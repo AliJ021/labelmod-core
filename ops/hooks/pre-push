@@ -1,0 +1,72 @@
+#!/usr/bin/env bash
+# =====================================================================
+# pre-push — دروازه محلی پیش از رسیدن کد به GitHub
+# =====================================================================
+# چون در پلن Free روی مخزن خصوصی، نه Branch Protection در دسترس است و
+# نه Push Protection، این هوک جای هر دو را می‌گیرد — و در واقع بهتر:
+# راز قبل از اینکه اصلاً از این دستگاه خارج شود گرفته می‌شود، نه در سرور.
+#
+# نصب:  ops/install-hooks.sh
+# عبور اضطراری:  git push --no-verify   (فقط وقتی واقعاً می‌دانید چه می‌کنید)
+# =====================================================================
+set -uo pipefail
+cd "$(git rev-parse --show-toplevel)"
+
+RED='\033[0;31m'; GRN='\033[0;32m'; YLW='\033[0;33m'; NC='\033[0m'
+FAIL=0
+
+echo "─── بررسی پیش از Push ───"
+
+# ── ۱. جست‌وجوی راز ────────────────────────────────────────────────
+echo "→ جست‌وجوی راز در فایل‌های ردیابی‌شده"
+
+PATTERNS='github_pat_[A-Za-z0-9_]{22,}|gh[pousr]_[A-Za-z0-9]{36}|-----BEGIN [A-Z ]*PRIVATE KEY-----|AKIA[0-9A-Z]{16}|(password|passwd|secret|token|api_?key|apikey)[[:space:]]*[:=][[:space:]]*["'"'"'][^"'"'"']{8,}["'"'"']'
+
+HITS=$(git grep -InE "$PATTERNS" -- \
+        ':!.env.example' ':!ops/hooks/pre-push' ':!docs/SECURITY.md' 2>/dev/null \
+      | grep -v 'ci_only_not_a_real_secret' || true)
+
+if [ -n "$HITS" ]; then
+  echo -e "${RED}✗ راز احتمالی پیدا شد — Push متوقف شد:${NC}"
+  echo "$HITS" | head -20 | sed 's/^/    /'
+  echo
+  echo "  اگر واقعی است: فایل را پاک کنید، راز را Revoke کنید، و اگر"
+  echo "  قبلاً کامیت شده تاریخچه را هم بازنویسی کنید (git filter-repo)."
+  FAIL=1
+else
+  echo -e "  ${GRN}✓ چیزی پیدا نشد${NC}"
+fi
+
+# ── ۲. فایل‌هایی که هرگز نباید کامیت شوند ──────────────────────────
+echo "→ بررسی فایل‌های ممنوع"
+BANNED=$(git ls-files | grep -E '(^|/)\.env$|(^|/)\.env\.(local|production|prod)$|\.pem$|\.key$|\.p12$|\.pfx$|(^|/)id_rsa|(^|/)\.npmrc$|\.dump$|\.sql\.gz$' || true)
+if [ -n "$BANNED" ]; then
+  echo -e "${RED}✗ فایل ممنوع در مخزن:${NC}"
+  echo "$BANNED" | sed 's/^/    /'
+  FAIL=1
+else
+  echo -e "  ${GRN}✓ پاک${NC}"
+fi
+
+# ── ۳. تست‌های مالی ────────────────────────────────────────────────
+if [ -n "${DATABASE_URL:-}" ]; then
+  echo "→ اجرای تست‌های مالی"
+  if ./ops/db.sh test > /tmp/labelmod-pretest.log 2>&1; then
+    echo -e "  ${GRN}✓ همه تست‌ها پاس${NC}"
+  else
+    echo -e "${RED}✗ تست‌ها رد شدند — Push متوقف شد${NC}"
+    tail -25 /tmp/labelmod-pretest.log | sed 's/^/    /'
+    FAIL=1
+  fi
+else
+  echo -e "  ${YLW}⚠ DATABASE_URL ست نیست — تست‌ها اجرا نشدند${NC}"
+  echo -e "  ${YLW}  برای این پروژه، Push بدون اجرای تست مالی توصیه نمی‌شود.${NC}"
+fi
+
+echo "─────────────────────────"
+if [ $FAIL -ne 0 ]; then
+  echo -e "${RED}Push لغو شد.${NC}"
+  exit 1
+fi
+echo -e "${GRN}آماده Push${NC}"
+exit 0

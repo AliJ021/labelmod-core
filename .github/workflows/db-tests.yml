@@ -1,0 +1,72 @@
+# تست‌های مالی — روی هر Push و هر PR اجرا می‌شوند.
+#
+# ⚠️ پیش از استفاده، اکشن را به SHA کامل پین کنید (بند ۵ SECURITY.md):
+#      git ls-remote https://github.com/actions/checkout refs/tags/v4
+#    سپس  actions/checkout@v4  را با  actions/checkout@<sha>  جایگزین کنید
+#    و تگ را به‌صورت کامنت کنارش نگه دارید.
+
+name: تست‌های پایگاه داده
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read          # حداقل دسترسی ممکن
+
+jobs:
+  db-tests:
+    runs-on: ubuntu-latest
+
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_DB: labelmod
+          POSTGRES_USER: labelmod
+          POSTGRES_PASSWORD: ci_only_not_a_real_secret
+        ports: ['5432:5432']
+        options: >-
+          --health-cmd "pg_isready -U labelmod -d labelmod"
+          --health-interval 10s --health-timeout 5s --health-retries 10
+
+    env:
+      DATABASE_URL: postgres://labelmod:ci_only_not_a_real_secret@localhost:5432/labelmod
+      PGHOST: localhost
+      PGUSER: labelmod
+      PGPASSWORD: ci_only_not_a_real_secret
+      PGDATABASE: labelmod
+
+    steps:
+      - uses: actions/checkout@v4     # TODO: به SHA پین شود
+
+      - name: نصب کلاینت پستگرس
+        run: sudo apt-get update -qq && sudo apt-get install -y -qq postgresql-client
+
+      - name: اجرای مهاجرت‌ها و بارگذاری داده مرجع
+        run: ./ops/db.sh migrate && ./ops/db.sh seed
+
+      # db.sh test خودش یک دیتابیس یک‌بارمصرف می‌سازد و در پایان پاک می‌کند
+      - name: تست‌های مالی — سناریوی طلایی، حالت لبه‌ای، همزمانی
+        run: ./ops/db.sh test
+
+      - name: ادعاهای پایدار — هیچ سند نامتوازن، هیچ موجودی منفی
+        run: |
+          psql -v ON_ERROR_STOP=1 "$DATABASE_URL" -c "
+            DO \$\$
+            DECLARE n int;
+            BEGIN
+              SELECT count(*) INTO n FROM (
+                SELECT entry_id FROM ledger.journal_line
+                 GROUP BY entry_id HAVING sum(debit) <> sum(credit)) x;
+              IF n > 0 THEN RAISE EXCEPTION 'سند نامتوازن یافت شد: %', n; END IF;
+
+              SELECT count(*) INTO n FROM inventory.stock_balance WHERE on_hand < 0;
+              IF n > 0 THEN RAISE EXCEPTION 'موجودی منفی یافت شد: %', n; END IF;
+
+              SELECT count(*) INTO n FROM inventory.balance_check
+               WHERE qty_diff <> 0 OR value_diff <> 0;
+              IF n > 0 THEN RAISE EXCEPTION 'اختلاف Projection با حرکت‌ها: %', n; END IF;
+            END \$\$;"

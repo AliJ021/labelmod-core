@@ -1,0 +1,663 @@
+<title>پوسته شیشه‌ای لیبل مد</title>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Vazirmatn:wght@300;400;500;600;700;800&family=IBM+Plex+Mono:wght@400;500&display=swap">
+
+<style>
+/* ══════════════════════════════════════════════════════════════════
+   توکن‌ها — دو سطح مجزا از روز اول (ADR-002)
+   surface-glass  : لایه کنترلی شناور. فقط جایی که تضاد قربانی نمی‌شود.
+   surface-solid  : محتوا و هر چیزی که باید سریع و پرتضاد خوانده شود.
+   ══════════════════════════════════════════════════════════════════ */
+:root{
+  /* زمینه — دنیای پارچه و رنگرزی: ایندیگو، آلویی، جین */
+  --bg-deep:#EDEBF2;
+  --mesh-1:#B9C0E8;
+  --mesh-2:#D9BCCF;
+  --mesh-3:#AECFCE;
+
+  --surface-solid:#FFFFFF;
+  --surface-solid-2:#F4F3F8;
+  --surface-glass:rgba(255,255,255,.55);
+  --surface-glass-2:rgba(255,255,255,.38);
+  --glass-blur:22px;
+  --glass-sat:180%;
+  --glass-rim:rgba(255,255,255,.85);
+  --glass-rim-2:rgba(120,110,160,.20);
+  --glass-shadow:0 8px 32px -12px rgba(40,30,70,.28);
+
+  --ink:#14121C;
+  --ink-2:#4A4560;
+  --ink-3:#787292;
+  --rule:rgba(70,60,110,.14);
+  --rule-2:rgba(70,60,110,.26);
+
+  --accent:#8A6214;
+  --accent-ink:#FFFFFF;
+  --chart-1:#B0801F;
+  --good:#2E8B63;
+  --warn:#B08A1E;
+  --crit:#C0392F;
+
+  --r-lg:26px; --r-md:18px; --r-sm:12px; --r-xs:8px;
+  --pad:14px;
+}
+@media (prefers-color-scheme: dark){
+  :root:not([data-theme="light"]){
+    --bg-deep:#0D0B14;
+    --mesh-1:#2B2456;
+    --mesh-2:#46243E;
+    --mesh-3:#0F3A3C;
+
+    --surface-solid:#17151F;
+    --surface-solid-2:#201D2B;
+    --surface-glass:rgba(255,255,255,.09);
+    --surface-glass-2:rgba(255,255,255,.055);
+    --glass-rim:rgba(255,255,255,.30);
+    --glass-rim-2:rgba(0,0,0,.35);
+    --glass-shadow:0 8px 36px -14px rgba(0,0,0,.75);
+
+    --ink:#F1EEF8;
+    --ink-2:#B6B0CC;
+    --ink-3:#847EA0;
+    --rule:rgba(255,255,255,.10);
+    --rule-2:rgba(255,255,255,.18);
+
+    --accent:#C9973F;
+    --accent-ink:#1A1408;
+    --chart-1:#C9973F;
+    --good:#43B083;
+    --warn:#E8C24A;
+    --crit:#D4405F;
+  }
+}
+:root[data-theme="dark"]{
+  --bg-deep:#0D0B14;
+  --mesh-1:#2B2456; --mesh-2:#46243E; --mesh-3:#0F3A3C;
+  --surface-solid:#17151F; --surface-solid-2:#201D2B;
+  --surface-glass:rgba(255,255,255,.09);
+  --surface-glass-2:rgba(255,255,255,.055);
+  --glass-rim:rgba(255,255,255,.30);
+  --glass-rim-2:rgba(0,0,0,.35);
+  --glass-shadow:0 8px 36px -14px rgba(0,0,0,.75);
+  --ink:#F1EEF8; --ink-2:#B6B0CC; --ink-3:#847EA0;
+  --rule:rgba(255,255,255,.10); --rule-2:rgba(255,255,255,.18);
+  --accent:#C9973F; --accent-ink:#1A1408; --chart-1:#C9973F;
+  --good:#43B083; --warn:#E8C24A; --crit:#D4405F;
+}
+
+/* حالت عملکرد — دستی یا خودکار.
+   شیشه به سطح مات برمی‌گردد و backdrop-filter کاملاً حذف می‌شود. */
+:root[data-perf="on"],
+:root[data-perf="on"] *{ --glass-blur:0px !important; }
+:root[data-perf="on"]{
+  --surface-glass:var(--surface-solid);
+  --surface-glass-2:var(--surface-solid-2);
+  --glass-rim:var(--rule-2);
+}
+@media (prefers-reduced-transparency: reduce){
+  :root:not([data-perf="off"]){
+    --surface-glass:var(--surface-solid);
+    --surface-glass-2:var(--surface-solid-2);
+    --glass-blur:0px;
+  }
+}
+
+*{box-sizing:border-box}
+body{
+  margin:0; background:var(--bg-deep); color:var(--ink);
+  font-family:"Vazirmatn",system-ui,sans-serif; font-size:16px; line-height:1.8;
+  -webkit-font-smoothing:antialiased;
+}
+.doc{direction:rtl;text-align:right;position:relative;min-height:100vh}
+.num,.mono{font-family:"IBM Plex Mono",ui-monospace,monospace}
+.tnum{font-variant-numeric:tabular-nums}
+
+/* مِش زمینه — چیزی که شیشه باید بشکندش. روی زمینه تخت، شیشه دیده نمی‌شود. */
+.mesh{position:fixed;inset:0;z-index:0;pointer-events:none;overflow:hidden}
+.mesh::before,.mesh::after,.mesh i{
+  content:"";position:absolute;border-radius:50%;filter:blur(70px);opacity:.85;
+}
+.mesh::before{width:52vw;height:52vw;background:var(--mesh-1);top:-12vw;right:-8vw}
+.mesh::after {width:46vw;height:46vw;background:var(--mesh-2);top:38vh;left:-10vw}
+.mesh i      {width:40vw;height:40vw;background:var(--mesh-3);bottom:-14vw;right:22vw;display:block}
+
+.wrap{position:relative;z-index:1;max-width:1180px;margin:0 auto;padding:0 22px 110px}
+
+/* ── شیشه: بلور + اشباع + رینگ بازتاب + سایه داخلی ────────────── */
+.glass{
+  background:var(--surface-glass);
+  backdrop-filter:blur(var(--glass-blur)) saturate(var(--glass-sat));
+  -webkit-backdrop-filter:blur(var(--glass-blur)) saturate(var(--glass-sat));
+  border-radius:var(--r-lg);
+  box-shadow:var(--glass-shadow), inset 0 1px 0 var(--glass-rim),
+             inset 0 -1px 0 var(--glass-rim-2);
+  position:relative; isolation:isolate;
+}
+/* بازتاب ویژه روی لبه — همان چیزی که شیشه را از «تاری» جدا می‌کند */
+.glass::after{
+  content:"";position:absolute;inset:0;border-radius:inherit;pointer-events:none;
+  padding:1px;
+  background:linear-gradient(140deg,
+      var(--glass-rim) 0%, transparent 34%,
+      transparent 64%, var(--glass-rim) 100%);
+  -webkit-mask:linear-gradient(#000 0 0) content-box, linear-gradient(#000 0 0);
+  -webkit-mask-composite:xor; mask-composite:exclude;
+  opacity:.9;
+}
+@supports not (backdrop-filter: blur(1px)){
+  .glass{background:var(--surface-solid)}
+}
+.solid{
+  background:var(--surface-solid);
+  border:1px solid var(--rule);
+  border-radius:var(--r-lg);
+  box-shadow:0 2px 10px -6px rgba(20,15,40,.25);
+}
+
+/* ── سربرگ ─────────────────────────────────────────────────────── */
+.mast{padding:60px 0 26px}
+.eyebrow{font-size:11.5px;letter-spacing:.2em;text-transform:uppercase;
+  color:var(--accent);font-weight:700;margin:0 0 16px}
+h1{font-size:clamp(34px,5.2vw,54px);font-weight:800;line-height:1.12;margin:0 0 12px;
+  letter-spacing:-.02em;text-wrap:balance}
+.dek{font-size:18px;color:var(--ink-2);font-weight:300;max-width:58ch;margin:0}
+
+/* ── نوار کنترل ────────────────────────────────────────────────── */
+.controls{
+  position:sticky;top:14px;z-index:20;display:flex;flex-wrap:wrap;gap:10px;
+  align-items:center;padding:10px 14px;margin:22px 0 46px;
+  /* نوار چسبان روی محتوا می‌افتد — پس باید کاملاً بپوشاند، نه نیمه‌شفاف */
+  background:color-mix(in srgb, var(--bg-deep) 88%, transparent);
+  backdrop-filter:blur(18px) saturate(160%);
+  -webkit-backdrop-filter:blur(18px) saturate(160%);
+  border:1px solid var(--rule);
+}
+.ctl{
+  display:inline-flex;align-items:center;gap:8px;border:1px solid var(--rule-2);
+  background:transparent;color:var(--ink-2);border-radius:999px;padding:6px 14px;
+  font:inherit;font-size:13.5px;cursor:pointer;transition:.18s;
+}
+.ctl:hover{color:var(--ink);border-color:var(--accent)}
+.ctl:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
+.ctl[aria-pressed="true"]{background:var(--accent);color:var(--accent-ink);border-color:var(--accent);font-weight:600}
+.ctl-note{font-size:12.5px;color:var(--ink-3);margin-inline-start:auto}
+
+/* ── بخش‌ها ────────────────────────────────────────────────────── */
+section{margin-bottom:62px;scroll-margin-top:86px}
+.sec-h{display:flex;align-items:baseline;gap:12px;margin-bottom:8px}
+.sec-n{font-family:"IBM Plex Mono",monospace;font-size:12px;font-weight:600;
+  color:var(--accent-ink);background:var(--accent);border-radius:6px;padding:2px 8px}
+h2{font-size:27px;font-weight:700;margin:0;letter-spacing:-.01em}
+.sec-d{color:var(--ink-2);font-size:15px;margin:10px 0 24px;max-width:66ch}
+h3{font-size:17px;font-weight:600;margin:0 0 10px}
+p{margin:0 0 14px;max-width:68ch}
+strong{font-weight:600;color:var(--ink)}
+
+/* ── کارت‌های استدلال ──────────────────────────────────────────── */
+.why{display:grid;grid-template-columns:repeat(auto-fit,minmax(250px,1fr));gap:14px}
+.why-c{padding:20px 22px}
+.why-c h4{margin:0 0 6px;font-size:15.5px;font-weight:600}
+.why-c p{font-size:14px;color:var(--ink-2);margin:0;max-width:none}
+.why-c .tagi{font-size:11px;letter-spacing:.1em;text-transform:uppercase;
+  font-weight:700;display:block;margin-bottom:9px}
+.ok-t{color:var(--good)} .no-t{color:var(--crit)}
+
+/* ── قاب artboard ──────────────────────────────────────────────── */
+.board{margin-bottom:16px}
+.board-lbl{display:flex;gap:9px;align-items:center;font-size:12.5px;color:var(--ink-3);
+  margin-bottom:10px;font-family:"IBM Plex Mono",monospace}
+.dot{width:7px;height:7px;border-radius:50%;background:var(--accent)}
+
+/* ══ داشبورد ═══════════════════════════════════════════════════ */
+.dash{padding:24px}
+.dash-top{display:flex;justify-content:space-between;align-items:flex-start;
+  gap:16px;flex-wrap:wrap;margin-bottom:22px}
+.dash-when{font-size:13px;color:var(--ink-3)}
+.hero-lbl{font-size:13px;color:var(--ink-2);margin-bottom:2px}
+.hero{font-size:clamp(38px,6vw,58px);font-weight:800;line-height:1.05;
+  letter-spacing:-.03em;font-variant-numeric:tabular-nums}
+.hero-u{font-size:.42em;font-weight:500;color:var(--ink-3);margin-inline-start:6px}
+.delta{display:inline-flex;align-items:center;gap:5px;font-size:13.5px;font-weight:600;
+  border-radius:999px;padding:3px 11px;margin-top:8px}
+.delta.up{color:var(--good);background:color-mix(in srgb,var(--good) 15%,transparent)}
+.seg{display:flex;gap:4px;padding:4px;border-radius:999px;background:var(--surface-glass-2)}
+.seg button{border:0;background:transparent;color:var(--ink-2);font:inherit;font-size:13px;
+  padding:5px 14px;border-radius:999px;cursor:pointer}
+.seg button[aria-pressed="true"]{background:var(--surface-solid);color:var(--ink);font-weight:600}
+
+.kpis{display:grid;grid-template-columns:repeat(auto-fit,minmax(148px,1fr));gap:10px;margin-bottom:22px}
+.kpi{
+  padding:15px 17px;border-radius:var(--r-md);
+  /* بدون backdrop-filter — این کارت داخل یک سطح شیشه‌ای است.
+     شیشه روی شیشه ممنوع است؛ فقط یک تینت و رینگ می‌گیرد. */
+  background:var(--surface-glass-2);
+  box-shadow:inset 0 1px 0 var(--glass-rim), inset 0 -1px 0 var(--glass-rim-2);
+}
+.kpi-l{font-size:12.5px;color:var(--ink-3);margin-bottom:4px}
+.kpi-v{font-size:22px;font-weight:700;font-variant-numeric:tabular-nums;letter-spacing:-.01em}
+.kpi-u{font-size:11.5px;color:var(--ink-3);font-weight:400;margin-inline-start:3px}
+.kpi-s{font-size:12px;color:var(--ink-3);margin-top:3px}
+
+.chart-head{display:flex;justify-content:space-between;align-items:baseline;margin-bottom:14px}
+.chart-t{font-size:14.5px;font-weight:600}
+.chart-sub{font-size:12.5px;color:var(--ink-3)}
+.chart{position:relative;height:132px;margin-bottom:6px}
+.grid-l{position:absolute;left:0;right:0;height:1px;background:var(--rule)}
+.bars{position:absolute;inset:0;display:flex;align-items:flex-end;gap:2px}
+.bar-w{flex:1;height:100%;display:flex;align-items:flex-end;position:relative;cursor:pointer}
+.bar{width:100%;background:var(--chart-1);border-radius:4px 4px 0 0;transition:opacity .15s}
+.bar-w:hover .bar{opacity:.75}
+.bar-w:focus-visible{outline:2px solid var(--accent);outline-offset:2px;border-radius:4px}
+.peak-lbl{position:absolute;bottom:100%;left:50%;transform:translateX(-50%);
+  font-size:11.5px;font-weight:600;color:var(--ink);white-space:nowrap;margin-bottom:5px;
+  font-variant-numeric:tabular-nums}
+.tip{position:absolute;bottom:100%;left:50%;transform:translateX(-50%) translateY(-4px);
+  background:var(--surface-solid);border:1px solid var(--rule-2);border-radius:var(--r-xs);
+  padding:6px 10px;font-size:12px;white-space:nowrap;pointer-events:none;
+  opacity:0;transition:opacity .12s;box-shadow:0 4px 14px -6px rgba(0,0,0,.4);z-index:5}
+.bar-w:hover .tip,.bar-w:focus-visible .tip{opacity:1}
+.tip b{font-variant-numeric:tabular-nums}
+.xaxis{display:flex;gap:2px;font-size:11px;color:var(--ink-3);font-variant-numeric:tabular-nums}
+.xaxis span{flex:1;text-align:center}
+
+.top-list{margin-top:22px}
+.tl-row{display:flex;align-items:center;gap:12px;padding:9px 0;border-bottom:1px solid var(--rule)}
+.tl-row:last-child{border-bottom:0}
+.sw{width:18px;height:18px;border-radius:5px;flex-shrink:0;border:1px solid var(--rule-2)}
+.tl-n{flex:1;font-size:14px}
+.tl-n small{color:var(--ink-3);font-size:12.5px;margin-inline-start:6px}
+.tl-q{font-size:14px;font-weight:600;font-variant-numeric:tabular-nums;color:var(--ink-2)}
+
+/* ══ صندوق ═════════════════════════════════════════════════════ */
+.pos{border-radius:var(--r-lg);overflow:hidden;position:relative}
+.pos-bar{
+  display:flex;align-items:center;gap:12px;padding:11px 16px;flex-wrap:wrap;
+  background:var(--surface-glass);
+  backdrop-filter:blur(var(--glass-blur)) saturate(var(--glass-sat));
+  -webkit-backdrop-filter:blur(var(--glass-blur)) saturate(var(--glass-sat));
+  border-bottom:1px solid var(--rule);
+}
+.pos-who{font-size:13.5px;font-weight:600}
+.pos-meta{font-size:12.5px;color:var(--ink-3)}
+.pill{display:inline-flex;align-items:center;gap:6px;font-size:12px;font-weight:600;
+  border-radius:999px;padding:3px 10px;margin-inline-start:auto}
+.pill.on{color:var(--good);background:color-mix(in srgb,var(--good) 16%,transparent)}
+.pos-body{background:var(--surface-solid);padding:16px}
+.scan{display:flex;gap:9px;margin-bottom:14px}
+.scan input{
+  flex:1;font:inherit;font-size:15px;padding:12px 15px;border-radius:var(--r-md);
+  border:1.5px solid var(--rule-2);background:var(--surface-solid-2);color:var(--ink);
+}
+.scan input::placeholder{color:var(--ink-3)}
+.scan input:focus{outline:0;border-color:var(--accent)}
+.scan-b{border:1.5px solid var(--rule-2);background:var(--surface-solid-2);color:var(--ink);
+  border-radius:var(--r-md);padding:0 16px;font:inherit;font-size:14px;cursor:pointer;white-space:nowrap}
+.scan-b:hover{border-color:var(--accent)}
+
+.cart{border:1px solid var(--rule);border-radius:var(--r-md);overflow:hidden;margin-bottom:14px}
+.ci{display:flex;align-items:center;gap:12px;padding:12px 14px;border-bottom:1px solid var(--rule);
+  background:var(--surface-solid)}
+.ci:last-child{border-bottom:0}
+.ci-n{flex:1;min-width:0}
+.ci-t{font-size:14.5px;font-weight:600;line-height:1.4}
+.ci-s{font-size:12.5px;color:var(--ink-3);font-family:"IBM Plex Mono",monospace}
+.qty{display:flex;align-items:center;gap:8px;background:var(--surface-solid-2);
+  border-radius:var(--r-sm);padding:3px 6px}
+.qty button{width:26px;height:26px;border:0;border-radius:7px;background:transparent;
+  color:var(--ink);font-size:16px;line-height:1;cursor:pointer;font-family:inherit}
+.qty button:hover{background:var(--surface-solid)}
+.qty span{min-width:20px;text-align:center;font-weight:600;font-variant-numeric:tabular-nums;font-size:14px}
+.ci-p{font-size:14.5px;font-weight:600;font-variant-numeric:tabular-nums;white-space:nowrap;min-width:96px;text-align:left}
+
+.totals{border-radius:var(--r-md);background:var(--surface-solid-2);padding:14px 16px;margin-bottom:14px}
+.tr{display:flex;justify-content:space-between;font-size:14px;color:var(--ink-2);padding:3px 0}
+.tr b{font-variant-numeric:tabular-nums;color:var(--ink);font-weight:500}
+.tr.dc b{color:var(--crit)}
+.tr.big{border-top:1px solid var(--rule-2);margin-top:9px;padding-top:11px;
+  font-size:16px;color:var(--ink);font-weight:600}
+.tr.big b{font-size:26px;font-weight:800;letter-spacing:-.02em}
+
+.pays{display:grid;grid-template-columns:repeat(auto-fit,minmax(112px,1fr));gap:8px;margin-bottom:12px}
+.pay{border:1.5px solid var(--rule-2);background:var(--surface-solid);color:var(--ink);
+  border-radius:var(--r-md);padding:13px 8px;font:inherit;font-size:14px;font-weight:500;cursor:pointer;
+  transition:.15s}
+.pay:hover{border-color:var(--accent)}
+.pay[aria-pressed="true"]{border-color:var(--accent);background:color-mix(in srgb,var(--accent) 12%,var(--surface-solid));font-weight:700}
+.cta{width:100%;border:0;border-radius:var(--r-md);background:var(--accent);color:var(--accent-ink);
+  font:inherit;font-size:18px;font-weight:700;padding:17px;cursor:pointer;letter-spacing:-.01em}
+.cta:hover{filter:brightness(1.07)}
+.cta:active{transform:translateY(1px)}
+.lost{width:100%;margin-top:9px;border:1px dashed var(--rule-2);background:transparent;
+  color:var(--ink-3);border-radius:var(--r-md);padding:11px;font:inherit;font-size:13.5px;cursor:pointer}
+.lost:hover{color:var(--warn);border-color:var(--warn)}
+
+/* ── جدول توکن ─────────────────────────────────────────────────── */
+.tw{overflow-x:auto;border-radius:var(--r-md);border:1px solid var(--rule)}
+table{border-collapse:collapse;width:100%;font-size:14px;min-width:520px;background:var(--surface-solid)}
+th{text-align:right;font-size:11.5px;letter-spacing:.07em;text-transform:uppercase;color:var(--ink-3);
+  font-weight:600;padding:10px 14px;border-bottom:1px solid var(--rule-2);background:var(--surface-solid-2);white-space:nowrap}
+td{padding:10px 14px;border-bottom:1px solid var(--rule);color:var(--ink-2);vertical-align:top;line-height:1.6}
+tr:last-child td{border-bottom:0}
+td code{font-family:"IBM Plex Mono",monospace;font-size:12.5px;color:var(--ink)}
+
+pre{overflow-x:auto;background:var(--surface-solid);border:1px solid var(--rule);
+  border-radius:var(--r-md);padding:16px 18px;font-family:"IBM Plex Mono",monospace;
+  font-size:12.8px;line-height:1.85;direction:ltr;text-align:left;margin:0 0 14px;color:var(--ink-2)}
+pre b{color:var(--accent);font-weight:500}
+pre i{color:var(--ink-3);font-style:normal}
+
+.note{border-inline-start:3px solid var(--accent);padding:14px 18px;border-radius:0 var(--r-sm) var(--r-sm) 0;
+  background:color-mix(in srgb,var(--accent) 9%,transparent);font-size:14.5px;color:var(--ink-2);margin:0 0 16px}
+.note b{color:var(--ink)}
+
+footer{border-top:1px solid var(--rule);padding-top:22px;margin-top:56px;font-size:13px;color:var(--ink-3);max-width:70ch}
+
+@media (prefers-reduced-motion: reduce){*{transition:none !important;animation:none !important}}
+</style>
+
+<div class="doc">
+<div class="mesh"><i></i></div>
+<div class="wrap">
+
+<header class="mast">
+  <p class="eyebrow">ADR-002 · نمونه بصری پیش از کد</p>
+  <h1>پوسته شیشه‌ای لیبل مد</h1>
+  <p class="dek">Liquid Glass، ناحیه‌بندی‌شده. شیشه کامل روی داشبورد، سطح مات و پرتضاد روی صندوق — و توکن‌هایی که این تفکیک را از روز اول ممکن می‌کنند.</p>
+</header>
+
+<div class="controls glass">
+  <button class="ctl" id="theme" aria-pressed="false">◐ تم تیره</button>
+  <button class="ctl" id="perf" aria-pressed="false">⚡ حالت عملکرد</button>
+  <span class="ctl-note">حالت عملکرد را بزنید — شیشه کاملاً حذف می‌شود</span>
+</div>
+
+<!-- ═══ ۱ ═══ -->
+<section>
+  <div class="sec-h"><span class="sec-n">۱</span><h2>چرا همه‌جا شیشه نه</h2></div>
+  <p class="sec-d">رابطی که همه‌چیزش شیشه است، Liquid Glass نیست — بدفهمی آن است. راهنمای خود اپل می‌گوید شیشه به <strong>لایه کنترلی</strong> تعلق دارد، نه به محتوا، و شیشه روی شیشه هرگز.</p>
+  <div class="why">
+    <div class="why-c glass">
+      <span class="tagi ok-t">✓ داشبورد — شیشه کامل</span>
+      <h4>خوانده می‌شود، نه عمل</h4>
+      <p>روی دسکتاپ، در آرامش، چند بار در روز. عمق و شفافیت اینجا همان حس «اپ بانکی» را می‌سازد که سند خواسته بود — بدون اینکه هزینه‌ای بدهد.</p>
+    </div>
+    <div class="why-c glass">
+      <span class="tagi no-t">✗ صندوق — تضاد رنگی</span>
+      <h4>نور فروشگاه</h4>
+      <p>صندوق‌دار زیر مهتابی و گاهی آفتاب کنار ویترین کار می‌کند و باید عدد قیمت را در کسری از ثانیه بخواند. سطح نیمه‌شفاف مستقیماً با این می‌جنگد.</p>
+    </div>
+    <div class="why-c glass">
+      <span class="tagi no-t">✗ صندوق — عملکرد</span>
+      <h4>تبلت ارزان پای صندوق</h4>
+      <p><code>backdrop-filter</code> مرورگر را وادار به لایه ترکیب جداگانه می‌کند. روی سخت‌افزار ضعیف یعنی افت فریم در اسکن پشت‌سرهم — و صندوق کند یعنی صف.</p>
+    </div>
+  </div>
+</section>
+
+<!-- ═══ ۲ ═══ -->
+<section>
+  <div class="sec-h"><span class="sec-n">۲</span><h2>داشبورد مدیریتی</h2></div>
+  <p class="sec-d">شیشه کامل. توجه کنید که <strong>فروش</strong>، <strong>وجه دریافتی</strong> و <strong>سود</strong> سه کارت جدا با برچسب صریح‌اند — طبق قاعده‌ای که در بازبینی گذاشتیم، هیچ‌وقت زیر عنوان کلی «دخل» جمع نمی‌شوند.</p>
+
+  <div class="board">
+    <div class="board-lbl"><span class="dot"></span>surface-glass · دسکتاپ</div>
+    <div class="dash glass">
+
+      <div class="dash-top">
+        <div>
+          <div class="dash-when">امروز · شنبه ۳ شهریور ۱۴۰۵</div>
+          <div class="hero-lbl">فروش خالص</div>
+          <div class="hero tnum">۴۸٬۲۰۰٬۰۰۰<span class="hero-u">تومان</span></div>
+          <div class="delta up">▲ ۱۲٪ نسبت به شنبه قبل</div>
+        </div>
+        <div class="seg" role="group" aria-label="بازه">
+          <button aria-pressed="true">امروز</button>
+          <button aria-pressed="false">هفته</button>
+          <button aria-pressed="false">ماه</button>
+        </div>
+      </div>
+
+      <div class="kpis">
+        <div class="kpi">
+          <div class="kpi-l">وجه دریافتی</div>
+          <div class="kpi-v tnum">۴۵٬۹۰۰٬۰۰۰<span class="kpi-u">ت</span></div>
+          <div class="kpi-s">۲٬۳۰۰٬۰۰۰ نسیه</div>
+        </div>
+        <div class="kpi">
+          <div class="kpi-l">سود ناخالص</div>
+          <div class="kpi-v tnum">۱۹٬۳۰۰٬۰۰۰<span class="kpi-u">ت</span></div>
+          <div class="kpi-s">حاشیه ۴۰٪</div>
+        </div>
+        <div class="kpi">
+          <div class="kpi-l">تعداد فاکتور</div>
+          <div class="kpi-v tnum">۳۱</div>
+          <div class="kpi-s">۲۴ مشتری یکتا</div>
+        </div>
+        <div class="kpi">
+          <div class="kpi-l">میانگین سبد</div>
+          <div class="kpi-v tnum">۱٬۵۵۵٬۰۰۰<span class="kpi-u">ت</span></div>
+          <div class="kpi-s">۱٫۸ قلم</div>
+        </div>
+      </div>
+
+      <div class="chart-head">
+        <div class="chart-t">فروش خالص به تفکیک ساعت</div>
+        <div class="chart-sub">تومان · نشانگر را روی میله ببرید</div>
+      </div>
+      <div class="chart" id="chart">
+        <div class="grid-l" style="top:0"></div>
+        <div class="grid-l" style="top:50%"></div>
+        <div class="grid-l" style="bottom:0"></div>
+        <div class="bars" id="bars"></div>
+      </div>
+      <div class="xaxis" id="xaxis"></div>
+
+      <div class="top-list">
+        <div class="chart-t" style="margin-bottom:6px">پرفروش‌ترین‌های امروز</div>
+        <div class="tl-row"><span class="sw" style="background:#1B1B1F"></span>
+          <span class="tl-n">شلوار کایمون <small>مشکی · XL</small></span><span class="tl-q tnum">۶ عدد</span></div>
+        <div class="tl-row"><span class="sw" style="background:#2E3B57"></span>
+          <span class="tl-n">پیراهن آستین‌بلند <small>سرمه‌ای · L</small></span><span class="tl-q tnum">۵ عدد</span></div>
+        <div class="tl-row"><span class="sw" style="background:#6E6355"></span>
+          <span class="tl-n">پولوشرت پنبه <small>زیتونی · M</small></span><span class="tl-q tnum">۴ عدد</span></div>
+        <div class="tl-row"><span class="sw" style="background:#7A4A32"></span>
+          <span class="tl-n">کفش چرم <small>قهوه‌ای · ۴۲</small></span><span class="tl-q tnum">۳ عدد</span></div>
+      </div>
+
+    </div>
+  </div>
+</section>
+
+<!-- ═══ ۳ ═══ -->
+<section>
+  <div class="sec-h"><span class="sec-n">۳</span><h2>صندوق فروشگاهی</h2></div>
+  <p class="sec-d">شیشه فقط روی نوار بالا — که اطلاعات وضعیت دارد، نه عدد پول. سبد، جمع و دکمه‌ها <strong>کاملاً مات</strong>اند. دکمه «سایز نداشتیم» هم اینجاست: ارزان‌ترین داده با بالاترین ارزش برای سفارش خرید فصل بعد.</p>
+
+  <div class="board">
+    <div class="board-lbl"><span class="dot"></span>surface-solid · تبلت پای صندوق</div>
+    <div class="pos solid" style="padding:0">
+      <div class="pos-bar">
+        <span class="pos-who">مریم رضایی</span>
+        <span class="pos-meta">شیفت عصر · از ۱۵:۰۰</span>
+        <span class="pill on">● متصل</span>
+      </div>
+      <div class="pos-body">
+
+        <div class="scan">
+          <input type="text" placeholder="اسکن بارکد یا جست‌وجوی نام و SKU…" aria-label="جست‌وجو">
+          <button class="scan-b">⌨ دوربین</button>
+        </div>
+
+        <div class="cart">
+          <div class="ci">
+            <div class="ci-n">
+              <div class="ci-t">شلوار کایمون · مشکی · XL</div>
+              <div class="ci-s">KAY-BLK-XL</div>
+            </div>
+            <div class="qty"><button aria-label="کم">−</button><span class="tnum">۱</span><button aria-label="زیاد">+</button></div>
+            <div class="ci-p tnum">۲٬۴۵۰٬۰۰۰</div>
+          </div>
+          <div class="ci">
+            <div class="ci-n">
+              <div class="ci-t">پیراهن آستین‌بلند · سرمه‌ای · L</div>
+              <div class="ci-s">SHR-NVY-L</div>
+            </div>
+            <div class="qty"><button aria-label="کم">−</button><span class="tnum">۲</span><button aria-label="زیاد">+</button></div>
+            <div class="ci-p tnum">۲٬۵۶۰٬۰۰۰</div>
+          </div>
+        </div>
+
+        <div class="totals">
+          <div class="tr"><span>جمع کل</span><b class="tnum">۵٬۰۱۰٬۰۰۰</b></div>
+          <div class="tr dc"><span>تخفیف</span><b class="tnum">−۲۵۰٬۰۰۰</b></div>
+          <div class="tr"><span>مالیات بر ارزش افزوده</span><b class="tnum">۰ <span style="font-size:11.5px;color:var(--ink-3);font-weight:400">غیرفعال</span></b></div>
+          <div class="tr big"><span>قابل پرداخت</span><b class="tnum">۴٬۷۶۰٬۰۰۰</b></div>
+        </div>
+
+        <div class="pays" role="group" aria-label="روش پرداخت">
+          <button class="pay" aria-pressed="true">نقدی</button>
+          <button class="pay" aria-pressed="false">کارت‌خوان</button>
+          <button class="pay" aria-pressed="false">کارت‌به‌کارت</button>
+          <button class="pay" aria-pressed="false">ترکیبی</button>
+        </div>
+
+        <button class="cta">ثبت فروش · ۴٬۷۶۰٬۰۰۰ تومان</button>
+        <button class="lost">＋ ثبت «سایز نداشتیم»</button>
+
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ═══ ۴ ═══ -->
+<section>
+  <div class="sec-h"><span class="sec-n">۴</span><h2>توکن‌ها — چرا الان مهم است</h2></div>
+  <p class="sec-d">این تفکیک باید از اولین کامپوننت وجود داشته باشد. اگر بعداً اضافه شود، یعنی بازنویسی هر کامپوننت.</p>
+  <div class="tw"><table>
+    <thead><tr><th>توکن</th><th>کجا</th><th>در حالت عملکرد</th></tr></thead>
+    <tbody>
+      <tr><td><code>--surface-glass</code></td><td>نوار بالا، مودال، کارت داشبورد، ورود</td><td>به <code>--surface-solid</code> برمی‌گردد</td></tr>
+      <tr><td><code>--surface-solid</code></td><td>سبد صندوق، جدول عدد، فرم، هر چیز پرتضاد</td><td>بدون تغییر</td></tr>
+      <tr><td><code>--glass-blur</code></td><td>تنها جای شعاع بلور در کل سیستم</td><td><code>0px</code> — کل <code>backdrop-filter</code> حذف</td></tr>
+      <tr><td><code>--glass-rim</code></td><td>رینگ بازتاب ویژه لبه</td><td>به خط مرزی ساده تبدیل می‌شود</td></tr>
+      <tr><td><code>--chart-1</code></td><td>تک‌سری نمودار</td><td>پله تیره‌تر در تم روشن، نه همان رنگ</td></tr>
+    </tbody>
+  </table></div>
+</section>
+
+<!-- ═══ ۵ ═══ -->
+<section>
+  <div class="sec-h"><span class="sec-n">۵</span><h2>تکنیک</h2></div>
+  <p class="sec-d">آنچه «شیشه» را از «تاری» جدا می‌کند، بلور نیست — بازتاب لبه و اشباع رنگ است.</p>
+<pre>.glass {
+  background: var(--surface-glass);
+  <b>backdrop-filter</b>: blur(var(--glass-blur)) <b>saturate(180%)</b>;
+  <i>/* اشباع، رنگ پشت را زنده نگه می‌دارد — بدون آن شیشه گِلی می‌شود */</i>
+  box-shadow:
+    var(--glass-shadow),
+    <b>inset 0 1px 0</b> var(--glass-rim),      <i>/* لبه بالا: نور */</i>
+    <b>inset 0 -1px 0</b> var(--glass-rim-2);   <i>/* لبه پایین: سایه */</i>
+}
+
+<i>/* بازتاب ویژه — رینگ گرادیانی فقط روی مرز */</i>
+.glass::after {
+  content: ""; position: absolute; inset: 0; padding: 1px;
+  border-radius: inherit; pointer-events: none;
+  background: linear-gradient(140deg,
+      var(--glass-rim) 0%, transparent 34%,
+      transparent 64%, var(--glass-rim) 100%);
+  <b>mask</b>: linear-gradient(#000 0 0) content-box, linear-gradient(#000 0 0);
+  <b>mask-composite</b>: exclude;  <i>/* فقط رینگ می‌ماند، وسط خالی */</i>
+}</pre>
+
+  <div class="note">
+    <b>شکست نور واقعی (feDisplacementMap) عمداً استفاده نشده.</b>
+    پشتیبانی مرورگری‌اش ناقص است — روی سافاری اصلاً کار نمی‌کند و روی موبایل گران است.
+    ترکیب بالا در همه‌جا یکسان رندر می‌شود و ۹۰٪ همان حس را می‌دهد. اگر روزی پشتیبانی
+    عمومی شد، به‌صورت <code>@supports</code> اضافه می‌شود بدون تغییر توکن‌ها.
+  </div>
+
+  <div class="note">
+    <b>سه قاعده سخت که در کد اجبار می‌شوند:</b> شیشه روی شیشه ممنوع ·
+    متن روی سطح شیشه‌ای حداقل ۴٫۵:۱ تضاد، سنجیده با بدترین محتوای پشتش ·
+    انیمیشن فقط روی <code>transform</code> و <code>opacity</code>، هرگز روی
+    <code>width</code> و <code>top</code>.
+  </div>
+
+  <p style="font-size:14.5px;color:var(--ink-2)"><strong>بودجه عملکرد صندوق:</strong> افزودن قلم به سبد زیر ۱۰۰ میلی‌ثانیه روی ضعیف‌ترین دستگاه هدف. هر افکتی که این را بشکند حذف می‌شود — بدون بحث.</p>
+</section>
+
+<footer>
+  <p>پالت با اسکریپت اعتبارسنجی بررسی شده: رنگ نمودار روی هر دو سطح ≥۳:۱ تضاد دارد (پله تیره‌تر <code>#B0801F</code> در تم روشن)، و هشدار در برابر خطا ΔE ۱۸٫۷ برای دید عادی و ۱۰٫۷ در کوررنگی — هر دو با آیکون و برچسب می‌آیند، نه فقط رنگ. تم تیره جداگانه انتخاب شده، نه معکوسِ خودکارِ تم روشن.</p>
+  <p>جهت بصری اینجا قفل می‌شود، بعد کامپوننت React نوشته می‌شود.</p>
+</footer>
+
+</div>
+</div>
+
+<script>
+(function(){
+  var root = document.documentElement;
+
+  // تم
+  var tBtn = document.getElementById('theme');
+  var dark = matchMedia('(prefers-color-scheme: dark)').matches;
+  function paint(){
+    root.setAttribute('data-theme', dark ? 'dark' : 'light');
+    tBtn.setAttribute('aria-pressed', String(dark));
+    tBtn.textContent = dark ? '◑ تم روشن' : '◐ تم تیره';
+  }
+  paint();
+  tBtn.addEventListener('click', function(){ dark = !dark; paint(); });
+
+  // حالت عملکرد
+  var pBtn = document.getElementById('perf'), perf = false;
+  pBtn.addEventListener('click', function(){
+    perf = !perf;
+    root.setAttribute('data-perf', perf ? 'on' : 'off');
+    pBtn.setAttribute('aria-pressed', String(perf));
+    pBtn.textContent = perf ? '⚡ حالت عملکرد: روشن' : '⚡ حالت عملکرد';
+  });
+
+  // نمودار ساعتی — تک‌سری، برچسب مستقیم فقط روی قله
+  var fa = function(n){ return n.toLocaleString('fa-IR'); };
+  var hours = [10,11,12,13,14,15,16,17,18,19,20,21];
+  var vals  = [1.2,2.4,3.1,2.2,1.6,3.8,4.6,5.9,8.4,7.1,4.9,2.8];
+  var max = Math.max.apply(null, vals);
+  var bars = document.getElementById('bars'), xa = document.getElementById('xaxis');
+  vals.forEach(function(v,i){
+    var w = document.createElement('div');
+    w.className = 'bar-w'; w.tabIndex = 0;
+    w.setAttribute('role','img');
+    w.setAttribute('aria-label', 'ساعت ' + fa(hours[i]) + '، ' + fa(Math.round(v*1000)) + ' هزار تومان');
+    var b = document.createElement('div');
+    b.className = 'bar'; b.style.height = (v/max*100) + '%';
+    w.appendChild(b);
+    if (v === max){
+      var pk = document.createElement('span');
+      pk.className = 'peak-lbl'; pk.textContent = fa(8.4) + ' م';
+      w.appendChild(pk);
+    }
+    var tip = document.createElement('div');
+    tip.className = 'tip';
+    tip.innerHTML = 'ساعت ' + fa(hours[i]) + ':۰۰ — <b>' + fa(Math.round(v*100)/100) + ' میلیون</b>';
+    w.appendChild(tip);
+    bars.appendChild(w);
+    var s = document.createElement('span');
+    s.textContent = (i % 2 === 0) ? fa(hours[i]) : '';
+    xa.appendChild(s);
+  });
+
+  // نمایشی: انتخاب روش پرداخت و بازه
+  function group(sel){
+    document.querySelectorAll(sel).forEach(function(g){
+      g.querySelectorAll('button').forEach(function(b){
+        b.addEventListener('click', function(){
+          g.querySelectorAll('button').forEach(function(x){ x.setAttribute('aria-pressed','false'); });
+          b.setAttribute('aria-pressed','true');
+        });
+      });
+    });
+  }
+  group('.pays'); group('.seg');
+})();
+</script>
