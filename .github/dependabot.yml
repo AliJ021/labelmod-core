@@ -1,0 +1,25 @@
+# Dependabot — به‌روزرسانی خودکار وابستگی‌ها
+#
+# اکشن‌های GitHub به SHA کامل پین شده‌اند (بند ۵ SECURITY.md). پین بدون
+# نگهداری، خودش یک بدهی امنیتی می‌شود: نسخه قفل‌شده وصله‌های بعدی را
+# نمی‌گیرد. Dependabot این تناقض را حل می‌کند — SHA را به‌روز نگه می‌دارد
+# و هر تغییر از مسیر PR و تست‌های مالی رد می‌شود، نه مستقیم روی main.
+#
+# ⚠️ ورودی npm عمداً اینجا نیست: پوشه apps/ هنوز package.json ندارد و
+#    Dependabot برای مسیر خالی خطا می‌دهد. هم‌زمان با ساخت لایه API
+#    اضافه شود.
+
+version: 2
+
+updates:
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
+      day: saturday
+    open-pull-requests-limit: 3
+    commit-message:
+      prefix: "امنیت"
+    labels:
+      - dependencies
+      - security

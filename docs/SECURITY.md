@@ -218,15 +218,31 @@ REVOKE UPDATE, DELETE ON inventory.stock_movement  FROM labelmod_app;
 
 ## ۹. محدودیت پلن GitHub — و جایگزین آن
 
-روی **پلن Free با مخزن خصوصی** این‌ها در دسترس **نیستند**:
+مخزن: `AliJ021/labelmod-core` — خصوصی، پلن Free.
 
-| قابلیت | وضعیت روی Free + خصوصی |
-|---|---|
-| Branch protection rules | ❌ فقط Pro / Team / Enterprise |
-| Repository rulesets | ❌ فقط Pro / Team / Enterprise |
-| Secret scanning و Push protection | ❌ نیازمند GitHub Secret Protection |
-| Dependabot alerts و security updates | ✅ رایگان |
-| GitHub Actions | ✅ رایگان با سهمیه ماهانه |
+جدول زیر **آزموده شده** است، نه حدس. تاریخ بررسی: شهریور ۱۴۰۵.
+
+| قابلیت | وضعیت | پاسخ واقعی API |
+|---|---|---|
+| Repository rulesets | ❌ | `Upgrade to GitHub Pro or make this repository public` |
+| Branch protection rules | ❌ | همان محدودیت |
+| Secret scanning و Push protection | ❌ | `Secret scanning is not available for this repository` |
+| Dependabot alerts | ✅ **فعال شد** | — |
+| Dependabot security updates | ✅ **فعال شد** | — |
+| محدودکردن اکشن‌های مجاز | ✅ **فعال شد** | فقط اکشن‌های متعلق به خود GitHub |
+| اجبار پین اکشن به SHA | ✅ **فعال شد** | `sha_pinning_required: true` |
+| مجوز پیش‌فرض `GITHUB_TOKEN` | ✅ فقط خواندن | `default_workflow_permissions: read` |
+
+سه ردیف آخر مهم‌اند چون **سمت سرور** اجرا می‌شوند و با `--no-verify` یا با
+Push از دستگاهی که هوک ندارد قابل دور زدن نیستند:
+
+- `sha_pinning_required` باعث می‌شود Workflow با اکشن پین‌نشده اصلاً اجرا
+  نشود. یعنی حتی اگر کسی `actions/checkout@v4` را دوباره اضافه کند، CI
+  شکست می‌خورد و کسی متوجه می‌شود.
+- فهرست مجاز به «اکشن‌های خود GitHub» محدود شده. افزودن یک اکشن شخص ثالث
+  نیازمند تصمیم صریح و تغییر تنظیمات است، نه یک خط در YAML.
+- توکن CI فقط خواندن دارد، پس یک Workflow ربوده‌شده نمی‌تواند روی مخزن
+  بنویسد.
 
 **جایگزین: هوک محلی `ops/hooks/pre-push`.**
 
@@ -246,3 +262,25 @@ ops/install-hooks.sh
 
 اگر روزی خواستید محافظت واقعاً اجباری و غیرقابل دور زدن باشد، ارتقا به
 **GitHub Pro** ارزان‌ترین راه است. تا آن موقع، هوک + CI کافی است.
+
+### شکاف باقی‌مانده — صریح بگوییم
+
+بدون Ruleset، **هیچ‌چیز سمت سرور مانع Push مستقیم روی `main` با تست شکسته
+نمی‌شود.** CI بعد از Push اجرا می‌شود و شکست را نشان می‌دهد، ولی کد
+تا آن موقع روی `main` نشسته است. تنها دروازه پیش از Push، هوک محلی است و
+هوک روی **هر کلون جدید باید دوباره نصب شود**:
+
+```bash
+ops/install-hooks.sh
+```
+
+اگر روزی نفر دومی به پروژه اضافه شد، این دیگر کافی نیست و Pro لازم می‌شود.
+
+### وابستگی‌ها
+
+اکشن‌ها به SHA کامل پین شده‌اند. پین بدون نگهداری خودش به بدهی امنیتی
+تبدیل می‌شود، چون نسخه قفل‌شده وصله‌های بعدی را نمی‌گیرد.
+`.github/dependabot.yml` هفتگی SHAها را بررسی و از مسیر PR به‌روز می‌کند —
+که یعنی هر به‌روزرسانی از تست‌های مالی رد می‌شود.
+
+ورودی `npm` عمداً هنوز در آن فایل نیست؛ هم‌زمان با ساخت `apps/` اضافه شود.
