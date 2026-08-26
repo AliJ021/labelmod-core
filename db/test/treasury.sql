@@ -325,6 +325,11 @@ SELECT count(*) INTO v_n FROM inventory.balance_check
  WHERE qty_diff <> 0 OR value_diff <> 0;
 PERFORM pg_temp.assert_eq('اختلاف Projection با حرکت‌ها', v_n, 0);
 
+-- مشتری و تأمین‌کننده جدول دارند، پس سطرشان باید شناسه داشته باشد
+SELECT count(*) INTO v_n FROM ledger.journal_line
+ WHERE party_type IN ('customer','supplier') AND party_id IS NULL;
+PERFORM pg_temp.assert_eq('سطر سند با نوع شخص ولی بدون شناسه', v_n, 0);
+
 PERFORM pg_temp.assert_eq('ارزش موجودی: دفتر کل = انبار',
   pg_temp.bal('1301'),
   (SELECT coalesce(sum(total_value),0) FROM inventory.stock_balance));

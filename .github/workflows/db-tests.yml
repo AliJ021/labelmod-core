@@ -80,4 +80,21 @@ jobs:
                   FROM platform.audit_log) x
                WHERE prev_hash IS DISTINCT FROM expected_prev;
               IF n > 0 THEN RAISE EXCEPTION 'گسست در زنجیره هش حسابرسی: %', n; END IF;
+
+              -- هیچ مؤلفه درآمدی، مالیاتی یا انبار نباید اجازه تغییر حساب بگیرد
+              SELECT count(*) INTO n FROM ledger.posting_rule
+               WHERE allow_account_override
+                 AND account_code IN ('4101','4102','4103','4201','2201','5101','1301');
+              IF n > 0 THEN
+                RAISE EXCEPTION 'مؤلفه قفل‌شده با اجازه تغییر حساب: %', n;
+              END IF;
+
+              -- مشتری و تأمین‌کننده جدول دارند، پس سطرشان باید شناسه داشته
+              -- باشد؛ وگرنه گردش حساب اشخاص از دفتر ساختنی نیست.
+              -- (party_type='other' مثل باربری جدول ندارد و مستثناست.)
+              SELECT count(*) INTO n FROM ledger.journal_line
+               WHERE party_type IN ('customer','supplier') AND party_id IS NULL;
+              IF n > 0 THEN
+                RAISE EXCEPTION 'سطر سند با نوع شخص ولی بدون شناسه شخص: %', n;
+              END IF;
             END \$\$;"
