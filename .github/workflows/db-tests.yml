@@ -1,9 +1,12 @@
 # تست‌های مالی — روی هر Push و هر PR اجرا می‌شوند.
 #
-# ⚠️ پیش از استفاده، اکشن را به SHA کامل پین کنید (بند ۵ SECURITY.md):
-#      git ls-remote https://github.com/actions/checkout refs/tags/v4
-#    سپس  actions/checkout@v4  را با  actions/checkout@<sha>  جایگزین کنید
-#    و تگ را به‌صورت کامنت کنارش نگه دارید.
+# اکشن‌ها به SHA کامل کامیت پین شده‌اند، نه به تگ (بند ۵ SECURITY.md).
+# تگ قابل جابه‌جایی است: کسی که مخزن اکشن را در اختیار بگیرد می‌تواند
+# v4 را به کامیت دیگری منتقل کند و کد دلخواهش در CI شما اجرا شود.
+#
+# برای به‌روزرسانی یک پین:
+#   git ls-remote https://github.com/actions/checkout refs/tags/v4
+# SHA را جایگزین کنید و شماره نسخه را در کامنت کنارش به‌روز کنید.
 
 name: تست‌های پایگاه داده
 
@@ -40,7 +43,7 @@ jobs:
       PGDATABASE: labelmod
 
     steps:
-      - uses: actions/checkout@v4     # TODO: به SHA پین شود
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262  # v4.4.0
 
       - name: نصب کلاینت پستگرس
         run: sudo apt-get update -qq && sudo apt-get install -y -qq postgresql-client
