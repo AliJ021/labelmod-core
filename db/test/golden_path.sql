@@ -33,6 +33,7 @@ DECLARE
   v_prod uuid;
   v_var  uuid;
   v_rcpt uuid;
+  v_tx   uuid;
   v_shift uuid;
   v_inv  uuid;
   v_line uuid;
@@ -68,7 +69,7 @@ VALUES (v_prod, 'مشکی', 'XL', 'KAY-BLK-XL', '6260000000017')
 RETURNING id INTO v_var;
 
 -- ═══════════════════════════════════════════════════════════════════
-RAISE NOTICE E'\n═══ ۱. رسید خرید اول: ۱۰ عدد × ۱٬۰۰۰٬۰۰۰ + حمل ۵۰۰٬۰۰۰ نقدی ═══';
+RAISE NOTICE E'\n═══ ۱. رسید خرید اول: ۱۰ عدد × ۱٬۰۰۰٬۰۰۰ + حمل ۵۰۰٬۰۰۰ بدهی به باربری ═══';
 -- بهای تمام‌شده باید (۱۰٬۰۰۰٬۰۰۰ + ۵۰۰٬۰۰۰) ÷ ۱۰ = ۱٬۰۵۰٬۰۰۰ شود
 
 INSERT INTO purchasing.receipt (number, branch_id, supplier_id, warehouse_id,
@@ -80,13 +81,35 @@ RETURNING id INTO v_rcpt;
 INSERT INTO purchasing.receipt_line (receipt_id, variation_id, qty, unit_price, line_amount)
 VALUES (v_rcpt, v_var, 10, 1000000, 10000000);
 
-INSERT INTO purchasing.receipt_charge (receipt_id, charge_type, amount, allocation, paid_from)
-VALUES (v_rcpt, 'freight', 500000, 'by_value', 'cash');
+-- کرایه حمل بدهی به باربری است، نه به تأمین‌کننده کالا. بهای تمام‌شده را
+-- بالا می‌برد ولی حساب پرداختنیِ تأمین‌کننده را نه.
+INSERT INTO purchasing.receipt_charge (receipt_id, charge_type, amount, allocation,
+                                       paid_from, payee_type, payee_name)
+VALUES (v_rcpt, 'freight', 500000, 'by_value', 'payable', 'other', 'باربری');
 
 PERFORM purchasing.post_receipt(v_rcpt, v_user);
 
 PERFORM pg_temp.assert_eq('بهای تمام‌شده واحد پس از تخصیص حمل',
   (SELECT landed_unit_cost FROM purchasing.receipt_line WHERE receipt_id = v_rcpt), 1050000);
+
+-- بدهی تأمین‌کننده = کالا ۱۰٬۰۰۰٬۰۰۰ + مالیات ۱٬۰۰۰٬۰۰۰.
+-- کرایه حمل بهای تمام‌شده را بالا می‌برد ولی بدهی شخص ثالث است.
+PERFORM pg_temp.assert_eq('بدهی به تأمین‌کننده کالا',
+  (SELECT total_payable FROM purchasing.receipt WHERE id = v_rcpt), 11000000);
+PERFORM pg_temp.assert_eq('بدهی به شخص ثالث (باربری)',
+  (SELECT third_party_payable FROM purchasing.receipt WHERE id = v_rcpt), 500000);
+PERFORM pg_temp.assert_eq('حساب پرداختنی تأمین‌کننده در دفتر',
+  (SELECT coalesce(sum(credit - debit),0) FROM ledger.journal_line
+    WHERE account_code = '2101'), 11000000);
+-- سند و رسید باید یک عدد بگویند — پیش از اصلاح، سند ۵۰۰٬۰۰۰ بیشتر از
+-- رسید به تأمین‌کننده بدهکار می‌کرد و گردش حسابش با فاکتور نمی‌خواند.
+PERFORM pg_temp.assert_eq('رسید و سند یک بدهی می‌گویند',
+  (SELECT total_payable FROM purchasing.receipt WHERE id = v_rcpt),
+  (SELECT coalesce(sum(credit - debit),0) FROM ledger.journal_line
+    WHERE account_code = '2101'));
+PERFORM pg_temp.assert_eq('سایر حساب‌های پرداختنی در دفتر',
+  (SELECT coalesce(sum(credit - debit),0) FROM ledger.journal_line
+    WHERE account_code = '2103'), 500000);
 
 SELECT on_hand, total_value INTO v_qty, v_val
   FROM inventory.stock_balance WHERE variation_id = v_var AND warehouse_id = WH;
@@ -237,15 +260,29 @@ END;
 
 -- ═══════════════════════════════════════════════════════════════════
 RAISE NOTICE E'\n═══ ۸. بستن شیفت و سند تجمیعی ═══';
+-- کرایه باربری از کشوی همین شیفت پرداخت می‌شود: یک تراکنش خزانه که
+-- بدهی ۲۱۰۳ را می‌بندد و صندوق را بستانکار می‌کند.
+INSERT INTO treasury.transaction
+  (branch_id, purpose, from_account_id, party_type, expense_account_code,
+   amount, shift_id, occurred_at, note, created_by)
+VALUES (BR, 'expense', '00000000-0000-7000-8000-000000000201', 'other', '2103',
+        500000, v_shift, '2026-06-10 14:00+03:30', 'پرداخت کرایه باربری', v_user)
+RETURNING id INTO v_tx;
+PERFORM treasury.post_transaction(v_tx, v_user);
+
+PERFORM pg_temp.assert_eq('بدهی باربری پس از پرداخت',
+  (SELECT coalesce(sum(credit - debit),0) FROM ledger.journal_line
+    WHERE account_code = '2103'), 0);
+
 -- نقد مورد انتظار: افتتاحیه ۱٬۰۰۰٬۰۰۰ + فروش نقدی ۳٬۰۰۰٬۰۰۰
---                  − بازپرداخت نقدی مرجوعی ۲٬۰۹۰٬۰۰۰ = ۱٬۹۱۰٬۰۰۰
--- شمارش واقعی ۱٬۸۶۰٬۰۰۰ → کسری ۵۰٬۰۰۰ که سند مستقل می‌گیرد.
--- خروج نقد بابت مرجوعی نباید به مغایرت تبدیل شود؛ سند خودش را دارد.
+--                  − بازپرداخت مرجوعی ۲٬۰۹۰٬۰۰۰ − کرایه ۵۰۰٬۰۰۰ = ۱٬۴۱۰٬۰۰۰
+-- شمارش واقعی ۱٬۳۶۰٬۰۰۰ → کسری ۵۰٬۰۰۰ که سند مستقل می‌گیرد.
+-- نه بازپرداخت و نه پرداخت خزانه نباید به مغایرت تبدیل شوند.
 
-PERFORM sales.close_shift(v_shift, 1860000, v_user, 'کسری هنگام شمارش');
+PERFORM sales.close_shift(v_shift, 1360000, v_user, 'کسری هنگام شمارش');
 
-PERFORM pg_temp.assert_eq('نقد مورد انتظار پس از کسر بازپرداخت',
-  (SELECT expected_cash FROM sales.cash_shift WHERE id = v_shift), 1910000);
+PERFORM pg_temp.assert_eq('نقد مورد انتظار پس از بازپرداخت و پرداخت خزانه',
+  (SELECT expected_cash FROM sales.cash_shift WHERE id = v_shift), 1410000);
 
 PERFORM pg_temp.assert_eq('مغایرت صندوق',
   (SELECT variance FROM sales.cash_shift WHERE id = v_shift), -50000);

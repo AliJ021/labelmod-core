@@ -18,17 +18,25 @@ INSERT INTO ledger.posting_rule
 -- فروش دوره ثبت (سند تجمیعی — یک سند به‌ازای هر شیفت صندوق، و یک سند
 -- به‌ازای هر روزِ هر کانال غیرحضوری. جزئیات در ledger.posting_batch)
 -- ---------------------------------------------------------------------
+-- مقصد هر پرداخت از kind روش پرداخت می‌آید. کارت‌خوان، درگاه و
+-- کارت‌به‌کارت سه مقصد متفاوت‌اند و یکی‌کردنشان مغایرت‌گیری با PSP را
+-- از روز اول غلط می‌کند.
 ('sale_shift','cash',              'debit', '1101', NULL,      'دریافت نقدی فروش',            1),
 ('sale_shift','card_clearing',     'debit', '1103', NULL,      'فروش کارت‌خوان — تسویه‌نشده', 2),
-('sale_shift','transfer_clearing', 'debit', '1104', NULL,      'فروش درگاه و کارت‌به‌کارت',   3),
+('sale_shift','gateway_clearing',  'debit', '1104', NULL,      'فروش درگاه پرداخت',           3),
+('sale_shift','p2p_clearing',      'debit', '1105', NULL,      'فروش کارت‌به‌کارت',           4),
 -- تراکنش با نتیجه نامشخص هنوز پول نیست: تا استعلام انسانی در حساب واسط
 -- مستقل می‌ماند و نه وجوه در راه می‌شود نه طلب از مشتری.
-('sale_shift','unknown_clearing',  'debit', '1106', NULL,      'پرداخت نامشخص — در انتظار استعلام', 4),
-('sale_shift','receivable',        'debit', '1201', 'customer','فروش نسیه',                   5),
-('sale_shift','discount',          'debit', '4102', NULL,      'تخفیفات اعطایی',              6),
-('sale_shift','sales',             'credit','4101', NULL,      'فروش کالا',                   7),
-('sale_shift','shipping',          'credit','4201', NULL,      'درآمد حمل و ارسال',           8),
-('sale_shift','tax',               'credit','2201', NULL,      'مالیات ارزش افزوده فروش',     9),
+('sale_shift','unknown_clearing',  'debit', '1106', NULL,      'پرداخت نامشخص — در انتظار استعلام', 5),
+-- امتیاز و کارت هدیه بدهی ما به مشتری‌اند؛ استفاده از آن‌ها بدهی را کم
+-- می‌کند، نه اینکه طلب جدید بسازد.
+('sale_shift','points_redeem',     'debit', '2301', 'customer','استفاده مشتری از امتیاز',     6),
+('sale_shift','giftcard_redeem',   'debit', '2302', 'customer','استفاده از کارت هدیه',        7),
+('sale_shift','receivable',        'debit', '1201', 'customer','فروش نسیه',                   8),
+('sale_shift','discount',          'debit', '4102', NULL,      'تخفیفات اعطایی',              9),
+('sale_shift','sales',             'credit','4101', NULL,      'فروش کالا',                  10),
+('sale_shift','shipping',          'credit','4201', NULL,      'درآمد حمل و ارسال',          11),
+('sale_shift','tax',               'credit','2201', NULL,      'مالیات ارزش افزوده فروش',    12),
 
 -- ---------------------------------------------------------------------
 -- بهای تمام‌شده دوره ثبت (سند جداگانه — تا سود ناخالص مستقیم خوانده شود)
@@ -45,10 +53,11 @@ INSERT INTO ledger.posting_rule
 -- ---------------------------------------------------------------------
 -- رسید خرید
 -- ---------------------------------------------------------------------
-('purchase_receipt','inventory','debit', '1301', NULL,      'ورود کالا به بهای تمام‌شده', 1),
-('purchase_receipt','input_tax','debit', '1401', NULL,      'اعتبار مالیات ارزش افزوده',  2),
-('purchase_receipt','payable',  'credit','2101', 'supplier','بدهی به تأمین‌کننده',        3),
-('purchase_receipt','cash',     'credit','1101', NULL,      'پرداخت نقدی هزینه جانبی',    4),
+('purchase_receipt','inventory',    'debit', '1301', NULL,      'ورود کالا به بهای تمام‌شده',      1),
+('purchase_receipt','input_tax',    'debit', '1401', NULL,      'اعتبار مالیات ارزش افزوده',       2),
+('purchase_receipt','payable',      'credit','2101', 'supplier','بدهی به تأمین‌کننده',             3),
+('purchase_receipt','other_payable','credit','2103', NULL,      'بدهی هزینه جانبی به شخص ثالث',    4),
+('purchase_receipt','from_account', 'credit','1101', NULL,      'پرداخت هزینه جانبی از خزانه',     5),
 
 -- ---------------------------------------------------------------------
 -- برگشت از فروش
@@ -72,13 +81,11 @@ INSERT INTO ledger.posting_rule
 -- ---------------------------------------------------------------------
 -- تسویه کارت‌خوان و درگاه (بستن حساب واسط هنگام واریز بانک)
 -- ---------------------------------------------------------------------
-('card_settlement','bank',          'debit', '1102', NULL, 'واریز به حساب بانکی',   1),
-('card_settlement','fee',           'debit', '6101', NULL, 'کارمزد بانکی',          2),
-('card_settlement','card_clearing', 'credit','1103', NULL, 'بستن وجوه در راه',      3),
-
-('gateway_settlement','bank',              'debit', '1102', NULL, 'واریز درگاه پرداخت', 1),
-('gateway_settlement','fee',               'debit', '6101', NULL, 'کارمزد درگاه',       2),
-('gateway_settlement','transfer_clearing', 'credit','1104', NULL, 'بستن وجوه در راه',   3),
+-- یک رویداد برای هر دو: حساب مبدأ و مقصد از خودِ حساب خزانه می‌آید،
+-- نه از قاعده. به همین دلیل allow_account_override پایین فعال می‌شود.
+('settlement','bank',     'debit', '1102', NULL, 'واریز تسویه به حساب بانکی', 1),
+('settlement','fee',      'debit', '6101', NULL, 'کارمزد کارت‌خوان و درگاه',  2),
+('settlement','clearing', 'credit','1103', NULL, 'بستن وجوه در راه',          3),
 
 -- ---------------------------------------------------------------------
 -- کسری، اضافه و کالای معیوب انبار
@@ -99,11 +106,24 @@ INSERT INTO ledger.posting_rule
 ('loyalty_redeem','sales',    'credit','4101', NULL,      'فروش با امتیاز',         2),
 
 -- ---------------------------------------------------------------------
--- پرداخت به تأمین‌کننده
+-- تراکنش‌های خزانه (treasury.transaction)
 -- ---------------------------------------------------------------------
-('supplier_payment','payable','debit', '2101', 'supplier','پرداخت به تأمین‌کننده', 1),
-('supplier_payment','cash',   'credit','1101', NULL,      'پرداخت از صندوق',       2),
-('supplier_payment','bank',   'credit','1102', NULL,      'پرداخت از بانک',        3),
+-- «از کدام حساب» و «به کدام حساب» داده تراکنش است، نه قاعده. حساب پیش‌فرض
+-- اینجا فقط پیش‌فرض است و با allow_account_override قابل تعیین می‌شود.
+('supplier_payment','payable',     'debit', '2101', 'supplier','پرداخت به تأمین‌کننده',   1),
+('supplier_payment','from_account','credit','1101', NULL,      'پرداخت از خزانه',         2),
+
+('customer_receipt','to_account','debit', '1101', NULL,      'دریافت از مشتری',          1),
+('customer_receipt','receivable','credit','1201', 'customer','تسویه بدهی مشتری',         2),
+
+('expense_payment','expense',     'debit', '6203', NULL, 'هزینه عملیاتی',      1),
+('expense_payment','from_account','credit','1101', NULL, 'پرداخت از خزانه',    2),
+
+('capital_injection','to_account','debit', '1102', NULL, 'آورده نقدی مالک',    1),
+('capital_injection','equity',    'credit','3101', NULL, 'افزایش سرمایه',      2),
+
+('treasury_transfer','to_account',  'debit', '1102', NULL, 'واریز به حساب مقصد',  1),
+('treasury_transfer','from_account','credit','1101', NULL, 'برداشت از حساب مبدأ', 2),
 
 -- ---------------------------------------------------------------------
 -- سند افتتاحیه
@@ -116,5 +136,20 @@ INSERT INTO ledger.posting_rule
 ('opening','equity',     'credit','3102', NULL,      'سود و زیان انباشته',       6)
 
 ON CONFLICT (event_type, leg, side) DO NOTHING;
+
+-- ---------------------------------------------------------------------
+-- کدام مؤلفه‌ها اجازه تعیین حساب از سوی تراکنش دارند
+-- ---------------------------------------------------------------------
+-- فقط مؤلفه‌هایی که حسابشان ذاتاً داده تراکنش است: کدام صندوق، کدام
+-- حساب بانکی، کدام کارت‌خوان، کدام سرفصل هزینه.
+-- درآمد، تخفیف، مالیات، بهای تمام‌شده و موجودی کالا هرگز اینجا نمی‌آیند.
+UPDATE ledger.posting_rule SET allow_account_override = true
+ WHERE (event_type, leg) IN (VALUES
+   ('treasury_transfer','to_account'),   ('treasury_transfer','from_account'),
+   ('supplier_payment', 'from_account'), ('customer_receipt', 'to_account'),
+   ('expense_payment',  'from_account'), ('expense_payment',  'expense'),
+   ('capital_injection','to_account'),
+   ('settlement','bank'),                ('settlement','clearing'),
+   ('purchase_receipt','from_account'));
 
 COMMIT;

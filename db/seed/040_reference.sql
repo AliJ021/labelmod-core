@@ -25,7 +25,32 @@ INSERT INTO platform.document_counter (branch_id, doc_type, fiscal_year, prefix)
 ('00000000-0000-7000-8000-000000000001', 'invoice',      1405, 'F-1405-'),
 ('00000000-0000-7000-8000-000000000001', 'sale_return',  1405, 'R-1405-'),
 ('00000000-0000-7000-8000-000000000001', 'purchase',     1405, 'P-1405-'),
-('00000000-0000-7000-8000-000000000001', 'journal',      1405, 'J-1405-');
+('00000000-0000-7000-8000-000000000001', 'journal',      1405, 'J-1405-'),
+('00000000-0000-7000-8000-000000000001', 'treasury',     1405, 'T-1405-'),
+('00000000-0000-7000-8000-000000000001', 'settlement',   1405, 'S-1405-')
+ON CONFLICT (branch_id, doc_type, fiscal_year) DO NOTHING;
+
+-- حساب‌های خزانه ------------------------------------------------------
+-- ⚠️ نام بانک، شماره حساب، شبا و کارمزد باید با اطلاعات واقعی و
+--    صورتحساب PSP جایگزین شوند.
+INSERT INTO treasury.account
+  (id, code, name, kind, branch_id, ledger_account_code,
+   bank_name, settlement_days, fee_percent) VALUES
+('00000000-0000-7000-8000-000000000201', 'CASH-MAIN', 'صندوق فروشگاه',
+ 'cash_box', '00000000-0000-7000-8000-000000000001', '1101', NULL, 0, 0),
+('00000000-0000-7000-8000-000000000202', 'BANK-1',    'حساب جاری اصلی',
+ 'bank',     '00000000-0000-7000-8000-000000000001', '1102', 'نامشخص', 0, 0),
+('00000000-0000-7000-8000-000000000203', 'POS-1',     'کارت‌خوان فروشگاه',
+ 'card_terminal', '00000000-0000-7000-8000-000000000001', '1103', NULL, 1, 0),
+('00000000-0000-7000-8000-000000000204', 'GW-1',      'درگاه پرداخت سایت',
+ 'gateway',  '00000000-0000-7000-8000-000000000001', '1104', NULL, 1, 0),
+('00000000-0000-7000-8000-000000000205', 'P2P-1',     'کارت‌به‌کارت',
+ 'bank',     '00000000-0000-7000-8000-000000000001', '1105', 'نامشخص', 0, 0)
+ON CONFLICT (code) DO NOTHING;
+
+UPDATE treasury.account
+   SET settlement_account_id = '00000000-0000-7000-8000-000000000202'
+ WHERE code IN ('POS-1','GW-1') AND settlement_account_id IS NULL;
 
 -- نقش‌ها ---------------------------------------------------------------
 INSERT INTO identity.role (code, name) VALUES
@@ -92,14 +117,18 @@ INSERT INTO identity.permission_rule
 ('admin','cost.view',              true,  NULL,   NULL,  NULL);
 
 -- روش‌های پرداخت -------------------------------------------------------
--- ⚠️ دوره تسویه و نرخ کارمزد باید از PSP گرفته و اینجا اصلاح شود.
+-- ⚠️ دوره تسویه و نرخ کارمزد باید از PSP گرفته و در treasury.account
+--    اصلاح شود. نگاشت حساب دفتر اینجا نیست — تنها مرجع آن
+--    ledger.posting_rule است (مؤلفه‌های sale_shift).
 INSERT INTO treasury.payment_method
-  (code, name, kind, clearing_account_code, settlement_days, fee_percent, requires_ref) VALUES
-('cash',     'نقدی',           'cash',        NULL,   0, 0,     false),
-('card',     'کارت‌خوان',      'card_reader', '1103', 1, 0,     true),
-('transfer', 'کارت‌به‌کارت',   'transfer',    '1105', 0, 0,     true),
-('gateway',  'درگاه پرداخت',   'gateway',     '1104', 1, 0,     true),
-('credit',   'نسیه',           'credit',      NULL,   0, 0,     false),
-('points',   'امتیاز باشگاه',  'points',      NULL,   0, 0,     false);
+  (code, name, kind, settlement_days, fee_percent, requires_ref) VALUES
+('cash',     'نقدی',           'cash',        0, 0, false),
+('card',     'کارت‌خوان',      'card_reader', 1, 0, true),
+('transfer', 'کارت‌به‌کارت',   'transfer',    0, 0, true),
+('gateway',  'درگاه پرداخت',   'gateway',     1, 0, true),
+('credit',   'نسیه',           'credit',      0, 0, false),
+('points',   'امتیاز باشگاه',  'points',      0, 0, false),
+('giftcard', 'کارت هدیه',      'gift_card',   0, 0, true)
+ON CONFLICT (code) DO NOTHING;
 
 COMMIT;

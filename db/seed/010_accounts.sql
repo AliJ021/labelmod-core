@@ -32,6 +32,8 @@ INSERT INTO ledger.account (code, parent_code, name, level, nature, type, is_pos
 ('2',    NULL, 'بدهی‌های جاری',                      'kol',     'credit', 'liability', false),
 ('21',   '2',  'حساب‌های پرداختنی',                   'moin',    'credit', 'liability', false),
 ('2101', '21', 'حساب پرداختنی تجاری — تأمین‌کنندگان','tafsili', 'credit', 'liability', true),
+-- کرایه حمل و هزینه جانبیِ شخص ثالث بدهی به تأمین‌کننده کالا نیست
+('2103', '21', 'سایر حساب‌های پرداختنی',           'tafsili', 'credit', 'liability', true),
 ('22',   '2',  'بدهی مالیاتی',                       'moin',    'credit', 'liability', false),
 ('2201', '22', 'مالیات و عوارض ارزش افزوده پرداختنی','tafsili', 'credit', 'liability', true),
 ('23',   '2',  'سایر بدهی‌ها',                        'moin',    'credit', 'liability', false),
