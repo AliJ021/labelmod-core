@@ -15,19 +15,23 @@ INSERT INTO ledger.posting_rule
   (event_type, leg, side, account_code, party_type, description, sort_order) VALUES
 
 -- ---------------------------------------------------------------------
--- فروش شیفت (سند تجمیعی — یک سند به‌ازای هر شیفت صندوق)
+-- فروش دوره ثبت (سند تجمیعی — یک سند به‌ازای هر شیفت صندوق، و یک سند
+-- به‌ازای هر روزِ هر کانال غیرحضوری. جزئیات در ledger.posting_batch)
 -- ---------------------------------------------------------------------
 ('sale_shift','cash',              'debit', '1101', NULL,      'دریافت نقدی فروش',            1),
 ('sale_shift','card_clearing',     'debit', '1103', NULL,      'فروش کارت‌خوان — تسویه‌نشده', 2),
 ('sale_shift','transfer_clearing', 'debit', '1104', NULL,      'فروش درگاه و کارت‌به‌کارت',   3),
-('sale_shift','receivable',        'debit', '1201', 'customer','فروش نسیه',                   4),
-('sale_shift','discount',          'debit', '4102', NULL,      'تخفیفات اعطایی',              5),
-('sale_shift','sales',             'credit','4101', NULL,      'فروش کالا',                   6),
-('sale_shift','shipping',          'credit','4201', NULL,      'درآمد حمل و ارسال',           7),
-('sale_shift','tax',               'credit','2201', NULL,      'مالیات ارزش افزوده فروش',     8),
+-- تراکنش با نتیجه نامشخص هنوز پول نیست: تا استعلام انسانی در حساب واسط
+-- مستقل می‌ماند و نه وجوه در راه می‌شود نه طلب از مشتری.
+('sale_shift','unknown_clearing',  'debit', '1106', NULL,      'پرداخت نامشخص — در انتظار استعلام', 4),
+('sale_shift','receivable',        'debit', '1201', 'customer','فروش نسیه',                   5),
+('sale_shift','discount',          'debit', '4102', NULL,      'تخفیفات اعطایی',              6),
+('sale_shift','sales',             'credit','4101', NULL,      'فروش کالا',                   7),
+('sale_shift','shipping',          'credit','4201', NULL,      'درآمد حمل و ارسال',           8),
+('sale_shift','tax',               'credit','2201', NULL,      'مالیات ارزش افزوده فروش',     9),
 
 -- ---------------------------------------------------------------------
--- بهای تمام‌شده شیفت (سند جداگانه — تا سود ناخالص مستقیم خوانده شود)
+-- بهای تمام‌شده دوره ثبت (سند جداگانه — تا سود ناخالص مستقیم خوانده شود)
 -- ---------------------------------------------------------------------
 ('shift_cogs','cogs',      'debit', '5101', NULL, 'بهای تمام‌شده کالای فروش‌رفته', 1),
 ('shift_cogs','inventory', 'credit','1301', NULL, 'کاهش موجودی کالا',              2),
@@ -49,12 +53,15 @@ INSERT INTO ledger.posting_rule
 -- ---------------------------------------------------------------------
 -- برگشت از فروش
 -- ---------------------------------------------------------------------
+-- ارزش کالای برگشتی به ترتیب تسویه می‌شود: بازپرداخت نقدی، سپس کاهش
+-- بدهی باقی‌مانده همان فاکتور، و تنها باقی‌مانده به اعتبار مشتری.
 ('sale_return','sales_return',   'debit', '4103', NULL,      'برگشت از فروش',                1),
 ('sale_return','tax',            'debit', '2201', NULL,      'معکوس مالیات ارزش افزوده',     2),
 ('sale_return','refund_cash',    'credit','1101', NULL,      'بازپرداخت نقدی',               3),
-('sale_return','customer_credit','credit','2301', 'customer','اعتبار مشتری بابت مرجوعی',     4),
-('sale_return','inventory',      'debit', '1301', NULL,      'بازگشت کالا به انبار',         5),
-('sale_return','cogs',           'credit','5101', NULL,      'معکوس بهای تمام‌شده',          6),
+('sale_return','receivable',     'credit','1201', 'customer','تسویه بدهی مشتری بابت مرجوعی', 4),
+('sale_return','customer_credit','credit','2301', 'customer','اعتبار مشتری بابت مرجوعی',     5),
+('sale_return','inventory',      'debit', '1301', NULL,      'بازگشت کالا به انبار',         6),
+('sale_return','cogs',           'credit','5101', NULL,      'معکوس بهای تمام‌شده',          7),
 
 -- ---------------------------------------------------------------------
 -- تعدیل بهای تمام‌شده (باقی‌مانده ارزش هنگام صفر شدن موجودی)
@@ -106,6 +113,8 @@ INSERT INTO ledger.posting_rule
 ('opening','bank',       'debit', '1102', NULL,      'موجودی بانک اول دوره',     3),
 ('opening','receivable', 'debit', '1201', 'customer','مانده بدهکاران اول دوره',  4),
 ('opening','payable',    'credit','2101', 'supplier','مانده بستانکاران اول دوره',5),
-('opening','equity',     'credit','3102', NULL,      'سود و زیان انباشته',       6);
+('opening','equity',     'credit','3102', NULL,      'سود و زیان انباشته',       6)
+
+ON CONFLICT (event_type, leg, side) DO NOTHING;
 
 COMMIT;

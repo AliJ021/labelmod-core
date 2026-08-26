@@ -143,12 +143,16 @@ SELECT count(*) INTO v_n FROM (
 PERFORM pg_temp.assert_eq('اسناد نامتوازن پس از فروش نسیه', v_n, 0);
 
 -- ═══════════════════════════════════════════════════════════════════
-RAISE NOTICE E'\n═══ ۳. مرجوعی کامل — باید دقیقاً همان بهای خارج‌شده برگردد ═══';
+RAISE NOTICE E'\n═══ ۳. مرجوعی کامل فروش نسیه ═══';
+-- فاکتور ۵٬۰۰۰٬۰۰۰ بود که فقط ۲٬۰۰۰٬۰۰۰ نقدی دریافت شده. مرجوعی کامل
+-- باید همان ۲٬۰۰۰٬۰۰۰ را برگرداند و ۳٬۰۰۰٬۰۰۰ بدهی را صفر کند —
+-- نه اینکه ۵٬۰۰۰٬۰۰۰ نقد بدهد و بدهی را دست‌نخورده بگذارد.
 
 SELECT id INTO v_line FROM sales.invoice_line WHERE invoice_id = v_inv;
 INSERT INTO sales.sale_return (branch_id, invoice_id, warehouse_id,
-                               reason_code, refund_amount, occurred_at, created_by)
-VALUES (BR, v_inv, WH, 'changed_mind', 5000000, '2026-06-06', v_user)
+                               reason_code, refund_amount, refund_method,
+                               occurred_at, created_by)
+VALUES (BR, v_inv, WH, 'changed_mind', 2000000, 'cash', '2026-06-06', v_user)
 RETURNING id INTO v_ret;
 INSERT INTO sales.sale_return_line (return_id, invoice_line_id, qty,
                                     unit_price, net_amount, unit_cost, cogs_amount)
@@ -161,6 +165,14 @@ PERFORM pg_temp.assert_eq('وضعیت فاکتور پس از مرجوعی کام
 PERFORM pg_temp.assert_eq('بهای برگشتی = بهای خارج‌شده',
   (SELECT cogs_amount FROM sales.sale_return WHERE id = v_ret),
   (SELECT cogs_amount FROM sales.invoice_line WHERE id = v_line));
+PERFORM pg_temp.assert_eq('بدهی مشتری پس از مرجوعی کامل',
+  (SELECT coalesce(sum(debit - credit),0) FROM ledger.journal_line
+    WHERE account_code = '1201'), 0);
+PERFORM pg_temp.assert_eq('بدهی تسویه‌شده روی برگ مرجوعی',
+  (SELECT receivable_applied FROM sales.sale_return WHERE id = v_ret), 3000000);
+PERFORM pg_temp.assert_eq('اعتبار مشتری — نباید ساخته شود',
+  (SELECT coalesce(sum(credit - debit),0) FROM ledger.journal_line
+    WHERE account_code = '2301'), 0);
 
 -- ═══════════════════════════════════════════════════════════════════
 RAISE NOTICE E'\n═══ ۴. صحت نهایی کل دفتر ═══';

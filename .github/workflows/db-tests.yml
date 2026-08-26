@@ -69,4 +69,15 @@ jobs:
               SELECT count(*) INTO n FROM inventory.balance_check
                WHERE qty_diff <> 0 OR value_diff <> 0;
               IF n > 0 THEN RAISE EXCEPTION 'اختلاف Projection با حرکت‌ها: %', n; END IF;
+
+              -- هر فاکتور نهایی‌شده باید در یک دوره ثبتِ بسته‌شده باشد
+              SELECT count(*) INTO n FROM sales.unposted_revenue;
+              IF n > 0 THEN RAISE EXCEPTION 'درآمد ثبت‌نشده در دفتر: % فاکتور', n; END IF;
+
+              -- زنجیره حسابرسی نباید گسست داشته باشد
+              SELECT count(*) INTO n FROM (
+                SELECT prev_hash, lag(hash) OVER (ORDER BY id) AS expected_prev
+                  FROM platform.audit_log) x
+               WHERE prev_hash IS DISTINCT FROM expected_prev;
+              IF n > 0 THEN RAISE EXCEPTION 'گسست در زنجیره هش حسابرسی: %', n; END IF;
             END \$\$;"

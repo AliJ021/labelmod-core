@@ -237,17 +237,32 @@ END;
 
 -- ═══════════════════════════════════════════════════════════════════
 RAISE NOTICE E'\n═══ ۸. بستن شیفت و سند تجمیعی ═══';
--- نقد مورد انتظار: افتتاحیه ۱٬۰۰۰٬۰۰۰ + فروش نقدی ۳٬۰۰۰٬۰۰۰ = ۴٬۰۰۰٬۰۰۰
--- شمارش واقعی ۳٬۹۵۰٬۰۰۰ → کسری ۵۰٬۰۰۰ که سند مستقل می‌گیرد
+-- نقد مورد انتظار: افتتاحیه ۱٬۰۰۰٬۰۰۰ + فروش نقدی ۳٬۰۰۰٬۰۰۰
+--                  − بازپرداخت نقدی مرجوعی ۲٬۰۹۰٬۰۰۰ = ۱٬۹۱۰٬۰۰۰
+-- شمارش واقعی ۱٬۸۶۰٬۰۰۰ → کسری ۵۰٬۰۰۰ که سند مستقل می‌گیرد.
+-- خروج نقد بابت مرجوعی نباید به مغایرت تبدیل شود؛ سند خودش را دارد.
 
-PERFORM sales.close_shift(v_shift, 3950000, v_user, 'کسری هنگام شمارش');
+PERFORM sales.close_shift(v_shift, 1860000, v_user, 'کسری هنگام شمارش');
+
+PERFORM pg_temp.assert_eq('نقد مورد انتظار پس از کسر بازپرداخت',
+  (SELECT expected_cash FROM sales.cash_shift WHERE id = v_shift), 1910000);
 
 PERFORM pg_temp.assert_eq('مغایرت صندوق',
   (SELECT variance FROM sales.cash_shift WHERE id = v_shift), -50000);
 
-SELECT count(*) INTO v_n FROM ledger.journal_entry
- WHERE ref_type = 'cash_shift' AND ref_id = v_shift;
+-- سند فروش و COGS به «دوره ثبت» گره خورده‌اند، نه مستقیم به شیفت —
+-- چون فروش آنلاین هم دوره دارد ولی شیفت ندارد. مغایرت صندوق همچنان
+-- مستقیماً به شیفت وصل است.
+SELECT count(*) INTO v_n FROM ledger.journal_entry e
+ WHERE (e.ref_type = 'cash_shift' AND e.ref_id = v_shift)
+    OR (e.ref_type = 'posting_batch' AND e.ref_id =
+        (SELECT id FROM ledger.posting_batch WHERE kind = 'shift' AND shift_id = v_shift));
 PERFORM pg_temp.assert_eq('تعداد اسناد شیفت (فروش + COGS + مغایرت)', v_n, 3);
+
+PERFORM pg_temp.assert_eq('دوره ثبت شیفت بسته و به هر دو سند وصل است',
+  (SELECT count(*) FROM ledger.posting_batch
+    WHERE kind = 'shift' AND shift_id = v_shift AND status = 'posted'
+      AND sale_entry_id IS NOT NULL AND cogs_entry_id IS NOT NULL), 1);
 
 -- ═══════════════════════════════════════════════════════════════════
 RAISE NOTICE E'\n═══ ۹. صحت دفتر کل ═══';
@@ -304,17 +319,29 @@ END;
 
 RAISE NOTICE E'\n═══ ۱۲. حسابرسی و صف ═══';
 
-INSERT INTO platform.audit_log (actor_id, action, entity, entity_id, after)
-VALUES (v_user, 'sale.finalize', 'invoice', v_inv::text, '{"n":1}'::jsonb);
-INSERT INTO platform.audit_log (actor_id, action, entity, entity_id, after)
-VALUES (v_user, 'shift.close', 'cash_shift', v_shift::text, '{"n":2}'::jsonb);
+-- لاگ را دیگر دستی نمی‌سازیم: خودِ توابع مالی می‌نویسند.
+PERFORM pg_temp.assert_eq('لاگ حسابرسی رسید خرید',
+  (SELECT count(*) FROM platform.audit_log WHERE action = 'purchase.post'), 2);
+PERFORM pg_temp.assert_eq('لاگ حسابرسی نهایی‌کردن فاکتور',
+  (SELECT count(*) FROM platform.audit_log
+    WHERE action = 'invoice.finalize' AND entity_id = v_inv::text), 1);
+PERFORM pg_temp.assert_eq('لاگ حسابرسی بستن شیفت',
+  (SELECT count(*) FROM platform.audit_log
+    WHERE action = 'shift.close' AND entity_id = v_shift::text), 1);
 
-SELECT count(*) INTO v_n FROM platform.audit_log
- WHERE prev_hash IS NOT NULL AND hash IS NOT NULL;
-PERFORM pg_temp.assert_eq('زنجیره هش حسابرسی', v_n, 1);
+-- زنجیره باید پیوسته باشد: prev_hash هر ردیف دقیقاً hash ردیف قبلی است
+SELECT count(*) INTO v_n FROM (
+  SELECT prev_hash, lag(hash) OVER (ORDER BY id) AS expected_prev
+    FROM platform.audit_log) x
+ WHERE prev_hash IS DISTINCT FROM expected_prev;
+PERFORM pg_temp.assert_eq('گسست در زنجیره هش حسابرسی', v_n, 0);
 
 BEGIN
-  UPDATE platform.audit_log SET action = 'tampered' WHERE id = 1;
+  -- شناسه ثابت ننویس: bigserial با Rollback برنمی‌گردد و id=1 ممکن است
+  -- در اجرای دوم اصلاً وجود نداشته باشد — آن‌وقت UPDATE صفر سطری
+  -- بی‌سروصدا «موفق» می‌شود و تست دستکاری بی‌معنا می‌ماند.
+  UPDATE platform.audit_log SET action = 'tampered'
+   WHERE id = (SELECT min(id) FROM platform.audit_log);
   RAISE EXCEPTION '✗ لاگ حسابرسی قابل تغییر بود';
 EXCEPTION WHEN raise_exception THEN
   IF sqlerrm LIKE '✗%' THEN RAISE; END IF;

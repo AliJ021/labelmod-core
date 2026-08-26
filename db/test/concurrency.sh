@@ -7,10 +7,11 @@
 # اگر هر دو موفق شوند، موجودی منفی می‌شود و باگ داریم.
 # =====================================================================
 set -u
+export PGCLIENTENCODING="${PGCLIENTENCODING:-UTF8}"
 # اتصال: DATABASE_URL اولویت دارد، وگرنه متغیرهای PG* محیط
 CONN="${DATABASE_URL:-}"
 if [ -z "$CONN" ]; then CONN="dbname=${PGDATABASE:-labelmod}"; fi
-PSQL="psql -v ON_ERROR_STOP=1 -q -t -A"
+PSQL="psql -v ON_ERROR_STOP=1 -q -t -A -d"
 run() { $PSQL "$CONN" "$@"; }
 
 # این تست به‌ناچار Commit واقعی می‌کند (دو نشست مجزا لازم دارد)، پس
@@ -54,8 +55,10 @@ BEGIN
   INSERT INTO sales.invoice_line (invoice_id,line_no,variation_id,qty,unit_price,net_amount)
     VALUES (v_inv1,1,v_var,1,2000000,2000000);
 
+  -- فاکتور سایت شیفت صندوق ندارد — همان‌طور که سفارش واقعی ووکامرس ندارد.
+  -- این مسیر دوره ثبت «کانال-روز» را هم زیر فشار همزمانی می‌برد.
   INSERT INTO sales.invoice (branch_id,warehouse_id,shift_id,occurred_at,created_by,channel)
-    VALUES (BR,WH,v_shift,'2026-06-02 10:00+03:30',v_user,'web') RETURNING id INTO v_inv2;
+    VALUES (BR,WH,NULL,'2026-06-02 10:00+03:30',v_user,'web') RETURNING id INTO v_inv2;
   INSERT INTO sales.invoice_line (invoice_id,line_no,variation_id,qty,unit_price,net_amount)
     VALUES (v_inv2,1,v_var,1,2000000,2000000);
 
@@ -79,7 +82,7 @@ echo "═══ اجرای هم‌زمان دو تراکنش ═══"
 
 run_sale () {
   # تراکنش کامل: قفل می‌گیرد، مکث می‌کند تا همپوشانی تضمین شود، ثبت می‌کند
-  psql -q -t -A "$CONN" <<SQL 2>&1 | tr '\n' ' '
+  psql -q -t -A -d "$CONN" <<SQL 2>&1 | tr '\n' ' '
 BEGIN;
 SELECT pg_sleep($2);
 SELECT sales.finalize_invoice('$1'::uuid, '$USR'::uuid);

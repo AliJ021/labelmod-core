@@ -18,6 +18,9 @@ INSERT INTO ledger.account (code, parent_code, name, level, nature, type, is_pos
 ('1103', '11', 'وجوه در راه کارت‌خوان',              'tafsili', 'debit',  'asset',   true),
 ('1104', '11', 'وجوه در راه درگاه پرداخت',           'tafsili', 'debit',  'asset',   true),
 ('1105', '11', 'وجوه در راه کارت‌به‌کارت',            'tafsili', 'debit',  'asset',   true),
+-- تراکنشی که نتیجه‌اش معلوم نیست، پول نیست. تا استعلام انسانی اینجا می‌ماند
+-- و هرگز مستقیم وارد بانک یا وجوه در راه کارت‌خوان نمی‌شود.
+('1106', '11', 'پرداخت نامشخص — در انتظار استعلام',  'tafsili', 'debit',  'asset',   true),
 ('12',   '1',  'حساب‌های دریافتنی',                   'moin',    'debit',  'asset',   false),
 ('1201', '12', 'حساب دریافتنی تجاری — مشتریان',      'tafsili', 'debit',  'asset',   true),
 ('13',   '1',  'موجودی کالا',                        'moin',    'debit',  'asset',   false),
@@ -70,11 +73,13 @@ INSERT INTO ledger.account (code, parent_code, name, level, nature, type, is_pos
 ('62',   '6',  'هزینه‌های اداری',                    'moin',    'debit',  'expense', false),
 ('6201', '62', 'هزینه اجاره',                        'tafsili', 'debit',  'expense', true),
 ('6202', '62', 'هزینه حقوق و دستمزد',                'tafsili', 'debit',  'expense', true),
-('6203', '62', 'هزینه‌های متفرقه',                   'tafsili', 'debit',  'expense', true);
+('6203', '62', 'هزینه‌های متفرقه',                   'tafsili', 'debit',  'expense', true)
+ON CONFLICT (code) DO NOTHING;
 
 INSERT INTO ledger.cost_center (code, name) VALUES
 ('STORE', 'فروشگاه حضوری'),
 ('WEB',   'فروش اینترنتی'),
-('ADMIN', 'اداری');
+('ADMIN', 'اداری')
+ON CONFLICT (code) DO NOTHING;
 
 COMMIT;

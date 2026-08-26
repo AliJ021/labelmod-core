@@ -6,23 +6,40 @@ set -euo pipefail
 cd "$(dirname "$0")/.."
 : "${DATABASE_URL:?DATABASE_URL تنظیم نشده است}"
 
+# psql روی ویندوز client_encoding را از Code Page کنسول برمی‌دارد (اغلب
+# WIN1252) و آن‌وقت اولین کامنت فارسی مهاجرت با خطای encoding رد می‌شود.
+# کل این مخزن UTF-8 است؛ صریح اعلامش می‌کنیم.
+export PGCLIENTENCODING="${PGCLIENTENCODING:-UTF8}"
+
 PSQL="psql -v ON_ERROR_STOP=1 -q"
 
-migrate () { for f in db/migrations/*.sql; do echo "→ $f"; $PSQL "$1" -f "$f"; done; }
-seed    () { for f in db/seed/*.sql;       do echo "→ $f"; $PSQL "$1" -f "$f"; done; }
+migrate () { for f in db/migrations/*.sql; do echo "→ $f"; $PSQL -d "$1" -f "$f"; done; }
+seed    () { for f in db/seed/*.sql;       do echo "→ $f"; $PSQL -d "$1" -f "$f"; done; }
 
-# جایگزینی نام دیتابیس در رشته اتصال، بدون دست‌زدن به بقیه پارامترها
+# جایگزینی نام دیتابیس در رشته اتصال، بدون دست‌زدن به بقیه پارامترها.
+# شل خالص و بدون وابستگی بیرونی: روی ویندوز/Git Bash هم python3 ممکن است
+# فقط یک Stub فروشگاه مایکروسافت باشد که ساکت شکست می‌خورد.
 swap_db () {
-  python3 - "$1" "$2" <<'PY'
-import sys, urllib.parse as u
-url, newdb = sys.argv[1], sys.argv[2]
-p = u.urlparse(url)
-if p.scheme in ('postgres','postgresql'):
-    print(u.urlunparse(p._replace(path='/'+newdb)))
-else:                                   # فرم key=value
-    parts = [kv for kv in url.split() if not kv.startswith('dbname=')]
-    print(' '.join(parts + ['dbname='+newdb]))
-PY
+  local url="$1" newdb="$2" base query rest out kv
+  case "$url" in
+    postgres://*|postgresql://*)
+      base="${url%%\?*}"
+      query=""
+      [ "$base" != "$url" ] && query="?${url#*\?}"
+      rest="${base#*://}"
+      case "$rest" in
+        */*) printf '%s/%s%s\n' "${base%/*}" "$newdb" "$query" ;;
+        *)   printf '%s/%s%s\n' "$base"      "$newdb" "$query" ;;
+      esac
+      ;;
+    *)                                  # فرم key=value
+      out=""
+      for kv in $url; do
+        case "$kv" in dbname=*) ;; *) out="$out $kv" ;; esac
+      done
+      printf '%s dbname=%s\n' "${out# }" "$newdb"
+      ;;
+  esac
 }
 
 # ---------------------------------------------------------------------
@@ -38,13 +55,13 @@ run_tests () {
 
   cleanup () {
     [ -n "${TESTDB:-}" ] || return 0
-    $PSQL "$DATABASE_URL" -c "DROP DATABASE IF EXISTS \"$TESTDB\" WITH (FORCE);" >/dev/null 2>&1 || true
+    $PSQL -d "$DATABASE_URL" -c "DROP DATABASE IF EXISTS \"$TESTDB\" WITH (FORCE);" >/dev/null 2>&1 || true
   }
   trap cleanup EXIT
 
   echo "→ ساخت دیتابیس تست: $TESTDB"
-  $PSQL "$DATABASE_URL" -c "DROP DATABASE IF EXISTS \"$TESTDB\" WITH (FORCE);" >/dev/null 2>&1 || true
-  $PSQL "$DATABASE_URL" -c "CREATE DATABASE \"$TESTDB\";" >/dev/null
+  $PSQL -d "$DATABASE_URL" -c "DROP DATABASE IF EXISTS \"$TESTDB\" WITH (FORCE);" >/dev/null 2>&1 || true
+  $PSQL -d "$DATABASE_URL" -c "CREATE DATABASE \"$TESTDB\";" >/dev/null
 
   migrate "$TESTURL" >/dev/null
   seed    "$TESTURL" >/dev/null
@@ -53,7 +70,7 @@ run_tests () {
   local out
   for f in db/test/*.sql; do
     echo; echo "═══ $f ═══"
-    if out=$($PSQL "$TESTURL" -f "$f" 2>&1); then :; else fail=1; fi
+    if out=$($PSQL -d "$TESTURL" -f "$f" 2>&1); then :; else fail=1; fi
     sed 's/psql:[^ ]*: \(NOTICE\|ERROR\):  //' <<<"$out"
     grep -q '✗' <<<"$out" && fail=1 || true
   done
@@ -75,7 +92,7 @@ run_tests () {
 backup () {
   local dir="${BACKUP_DIR:-./backup}"; mkdir -p "$dir"
   local f="$dir/labelmod-$(date +%Y%m%d-%H%M%S).dump"
-  pg_dump -Fc "$DATABASE_URL" -f "$f"
+  pg_dump -Fc -d "$DATABASE_URL" -f "$f"
   echo "✓ بکاپ: $f"
   echo "⚠️  این فایل باید به جایی خارج از همین سرور کپی شود."
   echo "⚠️  بکاپی که Restore آن تست نشده، بکاپ نیست."
@@ -85,7 +102,7 @@ case "${1:-}" in
   migrate) migrate "$DATABASE_URL" ;;
   seed)    seed    "$DATABASE_URL" ;;
   test)    run_tests ;;
-  reset)   $PSQL "$DATABASE_URL" -c "DROP SCHEMA IF EXISTS platform,identity,catalog,inventory,purchasing,sales,treasury,ledger CASCADE;"
+  reset)   $PSQL -d "$DATABASE_URL" -c "DROP SCHEMA IF EXISTS platform,identity,catalog,inventory,purchasing,sales,treasury,ledger CASCADE;"
            migrate "$DATABASE_URL"; seed "$DATABASE_URL"; echo "✓ بازسازی شد" ;;
   backup)  backup ;;
   *) echo "استفاده: ops/db.sh {migrate|seed|test|reset|backup}"; exit 1 ;;
