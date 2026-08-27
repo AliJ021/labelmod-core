@@ -12,6 +12,9 @@ import type { Db } from "../db/client.ts";
 import type { Config } from "../lib/config.ts";
 import { registerErrorHandler } from "./errors.ts";
 import { registerAuthRoutes } from "./auth-routes.ts";
+import { registerSalesRoutes } from "./sales-routes.ts";
+import { InvoiceService } from "../sales/invoice.ts";
+import { ShiftService } from "../sales/shift.ts";
 import { safeEqual } from "../auth/password.ts";
 
 declare module "fastify" {
@@ -82,6 +85,34 @@ export async function buildApp(deps: AppDeps): Promise<FastifyInstance> {
     bodyLimit: 1_048_576,
   });
 
+  // بدنه خالی با Content-Type: application/json را «شیء تهی» بگیر.
+  //
+  // چند مسیر بدنه نمی‌خواهند — نهایی‌سازی فاکتور، قفل صفحه، ابطال
+  // سبد. ولی کلاینت‌های رایج (از جمله axios) روی هر POST سرآیند
+  // application/json می‌گذارند، حتی بی‌بدنه. بدون این، همه‌شان
+  // ۴۰۰ می‌گیرند با پیامی انگلیسی که کاربر نمی‌فهمد.
+  //
+  // این در آزمایش زنده پیدا شد؛ تست‌ها `payload: {}` می‌فرستادند و
+  // هرگز به حالت واقعی نمی‌رسیدند.
+  app.addContentTypeParser(
+    "application/json",
+    { parseAs: "string" },
+    (_req, body: string, done) => {
+      if (body === "" || body === undefined) return done(null, {});
+      try {
+        done(null, JSON.parse(body) as unknown);
+      } catch {
+        const err = new Error("بدنه درخواست JSON معتبر نیست") as Error & {
+          statusCode: number;
+          code: string;
+        };
+        err.statusCode = 400;
+        err.code = "invalid_json";
+        done(err, undefined);
+      }
+    },
+  );
+
   await app.register(cookie);
   await app.register(rateLimit, {
     global: false,
@@ -149,5 +180,10 @@ export async function buildApp(deps: AppDeps): Promise<FastifyInstance> {
   app.get("/health", async () => ({ ok: true }));
 
   registerAuthRoutes(app, deps);
+  registerSalesRoutes(app, {
+    db: deps.db,
+    invoices: new InvoiceService(deps.db),
+    shifts: new ShiftService(deps.db),
+  });
   return app;
 }

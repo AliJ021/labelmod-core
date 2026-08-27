@@ -96,7 +96,175 @@ export interface BranchTable {
   is_active: boolean;
 }
 
+// ── کاتالوگ و انبار ───────────────────────────────────────────────
+
+export interface ProductTable {
+  id: Generated<string>;
+  code: string;
+  name_internal: string;
+  name_web: string | null;
+  tax_rate_code: string;
+}
+
+export interface VariationTable {
+  id: Generated<string>;
+  product_id: string;
+  color: string | null;
+  size: string | null;
+  sku: string;
+  barcode: string | null;
+  status: string;
+}
+
+export interface PriceTable {
+  id: Generated<string>;
+  variation_id: string;
+  price_list: string;
+  /** رشته، نه عدد — پارسر NUMERIC رشته می‌دهد و همان‌جا می‌ماند. */
+  amount: string;
+  kind: "regular" | "markdown" | "promo";
+  reason: string | null;
+  valid_from: Date;
+  valid_to: Date | null;
+  created_by: string | null;
+}
+
+export interface StockBalanceTable {
+  variation_id: string;
+  warehouse_id: string;
+  on_hand: string;
+  reserved: string;
+  total_value: string;
+  row_version: number;
+  updated_at: Generated<Date>;
+}
+
+export interface WarehouseTable {
+  id: Generated<string>;
+  branch_id: string;
+  code: string;
+  name: string;
+  kind: string;
+}
+
+// ── فروش ──────────────────────────────────────────────────────────
+
+export interface CashShiftTable {
+  id: Generated<string>;
+  branch_id: string;
+  user_id: string;
+  opened_at: Generated<Date>;
+  opening_cash: string;
+  closed_at: Date | null;
+  counted_cash: string | null;
+  expected_cash: string | null;
+  variance: string | null;
+  variance_note: string | null;
+  approved_by: string | null;
+  status: string;
+}
+
+export interface InvoiceTable {
+  id: Generated<string>;
+  number: string | null;
+  branch_id: string;
+  warehouse_id: string;
+  shift_id: string | null;
+  customer_id: string | null;
+  channel: string;
+  status: string;
+  gross_amount: string;
+  discount_amount: string;
+  net_amount: string;
+  tax_amount: string;
+  shipping_amount: string;
+  payable_amount: string;
+  paid_amount: string;
+  cogs_amount: string;
+  client_event_id: string | null;
+  occurred_at: Generated<Date>;
+  finalized_at: Date | null;
+  created_by: string | null;
+  note: string | null;
+  posting_batch_id: string | null;
+}
+
+export interface InvoiceLineTable {
+  id: Generated<string>;
+  invoice_id: string;
+  line_no: number;
+  variation_id: string;
+  qty: string;
+  unit_price: string;
+  discount_amount: string;
+  tax_amount: string;
+  net_amount: string;
+  unit_cost: string;
+  cogs_amount: string;
+  returned_qty: string;
+  discount_reason: string | null;
+}
+
+export interface CustomerTable {
+  id: Generated<string>;
+  mobile_normalized: string;
+  full_name: string | null;
+  credit_limit: string;
+}
+
+// ── خزانه ─────────────────────────────────────────────────────────
+
+export interface PaymentTable {
+  id: Generated<string>;
+  invoice_id: string | null;
+  return_id: string | null;
+  shift_id: string | null;
+  method_code: string;
+  direction: "in" | "out";
+  amount: string;
+  ref_no: string | null;
+  status: string;
+  occurred_at: Generated<Date>;
+  settled_at: Date | null;
+  fee_amount: string;
+  note: string | null;
+  client_event_id: string | null;
+  account_id: string | null;
+  settlement_id: string | null;
+}
+
+export interface PaymentMethodTable {
+  code: string;
+  name: string;
+  kind: string;
+  settlement_days: number;
+  fee_percent: string;
+  requires_ref: boolean;
+}
+
+// ── پلتفرم ────────────────────────────────────────────────────────
+
+export interface InboxMessageTable {
+  source: string;
+  event_id: string;
+  received_at: Generated<Date>;
+  payload: unknown;
+  result_ref: string | null;
+}
+
 export interface Database {
+  "catalog.product": ProductTable;
+  "catalog.variation": VariationTable;
+  "catalog.price": PriceTable;
+  "inventory.stock_balance": StockBalanceTable;
+  "inventory.warehouse": WarehouseTable;
+  "sales.cash_shift": CashShiftTable;
+  "sales.invoice": InvoiceTable;
+  "sales.invoice_line": InvoiceLineTable;
+  "sales.customer": CustomerTable;
+  "treasury.payment": PaymentTable;
+  "treasury.payment_method": PaymentMethodTable;
+  "platform.inbox_message": InboxMessageTable;
   "identity.app_user": AppUserTable;
   "identity.role": RoleTable;
   "identity.user_role": UserRoleTable;

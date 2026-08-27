@@ -8,6 +8,10 @@ import type { FastifyInstance, FastifyReply, FastifyRequest } from "fastify";
 import { AuthError } from "../auth/service.ts";
 import { ForbiddenError } from "../auth/permission.ts";
 import { MoneyError } from "../lib/money.ts";
+import { InvoiceError } from "../sales/invoice.ts";
+import { ShiftError } from "../sales/shift.ts";
+import { ScopeError } from "../sales/scope.ts";
+import { IdempotencyInFlightError } from "../lib/idempotency.ts";
 import { ZodError } from "zod";
 
 export interface ErrorBody {
@@ -44,6 +48,18 @@ export function registerErrorHandler(app: FastifyInstance): void {
       const status = err.decision.verdict === "needs_approval" ? 428 : 403;
       req.log.info({ operation: err.operation, correlationId }, "مجوز رد شد");
       return reply.code(status).send(body(err.decision.verdict, err.message, correlationId));
+    }
+
+    // خطاهای دامنه فروش و صندوق. هر کدام کد و وضعیت خودش را حمل
+    // می‌کند، پس اینجا فقط ترجمه می‌شوند نه دسته‌بندی دوباره.
+    if (
+      err instanceof InvoiceError ||
+      err instanceof ShiftError ||
+      err instanceof ScopeError ||
+      err instanceof IdempotencyInFlightError
+    ) {
+      req.log.info({ code: err.code, correlationId }, "درخواست فروش رد شد");
+      return reply.code(err.statusCode).send(body(err.code, err.message, correlationId));
     }
 
     // نگهبان‌های دیتابیس.
