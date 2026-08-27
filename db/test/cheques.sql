@@ -330,6 +330,30 @@ PERFORM pg_temp.assert_raises('چک پرداختی بدون حساب بانکی'
           VALUES (''issued'',%L,''CH-BAD3'',''ملت'',1000,''2026-04-01'',''2026-05-01'',
                   ''supplier'',%L,%L)', BR, v_sup, v_user));
 
+-- سقف وعده: تنظیمی که هیچ‌جا اجرا نشود، بدتر از نبودنش است
+INSERT INTO treasury.cheque
+  (direction, branch_id, cheque_no, bank_name, amount,
+   issued_on, due_on, party_type, party_id, created_by)
+VALUES ('received', BR, 'CH-005', 'ملت', 1000000,
+        '2026-04-01', '2027-01-01', 'customer', v_cust, v_user);
+PERFORM pg_temp.assert_raises('چک با وعده بیش از سقف',
+  format('SELECT treasury.post_cheque_event(%L,''receive'',%L)',
+         (SELECT id FROM treasury.cheque WHERE cheque_no = 'CH-005'), v_user));
+
+-- و سقف داده است: بالا بردنش همان چک را قابل ثبت می‌کند
+UPDATE platform.setting SET value = '400'::jsonb WHERE key = 'cheque.max_due_days';
+PERFORM treasury.post_cheque_event(
+  (SELECT id FROM treasury.cheque WHERE cheque_no = 'CH-005'), 'receive', v_user);
+PERFORM pg_temp.assert_txt('همان چک پس از بالا بردن سقف',
+  (SELECT status FROM treasury.cheque WHERE cheque_no = 'CH-005'), 'in_hand');
+UPDATE platform.setting SET value = '180'::jsonb WHERE key = 'cheque.max_due_days';
+
+-- شماره‌گذاری بدون پرش: سه رویداد روی یک چک، فقط یک شماره
+PERFORM pg_temp.assert_eq('شمارنده سند = تعداد چک‌های شماره‌دار',
+  (SELECT last_no FROM platform.document_counter
+    WHERE doc_type = 'cheque' AND branch_id = BR),
+  (SELECT count(*) FROM treasury.cheque WHERE number IS NOT NULL));
+
 -- خرج‌کردن یک تصمیم حسابدار است، نه یک ثابت در کد
 UPDATE platform.setting SET value = 'false'::jsonb WHERE key = 'cheque.allow_endorse';
 PERFORM pg_temp.assert_raises('خرج‌کردن وقتی تنظیم خاموش است',

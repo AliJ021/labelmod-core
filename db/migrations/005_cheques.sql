@@ -109,8 +109,7 @@ BEGIN
   OR NEW.due_on    IS DISTINCT FROM OLD.due_on
   OR NEW.issued_on IS DISTINCT FROM OLD.issued_on
   OR NEW.cheque_no IS DISTINCT FROM OLD.cheque_no
-  OR NEW.direction IS DISTINCT FROM OLD.direction
-  OR NEW.amount    IS DISTINCT FROM OLD.amount THEN
+  OR NEW.direction IS DISTINCT FROM OLD.direction THEN
     RAISE EXCEPTION
       'چک % سند خورده است؛ مبلغ، تاریخ و شماره آن تغییر نمی‌کند. اصلاح فقط با ابطال و ثبت برگه جدید.',
       OLD.cheque_no;
@@ -206,6 +205,8 @@ DECLARE
   v_on     date;
   v_endorsee uuid;
   v_allow  boolean;
+  v_max_days int;
+  v_number text;
 BEGIN
   SELECT * INTO c FROM treasury.cheque WHERE id = p_cheque FOR UPDATE;
   IF NOT FOUND THEN RAISE EXCEPTION 'چک یافت نشد'; END IF;
@@ -261,6 +262,16 @@ BEGIN
     IF acct.kind <> 'bank' THEN
       RAISE EXCEPTION
         'چک فقط به حساب بانکی می‌نشیند، نه به % (حساب %)', acct.kind, acct.code;
+    END IF;
+  END IF;
+
+  -- وعده بلند یک ریسک اعتباری است، نه یک جزئیات. سقفش داده است نه کد.
+  IF p_action IN ('receive','issue') THEN
+    SELECT (value)::int INTO v_max_days FROM platform.setting WHERE key = 'cheque.max_due_days';
+    IF v_max_days IS NOT NULL AND (c.due_on - c.issued_on) > v_max_days THEN
+      RAISE EXCEPTION
+        'وعده چک % برابر % روز است و از سقف % روز می‌گذرد (تنظیم cheque.max_due_days). نیازمند تصمیم صریح مدیر.',
+        c.cheque_no, c.due_on - c.issued_on, v_max_days;
     END IF;
   END IF;
 
@@ -399,13 +410,18 @@ BEGIN
      CASE WHEN p_action IN ('endorse') THEN 'supplier' ELSE c.party_type END,
      coalesce(p_party_id, c.party_id), p_note, p_user);
 
-  -- شماره سند داخلی در اولین رویدادِ دارای سند تخصیص می‌یابد
+  -- شماره سند داخلی در اولین رویدادِ دارای سند تخصیص می‌یابد.
+  -- تخصیص صریح است و نه داخل COALESCE: next_document_no یک تابع Volatile
+  -- با اثر جانبی است و تکیه بر ترتیب ارزیابی COALESCE می‌تواند شمارنده
+  -- را بی‌صدا جلو ببرد — یعنی همان پرش شماره‌ای که قاعده منع کرده.
+  v_number := c.number;
+  IF v_number IS NULL AND v_entry IS NOT NULL THEN
+    v_number := platform.next_document_no(c.branch_id, 'cheque', v_fy);
+  END IF;
+
   UPDATE treasury.cheque
      SET status = v_to,
-         number = coalesce(number, CASE WHEN v_entry IS NOT NULL
-                   THEN platform.next_document_no(c.branch_id, 'cheque',
-                        (SELECT id FROM ledger.fiscal_year
-                          WHERE v_on BETWEEN starts_on AND ends_on)) END),
+         number = v_number,
          deposit_account_id = CASE WHEN p_action = 'deposit'
                                    THEN acct.id ELSE deposit_account_id END
    WHERE id = p_cheque;
