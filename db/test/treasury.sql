@@ -301,8 +301,19 @@ PERFORM pg_temp.assert_raises('تغییر حساب روی مؤلفه قفل‌ش
          jsonb_build_object('leg','cash','amount',1000)),
        NULL,NULL,'%s')$q$, BR, v_user));
 
+-- این عدد عمداً قفل است: هر مؤلفه تازه‌ای که اجازه تغییر حساب بگیرد،
+-- اینجا قرمز می‌شود و باید آگاهانه تأیید شود. ۱۰ مؤلفه خزانه و خرید،
+-- به‌علاوه دو مؤلفه بانکیِ چک (وصول و پاس‌شدن).
 PERFORM pg_temp.assert_eq('مؤلفه‌های دارای اجازه تغییر حساب',
-  (SELECT count(*) FROM ledger.posting_rule WHERE allow_account_override), 10);
+  (SELECT count(*) FROM ledger.posting_rule WHERE allow_account_override), 12);
+
+-- و همه‌شان باید حسابِ نقد، بانک، وجوه در راه یا سرفصل هزینه باشند.
+-- هیچ حساب درآمد، مالیات یا موجودی کالا در این فهرست نمی‌آید.
+PERFORM pg_temp.assert_eq('مؤلفه با اجازه تغییر حساب و خارج از دامنه مجاز',
+  (SELECT count(*) FROM ledger.posting_rule r
+     JOIN ledger.account a ON a.code = r.account_code
+    WHERE r.allow_account_override
+      AND a.parent_code NOT IN ('11','61','62')), 0);
 
 SELECT count(*) INTO v_n FROM ledger.posting_rule
  WHERE allow_account_override

@@ -126,6 +126,52 @@ INSERT INTO ledger.posting_rule
 ('treasury_transfer','from_account','credit','1101', NULL, 'برداشت از حساب مبدأ', 2),
 
 -- ---------------------------------------------------------------------
+-- چک دریافتی و پرداختی (treasury.cheque)
+-- ---------------------------------------------------------------------
+-- چک در لحظه دریافت پول نیست. تا وصول نشود در «اسناد دریافتنی» می‌ماند
+-- و هرگز مستقیم به صندوق یا بانک نمی‌رود.
+--
+-- «به کدام حساب بانکی وصول شد» داده تراکنش است، نه قاعده — پس مؤلفه
+-- bank پایین allow_account_override می‌گیرد. حساب‌های چک نمی‌گیرند.
+
+-- دریافت چک از مشتری بابت بدهی
+('cheque_receive','cheque_in_hand','debit', '1501','customer','دریافت چک از مشتری',        1),
+('cheque_receive','receivable',    'credit','1201','customer','تسویه بدهی مشتری با چک',    2),
+
+-- واگذاری چک به بانک برای وصول
+('cheque_deposit','in_collection', 'debit', '1502','customer','واگذاری چک به بانک',        1),
+('cheque_deposit','cheque_in_hand','credit','1501','customer','خروج چک از صندوق',          2),
+
+-- وصول چک — تنها لحظه‌ای که چک پول می‌شود
+('cheque_clear','bank',          'debit', '1102',NULL,      'وصول چک به حساب بانکی',      1),
+('cheque_clear','in_collection', 'credit','1502','customer','بستن چک در جریان وصول',      2),
+
+-- خرج‌کردن چک دریافتی به تأمین‌کننده
+('cheque_endorse','payable',       'debit', '2101','supplier','پرداخت به تأمین‌کننده با چک مشتری', 1),
+('cheque_endorse','cheque_in_hand','credit','1501','customer','خروج چک خرج‌شده',                  2),
+
+-- برگشت چک دریافتی
+('cheque_bounce','returned',     'debit', '1503','customer','چک برگشتی مشتری',              1),
+('cheque_bounce','in_collection','credit','1502','customer','خروج چک از جریان وصول',        2),
+('cheque_bounce','payable_back', 'credit','2101','supplier','زنده‌شدن بدهی تأمین‌کننده بابت چک برگشتی', 3),
+
+-- انتقال چک برگشتی به بدهی عادی مشتری، تا از مسیر دریافت معمول تسویه شود
+('cheque_bounce_settle','receivable','debit', '1201','customer','انتقال چک برگشتی به بدهی مشتری', 1),
+('cheque_bounce_settle','returned',  'credit','1503','customer','بستن چک برگشتی',                2),
+
+-- صدور چک به تأمین‌کننده
+('cheque_issue','payable',       'debit', '2101','supplier','تسویه بدهی تأمین‌کننده با چک', 1),
+('cheque_issue','cheque_payable','credit','2401','supplier','چک صادرشده',                   2),
+
+-- پاس‌شدن چک صادرشده از حساب بانکی
+('cheque_pay','cheque_payable','debit', '2401','supplier','پاس‌شدن چک صادرشده',    1),
+('cheque_pay','bank',          'credit','1102',NULL,      'برداشت بابت چک از بانک', 2),
+
+-- ابطال چک صادرشده — بدهی به پرداختنی تجاری برمی‌گردد
+('cheque_cancel_issued','cheque_payable','debit', '2401','supplier','ابطال چک صادرشده',        1),
+('cheque_cancel_issued','payable',       'credit','2101','supplier','بازگشت بدهی تأمین‌کننده', 2),
+
+-- ---------------------------------------------------------------------
 -- سند افتتاحیه
 -- ---------------------------------------------------------------------
 ('opening','inventory',  'debit', '1301', NULL,      'موجودی اول دوره',          1),
@@ -150,6 +196,7 @@ UPDATE ledger.posting_rule SET allow_account_override = true
    ('expense_payment',  'from_account'), ('expense_payment',  'expense'),
    ('capital_injection','to_account'),
    ('settlement','bank'),                ('settlement','clearing'),
-   ('purchase_receipt','from_account'));
+   ('purchase_receipt','from_account'),
+   ('cheque_clear','bank'),                ('cheque_pay','bank'));
 
 COMMIT;

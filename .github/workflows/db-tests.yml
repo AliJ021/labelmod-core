@@ -100,4 +100,20 @@ jobs:
               IF n > 0 THEN
                 RAISE EXCEPTION 'سطر سند با نوع شخص ولی بدون شناسه شخص: %', n;
               END IF;
+
+              -- مانده حساب‌های چک در دفتر باید با جمع برگه‌های باز بخواند.
+              -- همان چیزی که balance_check برای انبار می‌سنجد.
+              SELECT count(*) INTO n FROM treasury.cheque_check WHERE diff <> 0;
+              IF n > 0 THEN
+                RAISE EXCEPTION 'اختلاف دفتر با پرونده چک: % حساب', n;
+              END IF;
+
+              -- وضعیت چک Projection زنجیره رویداد است، نه یک ستون آزاد
+              SELECT count(*) INTO n FROM treasury.cheque c
+               WHERE c.status <> 'draft'
+                 AND NOT EXISTS (SELECT 1 FROM treasury.cheque_event e
+                                  WHERE e.cheque_id = c.id);
+              IF n > 0 THEN
+                RAISE EXCEPTION 'چک با وضعیت غیر draft و بدون رویداد: %', n;
+              END IF;
             END \$\$;"

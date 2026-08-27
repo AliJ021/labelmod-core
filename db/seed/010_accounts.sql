@@ -27,6 +27,12 @@ INSERT INTO ledger.account (code, parent_code, name, level, nature, type, is_pos
 ('1301', '13', 'موجودی کالای فروشگاه',               'tafsili', 'debit',  'asset',   true),
 ('14',   '1',  'پیش‌پرداخت و اعتبار مالیاتی',         'moin',    'debit',  'asset',   false),
 ('1401', '14', 'مالیات ارزش افزوده خرید — اعتبار',   'tafsili', 'debit',  'asset',   true),
+-- چک مثل نقد رفتار نمی‌کند: یک وعده است تا وصول شود. سه پله‌اش جدا
+-- نگه داشته می‌شوند تا «چک نزد ما» با «چک در جریان وصول» یکی نشود.
+('15',   '1',  'اسناد دریافتنی',                     'moin',    'debit',  'asset',   false),
+('1501', '15', 'اسناد دریافتنی — چک نزد ما',         'tafsili', 'debit',  'asset',   true),
+('1502', '15', 'اسناد دریافتنی — چک در جریان وصول',  'tafsili', 'debit',  'asset',   true),
+('1503', '15', 'اسناد دریافتنی — چک برگشتی',         'tafsili', 'debit',  'asset',   true),
 
 -- ۲ بدهی‌های جاری -------------------------------------------------------
 ('2',    NULL, 'بدهی‌های جاری',                      'kol',     'credit', 'liability', false),
@@ -39,6 +45,8 @@ INSERT INTO ledger.account (code, parent_code, name, level, nature, type, is_pos
 ('23',   '2',  'سایر بدهی‌ها',                        'moin',    'credit', 'liability', false),
 ('2301', '23', 'بدهی امتیاز و اعتبار مشتریان',       'tafsili', 'credit', 'liability', true),
 ('2302', '23', 'بدهی کارت هدیه',                     'tafsili', 'credit', 'liability', true),
+('24',   '2',  'اسناد پرداختنی',                     'moin',    'credit', 'liability', false),
+('2401', '24', 'اسناد پرداختنی — چک صادرشده',        'tafsili', 'credit', 'liability', true),
 
 -- ۳ حقوق مالکانه --------------------------------------------------------
 ('3',    NULL, 'حقوق مالکانه',                       'kol',     'credit', 'equity',  false),

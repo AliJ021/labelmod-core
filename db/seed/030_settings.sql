@@ -63,6 +63,20 @@ INSERT INTO platform.setting (key, value, description, requires_approval) VALUES
  'مدت نگهداری بکاپ روزانه.', false),
 
 ('backup.restore_drill_days', '30'::jsonb,
- 'فاصله مجاز میان دو تمرین Restore. عبور از آن هشدار می‌دهد.', false);
+ 'فاصله مجاز میان دو تمرین Restore. عبور از آن هشدار می‌دهد.', false),
+
+('cheque.due_warning_days', '7'::jsonb,
+ 'چند روز پیش از سررسید، چک در فهرست هشدار دیده شود.', false),
+
+('cheque.allow_endorse', 'true'::jsonb,
+ 'اجازه خرج‌کردن چک دریافتی به تأمین‌کننده. برخی حسابداران آن را ممنوع می‌کنند چون مسئولیت ظهرنویسی روی ماست.', true),
+
+('cheque.max_due_days', '180'::jsonb,
+ 'حداکثر فاصله سررسید تا تاریخ صدور. چک با وعده بلندتر نیازمند تأیید مدیر است.', true)
+
+-- DO NOTHING است، نه DO UPDATE: اگر حسابدار نرخ مالیات یا سقف تخفیف را
+-- تصویب و عوض کرده باشد، اجرای دوباره seed نباید آن را به پیش‌فرض
+-- برگرداند. تنظیم تازه اضافه می‌شود؛ تنظیم موجود دست‌نخورده می‌ماند.
+ON CONFLICT (key) DO NOTHING;
 
 COMMIT;
