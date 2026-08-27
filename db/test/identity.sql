@@ -58,6 +58,7 @@ DECLARE
   v_dev uuid; v_dev2 uuid;
   v_s1 uuid; v_s2 uuid; v_n int;
   v_verdict identity.permission_verdict; v_approver text; v_reason text;
+  v_secret text := encode(digest('راز-دستگاه-تست', 'sha256'), 'hex');
   r record;
 BEGIN
 
@@ -226,21 +227,38 @@ RAISE NOTICE E'\n═══ ۵. PIN: سه شرط، هر سه لازم ═══';
 
 -- دستگاه هنوز تأیید نشده
 PERFORM pg_temp.assert_eq('PIN روی دستگاه تأییدنشده مجاز نیست',
-  identity.pin_allowed(v_cashier, v_dev)::int, 0);
+  identity.pin_allowed(v_cashier, v_dev, v_secret)::int, 0);
 
-UPDATE identity.device SET is_approved = true, approved_by = v_admin, approved_at = now()
- WHERE id = v_dev;
-PERFORM pg_temp.assert_eq('PIN پس از تأیید دستگاه و ورود امروز مجاز است',
-  identity.pin_allowed(v_cashier, v_dev)::int, 1);
+PERFORM identity.approve_device(v_dev, v_admin);
+-- تأیید به‌تنهایی کافی نیست: fingerprint یک شناسه است نه یک راز، پس
+-- دستگاه باید راز ثبت‌نام هم گرفته باشد.
+PERFORM pg_temp.assert_eq('تأیید بدون ثبت‌نام، PIN را باز نمی‌کند',
+  identity.pin_allowed(v_cashier, v_dev, v_secret)::int, 0);
+
+PERFORM pg_temp.assert_eq('ثبت‌نام دستگاه تأییدشده',
+  identity.enroll_device(v_dev, v_secret, v_admin)::int, 1);
+PERFORM pg_temp.assert_eq('ثبت‌نام دوباره رد می‌شود',
+  identity.enroll_device(v_dev, v_secret, v_admin)::int, 0);
+
+PERFORM pg_temp.assert_eq('PIN پس از تأیید، ثبت‌نام و ورود امروز مجاز است',
+  identity.pin_allowed(v_cashier, v_dev, v_secret)::int, 1);
+PERFORM pg_temp.assert_eq('راز نادرست، PIN را باز نمی‌کند',
+  identity.pin_allowed(v_cashier, v_dev,
+    encode(digest('راز-جعلی','sha256'),'hex'))::int, 0);
+PERFORM pg_temp.assert_eq('بدون راز، PIN باز نمی‌شود',
+  identity.pin_allowed(v_cashier, v_dev, NULL)::int, 0);
 
 -- کاربری که امروز روی این دستگاه ورود کامل نکرده
 PERFORM pg_temp.assert_eq('PIN بدون ورود کامل امروز مجاز نیست',
-  identity.pin_allowed(v_sup, v_dev)::int, 0);
+  identity.pin_allowed(v_sup, v_dev, v_secret)::int, 0);
 PERFORM pg_temp.assert_eq('PIN بدون دستگاه مجاز نیست',
-  identity.pin_allowed(v_cashier, NULL)::int, 0);
+  identity.pin_allowed(v_cashier, NULL, v_secret)::int, 0);
 
 PERFORM pg_temp.assert_raises('تأیید دستگاه بدون ثبت تأییدکننده',
   format('UPDATE identity.device SET is_approved = true WHERE id = %L', v_dev2));
+PERFORM pg_temp.assert_raises('راز ثبت‌نام روی دستگاه تأییدنشده',
+  format('UPDATE identity.device SET secret_hash = %L, enrolled_at = now() WHERE id = %L',
+         v_secret, v_dev2));
 
 -- قفل صفحه و باز کردنش
 v_s2 := identity.open_session(v_cashier, pg_temp.tok('lock'), 'password', v_dev);
@@ -249,18 +267,43 @@ SELECT count(*) INTO v_n FROM identity.session_from_token(pg_temp.tok('lock'));
 PERFORM pg_temp.assert_eq('نشست قفل‌شده کاری نمی‌کند', v_n, 0);
 
 PERFORM pg_temp.assert_eq('باز کردن قفل با PIN',
-  identity.unlock_session(pg_temp.tok('lock'), v_cashier)::int, 1);
+  identity.unlock_session(pg_temp.tok('lock'), v_cashier, v_secret)::int, 1);
+-- باز شد، ولی ارتقایافته نیست
+PERFORM pg_temp.assert_eq('نشستِ باز‌شده با PIN، pin_unlocked دارد',
+  (SELECT pin_unlocked FROM identity.session WHERE token_hash = pg_temp.tok('lock'))::int, 1);
+PERFORM pg_temp.assert_eq('session_from_token همین را برمی‌گرداند',
+  (SELECT pin_unlocked FROM identity.session_from_token(pg_temp.tok('lock')))::int, 1);
 SELECT count(*) INTO v_n FROM identity.session_from_token(pg_temp.tok('lock'));
 PERFORM pg_temp.assert_eq('نشست پس از باز شدن دوباره کار می‌کند', v_n, 1);
 
 PERFORM pg_temp.assert_raises('باز کردن قفل نشست کاربر دیگر',
-  format('SELECT identity.unlock_session(%L,%L)', pg_temp.tok('lock'), v_sup));
+  format('SELECT identity.unlock_session(%L,%L,%L)', pg_temp.tok('lock'), v_sup, v_secret));
+
+-- احراز کامل مجدد، تنها راه درآوردن نشست از حالت PIN
+PERFORM pg_temp.assert_eq('احراز کامل مجدد',
+  identity.reauth_session(pg_temp.tok('lock'), v_cashier)::int, 1);
+PERFORM pg_temp.assert_eq('پس از احراز مجدد، pin_unlocked پاک شد',
+  (SELECT pin_unlocked FROM identity.session WHERE token_hash = pg_temp.tok('lock'))::int, 0);
+PERFORM pg_temp.assert_raises('احراز مجدد روی نشست کاربر دیگر',
+  format('SELECT identity.reauth_session(%L,%L)', pg_temp.tok('lock'), v_sup));
+
+-- ابطال اعتماد دستگاه: «تبلت گم شد»
+PERFORM identity.open_session(v_cashier, pg_temp.tok('ondev'), 'password', v_dev);
+PERFORM pg_temp.assert_eq('ابطال دستگاه، نشست‌های رویش را می‌بندد',
+  (identity.revoke_device(v_dev, v_admin) > 0)::int, 1);
+SELECT count(*) INTO v_n FROM identity.session_from_token(pg_temp.tok('ondev'));
+PERFORM pg_temp.assert_eq('نشست روی دستگاه باطل‌شده مرد', v_n, 0);
+PERFORM pg_temp.assert_eq('راز دستگاه هم رفت',
+  identity.pin_allowed(v_cashier, v_dev, v_secret)::int, 0);
+PERFORM identity.approve_device(v_dev, v_admin);
+PERFORM pg_temp.assert_eq('تأیید دوباره، راز قدیمی را برنمی‌گرداند',
+  identity.pin_allowed(v_cashier, v_dev, v_secret)::int, 0);
 
 -- نشست روی دستگاه تأییدنشده با PIN باز نمی‌شود
 PERFORM identity.open_session(v_cashier, pg_temp.tok('lock2'), 'password', v_dev2);
 PERFORM identity.lock_session(pg_temp.tok('lock2'));
 PERFORM pg_temp.assert_raises('باز کردن قفل روی دستگاه تأییدنشده',
-  format('SELECT identity.unlock_session(%L,%L)', pg_temp.tok('lock2'), v_cashier));
+  format('SELECT identity.unlock_session(%L,%L,%L)', pg_temp.tok('lock2'), v_cashier, v_secret));
 
 -- ═══════════════════════════════════════════════════════════════════
 RAISE NOTICE E'\n═══ ۶. مجوز از permission_rule، نه از شرط در کد ═══';

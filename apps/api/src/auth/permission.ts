@@ -69,3 +69,26 @@ export async function requirePermission(db: Db, q: PermissionQuery): Promise<Dec
   if (decision.verdict !== "allow") throw new ForbiddenError(decision, q.operation);
   return decision;
 }
+
+/**
+ * مجوز برای یک نشست — مسیری که هر Endpoint کسب‌وکاری باید از آن بیاید.
+ *
+ * چرا این تابع وجود دارد و چرا باید همین را صدا زد: نسخه اول
+ * `viaPin: false` را دستی می‌فرستاد و شرط چهارم دفاع PIN را مرده کرده
+ * بود. اینجا `viaPin` از **نشست** می‌آید، پس فراخوان نمی‌تواند فراموشش
+ * کند یا اشتباه بفرستد.
+ */
+export async function requireForSession(
+  db: Db,
+  session: { userId: string; pinUnlocked: boolean },
+  operation: string,
+  opts: { amount?: bigint | undefined; percent?: number | undefined } = {},
+): Promise<Decision> {
+  return requirePermission(db, {
+    userId: session.userId,
+    operation,
+    amount: opts.amount,
+    percent: opts.percent,
+    viaPin: session.pinUnlocked,
+  });
+}

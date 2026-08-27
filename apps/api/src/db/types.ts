@@ -43,6 +43,9 @@ export interface DeviceTable {
   is_approved: boolean;
   approved_by: string | null;
   approved_at: Date | null;
+  /** SHA-256 راز ثبت‌نام. NULL یعنی دستگاه هنوز PIN را باز نمی‌کند. */
+  secret_hash: string | null;
+  enrolled_at: Date | null;
   last_seen_at: Date | null;
   created_at: Generated<Date>;
 }
@@ -60,6 +63,7 @@ export interface SessionTable {
   expires_at: Date;
   last_seen_at: Generated<Date>;
   locked_at: Date | null;
+  pin_unlocked: boolean;
   revoked_at: Date | null;
   revoke_reason: string | null;
 }
