@@ -564,6 +564,41 @@ describe("احراز هویت روی دیتابیس واقعی", { skip }, () =>
     assert.ok(limited.json().error.correlationId, "کد پیگیری باید حتی اینجا باشد");
   });
 
+  test("HTTP: POST بدون بدنه با Content-Type: application/json کار می‌کند", async () => {
+    // در آزمایش زنده پیدا شد: کلاینت‌های رایج (axios و مانندش) روی هر
+    // POST سرآیند application/json می‌گذارند حتی بی‌بدنه. بدون پارسر
+    // سفارشی، نهایی‌سازی فاکتور و قفل صفحه ۴۰۰ می‌گرفتند با پیامی
+    // انگلیسی. تست‌ها `payload: {}` می‌فرستادند و هرگز به حالت واقعی
+    // نمی‌رسیدند.
+    const s = await auth.login({ username, password: PASSWORD, deviceFingerprint: fingerprint });
+    const csrf = "csrf-empty-body";
+    const r = await app.inject({
+      method: "POST",
+      url: "/auth/lock",
+      cookies: { labelmod_session: s.token, labelmod_csrf: csrf },
+      headers: { "x-csrf-token": csrf, "content-type": "application/json" },
+      body: "",
+    });
+    assert.equal(r.statusCode, 200, `بدنه خالی نباید رد شود: ${r.body}`);
+
+    // نشست تازه: درخواست بالا نشست قبلی را **قفل** کرد، پس با همان
+    // نمی‌شود ادامه داد — و ۴۰۱ گرفتن اینجا رفتار درست است.
+    const s2 = await auth.login({ username, password: PASSWORD, deviceFingerprint: fingerprint });
+
+    // ولی JSON خراب همچنان رد می‌شود — با پیام فارسی
+    const bad = await app.inject({
+      method: "POST",
+      url: "/auth/lock",
+      cookies: { labelmod_session: s2.token, labelmod_csrf: csrf },
+      headers: { "x-csrf-token": csrf, "content-type": "application/json" },
+      body: "{ناقص",
+    });
+    assert.equal(bad.statusCode, 400);
+    assert.match(bad.json().error.message, /معتبر نیست/);
+    await auth.logout(s.token);
+    await auth.logout(s2.token);
+  });
+
   test("HTTP: مسیر ناموجود برای ناشناس ۴۰۱ می‌دهد، نه ۴۰۴", async () => {
     // عمدی: پاسخ ۴۰۴ به کاربر بدون نشست، فهرست مسیرهای موجود را
     // قابل شمارش می‌کند. تفاوت ۴۰۱ و ۴۰۴ فقط برای کسی که وارد شده
