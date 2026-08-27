@@ -511,6 +511,57 @@ describe("فروش و صندوق روی دیتابیس واقعی", { skip }, ()
     assert.equal(r.json().error.code, "invoice_has_payment");
   });
 
+  test("کاربر شعبه دیگر نمی‌تواند بفروشد", async () => {
+    // یافته بازبینی امنیتی: ستون user_role.branch_id وجود داشت و لایه
+    // API کاملاً نادیده‌اش می‌گرفت — هر کاربری می‌توانست branchId و
+    // warehouseId دلخواه بفرستد.
+    //
+    // امروز یک شعبه بیشتر نیست، پس اثر عملی نداشت. ولی الگویی که ستون
+    // دسترسی را نادیده بگیرد، با شعبه دوم بی‌صدا به نشت تبدیل می‌شود.
+    const other = await sql<{ id: string }>`
+      INSERT INTO platform.branch (code, name)
+      VALUES (${`BR2-${suffix}`}, 'شعبه دوم') RETURNING id`.execute(handle.db);
+    const otherBranch = other.rows[0]!.id;
+    const otherWh = await sql<{ id: string }>`
+      INSERT INTO inventory.warehouse (branch_id, code, name, kind)
+      VALUES (${otherBranch}, ${`WH2-${suffix}`}, 'انبار شعبه دوم', 'store')
+      RETURNING id`.execute(handle.db);
+
+    const s = await loginAs(cashier);
+
+    // شعبه‌ای که نقشِ کاربر رویش نیست
+    const foreign = await app.inject({
+      method: "POST",
+      url: "/invoices",
+      ...s,
+      payload: { branchId: otherBranch, warehouseId: otherWh.rows[0]!.id, channel: "web" },
+    });
+    assert.equal(foreign.statusCode, 403, foreign.body);
+    assert.equal(foreign.json().error.code, "branch_forbidden");
+
+    // و انبار شعبه دیگر، حتی با شعبه خودی — وگرنه موجودی شعبه دوم
+    // بی‌آنکه کسی بفهمد کم می‌شد
+    const crossed = await app.inject({
+      method: "POST",
+      url: "/invoices",
+      ...s,
+      payload: { branchId: BRANCH, warehouseId: otherWh.rows[0]!.id, channel: "web" },
+    });
+    assert.equal(crossed.statusCode, 403, crossed.body);
+    assert.match(crossed.json().error.message, /متعلق به این شعبه نیست/);
+
+    // مدیر (نقش بدون شعبه) به همه شعب دسترسی دارد
+    await sql`INSERT INTO identity.user_role (user_id, role_code, branch_id)
+              VALUES (${supervisorId}::uuid, 'admin', NULL)`.execute(handle.db);
+    const asAdmin = await app.inject({
+      method: "POST",
+      url: "/invoices",
+      ...(await loginAs(supervisor)),
+      payload: { branchId: otherBranch, warehouseId: otherWh.rows[0]!.id, channel: "web" },
+    });
+    assert.equal(asAdmin.statusCode, 201, "نقش با branch_id تهی یعنی همه شعب");
+  });
+
   test("همه مسیرهای فروش پشت نشست‌اند", async () => {
     for (const [method, url] of [
       ["GET", `/shifts/current?branchId=${BRANCH}`],

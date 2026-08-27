@@ -17,6 +17,7 @@ import { parseMoney, serializeMoney } from "../lib/money.ts";
 import { runOnce } from "../lib/idempotency.ts";
 import { InvoiceError, invoiceToJson, type InvoiceService } from "../sales/invoice.ts";
 import { ShiftError, shiftToJson, type ShiftService } from "../sales/shift.ts";
+import { assertBranch, assertWarehouseInBranch } from "../sales/scope.ts";
 
 /** پول در JSON رشته است — رقم صحیح، بدون اعشار و بدون جداکننده. */
 const moneyString = z
@@ -83,6 +84,7 @@ export function registerSalesRoutes(app: FastifyInstance, deps: SalesRouteDeps):
   app.get("/shifts/current", async (req) => {
     const s = session(req);
     const branchId = z.object({ branchId: uuid }).parse(req.query).branchId;
+    await assertBranch(db, s.userId, branchId);
     const shift = await shifts.current(s.userId, branchId);
     return shift ? shiftToJson(shift) : null;
   });
@@ -90,6 +92,7 @@ export function registerSalesRoutes(app: FastifyInstance, deps: SalesRouteDeps):
   app.post("/shifts", async (req, reply) => {
     const s = session(req);
     const body = openShiftBody.parse(req.body);
+    await assertBranch(db, s.userId, body.branchId);
     await requireForSession(db, s, "sale.create");
 
     const shift = await shifts.open({
@@ -113,6 +116,7 @@ export function registerSalesRoutes(app: FastifyInstance, deps: SalesRouteDeps):
 
     const shift = await shifts.byId(id);
     if (!shift) throw new ShiftError("shift_not_found", "شیفت یافت نشد", 404);
+    await assertBranch(db, s.userId, shift.branchId);
 
     // مجوز `shift.close` جدا از `sale.create` است — و طبق داده فعلی
     // permission_rule، صندوق‌دار آن را ندارد. یعنی بستن کشو تصمیم
@@ -134,6 +138,10 @@ export function registerSalesRoutes(app: FastifyInstance, deps: SalesRouteDeps):
   app.post("/invoices", async (req, reply) => {
     const s = session(req);
     const body = createInvoiceBody.parse(req.body);
+    // دامنه پیش از مجوز: بی‌معناست که بپرسیم «می‌تواند بفروشد؟» وقتی
+    // اصلاً به آن شعبه دسترسی ندارد.
+    await assertBranch(db, s.userId, body.branchId);
+    await assertWarehouseInBranch(db, body.warehouseId, body.branchId);
     await requireForSession(db, s, "sale.create");
 
     // فاکتور صندوق به شیفت باز کاربر می‌چسبد. بدون شیفت، درآمدش به
@@ -167,6 +175,7 @@ export function registerSalesRoutes(app: FastifyInstance, deps: SalesRouteDeps):
     const { id } = z.object({ id: uuid }).parse(req.params);
     const inv = await invoices.byId(id);
     if (!inv) throw new InvoiceError("invoice_not_found", "فاکتور یافت نشد", 404);
+    await assertBranch(db, session(req).userId, inv.branchId);
     return invoiceToJson(inv);
   });
 
@@ -180,6 +189,7 @@ export function registerSalesRoutes(app: FastifyInstance, deps: SalesRouteDeps):
     const s = session(req);
     const { id } = z.object({ id: uuid }).parse(req.params);
     const body = addLineBody.parse(req.body);
+    await assertInvoiceInScope(db, s.userId, id, invoices);
     await requireForSession(db, s, "sale.create");
 
     const discount = body.discountAmount ? parseMoney(body.discountAmount) : 0n;
@@ -226,6 +236,7 @@ export function registerSalesRoutes(app: FastifyInstance, deps: SalesRouteDeps):
   app.delete("/invoices/:id/lines/:lineId", async (req) => {
     const s = session(req);
     const { id, lineId } = z.object({ id: uuid, lineId: uuid }).parse(req.params);
+    await assertInvoiceInScope(db, s.userId, id, invoices);
     await requireForSession(db, s, "sale.create");
     return invoiceToJson(await invoices.removeLine(id, lineId, s.userId));
   });
@@ -241,6 +252,7 @@ export function registerSalesRoutes(app: FastifyInstance, deps: SalesRouteDeps):
     const s = session(req);
     const { id } = z.object({ id: uuid }).parse(req.params);
     const body = z.object({ reason: z.string().max(200).optional() }).parse(req.body ?? {});
+    await assertInvoiceInScope(db, s.userId, id, invoices);
     await requireForSession(db, s, "sale.create");
     const inv = await invoices.cancelDraft(id, s.userId, body.reason);
     return invoiceToJson(inv);
@@ -250,6 +262,7 @@ export function registerSalesRoutes(app: FastifyInstance, deps: SalesRouteDeps):
     const s = session(req);
     const { id } = z.object({ id: uuid }).parse(req.params);
     const body = paymentBody.parse(req.body);
+    await assertInvoiceInScope(db, s.userId, id, invoices);
     await requireForSession(db, s, "sale.create");
 
     const result = await invoices.addPayment({
@@ -273,6 +286,7 @@ export function registerSalesRoutes(app: FastifyInstance, deps: SalesRouteDeps):
   app.post("/invoices/:id/finalize", async (req) => {
     const s = session(req);
     const { id } = z.object({ id: uuid }).parse(req.params);
+    await assertInvoiceInScope(db, s.userId, id, invoices);
     await requireForSession(db, s, "sale.create");
 
     const inv = await invoices.byId(id);
@@ -322,6 +336,13 @@ export function registerSalesRoutes(app: FastifyInstance, deps: SalesRouteDeps):
     session(req);
     const { variationId } = z.object({ variationId: uuid }).parse(req.params);
     const { warehouseId } = z.object({ warehouseId: uuid }).parse(req.query);
+    const wh = await db
+      .selectFrom("inventory.warehouse")
+      .select("branch_id")
+      .where("id", "=", warehouseId)
+      .executeTakeFirst();
+    if (!wh) throw new InvoiceError("warehouse_not_found", "انبار یافت نشد", 404);
+    await assertBranch(db, session(req).userId, wh.branch_id);
 
     const row = await db
       .selectFrom("inventory.stock_balance")
@@ -339,6 +360,18 @@ export function registerSalesRoutes(app: FastifyInstance, deps: SalesRouteDeps):
       unitPrice: price === null ? null : serializeMoney(price),
     };
   });
+}
+
+/** فاکتور باید در دامنه شعبه‌های کاربر باشد. */
+async function assertInvoiceInScope(
+  db: Db,
+  userId: string,
+  invoiceId: string,
+  invoices: InvoiceService,
+): Promise<void> {
+  const inv = await invoices.byId(invoiceId);
+  if (!inv) throw new InvoiceError("invoice_not_found", "فاکتور یافت نشد", 404);
+  await assertBranch(db, userId, inv.branchId);
 }
 
 function idempotencyKey(req: { headers: Record<string, unknown> }): string | undefined {

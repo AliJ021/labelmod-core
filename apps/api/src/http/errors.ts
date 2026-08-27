@@ -10,6 +10,7 @@ import { ForbiddenError } from "../auth/permission.ts";
 import { MoneyError } from "../lib/money.ts";
 import { InvoiceError } from "../sales/invoice.ts";
 import { ShiftError } from "../sales/shift.ts";
+import { ScopeError } from "../sales/scope.ts";
 import { IdempotencyInFlightError } from "../lib/idempotency.ts";
 import { ZodError } from "zod";
 
@@ -54,6 +55,7 @@ export function registerErrorHandler(app: FastifyInstance): void {
     if (
       err instanceof InvoiceError ||
       err instanceof ShiftError ||
+      err instanceof ScopeError ||
       err instanceof IdempotencyInFlightError
     ) {
       req.log.info({ code: err.code, correlationId }, "درخواست فروش رد شد");
