@@ -146,6 +146,33 @@ jobs:
                 RAISE EXCEPTION 'نشست باطل‌شده با پرچم PIN: %', n;
               END IF;
 
+              -- سطر فاکتور بدون قیمت یعنی جایی قیمت را از کلاینت گرفته
+              SELECT count(*) INTO n FROM sales.invoice_line l
+                JOIN sales.invoice i ON i.id = l.invoice_id
+               WHERE i.status <> 'cancelled' AND l.unit_price <= 0;
+              IF n > 0 THEN
+                RAISE EXCEPTION 'سطر فاکتور با قیمت صفر یا منفی: %', n;
+              END IF;
+
+              -- تخفیف سطر هرگز از خودِ سطر بیشتر نمی‌شود
+              SELECT count(*) INTO n FROM sales.invoice_line
+               WHERE discount_amount > round(qty * unit_price);
+              IF n > 0 THEN
+                RAISE EXCEPTION 'تخفیف بیشتر از مبلغ سطر: %', n;
+              END IF;
+
+              -- جمع فاکتور باید با جمع سطرهایش بخواند
+              SELECT count(*) INTO n FROM (
+                SELECT i.id FROM sales.invoice i
+                  JOIN sales.invoice_line l ON l.invoice_id = i.id
+                 WHERE i.status <> 'cancelled'
+                 GROUP BY i.id, i.gross_amount, i.net_amount
+                HAVING i.gross_amount <> round(sum(l.qty * l.unit_price))
+                    OR i.net_amount   <> sum(l.net_amount)) x;
+              IF n > 0 THEN
+                RAISE EXCEPTION 'جمع فاکتور با جمع سطرهایش نمی‌خواند: %', n;
+              END IF;
+
               -- هیچ عملیات حساسی نباید از فهرست ممنوعه PIN بیرون بماند
               SELECT count(*) INTO n FROM (
                 SELECT unnest(ARRAY['refund.cash','invoice.cancel',
