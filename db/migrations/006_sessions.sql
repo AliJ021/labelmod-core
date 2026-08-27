@@ -422,3 +422,80 @@ COMMENT ON FUNCTION identity.can IS
   'مجوز از identity.permission_rule. سخاوتمندترین نقش برنده است؛ عبور از سقف «نیازمند تأیید» می‌شود نه «ممنوع».';
 
 COMMIT;
+
+BEGIN;
+
+-- ---------------------------------------------------------------------
+-- ۸. نگهداری: نشست مرده و تلاش کهنه
+-- ---------------------------------------------------------------------
+-- تغییرناپذیری auth_attempt درباره دستکاری است، نه نگهداری ابدی. بدون
+-- مسیر پاکسازی، این جدول تا ابد رشد می‌کند و اولین چیزی که می‌شکند،
+-- همان کوئری قفل است که هر ورود صدایش می‌زند.
+--
+-- ولی پاکسازی نباید به یک در پشتی تبدیل شود: کسی که به اپلیکیشن نفوذ
+-- کرده نباید بتواند ردّ تلاش‌های خودش را پاک کند. پس Trigger فقط وقتی
+-- DELETE را می‌پذیرد که هر دو شرط برقرار باشد:
+--   ۱. پرچم labelmod.auth_purge در همان تراکنش روشن شده باشد
+--   ۲. سطر از پنجره نگهداری قدیمی‌تر باشد
+-- پنجره داده است: auth.attempt_retention_days.
+
+CREATE OR REPLACE FUNCTION identity.auth_attempt_immutable() RETURNS trigger
+LANGUAGE plpgsql AS $$
+DECLARE v_days int;
+BEGIN
+  IF TG_OP = 'DELETE'
+     AND coalesce(current_setting('labelmod.auth_purge', true), '') = 'on' THEN
+    SELECT (value)::int INTO v_days FROM platform.setting
+     WHERE key = 'auth.attempt_retention_days';
+    v_days := coalesce(v_days, 180);
+    IF OLD.at < now() - make_interval(days => v_days) THEN
+      RETURN OLD;
+    END IF;
+    RAISE EXCEPTION
+      'تلاش احراز هویت تازه‌تر از % روز پاک نمی‌شود. پنجره نگهداری، ردّ حادثه را حفظ می‌کند.',
+      v_days;
+  END IF;
+  RAISE EXCEPTION 'تلاش احراز هویت قابل تغییر یا حذف نیست';
+END $$;
+
+-- تنها مسیر مجاز پاکسازی. خودش پرچم را ست می‌کند و نتیجه را در لاگ
+-- حسابرسی می‌نویسد — یعنی پاک‌کردنِ رد، خودش یک رد می‌گذارد.
+CREATE OR REPLACE FUNCTION identity.purge_auth_attempts(p_actor uuid)
+RETURNS int LANGUAGE plpgsql AS $$
+DECLARE v_days int; v_n int;
+BEGIN
+  SELECT (value)::int INTO v_days FROM platform.setting
+   WHERE key = 'auth.attempt_retention_days';
+  v_days := coalesce(v_days, 180);
+
+  PERFORM set_config('labelmod.auth_purge', 'on', true);
+  DELETE FROM identity.auth_attempt WHERE at < now() - make_interval(days => v_days);
+  GET DIAGNOSTICS v_n = ROW_COUNT;
+  PERFORM set_config('labelmod.auth_purge', '', true);
+
+  PERFORM platform.audit('auth.purge_attempts', 'identity_auth_attempt', NULL,
+    jsonb_build_object('deleted', v_n, 'retention_days', v_days), p_actor);
+  RETURN v_n;
+END $$;
+
+-- نشست منقضی یا باطل، پس از یک دوره، دیگر ارزش نگهداری ندارد. برخلاف
+-- تلاش‌ها، نشست تغییرناپذیر نیست و حذفش نگهبانی نمی‌خواهد.
+CREATE OR REPLACE FUNCTION identity.purge_sessions(p_actor uuid)
+RETURNS int LANGUAGE plpgsql AS $$
+DECLARE v_days int; v_n int;
+BEGIN
+  SELECT (value)::int INTO v_days FROM platform.setting
+   WHERE key = 'auth.session_retention_days';
+  v_days := coalesce(v_days, 90);
+
+  DELETE FROM identity.session
+   WHERE (revoked_at IS NOT NULL OR expires_at < now())
+     AND coalesce(revoked_at, expires_at) < now() - make_interval(days => v_days);
+  GET DIAGNOSTICS v_n = ROW_COUNT;
+
+  PERFORM platform.audit('auth.purge_sessions', 'identity_session', NULL,
+    jsonb_build_object('deleted', v_n, 'retention_days', v_days), p_actor);
+  RETURN v_n;
+END $$;
+
+COMMIT;

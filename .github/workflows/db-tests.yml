@@ -8,7 +8,7 @@
 #   git ls-remote https://github.com/actions/checkout refs/tags/v4
 # SHA را جایگزین کنید و شماره نسخه را در کامنت کنارش به‌روز کنید.
 
-name: تست‌های پایگاه داده
+name: تست‌ها
 
 on:
   push:
@@ -142,3 +142,33 @@ jobs:
                 RAISE EXCEPTION 'عملیات حساس خارج از فهرست ممنوعه PIN: %', n;
               END IF;
             END \$\$;"
+
+      # ------------------------------------------------------------------
+      # لایه API
+      # ------------------------------------------------------------------
+      # اکشن‌ها فقط از خود GitHub‌اند (بند ۹ SECURITY.md) و به SHA کامل
+      # پین شده‌اند. corepack نسخه pnpm را از packageManager می‌خواند، پس
+      # نسخه ابزار هم مثل وابستگی‌ها قفل است.
+      - name: راه‌اندازی Node
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020  # v4.4.0
+        with:
+          node-version: '22'
+
+      - name: فعال‌کردن pnpm از packageManager
+        run: corepack enable
+
+      - name: نصب وابستگی‌ها
+        # --frozen-lockfile الزام بند ۵ SECURITY.md است: نصب در CI نباید
+        # بتواند نسخه‌ای بیرون از Lockfile بیاورد.
+        run: pnpm install --frozen-lockfile
+
+      - name: بررسی تایپ
+        run: pnpm typecheck
+
+      - name: تست‌های لایه API
+        # تست یکپارچه خودش یک دیتابیس یک‌بارمصرف می‌سازد و می‌اندازد
+        run: pnpm test
+
+      - name: آسیب‌پذیری وابستگی‌ها
+        # شکست روی High و بالاتر — بند ۵ SECURITY.md
+        run: pnpm audit --prod --audit-level high

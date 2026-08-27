@@ -95,7 +95,13 @@ INSERT INTO platform.setting (key, value, description, requires_approval) VALUES
 
 ('auth.pin_forbidden_operations',
  '["refund.cash","invoice.cancel","price.change","stock.adjust","period.close","period.reopen","user.manage","journal.manual","return.late"]'::jsonb,
- 'عملیاتی که با PIN هرگز مجاز نیستند و احراز هویت کامل می‌خواهند — بند ۱ SECURITY.md.', true)
+ 'عملیاتی که با PIN هرگز مجاز نیستند و احراز هویت کامل می‌خواهند — بند ۱ SECURITY.md.', true),
+
+('auth.attempt_retention_days', '180'::jsonb,
+ 'پنجره نگهداری تلاش‌های احراز هویت. تازه‌تر از این پاک نمی‌شود — ردّ حادثه باید بماند.', true),
+
+('auth.session_retention_days', '90'::jsonb,
+ 'مدت نگهداری نشست منقضی یا باطل‌شده پیش از پاکسازی.', false)
 
 -- DO NOTHING است، نه DO UPDATE: اگر حسابدار نرخ مالیات یا سقف تخفیف را
 -- تصویب و عوض کرده باشد، اجرای دوباره seed نباید آن را به پیش‌فرض

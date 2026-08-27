@@ -192,6 +192,34 @@ PERFORM pg_temp.assert_raises('تغییر تلاش احراز هویت',
 PERFORM pg_temp.assert_raises('حذف تلاش احراز هویت',
   format('DELETE FROM identity.auth_attempt WHERE user_id = %L', v_cashier));
 
+-- پاکسازی یک مسیر نگهداری است، نه یک در پشتی: حتی با پرچم روشن، سطر
+-- داخل پنجره نگهداری پاک نمی‌شود. کسی که به اپلیکیشن نفوذ کرده نباید
+-- بتواند ردّ تلاش‌های خودش را بشوید.
+PERFORM set_config('labelmod.auth_purge', 'on', true);
+PERFORM pg_temp.assert_raises('پاکسازی تلاش تازه، حتی با پرچم روشن',
+  format('DELETE FROM identity.auth_attempt WHERE user_id = %L', v_cashier));
+PERFORM set_config('labelmod.auth_purge', '', true);
+
+SELECT count(*) INTO v_n FROM identity.auth_attempt;
+INSERT INTO identity.auth_attempt (at, kind, username, user_id, device_id, succeeded)
+VALUES (now() - interval '400 days','password','قدیمی',v_cashier,v_dev,false);
+PERFORM pg_temp.assert_eq('پاکسازی فقط تلاش کهنه‌تر از پنجره را می‌برد',
+  identity.purge_auth_attempts(v_admin), 1);
+PERFORM pg_temp.assert_eq('تلاش‌های داخل پنجره دست‌نخورده ماندند',
+  (SELECT count(*) FROM identity.auth_attempt), v_n);
+
+-- و خودِ پاکسازی یک رد در لاگ حسابرسی می‌گذارد
+PERFORM pg_temp.assert_eq('پاکسازی در لاگ حسابرسی ثبت شد',
+  (SELECT count(*) FROM platform.audit_log WHERE action = 'auth.purge_attempts'), 1);
+
+-- نشست منقضی پس از دوره نگهداری پاک می‌شود
+PERFORM identity.open_session(v_sup, pg_temp.tok('stale'), 'password', v_dev);
+UPDATE identity.session SET issued_at = now() - interval '200 days',
+                            expires_at = now() - interval '199 days'
+ WHERE token_hash = pg_temp.tok('stale');
+PERFORM pg_temp.assert_eq('نشست کهنه پاک شد',
+  identity.purge_sessions(v_admin), 1);
+
 -- ═══════════════════════════════════════════════════════════════════
 RAISE NOTICE E'\n═══ ۵. PIN: سه شرط، هر سه لازم ═══';
 -- ═══════════════════════════════════════════════════════════════════
@@ -312,13 +340,17 @@ PERFORM pg_temp.assert_eq('دستگاه تأییدشده بدون تأییدکن
   (SELECT count(*) FROM identity.device
     WHERE is_approved AND (approved_by IS NULL OR approved_at IS NULL)), 0);
 
-PERFORM pg_temp.assert_eq('هر باز و بسته‌شدن نشست در لاگ حسابرسی',
-  (SELECT count(*) FROM platform.audit_log
-    WHERE entity IN ('identity_session','app_user')
-      AND action LIKE 'session.%'), 
-  (SELECT count(*) FROM identity.session)
-  + (SELECT count(*) FROM platform.audit_log WHERE action = 'session.revoke')
-  + (SELECT count(*) FROM platform.audit_log WHERE action IN ('session.revoke_all','session.unlock')));
+-- هر نشست موجود باید ردّ باز شدنش را در لاگ داشته باشد. نشستی که
+-- بی‌صدا ساخته شود، یعنی مسیری platform.audit را دور زده.
+PERFORM pg_temp.assert_eq('نشست بدون ردّ باز شدن در لاگ حسابرسی',
+  (SELECT count(*) FROM identity.session s
+    WHERE NOT EXISTS (
+      SELECT 1 FROM platform.audit_log a
+       WHERE a.action = 'session.open' AND a.entity_id = s.id::text)), 0);
+
+PERFORM pg_temp.assert_eq('ابطال و باز کردن قفل هم ثبت شده‌اند',
+  ((SELECT count(*) FROM platform.audit_log
+     WHERE action IN ('session.revoke','session.revoke_all','session.unlock')) > 0)::int, 1);
 
 RAISE NOTICE E'\n╔══════════════════════════════════════════╗';
 RAISE NOTICE   '║   تمام تست‌های نشست و مجوز پاس شدند     ║';

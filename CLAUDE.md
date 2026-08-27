@@ -80,7 +80,16 @@ ops/db.sh reset       # بازسازی کامل
 ops/db.sh backup      # دامپ رمزنشده — باید خارج از سرور کپی شود
 
 ops/install-hooks.sh  # یک بار روی هر کلون
+
+corepack enable       # یک بار — نسخه pnpm از packageManager خوانده می‌شود
+pnpm install
+pnpm check            # lint + typecheck + test
+pnpm --filter @labelmod/api dev
 ```
+
+`pnpm test` تست یکپارچه را روی یک **دیتابیس یک‌بارمصرف** اجرا می‌کند که
+خودش می‌سازد و می‌اندازد. اگر `DATABASE_URL` نباشد، آن تست‌ها skip
+می‌شوند و پیامش را می‌بینید — سبز وانمود نمی‌کنند.
 
 `ops/db.sh test` برای هر اجرا یک دیتابیس تازه می‌سازد و پاک می‌کند.
 دلیلش: تست همزمانی به دو نشست مجزا نیاز دارد و نمی‌تواند Rollback شود؛
@@ -89,7 +98,7 @@ ops/install-hooks.sh  # یک بار روی هر کلون
 ## گلوگاه‌ها
 
 - **پیش از هر تغییر در `db/migrations/00[23456]_*.sql`، `ops/db.sh test` را
-  اجرا کن و بعد از تغییر دوباره.** ۲۷۳ ادعا باید پاس شوند.
+  اجرا کن و بعد از تغییر دوباره.** ۲۷۹ ادعای SQL به‌علاوه ۳۵ تست Node باید پاس شوند.
 - `db/test/regressions.sql` هشت باگ تأییدشده را قفل می‌کند،
   `db/test/treasury.sql` مسیرهای پول را، `db/test/cheques.sql` ماشین
   وضعیت چک را و `db/test/identity.sql` نشست، قفل ورود و مجوز را. اگر یکی قرمز شد، یک اصلاح برگشته — نه اینکه تست سخت‌گیر
@@ -111,6 +120,11 @@ ops/install-hooks.sh  # یک بار روی هر کلون
   فهرست مجازِ محدود به اکشن‌های خود GitHub، توکن CI فقط‌خواندنی،
   Dependabot. جزئیات در `docs/SECURITY.md` بند ۹.
 - **اکشن جدید فقط با SHA کامل.** `@v4` باعث شکست کل Workflow می‌شود.
+  SHA را با `git ls-remote https://github.com/actions/<نام> refs/tags/v*`
+  بگیر، نه از حافظه.
+- **نسخه وابستگی از حافظه انتخاب نکن.** `pnpm audit --prod
+  --audit-level high` در CI است و بیلد را می‌شکند. نسخه‌های اولیه همین
+  ماژول پنج آسیب‌پذیری High داشتند که سه‌تایش تزریق SQL بود.
 - مهاجرت‌ها SQL خام و شماره‌دارند. هرگز مهاجرت تولیدشده توسط ORM اضافه نکن.
 
 ## ساختار
@@ -122,13 +136,33 @@ db/test/        تست‌های مالی — در CI و در pre-push اجرا �
 docs/           ADR-001 (Stack) · ADR-002 (طراحی) · ADR-003 (دوره ثبت)
                 ADR-004 (چک) · SECURITY.md
 ops/            db.sh · install-hooks.sh · hooks/
-apps/           (هنوز ساخته نشده) api · web · worker
+apps/api/       Fastify + Kysely — احراز هویت، نشست، مجوز
+apps/           (هنوز ساخته نشده) web · worker
 ```
+
+## قواعد لایه API
+
+جزئیات در `.claude/rules/api.md` و `docs/SECURITY.md`. سه‌تا که بیشترین
+اهمیت را دارند:
+
+- **پول در JSON رشته است، نه عدد.** `apps/api/src/lib/money.ts` تنها
+  مرز تبدیل است و `number` را صریح رد می‌کند.
+- **هیچ شرط دسترسی در کد نیست.** مجوز فقط از `identity.can()`. اگر
+  وسوسه شدی یک `if` روی نام نقش بنویسی، یعنی یک ردیف در
+  `permission_rule` کم است.
+- **کاربر عامل در همان تراکنش.** `platform.set_actor()` با
+  `is_local = true` ست می‌شود، پس در Pool اشتراکی به درخواست بعدی نشت
+  نمی‌کند — و به همین دلیل فقط داخل تراکنش معنا دارد.
 
 ## Stack
 
 Node 22 + Fastify + **Kysely** · React + Vite · PostgreSQL 16 · pnpm ·
 Docker Compose تک‌سرور. **بدون Redis، بدون Kubernetes، بدون Microservice.**
+
+TypeScript بدون مرحله Build اجرا می‌شود (`node --experimental-strip-types`).
+یعنی کد باید در زیرمجموعه **strip-only** بماند: بدون `enum`، بدون
+`namespace`، و **بدون parameter property** در سازنده کلاس. اگر `tsc`
+سبز بود ولی Node خطای `ERR_UNSUPPORTED_TYPESCRIPT_SYNTAX` داد، همین است.
 
 Kysely نه Prisma: عملیات مالی به SQL صریح نیاز دارد (`FOR UPDATE`، CTE،
 توابع تجمیعی). `sql.raw` با ورودی کاربر **ممنوع مطلق**.
