@@ -6,7 +6,8 @@ BEGIN;
 
 -- شعبه و انبارها ------------------------------------------------------
 INSERT INTO platform.branch (id, code, name) VALUES
-('00000000-0000-7000-8000-000000000001', 'MAIN', 'شعبه اصلی');
+('00000000-0000-7000-8000-000000000001', 'MAIN', 'شعبه اصلی')
+ON CONFLICT (id) DO NOTHING;
 
 INSERT INTO inventory.warehouse (id, branch_id, code, name, kind) VALUES
 ('00000000-0000-7000-8000-000000000101',
@@ -14,12 +15,14 @@ INSERT INTO inventory.warehouse (id, branch_id, code, name, kind) VALUES
 ('00000000-0000-7000-8000-000000000102',
  '00000000-0000-7000-8000-000000000001', 'STOCK', 'انبار پشتیبان', 'stock'),
 ('00000000-0000-7000-8000-000000000103',
- '00000000-0000-7000-8000-000000000001', 'DEFECT', 'کالای معیوب', 'defective');
+ '00000000-0000-7000-8000-000000000001', 'DEFECT', 'کالای معیوب', 'defective')
+ON CONFLICT (id) DO NOTHING;
 
 -- سال مالی و شمارنده اسناد --------------------------------------------
 -- ⚠️ تاریخ شروع سال مالی باید توسط حسابدار تأیید شود.
 INSERT INTO ledger.fiscal_year (id, starts_on, ends_on, status) VALUES
-(1405, '2026-03-21', '2027-03-20', 'open');
+(1405, '2026-03-21', '2027-03-20', 'open')
+ON CONFLICT (id) DO NOTHING;
 
 INSERT INTO platform.document_counter (branch_id, doc_type, fiscal_year, prefix) VALUES
 ('00000000-0000-7000-8000-000000000001', 'invoice',      1405, 'F-1405-'),
@@ -60,7 +63,8 @@ INSERT INTO identity.role (code, name) VALUES
 ('supervisor', 'سرپرست فروشگاه'),
 ('cashier',    'صندوق‌دار'),
 ('warehouse',  'انباردار'),
-('marketing',  'بازاریاب و پشتیبانی');
+('marketing',  'بازاریاب و پشتیبانی')
+ON CONFLICT (code) DO NOTHING;
 
 -- ماتریس تأیید ---------------------------------------------------------
 -- ⚠️ سقف‌ها پیشنهادی‌اند و باید توسط مالک کسب‌وکار تصویب شوند.
@@ -115,7 +119,8 @@ INSERT INTO identity.permission_rule
 ('admin','period.reopen',          true,  NULL,   NULL,  NULL),
 ('admin','user.manage',            true,  NULL,   NULL,  NULL),
 ('admin','deadletter.replay',      true,  NULL,   NULL,  NULL),
-('admin','cost.view',              true,  NULL,   NULL,  NULL);
+('admin','cost.view',              true,  NULL,   NULL,  NULL)
+ON CONFLICT (role_code, operation) DO NOTHING;
 
 -- روش‌های پرداخت -------------------------------------------------------
 -- ⚠️ دوره تسویه و نرخ کارمزد باید از PSP گرفته و در treasury.account
