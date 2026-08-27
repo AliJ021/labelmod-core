@@ -116,4 +116,29 @@ jobs:
               IF n > 0 THEN
                 RAISE EXCEPTION 'چک با وضعیت غیر draft و بدون رویداد: %', n;
               END IF;
+
+              -- خودِ توکن نشست هرگز ذخیره نمی‌شود؛ فقط SHA-256 آن
+              SELECT count(*) INTO n FROM identity.session
+               WHERE token_hash !~ '^[0-9a-f]{64}$';
+              IF n > 0 THEN
+                RAISE EXCEPTION 'نشست با هش توکن نامعتبر: %', n;
+              END IF;
+
+              -- دستگاه تأییدشده باید تأییدکننده و زمان تأیید داشته باشد
+              SELECT count(*) INTO n FROM identity.device
+               WHERE is_approved AND (approved_by IS NULL OR approved_at IS NULL);
+              IF n > 0 THEN
+                RAISE EXCEPTION 'دستگاه تأییدشده بدون تأییدکننده: %', n;
+              END IF;
+
+              -- هیچ عملیات حساسی نباید از فهرست ممنوعه PIN بیرون بماند
+              SELECT count(*) INTO n FROM (
+                SELECT unnest(ARRAY['refund.cash','invoice.cancel',
+                                    'price.change','stock.adjust']) AS op) x
+               WHERE NOT EXISTS (
+                 SELECT 1 FROM platform.setting
+                  WHERE key = 'auth.pin_forbidden_operations' AND value ? x.op);
+              IF n > 0 THEN
+                RAISE EXCEPTION 'عملیات حساس خارج از فهرست ممنوعه PIN: %', n;
+              END IF;
             END \$\$;"
