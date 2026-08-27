@@ -22,6 +22,10 @@ const schema = z.object({
   // کوکی نشست. در تولید حتماً روی HTTPS.
   COOKIE_NAME: z.string().default("labelmod_session"),
   COOKIE_DOMAIN: z.string().optional(),
+  // کوکی راز دستگاه و کوکی توکن CSRF — نام‌هایشان از همان مبنا مشتق
+  // می‌شوند تا در استقرار، سه‌تایی با هم جابه‌جا شوند.
+  DEVICE_COOKIE_NAME: z.string().default("labelmod_device"),
+  CSRF_COOKIE_NAME: z.string().default("labelmod_csrf"),
 
   LOG_LEVEL: z.enum(["fatal", "error", "warn", "info", "debug", "trace"]).default("info"),
 });

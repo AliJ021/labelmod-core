@@ -52,21 +52,43 @@ export interface DeviceState {
   /** ثبت شده — یعنی ردیفی دارد. هر دستگاهی که یک بار دیده شود ثبت می‌شود. */
   registered: true;
   /**
-   * تأییدشده توسط مدیر. **فقط این** یعنی PIN روی این دستگاه کار می‌کند.
-   * «ردیف دارد» با «تأیید شده» یکی نیست؛ یکی‌گرفتنشان صندوق‌دار را به
-   * مسیری می‌فرستد که همیشه شکست می‌خورد.
+   * تأییدشده توسط مدیر. «ردیف دارد» با «تأیید شده» یکی نیست؛
+   * یکی‌گرفتنشان صندوق‌دار را به مسیری می‌فرستد که همیشه شکست می‌خورد.
    */
   approved: boolean;
+  /**
+   * راز ثبت‌نام گرفته است. **فقط این** یعنی PIN روی این دستگاه کار
+   * می‌کند — تأیید به‌تنهایی کافی نیست، چون fingerprint یک شناسه است
+   * نه یک راز و هر کسی می‌تواند تکرارش کند.
+   */
+  enrolled: boolean;
+  /**
+   * راز تازه‌صادرشده. فقط در همان پاسخی که ثبت‌نام رخ می‌دهد پر است و
+   * هرگز ذخیره نمی‌شود — مثل خودِ توکن نشست.
+   */
+  issuedSecret?: string | undefined;
 }
 
-export interface Session {
-  token: string;
+/**
+ * نشستی که از توکن حل شده — بدون خودِ توکن و بدون توکن CSRF، چون
+ * هیچ‌کدام حالت نشست نیستند: توکن فقط در کوکی است و توکن CSRF فقط در
+ * لحظه ورود ساخته می‌شود.
+ */
+export interface ResolvedSession {
   sessionId: string;
   userId: string;
   fullName: string;
   roles: string[];
   expiresAt: Date;
   device: DeviceState | null;
+  /** نشست با PIN باز شده و عملیات حساس رویش بسته است. */
+  pinUnlocked: boolean;
+}
+
+export interface Session extends ResolvedSession {
+  token: string;
+  /** توکن Double-Submit برای دفاع CSRF. در کوکی خواندنی می‌نشیند. */
+  csrfToken: string;
 }
 
 export class AuthService {
@@ -125,7 +147,80 @@ export class AuthService {
     }
 
     await this.record("password", input, user.id, deviceId, true, null);
-    return this.openSession(user.id, user.full_name, "password", device, input);
+
+    // ثبت‌نام دستگاه: راز فقط پس از یک ورود **کامل** روی دستگاه
+    // تأییدشده صادر می‌شود، و فقط یک بار. پس هرگز به کسی که صرفاً
+    // رشته fingerprint را می‌داند نمی‌رسد.
+    const enrolled = device ? await this.enrollIfDue(device, user.id) : null;
+
+    return this.openSession(user.id, user.full_name, "password", enrolled, input);
+  }
+
+  /**
+   * احراز هویت کامل مجدد روی نشست موجود.
+   *
+   * تنها راه درآوردن نشست از حالت PIN. بند ۱ SECURITY.md: عملیات حساس
+   * پس از باز شدن با PIN نیازمند احراز کامل مجدد است — و بدون این
+   * تابع، آن الزام هیچ مسیری نداشت.
+   */
+  async reauthenticate(token: string, password: string): Promise<void> {
+    const tokenHash = hashToken(token);
+    const row = await this.#db
+      .selectFrom("identity.session as s")
+      .innerJoin("identity.app_user as u", "u.id", "s.user_id")
+      .select(["s.user_id", "s.device_id", "u.password_hash", "u.is_active"])
+      .where("s.token_hash", "=", tokenHash)
+      .where("s.revoked_at", "is", null)
+      .where("s.expires_at", ">", sql<Date>`now()`)
+      .executeTakeFirst();
+
+    if (!row) throw new AuthError("no_session", "نشستی برای احراز مجدد وجود ندارد");
+
+    const ok = await verifySecret(row.password_hash, password);
+    await this.#db
+      .insertInto("identity.auth_attempt")
+      .values({
+        kind: "password",
+        user_id: row.user_id,
+        device_id: row.device_id,
+        succeeded: ok,
+        failure_code: ok ? null : "bad_password",
+        username: null,
+        ip: null,
+      })
+      .execute();
+
+    if (!ok || !row.is_active) throw new AuthError("bad_credentials", VAGUE);
+
+    // قفل *پس از* تطبیق رمز — همان قاعده مسیر ورود
+    if (await this.isLocked(row.user_id, row.device_id, "password")) {
+      throw new AuthError("locked", "این حساب موقتاً قفل است.");
+    }
+
+    await this.#db.transaction().execute(async (trx) => {
+      await sql`SELECT platform.set_actor(${row.user_id}::uuid)`.execute(trx);
+      await sql`SELECT identity.reauth_session(${tokenHash}, ${row.user_id}::uuid)`
+        .execute(trx);
+    });
+  }
+
+  /** راز ثبت‌نام دستگاه، اگر تأییدشده و هنوز ثبت‌نام‌نشده باشد. */
+  private async enrollIfDue(device: DeviceState, userId: string): Promise<DeviceState> {
+    if (!device.approved || device.enrolled) return device;
+
+    const secret = newToken();
+    const done = await this.#db.transaction().execute(async (trx) => {
+      await sql`SELECT platform.set_actor(${userId}::uuid)`.execute(trx);
+      const r = await sql<{ enroll_device: boolean }>`
+        SELECT identity.enroll_device(
+          ${device.id}::uuid, ${hashToken(secret)}, ${userId}::uuid)
+      `.execute(trx);
+      return r.rows[0]?.enroll_device ?? false;
+    });
+
+    return done
+      ? { ...device, enrolled: true, issuedSecret: secret }
+      : { ...device, enrolled: true };
   }
 
   /**
@@ -135,7 +230,12 @@ export class AuthService {
    * identity.pin_allowed سنجیده می‌شوند و شرط چهارم — «PIN هرگز عملیات
    * حساس را مجاز نمی‌کند» — در identity.can اعمال می‌شود.
    */
-  async unlockWithPin(token: string, pin: string, deviceFingerprint: string): Promise<void> {
+  async unlockWithPin(
+    token: string,
+    pin: string,
+    deviceFingerprint: string,
+    deviceSecret: string | undefined,
+  ): Promise<void> {
     const tokenHash = hashToken(token);
     const row = await this.#db
       .selectFrom("identity.session as s")
@@ -151,6 +251,17 @@ export class AuthService {
     const { id: deviceId } = await this.resolveDevice(deviceFingerprint);
     if (deviceId !== row.device_id) {
       throw new AuthError("pin_not_allowed", "این نشست متعلق به دستگاه دیگری است");
+    }
+
+    // راز ثبت‌نام دستگاه. بدون آن، هویت دستگاه فقط یک رشته‌ی
+    // fingerprint بود که هر کسی می‌توانست تکرارش کند — و «PIN فقط روی
+    // دستگاه تأییدشده» به «PIN برای هر کسی که رشته را می‌داند» تنزل
+    // می‌کرد.
+    if (!deviceSecret) {
+      throw new AuthError(
+        "pin_not_allowed",
+        "این دستگاه برای ورود با PIN ثبت‌نام نشده است. یک بار با رمز کامل وارد شوید.",
+      );
     }
 
     if (await this.isLocked(row.user_id, deviceId, "pin")) {
@@ -174,11 +285,20 @@ export class AuthService {
       throw new AuthError("bad_credentials", "PIN اشتباه است");
     }
 
+    // نگهبان unlock_session با RAISE EXCEPTION رد می‌کند (SQLSTATE
+    // P0001). آن خطا اینجا به AuthError ترجمه می‌شود تا مسیر PIN یک
+    // ۴۰۳ روشن بدهد، نه یک ۵۰۰ که شبیه خرابی سرور است.
     await this.#db.transaction().execute(async (trx) => {
       await sql`SELECT platform.set_actor(${row.user_id}::uuid)`.execute(trx);
       const unlocked = await sql<{ unlock_session: boolean }>`
-        SELECT identity.unlock_session(${tokenHash}, ${row.user_id}::uuid)
-      `.execute(trx);
+        SELECT identity.unlock_session(
+          ${tokenHash}, ${row.user_id}::uuid, ${hashToken(deviceSecret)})
+      `.execute(trx).catch((e: { code?: string; message?: string }) => {
+        if (e.code === "P0001") {
+          throw new AuthError("pin_not_allowed", e.message ?? "باز کردن قفل مجاز نیست");
+        }
+        throw e;
+      });
       if (!unlocked.rows[0]?.unlock_session) {
         throw new AuthError("pin_not_allowed", "باز کردن قفل ممکن نشد");
       }
@@ -198,12 +318,13 @@ export class AuthService {
   }
 
   /** نشست معتبر از توکن. نشست منقضی، باطل یا قفل هیچ‌چیز برنمی‌گرداند. */
-  async resolve(token: string): Promise<Omit<Session, "token"> | null> {
+  async resolve(token: string): Promise<ResolvedSession | null> {
     const result = await sql<{
       session_id: string;
       user_id: string;
       device_id: string | null;
       expires_at: Date;
+      pin_unlocked: boolean;
     }>`SELECT * FROM identity.session_from_token(${hashToken(token)})`.execute(this.#db);
 
     const row = result.rows[0];
@@ -223,6 +344,7 @@ export class AuthService {
       roles: await this.rolesOf(row.user_id),
       expiresAt: row.expires_at,
       device: row.device_id ? await this.deviceState(row.device_id) : null,
+      pinUnlocked: row.pin_unlocked,
     };
   }
 
@@ -319,28 +441,38 @@ export class AuthService {
 
     return {
       token,
+      csrfToken: newToken(),
       sessionId,
       userId,
       fullName,
       roles: await this.rolesOf(userId),
       expiresAt,
       device,
+      // نشست تازه با رمز ساخته شده، پس ارتقایافته است
+      pinUnlocked: false,
     };
   }
 
   private async deviceState(deviceId: string): Promise<DeviceState | null> {
     const d = await this.#db
       .selectFrom("identity.device")
-      .select(["id", "is_approved"])
+      .select(["id", "is_approved", "secret_hash"])
       .where("id", "=", deviceId)
       .executeTakeFirst();
-    return d ? { id: d.id, registered: true, approved: d.is_approved } : null;
+    return d
+      ? {
+          id: d.id,
+          registered: true,
+          approved: d.is_approved,
+          enrolled: d.secret_hash !== null,
+        }
+      : null;
   }
 
   private async resolveDevice(fingerprint: string): Promise<DeviceState> {
     const existing = await this.#db
       .selectFrom("identity.device")
-      .select(["id", "is_approved"])
+      .select(["id", "is_approved", "secret_hash"])
       .where("fingerprint", "=", fingerprint)
       .executeTakeFirst();
     if (existing) {
@@ -349,11 +481,16 @@ export class AuthService {
         .set({ last_seen_at: sql<Date>`now()` })
         .where("id", "=", existing.id)
         .execute();
-      return { id: existing.id, registered: true, approved: existing.is_approved };
+      return {
+        id: existing.id,
+        registered: true,
+        approved: existing.is_approved,
+        enrolled: existing.secret_hash !== null,
+      };
     }
 
     // دستگاه ناشناس ثبت می‌شود ولی **تأیید نمی‌شود**. ورود کامل رویش
-    // کار می‌کند؛ PIN تا تأیید مدیر نه.
+    // کار می‌کند؛ PIN تا تأیید مدیر و ثبت‌نام نه.
     const created = await this.#db
       .insertInto("identity.device")
       .values({
@@ -368,9 +505,7 @@ export class AuthService {
       })
       .returning("id")
       .executeTakeFirstOrThrow();
-    // ثبت شد، ولی تأیید نشد. ورود کامل رویش کار می‌کند؛ PIN تا تأیید
-    // مدیر نه.
-    return { id: created.id, registered: true, approved: false };
+    return { id: created.id, registered: true, approved: false, enrolled: false };
   }
 
   private async isLocked(

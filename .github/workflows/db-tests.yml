@@ -131,6 +131,21 @@ jobs:
                 RAISE EXCEPTION 'دستگاه تأییدشده بدون تأییدکننده: %', n;
               END IF;
 
+              -- راز دستگاه فقط روی دستگاه تأییدشده معنا دارد
+              SELECT count(*) INTO n FROM identity.device
+               WHERE secret_hash IS NOT NULL AND NOT is_approved;
+              IF n > 0 THEN
+                RAISE EXCEPTION 'دستگاه ثبت‌نام‌شده ولی تأییدنشده: %', n;
+              END IF;
+
+              -- نشستِ باز‌شده با PIN نباید باطل یا منقضی باشد و همچنان
+              -- pin_unlocked نگه دارد — یعنی حالت گمراه‌کننده نماند
+              SELECT count(*) INTO n FROM identity.session
+               WHERE pin_unlocked AND revoked_at IS NOT NULL;
+              IF n > 0 THEN
+                RAISE EXCEPTION 'نشست باطل‌شده با پرچم PIN: %', n;
+              END IF;
+
               -- هیچ عملیات حساسی نباید از فهرست ممنوعه PIN بیرون بماند
               SELECT count(*) INTO n FROM (
                 SELECT unnest(ARRAY['refund.cash','invoice.cancel',

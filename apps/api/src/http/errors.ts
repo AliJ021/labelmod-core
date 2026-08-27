@@ -33,7 +33,9 @@ export function registerErrorHandler(app: FastifyInstance): void {
     if (err instanceof AuthError) {
       // ۴۲۹ برای قفل: کاربر باید بداند مشکل نرخ است نه اعتبارنامه،
       // بدون اینکه بفهمد کدام نام کاربری وجود دارد.
-      const status = err.code === "locked" ? 429 : 401;
+      // ۴۰۳ برای PIN: اعتبارنامه درست بود، ولی این مسیر مجاز نیست.
+      const status =
+        err.code === "locked" ? 429 : err.code === "pin_not_allowed" ? 403 : 401;
       req.log.info({ code: err.code, correlationId }, "شکست احراز هویت");
       return reply.code(status).send(body(err.code, err.message, correlationId));
     }
@@ -42,6 +44,26 @@ export function registerErrorHandler(app: FastifyInstance): void {
       const status = err.decision.verdict === "needs_approval" ? 428 : 403;
       req.log.info({ operation: err.operation, correlationId }, "مجوز رد شد");
       return reply.code(status).send(body(err.decision.verdict, err.message, correlationId));
+    }
+
+    // نگهبان‌های دیتابیس.
+    //
+    // هر RAISE EXCEPTION در توابع ما SQLSTATE پیش‌فرض P0001 می‌گیرد و
+    // پیامش **عمداً فارسی و برای کاربر نوشته شده** — «موجودی کافی
+    // نیست»، «سند نامتوازن است»، «PIN روی این دستگاه مجاز نیست».
+    //
+    // پیش از این همه‌شان ۵۰۰ می‌شدند: یعنی قاعده‌ای که درست کار کرده
+    // بود، شبیه خرابی سرور گزارش می‌شد. همان الگویی که یک بار برای
+    // محدودیت نرخ گرفتیم — و دفاعی که شبیه خرابی باشد، در عمل خاموش
+    // است چون کسی به لاگ ۵۰۰ اعتماد نمی‌کند.
+    //
+    // ۴۰۹ است نه ۴۰۰: ورودی معتبر بود، ولی با وضعیت فعلی سیستم
+    // نمی‌خواند.
+    const dbError = err as { code?: string; message?: string };
+    if (dbError.code === "P0001") {
+      const rule = dbError.message ?? "قاعده سیستم این عملیات را رد کرد";
+      req.log.info({ correlationId, rule }, "قاعده دیتابیس درخواست را رد کرد");
+      return reply.code(409).send(body("rule_violation", rule, correlationId));
     }
 
     // خطاهایی که خودِ Fastify یا افزونه‌هایش وضعیت داده‌اند — محدودیت

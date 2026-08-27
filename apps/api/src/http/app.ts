@@ -12,6 +12,7 @@ import type { Db } from "../db/client.ts";
 import type { Config } from "../lib/config.ts";
 import { registerErrorHandler } from "./errors.ts";
 import { registerAuthRoutes } from "./auth-routes.ts";
+import { safeEqual } from "../auth/password.ts";
 
 declare module "fastify" {
   interface FastifyRequest {
@@ -19,8 +20,39 @@ declare module "fastify" {
   }
 }
 
+/** روش‌هایی که وضعیت را عوض نمی‌کنند و توکن CSRF نمی‌خواهند. */
+const SAFE_METHODS = new Set(["GET", "HEAD", "OPTIONS"]);
+
+/**
+ * مسیرهایی که از دفاع CSRF مستثنا هستند.
+ *
+ * فقط ورود — و دلیلش دو چیز است:
+ *
+ * ۱. **هیچ محافظتی اضافه نمی‌کرد.** کوکی نشست SameSite=Strict است، پس
+ *    یک درخواست بین‌سایتی اصلاً کوکی نمی‌فرستد و شرط CSRF هرگز فعال
+ *    نمی‌شد. یعنی این بررسی فقط روی درخواست‌های هم‌سایت اثر داشت.
+ *
+ * ۲. **یک تله می‌ساخت.** کاربری که کوکی نشستش مانده ولی کوکی CSRF را
+ *    از دست داده — پاک‌کردن مرورگر، یا نشستی از پیش از این Deploy —
+ *    دیگر هرگز نمی‌توانست وارد شود: هر تلاش ورود ۴۰۳ می‌گرفت و راه
+ *    خروجی نبود جز پاک‌کردن دستی کوکی. وسط شیفت روی تبلت صندوق، این
+ *    یعنی تماس با پشتیبانی.
+ *
+ * این در آزمایش زنده پیدا شد، نه در تست.
+ */
+const CSRF_EXEMPT_PATHS = new Set(["/auth/login"]);
+
 /** مسیرهایی که پیش از ورود هم باید کار کنند. */
-const PUBLIC_PATHS = new Set(["/health", "/auth/login", "/auth/logout", "/auth/unlock"]);
+const PUBLIC_PATHS = new Set([
+  "/health",
+  "/auth/login",
+  "/auth/logout",
+  // نشست قفل‌شده از session_from_token چیزی نمی‌گیرد، پس این دو مسیر
+  // نمی‌توانند پشت گیت نشست باشند. هر دو خودشان کوکی نشست را می‌خوانند
+  // و دفاع CSRF هم رویشان اعمال می‌شود.
+  "/auth/unlock",
+  "/auth/reauth",
+]);
 
 export interface AppDeps {
   db: Db;
@@ -76,7 +108,36 @@ export async function buildApp(deps: AppDeps): Promise<FastifyInstance> {
     const token = req.cookies[config.COOKIE_NAME];
     if (token) req.session = await auth.resolve(token);
 
+    // ── دفاع CSRF: Double-Submit ─────────────────────────────────────
+    // بند ۶ SECURITY.md دو لایه خواسته: SameSite=Strict **به‌علاوه**
+    // توکن Double-Submit. لایه اول از روز اول بود؛ این لایه دوم است.
+    //
+    // شرط بر «کوکی نشست همراه درخواست هست» گذاشته شده، نه بر «نشست حل
+    // شد» — چون نشست قفل‌شده حل نمی‌شود ولی /auth/unlock همچنان یک
+    // عملیات تغییردهنده وضعیت است و باید محافظت شود.
     const path = req.routeOptions.url ?? req.url.split("?")[0] ?? "";
+
+    if (token && !SAFE_METHODS.has(req.method) && !CSRF_EXEMPT_PATHS.has(path)) {
+      const cookieToken = req.cookies[config.CSRF_COOKIE_NAME];
+      const headerToken = req.headers["x-csrf-token"];
+      const ok =
+        typeof cookieToken === "string" &&
+        typeof headerToken === "string" &&
+        cookieToken.length > 0 &&
+        safeEqual(cookieToken, headerToken);
+
+      if (!ok) {
+        req.log.warn({ correlationId: req.id, path: req.url }, "توکن CSRF نامعتبر");
+        return reply.code(403).send({
+          error: {
+            code: "csrf_failed",
+            message: "توکن امنیتی درخواست نامعتبر است. صفحه را دوباره بارگذاری کنید.",
+            correlationId: req.id,
+          },
+        });
+      }
+    }
+
     if (PUBLIC_PATHS.has(path)) return;
     if (!req.session) {
       return reply.code(401).send({

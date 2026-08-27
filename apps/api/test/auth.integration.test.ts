@@ -31,6 +31,7 @@ describe("احراز هویت روی دیتابیس واقعی", { skip }, () =>
   let adminId: string;
   const suffix = `t${Date.now()}${Math.floor(Math.random() * 1000)}`;
   const username = `cashier_${suffix}`;
+  const adminName = `admin_${suffix}`;
   const fingerprint = `fp-${suffix}-device`;
   const PASSWORD = "رمز-درست-و-به‌قدر-کافی-بلند";
   // ثابت نام‌دار، نه رشته درون‌خطی: هوک pre-push الگوی
@@ -62,12 +63,12 @@ describe("احراز هویت روی دیتابیس واقعی", { skip }, () =>
     const a = await handle.db
       .insertInto("identity.app_user")
       .values({
-        username: `admin_${suffix}`,
+        username: adminName,
         full_name: "مدیر یکپارچه",
         password_hash: hash,
         is_active: true,
         mobile: null,
-        pin_hash: null,
+        pin_hash: await hashSecret("1379"),
         totp_secret: null,
       })
       .returning("id")
@@ -133,12 +134,19 @@ describe("احراز هویت روی دیتابیس واقعی", { skip }, () =>
       url: "/auth/login",
       payload: { username, password: PASSWORD, deviceFingerprint: fp },
     });
-    assert.deepEqual(r.json().device, { registered: true, approved: false });
+    assert.deepEqual(r.json().device, {
+      registered: true,
+      approved: false,
+      enrolled: false,
+      pinAvailable: false,
+    });
 
-    await sql`UPDATE identity.device SET is_approved = true, approved_by = ${adminId}::uuid,
-                approved_at = now() WHERE fingerprint = ${fp}`.execute(handle.db);
+    await sql`SELECT identity.approve_device(
+                (SELECT id FROM identity.device WHERE fingerprint = ${fp}),
+                ${adminId}::uuid)`.execute(handle.db);
     const after = await auth.login({ username, password: PASSWORD, deviceFingerprint: fp });
     assert.equal(after.device?.approved, true, "پس از تأیید مدیر باید true شود");
+    assert.ok(after.device?.issuedSecret, "و همان ورود باید راز ثبت‌نام بدهد");
 
     await auth.logout(s.token);
     await auth.logout(after.token);
@@ -201,26 +209,110 @@ describe("احراز هویت روی دیتابیس واقعی", { skip }, () =>
     await auth.logout(other.token);
   });
 
-  test("قفل صفحه و باز کردنش با PIN", async () => {
-    const s = await auth.login({ username, password: PASSWORD, deviceFingerprint: fingerprint });
+  test("PIN بدون راز ثبت‌نام دستگاه کار نمی‌کند", async () => {
+    // یافته بازبینی امنیتی، مورد ۳: هویت دستگاه فقط یک رشته بود که
+    // کلاینت می‌فرستاد. هر کسی که fingerprint یک تبلت تأییدشده را
+    // می‌دانست، می‌توانست نشستش را روی «دستگاه مورد اعتماد» بنشاند
+    // بدون اینکه فیزیکی به آن دسترسی داشته باشد.
+    const fp = `${fingerprint}-enroll`;
+    const s1 = await auth.login({ username, password: PASSWORD, deviceFingerprint: fp });
+    assert.equal(s1.device?.approved, false);
+    assert.equal(s1.device?.enrolled, false);
+    assert.equal(s1.device?.issuedSecret, undefined, "دستگاه تأییدنشده راز نمی‌گیرد");
 
-    // دستگاه هنوز تأیید نشده: PIN نباید کار کند
-    await auth.lock(s.token);
+    // تأیید مدیر — ولی هنوز ثبت‌نام نشده
+    await sql`SELECT identity.approve_device(
+                (SELECT id FROM identity.device WHERE fingerprint = ${fp}),
+                ${adminId}::uuid)`.execute(handle.db);
+
+    await auth.lock(s1.token);
     await assert.rejects(
-      () => auth.unlockWithPin(s.token, "4321", fingerprint),
-      /دستگاه تأیید نشده|مجاز نیست|ممکن نشد/,
+      () => auth.unlockWithPin(s1.token, "4321", fp, undefined),
+      /ثبت‌نام نشده/,
+      "تأیید به‌تنهایی نباید PIN را باز کند",
     );
 
-    await sql`UPDATE identity.device SET is_approved = true, approved_by = ${adminId}::uuid,
-                approved_at = now() WHERE fingerprint = ${fingerprint}`.execute(handle.db);
+    // ورود کامل بعدی راز را صادر می‌کند — و فقط همان یک بار
+    const s2 = await auth.login({ username, password: PASSWORD, deviceFingerprint: fp });
+    const secret = s2.device?.issuedSecret;
+    assert.ok(secret, "اولین ورود کامل پس از تأیید باید راز صادر کند");
+    assert.equal(s2.device?.enrolled, true);
 
-    assert.equal(await auth.resolve(s.token), null, "نشست قفل نباید حل شود");
-    await auth.unlockWithPin(s.token, "4321", fingerprint);
-    assert.equal((await auth.resolve(s.token))?.userId, userId);
+    const s3 = await auth.login({ username, password: PASSWORD, deviceFingerprint: fp });
+    assert.equal(s3.device?.issuedSecret, undefined, "راز فقط یک بار صادر می‌شود");
+    assert.equal(s3.device?.enrolled, true);
 
-    // PIN غلط
+    // راز غلط قبول نمی‌شود
+    await auth.lock(s3.token);
+    await assert.rejects(
+      () => auth.unlockWithPin(s3.token, "4321", fp, "راز-جعلی-و-به‌قدر-کافی-بلند"),
+      /مجاز نیست/,
+      "راز نادرست نباید قفل را باز کند",
+    );
+
+    // راز درست کار می‌کند
+    await auth.unlockWithPin(s3.token, "4321", fp, secret);
+    assert.equal((await auth.resolve(s3.token))?.userId, userId);
+
+    await auth.logout(s1.token);
+    await auth.logout(s2.token);
+    await auth.logout(s3.token);
+  });
+
+  test("نشستِ باز‌شده با PIN، عملیات حساس را باز نمی‌کند", async () => {
+    // یافته بازبینی امنیتی، مورد ۱: identity.can پارامتر p_via_pin
+    // داشت و تست هم داشت، ولی هیچ مسیر واقعی‌ای true نمی‌فرستاد —
+    // یعنی شرط چهارم دفاع PIN در سیستم در حال اجرا مرده بود.
+    const fp = `${fingerprint}-elev`;
+    await auth.login({ username: adminName, password: PASSWORD, deviceFingerprint: fp });
+    await sql`SELECT identity.approve_device(
+                (SELECT id FROM identity.device WHERE fingerprint = ${fp}),
+                ${adminId}::uuid)`.execute(handle.db);
+    const s = await auth.login({ username: adminName, password: PASSWORD, deviceFingerprint: fp });
+    const secret = s.device?.issuedSecret;
+    assert.ok(secret);
+
+    // نشست تازه با رمز: ارتقایافته
+    let live = await auth.resolve(s.token);
+    assert.equal(live?.pinUnlocked, false);
+    assert.equal(
+      (await can(handle.db, { userId: adminId, operation: "refund.cash", viaPin: live!.pinUnlocked }))
+        .verdict,
+      "allow",
+      "مدیر با احراز کامل باید بتواند",
+    );
+
+    // پس از باز شدن با PIN: همان مدیر، همان عملیات، ممنوع
     await auth.lock(s.token);
-    await assert.rejects(() => auth.unlockWithPin(s.token, "0000", fingerprint), /PIN اشتباه/);
+    await auth.unlockWithPin(s.token, "1379", fp, secret);
+    live = await auth.resolve(s.token);
+    assert.equal(live?.pinUnlocked, true, "نشست باید بداند با PIN باز شده");
+    assert.equal(
+      (await can(handle.db, { userId: adminId, operation: "refund.cash", viaPin: live!.pinUnlocked }))
+        .verdict,
+      "deny",
+      "همان مدیر از مسیر PIN نباید بتواند",
+    );
+    // ولی فروش عادی باز است
+    assert.equal(
+      (await can(handle.db, { userId: adminId, operation: "sale.create", viaPin: live!.pinUnlocked }))
+        .verdict,
+      "allow",
+    );
+
+    // احراز کامل مجدد نشست را ارتقا می‌دهد
+    await assert.rejects(() => auth.reauthenticate(s.token, WRONG), /نام کاربری یا رمز/);
+    live = await auth.resolve(s.token);
+    assert.equal(live?.pinUnlocked, true, "رمز غلط نباید ارتقا بدهد");
+
+    await auth.reauthenticate(s.token, PASSWORD);
+    live = await auth.resolve(s.token);
+    assert.equal(live?.pinUnlocked, false, "احراز کامل مجدد باید ارتقا بدهد");
+    assert.equal(
+      (await can(handle.db, { userId: adminId, operation: "refund.cash", viaPin: live!.pinUnlocked }))
+        .verdict,
+      "allow",
+    );
     await auth.logout(s.token);
   });
 
@@ -293,10 +385,20 @@ describe("احراز هویت روی دیتابیس واقعی", { skip }, () =>
     const anon = await app.inject({ method: "GET", url: "/auth/me" });
     assert.equal(anon.statusCode, 401);
 
+    // خروج یک عملیات تغییردهنده وضعیت است، پس توکن CSRF می‌خواهد
+    const csrf = login.cookies.find((c) => c.name === "labelmod_csrf");
+    assert.ok(csrf, "کوکی CSRF ست نشد");
+    // صفت HttpOnly اصلاً ست نمی‌شود (نه اینکه false باشد) — الگوی
+    // Double-Submit به کدِ صفحه نیاز دارد که مقدار را بخواند و در
+    // سرآیند برگرداند.
+    assert.ok(!csrf.httpOnly, "توکن CSRF باید برای کد صفحه خواندنی باشد");
+    assert.equal(cookie.httpOnly, true, "ولی توکن نشست هرگز خواندنی نیست");
+
     const out = await app.inject({
       method: "POST",
       url: "/auth/logout",
-      cookies: { labelmod_session: cookie.value },
+      cookies: { labelmod_session: cookie.value, labelmod_csrf: csrf.value },
+      headers: { "x-csrf-token": csrf.value },
     });
     assert.equal(out.statusCode, 200);
 
@@ -322,6 +424,118 @@ describe("احراز هویت روی دیتابیس واقعی", { skip }, () =>
     for (const leak of ["\\n    at ", "node_modules", "/src/", ".ts:", "stack"]) {
       assert.ok(!raw.includes(leak), `نشت جزئیات داخلی: ${leak}`);
     }
+  });
+
+  test("HTTP: درخواست تغییردهنده بدون توکن CSRF رد می‌شود", async () => {
+    // یافته بازبینی امنیتی، مورد ۴: بند ۶ SECURITY.md دو لایه خواسته —
+    // SameSite=Strict **به‌علاوه** توکن Double-Submit. لایه دوم فقط در
+    // یک کامنت ادعا شده بود.
+    const s = await auth.login({ username, password: PASSWORD, deviceFingerprint: fingerprint });
+    const csrfValue = "توکن-csrf-ساختگی-برای-تست";
+
+    const noHeader = await app.inject({
+      method: "POST",
+      url: "/auth/logout",
+      cookies: { labelmod_session: s.token, labelmod_csrf: csrfValue },
+    });
+    assert.equal(noHeader.statusCode, 403, "بدون سرآیند باید رد شود");
+    assert.equal(noHeader.json().error.code, "csrf_failed");
+
+    const wrongHeader = await app.inject({
+      method: "POST",
+      url: "/auth/logout",
+      cookies: { labelmod_session: s.token, labelmod_csrf: csrfValue },
+      headers: { "x-csrf-token": "چیز-دیگری" },
+    });
+    assert.equal(wrongHeader.statusCode, 403, "سرآیند ناهماهنگ باید رد شود");
+
+    // GET نیازی ندارد — وضعیت را عوض نمی‌کند
+    const read = await app.inject({
+      method: "GET",
+      url: "/auth/me",
+      cookies: { labelmod_session: s.token },
+    });
+    assert.equal(read.statusCode, 200, "GET نباید توکن CSRF بخواهد");
+
+    const ok = await app.inject({
+      method: "POST",
+      url: "/auth/logout",
+      cookies: { labelmod_session: s.token, labelmod_csrf: csrfValue },
+      headers: { "x-csrf-token": csrfValue },
+    });
+    assert.equal(ok.statusCode, 200);
+  });
+
+  test("ورود هرگز پشت دفاع CSRF گیر نمی‌کند", async () => {
+    // تله‌ای که در آزمایش زنده پیدا شد: نسخه اول، ورود را هم پشت CSRF
+    // می‌گذاشت. کاربری که کوکی نشستش مانده ولی کوکی CSRF را از دست
+    // داده بود، دیگر هرگز نمی‌توانست وارد شود — و راه خروجی جز
+    // پاک‌کردن دستی کوکی نداشت.
+    //
+    // آن بررسی هیچ محافظتی هم اضافه نمی‌کرد: با SameSite=Strict،
+    // درخواست بین‌سایتی اصلاً کوکی نمی‌فرستد.
+    const stale = await auth.login({ username, password: PASSWORD, deviceFingerprint: fingerprint });
+
+    const relogin = await app.inject({
+      method: "POST",
+      url: "/auth/login",
+      // کوکی نشست هست، کوکی و سرآیند CSRF نیست
+      cookies: { labelmod_session: stale.token },
+      payload: { username, password: PASSWORD, deviceFingerprint: fingerprint },
+    });
+    assert.equal(relogin.statusCode, 200, "ورود دوباره نباید ۴۰۳ بگیرد");
+    assert.ok(relogin.cookies.find((c) => c.name === "labelmod_csrf"), "و باید کوکی تازه بدهد");
+    await auth.logout(stale.token);
+  });
+
+  test("HTTP: نگهبان دیتابیس ۴۰۹ می‌دهد، نه ۵۰۰", async () => {
+    // در آزمایش زنده پیدا شد: راز جعلی دستگاه، unlock_session را با
+    // RAISE EXCEPTION رد می‌کرد (SQLSTATE P0001) و Error Handler آن را
+    // «خطای ناشناخته» می‌دید → ۵۰۰.
+    //
+    // همان الگوی محدودیت نرخ: دفاعی که شبیه خرابی سرور گزارش شود، در
+    // عمل خاموش است. و این برای هر تابع مالی آینده هم صدق می‌کند —
+    // apply_movement، post_entry، post_cheque_event همه P0001 می‌زنند.
+    const fp = `${fingerprint}-p0001`;
+    await auth.login({ username, password: PASSWORD, deviceFingerprint: fp });
+    await sql`SELECT identity.approve_device(
+                (SELECT id FROM identity.device WHERE fingerprint = ${fp}),
+                ${adminId}::uuid)`.execute(handle.db);
+    const s = await auth.login({ username, password: PASSWORD, deviceFingerprint: fp });
+    assert.ok(s.device?.issuedSecret);
+
+    await auth.lock(s.token);
+    const forged = await app.inject({
+      method: "POST",
+      url: "/auth/unlock",
+      cookies: {
+        labelmod_session: s.token,
+        labelmod_csrf: "csrf-value",
+        labelmod_device: "راز-جعلی-و-به‌قدر-کافی-بلند",
+      },
+      headers: { "x-csrf-token": "csrf-value" },
+      payload: { pin: "4321", deviceFingerprint: fp },
+    });
+    assert.notEqual(forged.statusCode, 500, "نباید ۵۰۰ بدهد");
+    assert.equal(forged.statusCode, 403, "راز جعلی باید ۴۰۳ روشن بگیرد");
+    assert.equal(forged.json().error.code, "pin_not_allowed");
+    assert.match(forged.json().error.message, /مجاز نیست/);
+
+    // و راز درست همچنان کار می‌کند
+    const ok = await app.inject({
+      method: "POST",
+      url: "/auth/unlock",
+      cookies: {
+        labelmod_session: s.token,
+        labelmod_csrf: "csrf-value",
+        labelmod_device: s.device.issuedSecret as string,
+      },
+      headers: { "x-csrf-token": "csrf-value" },
+      payload: { pin: "4321", deviceFingerprint: fp },
+    });
+    assert.equal(ok.statusCode, 200);
+    assert.equal(ok.json().elevated, false, "PIN نشست را ارتقا نمی‌دهد");
+    await auth.logout(s.token);
   });
 
   test("HTTP: محدودیت نرخ ۴۲۹ می‌دهد، نه ۵۰۰", async () => {
