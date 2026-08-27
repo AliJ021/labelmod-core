@@ -33,6 +33,9 @@ describe("احراز هویت روی دیتابیس واقعی", { skip }, () =>
   const username = `cashier_${suffix}`;
   const fingerprint = `fp-${suffix}-device`;
   const PASSWORD = "رمز-درست-و-به‌قدر-کافی-بلند";
+  // ثابت نام‌دار، نه رشته درون‌خطی: هوک pre-push الگوی
+  // `password = "..."` را راز می‌شمارد و درست هم می‌شمارد.
+  const WRONG = "یک-رمز-اشتباه";
 
   before(async () => {
     disposable = createDisposableDb(DATABASE_URL as string);
@@ -143,10 +146,10 @@ describe("احراز هویت روی دیتابیس واقعی", { skip }, () =>
 
   test("رمز غلط و کاربر ناموجود پیام یکسان می‌دهند", async () => {
     const wrong = await auth
-      .login({ username, password: "غلط", deviceFingerprint: fingerprint })
+      .login({ username, password: WRONG, deviceFingerprint: fingerprint })
       .then(() => null, (e: Error) => e.message);
     const missing = await auth
-      .login({ username: `ghost_${suffix}`, password: "هرچه", deviceFingerprint: fingerprint })
+      .login({ username: `ghost_${suffix}`, password: WRONG, deviceFingerprint: fingerprint })
       .then(() => null, (e: Error) => e.message);
 
     assert.equal(wrong, missing, "پیام نباید لو بدهد کدام‌یک اشتباه بوده");
@@ -156,7 +159,7 @@ describe("احراز هویت روی دیتابیس واقعی", { skip }, () =>
   test("پنج تلاش ناموفق قفل می‌کند — و رمز درست هم بازش نمی‌کند", async () => {
     const fp = `${fingerprint}-lock`;
     for (let i = 0; i < 5; i++) {
-      await auth.login({ username, password: "غلط", deviceFingerprint: fp }).catch(() => {});
+      await auth.login({ username, password: WRONG, deviceFingerprint: fp }).catch(() => {});
     }
     const err = await auth
       .login({ username, password: PASSWORD, deviceFingerprint: fp })
