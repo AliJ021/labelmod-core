@@ -72,7 +72,36 @@ INSERT INTO platform.setting (key, value, description, requires_approval) VALUES
  'اجازه خرج‌کردن چک دریافتی به تأمین‌کننده. برخی حسابداران آن را ممنوع می‌کنند چون مسئولیت ظهرنویسی روی ماست.', true),
 
 ('cheque.max_due_days', '180'::jsonb,
- 'حداکثر فاصله سررسید تا تاریخ صدور. چک با وعده بلندتر نیازمند تأیید مدیر است.', true)
+ 'حداکثر فاصله سررسید تا تاریخ صدور. چک با وعده بلندتر نیازمند تأیید مدیر است.', true),
+
+-- احراز هویت — بند ۱ SECURITY.md. این‌ها سقف‌اند، نه پیشنهاد.
+('auth.session_hours_staff', '12'::jsonb,
+ 'عمر نشست پرسنل به ساعت.', false),
+
+('auth.session_hours_customer', '720'::jsonb,
+ 'عمر نشست مشتری به ساعت (۳۰ روز)، با تمدید چرخشی.', false),
+
+('auth.max_failed_attempts', '5'::jsonb,
+ 'تعداد تلاش ناموفق پیش از قفل. روی «کاربر + دستگاه» شمرده می‌شود، نه فقط کاربر.', false),
+
+('auth.lockout_minutes', '15'::jsonb,
+ 'مدت قفل پس از عبور از سقف تلاش ناموفق.', false),
+
+('auth.min_password_length', '12'::jsonb,
+ 'حداقل طول رمز. قواعد پیچیدگی عمداً نیست — توصیه به‌روز خلافش است.', false),
+
+('auth.pin_length', '4'::jsonb,
+ 'طول PIN صندوق‌دار. PIN هرگز عملیات حساس را مجاز نمی‌کند؛ فقط قفل صفحه را باز می‌کند.', false),
+
+('auth.pin_forbidden_operations',
+ '["refund.cash","invoice.cancel","price.change","stock.adjust","period.close","period.reopen","user.manage","journal.manual","return.late"]'::jsonb,
+ 'عملیاتی که با PIN هرگز مجاز نیستند و احراز هویت کامل می‌خواهند — بند ۱ SECURITY.md.', true),
+
+('auth.attempt_retention_days', '180'::jsonb,
+ 'پنجره نگهداری تلاش‌های احراز هویت. تازه‌تر از این پاک نمی‌شود — ردّ حادثه باید بماند.', true),
+
+('auth.session_retention_days', '90'::jsonb,
+ 'مدت نگهداری نشست منقضی یا باطل‌شده پیش از پاکسازی.', false)
 
 -- DO NOTHING است، نه DO UPDATE: اگر حسابدار نرخ مالیات یا سقف تخفیف را
 -- تصویب و عوض کرده باشد، اجرای دوباره seed نباید آن را به پیش‌فرض

@@ -39,13 +39,27 @@ fi
 
 # ── ۲. فایل‌هایی که هرگز نباید کامیت شوند ──────────────────────────
 echo "→ بررسی فایل‌های ممنوع"
-BANNED=$(git ls-files | grep -E '(^|/)\.env$|(^|/)\.env\.(local|production|prod)$|\.pem$|\.key$|\.p12$|\.pfx$|(^|/)id_rsa|(^|/)\.npmrc$|\.dump$|\.sql\.gz$' || true)
+BANNED=$(git ls-files | grep -E '(^|/)\.env$|(^|/)\.env\.(local|production|prod)$|\.pem$|\.key$|\.p12$|\.pfx$|(^|/)id_rsa|\.dump$|\.sql\.gz$' || true)
 if [ -n "$BANNED" ]; then
   echo -e "${RED}✗ فایل ممنوع در مخزن:${NC}"
   echo "$BANNED" | sed 's/^/    /'
   FAIL=1
 else
   echo -e "  ${GRN}✓ پاک${NC}"
+fi
+
+# .npmrc پیش از این کاملاً ممنوع بود. ولی خطر واقعی، توکن داخل آن است
+# نه خود فایل — و تنظیمات Workspace (مثل خاموش‌کردن اسکریپت نصب) جای
+# دیگری ندارند. پس محتوا سنجیده می‌شود، نه نام فایل. این سخت‌گیرانه‌تر
+# است: توکنی که در فایلی با نام دیگر پنهان شود هم گرفته می‌شود.
+NPMRC_AUTH=$(git ls-files -- '*.npmrc' '.npmrc' 2>/dev/null | while read -r f; do
+  [ -f "$f" ] && grep -InE '_authToken|_auth[[:space:]]*=|_password|//[^[:space:]]+/:_' "$f" | sed "s|^|$f:|"
+done)
+if [ -n "$NPMRC_AUTH" ]; then
+  echo -e "${RED}✗ اطلاعات احراز هویت در .npmrc:${NC}"
+  echo "$NPMRC_AUTH" | sed 's/^/    /'
+  echo "  توکن رجیستری باید در محیط باشد، نه در مخزن."
+  FAIL=1
 fi
 
 # ── ۳. بیت اجرای اسکریپت‌ها ────────────────────────────────────────
@@ -76,6 +90,35 @@ if [ -n "${DATABASE_URL:-}" ]; then
 else
   echo -e "  ${YLW}⚠ DATABASE_URL ست نیست — تست‌ها اجرا نشدند${NC}"
   echo -e "  ${YLW}  برای این پروژه، Push بدون اجرای تست مالی توصیه نمی‌شود.${NC}"
+fi
+
+# ── ۵. لایه Node ───────────────────────────────────────────────────
+# فقط اگر وابستگی‌ها نصب‌اند. کلون تازه‌ای که هنوز pnpm install نزده،
+# نباید سر Push گیر کند — ولی باید بداند که این دروازه رد شد.
+if [ -f package.json ]; then
+  if [ -d node_modules ] && command -v pnpm >/dev/null 2>&1; then
+    echo "→ بررسی تایپ و تست لایه API"
+    if pnpm typecheck > /tmp/labelmod-node.log 2>&1 \
+       && pnpm test >> /tmp/labelmod-node.log 2>&1; then
+      echo -e "  ${GRN}✓ typecheck و تست پاس${NC}"
+    else
+      echo -e "${RED}✗ لایه API رد شد — Push متوقف شد${NC}"
+      tail -25 /tmp/labelmod-node.log | sed 's/^/    /'
+      FAIL=1
+    fi
+
+    # آسیب‌پذیری High همان چیزی است که CI رویش می‌شکند. بهتر است
+    # اینجا بفهمیم تا بعد از Push.
+    if ! pnpm audit --prod --audit-level high > /tmp/labelmod-audit.log 2>&1; then
+      echo -e "${RED}✗ آسیب‌پذیری High یا بالاتر در وابستگی‌ها${NC}"
+      grep -E 'Severity|vulnerabilities found' /tmp/labelmod-audit.log | sed 's/^/    /'
+      FAIL=1
+    else
+      echo -e "  ${GRN}✓ بدون آسیب‌پذیری High${NC}"
+    fi
+  else
+    echo -e "  ${YLW}⚠ node_modules نیست — لایه API بررسی نشد (pnpm install)${NC}"
+  fi
 fi
 
 echo "─────────────────────────"

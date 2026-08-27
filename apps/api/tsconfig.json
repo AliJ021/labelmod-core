@@ -1,0 +1,14 @@
+{
+  "extends": "../../tsconfig.base.json",
+  "compilerOptions": {
+    "rootDir": ".",
+    "outDir": "dist",
+    "types": ["node"],
+    // node --experimental-strip-types فایل‌ها را با پسوند .ts وارد می‌کند.
+    // tsc باید همان شکل import را بپذیرد، وگرنه کد اجراشدنی و کدِ
+    // تایپ‌شده دو چیز متفاوت می‌شوند.
+    "allowImportingTsExtensions": true,
+    "rewriteRelativeImportExtensions": true
+  },
+  "include": ["src/**/*.ts", "test/**/*.ts"]
+}

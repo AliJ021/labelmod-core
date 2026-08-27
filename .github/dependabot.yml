@@ -5,9 +5,8 @@
 # نمی‌گیرد. Dependabot این تناقض را حل می‌کند — SHA را به‌روز نگه می‌دارد
 # و هر تغییر از مسیر PR و تست‌های مالی رد می‌شود، نه مستقیم روی main.
 #
-# ⚠️ ورودی npm عمداً اینجا نیست: پوشه apps/ هنوز package.json ندارد و
-#    Dependabot برای مسیر خالی خطا می‌دهد. هم‌زمان با ساخت لایه API
-#    اضافه شود.
+# ورودی npm هم‌زمان با ساخت apps/api اضافه شد. تعداد کم وابستگی خودش
+# یک کنترل امنیتی است — ولی همان تعداد کم هم باید وصله بگیرد.
 
 version: 2
 
@@ -23,3 +22,22 @@ updates:
     labels:
       - dependencies
       - security
+
+  # وابستگی‌های Node — Workspace ریشه، تا هر دو apps/ دیده شوند
+  - package-ecosystem: npm
+    directory: /
+    schedule:
+      interval: weekly
+      day: saturday
+    open-pull-requests-limit: 5
+    commit-message:
+      prefix: "امنیت"
+    labels:
+      - dependencies
+      - security
+    # به‌روزرسانی امنیتی جدا از به‌روزرسانی معمول می‌آید، پس PR وصله
+    # امنیتی پشت PRهای نسخه معمولی صف نمی‌کشد.
+    groups:
+      types:
+        patterns:
+          - "@types/*"
