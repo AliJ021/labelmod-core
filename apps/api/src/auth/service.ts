@@ -88,16 +88,6 @@ export class AuthService {
       .where("username", "=", input.username)
       .executeTakeFirst();
 
-    // قفل پیش از تطبیق رمز سنجیده می‌شود: رمز درستِ یک حساب قفل هم
-    // نباید باز کند، وگرنه قفل فقط یک تأخیر است نه یک دفاع.
-    if (user && (await this.isLocked(user.id, deviceId, "password"))) {
-      await this.record("password", input, user.id, deviceId, false, "locked");
-      throw new AuthError(
-        "locked",
-        "این حساب موقتاً قفل است. چند دقیقه دیگر دوباره تلاش کنید.",
-      );
-    }
-
     // کاربر ناموجود هم همان هزینه Argon2id را می‌پردازد تا زمان پاسخ،
     // وجود یا نبود نام کاربری را لو ندهد.
     const ok = await verifySecret(user?.password_hash ?? null, input.password);
@@ -112,6 +102,26 @@ export class AuthService {
         !user ? "no_user" : !ok ? "bad_password" : "inactive",
       );
       throw new AuthError("bad_credentials", VAGUE);
+    }
+
+    // قفل *پس از* تطبیق رمز سنجیده می‌شود، نه پیش از آن.
+    //
+    // نسخه اول برعکس بود و یک اوراکل شمارش نام کاربری می‌ساخت: تلاش
+    // ششم برای کاربر موجود ۴۲۹ و «قفل است» می‌گرفت و برای نام ناموجود
+    // ۴۰۱ و «نام کاربری یا رمز اشتباه است» — با ۱۰ برابر اختلاف زمان،
+    // چون مسیر قفل اصلاً Argon2id را اجرا نمی‌کرد. و چون قفل روی
+    // «کاربر + دستگاه» است و fingerprint را خود مهاجم می‌فرستد، این
+    // شمارش کاملاً بی‌صدا بود: کاربر واقعی هیچ اختلالی نمی‌دید.
+    //
+    // حالا هر تلاش با رمز غلط — چه کاربر باشد چه نباشد — دقیقاً یک
+    // پاسخ و یک هزینه دارد. «قفل است» فقط به کسی گفته می‌شود که رمز
+    // درست را دارد، و قفل همچنان ورودش را می‌بندد.
+    if (await this.isLocked(user.id, deviceId, "password")) {
+      await this.record("password", input, user.id, deviceId, false, "locked");
+      throw new AuthError(
+        "locked",
+        "این حساب موقتاً قفل است. چند دقیقه دیگر دوباره تلاش کنید.",
+      );
     }
 
     await this.record("password", input, user.id, deviceId, true, null);

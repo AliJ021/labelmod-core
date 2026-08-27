@@ -156,6 +156,31 @@ describe("احراز هویت روی دیتابیس واقعی", { skip }, () =>
     assert.equal(wrong, "نام کاربری یا رمز اشتباه است");
   });
 
+  test("قفل، وجود نام کاربری را لو نمی‌دهد", async () => {
+    // اوراکل شمارش نام کاربری: نسخه اول قفل را *پیش از* تطبیق رمز
+    // می‌سنجید، پس تلاش ششم برای کاربر موجود «locked» می‌گرفت و برای
+    // نام ناموجود «bad_credentials» — با ۱۰ برابر اختلاف زمان، چون
+    // مسیر قفل اصلاً Argon2id را اجرا نمی‌کرد.
+    //
+    // و چون قفل روی «کاربر + دستگاه» است و fingerprint را خود مهاجم
+    // می‌فرستد، شمارش کاملاً بی‌صدا بود: کاربر واقعی هیچ اختلالی
+    // نمی‌دید.
+    const probe = async (name: string) => {
+      const fp = `enum-${name}-${Date.now()}`;
+      for (let i = 0; i < 5; i++) {
+        await auth.login({ username: name, password: WRONG, deviceFingerprint: fp }).catch(() => {});
+      }
+      return auth
+        .login({ username: name, password: WRONG, deviceFingerprint: fp })
+        .then(() => "ok", (e: { code?: string; message?: string }) => `${e.code}|${e.message}`);
+    };
+
+    const existing = await probe(username);
+    const missing = await probe(`ghost_${suffix}`);
+    assert.equal(existing, missing, "پاسخ کاربر موجود و ناموجود باید یکسان باشد");
+    assert.match(existing, /^bad_credentials\|/);
+  });
+
   test("پنج تلاش ناموفق قفل می‌کند — و رمز درست هم بازش نمی‌کند", async () => {
     const fp = `${fingerprint}-lock`;
     for (let i = 0; i < 5; i++) {
