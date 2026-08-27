@@ -140,7 +140,7 @@ db/migrations/  اسکیما و توابع — SQL خام، شماره‌دار�
 db/seed/        کدینگ حساب، قواعد ثبت، تنظیمات، داده مرجع
 db/test/        تست‌های مالی — در CI و در pre-push اجرا می‌شوند
 docs/           ADR-001 (Stack) · ADR-002 (طراحی) · ADR-003 (دوره ثبت)
-                ADR-004 (چک) · SECURITY.md
+                ADR-004 (چک) · ADR-005 (اعتماد دستگاه) · SECURITY.md
 ops/            db.sh · install-hooks.sh · hooks/
 apps/api/       Fastify + Kysely — احراز هویت، نشست، مجوز
 apps/           (هنوز ساخته نشده) web · worker
@@ -199,6 +199,7 @@ Microservice · Redis · حالت آفلاین کامل · Windows Bridge و PC-
 - @docs/ADR-002-design-language.md — Liquid Glass ناحیه‌بندی‌شده + پالت قفل‌شده
 - `docs/ADR-003-posting-batch.md` — چرا دوره ثبت از شیفت صندوق جداست
 - `docs/ADR-004-cheques.md` — چرا چک یک سند مستقل است، نه یک روش پرداخت
+- `docs/ADR-005-device-trust.md` — اعتماد دستگاه، ارتقای نشست و CSRF
 - @docs/SECURITY.md — Argon2id، نشست مات، WebAuthn، زنجیره تأمین
 - `docs/design-proof.html` — نمونه بصری داشبورد و صندوق
 
