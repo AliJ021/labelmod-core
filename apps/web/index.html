@@ -1,0 +1,31 @@
+<!doctype html>
+<html lang="fa" dir="rtl">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+    <title>لیبل مد</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      rel="stylesheet"
+      href="https://fonts.googleapis.com/css2?family=Vazirmatn:wght@300;400;500;600;700;800&family=IBM+Plex+Mono:wght@400;500&display=swap"
+    />
+    <script>
+      // تم و حالت عملکرد **پیش از اولین رنگ** اعمال می‌شوند.
+      // بدون این، صفحه یک لحظه با تم غلط بالا می‌آید و بعد می‌پرد —
+      // چیزی که روی تبلت صندوق در تاریکی، آزاردهنده است.
+      try {
+        var t = localStorage.getItem("lm.theme");
+        if (t === "light" || t === "dark")
+          document.documentElement.setAttribute("data-theme", t);
+        var p = localStorage.getItem("lm.perf");
+        if (p === "on" || p === "off")
+          document.documentElement.setAttribute("data-perf", p);
+      } catch (_) {}
+    </script>
+  </head>
+  <body>
+    <div id="root"></div>
+    <script type="module" src="/src/main.tsx"></script>
+  </body>
+</html>

@@ -1,0 +1,387 @@
+/* چیدمان — همه فاصله‌ها منطقی (inline-start/end)، پس RTL خودبه‌خود درست است. */
+
+.stack {
+  display: flex;
+  flex-direction: column;
+}
+
+.row {
+  display: flex;
+  align-items: center;
+  gap: var(--s-3);
+}
+
+.between {
+  justify-content: space-between;
+}
+
+.pad {
+  padding: var(--s-5);
+  border-radius: var(--r-inner, var(--r-lg));
+}
+
+.muted {
+  color: var(--ink-2);
+}
+
+.small {
+  font-size: 0.86rem;
+}
+
+/* ── نوار بالا ─────────────────────────────────────────────────── */
+.topbar {
+  display: flex;
+  align-items: center;
+  gap: var(--s-4);
+  padding: var(--s-3) var(--s-4);
+  margin-bottom: var(--s-5);
+  flex-wrap: wrap;
+  position: sticky;
+  top: var(--s-2);
+  z-index: 10;
+}
+
+.brand {
+  font-weight: 800;
+  letter-spacing: 0.02em;
+}
+
+.zones {
+  display: flex;
+  gap: var(--s-1);
+  margin-inline-start: auto;
+}
+
+.zones button,
+.tool {
+  min-height: var(--touch);
+  padding: 0 var(--s-4);
+  border: 0;
+  border-radius: var(--r-sm);
+  background: transparent;
+  color: var(--ink-2);
+  font-weight: 600;
+  transition: background var(--t-fast) var(--ease-out),
+    color var(--t-fast) var(--ease-out);
+}
+
+.zones button:hover,
+.tool:hover {
+  background: color-mix(in srgb, var(--ink) 7%, transparent);
+  color: var(--ink);
+}
+
+.zones button.on {
+  background: var(--accent);
+  color: var(--accent-ink);
+}
+
+.tools {
+  display: flex;
+  gap: var(--s-1);
+}
+
+.tool {
+  font-size: 0.84rem;
+  font-weight: 500;
+}
+
+.zone-note {
+  margin: var(--s-5) 0 0;
+  text-align: center;
+  color: var(--ink-3);
+  font-size: 0.86rem;
+}
+
+/* ── داشبورد ───────────────────────────────────────────────────── */
+.kpis {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+  gap: var(--s-3);
+  margin-top: var(--s-5);
+}
+
+.kpi {
+  display: flex;
+  flex-direction: column;
+  gap: var(--s-1);
+  padding: var(--s-4);
+}
+
+.kpi-value {
+  font-size: clamp(1.35rem, 1rem + 1.6vw, 2rem);
+  font-weight: 700;
+  line-height: 1.2;
+}
+
+.two {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+  gap: var(--s-5);
+  /* هر کارت به اندازه محتوای خودش. بدون این، کارت کوتاه‌تر کشیده
+     می‌شود و بالای نمودار یک ناحیه سفید خالی می‌ماند. */
+  align-items: start;
+}
+
+.bars {
+  display: flex;
+  align-items: flex-end;
+  gap: var(--s-2);
+  /* ارتفاع **قطعی** لازم است: فرزندها درصدی‌اند و درصد بدون ارتفاع
+     مشخصِ والد به صفر می‌رسد. یک بار با `flex:1` امتحان شد و میله‌ها
+     کاملاً ناپدید شدند. */
+  height: 130px;
+  width: 100%;
+}
+
+.bar {
+  flex: 1;
+  min-height: 4px;
+  border-radius: var(--r-xs) var(--r-xs) 2px 2px;
+  background: linear-gradient(
+    to top,
+    var(--chart-1),
+    color-mix(in srgb, var(--chart-1) 55%, transparent)
+  );
+  /* انیمیشن روی transform، نه height — قاعده design.md */
+  transform-origin: bottom;
+  animation: grow var(--t-slow) var(--ease-out) both;
+}
+
+@keyframes grow {
+  from {
+    transform: scaleY(0);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .bar {
+    animation: none;
+  }
+}
+
+.tasks {
+  list-style: none;
+  margin: var(--s-4) 0 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: var(--s-2);
+}
+
+.tasks li {
+  display: flex;
+  align-items: center;
+  gap: var(--s-2);
+  padding: var(--s-2) 0;
+  border-bottom: 1px solid var(--rule);
+}
+
+.tasks li:last-child {
+  border-bottom: 0;
+}
+
+.tasks span {
+  flex: 1;
+}
+
+.link {
+  border: 0;
+  background: none;
+  color: var(--accent);
+  font-weight: 600;
+  min-height: var(--touch);
+  padding-inline: var(--s-2);
+  border-radius: var(--r-xs);
+}
+
+.pill {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--s-1);
+  padding: var(--s-1) var(--s-3);
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--ink) 8%, transparent);
+  font-size: 0.84rem;
+  font-weight: 600;
+}
+
+/* رنگ + شکل + متن. هیچ‌کدام به‌تنهایی حامل معنا نیست. */
+.dot {
+  font-size: 0.7em;
+  line-height: 1;
+}
+.dot--good { color: var(--good); }
+.dot--warn { color: var(--warn); }
+.dot--crit { color: var(--crit); }
+
+/* ── صندوق ─────────────────────────────────────────────────────── */
+.pos-bar {
+  display: flex;
+  align-items: center;
+  gap: var(--s-3);
+  padding: var(--s-3);
+  margin-bottom: var(--s-4);
+}
+
+.scan {
+  flex: 1;
+}
+
+.scan input {
+  width: 100%;
+  min-height: var(--touch-lg);
+  padding: 0 var(--s-4);
+  border: 1px solid var(--rule-2);
+  border-radius: var(--r-sm);
+  /* ورودی اسکن مات است، حتی داخل نوار شیشه‌ای: متنی که تایپ می‌شود
+     باید پرتضاد باشد. */
+  background: var(--surface-solid);
+  color: var(--ink);
+  font: inherit;
+  font-size: 1.05rem;
+}
+
+.pos-body {
+  display: grid;
+  grid-template-columns: 1fr;
+  gap: var(--s-4);
+}
+
+@media (min-width: 900px) {
+  .pos-body {
+    grid-template-columns: 1fr 320px;
+  }
+}
+
+.cart,
+.pay {
+  padding: var(--s-4);
+}
+
+.lines {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+
+.lines li {
+  display: flex;
+  align-items: center;
+  gap: var(--s-3);
+  padding: var(--s-3) 0;
+  border-bottom: 1px solid var(--rule);
+}
+
+.lines li:last-child {
+  border-bottom: 0;
+}
+
+.line-name {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+}
+
+.line-total {
+  font-weight: 700;
+  font-size: 1.05rem;
+}
+
+.qty {
+  display: flex;
+  align-items: center;
+  gap: var(--s-1);
+}
+
+.qty button {
+  /* هدف لمسی ۴۴ پیکسل. زیر این، صندوق‌دار اشتباه می‌زند. */
+  width: var(--touch);
+  height: var(--touch);
+  border: 1px solid var(--rule-2);
+  border-radius: var(--r-sm);
+  background: var(--surface-solid-2);
+  font-size: 1.2rem;
+  font-weight: 700;
+  transition: transform var(--t-fast) var(--ease-out);
+}
+
+.qty button:active {
+  transform: scale(0.94);
+}
+
+.qty > span {
+  min-width: 2.5ch;
+  text-align: center;
+  font-weight: 700;
+}
+
+.empty {
+  color: var(--ink-3);
+  text-align: center;
+  padding: var(--s-6) 0;
+}
+
+.pay {
+  display: flex;
+  flex-direction: column;
+  gap: var(--s-2);
+  align-self: start;
+}
+
+.total {
+  display: flex;
+  flex-direction: column;
+  padding-bottom: var(--s-3);
+  margin-bottom: var(--s-2);
+  border-bottom: 1px solid var(--rule-2);
+}
+
+.total-value {
+  font-size: clamp(1.6rem, 1.2rem + 2vw, 2.4rem);
+  font-weight: 800;
+  line-height: 1.15;
+}
+
+.btn {
+  min-height: var(--touch-lg);
+  border: 1px solid var(--rule-2);
+  border-radius: var(--r-sm);
+  background: var(--surface-solid-2);
+  color: var(--ink);
+  font-weight: 700;
+  font-size: 1rem;
+  transition: transform var(--t-fast) var(--ease-out),
+    filter var(--t-fast) var(--ease-out);
+}
+
+.btn:active {
+  transform: scale(0.985);
+}
+
+.btn--primary {
+  background: var(--accent);
+  color: var(--accent-ink);
+  border-color: transparent;
+}
+
+.btn--primary:hover {
+  filter: brightness(1.06);
+}
+
+.btn--quiet {
+  background: transparent;
+  color: var(--ink-2);
+  border-color: transparent;
+  min-height: var(--touch);
+  font-weight: 500;
+}
+
+/* پنل نمودار: مات، حتی داخل کارت شیشه‌ای.
+   رنگ نمودار روی شیشه به ۳:۱ نمی‌رسد — سنجیده شده در palette.test.ts. */
+.chart-panel {
+  margin-top: var(--s-4);
+  padding: var(--s-4) var(--s-3) var(--s-3);
+  border-radius: var(--r-inner, var(--r-md));
+}
