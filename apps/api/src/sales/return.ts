@@ -1,0 +1,428 @@
+/**
+ * برگشت از فروش.
+ *
+ * تمام منطق مالی در `sales.post_return` است: بهای بازگشت از Snapshot
+ * همان فروش (نه میانگین جاری انبار)، ترتیب تسویه بازپرداخت، و سقف
+ * «بیش از پول واقعاً دریافت‌شده پس داده نمی‌شود».
+ *
+ * این لایه چهار چیز اضافه می‌کند که دیتابیس نمی‌داند:
+ *   ۱. مهلت مرجوعی — `return.same_day` یا `return.late`
+ *   ۲. مجوز بازپرداخت نقدی — `refund.cash`
+ *   ۳. علت مرجوعی از فهرست بسته `return.reason_codes`
+ *   ۴. بازپرداخت نقدی باید به شیفت باز همان کاربر بچسبد
+ *
+ * ⚠️ برگ مرجوعی **یک‌جا** ساخته می‌شود، نه مثل سبد قدم‌به‌قدم. مرجوعی
+ *    یک تصمیم است که در لحظه گرفته می‌شود؛ سبد نیست.
+ */
+import { sql } from "kysely";
+import type { Transaction } from "kysely";
+import type { Db } from "../db/client.ts";
+import type { Database } from "../db/types.ts";
+import { parseMoney, serializeMoney } from "../lib/money.ts";
+import { setActor } from "../lib/idempotency.ts";
+
+export class ReturnError extends Error {
+  readonly statusCode: number;
+  readonly code: string;
+
+  constructor(code: string, message: string, statusCode = 409) {
+    super(message);
+    this.name = "ReturnError";
+    this.code = code;
+    this.statusCode = statusCode;
+  }
+}
+
+export interface ReturnLineInput {
+  invoiceLineId: string;
+  qty: string;
+  restock?: boolean | undefined;
+  condition?: "sellable" | "defective" | undefined;
+}
+
+export interface SaleReturn {
+  id: string;
+  number: string | null;
+  invoiceId: string;
+  branchId: string;
+  warehouseId: string;
+  shiftId: string | null;
+  status: string;
+  reasonCode: string;
+  reasonNote: string | null;
+  netAmount: bigint;
+  taxAmount: bigint;
+  refundAmount: bigint;
+  refundMethod: string | null;
+  receivableApplied: bigint;
+  creditApplied: bigint;
+  cogsAmount: bigint;
+  occurredAt: Date;
+  lines: Array<{
+    id: string;
+    invoiceLineId: string;
+    qty: string;
+    restock: boolean;
+    condition: string;
+    netAmount: bigint;
+  }>;
+}
+
+/** یک سطر فاکتور، با آنچه هنوز قابل برگشت است. */
+export interface ReturnableLine {
+  invoiceLineId: string;
+  variationId: string;
+  soldQty: string;
+  returnedQty: string;
+  remainingQty: string;
+  unitPrice: bigint;
+  netAmount: bigint;
+}
+
+export class ReturnService {
+  readonly #db: Db;
+
+  constructor(db: Db) {
+    this.#db = db;
+  }
+
+  async byId(returnId: string): Promise<SaleReturn | null> {
+    const r = await this.#db
+      .selectFrom("sales.sale_return")
+      .selectAll()
+      .where("id", "=", returnId)
+      .executeTakeFirst();
+    if (!r) return null;
+
+    const lines = await this.#db
+      .selectFrom("sales.sale_return_line")
+      .select(["id", "invoice_line_id", "qty", "restock", "condition", "net_amount"])
+      .where("return_id", "=", returnId)
+      .execute();
+
+    return {
+      id: r.id,
+      number: r.number,
+      invoiceId: r.invoice_id,
+      branchId: r.branch_id,
+      warehouseId: r.warehouse_id,
+      shiftId: r.shift_id,
+      status: r.status,
+      reasonCode: r.reason_code,
+      reasonNote: r.reason_note,
+      netAmount: parseMoney(r.net_amount),
+      taxAmount: parseMoney(r.tax_amount),
+      refundAmount: parseMoney(r.refund_amount),
+      refundMethod: r.refund_method,
+      receivableApplied: parseMoney(r.receivable_applied),
+      creditApplied: parseMoney(r.credit_applied),
+      cogsAmount: parseMoney(r.cogs_amount),
+      occurredAt: r.occurred_at,
+      lines: lines.map((l) => ({
+        id: l.id,
+        invoiceLineId: l.invoice_line_id,
+        qty: l.qty,
+        restock: l.restock,
+        condition: l.condition,
+        netAmount: parseMoney(l.net_amount),
+      })),
+    };
+  }
+
+  /**
+   * آنچه از یک فاکتور هنوز قابل برگشت است.
+   *
+   * صندوق‌دار پیش از زدن مرجوعی باید بداند کدام قلم چقدر باقی مانده،
+   * وگرنه فقط `post_return` سر خط آخر خطا می‌دهد و کل برگ رد می‌شود.
+   */
+  async returnable(invoiceId: string): Promise<ReturnableLine[]> {
+    const rows = await this.#db
+      .selectFrom("sales.invoice_line")
+      .select([
+        "id",
+        "variation_id",
+        "qty",
+        "returned_qty",
+        "unit_price",
+        "net_amount",
+      ])
+      .where("invoice_id", "=", invoiceId)
+      .execute();
+
+    return rows.map((l) => ({
+      invoiceLineId: l.id,
+      variationId: l.variation_id,
+      soldQty: l.qty,
+      returnedQty: l.returned_qty,
+      remainingQty: String(Number(l.qty) - Number(l.returned_qty)),
+      unitPrice: parseMoney(l.unit_price),
+      netAmount: parseMoney(l.net_amount),
+    }));
+  }
+
+  /**
+   * علت مرجوعی از فهرست بسته `return.reason_codes` خوانده می‌شود.
+   *
+   * فهرست باز یعنی «سایر» — و «سایر» یعنی هیچ‌وقت نمی‌فهمیم کالا چرا
+   * برگشت خورده. تصمیم داده است نه کد: تغییر فهرست یک `UPDATE` است.
+   */
+  async assertReasonCode(code: string): Promise<void> {
+    const row = await this.#db
+      .selectFrom("platform.setting")
+      .select("value")
+      .where("key", "=", "return.reason_codes")
+      .executeTakeFirst();
+
+    const list = Array.isArray(row?.value) ? (row.value as string[]) : [];
+    if (list.length > 0 && !list.includes(code)) {
+      throw new ReturnError(
+        "bad_reason_code",
+        `علت «${code}» در فهرست مجاز نیست. علت‌های مجاز: ${list.join("، ")}`,
+        422,
+      );
+    }
+  }
+
+  /** روش بازپرداخت باید یک روش پرداخت فعال باشد. */
+  async assertRefundMethod(code: string): Promise<{ kind: string }> {
+    const row = await this.#db
+      .selectFrom("treasury.payment_method")
+      .select(["kind", "is_active"])
+      .where("code", "=", code)
+      .executeTakeFirst();
+
+    if (!row || !row.is_active) {
+      throw new ReturnError("bad_refund_method", `روش بازپرداخت «${code}» فعال نیست`, 422);
+    }
+    // نسیه و امتیاز، بازپرداخت نیستند — تسویه‌اند. اگر به‌عنوان روش
+    // بازپرداخت پذیرفته شوند، `post_return` یک `treasury.payment` نقدی
+    // به نامشان می‌سازد و پولی که هرگز از کشو خارج نشده، خارج‌شده
+    // ثبت می‌شود.
+    if (row.kind === "credit" || row.kind === "points") {
+      throw new ReturnError(
+        "bad_refund_method",
+        `«${code}» روش بازپرداخت نیست. مازاد ارزش کالا خودش به بدهی یا اعتبار مشتری می‌نشیند.`,
+        422,
+      );
+    }
+    return { kind: row.kind };
+  }
+
+  /** چند روز از نهایی‌شدن فاکتور گذشته، و آیا از مهلت گذشته است. */
+  async returnWindow(invoiceId: string): Promise<{ daysSince: number; late: boolean }> {
+    const res = await sql<{ days: number; window_days: number }>`
+      SELECT
+        floor(extract(epoch FROM (now() - coalesce(i.finalized_at, i.occurred_at))) / 86400)::int
+          AS days,
+        coalesce((SELECT (value #>> '{}')::int FROM platform.setting
+                   WHERE key = 'return.window_days'), 7) AS window_days
+        FROM sales.invoice i WHERE i.id = ${invoiceId}::uuid
+    `.execute(this.#db);
+
+    const r = res.rows[0];
+    if (!r) throw new ReturnError("invoice_not_found", "فاکتور یافت نشد", 404);
+    return { daysSince: r.days, late: r.days > r.window_days };
+  }
+
+  async createDraft(input: {
+    invoiceId: string;
+    reasonCode: string;
+    reasonNote?: string | undefined;
+    refundAmount: bigint;
+    refundMethod?: string | undefined;
+    shiftId?: string | undefined;
+    lines: ReturnLineInput[];
+    actorId: string;
+  }): Promise<SaleReturn> {
+    if (input.lines.length === 0) {
+      throw new ReturnError("no_lines", "برگ مرجوعی بدون قلم ساخته نمی‌شود", 400);
+    }
+    if (input.refundAmount < 0n) {
+      throw new ReturnError("bad_refund", "مبلغ بازپرداخت منفی نمی‌شود", 400);
+    }
+    await this.assertReasonCode(input.reasonCode);
+
+    const inv = await this.#db
+      .selectFrom("sales.invoice")
+      .select(["id", "branch_id", "warehouse_id", "status"])
+      .where("id", "=", input.invoiceId)
+      .executeTakeFirst();
+    if (!inv) throw new ReturnError("invoice_not_found", "فاکتور یافت نشد", 404);
+    if (!["finalized", "paid", "partially_returned"].includes(inv.status)) {
+      throw new ReturnError(
+        "invoice_not_returnable",
+        `فاکتور در وضعیت «${inv.status}» قابل مرجوعی نیست`,
+      );
+    }
+
+    // هر سطر باید واقعاً از همین فاکتور باشد. بدون این، یک درخواست
+    // دستکاری‌شده می‌توانست سطر فاکتور دیگری را مرجوع کند — و
+    // `post_return` هم جلویش را نمی‌گرفت، چون خودش سطرها را از
+    // `sale_return_line` می‌خواند نه از فاکتور.
+    const validLines = await this.#db
+      .selectFrom("sales.invoice_line")
+      .select("id")
+      .where("invoice_id", "=", input.invoiceId)
+      .execute();
+    const valid = new Set(validLines.map((l) => l.id));
+    const seen = new Set<string>();
+    for (const l of input.lines) {
+      if (!valid.has(l.invoiceLineId)) {
+        throw new ReturnError(
+          "line_not_in_invoice",
+          "یکی از سطرهای مرجوعی به این فاکتور تعلق ندارد",
+          422,
+        );
+      }
+      // دو سطر برای یک قلم، سقف «بیش از باقی‌مانده» را دور می‌زد:
+      // `post_return` هر سطر را جدا با `returned_qty` می‌سنجد و
+      // `returned_qty` تا پایان حلقه به‌روز نشده است.
+      if (seen.has(l.invoiceLineId)) {
+        throw new ReturnError(
+          "duplicate_line",
+          "یک قلم فاکتور دو بار در برگ مرجوعی آمده است",
+          422,
+        );
+      }
+      seen.add(l.invoiceLineId);
+      if (!(Number(l.qty) > 0)) {
+        throw new ReturnError("bad_qty", "تعداد مرجوعی باید بزرگ‌تر از صفر باشد", 400);
+      }
+    }
+
+    const id = await this.#db.transaction().execute(async (trx) => {
+      await setActor(trx, input.actorId);
+      const r = await trx
+        .insertInto("sales.sale_return")
+        .values({
+          branch_id: inv.branch_id,
+          invoice_id: input.invoiceId,
+          warehouse_id: inv.warehouse_id,
+          shift_id: input.shiftId ?? null,
+          kind: "return",
+          net_amount: "0",
+          tax_amount: "0",
+          refund_amount: serializeMoney(input.refundAmount),
+          cogs_amount: "0",
+          reason_code: input.reasonCode,
+          reason_note: input.reasonNote ?? null,
+          status: "draft",
+          created_by: input.actorId,
+          approved_by: null,
+          refund_method: input.refundMethod ?? null,
+          receivable_applied: "0",
+          credit_applied: "0",
+          number: null,
+        })
+        .returning("id")
+        .executeTakeFirstOrThrow();
+
+      for (const l of input.lines) {
+        await trx
+          .insertInto("sales.sale_return_line")
+          .values({
+            return_id: r.id,
+            invoice_line_id: l.invoiceLineId,
+            qty: l.qty,
+            // این پنج عدد را post_return از Snapshot فروش بازمی‌نویسد؛
+            // اینجا فقط جای خالی NOT NULL پر می‌شود.
+            unit_price: "0",
+            net_amount: "0",
+            tax_amount: "0",
+            unit_cost: "0",
+            cogs_amount: "0",
+            restock: l.restock ?? true,
+            condition: l.condition ?? "sellable",
+          })
+          .execute();
+      }
+      return r.id;
+    });
+
+    return (await this.byId(id)) as SaleReturn;
+  }
+
+  /**
+   * ثبت مرجوعی — کالا به انبار برمی‌گردد و سند معکوس زده می‌شود.
+   *
+   * `trx` از بیرون می‌آید تا با Inbox در یک تراکنش بنشیند.
+   */
+  async postIn(
+    trx: Transaction<Database>,
+    returnId: string,
+    actorId: string,
+  ): Promise<string> {
+    await setActor(trx, actorId);
+    const r = await sql<{ post_return: string }>`
+      SELECT sales.post_return(${returnId}::uuid, ${actorId}::uuid) AS post_return
+    `.execute(trx);
+    const number = r.rows[0]?.post_return;
+    if (!number) throw new ReturnError("post_failed", "ثبت مرجوعی ناموفق بود", 500);
+    return number;
+  }
+
+  /** ابطال برگ پیش‌نویس — تنها وضعیتی که برگشت‌پذیر است. */
+  async cancelDraft(returnId: string, actorId: string): Promise<SaleReturn> {
+    const r = await this.byId(returnId);
+    if (!r) throw new ReturnError("return_not_found", "برگ مرجوعی یافت نشد", 404);
+    if (r.status !== "draft") {
+      throw new ReturnError(
+        "return_not_draft",
+        `برگ مرجوعی در وضعیت «${r.status}» باطل نمی‌شود`,
+      );
+    }
+    await this.#db.transaction().execute(async (trx) => {
+      await setActor(trx, actorId);
+      await trx
+        .updateTable("sales.sale_return")
+        .set({ status: "cancelled" })
+        .where("id", "=", returnId)
+        .where("status", "=", "draft")
+        .execute();
+    });
+    return (await this.byId(returnId)) as SaleReturn;
+  }
+}
+
+/** شکل JSON — پول همیشه رشته. */
+export function returnToJson(r: SaleReturn) {
+  return {
+    id: r.id,
+    number: r.number,
+    invoiceId: r.invoiceId,
+    branchId: r.branchId,
+    warehouseId: r.warehouseId,
+    shiftId: r.shiftId,
+    status: r.status,
+    reasonCode: r.reasonCode,
+    reasonNote: r.reasonNote,
+    netAmount: serializeMoney(r.netAmount),
+    taxAmount: serializeMoney(r.taxAmount),
+    refundAmount: serializeMoney(r.refundAmount),
+    refundMethod: r.refundMethod,
+    receivableApplied: serializeMoney(r.receivableApplied),
+    creditApplied: serializeMoney(r.creditApplied),
+    cogsAmount: serializeMoney(r.cogsAmount),
+    occurredAt: r.occurredAt.toISOString(),
+    lines: r.lines.map((l) => ({
+      id: l.id,
+      invoiceLineId: l.invoiceLineId,
+      qty: l.qty,
+      restock: l.restock,
+      condition: l.condition,
+      netAmount: serializeMoney(l.netAmount),
+    })),
+  };
+}
+
+export function returnableToJson(lines: ReturnableLine[]) {
+  return lines.map((l) => ({
+    invoiceLineId: l.invoiceLineId,
+    variationId: l.variationId,
+    soldQty: l.soldQty,
+    returnedQty: l.returnedQty,
+    remainingQty: l.remainingQty,
+    unitPrice: serializeMoney(l.unitPrice),
+    netAmount: serializeMoney(l.netAmount),
+  }));
+}
