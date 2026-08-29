@@ -119,7 +119,41 @@ INSERT INTO identity.permission_rule
 ('admin','period.reopen',          true,  NULL,   NULL,  NULL),
 ('admin','user.manage',            true,  NULL,   NULL,  NULL),
 ('admin','deadletter.replay',      true,  NULL,   NULL,  NULL),
-('admin','cost.view',              true,  NULL,   NULL,  NULL)
+('admin','cost.view',              true,  NULL,   NULL,  NULL),
+
+-- هفت ردیفی که در فهرست دستیِ بالا جا افتاده بودند و شکافشان فقط با
+-- ساخته‌شدن مسیر مرجوعی معلوم شد. سه‌تایشان **ناسازگار** بودند، نه فقط
+-- ناقص — مدیر عملیات سخت‌تر را داشت و آسان‌تر را نه:
+--
+--   return.same_day   — مدیر «مرجوعی دیرهنگام» را داشت ولی مرجوعی
+--                       همان‌روز را نه. یعنی مرجوعی روز اول رد می‌شد و
+--                       روز هشتم قبول.
+--   sale.discount_high— مدیر تخفیف عادی را داشت ولی پله بالاتر را نه،
+--                       در حالی که همان پله برای صندوق‌دار باز است.
+--   shift.close       — مدیر دوره ثبت را می‌بندد ولی کشوی صندوق را نه.
+--                       صندوق‌داری که بدون بستن شیفت رفته، در فروشگاهی
+--                       که سرپرست ندارد، هیچ‌کس نمی‌توانست شیفتش را
+--                       ببندد.
+--
+-- و یکی از آن‌ها را **هیچ نقشی** نداشت:
+--
+--   settings.security — حسابدار صریحاً ممنوع بود و کسی مجاز نبود.
+--                       یعنی تنظیمات امنیتی از مسیر API تغییرناپذیر
+--                       بودند؛ عملیاتی که هیچ‌کس نمی‌تواند انجامش دهد،
+--                       در عمل وجود ندارد.
+--
+-- سه‌تای انبار برای همین است که مدیر در فروشگاه تک‌نفره، خودش انبار را
+-- هم می‌گرداند.
+--
+-- ⚠️ اگر مالک نمی‌خواهد مدیر یکی از این‌ها را داشته باشد، حذفش یک
+--    DELETE است — نه یک Deploy. سقف‌ها روی نقش‌های پایین‌ترند، نه اینجا.
+('admin','return.same_day',        true,  NULL,   NULL,  NULL),
+('admin','sale.discount_high',     true,  NULL,   NULL,  NULL),
+('admin','shift.close',            true,  NULL,   NULL,  NULL),
+('admin','settings.security',      true,  NULL,   NULL,  NULL),
+('admin','stock.count',            true,  NULL,   NULL,  NULL),
+('admin','stock.receive',          true,  NULL,   NULL,  NULL),
+('admin','stock.transfer',         true,  NULL,   NULL,  NULL)
 ON CONFLICT (role_code, operation) DO NOTHING;
 
 -- روش‌های پرداخت -------------------------------------------------------
