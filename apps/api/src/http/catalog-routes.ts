@@ -1,0 +1,161 @@
+/**
+ * مسیرهای کالا — ساخت خودکار تنوع و ماتریس موجودی.
+ *
+ * ساخت تنوع، مجوز تازه‌ای می‌خواهد: `catalog.manage`. تا امروز هیچ
+ * عملیاتی برای تعریف کالا در `permission_rule` نبود — یعنی اگر مسیرش
+ * ساخته می‌شد، یا باید بی‌مجوز می‌ماند یا یک `if` روی نام نقش می‌خورد.
+ * هر دو خلاف قاعده‌اند؛ راه درست یک ردیف تازه در داده است.
+ */
+import type { FastifyInstance } from "fastify";
+import { z } from "zod";
+import { AuthError } from "../auth/service.ts";
+import { requireForSession } from "../auth/permission.ts";
+import type { Db } from "../db/client.ts";
+import { parseMoney } from "../lib/money.ts";
+import { branchesOf } from "../sales/scope.ts";
+import {
+  CatalogError,
+  generateToJson,
+  type VariationService,
+} from "../catalog/variation.ts";
+
+const uuid = z.string().uuid("شناسه نامعتبر");
+
+/**
+ * نویسه‌هایی که در نام رنگ و سایز مجاز نیستند.
+ *
+ * دو دسته، هر دو با پیامد دیدنی:
+ *   • کنترلی‌های C0/C1 و DEL — در برچسب چاپی و جدول، دیده نمی‌شوند
+ *     ولی خروجی را خراب می‌کنند.
+ *   • نشانه‌های جهت‌دهی دوطرفه (LRM/RLM/LRE…/RLO) — می‌توانند ظاهر
+ *     متن را **وارونه** نشان دهند بدون اینکه محتوا عوض شود. روی
+ *     برچسب قیمت یعنی عددی که چشم می‌خواند با عددی که ذخیره شده یکی
+ *     نباشد.
+ *
+ * صریح با کد نویسه نوشته شده، نه با خودِ نویسه: نویسه کنترلیِ خام در
+ * سورس نامرئی است و فایل را از نظر ابزارها دودویی می‌کند.
+ */
+const CONTROL_CHARS = /[\u0000-\u001f\u007f-\u009f\u200e\u200f\u202a-\u202e\u2066-\u2069]/;
+
+const moneyString = z
+  .string()
+  .regex(/^\d+$/, "مبلغ باید رقم صحیح باشد (ریال، بدون اعشار)");
+
+/**
+ * نام رنگ و سایز — متن آزاد فارسی، ولی نه هر چیزی.
+ *
+ * کنترل طول و حذف نویسه‌های کنترلی: این مقادیر روی **برچسب چاپی** و در
+ * سرستون ماتریس می‌نشینند. یک «رنگ» ۵۰۰ حرفی جدول را می‌شکند و یک
+ * نویسه جهت‌دهی راست‌به‌چپ می‌تواند ظاهر برچسب را وارونه کند.
+ */
+const attributeName = z
+  .string()
+  .trim()
+  .min(1, "نام نمی‌تواند خالی باشد")
+  .max(40, "نام حداکثر ۴۰ نویسه")
+  .refine((v) => !CONTROL_CHARS.test(v), {
+    message: "نام شامل نویسه کنترلی است",
+  });
+
+const generateBody = z
+  .object({
+    colors: z.array(attributeName).max(40).default([]),
+    sizes: z.array(attributeName).max(40).default([]),
+    /** قیمت اختیاری — روی همه تنوع‌های تازه یکسان می‌نشیند. */
+    price: moneyString.optional(),
+  })
+  .refine((v) => v.colors.length > 0 || v.sizes.length > 0, {
+    message: "دست‌کم یک رنگ یا یک سایز لازم است",
+  });
+
+export interface CatalogRouteDeps {
+  db: Db;
+  variations: VariationService;
+}
+
+export function registerCatalogRoutes(
+  app: FastifyInstance,
+  deps: CatalogRouteDeps,
+): void {
+  const { db, variations } = deps;
+
+  const session = (req: { session: unknown }) => {
+    const s = req.session as
+      | { userId: string; pinUnlocked: boolean; fullName: string }
+      | null;
+    if (!s) throw new AuthError("no_session", "وارد نشده‌اید");
+    return s;
+  };
+
+  /**
+   * ساخت خودکار همه ترکیب‌های رنگ×سایز.
+   *
+   * عمداً **Idempotency-Key نمی‌گیرد**: خودِ عملیات از پایه تکرارپذیر
+   * است — ترکیبِ موجود رد می‌شود، نه دوباره ساخته. یعنی فشار دوباره
+   * روی دکمه هیچ‌چیز اضافه نمی‌سازد و نیازی به کلید نیست.
+   */
+  app.post("/products/:id/variations/generate", async (req, reply) => {
+    const s = session(req);
+    const { id } = z.object({ id: uuid }).parse(req.params);
+    const body = generateBody.parse(req.body);
+    await requireForSession(db, s, "catalog.manage");
+
+    const result = await variations.generate({
+      productId: id,
+      colors: body.colors,
+      sizes: body.sizes,
+      actorId: s.userId,
+      ...(body.price === undefined ? {} : { price: parseMoney(body.price) }),
+    });
+    return reply.code(201).send(generateToJson(result));
+  });
+
+  /**
+   * ماتریس موجودی — سطر رنگ، ستون سایز.
+   *
+   * بدون `warehouseId` جمع همه انبارهای **شعبه‌های خودِ کاربر** را
+   * می‌دهد، نه کل سیستم. مثل بقیه مسیرها، دامنه شعبه از
+   * `identity.user_role` می‌آید.
+   */
+  app.get("/products/:id/stock-matrix", async (req) => {
+    const s = session(req);
+    const { id } = z.object({ id: uuid }).parse(req.params);
+    const query = z
+      .object({ warehouseId: uuid.optional() })
+      .parse(req.query ?? {});
+
+    const allowed = await visibleWarehouses(db, s.userId, query.warehouseId);
+    return variations.stockMatrix(id, allowed);
+  });
+}
+
+/**
+ * انبارهایی که این کاربر حق دیدنشان را دارد.
+ *
+ * `null` یعنی «همه» و فقط برای نقشی صادر می‌شود که دامنه‌اش همه شعب
+ * است. برای بقیه، فهرست صریح انبارهای شعبه‌هایشان — پس حتی اگر
+ * `warehouseId` انبار شعبه دیگری باشد، در فهرست نمی‌آید و ماتریس
+ * صفر برمی‌گردد به‌جای اینکه موجودی شعبه دیگر را لو بدهد.
+ */
+async function visibleWarehouses(
+  db: Db,
+  userId: string,
+  requested: string | undefined,
+): Promise<string[] | null> {
+  const scope = await branchesOf(db, userId);
+
+  if (scope === "all") {
+    return requested === undefined ? null : [requested];
+  }
+  if (scope.length === 0) return [];
+
+  const rows = await db
+    .selectFrom("inventory.warehouse")
+    .select("id")
+    .where("branch_id", "in", scope)
+    .execute();
+  const ids = rows.map((r) => r.id);
+
+  if (requested === undefined) return ids;
+  return ids.includes(requested) ? [requested] : [];
+}

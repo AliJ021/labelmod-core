@@ -76,6 +76,7 @@ INSERT INTO identity.permission_rule
 ('cashier','sale.discount',        true,  NULL,   10.00, NULL),
 ('cashier','sale.discount_high',   true,  NULL,   25.00, 'supervisor'),
 ('cashier','sale.credit',          false, NULL,   NULL,  NULL),
+('cashier','catalog.manage',       false, NULL,   NULL,  NULL),
 ('cashier','return.same_day',      true,  NULL,   NULL,  NULL),
 ('cashier','return.late',          false, NULL,   NULL,  NULL),
 ('cashier','refund.cash',          false, NULL,   NULL,  NULL),
@@ -86,6 +87,7 @@ INSERT INTO identity.permission_rule
 ('supervisor','sale.discount',     true,  NULL,   25.00, NULL),
 ('supervisor','sale.discount_high',true,  NULL,   NULL,  'admin'),
 ('supervisor','sale.credit',       true,  NULL,   NULL,  NULL),
+('supervisor','catalog.manage',    true,  NULL,   NULL,  NULL),
 ('supervisor','return.same_day',   true,  NULL,   NULL,  NULL),
 ('supervisor','return.late',       true,  NULL,   NULL,  'admin'),
 ('supervisor','refund.cash',       true,  NULL,   NULL,  NULL),
@@ -97,6 +99,7 @@ INSERT INTO identity.permission_rule
 
 ('warehouse','stock.receive',      true,  NULL,   NULL,  NULL),
 ('warehouse','stock.transfer',     true,  NULL,   NULL,  NULL),
+('warehouse','catalog.manage',     true,  NULL,   NULL,  NULL),
 ('warehouse','stock.count',        true,  NULL,   NULL,  NULL),
 ('warehouse','stock.adjust',       true,  NULL,   NULL,  'admin'),
 ('warehouse','cost.view',          false, NULL,   NULL,  NULL),
@@ -153,7 +156,18 @@ INSERT INTO identity.permission_rule
 ('admin','settings.security',      true,  NULL,   NULL,  NULL),
 ('admin','stock.count',            true,  NULL,   NULL,  NULL),
 ('admin','stock.receive',          true,  NULL,   NULL,  NULL),
-('admin','stock.transfer',         true,  NULL,   NULL,  NULL)
+('admin','stock.transfer',         true,  NULL,   NULL,  NULL),
+
+-- تعریف کالا و ساخت خودکار تنوع‌ها.
+--
+-- تا امروز هیچ عملیاتی برای «تعریف کالا» وجود نداشت — نه مجاز، نه
+-- ممنوع. یعنی مسیر ساخت تنوع یا باید بی‌مجوز می‌ماند یا یک `if` روی نام
+-- نقش می‌خورد؛ هر دو خلاف قاعده‌اند.
+--
+-- صندوق‌دار صریحاً ممنوع است، نه فقط جاافتاده: کسی که پای صندوق ایستاده
+-- نباید بتواند وسط شیفت کالای تازه بسازد و بارکد چاپ کند. انباردار
+-- می‌تواند، چون کالای تازه معمولاً همراه رسید خرید می‌آید.
+('admin','catalog.manage',         true,  NULL,   NULL,  NULL)
 ON CONFLICT (role_code, operation) DO NOTHING;
 
 -- روش‌های پرداخت -------------------------------------------------------
