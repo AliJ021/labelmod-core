@@ -205,6 +205,80 @@ export interface InvoiceLineTable {
   discount_reason: string | null;
 }
 
+export interface SaleReturnTable {
+  id: Generated<string>;
+  number: string | null;
+  branch_id: string;
+  invoice_id: string;
+  warehouse_id: string;
+  shift_id: string | null;
+  kind: string;
+  net_amount: string;
+  tax_amount: string;
+  refund_amount: string;
+  cogs_amount: string;
+  reason_code: string;
+  reason_note: string | null;
+  status: string;
+  occurred_at: Generated<Date>;
+  created_by: string | null;
+  approved_by: string | null;
+  refund_method: string | null;
+  receivable_applied: string;
+  credit_applied: string;
+}
+
+export interface SaleReturnLineTable {
+  id: Generated<string>;
+  return_id: string;
+  invoice_line_id: string;
+  qty: string;
+  unit_price: string;
+  net_amount: string;
+  tax_amount: string;
+  unit_cost: string;
+  cogs_amount: string;
+  restock: boolean;
+  condition: string;
+}
+
+/**
+ * دوره ثبت — ADR-003. فاکتور صندوق به دوره شیفت می‌چسبد و فاکتور
+ * آنلاین به دوره (شعبه، کانال، روز).
+ */
+export interface PostingBatchTable {
+  id: Generated<string>;
+  branch_id: string;
+  kind: string;
+  shift_id: string | null;
+  channel: string | null;
+  business_date: string;
+  status: Generated<string>;
+  sale_entry_id: string | null;
+  cogs_entry_id: string | null;
+  posted_at: Date | null;
+  posted_by: string | null;
+}
+
+/**
+ * View — درآمدی که هنوز سند نخورده. فقط خواندنی.
+ *
+ * `batch_id` تهی یعنی فاکتور به هیچ دوره‌ای نچسبیده؛ وضعیت غیر
+ * `posted` یعنی دوره هست ولی هنوز بسته نشده.
+ */
+export interface UnpostedRevenueView {
+  invoice_id: string;
+  number: string | null;
+  branch_id: string;
+  channel: string;
+  occurred_at: Date;
+  payable_amount: string;
+  cogs_amount: string;
+  batch_id: string | null;
+  batch_kind: string | null;
+  business_date: Date | null;
+}
+
 export interface CustomerTable {
   id: Generated<string>;
   mobile_normalized: string;
@@ -240,6 +314,7 @@ export interface PaymentMethodTable {
   settlement_days: number;
   fee_percent: string;
   requires_ref: boolean;
+  is_active: boolean;
 }
 
 // ── پلتفرم ────────────────────────────────────────────────────────
@@ -262,6 +337,10 @@ export interface Database {
   "sales.invoice": InvoiceTable;
   "sales.invoice_line": InvoiceLineTable;
   "sales.customer": CustomerTable;
+  "sales.sale_return": SaleReturnTable;
+  "sales.sale_return_line": SaleReturnLineTable;
+  "sales.unposted_revenue": UnpostedRevenueView;
+  "ledger.posting_batch": PostingBatchTable;
   "treasury.payment": PaymentTable;
   "treasury.payment_method": PaymentMethodTable;
   "platform.inbox_message": InboxMessageTable;

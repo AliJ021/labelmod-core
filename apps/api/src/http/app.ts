@@ -13,8 +13,12 @@ import type { Config } from "../lib/config.ts";
 import { registerErrorHandler } from "./errors.ts";
 import { registerAuthRoutes } from "./auth-routes.ts";
 import { registerSalesRoutes } from "./sales-routes.ts";
+import { registerReturnRoutes } from "./return-routes.ts";
+import { registerPostingRoutes } from "./posting-routes.ts";
 import { InvoiceService } from "../sales/invoice.ts";
 import { ShiftService } from "../sales/shift.ts";
+import { ReturnService } from "../sales/return.ts";
+import { PostingBatchService } from "../sales/posting-batch.ts";
 import { safeEqual } from "../auth/password.ts";
 
 declare module "fastify" {
@@ -179,11 +183,22 @@ export async function buildApp(deps: AppDeps): Promise<FastifyInstance> {
 
   app.get("/health", async () => ({ ok: true }));
 
+  const shifts = new ShiftService(deps.db);
+
   registerAuthRoutes(app, deps);
   registerSalesRoutes(app, {
     db: deps.db,
     invoices: new InvoiceService(deps.db),
-    shifts: new ShiftService(deps.db),
+    shifts,
+  });
+  registerReturnRoutes(app, {
+    db: deps.db,
+    returns: new ReturnService(deps.db),
+    shifts,
+  });
+  registerPostingRoutes(app, {
+    db: deps.db,
+    batches: new PostingBatchService(deps.db),
   });
   return app;
 }

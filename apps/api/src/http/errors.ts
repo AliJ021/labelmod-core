@@ -11,6 +11,8 @@ import { MoneyError } from "../lib/money.ts";
 import { InvoiceError } from "../sales/invoice.ts";
 import { ShiftError } from "../sales/shift.ts";
 import { ScopeError } from "../sales/scope.ts";
+import { ReturnError } from "../sales/return.ts";
+import { BatchError } from "../sales/posting-batch.ts";
 import { IdempotencyInFlightError } from "../lib/idempotency.ts";
 import { ZodError } from "zod";
 
@@ -56,6 +58,8 @@ export function registerErrorHandler(app: FastifyInstance): void {
       err instanceof InvoiceError ||
       err instanceof ShiftError ||
       err instanceof ScopeError ||
+      err instanceof ReturnError ||
+      err instanceof BatchError ||
       err instanceof IdempotencyInFlightError
     ) {
       req.log.info({ code: err.code, correlationId }, "درخواست فروش رد شد");
