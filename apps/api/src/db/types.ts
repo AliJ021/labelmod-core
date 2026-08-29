@@ -124,7 +124,8 @@ export interface PriceTable {
   amount: string;
   kind: "regular" | "markdown" | "promo";
   reason: string | null;
-  valid_from: Date;
+  /** پیش‌فرض `now()` در دیتابیس — روی درج لازم نیست. */
+  valid_from: Generated<Date>;
   valid_to: Date | null;
   created_by: string | null;
 }
