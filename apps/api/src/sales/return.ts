@@ -136,25 +136,33 @@ export class ReturnService {
    * وگرنه فقط `post_return` سر خط آخر خطا می‌دهد و کل برگ رد می‌شود.
    */
   async returnable(invoiceId: string): Promise<ReturnableLine[]> {
-    const rows = await this.#db
-      .selectFrom("sales.invoice_line")
-      .select([
-        "id",
-        "variation_id",
-        "qty",
-        "returned_qty",
-        "unit_price",
-        "net_amount",
-      ])
-      .where("invoice_id", "=", invoiceId)
-      .execute();
+    // تفریق در SQL انجام می‌شود نه در جاوااسکریپت. `platform.qty` سه
+    // رقم اعشار دارد و `Number()` روی آن همان خطای شناوری را می‌آورد
+    // که یک بار روی `qty × price` گرفتیمش — با این تفاوت که اینجا
+    // نتیجه چیزی است که صندوق‌دار رویش تصمیم می‌گیرد.
+    const res = await sql<{
+      id: string;
+      variation_id: string;
+      qty: string;
+      returned_qty: string;
+      remaining_qty: string;
+      unit_price: string;
+      net_amount: string;
+    }>`
+      SELECT id, variation_id, qty::text, returned_qty::text,
+             (qty - returned_qty)::text AS remaining_qty,
+             unit_price::text, net_amount::text
+        FROM sales.invoice_line
+       WHERE invoice_id = ${invoiceId}::uuid
+       ORDER BY id
+    `.execute(this.#db);
 
-    return rows.map((l) => ({
+    return res.rows.map((l) => ({
       invoiceLineId: l.id,
       variationId: l.variation_id,
       soldQty: l.qty,
       returnedQty: l.returned_qty,
-      remainingQty: String(Number(l.qty) - Number(l.returned_qty)),
+      remainingQty: l.remaining_qty,
       unitPrice: parseMoney(l.unit_price),
       netAmount: parseMoney(l.net_amount),
     }));

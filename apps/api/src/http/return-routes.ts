@@ -45,12 +45,30 @@ const uuid = z.string().uuid("شناسه نامعتبر");
  */
 const MONEY_OUT_LIMIT = { rateLimit: { max: 30, timeWindow: "1 minute" } };
 
+/**
+ * شناسه‌های داده‌ای — کد علت و کد روش پرداخت.
+ *
+ * محدود به حروف کوچک، رقم و زیرخط. دو دلیل، هر دو واقعی:
+ *
+ * ۱. هر مقدار موجود در `return.reason_codes` و `treasury.payment_method`
+ *    همین شکل را دارد، پس محدودیت چیزی را نمی‌شکند.
+ * ۲. پیام خطای «این کد مجاز نیست» همان کد را به کاربر برمی‌گرداند.
+ *    بازتاب ورودی خام در پاسخ، همان جایی است که XSS از آن شروع می‌شود
+ *    — حتی اگر امروز UI نداریم و CSP هم بدون unsafe-inline است.
+ *    ارزان‌ترین دفاع این است که چیزی برای بازتاب نماند.
+ */
+const dataCode = z
+  .string()
+  .min(1)
+  .max(64)
+  .regex(/^[a-z0-9_]+$/, "کد باید فقط حروف کوچک لاتین، رقم و زیرخط باشد");
+
 const createReturnBody = z.object({
   invoiceId: uuid,
-  reasonCode: z.string().min(1).max(64),
+  reasonCode: dataCode,
   reasonNote: z.string().max(500).optional(),
   refundAmount: moneyString.default("0"),
-  refundMethod: z.string().min(1).max(32).optional(),
+  refundMethod: dataCode.optional(),
   lines: z
     .array(
       z.object({

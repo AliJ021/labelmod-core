@@ -62,7 +62,10 @@ export class PostingBatchService {
         "batch_kind",
         "branch_id",
         "channel",
-        "business_date",
+        // `business_date` را **در SQL** به متن می‌بریم، نه با Date
+        // جاوااسکریپت: تاریخِ دوره، هویت دوره ثبت است و نباید به
+        // منطقه زمانی سرور یا رفتار درایور وابسته باشد.
+        sql<string>`business_date::text`.as("business_date"),
         (eb) => eb.fn.countAll<string>().as("invoice_count"),
         (eb) => eb.fn.sum<string>("payable_amount").as("payable_amount"),
         (eb) => eb.fn.sum<string>("cogs_amount").as("cogs_amount"),
@@ -81,7 +84,7 @@ export class PostingBatchService {
       batchKind: r.batch_kind,
       branchId: r.branch_id,
       channel: r.channel,
-      businessDate: r.business_date === null ? null : isoDate(r.business_date),
+      businessDate: r.business_date,
       invoiceCount: Number(r.invoice_count),
       payableAmount: parseMoney(r.payable_amount ?? "0"),
       cogsAmount: parseMoney(r.cogs_amount ?? "0"),
@@ -127,16 +130,6 @@ export class PostingBatchService {
       .executeTakeFirst();
     return row ?? null;
   }
-}
-
-/** `date` پستگرس در درایور `Date` می‌شود؛ فقط بخش تاریخ لازم است. */
-function isoDate(v: Date | string): string {
-  if (typeof v === "string") return v.slice(0, 10);
-  // بخش تاریخ در وقت محلی سرور — همان چیزی که پستگرس برگردانده بود.
-  const y = v.getFullYear();
-  const m = String(v.getMonth() + 1).padStart(2, "0");
-  const d = String(v.getDate()).padStart(2, "0");
-  return `${y}-${m}-${d}`;
 }
 
 export function unpostedToJson(rows: UnpostedRow[]) {

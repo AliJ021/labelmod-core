@@ -218,7 +218,9 @@ describe("برگشت از فروش و دوره ثبت", { skip }, () => {
     assert.equal(body.late, false, "فروش همین حالا، دیرهنگام نیست");
     assert.equal(body.lines.length, 1);
     assert.equal(body.lines[0].invoiceLineId, lineId);
-    assert.equal(body.lines[0].remainingQty, "5");
+    // «5.000» نه «5»: تعداد از SQL می‌آید و همان دقت `platform.qty`
+    // را نگه می‌دارد — مثل onHand در /stock.
+    assert.equal(body.lines[0].remainingQty, "5.000");
     assert.equal(typeof body.lines[0].unitPrice, "string", "پول باید رشته باشد");
   });
 
@@ -319,7 +321,7 @@ describe("برگشت از فروش و دوره ثبت", { skip }, () => {
 
     // باقی‌مانده قابل برگشت، دو تا شده
     const left = await app.inject({ method: "GET", url: `/invoices/${invoiceId}/returnable`, ...s });
-    assert.equal(left.json().lines[0].remainingQty, "2");
+    assert.equal(left.json().lines[0].remainingQty, "2.000");
   });
 
   test("بازپرداخت بیش از پول دریافت‌شده رد می‌شود — ۴۰۹ نه ۵۰۰", async () => {
@@ -476,13 +478,34 @@ describe("برگشت از فروش و دوره ثبت", { skip }, () => {
       paid: "1000000",
     });
 
+    // کدِ بدشکل حتی به منطق نمی‌رسد — Zod سر مرز ردش می‌کند، تا چیزی
+    // برای بازتاب در پیام خطا نماند.
+    const malformed = await app.inject({
+      method: "POST",
+      url: "/returns",
+      ...s,
+      payload: {
+        invoiceId,
+        reasonCode: "<script>alert(1)</script>",
+        refundAmount: "0",
+        lines: [{ invoiceLineId: lineId, qty: "1" }],
+      },
+    });
+    assert.equal(malformed.statusCode, 400, malformed.body);
+    assert.equal(malformed.json().error.code, "invalid_input");
+    assert.ok(
+      !malformed.body.includes("<script>"),
+      "ورودی خام نباید در پاسخ بازتاب شود",
+    );
+
+    // کدِ خوش‌شکل ولی خارج از فهرست، به منطق می‌رسد و ۴۲۲ می‌گیرد
     const badReason = await app.inject({
       method: "POST",
       url: "/returns",
       ...s,
       payload: {
         invoiceId,
-        reasonCode: "چون-دلم-خواست",
+        reasonCode: "because_i_felt_like_it",
         refundAmount: "0",
         lines: [{ invoiceLineId: lineId, qty: "1" }],
       },
