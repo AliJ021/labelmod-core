@@ -1,0 +1,91 @@
+/* پایه — RTL، تایپوگرافی، و قواعدی که کل سیستم رویشان می‌ایستد. */
+
+*,
+*::before,
+*::after {
+  box-sizing: border-box;
+}
+
+html {
+  /* بزرگ‌نمایی هرگز غیرفعال نمی‌شود. */
+  -webkit-text-size-adjust: 100%;
+}
+
+body {
+  margin: 0;
+  background: var(--bg-deep);
+  color: var(--ink);
+  font-family: Vazirmatn, "Segoe UI", system-ui, sans-serif;
+  font-size: 16px;
+  line-height: 1.75;
+  -webkit-font-smoothing: antialiased;
+  text-rendering: optimizeLegibility;
+}
+
+/* عدد در جدول باید هم‌عرض باشد، وگرنه ستون قیمت می‌رقصد. */
+.num {
+  /* مونو اول: ستون قیمت باید هم‌عرض بماند، وگرنه ارقام می‌رقصند.
+     جداکننده هزارگان فارسی «٬» (U+066C) به‌شکل ویرگولِ بالا رندر
+     می‌شود — در Vazirmatn هم همین‌طور. این ظاهرِ درستِ آن نویسه است،
+     نه نبودِ گلیف. */
+  font-family: "IBM Plex Mono", Vazirmatn, ui-monospace, monospace;
+  font-variant-numeric: tabular-nums;
+  direction: ltr;
+  unicode-bidi: isolate;
+}
+
+h1,
+h2,
+h3 {
+  line-height: 1.35;
+  margin: 0;
+  text-wrap: balance;
+}
+
+p {
+  text-wrap: pretty;
+}
+
+button {
+  font: inherit;
+  color: inherit;
+  cursor: pointer;
+}
+
+/* هیچ چیزی نباید افقی اسکرول بدهد؛ جدول عریض داخل ظرف خودش می‌لغزد. */
+.scroll-x {
+  overflow-x: auto;
+  overscroll-behavior-x: contain;
+}
+
+.app {
+  position: relative;
+  z-index: 1;
+  min-height: 100dvh;
+  /* ناحیه امن — تبلت صندوق ممکن است بریدگی داشته باشد. */
+  padding:
+    max(var(--s-4), env(safe-area-inset-top))
+    max(var(--s-4), env(safe-area-inset-right))
+    max(var(--s-4), env(safe-area-inset-bottom))
+    max(var(--s-4), env(safe-area-inset-left));
+}
+
+.sr-only {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip-path: inset(50%);
+  white-space: nowrap;
+}
+
+/* گذار سیال میان نماها — روی transform و opacity، نه layout. */
+@media (prefers-reduced-motion: no-preference) {
+  ::view-transition-old(zone),
+  ::view-transition-new(zone) {
+    animation-duration: var(--t-slow);
+    animation-timing-function: var(--ease-out);
+  }
+}

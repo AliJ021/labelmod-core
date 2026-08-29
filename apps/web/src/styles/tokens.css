@@ -1,0 +1,184 @@
+/* ═══════════════════════════════════════════════════════════════════
+   توکن‌ها — ADR-002
+
+   **دو سطح، از روز اول.** این مهم‌ترین تصمیم این فایل است:
+
+     --surface-solid  محتوا، جدول عدد، فرم، و کل صندوق فروشگاهی
+     --surface-glass  فقط لایه کنترلی شناور
+
+   ADR-002 صریح گفته اگر این تفکیک از روز اول در توکن‌ها نباشد، بعداً
+   اضافه‌کردنش یعنی بازنویسی هر کامپوننت. پس از همین‌جا هست.
+
+   **پالت قفل است.** هر مقدار رنگی اینجا در برابر سطح خودش سنجیده شده
+   و `scripts/validate-palette.mjs` در CI دوباره می‌سنجدش. عوض‌کردن یک
+   Hex بدون اجرای آن اسکریپت، یعنی شکستن یک ادعای سنجیده‌شده.
+   ═══════════════════════════════════════════════════════════════════ */
+
+:root {
+  /* ── زمینه: دنیای پارچه و رنگرزی — ایندیگو، آلویی، جین ─────────── */
+  --bg-deep: #edebf2;
+  --mesh-1: #b9c0e8;
+  --mesh-2: #d9bccf;
+  --mesh-3: #aecfce;
+
+  /* ── دو سطح ──────────────────────────────────────────────────── */
+  --surface-solid: #ffffff;
+  --surface-solid-2: #f4f3f8;
+  --surface-glass: rgba(255, 255, 255, 0.55);
+  /* تینت داخل شیشه — عمداً بدون backdrop-filter. شیشه روی شیشه ممنوع. */
+  --surface-glass-2: rgba(255, 255, 255, 0.38);
+
+  --glass-blur: 22px;
+  --glass-sat: 180%;
+  --glass-rim: rgba(255, 255, 255, 0.85);
+  --glass-rim-2: rgba(120, 110, 160, 0.2);
+  --glass-shadow: 0 8px 32px -12px rgba(40, 30, 70, 0.28);
+
+  /* ── جوهر ────────────────────────────────────────────────────── */
+  --ink: #14121c;
+  --ink-2: #4a4560;
+  --ink-3: #787292;
+  --rule: rgba(70, 60, 110, 0.14);
+  --rule-2: rgba(70, 60, 110, 0.26);
+
+  /* ── برنج: دنیای دکمه و پلاک پوشاک ───────────────────────────── */
+  --accent: #8a6214;
+  --accent-ink: #ffffff;
+  --chart-1: #b0801f;
+  --good: #2e8b63;
+  --warn: #b08a1e;
+  --crit: #c0392f;
+
+  /* ── شعاع‌های هم‌مرکز: داخلی = بیرونی − فاصله ─────────────────── */
+  --r-lg: 26px;
+  --r-md: 18px;
+  --r-sm: 12px;
+  --r-xs: 8px;
+  --pad: 14px;
+
+  /* ── فاصله ───────────────────────────────────────────────────── */
+  --s-1: 4px;
+  --s-2: 8px;
+  --s-3: 12px;
+  --s-4: 16px;
+  --s-5: 24px;
+  --s-6: 32px;
+  --s-7: 48px;
+
+  /* ── حرکت ────────────────────────────────────────────────────── */
+  --ease-out: cubic-bezier(0.22, 1, 0.36, 1);
+  --ease-in-out: cubic-bezier(0.65, 0, 0.35, 1);
+  --t-fast: 120ms;
+  --t-base: 220ms;
+  --t-slow: 380ms;
+
+  /* هدف لمسی. زیر ۴۴ پیکسل روی تبلت صندوق یعنی خطای زدن. */
+  --touch: 44px;
+  --touch-lg: 56px;
+
+  color-scheme: light dark;
+}
+
+/* ── تم تیره ─────────────────────────────────────────────────────
+   انتخاب‌شده، نه معکوسِ خودکارِ تم روشن. هر پله جداگانه در برابر سطح
+   خودش سنجیده شده — ADR-002.
+   ─────────────────────────────────────────────────────────────── */
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --bg-deep: #0d0b14;
+    --mesh-1: #2b2456;
+    --mesh-2: #46243e;
+    --mesh-3: #0f3a3c;
+
+    --surface-solid: #17151f;
+    --surface-solid-2: #201d2b;
+    --surface-glass: rgba(255, 255, 255, 0.09);
+    --surface-glass-2: rgba(255, 255, 255, 0.055);
+    --glass-rim: rgba(255, 255, 255, 0.3);
+    --glass-rim-2: rgba(0, 0, 0, 0.35);
+    --glass-shadow: 0 8px 36px -14px rgba(0, 0, 0, 0.75);
+
+    --ink: #f1eef8;
+    --ink-2: #b6b0cc;
+    --ink-3: #847ea0;
+    --rule: rgba(255, 255, 255, 0.1);
+    --rule-2: rgba(255, 255, 255, 0.18);
+
+    --accent: #c9973f;
+    --accent-ink: #1a1408;
+    --chart-1: #c9973f;
+    --good: #43b083;
+    --warn: #e8c24a;
+    --crit: #d4405f;
+  }
+}
+
+:root[data-theme="dark"] {
+  --bg-deep: #0d0b14;
+  --mesh-1: #2b2456;
+  --mesh-2: #46243e;
+  --mesh-3: #0f3a3c;
+
+  --surface-solid: #17151f;
+  --surface-solid-2: #201d2b;
+  --surface-glass: rgba(255, 255, 255, 0.09);
+  --surface-glass-2: rgba(255, 255, 255, 0.055);
+  --glass-rim: rgba(255, 255, 255, 0.3);
+  --glass-rim-2: rgba(0, 0, 0, 0.35);
+  --glass-shadow: 0 8px 36px -14px rgba(0, 0, 0, 0.75);
+
+  --ink: #f1eef8;
+  --ink-2: #b6b0cc;
+  --ink-3: #847ea0;
+  --rule: rgba(255, 255, 255, 0.1);
+  --rule-2: rgba(255, 255, 255, 0.18);
+
+  --accent: #c9973f;
+  --accent-ink: #1a1408;
+  --chart-1: #c9973f;
+  --good: #43b083;
+  --warn: #e8c24a;
+  --crit: #d4405f;
+}
+
+/* ── حالت عملکرد ─────────────────────────────────────────────────
+   ADR-002 یک کلید صریح خواسته: شیشه به سطح مات برمی‌گردد و
+   `backdrop-filter` **کاملاً** حذف می‌شود.
+
+   دو مصرف دارد و هر دو واقعی‌اند: تبلت ارزانِ پای صندوق که با لایه
+   ترکیب اضافی فریم می‌اندازد، و کاربری که شفافیت اذیتش می‌کند.
+   ─────────────────────────────────────────────────────────────── */
+:root[data-perf="on"] {
+  --glass-blur: 0px;
+  --surface-glass: var(--surface-solid);
+  --surface-glass-2: var(--surface-solid-2);
+  --glass-rim: var(--rule-2);
+  --glass-rim-2: var(--rule);
+}
+
+/* ترجیح سیستمی، مگر اینکه کاربر صریحاً شیشه را خواسته باشد. */
+@media (prefers-reduced-transparency: reduce) {
+  :root:not([data-perf="off"]) {
+    --glass-blur: 0px;
+      --surface-glass: var(--surface-solid);
+    --surface-glass-2: var(--surface-solid-2);
+    --glass-rim: var(--rule-2);
+  }
+}
+
+/* پشتیبانی نداشتن از backdrop-filter یعنی سطح مات کامل، نه یک کارت
+   نیمه‌شفافِ ناخوانا. */
+@supports not (backdrop-filter: blur(1px)) {
+  :root {
+    --surface-glass: var(--surface-solid);
+    --surface-glass-2: var(--surface-solid-2);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  :root {
+    --t-fast: 1ms;
+    --t-base: 1ms;
+    --t-slow: 1ms;
+  }
+}
