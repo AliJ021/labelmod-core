@@ -359,7 +359,9 @@ function dedupe(values: string[]): string[] {
 }
 
 function comboKey(color: string | null, size: string | null): string {
-  return `${color ?? " "}|${size ?? " "}`;
+  // JSON، نه یک جداکننده دلخواه: رنگی به نام «آبی|تیره» نباید با
+  // ترکیب دیگری یکی شمرده شود، و `null` باید از رشته «null» جدا بماند.
+  return JSON.stringify([color, size]);
 }
 
 /** `null` کلید JSON نمی‌شود؛ یک برچسب ثابت جایش می‌گیرد. */

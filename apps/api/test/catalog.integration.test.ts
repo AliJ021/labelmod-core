@@ -425,6 +425,26 @@ describe("ساخت خودکار تنوع و ماتریس موجودی", { skip }
     assert.equal(huge.statusCode, 422, huge.body);
     assert.equal(huge.json().error.code, "too_many_combinations");
 
+    // نشانه وارونه‌سازی دوطرفه: محتوا را عوض نمی‌کند ولی ظاهر برچسب
+    // چاپی را وارونه نشان می‌دهد. با کد نویسه نوشته شده، نه با خودش —
+    // نویسه کنترلیِ خام در سورس نامرئی است.
+    const bidi = await app.inject({
+      method: "POST",
+      url: `/products/${productId}/variations/generate`,
+      ...s,
+      payload: { colors: ["\u202eمشکی"], sizes: ["M"] },
+    });
+    assert.equal(bidi.statusCode, 400, bidi.body);
+    assert.equal(bidi.json().error.code, "invalid_input");
+
+    const nul = await app.inject({
+      method: "POST",
+      url: `/products/${productId}/variations/generate`,
+      ...s,
+      payload: { colors: ["مشکی"], sizes: ["M\u0000"] },
+    });
+    assert.equal(nul.statusCode, 400, nul.body);
+
     const missing = await app.inject({
       method: "POST",
       url: `/products/00000000-0000-7000-8000-0000000000ff/variations/generate`,
