@@ -18,6 +18,7 @@ import {
   generateToJson,
   type VariationService,
 } from "../catalog/variation.ts";
+import { labelPage, LABEL_CSP, type LabelItem } from "../catalog/label.ts";
 
 const uuid = z.string().uuid("شناسه نامعتبر");
 
@@ -68,6 +69,28 @@ const generateBody = z
     message: "دست‌کم یک رنگ یا یک سایز لازم است",
   });
 
+/**
+ * درخواست چاپ برچسب.
+ *
+ * سقف ۵۰۰ برچسب در یک درخواست: بیش از این، صفحه‌ای می‌سازد که خودِ
+ * مرورگر در چاپ گیر می‌کند — و تقریباً همیشه اشتباه ورودی است، نه یک
+ * چاپ واقعی.
+ */
+const labelBody = z.object({
+  items: z
+    .array(
+      z.object({
+        variationId: uuid,
+        count: z.number().int().min(1).max(100).default(1),
+      }),
+    )
+    .min(1, "دست‌کم یک کالا لازم است")
+    .max(200),
+  layout: z.enum(["a4", "roll"]).default("a4"),
+  rollWidthMm: z.number().min(20).max(120).optional(),
+  rollHeightMm: z.number().min(10).max(120).optional(),
+});
+
 export interface CatalogRouteDeps {
   db: Db;
   variations: VariationService;
@@ -108,6 +131,70 @@ export function registerCatalogRoutes(
       ...(body.price === undefined ? {} : { price: parseMoney(body.price) }),
     });
     return reply.code(201).send(generateToJson(result));
+  });
+
+  /**
+   * برچسب قیمت آماده چاپ.
+   *
+   * `POST` است نه `GET`، با اینکه چیزی را عوض نمی‌کند: فهرست کالاها و
+   * تعدادشان در URL جا نمی‌شود، و URL در تاریخچه مرورگر و لاگ
+   * می‌نشیند. به همین دلیل هم دفاع CSRF رویش اعمال می‌شود.
+   *
+   * پاسخ HTML است، نه JSON — تنها مسیر این پروژه که چنین است. سه
+   * هدر همراهش می‌رود که هیچ‌کدام تزئینی نیستند:
+   *   • CSP بدون هیچ اسکریپتی — صفحه جاوااسکریپت لازم ندارد
+   *   • nosniff — تا مرورگر نوع دیگری حدس نزند
+   *   • no-store — برچسب قیمت نباید در Cache بماند و قیمت کهنه بدهد
+   */
+  app.post("/labels", async (req, reply) => {
+    const s = session(req);
+    const body = labelBody.parse(req.body);
+    await requireForSession(db, s, "catalog.manage");
+
+    const wanted = new Map(body.items.map((i) => [i.variationId, i.count]));
+    const rows = await variations.labelData([...wanted.keys()]);
+
+    if (rows.length === 0) {
+      throw new CatalogError("variation_not_found", "هیچ‌کدام از کالاها یافت نشدند", 404);
+    }
+
+    const shop = await db
+      .selectFrom("platform.branch")
+      .select("name")
+      .where("is_active", "=", true)
+      .orderBy("code")
+      .executeTakeFirst();
+
+    const items: LabelItem[] = rows.map((r) => ({
+      barcode: r.barcode,
+      sku: r.sku,
+      productName: r.productName,
+      color: r.color,
+      size: r.size,
+      priceRial: r.priceRial,
+      count: wanted.get(r.id) ?? 1,
+    }));
+
+    const html = labelPage(items, {
+      layout: body.layout,
+      shopName: shop?.name ?? "فروشگاه",
+      ...(body.layout === "roll"
+        ? {
+            rollMm: {
+              width: body.rollWidthMm ?? 50,
+              height: body.rollHeightMm ?? 30,
+            },
+          }
+        : {}),
+    });
+
+    return reply
+      .code(200)
+      .header("content-type", "text/html; charset=utf-8")
+      .header("content-security-policy", LABEL_CSP)
+      .header("x-content-type-options", "nosniff")
+      .header("cache-control", "no-store")
+      .send(html);
   });
 
   /**
