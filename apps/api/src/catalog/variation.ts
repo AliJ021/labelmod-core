@@ -21,7 +21,7 @@ import { sql } from "kysely";
 import type { Transaction } from "kysely";
 import type { Db } from "../db/client.ts";
 import type { Database } from "../db/types.ts";
-import { serializeMoney } from "../lib/money.ts";
+import { parseMoney, serializeMoney } from "../lib/money.ts";
 import { setActor } from "../lib/idempotency.ts";
 import { makeEan13, MAX_SERIAL } from "./barcode.ts";
 import { sortSizes } from "./size-order.ts";
@@ -203,6 +203,62 @@ export class VariationService {
 
       return { productId: product.id, productCode: product.code, created, skipped };
     });
+  }
+
+  /**
+   * داده برچسب برای چند تنوع.
+   *
+   * قیمت **از دیتابیس** خوانده می‌شود، نه از کلاینت — همان قاعده‌ای که
+   * سبد خرید رویش بنا شده. برچسبی که قیمتش را فراخوان تعیین کند، یک
+   * برچسب جعلی است.
+   *
+   * تنوعِ بی‌قیمت خطا نمی‌دهد: برچسبش با «بدون قیمت» چاپ می‌شود تا
+   * معلوم شود کدام کالا هنوز قیمت‌گذاری نشده. سکوت بدتر از آن است.
+   */
+  async labelData(
+    ids: string[],
+  ): Promise<Array<{
+    id: string;
+    barcode: string | null;
+    sku: string;
+    productName: string;
+    color: string | null;
+    size: string | null;
+    priceRial: bigint | null;
+  }>> {
+    if (ids.length === 0) return [];
+
+    const rows = await sql<{
+      id: string;
+      barcode: string | null;
+      sku: string;
+      product_name: string;
+      color: string | null;
+      size: string | null;
+      amount: string | null;
+    }>`
+      SELECT v.id, v.barcode, v.sku, p.name_internal AS product_name,
+             v.color, v.size,
+             (SELECT pr.amount FROM catalog.price pr
+               WHERE pr.variation_id = v.id
+                 AND pr.price_list = 'default'
+                 AND pr.valid_from <= now()
+                 AND (pr.valid_to IS NULL OR pr.valid_to > now())
+               ORDER BY pr.valid_from DESC LIMIT 1)::text AS amount
+        FROM catalog.variation v
+        JOIN catalog.product p ON p.id = v.product_id
+       WHERE v.id = ANY(${ids}::uuid[])
+    `.execute(this.#db);
+
+    return rows.rows.map((r) => ({
+      id: r.id,
+      barcode: r.barcode,
+      sku: r.sku,
+      productName: r.product_name,
+      color: r.color,
+      size: r.size,
+      priceRial: r.amount === null ? null : parseMoney(r.amount),
+    }));
   }
 
   /**

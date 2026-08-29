@@ -462,6 +462,106 @@ describe("ساخت خودکار تنوع و ماتریس موجودی", { skip }
     assert.equal(matrix.statusCode, 404, matrix.body);
   });
 
+  test("برچسب قیمت — HTML امن، با هدرهایی که تزئینی نیستند", async () => {
+    const sup = await loginAs(supervisor);
+    const productId = await newProduct("label");
+
+    const gen = await app.inject({
+      method: "POST",
+      url: `/products/${productId}/variations/generate`,
+      ...sup,
+      payload: { colors: ["سرمه‌ای"], sizes: ["M", "L"], price: "3200000" },
+    });
+    const made = gen.json().created as Created[];
+
+    const r = await app.inject({
+      method: "POST",
+      url: "/labels",
+      ...sup,
+      payload: {
+        items: [
+          { variationId: made[0]!.id, count: 2 },
+          { variationId: made[1]!.id, count: 1 },
+        ],
+      },
+    });
+    assert.equal(r.statusCode, 200, r.body);
+    assert.match(r.headers["content-type"] as string, /text\/html/);
+
+    // این سه هدر با هم یک دفاع‌اند، نه سه تزئین:
+    // CSP اسکریپت را کامل می‌بندد، nosniff نمی‌گذارد مرورگر نوع دیگری
+    // حدس بزند، و no-store مانع می‌شود برچسبِ قیمتِ کهنه از Cache
+    // بیرون بیاید.
+    assert.match(r.headers["content-security-policy"] as string, /script-src|default-src 'none'/);
+    assert.equal(r.headers["x-content-type-options"], "nosniff");
+    assert.equal(r.headers["cache-control"], "no-store");
+
+    const html = r.body;
+    assert.equal(html.split('class="label"').length - 1, 3, "۲ + ۱ = سه برچسب");
+    // ۳٬۲۰۰٬۰۰۰ ریال = ۳۲۰٬۰۰۰ تومان
+    assert.ok(html.includes("320٬000"), "قیمت باید به تومان روی برچسب بیاید");
+    assert.ok(!html.includes("3٬200٬000"), "ریال نباید روی برچسب بیاید");
+    assert.ok(html.includes("<svg"), "بارکد باید رسم شود");
+    assert.ok(html.includes("شعبه اصلی"), "نام فروشگاه از دیتابیس");
+  });
+
+  test("نام کالای مخرب، از مسیر واقعی هم اسکریپت اجرا نمی‌کند", async () => {
+    const sup = await loginAs(supervisor);
+    const evil = await sql<{ id: string }>`
+      INSERT INTO catalog.product (code, name_internal)
+      VALUES (${`P-${suffix}-x`}, ${'<script>alert(1)</script>'}) RETURNING id`
+      .execute(handle.db);
+
+    const gen = await app.inject({
+      method: "POST",
+      url: `/products/${evil.rows[0]!.id}/variations/generate`,
+      ...sup,
+      payload: { colors: ["مشکی"], sizes: ["M"] },
+    });
+    const v = (gen.json().created as Created[])[0]!;
+
+    const r = await app.inject({
+      method: "POST",
+      url: "/labels",
+      ...sup,
+      payload: { items: [{ variationId: v.id, count: 1 }] },
+    });
+    assert.equal(r.statusCode, 200, r.body);
+    assert.ok(!/<script/i.test(r.body), "تگ اسکریپت نباید از دیتابیس به صفحه برسد");
+    assert.ok(r.body.includes("&lt;script&gt;"), "باید Escape شده باشد");
+  });
+
+  test("صندوق‌دار برچسب چاپ نمی‌کند، و کالای ناموجود ۴۰۴ می‌گیرد", async () => {
+    const sup = await loginAs(supervisor);
+    const productId = await newProduct("labelperm");
+    const gen = await app.inject({
+      method: "POST",
+      url: `/products/${productId}/variations/generate`,
+      ...sup,
+      payload: { colors: ["زرد"], sizes: ["S"] },
+    });
+    const v = (gen.json().created as Created[])[0]!;
+
+    const csh = await loginAs(cashier);
+    const denied = await app.inject({
+      method: "POST",
+      url: "/labels",
+      ...csh,
+      payload: { items: [{ variationId: v.id, count: 1 }] },
+    });
+    assert.equal(denied.statusCode, 403, denied.body);
+
+    const missing = await app.inject({
+      method: "POST",
+      url: "/labels",
+      ...sup,
+      payload: {
+        items: [{ variationId: "00000000-0000-7000-8000-0000000000ff", count: 1 }],
+      },
+    });
+    assert.equal(missing.statusCode, 404, missing.body);
+  });
+
   test("رنگ تکراری در یک درخواست، کالای تکراری نمی‌سازد", async () => {
     const s = await loginAs(supervisor);
     const productId = await newProduct("dupe");
