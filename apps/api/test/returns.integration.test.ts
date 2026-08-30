@@ -204,6 +204,26 @@ describe("برگشت از فروش و دوره ثبت", { skip }, () => {
     disposable?.drop();
   });
 
+  test("مهلت ۴۸ ساعته با شمارش روز بیان‌شدنی نیست", async () => {
+    // چرا این تست وجود دارد: با کلید قدیمیِ روزشمار و مقدار ۲،
+    // فاکتور ۷۱ ساعته `floor(71/24) = 2` می‌داد و «داخل مهلت» شمرده
+    // می‌شد — یعنی مهلت واقعی ۷۲ ساعت بود، نه ۴۸.
+    const s = await loginAs(supervisor);
+    const { invoiceId } = await soldInvoice({ who: supervisor, qty: "1", paid: "1000000" });
+
+    // فاکتور را ۷۱ ساعت به عقب می‌بریم — زیر ۷۲، بالای ۴۸.
+    await sql`
+      UPDATE sales.invoice SET finalized_at = now() - interval '71 hours'
+       WHERE id = ${invoiceId}::uuid`.execute(handle.db);
+
+    const r = await app.inject({ method: "GET", url: `/invoices/${invoiceId}/returnable`, ...s });
+    assert.equal(r.statusCode, 200, r.body);
+    const body = r.json();
+    assert.equal(body.hoursSinceSale, 71);
+    assert.equal(body.daysSinceSale, 2, "روزشمار هنوز ۲ می‌گوید");
+    assert.equal(body.late, true, "ولی با مهلت ۴۸ ساعته، دیرهنگام است");
+  });
+
   test("پیش‌نمایش مرجوعی، باقی‌مانده هر قلم را می‌دهد", async () => {
     const s = await loginAs(supervisor);
     const { invoiceId, lineId } = await soldInvoice({
@@ -216,6 +236,7 @@ describe("برگشت از فروش و دوره ثبت", { skip }, () => {
     assert.equal(r.statusCode, 200, r.body);
     const body = r.json();
     assert.equal(body.late, false, "فروش همین حالا، دیرهنگام نیست");
+    assert.equal(body.hoursSinceSale, 0, "مهلت به ساعت شمرده می‌شود");
     assert.equal(body.lines.length, 1);
     assert.equal(body.lines[0].invoiceLineId, lineId);
     // «5.000» نه «5»: تعداد از SQL می‌آید و همان دقت `platform.qty`

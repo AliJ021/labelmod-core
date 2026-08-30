@@ -33,6 +33,7 @@ interface SettingView {
   options: Array<{ value: string; label: string }> | null;
   min: number | null;
   max: number | null;
+  unit: string | null;
   isEditable: boolean;
   canEdit: boolean;
   permission: string;
@@ -261,9 +262,26 @@ describe("تنظیمات از مسیر API", { skip }, () => {
   });
 
   test("تنظیم تصویب‌خواه بدون دلیل عوض نمی‌شود", async () => {
-    const r = await patch(admin, "return.window_days", 3);
+    const r = await patch(admin, "return.window_hours", 72);
     assert.equal(r.statusCode, 409, r.body);
     assert.match((JSON.parse(r.body) as { error: { message: string } }).error.message, /دلیل/);
+  });
+
+  test("مهلت مرجوعی به ساعت است و ۴۸ ساعت پیش‌فرض است", async () => {
+    // «۲ روز» نمی‌توانست ۴۸ ساعت را بیان کند: گرد کردن روز، ۷۱ ساعت را
+    // هم داخل مهلت می‌شمرد. کلید قدیمی حذف شده، نه اینکه کنارش بماند.
+    const gs = await groups(admin);
+    const w = find(gs, "return.window_hours");
+    assert.equal(w.unit, "ساعت");
+    assert.equal(w.kind, "int");
+
+    const all = gs.flatMap((g) => g.settings).map((x) => x.key);
+    assert.ok(!all.includes("return.window_days"), "کلید قدیمی نباید مانده باشد");
+
+    const r = await patch(admin, "return.window_hours", 24, "تست تغییر مهلت");
+    assert.equal(r.statusCode, 200, r.body);
+    assert.equal(find(await groups(admin), "return.window_hours").value, 24);
+    await patch(admin, "return.window_hours", 48, "بازگشت به پیش‌فرض");
   });
 
   test("نشست باز‌شده با PIN تنظیمات را عوض نمی‌کند", async () => {
