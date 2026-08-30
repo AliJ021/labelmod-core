@@ -59,6 +59,29 @@ export function registerPostingRoutes(app: FastifyInstance, deps: PostingRouteDe
   });
 
   /**
+   * بستن همه دوره‌های کانالِ روزهای گذشته — مسیرِ کار شبانه.
+   *
+   * **موجودی را دست نمی‌زند.** کالا همان لحظه فروش از انبار خارج
+   * شده؛ اینجا فقط سند حسابداری بسته می‌شود.
+   *
+   * عمداً `Idempotency-Key` نمی‌گیرد: خودِ عملیات تکرارپذیر است —
+   * `post_batch` دوره `posted` را دوباره ثبت نمی‌کند و اجرای دوم
+   * فهرست خالی برمی‌گرداند.
+   *
+   * پشت `period.close` است، نه `shift.close`: بستن دوره کار حسابدار
+   * است، نه کار صندوق.
+   */
+  app.post("/posting-batches/close-due", async (req) => {
+    const s = session(req);
+    await requireForSession(db, s, "period.close");
+    const closed = await batches.closeDue(s.userId);
+    return {
+      closed: closed.filter((c) => c.skipped === null),
+      skipped: closed.filter((c) => c.skipped !== null),
+    };
+  });
+
+  /**
    * بستن دوره کانال — سند فروش و COGS یک روز از یک کانال.
    *
    * Idempotent با کلیدی که **از خودِ عملیات** ساخته می‌شود، نه از هدر:

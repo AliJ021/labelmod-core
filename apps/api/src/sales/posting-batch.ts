@@ -3,7 +3,8 @@
  *
  * ADR-003: دوره ثبت از شیفت صندوق جداست. فاکتور صندوق به دوره شیفت
  * می‌چسبد و با بستن کشو ثبت می‌شود؛ فاکتور آنلاین به دوره
- * (شعبه، کانال، روز) می‌چسبد و **هیچ‌چیز خودکار آن را نمی‌بندد**.
+ * (شعبه، کانال، روز) می‌چسبد و با یک کار زمان‌بندی‌شده شبانه بسته
+ * می‌شود (`closeDue`، مهاجرت ۰۱۳).
  *
  * تا پیش از این، لایه API فقط بستن شیفت را داشت. یعنی فروش سایت
  * نهایی می‌شد، کالا از انبار خارج می‌شد، پول می‌آمد — و سند فروش و
@@ -16,6 +17,18 @@ import type { Db } from "../db/client.ts";
 import type { Database } from "../db/types.ts";
 import { parseMoney, serializeMoney } from "../lib/money.ts";
 import { setActor } from "../lib/idempotency.ts";
+
+/** نتیجه یک دوره در اجرای بستن خودکار. */
+export interface ClosedBatch {
+  batchId: string;
+  branchId: string;
+  channel: string;
+  businessDate: string;
+  saleEntry: string | null;
+  cogsEntry: string | null;
+  /** اگر پر باشد یعنی این دوره بسته **نشد** و دلیلش همین است. */
+  skipped: string | null;
+}
 
 export class BatchError extends Error {
   readonly statusCode: number;
@@ -114,6 +127,44 @@ export class PostingBatchService {
     return { saleEntry: row.sale_entry, cogsEntry: row.cogs_entry };
   }
 
+  /**
+   * بستن همه دوره‌های کانالِ روزهای گذشته — کار زمان‌بندی‌شده شبانه.
+   *
+   * **موجودی را دست نمی‌زند.** کالا در همان لحظه فروش از انبار خارج
+   * شده؛ آنچه اینجا بسته می‌شود فقط سند حسابداری است.
+   *
+   * کل اجرا در **یک تراکنش** است: یا همه دوره‌های واجد شرایط بسته
+   * می‌شوند یا هیچ‌کدام. دوره مشکل‌دار (فاکتور نیمه‌کاره، یا بدون
+   * فاکتور نهایی‌شده) رد می‌شود و دلیلش برمی‌گردد — نه اینکه کل
+   * اجرا را بشکند.
+   */
+  async closeDue(actorId: string): Promise<ClosedBatch[]> {
+    return this.#db.transaction().execute(async (trx) => {
+      await setActor(trx, actorId);
+      const res = await sql<{
+        batch_id: string;
+        branch_id: string;
+        channel: string;
+        business_date: Date;
+        sale_entry: string | null;
+        cogs_entry: string | null;
+        skipped: string | null;
+      }>`SELECT * FROM sales.close_due_channel_days(${actorId}::uuid)`.execute(trx);
+
+      return res.rows.map((r) => ({
+        batchId: r.batch_id,
+        branchId: r.branch_id,
+        channel: r.channel,
+        // تاریخ کاری، نه لحظه — `toISOString` آن را به UTC می‌برد و
+        // ممکن است یک روز عقب بیفتد.
+        businessDate: formatDate(r.business_date),
+        saleEntry: r.sale_entry,
+        cogsEntry: r.cogs_entry,
+        skipped: r.skipped,
+      }));
+    });
+  }
+
   /** دوره یک (شعبه، کانال، روز)، اگر ساخته شده باشد. */
   async channelDay(
     branchId: string,
@@ -130,6 +181,20 @@ export class PostingBatchService {
       .executeTakeFirst();
     return row ?? null;
   }
+}
+
+/**
+ * `date` پستگرس → «YYYY-MM-DD»، بدون عبور از UTC.
+ *
+ * `toISOString()` تاریخ را به UTC می‌برد؛ برای یک `date` که درایور
+ * آن را نیمه‌شب **محلی** می‌سازد، این یعنی در تهران یک روز عقب
+ * می‌افتد. تاریخ کاری باید همان چیزی بماند که در دیتابیس است.
+ */
+function formatDate(d: Date): string {
+  const y = d.getFullYear();
+  const m = String(d.getMonth() + 1).padStart(2, "0");
+  const day = String(d.getDate()).padStart(2, "0");
+  return `${y}-${m}-${day}`;
 }
 
 export function unpostedToJson(rows: UnpostedRow[]) {
