@@ -340,13 +340,15 @@ PERFORM pg_temp.assert_raises('چک با وعده بیش از سقف',
   format('SELECT treasury.post_cheque_event(%L,''receive'',%L)',
          (SELECT id FROM treasury.cheque WHERE cheque_no = 'CH-005'), v_user));
 
--- و سقف داده است: بالا بردنش همان چک را قابل ثبت می‌کند
-UPDATE platform.setting SET value = '400'::jsonb WHERE key = 'cheque.max_due_days';
+-- و سقف داده است: بالا بردنش همان چک را قابل ثبت می‌کند.
+-- از مسیر واقعی عوض می‌شود، نه با UPDATE مستقیم — مقدار تنظیم از
+-- مهاجرت ۰۰۸ به بعد فقط از set_setting حرکت می‌کند.
+PERFORM platform.set_setting('cheque.max_due_days', '400'::jsonb, 'تست سقف وعده');
 PERFORM treasury.post_cheque_event(
   (SELECT id FROM treasury.cheque WHERE cheque_no = 'CH-005'), 'receive', v_user);
 PERFORM pg_temp.assert_txt('همان چک پس از بالا بردن سقف',
   (SELECT status FROM treasury.cheque WHERE cheque_no = 'CH-005'), 'in_hand');
-UPDATE platform.setting SET value = '180'::jsonb WHERE key = 'cheque.max_due_days';
+PERFORM platform.set_setting('cheque.max_due_days', '180'::jsonb, 'بازگشت به پیش‌فرض');
 
 -- شماره‌گذاری بدون پرش: سه رویداد روی یک چک، فقط یک شماره
 PERFORM pg_temp.assert_eq('شمارنده سند = تعداد چک‌های شماره‌دار',
@@ -355,11 +357,11 @@ PERFORM pg_temp.assert_eq('شمارنده سند = تعداد چک‌های شم
   (SELECT count(*) FROM treasury.cheque WHERE number IS NOT NULL));
 
 -- خرج‌کردن یک تصمیم حسابدار است، نه یک ثابت در کد
-UPDATE platform.setting SET value = 'false'::jsonb WHERE key = 'cheque.allow_endorse';
+PERFORM platform.set_setting('cheque.allow_endorse', 'false'::jsonb, 'تست ممنوعیت ظهرنویسی');
 PERFORM pg_temp.assert_raises('خرج‌کردن وقتی تنظیم خاموش است',
   format('SELECT treasury.post_cheque_event(%L,''endorse'',%L,NULL,%L)',
          (SELECT id FROM treasury.cheque WHERE cheque_no='CH-004'), v_user, v_sup));
-UPDATE platform.setting SET value = 'true'::jsonb WHERE key = 'cheque.allow_endorse';
+PERFORM platform.set_setting('cheque.allow_endorse', 'true'::jsonb, 'بازگشت به پیش‌فرض');
 
 -- ═══════════════════════════════════════════════════════════════════
 RAISE NOTICE E'\n═══ ۸. حسابرسی و پرونده سررسید ═══';

@@ -16,11 +16,13 @@ import { registerSalesRoutes } from "./sales-routes.ts";
 import { registerReturnRoutes } from "./return-routes.ts";
 import { registerPostingRoutes } from "./posting-routes.ts";
 import { registerCatalogRoutes } from "./catalog-routes.ts";
+import { registerSettingsRoutes } from "./settings-routes.ts";
 import { InvoiceService } from "../sales/invoice.ts";
 import { ShiftService } from "../sales/shift.ts";
 import { ReturnService } from "../sales/return.ts";
 import { PostingBatchService } from "../sales/posting-batch.ts";
 import { VariationService } from "../catalog/variation.ts";
+import { SettingService } from "../platform/settings.ts";
 import { safeEqual } from "../auth/password.ts";
 
 declare module "fastify" {
@@ -205,6 +207,10 @@ export async function buildApp(deps: AppDeps): Promise<FastifyInstance> {
   registerCatalogRoutes(app, {
     db: deps.db,
     variations: new VariationService(deps.db),
+  });
+  registerSettingsRoutes(app, {
+    db: deps.db,
+    settings: new SettingService(deps.db),
   });
   return app;
 }

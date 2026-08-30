@@ -173,10 +173,14 @@ jobs:
                 RAISE EXCEPTION 'جمع فاکتور با جمع سطرهایش نمی‌خواند: %', n;
               END IF;
 
-              -- هیچ عملیات حساسی نباید از فهرست ممنوعه PIN بیرون بماند
+              -- هیچ عملیات حساسی نباید از فهرست ممنوعه PIN بیرون بماند.
+              -- settings.security اینجاست تا دفاع، خودش را هم بپوشاند:
+              -- بدون آن، نشستی که با PIN باز شده می‌توانست سیاست PIN را
+              -- عوض کند.
               SELECT count(*) INTO n FROM (
                 SELECT unnest(ARRAY['refund.cash','invoice.cancel',
-                                    'price.change','stock.adjust']) AS op) x
+                                    'price.change','stock.adjust',
+                                    'settings.security']) AS op) x
                WHERE NOT EXISTS (
                  SELECT 1 FROM platform.setting
                   WHERE key = 'auth.pin_forbidden_operations' AND value ? x.op);

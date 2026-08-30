@@ -87,6 +87,27 @@ export interface SettingTable {
   requires_approval: boolean;
   updated_at: Generated<Date>;
   updated_by: string | null;
+  /** نوع مقدار — تعیین‌کننده ویجت در رابط کاربری و اعتبارسنجی در set_setting. */
+  kind: Generated<string>;
+  label: string | null;
+  group_key: Generated<string>;
+  /** [{value,label}] برای choice و multichoice. */
+  options: unknown;
+  min_value: string | null;
+  max_value: string | null;
+  unit: string | null;
+  help: string | null;
+  sort_order: Generated<number>;
+  /** عملیاتی که identity.can() برای تغییر این تنظیم می‌سنجد. */
+  permission: Generated<string>;
+  is_editable: Generated<boolean>;
+}
+
+export interface SettingGroupTable {
+  key: string;
+  title: string;
+  subtitle: string | null;
+  sort_order: Generated<number>;
 }
 
 export interface BranchTable {
@@ -352,5 +373,6 @@ export interface Database {
   "identity.session": SessionTable;
   "identity.auth_attempt": AuthAttemptTable;
   "platform.setting": SettingTable;
+  "platform.setting_group": SettingGroupTable;
   "platform.branch": BranchTable;
 }
