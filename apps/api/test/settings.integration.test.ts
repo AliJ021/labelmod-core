@@ -284,6 +284,59 @@ describe("تنظیمات از مسیر API", { skip }, () => {
     await patch(admin, "return.window_hours", 48, "بازگشت به پیش‌فرض");
   });
 
+  test("کارمزد و دوره تسویه کارت‌خوان از تنظیمات عوض می‌شوند", async () => {
+    // عمداً در `platform.setting` نیست: این دو عدد از قبل در
+    // `treasury.account` هستند و همان‌جاست که سند تسویه می‌خواندشان.
+    // یک کلید سراسری یعنی کارت‌خوان فروشگاه و درگاه سایت ناچار یک
+    // کارمزد داشته باشند — که تقریباً هرگز درست نیست.
+    const s = await loginAs(admin);
+    const r = await app.inject({ method: "GET", url: "/settlement-terms", ...s });
+    assert.equal(r.statusCode, 200, r.body);
+    const terms = (JSON.parse(r.body) as { terms: Array<Record<string, unknown>> }).terms;
+    assert.equal(terms.length, 2, "کارت‌خوان و درگاه");
+
+    const pos = terms.find((t) => t.code === "POS-1");
+    assert.ok(pos, "کارت‌خوان در فهرست نیست");
+    assert.equal(pos.settlementDays, 1, "کارت‌خوان فردای همان روز تسویه می‌کند");
+    assert.equal(typeof pos.feePercent, "string", "کارمزد رشته است، نه عدد");
+
+    const upd = await app.inject({
+      method: "PATCH",
+      url: `/settlement-terms/${pos.id as string}`,
+      ...s,
+      payload: { settlementDays: 1, feePercent: "0.235", reason: "قرارداد PSP" },
+    });
+    assert.equal(upd.statusCode, 200, upd.body);
+    assert.equal((JSON.parse(upd.body) as { feePercent: string }).feePercent, "0.235");
+
+    // سقف ۱۰٪ — عددی مثل ۱۵ تقریباً همیشه یعنی درصد و مبلغ اشتباه
+    // گرفته شده، و آن اشتباه هر روز در سند تسویه ضرب می‌شود.
+    const bad = await app.inject({
+      method: "PATCH",
+      url: `/settlement-terms/${pos.id as string}`,
+      ...s,
+      payload: { settlementDays: 1, feePercent: "15", reason: "تست" },
+    });
+    assert.equal(bad.statusCode, 409, bad.body);
+  });
+
+  test("حسابدار کارمزد را نمی‌بیند-قابل-تغییر و نمی‌تواند عوضش کند", async () => {
+    const s = await loginAs(accountant);
+    const r = await app.inject({ method: "GET", url: "/settlement-terms", ...s });
+    assert.equal(r.statusCode, 200, r.body);
+    const terms = (JSON.parse(r.body) as { terms: Array<{ canEdit: boolean }> }).terms;
+    assert.ok(terms.every((t) => !t.canEdit), "حسابدار settings.security ندارد");
+
+    const pos = (JSON.parse(r.body) as { terms: Array<{ id: string }> }).terms[0];
+    const upd = await app.inject({
+      method: "PATCH",
+      url: `/settlement-terms/${pos!.id}`,
+      ...s,
+      payload: { settlementDays: 5, feePercent: "1", reason: "تست" },
+    });
+    assert.equal(upd.statusCode, 403, upd.body);
+  });
+
   test("نشست باز‌شده با PIN تنظیمات را عوض نمی‌کند", async () => {
     // PIN فقط قفل صفحه را برمی‌دارد. اگر می‌شد با PIN سقف تخفیف یا
     // مهلت مرجوعی را عوض کرد، بند ۱ SECURITY.md در عمل وجود نداشت.

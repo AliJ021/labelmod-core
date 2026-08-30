@@ -55,6 +55,7 @@ DECLARE
   v_admin uuid;
   v_n     int;
   v_row   platform.setting;
+  v_pos   uuid;
 BEGIN
 
 INSERT INTO identity.app_user (username, full_name) VALUES ('cfg','مدیر تنظیمات')
@@ -222,7 +223,57 @@ PERFORM pg_temp.assert_txt('به‌روزرسانی فراداده بی‌مان
   (SELECT help FROM platform.setting WHERE key = 'tax.default_rate'),
   'متن راهنمای تازه');
 
-RAISE NOTICE E'\n── ۹. خواننده‌های نوع‌دار ────────────────────────────────';
+RAISE NOTICE E'\n── ۹. شرایط تسویه کارت‌خوان و درگاه ─────────────────────';
+
+-- کارمزد و دوره تسویه در `treasury.account` می‌مانند، نه در
+-- `platform.setting`: همان‌جاست که settle_batch می‌خواندشان، و
+-- **به‌ازای هر پایانه** معنا دارند نه یکی برای کل سیستم.
+PERFORM pg_temp.assert_eq('پایانه‌های تسویه‌شونده',
+  (SELECT count(*) FROM treasury.settlement_terms), 2);
+PERFORM pg_temp.assert_eq('کارت‌خوان فردای همان روز تسویه می‌کند',
+  (SELECT settlement_days FROM treasury.settlement_terms WHERE code = 'POS-1'), 1);
+
+SELECT id INTO v_pos FROM treasury.account WHERE code = 'POS-1';
+
+PERFORM pg_temp.assert_raises('UPDATE مستقیم روی کارمزد',
+  format($$UPDATE treasury.account SET fee_percent = 2 WHERE id = %L$$, v_pos));
+PERFORM pg_temp.assert_eq('کارمزد پس از تلاش ناموفق',
+  (SELECT fee_percent FROM treasury.account WHERE id = v_pos), 0);
+
+-- ولی ستون‌های بی‌اثر در محاسبه، آزادند
+UPDATE treasury.account SET bank_name = 'بانک نمونه' WHERE id = v_pos;
+PERFORM pg_temp.assert_eq('ستون بی‌اثر در محاسبه، آزاد است',
+  (SELECT count(*) FROM treasury.account WHERE id = v_pos AND bank_name = 'بانک نمونه'), 1);
+
+-- سقف ۱۰٪: عددی مثل ۱۵ تقریباً همیشه یعنی درصد و مبلغ اشتباه گرفته
+-- شده — و آن اشتباه مستقیم در سند تسویه ضرب می‌شود.
+PERFORM pg_temp.assert_raises('کارمزد ۱۵ درصد',
+  format($$SELECT treasury.set_settlement_terms(%L, 1::smallint, 15, 'تست')$$, v_pos));
+PERFORM pg_temp.assert_raises('کارمزد منفی',
+  format($$SELECT treasury.set_settlement_terms(%L, 1::smallint, -1, 'تست')$$, v_pos));
+PERFORM pg_temp.assert_raises('دوره تسویه ۹۹ روزه',
+  format($$SELECT treasury.set_settlement_terms(%L, 99::smallint, 1, 'تست')$$, v_pos));
+
+-- صندوق نقدی شرایط تسویه ندارد
+PERFORM pg_temp.assert_raises('شرایط تسویه روی صندوق نقدی',
+  format($$SELECT treasury.set_settlement_terms(
+             (SELECT id FROM treasury.account WHERE code='CASH-MAIN'),
+             1::smallint, 1, 'تست')$$));
+
+-- و تغییر معتبر می‌نشیند و ردّ حسابرسی می‌گذارد
+PERFORM treasury.set_settlement_terms(v_pos, 1::smallint, 0.235, 'قرارداد PSP');
+PERFORM pg_temp.assert_eq('کارمزد پس از تغییر معتبر',
+  (SELECT fee_percent FROM treasury.account WHERE id = v_pos), 0.235);
+
+SELECT count(*) INTO v_n FROM platform.audit_log
+ WHERE action = 'treasury.settlement_terms'
+   AND entity_id = 'POS-1'
+   AND (before ->> 'fee_percent')::numeric = 0
+   AND (after  ->> 'fee_percent')::numeric = 0.235
+   AND reason = 'قرارداد PSP';
+PERFORM pg_temp.assert_eq('ردّ حسابرسی کارمزد', v_n, 1);
+
+RAISE NOTICE E'\n── ۱۰. خواننده‌های نوع‌دار ───────────────────────────────';
 
 PERFORM pg_temp.assert_eq('setting_int', platform.setting_int('auth.pin_length'), 4);
 PERFORM pg_temp.assert_txt('setting_bool',

@@ -43,6 +43,21 @@ const settingKey = z
   .max(120)
   .regex(/^[a-z][a-z0-9_]*(\.[a-z0-9_]+)+$/, "کلید تنظیم نامعتبر است");
 
+/**
+ * شرایط تسویه پایانه.
+ *
+ * کارمزد **رشته** است، نه عدد: `numeric(5,3)` اعشار دارد و
+ * `number` جاوااسکریپت ۰٫۲۳۵ را دقیق نگه نمی‌دارد. همان قاعده پول،
+ * به همان دلیل.
+ */
+const termsBody = z.object({
+  settlementDays: z.number().int().min(0).max(90),
+  feePercent: z
+    .string()
+    .regex(/^\d+(\.\d{1,3})?$/, "کارمزد باید عدد با حداکثر سه رقم اعشار باشد"),
+  reason: z.string().trim().max(500).optional(),
+});
+
 export interface SettingsRouteDeps {
   db: Db;
   settings: SettingService;
@@ -115,5 +130,41 @@ export function registerSettingsRoutes(app: FastifyInstance, deps: SettingsRoute
       settings.setIn(trx, key, body.value, body.reason ?? null),
     );
     return out;
+  });
+
+  /**
+   * شرایط تسویه کارت‌خوان و درگاه — دوره و کارمزد.
+   *
+   * جدا از `/settings` است چون شکلش جدول است نه کلید/مقدار، و
+   * **به‌ازای هر پایانه** معنا دارد: کارت‌خوان فروشگاه و درگاه سایت
+   * معمولاً قرارداد متفاوت دارند.
+   */
+  app.get("/settlement-terms", async (req) => {
+    const s = session(req);
+    await requireForSession(db, s, "settings.view");
+    const d = await can(db, {
+      userId: s.userId,
+      operation: "settings.security",
+      viaPin: s.pinUnlocked,
+    });
+    return { terms: await settings.settlementTerms(d.verdict === "allow") };
+  });
+
+  /**
+   * تغییر دوره تسویه و کارمزد یک پایانه.
+   *
+   * پشت `settings.security`، نه `settings.manage`: این نرخ مستقیم در
+   * سند تسویه ضرب می‌شود. یک اشتباه اینجا هر روز در دفتر تکرار
+   * می‌شود بی‌آنکه چیزی قرمز شود.
+   */
+  app.patch("/settlement-terms/:id", async (req) => {
+    const s = session(req);
+    const { id } = z.object({ id: z.string().uuid("شناسه نامعتبر") }).parse(req.params);
+    const body = termsBody.parse(req.body);
+    await requireForSession(db, s, "settings.security");
+
+    return withActor(db, { userId: s.userId, ip: req.ip }, (trx) =>
+      settings.setTermsIn(trx, id, body.settlementDays, body.feePercent, body.reason ?? null),
+    );
   });
 }

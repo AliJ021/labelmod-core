@@ -103,6 +103,20 @@ function parseOptions(v: unknown): Array<{ value: string; label: string }> | nul
     }));
 }
 
+/** شرایط تسویه یک پایانه — کارت‌خوان یا درگاه. */
+export interface SettlementTermsView {
+  id: string;
+  code: string;
+  name: string;
+  kind: string;
+  settlementDays: number;
+  /** درصد، به‌صورت رشته: `numeric(5,3)` است و اعشار دارد. */
+  feePercent: string;
+  isActive: boolean;
+  settlesTo: string | null;
+  canEdit: boolean;
+}
+
 export class SettingService {
   readonly #db: Db;
 
@@ -178,6 +192,62 @@ export class SettingService {
       });
     }
     return [...groups.values()];
+  }
+
+  /**
+   * شرایط تسویه کارت‌خوان و درگاه.
+   *
+   * عمداً در `platform.setting` نیست: این دو عدد از قبل در
+   * `treasury.account` وجود دارند و همان‌جاست که `settle_batch`
+   * می‌خواندشان. یک کلید سراسری یعنی کارت‌خوان فروشگاه و درگاه سایت
+   * ناچار یک کارمزد داشته باشند — که تقریباً هرگز درست نیست.
+   */
+  async settlementTerms(canEdit: boolean): Promise<SettlementTermsView[]> {
+    const r = await sql<{
+      id: string;
+      code: string;
+      name: string;
+      kind: string;
+      settlement_days: number;
+      fee_percent: string;
+      is_active: boolean;
+      settles_to: string | null;
+    }>`SELECT * FROM treasury.settlement_terms ORDER BY kind, code`.execute(this.#db);
+
+    return r.rows.map((t) => ({
+      id: t.id,
+      code: t.code,
+      name: t.name,
+      kind: t.kind,
+      settlementDays: Number(t.settlement_days),
+      feePercent: t.fee_percent,
+      isActive: t.is_active,
+      settlesTo: t.settles_to,
+      canEdit,
+    }));
+  }
+
+  /** نوشتن شرایط تسویه — تنها از مسیر `treasury.set_settlement_terms()`. */
+  async setTermsIn(
+    trx: Transaction<Database>,
+    accountId: string,
+    settlementDays: number,
+    feePercent: string,
+    reason: string | null,
+  ): Promise<{ id: string; settlementDays: number; feePercent: string }> {
+    const r = await sql<{ id: string; settlement_days: number; fee_percent: string }>`
+      SELECT id, settlement_days, fee_percent
+        FROM treasury.set_settlement_terms(
+          ${accountId}::uuid, ${settlementDays}::smallint, ${feePercent}::numeric, ${reason})
+    `.execute(trx);
+
+    const row = r.rows[0];
+    if (!row) throw new SettingError("terms_failed", "شرایط تسویه ذخیره نشد", 500);
+    return {
+      id: row.id,
+      settlementDays: Number(row.settlement_days),
+      feePercent: row.fee_percent,
+    };
   }
 
   /**
