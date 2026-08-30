@@ -216,20 +216,35 @@ export class ReturnService {
     return { kind: row.kind };
   }
 
-  /** چند روز از نهایی‌شدن فاکتور گذشته، و آیا از مهلت گذشته است. */
-  async returnWindow(invoiceId: string): Promise<{ daysSince: number; late: boolean }> {
-    const res = await sql<{ days: number; window_days: number }>`
+  /**
+   * چند ساعت از نهایی‌شدن فاکتور گذشته، و آیا از مهلت گذشته است.
+   *
+   * **به ساعت، نه روز.** مالک مهلت ۴۸ ساعته خواسته و گرد کردن روز
+   * نمی‌تواند بیانش کند: با `window_days = 2`، فاکتور ۷۱ ساعته
+   * `floor(71/24) = 2` می‌داد و «داخل مهلت» شمرده می‌شد — یعنی مهلت
+   * واقعی ۷۲ ساعت بود، نه ۴۸.
+   *
+   * ساعت هم `floor` می‌شود، ولی خطایش حداکثر یک ساعت است نه یک روز.
+   */
+  async returnWindow(
+    invoiceId: string,
+  ): Promise<{ hoursSince: number; daysSince: number; late: boolean }> {
+    const res = await sql<{ hours: number; window_hours: number }>`
       SELECT
-        floor(extract(epoch FROM (now() - coalesce(i.finalized_at, i.occurred_at))) / 86400)::int
-          AS days,
-        coalesce((SELECT (value #>> '{}')::int FROM platform.setting
-                   WHERE key = 'return.window_days'), 7) AS window_days
+        floor(extract(epoch FROM (now() - coalesce(i.finalized_at, i.occurred_at))) / 3600)::int
+          AS hours,
+        platform.setting_int('return.window_hours', 48) AS window_hours
         FROM sales.invoice i WHERE i.id = ${invoiceId}::uuid
     `.execute(this.#db);
 
     const r = res.rows[0];
     if (!r) throw new ReturnError("invoice_not_found", "فاکتور یافت نشد", 404);
-    return { daysSince: r.days, late: r.days > r.window_days };
+    return {
+      hoursSince: r.hours,
+      // برای نمایش نگه داشته شده؛ تصمیم «دیرهنگام» فقط به ساعت است.
+      daysSince: Math.floor(r.hours / 24),
+      late: r.hours > r.window_hours,
+    };
   }
 
   async createDraft(input: {

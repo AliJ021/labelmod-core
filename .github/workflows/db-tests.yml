@@ -87,7 +87,7 @@ jobs:
               -- هیچ مؤلفه درآمدی، مالیاتی یا انبار نباید اجازه تغییر حساب بگیرد
               SELECT count(*) INTO n FROM ledger.posting_rule
                WHERE allow_account_override
-                 AND account_code IN ('4101','4102','4103','4201','2201','5101','1301');
+                 AND account_code IN ('4101','4102','4103','4201','2201','5101','5102','1301');
               IF n > 0 THEN
                 RAISE EXCEPTION 'مؤلفه قفل‌شده با اجازه تغییر حساب: %', n;
               END IF;
@@ -173,10 +173,14 @@ jobs:
                 RAISE EXCEPTION 'جمع فاکتور با جمع سطرهایش نمی‌خواند: %', n;
               END IF;
 
-              -- هیچ عملیات حساسی نباید از فهرست ممنوعه PIN بیرون بماند
+              -- هیچ عملیات حساسی نباید از فهرست ممنوعه PIN بیرون بماند.
+              -- settings.security اینجاست تا دفاع، خودش را هم بپوشاند:
+              -- بدون آن، نشستی که با PIN باز شده می‌توانست سیاست PIN را
+              -- عوض کند.
               SELECT count(*) INTO n FROM (
                 SELECT unnest(ARRAY['refund.cash','invoice.cancel',
-                                    'price.change','stock.adjust']) AS op) x
+                                    'price.change','stock.adjust',
+                                    'settings.security']) AS op) x
                WHERE NOT EXISTS (
                  SELECT 1 FROM platform.setting
                   WHERE key = 'auth.pin_forbidden_operations' AND value ? x.op);

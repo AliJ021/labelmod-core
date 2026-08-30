@@ -116,7 +116,11 @@ export function registerReturnRoutes(app: FastifyInstance, deps: ReturnRouteDeps
     return {
       invoiceId: id,
       invoiceStatus: inv.status,
+      // هر دو برمی‌گردند: صندوق‌دار «۲ روز پیش» را راحت‌تر می‌خواند،
+      // ولی تصمیم «دیرهنگام» فقط از ساعت می‌آید — مهلت ۴۸ ساعته با
+      // شمارش روز بیان‌شدنی نیست.
       daysSinceSale: window.daysSince,
+      hoursSinceSale: window.hoursSince,
       late: window.late,
       lines: returnableToJson(await returns.returnable(id)),
     };

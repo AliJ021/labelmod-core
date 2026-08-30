@@ -14,6 +14,7 @@ import { ScopeError } from "../sales/scope.ts";
 import { ReturnError } from "../sales/return.ts";
 import { BatchError } from "../sales/posting-batch.ts";
 import { CatalogError } from "../catalog/variation.ts";
+import { SettingError } from "../platform/settings.ts";
 import { IdempotencyInFlightError } from "../lib/idempotency.ts";
 import { ZodError } from "zod";
 
@@ -62,6 +63,7 @@ export function registerErrorHandler(app: FastifyInstance): void {
       err instanceof ReturnError ||
       err instanceof BatchError ||
       err instanceof CatalogError ||
+      err instanceof SettingError ||
       err instanceof IdempotencyInFlightError
     ) {
       req.log.info({ code: err.code, correlationId }, "درخواست فروش رد شد");

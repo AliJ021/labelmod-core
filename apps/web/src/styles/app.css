@@ -385,3 +385,179 @@
   padding: var(--s-4) var(--s-3) var(--s-3);
   border-radius: var(--r-inner, var(--r-md));
 }
+
+/* ── تنظیمات ─────────────────────────────────────────────────────
+   کارت گروه شیشه‌ای است (لایه کنترلی)، ولی هر ردیف فرم **مات**.
+   همان دلیل صندوق: عددی که تایپ می‌شود و دکمه‌ای که فشرده می‌شود
+   باید پرتضاد باشند.
+   ─────────────────────────────────────────────────────────────── */
+.set-group-head {
+  display: flex;
+  align-items: center;
+  gap: var(--s-3);
+  width: 100%;
+  min-height: var(--touch);
+  padding: 0;
+  border: 0;
+  background: none;
+  text-align: start;
+}
+
+.set-count {
+  margin-inline-start: auto;
+  min-width: 2.5ch;
+  padding: 2px var(--s-2);
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--ink) 9%, transparent);
+  color: var(--ink-2);
+  font-size: 0.8rem;
+  font-weight: 700;
+  text-align: center;
+}
+
+.set-row {
+  display: flex;
+  flex-direction: column;
+  gap: var(--s-2);
+  padding: var(--s-4);
+}
+
+.set-row-head {
+  display: flex;
+  align-items: start;
+  gap: var(--s-3);
+}
+
+.set-label {
+  font-weight: 700;
+  line-height: 1.4;
+}
+
+/* کلید فنی کنار برچسب می‌ماند: وقتی کسی از سند یا پشتیبانی سراغ یک
+   تنظیم را می‌گیرد، با همین نام صدایش می‌زند. */
+.set-key {
+  font-family: "IBM Plex Mono", ui-monospace, monospace;
+  font-size: 0.72rem;
+  color: var(--ink-3);
+  direction: ltr;
+  unicode-bidi: isolate;
+}
+
+.set-help {
+  margin: 0;
+  color: var(--ink-2);
+  font-size: 0.86rem;
+  line-height: 1.7;
+}
+
+.set-lock {
+  margin-inline-start: auto;
+  flex-shrink: 0;
+  font-size: 0.78rem;
+  font-weight: 600;
+}
+
+.set-field {
+  display: flex;
+  align-items: center;
+  gap: var(--s-2);
+}
+
+.set-input {
+  min-height: var(--touch);
+  max-width: 100%;
+  padding: 0 var(--s-3);
+  border: 1px solid var(--rule-2);
+  border-radius: var(--r-sm);
+  background: var(--surface-solid-2);
+  color: var(--ink);
+  font: inherit;
+}
+
+.set-field .set-input {
+  width: 12ch;
+}
+
+/* فهرست کشویی به اندازه بلندترین گزینه‌اش، نه به اندازه کارت. یک
+   `<select>` تمام‌عرض روی دسکتاپ، مقصدِ کلیک را از چشم پنهان می‌کند. */
+select.set-input {
+  width: auto;
+  max-width: min(100%, 42ch);
+  padding-inline-end: var(--s-2);
+}
+
+.set-input:disabled {
+  color: var(--ink-3);
+  cursor: not-allowed;
+}
+
+.set-unit {
+  color: var(--ink-2);
+  font-size: 0.86rem;
+}
+
+.set-switch,
+.set-check {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--s-2);
+  min-height: var(--touch);
+  cursor: pointer;
+}
+
+.set-switch input,
+.set-check input {
+  width: 20px;
+  height: 20px;
+  accent-color: var(--accent);
+}
+
+.set-checks {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--s-1) var(--s-4);
+}
+
+.set-reason {
+  display: flex;
+  flex-direction: column;
+  gap: var(--s-1);
+}
+
+.set-reason .set-input {
+  width: 100%;
+}
+
+.set-foot {
+  display: flex;
+  align-items: center;
+  gap: var(--s-3);
+  flex-wrap: wrap;
+  padding-top: var(--s-2);
+  border-top: 1px solid var(--rule);
+}
+
+.set-foot > .row {
+  margin-inline-start: auto;
+}
+
+.set-save {
+  min-height: var(--touch);
+  padding-inline: var(--s-5);
+}
+
+.set-save:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+
+/* پیام وضعیت: رنگ + آیکون + متن. هیچ‌کدام به‌تنهایی حامل معنا نیست. */
+.set-msg {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--s-1);
+  font-size: 0.84rem;
+  font-weight: 600;
+}
+.set-msg--crit { color: var(--crit); }
+.set-msg--good { color: var(--good); }

@@ -11,6 +11,7 @@ import { useEffect, useState } from "react";
 import { Glass, GlassFilters } from "./components/Glass.tsx";
 import { Dashboard } from "./screens/Dashboard.tsx";
 import { Pos } from "./screens/Pos.tsx";
+import { Settings } from "./screens/Settings.tsx";
 import {
   getPerf,
   getTheme,
@@ -21,7 +22,19 @@ import {
   type Theme,
 } from "./lib/theme.ts";
 
-type Zone = "dashboard" | "pos";
+type Zone = "dashboard" | "pos" | "settings";
+
+/**
+ * چرا هر ناحیه این‌قدر شیشه دارد — ADR-002، به زبان خودِ صفحه.
+ *
+ * تنظیمات ناحیه «متوسط» است: کارت گروه شیشه‌ای، ولی هر ورودی فرم مات.
+ * عددی که تایپ می‌شود باید پرتضاد باشد، حتی وقتی عجله‌ای در کار نیست.
+ */
+const ZONE_NOTE: Record<Zone, string> = {
+  dashboard: "این ناحیه شیشه کامل دارد — خوانده می‌شود، نه عمل.",
+  pos: "این ناحیه عمداً مات است — زیر نور فروشگاه باید در کسری از ثانیه خوانده شود.",
+  settings: "شیشه فقط روی کارت گروه — ورودی‌ها مات‌اند تا عدد و دکمه پرتضاد بمانند.",
+};
 
 export function App() {
   const [zone, setZone] = useState<Zone>("dashboard");
@@ -96,6 +109,15 @@ export function App() {
             >
               صندوق
             </button>
+            <button
+              type="button"
+              role="tab"
+              aria-selected={zone === "settings"}
+              className={zone === "settings" ? "on" : ""}
+              onClick={() => switchZone("settings")}
+            >
+              تنظیمات
+            </button>
           </div>
 
           <div className="tools">
@@ -115,14 +137,10 @@ export function App() {
         </Glass>
 
         <main style={{ viewTransitionName: "zone" }}>
-          {zone === "dashboard" ? <Dashboard /> : <Pos />}
+          {zone === "dashboard" ? <Dashboard /> : zone === "pos" ? <Pos /> : <Settings />}
         </main>
 
-        <p className="zone-note">
-          {zone === "dashboard"
-            ? "این ناحیه شیشه کامل دارد — خوانده می‌شود، نه عمل."
-            : "این ناحیه عمداً مات است — زیر نور فروشگاه باید در کسری از ثانیه خوانده شود."}
-        </p>
+        <p className="zone-note">{ZONE_NOTE[zone]}</p>
       </div>
     </>
   );

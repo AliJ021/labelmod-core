@@ -360,14 +360,17 @@ PERFORM pg_temp.assert_txt('اصلاح موجودی با PIN: ممنوع', r.ver
 SELECT * INTO r FROM identity.can(v_cashier, 'sale.create', NULL, NULL, true);
 PERFORM pg_temp.assert_txt('فروش عادی با PIN: مجاز', r.verdict::text, 'allow');
 
--- فهرست ممنوعه داده است، نه کد
-UPDATE platform.setting SET value = '[]'::jsonb
- WHERE key = 'auth.pin_forbidden_operations';
+-- فهرست ممنوعه داده است، نه کد.
+-- از مسیر واقعی عوض می‌شود، نه با UPDATE مستقیم — مقدار تنظیم از
+-- مهاجرت ۰۰۸ به بعد فقط از set_setting حرکت می‌کند.
+PERFORM platform.set_setting('auth.pin_forbidden_operations', '[]'::jsonb,
+  'تست: فهرست ممنوعه داده است نه کد');
 SELECT * INTO r FROM identity.can(v_admin, 'refund.cash', NULL, NULL, true);
 PERFORM pg_temp.assert_txt('پس از خالی‌کردن فهرست ممنوعه', r.verdict::text, 'allow');
-UPDATE platform.setting SET value =
- '["refund.cash","invoice.cancel","price.change","stock.adjust","period.close","period.reopen","user.manage","journal.manual","return.late"]'::jsonb
- WHERE key = 'auth.pin_forbidden_operations';
+PERFORM platform.set_setting('auth.pin_forbidden_operations',
+ '["refund.cash","invoice.cancel","price.change","stock.adjust","period.close",
+   "period.reopen","user.manage","journal.manual","return.late",
+   "settings.manage","settings.security"]'::jsonb, 'بازگشت به پیش‌فرض');
 
 -- ═══════════════════════════════════════════════════════════════════
 RAISE NOTICE E'\n═══ ادعاهای پایدار ═══';
