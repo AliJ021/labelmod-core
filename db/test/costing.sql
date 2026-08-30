@@ -70,11 +70,15 @@ INSERT INTO catalog.price (variation_id, price_list, amount)
   VALUES (v_var, 'default', 500000);
 
 -- ═══════════════════════════════════════════════════════════════════
-RAISE NOTICE E'\n═══ ۱. میانگین موزون — رفتار پیش‌فرض دست‌نخورده می‌ماند ═══';
+RAISE NOTICE E'\n═══ ۱. میانگین موزون — روش دوم، هنوز کامل کار می‌کند ═══';
 -- ═══════════════════════════════════════════════════════════════════
 
-PERFORM pg_temp.assert_eq('روش پیش‌فرض میانگین موزون است',
-  (platform.setting_text('costing.method') = 'moving_weighted_average')::int, 1);
+-- پیش‌فرض از مهاجرت ۰۱۳ «آخرین قیمت خرید» شد (تصمیم مالک). این بخش
+-- رفتار میانگین موزون را می‌سنجد، پس صریح روشنش می‌کند.
+PERFORM pg_temp.assert_eq('پیش‌فرض سیستم، آخرین قیمت خرید است',
+  (platform.setting_text('costing.method') = 'last_purchase')::int, 1);
+PERFORM platform.set_setting('costing.method', '"moving_weighted_average"'::jsonb,
+  'تست: سنجش روش میانگین');
 
 INSERT INTO purchasing.receipt (number, branch_id, supplier_id, warehouse_id, occurred_at)
 VALUES (platform.next_document_no(BR,'purchase',1405::smallint), BR, v_sup, WH, '2026-06-01')

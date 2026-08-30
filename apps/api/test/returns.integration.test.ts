@@ -576,6 +576,85 @@ describe("برگشت از فروش و دوره ثبت", { skip }, () => {
     assert.equal(r.json().error.code, "no_open_shift");
   });
 
+  test("بستن خودکار: موجودی دست نمی‌خورد، فقط سند بسته می‌شود", async () => {
+    // پاسخ سؤال مالک: «وقتی الان در سایت سفارش ثبت بشه تا شب از
+    // موجودی کم نمیشه؟» — چرا، همان لحظه. آنچه شبانه بسته می‌شود
+    // فقط سند حسابداری است.
+    //
+    // با مدیر وارد می‌شویم چون بستن دوره `period.close` می‌خواهد، نه
+    // `shift.close`: بستن کشو کار صندوق است و بستن دوره کار حسابدار.
+    // سرپرست عمداً این مجوز را ندارد.
+    const s = await loginAs(admin);
+
+    const before = await sql<{ on_hand: string }>`
+      SELECT on_hand FROM inventory.stock_balance
+       WHERE variation_id = ${variationId}::uuid AND warehouse_id = ${STORE_WH}::uuid`
+      .execute(handle.db);
+
+    // فاکتور کانال آنلاین با تاریخ دیروز
+    const inv = await sql<{ id: string }>`
+      INSERT INTO sales.invoice (branch_id, warehouse_id, shift_id, channel,
+                                 occurred_at, created_by)
+      VALUES (${BRANCH}::uuid, ${STORE_WH}::uuid, NULL, 'web',
+              now() - interval '1 day', ${ids["supervisor"]}::uuid)
+      RETURNING id`.execute(handle.db);
+    const invoiceId = inv.rows[0]!.id;
+    await sql`
+      INSERT INTO sales.invoice_line (invoice_id, line_no, variation_id, qty,
+                                      unit_price, net_amount)
+      VALUES (${invoiceId}::uuid, 1, ${variationId}::uuid, 1, 1200000, 1200000)`
+      .execute(handle.db);
+    // فروش ناشناس نمی‌تواند نسیه بماند — یک قاعده واقعی که موقع بستن
+    // دوره می‌گیردش. پس پرداخت درگاه را هم ثبت می‌کنیم، همان‌طور که
+    // یک سفارش واقعی سایت دارد.
+    await sql`
+      INSERT INTO treasury.payment (invoice_id, shift_id, method_code, amount, ref_no)
+      VALUES (${invoiceId}::uuid, NULL, 'gateway', 1200000, ${`GW-${suffix}`})`
+      .execute(handle.db);
+
+    // کاربر عامل صریح پاس داده می‌شود، نه از راه `set_actor`:
+    // `set_config` با is_local=true فقط داخل تراکنش زنده است و اینجا
+    // هر دستور تراکنش خودش است.
+    await sql`SELECT sales.finalize_invoice(${invoiceId}::uuid, ${ids["supervisor"]}::uuid)`
+      .execute(handle.db);
+
+    const afterSale = await sql<{ on_hand: string }>`
+      SELECT on_hand FROM inventory.stock_balance
+       WHERE variation_id = ${variationId}::uuid AND warehouse_id = ${STORE_WH}::uuid`
+      .execute(handle.db);
+    assert.equal(
+      Number(afterSale.rows[0]!.on_hand),
+      Number(before.rows[0]!.on_hand) - 1,
+      "موجودی باید همان لحظه فروش کم شود، نه شب",
+    );
+
+    const r = await app.inject({
+      method: "POST",
+      url: "/posting-batches/close-due",
+      ...s,
+      payload: {},
+    });
+    assert.equal(r.statusCode, 200, r.body);
+    const body = JSON.parse(r.body) as {
+      closed: Array<{ channel: string; saleEntry: string | null; businessDate: string }>;
+    };
+    const web = body.closed.find((c) => c.channel === "web");
+    assert.ok(web, `دوره web بسته نشد: ${r.body}`);
+    assert.ok(web.saleEntry, "سند فروش باید زده شده باشد");
+    assert.match(web.businessDate, /^\d{4}-\d{2}-\d{2}$/, "تاریخ کاری باید YYYY-MM-DD باشد");
+
+    // و موجودی پس از بستن سند، دست‌نخورده
+    const afterClose = await sql<{ on_hand: string }>`
+      SELECT on_hand FROM inventory.stock_balance
+       WHERE variation_id = ${variationId}::uuid AND warehouse_id = ${STORE_WH}::uuid`
+      .execute(handle.db);
+    assert.equal(
+      afterClose.rows[0]!.on_hand,
+      afterSale.rows[0]!.on_hand,
+      "بستن سند نباید موجودی را عوض کند",
+    );
+  });
+
   test("درآمد کانال آنلاین تا بستن دوره، ثبت‌نشده می‌ماند", async () => {
     const a = await loginAs(admin);
     const { invoiceId } = await soldInvoice({

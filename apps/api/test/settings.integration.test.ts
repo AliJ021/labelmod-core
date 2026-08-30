@@ -162,7 +162,11 @@ describe("تنظیمات از مسیر API", { skip }, () => {
     assert.ok(gs.length >= 8, `تعداد گروه: ${gs.length}`);
 
     const all = gs.flatMap((g) => g.settings);
-    assert.equal(all.length, 30, "تعداد تنظیمات");
+    // عدد دقیق ادعا نمی‌شود: هر تنظیم تازه این تست را می‌شکست بدون
+    // اینکه چیزی واقعاً خراب شده باشد. آنچه اهمیت دارد این است که
+    // فهرست خالی نیست و **هر** تنظیم فراداده کامل دارد.
+    assert.ok(all.length >= 30, `تعداد تنظیمات: ${all.length}`);
+    assert.equal(new Set(all.map((x) => x.key)).size, all.length, "کلید تکراری");
 
     // اگر برچسب یا نوع نیاید، رابط کاربری ناچار است کلید فنی انگلیسی
     // نشان دهد یا ویجت را حدس بزند — همان hardcode که ممنوع است.
@@ -181,6 +185,12 @@ describe("تنظیمات از مسیر API", { skip }, () => {
       costing.options?.map((o) => o.value).sort(),
       ["last_purchase", "moving_weighted_average"],
     );
+    // پیش‌فرض، تصمیم مالک است: «آخرین قیمت خرید»، مثل هلو.
+    assert.equal(costing.value, "last_purchase", "پیش‌فرض باید آخرین قیمت خرید باشد");
+
+    // بستن خودکار فروش سایت باید یک کلید بله/خیر باشد.
+    assert.equal(find(gs, "sales.auto_close_channel_day").kind, "bool");
+    assert.equal(find(gs, "sales.auto_close_after_hours").unit, "ساعت");
 
     // سند فروش باید از داخل تنظیمات قابل انتخاب باشد.
     const posting = find(gs, "ledger.sale_posting");
