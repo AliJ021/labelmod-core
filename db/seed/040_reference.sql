@@ -193,6 +193,19 @@ INSERT INTO identity.permission_rule
 -- یعنی دیدن **همه** گروه‌ها — از جمله عمر نشست، سقف تلاش ناموفق و
 -- سیاست PIN. انباردار برای کارش هیچ‌کدام را لازم ندارد و کمترین
 -- دسترسی برنده است. اگر مالک بخواهد ببیند، یک INSERT است.
+-- تغییر دستی قیمت روی سطر فاکتور (مهاجرت ۰۱۰).
+--
+-- **دروازه اول** است، نه تنها دروازه: سقف «چقدر پایین‌تر از فهرست»
+-- همان نردبان تخفیف است (`sale.discount` و `sale.discount_high`) و در
+-- لایه API روی «کاهش کل» سنجیده می‌شود. یعنی صندوق‌داری که این مجوز را
+-- دارد، همچنان نمی‌تواند بیشتر از سقف تخفیفِ نقشش پایین بیاورد.
+--
+-- صندوق‌دار عمداً ندارد: قیمت دستی پای صندوق، بی‌سقف‌ترین راه دادن
+-- تخفیف است و باید تصمیم سرپرست باشد. اگر مالک بخواهد بدهدش، یک
+-- INSERT است — نه یک Deploy.
+('supervisor','sale.price_override', true, NULL,   NULL,  NULL),
+('admin','sale.price_override',      true, NULL,   NULL,  NULL),
+
 ('supervisor','settings.view',     true,  NULL,   NULL,  NULL),
 ('accountant','settings.view',     true,  NULL,   NULL,  NULL),
 ('accountant','settings.manage',   true,  NULL,   NULL,  NULL),

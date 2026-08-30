@@ -225,6 +225,9 @@ export interface InvoiceLineTable {
   cogs_amount: string;
   returned_qty: string;
   discount_reason: string | null;
+  /** قیمت فهرست — فقط وقتی قیمت دستی خورده باشد. NULL یعنی دست‌نخورده. */
+  list_price: string | null;
+  price_override_reason: string | null;
 }
 
 export interface SaleReturnTable {

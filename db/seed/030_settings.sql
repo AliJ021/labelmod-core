@@ -212,7 +212,7 @@ SELECT * FROM (VALUES
  60, 'settings.security', true),
 
 ('auth.pin_forbidden_operations',
- '["refund.cash","invoice.cancel","price.change","stock.adjust","period.close","period.reopen","user.manage","journal.manual","return.late","settings.manage","settings.security"]'::jsonb,
+ '["refund.cash","invoice.cancel","price.change","stock.adjust","period.close","period.reopen","user.manage","journal.manual","return.late","settings.manage","settings.security","sale.price_override"]'::jsonb,
  'عملیاتی که با PIN هرگز مجاز نیستند و احراز هویت کامل می‌خواهند — بند ۱ SECURITY.md.', true,
  'multichoice', 'کارهایی که با PIN انجام نمی‌شوند', 'security',
  '[{"value":"refund.cash","label":"بازپرداخت نقدی"},
@@ -225,6 +225,7 @@ SELECT * FROM (VALUES
    {"value":"journal.manual","label":"سند دستی حسابداری"},
    {"value":"return.late","label":"مرجوعی خارج از مهلت"},
    {"value":"sale.discount_high","label":"تخفیف بالاتر از سقف"},
+   {"value":"sale.price_override","label":"تغییر دستی قیمت در فاکتور"},
    {"value":"sale.credit","label":"فروش نسیه"},
    {"value":"stock.receive","label":"رسید انبار"},
    {"value":"stock.transfer","label":"انتقال بین انبار"},

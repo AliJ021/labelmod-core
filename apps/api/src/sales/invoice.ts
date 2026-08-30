@@ -3,11 +3,24 @@
  *
  * دو قاعده‌ای که کل این فایل رویشان بنا شده:
  *
- * **۱. قیمت از دیتابیس می‌آید، نه از کلاینت.** تبلت صندوق فقط می‌گوید
- * «این کالا، این تعداد». اگر `unit_price` را کلاینت می‌فرستاد، یک POS
- * دستکاری‌شده — یا یک درخواست مستقیم — می‌توانست هر چیزی را به هر
- * قیمتی بفروشد و هیچ نگهبانی نمی‌گرفتش. تخفیف یک میدان جداگانه و
- * مجوزدار است، نه یک قیمت کمتر.
+ * **۱. قیمت از دیتابیس می‌آید، مگر با مجوز صریح.** تبلت صندوق معمولاً
+ * فقط می‌گوید «این کالا، این تعداد». اگر `unit_price` را همیشه کلاینت
+ * می‌فرستاد، یک POS دستکاری‌شده — یا یک درخواست مستقیم — می‌توانست هر
+ * چیزی را به هر قیمتی بفروشد.
+ *
+ * مالک «قیمت دستی مثل دشت» خواسته، پس این قاعده مطلق نماند — ولی
+ * **مجوزدار** شد و دو دروازه دارد:
+ *
+ *   `sale.price_override`   اجازه تایپ‌کردن قیمت
+ *   `sale.discount[_high]`  سقف **کاهش کل**، چه از راه تخفیف چه از
+ *                           راه قیمت دستی
+ *
+ * دروازه دوم حیاتی است: بدون آن، صندوق‌داری با سقف تخفیف ۱۰٪ کافی بود
+ * به‌جای تخفیف، قیمت را نصف بنویسد و کل نردبان بی‌معنا شود.
+ *
+ * و قیمت فهرست در `list_price` می‌نشیند، نه در تخفیف — چون مالک صریح
+ * گفت «یک وقت داخل فاکتور فروش دوتا قیمت نخورد». فاکتور یک عدد نشان
+ * می‌دهد؛ `list_price` برای حسابرسی است، نه برای چاپ.
  *
  * **۲. اثر مالی در دیتابیس است، نه اینجا.** خروج کالا، بهای تمام‌شده،
  * شماره فاکتور و دوره ثبت همه در `sales.finalize_invoice`‌اند. این لایه
@@ -43,6 +56,15 @@ export interface InvoiceLine {
   discountAmount: bigint;
   netAmount: bigint;
   discountReason: string | null;
+  /**
+   * قیمت فهرست — **فقط** وقتی قیمت دستی خورده باشد، وگرنه null.
+   *
+   * فاکتور چاپی این را نشان نمی‌دهد؛ `unitPrice` تنها قیمتی است که
+   * مشتری می‌بیند. این میدان برای صفحه حسابرسی و گزارش «چقدر زیر
+   * قیمت فروختیم» است.
+   */
+  listPrice: bigint | null;
+  priceOverrideReason: string | null;
 }
 
 export interface Invoice {
@@ -73,6 +95,9 @@ export interface AddLineInput {
   qty: string;
   discountAmount?: bigint | undefined;
   discountReason?: string | undefined;
+  /** قیمت دستی. اگر نیاید، قیمت از `catalog.price` خوانده می‌شود. */
+  unitPrice?: bigint | undefined;
+  priceOverrideReason?: string | undefined;
   actorId: string;
 }
 
@@ -110,6 +135,8 @@ export class InvoiceService {
         "l.discount_amount",
         "l.net_amount",
         "l.discount_reason",
+        "l.list_price",
+        "l.price_override_reason",
         "v.sku",
         "p.name_internal",
       ])
@@ -143,6 +170,8 @@ export class InvoiceService {
         qty: l.qty,
         unitPrice: parseMoney(l.unit_price),
         discountAmount: parseMoney(l.discount_amount),
+        listPrice: l.list_price === null ? null : parseMoney(l.list_price),
+        priceOverrideReason: l.price_override_reason,
         netAmount: parseMoney(l.net_amount),
         discountReason: l.discount_reason,
       })),
@@ -254,29 +283,46 @@ export class InvoiceService {
   }
 
   /**
-   * سهم تخفیف — پیش از افزودن سطر، تا مجوز با عدد واقعی سنجیده شود.
+   * **کاهش کل** سطر نسبت به قیمت فهرست — پیش از افزودن، تا مجوز با
+   * عدد واقعی سنجیده شود.
    *
-   * جدا از `addLine` است چون مسیر HTTP باید **پیش از** هر نوشتنی
-   * مجوز بگیرد؛ نه اینکه بنویسد و بعد بفهمد اجازه نداشته.
+   * جدا از `addLine` است چون مسیر HTTP باید **پیش از** هر نوشتنی مجوز
+   * بگیرد؛ نه اینکه بنویسد و بعد بفهمد اجازه نداشته.
+   *
+   * «کاهش کل» یعنی تخفیف **به‌علاوه** تفاوت قیمت دستی. این نکته کل
+   * امنیت این مسیر است: اگر فقط تخفیف سنجیده می‌شد، صندوق‌دار به‌جای
+   * تخفیفِ بالای سقف، قیمت را کمتر می‌نوشت و همان کار را بی‌مجوز
+   * می‌کرد.
+   *
+   * قیمت بالاتر از فهرست کاهش نیست: درصد صفر می‌شود و نردبان تخفیف
+   * اصلاً فعال نمی‌شود. (دروازه `sale.price_override` جداگانه سنجیده
+   * شده است.)
    */
-  async discountCheck(
+  async markdownCheck(
     variationId: string,
     qty: string,
     discountAmount: bigint,
+    unitPrice?: bigint | undefined,
   ): Promise<DiscountCheck> {
-    const price = await this.currentPrice(variationId);
-    const gross = await this.grossOf(price, qty);
-    if (gross <= 0n) return { percent: 0, grossAmount: 0n };
-    if (discountAmount > gross) {
+    const list = await this.currentPrice(variationId);
+    const listGross = await this.grossOf(list, qty);
+    const soldGross = unitPrice === undefined ? listGross : await this.grossOf(unitPrice, qty);
+
+    if (discountAmount > soldGross) {
       throw new InvoiceError(
         "discount_exceeds_line",
         "تخفیف از مبلغ خودِ قلم بیشتر است",
         422,
       );
     }
+    if (listGross <= 0n) return { percent: 0, grossAmount: listGross };
+
+    const markdown = listGross - (soldGross - discountAmount);
+    if (markdown <= 0n) return { percent: 0, grossAmount: listGross };
+
     return {
-      percent: Number((discountAmount * 10000n) / gross) / 100,
-      grossAmount: gross,
+      percent: Number((markdown * 10000n) / listGross) / 100,
+      grossAmount: markdown,
     };
   }
 
@@ -303,13 +349,25 @@ export class InvoiceService {
   async addLine(input: AddLineInput): Promise<Invoice> {
     const inv = await this.requireDraft(input.invoiceId);
     const variationId = await this.resolveVariation(input);
-    const price = await this.currentPrice(variationId, inv.occurredAt);
+    const listPrice = await this.currentPrice(variationId, inv.occurredAt);
     const discount = input.discountAmount ?? 0n;
 
     const qty = Number(input.qty);
     if (!Number.isFinite(qty) || qty <= 0) {
       throw new InvoiceError("bad_qty", "تعداد باید بزرگ‌تر از صفر باشد", 400);
     }
+
+    // قیمت صفر یا منفی از هیچ مسیری. ادعای پایدار CI هم همین را
+    // می‌سنجد، ولی خطای اینجا برای کاربر خوانا است نه یک نقض قید.
+    if (input.unitPrice !== undefined && input.unitPrice <= 0n) {
+      throw new InvoiceError("bad_price", "قیمت باید بزرگ‌تر از صفر باشد", 422);
+    }
+
+    // قیمتِ دستیِ برابر با فهرست، بازنویسی نیست. `list_price` را
+    // NULL نگه می‌داریم تا «آیا این سطر دستکاری شده؟» یک تست ساده
+    // بماند و گزارش‌ها با سطرهای بی‌تفاوت شلوغ نشوند.
+    const overridden = input.unitPrice !== undefined && input.unitPrice !== listPrice;
+    const price = overridden ? (input.unitPrice as bigint) : listPrice;
 
     const gross = await this.grossOf(price, input.qty);
     if (discount > gross) {
@@ -334,8 +392,26 @@ export class InvoiceService {
           cogs_amount: "0",
           returned_qty: "0",
           discount_reason: input.discountReason ?? null,
+          list_price: overridden ? serializeMoney(listPrice) : null,
+          price_override_reason: overridden ? (input.priceOverrideReason ?? null) : null,
         })
         .execute();
+
+      // ردّ حسابرسی فقط وقتی واقعاً قیمتی دست خورده. سطر عادی سبد
+      // رویداد حسابرسی نمی‌سازد — وگرنه لاگ با هر اسکن بارکد پر
+      // می‌شود و همان چیزی که باید دیده شود، گم می‌شود.
+      if (overridden) {
+        await sql`
+          SELECT platform.audit('sale.price_override', 'invoice_line', ${input.invoiceId},
+            ${JSON.stringify({
+              variationId,
+              qty: input.qty,
+              listPrice: serializeMoney(listPrice),
+              unitPrice: serializeMoney(price),
+            })}::jsonb,
+            ${input.actorId}::uuid, ${input.priceOverrideReason ?? null})
+        `.execute(trx);
+      }
       await refreshTotals(trx, input.invoiceId);
     });
 
@@ -588,6 +664,11 @@ export function invoiceToJson(inv: Invoice) {
       discountAmount: serializeMoney(l.discountAmount),
       netAmount: serializeMoney(l.netAmount),
       discountReason: l.discountReason,
+      // `listPrice` فقط وقتی مقدار دارد که قیمت دستی خورده باشد. رسید
+      // چاپی این را نشان نمی‌دهد — «یک وقت داخل فاکتور دوتا قیمت
+      // نخورد» — ولی صفحه حسابرسی و گزارش لازمش دارند.
+      listPrice: l.listPrice === null ? null : serializeMoney(l.listPrice),
+      priceOverrideReason: l.priceOverrideReason,
     })),
   };
 }

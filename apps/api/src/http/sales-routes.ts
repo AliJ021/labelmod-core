@@ -50,6 +50,13 @@ const addLineBody = z
     qty: z.string().regex(/^\d+(\.\d{1,3})?$/, "تعداد نامعتبر"),
     discountAmount: moneyString.optional(),
     discountReason: z.string().max(200).optional(),
+    /**
+     * قیمت دستی — مثل دشت. اگر نیاید، قیمت از `catalog.price` خوانده
+     * می‌شود؛ یعنی رفتار پیش‌فرض دست‌نخورده می‌ماند و کلاینتی که این
+     * میدان را نمی‌فرستد هیچ قدرت تازه‌ای نمی‌گیرد.
+     */
+    unitPrice: moneyString.optional(),
+    priceOverrideReason: z.string().max(200).optional(),
   })
   .refine((v) => v.variationId ?? v.barcode, {
     message: "کالا باید با شناسه یا بارکد مشخص شود",
@@ -182,8 +189,8 @@ export function registerSalesRoutes(app: FastifyInstance, deps: SalesRouteDeps):
   /**
    * افزودن قلم به سبد.
    *
-   * قیمت **از دیتابیس** خوانده می‌شود. کلاینت فقط کالا و تعداد را
-   * می‌گوید؛ تخفیف یک میدان جداگانه و مجوزدار است.
+   * قیمت **از دیتابیس** خوانده می‌شود، مگر اینکه کلاینت `unitPrice`
+   * بفرستد — و آن‌وقت دو دروازه باز می‌شود، نه یکی.
    */
   app.post("/invoices/:id/lines", async (req, reply) => {
     const s = session(req);
@@ -193,8 +200,31 @@ export function registerSalesRoutes(app: FastifyInstance, deps: SalesRouteDeps):
     await requireForSession(db, s, "sale.create");
 
     const discount = body.discountAmount ? parseMoney(body.discountAmount) : 0n;
+    const manualPrice = body.unitPrice === undefined ? undefined : parseMoney(body.unitPrice);
 
-    // مجوز تخفیف **پیش از** نوشتن سنجیده می‌شود، با درصد واقعی.
+    // ورودی بی‌معنا **پیش از** مجوز رد می‌شود. بدون این، قیمت صفر یک
+    // کاهش ۱۰۰٪ بود و به‌جای «قیمت نامعتبر»، «نیازمند تأیید سرپرست»
+    // می‌گرفت — یعنی سیستم پیشنهاد می‌کرد کسی آن را تأیید کند.
+    // (`InvoiceService` هم همین را می‌سنجد؛ آن لایه دوم است.)
+    if (manualPrice !== undefined && manualPrice <= 0n) {
+      throw new InvoiceError("bad_price", "قیمت باید بزرگ‌تر از صفر باشد", 422);
+    }
+
+    // ── دروازه اول: اجازه **تایپ‌کردن** قیمت ─────────────────────────
+    // جدا از سقف تخفیف است، چون دو چیز متفاوت‌اند: «آیا این نقش اصلاً
+    // حق دارد قیمت بنویسد» و «چقدر پایین‌تر از فهرست». صندوق‌دار
+    // ممکن است اولی را نداشته باشد ولی تخفیف عادی را داشته باشد.
+    if (manualPrice !== undefined) {
+      await requireForSession(db, s, "sale.price_override");
+    }
+
+    // ── دروازه دوم: سقف **کاهش کل** ──────────────────────────────────
+    // مجوز **پیش از** نوشتن سنجیده می‌شود، با درصد واقعی.
+    //
+    // «کاهش کل» یعنی تخفیف به‌علاوه تفاوت قیمت دستی، در یک عدد. این
+    // نکته کل امنیت این مسیر است: اگر فقط تخفیف سنجیده می‌شد،
+    // صندوق‌داری با سقف ۱۰٪ کافی بود قیمت را نصف بنویسد و همان کار را
+    // بی‌مجوز بکند.
     //
     // دو عملیات، نه یکی: `sale.discount` سقف عادی نقش است و
     // `sale.discount_high` پله بالاتر که تأیید می‌خواهد. اگر فقط اولی
@@ -203,21 +233,23 @@ export function registerSalesRoutes(app: FastifyInstance, deps: SalesRouteDeps):
     //
     // خودِ آستانه‌ها اینجا نیستند: هر دو از permission_rule می‌آیند.
     // این کد فقط می‌داند «یک پله بالاتر هم هست»، نه اینکه پله کجاست.
-    if (discount > 0n) {
+    if (discount > 0n || manualPrice !== undefined) {
       const variationId = await invoices.resolveVariation(body);
-      const check = await invoices.discountCheck(variationId, body.qty, discount);
-      const normal = await can(db, {
-        userId: s.userId,
-        operation: "sale.discount",
-        percent: check.percent,
-        amount: discount,
-        viaPin: s.pinUnlocked,
-      });
-      if (normal.verdict !== "allow") {
-        await requireForSession(db, s, "sale.discount_high", {
+      const check = await invoices.markdownCheck(variationId, body.qty, discount, manualPrice);
+      if (check.grossAmount > 0n) {
+        const normal = await can(db, {
+          userId: s.userId,
+          operation: "sale.discount",
           percent: check.percent,
-          amount: discount,
+          amount: check.grossAmount,
+          viaPin: s.pinUnlocked,
         });
+        if (normal.verdict !== "allow") {
+          await requireForSession(db, s, "sale.discount_high", {
+            percent: check.percent,
+            amount: check.grossAmount,
+          });
+        }
       }
     }
 
@@ -229,6 +261,10 @@ export function registerSalesRoutes(app: FastifyInstance, deps: SalesRouteDeps):
       ...(body.variationId === undefined ? {} : { variationId: body.variationId }),
       ...(body.barcode === undefined ? {} : { barcode: body.barcode }),
       ...(body.discountReason === undefined ? {} : { discountReason: body.discountReason }),
+      ...(manualPrice === undefined ? {} : { unitPrice: manualPrice }),
+      ...(body.priceOverrideReason === undefined
+        ? {}
+        : { priceOverrideReason: body.priceOverrideReason }),
     });
     return reply.code(201).send(invoiceToJson(inv));
   });

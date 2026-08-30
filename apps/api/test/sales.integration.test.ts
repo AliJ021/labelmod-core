@@ -169,16 +169,33 @@ describe("فروش و صندوق روی دیتابیس واقعی", { skip }, ()
     assert.equal(inv.statusCode, 201);
     const invoiceId = inv.json().id as string;
 
-    // کلاینت قیمت دلخواه می‌فرستد — عمداً نادیده گرفته می‌شود
+    // کلاینت قیمت دلخواه می‌فرستد.
+    //
+    // تا پیش از مهاجرت ۰۱۰ این میدان **بی‌صدا نادیده گرفته می‌شد**.
+    // حالا که قیمت دستی وجود دارد، صریح رد می‌شود — و این قوی‌تر است،
+    // نه ضعیف‌تر: تلاش دیده می‌شود به‌جای اینکه ساکت بیفتد. خودِ
+    // تضمین عوض نشده؛ صندوق‌دار همچنان نمی‌تواند قیمت را تعیین کند،
+    // چون `sale.price_override` را ندارد.
+    const denied = await app.inject({
+      method: "POST",
+      url: `/invoices/${invoiceId}/lines`,
+      ...s,
+      payload: { barcode: BARCODE, qty: "2", unitPrice: "1" },
+    });
+    assert.equal(denied.statusCode, 403, denied.body);
+
+    // و بدون آن میدان، قیمت همچنان از `catalog.price` می‌آید — میدان
+    // ناشناخته `price` هم مثل قبل نادیده گرفته می‌شود.
     const line = await app.inject({
       method: "POST",
       url: `/invoices/${invoiceId}/lines`,
       ...s,
-      payload: { barcode: BARCODE, qty: "2", unitPrice: "1", price: "1" },
+      payload: { barcode: BARCODE, qty: "2", price: "1" },
     });
     assert.equal(line.statusCode, 201);
     const body = line.json();
     assert.equal(body.lines[0].unitPrice, "1200000", "قیمت باید از catalog.price بیاید");
+    assert.equal(body.lines[0].listPrice, null, "سطر دست‌نخورده listPrice ندارد");
     assert.equal(body.grossAmount, "2400000");
     assert.equal(body.payableAmount, "2400000");
   });
