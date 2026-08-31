@@ -254,6 +254,62 @@ PERFORM pg_temp.assert_raises('بستن بدون کاربر عامل',
   'SELECT * FROM sales.close_due_channel_days(NULL)');
 
 -- ═══════════════════════════════════════════════════════════════════
+RAISE NOTICE E'\n═══ ۷. منطقه زمانی، تعریف «امروز» را می‌سازد ═══';
+-- ═══════════════════════════════════════════════════════════════════
+-- مهم‌ترین ادعای این بخش: تاریخ کاری از تنظیم می‌آید، نه از منطقه
+-- زمانی نشست. بدون این، سفارش ساعت ۱ بامداد تهران روی سروری که UTC
+-- است، به **روز قبل** می‌خورد و کسی نمی‌فهمد چرا فروش دیشب در گزارش
+-- امروز نیست.
+
+PERFORM pg_temp.assert_txt('منطقه زمانی پیش‌فرض',
+  platform.setting_text('platform.timezone'), 'Asia/Tehran');
+
+-- ساعت ۱ بامداد تهران = ۲۱:۳۰ روز قبل به وقت UTC. تاریخ کاری باید
+-- **همان روز تهران** باشد.
+PERFORM pg_temp.assert_txt('یک بامداد تهران، همان روز است',
+  platform.business_date('2026-07-15 01:00+03:30'::timestamptz)::text, '2026-07-15');
+
+-- و ساعت ۲۳:۵۹ تهران هنوز همان روز
+PERFORM pg_temp.assert_txt('یازده‌ونیم شب تهران، هنوز همان روز',
+  platform.business_date('2026-07-15 23:59+03:30'::timestamptz)::text, '2026-07-15');
+
+-- با منطقه دیگر، همان لحظه روز دیگری می‌شود — یعنی تنظیم واقعاً اثر
+-- دارد و یک عدد تزئینی نیست.
+PERFORM platform.set_setting('platform.timezone', '"UTC"'::jsonb, 'تست اثر تنظیم');
+PERFORM pg_temp.assert_txt('همان لحظه با UTC، روز قبل می‌شود',
+  platform.business_date('2026-07-15 01:00+03:30'::timestamptz)::text, '2026-07-14');
+PERFORM platform.set_setting('platform.timezone', '"Asia/Tehran"'::jsonb, 'بازگشت');
+
+-- منطقه نامعتبر پذیرفته نمی‌شود. اگر می‌شد، `AT TIME ZONE` در **هر
+-- فروش** خطا می‌داد — نه فقط موقع تنظیم.
+PERFORM pg_temp.assert_raises('منطقه زمانی نامعتبر',
+  $$SELECT platform.set_setting('platform.timezone', '"Asia/Tehrn"'::jsonb, 'غلط تایپی')$$);
+PERFORM pg_temp.assert_raises('منطقه زمانی عددی',
+  $$SELECT platform.set_setting('platform.timezone', '5'::jsonb, 'تست')$$);
+PERFORM pg_temp.assert_txt('پس از تلاش ناموفق، مقدار سالم مانده',
+  platform.setting_text('platform.timezone'), 'Asia/Tehran');
+
+-- دوره ثبت هم از همین تعریف می‌آید: فاکتور ساعت ۱ بامداد تهران باید
+-- به دوره همان روز بخورد.
+INSERT INTO sales.invoice (branch_id, warehouse_id, shift_id, customer_id, channel,
+                           occurred_at, created_by)
+VALUES (BR, WH, NULL, v_cust, 'web',
+        (v_today - 6)::timestamptz + interval '1 hour', v_user)
+RETURNING id INTO v_inv;
+INSERT INTO sales.invoice_line (invoice_id, line_no, variation_id, qty, unit_price, net_amount)
+VALUES (v_inv, 1, v_var, 1, 1000000, 1000000);
+PERFORM sales.finalize_invoice(v_inv, v_user);
+
+PERFORM pg_temp.assert_txt('دوره فاکتور یک بامداد، همان روز است',
+  (SELECT b.business_date::text FROM ledger.posting_batch b
+     JOIN sales.invoice i ON i.posting_batch_id = b.id WHERE i.id = v_inv),
+  (v_today - 6)::text);
+
+-- و بسته می‌شود، تا ادعای پایدار پایین سالم بماند
+PERFORM pg_temp.assert_eq('دوره همین فاکتور هم بسته شد',
+  (SELECT count(*) FROM sales.close_due_channel_days(v_user) WHERE skipped IS NULL), 1);
+
+-- ═══════════════════════════════════════════════════════════════════
 RAISE NOTICE E'\n═══ ادعاهای پایدار ═══';
 -- ═══════════════════════════════════════════════════════════════════
 
