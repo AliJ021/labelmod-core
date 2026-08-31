@@ -22,9 +22,21 @@ echo "→ جست‌وجوی راز در فایل‌های ردیابی‌شده"
 
 PATTERNS='github_pat_[A-Za-z0-9_]{22,}|gh[pousr]_[A-Za-z0-9]{36}|-----BEGIN [A-Z ]*PRIVATE KEY-----|AKIA[0-9A-Z]{16}|(password|passwd|secret|token|api_?key|apikey)[[:space:]]*[:=][[:space:]]*["'"'"'][^"'"'"']{8,}["'"'"']'
 
+# استثنای نقطه‌ای: هش «مسیر + متن خط». مسیر داخل هش است، پس هر ورودی
+# دقیقاً یک خط از یک فایل را آزاد می‌کند — نه پوشه، نه پسوند، نه الگو.
+# راز واقعیِ تازه، هشِ دیگری دارد و همچنان Push را متوقف می‌کند.
+# نبودِ فایل = هیچ استثنایی؛ یعنی خطا به‌سمت «مسدود کردن» می‌افتد.
+ALLOWLIST='ops/secret-allowlist.txt'
+
 HITS=$(git grep -InE "$PATTERNS" -- \
-        ':!.env.example' ':!ops/hooks/pre-push' ':!docs/SECURITY.md' 2>/dev/null \
-      | grep -v 'ci_only_not_a_real_secret' || true)
+        ':!.env.example' ':!ops/hooks/pre-push' ':!docs/SECURITY.md' \
+        ":!$ALLOWLIST" 2>/dev/null \
+      | grep -v 'ci_only_not_a_real_secret' \
+      | while IFS= read -r hit; do
+          path=${hit%%:*}; rest=${hit#*:}; text=${rest#*:}
+          digest=$(printf '%s\t%s' "$path" "$text" | sha256sum | cut -d' ' -f1)
+          grep -qxF "$digest" "$ALLOWLIST" 2>/dev/null || printf '%s\n' "$hit"
+        done || true)
 
 if [ -n "$HITS" ]; then
   echo -e "${RED}✗ راز احتمالی پیدا شد — Push متوقف شد:${NC}"
