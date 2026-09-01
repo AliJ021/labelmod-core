@@ -144,7 +144,15 @@ export const pos = {
     opts?: RequestOptions,
   ) => api.post<CreatedInvoice>("/invoices", input, opts),
 
-  invoice: (id: string) => api.get<Invoice>(`/invoices/${id}`),
+  /**
+   * یک فاکتور، **با** «چقدر تا حالا گرفته‌ایم».
+   *
+   * `receivedAmount` فقط از این مسیر می‌آید و لازم است چون
+   * `paidAmount` روی پیش‌نویس عمداً صفر است. بدون آن، سبدی که پس از
+   * Reload بازیابی می‌شود «دریافتی صفر» نشان می‌داد و همان مبلغ
+   * دوباره از مشتری گرفته می‌شد.
+   */
+  invoice: (id: string) => api.get<Invoice & { receivedAmount: string }>(`/invoices/${id}`),
 
   /**
    * اسکن — کالای تکراری روی همان سطر شمرده می‌شود.

@@ -258,13 +258,29 @@ export function registerSalesRoutes(app: FastifyInstance, deps: SalesRouteDeps):
     });
   });
 
+  /**
+   * یک فاکتور، با «چقدر تا حالا گرفته‌ایم».
+   *
+   * `receivedAmount` اینجا لازم است چون `invoice.paidAmount` روی
+   * پیش‌نویس عمداً صفر است — آن ستون را `finalize_invoice` می‌نویسد.
+   * بدون این میدان، صندوقی که وسط فروش Reload شده هیچ راهی نداشت
+   * بفهمد مشتری قبلاً بخشی از پول را داده: سبد را با «دریافتی صفر»
+   * بازمی‌ساخت و همان مبلغ **دوباره** گرفته می‌شد.
+   *
+   * همان `paidSoFar` که مسیر پرداخت استفاده می‌کند — یک تعریف، نه دو
+   * تا. جمع پرداخت‌های **واقعاً موفق**؛ «نامشخص» و «در انتظار» پول
+   * شمرده نمی‌شوند.
+   */
   app.get("/invoices/:id", async (req) => {
-    session(req);
+    const s = session(req);
     const { id } = z.object({ id: uuid }).parse(req.params);
     const inv = await invoices.byId(id);
     if (!inv) throw new InvoiceError("invoice_not_found", "فاکتور یافت نشد", 404);
-    await assertBranch(db, session(req).userId, inv.branchId);
-    return invoiceToJson(inv);
+    await assertBranch(db, s.userId, inv.branchId);
+    return {
+      ...invoiceToJson(inv),
+      receivedAmount: serializeMoney(await invoices.paidSoFar(id)),
+    };
   });
 
   /**

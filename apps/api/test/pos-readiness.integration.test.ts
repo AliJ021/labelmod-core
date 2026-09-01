@@ -609,6 +609,47 @@ describe("آمادگی API صندوق", { skip }, () => {
     assert.notEqual(a.json().id, b.json().id);
   });
 
+  // ── دریافتی روی خودِ فاکتور ──────────────────────────────────────
+
+  test("GET فاکتور، دریافتی تا این لحظه را هم می‌دهد", async () => {
+    // بدون این میدان، صندوقی که وسط فروش Reload شده هیچ راهی نداشت
+    // بفهمد مشتری قبلاً بخشی از پول را داده — سبد را با «دریافتی
+    // صفر» بازمی‌ساخت و همان مبلغ دوباره گرفته می‌شد.
+    const { s, invoiceId } = await newCart("2");
+
+    const before = await app.inject({ method: "GET", url: `/invoices/${invoiceId}`, ...s });
+    assert.equal(before.statusCode, 200, before.body);
+    assert.equal(before.json().receivedAmount, "0");
+    assert.equal(typeof before.json().receivedAmount, "string", "پول در JSON رشته است");
+
+    await app.inject({
+      method: "POST",
+      url: `/invoices/${invoiceId}/payments`,
+      ...s,
+      payload: { methodCode: "cash", amount: "700000" },
+    });
+
+    const after = await app.inject({ method: "GET", url: `/invoices/${invoiceId}`, ...s });
+    assert.equal(after.json().receivedAmount, "700000");
+    // `paidAmount` روی پیش‌نویس عمداً صفر می‌ماند — آن ستون را
+    // finalize_invoice می‌نویسد. دو عدد، دو معنا.
+    assert.equal(after.json().paidAmount, "0", "paidAmount روی پیش‌نویس دست‌نخورده");
+  });
+
+  test("دریافتی فاکتور، جمع چند پرداخت است", async () => {
+    const { s, invoiceId } = await newCart("2");
+    for (const amount of ["300000", "400000"]) {
+      await app.inject({
+        method: "POST",
+        url: `/invoices/${invoiceId}/payments`,
+        ...s,
+        payload: { methodCode: "cash", amount },
+      });
+    }
+    const r = await app.inject({ method: "GET", url: `/invoices/${invoiceId}`, ...s });
+    assert.equal(r.json().receivedAmount, "700000");
+  });
+
   // ── پرداخت Idempotent ───────────────────────────────────────────
 
   test("Retry پرداخت همان paymentId را Replay می‌کند و پول دوباره ثبت نمی‌شود", async () => {

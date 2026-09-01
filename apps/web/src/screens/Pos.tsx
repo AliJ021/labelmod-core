@@ -32,6 +32,7 @@ import { ApiError } from "../lib/api.ts";
 import { ActionKeys, ScanCounter } from "../lib/action-key.ts";
 import { canFinalize, changeRial, remainingRial, steppedQty } from "../lib/cart.ts";
 import { parseRial, rialFromTomanInput, toman } from "../lib/money.ts";
+import { forgetCart, readCart, rememberCart } from "../lib/open-cart.ts";
 import { pos, type Branch, type Invoice, type PaymentMethod, type Shift } from "../lib/pos.ts";
 import { ScanBuffer } from "../lib/scanner.ts";
 
@@ -100,6 +101,38 @@ export function Pos() {
     })();
   }, [branchId]);
 
+  /**
+   * سبدی که با Reload یتیم شده بود، برمی‌گردد.
+   *
+   * `receivedAmount` هم با همان یک تماس می‌آید — بدون آن، سبد
+   * بازیابی‌شده «دریافتی صفر» نشان می‌داد و همان مبلغ **دوباره** از
+   * مشتری گرفته می‌شد.
+   *
+   * پیش‌نویسی که دیگر پیش‌نویس نیست (یا پاک شده) فقط فراموش می‌شود؛
+   * خطا دادنش به صندوق‌دار چیزی نمی‌گوید و جلوی فروش تازه را می‌گیرد.
+   */
+  useEffect(() => {
+    if (!shift || invoice) return;
+    const saved = readCart(shift.id);
+    if (!saved) return;
+    void (async () => {
+      try {
+        const inv = await pos.invoice(saved.invoiceId);
+        if (inv.status === "draft") {
+          setInvoice(inv);
+          setReceived(parseRial(inv.receivedAmount));
+          setNote("سبد نیمه‌تمام قبلی برگردانده شد.");
+        } else {
+          forgetCart();
+        }
+      } catch {
+        forgetCart();
+      }
+    })();
+    // فقط هنگام تغییر شیفت — نه با هر تغییر سبد.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [shift]);
+
   /** فاکتور پیش‌نویس، در صورت نبود ساخته می‌شود. */
   const ensureInvoice = useCallback(async (): Promise<Invoice> => {
     if (invoice && invoice.status === "draft") return invoice;
@@ -109,6 +142,8 @@ export function Pos() {
     setInvoice(created);
     setReceived(0n);
     scans.current.reset();
+    // شناسه در حافظه مرورگر می‌نشیند تا Reload آن را یتیم نکند.
+    if (shift) rememberCart({ invoiceId: created.id, shiftId: shift.id });
     return created;
   }, [invoice, shift, branchId, warehouseId]);
 
@@ -217,6 +252,7 @@ export function Pos() {
         pos.finalize(invoice.id, { idempotencyKey: key }),
       );
       setNote(`فاکتور ${done.number ?? ""} ثبت شد.`);
+      forgetCart();
       setInvoice(null);
       setReceived(0n);
       scans.current.reset();
@@ -226,6 +262,7 @@ export function Pos() {
     guarded(async () => {
       if (!invoice) return;
       await pos.cancel(invoice.id, "رها شد");
+      forgetCart();
       setInvoice(null);
       setReceived(0n);
       scans.current.reset();
