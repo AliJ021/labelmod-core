@@ -548,6 +548,36 @@ export class InvoiceService {
     await refreshTotals(trx, input.invoiceId);
   }
 
+  /**
+   * تخفیف روی سطری که همین حالا در سبد است.
+   *
+   * Snapshot قیمت دست نمی‌خورد — کل دلیل وجود این مسیر همین است.
+   * تنها راه دیگر، حذف سطر و افزودن دوباره‌اش با تخفیف بود، و آن
+   * قیمت را از `catalog.price` دوباره می‌خواند.
+   *
+   * سقف و مجوز اینجا **نیستند**: لایه مسیر با همان دروازه‌ای
+   * می‌سنجدشان که افزودن قلم می‌سنجد. آنچه دیتابیس اجبار می‌کند
+   * (تخفیف بیشتر از مبلغ قلم، و دلیل اجباری بالای آستانه) سر جایش
+   * می‌ماند و این متد دورش نمی‌زند.
+   */
+  async setLineDiscount(input: {
+    invoiceId: string;
+    lineId: string;
+    discountAmount: string;
+    discountReason?: string | undefined;
+    actorId: string;
+  }): Promise<Invoice> {
+    await this.requireDraft(input.invoiceId);
+    await this.#db.transaction().execute(async (trx) => {
+      await setActor(trx, input.actorId);
+      await sql`SELECT sales.set_line_discount(
+        ${input.invoiceId}::uuid, ${input.lineId}::uuid,
+        ${input.discountAmount}::numeric, ${input.discountReason ?? null}::text)`
+        .execute(trx);
+    });
+    return (await this.byId(input.invoiceId)) as Invoice;
+  }
+
   async removeLine(invoiceId: string, lineId: string, actorId: string): Promise<Invoice> {
     await this.requireDraft(invoiceId);
     await this.#db.transaction().execute(async (trx) => {

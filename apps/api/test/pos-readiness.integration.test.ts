@@ -609,6 +609,107 @@ describe("آمادگی API صندوق", { skip }, () => {
     assert.notEqual(a.json().id, b.json().id);
   });
 
+  // ── تخفیف روی سطر موجود ─────────────────────────────────────────
+
+  test("تخفیف روی سطر موجود، Snapshot قیمت را دست نمی‌زند", async () => {
+    // تنها راه دیگر حذف و افزودن دوباره بود — و آن قیمت را از
+    // catalog.price دوباره می‌خواند.
+    const { s, invoiceId, body } = await newCart("2");
+    const lineId = body.lines[0]!.id;
+
+    // قیمت فهرست را عوض می‌کنیم: اگر تخفیف باعث بازقیمت‌گذاری شود،
+    // ادعای بعدی می‌شکند.
+    await sql`UPDATE catalog.price SET amount = 9999999 WHERE variation_id = ${variationId}::uuid`
+      .execute(handle.db);
+
+    const r = await app.inject({
+      method: "PATCH",
+      url: `/invoices/${invoiceId}/lines/${lineId}/discount`,
+      ...s,
+      payload: { discountAmount: "100000", discountReason: "مشتری قدیمی" },
+    });
+
+    await sql`UPDATE catalog.price SET amount = 1000001 WHERE variation_id = ${variationId}::uuid`
+      .execute(handle.db);
+
+    assert.equal(r.statusCode, 200, r.body);
+    const line = (r.json().lines as Array<Record<string, string>>)[0]!;
+    assert.equal(line.unitPrice, "1000001", "قیمت لحظه فروش دست‌نخورده");
+    assert.equal(line.discountAmount, "100000");
+    assert.equal(line.netAmount, "1900002", "۲×۱۰۰۰۰۰۱ منهای تخفیف");
+    assert.equal(r.json().netAmount, "1900002", "جمع فاکتور بازساخته شد");
+  });
+
+  test("تخفیف بیشتر از مبلغ قلم، همان خطای مسیر افزودن قلم را می‌دهد", async () => {
+    // ادعای واقعی این تست «۴۲۲» نیست، «**همان**» است: هر دو مسیر از
+    // یک دروازه رد می‌شوند، پس باید یک کد بدهند. اگر روزی از هم جدا
+    // شوند، اینجا قرمز می‌شود.
+    const { s, invoiceId, body } = await newCart("1");
+    const lineId = body.lines[0]!.id;
+
+    const viaPatch = await app.inject({
+      method: "PATCH",
+      url: `/invoices/${invoiceId}/lines/${lineId}/discount`,
+      ...s,
+      payload: { discountAmount: "99999999" },
+    });
+    const viaAdd = await app.inject({
+      method: "POST",
+      url: `/invoices/${invoiceId}/lines`,
+      ...s,
+      payload: { barcode: BARCODE, qty: "1", discountAmount: "99999999" },
+    });
+
+    assert.equal(viaPatch.statusCode, 422, viaPatch.body);
+    assert.equal(viaPatch.json().error.code, "discount_exceeds_line");
+    assert.equal(viaAdd.statusCode, viaPatch.statusCode, "دو مسیر، یک کد وضعیت");
+    assert.equal(viaAdd.json().error.code, viaPatch.json().error.code, "دو مسیر، یک کد خطا");
+
+    // لایه دوم هم سر جایش است: نگهبان دیتابیس مستقیماً هم رد می‌کند.
+    await assert.rejects(
+      sql`SELECT sales.set_line_discount(${invoiceId}::uuid, ${lineId}::uuid, 99999999)`.execute(
+        handle.db,
+      ),
+    );
+  });
+
+  test("سطری که در این فاکتور نیست رد می‌شود", async () => {
+    const { s, invoiceId } = await newCart("1");
+    const r = await app.inject({
+      method: "PATCH",
+      url: `/invoices/${invoiceId}/lines/00000000-0000-7000-8000-0000000009ff/discount`,
+      ...s,
+      payload: { discountAmount: "1000" },
+    });
+    assert.equal(r.statusCode, 404, r.body);
+    assert.equal(r.json().error.code, "line_not_found");
+  });
+
+  test("تخفیف بالای سقف صندوق‌دار، تأیید می‌خواهد نه رد خاموش", async () => {
+    // همان نردبان `sale.discount` → `sale.discount_high` که مسیر
+    // افزودن قلم دارد — چون هر دو از یک دروازه رد می‌شوند.
+    const { s, invoiceId, body } = await newCart("1");
+    const r = await app.inject({
+      method: "PATCH",
+      url: `/invoices/${invoiceId}/lines/${body.lines[0]!.id}/discount`,
+      ...s,
+      payload: { discountAmount: "900000" },
+    });
+    assert.ok(r.statusCode === 403 || r.statusCode === 428, `کد غیرمنتظره: ${r.body}`);
+  });
+
+  test("تخفیف روی فاکتور شعبه دیگر ممکن نیست", async () => {
+    const { invoiceId, body } = await newCart("1");
+    const other = await loginAs(outsider);
+    const r = await app.inject({
+      method: "PATCH",
+      url: `/invoices/${invoiceId}/lines/${body.lines[0]!.id}/discount`,
+      ...other,
+      payload: { discountAmount: "1000" },
+    });
+    assert.equal(r.statusCode, 403, r.body);
+  });
+
   // ── یافتن فاکتور از روی شماره رسید ──────────────────────────────
 
   test("فاکتور نهایی‌شده از روی شماره رسید پیدا می‌شود", async () => {

@@ -88,6 +88,44 @@ INSERT INTO sales.invoice_line (invoice_id, line_no, variation_id, qty, unit_pri
 VALUES (v_inv, 1, v_var, 1, 1000001, 1000001) RETURNING id INTO v_line;
 INSERT INTO sales.invoice_line (invoice_id, line_no, variation_id, qty, unit_price, net_amount)
 VALUES (v_inv, 2, v_var2, 2, 500000, 1000000) RETURNING id INTO v_line2;
+-- ── تخفیف روی سطر موجود (مهاجرت ۰۱۷) ────────────────────────────
+-- عمداً همین‌جا، پیش از نهایی‌سازی: `set_line_discount` فقط روی
+-- فاکتور draft کار می‌کند. جابه‌جا کردنش به بخش‌های بعدی، تست را
+-- می‌شکند — و همان اولین بار شکست.
+--
+-- کل دلیل وجود این تابع: Snapshot قیمت دست نمی‌خورد. تنها راه دیگر
+-- حذف سطر و افزودن دوباره‌اش بود، و آن قیمت را دوباره می‌خواند.
+
+UPDATE catalog.price SET amount = 9999999 WHERE variation_id = v_var2;
+PERFORM sales.set_line_discount(v_inv, v_line2, 50000, 'مشتری قدیمی');
+
+PERFORM pg_temp.assert_eq('قیمت سطر پس از تخفیف دست‌نخورده ماند',
+  (SELECT unit_price FROM sales.invoice_line WHERE id = v_line2), 500000);
+PERFORM pg_temp.assert_eq('تخفیف روی سطر نشست',
+  (SELECT discount_amount FROM sales.invoice_line WHERE id = v_line2), 50000);
+PERFORM pg_temp.assert_eq('مبلغ سطر = ناخالص منهای تخفیف',
+  (SELECT net_amount FROM sales.invoice_line WHERE id = v_line2), 950000);
+PERFORM pg_temp.assert_eq('دلیل تخفیف ثبت شد',
+  (SELECT CASE WHEN discount_reason = 'مشتری قدیمی' THEN 1 ELSE 0 END
+     FROM sales.invoice_line WHERE id = v_line2), 1);
+UPDATE catalog.price SET amount = 500000 WHERE variation_id = v_var2;
+
+PERFORM pg_temp.assert_raises('تخفیف بیشتر از مبلغ قلم رد می‌شود',
+  format('SELECT sales.set_line_discount(%L,%L,99999999)', v_inv, v_line2));
+PERFORM pg_temp.assert_raises('تخفیف منفی رد می‌شود',
+  format('SELECT sales.set_line_discount(%L,%L,-1)', v_inv, v_line2));
+PERFORM pg_temp.assert_raises('تخفیف روی سطری که در فاکتور نیست رد می‌شود',
+  format('SELECT sales.set_line_discount(%L,%L,1000)', v_inv, gen_random_uuid()));
+
+-- تعداد سطر تخفیف‌دار دیگر از مسیر set_line_qty عوض نمی‌شود — همان
+-- قاعده مهاجرت ۰۱۵، حالا از راهی که تخفیف را تازه گذاشته.
+PERFORM pg_temp.assert_raises('پس از تخفیف، تغییر تعداد همان سطر رد می‌شود',
+  format('SELECT sales.set_line_qty(%L,%L,3)', v_inv, v_line2));
+
+PERFORM sales.set_line_discount(v_inv, v_line2, 0);
+PERFORM pg_temp.assert_eq('برداشتن تخفیف، مبلغ را برمی‌گرداند',
+  (SELECT net_amount FROM sales.invoice_line WHERE id = v_line2), 1000000);
+
 PERFORM sales.refresh_invoice_totals(v_inv);
 
 PERFORM pg_temp.assert_eq('جمع اولیه فاکتور',

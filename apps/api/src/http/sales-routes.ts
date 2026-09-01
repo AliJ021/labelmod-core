@@ -88,6 +88,12 @@ const scanBody = z
     message: "کالا باید با شناسه یا بارکد مشخص شود",
   });
 
+/** تخفیف روی سطری که همین حالا در سبد است. */
+const setLineDiscountBody = z.object({
+  discountAmount: moneyString,
+  discountReason: z.string().max(200).optional(),
+});
+
 const paymentBody = z.object({
   methodCode: z.string().min(1).max(32),
   amount: moneyString,
@@ -111,6 +117,92 @@ export function registerSalesRoutes(app: FastifyInstance, deps: SalesRouteDeps):
     if (!s) throw new AuthError("no_session", "وارد نشده‌اید");
     return s;
   };
+
+  /**
+   * دروازه «کاهش قیمت» — یک تعریف، برای هر مسیری که تخفیف می‌دهد.
+   *
+   * پیش از این فقط `POST /lines` تخفیف می‌گرفت و این منطق داخل همان
+   * Handler بود. حالا مسیر «تخفیف روی سطر موجود» هم هست، و کپی‌کردنش
+   * یعنی دو تعریف از یک قاعده مالی — که دیر یا زود یکی‌شان عقب
+   * می‌ماند و آن یکی همان است که دور زده می‌شود.
+   *
+   * سه دروازه، به همین ترتیب:
+   *
+   * ۱. **ورودی بی‌معنا پیش از مجوز.** بدون این، قیمت صفر یک کاهش
+   *    ۱۰۰٪ بود و به‌جای «قیمت نامعتبر»، «نیازمند تأیید سرپرست»
+   *    می‌گرفت — یعنی سیستم پیشنهاد می‌کرد کسی آن را تأیید کند.
+   *
+   * ۲. **اجازه تایپ‌کردن قیمت** (`sale.price_override`) — جدا از سقف
+   *    تخفیف، چون دو چیز متفاوت‌اند: «آیا این نقش اصلاً حق دارد قیمت
+   *    بنویسد» و «چقدر پایین‌تر از فهرست».
+   *
+   * ۳. **سقف کاهش کل** — تخفیف به‌علاوه تفاوت قیمت دستی، در یک عدد.
+   *    کل امنیت این مسیر همین است: اگر فقط تخفیف سنجیده می‌شد،
+   *    صندوق‌داری با سقف ۱۰٪ کافی بود قیمت را نصف بنویسد و همان کار
+   *    را بی‌مجوز بکند.
+   *
+   *    دو عملیات، نه یکی: `sale.discount` سقف عادی نقش است و
+   *    `sale.discount_high` پله بالاتر که تأیید می‌خواهد. اگر فقط
+   *    اولی سنجیده می‌شد، تخفیف بالای سقف «ممنوع» می‌شد نه «نیازمند
+   *    تأیید» — و سرپرست هیچ‌وقت پرسیده نمی‌شد.
+   *
+   * خودِ آستانه‌ها اینجا نیستند: هر دو از `permission_rule` می‌آیند.
+   * این کد فقط می‌داند «یک پله بالاتر هم هست»، نه اینکه پله کجاست.
+   */
+  async function assertMarkdownAllowed(
+    s: { userId: string; pinUnlocked: boolean },
+    input: {
+      variationId: string;
+      qty: string;
+      discount: bigint;
+      /**
+       * قیمتی که **همین حالا** دستی نوشته می‌شود. فقط این دروازه
+       * `sale.price_override` را باز می‌کند.
+       */
+      settingPrice?: bigint | undefined;
+      /**
+       * قیمتی که سطر واقعاً به آن فروخته می‌شود — برای ریاضیِ سقف.
+       *
+       * روی سطری که **قبلاً** قیمت دستی خورده، تفاوت قیمت باید در
+       * «کاهش کل» بیاید وگرنه سقف دور زده می‌شود؛ ولی مجوز نوشتن
+       * قیمت نباید دوباره خواسته شود، چون کسی الان قیمتی نمی‌نویسد.
+       * یکی‌کردن این دو یعنی یا سقف سوراخ می‌شود یا تخفیف مشروع رد.
+       */
+      effectivePrice?: bigint | undefined;
+    },
+  ): Promise<void> {
+    if (input.settingPrice !== undefined && input.settingPrice <= 0n) {
+      throw new InvoiceError("bad_price", "قیمت باید بزرگ‌تر از صفر باشد", 422);
+    }
+    if (input.settingPrice !== undefined) {
+      await requireForSession(db, s, "sale.price_override");
+    }
+
+    const priceForMath = input.settingPrice ?? input.effectivePrice;
+    if (input.discount <= 0n && priceForMath === undefined) return;
+
+    const check = await invoices.markdownCheck(
+      input.variationId,
+      input.qty,
+      input.discount,
+      priceForMath,
+    );
+    if (check.grossAmount <= 0n) return;
+
+    const normal = await can(db, {
+      userId: s.userId,
+      operation: "sale.discount",
+      percent: check.percent,
+      amount: check.grossAmount,
+      viaPin: s.pinUnlocked,
+    });
+    if (normal.verdict !== "allow") {
+      await requireForSession(db, s, "sale.discount_high", {
+        percent: check.percent,
+        amount: check.grossAmount,
+      });
+    }
+  }
 
   // ── شیفت صندوق ──────────────────────────────────────────────────
 
@@ -337,56 +429,12 @@ export function registerSalesRoutes(app: FastifyInstance, deps: SalesRouteDeps):
     const discount = body.discountAmount ? parseMoney(body.discountAmount) : 0n;
     const manualPrice = body.unitPrice === undefined ? undefined : parseMoney(body.unitPrice);
 
-    // ورودی بی‌معنا **پیش از** مجوز رد می‌شود. بدون این، قیمت صفر یک
-    // کاهش ۱۰۰٪ بود و به‌جای «قیمت نامعتبر»، «نیازمند تأیید سرپرست»
-    // می‌گرفت — یعنی سیستم پیشنهاد می‌کرد کسی آن را تأیید کند.
-    // (`InvoiceService` هم همین را می‌سنجد؛ آن لایه دوم است.)
-    if (manualPrice !== undefined && manualPrice <= 0n) {
-      throw new InvoiceError("bad_price", "قیمت باید بزرگ‌تر از صفر باشد", 422);
-    }
-
-    // ── دروازه اول: اجازه **تایپ‌کردن** قیمت ─────────────────────────
-    // جدا از سقف تخفیف است، چون دو چیز متفاوت‌اند: «آیا این نقش اصلاً
-    // حق دارد قیمت بنویسد» و «چقدر پایین‌تر از فهرست». صندوق‌دار
-    // ممکن است اولی را نداشته باشد ولی تخفیف عادی را داشته باشد.
-    if (manualPrice !== undefined) {
-      await requireForSession(db, s, "sale.price_override");
-    }
-
-    // ── دروازه دوم: سقف **کاهش کل** ──────────────────────────────────
-    // مجوز **پیش از** نوشتن سنجیده می‌شود، با درصد واقعی.
-    //
-    // «کاهش کل» یعنی تخفیف به‌علاوه تفاوت قیمت دستی، در یک عدد. این
-    // نکته کل امنیت این مسیر است: اگر فقط تخفیف سنجیده می‌شد،
-    // صندوق‌داری با سقف ۱۰٪ کافی بود قیمت را نصف بنویسد و همان کار را
-    // بی‌مجوز بکند.
-    //
-    // دو عملیات، نه یکی: `sale.discount` سقف عادی نقش است و
-    // `sale.discount_high` پله بالاتر که تأیید می‌خواهد. اگر فقط اولی
-    // سنجیده می‌شد، تخفیف بالای سقف «ممنوع» می‌شد نه «نیازمند تأیید»
-    // — و سرپرست هیچ‌وقت پرسیده نمی‌شد.
-    //
-    // خودِ آستانه‌ها اینجا نیستند: هر دو از permission_rule می‌آیند.
-    // این کد فقط می‌داند «یک پله بالاتر هم هست»، نه اینکه پله کجاست.
-    if (discount > 0n || manualPrice !== undefined) {
-      const variationId = await invoices.resolveVariation(body);
-      const check = await invoices.markdownCheck(variationId, body.qty, discount, manualPrice);
-      if (check.grossAmount > 0n) {
-        const normal = await can(db, {
-          userId: s.userId,
-          operation: "sale.discount",
-          percent: check.percent,
-          amount: check.grossAmount,
-          viaPin: s.pinUnlocked,
-        });
-        if (normal.verdict !== "allow") {
-          await requireForSession(db, s, "sale.discount_high", {
-            percent: check.percent,
-            amount: check.grossAmount,
-          });
-        }
-      }
-    }
+    await assertMarkdownAllowed(s, {
+      variationId: await invoices.resolveVariation(body),
+      qty: body.qty,
+      discount,
+      ...(manualPrice === undefined ? {} : { settingPrice: manualPrice }),
+    });
 
     const inv = await invoices.addLine({
       invoiceId: id,
@@ -430,6 +478,52 @@ export function registerSalesRoutes(app: FastifyInstance, deps: SalesRouteDeps):
 
     return invoiceToJson(
       await invoices.setLineQty({ invoiceId: id, lineId, qty: body.qty, actorId: s.userId }),
+    );
+  });
+
+  /**
+   * تخفیف روی سطری که همین حالا در سبد است.
+   *
+   * تا امروز تخفیف فقط در لحظه **افزودن** قلم تنظیم می‌شد، پس
+   * صندوق‌داری که کالا را اسکن کرده و بعد می‌خواهد تخفیف بدهد تنها
+   * یک راه داشت: حذف سطر و افزودن دوباره‌اش. همان راهی که مهاجرت ۰۱۵
+   * برای تغییر تعداد ردش کرد، و به همان دلیل — افزودن دوباره قیمت را
+   * از `catalog.price` دوباره می‌خواند و Snapshot لحظه فروش را
+   * می‌بازد.
+   *
+   * دروازه‌اش **همان** `assertMarkdownAllowed` مسیر افزودن قلم است.
+   * قیمت دستی از این مسیر عوض نمی‌شود؛ آن هنوز فقط هنگام افزودن قلم
+   * ممکن است، چون تغییر قیمت روی سطر موجود یعنی همان بازقیمت‌گذاری.
+   */
+  app.patch("/invoices/:id/lines/:lineId/discount", async (req) => {
+    const s = session(req);
+    const { id, lineId } = z.object({ id: uuid, lineId: uuid }).parse(req.params);
+    const body = setLineDiscountBody.parse(req.body);
+    await assertInvoiceInScope(db, s.userId, id, invoices);
+    await requireForSession(db, s, "sale.create");
+
+    const inv = await invoices.byId(id);
+    if (!inv) throw new InvoiceError("invoice_not_found", "فاکتور یافت نشد", 404);
+    const line = inv.lines.find((l) => l.id === lineId);
+    if (!line) throw new InvoiceError("line_not_found", "این قلم در فاکتور نیست", 404);
+
+    await assertMarkdownAllowed(s, {
+      variationId: line.variationId,
+      qty: line.qty,
+      discount: parseMoney(body.discountAmount),
+      // قیمت دستیِ **قبلی** فقط وارد ریاضی سقف می‌شود، نه وارد
+      // دروازه مجوز: کسی الان قیمتی نمی‌نویسد.
+      ...(line.listPrice === null ? {} : { effectivePrice: line.unitPrice }),
+    });
+
+    return invoiceToJson(
+      await invoices.setLineDiscount({
+        invoiceId: id,
+        lineId,
+        discountAmount: body.discountAmount,
+        actorId: s.userId,
+        ...(body.discountReason === undefined ? {} : { discountReason: body.discountReason }),
+      }),
     );
   });
 

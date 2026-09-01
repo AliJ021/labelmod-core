@@ -7,7 +7,7 @@
 > پیش از ورود داده واقعی، بخش «تصمیم‌های باز» پایین را بخوانید.
 
 ```
-۴۶۶ ادعای SQL  ·  ۳۰۵ تست Node  ·  هر دو در CI روی دیتابیس یک‌بارمصرف
+۴۷۵ ادعای SQL  ·  ۳۱۰ تست Node  ·  هر دو در CI روی دیتابیس یک‌بارمصرف
 ```
 
 ---
@@ -64,6 +64,7 @@ Idempotency روی هر مسیر تغییردهنده وضعیت.
 | `GET /return-reasons` | علت‌های مجاز مرجوعی با برچسب فارسی |
 | `POST /invoices/:id/scan` | اسکن بارکد؛ کالای تکراری روی همان سطر شمرده می‌شود |
 | `PATCH /invoices/:id/lines/:lineId` | تعداد **مطلق**، بدون بازقیمت‌گذاری |
+| `PATCH .../lines/:lineId/discount` | تخفیف روی سطر موجود، بدون بازقیمت‌گذاری |
 | `DELETE /invoices/:id/lines/:lineId` | حذف قلم |
 | `POST /invoices/:id/payments` | `{ paymentId, replayed, receivedAmount, invoice }` |
 | `POST /invoices/:id/finalize` | شماره فاکتور، Idempotent |
@@ -144,11 +145,11 @@ docker compose up -d db
 export DATABASE_URL='postgres://labelmod:رمز@localhost:5432/labelmod'
 ops/db.sh migrate         # ساخت اسکیما
 ops/db.sh seed            # کدینگ حساب، قواعد ثبت، تنظیمات
-ops/db.sh test            # ۴۶۶ ادعا — باید همه پاس شوند
+ops/db.sh test            # ۴۷۵ ادعا — باید همه پاس شوند
 
 corepack enable
 pnpm install
-pnpm check                # lint + typecheck + ۳۰۵ تست
+pnpm check                # lint + typecheck + ۳۱۰ تست
 pnpm --filter @labelmod/api dev
 pnpm --filter @labelmod/web dev
 
