@@ -32,6 +32,7 @@ describe("آمادگی API صندوق", { skip }, () => {
   const PASSWORD = "رمز-آمادگی-صندوق-و-به‌قدر-کافی-بلند";
   const cashier = `pos_cashier_${suffix}`;
   const outsider = `pos_outsider_${suffix}`;
+  const supervisor = `pos_sup_${suffix}`;
   let cashierId = "";
   let outsiderId = "";
   let otherBranchId = "";
@@ -89,9 +90,10 @@ describe("آمادگی API صندوق", { skip }, () => {
       .execute(handle.db);
 
     const hash = await hashSecret(PASSWORD);
-    for (const [username, name, branch] of [
-      [cashier, "صندوق‌دار آمادگی", BRANCH],
-      [outsider, "صندوق‌دار شعبه دوم", otherBranchId],
+    for (const [username, name, branch, role] of [
+      [cashier, "صندوق‌دار آمادگی", BRANCH, "cashier"],
+      [outsider, "صندوق‌دار شعبه دوم", otherBranchId, "cashier"],
+      [supervisor, "سرپرست آمادگی", BRANCH, "supervisor"],
     ] as const) {
       const u = await handle.db
         .insertInto("identity.app_user")
@@ -108,10 +110,10 @@ describe("آمادگی API صندوق", { skip }, () => {
         .executeTakeFirstOrThrow();
       await handle.db
         .insertInto("identity.user_role")
-        .values({ user_id: u.id, role_code: "cashier", branch_id: branch })
+        .values({ user_id: u.id, role_code: role, branch_id: branch })
         .execute();
       if (username === cashier) cashierId = u.id;
-      else outsiderId = u.id;
+      else if (username === outsider) outsiderId = u.id;
     }
 
     // کالا، قیمت و موجودی شعبه اول
@@ -999,5 +1001,129 @@ describe("آمادگی API صندوق", { skip }, () => {
     });
     assert.equal(r.statusCode, 403);
     assert.equal(r.json().error.code, "branch_forbidden");
+  });
+
+  // ── بستن شیفت ───────────────────────────────────────────────────
+
+  test("بستن شیفت با Draft باز، ۴۰۹ فارسی می‌دهد", async () => {
+    const c = await loginAs(cashier);
+    await newCart("1"); // یک پیش‌نویس باز می‌گذاریم
+    const mine = await app.inject({
+      method: "GET",
+      url: `/shifts/current?branchId=${BRANCH}`,
+      ...c,
+    });
+    const shiftId = mine.json().id as string;
+
+    const sup = await loginAs(supervisor);
+    const r = await app.inject({
+      method: "POST",
+      url: `/shifts/${shiftId}/close`,
+      ...sup,
+      payload: { countedCash: "0" },
+    });
+    assert.equal(r.statusCode, 409, r.body);
+    assert.equal(r.json().error.code, "rule_violation");
+    assert.match(r.json().error.message as string, /نهایی‌نشده/);
+  });
+
+  test("صندوق‌دار مجوز بستن شیفت ندارد", async () => {
+    const sup = await loginAs(supervisor);
+    await app.inject({
+      method: "POST",
+      url: "/shifts",
+      ...sup,
+      payload: { branchId: BRANCH, openingCash: "0" },
+    });
+    const own = await app.inject({
+      method: "GET",
+      url: `/shifts/current?branchId=${BRANCH}`,
+      ...sup,
+    });
+    const shiftId = own.json().id as string;
+
+    const c = await loginAs(cashier);
+    const r = await app.inject({
+      method: "POST",
+      url: `/shifts/${shiftId}/close`,
+      ...c,
+      payload: { countedCash: "0" },
+    });
+    assert.equal(r.statusCode, 403, r.body);
+  });
+
+  test("Retry بستن شیفت همان نتیجه را Replay می‌کند، نه ۴۰۹", async () => {
+    const sup = await loginAs(supervisor);
+    const shiftId = (
+      await app.inject({ method: "GET", url: `/shifts/current?branchId=${BRANCH}`, ...sup })
+    ).json().id as string;
+    const key = `close-${suffix}-${shiftId}`;
+
+    const a = await app.inject({
+      method: "POST",
+      url: `/shifts/${shiftId}/close`,
+      ...sup,
+      headers: { ...sup.headers, "idempotency-key": key },
+      payload: { countedCash: "0" },
+    });
+    assert.equal(a.statusCode, 200, a.body);
+    assert.equal(a.json().status, "closed");
+    assert.equal(a.json().replayed, false);
+    assert.equal(typeof a.json().countedCash, "string", "پول در JSON رشته است");
+    assert.equal(a.json().variance, "0");
+
+    const b = await app.inject({
+      method: "POST",
+      url: `/shifts/${shiftId}/close`,
+      ...sup,
+      headers: { ...sup.headers, "idempotency-key": key },
+      payload: { countedCash: "0" },
+    });
+    assert.equal(b.statusCode, 200, b.body);
+    assert.equal(b.json().replayed, true);
+    assert.equal(b.json().id, shiftId);
+
+    // بدون کلید، رفتار قبلی سر جایش است: شیفت بسته دوباره بسته نمی‌شود.
+    const c = await app.inject({
+      method: "POST",
+      url: `/shifts/${shiftId}/close`,
+      ...sup,
+      payload: { countedCash: "0" },
+    });
+    assert.equal(c.statusCode, 409, c.body);
+    assert.equal(c.json().error.code, "shift_not_open");
+  });
+
+  test("همان کلید بستن با مبلغ شمارش متفاوت، Conflict می‌دهد", async () => {
+    const sup = await loginAs(supervisor);
+    await app.inject({
+      method: "POST",
+      url: "/shifts",
+      ...sup,
+      payload: { branchId: BRANCH, openingCash: "100000" },
+    });
+    const shiftId = (
+      await app.inject({ method: "GET", url: `/shifts/current?branchId=${BRANCH}`, ...sup })
+    ).json().id as string;
+    const key = `close2-${suffix}-${shiftId}`;
+
+    const a = await app.inject({
+      method: "POST",
+      url: `/shifts/${shiftId}/close`,
+      ...sup,
+      headers: { ...sup.headers, "idempotency-key": key },
+      payload: { countedCash: "100000" },
+    });
+    assert.equal(a.statusCode, 200, a.body);
+
+    const clash = await app.inject({
+      method: "POST",
+      url: `/shifts/${shiftId}/close`,
+      ...sup,
+      headers: { ...sup.headers, "idempotency-key": key },
+      payload: { countedCash: "90000" },
+    });
+    assert.equal(clash.statusCode, 409, clash.body);
+    assert.equal(clash.json().error.code, "idempotency_key_reused");
   });
 });

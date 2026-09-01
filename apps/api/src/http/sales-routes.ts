@@ -157,13 +157,35 @@ export function registerSalesRoutes(app: FastifyInstance, deps: SalesRouteDeps):
     // است نه کدی؛ اگر عوض شود، یک UPDATE کافی است.
     await requireForSession(db, s, "shift.close");
 
-    const closed = await shifts.close({
-      shiftId: id,
-      countedCash: parseMoney(body.countedCash),
-      actorId: s.userId,
-      ...(body.note === undefined ? {} : { note: body.note }),
+    // Idempotent: بستن شیفت سند فروش، COGS و مغایرت می‌زند. تکرار
+    // درخواست تا امروز ۴۰۹ «شیفت قبلاً بسته شده» می‌گرفت — ایمن، ولی
+    // برای صندوق‌داری که پاسخ اولش در شبکه گم شده، شبیه خطاست.
+    const out = await runOnce<string>(db, {
+      key: idempotencyKey(req),
+      source: "api.shift.close",
+      payload: {
+        actorId: s.userId,
+        shiftId: id,
+        countedCash: body.countedCash,
+        note: body.note ?? null,
+      },
+      run: async (trx) => {
+        await shifts.closeIn(trx, {
+          shiftId: id,
+          countedCash: parseMoney(body.countedCash),
+          actorId: s.userId,
+          ...(body.note === undefined ? {} : { note: body.note }),
+        });
+        return { value: id, ref: id };
+      },
+      replay: async (ref) => ref,
     });
-    return shiftToJson(closed);
+
+    const closed = await shifts.byId(out.value);
+    if (!closed) throw new ShiftError("shift_not_found", "شیفت یافت نشد", 404);
+    // دامنه در مسیر Replay هم دوباره سنجیده می‌شود.
+    await assertBranch(db, s.userId, closed.branchId);
+    return { ...shiftToJson(closed), replayed: out.replayed };
   });
 
   // ── سبد و فاکتور ────────────────────────────────────────────────
