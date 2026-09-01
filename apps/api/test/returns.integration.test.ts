@@ -756,6 +756,24 @@ describe("برگشت از فروش و دوره ثبت", { skip }, () => {
     assert.equal(r.json().error.code, "batch_not_found");
   });
 
+  test("تاریخِ خوش‌شکل ولی ناموجود ۴۰۰ می‌گیرد، نه ۵۰۰", async () => {
+    // «۲۰۲۶-۱۳-۴۵» شکل درستی دارد ولی تاریخ نیست. الگوی قبلی ردش
+    // نمی‌کرد و رشته تا `${input.date}::date` می‌رفت؛ آنجا SQLSTATE
+    // 22008 می‌گرفت که `errors.ts` نگاشتی برایش ندارد، پس یک ورودی
+    // نامعتبر کاربر به‌شکل «خطای داخلی» بیرون می‌آمد.
+    const a = await loginAs(admin);
+    for (const date of ["2026-13-45", "2026-02-30", "2025-02-29"]) {
+      const r = await app.inject({
+        method: "POST",
+        url: "/posting-batches/close-channel-day",
+        ...a,
+        payload: { branchId: BRANCH, channel: "web", date },
+      });
+      assert.equal(r.statusCode, 400, `${date} → ${r.body}`);
+      assert.equal(r.json().error.code, "invalid_input", date);
+    }
+  });
+
   async function stockOf(warehouseId: string): Promise<number> {
     const r = await sql<{ on_hand: string }>`
       SELECT coalesce(on_hand, 0)::text AS on_hand FROM inventory.stock_balance

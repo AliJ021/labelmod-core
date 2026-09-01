@@ -149,7 +149,13 @@ export function registerScopeRoutes(app: FastifyInstance, deps: ScopeRouteDeps):
         branchId: z.string().uuid("شناسه نامعتبر"),
         // بدون تاریخ یعنی «امروز» — و «امروز» را
         // `platform.business_date()` تعریف می‌کند، نه منطقه زمانی سرور.
-        date: z.string().regex(/^\d{4}-\d{2}-\d{2}$/, "تاریخ نامعتبر").optional(),
+        // `z.iso.date()` و نه یک Regex: الگوی `\d{4}-\d{2}-\d{2}` به
+        // «۲۰۲۶-۱۳-۴۵» هم اجازه عبور می‌داد و آن رشته تا `::date` در SQL
+        // می‌رفت. آنجا SQLSTATE 22008 می‌گرفت که هیچ نگاشتی ندارد، پس
+        // یک **ورودی نامعتبر کاربر** به‌شکل «خطای داخلی ۵۰۰» گزارش
+        // می‌شد — همان الگویی که برای محدودیت نرخ و P0001 دو بار اصلاح
+        // شد. این نسخه تقویم واقعی را می‌سنجد، کبیسه هم.
+        date: z.iso.date("تاریخ نامعتبر").optional(),
       })
       .parse(req.query);
     await assertBranch(db, s.userId, q.branchId);

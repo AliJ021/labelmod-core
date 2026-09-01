@@ -661,6 +661,35 @@ describe("آمادگی API صندوق", { skip }, () => {
     assert.equal(r.statusCode, 400, r.body);
   });
 
+  test("تاریخِ خوش‌شکل ولی ناموجود ۴۰۰ می‌گیرد، نه ۵۰۰", async () => {
+    // الگوی `\d{4}-\d{2}-\d{2}` این‌ها را رد نمی‌کرد و رشته تا
+    // `::date` در SQL می‌رفت. آنجا SQLSTATE 22008 می‌گرفت که در
+    // `errors.ts` نگاشتی ندارد — پس یک **ورودی نامعتبر کاربر** به‌شکل
+    // «خطای داخلی» گزارش می‌شد. همان الگویی که پیش‌تر برای محدودیت نرخ
+    // و P0001 اصلاح شد: دفاعی که شبیه خرابی سرور باشد، خاموش است.
+    const s = await loginAs(cashier);
+    for (const date of ["2026-13-45", "2026-02-30", "2026-00-10", "2025-02-29"]) {
+      const r = await app.inject({
+        method: "GET",
+        url: `/reports/daily?branchId=${BRANCH}&date=${date}`,
+        ...s,
+      });
+      assert.equal(r.statusCode, 400, `${date} → ${r.body}`);
+      assert.equal(r.json().error.code, "invalid_input", date);
+    }
+  });
+
+  test("۲۹ فوریه سال کبیسه یک تاریخ معتبر است", async () => {
+    // سخت‌گیری نباید به قیمت ردکردن یک روز واقعی تمام شود.
+    const s = await loginAs(cashier);
+    const r = await app.inject({
+      method: "GET",
+      url: `/reports/daily?branchId=${BRANCH}&date=2024-02-29`,
+      ...s,
+    });
+    assert.equal(r.statusCode, 200, r.body);
+  });
+
   test("بدون نشست، خلاصه روز بیرون نمی‌رود", async () => {
     const r = await app.inject({ method: "GET", url: `/reports/daily?branchId=${BRANCH}` });
     assert.equal(r.statusCode, 401);
