@@ -186,7 +186,33 @@ export class InvoiceService {
     channel: string;
     actorId: string;
   }): Promise<Invoice> {
-    const id = await this.#db.transaction().execute(async (trx) => {
+    const id = await this.#db.transaction().execute((trx) => this.createDraftIn(trx, input));
+
+    const inv = await this.byId(id);
+    if (!inv) throw new InvoiceError("invoice_not_found", "فاکتور ساخته نشد", 500);
+    return inv;
+  }
+
+  /**
+   * همان ساخت پیش‌نویس، ولی داخل تراکنشی که فراخوان می‌دهد.
+   *
+   * لازم است چون `runOnce` باید درج Inbox و اثر را در **یک** تراکنش
+   * انجام دهد؛ اگر این متد تراکنش خودش را باز کند، دو Commit جدا
+   * می‌شود و همان چیزی که Idempotency می‌خواست جلویش را بگیرد، از
+   * میانشان رد می‌شود.
+   */
+  async createDraftIn(
+    trx: Transaction<Database>,
+    input: {
+      branchId: string;
+      warehouseId: string;
+      shiftId?: string | undefined;
+      customerId?: string | undefined;
+      channel: string;
+      actorId: string;
+    },
+  ): Promise<string> {
+    {
       await setActor(trx, input.actorId);
       const row = await trx
         .insertInto("sales.invoice")
@@ -215,11 +241,7 @@ export class InvoiceService {
         .returning("id")
         .executeTakeFirstOrThrow();
       return row.id;
-    });
-
-    const inv = await this.byId(id);
-    if (!inv) throw new InvoiceError("invoice_not_found", "فاکتور ساخته نشد", 500);
-    return inv;
+    }
   }
 
   /**
@@ -418,6 +440,114 @@ export class InvoiceService {
     return (await this.byId(input.invoiceId)) as Invoice;
   }
 
+  /**
+   * اسکن بارکد — همان کالا در سبد، یک سطر با تعداد بیشتر.
+   *
+   * `addLine` عمداً دست‌نخورده می‌ماند و هرگز ادغام نمی‌کند: مسیر سایت
+   * و مسیر تخفیف‌دار به سطر مستقل نیاز دارند. ادغام رفتار **اسکنر**
+   * است، نه رفتار افزودن قلم.
+   *
+   * تصمیم ادغام در سرور گرفته می‌شود، زیر قفل فاکتور. کلاینت
+   * `variationId` را نمی‌داند و نباید بداند — فقط بارکدی که خوانده
+   * است.
+   *
+   * «سطر سازگار» یعنی همان کالا **و** همان Snapshot: بدون تخفیف،
+   * بدون قیمت دستی، بدون دلیل ثبت‌شده، و با همان `unit_price` که
+   * قیمت‌گذاری امروز برای این فاکتور می‌دهد. آخری مهم است: اگر قیمتِ
+   * حل‌شده با سطر موجود یکی نباشد، ادغام یعنی بازقیمت‌گذاری بی‌صدای
+   * چیزی که مشتری قبلاً دیده.
+   *
+   * قیمت از همان مسیر `addLine` می‌آید — `currentPrice` با
+   * `invoice.occurred_at` — نه یک منطق موازی. دو مرجع قیمت یعنی روزی
+   * یکی از دیگری عقب می‌ماند.
+   */
+  async scanIn(
+    trx: Transaction<Database>,
+    input: {
+      invoiceId: string;
+      variationId?: string | undefined;
+      barcode?: string | undefined;
+      qty: string;
+      actorId: string;
+    },
+  ): Promise<void> {
+    const inv = await this.requireDraft(input.invoiceId);
+    const variationId = await this.resolveVariation(input);
+    const price = await this.currentPrice(variationId, inv.occurredAt);
+
+    await setActor(trx, input.actorId);
+
+    // قفل فاکتور **پیش از** یافتن سطر سازگار: بدون این، دو اسکن
+    // هم‌زمان هر دو «سطری نیست» می‌دیدند و دو سطر می‌ساختند — یا هر
+    // دو تعداد قدیمی را می‌خواندند و یک افزایش گم می‌شد.
+    const locked = await sql<{ status: string }>`
+      SELECT status FROM sales.invoice WHERE id = ${input.invoiceId}::uuid FOR UPDATE
+    `.execute(trx);
+    const status = locked.rows[0]?.status;
+    if (!status) throw new InvoiceError("invoice_not_found", "فاکتور یافت نشد", 404);
+    if (status !== "draft") {
+      throw new InvoiceError(
+        "invoice_not_draft",
+        `فاکتور در وضعیت «${status}» است و دیگر تغییر نمی‌کند`,
+      );
+    }
+
+    // اگر چند سطر سازگار باشد، کم‌ترین `line_no` انتخاب می‌شود —
+    // ترتیب قطعی، بدون ادغام یا حذف سطرهای دیگر. سطر تکراری قبلی کار
+    // کسی دیگر بوده و این مسیر آن را جمع نمی‌کند.
+    const match = await sql<{ id: string }>`
+      SELECT id FROM sales.invoice_line
+       WHERE invoice_id = ${input.invoiceId}::uuid
+         AND variation_id = ${variationId}::uuid
+         AND discount_amount = 0
+         AND list_price IS NULL
+         AND discount_reason IS NULL
+         AND price_override_reason IS NULL
+         AND unit_price = ${serializeMoney(price)}::numeric
+       ORDER BY line_no
+       LIMIT 1
+       FOR UPDATE
+    `.execute(trx);
+
+    const existing = match.rows[0]?.id;
+    if (existing) {
+      // جمع تعداد در SQL انجام می‌شود، نه در TypeScript.
+      await sql`
+        SELECT sales.set_line_qty(
+          ${input.invoiceId}::uuid, ${existing}::uuid,
+          (SELECT qty FROM sales.invoice_line WHERE id = ${existing}::uuid)
+            + ${input.qty}::platform.qty)
+      `.execute(trx);
+      return;
+    }
+
+    const nextNo = await nextLineNo(trx, input.invoiceId);
+    await trx
+      .insertInto("sales.invoice_line")
+      .values({
+        invoice_id: input.invoiceId,
+        line_no: nextNo,
+        variation_id: variationId,
+        qty: input.qty,
+        unit_price: serializeMoney(price),
+        discount_amount: "0",
+        tax_amount: "0",
+        // مبلغ سطر با round() صریح در SQL — همان قاعده‌ای که
+        // `grossOf` برایش وجود دارد. تقسیم و ضرب در TypeScript با
+        // جمع دیتابیس یکی درنمی‌آید.
+        net_amount: sql<string>`round(${input.qty}::numeric * ${serializeMoney(price)}::numeric)`,
+        unit_cost: "0",
+        cogs_amount: "0",
+        returned_qty: "0",
+        discount_reason: null,
+        list_price: null,
+        price_override_reason: null,
+      })
+      .execute();
+
+    await refreshTotals(trx, input.invoiceId);
+  }
+
   async removeLine(invoiceId: string, lineId: string, actorId: string): Promise<Invoice> {
     await this.requireDraft(invoiceId);
     await this.#db.transaction().execute(async (trx) => {
@@ -436,6 +566,55 @@ export class InvoiceService {
   }
 
   /**
+   * تغییر تعداد یک قلم — بدون دست‌زدن به Snapshot قیمت.
+   *
+   * تنها راه دیگر، حذف سطر و افزودن دوباره‌اش بود؛ و آن مسیر قیمت را
+   * از `catalog.price` دوباره می‌خواند. برای فاکتوری که قیمت لحظه
+   * فروش را نگه می‌دارد، این یک اصلاح نیست — یک بازقیمت‌گذاری بی‌صدا
+   * است.
+   *
+   * سنجش‌های اینجا **لایه اول**اند و فقط برای اینکه کاربر کد و پیام
+   * دقیق بگیرد. لایه دومِ همین قواعد داخل `sales.set_line_qty` است و
+   * زیر قفل فاکتور اجرا می‌شود — یعنی مسابقه‌ای که این خواندن‌ها
+   * می‌توانند از دست بدهند، آنجا گرفته می‌شود.
+   */
+  async setLineQty(input: {
+    invoiceId: string;
+    lineId: string;
+    qty: string;
+    actorId: string;
+  }): Promise<Invoice> {
+    await this.requireDraft(input.invoiceId);
+
+    const line = await this.#db
+      .selectFrom("sales.invoice_line")
+      .select(["id", "discount_amount", "list_price"])
+      .where("id", "=", input.lineId)
+      .where("invoice_id", "=", input.invoiceId)
+      .executeTakeFirst();
+    if (!line) throw new InvoiceError("line_not_found", "این قلم در فاکتور نیست", 404);
+
+    // تخفیف یک مبلغ **مطلق** برای تعدادِ آن لحظه است. با تغییر تعداد،
+    // یا باید مطلق بماند (و درصد کاهش بی‌صدا عوض شود) یا نسبتی شود (و
+    // مبلغ ثبت‌شده بی‌صدا عوض شود). هر دو یک تصمیم مالی‌اند.
+    if (parseMoney(line.discount_amount) > 0n || line.list_price !== null) {
+      throw new InvoiceError(
+        "line_price_adjusted",
+        "تعداد سطری که تخفیف خورده یا قیمتش دستی تغییر کرده از این مسیر عوض نمی‌شود؛ سطر را حذف و دوباره ثبت کنید.",
+      );
+    }
+
+    await this.#db.transaction().execute(async (trx) => {
+      await setActor(trx, input.actorId);
+      await sql`SELECT sales.set_line_qty(
+        ${input.invoiceId}::uuid, ${input.lineId}::uuid, ${input.qty}::platform.qty)`
+        .execute(trx);
+    });
+
+    return (await this.byId(input.invoiceId)) as Invoice;
+  }
+
+  /**
    * ثبت پرداخت روی فاکتور.
    *
    * پرداخت پیش از نهایی‌سازی ثبت می‌شود چون `finalize_invoice` جمع
@@ -451,6 +630,31 @@ export class InvoiceService {
     actorId: string;
     clientEventId?: string | undefined;
   }): Promise<{ paymentId: string }> {
+    const id = await this.#db
+      .transaction()
+      .execute((trx) => this.addPaymentIn(trx, input));
+    return { paymentId: id };
+  }
+
+  /**
+   * همان ثبت پرداخت، داخل تراکنش فراخوان.
+   *
+   * `runOnce` باید درج Inbox و ثبت پول را در **یک** تراکنش انجام دهد.
+   * اگر این متد تراکنش خودش را باز کند، خرابی میان دو Commit یا پول
+   * بدون رد می‌گذارد یا رد بدون پول — و هر دو بدتر از تکرارند.
+   */
+  async addPaymentIn(
+    trx: Transaction<Database>,
+    input: {
+      invoiceId: string;
+      methodCode: string;
+      amount: bigint;
+      refNo?: string | undefined;
+      accountId?: string | undefined;
+      actorId: string;
+      clientEventId?: string | undefined;
+    },
+  ): Promise<string> {
     const inv = await this.requireDraft(input.invoiceId);
     if (input.amount <= 0n) {
       throw new InvoiceError("bad_amount", "مبلغ پرداخت باید مثبت باشد", 400);
@@ -472,7 +676,7 @@ export class InvoiceService {
       );
     }
 
-    const id = await this.#db.transaction().execute(async (trx) => {
+    {
       await setActor(trx, input.actorId);
       const row = await trx
         .insertInto("treasury.payment")
@@ -495,9 +699,7 @@ export class InvoiceService {
         .returning("id")
         .executeTakeFirstOrThrow();
       return row.id;
-    });
-
-    return { paymentId: id };
+    }
   }
 
   /**
@@ -614,24 +816,13 @@ async function nextLineNo(trx: Transaction<Database>, invoiceId: string): Promis
  *
  * انباشتن یعنی حذف یک سطر باید دقیقاً همان عددی را کم کند که افزوده
  * بود؛ یک گرد کردن متفاوت و جمع‌ها بی‌صدا از سطرها جدا می‌افتند.
+ *
+ * خودِ SQL از مهاجرت ۰۱۵ در دیتابیس است: `sales.set_line_qty` هم
+ * همان را صدا می‌زند و دو تعریف از یک جمع، دیر یا زود از هم جدا
+ * می‌افتند.
  */
 async function refreshTotals(trx: Transaction<Database>, invoiceId: string): Promise<void> {
-  await sql`
-    UPDATE sales.invoice i SET
-      gross_amount    = t.gross,
-      discount_amount = t.disc,
-      net_amount      = t.net,
-      tax_amount      = t.tax,
-      payable_amount  = t.net + t.tax + i.shipping_amount
-    FROM (
-      SELECT coalesce(sum(qty * unit_price), 0) AS gross,
-             coalesce(sum(discount_amount), 0)  AS disc,
-             coalesce(sum(net_amount), 0)       AS net,
-             coalesce(sum(tax_amount), 0)       AS tax
-        FROM sales.invoice_line WHERE invoice_id = ${invoiceId}::uuid
-    ) t
-    WHERE i.id = ${invoiceId}::uuid
-  `.execute(trx);
+  await sql`SELECT sales.refresh_invoice_totals(${invoiceId}::uuid)`.execute(trx);
 }
 
 /** شکل JSON — پول همیشه رشته. */

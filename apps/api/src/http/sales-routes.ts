@@ -62,6 +62,32 @@ const addLineBody = z
     message: "کالا باید با شناسه یا بارکد مشخص شود",
   });
 
+/**
+ * تعداد در صندوق عدد صحیح است — عمداً سخت‌گیرتر از `addLine`.
+ *
+ * دیتابیس `platform.qty` اعشاری می‌پذیرد و باید بپذیرد (متر پارچه
+ * روزی می‌آید). ولی صندوق پوشاک امروز کالای تعدادی می‌فروشد و «۱٫۵
+ * پیراهن» یک اشتباه تایپی است، نه یک فروش.
+ */
+const setLineQtyBody = z.object({
+  qty: z.string().regex(/^\d+$/, "تعداد باید عدد صحیح باشد"),
+});
+
+/**
+ * اسکن صندوق — بارکد و تعداد، هیچ قیمتی.
+ *
+ * `qty` پیش‌فرض «۱» است چون یک کشیدن اسکنر یعنی یک عدد.
+ */
+const scanBody = z
+  .object({
+    variationId: uuid.optional(),
+    barcode: z.string().min(1).max(64).optional(),
+    qty: z.string().regex(/^\d+$/, "تعداد باید عدد صحیح باشد").default("1"),
+  })
+  .refine((v) => v.variationId ?? v.barcode, {
+    message: "کالا باید با شناسه یا بارکد مشخص شود",
+  });
+
 const paymentBody = z.object({
   methodCode: z.string().min(1).max(32),
   amount: moneyString,
@@ -131,13 +157,35 @@ export function registerSalesRoutes(app: FastifyInstance, deps: SalesRouteDeps):
     // است نه کدی؛ اگر عوض شود، یک UPDATE کافی است.
     await requireForSession(db, s, "shift.close");
 
-    const closed = await shifts.close({
-      shiftId: id,
-      countedCash: parseMoney(body.countedCash),
-      actorId: s.userId,
-      ...(body.note === undefined ? {} : { note: body.note }),
+    // Idempotent: بستن شیفت سند فروش، COGS و مغایرت می‌زند. تکرار
+    // درخواست تا امروز ۴۰۹ «شیفت قبلاً بسته شده» می‌گرفت — ایمن، ولی
+    // برای صندوق‌داری که پاسخ اولش در شبکه گم شده، شبیه خطاست.
+    const out = await runOnce<string>(db, {
+      key: idempotencyKey(req),
+      source: "api.shift.close",
+      payload: {
+        actorId: s.userId,
+        shiftId: id,
+        countedCash: body.countedCash,
+        note: body.note ?? null,
+      },
+      run: async (trx) => {
+        await shifts.closeIn(trx, {
+          shiftId: id,
+          countedCash: parseMoney(body.countedCash),
+          actorId: s.userId,
+          ...(body.note === undefined ? {} : { note: body.note }),
+        });
+        return { value: id, ref: id };
+      },
+      replay: async (ref) => ref,
     });
-    return shiftToJson(closed);
+
+    const closed = await shifts.byId(out.value);
+    if (!closed) throw new ShiftError("shift_not_found", "شیفت یافت نشد", 404);
+    // دامنه در مسیر Replay هم دوباره سنجیده می‌شود.
+    await assertBranch(db, s.userId, closed.branchId);
+    return { ...shiftToJson(closed), replayed: out.replayed };
   });
 
   // ── سبد و فاکتور ────────────────────────────────────────────────
@@ -166,15 +214,48 @@ export function registerSalesRoutes(app: FastifyInstance, deps: SalesRouteDeps):
       shiftId = shift.id;
     }
 
-    const inv = await invoices.createDraft({
-      branchId: body.branchId,
-      warehouseId: body.warehouseId,
-      channel: body.channel,
-      actorId: s.userId,
-      ...(shiftId === undefined ? {} : { shiftId }),
-      ...(body.customerId === undefined ? {} : { customerId: body.customerId }),
+    // Idempotent: دابل‌کلیک روی «فروش تازه» یا Retry شبکه تبلت نباید
+    // یک پیش‌نویس دوم جا بگذارد. پیش‌نویس رها اثر مالی ندارد، ولی
+    // `close_shift` تا ابد ردش می‌کند: «شیفت با فاکتور نهایی‌نشده بسته
+    // نمی‌شود».
+    //
+    // `shiftId` عمداً در Payload نیست: ورودی کلاینت نیست، از وضعیت
+    // سرور می‌آید. اگر بود، Retry همان درخواست پس از عوض‌شدن شیفت
+    // به‌جای Replay، Conflict می‌گرفت.
+    const out = await runOnce<string>(db, {
+      key: idempotencyKey(req),
+      source: "api.invoice.create",
+      payload: {
+        actorId: s.userId,
+        branchId: body.branchId,
+        warehouseId: body.warehouseId,
+        channel: body.channel,
+        customerId: body.customerId ?? null,
+      },
+      run: async (trx) => {
+        const id = await invoices.createDraftIn(trx, {
+          branchId: body.branchId,
+          warehouseId: body.warehouseId,
+          channel: body.channel,
+          actorId: s.userId,
+          ...(shiftId === undefined ? {} : { shiftId }),
+          ...(body.customerId === undefined ? {} : { customerId: body.customerId }),
+        });
+        return { value: id, ref: id };
+      },
+      replay: async (ref) => ref,
     });
-    return reply.code(201).send(invoiceToJson(inv));
+
+    // مسیر Replay هم دامنه را دوباره می‌سنجد: بدون این، کاربر شعبه
+    // دیگر با حدس‌زدن یک کلید، فاکتور کسی را می‌دید.
+    await assertInvoiceInScope(db, s.userId, out.value, invoices);
+    const inv = await invoices.byId(out.value);
+    if (!inv) throw new InvoiceError("invoice_not_found", "فاکتور ساخته نشد", 500);
+
+    return reply.code(out.replayed ? 200 : 201).send({
+      ...invoiceToJson(inv),
+      replayed: out.replayed,
+    });
   });
 
   app.get("/invoices/:id", async (req) => {
@@ -269,6 +350,89 @@ export function registerSalesRoutes(app: FastifyInstance, deps: SalesRouteDeps):
     return reply.code(201).send(invoiceToJson(inv));
   });
 
+  /**
+   * تغییر تعداد یک قلم.
+   *
+   * `qty` **مطلق** است نه دلتا: کلیک دوم روی «+» که پاسخ اولی هنوز
+   * نرسیده، با دلتا دو بار شمرده می‌شد. با مقدار مطلق، آخرین درخواست
+   * برنده است و تکرارش اثری ندارد.
+   *
+   * `qty=0` رد می‌شود: حذف قلم مسیر خودش را دارد و یک عملیات دیگر
+   * است — با دلیل و ردّ حسابرسی متفاوت.
+   */
+  app.patch("/invoices/:id/lines/:lineId", async (req) => {
+    const s = session(req);
+    const { id, lineId } = z.object({ id: uuid, lineId: uuid }).parse(req.params);
+    const body = setLineQtyBody.parse(req.body);
+    await assertInvoiceInScope(db, s.userId, id, invoices);
+    await requireForSession(db, s, "sale.create");
+
+    // سنجش مقدار **پس از** دامنه و مجوز: کاربری که به این فاکتور
+    // دسترسی ندارد باید ۴۰۳ بگیرد، نه ۴۰۰ — وگرنه پاسخ خطا به ترتیبِ
+    // ورودی وابسته می‌شود و با بقیه مسیرها یکدست نیست.
+    if (Number(body.qty) <= 0) {
+      throw new InvoiceError("bad_qty", "تعداد باید بزرگ‌تر از صفر باشد؛ برای حذف قلم از مسیر حذف استفاده کنید.", 400);
+    }
+
+    return invoiceToJson(
+      await invoices.setLineQty({ invoiceId: id, lineId, qty: body.qty, actorId: s.userId }),
+    );
+  });
+
+  /**
+   * اسکن یک بارکد.
+   *
+   * تفاوتش با `POST /lines` در یک جمله: این مسیر می‌داند اسکنر پشتش
+   * است، پس اسکن دوباره همان کالا تعداد همان سطر را بالا می‌برد
+   * به‌جای اینکه سطر دوم بسازد. `POST /lines` عمداً دست‌نخورده مانده.
+   *
+   * `Idempotency-Key` **اختیاری** است و باید برای هر کشیدن اسکنر
+   * تازه باشد: دو بار اسکن عمدی یعنی دو عدد. کلید فقط برای این است
+   * که Retry شبکه، عدد سوم نسازد.
+   */
+  app.post("/invoices/:id/scan", async (req) => {
+    const s = session(req);
+    const { id } = z.object({ id: uuid }).parse(req.params);
+    const body = scanBody.parse(req.body ?? {});
+    await assertInvoiceInScope(db, s.userId, id, invoices);
+    await requireForSession(db, s, "sale.create");
+
+    // مثل مسیر تغییر تعداد: اول «اجازه داری؟»، بعد «ورودی درست است؟».
+    if (Number(body.qty) <= 0) {
+      throw new InvoiceError("bad_qty", "تعداد باید بزرگ‌تر از صفر باشد", 400);
+    }
+
+    const out = await runOnce<string>(db, {
+      key: idempotencyKey(req),
+      source: "api.invoice.scan",
+      payload: {
+        actorId: s.userId,
+        invoiceId: id,
+        variationId: body.variationId ?? null,
+        barcode: body.barcode ?? null,
+        qty: body.qty,
+      },
+      run: async (trx) => {
+        await invoices.scanIn(trx, {
+          invoiceId: id,
+          qty: body.qty,
+          actorId: s.userId,
+          ...(body.variationId === undefined ? {} : { variationId: body.variationId }),
+          ...(body.barcode === undefined ? {} : { barcode: body.barcode }),
+        });
+        return { value: id, ref: id };
+      },
+      replay: async (ref) => ref,
+    });
+
+    // پاسخ عمداً فقط فاکتور و replayed است. «کدام سطر عوض شد» و «ادغام
+    // شد یا نه» را در مسیر Replay نمی‌شود بدون حدس بازسازی کرد، و
+    // میدانی که در Replay حدسی باشد بدتر از نبودنش است.
+    const inv = await invoices.byId(id);
+    if (!inv) throw new InvoiceError("invoice_not_found", "فاکتور یافت نشد", 404);
+    return { invoice: invoiceToJson(inv), replayed: out.replayed };
+  });
+
   app.delete("/invoices/:id/lines/:lineId", async (req) => {
     const s = session(req);
     const { id, lineId } = z.object({ id: uuid, lineId: uuid }).parse(req.params);
@@ -301,16 +465,62 @@ export function registerSalesRoutes(app: FastifyInstance, deps: SalesRouteDeps):
     await assertInvoiceInScope(db, s.userId, id, invoices);
     await requireForSession(db, s, "sale.create");
 
-    const result = await invoices.addPayment({
-      invoiceId: id,
-      methodCode: body.methodCode,
-      amount: parseMoney(body.amount),
-      actorId: s.userId,
-      ...(body.refNo === undefined ? {} : { refNo: body.refNo }),
-      ...(body.accountId === undefined ? {} : { accountId: body.accountId }),
-      ...(idempotencyKey(req) === undefined ? {} : { clientEventId: idempotencyKey(req) }),
+    // Replay واقعی، نه فقط جلوگیری از درج دوم.
+    //
+    // پیش از این، کلید فقط در `client_event_id` می‌نشست و قید یکتایی
+    // پستگرس درج دوم را می‌شکست — یعنی پول دوباره ثبت نمی‌شد (خوب) ولی
+    // کاربر خطای سرور می‌دید (بد). دفاعی که شبیه خرابی گزارش شود، در
+    // عمل خاموش است.
+    //
+    // هر دو لایه سر جایشان می‌مانند: Inbox پاسخ درست را برمی‌گرداند و
+    // قید یکتایی آخرین سد است.
+    const key = idempotencyKey(req);
+    const out = await runOnce<string>(db, {
+      key,
+      source: "api.invoice.payment",
+      payload: {
+        actorId: s.userId,
+        invoiceId: id,
+        methodCode: body.methodCode,
+        amount: body.amount,
+        refNo: body.refNo ?? null,
+        accountId: body.accountId ?? null,
+      },
+      run: async (trx) => {
+        const paymentId = await invoices.addPaymentIn(trx, {
+          invoiceId: id,
+          methodCode: body.methodCode,
+          amount: parseMoney(body.amount),
+          actorId: s.userId,
+          ...(body.refNo === undefined ? {} : { refNo: body.refNo }),
+          ...(body.accountId === undefined ? {} : { accountId: body.accountId }),
+          ...(key === undefined ? {} : { clientEventId: key }),
+        });
+        return { value: paymentId, ref: paymentId };
+      },
+      replay: async (ref) => ref,
     });
-    return reply.code(201).send(result);
+
+    // نمای فعلی سرور، نه آنچه کلاینت حساب کرده.
+    //
+    // `invoice.paidAmount` روی پیش‌نویس عمداً صفر است: آن ستون را
+    // `finalize_invoice` می‌نویسد. «چقدر تا حالا گرفته‌ایم» عدد دیگری
+    // است و از `paidSoFar` می‌آید — جمع پرداخت‌های **واقعاً موفق**؛
+    // «نامشخص» و «در انتظار» پول شمرده نمی‌شوند.
+    //
+    // دو نام جدا، چون دو چیز جدا هستند. اگر یکی می‌شدند، صندوق روی
+    // پیش‌نویس عدد اشتباه نشان می‌داد یا فاکتور نهایی عدد دوباره
+    // حساب‌شده.
+    const inv = await invoices.byId(id);
+    if (!inv) throw new InvoiceError("invoice_not_found", "فاکتور یافت نشد", 404);
+    const received = await invoices.paidSoFar(id);
+
+    return reply.code(out.replayed ? 200 : 201).send({
+      paymentId: out.value,
+      replayed: out.replayed,
+      receivedAmount: serializeMoney(received),
+      invoice: invoiceToJson(inv),
+    });
   });
 
   /**

@@ -8,7 +8,9 @@
  * انتظار، مغایرت، سند تجمیعی و COGS. اینجا فقط مجوز، ورودی و ترجمه.
  */
 import { sql } from "kysely";
+import type { Transaction } from "kysely";
 import type { Db } from "../db/client.ts";
+import type { Database } from "../db/types.ts";
 import { parseMoney, serializeMoney } from "../lib/money.ts";
 import { setActor } from "../lib/idempotency.ts";
 
@@ -128,28 +130,49 @@ export class ShiftService {
     actorId: string;
     note?: string | undefined;
   }): Promise<Shift> {
+    await this.#db.transaction().execute((trx) => this.closeIn(trx, input));
+
+    const closed = await this.byId(input.shiftId);
+    if (!closed) throw new ShiftError("shift_not_found", "شیفت یافت نشد", 404);
+    return closed;
+  }
+
+  /**
+   * همان بستن شیفت، داخل تراکنش فراخوان.
+   *
+   * `runOnce` باید درج Inbox و سند بستن را در یک تراکنش انجام دهد.
+   * بستن شیفت سند فروش، COGS و مغایرت می‌زند؛ رد بدون سند یا سند
+   * بدون رد، هر دو بدتر از تکرارند.
+   */
+  async closeIn(
+    trx: Transaction<Database>,
+    input: {
+      shiftId: string;
+      countedCash: bigint;
+      actorId: string;
+      note?: string | undefined;
+    },
+  ): Promise<void> {
     if (input.countedCash < 0n) {
       throw new ShiftError("bad_counted_cash", "شمارش نقد منفی نمی‌شود", 400);
     }
 
+    // سنجش وضعیت **داخل** همین متد است، نه در مسیر HTTP: مسیر Replay
+    // اصلاً اینجا نمی‌رسد، پس شیفتی که خودمان بسته‌ایم پاسخ قبلی را
+    // می‌گیرد، در حالی که بستن دوم بدون کلید همچنان `shift_not_open`
+    // می‌شود — نه پیام عمومی نگهبان دیتابیس.
     const shift = await this.byId(input.shiftId);
     if (!shift) throw new ShiftError("shift_not_found", "شیفت یافت نشد", 404);
     if (shift.status !== "open") {
       throw new ShiftError("shift_not_open", "این شیفت پیش از این بسته شده است");
     }
 
-    await this.#db.transaction().execute(async (trx) => {
-      await setActor(trx, input.actorId);
-      await sql`SELECT sales.close_shift(
-        ${input.shiftId}::uuid,
-        ${serializeMoney(input.countedCash)}::numeric,
-        ${input.actorId}::uuid,
-        ${input.note ?? null}::text)`.execute(trx);
-    });
-
-    const closed = await this.byId(input.shiftId);
-    if (!closed) throw new ShiftError("shift_not_found", "شیفت یافت نشد", 404);
-    return closed;
+    await setActor(trx, input.actorId);
+    await sql`SELECT sales.close_shift(
+      ${input.shiftId}::uuid,
+      ${serializeMoney(input.countedCash)}::numeric,
+      ${input.actorId}::uuid,
+      ${input.note ?? null}::text)`.execute(trx);
   }
 }
 

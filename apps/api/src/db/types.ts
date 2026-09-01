@@ -167,6 +167,7 @@ export interface WarehouseTable {
   code: string;
   name: string;
   kind: string;
+  is_active: boolean;
 }
 
 // ── فروش ──────────────────────────────────────────────────────────
