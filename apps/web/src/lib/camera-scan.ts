@@ -124,6 +124,16 @@ export async function resolveDetector(
   //
   // `?url` به Vite می‌گوید فایل را کنار بقیه دارایی‌ها بگذارد و آدرس
   // محلی‌اش را بدهد. هیچ درخواستی از دامنه ما بیرون نمی‌رود.
+  // ⚠️ محلی‌بودن فایل کافی نیست: **اجرای** WASM هم از CSP اجازه
+  // می‌خواهد. یک `script-src` سخت‌گیرانه بدون `wasm-unsafe-eval`،
+  // نمونه‌سازی WebAssembly را در مرورگرهای Chromium می‌بندد — و این
+  // مسیر همان مسیر Polyfill است، یعنی آیفون و هر مرورگری که
+  // `BarcodeDetector` بومی ندارد.
+  //
+  // امروز هنوز CSP سراسری‌ای وجود ندارد (بند ۶ SECURITY.md آن را
+  // می‌خواهد و `docker-compose.yml` هنوز Caddy ندارد). پس این تله
+  // برای **روزی** است که اضافه شود: بدون آن کلیدواژه، دوربین بی‌صدا
+  // از کار می‌افتد — دقیقاً در قطعی برق، که تنها دلیل وجودش است.
   const { default: wasmUrl } = await import("zxing-wasm/reader/zxing_reader.wasm?url");
   mod.setZXingModuleOverrides({ locateFile: () => wasmUrl });
 

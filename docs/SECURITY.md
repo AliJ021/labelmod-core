@@ -179,7 +179,12 @@ REVOKE UPDATE, DELETE ON inventory.stock_movement  FROM labelmod_app;
 - **اعتبارسنجی با Zod در هر مرز API.** هیچ ورودی بدون Schema وارد منطق نشود.
 - **کوئری پارامتری، همیشه.** Kysely این را تضمین می‌کند. `sql.raw` با ورودی
   کاربر ممنوع مطلق.
-- **CSP** بدون `unsafe-inline`، با nonce.
+- **CSP** بدون `unsafe-inline`، با nonce. `script-src` باید
+  **`wasm-unsafe-eval`** هم داشته باشد: اسکنر بارکد موبایل روی
+  مرورگرهای بدون `BarcodeDetector` بومی (از جمله آیفون) از WebAssembly
+  استفاده می‌کند و CSP سخت‌گیرانه بدون این کلیدواژه، نمونه‌سازی آن را
+  در Chromium می‌بندد. فایل WASM محلی سرو می‌شود، ولی محلی‌بودن جای
+  اجازه اجرا را نمی‌گیرد.
 - **CSRF:** `SameSite=Strict` به‌علاوه توکن Double-Submit روی هر درخواست
   تغییردهنده وضعیت.
 - **محدودیت نرخ:** ورود (۵ در دقیقه بر IP) · ارسال OTP · endpointهای پرداخت.
