@@ -609,6 +609,63 @@ describe("آمادگی API صندوق", { skip }, () => {
     assert.notEqual(a.json().id, b.json().id);
   });
 
+  // ── خلاصه روز ───────────────────────────────────────────────────
+
+  test("صندوق‌دار فروش و دریافتی را می‌بیند، ولی سود را نه", async () => {
+    // `cost.view` طبق `040_reference.sql` فقط حسابدار و مدیر دارند.
+    // ولی «چقدر پول در کشوست» را صندوق‌دار آخر شب لازم دارد، پس کل
+    // مسیر ۴۰۳ نمی‌شود.
+    const s = await loginAs(cashier);
+    const r = await app.inject({
+      method: "GET",
+      url: `/reports/daily?branchId=${BRANCH}`,
+      ...s,
+    });
+    assert.equal(r.statusCode, 200, r.body);
+    const body = r.json();
+    assert.equal(typeof body.salesAmount, "string", "پول در JSON رشته است");
+    assert.equal(typeof body.receivedAmount, "string");
+    assert.equal(body.profitAmount, null, "سود بدون cost.view دیده نمی‌شود");
+  });
+
+  test("سود `null` است، نه صفر", async () => {
+    // صفر یک ادعای مالی است («امروز سودی نبود»)؛ «اجازه نداری» ادعای
+    // دیگری است. یکی‌کردنشان یعنی صندوق‌دار فکر کند فروشگاه ضرر کرده.
+    const s = await loginAs(cashier);
+    const r = await app.inject({
+      method: "GET",
+      url: `/reports/daily?branchId=${BRANCH}`,
+      ...s,
+    });
+    assert.notEqual(r.json().profitAmount, "0");
+    assert.equal(r.json().profitAmount, null);
+  });
+
+  test("خلاصه روز شعبه دیگر ۴۰۳ می‌گیرد", async () => {
+    const s = await loginAs(cashier);
+    const r = await app.inject({
+      method: "GET",
+      url: `/reports/daily?branchId=${otherBranchId}`,
+      ...s,
+    });
+    assert.equal(r.statusCode, 403, r.body);
+  });
+
+  test("تاریخ نامعتبر رد می‌شود", async () => {
+    const s = await loginAs(cashier);
+    const r = await app.inject({
+      method: "GET",
+      url: `/reports/daily?branchId=${BRANCH}&date=دیروز`,
+      ...s,
+    });
+    assert.equal(r.statusCode, 400, r.body);
+  });
+
+  test("بدون نشست، خلاصه روز بیرون نمی‌رود", async () => {
+    const r = await app.inject({ method: "GET", url: `/reports/daily?branchId=${BRANCH}` });
+    assert.equal(r.statusCode, 401);
+  });
+
   // ── تخفیف روی سطر موجود ─────────────────────────────────────────
 
   test("تخفیف روی سطر موجود، Snapshot قیمت را دست نمی‌زند", async () => {

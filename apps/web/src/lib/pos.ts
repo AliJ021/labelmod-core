@@ -157,6 +157,28 @@ export interface SaleReturn {
   occurredAt: string;
 }
 
+export interface DailyReport {
+  businessDate: string;
+  salesAmount: string;
+  receivedAmount: string;
+  /** `null` یعنی اجازه دیدن سود نیست — نه اینکه سود صفر بوده. */
+  profitAmount: string | null;
+  invoiceCount: number;
+  returnCount: number;
+}
+
+/** درآمدی که هنوز به دفتر نرفته — زنگ خطر داشبورد. */
+export interface UnpostedRow {
+  batchId: string;
+  batchKind: string;
+  branchId: string;
+  channel: string;
+  businessDate: string;
+  invoiceCount: number;
+  payableAmount: string;
+  cogsAmount: string;
+}
+
 export interface ScanResult {
   invoice: Invoice;
   /** درخواست تازه اجرا شد یا پاسخ قبلی برگشت. */
@@ -254,6 +276,27 @@ export const pos = {
 
   finalize: (invoiceId: string, opts?: RequestOptions) =>
     api.post<Invoice>(`/invoices/${invoiceId}/finalize`, {}, opts),
+
+  /**
+   * خلاصه یک روز کاری.
+   *
+   * `profitAmount` وقتی `null` است که کاربر `cost.view` نداشته باشد —
+   * **نه صفر**. صفر یک ادعای مالی است؛ «اجازه دیدنش را نداری» ادعای
+   * دیگری. یکی‌کردنشان یعنی صندوق‌دار فکر کند فروشگاه ضرر کرده.
+   */
+  dailyReport: (branchId: string, date?: string) =>
+    api.get<DailyReport>(
+      `/reports/daily?branchId=${encodeURIComponent(branchId)}` +
+        (date === undefined ? "" : `&date=${encodeURIComponent(date)}`),
+    ),
+
+  /**
+   * دوره‌هایی که درآمدشان هنوز به دفتر نرفته.
+   *
+   * پشت `cost.view` است، پس صندوق‌دار ۴۰۳ می‌گیرد — و داشبورد باید
+   * آن را یک «خطا» نداند، بلکه فقط کارت را نشان ندهد.
+   */
+  unpostedRevenue: () => api.get<{ rows: UnpostedRow[] }>("/posting-batches/unposted"),
 
   /** علت‌های مجاز مرجوعی با برچسب فارسی — از `platform.setting`. */
   returnReasons: () => api.get<{ reasons: ReturnReason[] }>("/return-reasons"),

@@ -14,7 +14,11 @@
 import type { FastifyInstance } from "fastify";
 import { AuthError } from "../auth/service.ts";
 import type { Db } from "../db/client.ts";
-import { branchesOf } from "../sales/scope.ts";
+import { assertBranch, branchesOf } from "../sales/scope.ts";
+import { can } from "../auth/permission.ts";
+import { serializeMoney } from "../lib/money.ts";
+import { sql } from "kysely";
+import { z } from "zod";
 
 export interface ScopeRouteDeps {
   db: Db;
@@ -116,6 +120,72 @@ export function registerScopeRoutes(app: FastifyInstance, deps: ScopeRouteDeps):
         kind: m.kind,
         requiresRef: m.requires_ref,
       })),
+    };
+  });
+
+  /**
+   * خلاصه یک روز کاری: فروش، وجه دریافتی، سود.
+   *
+   * هر سه در SQL حساب می‌شوند (`sales.daily_summary`) — نه اینجا.
+   * جمع پول در TypeScript با جمع دیتابیس یکی درنمی‌آید.
+   *
+   * ── چرا `profitAmount` می‌تواند `null` باشد ──────────────────────
+   *
+   * سود داده مدیریتی است و `cost.view` را می‌خواهد — که طبق
+   * `040_reference.sql` فقط حسابدار و مدیر دارند، نه صندوق‌دار و نه
+   * سرپرست.
+   *
+   * ولی «فروش امروز چقدر بود» و «چقدر پول در کشوست» را صندوق‌دار
+   * **باید** ببیند؛ آخر شب با همان‌ها کشو را می‌شمارد. پس کل مسیر
+   * ۴۰۳ نمی‌شود و فقط همان یک عدد `null` می‌آید.
+   *
+   * `null` است نه صفر: صفر یک ادعای مالی است («امروز سودی نبود») و
+   * «اجازه دیدنش را نداری» ادعای دیگری است.
+   */
+  app.get("/reports/daily", async (req) => {
+    const s = session(req) as { userId: string; pinUnlocked: boolean };
+    const q = z
+      .object({
+        branchId: z.string().uuid("شناسه نامعتبر"),
+        // بدون تاریخ یعنی «امروز» — و «امروز» را
+        // `platform.business_date()` تعریف می‌کند، نه منطقه زمانی سرور.
+        date: z.string().regex(/^\d{4}-\d{2}-\d{2}$/, "تاریخ نامعتبر").optional(),
+      })
+      .parse(req.query);
+    await assertBranch(db, s.userId, q.branchId);
+
+    const row = await sql<{
+      business_date: string;
+      sales_amount: string;
+      received_amount: string;
+      profit_amount: string;
+      invoice_count: string;
+      return_count: string;
+    }>`SELECT * FROM sales.daily_summary(
+         ${q.branchId}::uuid,
+         coalesce(${q.date ?? null}::date, platform.business_date()))`.execute(db);
+
+    // `daily_summary` یک CROSS JOIN از سه CTE تک‌سطری است، پس همیشه
+    // **دقیقاً** یک سطر می‌دهد — حتی برای روزی که هیچ فروشی نداشته
+    // (سه صفر). نبودن سطر یعنی خودِ تابع عوض شده، که یک خطای برنامه
+    // است نه یک حالت کاربر: پیام عمومی ۵۰۰ درست‌ترین پاسخ است.
+    const r = row.rows[0];
+    if (!r) throw new Error("sales.daily_summary سطری برنگرداند");
+
+    const costs = await can(db, {
+      userId: s.userId,
+      operation: "cost.view",
+      viaPin: s.pinUnlocked,
+    });
+
+    return {
+      businessDate: r.business_date,
+      salesAmount: serializeMoney(BigInt(r.sales_amount)),
+      receivedAmount: serializeMoney(BigInt(r.received_amount)),
+      profitAmount:
+        costs.verdict === "allow" ? serializeMoney(BigInt(r.profit_amount)) : null,
+      invoiceCount: Number(r.invoice_count),
+      returnCount: Number(r.return_count),
     };
   });
 
