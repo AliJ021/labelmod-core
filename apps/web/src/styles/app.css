@@ -598,6 +598,7 @@ select.set-input {
 /* هدف لمسی ۴۴ پیکسل: همان صفحه روی موبایل هم باز می‌شود، و قطعی برق
    یعنی ممکن است تنها راهِ فروش همین باشد. */
 .auth-field input,
+.auth-field select,
 .auth-submit,
 .auth-alt {
   min-height: var(--touch);
@@ -605,14 +606,16 @@ select.set-input {
   border-radius: var(--r-sm);
 }
 
-.auth-field input {
+.auth-field input,
+.auth-field select {
   padding: 0 var(--s-3);
   color: var(--ink);
   background: var(--surface-solid);
   border: 1px solid var(--rule);
 }
 
-.auth-field input:focus-visible {
+.auth-field input:focus-visible,
+.auth-field select:focus-visible {
   outline: 2px solid var(--accent);
   outline-offset: 1px;
 }

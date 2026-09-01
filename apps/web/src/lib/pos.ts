@@ -204,6 +204,16 @@ export const pos = {
   invoice: (id: string) => api.get<Invoice & { receivedAmount: string }>(`/invoices/${id}`),
 
   /**
+   * فاکتور از روی **شماره رسید** — نقطه شروع هر مرجوعی.
+   *
+   * شماره در سطح شعبه یکتاست، نه سراسری، پس `branchId` اجباری است.
+   */
+  invoiceByNumber: (number: string, branchId: string) =>
+    api.get<Invoice & { receivedAmount: string }>(
+      `/invoices/lookup?number=${encodeURIComponent(number)}&branchId=${encodeURIComponent(branchId)}`,
+    ),
+
+  /**
    * اسکن — کالای تکراری روی همان سطر شمرده می‌شود.
    *
    * `qty` رشته و عدد صحیح است: صندوق پوشاک کالای تعدادی می‌فروشد و

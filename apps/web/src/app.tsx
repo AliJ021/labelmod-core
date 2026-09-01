@@ -12,6 +12,7 @@ import { Glass, GlassFilters } from "./components/Glass.tsx";
 import { Dashboard } from "./screens/Dashboard.tsx";
 import { Login, LockScreen } from "./screens/Login.tsx";
 import { Pos } from "./screens/Pos.tsx";
+import { Returns } from "./screens/Returns.tsx";
 import { Settings } from "./screens/Settings.tsx";
 import {
   authView,
@@ -31,7 +32,7 @@ import {
   type Theme,
 } from "./lib/theme.ts";
 
-type Zone = "dashboard" | "pos" | "settings";
+type Zone = "dashboard" | "pos" | "returns" | "settings";
 
 /**
  * چرا هر ناحیه این‌قدر شیشه دارد — ADR-002، به زبان خودِ صفحه.
@@ -42,6 +43,7 @@ type Zone = "dashboard" | "pos" | "settings";
 const ZONE_NOTE: Record<Zone, string> = {
   dashboard: "این ناحیه شیشه کامل دارد — خوانده می‌شود، نه عمل.",
   pos: "این ناحیه عمداً مات است — زیر نور فروشگاه باید در کسری از ثانیه خوانده شود.",
+  returns: "ناحیه متوسط — کارت شیشه‌ای، ولی هر سطر و مبلغی که خوانده می‌شود مات.",
   settings: "شیشه فقط روی کارت گروه — ورودی‌ها مات‌اند تا عدد و دکمه پرتضاد بمانند.",
 };
 
@@ -225,6 +227,15 @@ export function App() {
             <button
               type="button"
               role="tab"
+              aria-selected={zone === "returns"}
+              className={zone === "returns" ? "on" : ""}
+              onClick={() => switchZone("returns")}
+            >
+              مرجوعی
+            </button>
+            <button
+              type="button"
+              role="tab"
               aria-selected={zone === "settings"}
               className={zone === "settings" ? "on" : ""}
               onClick={() => switchZone("settings")}
@@ -270,7 +281,15 @@ export function App() {
         </Glass>
 
         <main style={{ viewTransitionName: "zone" }}>
-          {zone === "dashboard" ? <Dashboard /> : zone === "pos" ? <Pos /> : <Settings />}
+          {zone === "dashboard" ? (
+            <Dashboard />
+          ) : zone === "pos" ? (
+            <Pos />
+          ) : zone === "returns" ? (
+            <Returns />
+          ) : (
+            <Settings />
+          )}
         </main>
 
         <p className="zone-note">{ZONE_NOTE[zone]}</p>
