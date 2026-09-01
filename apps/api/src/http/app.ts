@@ -17,6 +17,7 @@ import { registerReturnRoutes } from "./return-routes.ts";
 import { registerPostingRoutes } from "./posting-routes.ts";
 import { registerCatalogRoutes } from "./catalog-routes.ts";
 import { registerSettingsRoutes } from "./settings-routes.ts";
+import { registerScopeRoutes } from "./scope-routes.ts";
 import { InvoiceService } from "../sales/invoice.ts";
 import { ShiftService } from "../sales/shift.ts";
 import { ReturnService } from "../sales/return.ts";
@@ -212,5 +213,6 @@ export async function buildApp(deps: AppDeps): Promise<FastifyInstance> {
     db: deps.db,
     settings: new SettingService(deps.db),
   });
+  registerScopeRoutes(app, { db: deps.db });
   return app;
 }
