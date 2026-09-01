@@ -62,6 +62,17 @@ const addLineBody = z
     message: "کالا باید با شناسه یا بارکد مشخص شود",
   });
 
+/**
+ * تعداد در صندوق عدد صحیح است — عمداً سخت‌گیرتر از `addLine`.
+ *
+ * دیتابیس `platform.qty` اعشاری می‌پذیرد و باید بپذیرد (متر پارچه
+ * روزی می‌آید). ولی صندوق پوشاک امروز کالای تعدادی می‌فروشد و «۱٫۵
+ * پیراهن» یک اشتباه تایپی است، نه یک فروش.
+ */
+const setLineQtyBody = z.object({
+  qty: z.string().regex(/^\d+$/, "تعداد باید عدد صحیح باشد"),
+});
+
 const paymentBody = z.object({
   methodCode: z.string().min(1).max(32),
   amount: moneyString,
@@ -267,6 +278,31 @@ export function registerSalesRoutes(app: FastifyInstance, deps: SalesRouteDeps):
         : { priceOverrideReason: body.priceOverrideReason }),
     });
     return reply.code(201).send(invoiceToJson(inv));
+  });
+
+  /**
+   * تغییر تعداد یک قلم.
+   *
+   * `qty` **مطلق** است نه دلتا: کلیک دوم روی «+» که پاسخ اولی هنوز
+   * نرسیده، با دلتا دو بار شمرده می‌شد. با مقدار مطلق، آخرین درخواست
+   * برنده است و تکرارش اثری ندارد.
+   *
+   * `qty=0` رد می‌شود: حذف قلم مسیر خودش را دارد و یک عملیات دیگر
+   * است — با دلیل و ردّ حسابرسی متفاوت.
+   */
+  app.patch("/invoices/:id/lines/:lineId", async (req) => {
+    const s = session(req);
+    const { id, lineId } = z.object({ id: uuid, lineId: uuid }).parse(req.params);
+    const body = setLineQtyBody.parse(req.body);
+    if (Number(body.qty) <= 0) {
+      throw new InvoiceError("bad_qty", "تعداد باید بزرگ‌تر از صفر باشد؛ برای حذف قلم از مسیر حذف استفاده کنید.", 400);
+    }
+    await assertInvoiceInScope(db, s.userId, id, invoices);
+    await requireForSession(db, s, "sale.create");
+
+    return invoiceToJson(
+      await invoices.setLineQty({ invoiceId: id, lineId, qty: body.qty, actorId: s.userId }),
+    );
   });
 
   app.delete("/invoices/:id/lines/:lineId", async (req) => {

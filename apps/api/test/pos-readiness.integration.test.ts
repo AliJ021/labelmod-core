@@ -36,6 +36,8 @@ describe("آمادگی API صندوق", { skip }, () => {
   let outsiderId = "";
   let otherBranchId = "";
   let otherWarehouseId = "";
+  let variationId = "";
+  const BARCODE = `BC-${suffix}`;
 
   const sessions = new Map<
     string,
@@ -112,13 +114,59 @@ describe("آمادگی API صندوق", { skip }, () => {
       else outsiderId = u.id;
     }
 
+    // کالا، قیمت و موجودی شعبه اول
+    const prod = await sql<{ id: string }>`
+      INSERT INTO catalog.product (code, name_internal)
+      VALUES (${`P-${suffix}`}, 'تی‌شرت آمادگی') RETURNING id`.execute(handle.db);
+    const v = await sql<{ id: string }>`
+      INSERT INTO catalog.variation (product_id, color, size, sku, barcode)
+      VALUES (${prod.rows[0]!.id}, 'مشکی', 'M', ${`SKU-${suffix}`}, ${BARCODE})
+      RETURNING id`.execute(handle.db);
+    variationId = v.rows[0]!.id;
+    await sql`INSERT INTO catalog.price (variation_id, price_list, amount)
+              VALUES (${variationId}, 'default', 1000001)`.execute(handle.db);
+    await sql`SELECT platform.set_actor(${cashierId}::uuid)`.execute(handle.db);
+    await sql`SELECT inventory.apply_movement(
+                ${variationId}::uuid, ${STORE_WH}::uuid, 100, 'purchase_receipt',
+                NULL, NULL, ${cashierId}::uuid, 400000)`.execute(handle.db);
+
     app = await buildApp({
       db: handle.db,
       auth,
       config: loadConfig({ ...process.env, NODE_ENV: "test", LOG_LEVEL: "fatal" }),
     });
     await app.ready();
+
+    // یک شیفت باز برای همه تست‌های سبد
+    const s = await loginAs(cashier);
+    await app.inject({
+      method: "POST",
+      url: "/shifts",
+      ...s,
+      payload: { branchId: BRANCH, openingCash: "0" },
+    });
   });
+
+  /** سبد تازه با یک قلم — نقطه شروع بیشتر ادعاهای زیر. */
+  async function newCart(qty = "1") {
+    const s = await loginAs(cashier);
+    const inv = await app.inject({
+      method: "POST",
+      url: "/invoices",
+      ...s,
+      payload: { branchId: BRANCH, warehouseId: STORE_WH, channel: "pos" },
+    });
+    assert.equal(inv.statusCode, 201, inv.body);
+    const invoiceId = inv.json().id as string;
+    const line = await app.inject({
+      method: "POST",
+      url: `/invoices/${invoiceId}/lines`,
+      ...s,
+      payload: { barcode: BARCODE, qty },
+    });
+    assert.equal(line.statusCode, 201, line.body);
+    return { s, invoiceId, body: line.json() as { lines: Array<{ id: string }> } };
+  }
 
   after(async () => {
     await app?.close();
@@ -254,5 +302,161 @@ describe("آمادگی API صندوق", { skip }, () => {
     });
     assert.equal(inv.statusCode, 201, inv.body);
     assert.ok(cashierId && outsiderId);
+  });
+
+  // ── تغییر تعداد ─────────────────────────────────────────────────
+
+  test("تعداد عوض می‌شود و جمع از سرور می‌آید", async () => {
+    const { s, invoiceId, body } = await newCart("1");
+    assert.equal(body.lines.length, 1);
+    const lineId = body.lines[0]!.id;
+
+    const r = await app.inject({
+      method: "PATCH",
+      url: `/invoices/${invoiceId}/lines/${lineId}`,
+      ...s,
+      payload: { qty: "3" },
+    });
+    assert.equal(r.statusCode, 200, r.body);
+    const inv = r.json() as {
+      netAmount: string;
+      payableAmount: string;
+      lines: Array<{ qty: string; netAmount: string; unitPrice: string }>;
+    };
+    assert.equal(inv.lines[0]!.unitPrice, "1000001", "قیمت Snapshot دست‌نخورده می‌ماند");
+    assert.equal(inv.lines[0]!.netAmount, "3000003");
+    assert.equal(inv.netAmount, "3000003");
+    assert.equal(inv.payableAmount, "3000003");
+    assert.equal(typeof inv.netAmount, "string", "پول در JSON رشته است");
+  });
+
+  test("تغییر تعداد قیمت را دوباره از فهرست نمی‌خواند", async () => {
+    const { s, invoiceId, body } = await newCart("1");
+    const lineId = body.lines[0]!.id;
+
+    // قیمت فهرست بالا می‌رود؛ فاکتور باز نباید تکان بخورد.
+    await sql`UPDATE catalog.price SET amount = 7777777 WHERE variation_id = ${variationId}`
+      .execute(handle.db);
+    const r = await app.inject({
+      method: "PATCH",
+      url: `/invoices/${invoiceId}/lines/${lineId}`,
+      ...s,
+      payload: { qty: "2" },
+    });
+    await sql`UPDATE catalog.price SET amount = 1000001 WHERE variation_id = ${variationId}`
+      .execute(handle.db);
+
+    assert.equal(r.statusCode, 200, r.body);
+    assert.equal(r.json().lines[0].unitPrice, "1000001");
+    assert.equal(r.json().netAmount, "2000002");
+  });
+
+  test("تعداد صفر رد می‌شود — حذف مسیر خودش را دارد", async () => {
+    const { s, invoiceId, body } = await newCart();
+    const r = await app.inject({
+      method: "PATCH",
+      url: `/invoices/${invoiceId}/lines/${body.lines[0]!.id}`,
+      ...s,
+      payload: { qty: "0" },
+    });
+    assert.equal(r.statusCode, 400);
+    assert.equal(r.json().error.code, "bad_qty");
+  });
+
+  test("تعداد اعشاری در صندوق رد می‌شود", async () => {
+    const { s, invoiceId, body } = await newCart();
+    const r = await app.inject({
+      method: "PATCH",
+      url: `/invoices/${invoiceId}/lines/${body.lines[0]!.id}`,
+      ...s,
+      payload: { qty: "1.5" },
+    });
+    assert.equal(r.statusCode, 400);
+    assert.equal(r.json().error.code, "invalid_input");
+  });
+
+  test("سطر ناموجود ۴۰۴ می‌دهد", async () => {
+    const { s, invoiceId } = await newCart();
+    const r = await app.inject({
+      method: "PATCH",
+      url: `/invoices/${invoiceId}/lines/00000000-0000-7000-8000-0000000009ff`,
+      ...s,
+      payload: { qty: "2" },
+    });
+    assert.equal(r.statusCode, 404);
+    assert.equal(r.json().error.code, "line_not_found");
+  });
+
+  test("کاربر شعبه دیگر نمی‌تواند تعداد را عوض کند", async () => {
+    const { invoiceId, body } = await newCart();
+    const other = await loginAs(outsider);
+    const r = await app.inject({
+      method: "PATCH",
+      url: `/invoices/${invoiceId}/lines/${body.lines[0]!.id}`,
+      ...other,
+      payload: { qty: "2" },
+    });
+    assert.equal(r.statusCode, 403);
+    assert.equal(r.json().error.code, "branch_forbidden");
+  });
+
+  test("سطر تخفیف‌دار از این مسیر عوض نمی‌شود", async () => {
+    const { s, invoiceId, body } = await newCart("2");
+    const lineId = body.lines[0]!.id;
+    // تخفیف را مستقیم می‌نشانیم: مسیر HTTPاش مجوز جدا دارد و اینجا
+    // موضوع، رفتار تغییر تعداد است نه سقف تخفیف.
+    await sql`UPDATE sales.invoice_line
+                 SET discount_amount = 1000, net_amount = net_amount - 1000
+               WHERE id = ${lineId}`.execute(handle.db);
+    const r = await app.inject({
+      method: "PATCH",
+      url: `/invoices/${invoiceId}/lines/${lineId}`,
+      ...s,
+      payload: { qty: "4" },
+    });
+    assert.equal(r.statusCode, 409, r.body);
+    assert.equal(r.json().error.code, "line_price_adjusted");
+  });
+
+  test("سطر با قیمت دستی هم از این مسیر عوض نمی‌شود", async () => {
+    const { s, invoiceId, body } = await newCart("2");
+    const lineId = body.lines[0]!.id;
+    await sql`UPDATE sales.invoice_line SET list_price = 1050000 WHERE id = ${lineId}`
+      .execute(handle.db);
+    const r = await app.inject({
+      method: "PATCH",
+      url: `/invoices/${invoiceId}/lines/${lineId}`,
+      ...s,
+      payload: { qty: "4" },
+    });
+    assert.equal(r.statusCode, 409, r.body);
+    assert.equal(r.json().error.code, "line_price_adjusted");
+  });
+
+  test("پس از نهایی‌سازی، تعداد دیگر عوض نمی‌شود", async () => {
+    const { s, invoiceId, body } = await newCart("1");
+    const lineId = body.lines[0]!.id;
+    await app.inject({
+      method: "POST",
+      url: `/invoices/${invoiceId}/payments`,
+      ...s,
+      payload: { methodCode: "cash", amount: "1000001" },
+    });
+    const fin = await app.inject({
+      method: "POST",
+      url: `/invoices/${invoiceId}/finalize`,
+      ...s,
+      headers: { ...s.headers, "idempotency-key": `fin-${invoiceId}` },
+    });
+    assert.equal(fin.statusCode, 200, fin.body);
+
+    const r = await app.inject({
+      method: "PATCH",
+      url: `/invoices/${invoiceId}/lines/${lineId}`,
+      ...s,
+      payload: { qty: "5" },
+    });
+    assert.equal(r.statusCode, 409, r.body);
+    assert.equal(r.json().error.code, "invoice_not_draft");
   });
 });

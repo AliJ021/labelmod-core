@@ -436,6 +436,55 @@ export class InvoiceService {
   }
 
   /**
+   * تغییر تعداد یک قلم — بدون دست‌زدن به Snapshot قیمت.
+   *
+   * تنها راه دیگر، حذف سطر و افزودن دوباره‌اش بود؛ و آن مسیر قیمت را
+   * از `catalog.price` دوباره می‌خواند. برای فاکتوری که قیمت لحظه
+   * فروش را نگه می‌دارد، این یک اصلاح نیست — یک بازقیمت‌گذاری بی‌صدا
+   * است.
+   *
+   * سنجش‌های اینجا **لایه اول**اند و فقط برای اینکه کاربر کد و پیام
+   * دقیق بگیرد. لایه دومِ همین قواعد داخل `sales.set_line_qty` است و
+   * زیر قفل فاکتور اجرا می‌شود — یعنی مسابقه‌ای که این خواندن‌ها
+   * می‌توانند از دست بدهند، آنجا گرفته می‌شود.
+   */
+  async setLineQty(input: {
+    invoiceId: string;
+    lineId: string;
+    qty: string;
+    actorId: string;
+  }): Promise<Invoice> {
+    await this.requireDraft(input.invoiceId);
+
+    const line = await this.#db
+      .selectFrom("sales.invoice_line")
+      .select(["id", "discount_amount", "list_price"])
+      .where("id", "=", input.lineId)
+      .where("invoice_id", "=", input.invoiceId)
+      .executeTakeFirst();
+    if (!line) throw new InvoiceError("line_not_found", "این قلم در فاکتور نیست", 404);
+
+    // تخفیف یک مبلغ **مطلق** برای تعدادِ آن لحظه است. با تغییر تعداد،
+    // یا باید مطلق بماند (و درصد کاهش بی‌صدا عوض شود) یا نسبتی شود (و
+    // مبلغ ثبت‌شده بی‌صدا عوض شود). هر دو یک تصمیم مالی‌اند.
+    if (parseMoney(line.discount_amount) > 0n || line.list_price !== null) {
+      throw new InvoiceError(
+        "line_price_adjusted",
+        "تعداد سطری که تخفیف خورده یا قیمتش دستی تغییر کرده از این مسیر عوض نمی‌شود؛ سطر را حذف و دوباره ثبت کنید.",
+      );
+    }
+
+    await this.#db.transaction().execute(async (trx) => {
+      await setActor(trx, input.actorId);
+      await sql`SELECT sales.set_line_qty(
+        ${input.invoiceId}::uuid, ${input.lineId}::uuid, ${input.qty}::platform.qty)`
+        .execute(trx);
+    });
+
+    return (await this.byId(input.invoiceId)) as Invoice;
+  }
+
+  /**
    * ثبت پرداخت روی فاکتور.
    *
    * پرداخت پیش از نهایی‌سازی ثبت می‌شود چون `finalize_invoice` جمع
@@ -614,24 +663,13 @@ async function nextLineNo(trx: Transaction<Database>, invoiceId: string): Promis
  *
  * انباشتن یعنی حذف یک سطر باید دقیقاً همان عددی را کم کند که افزوده
  * بود؛ یک گرد کردن متفاوت و جمع‌ها بی‌صدا از سطرها جدا می‌افتند.
+ *
+ * خودِ SQL از مهاجرت ۰۱۵ در دیتابیس است: `sales.set_line_qty` هم
+ * همان را صدا می‌زند و دو تعریف از یک جمع، دیر یا زود از هم جدا
+ * می‌افتند.
  */
 async function refreshTotals(trx: Transaction<Database>, invoiceId: string): Promise<void> {
-  await sql`
-    UPDATE sales.invoice i SET
-      gross_amount    = t.gross,
-      discount_amount = t.disc,
-      net_amount      = t.net,
-      tax_amount      = t.tax,
-      payable_amount  = t.net + t.tax + i.shipping_amount
-    FROM (
-      SELECT coalesce(sum(qty * unit_price), 0) AS gross,
-             coalesce(sum(discount_amount), 0)  AS disc,
-             coalesce(sum(net_amount), 0)       AS net,
-             coalesce(sum(tax_amount), 0)       AS tax
-        FROM sales.invoice_line WHERE invoice_id = ${invoiceId}::uuid
-    ) t
-    WHERE i.id = ${invoiceId}::uuid
-  `.execute(trx);
+  await sql`SELECT sales.refresh_invoice_totals(${invoiceId}::uuid)`.execute(trx);
 }
 
 /** شکل JSON — پول همیشه رشته. */
