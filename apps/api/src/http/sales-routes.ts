@@ -364,11 +364,15 @@ export function registerSalesRoutes(app: FastifyInstance, deps: SalesRouteDeps):
     const s = session(req);
     const { id, lineId } = z.object({ id: uuid, lineId: uuid }).parse(req.params);
     const body = setLineQtyBody.parse(req.body);
+    await assertInvoiceInScope(db, s.userId, id, invoices);
+    await requireForSession(db, s, "sale.create");
+
+    // سنجش مقدار **پس از** دامنه و مجوز: کاربری که به این فاکتور
+    // دسترسی ندارد باید ۴۰۳ بگیرد، نه ۴۰۰ — وگرنه پاسخ خطا به ترتیبِ
+    // ورودی وابسته می‌شود و با بقیه مسیرها یکدست نیست.
     if (Number(body.qty) <= 0) {
       throw new InvoiceError("bad_qty", "تعداد باید بزرگ‌تر از صفر باشد؛ برای حذف قلم از مسیر حذف استفاده کنید.", 400);
     }
-    await assertInvoiceInScope(db, s.userId, id, invoices);
-    await requireForSession(db, s, "sale.create");
 
     return invoiceToJson(
       await invoices.setLineQty({ invoiceId: id, lineId, qty: body.qty, actorId: s.userId }),
@@ -390,11 +394,13 @@ export function registerSalesRoutes(app: FastifyInstance, deps: SalesRouteDeps):
     const s = session(req);
     const { id } = z.object({ id: uuid }).parse(req.params);
     const body = scanBody.parse(req.body ?? {});
+    await assertInvoiceInScope(db, s.userId, id, invoices);
+    await requireForSession(db, s, "sale.create");
+
+    // مثل مسیر تغییر تعداد: اول «اجازه داری؟»، بعد «ورودی درست است؟».
     if (Number(body.qty) <= 0) {
       throw new InvoiceError("bad_qty", "تعداد باید بزرگ‌تر از صفر باشد", 400);
     }
-    await assertInvoiceInScope(db, s.userId, id, invoices);
-    await requireForSession(db, s, "sale.create");
 
     const out = await runOnce<string>(db, {
       key: idempotencyKey(req),

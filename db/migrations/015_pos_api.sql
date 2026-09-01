@@ -7,7 +7,7 @@
 -- خوانده می‌شد. برای فاکتوری که قیمت لحظه فروش را نگه می‌دارد، این
 -- یک اصلاح نیست؛ یک بازقیمت‌گذاری بی‌صداست.
 --
--- سه چیز، همه افزایشی:
+-- چهار چیز، همه افزایشی:
 --
 --   ۱. `sales.refresh_invoice_totals` — همان SQL بازسازی جمع‌ها که تا
 --      امروز فقط داخل لایه TypeScript بود. دو مسیر نباید دو تعریف از
@@ -16,6 +16,8 @@
 --      کامل Snapshot و محاسبه مبلغ در SQL.
 --   ۳. `invoice_line_draft_guard` — قاعده «سبد فقط تا پیش از
 --      نهایی‌سازی عوض می‌شود» از لایه API به دیتابیس می‌آید.
+--   ۴. `invoice_line_no_truncate` — همان قاعده در برابر `TRUNCATE`،
+--      که نگهبان سطری اصلاً نمی‌بیندش.
 --
 -- درباره ۳ و اینکه چرا نهایی‌سازی و مرجوعی را نمی‌شکند:
 --   `sales.finalize_invoice` اول `unit_cost` و `cogs_amount` سطرها را
@@ -113,6 +115,16 @@ BEGIN
     RAISE EXCEPTION 'تعداد سطری که تخفیف خورده یا قیمتش دستی تغییر کرده از این مسیر عوض نمی‌شود؛ سطر را حذف و دوباره ثبت کنید.';
   END IF;
 
+  -- مالیات سطر یک **مبلغ ثبت‌شده** برای تعدادِ آن لحظه است، نه یک نرخ
+  -- که بشود دوباره از آن حساب کرد. امروز هر مسیر درج `tax_amount` را
+  -- صفر می‌نویسد (مالیات هنوز روشن نشده) و این شرط هرگز اجرا نمی‌شود؛
+  -- روزی که روشن شود، تغییر تعداد بدون بازمحاسبه مالیات یک عدد غلط
+  -- روی فاکتور می‌گذاشت. رد کردن، امن‌تر از حدس‌زدن نرخ است — همان
+  -- تصمیمی که بالا برای تخفیف گرفته شد.
+  IF l.tax_amount <> 0 THEN
+    RAISE EXCEPTION 'تعداد سطری که مالیات ثبت‌شده دارد از این مسیر عوض نمی‌شود؛ سطر را حذف و دوباره ثبت کنید.';
+  END IF;
+
   UPDATE sales.invoice_line
      SET qty        = p_qty,
          net_amount = round(p_qty * unit_price) - discount_amount
@@ -161,6 +173,16 @@ BEGIN
         'سطر فاکتور نهایی‌شده تغییر نمی‌کند (وضعیت «%»)؛ اصلاح فقط با مرجوعی یا سند معکوس.',
         v_status;
     END IF;
+
+    -- تغییر مجاز باید تغییر **واقعی** باشد. به‌روزرسانی‌ای که هیچ
+    -- ستونی را عوض نمی‌کند روی پول اثری ندارد، ولی نشانه یک مسیر
+    -- اشتباه است که خیال می‌کند دارد سطر نهایی‌شده را اصلاح می‌کند.
+    -- عبور دادنش یعنی آن مسیر هرگز پیدا نمی‌شود.
+    IF NEW.returned_qty IS NOT DISTINCT FROM OLD.returned_qty THEN
+      RAISE EXCEPTION
+        'به‌روزرسانی بی‌اثر روی سطر فاکتور نهایی‌شده (وضعیت «%») پذیرفته نمی‌شود.',
+        v_status;
+    END IF;
     RETURN NEW;
   END IF;
 
@@ -176,5 +198,32 @@ DROP TRIGGER IF EXISTS invoice_line_draft_guard ON sales.invoice_line;
 CREATE TRIGGER invoice_line_draft_guard
   BEFORE INSERT OR UPDATE OR DELETE ON sales.invoice_line
   FOR EACH ROW EXECUTE FUNCTION sales.invoice_line_draft_guard();
+
+-- ---------------------------------------------------------------------
+-- ۴. TRUNCATE هم یک راه پاک‌کردن است
+-- ---------------------------------------------------------------------
+-- نگهبان سطری بالا `TRUNCATE` را **نمی‌بیند**: پستگرس آن را رویداد
+-- سطری نمی‌داند و `FOR EACH ROW` هرگز اجرا نمی‌شود. یعنی یک دستور
+-- می‌توانست سبد همه فاکتورها — نهایی‌شده و نشده — را ببرد بی‌آنکه
+-- Trigger بالا حتی یک بار صدا زده شود.
+--
+-- همان «دو لایه دفاع» که SECURITY.md برای جدول‌های تغییرناپذیر
+-- می‌خواهد: نقش اپلیکیشن مالک جدول نیست و از این راه هم نمی‌تواند.
+-- هیچ مسیری در این مخزن `TRUNCATE` نمی‌زند، پس چیزی را نمی‌شکند.
+
+CREATE OR REPLACE FUNCTION sales.invoice_line_no_truncate() RETURNS trigger
+LANGUAGE plpgsql
+SET search_path = pg_catalog AS $$
+BEGIN
+  RAISE EXCEPTION 'سطرهای فاکتور با TRUNCATE پاک نمی‌شوند؛ این جدول سند فروش است.';
+END $$;
+
+COMMENT ON FUNCTION sales.invoice_line_no_truncate IS
+  'TRUNCATE روی سطر فاکتور را رد می‌کند — نگهبان سطری این دستور را نمی‌بیند.';
+
+DROP TRIGGER IF EXISTS invoice_line_no_truncate ON sales.invoice_line;
+CREATE TRIGGER invoice_line_no_truncate
+  BEFORE TRUNCATE ON sales.invoice_line
+  FOR EACH STATEMENT EXECUTE FUNCTION sales.invoice_line_no_truncate();
 
 COMMIT;

@@ -161,6 +161,14 @@ PERFORM pg_temp.assert_raises('تعداد سطر با قیمت دستی عوض �
   format('SELECT sales.set_line_qty(%L,%L,5)', v_inv, v_line2));
 UPDATE sales.invoice_line SET list_price = NULL WHERE id = v_line2;
 
+-- سطر با مالیات ثبت‌شده. امروز هر مسیر درج مالیات را صفر می‌نویسد،
+-- پس این حالت فقط دستی ساختنی است — ولی روزی که مالیات روشن شود،
+-- تغییر تعداد بدون بازمحاسبه مالیات یک عدد غلط روی فاکتور می‌گذاشت.
+UPDATE sales.invoice_line SET tax_amount = 500 WHERE id = v_line2;
+PERFORM pg_temp.assert_raises('تعداد سطر مالیات‌دار عوض نمی‌شود',
+  format('SELECT sales.set_line_qty(%L,%L,5)', v_inv, v_line2));
+UPDATE sales.invoice_line SET tax_amount = 0 WHERE id = v_line2;
+
 PERFORM sales.refresh_invoice_totals(v_inv);
 
 -- ═══════════════════════════════════════════════════════════════════
@@ -190,6 +198,20 @@ PERFORM pg_temp.assert_raises('تغییر قیمت سطر نهایی رد می�
   format('UPDATE sales.invoice_line SET unit_price = 1 WHERE id = %L', v_line));
 PERFORM pg_temp.assert_raises('تغییر تخفیف سطر نهایی رد می‌شود',
   format('UPDATE sales.invoice_line SET discount_amount = 1 WHERE id = %L', v_line));
+
+-- به‌روزرسانی بی‌اثر: هیچ ستونی عوض نمی‌شود، حتی returned_qty. اثری
+-- روی پول ندارد، ولی نشانه مسیری است که خیال می‌کند دارد سطر
+-- نهایی‌شده را اصلاح می‌کند. عبور دادنش یعنی آن مسیر پیدا نمی‌شود.
+PERFORM pg_temp.assert_raises('به‌روزرسانی بی‌اثر روی سطر نهایی رد می‌شود',
+  format('UPDATE sales.invoice_line SET returned_qty = returned_qty WHERE id = %L', v_line));
+
+-- TRUNCATE را نگهبان سطری نمی‌بیند. `CASCADE` مسیر واقعی خطر است:
+-- بدون نگهبان جداگانه، یک `TRUNCATE sales.invoice CASCADE` سبد همه
+-- فاکتورها و حتی پرداخت‌ها را با هم می‌برد.
+PERFORM pg_temp.assert_raises('TRUNCATE CASCADE روی سطر فاکتور رد می‌شود',
+  'TRUNCATE sales.invoice_line CASCADE');
+PERFORM pg_temp.assert_raises('TRUNCATE CASCADE از راه جدول فاکتور هم رد می‌شود',
+  'TRUNCATE sales.invoice CASCADE');
 
 -- ═══════════════════════════════════════════════════════════════════
 RAISE NOTICE E'\n═══ ۵. چرخه کامل مرجوعی از نگهبان رد می‌شود ═══';

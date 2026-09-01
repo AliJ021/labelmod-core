@@ -19,8 +19,12 @@ import { loadConfig } from "../src/lib/config.ts";
 const DATABASE_URL = process.env.DATABASE_URL;
 const skip = DATABASE_URL ? false : "DATABASE_URL تنظیم نشده — تست یکپارچه رد شد";
 
-const BRANCH = "00000000-0000-7000-8000-000000000001";
-const STORE_WH = "00000000-0000-7000-8000-000000000101";
+// شناسه‌ها از **کد کسب‌وکاری** پیدا می‌شوند، نه UUID رونویسی‌شده از
+// Seed. اگر روزی `040_reference.sql` شناسه‌ها را عوض کند، تست باید
+// همچنان کار کند — وگرنه همان «حدس‌زدن شناسه» را می‌کند که ادعای
+// مرکزی این پرونده می‌گوید صندوق نباید بکند.
+let BRANCH = "";
+let STORE_WH = "";
 
 describe("آمادگی API صندوق", { skip }, () => {
   let disposable: DisposableDb | null = null;
@@ -72,6 +76,16 @@ describe("آمادگی API صندوق", { skip }, () => {
     if (!disposable) throw new Error("ساخت دیتابیس یک‌بارمصرف ممکن نشد");
     handle = createDb(disposable.url, 5);
     auth = new AuthService(handle.db);
+
+    const seeded = await sql<{ branch_id: string; warehouse_id: string }>`
+      SELECT b.id AS branch_id, w.id AS warehouse_id
+        FROM platform.branch b
+        JOIN inventory.warehouse w ON w.branch_id = b.id AND w.code = 'STORE'
+       WHERE b.code = 'MAIN'`.execute(handle.db);
+    const seedRow = seeded.rows[0];
+    if (!seedRow) throw new Error("شعبه MAIN یا انبار STORE در Seed پیدا نشد");
+    BRANCH = seedRow.branch_id;
+    STORE_WH = seedRow.warehouse_id;
 
     // شعبه دوم — تنها راه سنجیدن اینکه فهرست واقعاً فیلتر می‌شود.
     const b = await sql<{ id: string }>`
@@ -565,6 +579,15 @@ describe("آمادگی API صندوق", { skip }, () => {
       "هیچ‌کدام نباید خطای سرور بدهد",
     );
 
+    // Payload هر دو یکسان است؛ پس ۴۰۹ فقط می‌تواند «هنوز در جریان»
+    // باشد. «کلید برای درخواست دیگری استفاده شده» اینجا یعنی مقایسه
+    // Payload دو درخواست یکسان را متفاوت دیده — باگ، نه مسابقه.
+    for (const r of [a, b]) {
+      if (r.statusCode === 409) {
+        assert.equal(r.json().error.code, "idempotency_in_flight", `کد غیرمنتظره: ${r.body}`);
+      }
+    }
+
     const rows = await sql<{ n: string }>`
       SELECT count(*)::text AS n FROM platform.inbox_message
        WHERE source = 'api.invoice.create' AND event_id = ${key}`.execute(handle.db);
@@ -708,8 +731,12 @@ describe("آمادگی API صندوق", { skip }, () => {
     assert.ok(a.statusCode < 500 && b.statusCode < 500, "هیچ‌کدام خطای سرور نمی‌دهد");
     for (const r of [a, b]) {
       if (r.statusCode >= 300) {
+        // `idempotency_key_reused` عمداً در این فهرست **نیست**: هر دو
+        // درخواست Payload یکسان دارند، پس اگر سرور بگوید «کلید برای
+        // درخواست دیگری استفاده شده»، یعنی نرمال‌سازی Payload خراب
+        // است — یک باگ، نه یک نتیجه مشروعِ مسابقه.
         assert.ok(
-          ["idempotency_in_flight", "idempotency_key_reused", "duplicate_client_event"].includes(
+          ["idempotency_in_flight", "duplicate_client_event"].includes(
             r.json().error.code as string,
           ),
           `کد غیرمنتظره: ${r.body}`,
