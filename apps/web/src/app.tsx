@@ -10,7 +10,7 @@
 import { useCallback, useEffect, useState } from "react";
 import { Glass, GlassFilters } from "./components/Glass.tsx";
 import { Dashboard } from "./screens/Dashboard.tsx";
-import { Login, LockScreen } from "./screens/Login.tsx";
+import { Login, LockScreen, ReauthPanel } from "./screens/Login.tsx";
 import { Pos } from "./screens/Pos.tsx";
 import { Returns } from "./screens/Returns.tsx";
 import { Settings } from "./screens/Settings.tsx";
@@ -56,6 +56,7 @@ export function App() {
   const [me, setMe] = useState<Me | null>(null);
   const [loaded, setLoaded] = useState(false);
   const [lockedUser, setLockedUser] = useState<string | null>(null);
+  const [upgrading, setUpgrading] = useState(false);
 
   // ترجیح‌ها فقط در مرورگر خوانده می‌شوند، پس بعد از Mount.
   useEffect(() => {
@@ -138,6 +139,26 @@ export function App() {
         <div className="auth-wrap">
           <p className="muted">در حال بررسی نشست…</p>
         </div>
+      </>
+    );
+  }
+
+  if (view === "ready" && upgrading) {
+    return (
+      <>
+        <GlassFilters />
+        <div className="mesh" aria-hidden="true">
+          <i />
+          <i />
+          <i />
+        </div>
+        <ReauthPanel
+          onDone={() => {
+            setUpgrading(false);
+            void refresh();
+          }}
+          onCancel={() => setUpgrading(false)}
+        />
       </>
     );
   }
@@ -252,9 +273,14 @@ export function App() {
               می‌زند و خطای سرور می‌گیرد بی‌آنکه بفهمد چرا.
             */}
             {me !== null && !me.elevated ? (
-              <span className="tool" title="برای عملیات حساس، احراز هویت کامل لازم است">
+              <button
+                type="button"
+                className="tool"
+                onClick={() => setUpgrading(true)}
+                title="برای عملیات حساس، احراز هویت کامل لازم است — برای ارتقا کلیک کنید"
+              >
                 <span className="dot dot--warn" aria-hidden="true">●</span> نشست PIN
-              </span>
+              </button>
             ) : null}
             <span className="tool" title={me?.roles.join("، ") ?? ""}>
               {me?.fullName}

@@ -59,6 +59,7 @@ export function Pos() {
   const [error, setError] = useState<string | null>(null);
   const [note, setNote] = useState<string | null>(null);
   const [closing, setClosing] = useState(false);
+  const [discounting, setDiscounting] = useState<string | null>(null);
 
   // بیرون از چرخه Render: کلیدی که داخل Render ساخته شود، دقیقاً روی
   // همان Retry که باید نجاتش بدهد عوض می‌شود.
@@ -225,6 +226,18 @@ export function Pos() {
     guarded(async () => {
       if (!invoice) return;
       setInvoice(await pos.removeLine(invoice.id, lineId));
+    });
+
+  const applyDiscount = (lineId: string, amountRial: bigint, why: string) =>
+    guarded(async () => {
+      if (!invoice) return;
+      setInvoice(
+        await pos.setLineDiscount(invoice.id, lineId, {
+          discountAmount: amountRial.toString(),
+          ...(why.trim() === "" ? {} : { discountReason: why.trim() }),
+        }),
+      );
+      setDiscounting(null);
     });
 
   const takePayment = (methodCode: string, amountRial: bigint, refNo?: string) =>
@@ -395,12 +408,31 @@ export function Pos() {
                 <button
                   type="button"
                   className="line-drop"
+                  onClick={() => setDiscounting(discounting === l.id ? null : l.id)}
+                  aria-label={`تخفیف ${l.productName}`}
+                  title="تخفیف"
+                  disabled={busy}
+                >
+                  ٪
+                </button>
+                <button
+                  type="button"
+                  className="line-drop"
                   onClick={() => void removeLine(l.id)}
                   aria-label={`حذف ${l.productName}`}
                   disabled={busy}
                 >
                   ✕
                 </button>
+                {discounting === l.id ? (
+                  <DiscountPanel
+                    gross={parseRial(l.unitPrice) * BigInt(Math.trunc(Number(l.qty)))}
+                    current={parseRial(l.discountAmount)}
+                    busy={busy}
+                    onApply={(amount, why) => void applyDiscount(l.id, amount, why)}
+                    onCancel={() => setDiscounting(null)}
+                  />
+                ) : null}
               </li>
             ))}
             {lines.length === 0 && <li className="empty">سبد خالی است — بارکد را اسکن کنید</li>}
@@ -618,6 +650,73 @@ function CloseShiftPanel({
         onClick={() => rial !== null && onClose(rial.toString(), text.trim())}
       >
         {busy ? "…" : "بستن و شمارش"}
+      </button>
+      <button type="button" className="btn btn--quiet" onClick={onCancel} disabled={busy}>
+        انصراف
+      </button>
+    </Solid>
+  );
+}
+
+/**
+ * تخفیف یک سطر.
+ *
+ * سقفش اینجا **سنجیده نمی‌شود**: نردبان `sale.discount` →
+ * `sale.discount_high` در `permission_rule` است و سرور با همان
+ * دروازه‌ای می‌سنجدش که افزودن قلم را. کپی‌کردن آستانه‌ها در UI یعنی
+ * دو تعریف — و آن‌که عقب می‌ماند همان است که دور زده می‌شود.
+ *
+ * تنها چیزی که اینجا سنجیده می‌شود «بیشتر از مبلغ خودِ قلم نباشد»
+ * است، و آن هم فقط برای اینکه کاربر پیش از کلیک بفهمد. سرور و
+ * دیتابیس هر دو دوباره می‌سنجندش.
+ */
+function DiscountPanel({
+  gross,
+  current,
+  busy,
+  onApply,
+  onCancel,
+}: {
+  gross: bigint;
+  current: bigint;
+  busy: boolean;
+  onApply: (amount: bigint, why: string) => void;
+  onCancel: () => void;
+}) {
+  const [amount, setAmount] = useState(current > 0n ? toman(current).replace(/٬/g, "") : "");
+  const [why, setWhy] = useState("");
+  const rial = amount.trim() === "" ? 0n : rialFromTomanInput(amount);
+  const tooBig = rial !== null && rial > gross;
+
+  return (
+    <Solid className="line-discount stack" style={{ gap: "var(--s-2)" }}>
+      <label className="auth-field">
+        <span>تخفیف (تومان) — حداکثر {toman(gross)}</span>
+        <input
+          type="text"
+          inputMode="numeric"
+          value={amount}
+          onChange={(e) => setAmount(e.target.value)}
+          autoFocus
+        />
+      </label>
+      <label className="auth-field">
+        <span>دلیل — بالای آستانه اجباری است</span>
+        <input value={why} onChange={(e) => setWhy(e.target.value)} />
+      </label>
+      {tooBig ? (
+        <p className="auth-error" role="alert">
+          <span className="dot dot--crit" aria-hidden="true">●</span> تخفیف از مبلغ خودِ قلم
+          بیشتر است.
+        </p>
+      ) : null}
+      <button
+        type="button"
+        className="btn btn--primary"
+        disabled={busy || rial === null || tooBig}
+        onClick={() => rial !== null && !tooBig && onApply(rial, why)}
+      >
+        اعمال تخفیف
       </button>
       <button type="button" className="btn btn--quiet" onClick={onCancel} disabled={busy}>
         انصراف

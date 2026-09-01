@@ -230,6 +230,19 @@ export const pos = {
   setLineQty: (invoiceId: string, lineId: string, qty: string, opts?: RequestOptions) =>
     api.patch<Invoice>(`/invoices/${invoiceId}/lines/${lineId}`, { qty }, opts),
 
+  /**
+   * تخفیف روی سطر موجود — بدون بازقیمت‌گذاری.
+   *
+   * سقف و مجوزش را سرور می‌سنجد، با **همان** دروازه‌ای که افزودن قلم
+   * می‌سنجد. تخفیف بالای سقف نقش، ۴۰۳ یا ۴۲۸ می‌گیرد نه رد خاموش.
+   */
+  setLineDiscount: (
+    invoiceId: string,
+    lineId: string,
+    input: { discountAmount: string; discountReason?: string },
+    opts?: RequestOptions,
+  ) => api.patch<Invoice>(`/invoices/${invoiceId}/lines/${lineId}/discount`, input, opts),
+
   removeLine: (invoiceId: string, lineId: string, opts?: RequestOptions) =>
     api.del<Invoice>(`/invoices/${invoiceId}/lines/${lineId}`, opts),
 

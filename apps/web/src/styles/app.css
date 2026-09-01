@@ -682,3 +682,12 @@ select.set-input {
   opacity: 0.4;
   cursor: default;
 }
+
+/* پنل تخفیف سطر — داخل خودِ سطر باز می‌شود، نه در یک مودال.
+   صندوق‌دار وسط صف نباید تمرکزش را از سبد بردارد. */
+.line-discount {
+  grid-column: 1 / -1;
+  padding: var(--s-3);
+  margin-top: var(--s-2);
+  border-radius: var(--r-sm);
+}

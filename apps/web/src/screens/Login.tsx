@@ -194,3 +194,88 @@ export function LockScreen({
     </div>
   );
 }
+
+/**
+ * ارتقای نشست — تنها راه درآوردن نشست از حالت PIN.
+ *
+ * بند ۱ SECURITY.md: «بازپرداخت، ابطال فاکتور، تغییر قیمت و اصلاح
+ * موجودی نیازمند احراز هویت کامل مجدد است — نه PIN.» یعنی
+ * `identity.can()` این عملیات را روی نشست PIN می‌بندد و تنها
+ * `/auth/reauth` بازشان می‌کند.
+ *
+ * چرا یک فرم جدا و نه «دوباره وارد شو»: خروج و ورود دوباره نشست را
+ * **عوض** می‌کند و سبد نیمه‌تمام صندوق‌دار را می‌اندازد. ارتقا همان
+ * نشست را نگه می‌دارد.
+ */
+export function ReauthPanel({
+  onDone,
+  onCancel,
+}: {
+  onDone: () => void;
+  onCancel: () => void;
+}) {
+  const [password, setPassword] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const box = useRef<HTMLInputElement>(null);
+
+  useEffect(() => box.current?.focus(), []);
+
+  async function submit(e: React.FormEvent) {
+    e.preventDefault();
+    if (busy) return;
+    setBusy(true);
+    setError(null);
+    try {
+      await session.reauth(password);
+      setPassword("");
+      onDone();
+    } catch (err) {
+      setError(message(err));
+      setPassword("");
+      box.current?.focus();
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  return (
+    <div className="auth-wrap">
+      <Glass as="section" radius="lg" className="pad auth-card" live>
+        <h1 className="auth-title">ارتقای نشست</h1>
+        <p className="muted" style={{ marginTop: 0 }}>
+          این نشست با PIN باز شده. برای بازپرداخت، ابطال فاکتور یا تغییر قیمت، رمز کامل
+          لازم است.
+        </p>
+
+        <form onSubmit={submit} className="stack" style={{ gap: "var(--s-3)" }}>
+          <Solid className="auth-field">
+            <label htmlFor="lm-reauth">رمز عبور</label>
+            <input
+              id="lm-reauth"
+              ref={box}
+              type="password"
+              value={password}
+              onChange={(e) => setPassword(e.target.value)}
+              autoComplete="current-password"
+              required
+            />
+          </Solid>
+
+          {error ? (
+            <p className="auth-error" role="alert">
+              <span className="dot dot--crit" aria-hidden="true">●</span> {error}
+            </p>
+          ) : null}
+
+          <button type="submit" className="auth-submit" disabled={busy}>
+            {busy ? "…" : "ارتقا"}
+          </button>
+          <button type="button" className="auth-alt" onClick={onCancel} disabled={busy}>
+            بعداً
+          </button>
+        </form>
+      </Glass>
+    </div>
+  );
+}
