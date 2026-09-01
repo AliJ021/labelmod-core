@@ -609,6 +609,42 @@ describe("آمادگی API صندوق", { skip }, () => {
     assert.notEqual(a.json().id, b.json().id);
   });
 
+  // ── علت‌های مرجوعی ──────────────────────────────────────────────
+
+  test("صندوق‌دار علت‌های مرجوعی را با برچسب فارسی می‌گیرد", async () => {
+    // از راه `GET /settings` ممکن نبود: آن `settings.view` می‌خواهد و
+    // صندوق‌دار ندارد. تنها راه دیگر نوشتن فهرست در کد بود.
+    const s = await loginAs(cashier);
+    const r = await app.inject({ method: "GET", url: "/return-reasons", ...s });
+    assert.equal(r.statusCode, 200, r.body);
+
+    const reasons = r.json().reasons as Array<{ code: string; label: string }>;
+    assert.ok(reasons.length > 0, "فهرست خالی نیست");
+    for (const x of reasons) {
+      assert.deepEqual(Object.keys(x).sort(), ["code", "label"], "فقط کد و برچسب بیرون می‌رود");
+    }
+
+    const small = reasons.find((x) => x.code === "size_small");
+    assert.ok(small, "کد نمونه هست");
+    assert.equal(small.label, "سایز کوچک بود", "برچسب فارسی، نه خودِ کد");
+  });
+
+  test("علتی که در فهرست مجاز نیست بیرون نمی‌رود", async () => {
+    // `options` برچسب همه کدهای شناخته‌شده را دارد، ولی `value` فهرست
+    // مجازهاست. نشان‌دادن علتی که سرور بعداً ردش می‌کند، بدتر از
+    // ندیدنش است.
+    const s = await loginAs(cashier);
+    const r = await app.inject({ method: "GET", url: "/return-reasons", ...s });
+    const codes = (r.json().reasons as Array<{ code: string }>).map((x) => x.code);
+    assert.ok(codes.includes("size_small"));
+    assert.ok(!codes.includes("late_delivery"), "برچسب دارد ولی مجاز نیست");
+  });
+
+  test("بدون نشست، علت‌ها بیرون نمی‌روند", async () => {
+    const r = await app.inject({ method: "GET", url: "/return-reasons" });
+    assert.equal(r.statusCode, 401, r.body);
+  });
+
   // ── دریافتی روی خودِ فاکتور ──────────────────────────────────────
 
   test("GET فاکتور، دریافتی تا این لحظه را هم می‌دهد", async () => {

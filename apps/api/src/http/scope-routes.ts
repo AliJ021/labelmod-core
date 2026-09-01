@@ -118,4 +118,55 @@ export function registerScopeRoutes(app: FastifyInstance, deps: ScopeRouteDeps):
       })),
     };
   });
+
+  /**
+   * علت‌های مجاز مرجوعی، با برچسب فارسی.
+   *
+   * چرا یک مسیر جدا و نه `GET /settings`: آن `settings.view` می‌خواهد
+   * و صندوق‌دار **ندارد** (`040_reference.sql` — فقط سرپرست، حسابدار
+   * و مدیر). یعنی صفحه مرجوعی از آن راه هیچ‌وقت برچسب‌ها را
+   * نمی‌دید.
+   *
+   * تنها راه دیگر، نوشتن فهرست در کد React بود — که همان چیزی است که
+   * `CLAUDE.md` صریح ممنوع کرده: «تصمیم‌های باز داده‌اند، نه کد».
+   * علت مرجوعی سوخت موتور پیشنهاد سایز است و مالک باید بتواند با یک
+   * `UPDATE` عوضش کند، نه با یک Deploy.
+   *
+   * دقیقاً همان الگوی `GET /payment-methods`: فقط آنچه فرم لازم دارد
+   * (`value` و `label`) بیرون می‌رود — نه خودِ ردیف تنظیم با
+   * `permission`، `help` و ردّ حسابرسی‌اش.
+   */
+  app.get("/return-reasons", async (req) => {
+    session(req);
+    const row = await db
+      .selectFrom("platform.setting")
+      .select(["value", "options"])
+      .where("key", "=", "return.reason_codes")
+      .executeTakeFirst();
+    if (!row) return { reasons: [] };
+
+    // `value` فهرست کدهای **مجاز** است؛ `options` برچسب همه کدهای
+    // شناخته‌شده. برچسبی که کدش در `value` نیست نباید نشان داده شود —
+    // وگرنه صندوق‌دار علتی را می‌بیند که سرور بعداً ردش می‌کند.
+    const allowed = new Set(
+      Array.isArray(row.value) ? row.value.map((v) => String(v)) : [],
+    );
+    const labels = new Map<string, string>();
+    if (Array.isArray(row.options)) {
+      for (const o of row.options) {
+        if (o !== null && typeof o === "object") {
+          const rec = o as { value?: unknown; label?: unknown };
+          const code = String(rec.value);
+          labels.set(code, typeof rec.label === "string" ? rec.label : code);
+        }
+      }
+    }
+
+    return {
+      reasons: [...allowed].map((code) => ({
+        code,
+        label: labels.get(code) ?? code,
+      })),
+    };
+  });
 }
