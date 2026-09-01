@@ -271,6 +271,44 @@ export function registerSalesRoutes(app: FastifyInstance, deps: SalesRouteDeps):
    * تا. جمع پرداخت‌های **واقعاً موفق**؛ «نامشخص» و «در انتظار» پول
    * شمرده نمی‌شوند.
    */
+  /**
+   * یافتن فاکتور از روی شماره رسید.
+   *
+   * مرجوعی از روی رسیدِ دست مشتری شروع می‌شود و روی آن یک **شماره**
+   * چاپ شده، نه UUID. بدون این مسیر، صفحه مرجوعی راهی نداشت جز
+   * اینکه از صندوق‌دار UUID بخواهد.
+   *
+   * **مسیر ثابت پیش از `/:id` ثبت می‌شود** تا مسیریاب Fastify
+   * «lookup» را شناسه نخواند. ادعای پایدارش در تست هست، چون این
+   * چیزی است که با یک جابه‌جایی بی‌ربط در همین فایل می‌شکند.
+   *
+   * جست‌وجو **همیشه شعبه‌دار** است: شماره در سطح شعبه یکتاست، نه
+   * سراسری (`platform.next_document_no()` شمارنده را به شعبه
+   * می‌بندد). بدون این، صندوق‌دار شعبه A رسید شعبه B را پیدا می‌کرد.
+   */
+  app.get("/invoices/lookup", async (req) => {
+    const s = session(req);
+    const q = z
+      .object({ number: z.string().min(1).max(64), branchId: uuid })
+      .parse(req.query);
+    await assertBranch(db, s.userId, q.branchId);
+
+    const row = await db
+      .selectFrom("sales.invoice")
+      .select("id")
+      .where("number", "=", q.number.trim())
+      .where("branch_id", "=", q.branchId)
+      .executeTakeFirst();
+    if (!row) throw new InvoiceError("invoice_not_found", "فاکتوری با این شماره پیدا نشد", 404);
+
+    const inv = await invoices.byId(row.id);
+    if (!inv) throw new InvoiceError("invoice_not_found", "فاکتور یافت نشد", 404);
+    return {
+      ...invoiceToJson(inv),
+      receivedAmount: serializeMoney(await invoices.paidSoFar(row.id)),
+    };
+  });
+
   app.get("/invoices/:id", async (req) => {
     const s = session(req);
     const { id } = z.object({ id: uuid }).parse(req.params);

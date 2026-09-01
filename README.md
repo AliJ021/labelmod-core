@@ -7,7 +7,7 @@
 > پیش از ورود داده واقعی، بخش «تصمیم‌های باز» پایین را بخوانید.
 
 ```
-۴۶۶ ادعای SQL  ·  ۲۸۲ تست Node  ·  هر دو در CI روی دیتابیس یک‌بارمصرف
+۴۶۶ ادعای SQL  ·  ۲۸۹ تست Node  ·  هر دو در CI روی دیتابیس یک‌بارمصرف
 ```
 
 ---
@@ -60,6 +60,8 @@ Idempotency روی هر مسیر تغییردهنده وضعیت.
 | `GET /payment-methods` | روش‌های فعال با `code`، نام فارسی، `kind`، `requiresRef` |
 | `POST /invoices` | سبد تازه — با `Idempotency-Key`: ۲۰۱ تازه، ۲۰۰ Replay |
 | `GET /invoices/:id` | فاکتور، **به‌علاوه `receivedAmount`** — تا سبدِ پس از Reload دوباره پول نگیرد |
+| `GET /invoices/lookup` | یافتن فاکتور از روی **شماره رسید**، در دامنه شعبه |
+| `GET /return-reasons` | علت‌های مجاز مرجوعی با برچسب فارسی |
 | `POST /invoices/:id/scan` | اسکن بارکد؛ کالای تکراری روی همان سطر شمرده می‌شود |
 | `PATCH /invoices/:id/lines/:lineId` | تعداد **مطلق**، بدون بازقیمت‌گذاری |
 | `DELETE /invoices/:id/lines/:lineId` | حذف قلم |
@@ -145,7 +147,7 @@ ops/db.sh test            # ۴۶۶ ادعا — باید همه پاس شوند
 
 corepack enable
 pnpm install
-pnpm check                # lint + typecheck + ۲۸۲ تست
+pnpm check                # lint + typecheck + ۲۸۹ تست
 pnpm --filter @labelmod/api dev
 pnpm --filter @labelmod/web dev
 

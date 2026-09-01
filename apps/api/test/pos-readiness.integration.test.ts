@@ -609,6 +609,67 @@ describe("آمادگی API صندوق", { skip }, () => {
     assert.notEqual(a.json().id, b.json().id);
   });
 
+  // ── یافتن فاکتور از روی شماره رسید ──────────────────────────────
+
+  test("فاکتور نهایی‌شده از روی شماره رسید پیدا می‌شود", async () => {
+    // مرجوعی از روی رسیدِ دست مشتری شروع می‌شود و روی آن شماره چاپ
+    // شده، نه UUID.
+    const { s, invoiceId } = await newCart("1");
+    await app.inject({
+      method: "POST",
+      url: `/invoices/${invoiceId}/payments`,
+      ...s,
+      payload: { methodCode: "cash", amount: "1000001" },
+    });
+    const done = await app.inject({ method: "POST", url: `/invoices/${invoiceId}/finalize`, ...s });
+    assert.equal(done.statusCode, 200, done.body);
+    const number = done.json().number as string;
+    assert.ok(number, "شماره تخصیص یافت");
+
+    const found = await app.inject({
+      method: "GET",
+      url: `/invoices/lookup?number=${encodeURIComponent(number)}&branchId=${BRANCH}`,
+      ...s,
+    });
+    assert.equal(found.statusCode, 200, found.body);
+    assert.equal(found.json().id, invoiceId, "همان فاکتور");
+    assert.equal(found.json().receivedAmount, "1000001", "دریافتی هم می‌آید");
+  });
+
+  test("مسیر lookup را مسیریاب شناسه نمی‌خواند", async () => {
+    // این چیزی است که با یک جابه‌جایی بی‌ربط در همین فایل می‌شکند:
+    // اگر `/invoices/:id` زودتر ثبت شود، «lookup» یک شناسه نامعتبر
+    // حساب می‌شود و ۴۰۰ می‌گیرد نه ۴۰۴.
+    const s = await loginAs(cashier);
+    const r = await app.inject({
+      method: "GET",
+      url: `/invoices/lookup?number=NOPE-${suffix}&branchId=${BRANCH}`,
+      ...s,
+    });
+    assert.equal(r.statusCode, 404, r.body);
+    assert.equal(r.json().error.code, "invoice_not_found");
+  });
+
+  test("رسید شعبه دیگر پیدا نمی‌شود", async () => {
+    // شماره در سطح شعبه یکتاست، نه سراسری. بدون دامنه، صندوق‌دار
+    // شعبه A رسید شعبه B را می‌دید.
+    const s = await loginAs(cashier);
+    const r = await app.inject({
+      method: "GET",
+      url: `/invoices/lookup?number=F-1405-000001&branchId=${otherBranchId}`,
+      ...s,
+    });
+    assert.equal(r.statusCode, 403, r.body);
+  });
+
+  test("بدون نشست، جست‌وجوی رسید کار نمی‌کند", async () => {
+    const r = await app.inject({
+      method: "GET",
+      url: `/invoices/lookup?number=X&branchId=${BRANCH}`,
+    });
+    assert.equal(r.statusCode, 401);
+  });
+
   // ── علت‌های مرجوعی ──────────────────────────────────────────────
 
   test("صندوق‌دار علت‌های مرجوعی را با برچسب فارسی می‌گیرد", async () => {

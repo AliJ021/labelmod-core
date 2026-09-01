@@ -108,6 +108,55 @@ export interface PaymentResult {
   invoice: Invoice;
 }
 
+export interface ReturnReason {
+  code: string;
+  label: string;
+}
+
+/** یک سطر فاکتور، از دید «چقدرش هنوز قابل برگشت است». */
+export interface ReturnableLine {
+  invoiceLineId: string;
+  variationId: string;
+  soldQty: string;
+  returnedQty: string;
+  remainingQty: string;
+  unitPrice: string;
+  netAmount: string;
+}
+
+export interface Returnable {
+  invoiceId: string;
+  invoiceStatus: string;
+  daysSinceSale: number;
+  /**
+   * مهلت مرجوعی به **ساعت** سنجیده می‌شود، نه روز.
+   *
+   * گرد کردن روز نمی‌تواند ۴۸ ساعت را بیان کند: با «۲ روز»، فاکتور
+   * ۷۱ ساعته هم داخل مهلت شمرده می‌شد.
+   */
+  hoursSinceSale: number;
+  /** دیرتر از مهلت — همچنان ممکن، ولی تأیید مدیر می‌خواهد. */
+  late: boolean;
+  lines: ReturnableLine[];
+}
+
+export interface SaleReturn {
+  id: string;
+  number: string | null;
+  invoiceId: string;
+  branchId: string;
+  status: string;
+  reasonCode: string;
+  reasonNote: string | null;
+  netAmount: string;
+  taxAmount: string;
+  refundAmount: string;
+  refundMethod: string | null;
+  receivableApplied: string;
+  creditApplied: string;
+  occurredAt: string;
+}
+
 export interface ScanResult {
   invoice: Invoice;
   /** درخواست تازه اجرا شد یا پاسخ قبلی برگشت. */
@@ -182,6 +231,31 @@ export const pos = {
 
   finalize: (invoiceId: string, opts?: RequestOptions) =>
     api.post<Invoice>(`/invoices/${invoiceId}/finalize`, {}, opts),
+
+  /** علت‌های مجاز مرجوعی با برچسب فارسی — از `platform.setting`. */
+  returnReasons: () => api.get<{ reasons: ReturnReason[] }>("/return-reasons"),
+
+  returnable: (invoiceId: string) =>
+    api.get<Returnable>(`/invoices/${invoiceId}/returnable`),
+
+  createReturn: (
+    input: {
+      invoiceId: string;
+      reasonCode: string;
+      reasonNote?: string;
+      refundAmount: string;
+      refundMethod?: string;
+      lines: Array<{ invoiceLineId: string; qty: string; restock?: boolean }>;
+    },
+    opts?: RequestOptions,
+  ) => api.post<SaleReturn>("/returns", input, opts),
+
+  /** ثبت — اینجاست که کالا برمی‌گردد و پول از کشو بیرون می‌رود. */
+  postReturn: (returnId: string, opts?: RequestOptions) =>
+    api.post<SaleReturn & { replayed: boolean }>(`/returns/${returnId}/post`, {}, opts),
+
+  cancelReturn: (returnId: string) =>
+    api.post<SaleReturn>(`/returns/${returnId}/cancel`, {}),
 
   cancel: (invoiceId: string, reason?: string) =>
     api.post<Invoice>(`/invoices/${invoiceId}/cancel`, reason === undefined ? {} : { reason }),
