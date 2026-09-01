@@ -31,7 +31,7 @@ import { CameraScan } from "../components/CameraScan.tsx";
 import { Glass, Solid } from "../components/Glass.tsx";
 import { ApiError } from "../lib/api.ts";
 import { ActionKeys, ScanCounter } from "../lib/action-key.ts";
-import { canFinalize, changeRial, remainingRial, steppedQty } from "../lib/cart.ts";
+import { canFinalize, changeRial, lineGross, remainingRial, steppedQty } from "../lib/cart.ts";
 import { parseRial, rialFromTomanInput, toman } from "../lib/money.ts";
 import { forgetCart, readCart, rememberCart } from "../lib/open-cart.ts";
 import { pos, type Branch, type Invoice, type PaymentMethod, type Shift } from "../lib/pos.ts";
@@ -245,6 +245,22 @@ export function Pos() {
   const takePayment = (methodCode: string, amountRial: bigint, refNo?: string) =>
     guarded(async () => {
       if (!invoice) return;
+      // ── چرا کلید از `received` ساخته می‌شود و نه از یک شمارنده ──
+      //
+      // نام عمل باید روی **Retry همان پرداخت** ثابت بماند و برای
+      // **پرداخت بعدی** عوض شود. `received` هر دو را می‌دهد: تا وقتی
+      // پرداختی ثبت نشده تغییر نمی‌کند (پس Retry همان کلید را
+      // می‌برد)، و به‌محض ثبت بالا می‌رود.
+      //
+      // شمارنده — مثل `ScanCounter` — اینجا **بدتر** بود: هر Retry
+      // یک عدد جلو می‌رفت و کلید تازه می‌گرفت، یعنی پرداختی که فقط
+      // پاسخش در شبکه گم شده بود، دوباره از مشتری گرفته می‌شد.
+      //
+      // ⚠️ این به یک ثابت دور وابسته است: `addPaymentIn` وضعیت
+      // `succeeded` می‌نویسد و `paidSoFar` همان را می‌شمارد. اگر روزی
+      // درگاهی اضافه شود که پرداخت را `pending` ثبت کند، `received`
+      // بالا نمی‌رود و پرداخت **عمدیِ** بعدی Replay اولی می‌شود. آن
+      // روز این کلید باید شناسه خودِ پرداخت را هم بگیرد.
       const out = await keys.current.run(`pay:${invoice.id}:${received}`, (key) =>
         pos.pay(
           invoice.id,
@@ -437,7 +453,7 @@ export function Pos() {
                 </button>
                 {discounting === l.id ? (
                   <DiscountPanel
-                    gross={parseRial(l.unitPrice) * BigInt(Math.trunc(Number(l.qty)))}
+                    gross={lineGross(l)}
                     current={parseRial(l.discountAmount)}
                     busy={busy}
                     onApply={(amount, why) => void applyDiscount(l.id, amount, why)}

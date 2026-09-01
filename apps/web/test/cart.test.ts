@@ -6,7 +6,14 @@
  */
 import { describe, test } from "node:test";
 import assert from "node:assert/strict";
-import { canFinalize, changeRial, isSettled, remainingRial, steppedQty } from "../src/lib/cart.ts";
+import {
+  canFinalize,
+  changeRial,
+  isSettled,
+  lineGross,
+  remainingRial,
+  steppedQty,
+} from "../src/lib/cart.ts";
 import { rialFromTomanInput, toman } from "../src/lib/money.ts";
 
 describe("مانده و باقی پول", () => {
@@ -59,6 +66,31 @@ describe("اجازه نهایی‌سازی", () => {
 
   test("فاکتوری که دیگر پیش‌نویس نیست", () => {
     assert.equal(canFinalize({ ...base, status: "finalized" }), false);
+  });
+});
+
+describe("ناخالص سطر", () => {
+  test("جمع خالص و تخفیف، همان ناخالص سرور است", () => {
+    // `net_amount = round(qty × unit_price) − discount_amount`
+    assert.equal(lineGross({ netAmount: "1900002", discountAmount: "100000" }), 2_000_002n);
+  });
+
+  test("سطر بدون تخفیف", () => {
+    assert.equal(lineGross({ netAmount: "2000002", discountAmount: "0" }), 2_000_002n);
+  });
+
+  test("تعداد اعشاری هم درست می‌ماند", () => {
+    // این همان چیزی است که نسخه قبلی می‌شکست: `unitPrice × trunc(qty)`
+    // برای ۲٫۵ عدد ۲ می‌گرفت و سقف تخفیف را کمتر از واقع نشان می‌داد.
+    // اینجا تعداد اصلاً وارد حساب نمی‌شود.
+    assert.equal(lineGross({ netAmount: "1250000", discountAmount: "0" }), 1_250_000n);
+  });
+
+  test("مبالغ بزرگ دقت را از دست نمی‌دهند", () => {
+    assert.equal(
+      lineGross({ netAmount: "9007199254740993", discountAmount: "1" }),
+      9_007_199_254_740_994n,
+    );
   });
 });
 

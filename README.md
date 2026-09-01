@@ -7,7 +7,7 @@
 > پیش از ورود داده واقعی، بخش «تصمیم‌های باز» پایین را بخوانید.
 
 ```
-۴۹۳ ادعای SQL  ·  ۳۲۹ تست Node  ·  هر دو در CI روی دیتابیس یک‌بارمصرف
+۴۹۳ ادعای SQL  ·  ۳۳۳ تست Node  ·  هر دو در CI روی دیتابیس یک‌بارمصرف
 ```
 
 ---
@@ -152,7 +152,7 @@ ops/db.sh test            # ۴۹۳ ادعا — باید همه پاس شوند
 
 corepack enable
 pnpm install
-pnpm check                # lint + typecheck + ۳۲۹ تست
+pnpm check                # lint + typecheck + ۳۳۳ تست
 pnpm --filter @labelmod/api dev
 pnpm --filter @labelmod/web dev
 

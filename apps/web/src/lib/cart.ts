@@ -54,6 +54,26 @@ export function canFinalize(input: {
 }
 
 /**
+ * مبلغ ناخالص یک سطر — **بدون** ضرب و تقسیم.
+ *
+ * وسوسه‌اش این بود که `unitPrice × qty` نوشته شود. دو مشکل داشت:
+ *
+ * ۱. **فرمول سرور را دوباره می‌نوشت.** دیتابیس
+ *    `round(qty * unit_price)` می‌زند. نسخه TypeScript برای رسیدن به
+ *    `bigint` مجبور بود تعداد را `trunc` کند، و `platform.qty` اعشار
+ *    می‌پذیرد (`NUMERIC(14,3)`) — پس سطری با تعداد اعشاری، سقف را
+ *    **کمتر از واقع** نشان می‌داد.
+ *
+ * ۲. **لازم نبود.** همان عدد از قبل در پاسخ سرور هست:
+ *    `net_amount = round(qty × unit_price) − discount_amount`، پس
+ *    جمعِ این دو دقیقاً همان ناخالص است. یک جمع، بدون گرد کردن،
+ *    بدون تبدیل تعداد.
+ */
+export function lineGross(line: { netAmount: string; discountAmount: string }): bigint {
+  return BigInt(line.netAmount) + BigInt(line.discountAmount);
+}
+
+/**
  * تعداد تازه یک سطر پس از «+» یا «−».
  *
  * `null` یعنی نتیجه صفر یا کمتر می‌شد — که مسیرش **حذف قلم** است، نه
