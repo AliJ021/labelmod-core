@@ -73,6 +73,21 @@ const setLineQtyBody = z.object({
   qty: z.string().regex(/^\d+$/, "تعداد باید عدد صحیح باشد"),
 });
 
+/**
+ * اسکن صندوق — بارکد و تعداد، هیچ قیمتی.
+ *
+ * `qty` پیش‌فرض «۱» است چون یک کشیدن اسکنر یعنی یک عدد.
+ */
+const scanBody = z
+  .object({
+    variationId: uuid.optional(),
+    barcode: z.string().min(1).max(64).optional(),
+    qty: z.string().regex(/^\d+$/, "تعداد باید عدد صحیح باشد").default("1"),
+  })
+  .refine((v) => v.variationId ?? v.barcode, {
+    message: "کالا باید با شناسه یا بارکد مشخص شود",
+  });
+
 const paymentBody = z.object({
   methodCode: z.string().min(1).max(32),
   amount: moneyString,
@@ -336,6 +351,58 @@ export function registerSalesRoutes(app: FastifyInstance, deps: SalesRouteDeps):
     return invoiceToJson(
       await invoices.setLineQty({ invoiceId: id, lineId, qty: body.qty, actorId: s.userId }),
     );
+  });
+
+  /**
+   * اسکن یک بارکد.
+   *
+   * تفاوتش با `POST /lines` در یک جمله: این مسیر می‌داند اسکنر پشتش
+   * است، پس اسکن دوباره همان کالا تعداد همان سطر را بالا می‌برد
+   * به‌جای اینکه سطر دوم بسازد. `POST /lines` عمداً دست‌نخورده مانده.
+   *
+   * `Idempotency-Key` **اختیاری** است و باید برای هر کشیدن اسکنر
+   * تازه باشد: دو بار اسکن عمدی یعنی دو عدد. کلید فقط برای این است
+   * که Retry شبکه، عدد سوم نسازد.
+   */
+  app.post("/invoices/:id/scan", async (req) => {
+    const s = session(req);
+    const { id } = z.object({ id: uuid }).parse(req.params);
+    const body = scanBody.parse(req.body ?? {});
+    if (Number(body.qty) <= 0) {
+      throw new InvoiceError("bad_qty", "تعداد باید بزرگ‌تر از صفر باشد", 400);
+    }
+    await assertInvoiceInScope(db, s.userId, id, invoices);
+    await requireForSession(db, s, "sale.create");
+
+    const out = await runOnce<string>(db, {
+      key: idempotencyKey(req),
+      source: "api.invoice.scan",
+      payload: {
+        actorId: s.userId,
+        invoiceId: id,
+        variationId: body.variationId ?? null,
+        barcode: body.barcode ?? null,
+        qty: body.qty,
+      },
+      run: async (trx) => {
+        await invoices.scanIn(trx, {
+          invoiceId: id,
+          qty: body.qty,
+          actorId: s.userId,
+          ...(body.variationId === undefined ? {} : { variationId: body.variationId }),
+          ...(body.barcode === undefined ? {} : { barcode: body.barcode }),
+        });
+        return { value: id, ref: id };
+      },
+      replay: async (ref) => ref,
+    });
+
+    // پاسخ عمداً فقط فاکتور و replayed است. «کدام سطر عوض شد» و «ادغام
+    // شد یا نه» را در مسیر Replay نمی‌شود بدون حدس بازسازی کرد، و
+    // میدانی که در Replay حدسی باشد بدتر از نبودنش است.
+    const inv = await invoices.byId(id);
+    if (!inv) throw new InvoiceError("invoice_not_found", "فاکتور یافت نشد", 404);
+    return { invoice: invoiceToJson(inv), replayed: out.replayed };
   });
 
   app.delete("/invoices/:id/lines/:lineId", async (req) => {

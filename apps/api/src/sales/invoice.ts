@@ -440,6 +440,114 @@ export class InvoiceService {
     return (await this.byId(input.invoiceId)) as Invoice;
   }
 
+  /**
+   * اسکن بارکد — همان کالا در سبد، یک سطر با تعداد بیشتر.
+   *
+   * `addLine` عمداً دست‌نخورده می‌ماند و هرگز ادغام نمی‌کند: مسیر سایت
+   * و مسیر تخفیف‌دار به سطر مستقل نیاز دارند. ادغام رفتار **اسکنر**
+   * است، نه رفتار افزودن قلم.
+   *
+   * تصمیم ادغام در سرور گرفته می‌شود، زیر قفل فاکتور. کلاینت
+   * `variationId` را نمی‌داند و نباید بداند — فقط بارکدی که خوانده
+   * است.
+   *
+   * «سطر سازگار» یعنی همان کالا **و** همان Snapshot: بدون تخفیف،
+   * بدون قیمت دستی، بدون دلیل ثبت‌شده، و با همان `unit_price` که
+   * قیمت‌گذاری امروز برای این فاکتور می‌دهد. آخری مهم است: اگر قیمتِ
+   * حل‌شده با سطر موجود یکی نباشد، ادغام یعنی بازقیمت‌گذاری بی‌صدای
+   * چیزی که مشتری قبلاً دیده.
+   *
+   * قیمت از همان مسیر `addLine` می‌آید — `currentPrice` با
+   * `invoice.occurred_at` — نه یک منطق موازی. دو مرجع قیمت یعنی روزی
+   * یکی از دیگری عقب می‌ماند.
+   */
+  async scanIn(
+    trx: Transaction<Database>,
+    input: {
+      invoiceId: string;
+      variationId?: string | undefined;
+      barcode?: string | undefined;
+      qty: string;
+      actorId: string;
+    },
+  ): Promise<void> {
+    const inv = await this.requireDraft(input.invoiceId);
+    const variationId = await this.resolveVariation(input);
+    const price = await this.currentPrice(variationId, inv.occurredAt);
+
+    await setActor(trx, input.actorId);
+
+    // قفل فاکتور **پیش از** یافتن سطر سازگار: بدون این، دو اسکن
+    // هم‌زمان هر دو «سطری نیست» می‌دیدند و دو سطر می‌ساختند — یا هر
+    // دو تعداد قدیمی را می‌خواندند و یک افزایش گم می‌شد.
+    const locked = await sql<{ status: string }>`
+      SELECT status FROM sales.invoice WHERE id = ${input.invoiceId}::uuid FOR UPDATE
+    `.execute(trx);
+    const status = locked.rows[0]?.status;
+    if (!status) throw new InvoiceError("invoice_not_found", "فاکتور یافت نشد", 404);
+    if (status !== "draft") {
+      throw new InvoiceError(
+        "invoice_not_draft",
+        `فاکتور در وضعیت «${status}» است و دیگر تغییر نمی‌کند`,
+      );
+    }
+
+    // اگر چند سطر سازگار باشد، کم‌ترین `line_no` انتخاب می‌شود —
+    // ترتیب قطعی، بدون ادغام یا حذف سطرهای دیگر. سطر تکراری قبلی کار
+    // کسی دیگر بوده و این مسیر آن را جمع نمی‌کند.
+    const match = await sql<{ id: string }>`
+      SELECT id FROM sales.invoice_line
+       WHERE invoice_id = ${input.invoiceId}::uuid
+         AND variation_id = ${variationId}::uuid
+         AND discount_amount = 0
+         AND list_price IS NULL
+         AND discount_reason IS NULL
+         AND price_override_reason IS NULL
+         AND unit_price = ${serializeMoney(price)}::numeric
+       ORDER BY line_no
+       LIMIT 1
+       FOR UPDATE
+    `.execute(trx);
+
+    const existing = match.rows[0]?.id;
+    if (existing) {
+      // جمع تعداد در SQL انجام می‌شود، نه در TypeScript.
+      await sql`
+        SELECT sales.set_line_qty(
+          ${input.invoiceId}::uuid, ${existing}::uuid,
+          (SELECT qty FROM sales.invoice_line WHERE id = ${existing}::uuid)
+            + ${input.qty}::platform.qty)
+      `.execute(trx);
+      return;
+    }
+
+    const nextNo = await nextLineNo(trx, input.invoiceId);
+    await trx
+      .insertInto("sales.invoice_line")
+      .values({
+        invoice_id: input.invoiceId,
+        line_no: nextNo,
+        variation_id: variationId,
+        qty: input.qty,
+        unit_price: serializeMoney(price),
+        discount_amount: "0",
+        tax_amount: "0",
+        // مبلغ سطر با round() صریح در SQL — همان قاعده‌ای که
+        // `grossOf` برایش وجود دارد. تقسیم و ضرب در TypeScript با
+        // جمع دیتابیس یکی درنمی‌آید.
+        net_amount: sql<string>`round(${input.qty}::numeric * ${serializeMoney(price)}::numeric)`,
+        unit_cost: "0",
+        cogs_amount: "0",
+        returned_qty: "0",
+        discount_reason: null,
+        list_price: null,
+        price_override_reason: null,
+      })
+      .execute();
+
+    await refreshTotals(trx, input.invoiceId);
+  }
+
   async removeLine(invoiceId: string, lineId: string, actorId: string): Promise<Invoice> {
     await this.requireDraft(invoiceId);
     await this.#db.transaction().execute(async (trx) => {

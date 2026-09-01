@@ -749,4 +749,255 @@ describe("آمادگی API صندوق", { skip }, () => {
     assert.equal(again.statusCode, 409, again.body);
     assert.equal(again.json().error.code, "duplicate_client_event");
   });
+
+  // ── اسکن با ادغام سمت سرور ──────────────────────────────────────
+
+  test("اسکن دوباره همان بارکد، تعداد همان سطر را بالا می‌برد", async () => {
+    const s = await loginAs(cashier);
+    const inv = await app.inject({
+      method: "POST",
+      url: "/invoices",
+      ...s,
+      payload: { branchId: BRANCH, warehouseId: STORE_WH, channel: "pos" },
+    });
+    const invoiceId = inv.json().id as string;
+
+    const a = await app.inject({
+      method: "POST",
+      url: `/invoices/${invoiceId}/scan`,
+      ...s,
+      payload: { barcode: BARCODE },
+    });
+    assert.equal(a.statusCode, 200, a.body);
+    assert.equal(a.json().invoice.lines.length, 1);
+    assert.equal(a.json().invoice.lines[0].qty, "1.000");
+
+    const b = await app.inject({
+      method: "POST",
+      url: `/invoices/${invoiceId}/scan`,
+      ...s,
+      payload: { barcode: BARCODE },
+    });
+    assert.equal(b.statusCode, 200, b.body);
+    const invB = b.json().invoice as {
+      netAmount: string;
+      lines: Array<{ id: string; qty: string; netAmount: string }>;
+    };
+    assert.equal(invB.lines.length, 1, "سطر دوم ساخته نشد");
+    assert.equal(invB.lines[0]!.qty, "2.000");
+    assert.equal(invB.lines[0]!.id, a.json().invoice.lines[0].id, "همان سطر");
+    assert.equal(invB.netAmount, "2000002");
+  });
+
+  test("POST /lines هنوز ادغام نمی‌کند — رفتار قبلی نشکست", async () => {
+    const { s, invoiceId } = await newCart("1");
+    const again = await app.inject({
+      method: "POST",
+      url: `/invoices/${invoiceId}/lines`,
+      ...s,
+      payload: { barcode: BARCODE, qty: "1" },
+    });
+    assert.equal(again.statusCode, 201, again.body);
+    assert.equal(again.json().lines.length, 2, "مسیر افزودن قلم باید سطر تازه بسازد");
+  });
+
+  test("اسکن با تعداد بیشتر از یک", async () => {
+    const s = await loginAs(cashier);
+    const invoiceId = (
+      await app.inject({
+        method: "POST",
+        url: "/invoices",
+        ...s,
+        payload: { branchId: BRANCH, warehouseId: STORE_WH, channel: "pos" },
+      })
+    ).json().id as string;
+    const r = await app.inject({
+      method: "POST",
+      url: `/invoices/${invoiceId}/scan`,
+      ...s,
+      payload: { barcode: BARCODE, qty: "3" },
+    });
+    assert.equal(r.statusCode, 200, r.body);
+    assert.equal(r.json().invoice.lines[0].qty, "3.000");
+    assert.equal(r.json().invoice.netAmount, "3000003");
+  });
+
+  test("سطری که قیمتش با قیمت‌گذاری امروز یکی نیست، ادغام نمی‌شود", async () => {
+    const s = await loginAs(cashier);
+    const invoiceId = (
+      await app.inject({
+        method: "POST",
+        url: "/invoices",
+        ...s,
+        payload: { branchId: BRANCH, warehouseId: STORE_WH, channel: "pos" },
+      })
+    ).json().id as string;
+    await app.inject({
+      method: "POST",
+      url: `/invoices/${invoiceId}/scan`,
+      ...s,
+      payload: { barcode: BARCODE },
+    });
+
+    // قیمت عوض می‌شود. قرارداد واقعی قیمت‌گذاری این است که
+    // `currentPrice` ردیف معتبر در `occurred_at` را می‌خواند — پس
+    // قیمت حل‌شده هم عوض می‌شود و دیگر با Snapshot سطر یکی نیست.
+    await sql`UPDATE catalog.price SET amount = 2000000 WHERE variation_id = ${variationId}`
+      .execute(handle.db);
+    const r = await app.inject({
+      method: "POST",
+      url: `/invoices/${invoiceId}/scan`,
+      ...s,
+      payload: { barcode: BARCODE },
+    });
+    await sql`UPDATE catalog.price SET amount = 1000001 WHERE variation_id = ${variationId}`
+      .execute(handle.db);
+
+    assert.equal(r.statusCode, 200, r.body);
+    const lines = r.json().invoice.lines as Array<{ unitPrice: string }>;
+    assert.equal(lines.length, 2, "بازقیمت‌گذاری بی‌صدا رخ نداد");
+    assert.deepEqual(
+      lines.map((l) => l.unitPrice).sort(),
+      ["1000001", "2000000"],
+      "هر سطر قیمت لحظه خودش را نگه داشت",
+    );
+  });
+
+  test("سطر تخفیف‌دار سازگار نیست و ادغام نمی‌شود", async () => {
+    const { s, invoiceId, body } = await newCart("1");
+    await sql`UPDATE sales.invoice_line
+                 SET discount_amount = 1000, net_amount = net_amount - 1000
+               WHERE id = ${body.lines[0]!.id}`.execute(handle.db);
+    const r = await app.inject({
+      method: "POST",
+      url: `/invoices/${invoiceId}/scan`,
+      ...s,
+      payload: { barcode: BARCODE },
+    });
+    assert.equal(r.statusCode, 200, r.body);
+    assert.equal(r.json().invoice.lines.length, 2);
+  });
+
+  test("Retry اسکن با همان کلید، عدد سوم نمی‌سازد", async () => {
+    const s = await loginAs(cashier);
+    const invoiceId = (
+      await app.inject({
+        method: "POST",
+        url: "/invoices",
+        ...s,
+        payload: { branchId: BRANCH, warehouseId: STORE_WH, channel: "pos" },
+      })
+    ).json().id as string;
+    const key = `scan-${suffix}-${invoiceId}`;
+
+    const a = await app.inject({
+      method: "POST",
+      url: `/invoices/${invoiceId}/scan`,
+      ...s,
+      headers: { ...s.headers, "idempotency-key": key },
+      payload: { barcode: BARCODE },
+    });
+    const b = await app.inject({
+      method: "POST",
+      url: `/invoices/${invoiceId}/scan`,
+      ...s,
+      headers: { ...s.headers, "idempotency-key": key },
+      payload: { barcode: BARCODE },
+    });
+    assert.equal(a.json().replayed, false);
+    assert.equal(b.json().replayed, true);
+    assert.equal(b.json().invoice.lines[0].qty, "1.000", "Retry تعداد را بالا نبرد");
+
+    // ولی اسکن عمدی بعدی، با کلید تازه، شمرده می‌شود.
+    const c = await app.inject({
+      method: "POST",
+      url: `/invoices/${invoiceId}/scan`,
+      ...s,
+      headers: { ...s.headers, "idempotency-key": `${key}-2` },
+      payload: { barcode: BARCODE },
+    });
+    assert.equal(c.json().invoice.lines[0].qty, "2.000");
+  });
+
+  test("دو اسکن هم‌زمان با کلیدهای متفاوت، هر دو شمرده می‌شوند", async () => {
+    const s = await loginAs(cashier);
+    const invoiceId = (
+      await app.inject({
+        method: "POST",
+        url: "/invoices",
+        ...s,
+        payload: { branchId: BRANCH, warehouseId: STORE_WH, channel: "pos" },
+      })
+    ).json().id as string;
+
+    const scan = (k: string) =>
+      app.inject({
+        method: "POST",
+        url: `/invoices/${invoiceId}/scan`,
+        ...s,
+        headers: { ...s.headers, "idempotency-key": k },
+        payload: { barcode: BARCODE },
+      });
+    const [a, b] = await Promise.all([scan(`c1-${invoiceId}`), scan(`c2-${invoiceId}`)]);
+    assert.equal(a.statusCode, 200, a.body);
+    assert.equal(b.statusCode, 200, b.body);
+
+    const inv = await app.inject({ method: "GET", url: `/invoices/${invoiceId}`, ...s });
+    const lines = inv.json().lines as Array<{ qty: string }>;
+    const total = lines.reduce((t, l) => t + Number(l.qty), 0);
+    assert.equal(total, 2, "هیچ اسکنی گم نشد");
+    assert.equal(inv.json().netAmount, String(1000001 * 2));
+  });
+
+  test("بارکد ناشناخته ۴۰۴ می‌دهد و سبد دست‌نخورده می‌ماند", async () => {
+    const { s, invoiceId } = await newCart("1");
+    const r = await app.inject({
+      method: "POST",
+      url: `/invoices/${invoiceId}/scan`,
+      ...s,
+      payload: { barcode: "NOPE-000" },
+    });
+    assert.equal(r.statusCode, 404);
+    assert.equal(r.json().error.code, "variation_not_found");
+    const inv = await app.inject({ method: "GET", url: `/invoices/${invoiceId}`, ...s });
+    assert.equal(inv.json().lines.length, 1);
+  });
+
+  test("اسکن روی فاکتور نهایی‌شده رد می‌شود", async () => {
+    const { s, invoiceId } = await newCart("1");
+    await app.inject({
+      method: "POST",
+      url: `/invoices/${invoiceId}/payments`,
+      ...s,
+      headers: { ...s.headers, "idempotency-key": `payf-${invoiceId}` },
+      payload: { methodCode: "cash", amount: "1000001" },
+    });
+    await app.inject({
+      method: "POST",
+      url: `/invoices/${invoiceId}/finalize`,
+      ...s,
+      headers: { ...s.headers, "idempotency-key": `finf-${invoiceId}` },
+    });
+    const r = await app.inject({
+      method: "POST",
+      url: `/invoices/${invoiceId}/scan`,
+      ...s,
+      payload: { barcode: BARCODE },
+    });
+    assert.equal(r.statusCode, 409, r.body);
+    assert.equal(r.json().error.code, "invoice_not_draft");
+  });
+
+  test("کاربر شعبه دیگر نمی‌تواند در این سبد اسکن کند", async () => {
+    const { invoiceId } = await newCart("1");
+    const other = await loginAs(outsider);
+    const r = await app.inject({
+      method: "POST",
+      url: `/invoices/${invoiceId}/scan`,
+      ...other,
+      payload: { barcode: BARCODE },
+    });
+    assert.equal(r.statusCode, 403);
+    assert.equal(r.json().error.code, "branch_forbidden");
+  });
 });
