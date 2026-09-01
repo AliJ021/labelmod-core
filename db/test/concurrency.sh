@@ -28,7 +28,7 @@ DECLARE
   BR uuid := '00000000-0000-7000-8000-000000000001';
   WH uuid := '00000000-0000-7000-8000-000000000101';
   v_user uuid; v_sup uuid; v_prod uuid; v_var uuid; v_rcpt uuid;
-  v_shift uuid; v_inv1 uuid; v_inv2 uuid;
+  v_shift uuid; v_inv1 uuid; v_inv2 uuid; v_inv3 uuid; v_line3 uuid;
 BEGIN
   DELETE FROM platform.setting WHERE key = '_conc_test_'||current_setting('test.rid');
 
@@ -62,18 +62,27 @@ BEGIN
   INSERT INTO sales.invoice_line (invoice_id,line_no,variation_id,qty,unit_price,net_amount)
     VALUES (v_inv2,1,v_var,1,2000000,2000000);
 
+  -- فاکتور سوم عمداً پیش‌نویس می‌ماند: سناریوی دوم تغییر هم‌زمان
+  -- تعداد را می‌سنجد، نه نهایی‌سازی هم‌زمان را.
+  INSERT INTO sales.invoice (branch_id,warehouse_id,shift_id,occurred_at,created_by,channel)
+    VALUES (BR,WH,v_shift,'2026-06-02 10:00+03:30',v_user,'pos') RETURNING id INTO v_inv3;
+  INSERT INTO sales.invoice_line (invoice_id,line_no,variation_id,qty,unit_price,net_amount)
+    VALUES (v_inv3,1,v_var,1,2000000,2000000) RETURNING id INTO v_line3;
+
   INSERT INTO platform.setting (key,value,description)
     VALUES ('_conc_test_'||current_setting('test.rid'),
-            jsonb_build_object('inv1',v_inv1,'inv2',v_inv2,'var',v_var,'user',v_user),
+            jsonb_build_object('inv1',v_inv1,'inv2',v_inv2,'var',v_var,'user',v_user,
+                               'inv3',v_inv3,'line3',v_line3),
             'داده موقت تست همزمانی');
 END $$;
 SELECT (value->>'inv1')||' '||(value->>'inv2')||' '||(value->>'var')||' '||(value->>'user')
+       ||' '||(value->>'inv3')||' '||(value->>'line3')
   FROM platform.setting WHERE key='_conc_test_'||current_setting('test.rid');
 SQL
 )
 
 # خط آخر خروجی شناسه‌هاست؛ خط اول را set_config تولید می‌کند
-read -r INV1 INV2 VAR USR <<< "$(printf '%s\n' "$IDS" | tail -1)"
+read -r INV1 INV2 VAR USR INV3 LINE3 <<< "$(printf '%s\n' "$IDS" | tail -1)"
 echo "  فاکتور صندوق: $INV1"
 echo "  فاکتور سایت : $INV2"
 
@@ -120,6 +129,35 @@ FAIL=0
 [ "$SOLD" = "1" ] && echo "  ✓ دقیقاً ۱ فاکتور نهایی شد" || { echo "  ✗ تعداد فاکتور نهایی‌شده: $SOLD (انتظار ۱)"; FAIL=1; }
 [ "${ONHAND%%.*}" = "0" ] && echo "  ✓ موجودی صفر شد، نه منفی" || { echo "  ✗ موجودی: $ONHAND (انتظار ۰)"; FAIL=1; }
 [ "$MOVES" = "1" ] && echo "  ✓ فقط ۱ حرکت انبار ثبت شد" || { echo "  ✗ تعداد حرکت: $MOVES (انتظار ۱)"; FAIL=1; }
+
+echo
+echo "═══ سناریوی دوم: دو اسکن هم‌زمان روی یک سطر سبد ═══"
+# همان کاری که مسیر اسکن می‌کند: قفل فاکتور، خواندن تعداد، افزودن یک.
+# اگر خواندن پیش از قفل بود، یکی از دو افزایش گم می‌شد و صندوق‌دار
+# دو بار اسکن می‌کرد ولی یک عدد می‌دید.
+scan_once () {
+  psql -q -t -A -d "$CONN" <<SQL 2>&1 | tr '\n' ' '
+BEGIN;
+SELECT 1 FROM sales.invoice WHERE id='$INV3'::uuid FOR UPDATE;
+SELECT pg_sleep($1);
+SELECT sales.set_line_qty('$INV3'::uuid, '$LINE3'::uuid,
+  (SELECT qty FROM sales.invoice_line WHERE id='$LINE3'::uuid) + 1);
+COMMIT;
+SQL
+}
+
+scan_once 0.4 > /tmp/c3.out &
+Q1=$!
+scan_once 0.4 > /tmp/c4.out &
+Q2=$!
+wait $Q1 $Q2
+
+QTY=$(run -c "SELECT qty FROM sales.invoice_line WHERE id='$LINE3';" | tr -d ' ')
+TOTAL=$(run -c "SELECT i.net_amount - (SELECT sum(l.net_amount) FROM sales.invoice_line l
+                  WHERE l.invoice_id=i.id) FROM sales.invoice i WHERE i.id='$INV3';" | tr -d ' ')
+
+[ "${QTY%%.*}" = "3" ] && echo "  ✓ هر دو اسکن شمرده شدند (تعداد ۳)" || { echo "  ✗ تعداد: $QTY (انتظار ۳ — یک افزایش گم شد)"; FAIL=1; }
+[ "${TOTAL%%.*}" = "0" ] && echo "  ✓ جمع فاکتور با جمع سطرها یکی ماند" || { echo "  ✗ اختلاف جمع: $TOTAL"; FAIL=1; }
 
 run -c "DELETE FROM platform.setting WHERE key LIKE '_conc_test_%';" > /dev/null 2>&1 || true
 
