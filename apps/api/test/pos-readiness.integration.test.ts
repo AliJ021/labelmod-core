@@ -459,4 +459,125 @@ describe("آمادگی API صندوق", { skip }, () => {
     assert.equal(r.statusCode, 409, r.body);
     assert.equal(r.json().error.code, "invoice_not_draft");
   });
+
+  // ── Idempotency ایجاد فاکتور ────────────────────────────────────
+
+  test("همان کلید و همان Payload، همان فاکتور را برمی‌گرداند", async () => {
+    const s = await loginAs(cashier);
+    const key = `create-${suffix}-1`;
+    const payload = { branchId: BRANCH, warehouseId: STORE_WH, channel: "pos" };
+
+    const a = await app.inject({
+      method: "POST",
+      url: "/invoices",
+      ...s,
+      headers: { ...s.headers, "idempotency-key": key },
+      payload,
+    });
+    const b = await app.inject({
+      method: "POST",
+      url: "/invoices",
+      ...s,
+      headers: { ...s.headers, "idempotency-key": key },
+      payload,
+    });
+
+    assert.equal(a.statusCode, 201, a.body);
+    assert.equal(b.statusCode, 200, b.body);
+    assert.equal(a.json().replayed, false);
+    assert.equal(b.json().replayed, true);
+    assert.equal(a.json().id, b.json().id, "پیش‌نویس دوم ساخته نشد");
+
+    const n = await sql<{ n: string }>`
+      SELECT count(*)::text AS n FROM sales.invoice WHERE id = ${a.json().id}`.execute(handle.db);
+    assert.equal(n.rows[0]!.n, "1");
+  });
+
+  test("همان کلید با Payload متفاوت، Conflict می‌دهد", async () => {
+    const s = await loginAs(cashier);
+    const key = `create-${suffix}-2`;
+    await app.inject({
+      method: "POST",
+      url: "/invoices",
+      ...s,
+      headers: { ...s.headers, "idempotency-key": key },
+      payload: { branchId: BRANCH, warehouseId: STORE_WH, channel: "pos" },
+    });
+    const clash = await app.inject({
+      method: "POST",
+      url: "/invoices",
+      ...s,
+      headers: { ...s.headers, "idempotency-key": key },
+      payload: { branchId: BRANCH, warehouseId: STORE_WH, channel: "phone" },
+    });
+    assert.equal(clash.statusCode, 409, clash.body);
+    assert.equal(clash.json().error.code, "idempotency_key_reused");
+  });
+
+  test("همان کلید از کاربر دیگر، فاکتور کسی را لو نمی‌دهد", async () => {
+    const s = await loginAs(cashier);
+    const key = `create-${suffix}-3`;
+    await app.inject({
+      method: "POST",
+      url: "/invoices",
+      ...s,
+      headers: { ...s.headers, "idempotency-key": key },
+      payload: { branchId: BRANCH, warehouseId: STORE_WH, channel: "pos" },
+    });
+
+    const other = await loginAs(outsider);
+    const r = await app.inject({
+      method: "POST",
+      url: "/invoices",
+      ...other,
+      headers: { ...other.headers, "idempotency-key": key },
+      payload: { branchId: otherBranchId, warehouseId: otherWarehouseId, channel: "pos" },
+    });
+    // یا Conflict (چون actorId در Payload است) یا ۴۰۳/۴۲۲ — ولی هرگز
+    // فاکتور شعبه اول.
+    assert.notEqual(r.statusCode, 200);
+    assert.notEqual(r.statusCode, 201);
+  });
+
+  test("دو درخواست هم‌زمان با یک کلید، دو فاکتور نمی‌سازند", async () => {
+    const s = await loginAs(cashier);
+    const key = `create-${suffix}-race`;
+    const payload = { branchId: BRANCH, warehouseId: STORE_WH, channel: "pos" };
+    const send = () =>
+      app.inject({
+        method: "POST",
+        url: "/invoices",
+        ...s,
+        headers: { ...s.headers, "idempotency-key": key },
+        payload,
+      });
+
+    const [a, b] = await Promise.all([send(), send()]);
+    const codes = [a.statusCode, b.statusCode].sort();
+    assert.ok(
+      codes.every((c) => c === 200 || c === 201 || c === 409),
+      `وضعیت‌های غیرمنتظره: ${codes.join(",")}`,
+    );
+    assert.ok(!codes.includes(500), "هیچ‌کدام نباید ۵۰۰ بدهد");
+
+    const rows = await sql<{ n: string }>`
+      SELECT count(*)::text AS n FROM platform.inbox_message
+       WHERE source = 'api.invoice.create' AND event_id = ${key}`.execute(handle.db);
+    assert.equal(rows.rows[0]!.n, "1", "فقط یک رکورد Inbox");
+
+    const ids = new Set(
+      [a, b].filter((r) => r.statusCode < 300).map((r) => r.json().id as string),
+    );
+    assert.equal(ids.size, 1, "هر دو پاسخ موفق باید همان فاکتور باشند");
+  });
+
+  test("بدون کلید، رفتار قبلی دست‌نخورده می‌ماند", async () => {
+    const s = await loginAs(cashier);
+    const payload = { branchId: BRANCH, warehouseId: STORE_WH, channel: "pos" };
+    const a = await app.inject({ method: "POST", url: "/invoices", ...s, payload });
+    const b = await app.inject({ method: "POST", url: "/invoices", ...s, payload });
+    assert.equal(a.statusCode, 201);
+    assert.equal(b.statusCode, 201);
+    assert.notEqual(a.json().id, b.json().id);
+  });
 });

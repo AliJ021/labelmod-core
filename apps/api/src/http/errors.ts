@@ -15,7 +15,7 @@ import { ReturnError } from "../sales/return.ts";
 import { BatchError } from "../sales/posting-batch.ts";
 import { CatalogError } from "../catalog/variation.ts";
 import { SettingError } from "../platform/settings.ts";
-import { IdempotencyInFlightError } from "../lib/idempotency.ts";
+import { IdempotencyConflictError, IdempotencyInFlightError } from "../lib/idempotency.ts";
 import { ZodError } from "zod";
 
 export interface ErrorBody {
@@ -64,7 +64,8 @@ export function registerErrorHandler(app: FastifyInstance): void {
       err instanceof BatchError ||
       err instanceof CatalogError ||
       err instanceof SettingError ||
-      err instanceof IdempotencyInFlightError
+      err instanceof IdempotencyInFlightError ||
+      err instanceof IdempotencyConflictError
     ) {
       req.log.info({ code: err.code, correlationId }, "درخواست فروش رد شد");
       return reply.code(err.statusCode).send(body(err.code, err.message, correlationId));

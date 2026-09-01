@@ -53,15 +53,20 @@ export async function runOnce<T>(
     return { value: out.value, replayed: false };
   }
 
+  const canonical = canonicalJson(opts.payload ?? {});
+
   const existing = await db
     .selectFrom("platform.inbox_message")
-    .select("result_ref")
+    .select(["result_ref", "payload"])
     .where("source", "=", opts.source)
     .where("event_id", "=", opts.key)
     .executeTakeFirst();
 
-  if (existing?.result_ref) {
-    return { value: await opts.replay(existing.result_ref), replayed: true };
+  if (existing) {
+    assertSamePayload(existing.payload, canonical);
+    if (existing.result_ref) {
+      return { value: await opts.replay(existing.result_ref), replayed: true };
+    }
   }
 
   try {
@@ -73,7 +78,7 @@ export async function runOnce<T>(
         .values({
           source: opts.source,
           event_id: opts.key as string,
-          payload: JSON.stringify(opts.payload ?? {}),
+          payload: canonical,
           result_ref: null,
         })
         .execute();
@@ -98,10 +103,12 @@ export async function runOnce<T>(
     // است و باید همان پاسخ را بگیرد.
     const row = await db
       .selectFrom("platform.inbox_message")
-      .select("result_ref")
+      .select(["result_ref", "payload"])
       .where("source", "=", opts.source)
       .where("event_id", "=", opts.key as string)
       .executeTakeFirst();
+
+    if (row) assertSamePayload(row.payload, canonical);
 
     if (!row?.result_ref) {
       // درخواست همزمان هنوز تمام نشده. تکرار امن‌تر از حدس زدن است.
@@ -109,6 +116,53 @@ export async function runOnce<T>(
     }
     return { value: await opts.replay(row.result_ref), replayed: true };
   }
+}
+
+/**
+ * همان کلید، ولی درخواست دیگری.
+ *
+ * بدون این، کلیدی که کلاینت اشتباهاً دوباره استفاده کند **بی‌صدا**
+ * نتیجه عملیات قبلی را برمی‌گرداند: صندوق‌دار فکر می‌کند فاکتور دوم
+ * ساخته شده، در حالی که شماره فاکتور اول را می‌بیند. Replay فقط وقتی
+ * درست است که واقعاً همان درخواست باشد.
+ */
+export class IdempotencyConflictError extends Error {
+  readonly statusCode = 409;
+  readonly code = "idempotency_key_reused";
+
+  constructor() {
+    super(
+      "این کلید پیش‌تر برای درخواست دیگری استفاده شده است. برای عملیات تازه، کلید تازه بفرستید.",
+    );
+    this.name = "IdempotencyConflictError";
+  }
+}
+
+/**
+ * JSON با ترتیب قطعی کلیدها.
+ *
+ * `jsonb` پستگرس خودش ترتیب کلید و فاصله را نرمال می‌کند، پس مقایسه
+ * دو Payload باید روی همان نمایش باشد — نه روی رشته‌ای که ترتیب
+ * تایپ‌کردن ما را حمل می‌کند.
+ */
+export function canonicalJson(value: unknown): string {
+  const norm = (v: unknown): unknown => {
+    if (Array.isArray(v)) return v.map(norm);
+    if (v !== null && typeof v === "object") {
+      const src = v as Record<string, unknown>;
+      const out: Record<string, unknown> = {};
+      for (const k of Object.keys(src).sort()) {
+        if (src[k] !== undefined) out[k] = norm(src[k]);
+      }
+      return out;
+    }
+    return v;
+  };
+  return JSON.stringify(norm(value));
+}
+
+function assertSamePayload(stored: unknown, canonical: string): void {
+  if (canonicalJson(stored ?? {}) !== canonical) throw new IdempotencyConflictError();
 }
 
 export class IdempotencyInFlightError extends Error {

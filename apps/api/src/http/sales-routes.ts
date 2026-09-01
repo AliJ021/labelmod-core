@@ -177,15 +177,48 @@ export function registerSalesRoutes(app: FastifyInstance, deps: SalesRouteDeps):
       shiftId = shift.id;
     }
 
-    const inv = await invoices.createDraft({
-      branchId: body.branchId,
-      warehouseId: body.warehouseId,
-      channel: body.channel,
-      actorId: s.userId,
-      ...(shiftId === undefined ? {} : { shiftId }),
-      ...(body.customerId === undefined ? {} : { customerId: body.customerId }),
+    // Idempotent: دابل‌کلیک روی «فروش تازه» یا Retry شبکه تبلت نباید
+    // یک پیش‌نویس دوم جا بگذارد. پیش‌نویس رها اثر مالی ندارد، ولی
+    // `close_shift` تا ابد ردش می‌کند: «شیفت با فاکتور نهایی‌نشده بسته
+    // نمی‌شود».
+    //
+    // `shiftId` عمداً در Payload نیست: ورودی کلاینت نیست، از وضعیت
+    // سرور می‌آید. اگر بود، Retry همان درخواست پس از عوض‌شدن شیفت
+    // به‌جای Replay، Conflict می‌گرفت.
+    const out = await runOnce<string>(db, {
+      key: idempotencyKey(req),
+      source: "api.invoice.create",
+      payload: {
+        actorId: s.userId,
+        branchId: body.branchId,
+        warehouseId: body.warehouseId,
+        channel: body.channel,
+        customerId: body.customerId ?? null,
+      },
+      run: async (trx) => {
+        const id = await invoices.createDraftIn(trx, {
+          branchId: body.branchId,
+          warehouseId: body.warehouseId,
+          channel: body.channel,
+          actorId: s.userId,
+          ...(shiftId === undefined ? {} : { shiftId }),
+          ...(body.customerId === undefined ? {} : { customerId: body.customerId }),
+        });
+        return { value: id, ref: id };
+      },
+      replay: async (ref) => ref,
     });
-    return reply.code(201).send(invoiceToJson(inv));
+
+    // مسیر Replay هم دامنه را دوباره می‌سنجد: بدون این، کاربر شعبه
+    // دیگر با حدس‌زدن یک کلید، فاکتور کسی را می‌دید.
+    await assertInvoiceInScope(db, s.userId, out.value, invoices);
+    const inv = await invoices.byId(out.value);
+    if (!inv) throw new InvoiceError("invoice_not_found", "فاکتور ساخته نشد", 500);
+
+    return reply.code(out.replayed ? 200 : 201).send({
+      ...invoiceToJson(inv),
+      replayed: out.replayed,
+    });
   });
 
   app.get("/invoices/:id", async (req) => {

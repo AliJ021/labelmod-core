@@ -186,7 +186,33 @@ export class InvoiceService {
     channel: string;
     actorId: string;
   }): Promise<Invoice> {
-    const id = await this.#db.transaction().execute(async (trx) => {
+    const id = await this.#db.transaction().execute((trx) => this.createDraftIn(trx, input));
+
+    const inv = await this.byId(id);
+    if (!inv) throw new InvoiceError("invoice_not_found", "فاکتور ساخته نشد", 500);
+    return inv;
+  }
+
+  /**
+   * همان ساخت پیش‌نویس، ولی داخل تراکنشی که فراخوان می‌دهد.
+   *
+   * لازم است چون `runOnce` باید درج Inbox و اثر را در **یک** تراکنش
+   * انجام دهد؛ اگر این متد تراکنش خودش را باز کند، دو Commit جدا
+   * می‌شود و همان چیزی که Idempotency می‌خواست جلویش را بگیرد، از
+   * میانشان رد می‌شود.
+   */
+  async createDraftIn(
+    trx: Transaction<Database>,
+    input: {
+      branchId: string;
+      warehouseId: string;
+      shiftId?: string | undefined;
+      customerId?: string | undefined;
+      channel: string;
+      actorId: string;
+    },
+  ): Promise<string> {
+    {
       await setActor(trx, input.actorId);
       const row = await trx
         .insertInto("sales.invoice")
@@ -215,11 +241,7 @@ export class InvoiceService {
         .returning("id")
         .executeTakeFirstOrThrow();
       return row.id;
-    });
-
-    const inv = await this.byId(id);
-    if (!inv) throw new InvoiceError("invoice_not_found", "فاکتور ساخته نشد", 500);
-    return inv;
+    }
   }
 
   /**
