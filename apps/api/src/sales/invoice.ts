@@ -522,6 +522,31 @@ export class InvoiceService {
     actorId: string;
     clientEventId?: string | undefined;
   }): Promise<{ paymentId: string }> {
+    const id = await this.#db
+      .transaction()
+      .execute((trx) => this.addPaymentIn(trx, input));
+    return { paymentId: id };
+  }
+
+  /**
+   * همان ثبت پرداخت، داخل تراکنش فراخوان.
+   *
+   * `runOnce` باید درج Inbox و ثبت پول را در **یک** تراکنش انجام دهد.
+   * اگر این متد تراکنش خودش را باز کند، خرابی میان دو Commit یا پول
+   * بدون رد می‌گذارد یا رد بدون پول — و هر دو بدتر از تکرارند.
+   */
+  async addPaymentIn(
+    trx: Transaction<Database>,
+    input: {
+      invoiceId: string;
+      methodCode: string;
+      amount: bigint;
+      refNo?: string | undefined;
+      accountId?: string | undefined;
+      actorId: string;
+      clientEventId?: string | undefined;
+    },
+  ): Promise<string> {
     const inv = await this.requireDraft(input.invoiceId);
     if (input.amount <= 0n) {
       throw new InvoiceError("bad_amount", "مبلغ پرداخت باید مثبت باشد", 400);
@@ -543,7 +568,7 @@ export class InvoiceService {
       );
     }
 
-    const id = await this.#db.transaction().execute(async (trx) => {
+    {
       await setActor(trx, input.actorId);
       const row = await trx
         .insertInto("treasury.payment")
@@ -566,9 +591,7 @@ export class InvoiceService {
         .returning("id")
         .executeTakeFirstOrThrow();
       return row.id;
-    });
-
-    return { paymentId: id };
+    }
   }
 
   /**

@@ -22,6 +22,16 @@ import type { Db } from "../db/client.ts";
 /** خطای درج تکراری در پستگرس. */
 const UNIQUE_VIOLATION = "23505";
 
+/**
+ * قید یکتایی خودِ Inbox — و **فقط** همان.
+ *
+ * بدون سنجیدن نام قید، هر نقض یکتایی که داخل `run` رخ می‌داد (مثلاً
+ * `client_event_id` تکراری روی پرداخت) اینجا «مسابقه» تعبیر می‌شد و
+ * کاربر پیام «همین درخواست در حال پردازش است» می‌گرفت — پیامی که
+ * می‌گوید دوباره تلاش کن، برای خطایی که با تلاش دوباره حل نمی‌شود.
+ */
+const INBOX_UNIQUE = "inbox_message_pkey";
+
 export interface IdempotentResult<T> {
   value: T;
   /** آیا این پاسخ از اجرای تازه آمد یا از تکرار یک درخواست قبلی؟ */
@@ -96,7 +106,8 @@ export async function runOnce<T>(
     });
     return { value: out.value, replayed: false };
   } catch (err) {
-    if ((err as { code?: string }).code !== UNIQUE_VIOLATION) throw err;
+    const pg = err as { code?: string; constraint?: string };
+    if (pg.code !== UNIQUE_VIOLATION || pg.constraint !== INBOX_UNIQUE) throw err;
 
     // مسابقه: درخواست هم‌زمانِ دیگری زودتر رسید. منتظر نتیجه‌اش
     // می‌مانیم — نه اینکه خطا بدهیم، چون از دید فراخوان همان درخواست

@@ -558,7 +558,10 @@ describe("آمادگی API صندوق", { skip }, () => {
       codes.every((c) => c === 200 || c === 201 || c === 409),
       `وضعیت‌های غیرمنتظره: ${codes.join(",")}`,
     );
-    assert.ok(!codes.includes(500), "هیچ‌کدام نباید ۵۰۰ بدهد");
+    assert.ok(
+      codes.every((c) => c < 500),
+      "هیچ‌کدام نباید خطای سرور بدهد",
+    );
 
     const rows = await sql<{ n: string }>`
       SELECT count(*)::text AS n FROM platform.inbox_message
@@ -579,5 +582,171 @@ describe("آمادگی API صندوق", { skip }, () => {
     assert.equal(a.statusCode, 201);
     assert.equal(b.statusCode, 201);
     assert.notEqual(a.json().id, b.json().id);
+  });
+
+  // ── پرداخت Idempotent ───────────────────────────────────────────
+
+  test("Retry پرداخت همان paymentId را Replay می‌کند و پول دوباره ثبت نمی‌شود", async () => {
+    const { s, invoiceId } = await newCart("1");
+    const key = `pay-${suffix}-${invoiceId}`;
+    const payload = { methodCode: "cash", amount: "1000001" };
+
+    const a = await app.inject({
+      method: "POST",
+      url: `/invoices/${invoiceId}/payments`,
+      ...s,
+      headers: { ...s.headers, "idempotency-key": key },
+      payload,
+    });
+    const b = await app.inject({
+      method: "POST",
+      url: `/invoices/${invoiceId}/payments`,
+      ...s,
+      headers: { ...s.headers, "idempotency-key": key },
+      payload,
+    });
+
+    assert.equal(a.statusCode, 201, a.body);
+    assert.equal(b.statusCode, 200, b.body);
+    assert.equal(a.json().replayed, false);
+    assert.equal(b.json().replayed, true);
+    assert.equal(a.json().paymentId, b.json().paymentId, "همان paymentId");
+    assert.equal(b.json().receivedAmount, "1000001", "پول دوبار شمرده نشد");
+
+    const n = await sql<{ n: string }>`
+      SELECT count(*)::text AS n FROM treasury.payment WHERE invoice_id = ${invoiceId}::uuid`
+      .execute(handle.db);
+    assert.equal(n.rows[0]!.n, "1", "فقط یک ردیف پرداخت");
+  });
+
+  test("پاسخ پرداخت، نمای فعلی سرور را حمل می‌کند", async () => {
+    const { s, invoiceId } = await newCart("2");
+    const r = await app.inject({
+      method: "POST",
+      url: `/invoices/${invoiceId}/payments`,
+      ...s,
+      headers: { ...s.headers, "idempotency-key": `pay2-${suffix}-${invoiceId}` },
+      payload: { methodCode: "cash", amount: "500000" },
+    });
+    assert.equal(r.statusCode, 201, r.body);
+    const out = r.json() as {
+      paymentId: string;
+      replayed: boolean;
+      receivedAmount: string;
+      invoice: { payableAmount: string; paidAmount: string };
+    };
+    assert.ok(out.paymentId);
+    assert.equal(out.invoice.payableAmount, "2000002");
+    assert.equal(out.receivedAmount, "500000", "دریافتی تا این لحظه");
+    assert.equal(out.invoice.paidAmount, "0", "paid_amount را finalize می‌نویسد، نه پرداخت");
+    assert.equal(typeof out.receivedAmount, "string");
+  });
+
+  test("همان کلید پرداخت با مبلغ متفاوت، Conflict می‌دهد نه پرداخت دوم", async () => {
+    const { s, invoiceId } = await newCart("1");
+    const key = `pay3-${suffix}-${invoiceId}`;
+    await app.inject({
+      method: "POST",
+      url: `/invoices/${invoiceId}/payments`,
+      ...s,
+      headers: { ...s.headers, "idempotency-key": key },
+      payload: { methodCode: "cash", amount: "400000" },
+    });
+    const clash = await app.inject({
+      method: "POST",
+      url: `/invoices/${invoiceId}/payments`,
+      ...s,
+      headers: { ...s.headers, "idempotency-key": key },
+      payload: { methodCode: "cash", amount: "900000" },
+    });
+    assert.equal(clash.statusCode, 409, clash.body);
+    assert.equal(clash.json().error.code, "idempotency_key_reused");
+
+    const paid = await sql<{ t: string }>`
+      SELECT coalesce(sum(amount),0)::text AS t FROM treasury.payment
+       WHERE invoice_id = ${invoiceId}::uuid`.execute(handle.db);
+    assert.equal(paid.rows[0]!.t, "400000", "مبلغ دوم ثبت نشد");
+  });
+
+  test("کلید یکسان روی فاکتور دیگر هم Conflict است، نه پرداخت جابه‌جا", async () => {
+    const first = await newCart("1");
+    const second = await newCart("1");
+    const key = `pay4-${suffix}`;
+    await app.inject({
+      method: "POST",
+      url: `/invoices/${first.invoiceId}/payments`,
+      ...first.s,
+      headers: { ...first.s.headers, "idempotency-key": key },
+      payload: { methodCode: "cash", amount: "100000" },
+    });
+    const clash = await app.inject({
+      method: "POST",
+      url: `/invoices/${second.invoiceId}/payments`,
+      ...second.s,
+      headers: { ...second.s.headers, "idempotency-key": key },
+      payload: { methodCode: "cash", amount: "100000" },
+    });
+    assert.equal(clash.statusCode, 409, clash.body);
+    assert.equal(clash.json().error.code, "idempotency_key_reused");
+  });
+
+  test("دو پرداخت هم‌زمان با یک کلید، پول را دو بار ثبت نمی‌کنند", async () => {
+    const { s, invoiceId } = await newCart("1");
+    const key = `pay5-${suffix}-${invoiceId}`;
+    const send = () =>
+      app.inject({
+        method: "POST",
+        url: `/invoices/${invoiceId}/payments`,
+        ...s,
+        headers: { ...s.headers, "idempotency-key": key },
+        payload: { methodCode: "cash", amount: "300000" },
+      });
+
+    const [a, b] = await Promise.all([send(), send()]);
+    assert.ok(a.statusCode < 500 && b.statusCode < 500, "هیچ‌کدام خطای سرور نمی‌دهد");
+    for (const r of [a, b]) {
+      if (r.statusCode >= 300) {
+        assert.ok(
+          ["idempotency_in_flight", "idempotency_key_reused", "duplicate_client_event"].includes(
+            r.json().error.code as string,
+          ),
+          `کد غیرمنتظره: ${r.body}`,
+        );
+      }
+    }
+
+    const paid = await sql<{ t: string }>`
+      SELECT coalesce(sum(amount),0)::text AS t FROM treasury.payment
+       WHERE invoice_id = ${invoiceId}::uuid`.execute(handle.db);
+    assert.equal(paid.rows[0]!.t, "300000", "پول دقیقاً یک بار ثبت شد");
+  });
+
+  test("پرداخت تکراری با کلید رویدادِ از پیش مصرف‌شده، ۴۰۹ می‌دهد نه ۵۰۰", async () => {
+    // کلید یکسان روی دو منبع مختلف: Inbox جلویش را نمی‌گیرد، ولی قید
+    // یکتایی treasury.payment می‌گیرد. باید ۴۰۹ باشد، نه خطای سرور.
+    const { s, invoiceId } = await newCart("1");
+    const key = `pay6-${suffix}`;
+    const first = await app.inject({
+      method: "POST",
+      url: `/invoices/${invoiceId}/payments`,
+      ...s,
+      headers: { ...s.headers, "idempotency-key": key },
+      payload: { methodCode: "cash", amount: "200000" },
+    });
+    assert.equal(first.statusCode, 201, first.body);
+
+    // ردّ Inbox را پاک می‌کنیم تا فقط قید دیتابیس بماند.
+    await sql`DELETE FROM platform.inbox_message
+               WHERE source = 'api.invoice.payment' AND event_id = ${key}`.execute(handle.db);
+
+    const again = await app.inject({
+      method: "POST",
+      url: `/invoices/${invoiceId}/payments`,
+      ...s,
+      headers: { ...s.headers, "idempotency-key": key },
+      payload: { methodCode: "cash", amount: "200000" },
+    });
+    assert.equal(again.statusCode, 409, again.body);
+    assert.equal(again.json().error.code, "duplicate_client_event");
   });
 });

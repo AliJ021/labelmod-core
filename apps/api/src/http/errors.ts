@@ -84,7 +84,29 @@ export function registerErrorHandler(app: FastifyInstance): void {
     //
     // ۴۰۹ است نه ۴۰۰: ورودی معتبر بود، ولی با وضعیت فعلی سیستم
     // نمی‌خواند.
-    const dbError = err as { code?: string; message?: string };
+    const dbError = err as { code?: string; message?: string; constraint?: string };
+
+    // نقض یکتایی — **فقط** همان قید مشخصی که معنایش را می‌دانیم.
+    //
+    // نگاشت کورِ هر ۲۳۵۰۵ به «پرداخت تکراری» بدتر از نگاشت‌نکردنش
+    // بود: یک تصادف روی SKU یا بارکد هم همان پیام را می‌گرفت و کسی
+    // دنبال علت واقعی نمی‌گشت. تصمیم از روی نام قید گرفته می‌شود.
+    //
+    // قید یکتایی `platform.inbox_message` اینجا نمی‌رسد: `runOnce`
+    // خودش می‌گیردش و یا Replay می‌کند یا `idempotency_in_flight`.
+    if (dbError.code === "23505" && dbError.constraint === "payment_client_event_unique") {
+      req.log.info({ correlationId }, "پرداخت تکراری با همان کلید رویداد");
+      return reply
+        .code(409)
+        .send(
+          body(
+            "duplicate_client_event",
+            "این پرداخت پیش‌تر با همین کلید ثبت شده است.",
+            correlationId,
+          ),
+        );
+    }
+
     if (dbError.code === "P0001") {
       const rule = dbError.message ?? "قاعده سیستم این عملیات را رد کرد";
       req.log.info({ correlationId, rule }, "قاعده دیتابیس درخواست را رد کرد");

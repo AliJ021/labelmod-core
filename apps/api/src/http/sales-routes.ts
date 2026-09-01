@@ -370,16 +370,62 @@ export function registerSalesRoutes(app: FastifyInstance, deps: SalesRouteDeps):
     await assertInvoiceInScope(db, s.userId, id, invoices);
     await requireForSession(db, s, "sale.create");
 
-    const result = await invoices.addPayment({
-      invoiceId: id,
-      methodCode: body.methodCode,
-      amount: parseMoney(body.amount),
-      actorId: s.userId,
-      ...(body.refNo === undefined ? {} : { refNo: body.refNo }),
-      ...(body.accountId === undefined ? {} : { accountId: body.accountId }),
-      ...(idempotencyKey(req) === undefined ? {} : { clientEventId: idempotencyKey(req) }),
+    // Replay واقعی، نه فقط جلوگیری از درج دوم.
+    //
+    // پیش از این، کلید فقط در `client_event_id` می‌نشست و قید یکتایی
+    // پستگرس درج دوم را می‌شکست — یعنی پول دوباره ثبت نمی‌شد (خوب) ولی
+    // کاربر خطای سرور می‌دید (بد). دفاعی که شبیه خرابی گزارش شود، در
+    // عمل خاموش است.
+    //
+    // هر دو لایه سر جایشان می‌مانند: Inbox پاسخ درست را برمی‌گرداند و
+    // قید یکتایی آخرین سد است.
+    const key = idempotencyKey(req);
+    const out = await runOnce<string>(db, {
+      key,
+      source: "api.invoice.payment",
+      payload: {
+        actorId: s.userId,
+        invoiceId: id,
+        methodCode: body.methodCode,
+        amount: body.amount,
+        refNo: body.refNo ?? null,
+        accountId: body.accountId ?? null,
+      },
+      run: async (trx) => {
+        const paymentId = await invoices.addPaymentIn(trx, {
+          invoiceId: id,
+          methodCode: body.methodCode,
+          amount: parseMoney(body.amount),
+          actorId: s.userId,
+          ...(body.refNo === undefined ? {} : { refNo: body.refNo }),
+          ...(body.accountId === undefined ? {} : { accountId: body.accountId }),
+          ...(key === undefined ? {} : { clientEventId: key }),
+        });
+        return { value: paymentId, ref: paymentId };
+      },
+      replay: async (ref) => ref,
     });
-    return reply.code(201).send(result);
+
+    // نمای فعلی سرور، نه آنچه کلاینت حساب کرده.
+    //
+    // `invoice.paidAmount` روی پیش‌نویس عمداً صفر است: آن ستون را
+    // `finalize_invoice` می‌نویسد. «چقدر تا حالا گرفته‌ایم» عدد دیگری
+    // است و از `paidSoFar` می‌آید — جمع پرداخت‌های **واقعاً موفق**؛
+    // «نامشخص» و «در انتظار» پول شمرده نمی‌شوند.
+    //
+    // دو نام جدا، چون دو چیز جدا هستند. اگر یکی می‌شدند، صندوق روی
+    // پیش‌نویس عدد اشتباه نشان می‌داد یا فاکتور نهایی عدد دوباره
+    // حساب‌شده.
+    const inv = await invoices.byId(id);
+    if (!inv) throw new InvoiceError("invoice_not_found", "فاکتور یافت نشد", 404);
+    const received = await invoices.paidSoFar(id);
+
+    return reply.code(out.replayed ? 200 : 201).send({
+      paymentId: out.value,
+      replayed: out.replayed,
+      receivedAmount: serializeMoney(received),
+      invoice: invoiceToJson(inv),
+    });
   });
 
   /**
