@@ -268,6 +268,9 @@
 .lines li {
   display: flex;
   align-items: center;
+  /* روی موبایل سطر می‌شکند به‌جای اینکه نام کالا را له کند — و پنل
+     تخفیف هم از همین‌جا خط خودش را می‌گیرد. */
+  flex-wrap: wrap;
   gap: var(--s-3);
   padding: var(--s-3) 0;
   border-bottom: 1px solid var(--rule);
@@ -685,9 +688,106 @@ select.set-input {
 
 /* پنل تخفیف سطر — داخل خودِ سطر باز می‌شود، نه در یک مودال.
    صندوق‌دار وسط صف نباید تمرکزش را از سبد بردارد. */
+/* سطر سبد یک **flex** است، نه grid — پس `grid-column` اینجا هیچ
+   کاری نمی‌کرد و پنل لای دکمه‌ها فشرده می‌شد. `flex-basis: 100%` روی
+   ظرفِ wrap‌شونده همان کاری را می‌کند که انتظار می‌رفت. */
 .line-discount {
-  grid-column: 1 / -1;
+  flex-basis: 100%;
   padding: var(--s-3);
   margin-top: var(--s-2);
   border-radius: var(--r-sm);
+}
+
+
+/* ── موبایل ────────────────────────────────────────────────────────
+   سرور بیرون از فروشگاه است، پس وقتی برق می‌رود موبایل با اینترنت
+   همراه همچنان وصل است و فروش ادامه پیدا می‌کند. یعنی این چیدمان یک
+   راحتی نیست — تنها راهِ فروش در آن ساعت است. */
+
+@media (max-width: 560px) {
+  .app {
+    padding-inline: var(--s-3);
+  }
+
+  /* نوار بالا روی گوشی دو ردیف می‌شود: بخش‌ها، بعد ابزارها. بدون
+     این، نام کاربر و سه دکمه از لبه بیرون می‌زدند. */
+  .topbar {
+    gap: var(--s-2);
+    padding: var(--s-2);
+  }
+
+  .zones {
+    margin-inline-start: 0;
+    width: 100%;
+    overflow-x: auto;
+    /* اسکرول افقی فقط برای نوار بخش‌ها، نه برای کل صفحه. */
+    scrollbar-width: none;
+  }
+
+  .zones::-webkit-scrollbar {
+    display: none;
+  }
+
+  .zones button,
+  .tool {
+    padding: 0 var(--s-3);
+    white-space: nowrap;
+  }
+
+  .tools {
+    width: 100%;
+    overflow-x: auto;
+    scrollbar-width: none;
+  }
+
+  .tools::-webkit-scrollbar {
+    display: none;
+  }
+
+  /* نام کالا خط خودش را می‌گیرد و تعداد و مبلغ زیرش — روی عرض ۳۶۰
+     پیکسل، همه در یک خط یعنی نام کالا به دو کاراکتر می‌رسید. */
+  .line-name {
+    flex-basis: 100%;
+  }
+
+  .line-total {
+    margin-inline-start: auto;
+  }
+
+  .auth-card {
+    width: 100%;
+  }
+}
+
+/* ── دوربین ────────────────────────────────────────────────────────
+   نسبت ۴:۳ ثابت است تا باز شدن دوربین، سبد را زیر خط تا نیندازد. */
+
+.cam {
+  padding: var(--s-3);
+  margin-bottom: var(--s-4);
+  border-radius: var(--r-md);
+}
+
+.cam-frame {
+  position: relative;
+  aspect-ratio: 4 / 3;
+  max-height: 40vh;
+  overflow: hidden;
+  border-radius: var(--r-sm);
+  background: var(--bg-deep);
+}
+
+.cam-frame video {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+
+/* کادر هدف — بدون آن کاربر نمی‌داند بارکد را کجا بگیرد. */
+.cam-target {
+  position: absolute;
+  inset: 30% 12%;
+  border: 2px solid var(--accent);
+  border-radius: var(--r-xs);
+  box-shadow: 0 0 0 100vmax rgb(0 0 0 / 35%);
 }

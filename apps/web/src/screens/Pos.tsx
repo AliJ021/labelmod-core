@@ -27,6 +27,7 @@
  * و برای عمل بعدی تازه می‌شود — `lib/action-key.ts`.
  */
 import { useCallback, useEffect, useRef, useState } from "react";
+import { CameraScan } from "../components/CameraScan.tsx";
 import { Glass, Solid } from "../components/Glass.tsx";
 import { ApiError } from "../lib/api.ts";
 import { ActionKeys, ScanCounter } from "../lib/action-key.ts";
@@ -60,6 +61,7 @@ export function Pos() {
   const [note, setNote] = useState<string | null>(null);
   const [closing, setClosing] = useState(false);
   const [discounting, setDiscounting] = useState<string | null>(null);
+  const [camera, setCamera] = useState(false);
 
   // بیرون از چرخه Render: کلیدی که داخل Render ساخته شود، دقیقاً روی
   // همان Retry که باید نجاتش بدهد عوض می‌شود.
@@ -344,6 +346,11 @@ export function Pos() {
       <Glass as="header" radius="md" className="pos-bar" refract={false}>
         <ManualScan onSubmit={(code) => void addByBarcode(code)} disabled={busy} />
         <span className="pill">{count} قلم</span>
+        {/* دوربین فقط وقتی باز می‌شود که کاربر بخواهد — روی دسکتاپ
+            با بارکدخوان سیمی، هیچ‌وقت. */}
+        <button type="button" className="tool" onClick={() => setCamera((v) => !v)}>
+          {camera ? "بستن دوربین" : "دوربین"}
+        </button>
         <button type="button" className="tool" onClick={() => setClosing((v) => !v)}>
           بستن شیفت
         </button>
@@ -362,6 +369,10 @@ export function Pos() {
         <p className="solid pos-alert" role="status">
           <span className="dot dot--good" aria-hidden="true">●</span> {note}
         </p>
+      ) : null}
+
+      {camera ? (
+        <CameraScan onCode={(code) => void addByBarcode(code)} onClose={() => setCamera(false)} />
       ) : null}
 
       {closing ? (
