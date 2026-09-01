@@ -82,4 +82,40 @@ export function registerScopeRoutes(app: FastifyInstance, deps: ScopeRouteDeps):
       })),
     };
   });
+
+  /**
+   * روش‌های پرداخت فعال.
+   *
+   * صندوق باید بداند «نقدی» چه کدی دارد. تنها جای این کد امروز
+   * `db/seed/040_reference.sql` است — یعنی بدون این مسیر، کلاینت باید
+   * رشته «cash» را در خودش می‌نوشت.
+   *
+   * `kind` برمی‌گردد چون یک مقدار **اسکیما** است (در CHECK جدول
+   * `payment_method`)، نه یک ردیف Seed. کلاینت با `kind === 'cash'`
+   * روش نقدی را پیدا می‌کند؛ اگر بیش از یکی بود، از کاربر می‌پرسد.
+   *
+   * `fee_percent` و `settlement_days` عمداً بیرون نمی‌روند: قرارداد
+   * PSP داده داخلی است و کارمزد واقعی **به‌ازای هر پایانه** در
+   * `treasury.account` می‌نشیند، نه اینجا. `requires_ref` برمی‌گردد
+   * چون ستون واقعی همین جدول است و فرم پرداخت بدون آن نمی‌داند شماره
+   * پیگیری بخواهد یا نه.
+   */
+  app.get("/payment-methods", async (req) => {
+    session(req);
+    const rows = await db
+      .selectFrom("treasury.payment_method")
+      .select(["code", "name", "kind", "requires_ref"])
+      .where("is_active", "=", true)
+      .orderBy("code")
+      .execute();
+
+    return {
+      methods: rows.map((m) => ({
+        code: m.code,
+        name: m.name,
+        kind: m.kind,
+        requiresRef: m.requires_ref,
+      })),
+    };
+  });
 }

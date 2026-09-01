@@ -188,6 +188,51 @@ describe("آمادگی API صندوق", { skip }, () => {
     assert.deepEqual(r.json().branches, []);
   });
 
+  // ── روش‌های پرداخت ──────────────────────────────────────────────
+
+  test("GET /payment-methods بدون نشست ۴۰۱ می‌دهد", async () => {
+    const r = await app.inject({ method: "GET", url: "/payment-methods" });
+    assert.equal(r.statusCode, 401);
+  });
+
+  test("همه روش‌های فعال برمی‌گردند و روش نقدی از kind پیدا می‌شود", async () => {
+    const s = await loginAs(cashier);
+    const r = await app.inject({ method: "GET", url: "/payment-methods", ...s });
+    assert.equal(r.statusCode, 200, r.body);
+    const methods = r.json().methods as Array<{
+      code: string;
+      name: string;
+      kind: string;
+      requiresRef: boolean;
+    }>;
+
+    const active = await sql<{ n: string }>`
+      SELECT count(*)::text AS n FROM treasury.payment_method WHERE is_active`.execute(handle.db);
+    assert.equal(methods.length, Number(active.rows[0]!.n), "همه روش‌های فعال باید بیایند");
+
+    const cash = methods.filter((m) => m.kind === "cash");
+    assert.equal(cash.length, 1, "کلاینت باید بتواند روش نقدی را از kind پیدا کند");
+    assert.equal(cash[0]!.requiresRef, false);
+    assert.ok(cash[0]!.name.length > 0, "نام فارسی لازم است");
+
+    const card = methods.find((m) => m.kind === "card_reader");
+    assert.equal(card?.requiresRef, true, "requiresRef از ستون واقعی جدول می‌آید");
+  });
+
+  test("روش غیرفعال نمی‌آید و داده داخلی افشا نمی‌شود", async () => {
+    const s = await loginAs(cashier);
+    await sql`UPDATE treasury.payment_method SET is_active = false WHERE code = 'points'`
+      .execute(handle.db);
+    const methods = (await app.inject({ method: "GET", url: "/payment-methods", ...s })).json()
+      .methods as Array<Record<string, unknown>>;
+    assert.ok(!methods.some((m) => m["code"] === "points"));
+    for (const m of methods) {
+      assert.deepEqual(Object.keys(m).sort(), ["code", "kind", "name", "requiresRef"]);
+    }
+    await sql`UPDATE treasury.payment_method SET is_active = true WHERE code = 'points'`
+      .execute(handle.db);
+  });
+
   test("شناسه‌های پاسخ واقعاً برای فروش کار می‌کنند", async () => {
     const s = await loginAs(cashier);
     const branches = (await app.inject({ method: "GET", url: "/branches", ...s })).json()
