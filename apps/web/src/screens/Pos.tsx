@@ -58,6 +58,7 @@ export function Pos() {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [note, setNote] = useState<string | null>(null);
+  const [closing, setClosing] = useState(false);
 
   // بیرون از چرخه Render: کلیدی که داخل Render ساخته شود، دقیقاً روی
   // همان Retry که باید نجاتش بدهد عوض می‌شود.
@@ -258,6 +259,27 @@ export function Pos() {
       scans.current.reset();
     });
 
+  const closeShift = (countedCash: string, shiftNote: string) =>
+    guarded(async () => {
+      if (!shift) return;
+      const done = await keys.current.run(`close:${shift.id}`, (key) =>
+        pos.closeShift(
+          shift.id,
+          { countedCash, ...(shiftNote === "" ? {} : { note: shiftNote }) },
+          { idempotencyKey: key },
+        ),
+      );
+      const variance = done.variance === null ? 0n : parseRial(done.variance);
+      setNote(
+        variance === 0n
+          ? "شیفت بسته شد — بدون مغایرت."
+          : `شیفت بسته شد. مغایرت: ${toman(variance)} تومان.`,
+      );
+      setShift(null);
+      setClosing(false);
+      forgetCart();
+    });
+
   const abandon = () =>
     guarded(async () => {
       if (!invoice) return;
@@ -309,6 +331,9 @@ export function Pos() {
       <Glass as="header" radius="md" className="pos-bar" refract={false}>
         <ManualScan onSubmit={(code) => void addByBarcode(code)} disabled={busy} />
         <span className="pill">{count} قلم</span>
+        <button type="button" className="tool" onClick={() => setClosing((v) => !v)}>
+          بستن شیفت
+        </button>
       </Glass>
 
       {/* عنصر ساده با کلاس `solid`، نه کامپوننت `Solid`: آن `role`
@@ -324,6 +349,15 @@ export function Pos() {
         <p className="solid pos-alert" role="status">
           <span className="dot dot--good" aria-hidden="true">●</span> {note}
         </p>
+      ) : null}
+
+      {closing ? (
+        <CloseShiftPanel
+          busy={busy}
+          openCart={lines.length > 0}
+          onClose={(cash, n) => void closeShift(cash, n)}
+          onCancel={() => setClosing(false)}
+        />
       ) : null}
 
       <div className="pos-body">
@@ -527,6 +561,68 @@ function ManualScan({
         />
       </label>
     </form>
+  );
+}
+
+/**
+ * بستن شیفت — سند فروش، بهای تمام‌شده و مغایرت اینجا زده می‌شوند.
+ *
+ * مجوزش `shift.close` است و **جدا از فروش**: صندوق‌داری که می‌تواند
+ * بفروشد لزوماً نباید بتواند کشو را ببندد. اگر نداشته باشد، سرور ۴۰۳
+ * می‌دهد و همان پیام فارسی بالای صفحه می‌نشیند — دکمه را پنهان
+ * نمی‌کنیم چون `identity.can()` تنها مرجع است و کپی‌کردن قاعده‌اش در
+ * UI یعنی دو تعریف.
+ */
+function CloseShiftPanel({
+  busy,
+  openCart,
+  onClose,
+  onCancel,
+}: {
+  busy: boolean;
+  openCart: boolean;
+  onClose: (countedCash: string, note: string) => void;
+  onCancel: () => void;
+}) {
+  const [cash, setCash] = useState("");
+  const [text, setText] = useState("");
+  const rial = rialFromTomanInput(cash);
+
+  return (
+    <Solid className="pad stack" style={{ gap: "var(--s-3)" }}>
+      <h2 style={{ margin: 0 }}>بستن شیفت</h2>
+      {openCart ? (
+        <p className="auth-error" role="alert">
+          <span className="dot dot--warn" aria-hidden="true">●</span> سبد باز دارید. تا
+          نهایی‌سازی یا رها کردنش، شیفت بسته نمی‌شود.
+        </p>
+      ) : null}
+      <label className="auth-field">
+        <span>پول شمرده‌شده در کشو (تومان)</span>
+        <input
+          type="text"
+          inputMode="numeric"
+          value={cash}
+          onChange={(e) => setCash(e.target.value)}
+          autoFocus
+        />
+      </label>
+      <label className="auth-field">
+        <span>توضیح (اختیاری)</span>
+        <input value={text} onChange={(e) => setText(e.target.value)} />
+      </label>
+      <button
+        type="button"
+        className="btn btn--primary"
+        disabled={busy || rial === null}
+        onClick={() => rial !== null && onClose(rial.toString(), text.trim())}
+      >
+        {busy ? "…" : "بستن و شمارش"}
+      </button>
+      <button type="button" className="btn btn--quiet" onClick={onCancel} disabled={busy}>
+        انصراف
+      </button>
+    </Solid>
   );
 }
 
