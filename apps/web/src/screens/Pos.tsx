@@ -13,117 +13,597 @@
  * اعداد `solid`اند. این تصمیم را با «زیباتر می‌شود» عوض نکنید — بودجه
  * افزودن قلم به سبد **زیر ۱۰۰ میلی‌ثانیه** است و هر افکتی که بشکندش
  * حذف می‌شود.
+ *
+ * ── قواعدی که این صفحه نمی‌تواند دورشان بزند ──────────────────────
+ *
+ * **هیچ عددی اینجا حساب نمی‌شود.** جمع سطر، جمع فاکتور و قابل پرداخت
+ * همه از پاسخ سرور می‌آیند و در SQL ساخته شده‌اند. تنها چیزی که این
+ * صفحه حساب می‌کند «مانده» و «باقی پول» است — و آن هم در `lib/cart.ts`
+ * با `bigint` و تست.
+ *
+ * **قیمت هرگز فرستاده نمی‌شود.** صندوق فقط بارکد و تعداد می‌دهد.
+ *
+ * **هر عمل کاربر یک کلید Idempotency دارد** که روی Retry ثابت می‌ماند
+ * و برای عمل بعدی تازه می‌شود — `lib/action-key.ts`.
  */
-import { useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { Glass, Solid } from "../components/Glass.tsx";
-import { toman } from "../lib/money.ts";
+import { ApiError } from "../lib/api.ts";
+import { ActionKeys, ScanCounter } from "../lib/action-key.ts";
+import { canFinalize, changeRial, remainingRial, steppedQty } from "../lib/cart.ts";
+import { parseRial, rialFromTomanInput, toman } from "../lib/money.ts";
+import { pos, type Branch, type Invoice, type PaymentMethod, type Shift } from "../lib/pos.ts";
+import { ScanBuffer } from "../lib/scanner.ts";
 
-interface Line {
-  id: number;
-  name: string;
-  variant: string;
-  qty: number;
-  unit: bigint;
+function message(err: unknown): string {
+  if (err instanceof ApiError) return err.message;
+  return "ارتباط با سرور برقرار نشد.";
 }
 
-const START: Line[] = [
-  { id: 1, name: "پیراهن کلاسیک", variant: "مشکی · L", unit: 32_000_000n, qty: 1 },
-  { id: 2, name: "شلوار جین", variant: "سرمه‌ای · ۳۲", unit: 48_000_000n, qty: 2 },
-];
+/** انبار پیش‌فرض: قفسه فروشگاه، نه انبار پشتیبان یا کالای معیوب. */
+function defaultWarehouse(b: Branch) {
+  return b.warehouses.find((w) => w.kind === "store") ?? b.warehouses[0];
+}
 
 export function Pos() {
-  const [lines, setLines] = useState<Line[]>(START);
-  const [scan, setScan] = useState("");
+  const [branches, setBranches] = useState<Branch[]>([]);
+  const [methods, setMethods] = useState<PaymentMethod[]>([]);
+  const [branchId, setBranchId] = useState("");
+  const [warehouseId, setWarehouseId] = useState("");
+  const [shift, setShift] = useState<Shift | null>(null);
+  const [invoice, setInvoice] = useState<Invoice | null>(null);
+  const [received, setReceived] = useState(0n);
+  const [ready, setReady] = useState(false);
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [note, setNote] = useState<string | null>(null);
 
-  const total = lines.reduce((sum, l) => sum + l.unit * BigInt(l.qty), 0n);
-  const count = lines.reduce((n, l) => n + l.qty, 0);
+  // بیرون از چرخه Render: کلیدی که داخل Render ساخته شود، دقیقاً روی
+  // همان Retry که باید نجاتش بدهد عوض می‌شود.
+  const keys = useRef(new ActionKeys());
+  const scans = useRef(new ScanCounter());
+  const buffer = useRef(new ScanBuffer());
 
-  function bump(id: number, delta: number) {
-    setLines((prev) =>
-      prev
-        .map((l) => (l.id === id ? { ...l, qty: Math.max(0, l.qty + delta) } : l))
-        .filter((l) => l.qty > 0),
+  const branch = branches.find((b) => b.id === branchId) ?? null;
+
+  // ── بارگذاری اولیه ────────────────────────────────────────────────
+  useEffect(() => {
+    void (async () => {
+      try {
+        const [b, m] = await Promise.all([pos.branches(), pos.paymentMethods()]);
+        setBranches(b.branches);
+        setMethods(m.methods);
+        // یک شعبه یعنی انتخابی در کار نیست. صندوق‌دار نباید هر روز
+        // یک فهرست یک‌گزینه‌ای را تأیید کند.
+        const only = b.branches.length === 1 ? b.branches[0] : undefined;
+        if (only) {
+          setBranchId(only.id);
+          setWarehouseId(defaultWarehouse(only)?.id ?? "");
+        }
+      } catch (err) {
+        setError(message(err));
+      } finally {
+        setReady(true);
+      }
+    })();
+  }, []);
+
+  // شیفت جاری همین کاربر در همین شعبه.
+  useEffect(() => {
+    if (branchId === "") return;
+    void (async () => {
+      try {
+        setShift(await pos.currentShift(branchId));
+      } catch (err) {
+        setError(message(err));
+      }
+    })();
+  }, [branchId]);
+
+  /** فاکتور پیش‌نویس، در صورت نبود ساخته می‌شود. */
+  const ensureInvoice = useCallback(async (): Promise<Invoice> => {
+    if (invoice && invoice.status === "draft") return invoice;
+    const created = await keys.current.run(`create:${shift?.id ?? branchId}`, (key) =>
+      pos.createInvoice({ branchId, warehouseId, channel: "pos" }, { idempotencyKey: key }),
+    );
+    setInvoice(created);
+    setReceived(0n);
+    scans.current.reset();
+    return created;
+  }, [invoice, shift, branchId, warehouseId]);
+
+  const addByBarcode = useCallback(
+    async (barcode: string) => {
+      setError(null);
+      setBusy(true);
+      try {
+        const inv = await ensureInvoice();
+        // هر کشیدن اسکنر یک عمل تازه است: بدون شمارنده، اسکن دوم
+        // Replay اسکن اول می‌شد و تعداد روی یک می‌ماند.
+        const out = await keys.current.run(scans.current.next(inv.id), (key) =>
+          pos.scan(inv.id, { barcode, qty: "1" }, { idempotencyKey: key }),
+        );
+        setInvoice(out.invoice);
+      } catch (err) {
+        setError(message(err));
+      } finally {
+        setBusy(false);
+      }
+    },
+    [ensureInvoice],
+  );
+
+  // ── بارکدخوان ─────────────────────────────────────────────────────
+  //
+  // در فاز Capture و روی کل سند، نه روی یک ورودی: اسکنر خودش را
+  // کیبورد معرفی می‌کند و ممکن است هر جای صفحه فوکوس باشد. تصمیم
+  // «اسکن بود یا تایپ» در `ScanBuffer` است و از روی سرعت گرفته
+  // می‌شود، نه از روی فوکوس.
+  useEffect(() => {
+    if (!shift) return;
+    function onKey(e: KeyboardEvent) {
+      const step = buffer.current.push(e.key, e.timeStamp);
+      if (step.kind === "consumed") {
+        // اسکن در جریان است — نگذار کاراکترها در فیلدی که فوکوس دارد بریزند.
+        e.preventDefault();
+      } else if (step.kind === "scanned") {
+        e.preventDefault();
+        void addByBarcode(step.barcode);
+      }
+    }
+    document.addEventListener("keydown", onKey, true);
+    return () => document.removeEventListener("keydown", onKey, true);
+  }, [shift, addByBarcode]);
+
+  // ── عمل‌ها ────────────────────────────────────────────────────────
+
+  async function guarded(fn: () => Promise<void>) {
+    if (busy) return;
+    setBusy(true);
+    setError(null);
+    try {
+      await fn();
+    } catch (err) {
+      setError(message(err));
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  const openShift = (openingCash: string) =>
+    guarded(async () => setShift(await pos.openShift({ branchId, openingCash })));
+
+  const changeQty = (lineId: string, current: string, delta: number) =>
+    guarded(async () => {
+      if (!invoice) return;
+      const next = steppedQty(current, delta);
+      // رسیدن به صفر یعنی حذف — یک عمل دیگر با ردّ حسابرسی متفاوت.
+      setInvoice(
+        next === null
+          ? await pos.removeLine(invoice.id, lineId)
+          : await pos.setLineQty(invoice.id, lineId, next),
+      );
+    });
+
+  const removeLine = (lineId: string) =>
+    guarded(async () => {
+      if (!invoice) return;
+      setInvoice(await pos.removeLine(invoice.id, lineId));
+    });
+
+  const takePayment = (methodCode: string, amountRial: bigint, refNo?: string) =>
+    guarded(async () => {
+      if (!invoice) return;
+      const out = await keys.current.run(`pay:${invoice.id}:${received}`, (key) =>
+        pos.pay(
+          invoice.id,
+          {
+            methodCode,
+            amount: amountRial.toString(),
+            ...(refNo === undefined || refNo === "" ? {} : { refNo }),
+          },
+          { idempotencyKey: key },
+        ),
+      );
+      setInvoice(out.invoice);
+      // «چقدر گرفته‌ایم» از جمع سرور می‌آید، نه از مبلغی که فرستادیم.
+      setReceived(parseRial(out.receivedAmount));
+    });
+
+  const finalize = () =>
+    guarded(async () => {
+      if (!invoice) return;
+      const done = await keys.current.run(`finalize:${invoice.id}`, (key) =>
+        pos.finalize(invoice.id, { idempotencyKey: key }),
+      );
+      setNote(`فاکتور ${done.number ?? ""} ثبت شد.`);
+      setInvoice(null);
+      setReceived(0n);
+      scans.current.reset();
+    });
+
+  const abandon = () =>
+    guarded(async () => {
+      if (!invoice) return;
+      await pos.cancel(invoice.id, "رها شد");
+      setInvoice(null);
+      setReceived(0n);
+      scans.current.reset();
+    });
+
+  // ── نماها ─────────────────────────────────────────────────────────
+
+  if (!ready) return <Solid className="pad">در حال بارگذاری…</Solid>;
+
+  if (branches.length === 0) {
+    return (
+      <Solid className="pad">
+        <p style={{ margin: 0 }}>
+          به هیچ شعبه‌ای دسترسی ندارید. از مدیر بخواهید نقش شما را به یک شعبه وصل کند.
+        </p>
+      </Solid>
     );
   }
+
+  if (branchId === "" || warehouseId === "") {
+    return (
+      <SetupPanel
+        branches={branches}
+        branchId={branchId}
+        onPick={(b, w) => {
+          setBranchId(b);
+          setWarehouseId(w);
+        }}
+      />
+    );
+  }
+
+  if (!shift) {
+    return <OpenShiftPanel busy={busy} error={error} onOpen={openShift} branch={branch} />;
+  }
+
+  const payable = invoice ? parseRial(invoice.payableAmount) : 0n;
+  const lines = invoice?.lines ?? [];
+  const count = lines.reduce((n, l) => n + Number(l.qty), 0);
 
   return (
     <div className="pos">
       {/* تنها سطح شیشه‌ای این صفحه: نوار بالا، که لایه کنترلی است. */}
       <Glass as="header" radius="md" className="pos-bar" refract={false}>
-        <label className="scan">
-          <span className="sr-only">بارکد کالا</span>
-          <input
-            value={scan}
-            onChange={(e) => setScan(e.target.value)}
-            placeholder="بارکد را اسکن کنید یا کد کالا را بزنید"
-            inputMode="numeric"
-            autoFocus
-            autoComplete="off"
-          />
-        </label>
+        <ManualScan onSubmit={(code) => void addByBarcode(code)} disabled={busy} />
         <span className="pill">{count} قلم</span>
       </Glass>
 
+      {/* عنصر ساده با کلاس `solid`، نه کامپوننت `Solid`: آن `role`
+          نمی‌گیرد و اینجا اعلام زنده لازم است تا صندوق‌دار خطا را
+          بشنود، نه فقط ببیند. سطح شیشه‌ای هم داخلش نیست که Context
+          لازم شود. */}
+      {error ? (
+        <p className="solid pos-alert" role="alert">
+          <span className="dot dot--crit" aria-hidden="true">●</span> {error}
+        </p>
+      ) : null}
+      {note ? (
+        <p className="solid pos-alert" role="status">
+          <span className="dot dot--good" aria-hidden="true">●</span> {note}
+        </p>
+      ) : null}
+
       <div className="pos-body">
-        {/* سبد: مات، پرتضاد، عدد هم‌عرض. */}
         <Solid as="section" className="cart">
           <h2 className="sr-only">سبد خرید</h2>
           <ul className="lines">
             {lines.map((l) => (
               <li key={l.id}>
                 <div className="line-name">
-                  <strong>{l.name}</strong>
-                  <span className="muted small">{l.variant}</span>
+                  <strong>{l.productName}</strong>
+                  <span className="muted small">{l.sku}</span>
                 </div>
                 <div className="qty">
                   <button
                     type="button"
-                    onClick={() => bump(l.id, -1)}
-                    aria-label={`کم کردن ${l.name}`}
+                    onClick={() => void changeQty(l.id, l.qty, -1)}
+                    aria-label={`کم کردن ${l.productName}`}
+                    disabled={busy}
                   >
                     −
                   </button>
                   <span className="num" aria-live="polite">
-                    {l.qty}
+                    {Number(l.qty)}
                   </span>
                   <button
                     type="button"
-                    onClick={() => bump(l.id, 1)}
-                    aria-label={`اضافه کردن ${l.name}`}
+                    onClick={() => void changeQty(l.id, l.qty, 1)}
+                    aria-label={`اضافه کردن ${l.productName}`}
+                    disabled={busy}
                   >
                     +
                   </button>
                 </div>
-                <span className="num line-total">
-                  {toman(l.unit * BigInt(l.qty))}
-                </span>
+                <span className="num line-total">{toman(parseRial(l.netAmount))}</span>
+                <button
+                  type="button"
+                  className="line-drop"
+                  onClick={() => void removeLine(l.id)}
+                  aria-label={`حذف ${l.productName}`}
+                  disabled={busy}
+                >
+                  ✕
+                </button>
               </li>
             ))}
-            {lines.length === 0 && <li className="empty">سبد خالی است</li>}
+            {lines.length === 0 && <li className="empty">سبد خالی است — بارکد را اسکن کنید</li>}
           </ul>
         </Solid>
 
-        <Solid as="aside" className="pay">
-          <div className="total">
-            <span className="muted">قابل پرداخت</span>
-            <strong className="num total-value">{toman(total)}</strong>
-            <span className="muted small">تومان</span>
-          </div>
-          <button type="button" className="btn btn--primary">
-            دریافت وجه
-          </button>
-          <button type="button" className="btn">
-            نسیه
-          </button>
-          <button
-            type="button"
-            className="btn btn--quiet"
-            onClick={() => setLines([])}
-          >
-            رها کردن سبد
-          </button>
-        </Solid>
+        <PayPanel
+          methods={methods}
+          payable={payable}
+          received={received}
+          canFinalize={canFinalize({
+            status: invoice?.status ?? "none",
+            lineCount: lines.length,
+            payable,
+            received,
+          })}
+          busy={busy}
+          hasCart={invoice !== null && lines.length > 0}
+          onPay={(code, amount, ref) => void takePayment(code, amount, ref)}
+          onFinalize={() => void finalize()}
+          onAbandon={() => void abandon()}
+        />
       </div>
     </div>
+  );
+}
+
+/** انتخاب شعبه و انبار — فقط وقتی بیش از یکی باشد. */
+function SetupPanel({
+  branches,
+  branchId,
+  onPick,
+}: {
+  branches: Branch[];
+  branchId: string;
+  onPick: (branchId: string, warehouseId: string) => void;
+}) {
+  const picked = branches.find((b) => b.id === branchId) ?? null;
+  return (
+    <Solid className="pad stack" style={{ gap: "var(--s-3)" }}>
+      <h2 style={{ margin: 0 }}>شعبه و انبار</h2>
+      <div className="stack" style={{ gap: "var(--s-2)" }}>
+        {branches.map((b) => (
+          <button
+            key={b.id}
+            type="button"
+            className={b.id === branchId ? "btn btn--primary" : "btn"}
+            onClick={() => onPick(b.id, defaultWarehouse(b)?.id ?? "")}
+          >
+            {b.name} <span className="muted small">{b.code}</span>
+          </button>
+        ))}
+      </div>
+      {picked && picked.warehouses.length > 1 ? (
+        <>
+          <h3 style={{ margin: 0 }}>انبار</h3>
+          <div className="stack" style={{ gap: "var(--s-2)" }}>
+            {picked.warehouses.map((w) => (
+              <button
+                key={w.id}
+                type="button"
+                className="btn"
+                onClick={() => onPick(picked.id, w.id)}
+              >
+                {w.name} <span className="muted small">{w.code}</span>
+              </button>
+            ))}
+          </div>
+        </>
+      ) : null}
+    </Solid>
+  );
+}
+
+/** باز کردن شیفت — بدون آن هیچ فروشی ثبت نمی‌شود. */
+function OpenShiftPanel({
+  branch,
+  busy,
+  error,
+  onOpen,
+}: {
+  branch: Branch | null;
+  busy: boolean;
+  error: string | null;
+  onOpen: (openingCash: string) => void;
+}) {
+  const [cash, setCash] = useState("0");
+  const rial = rialFromTomanInput(cash);
+  return (
+    <Solid className="pad stack" style={{ gap: "var(--s-3)" }}>
+      <h2 style={{ margin: 0 }}>شیفت باز نیست</h2>
+      <p className="muted" style={{ margin: 0 }}>
+        {branch?.name} — موجودی ابتدای کشو را وارد کنید.
+      </p>
+      <label className="auth-field">
+        <span>موجودی اولیه (تومان)</span>
+        {/* `type="text"` نه `number`: صفحه‌کلید فارسی «۱۵۰۰۰» می‌فرستد
+            و ورودی عددی مرورگر آن را دور می‌اندازد. */}
+        <input
+          type="text"
+          inputMode="numeric"
+          value={cash}
+          onChange={(e) => setCash(e.target.value)}
+        />
+      </label>
+      {error ? (
+        <p className="auth-error" role="alert">
+          <span className="dot dot--crit" aria-hidden="true">●</span> {error}
+        </p>
+      ) : null}
+      <button
+        type="button"
+        className="btn btn--primary"
+        disabled={busy || rial === null}
+        onClick={() => rial !== null && onOpen(rial.toString())}
+      >
+        {busy ? "…" : "باز کردن شیفت"}
+      </button>
+    </Solid>
+  );
+}
+
+/**
+ * ورودی دستی بارکد.
+ *
+ * اسکنر از راه شنونده سراسری کار می‌کند و این فیلد لازمش ندارد؛ ولی
+ * برچسب خط‌خورده و موبایلِ بدون دوربین باید راهی داشته باشند.
+ */
+function ManualScan({
+  onSubmit,
+  disabled,
+}: {
+  onSubmit: (code: string) => void;
+  disabled: boolean;
+}) {
+  const [code, setCode] = useState("");
+  return (
+    <form
+      className="scan"
+      onSubmit={(e) => {
+        e.preventDefault();
+        const v = code.trim();
+        if (v !== "") {
+          onSubmit(v);
+          setCode("");
+        }
+      }}
+    >
+      <label>
+        <span className="sr-only">بارکد کالا</span>
+        <input
+          value={code}
+          onChange={(e) => setCode(e.target.value)}
+          placeholder="بارکد را اسکن کنید یا کد کالا را بزنید"
+          inputMode="numeric"
+          autoComplete="off"
+          disabled={disabled}
+        />
+      </label>
+    </form>
+  );
+}
+
+function PayPanel({
+  methods,
+  payable,
+  received,
+  canFinalize: allowed,
+  busy,
+  hasCart,
+  onPay,
+  onFinalize,
+  onAbandon,
+}: {
+  methods: PaymentMethod[];
+  payable: bigint;
+  received: bigint;
+  canFinalize: boolean;
+  busy: boolean;
+  hasCart: boolean;
+  onPay: (methodCode: string, amount: bigint, refNo?: string) => void;
+  onFinalize: () => void;
+  onAbandon: () => void;
+}) {
+  const [method, setMethod] = useState("");
+  const [amount, setAmount] = useState("");
+  const [refNo, setRefNo] = useState("");
+
+  const remaining = remainingRial(payable, received);
+  const change = changeRial(payable, received);
+  const chosen = methods.find((m) => m.code === method) ?? null;
+
+  // پیش‌فرض مبلغ: همان مانده. رایج‌ترین حالت، پرداخت کامل است.
+  const typed = amount.trim() === "" ? remaining : rialFromTomanInput(amount);
+
+  return (
+    <Solid as="aside" className="pay">
+      <div className="total">
+        <span className="muted">قابل پرداخت</span>
+        <strong className="num total-value">{toman(payable)}</strong>
+        <span className="muted small">تومان</span>
+      </div>
+
+      {received > 0n ? (
+        <p className="muted small" style={{ margin: 0 }}>
+          دریافت‌شده: <span className="num">{toman(received)}</span>
+          {remaining > 0n ? (
+            <>
+              {" · "}مانده: <span className="num">{toman(remaining)}</span>
+            </>
+          ) : null}
+          {change > 0n ? (
+            <>
+              {" · "}باقی پول: <strong className="num">{toman(change)}</strong>
+            </>
+          ) : null}
+        </p>
+      ) : null}
+
+      <div className="stack" style={{ gap: "var(--s-2)" }}>
+        {methods.map((m) => (
+          <button
+            key={m.code}
+            type="button"
+            className={m.code === method ? "btn btn--primary" : "btn"}
+            onClick={() => setMethod(m.code)}
+            disabled={!hasCart || busy}
+          >
+            {m.name}
+          </button>
+        ))}
+      </div>
+
+      {chosen ? (
+        <>
+          <label className="auth-field">
+            <span>مبلغ (تومان) — خالی یعنی همه مانده</span>
+            <input
+              type="text"
+              inputMode="numeric"
+              value={amount}
+              onChange={(e) => setAmount(e.target.value)}
+              placeholder={toman(remaining)}
+            />
+          </label>
+          {chosen.requiresRef ? (
+            <label className="auth-field">
+              <span>شماره پیگیری</span>
+              <input value={refNo} onChange={(e) => setRefNo(e.target.value)} />
+            </label>
+          ) : null}
+          <button
+            type="button"
+            className="btn btn--primary"
+            disabled={busy || typed === null || typed <= 0n || (chosen.requiresRef && refNo === "")}
+            onClick={() => {
+              if (typed !== null && typed > 0n) {
+                onPay(chosen.code, typed, refNo);
+                setAmount("");
+                setRefNo("");
+              }
+            }}
+          >
+            دریافت وجه
+          </button>
+        </>
+      ) : null}
+
+      <button type="button" className="btn btn--primary" disabled={!allowed || busy} onClick={onFinalize}>
+        نهایی‌کردن فاکتور
+      </button>
+      <button type="button" className="btn btn--quiet" disabled={!hasCart || busy} onClick={onAbandon}>
+        رها کردن سبد
+      </button>
+    </Solid>
   );
 }

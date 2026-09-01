@@ -644,3 +644,38 @@ select.set-input {
   color: var(--crit);
   font-size: 0.9rem;
 }
+
+/* ── صندوق: هشدار و حذف قلم ──────────────────────────────────────── */
+
+.pos-alert {
+  display: flex;
+  align-items: center;
+  gap: var(--s-2);
+  margin: 0;
+  padding: var(--s-3);
+  border-radius: var(--r-sm);
+  font-size: 0.95rem;
+}
+
+/* حذف قلم کنار سطر می‌ماند، نه پشت یک منو: صندوق‌دار وسط صف نباید
+   دنبال گزینه بگردد. هدف لمسی کامل، چون همین صفحه روی موبایل هم
+   باز می‌شود. */
+.line-drop {
+  min-width: var(--touch);
+  min-height: var(--touch);
+  color: var(--ink-3);
+  background: transparent;
+  border: 0;
+  border-radius: var(--r-xs);
+  font: inherit;
+  cursor: pointer;
+}
+
+.line-drop:hover:not([disabled]) {
+  color: var(--crit);
+}
+
+.line-drop[disabled] {
+  opacity: 0.4;
+  cursor: default;
+}
