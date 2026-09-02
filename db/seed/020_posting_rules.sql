@@ -69,6 +69,19 @@ INSERT INTO ledger.posting_rule
 ('purchase_receipt','revaluation',       'debit', '1301', NULL, 'تجدید ارزیابی موجودی به نرخ آخرین خرید', 6),
 ('purchase_receipt','revaluation_offset','credit','5102', NULL, 'تعدیل بهای تمام‌شده بابت تجدید ارزیابی', 7),
 
+-- هزینه جانبی‌ای که **به بهای کالا نمی‌رود** (مهاجرت ۰۲۶).
+--
+-- تا آن مهاجرت، `allocation = 'none'` وجود داشت ولی کار نمی‌کرد:
+-- باقی‌مانده گرد کردن تمامش را روی آخرین سطر می‌گذاشت. حالا سطر سند
+-- خودش را دارد.
+--
+-- حساب پیش‌فرض «هزینه حمل و ارسال» است چون رایج‌ترین موردش همان
+-- است، ولی `allow_account_override` روشن است: بسته‌بندی حساب خودش
+-- را دارد (۶۱۰۳) و ترخیص می‌تواند به متفرقه بخورد. **این تنها
+-- مؤلفه‌ای در این رویداد است که حساب می‌گیرد** — موجودی کالا،
+-- مالیات و بدهی هرگز.
+('purchase_receipt','expensed_charge','debit','6102', NULL, 'هزینه جانبی خرید — هزینه دوره، نه بهای کالا', 8),
+
 -- ---------------------------------------------------------------------
 -- برگشت از فروش
 -- ---------------------------------------------------------------------
@@ -206,7 +219,7 @@ UPDATE ledger.posting_rule SET allow_account_override = true
    ('expense_payment',  'from_account'), ('expense_payment',  'expense'),
    ('capital_injection','to_account'),
    ('settlement','bank'),                ('settlement','clearing'),
-   ('purchase_receipt','from_account'),
+   ('purchase_receipt','from_account'), ('purchase_receipt','expensed_charge'),
    ('cheque_clear','bank'),                ('cheque_pay','bank'));
 
 COMMIT;

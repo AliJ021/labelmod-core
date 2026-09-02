@@ -54,7 +54,7 @@ DO $test$
 DECLARE
   BR   uuid := '00000000-0000-7000-8000-000000000001';
   WH   uuid := '00000000-0000-7000-8000-000000000101';
-  v_user uuid; v_sup uuid; v_prod uuid; v_var uuid;
+  v_user uuid; v_sup uuid; v_prod uuid; v_var uuid; v_var2 uuid;
   v_a uuid; v_b uuid; v_c uuid;
   v_no_a text; v_no_b text; v_no_c text;
   v_counter_before bigint; v_counter_after bigint;
@@ -75,6 +75,9 @@ INSERT INTO catalog.product (code, name_internal) VALUES ('P-PR','کالای ت�
 INSERT INTO catalog.variation (product_id, sku, barcode, color, size)
 VALUES (v_prod, 'PR-1', '2000000000015', 'مشکی', 'L')
   RETURNING id INTO v_var;
+INSERT INTO catalog.variation (product_id, sku, barcode, color, size)
+VALUES (v_prod, 'PR-2', '2000000000022', 'سفید', 'M')
+  RETURNING id INTO v_var2;
 
 SELECT last_no INTO v_counter_before
   FROM platform.document_counter
@@ -182,6 +185,62 @@ PERFORM pg_temp.assert_eq('سند رسید با شماره دستی', v_n, 1);
 SELECT on_hand INTO v_n FROM inventory.stock_balance
  WHERE variation_id = v_var AND warehouse_id = WH;
 PERFORM pg_temp.assert_eq('موجودی = ۵+۳+۲+۱', v_n, 11);
+
+-- ── هزینه‌ای که به بهای کالا نمی‌رود ────────────────────────────────
+-- رگرسیون مهاجرت ۰۲۶. تا پیش از آن، هزینه با تخصیص «none» تمامش روی
+-- **آخرین سطر** می‌نشست: گزینه‌ای که می‌گفت «به بها نرو»، همه‌اش را
+-- روی یک قلم دلخواه می‌گذاشت. سند متوازن می‌ماند و هیچ تستی قرمز
+-- نمی‌شد — فقط بهای تمام‌شده آن قلم بی‌دلیل بالا می‌رفت.
+RAISE NOTICE E'\n═══ هزینه با تخصیص «بدون تخصیص» ═══';
+
+-- عدد این بخش به روش قیمت تمام‌شده وابسته است، پس خودش انتخابش
+-- می‌کند: با «آخرین قیمت خرید»، یک سطر تجدید ارزیابی هم به حساب
+-- ۱۳۰۱ می‌خورد و ادعای زیر را مبهم می‌کند.
+PERFORM platform.set_setting('costing.method', '"moving_weighted_average"'::jsonb,
+  'تست: جداکردن هزینه دوره از بهای کالا');
+
+INSERT INTO purchasing.receipt (branch_id, supplier_id, warehouse_id, occurred_at)
+VALUES (BR, v_sup, WH, '2026-06-14') RETURNING id INTO v_b;
+INSERT INTO purchasing.receipt_line (receipt_id, variation_id, qty, unit_price, line_amount)
+VALUES (v_b, v_var, 4, 1000000, 4000000),
+       (v_b, v_var2, 4, 1000000, 4000000);
+
+-- دو هزینه: یکی وارد بها می‌شود، یکی نه.
+INSERT INTO purchasing.receipt_charge
+  (receipt_id, charge_type, amount, allocation, paid_from, payee_type)
+VALUES (v_b, 'حمل', 800000, 'by_value', 'payable', 'other');
+INSERT INTO purchasing.receipt_charge
+  (receipt_id, charge_type, amount, allocation, paid_from, payee_type, expense_account_code)
+VALUES (v_b, 'بسته‌بندی', 500000, 'none', 'payable', 'other', '6103');
+
+SELECT purchasing.post_receipt(v_b, v_user) INTO v_entry;
+
+-- هر سطر فقط سهم خودش از هزینه ۸۰۰٬۰۰۰ را می‌گیرد — نه یک ریال بیشتر.
+SELECT sum(charge_alloc) INTO v_n FROM purchasing.receipt_line WHERE receipt_id = v_b;
+PERFORM pg_temp.assert_eq('تخصیص کل = فقط هزینه واردشونده به بها', v_n, 800000);
+
+SELECT max(charge_alloc) INTO v_n FROM purchasing.receipt_line WHERE receipt_id = v_b;
+PERFORM pg_temp.assert_eq('هیچ سطری هزینه «بدون تخصیص» را نگرفت', v_n, 400000);
+
+-- سطر سند: بسته‌بندی به حسابِ خودش، نه به موجودی کالا.
+SELECT coalesce(sum(debit), 0) INTO v_n FROM ledger.journal_line
+ WHERE entry_id = v_entry AND account_code = '6103';
+PERFORM pg_temp.assert_eq('هزینه دوره روی حساب ۶۱۰۳', v_n, 500000);
+
+SELECT coalesce(sum(debit), 0) INTO v_n FROM ledger.journal_line
+ WHERE entry_id = v_entry AND account_code = '1301';
+PERFORM pg_temp.assert_eq('موجودی کالا = کالا + هزینه واردشونده', v_n, 8800000);
+
+SELECT coalesce(sum(debit) - sum(credit), 0) INTO v_n FROM ledger.journal_line
+ WHERE entry_id = v_entry;
+PERFORM pg_temp.assert_eq('سند همچنان متوازن است', v_n, 0);
+
+-- حساب هزینه روی هزینه‌ای که به بها می‌رود بی‌معناست و رد می‌شود.
+PERFORM pg_temp.assert_raises(
+  'حساب هزینه روی تخصیص by_value رد می‌شود',
+  format($q$INSERT INTO purchasing.receipt_charge
+             (receipt_id, charge_type, amount, allocation, expense_account_code)
+           VALUES (%L::uuid, 'حمل', 1, 'by_value', '6103')$q$, v_b));
 
 RAISE NOTICE E'\n╔══════════════════════════════════════════╗';
 RAISE NOTICE   '║   تست رسید خرید پاس شد                  ║';

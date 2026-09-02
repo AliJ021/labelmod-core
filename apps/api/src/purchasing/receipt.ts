@@ -72,6 +72,12 @@ export interface ReceiptChargeJson {
   payeeName: string | null;
   paidAccountId: string | null;
   paidAccountName: string | null;
+  /**
+   * سرفصل هزینه دوره — فقط وقتی `allocation` برابر `none` است.
+   * تهی یعنی حساب پیش‌فرض قاعده ثبت (۶۱۰۲ هزینه حمل و ارسال).
+   */
+  expenseAccountCode: string | null;
+  expenseAccountName: string | null;
 }
 
 export interface ReceiptJson {
@@ -232,6 +238,7 @@ export class ReceiptService {
     const charges = await this.#db
       .selectFrom("purchasing.receipt_charge as c")
       .leftJoin("treasury.account as a", "a.id", "c.paid_account_id")
+      .leftJoin("ledger.account as x", "x.code", "c.expense_account_code")
       .select([
         "c.id",
         "c.charge_type",
@@ -241,7 +248,9 @@ export class ReceiptService {
         "c.payee_type",
         "c.payee_name",
         "c.paid_account_id",
+        "c.expense_account_code",
         "a.name as paid_account_name",
+        "x.name as expense_account_name",
       ])
       .where("c.receipt_id", "=", id)
       .orderBy("c.id")
@@ -298,6 +307,8 @@ export class ReceiptService {
         payeeName: c.payee_name,
         paidAccountId: c.paid_account_id,
         paidAccountName: c.paid_account_name,
+        expenseAccountCode: c.expense_account_code,
+        expenseAccountName: c.expense_account_name,
       })),
     };
   }
@@ -484,6 +495,7 @@ export class ReceiptService {
       payeeType: string;
       payeeName?: string | undefined;
       paidAccountId?: string | undefined;
+      expenseAccountCode?: string | undefined;
       actorId: string;
     },
   ): Promise<string> {
@@ -501,6 +513,7 @@ export class ReceiptService {
         payee_type: input.payeeType,
         payee_name: input.payeeName ?? null,
         paid_account_id: input.paidAccountId ?? null,
+        expense_account_code: input.expenseAccountCode ?? null,
       })
       .returning("id")
       .executeTakeFirstOrThrow();

@@ -1103,3 +1103,40 @@ select.set-input {
 .taf-balance {
   margin-inline-start: auto;
 }
+
+/* ── انبار و خرید ─────────────────────────────────────────────────── */
+
+/* فرم افزودن قلم: بارکد، تعداد، قیمت، دکمه — روی یک خط تا وقتی جا
+   دارد. اسکنر بارکد پشت‌سرهم می‌خواند، پس فیلد بارکد باید بزرگ‌ترین
+   سهم را داشته باشد و دکمه هرگز زیر خط نیفتد. */
+.rcpt-add {
+  display: flex;
+  gap: var(--s-2);
+  flex-wrap: wrap;
+}
+
+.rcpt-add input {
+  padding: var(--s-2);
+  border-radius: var(--r-sm);
+  border: 1px solid var(--ring);
+  background: var(--surface-solid);
+  color: var(--ink);
+  min-width: 0;
+}
+
+.rcpt-add input:nth-child(1) { flex: 3 1 12ch; }
+.rcpt-add input:nth-child(2) { flex: 1 1 6ch; }
+.rcpt-add input:nth-child(3) { flex: 2 1 12ch; }
+.rcpt-add .btn { flex: 0 0 auto; }
+
+/* برچسب وضعیت. رنگ به‌تنهایی معنا حمل نمی‌کند (ADR-002): متن فارسی
+   خودش وضعیت را می‌گوید و رنگ فقط کمکش می‌کند. */
+.chip {
+  display: inline-block;
+  padding: 2px var(--s-2);
+  border-radius: 999px;
+  border: 1px solid var(--ring);
+  background: var(--surface-solid);
+  font-size: 0.85rem;
+  white-space: nowrap;
+}

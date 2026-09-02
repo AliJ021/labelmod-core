@@ -408,6 +408,19 @@ export interface ReceiptChargeTable {
   payee_type: Generated<string>;
   payee_name: string | null;
   paid_account_id: string | null;
+  /** فقط برای allocation = none — تهی یعنی حساب پیش‌فرض قاعده ثبت. */
+  expense_account_code: string | null;
+}
+
+export interface LedgerAccountTable {
+  code: string;
+  parent_code: string | null;
+  name: string;
+  level: string;
+  nature: string;
+  type: string;
+  is_postable: boolean;
+  is_active: boolean;
 }
 
 export interface TreasuryAccountTable {
@@ -451,4 +464,5 @@ export interface Database {
   "purchasing.receipt_line": ReceiptLineTable;
   "purchasing.receipt_charge": ReceiptChargeTable;
   "treasury.account": TreasuryAccountTable;
+  "ledger.account": LedgerAccountTable;
 }

@@ -550,6 +550,80 @@ describe("رسید خرید", { skip }, () => {
     assert.equal(r.statusCode, 400, r.body);
   });
 
+  test("هزینه «بدون تخصیص» به بهای کالا نمی‌رود", async () => {
+    // رگرسیون مهاجرت ۰۲۶: تا پیش از آن، این هزینه تمامش روی آخرین
+    // قلم می‌نشست — گزینه‌ای که می‌گفت «به بها نرو» همه‌اش را روی یک
+    // قلم دلخواه می‌گذاشت و هیچ خطایی هم نمی‌داد.
+    const s = await loginAs(keeper);
+    const draft = await newDraft(keeper);
+
+    await app.inject({
+      method: "POST",
+      url: `/receipts/${draft.id}/lines`,
+      ...s,
+      payload: { variationId: variationA, qty: "2", unitPrice: "1000000" },
+    });
+    await app.inject({
+      method: "POST",
+      url: `/receipts/${draft.id}/lines`,
+      ...s,
+      payload: { variationId: variationB, qty: "2", unitPrice: "1000000" },
+    });
+
+    const charge = await app.inject({
+      method: "POST",
+      url: `/receipts/${draft.id}/charges`,
+      ...s,
+      payload: {
+        chargeType: "بسته‌بندی",
+        amount: "600000",
+        allocation: "none",
+        paidFrom: "payable",
+        payeeType: "other",
+        expenseAccountCode: "6103",
+      },
+    });
+    assert.equal(charge.statusCode, 201, charge.body);
+
+    const posted = (await app.inject({
+      method: "POST",
+      url: `/receipts/${draft.id}/post`,
+      ...s,
+    })).json() as ReceiptBody;
+    assert.equal(posted.status, "posted");
+
+    for (const line of posted.lines) {
+      assert.equal(line.chargeAlloc, "0", "هیچ سطری نباید سهمی از این هزینه بگیرد");
+      assert.equal(line.landedUnitCost, "1000000", "بهای واحد نباید بالا برود");
+    }
+
+    const expense = await sql<{ debit: string }>`
+      SELECT coalesce(sum(l.debit), 0) AS debit
+        FROM ledger.journal_entry e
+        JOIN ledger.journal_line l ON l.entry_id = e.id
+       WHERE e.ref_type = 'purchase_receipt' AND e.ref_id = ${draft.id}::uuid
+         AND l.account_code = '6103'`.execute(handle.db);
+    assert.equal(expense.rows[0]?.debit, "600000", "هزینه باید روی سرفصل خودش بنشیند");
+  });
+
+  test("سرفصل هزینه روی تخصیصِ واردشونده به بها رد می‌شود", async () => {
+    const s = await loginAs(keeper);
+    const draft = await newDraft(keeper);
+    const r = await app.inject({
+      method: "POST",
+      url: `/receipts/${draft.id}/charges`,
+      ...s,
+      payload: {
+        chargeType: "حمل",
+        amount: "1000",
+        allocation: "by_value",
+        expenseAccountCode: "6103",
+      },
+    });
+    // انتخابی که اثر ندارد نباید بی‌صدا پذیرفته شود.
+    assert.equal(r.statusCode, 400, r.body);
+  });
+
   test("فهرست حساب‌های پرداخت، صندوق فروشگاه را نشان نمی‌دهد", async () => {
     const s = await loginAs(keeper);
     const r = await app.inject({ method: "GET", url: "/purchasing/pay-accounts", ...s });

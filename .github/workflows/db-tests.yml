@@ -244,17 +244,33 @@ jobs:
       - name: ساخت ایمیج زمان‌بند
         run: docker build -f ops/deploy/Dockerfile.scheduler -t labelmod-scheduler:ci .
 
-      - name: API داخل ایمیج واقعاً بالا می‌آید
-        # پیکربندی ناقص را همان‌جا می‌شکند (lib/config.ts). این تست
-        # می‌گوید ماژول بومی argon2 روی musl کار می‌کند — چیزی که
-        # تایپ‌چک هرگز نمی‌گوید.
+      # ⚠️ `-w /app/apps/api` لازم است، نه تزئین: چیدمان pnpm وابستگی‌ها
+      # را در `apps/api/node_modules` می‌گذارد، نه در ریشه. از `/app`،
+      # `argon2` اصلاً پیدا نمی‌شود.
+      - name: argon2 داخل ایمیج روی musl کار می‌کند
+        # همان تابعی که رمز پرسنل را هش می‌کند، نه یک فراخوان دلخواه.
+        # تایپ‌چک هرگز نمی‌گوید ماژول بومی روی musl لینک می‌شود یا نه.
         run: |
-          set -e
-          docker run --rm labelmod-api:ci node -e "
-            const argon2 = require('argon2');
-            argon2.hash('x').then(h => argon2.verify(h, 'x'))
-              .then(ok => { if (!ok) throw new Error('argon2 کار نمی‌کند'); console.log('argon2 ✓'); });
-          "
+          docker run --rm -w /app/apps/api labelmod-api:ci \
+            node --experimental-strip-types --input-type=module -e "
+              const { hashSecret, verifySecret } = await import('./src/auth/password.ts');
+              const h = await hashSecret('رمز-آزمایشی');
+              if (!(await verifySecret(h, 'رمز-آزمایشی'))) throw new Error('argon2 کار نمی‌کند');
+              console.log('argon2 ✓');
+            "
+
+      - name: نقطه ورود واقعاً اجرا می‌شود و پیکربندی ناقص را می‌شکند
+        # سرویسی که با پیکربندی ناقص بالا بیاید و سر اولین درخواست
+        # واقعی خطا بدهد، خرابیِ گران‌تری می‌سازد (lib/config.ts).
+        # این گام هم آن نگهبان را می‌سنجد و هم اینکه ورودی ایمیج
+        # اصلاً اجرا می‌شود.
+        run: |
+          if docker run --rm labelmod-api:ci > out.txt 2>&1; then
+            echo "✗ API بدون DATABASE_URL بالا آمد — نگهبان پیکربندی کار نمی‌کند"; cat out.txt; exit 1
+          fi
+          grep -q 'پیکربندی نامعتبر است' out.txt || { echo "✗ پیام خطای انتظاری نیامد"; cat out.txt; exit 1; }
+          grep -q 'DATABASE_URL' out.txt || { echo "✗ نام متغیر غایب در پیام نیست"; cat out.txt; exit 1; }
+          echo "نگهبان پیکربندی ✓"
 
       - name: Caddyfile معتبر است
         run: |
