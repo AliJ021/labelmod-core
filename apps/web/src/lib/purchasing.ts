@@ -395,3 +395,101 @@ export const purchaseReturns = {
     opts?: RequestOptions,
   ) => api.post<PurchaseReturn & { replayed: boolean }>("/purchase-returns", input, opts),
 };
+
+// ── سفارش خرید ──────────────────────────────────────────────────────
+
+export interface OrderLine {
+  id: string;
+  variationId: string;
+  sku: string;
+  barcode: string | null;
+  productName: string;
+  color: string | null;
+  size: string | null;
+  qty: string;
+  unitPrice: string;
+  lineAmount: string;
+  /** رسیده منهای برگشتی — از نمای سرور، نه تفریق در مرورگر. */
+  receivedQty: string;
+  remainingQty: string;
+  /** بیش‌تحویل بسته نیست، ولی دیده می‌شود. */
+  overQty: string;
+}
+
+export interface Order {
+  id: string;
+  number: string | null;
+  status: string;
+  branchId: string;
+  supplierId: string;
+  supplierName: string;
+  warehouseId: string;
+  warehouseName: string;
+  expectedAt: string | null;
+  note: string | null;
+  createdAt: string;
+  sentAt: string | null;
+  closedAt: string | null;
+  closeReason: string | null;
+  /** جمع توافقی — یک عدد برای مقایسه، نه یک بدهی. */
+  orderedAmount: string;
+  lines: OrderLine[];
+}
+
+export interface OrderSummary {
+  id: string;
+  number: string | null;
+  status: string;
+  supplierName: string;
+  expectedAt: string | null;
+  createdAt: string;
+  lineCount: number;
+  pendingLines: number;
+}
+
+/** برچسب فارسی وضعیت سفارش. */
+export const ORDER_STATUS: Record<string, string> = {
+  draft: "پیش‌نویس",
+  sent: "فرستاده‌شده",
+  closed: "بسته",
+  cancelled: "باطل",
+};
+
+export const purchaseOrders = {
+  list: (status?: string) =>
+    api.get<OrderSummary[]>(`/purchase-orders${status ? `?status=${status}` : ""}`),
+
+  get: (id: string) => api.get<Order>(`/purchase-orders/${id}`),
+
+  create: (
+    input: {
+      branchId: string;
+      supplierId: string;
+      warehouseId: string;
+      expectedAt?: string;
+      note?: string;
+    },
+    opts?: RequestOptions,
+  ) => api.post<Order & { replayed: boolean }>("/purchase-orders", input, opts),
+
+  /** قلم مطلق است: «۱۰ تا» یعنی همان ۱۰ تا، نه ۱۰ تای دیگر. */
+  setLine: (
+    id: string,
+    input: { barcode?: string; variationId?: string; qty: string; unitPrice: string },
+  ) => api.put<Order>(`/purchase-orders/${id}/lines`, input),
+
+  removeLine: (id: string, lineId: string) =>
+    api.del<Order>(`/purchase-orders/${id}/lines/${lineId}`),
+
+  /** فرستادن — شماره می‌گیرد. هیچ سندی و هیچ حرکت انباری. */
+  send: (id: string, opts?: RequestOptions) =>
+    api.post<Order>(`/purchase-orders/${id}/send`, {}, opts),
+
+  /** «محموله رسید» — پیش‌نویس رسید از روی باقی‌مانده. */
+  makeReceipt: (id: string, opts?: RequestOptions) =>
+    api.post<Receipt & { replayed: boolean }>(`/purchase-orders/${id}/receipt`, {}, opts),
+
+  /** بستن یک تصمیم انسانی است. سفارش نیمه‌رسیده دلیل می‌خواهد. */
+  close: (id: string, reason?: string) =>
+    api.post<Order>(`/purchase-orders/${id}/close`, reason ? { reason } : {}),
+};

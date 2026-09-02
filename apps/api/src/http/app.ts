@@ -28,6 +28,7 @@ import { VariationService } from "../catalog/variation.ts";
 import { ReceiptService } from "../purchasing/receipt.ts";
 import { StockCountService } from "../inventory/stock-count.ts";
 import { PurchaseReturnService } from "../purchasing/return.ts";
+import { PurchaseOrderService } from "../purchasing/order.ts";
 import { SettingService } from "../platform/settings.ts";
 import { safeEqual } from "../auth/password.ts";
 
@@ -219,6 +220,7 @@ export async function buildApp(deps: AppDeps): Promise<FastifyInstance> {
     receipts: new ReceiptService(deps.db),
     counts: new StockCountService(deps.db),
     returns: new PurchaseReturnService(deps.db),
+    orders: new PurchaseOrderService(deps.db),
   });
   registerSettingsRoutes(app, {
     db: deps.db,

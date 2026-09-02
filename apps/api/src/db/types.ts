@@ -385,6 +385,8 @@ export interface ReceiptTable {
   posted_at: Date | null;
   created_by: string | null;
   note: string | null;
+  /** سفارشی که این رسید بابتش آمده. تهی = خرید بدون سفارش. */
+  order_id: string | null;
 }
 
 export interface ReceiptLineTable {
@@ -398,6 +400,46 @@ export interface ReceiptLineTable {
   landed_unit_cost: Generated<string>;
   /** جمع برگشتی‌ها. فقط `post_purchase_return()` بالایش می‌برد (مهاجرت ۰۲۸). */
   returned_qty: Generated<string>;
+  /** سطر سفارشی که این قلم بابتش آمده. باید به همان سفارشِ رسید باشد. */
+  order_line_id: string | null;
+}
+
+export interface PurchaseOrderTable {
+  id: Generated<string>;
+  /** تا لحظه **فرستادن** NULL — پیش‌نویس رهاشده شماره نمی‌سوزاند. */
+  number: string | null;
+  branch_id: string;
+  supplier_id: string;
+  warehouse_id: string;
+  status: Generated<string>;
+  expected_at: string | null;
+  note: string | null;
+  created_by: string | null;
+  created_at: Generated<Date>;
+  sent_at: Date | null;
+  closed_at: Date | null;
+  close_reason: string | null;
+}
+
+export interface PurchaseOrderLineTable {
+  id: Generated<string>;
+  order_id: string;
+  variation_id: string;
+  qty: string;
+  /** قیمت توافقی سفارش. بها را رسید تعیین می‌کند، نه این. */
+  unit_price: string;
+}
+
+/** نما — «چقدرش رسیده» محاسبه است، نه ستون (مهاجرت ۰۲۹). */
+export interface OrderProgressView {
+  order_line_id: string;
+  order_id: string;
+  variation_id: string;
+  ordered_qty: string;
+  ordered_unit_price: string;
+  received_qty: string;
+  remaining_qty: string;
+  over_qty: string;
 }
 
 export interface PurchaseReturnTable {
@@ -527,6 +569,9 @@ export interface Database {
   "ledger.account": LedgerAccountTable;
   "inventory.stock_count": StockCountTable;
   "inventory.stock_count_line": StockCountLineTable;
+  "purchasing.purchase_order": PurchaseOrderTable;
+  "purchasing.purchase_order_line": PurchaseOrderLineTable;
+  "purchasing.order_progress": OrderProgressView;
   "purchasing.purchase_return": PurchaseReturnTable;
   "purchasing.purchase_return_line": PurchaseReturnLineTable;
 }

@@ -90,6 +90,9 @@ export interface ReceiptJson {
   supplierId: string;
   supplierName: string;
   supplierInvoiceNo: string | null;
+  /** سفارشی که این رسید بابتش آمده. تهی = خرید بدون سفارش. */
+  orderId: string | null;
+  orderNumber: string | null;
   occurredAt: string;
   postedAt: string | null;
   note: string | null;
@@ -220,12 +223,15 @@ export class ReceiptService {
         "r.warehouse_id",
         "r.supplier_id",
         "r.supplier_invoice_no",
+        "r.order_id",
         "r.occurred_at",
         "r.posted_at",
         "r.note",
         "r.tax_amount",
         "s.name as supplier_name",
         "w.name as warehouse_name",
+        sql<string | null>`(SELECT o.number FROM purchasing.purchase_order o
+                             WHERE o.id = r.order_id)`.as("order_number"),
       ])
       .where("r.id", "=", id)
       .executeTakeFirst();
@@ -298,6 +304,8 @@ export class ReceiptService {
       supplierId: head.supplier_id,
       supplierName: head.supplier_name,
       supplierInvoiceNo: head.supplier_invoice_no,
+      orderId: head.order_id,
+      orderNumber: head.order_number,
       occurredAt: new Date(head.occurred_at).toISOString(),
       postedAt: head.posted_at === null ? null : new Date(head.posted_at).toISOString(),
       note: head.note,
@@ -353,6 +361,8 @@ export class ReceiptService {
       occurredAt?: string | undefined;
       supplierInvoiceNo?: string | undefined;
       note?: string | undefined;
+      /** سفارشی که این رسید بابتش آمده. تهی = خرید بدون سفارش. */
+      orderId?: string | undefined;
       actorId: string;
     },
   ): Promise<string> {
@@ -378,6 +388,7 @@ export class ReceiptService {
         supplier_invoice_no: input.supplierInvoiceNo ?? null,
         note: input.note ?? null,
         created_by: input.actorId,
+        order_id: input.orderId ?? null,
         ...(input.occurredAt === undefined ? {} : { occurred_at: new Date(input.occurredAt) }),
       })
       .returning("id")
@@ -400,19 +411,33 @@ export class ReceiptService {
       variationId: string;
       qty: string;
       unitPrice: bigint;
+      /**
+       * سطر سفارشی که این قلم بابتش آمده.
+       *
+       * دیتابیس اجبار می‌کند که به **همان** سفارشِ رسید باشد
+       * (`assert_order_line_matches`): کلید خارجی این را نمی‌گیرد،
+       * چون سطر واقعاً وجود دارد — فقط مال سفارش دیگری است.
+       */
+      orderLineId?: string | undefined;
       actorId: string;
     },
   ): Promise<string> {
     await setActor(trx, input.actorId);
     await this.assertDraft(trx, input.receiptId);
 
-    const existing = await trx
+    // ادغام فقط وقتی که سطر سفارش هم یکی باشد: دو سطر از دو سفارش،
+    // حتی با یک قیمت، دو تعهد جدا را برآورده می‌کنند.
+    let lookup = trx
       .selectFrom("purchasing.receipt_line")
       .select(["id", "qty"])
       .where("receipt_id", "=", input.receiptId)
       .where("variation_id", "=", input.variationId)
-      .where("unit_price", "=", serializeMoney(input.unitPrice))
-      .executeTakeFirst();
+      .where("unit_price", "=", serializeMoney(input.unitPrice));
+    lookup =
+      input.orderLineId === undefined
+        ? lookup.where("order_line_id", "is", null)
+        : lookup.where("order_line_id", "=", input.orderLineId);
+    const existing = await lookup.executeTakeFirst();
 
     if (existing) {
       await trx
@@ -433,6 +458,7 @@ export class ReceiptService {
         variation_id: input.variationId,
         qty: input.qty,
         unit_price: serializeMoney(input.unitPrice),
+        order_line_id: input.orderLineId ?? null,
         line_amount: sql<string>`round(${input.qty}::numeric * ${serializeMoney(input.unitPrice)}::numeric)`,
       })
       .returning("id")
