@@ -178,12 +178,14 @@ describe("تنظیمات از مسیر API", { skip }, () => {
       }
     }
 
-    // روش قیمت تمام‌شده باید هر دو گزینه را داشته باشد — «آخرین قیمت
-    // خرید» همان روشی است که هلو و دشت به کار می‌برند.
+    // روش قیمت تمام‌شده باید **هر سه** گزینه را داشته باشد. مالک خواست
+    // مثل هلو سه روش در دسترس باشد؛ و از این سه، فقط میانگین موزون و
+    // FIFO در فهرست استاندارد حسابداری شماره ۸ ایران‌اند — «آخرین قیمت
+    // خرید» روش رایج بازار است ولی در آن فهرست نیست.
     const costing = find(gs, "costing.method");
     assert.deepEqual(
       costing.options?.map((o) => o.value).sort(),
-      ["last_purchase", "moving_weighted_average"],
+      ["fifo", "last_purchase", "moving_weighted_average"],
     );
     // پیش‌فرض، تصمیم مالک است: «آخرین قیمت خرید»، مثل هلو.
     assert.equal(costing.value, "last_purchase", "پیش‌فرض باید آخرین قیمت خرید باشد");
@@ -192,12 +194,13 @@ describe("تنظیمات از مسیر API", { skip }, () => {
     assert.equal(find(gs, "sales.auto_close_channel_day").kind, "bool");
     assert.equal(find(gs, "sales.auto_close_after_hours").unit, "ساعت");
 
-    // سند فروش باید از داخل تنظیمات قابل انتخاب باشد.
+    // سند فروش: فقط گزینه‌ای که **واقعاً پیاده شده** در فهرست است.
+    //
+    // تا مهاجرت ۰۲۴، «per_invoice» هم بود ولی هیچ کدی نمی‌خواندش —
+    // مالک می‌توانست انتخابش کند و سیستم بی‌سروصدا همان تجمیعی را
+    // ادامه دهد. تنظیمی که کار نکند از نبودنش بدتر است.
     const posting = find(gs, "ledger.sale_posting");
-    assert.deepEqual(
-      posting.options?.map((o) => o.value).sort(),
-      ["per_invoice", "per_shift"],
-    );
+    assert.deepEqual(posting.options?.map((o) => o.value), ["per_shift"]);
   });
 
   test("صندوق‌دار و انباردار حتی صفحه تنظیمات را نمی‌بینند", async () => {
@@ -247,7 +250,8 @@ describe("تنظیمات از مسیر API", { skip }, () => {
       ["tax.default_rate", 120],
       ["auth.pin_length", 3],
       ["auth.min_password_length", 6],
-      ["costing.method", "fifo"],
+      // «lifo» عمداً: چیزی که هیچ‌وقت روش قیمت‌گذاری این پروژه نمی‌شود.
+      ["costing.method", "lifo"],
       ["pos.require_customer", "شاید"],
       ["cheque.due_warning_days", 7.5],
     ] as const) {
@@ -370,5 +374,243 @@ describe("تنظیمات از مسیر API", { skip }, () => {
       .set({ pin_unlocked: false })
       .where("token_hash", "is not", null)
       .execute();
+  });
+  // ── کدینگ حساب ──────────────────────────────────────────────────
+
+  test("درخت حساب چهارسطحی از API می‌آید", async () => {
+    const s = await loginAs(admin);
+    const r = await app.inject({ method: "GET", url: "/accounts", ...s });
+    assert.equal(r.statusCode, 200, r.body);
+
+    const accounts = r.json().accounts as Array<Record<string, unknown>>;
+    assert.ok(accounts.length >= 50, `تعداد حساب: ${accounts.length}`);
+
+    // چهار سطح، همان چیزی که هلو دارد
+    const levels = new Set(accounts.map((a) => a.level));
+    assert.ok(levels.has("group"), "سطح گروه نیست");
+    assert.ok(levels.has("kol"), "سطح کل نیست");
+    assert.ok(levels.has("moin"), "سطح معین نیست");
+
+    // صفحه بدون این دو نمی‌داند اجازه چه تغییری بدهد
+    const root = accounts.find((a) => a.code === "1");
+    assert.equal(root?.hasChildren, true, "گروه ۱ باید فرزند داشته باشد");
+    assert.equal(typeof root?.hasEntries, "boolean");
+  });
+
+  test("ساخت و ویرایش حساب از API", async () => {
+    const s = await loginAs(admin);
+    const put = (code: string, body: Record<string, unknown>) =>
+      app.inject({ method: "PUT", url: `/accounts/${code}`, ...s, payload: body });
+
+    const made = await put("8", {
+      name: "گروه آزمایشی",
+      level: "group",
+      parentCode: null,
+      nature: "debit",
+      type: "asset",
+      isPostable: false,
+    });
+    assert.equal(made.statusCode, 200, made.body);
+    assert.equal(made.json().level, "group");
+
+    // ویرایش نام، همان حساب را عوض می‌کند
+    const edited = await put("8", {
+      name: "گروه آزمایشی ویرایش‌شده",
+      level: "group",
+      parentCode: null,
+      nature: "debit",
+      type: "asset",
+      isPostable: false,
+    });
+    assert.equal(edited.statusCode, 200, edited.body);
+    assert.equal(edited.json().name, "گروه آزمایشی ویرایش‌شده");
+
+    // غیرفعال‌سازی به‌جای حذف
+    const off = await app.inject({
+      method: "PATCH",
+      url: "/accounts/8/active",
+      ...s,
+      payload: { isActive: false },
+    });
+    assert.equal(off.statusCode, 200, off.body);
+    assert.equal(off.json().isActive, false);
+  });
+
+  test("درختِ خراب ۴۰۹ می‌گیرد، نه ۵۰۰", async () => {
+    // نگهبان‌های مهاجرت ۰۱۹ باید از راه API هم پیام فارسی بدهند، نه
+    // «خطای داخلی» — همان الگویی که این مخزن سه بار اصلاحش کرده.
+    const s = await loginAs(admin);
+    const bad = await app.inject({
+      method: "PUT",
+      url: "/accounts/9999",
+      ...s,
+      payload: {
+        name: "کدِ بی‌ربط به والد",
+        level: "moin",
+        parentCode: "11",
+        nature: "debit",
+        type: "asset",
+        isPostable: true,
+      },
+    });
+    assert.equal(bad.statusCode, 409, bad.body);
+    assert.equal(bad.json().error.code, "rule_violation");
+  });
+
+  test("صندوق‌دار کدینگ حساب را عوض نمی‌کند", async () => {
+    const s = await loginAs(cashier);
+    const r = await app.inject({
+      method: "PUT",
+      url: "/accounts/8",
+      ...s,
+      payload: {
+        name: "تلاش صندوق‌دار",
+        level: "group",
+        parentCode: null,
+        nature: "debit",
+        type: "asset",
+        isPostable: false,
+      },
+    });
+    assert.equal(r.statusCode, 403, r.body);
+  });
+
+  // ── سقف مجوزها ──────────────────────────────────────────────────
+
+  test("ماتریس مجوز از API می‌آید و پول رشته است", async () => {
+    const s = await loginAs(admin);
+    const r = await app.inject({ method: "GET", url: "/permission-rules", ...s });
+    assert.equal(r.statusCode, 200, r.body);
+
+    const rules = r.json().rules as Array<Record<string, unknown>>;
+    assert.ok(rules.length > 0, "ماتریس خالی است");
+
+    for (const rule of rules) {
+      if (rule.maxAmount !== null) {
+        assert.equal(typeof rule.maxAmount, "string", `${rule.operation}: پول باید رشته باشد`);
+      }
+    }
+  });
+
+  test("سقف تخفیف از API عوض می‌شود", async () => {
+    const s = await loginAs(admin);
+    const r = await app.inject({
+      method: "PUT",
+      url: "/permission-rules/cashier/sale.discount",
+      ...s,
+      payload: {
+        allowed: true,
+        maxAmount: null,
+        maxPercent: 15,
+        needsApprovalFrom: null,
+        reason: "تست سقف تخفیف",
+      },
+    });
+    assert.equal(r.statusCode, 200, r.body);
+    assert.equal(r.json().maxPercent, 15);
+  });
+
+  test("بستن آخرین نقشِ دارای «settings.security» ۴۰۹ می‌گیرد", async () => {
+    // مهم‌ترین نگهبان این صفحه: بی‌آن، یک کلیک می‌توانست همه را برای
+    // همیشه از تغییر مجوزها بیرون بگذارد و تنها راه بازگشت psql بود.
+    const s = await loginAs(admin);
+    const r = await app.inject({
+      method: "PUT",
+      url: "/permission-rules/admin/settings.security",
+      ...s,
+      payload: {
+        allowed: false,
+        maxAmount: null,
+        maxPercent: null,
+        needsApprovalFrom: null,
+        reason: "تست قفل‌شدن",
+      },
+    });
+    assert.equal(r.statusCode, 409, r.body);
+    assert.equal(r.json().error.code, "rule_violation");
+  });
+
+  test("حسابدار سقف مجوز را عوض نمی‌کند", async () => {
+    const s = await loginAs(accountant);
+    const r = await app.inject({
+      method: "PUT",
+      url: "/permission-rules/cashier/sale.discount",
+      ...s,
+      payload: {
+        allowed: true,
+        maxAmount: null,
+        maxPercent: 90,
+        needsApprovalFrom: null,
+      },
+    });
+    assert.equal(r.statusCode, 403, r.body);
+  });
+  // ── تفصیلی و افتتاحیه ───────────────────────────────────────────
+
+  test("تفصیلی اشخاص از API می‌آید و پول رشته است", async () => {
+    const s = await loginAs(admin);
+    const r = await app.inject({ method: "GET", url: "/tafsili", ...s });
+    assert.equal(r.statusCode, 200, r.body);
+    const rows = r.json().rows as Array<Record<string, unknown>>;
+    for (const row of rows) {
+      assert.equal(typeof row.balance, "string", "مانده باید رشته باشد");
+      assert.equal(typeof row.code, "string");
+    }
+  });
+
+  test("سند افتتاحیه نامتوازن ۴۰۹ فارسی می‌گیرد", async () => {
+    // توازن **پیش از ثبت** سنجیده می‌شود تا کاربر پیام قابل فهم
+    // بگیرد، نه خطای فنی قید معوق دفتر.
+    const s = await loginAs(admin);
+    const r = await app.inject({
+      method: "POST",
+      url: "/opening-balance",
+      ...s,
+      payload: {
+        branchId: BRANCH,
+        fiscalYear: 1405,
+        legs: [
+          { leg: "cash", amount: "5000000" },
+          { leg: "equity", amount: "4000000" },
+        ],
+      },
+    });
+    assert.equal(r.statusCode, 409, r.body);
+    assert.equal(r.json().error.code, "rule_violation");
+    assert.match(r.json().error.message, /متوازن/);
+  });
+
+  test("سند افتتاحیه متوازن ثبت می‌شود", async () => {
+    const s = await loginAs(admin);
+    const r = await app.inject({
+      method: "POST",
+      url: "/opening-balance",
+      ...s,
+      payload: {
+        branchId: BRANCH,
+        fiscalYear: 1405,
+        legs: [
+          { leg: "cash", amount: "5000000" },
+          { leg: "equity", amount: "5000000" },
+        ],
+      },
+    });
+    assert.equal(r.statusCode, 200, r.body);
+    assert.equal(typeof r.json().entryId, "string");
+  });
+
+  test("صندوق‌دار سند افتتاحیه نمی‌زند", async () => {
+    const s = await loginAs(cashier);
+    const r = await app.inject({
+      method: "POST",
+      url: "/opening-balance",
+      ...s,
+      payload: {
+        branchId: BRANCH,
+        fiscalYear: 1405,
+        legs: [{ leg: "cash", amount: "1" }, { leg: "equity", amount: "1" }],
+      },
+    });
+    assert.equal(r.statusCode, 403, r.body);
   });
 });

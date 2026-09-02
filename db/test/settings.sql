@@ -128,8 +128,11 @@ PERFORM pg_temp.assert_raises('عدد صحیح با اعشار',
   $$SELECT platform.set_setting('cheque.due_warning_days', '7.5'::jsonb)$$);
 PERFORM pg_temp.assert_raises('عدد صحیح با متن',
   $$SELECT platform.set_setting('cheque.due_warning_days', '"هفت"'::jsonb)$$);
+-- مثال عمداً چیزی است که **هیچ‌وقت** روش قیمت‌گذاری نمی‌شود. پیش از
+-- این «fifo» بود، و وقتی FIFO در مهاجرت ۰۲۰ گزینه واقعی شد، این ادعا
+-- شکست — یعنی تست داشت کار می‌کرد.
 PERFORM pg_temp.assert_raises('گزینه‌ای بیرون از فهرست',
-  $$SELECT platform.set_setting('costing.method', '"fifo"'::jsonb, 'تست')$$);
+  $$SELECT platform.set_setting('costing.method', '"lifo"'::jsonb, 'تست')$$);
 PERFORM pg_temp.assert_raises('چندگزینه‌ای با عضو ناشناخته',
   $$SELECT platform.set_setting('return.reason_codes', '["دلخواه"]'::jsonb)$$);
 PERFORM pg_temp.assert_raises('مقدار تهی',
@@ -193,9 +196,14 @@ PERFORM pg_temp.assert_txt('روش قیمت تمام‌شده',
 PERFORM platform.set_setting('costing.method', '"moving_weighted_average"'::jsonb, 'بازگشت');
 
 -- سند فروش: هر دو حالت باید انتخاب‌شدنی باشند.
-PERFORM platform.set_setting('ledger.sale_posting', '"per_invoice"'::jsonb, 'تست');
-PERFORM pg_temp.assert_txt('سند فروش', platform.setting_text('ledger.sale_posting'), 'per_invoice');
-PERFORM platform.set_setting('ledger.sale_posting', '"per_shift"'::jsonb, 'بازگشت');
+-- «per_invoice» تا مهاجرت ۰۲۴ یک گزینه بود که **هیچ کدی نمی‌خواندش**؛
+-- انتخابش هیچ اثری نداشت. حالا برداشته شده تا تنظیم دروغ نگوید، و
+-- همین ادعا قفلش می‌کند: گزینه‌ای که پیاده نشده، نباید انتخاب‌شدنی
+-- باشد.
+PERFORM pg_temp.assert_raises('گزینه پیاده‌نشده انتخاب نمی‌شود',
+  $$SELECT platform.set_setting('ledger.sale_posting', '"per_invoice"'::jsonb, 'تست')$$);
+PERFORM pg_temp.assert_txt('سند فروش تجمیعی می‌ماند',
+  platform.setting_text('ledger.sale_posting'), 'per_shift');
 
 -- سیاست PIN قابل تغییر است، ولی فقط با گزینه‌های شناخته‌شده.
 PERFORM platform.set_setting('auth.pin_forbidden_operations',

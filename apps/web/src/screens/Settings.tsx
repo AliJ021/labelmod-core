@@ -14,6 +14,10 @@
  */
 import { useEffect, useState } from "react";
 import { Glass, Solid } from "../components/Glass.tsx";
+import { Accounts } from "./Accounts.tsx";
+import { Terminals } from "./Terminals.tsx";
+import { Permissions } from "./Permissions.tsx";
+import { Opening } from "./Opening.tsx";
 import { api, ApiError } from "../lib/api.ts";
 import {
   describeValue,
@@ -52,7 +56,7 @@ type Status =
   | { kind: "saved" }
   | { kind: "error"; message: string };
 
-export function Settings() {
+function SettingKeys() {
   const [groups, setGroups] = useState<Group[] | null>(null);
   const [loadError, setLoadError] = useState<string | null>(null);
   const [openGroup, setOpenGroup] = useState<string | null>(null);
@@ -351,5 +355,62 @@ function Field({
       />
       {setting.unit ? <span className="set-unit">{setting.unit}</span> : null}
     </span>
+  );
+}
+
+/**
+ * پوسته ناحیه تنظیمات — چهار زیرتب.
+ *
+ * چرا زیرتب و نه ناحیه سطح‌بالا: نوار بالای صفحه را صندوق‌دار هم
+ * می‌بیند، و سه تبِ تازه‌ای که اجازه بازکردنشان را ندارد فقط شلوغی
+ * است. این سه پشت `settings.security`‌اند و جایشان همین‌جاست.
+ *
+ * فهرست زیرتب‌ها اینجا نوشته شده چون **صفحه‌اند، نه داده** — برخلاف
+ * کلیدهای تنظیمات که از سرور می‌آیند. اگر روزی صفحه تازه‌ای اضافه شود،
+ * یک ردیف اینجا اضافه می‌شود؛ ولی هیچ‌کدام از این چهار صفحه محتوایش را
+ * hardcode نمی‌کند.
+ */
+const TABS = [
+  { key: "keys", label: "تنظیمات" },
+  { key: "accounts", label: "کدینگ حساب" },
+  { key: "terminals", label: "پایانه‌ها" },
+  { key: "permissions", label: "مجوزها" },
+  { key: "opening", label: "افتتاحیه و تفصیلی" },
+] as const;
+
+type Tab = (typeof TABS)[number]["key"];
+
+export function Settings() {
+  const [tab, setTab] = useState<Tab>("keys");
+
+  return (
+    <div className="stack" style={{ gap: "var(--s-4)" }}>
+      <div className="subtabs" role="tablist" aria-label="بخش‌های تنظیمات">
+        {TABS.map((t) => (
+          <button
+            key={t.key}
+            type="button"
+            role="tab"
+            aria-selected={tab === t.key}
+            className={tab === t.key ? "on" : ""}
+            onClick={() => setTab(t.key)}
+          >
+            {t.label}
+          </button>
+        ))}
+      </div>
+
+      {tab === "keys" ? (
+        <SettingKeys />
+      ) : tab === "accounts" ? (
+        <Accounts />
+      ) : tab === "terminals" ? (
+        <Terminals />
+      ) : tab === "permissions" ? (
+        <Permissions />
+      ) : (
+        <Opening />
+      )}
+    </div>
   );
 }
