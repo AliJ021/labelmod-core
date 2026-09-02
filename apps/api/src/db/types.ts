@@ -34,6 +34,20 @@ export interface UserRoleTable {
   branch_id: string | null;
 }
 
+export interface ApiClientTable {
+  id: Generated<string>;
+  name: string;
+  /** کاربر پشتی — همه مجوزها و ردّ حسابرسی از او می‌آید (مهاجرت ۰۳۰). */
+  user_id: string;
+  /** SHA-256 کلید. خودِ کلید هرگز ذخیره نمی‌شود. */
+  key_hash: string;
+  is_active: Generated<boolean>;
+  created_at: Generated<Date>;
+  created_by: string | null;
+  last_used_at: Date | null;
+  note: string | null;
+}
+
 export interface DeviceTable {
   id: Generated<string>;
   fingerprint: string;
@@ -309,7 +323,7 @@ export interface CustomerTable {
   id: Generated<string>;
   mobile_normalized: string;
   full_name: string | null;
-  credit_limit: string;
+  credit_limit: Generated<string>;
 }
 
 // ── خزانه ─────────────────────────────────────────────────────────
@@ -556,6 +570,7 @@ export interface Database {
   "identity.role": RoleTable;
   "identity.user_role": UserRoleTable;
   "identity.device": DeviceTable;
+  "identity.api_client": ApiClientTable;
   "identity.session": SessionTable;
   "identity.auth_attempt": AuthAttemptTable;
   "platform.setting": SettingTable;

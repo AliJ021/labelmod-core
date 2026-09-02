@@ -20,6 +20,7 @@ import { registerPurchasingRoutes } from "./purchasing-routes.ts";
 import { registerSettingsRoutes } from "./settings-routes.ts";
 import { registerScopeRoutes } from "./scope-routes.ts";
 import { registerAdminRoutes } from "./admin-routes.ts";
+import { registerWebRoutes } from "./web-routes.ts";
 import { InvoiceService } from "../sales/invoice.ts";
 import { ShiftService } from "../sales/shift.ts";
 import { ReturnService } from "../sales/return.ts";
@@ -30,7 +31,9 @@ import { StockCountService } from "../inventory/stock-count.ts";
 import { PurchaseReturnService } from "../purchasing/return.ts";
 import { PurchaseOrderService } from "../purchasing/order.ts";
 import { SettingService } from "../platform/settings.ts";
+import { WebOrderService } from "../sales/web-order.ts";
 import { safeEqual } from "../auth/password.ts";
+import { apiKeyFrom, resolveApiKey } from "../auth/api-key.ts";
 
 declare module "fastify" {
   interface FastifyRequest {
@@ -151,6 +154,34 @@ export async function buildApp(deps: AppDeps): Promise<FastifyInstance> {
   // اجباری‌اش می‌کند. اینجا تنها جایی است که کوکی خوانده می‌شود.
   app.addHook("onRequest", async (req, reply) => {
     req.session = null;
+
+    // ── کلید API: راه ورود ماشین ────────────────────────────────────
+    //
+    // افزونه ووکامرس نه کوکی دارد نه صفحه ورود. کلید یک نشست ساختگی
+    // می‌سازد که از دید بقیه کد یک نشست کامل است — مجوزش از همان
+    // `permission_rule` می‌آید و لاگ حسابرسی همان کاربر پشتی را
+    // می‌نویسد.
+    //
+    // ⚠️ **دفاع CSRF روی این مسیر لازم نیست و مضر است.** CSRF یک حمله
+    //    مبتنی بر کوکی است: مرورگر قربانی کوکی را خودکار می‌فرستد.
+    //    هدر `Authorization` را هیچ مرورگری خودکار نمی‌فرستد، پس
+    //    توکن Double-Submit اینجا فقط سایت را از کار می‌انداخت.
+    const apiKey = apiKeyFrom(req.headers.authorization);
+    if (apiKey) {
+      const client = await resolveApiKey(deps.db, apiKey);
+      if (!client) {
+        return reply.code(401).send({
+          error: {
+            code: "bad_api_key",
+            message: "کلید API نامعتبر یا باطل است",
+            correlationId: req.id,
+          },
+        });
+      }
+      req.session = client;
+      return;
+    }
+
     const token = req.cookies[config.COOKIE_NAME];
     if (token) req.session = await auth.resolve(token);
 
@@ -195,13 +226,10 @@ export async function buildApp(deps: AppDeps): Promise<FastifyInstance> {
   app.get("/health", async () => ({ ok: true }));
 
   const shifts = new ShiftService(deps.db);
+  const invoices = new InvoiceService(deps.db);
 
   registerAuthRoutes(app, deps);
-  registerSalesRoutes(app, {
-    db: deps.db,
-    invoices: new InvoiceService(deps.db),
-    shifts,
-  });
+  registerSalesRoutes(app, { db: deps.db, invoices, shifts });
   registerReturnRoutes(app, {
     db: deps.db,
     returns: new ReturnService(deps.db),
@@ -225,6 +253,11 @@ export async function buildApp(deps: AppDeps): Promise<FastifyInstance> {
   registerSettingsRoutes(app, {
     db: deps.db,
     settings: new SettingService(deps.db),
+  });
+  registerWebRoutes(app, {
+    db: deps.db,
+    webOrders: new WebOrderService(deps.db, invoices),
+    invoices,
   });
   registerScopeRoutes(app, { db: deps.db });
   registerAdminRoutes(app, { db: deps.db });
