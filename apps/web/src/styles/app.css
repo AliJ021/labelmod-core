@@ -1140,3 +1140,15 @@ select.set-input {
   font-size: 0.85rem;
   white-space: nowrap;
 }
+
+/* زبانه‌های داخل ناحیه انبار — مات، چون داخل یک سطح شیشه‌ای نیستند
+   ولی نوار بالای صفحه هم نیستند. */
+.wh-tabs {
+  gap: var(--s-1);
+}
+
+/* نتیجه شمارش. رنگ به‌تنهایی معنا حمل نمی‌کند (ADR-002): شکل نشانه
+   هم فرق می‌کند (● / ▼ / ▲) و برچسب فارسی کنارش است. */
+.cnt-ok    { color: var(--good); white-space: nowrap; }
+.cnt-short { color: var(--crit); white-space: nowrap; }
+.cnt-over  { color: var(--warn); white-space: nowrap; }

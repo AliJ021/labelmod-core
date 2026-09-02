@@ -433,6 +433,33 @@ export interface TreasuryAccountTable {
   is_active: boolean;
 }
 
+// ── انبارگردانی ───────────────────────────────────────────────────────
+
+export interface StockCountTable {
+  id: Generated<string>;
+  /** تا لحظه ثبت NULL — برگه رهاشده شماره نمی‌سوزاند (مهاجرت ۰۲۷). */
+  number: string | null;
+  branch_id: string;
+  warehouse_id: string;
+  status: Generated<string>;
+  started_at: Generated<Date>;
+  posted_at: Date | null;
+  created_by: string | null;
+  note: string | null;
+}
+
+export interface StockCountLineTable {
+  id: Generated<string>;
+  count_id: string;
+  variation_id: string;
+  counted_qty: string;
+  /** این چهار ستون را فقط `post_stock_count()` پر می‌کند، در لحظه ثبت. */
+  system_qty: string | null;
+  diff_qty: string | null;
+  unit_cost: string | null;
+  value_delta: string | null;
+}
+
 export interface Database {
   "catalog.product": ProductTable;
   "catalog.variation": VariationTable;
@@ -465,4 +492,6 @@ export interface Database {
   "purchasing.receipt_charge": ReceiptChargeTable;
   "treasury.account": TreasuryAccountTable;
   "ledger.account": LedgerAccountTable;
+  "inventory.stock_count": StockCountTable;
+  "inventory.stock_count_line": StockCountLineTable;
 }

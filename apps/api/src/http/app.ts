@@ -26,6 +26,7 @@ import { ReturnService } from "../sales/return.ts";
 import { PostingBatchService } from "../sales/posting-batch.ts";
 import { VariationService } from "../catalog/variation.ts";
 import { ReceiptService } from "../purchasing/receipt.ts";
+import { StockCountService } from "../inventory/stock-count.ts";
 import { SettingService } from "../platform/settings.ts";
 import { safeEqual } from "../auth/password.ts";
 
@@ -215,6 +216,7 @@ export async function buildApp(deps: AppDeps): Promise<FastifyInstance> {
   registerPurchasingRoutes(app, {
     db: deps.db,
     receipts: new ReceiptService(deps.db),
+    counts: new StockCountService(deps.db),
   });
   registerSettingsRoutes(app, {
     db: deps.db,

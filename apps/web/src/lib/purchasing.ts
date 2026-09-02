@@ -222,3 +222,80 @@ export const purchasing = {
 
   cancel: (id: string) => api.post<Receipt>(`/receipts/${id}/cancel`),
 };
+
+// ── انبارگردانی ─────────────────────────────────────────────────────
+
+export interface StockCountLine {
+  id: string;
+  variationId: string;
+  sku: string;
+  barcode: string | null;
+  productName: string;
+  color: string | null;
+  size: string | null;
+  countedQty: string;
+  /**
+   * تا لحظه ثبت `null` — و این عمدی است، نه یک شکاف.
+   *
+   * موجودی سیستم در لحظه ثبت و روی سطر قفل‌شده خوانده می‌شود. نشان
+   * دادن یک عددِ پیش‌بینی روی پیش‌نویس یعنی انباردار روی عددی تصمیم
+   * بگیرد که تا ثبت عوض می‌شود.
+   */
+  systemQty: string | null;
+  diffQty: string | null;
+  unitCost: string | null;
+  valueDelta: string | null;
+}
+
+export interface StockCount {
+  id: string;
+  number: string | null;
+  status: string;
+  branchId: string;
+  warehouseId: string;
+  warehouseName: string;
+  startedAt: string;
+  postedAt: string | null;
+  note: string | null;
+  lines: StockCountLine[];
+}
+
+export interface StockCountSummary {
+  id: string;
+  number: string | null;
+  status: string;
+  warehouseName: string;
+  startedAt: string;
+  lineCount: number;
+  diffCount: number;
+}
+
+export const stockCounts = {
+  list: (status?: string) =>
+    api.get<StockCountSummary[]>(`/stock-counts${status ? `?status=${status}` : ""}`),
+
+  get: (id: string) => api.get<StockCount>(`/stock-counts/${id}`),
+
+  create: (
+    input: { branchId: string; warehouseId: string; note?: string },
+    opts?: RequestOptions,
+  ) => api.post<StockCount & { replayed: boolean }>("/stock-counts", input, opts),
+
+  /**
+   * شمارش یک کالا — **مطلق**، نه افزایشی.
+   *
+   * `PUT` است و `Idempotency-Key` نمی‌خواهد: همان بارکد با همان عدد،
+   * هر چند بار که فرستاده شود یک نتیجه دارد. اسکن دوباره یعنی
+   * «دوباره شمردم و این عدد است»، نه «یکی دیگر پیدا کردم».
+   */
+  setLine: (id: string, input: { barcode?: string; variationId?: string; countedQty: string }) =>
+    api.put<StockCount>(`/stock-counts/${id}/lines`, input),
+
+  removeLine: (id: string, lineId: string) =>
+    api.del<StockCount>(`/stock-counts/${id}/lines/${lineId}`),
+
+  post: (id: string, opts?: RequestOptions) =>
+    api.post<StockCount & { replayed: boolean }>(`/stock-counts/${id}/post`, {}, opts),
+
+  cancel: (id: string) => api.post<StockCount>(`/stock-counts/${id}/cancel`),
+};

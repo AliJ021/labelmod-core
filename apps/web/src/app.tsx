@@ -12,7 +12,7 @@ import { Glass, GlassFilters } from "./components/Glass.tsx";
 import { Dashboard } from "./screens/Dashboard.tsx";
 import { Login, LockScreen, ReauthPanel } from "./screens/Login.tsx";
 import { Pos } from "./screens/Pos.tsx";
-import { Purchasing } from "./screens/Purchasing.tsx";
+import { Warehouse } from "./screens/Warehouse.tsx";
 import { Returns } from "./screens/Returns.tsx";
 import { Settings } from "./screens/Settings.tsx";
 import {
@@ -326,7 +326,7 @@ export function App() {
           ) : zone === "returns" ? (
             <Returns />
           ) : zone === "purchasing" ? (
-            <Purchasing />
+            <Warehouse />
           ) : (
             <Settings />
           )}
