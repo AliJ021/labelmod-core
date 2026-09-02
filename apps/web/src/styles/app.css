@@ -791,3 +791,257 @@ select.set-input {
   border-radius: var(--r-xs);
   box-shadow: 0 0 0 100vmax rgb(0 0 0 / 35%);
 }
+
+/* ═══ زیرتب‌های ناحیه تنظیمات ═══════════════════════════════════════ */
+
+.subtabs {
+  display: flex;
+  gap: var(--s-1);
+  flex-wrap: wrap;
+}
+
+.subtabs button {
+  padding: var(--s-2) var(--s-3);
+  border-radius: var(--r-sm);
+  border: 1px solid var(--ring);
+  background: var(--surface-solid);
+  color: var(--ink);
+  cursor: pointer;
+}
+
+.subtabs button.on {
+  border-color: var(--accent);
+  color: var(--accent);
+  font-weight: 600;
+}
+
+/* ═══ کدینگ حساب ═══════════════════════════════════════════════════ */
+
+.acct-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  gap: var(--s-3);
+  flex-wrap: wrap;
+}
+
+.acct-toggle,
+.acct-check {
+  display: flex;
+  align-items: center;
+  gap: var(--s-1);
+  white-space: nowrap;
+}
+
+.acct-tree {
+  list-style: none;
+  margin: var(--s-3) 0 0;
+  padding: 0;
+}
+
+.acct-tree > li {
+  border-block-end: 1px solid var(--ring);
+}
+
+.acct-off {
+  opacity: 0.55;
+}
+
+.acct-row,
+.acct-form {
+  display: flex;
+  align-items: center;
+  gap: var(--s-2);
+  padding-block: var(--s-2);
+  flex-wrap: wrap;
+}
+
+/* عرض ثابت تا ستون کد نرقصد — همان دلیلی که `.num` وجود دارد. */
+.acct-code {
+  min-width: 6ch;
+}
+
+.acct-name {
+  font-weight: 600;
+}
+
+.acct-meta {
+  flex: 1 1 auto;
+}
+
+.acct-actions {
+  display: flex;
+  gap: var(--s-1);
+  margin-inline-start: auto;
+}
+
+.acct-actions button,
+.term-row button,
+.perm-row button,
+.perm-form button,
+.acct-form button,
+.acct-add-root {
+  padding: var(--s-1) var(--s-2);
+  border-radius: var(--r-sm);
+  border: 1px solid var(--ring);
+  background: var(--surface-solid);
+  color: var(--ink);
+  cursor: pointer;
+}
+
+.acct-actions button:disabled,
+.term-row button:disabled,
+.perm-form button:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+
+.acct-form input,
+.acct-form select {
+  padding: var(--s-1) var(--s-2);
+  border-radius: var(--r-sm);
+  border: 1px solid var(--ring);
+  background: var(--surface-solid);
+  color: var(--ink);
+}
+
+.acct-hint {
+  flex-basis: 100%;
+  margin: 0;
+}
+
+.acct-add-root {
+  margin-block-start: var(--s-3);
+}
+
+/* ═══ پایانه‌ها ═════════════════════════════════════════════════════ */
+
+.term-list {
+  list-style: none;
+  margin: var(--s-3) 0 0;
+  padding: 0;
+}
+
+.term-row {
+  display: flex;
+  align-items: flex-end;
+  gap: var(--s-3);
+  padding-block: var(--s-3);
+  border-block-end: 1px solid var(--ring);
+  flex-wrap: wrap;
+}
+
+.term-id {
+  display: flex;
+  flex-direction: column;
+  min-width: 14ch;
+}
+
+.term-field {
+  display: flex;
+  flex-direction: column;
+  gap: var(--s-1);
+}
+
+.term-field span {
+  font-size: 0.85em;
+  color: var(--muted);
+}
+
+.term-field input {
+  padding: var(--s-1) var(--s-2);
+  border-radius: var(--r-sm);
+  border: 1px solid var(--ring);
+  background: var(--surface-solid);
+  color: var(--ink);
+  max-width: 16ch;
+}
+
+.term-reason input {
+  max-width: 24ch;
+}
+
+/* ═══ مجوزها ═══════════════════════════════════════════════════════ */
+
+.perm-filter input {
+  width: 100%;
+  padding: var(--s-2);
+  margin-block: var(--s-3);
+  border-radius: var(--r-sm);
+  border: 1px solid var(--ring);
+  background: var(--surface-solid);
+  color: var(--ink);
+}
+
+.perm-group {
+  margin-block-start: var(--s-4);
+}
+
+.perm-op {
+  font-family: "IBM Plex Mono", Vazirmatn, ui-monospace, monospace;
+  font-size: 0.95em;
+  margin: 0 0 var(--s-2);
+  color: var(--accent);
+}
+
+.perm-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+
+.perm-row,
+.perm-form {
+  display: flex;
+  align-items: center;
+  gap: var(--s-2);
+  padding-block: var(--s-2);
+  border-block-end: 1px solid var(--ring);
+  flex-wrap: wrap;
+}
+
+.perm-role {
+  min-width: 12ch;
+  font-weight: 600;
+}
+
+/* رنگ تنها حامل معنا نیست: شکل نشانه هم فرق می‌کند (● در برابر ○) و
+   برچسب متنی «مجاز»/«ممنوع» همیشه کنارش هست. */
+.perm-yes { color: var(--good); }
+.perm-no  { color: var(--muted); }
+
+.perm-caps {
+  flex: 1 1 auto;
+}
+
+.perm-field {
+  display: flex;
+  flex-direction: column;
+  gap: var(--s-1);
+}
+
+.perm-field span {
+  font-size: 0.85em;
+  color: var(--muted);
+}
+
+.perm-field input {
+  padding: var(--s-1) var(--s-2);
+  border-radius: var(--r-sm);
+  border: 1px solid var(--ring);
+  background: var(--surface-solid);
+  color: var(--ink);
+  max-width: 20ch;
+}
+
+.perm-check {
+  display: flex;
+  align-items: center;
+  gap: var(--s-1);
+}
+
+.perm-bad {
+  flex-basis: 100%;
+  margin: 0;
+  color: var(--crit);
+}
