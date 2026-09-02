@@ -227,7 +227,25 @@ INSERT INTO identity.permission_rule
 ('accountant','settings.view',     true,  NULL,   NULL,  NULL),
 ('accountant','settings.manage',   true,  NULL,   NULL,  NULL),
 ('admin','settings.view',          true,  NULL,   NULL,  NULL),
-('admin','settings.manage',        true,  NULL,   NULL,  NULL)
+('admin','settings.manage',        true,  NULL,   NULL,  NULL),
+
+-- تعریف تأمین‌کننده — جدا از «رسید خرید»، و باید جدا باشد.
+--
+-- هر تأمین‌کننده یک **تفصیلی** در دفتر می‌سازد و `tafsili_no` می‌گیرد.
+-- ساختن تفصیلی کار انبارداری نیست که فقط محموله را می‌شمارد؛ اگر بود،
+-- یک تأمین‌کننده با اسم غلط تا ابد در گردش حساب اشخاص می‌ماند —
+-- سطر تفصیلی حذف‌شدنی نیست وقتی سند به آن خورده باشد.
+--
+-- انباردار فهرست را می‌بیند (`stock.receive` کافی است) ولی سطر تازه
+-- نمی‌سازد.
+('supervisor','supplier.manage',   true,  NULL,   NULL,  NULL),
+('accountant','supplier.manage',   true,  NULL,   NULL,  NULL),
+('admin','supplier.manage',        true,  NULL,   NULL,  NULL),
+
+-- حسابدار رسید خرید را می‌بیند: فاکتور خرید و بدهی تأمین‌کننده کار
+-- اوست. تا امروز `stock.receive` نداشت، یعنی فهرست رسیدها برایش بسته
+-- بود در حالی که سند همان رسیدها را باید بخواند.
+('accountant','stock.receive',     true,  NULL,   NULL,  NULL)
 ON CONFLICT (role_code, operation) DO NOTHING;
 
 -- روش‌های پرداخت -------------------------------------------------------

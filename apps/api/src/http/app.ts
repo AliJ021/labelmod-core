@@ -16,6 +16,7 @@ import { registerSalesRoutes } from "./sales-routes.ts";
 import { registerReturnRoutes } from "./return-routes.ts";
 import { registerPostingRoutes } from "./posting-routes.ts";
 import { registerCatalogRoutes } from "./catalog-routes.ts";
+import { registerPurchasingRoutes } from "./purchasing-routes.ts";
 import { registerSettingsRoutes } from "./settings-routes.ts";
 import { registerScopeRoutes } from "./scope-routes.ts";
 import { registerAdminRoutes } from "./admin-routes.ts";
@@ -24,6 +25,7 @@ import { ShiftService } from "../sales/shift.ts";
 import { ReturnService } from "../sales/return.ts";
 import { PostingBatchService } from "../sales/posting-batch.ts";
 import { VariationService } from "../catalog/variation.ts";
+import { ReceiptService } from "../purchasing/receipt.ts";
 import { SettingService } from "../platform/settings.ts";
 import { safeEqual } from "../auth/password.ts";
 
@@ -209,6 +211,10 @@ export async function buildApp(deps: AppDeps): Promise<FastifyInstance> {
   registerCatalogRoutes(app, {
     db: deps.db,
     variations: new VariationService(deps.db),
+  });
+  registerPurchasingRoutes(app, {
+    db: deps.db,
+    receipts: new ReceiptService(deps.db),
   });
   registerSettingsRoutes(app, {
     db: deps.db,

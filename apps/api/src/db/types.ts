@@ -353,6 +353,73 @@ export interface InboxMessageTable {
   result_ref: string | null;
 }
 
+// ── خرید ──────────────────────────────────────────────────────────────
+
+export interface SupplierTable {
+  id: Generated<string>;
+  code: string;
+  name: string;
+  mobile: string | null;
+  phone: string | null;
+  address: string | null;
+  national_id: string | null;
+  is_active: boolean;
+  tafsili_no: Generated<number>;
+}
+
+export interface ReceiptTable {
+  id: Generated<string>;
+  /** تا لحظه ثبت NULL است — پیش‌نویس رهاشده شماره نمی‌سوزاند (مهاجرت ۰۲۵). */
+  number: string | null;
+  branch_id: string;
+  supplier_id: string;
+  warehouse_id: string;
+  supplier_invoice_no: string | null;
+  occurred_at: Generated<Date>;
+  goods_amount: Generated<string>;
+  charges_amount: Generated<string>;
+  tax_amount: Generated<string>;
+  total_payable: Generated<string>;
+  third_party_payable: Generated<string>;
+  status: Generated<string>;
+  posted_at: Date | null;
+  created_by: string | null;
+  note: string | null;
+}
+
+export interface ReceiptLineTable {
+  id: Generated<string>;
+  receipt_id: string;
+  variation_id: string;
+  qty: string;
+  unit_price: string;
+  line_amount: string;
+  charge_alloc: Generated<string>;
+  landed_unit_cost: Generated<string>;
+}
+
+export interface ReceiptChargeTable {
+  id: Generated<string>;
+  receipt_id: string;
+  charge_type: string;
+  amount: string;
+  allocation: Generated<string>;
+  paid_from: string | null;
+  payee_type: Generated<string>;
+  payee_name: string | null;
+  paid_account_id: string | null;
+}
+
+export interface TreasuryAccountTable {
+  id: Generated<string>;
+  code: string;
+  name: string;
+  kind: string;
+  branch_id: string | null;
+  ledger_account_code: string;
+  is_active: boolean;
+}
+
 export interface Database {
   "catalog.product": ProductTable;
   "catalog.variation": VariationTable;
@@ -379,4 +446,9 @@ export interface Database {
   "platform.setting": SettingTable;
   "platform.setting_group": SettingGroupTable;
   "platform.branch": BranchTable;
+  "purchasing.supplier": SupplierTable;
+  "purchasing.receipt": ReceiptTable;
+  "purchasing.receipt_line": ReceiptLineTable;
+  "purchasing.receipt_charge": ReceiptChargeTable;
+  "treasury.account": TreasuryAccountTable;
 }
