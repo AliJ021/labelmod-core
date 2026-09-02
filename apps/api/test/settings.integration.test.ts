@@ -178,12 +178,14 @@ describe("تنظیمات از مسیر API", { skip }, () => {
       }
     }
 
-    // روش قیمت تمام‌شده باید هر دو گزینه را داشته باشد — «آخرین قیمت
-    // خرید» همان روشی است که هلو و دشت به کار می‌برند.
+    // روش قیمت تمام‌شده باید **هر سه** گزینه را داشته باشد. مالک خواست
+    // مثل هلو سه روش در دسترس باشد؛ و از این سه، فقط میانگین موزون و
+    // FIFO در فهرست استاندارد حسابداری شماره ۸ ایران‌اند — «آخرین قیمت
+    // خرید» روش رایج بازار است ولی در آن فهرست نیست.
     const costing = find(gs, "costing.method");
     assert.deepEqual(
       costing.options?.map((o) => o.value).sort(),
-      ["last_purchase", "moving_weighted_average"],
+      ["fifo", "last_purchase", "moving_weighted_average"],
     );
     // پیش‌فرض، تصمیم مالک است: «آخرین قیمت خرید»، مثل هلو.
     assert.equal(costing.value, "last_purchase", "پیش‌فرض باید آخرین قیمت خرید باشد");
@@ -247,7 +249,8 @@ describe("تنظیمات از مسیر API", { skip }, () => {
       ["tax.default_rate", 120],
       ["auth.pin_length", 3],
       ["auth.min_password_length", 6],
-      ["costing.method", "fifo"],
+      // «lifo» عمداً: چیزی که هیچ‌وقت روش قیمت‌گذاری این پروژه نمی‌شود.
+      ["costing.method", "lifo"],
       ["pos.require_customer", "شاید"],
       ["cheque.due_warning_days", 7.5],
     ] as const) {

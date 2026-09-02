@@ -128,8 +128,11 @@ PERFORM pg_temp.assert_raises('عدد صحیح با اعشار',
   $$SELECT platform.set_setting('cheque.due_warning_days', '7.5'::jsonb)$$);
 PERFORM pg_temp.assert_raises('عدد صحیح با متن',
   $$SELECT platform.set_setting('cheque.due_warning_days', '"هفت"'::jsonb)$$);
+-- مثال عمداً چیزی است که **هیچ‌وقت** روش قیمت‌گذاری نمی‌شود. پیش از
+-- این «fifo» بود، و وقتی FIFO در مهاجرت ۰۲۰ گزینه واقعی شد، این ادعا
+-- شکست — یعنی تست داشت کار می‌کرد.
 PERFORM pg_temp.assert_raises('گزینه‌ای بیرون از فهرست',
-  $$SELECT platform.set_setting('costing.method', '"fifo"'::jsonb, 'تست')$$);
+  $$SELECT platform.set_setting('costing.method', '"lifo"'::jsonb, 'تست')$$);
 PERFORM pg_temp.assert_raises('چندگزینه‌ای با عضو ناشناخته',
   $$SELECT platform.set_setting('return.reason_codes', '["دلخواه"]'::jsonb)$$);
 PERFORM pg_temp.assert_raises('مقدار تهی',
