@@ -133,6 +133,13 @@ ops/db.sh backup      # دامپ رمزنشده — باید خارج از سر�
 ops/install-hooks.sh  # یک بار روی هر کلون
 ops/close-due-days.sh # بستن شبانه دوره فروش سایت — برای cron
 
+# استقرار تولیدی — راهنمای کامل در docs/DEPLOYMENT.md
+ops/deploy.sh up      # Build و اجرای docker-compose.prod.yml
+ops/deploy.sh migrate # مهاجرت داخل ظرف، بدون پورت باز پستگرس
+ops/deploy.sh seed
+ops/deploy.sh user --username ali --name '…' --role admin --branch MAIN
+ops/deploy.sh status  # درآمد ثبت‌نشده + چک سررسیدشده
+
 corepack enable       # یک بار — نسخه pnpm از packageManager خوانده می‌شود
 pnpm install
 pnpm check            # lint + typecheck + test
@@ -150,7 +157,7 @@ pnpm --filter @labelmod/api dev
 ## گلوگاه‌ها
 
 - **پیش از هر تغییر در `db/migrations/0[01][0-9]_*.sql`، `ops/db.sh test` را
-  اجرا کن و بعد از تغییر دوباره.** ۴۹۳ ادعای SQL به‌علاوه ۳۳۳ تست Node باید پاس شوند.
+  اجرا کن و بعد از تغییر دوباره.** ۵۷۵ ادعای SQL به‌علاوه ۳۸۱ تست Node باید پاس شوند.
 - `db/test/regressions.sql` هشت باگ تأییدشده را قفل می‌کند،
   `db/test/treasury.sql` مسیرهای پول را، `db/test/cheques.sql` ماشین
   وضعیت چک را، `db/test/identity.sql` نشست، قفل ورود و مجوز را و
@@ -198,8 +205,9 @@ db/seed/        کدینگ حساب، قواعد ثبت، تنظیمات، دا�
 db/test/        تست‌های مالی — در CI و در pre-push اجرا می‌شوند
 docs/           ADR-001 (Stack) · ADR-002 (طراحی) · ADR-003 (دوره ثبت)
                 ADR-004 (چک) · ADR-005 (اعتماد دستگاه)
-                ADR-006 (قیمت تمام‌شده) · SECURITY.md
-ops/            db.sh · install-hooks.sh · hooks/
+                ADR-006 (قیمت تمام‌شده) · SECURITY.md · DEPLOYMENT.md
+ops/            db.sh · deploy.sh · install-hooks.sh · hooks/
+                deploy/ — Caddyfile، Dockerfile زمان‌بند، scheduler.sh
 apps/api/       Fastify + Kysely — احراز هویت، نشست، مجوز، فروش، صندوق،
                 مرجوعی، دوره ثبت، کالا، تنظیمات
 apps/web/       React + Vite — داشبورد، صندوق، تنظیمات
@@ -306,6 +314,36 @@ apps/           (هنوز ساخته نشده) worker
 - **حالت عملکرد `backdrop-filter` را واقعاً برمی‌دارد**، نه فقط بلور را
   صفر می‌کند — `url(#…)` خودش یک لایه ترکیب می‌سازد.
 
+## قواعد استقرار
+
+جزئیات در `docs/DEPLOYMENT.md`. پنج‌تا که شکستنشان بی‌صداست:
+
+- **`wasm-unsafe-eval` از CSP برداشته نمی‌شود.** اسکنر بارکد روی هر
+  مرورگری بدون `BarcodeDetector` بومی — **از جمله آیفون** — از
+  WebAssembly استفاده می‌کند. بدون آن، دوربین باز می‌شود، تصویر
+  می‌آید، و هیچ بارکدی خوانده نمی‌شود؛ هیچ خطایی هم در کنسول نیست.
+  `apps/web/test/csp.test.ts` این را قفل کرده.
+- **`index.html` اسکریپت درون‌خطی نمی‌گیرد.** CSP تولیدی
+  `unsafe-inline` ندارد و Caddy فایل ایستا را از دیسک سرو می‌کند، پس
+  nonce ممکن نیست. بوت تم در `apps/web/public/boot.js` است. به همین
+  دلیل `build.modulePreload.polyfill` هم خاموش است — آن Polyfill یک
+  اسکریپت درون‌خطی تزریق می‌کند.
+- **UI و API روی یک دامنه‌اند.** کوکی نشست `SameSite=Strict` است و
+  کلاینت `/api` را نسبی صدا می‌زند. دو دامنه یعنی کوکی اصلاً فرستاده
+  نمی‌شود و ورود بی‌هیچ پیام مفیدی کار نمی‌کند.
+- **پستگرس و API هیچ پورتی روی میزبان منتشر نمی‌کنند.** کوکی نشست در
+  تولید `Secure` است؛ یک مسیر HTTP لخت به API یعنی همان کوکی روی
+  شبکه رمزنشده. تنها راه ورود، Caddy است.
+- **`seed` هیچ حساب انسانی نمی‌سازد.** تنها کاربرش «سیستم» است که نه
+  رمز دارد نه PIN و غیرفعال است. اولین مدیر با
+  `apps/api/src/cli/create-user.ts` ساخته می‌شود و رمزش تصادفی است و
+  یک بار چاپ می‌شود. رمز پیش‌فرضِ کامیت‌شده همان چیزی است که اولین
+  سطر فهرست کنترل بند ۸ SECURITY.md ممنوع کرده.
+
+⚠️ Reverse Proxy روی `/api` هدر CSP را با `?` می‌گذارد — یعنی «فقط اگر
+پاسخ خودش نگذاشته باشد». صفحه چاپ برچسب CSP سخت‌گیرتر خودش را دارد و
+نباید بازنویسی شود.
+
 ## Stack
 
 Node 22 + Fastify + **Kysely** · React + Vite · PostgreSQL 16 · pnpm ·
@@ -345,6 +383,7 @@ Microservice · Redis · حالت آفلاین کامل · Windows Bridge و PC-
 - `docs/ADR-006-costing.md` — آخرین قیمت خرید، تجدید ارزیابی، و اینکه
   سود کجا شناسایی می‌شود
 - @docs/SECURITY.md — Argon2id، نشست مات، WebAuthn، زنجیره تأمین
+- `docs/DEPLOYMENT.md` — استقرار روی سرور، TLS، CSP، بکاپ، عیب‌یابی
 - `docs/design-proof.html` — نمونه بصری داشبورد و صندوق
 
 بازبینی کامل پروژه:

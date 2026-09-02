@@ -1,0 +1,13 @@
+# هر چیزی که نباید داخل Context ساخت برود. مهم‌تر از حجم: راز.
+.git
+.env
+.env.*
+!.env.example
+node_modules
+**/node_modules
+apps/web/dist
+backup
+*.log
+.claude
+docs
+db/test

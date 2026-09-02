@@ -1,0 +1,15 @@
+# =====================================================================
+# کار شبانه — بستن دوره فروش سایت و بکاپ
+# =====================================================================
+# ایمیج پستگرس، فقط برای `psql` و `pg_dump`. نسخه‌اش عمداً همان نسخه
+# سرور است: `pg_dump` قدیمی‌تر از سرور، دامپ نمی‌گیرد.
+# ---------------------------------------------------------------------
+FROM postgres:16-alpine
+RUN apk add --no-cache bash tzdata
+ENV TZ=Asia/Tehran
+# اسکریپت‌ها از Volume می‌آیند تا تغییرشان نیاز به Build دوباره نداشته
+# باشد؛ فقط نقطه ورود اینجاست.
+COPY ops/deploy/scheduler.sh /usr/local/bin/scheduler.sh
+RUN chmod +x /usr/local/bin/scheduler.sh
+WORKDIR /app
+ENTRYPOINT ["/usr/local/bin/scheduler.sh"]

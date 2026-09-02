@@ -2,12 +2,13 @@
 
 پلتفرم یکپارچه لیبل مد — حسابداری، انبار، خرید، فروش و صندوق فروشگاهی.
 
-> **وضعیت: هسته مالی، لایه API، ورود و صفحه صندوق ساخته و تست شده‌اند.**
-> **رابط کاربری کامل است: ورود، صندوق، مرجوعی، تخفیف، داشبورد و موبایل. قیمت دستی هنوز فقط از API.**
+> **وضعیت: هسته مالی، لایه API، رابط کاربری و مسیر استقرار ساخته و تست شده‌اند.**
+> **رابط کاربری: ورود، صندوق، مرجوعی، تخفیف، داشبورد و موبایل. قیمت دستی هنوز فقط از API.**
+> **استقرار: `docker-compose.prod.yml` + Caddy با TLS خودکار — راهنما در `docs/DEPLOYMENT.md`.**
 > پیش از ورود داده واقعی، بخش «تصمیم‌های باز» پایین را بخوانید.
 
 ```
-۴۹۳ ادعای SQL  ·  ۳۳۳ تست Node  ·  هر دو در CI روی دیتابیس یک‌بارمصرف
+۵۷۵ ادعای SQL  ·  ۳۸۱ تست Node  ·  هر دو در CI روی دیتابیس یک‌بارمصرف
 ```
 
 ---
@@ -143,7 +144,7 @@ React + Vite، RTL کامل، زبان طراحی Liquid Glass ناحیه‌بن
 
 ---
 
-## راه‌اندازی
+## راه‌اندازی برای توسعه
 
 ```bash
 cp .env.example .env      # رمز پایگاه داده را عوض کنید
@@ -152,11 +153,11 @@ docker compose up -d db
 export DATABASE_URL='postgres://labelmod:رمز@localhost:5432/labelmod'
 ops/db.sh migrate         # ساخت اسکیما
 ops/db.sh seed            # کدینگ حساب، قواعد ثبت، تنظیمات
-ops/db.sh test            # ۴۹۳ ادعا — باید همه پاس شوند
+ops/db.sh test            # ۵۷۵ ادعا — باید همه پاس شوند
 
 corepack enable
 pnpm install
-pnpm check                # lint + typecheck + ۳۳۳ تست
+pnpm check                # lint + typecheck + ۳۸۱ تست
 pnpm --filter @labelmod/api dev
 pnpm --filter @labelmod/web dev
 
@@ -165,16 +166,62 @@ ops/install-hooks.sh      # یک بار روی هر کلون — جایگزین 
 
 اگر `ops/db.sh test` سبز نشد، هیچ کار دیگری نکنید تا علتش پیدا شود.
 
-### کار شبانه
-
-فروش سایت شیفت ندارد، پس سند حسابداری‌اش با یک کار زمان‌بندی‌شده بسته
-می‌شود. **موجودی ربطی به این ندارد و همان لحظه فروش کم می‌شود.**
+**`seed` هیچ حساب انسانی نمی‌سازد** و نباید بسازد — رمز پیش‌فرضِ
+کامیت‌شده همان چیزی است که بند ۸ SECURITY.md ممنوع کرده. اولین کاربر:
 
 ```bash
-0 3 * * *  DATABASE_URL='…' /srv/labelmod/ops/close-due-days.sh >> /var/log/labelmod-close.log 2>&1
+node --experimental-strip-types apps/api/src/cli/create-user.ts \
+     --username ali --name 'علی جوادی' --role admin --branch MAIN
 ```
 
-کنترل: `SELECT * FROM sales.unposted_revenue;` باید خالی باشد.
+رمز تصادفی ساخته می‌شود و **یک بار** چاپ می‌شود.
+
+---
+
+## استقرار روی سرور
+
+راهنمای کامل و گام‌به‌گام: **`docs/DEPLOYMENT.md`**
+
+```bash
+cp .env.example .env      # DB_PASSWORD · SITE_ADDRESS · ACME_EMAIL
+ops/deploy.sh up          # Build و اجرا
+ops/deploy.sh migrate
+ops/deploy.sh seed
+ops/deploy.sh user --username ali --name 'علی جوادی' --role admin --branch MAIN
+ops/deploy.sh status
+```
+
+چهار سرویس در `docker-compose.prod.yml`، و نه بیشتر (ADR-001):
+
+| سرویس | کار | پورت روی میزبان |
+| --- | --- | --- |
+| `db` | PostgreSQL 16 | **هیچ** — فقط شبکه داخلی |
+| `api` | Fastify | **هیچ** — فقط از پشت Caddy |
+| `caddy` | TLS خودکار + سرو UI + Reverse Proxy روی `/api` | ۸۰، ۴۴۳ |
+| `scheduler` | بستن شبانه دوره فروش سایت، بکاپ | — |
+
+سه چیزی که ارزش دانستن دارند:
+
+**۱. یک دامنه برای هر دو.** کوکی نشست `SameSite=Strict` است و UI مسیر
+`/api` را نسبی صدا می‌زند. دو دامنه یعنی کوکی اصلاً فرستاده نمی‌شود و
+ورود بی‌هیچ پیام مفیدی کار نمی‌کند.
+
+**۲. `wasm-unsafe-eval` در CSP اختیاری نیست.** اسکنر بارکد روی هر
+مرورگری بدون `BarcodeDetector` بومی — **از جمله آیفون** — از
+WebAssembly استفاده می‌کند. بدون آن کلیدواژه، دوربین باز می‌شود و هیچ
+بارکدی خوانده نمی‌شود، بی‌آنکه خطایی بدهد. `apps/web/test/csp.test.ts`
+این را در CI قفل کرده.
+
+**۳. کار شبانه بدون cron.** سرویس `scheduler` هر ساعت بیدار می‌شود؛
+اگر کار امروز انجام نشده باشد اجرایش می‌کند و نشانه‌اش را در یک Volume
+می‌گذارد — پس Restart ظرف، اجرای دوباره نمی‌سازد.
+**موجودی ربطی به بستن دوره ندارد و همان لحظه فروش کم می‌شود.**
+
+کنترل روزانه: `SELECT * FROM sales.unposted_revenue;` باید خالی باشد.
+
+⚠️ بکاپ خودکار روی همان سرور می‌نشیند. تا وقتی رمزنگاری‌شده به بیرون
+کپی نشود و Restore آن یک بار تست نشود، **بکاپ نیست** — بند ۶ راهنمای
+استقرار.
 
 ---
 
@@ -269,8 +316,9 @@ Microservice · Redis · Kubernetes · حالت آفلاین کامل · Windows
 db/migrations/   اسکیما و توابع — شماره‌دار، SQL خام، قابل حسابرسی
 db/seed/         کدینگ حساب، قواعد ثبت، تنظیمات، داده مرجع
 db/test/         ۱۷ فایل تست مالی — در CI و pre-push اجرا می‌شوند
-docs/            ADR-001 تا ADR-006 · SECURITY.md
-ops/             db.sh · install-hooks.sh · close-due-days.sh
+docs/            ADR-001 تا ADR-006 · SECURITY.md · DEPLOYMENT.md
+ops/             db.sh · deploy.sh · install-hooks.sh · close-due-days.sh
+                 deploy/ — Caddyfile، زمان‌بند شبانه
 apps/api/        Fastify + Kysely — احراز هویت، نشست، مجوز، فروش، صندوق،
                  مرجوعی، دوره ثبت، کالا، گزارش روزانه، تنظیمات
 apps/web/        React + Vite — ورود و قفل صفحه، صندوق، مرجوعی، داشبورد،
@@ -288,6 +336,7 @@ apps/web/        React + Vite — ورود و قفل صفحه، صندوق، م�
 | ADR-005 | اعتماد دستگاه، ارتقای نشست و CSRF |
 | ADR-006 | آخرین قیمت خرید، تجدید ارزیابی، و اینکه سود کجا شناسایی می‌شود |
 | SECURITY.md | Argon2id، نشست مات، WebAuthn، زنجیره تأمین |
+| DEPLOYMENT.md | استقرار روی سرور، TLS، CSP، بکاپ، عیب‌یابی |
 
 ## قدم بعدی
 
@@ -296,6 +345,6 @@ apps/web/        React + Vite — ورود و قفل صفحه، صندوق، م�
    از روی مشخصات بازار است نه دستگاه شما، و دوربین موبایل روی `http://`
    اصلاً اجازه کار ندارد. هیچ تستی جای این دو را نمی‌گیرد.
 ۲. تصمیم‌های ⏳ جدول بالا با حسابدار و مشاور مالیاتی قفل شوند.
-۳. افزونه ووکامرس و Worker.
+۳. صفحه انبار و خرید، افزونه ووکامرس، Worker.
 ۴. مهاجرت داده واقعی + شمارش فیزیکی نمونه‌ای.
 ۵. اجرای موازی با سیستم فعلی تا سه روز بدون مغایرت.

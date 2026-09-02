@@ -1,0 +1,108 @@
+# =====================================================================
+# استقرار تولیدی — تک سرور
+# =====================================================================
+#   docker compose -f docker-compose.prod.yml up -d --build
+#
+# چهار سرویس، و نه بیشتر (ADR-001): پستگرس، API، Caddy (که هم TLS
+# می‌گیرد و هم رابط کاربری را سرو می‌کند) و یک زمان‌بند شبانه.
+# بدون Redis، بدون Kubernetes، بدون صف جداگانه.
+#
+# ⚠️ پیش از اولین اجرا: `cp .env.example .env` و پر کردن آن.
+# ---------------------------------------------------------------------
+name: labelmod
+
+services:
+  db:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_DB: labelmod
+      POSTGRES_USER: labelmod
+      POSTGRES_PASSWORD: ${DB_PASSWORD:?DB_PASSWORD لازم است}
+      TZ: ${TZ:-Asia/Tehran}
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    # ⚠️ عمداً هیچ پورتی منتشر نمی‌شود. پستگرس فقط از شبکه داخلی
+    #    Compose دیده می‌شود. برای psql از میزبان:
+    #    docker compose -f docker-compose.prod.yml exec db psql -U labelmod -d labelmod
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U labelmod -d labelmod"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    restart: unless-stopped
+
+  api:
+    build:
+      context: .
+      dockerfile: apps/api/Dockerfile
+    environment:
+      NODE_ENV: production
+      HOST: 0.0.0.0
+      PORT: 3000
+      TZ: ${TZ:-Asia/Tehran}
+      DATABASE_URL: postgres://labelmod:${DB_PASSWORD:?DB_PASSWORD لازم است}@db:5432/labelmod
+      DB_POOL_MAX: ${DB_POOL_MAX:-10}
+      LOG_LEVEL: ${LOG_LEVEL:-info}
+      COOKIE_NAME: ${COOKIE_NAME:-labelmod_session}
+      DEVICE_COOKIE_NAME: ${DEVICE_COOKIE_NAME:-labelmod_device}
+      CSRF_COOKIE_NAME: ${CSRF_COOKIE_NAME:-labelmod_csrf}
+    depends_on:
+      db:
+        condition: service_healthy
+    # هیچ پورتی روی میزبان. تنها راه رسیدن به API از Caddy است، پس
+    # کوکی `Secure` هرگز روی HTTP لخت نمی‌رود.
+    healthcheck:
+      test: ["CMD-SHELL", "node -e \"fetch('http://127.0.0.1:3000/health').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))\""]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      start_period: 20s
+    restart: unless-stopped
+
+  caddy:
+    build:
+      context: .
+      dockerfile: apps/web/Dockerfile
+    environment:
+      SITE_ADDRESS: ${SITE_ADDRESS:?SITE_ADDRESS لازم است — دامنه‌ای که گواهی برایش گرفته می‌شود}
+      ACME_EMAIL: ${ACME_EMAIL:?ACME_EMAIL لازم است}
+      TZ: ${TZ:-Asia/Tehran}
+    ports:
+      - "80:80"
+      - "443:443"
+      - "443:443/udp"     # HTTP/3
+    volumes:
+      - ./ops/deploy/Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy_data:/data   # ⚠️ گواهی‌ها اینجایند. پاک شدنش یعنی صدور دوباره.
+      - caddy_config:/config
+    depends_on:
+      - api
+    restart: unless-stopped
+
+  scheduler:
+    build:
+      context: .
+      dockerfile: ops/deploy/Dockerfile.scheduler
+    environment:
+      TZ: ${TZ:-Asia/Tehran}
+      DATABASE_URL: postgres://labelmod:${DB_PASSWORD:?DB_PASSWORD لازم است}@db:5432/labelmod
+      BACKUP_DIR: /backup
+      CLOSE_HOUR: ${CLOSE_HOUR:-3}
+      BACKUP_HOUR: ${BACKUP_HOUR:-4}
+    volumes:
+      # مخزن فقط‌خواندنی: اسکریپت‌ها و مهاجرت‌ها از همین‌جا خوانده
+      # می‌شوند، پس `ops/deploy.sh migrate` نیاز به Build دوباره ندارد.
+      - ./ops:/app/ops:ro
+      - ./db:/app/db:ro
+      - ${BACKUP_DIR:-./backup}:/backup
+      - scheduler_state:/var/lib/labelmod-scheduler
+    depends_on:
+      db:
+        condition: service_healthy
+    restart: unless-stopped
+
+volumes:
+  pgdata:
+  caddy_data:
+  caddy_config:
+  scheduler_state:
