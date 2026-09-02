@@ -49,13 +49,32 @@ interface ErrorBody {
   error?: { code?: string; message?: string; correlationId?: string };
 }
 
-async function request<T>(method: string, path: string, body?: unknown): Promise<T> {
+export interface RequestOptions {
+  /**
+   * کلید Idempotency برای این **عمل**.
+   *
+   * سرور با همین کلید تصمیم می‌گیرد درخواست تازه است یا Replay. پس
+   * باید روی Retry شبکه **همان** بماند و برای عمل بعدی **تازه** شود.
+   * ساختنش کار `lib/action-key.ts` است، نه اینجا.
+   */
+  idempotencyKey?: string;
+}
+
+async function request<T>(
+  method: string,
+  path: string,
+  body?: unknown,
+  opts: RequestOptions = {},
+): Promise<T> {
   const headers: Record<string, string> = {};
   if (body !== undefined) headers["content-type"] = "application/json";
 
   if (method !== "GET" && method !== "HEAD") {
     const csrf = readCookie(CSRF_COOKIE);
     if (csrf) headers["x-csrf-token"] = csrf;
+    if (opts.idempotencyKey !== undefined) {
+      headers["idempotency-key"] = opts.idempotencyKey;
+    }
   }
 
   const res = await fetch(`${BASE}${path}`, {
@@ -90,6 +109,10 @@ function safeParse(text: string): unknown {
 
 export const api = {
   get: <T>(path: string) => request<T>("GET", path),
-  post: <T>(path: string, body?: unknown) => request<T>("POST", path, body ?? {}),
-  patch: <T>(path: string, body: unknown) => request<T>("PATCH", path, body),
+  post: <T>(path: string, body?: unknown, opts?: RequestOptions) =>
+    request<T>("POST", path, body ?? {}, opts),
+  patch: <T>(path: string, body: unknown, opts?: RequestOptions) =>
+    request<T>("PATCH", path, body, opts),
+  del: <T>(path: string, opts?: RequestOptions) =>
+    request<T>("DELETE", path, undefined, opts),
 };

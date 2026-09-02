@@ -268,6 +268,9 @@
 .lines li {
   display: flex;
   align-items: center;
+  /* روی موبایل سطر می‌شکند به‌جای اینکه نام کالا را له کند — و پنل
+     تخفیف هم از همین‌جا خط خودش را می‌گیرد. */
+  flex-wrap: wrap;
   gap: var(--s-3);
   padding: var(--s-3) 0;
   border-bottom: 1px solid var(--rule);
@@ -561,3 +564,230 @@ select.set-input {
 }
 .set-msg--crit { color: var(--crit); }
 .set-msg--good { color: var(--good); }
+
+/* ── ورود و قفل صفحه ────────────────────────────────────────────────
+   ADR-002 این ناحیه را «شیشه کامل» گذاشته: لحظه اول، بدون عددی که
+   خوانده شود. ولی ورودی‌ها `Solid`اند — رمز و PIN پرتضاد تایپ شوند. */
+
+.auth-wrap {
+  min-height: 100dvh;
+  display: grid;
+  place-items: center;
+  padding: var(--s-4);
+}
+
+.auth-card {
+  width: min(26rem, 100%);
+}
+
+.auth-title {
+  margin: 0 0 var(--s-1);
+  font-size: 1.4rem;
+  line-height: 1.3;
+}
+
+.auth-field {
+  display: flex;
+  flex-direction: column;
+  gap: var(--s-2);
+  padding: var(--s-3);
+}
+
+.auth-field label {
+  font-weight: 700;
+  font-size: 0.9rem;
+}
+
+/* هدف لمسی ۴۴ پیکسل: همان صفحه روی موبایل هم باز می‌شود، و قطعی برق
+   یعنی ممکن است تنها راهِ فروش همین باشد. */
+.auth-field input,
+.auth-field select,
+.auth-submit,
+.auth-alt {
+  min-height: var(--touch);
+  font: inherit;
+  border-radius: var(--r-sm);
+}
+
+.auth-field input,
+.auth-field select {
+  padding: 0 var(--s-3);
+  color: var(--ink);
+  background: var(--surface-solid);
+  border: 1px solid var(--rule);
+}
+
+.auth-field input:focus-visible,
+.auth-field select:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 1px;
+}
+
+.auth-submit {
+  padding: 0 var(--s-4);
+  font-weight: 700;
+  color: var(--accent-ink);
+  background: var(--accent);
+  border: 1px solid transparent;
+  cursor: pointer;
+}
+
+.auth-submit[disabled] {
+  opacity: 0.6;
+  cursor: progress;
+}
+
+.auth-alt {
+  padding: 0 var(--s-4);
+  color: var(--ink);
+  background: transparent;
+  border: 1px solid var(--rule);
+  cursor: pointer;
+}
+
+.auth-error {
+  margin: 0;
+  color: var(--crit);
+  font-size: 0.9rem;
+}
+
+/* ── صندوق: هشدار و حذف قلم ──────────────────────────────────────── */
+
+.pos-alert {
+  display: flex;
+  align-items: center;
+  gap: var(--s-2);
+  margin: 0;
+  padding: var(--s-3);
+  border-radius: var(--r-sm);
+  font-size: 0.95rem;
+}
+
+/* حذف قلم کنار سطر می‌ماند، نه پشت یک منو: صندوق‌دار وسط صف نباید
+   دنبال گزینه بگردد. هدف لمسی کامل، چون همین صفحه روی موبایل هم
+   باز می‌شود. */
+.line-drop {
+  min-width: var(--touch);
+  min-height: var(--touch);
+  color: var(--ink-3);
+  background: transparent;
+  border: 0;
+  border-radius: var(--r-xs);
+  font: inherit;
+  cursor: pointer;
+}
+
+.line-drop:hover:not([disabled]) {
+  color: var(--crit);
+}
+
+.line-drop[disabled] {
+  opacity: 0.4;
+  cursor: default;
+}
+
+/* پنل تخفیف سطر — داخل خودِ سطر باز می‌شود، نه در یک مودال.
+   صندوق‌دار وسط صف نباید تمرکزش را از سبد بردارد. */
+/* سطر سبد یک **flex** است، نه grid — پس `grid-column` اینجا هیچ
+   کاری نمی‌کرد و پنل لای دکمه‌ها فشرده می‌شد. `flex-basis: 100%` روی
+   ظرفِ wrap‌شونده همان کاری را می‌کند که انتظار می‌رفت. */
+.line-discount {
+  flex-basis: 100%;
+  padding: var(--s-3);
+  margin-top: var(--s-2);
+  border-radius: var(--r-sm);
+}
+
+
+/* ── موبایل ────────────────────────────────────────────────────────
+   سرور بیرون از فروشگاه است، پس وقتی برق می‌رود موبایل با اینترنت
+   همراه همچنان وصل است و فروش ادامه پیدا می‌کند. یعنی این چیدمان یک
+   راحتی نیست — تنها راهِ فروش در آن ساعت است. */
+
+@media (max-width: 560px) {
+  .app {
+    padding-inline: var(--s-3);
+  }
+
+  /* نوار بالا روی گوشی دو ردیف می‌شود: بخش‌ها، بعد ابزارها. بدون
+     این، نام کاربر و سه دکمه از لبه بیرون می‌زدند. */
+  .topbar {
+    gap: var(--s-2);
+    padding: var(--s-2);
+  }
+
+  .zones {
+    margin-inline-start: 0;
+    width: 100%;
+    overflow-x: auto;
+    /* اسکرول افقی فقط برای نوار بخش‌ها، نه برای کل صفحه. */
+    scrollbar-width: none;
+  }
+
+  .zones::-webkit-scrollbar {
+    display: none;
+  }
+
+  .zones button,
+  .tool {
+    padding: 0 var(--s-3);
+    white-space: nowrap;
+  }
+
+  .tools {
+    width: 100%;
+    overflow-x: auto;
+    scrollbar-width: none;
+  }
+
+  .tools::-webkit-scrollbar {
+    display: none;
+  }
+
+  /* نام کالا خط خودش را می‌گیرد و تعداد و مبلغ زیرش — روی عرض ۳۶۰
+     پیکسل، همه در یک خط یعنی نام کالا به دو کاراکتر می‌رسید. */
+  .line-name {
+    flex-basis: 100%;
+  }
+
+  .line-total {
+    margin-inline-start: auto;
+  }
+
+  .auth-card {
+    width: 100%;
+  }
+}
+
+/* ── دوربین ────────────────────────────────────────────────────────
+   نسبت ۴:۳ ثابت است تا باز شدن دوربین، سبد را زیر خط تا نیندازد. */
+
+.cam {
+  padding: var(--s-3);
+  margin-bottom: var(--s-4);
+  border-radius: var(--r-md);
+}
+
+.cam-frame {
+  position: relative;
+  aspect-ratio: 4 / 3;
+  max-height: 40vh;
+  overflow: hidden;
+  border-radius: var(--r-sm);
+  background: var(--bg-deep);
+}
+
+.cam-frame video {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+
+/* کادر هدف — بدون آن کاربر نمی‌داند بارکد را کجا بگیرد. */
+.cam-target {
+  position: absolute;
+  inset: 30% 12%;
+  border: 2px solid var(--accent);
+  border-radius: var(--r-xs);
+  box-shadow: 0 0 0 100vmax rgb(0 0 0 / 35%);
+}

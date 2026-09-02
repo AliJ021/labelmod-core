@@ -609,6 +609,331 @@ describe("آمادگی API صندوق", { skip }, () => {
     assert.notEqual(a.json().id, b.json().id);
   });
 
+  // ── خلاصه روز ───────────────────────────────────────────────────
+
+  test("صندوق‌دار فروش و دریافتی را می‌بیند، ولی سود را نه", async () => {
+    // `cost.view` طبق `040_reference.sql` فقط حسابدار و مدیر دارند.
+    // ولی «چقدر پول در کشوست» را صندوق‌دار آخر شب لازم دارد، پس کل
+    // مسیر ۴۰۳ نمی‌شود.
+    const s = await loginAs(cashier);
+    const r = await app.inject({
+      method: "GET",
+      url: `/reports/daily?branchId=${BRANCH}`,
+      ...s,
+    });
+    assert.equal(r.statusCode, 200, r.body);
+    const body = r.json();
+    assert.equal(typeof body.salesAmount, "string", "پول در JSON رشته است");
+    assert.equal(typeof body.receivedAmount, "string");
+    assert.equal(body.profitAmount, null, "سود بدون cost.view دیده نمی‌شود");
+  });
+
+  test("سود `null` است، نه صفر", async () => {
+    // صفر یک ادعای مالی است («امروز سودی نبود»)؛ «اجازه نداری» ادعای
+    // دیگری است. یکی‌کردنشان یعنی صندوق‌دار فکر کند فروشگاه ضرر کرده.
+    const s = await loginAs(cashier);
+    const r = await app.inject({
+      method: "GET",
+      url: `/reports/daily?branchId=${BRANCH}`,
+      ...s,
+    });
+    assert.notEqual(r.json().profitAmount, "0");
+    assert.equal(r.json().profitAmount, null);
+  });
+
+  test("خلاصه روز شعبه دیگر ۴۰۳ می‌گیرد", async () => {
+    const s = await loginAs(cashier);
+    const r = await app.inject({
+      method: "GET",
+      url: `/reports/daily?branchId=${otherBranchId}`,
+      ...s,
+    });
+    assert.equal(r.statusCode, 403, r.body);
+  });
+
+  test("تاریخ نامعتبر رد می‌شود", async () => {
+    const s = await loginAs(cashier);
+    const r = await app.inject({
+      method: "GET",
+      url: `/reports/daily?branchId=${BRANCH}&date=دیروز`,
+      ...s,
+    });
+    assert.equal(r.statusCode, 400, r.body);
+  });
+
+  test("تاریخِ خوش‌شکل ولی ناموجود ۴۰۰ می‌گیرد، نه ۵۰۰", async () => {
+    // الگوی `\d{4}-\d{2}-\d{2}` این‌ها را رد نمی‌کرد و رشته تا
+    // `::date` در SQL می‌رفت. آنجا SQLSTATE 22008 می‌گرفت که در
+    // `errors.ts` نگاشتی ندارد — پس یک **ورودی نامعتبر کاربر** به‌شکل
+    // «خطای داخلی» گزارش می‌شد. همان الگویی که پیش‌تر برای محدودیت نرخ
+    // و P0001 اصلاح شد: دفاعی که شبیه خرابی سرور باشد، خاموش است.
+    const s = await loginAs(cashier);
+    for (const date of ["2026-13-45", "2026-02-30", "2026-00-10", "2025-02-29"]) {
+      const r = await app.inject({
+        method: "GET",
+        url: `/reports/daily?branchId=${BRANCH}&date=${date}`,
+        ...s,
+      });
+      assert.equal(r.statusCode, 400, `${date} → ${r.body}`);
+      assert.equal(r.json().error.code, "invalid_input", date);
+    }
+  });
+
+  test("۲۹ فوریه سال کبیسه یک تاریخ معتبر است", async () => {
+    // سخت‌گیری نباید به قیمت ردکردن یک روز واقعی تمام شود.
+    const s = await loginAs(cashier);
+    const r = await app.inject({
+      method: "GET",
+      url: `/reports/daily?branchId=${BRANCH}&date=2024-02-29`,
+      ...s,
+    });
+    assert.equal(r.statusCode, 200, r.body);
+  });
+
+  test("بدون نشست، خلاصه روز بیرون نمی‌رود", async () => {
+    const r = await app.inject({ method: "GET", url: `/reports/daily?branchId=${BRANCH}` });
+    assert.equal(r.statusCode, 401);
+  });
+
+  // ── تخفیف روی سطر موجود ─────────────────────────────────────────
+
+  test("تخفیف روی سطر موجود، Snapshot قیمت را دست نمی‌زند", async () => {
+    // تنها راه دیگر حذف و افزودن دوباره بود — و آن قیمت را از
+    // catalog.price دوباره می‌خواند.
+    const { s, invoiceId, body } = await newCart("2");
+    const lineId = body.lines[0]!.id;
+
+    // قیمت فهرست را عوض می‌کنیم: اگر تخفیف باعث بازقیمت‌گذاری شود،
+    // ادعای بعدی می‌شکند.
+    await sql`UPDATE catalog.price SET amount = 9999999 WHERE variation_id = ${variationId}::uuid`
+      .execute(handle.db);
+
+    const r = await app.inject({
+      method: "PATCH",
+      url: `/invoices/${invoiceId}/lines/${lineId}/discount`,
+      ...s,
+      payload: { discountAmount: "100000", discountReason: "مشتری قدیمی" },
+    });
+
+    await sql`UPDATE catalog.price SET amount = 1000001 WHERE variation_id = ${variationId}::uuid`
+      .execute(handle.db);
+
+    assert.equal(r.statusCode, 200, r.body);
+    const line = (r.json().lines as Array<Record<string, string>>)[0]!;
+    assert.equal(line.unitPrice, "1000001", "قیمت لحظه فروش دست‌نخورده");
+    assert.equal(line.discountAmount, "100000");
+    assert.equal(line.netAmount, "1900002", "۲×۱۰۰۰۰۰۱ منهای تخفیف");
+    assert.equal(r.json().netAmount, "1900002", "جمع فاکتور بازساخته شد");
+  });
+
+  test("تخفیف بیشتر از مبلغ قلم، همان خطای مسیر افزودن قلم را می‌دهد", async () => {
+    // ادعای واقعی این تست «۴۲۲» نیست، «**همان**» است: هر دو مسیر از
+    // یک دروازه رد می‌شوند، پس باید یک کد بدهند. اگر روزی از هم جدا
+    // شوند، اینجا قرمز می‌شود.
+    const { s, invoiceId, body } = await newCart("1");
+    const lineId = body.lines[0]!.id;
+
+    const viaPatch = await app.inject({
+      method: "PATCH",
+      url: `/invoices/${invoiceId}/lines/${lineId}/discount`,
+      ...s,
+      payload: { discountAmount: "99999999" },
+    });
+    const viaAdd = await app.inject({
+      method: "POST",
+      url: `/invoices/${invoiceId}/lines`,
+      ...s,
+      payload: { barcode: BARCODE, qty: "1", discountAmount: "99999999" },
+    });
+
+    assert.equal(viaPatch.statusCode, 422, viaPatch.body);
+    assert.equal(viaPatch.json().error.code, "discount_exceeds_line");
+    assert.equal(viaAdd.statusCode, viaPatch.statusCode, "دو مسیر، یک کد وضعیت");
+    assert.equal(viaAdd.json().error.code, viaPatch.json().error.code, "دو مسیر، یک کد خطا");
+
+    // لایه دوم هم سر جایش است: نگهبان دیتابیس مستقیماً هم رد می‌کند.
+    await assert.rejects(
+      sql`SELECT sales.set_line_discount(${invoiceId}::uuid, ${lineId}::uuid, 99999999)`.execute(
+        handle.db,
+      ),
+    );
+  });
+
+  test("سطری که در این فاکتور نیست رد می‌شود", async () => {
+    const { s, invoiceId } = await newCart("1");
+    const r = await app.inject({
+      method: "PATCH",
+      url: `/invoices/${invoiceId}/lines/00000000-0000-7000-8000-0000000009ff/discount`,
+      ...s,
+      payload: { discountAmount: "1000" },
+    });
+    assert.equal(r.statusCode, 404, r.body);
+    assert.equal(r.json().error.code, "line_not_found");
+  });
+
+  test("تخفیف بالای سقف صندوق‌دار، تأیید می‌خواهد نه رد خاموش", async () => {
+    // همان نردبان `sale.discount` → `sale.discount_high` که مسیر
+    // افزودن قلم دارد — چون هر دو از یک دروازه رد می‌شوند.
+    const { s, invoiceId, body } = await newCart("1");
+    const r = await app.inject({
+      method: "PATCH",
+      url: `/invoices/${invoiceId}/lines/${body.lines[0]!.id}/discount`,
+      ...s,
+      payload: { discountAmount: "900000" },
+    });
+    assert.ok(r.statusCode === 403 || r.statusCode === 428, `کد غیرمنتظره: ${r.body}`);
+  });
+
+  test("تخفیف روی فاکتور شعبه دیگر ممکن نیست", async () => {
+    const { invoiceId, body } = await newCart("1");
+    const other = await loginAs(outsider);
+    const r = await app.inject({
+      method: "PATCH",
+      url: `/invoices/${invoiceId}/lines/${body.lines[0]!.id}/discount`,
+      ...other,
+      payload: { discountAmount: "1000" },
+    });
+    assert.equal(r.statusCode, 403, r.body);
+  });
+
+  // ── یافتن فاکتور از روی شماره رسید ──────────────────────────────
+
+  test("فاکتور نهایی‌شده از روی شماره رسید پیدا می‌شود", async () => {
+    // مرجوعی از روی رسیدِ دست مشتری شروع می‌شود و روی آن شماره چاپ
+    // شده، نه UUID.
+    const { s, invoiceId } = await newCart("1");
+    await app.inject({
+      method: "POST",
+      url: `/invoices/${invoiceId}/payments`,
+      ...s,
+      payload: { methodCode: "cash", amount: "1000001" },
+    });
+    const done = await app.inject({ method: "POST", url: `/invoices/${invoiceId}/finalize`, ...s });
+    assert.equal(done.statusCode, 200, done.body);
+    const number = done.json().number as string;
+    assert.ok(number, "شماره تخصیص یافت");
+
+    const found = await app.inject({
+      method: "GET",
+      url: `/invoices/lookup?number=${encodeURIComponent(number)}&branchId=${BRANCH}`,
+      ...s,
+    });
+    assert.equal(found.statusCode, 200, found.body);
+    assert.equal(found.json().id, invoiceId, "همان فاکتور");
+    assert.equal(found.json().receivedAmount, "1000001", "دریافتی هم می‌آید");
+  });
+
+  test("مسیر lookup را مسیریاب شناسه نمی‌خواند", async () => {
+    // این چیزی است که با یک جابه‌جایی بی‌ربط در همین فایل می‌شکند:
+    // اگر `/invoices/:id` زودتر ثبت شود، «lookup» یک شناسه نامعتبر
+    // حساب می‌شود و ۴۰۰ می‌گیرد نه ۴۰۴.
+    const s = await loginAs(cashier);
+    const r = await app.inject({
+      method: "GET",
+      url: `/invoices/lookup?number=NOPE-${suffix}&branchId=${BRANCH}`,
+      ...s,
+    });
+    assert.equal(r.statusCode, 404, r.body);
+    assert.equal(r.json().error.code, "invoice_not_found");
+  });
+
+  test("رسید شعبه دیگر پیدا نمی‌شود", async () => {
+    // شماره در سطح شعبه یکتاست، نه سراسری. بدون دامنه، صندوق‌دار
+    // شعبه A رسید شعبه B را می‌دید.
+    const s = await loginAs(cashier);
+    const r = await app.inject({
+      method: "GET",
+      url: `/invoices/lookup?number=F-1405-000001&branchId=${otherBranchId}`,
+      ...s,
+    });
+    assert.equal(r.statusCode, 403, r.body);
+  });
+
+  test("بدون نشست، جست‌وجوی رسید کار نمی‌کند", async () => {
+    const r = await app.inject({
+      method: "GET",
+      url: `/invoices/lookup?number=X&branchId=${BRANCH}`,
+    });
+    assert.equal(r.statusCode, 401);
+  });
+
+  // ── علت‌های مرجوعی ──────────────────────────────────────────────
+
+  test("صندوق‌دار علت‌های مرجوعی را با برچسب فارسی می‌گیرد", async () => {
+    // از راه `GET /settings` ممکن نبود: آن `settings.view` می‌خواهد و
+    // صندوق‌دار ندارد. تنها راه دیگر نوشتن فهرست در کد بود.
+    const s = await loginAs(cashier);
+    const r = await app.inject({ method: "GET", url: "/return-reasons", ...s });
+    assert.equal(r.statusCode, 200, r.body);
+
+    const reasons = r.json().reasons as Array<{ code: string; label: string }>;
+    assert.ok(reasons.length > 0, "فهرست خالی نیست");
+    for (const x of reasons) {
+      assert.deepEqual(Object.keys(x).sort(), ["code", "label"], "فقط کد و برچسب بیرون می‌رود");
+    }
+
+    const small = reasons.find((x) => x.code === "size_small");
+    assert.ok(small, "کد نمونه هست");
+    assert.equal(small.label, "سایز کوچک بود", "برچسب فارسی، نه خودِ کد");
+  });
+
+  test("علتی که در فهرست مجاز نیست بیرون نمی‌رود", async () => {
+    // `options` برچسب همه کدهای شناخته‌شده را دارد، ولی `value` فهرست
+    // مجازهاست. نشان‌دادن علتی که سرور بعداً ردش می‌کند، بدتر از
+    // ندیدنش است.
+    const s = await loginAs(cashier);
+    const r = await app.inject({ method: "GET", url: "/return-reasons", ...s });
+    const codes = (r.json().reasons as Array<{ code: string }>).map((x) => x.code);
+    assert.ok(codes.includes("size_small"));
+    assert.ok(!codes.includes("late_delivery"), "برچسب دارد ولی مجاز نیست");
+  });
+
+  test("بدون نشست، علت‌ها بیرون نمی‌روند", async () => {
+    const r = await app.inject({ method: "GET", url: "/return-reasons" });
+    assert.equal(r.statusCode, 401, r.body);
+  });
+
+  // ── دریافتی روی خودِ فاکتور ──────────────────────────────────────
+
+  test("GET فاکتور، دریافتی تا این لحظه را هم می‌دهد", async () => {
+    // بدون این میدان، صندوقی که وسط فروش Reload شده هیچ راهی نداشت
+    // بفهمد مشتری قبلاً بخشی از پول را داده — سبد را با «دریافتی
+    // صفر» بازمی‌ساخت و همان مبلغ دوباره گرفته می‌شد.
+    const { s, invoiceId } = await newCart("2");
+
+    const before = await app.inject({ method: "GET", url: `/invoices/${invoiceId}`, ...s });
+    assert.equal(before.statusCode, 200, before.body);
+    assert.equal(before.json().receivedAmount, "0");
+    assert.equal(typeof before.json().receivedAmount, "string", "پول در JSON رشته است");
+
+    await app.inject({
+      method: "POST",
+      url: `/invoices/${invoiceId}/payments`,
+      ...s,
+      payload: { methodCode: "cash", amount: "700000" },
+    });
+
+    const after = await app.inject({ method: "GET", url: `/invoices/${invoiceId}`, ...s });
+    assert.equal(after.json().receivedAmount, "700000");
+    // `paidAmount` روی پیش‌نویس عمداً صفر می‌ماند — آن ستون را
+    // finalize_invoice می‌نویسد. دو عدد، دو معنا.
+    assert.equal(after.json().paidAmount, "0", "paidAmount روی پیش‌نویس دست‌نخورده");
+  });
+
+  test("دریافتی فاکتور، جمع چند پرداخت است", async () => {
+    const { s, invoiceId } = await newCart("2");
+    for (const amount of ["300000", "400000"]) {
+      await app.inject({
+        method: "POST",
+        url: `/invoices/${invoiceId}/payments`,
+        ...s,
+        payload: { methodCode: "cash", amount },
+      });
+    }
+    const r = await app.inject({ method: "GET", url: `/invoices/${invoiceId}`, ...s });
+    assert.equal(r.json().receivedAmount, "700000");
+  });
+
   // ── پرداخت Idempotent ───────────────────────────────────────────
 
   test("Retry پرداخت همان paymentId را Replay می‌کند و پول دوباره ثبت نمی‌شود", async () => {
@@ -948,6 +1273,48 @@ describe("آمادگی API صندوق", { skip }, () => {
     assert.equal(c.json().invoice.lines[0].qty, "2.000");
   });
 
+  test("اسکنی که پاسخش گم شود، از GET دیده می‌شود", async () => {
+    // قراردادی که صفحه صندوق روی آن حساب می‌کند.
+    //
+    // اسکن **تنها عمل افزایشی** صندوق است؛ بقیه مطلق‌اند. پس فقط
+    // اینجا این حالت ممکن است: سرور اسکن را اعمال می‌کند ولی پاسخ در
+    // راه گم می‌شود — همان چیزی که روی اینترنت همراهِ ضعیف می‌افتد.
+    //
+    // آن‌وقت صندوق‌دار خطا می‌بیند و سبدش هنوز قلم را ندارد. اگر
+    // دوباره بکشد، `ScanCounter` نام عمل تازه می‌دهد و کلید
+    // Idempotency هم تازه است — یعنی سرور دومی را هم می‌شمارد و
+    // **مشتری دو تا حساب می‌شود**. کلید نمی‌تواند نجاتش دهد: کلیدِ
+    // ثابت، اسکن دوم عمدی را Replay می‌کرد.
+    //
+    // تنها راه این است که صندوق‌دار پیش از تصمیم وضعیت واقعی سرور را
+    // ببیند. این تست همان را می‌سنجد: اثر اسکن باید از مسیر خواندن
+    // فاکتور دیده شود، نه فقط در پاسخی که گم شده.
+    const s = await loginAs(cashier);
+    const invoiceId = (
+      await app.inject({
+        method: "POST",
+        url: "/invoices",
+        ...s,
+        payload: { branchId: BRANCH, warehouseId: STORE_WH, channel: "pos" },
+      })
+    ).json().id as string;
+
+    await app.inject({
+      method: "POST",
+      url: `/invoices/${invoiceId}/scan`,
+      ...s,
+      headers: { ...s.headers, "idempotency-key": `lost-${suffix}-${invoiceId}` },
+      payload: { barcode: BARCODE },
+    });
+
+    // پاسخ بالا را عمداً نادیده می‌گیریم — فرض این است که به دست
+    // کلاینت نرسیده.
+    const seen = await app.inject({ method: "GET", url: `/invoices/${invoiceId}`, ...s });
+    assert.equal(seen.statusCode, 200, seen.body);
+    assert.equal(seen.json().lines.length, 1, "قلم باید از GET دیده شود");
+    assert.equal(seen.json().lines[0].qty, "1.000", "و با تعداد واقعی، نه صفر");
+  });
+
   test("دو اسکن هم‌زمان با کلیدهای متفاوت، هر دو شمرده می‌شوند", async () => {
     const s = await loginAs(cashier);
     const invoiceId = (
@@ -1152,5 +1519,51 @@ describe("آمادگی API صندوق", { skip }, () => {
     });
     assert.equal(clash.statusCode, 409, clash.body);
     assert.equal(clash.json().error.code, "idempotency_key_reused");
+  });
+
+  test("دو باز کردن هم‌زمان شیفت، ۴۰۹ می‌دهد نه ۵۰۰", async () => {
+    // `POST /shifts` تنها تغییردهنده وضعیتی است که `Idempotency-Key`
+    // نمی‌برد، و لازم هم ندارد: `one_open_shift_per_user` در دیتابیس
+    // دو شیفت باز را غیرممکن کرده، پس موجودی اول صندوق هرگز دو بار
+    // شمرده نمی‌شود.
+    //
+    // ولی `shift.open` **اتمیک نیست**: پیش‌بررسی و درج دو گام‌اند. دو
+    // درخواست هم‌زمان می‌توانند هر دو از پیش‌بررسی رد شوند و دومی به
+    // ایندکس یکتا بخورد. آن ۲۳۵۰۵ نگاشتی نداشت و به شاخه عمومی
+    // می‌افتاد — یعنی نگهبانی که **درست کار کرده** به‌شکل «خطای
+    // داخلی» گزارش می‌شد.
+    //
+    // ادعا عمداً روی «کدام نگهبان گرفتش» نیست: هر دو مسیر باید یک
+    // پاسخ بدهند. چیزی که هرگز نباید بیاید، ۵۰۰ است.
+    const sup = await loginAs(supervisor);
+    const [a, b] = await Promise.all([
+      app.inject({
+        method: "POST",
+        url: "/shifts",
+        ...sup,
+        payload: { branchId: BRANCH, openingCash: "0" },
+      }),
+      app.inject({
+        method: "POST",
+        url: "/shifts",
+        ...sup,
+        payload: { branchId: BRANCH, openingCash: "0" },
+      }),
+    ]);
+
+    const codes = [a.statusCode, b.statusCode].sort();
+    assert.deepEqual(codes, [201, 409], `${a.statusCode}/${b.statusCode}: ${a.body} ${b.body}`);
+
+    const rejected = a.statusCode === 409 ? a : b;
+    assert.equal(rejected.json().error.code, "shift_already_open", rejected.body);
+
+    // و واقعاً یک شیفت باز شده، نه دوتا.
+    const own = await app.inject({
+      method: "GET",
+      url: `/shifts/current?branchId=${BRANCH}`,
+      ...sup,
+    });
+    assert.equal(own.statusCode, 200, own.body);
+    assert.ok(own.json()?.id, "شیفت باز باید دیده شود");
   });
 });

@@ -31,6 +31,34 @@ export function toman(rial: bigint): string {
   return negative ? `−${text}` : text;
 }
 
+/**
+ * آنچه صندوق‌دار تایپ می‌کند (تومان) → ریالِ رشته‌ای برای API.
+ *
+ * این مرز دیگری است که فقط همین فایل حق عبور از آن را دارد. صندوق‌دار
+ * «۱۵۰٬۰۰۰» می‌بیند و می‌نویسد؛ سرور ۱۵۰۰۰۰۰ ریال می‌خواهد. اگر این
+ * ضرب در ده جایی در یک کامپوننت بیفتد، دیر یا زود یک جا از قلم
+ * می‌افتد و مبلغ ده برابر یا یک‌دهم ثبت می‌شود.
+ *
+ * `null` یعنی ورودی هنوز عدد معتبری نیست — نه صفر. صفر یک مبلغ است.
+ *
+ * اعشار عمداً پذیرفته **نمی‌شود**: ریال واحد صحیح است و «۱۰٫۵ تومان»
+ * یعنی ۱۰۵ ریال، که در صندوق پوشاک یک اشتباه تایپی است نه یک قصد.
+ */
+export function rialFromTomanInput(raw: string): bigint | null {
+  let digits = "";
+  for (const ch of raw.trim()) {
+    const c = ch.codePointAt(0) as number;
+    if (c >= 0x06f0 && c <= 0x06f9) digits += String.fromCharCode(48 + (c - 0x06f0)); // ۰-۹
+    else if (c >= 0x0660 && c <= 0x0669) digits += String.fromCharCode(48 + (c - 0x0660)); // ٠-٩
+    else if (ch >= "0" && ch <= "9") digits += ch;
+    // جداکننده هزارگان به هر شکلی که تایپ شود، و نیم‌فاصله.
+    else if (ch === "٬" || ch === "," || ch === " " || ch === "‌") continue;
+    else return null;
+  }
+  if (digits === "") return null;
+  return BigInt(digits) * 10n;
+}
+
 /** برای سرستون و خلاصه: «۲٫۴ م» به‌جای «۲٬۴۰۰٬۰۰۰». */
 export function tomanShort(rial: bigint): string {
   const t = rial / 10n;

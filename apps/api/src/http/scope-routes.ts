@@ -14,7 +14,11 @@
 import type { FastifyInstance } from "fastify";
 import { AuthError } from "../auth/service.ts";
 import type { Db } from "../db/client.ts";
-import { branchesOf } from "../sales/scope.ts";
+import { assertBranch, branchesOf } from "../sales/scope.ts";
+import { can } from "../auth/permission.ts";
+import { serializeMoney } from "../lib/money.ts";
+import { sql } from "kysely";
+import { z } from "zod";
 
 export interface ScopeRouteDeps {
   db: Db;
@@ -115,6 +119,129 @@ export function registerScopeRoutes(app: FastifyInstance, deps: ScopeRouteDeps):
         name: m.name,
         kind: m.kind,
         requiresRef: m.requires_ref,
+      })),
+    };
+  });
+
+  /**
+   * خلاصه یک روز کاری: فروش، وجه دریافتی، سود.
+   *
+   * هر سه در SQL حساب می‌شوند (`sales.daily_summary`) — نه اینجا.
+   * جمع پول در TypeScript با جمع دیتابیس یکی درنمی‌آید.
+   *
+   * ── چرا `profitAmount` می‌تواند `null` باشد ──────────────────────
+   *
+   * سود داده مدیریتی است و `cost.view` را می‌خواهد — که طبق
+   * `040_reference.sql` فقط حسابدار و مدیر دارند، نه صندوق‌دار و نه
+   * سرپرست.
+   *
+   * ولی «فروش امروز چقدر بود» و «چقدر پول در کشوست» را صندوق‌دار
+   * **باید** ببیند؛ آخر شب با همان‌ها کشو را می‌شمارد. پس کل مسیر
+   * ۴۰۳ نمی‌شود و فقط همان یک عدد `null` می‌آید.
+   *
+   * `null` است نه صفر: صفر یک ادعای مالی است («امروز سودی نبود») و
+   * «اجازه دیدنش را نداری» ادعای دیگری است.
+   */
+  app.get("/reports/daily", async (req) => {
+    const s = session(req) as { userId: string; pinUnlocked: boolean };
+    const q = z
+      .object({
+        branchId: z.string().uuid("شناسه نامعتبر"),
+        // بدون تاریخ یعنی «امروز» — و «امروز» را
+        // `platform.business_date()` تعریف می‌کند، نه منطقه زمانی سرور.
+        // `z.iso.date()` و نه یک Regex: الگوی `\d{4}-\d{2}-\d{2}` به
+        // «۲۰۲۶-۱۳-۴۵» هم اجازه عبور می‌داد و آن رشته تا `::date` در SQL
+        // می‌رفت. آنجا SQLSTATE 22008 می‌گرفت که هیچ نگاشتی ندارد، پس
+        // یک **ورودی نامعتبر کاربر** به‌شکل «خطای داخلی ۵۰۰» گزارش
+        // می‌شد — همان الگویی که برای محدودیت نرخ و P0001 دو بار اصلاح
+        // شد. این نسخه تقویم واقعی را می‌سنجد، کبیسه هم.
+        date: z.iso.date("تاریخ نامعتبر").optional(),
+      })
+      .parse(req.query);
+    await assertBranch(db, s.userId, q.branchId);
+
+    const row = await sql<{
+      business_date: string;
+      sales_amount: string;
+      received_amount: string;
+      profit_amount: string;
+      invoice_count: string;
+      return_count: string;
+    }>`SELECT * FROM sales.daily_summary(
+         ${q.branchId}::uuid,
+         coalesce(${q.date ?? null}::date, platform.business_date()))`.execute(db);
+
+    // `daily_summary` یک CROSS JOIN از سه CTE تک‌سطری است، پس همیشه
+    // **دقیقاً** یک سطر می‌دهد — حتی برای روزی که هیچ فروشی نداشته
+    // (سه صفر). نبودن سطر یعنی خودِ تابع عوض شده، که یک خطای برنامه
+    // است نه یک حالت کاربر: پیام عمومی ۵۰۰ درست‌ترین پاسخ است.
+    const r = row.rows[0];
+    if (!r) throw new Error("sales.daily_summary سطری برنگرداند");
+
+    const costs = await can(db, {
+      userId: s.userId,
+      operation: "cost.view",
+      viaPin: s.pinUnlocked,
+    });
+
+    return {
+      businessDate: r.business_date,
+      salesAmount: serializeMoney(BigInt(r.sales_amount)),
+      receivedAmount: serializeMoney(BigInt(r.received_amount)),
+      profitAmount:
+        costs.verdict === "allow" ? serializeMoney(BigInt(r.profit_amount)) : null,
+      invoiceCount: Number(r.invoice_count),
+      returnCount: Number(r.return_count),
+    };
+  });
+
+  /**
+   * علت‌های مجاز مرجوعی، با برچسب فارسی.
+   *
+   * چرا یک مسیر جدا و نه `GET /settings`: آن `settings.view` می‌خواهد
+   * و صندوق‌دار **ندارد** (`040_reference.sql` — فقط سرپرست، حسابدار
+   * و مدیر). یعنی صفحه مرجوعی از آن راه هیچ‌وقت برچسب‌ها را
+   * نمی‌دید.
+   *
+   * تنها راه دیگر، نوشتن فهرست در کد React بود — که همان چیزی است که
+   * `CLAUDE.md` صریح ممنوع کرده: «تصمیم‌های باز داده‌اند، نه کد».
+   * علت مرجوعی سوخت موتور پیشنهاد سایز است و مالک باید بتواند با یک
+   * `UPDATE` عوضش کند، نه با یک Deploy.
+   *
+   * دقیقاً همان الگوی `GET /payment-methods`: فقط آنچه فرم لازم دارد
+   * (`value` و `label`) بیرون می‌رود — نه خودِ ردیف تنظیم با
+   * `permission`، `help` و ردّ حسابرسی‌اش.
+   */
+  app.get("/return-reasons", async (req) => {
+    session(req);
+    const row = await db
+      .selectFrom("platform.setting")
+      .select(["value", "options"])
+      .where("key", "=", "return.reason_codes")
+      .executeTakeFirst();
+    if (!row) return { reasons: [] };
+
+    // `value` فهرست کدهای **مجاز** است؛ `options` برچسب همه کدهای
+    // شناخته‌شده. برچسبی که کدش در `value` نیست نباید نشان داده شود —
+    // وگرنه صندوق‌دار علتی را می‌بیند که سرور بعداً ردش می‌کند.
+    const allowed = new Set(
+      Array.isArray(row.value) ? row.value.map((v) => String(v)) : [],
+    );
+    const labels = new Map<string, string>();
+    if (Array.isArray(row.options)) {
+      for (const o of row.options) {
+        if (o !== null && typeof o === "object") {
+          const rec = o as { value?: unknown; label?: unknown };
+          const code = String(rec.value);
+          labels.set(code, typeof rec.label === "string" ? rec.label : code);
+        }
+      }
+    }
+
+    return {
+      reasons: [...allowed].map((code) => ({
+        code,
+        label: labels.get(code) ?? code,
       })),
     };
   });

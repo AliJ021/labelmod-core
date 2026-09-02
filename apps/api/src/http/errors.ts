@@ -107,6 +107,24 @@ export function registerErrorHandler(app: FastifyInstance): void {
         );
     }
 
+    // دو کاربر (یا دو Tab) هم‌زمان یک شیفت باز می‌کنند: پیش‌بررسی
+    // `shift.open` هر دو را رد می‌کند، ولی اتمیک نیست — نگهبان واقعی
+    // همین ایندکس یکتاست. بدون این نگاشت، قاعده‌ای که **درست کار
+    // کرده** به‌شکل «خطای داخلی» گزارش می‌شد؛ همان الگویی که برای
+    // محدودیت نرخ و P0001 دو بار اصلاح شد.
+    if (dbError.code === "23505" && dbError.constraint === "one_open_shift_per_user") {
+      req.log.info({ correlationId }, "شیفت باز هم‌زمان");
+      return reply
+        .code(409)
+        .send(
+          body(
+            "shift_already_open",
+            "شیفت باز دارید. صفحه را تازه کنید تا همان را ببینید.",
+            correlationId,
+          ),
+        );
+    }
+
     if (dbError.code === "P0001") {
       const rule = dbError.message ?? "قاعده سیستم این عملیات را رد کرد";
       req.log.info({ correlationId, rule }, "قاعده دیتابیس درخواست را رد کرد");

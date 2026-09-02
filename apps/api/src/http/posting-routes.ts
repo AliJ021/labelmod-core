@@ -21,7 +21,10 @@ import {
 } from "../sales/posting-batch.ts";
 
 const uuid = z.string().uuid("شناسه نامعتبر");
-const isoDate = z.string().regex(/^\d{4}-\d{2}-\d{2}$/, "تاریخ باید YYYY-MM-DD باشد");
+// تقویم واقعی، نه فقط شکل رشته: «۲۰۲۶-۱۳-۴۵» شکل درستی دارد ولی
+// تاریخ نیست، و تا `::date` در `close_channel_day` می‌رفت و آنجا ۵۰۰
+// می‌داد نه ۴۰۰. `z.iso.date()` ماه، روزِ ماه و کبیسه را می‌سنجد.
+const isoDate = z.iso.date("تاریخ باید یک تاریخ معتبر YYYY-MM-DD باشد");
 
 const closeChannelDayBody = z.object({
   branchId: uuid,

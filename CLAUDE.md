@@ -150,7 +150,7 @@ pnpm --filter @labelmod/api dev
 ## گلوگاه‌ها
 
 - **پیش از هر تغییر در `db/migrations/0[01][0-9]_*.sql`، `ops/db.sh test` را
-  اجرا کن و بعد از تغییر دوباره.** ۴۶۶ ادعای SQL به‌علاوه ۲۱۲ تست Node باید پاس شوند.
+  اجرا کن و بعد از تغییر دوباره.** ۴۹۳ ادعای SQL به‌علاوه ۳۳۳ تست Node باید پاس شوند.
 - `db/test/regressions.sql` هشت باگ تأییدشده را قفل می‌کند،
   `db/test/treasury.sql` مسیرهای پول را، `db/test/cheques.sql` ماشین
   وضعیت چک را، `db/test/identity.sql` نشست، قفل ورود و مجوز را و
