@@ -159,6 +159,18 @@ export const purchasing = {
 
   receipt: (id: string) => api.get<Receipt>(`/receipts/${id}`),
 
+  /**
+   * یافتن رسید از روی **شماره** — نقطه شروع برگشت از خرید.
+   *
+   * شماره در سطح شعبه یکتاست، نه سراسری، پس `branchId` اجباری است.
+   * سمت سرور می‌گردد نه در فهرست مرورگر: فهرست سقف دارد و رسید سه ماه
+   * پیش در آن نیست.
+   */
+  receiptByNumber: (number: string, branchId: string) =>
+    api.get<Receipt>(
+      `/receipts/lookup?number=${encodeURIComponent(number)}&branchId=${encodeURIComponent(branchId)}`,
+    ),
+
   createReceipt: (
     input: {
       branchId: string;
@@ -298,4 +310,88 @@ export const stockCounts = {
     api.post<StockCount & { replayed: boolean }>(`/stock-counts/${id}/post`, {}, opts),
 
   cancel: (id: string) => api.post<StockCount>(`/stock-counts/${id}/cancel`),
+};
+
+// ── برگشت از خرید ───────────────────────────────────────────────────
+
+export interface ReturnableLine {
+  receiptLineId: string;
+  variationId: string;
+  sku: string;
+  productName: string;
+  color: string | null;
+  size: string | null;
+  receivedQty: string;
+  returnedQty: string;
+  /** از سرور می‌آید، نه از تفریق در مرورگر. */
+  remainingQty: string;
+  unitPrice: string;
+  /** بهای دفتری — کالا با همین نرخ خارج می‌شود، نه میانگین جاری. */
+  landedUnitCost: string;
+}
+
+export interface Returnable {
+  receiptId: string;
+  number: string | null;
+  supplierName: string;
+  warehouseId: string;
+  warehouseName: string;
+  occurredAt: string;
+  lines: ReturnableLine[];
+}
+
+export interface PurchaseReturn {
+  id: string;
+  number: string | null;
+  status: string;
+  receiptId: string;
+  receiptNumber: string | null;
+  supplierName: string;
+  warehouseName: string;
+  reasonCode: string;
+  reasonNote: string | null;
+  occurredAt: string;
+  postedAt: string | null;
+  goodsAmount: string;
+  costAmount: string;
+  taxAmount: string;
+  /** حملِ کالای پس‌فرستاده — پرداختیم و باربری برنمی‌گرداند. */
+  chargeLoss: string;
+  lines: {
+    id: string;
+    receiptLineId: string;
+    sku: string;
+    productName: string;
+    color: string | null;
+    size: string | null;
+    qty: string;
+    unitPrice: string | null;
+    unitCost: string | null;
+    goodsAmount: string | null;
+    costAmount: string | null;
+  }[];
+}
+
+export const purchaseReturns = {
+  /** چه چیزی از یک رسید هنوز قابل برگشت است. */
+  returnable: (receiptId: string) =>
+    api.get<Returnable>(`/receipts/${receiptId}/returnable`),
+
+  get: (id: string) => api.get<PurchaseReturn>(`/purchase-returns/${id}`),
+
+  /**
+   * ساخت و ثبت در یک درخواست.
+   *
+   * جداکردنشان یک پنجره باز می‌کرد: برگه‌ای ساخته و ثبت‌نشده که نه
+   * موجودی را کم کرده نه بدهی را، ولی در فهرست هست.
+   */
+  create: (
+    input: {
+      receiptId: string;
+      reasonCode: string;
+      reasonNote?: string;
+      lines: { receiptLineId: string; qty: string }[];
+    },
+    opts?: RequestOptions,
+  ) => api.post<PurchaseReturn & { replayed: boolean }>("/purchase-returns", input, opts),
 };

@@ -183,6 +183,29 @@ export class ReceiptService {
     }));
   }
 
+  /**
+   * یافتن رسید از روی **شماره**.
+   *
+   * شماره در سطح شعبه یکتاست، نه سراسری — پس `branchId` اجباری است،
+   * همان قاعده‌ای که `GET /invoices/lookup` دارد.
+   *
+   * چرا سرورساید و نه فیلتر روی فهرست: فهرست رسیدها سقف دارد و فقط
+   * تازه‌ترین‌ها را می‌دهد. برگشت از خریدی که سه ماه پیش رسید شده،
+   * با فیلتر مرورگر هرگز پیدا نمی‌شد.
+   */
+  async byNumber(
+    number: string,
+    branchId: string,
+  ): Promise<{ id: string } | null> {
+    const row = await this.#db
+      .selectFrom("purchasing.receipt")
+      .select("id")
+      .where("number", "=", number)
+      .where("branch_id", "=", branchId)
+      .executeTakeFirst();
+    return row ?? null;
+  }
+
   /** رسید کامل. `null` یعنی نبود یا بیرون از دامنه شعبه کاربر. */
   async get(id: string, branchIds: string[] | "all"): Promise<ReceiptJson | null> {
     const head = await this.#db

@@ -396,6 +396,39 @@ export interface ReceiptLineTable {
   line_amount: string;
   charge_alloc: Generated<string>;
   landed_unit_cost: Generated<string>;
+  /** جمع برگشتی‌ها. فقط `post_purchase_return()` بالایش می‌برد (مهاجرت ۰۲۸). */
+  returned_qty: Generated<string>;
+}
+
+export interface PurchaseReturnTable {
+  id: Generated<string>;
+  /** تا لحظه ثبت NULL — برگه رهاشده شماره نمی‌سوزاند. */
+  number: string | null;
+  branch_id: string;
+  receipt_id: string;
+  warehouse_id: string;
+  goods_amount: Generated<string>;
+  cost_amount: Generated<string>;
+  tax_amount: Generated<string>;
+  charge_loss: Generated<string>;
+  reason_code: string;
+  reason_note: string | null;
+  status: Generated<string>;
+  occurred_at: Generated<Date>;
+  posted_at: Date | null;
+  created_by: string | null;
+}
+
+export interface PurchaseReturnLineTable {
+  id: Generated<string>;
+  return_id: string;
+  receipt_line_id: string;
+  qty: string;
+  /** Snapshot در لحظه ثبت. تا آن موقع NULL. */
+  unit_price: string | null;
+  unit_cost: string | null;
+  goods_amount: string | null;
+  cost_amount: string | null;
 }
 
 export interface ReceiptChargeTable {
@@ -494,4 +527,6 @@ export interface Database {
   "ledger.account": LedgerAccountTable;
   "inventory.stock_count": StockCountTable;
   "inventory.stock_count_line": StockCountLineTable;
+  "purchasing.purchase_return": PurchaseReturnTable;
+  "purchasing.purchase_return_line": PurchaseReturnLineTable;
 }

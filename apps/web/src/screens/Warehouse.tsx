@@ -1,19 +1,25 @@
 /**
- * ناحیه انبار و خرید — دو کار، یک ناحیه.
+ * ناحیه انبار و خرید — سه کار، یک ناحیه.
  *
- * رسید خرید و انبارگردانی هر دو کار انباردارند و هر دو موجودی را
- * عوض می‌کنند، ولی از دو مسیر کاملاً متفاوت: یکی با سند تأمین‌کننده،
- * دیگری **بدون هیچ سندی جز شمارش خودِ انباردار**. مجوزشان هم جداست
- * (`stock.receive` در برابر `stock.count`).
+ * هر سه کار انباردارند و هر سه موجودی را عوض می‌کنند، ولی از سه مسیر
+ * متفاوت:
  *
- * پس یک ناحیه با دو زبانه، نه دو ناحیه: انباردار میان این دو
- * جابه‌جا می‌شود، ولی هرگز اشتباهشان نمی‌گیرد.
+ *   رسید خرید      کالا می‌آید، با سند تأمین‌کننده
+ *   برگشت از خرید  کالا برمی‌گردد، با بهای همان رسید
+ *   انبارگردانی    موجودی اصلاح می‌شود، **بدون هیچ سندی جز شمارش**
+ *
+ * سومی مجوز جدا دارد (`stock.count` در برابر `stock.receive`) و
+ * دلیلش همان است: کسی که می‌تواند بشمارد، می‌تواند کسری را پنهان کند.
+ *
+ * یک ناحیه با سه زبانه، نه سه ناحیه: انباردار میانشان جابه‌جا
+ * می‌شود، ولی هرگز اشتباهشان نمی‌گیرد.
  */
 import { useState } from "react";
 import { Purchasing } from "./Purchasing.tsx";
 import { StockCount } from "./StockCount.tsx";
+import { PurchaseReturn } from "./PurchaseReturn.tsx";
 
-type Tab = "receipts" | "count";
+type Tab = "receipts" | "returns" | "count";
 
 export function Warehouse() {
   const [tab, setTab] = useState<Tab>("receipts");
@@ -33,6 +39,15 @@ export function Warehouse() {
         <button
           type="button"
           role="tab"
+          aria-selected={tab === "returns"}
+          className={tab === "returns" ? "on" : ""}
+          onClick={() => setTab("returns")}
+        >
+          برگشت از خرید
+        </button>
+        <button
+          type="button"
+          role="tab"
           aria-selected={tab === "count"}
           className={tab === "count" ? "on" : ""}
           onClick={() => setTab("count")}
@@ -41,7 +56,7 @@ export function Warehouse() {
         </button>
       </div>
 
-      {tab === "receipts" ? <Purchasing /> : <StockCount />}
+      {tab === "receipts" ? <Purchasing /> : tab === "returns" ? <PurchaseReturn /> : <StockCount />}
     </div>
   );
 }

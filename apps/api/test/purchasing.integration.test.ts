@@ -624,6 +624,208 @@ describe("رسید خرید", { skip }, () => {
     assert.equal(r.statusCode, 400, r.body);
   });
 
+  // ── برگشت از خرید ─────────────────────────────────────────────────
+
+  test("برگشت از خرید: بدهی به بهای فاکتور، انبار به بهای دفتری", async () => {
+    const s = await loginAs(keeper);
+    const draft = await newDraft(keeper);
+
+    await app.inject({
+      method: "POST",
+      url: `/receipts/${draft.id}/lines`,
+      ...s,
+      payload: { variationId: variationA, qty: "10", unitPrice: "1000000" },
+    });
+    // حمل ۲٬۰۰۰٬۰۰۰ روی یک سطر → سهم هر واحد ۲۰۰٬۰۰۰،
+    // بهای دفتری هر واحد ۱٬۲۰۰٬۰۰۰.
+    await app.inject({
+      method: "POST",
+      url: `/receipts/${draft.id}/charges`,
+      ...s,
+      payload: {
+        chargeType: "حمل",
+        amount: "2000000",
+        allocation: "by_value",
+        paidFrom: "payable",
+        payeeType: "other",
+      },
+    });
+    await app.inject({ method: "POST", url: `/receipts/${draft.id}/post`, ...s });
+
+    const before = await onHand(variationA);
+
+    const view = (await app.inject({
+      method: "GET",
+      url: `/receipts/${draft.id}/returnable`,
+      ...s,
+    })).json() as {
+      lines: { receiptLineId: string; remainingQty: string; landedUnitCost: string }[];
+    };
+    assert.equal(view.lines[0]?.remainingQty, "10.000");
+    assert.equal(view.lines[0]?.landedUnitCost, "1200000", "بهای دفتری شامل حمل است");
+
+    const posted = await app.inject({
+      method: "POST",
+      url: "/purchase-returns",
+      ...s,
+      payload: {
+        receiptId: draft.id,
+        reasonCode: "quality",
+        lines: [{ receiptLineId: view.lines[0]?.receiptLineId, qty: "2" }],
+      },
+    });
+    assert.equal(posted.statusCode, 201, posted.body);
+
+    const body = posted.json() as {
+      number: string | null;
+      status: string;
+      goodsAmount: string;
+      costAmount: string;
+      chargeLoss: string;
+    };
+    assert.match(body.number ?? "", /^PR-\d{4}-\d{6}$/, `شماره نگرفت: ${body.number}`);
+    assert.equal(body.status, "posted");
+    // این سه عدد قلب موضوع‌اند: بدهی به بهای فاکتور، انبار به بهای
+    // دفتری، و تفاوتشان حملی که برنمی‌گردد.
+    assert.equal(body.goodsAmount, "2000000");
+    assert.equal(body.costAmount, "2400000");
+    assert.equal(body.chargeLoss, "400000");
+
+    assert.equal(await onHand(variationA), before - 2);
+
+    const entry = await sql<{ payable: string; inventory: string; loss: string; diff: string }>`
+      SELECT coalesce(sum(l.debit)  FILTER (WHERE l.account_code = '2101'), 0) AS payable,
+             coalesce(sum(l.credit) FILTER (WHERE l.account_code = '1301'), 0) AS inventory,
+             coalesce(sum(l.debit)  FILTER (WHERE l.account_code = '5102'), 0) AS loss,
+             coalesce(sum(l.debit) - sum(l.credit), 0) AS diff
+        FROM ledger.journal_entry e
+        JOIN ledger.journal_line l ON l.entry_id = e.id
+       WHERE e.ref_type = 'purchase_return'`
+      .execute(handle.db);
+    assert.equal(entry.rows[0]?.payable, "2000000");
+    assert.equal(entry.rows[0]?.inventory, "2400000");
+    assert.equal(entry.rows[0]?.loss, "400000");
+    assert.equal(entry.rows[0]?.diff, "0", "سند نامتوازن");
+  });
+
+  test("یافتن رسید از روی شماره، سمت سرور", async () => {
+    // فیلتر روی فهرست کافی نبود: فهرست سقف دارد و رسید سه ماه پیش در
+    // آن نیست.
+    const s = await loginAs(keeper);
+    const draft = await newDraft(keeper);
+    await app.inject({
+      method: "POST",
+      url: `/receipts/${draft.id}/lines`,
+      ...s,
+      payload: { variationId: variationA, qty: "1", unitPrice: "100000" },
+    });
+    const posted = (await app.inject({
+      method: "POST",
+      url: `/receipts/${draft.id}/post`,
+      ...s,
+    })).json() as ReceiptBody;
+
+    const found = await app.inject({
+      method: "GET",
+      url: `/receipts/lookup?number=${encodeURIComponent(posted.number ?? "")}&branchId=${BRANCH}`,
+      ...s,
+    });
+    assert.equal(found.statusCode, 200, found.body);
+    assert.equal((found.json() as ReceiptBody).id, draft.id);
+
+    const missing = await app.inject({
+      method: "GET",
+      url: `/receipts/lookup?number=P-0000-000000&branchId=${BRANCH}`,
+      ...s,
+    });
+    assert.equal(missing.statusCode, 404, missing.body);
+  });
+
+  test("بیشتر از باقی‌مانده برنمی‌گردد", async () => {
+    const s = await loginAs(keeper);
+    const draft = await newDraft(keeper);
+    await app.inject({
+      method: "POST",
+      url: `/receipts/${draft.id}/lines`,
+      ...s,
+      payload: { variationId: variationB, qty: "3", unitPrice: "1000000" },
+    });
+    await app.inject({ method: "POST", url: `/receipts/${draft.id}/post`, ...s });
+
+    const view = (await app.inject({
+      method: "GET",
+      url: `/receipts/${draft.id}/returnable`,
+      ...s,
+    })).json() as { lines: { receiptLineId: string }[] };
+
+    const r = await app.inject({
+      method: "POST",
+      url: "/purchase-returns",
+      ...s,
+      payload: {
+        receiptId: draft.id,
+        reasonCode: "quality",
+        lines: [{ receiptLineId: view.lines[0]?.receiptLineId, qty: "4" }],
+      },
+    });
+    assert.notEqual(r.statusCode, 201, "۴ عدد از ۳ عدد رسیدشده نباید برگردد");
+  });
+
+  test("رسید ثبت‌نشده برگشت ندارد", async () => {
+    const s = await loginAs(keeper);
+    const draft = await newDraft(keeper);
+    const r = await app.inject({
+      method: "GET",
+      url: `/receipts/${draft.id}/returnable`,
+      ...s,
+    });
+    assert.equal(r.statusCode, 422, r.body);
+    assert.equal(r.json().error.code, "receipt_not_posted");
+  });
+
+  test("قلمی از رسید دیگر، برگشت نمی‌خورد", async () => {
+    // بدون این بررسی، یک شناسه از رسید دیگر می‌توانست بهای آن رسید را
+    // برگرداند در حالی که بدهی این تأمین‌کننده کم می‌شد.
+    const s = await loginAs(keeper);
+
+    const a = await newDraft(keeper);
+    await app.inject({
+      method: "POST",
+      url: `/receipts/${a.id}/lines`,
+      ...s,
+      payload: { variationId: variationA, qty: "2", unitPrice: "500000" },
+    });
+    await app.inject({ method: "POST", url: `/receipts/${a.id}/post`, ...s });
+
+    const b = await newDraft(keeper);
+    await app.inject({
+      method: "POST",
+      url: `/receipts/${b.id}/lines`,
+      ...s,
+      payload: { variationId: variationB, qty: "2", unitPrice: "500000" },
+    });
+    await app.inject({ method: "POST", url: `/receipts/${b.id}/post`, ...s });
+
+    const viewB = (await app.inject({
+      method: "GET",
+      url: `/receipts/${b.id}/returnable`,
+      ...s,
+    })).json() as { lines: { receiptLineId: string }[] };
+
+    const r = await app.inject({
+      method: "POST",
+      url: "/purchase-returns",
+      ...s,
+      payload: {
+        receiptId: a.id,
+        reasonCode: "quality",
+        lines: [{ receiptLineId: viewB.lines[0]?.receiptLineId, qty: "1" }],
+      },
+    });
+    assert.equal(r.statusCode, 422, r.body);
+    assert.equal(r.json().error.code, "line_not_in_receipt");
+  });
+
   test("فهرست حساب‌های پرداخت، صندوق فروشگاه را نشان نمی‌دهد", async () => {
     const s = await loginAs(keeper);
     const r = await app.inject({ method: "GET", url: "/purchasing/pay-accounts", ...s });
