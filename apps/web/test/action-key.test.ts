@@ -9,7 +9,7 @@
  */
 import { describe, test } from "node:test";
 import assert from "node:assert/strict";
-import { ActionKeys, ScanCounter } from "../src/lib/action-key.ts";
+import { ActionKeys, ScanCounter, actionFor } from "../src/lib/action-key.ts";
 
 /** مولد قابل پیش‌بینی، تا ادعاها درباره «همان کلید» معنا داشته باشند. */
 function counterMint() {
@@ -108,5 +108,49 @@ describe("شمارنده اسکن", () => {
     c.next("inv-1");
     c.reset();
     assert.equal(c.next("inv-1"), "scan:inv-1:1");
+  });
+});
+
+describe("نام عمل از روی بدنه", () => {
+  const body = (refund: string) => ({
+    invoiceId: "inv-1",
+    reasonCode: "defect",
+    refundAmount: refund,
+    lines: [{ invoiceLineId: "l-1", qty: "1" }],
+  });
+
+  test("همان فرم، همان کلید — پس Retry واقعاً Replay می‌شود", () => {
+    // این نیمه‌ای است که نباید بشکند: اگر شبکه پاسخ را خورده باشد و
+    // صندوق‌دار **بدون تغییر فرم** دوباره بفرستد، باید همان کلید برود
+    // وگرنه برگ مرجوعی دوم ساخته می‌شود و پول دو بار برمی‌گردد.
+    const keys = new ActionKeys(counterMint());
+    const a = keys.keyFor(actionFor("return:inv-1", body("500000")));
+    const b = keys.keyFor(actionFor("return:inv-1", body("500000")));
+    assert.equal(a, b);
+  });
+
+  test("مبلغ عوض شود، کلید عوض می‌شود — وگرنه صفحه گیر می‌کرد", () => {
+    // بن‌بستی که این را لازم کرد: ساخت روی شبکه می‌شکند، صندوق‌دار
+    // مبلغ را اصلاح می‌کند، و با کلید ثابت سرور `idempotency_key_reused`
+    // می‌داد. هر تلاش بعدی همان ۴۰۹ — تا Reload صفحه.
+    const keys = new ActionKeys(counterMint());
+    const a = keys.keyFor(actionFor("return:inv-1", body("500000")));
+    const b = keys.keyFor(actionFor("return:inv-1", body("400000")));
+    assert.notEqual(a, b);
+  });
+
+  test("اقلام انتخابی هم بخشی از هویت عمل‌اند", () => {
+    const keys = new ActionKeys(counterMint());
+    const one = { ...body("500000"), lines: [{ invoiceLineId: "l-1", qty: "1" }] };
+    const two = { ...body("500000"), lines: [{ invoiceLineId: "l-1", qty: "2" }] };
+    assert.notEqual(keys.keyFor(actionFor("return:inv-1", one)), keys.keyFor(actionFor("return:inv-1", two)));
+  });
+
+  test("پیشوند فاکتورهای متفاوت را جدا نگه می‌دارد", () => {
+    const keys = new ActionKeys(counterMint());
+    assert.notEqual(
+      keys.keyFor(actionFor("return:inv-1", body("500000"))),
+      keys.keyFor(actionFor("return:inv-2", body("500000"))),
+    );
   });
 });

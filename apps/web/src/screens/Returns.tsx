@@ -29,7 +29,7 @@
 import { useEffect, useState } from "react";
 import { Glass, Solid } from "../components/Glass.tsx";
 import { ApiError } from "../lib/api.ts";
-import { ActionKeys } from "../lib/action-key.ts";
+import { ActionKeys, actionFor } from "../lib/action-key.ts";
 import { parseRial, rialFromTomanInput, toman } from "../lib/money.ts";
 import {
   pos,
@@ -138,22 +138,31 @@ export function Returns() {
     guarded(async () => {
       if (!invoice || typedRefund === null) return;
 
+      // بدنه **یک بار** ساخته می‌شود و هم به سرور می‌رود و هم نام عمل
+      // را می‌سازد. اگر این دو از هم جدا شوند، کلید و بدنه می‌توانند
+      // ناهم‌خوان شوند — دقیقاً همان چیزی که `actionFor` جلویش را
+      // می‌گیرد.
+      const body = {
+        invoiceId: invoice.id,
+        reasonCode: reason,
+        refundAmount: typedRefund.toString(),
+        lines: selectionToLines(selection),
+        ...(note.trim() === "" ? {} : { reasonNote: note.trim() }),
+        ...(method === "" ? {} : { refundMethod: method }),
+      };
+
       // پیش‌نویس فقط یک بار ساخته می‌شود. اگر ثبت روی شبکه شکسته
       // باشد، همان پیش‌نویس دوباره ثبت می‌شود — نه برگ دوم.
+      //
+      // نام عمل از **بدنه** ساخته می‌شود، نه فقط از شناسه فاکتور:
+      // Retry با همان فرم همان کلید را می‌برد (پس Replay می‌شود)، ولی
+      // اگر صندوق‌دار پس از یک شکست مبلغ یا اقلام را اصلاح کند کلید
+      // تازه می‌گیرد. با کلید ثابت، آن اصلاح ۴۰۹ می‌گرفت و صفحه تا
+      // Reload گیر می‌کرد.
       const sheet =
         draft ??
-        (await keys.run(`return:${invoice.id}`, (key) =>
-          pos.createReturn(
-            {
-              invoiceId: invoice.id,
-              reasonCode: reason,
-              refundAmount: typedRefund.toString(),
-              lines: selectionToLines(selection),
-              ...(note.trim() === "" ? {} : { reasonNote: note.trim() }),
-              ...(method === "" ? {} : { refundMethod: method }),
-            },
-            { idempotencyKey: key },
-          ),
+        (await keys.run(actionFor(`return:${invoice.id}`, body), (key) =>
+          pos.createReturn(body, { idempotencyKey: key }),
         ));
       setDraft(sheet);
 
