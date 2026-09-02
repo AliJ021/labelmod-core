@@ -242,7 +242,30 @@ export function Pos() {
   }
 
   const openShift = (openingCash: string) =>
-    guarded(async () => setShift(await pos.openShift({ branchId, openingCash })));
+    guarded(async () => {
+      try {
+        setShift(await pos.openShift({ branchId, openingCash }));
+      } catch (err) {
+        // همان درسِ اسکن، روی یک مسیر دیگر: اگر سرور شیفت را باز کند
+        // ولی پاسخ در راه گم شود، صندوق‌دار خطا می‌بیند و صفحه هنوز
+        // «شیفت باز نیست» نشان می‌دهد — در حالی که **دارد**. تلاش
+        // دوباره هم `shift_already_open` می‌گیرد، که درست است ولی
+        // به کسی که می‌خواست شیفت باز کند می‌گوید «اول ببندش».
+        //
+        // پس وضعیت واقعی خوانده می‌شود. اگر شیفت باز شده باشد، همان
+        // نشان داده می‌شود و کار ادامه پیدا می‌کند.
+        try {
+          const actual = await pos.currentShift(branchId);
+          if (actual) {
+            setShift(actual);
+            return;
+          }
+        } catch {
+          /* شبکه هنوز قطع است — همان خطای اصلی گفته می‌شود */
+        }
+        throw err;
+      }
+    });
 
   const changeQty = (lineId: string, current: string, delta: number) =>
     guarded(async () => {

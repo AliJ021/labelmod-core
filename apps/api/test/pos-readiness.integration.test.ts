@@ -1520,4 +1520,50 @@ describe("آمادگی API صندوق", { skip }, () => {
     assert.equal(clash.statusCode, 409, clash.body);
     assert.equal(clash.json().error.code, "idempotency_key_reused");
   });
+
+  test("دو باز کردن هم‌زمان شیفت، ۴۰۹ می‌دهد نه ۵۰۰", async () => {
+    // `POST /shifts` تنها تغییردهنده وضعیتی است که `Idempotency-Key`
+    // نمی‌برد، و لازم هم ندارد: `one_open_shift_per_user` در دیتابیس
+    // دو شیفت باز را غیرممکن کرده، پس موجودی اول صندوق هرگز دو بار
+    // شمرده نمی‌شود.
+    //
+    // ولی `shift.open` **اتمیک نیست**: پیش‌بررسی و درج دو گام‌اند. دو
+    // درخواست هم‌زمان می‌توانند هر دو از پیش‌بررسی رد شوند و دومی به
+    // ایندکس یکتا بخورد. آن ۲۳۵۰۵ نگاشتی نداشت و به شاخه عمومی
+    // می‌افتاد — یعنی نگهبانی که **درست کار کرده** به‌شکل «خطای
+    // داخلی» گزارش می‌شد.
+    //
+    // ادعا عمداً روی «کدام نگهبان گرفتش» نیست: هر دو مسیر باید یک
+    // پاسخ بدهند. چیزی که هرگز نباید بیاید، ۵۰۰ است.
+    const sup = await loginAs(supervisor);
+    const [a, b] = await Promise.all([
+      app.inject({
+        method: "POST",
+        url: "/shifts",
+        ...sup,
+        payload: { branchId: BRANCH, openingCash: "0" },
+      }),
+      app.inject({
+        method: "POST",
+        url: "/shifts",
+        ...sup,
+        payload: { branchId: BRANCH, openingCash: "0" },
+      }),
+    ]);
+
+    const codes = [a.statusCode, b.statusCode].sort();
+    assert.deepEqual(codes, [201, 409], `${a.statusCode}/${b.statusCode}: ${a.body} ${b.body}`);
+
+    const rejected = a.statusCode === 409 ? a : b;
+    assert.equal(rejected.json().error.code, "shift_already_open", rejected.body);
+
+    // و واقعاً یک شیفت باز شده، نه دوتا.
+    const own = await app.inject({
+      method: "GET",
+      url: `/shifts/current?branchId=${BRANCH}`,
+      ...sup,
+    });
+    assert.equal(own.statusCode, 200, own.body);
+    assert.ok(own.json()?.id, "شیفت باز باید دیده شود");
+  });
 });
