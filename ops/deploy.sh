@@ -40,6 +40,16 @@ case "${1:-}" in
     "${COMPOSE[@]}" run --rm --no-deps api \
       node --experimental-strip-types apps/api/src/cli/create-user.ts "$@"
     ;;
+  api-client)
+    # کلید ماشینی — افزونه ووکامرس و مانند آن.
+    #
+    # مثل `user` رمز تصادفی چاپ می‌کند، ولی کاربر پشتی‌اش **غیرفعال**
+    # است و هرگز نمی‌تواند وارد شود: کلید تنها راه اوست. کلید یک بار
+    # چاپ می‌شود و از آن به بعد فقط هشش در دیتابیس می‌ماند.
+    shift
+    "${COMPOSE[@]}" run --rm --no-deps api \
+      node --experimental-strip-types apps/api/src/cli/create-api-client.ts "$@"
+    ;;
   psql)    "${COMPOSE[@]}" exec db psql -U labelmod -d labelmod ;;
   backup)  in_db_tools "cd /app && BACKUP_DIR=/backup ops/db.sh backup" ;;
   logs)    "${COMPOSE[@]}" logs -f --tail=100 "${2:-}" ;;
@@ -52,5 +62,5 @@ case "${1:-}" in
     in_db_tools "psql -d \"\$DATABASE_URL\" -c \"SELECT * FROM treasury.cheque_due WHERE urgency <> 'future' LIMIT 20\"" || true
     ;;
   down)    "${COMPOSE[@]}" down ;;
-  *) echo "استفاده: ops/deploy.sh {up|migrate|seed|user|psql|backup|logs|status|down}"; exit 1 ;;
+  *) echo "استفاده: ops/deploy.sh {up|migrate|seed|user|api-client|psql|backup|logs|status|down}"; exit 1 ;;
 esac

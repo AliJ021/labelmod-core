@@ -591,12 +591,22 @@ describe("برگشت از فروش و دوره ثبت", { skip }, () => {
        WHERE variation_id = ${variationId}::uuid AND warehouse_id = ${STORE_WH}::uuid`
       .execute(handle.db);
 
-    // فاکتور کانال آنلاین با تاریخ دیروز
+    // فاکتور کانال آنلاین با تاریخ **دو روز پیش**، نه دیروز.
+    //
+    // ⚠️ «دیروز» کافی نیست و این تست را روزی دو ساعت قرمز می‌کرد.
+    //    بستن خودکار یک مهلت دارد (`sales.auto_close_after_hours`،
+    //    پیش‌فرض ۲) که از **نیمه‌شب تهران** شمرده می‌شود. میان ۰۰:۰۰ و
+    //    ۰۲:۰۰ به وقت تهران، دوره دیروز هنوز سررسید نشده — رفتار
+    //    درستِ تابع، نه یک باگ.
+    //
+    //    با دو روز، مهلت در هر ساعتی از شبانه‌روز گذشته است. تستی که
+    //    به ساعت اجرا وابسته باشد، دیر یا زود در CI قرمز می‌شود و
+    //    کسی هم نمی‌فهمد چرا — یک بار همین شد.
     const inv = await sql<{ id: string }>`
       INSERT INTO sales.invoice (branch_id, warehouse_id, shift_id, channel,
                                  occurred_at, created_by)
       VALUES (${BRANCH}::uuid, ${STORE_WH}::uuid, NULL, 'web',
-              now() - interval '1 day', ${ids["supervisor"]}::uuid)
+              now() - interval '2 days', ${ids["supervisor"]}::uuid)
       RETURNING id`.execute(handle.db);
     const invoiceId = inv.rows[0]!.id;
     await sql`
