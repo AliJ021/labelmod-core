@@ -374,4 +374,174 @@ describe("تنظیمات از مسیر API", { skip }, () => {
       .where("token_hash", "is not", null)
       .execute();
   });
+  // ── کدینگ حساب ──────────────────────────────────────────────────
+
+  test("درخت حساب چهارسطحی از API می‌آید", async () => {
+    const s = await loginAs(admin);
+    const r = await app.inject({ method: "GET", url: "/accounts", ...s });
+    assert.equal(r.statusCode, 200, r.body);
+
+    const accounts = r.json().accounts as Array<Record<string, unknown>>;
+    assert.ok(accounts.length >= 50, `تعداد حساب: ${accounts.length}`);
+
+    // چهار سطح، همان چیزی که هلو دارد
+    const levels = new Set(accounts.map((a) => a.level));
+    assert.ok(levels.has("group"), "سطح گروه نیست");
+    assert.ok(levels.has("kol"), "سطح کل نیست");
+    assert.ok(levels.has("moin"), "سطح معین نیست");
+
+    // صفحه بدون این دو نمی‌داند اجازه چه تغییری بدهد
+    const root = accounts.find((a) => a.code === "1");
+    assert.equal(root?.hasChildren, true, "گروه ۱ باید فرزند داشته باشد");
+    assert.equal(typeof root?.hasEntries, "boolean");
+  });
+
+  test("ساخت و ویرایش حساب از API", async () => {
+    const s = await loginAs(admin);
+    const put = (code: string, body: Record<string, unknown>) =>
+      app.inject({ method: "PUT", url: `/accounts/${code}`, ...s, payload: body });
+
+    const made = await put("8", {
+      name: "گروه آزمایشی",
+      level: "group",
+      parentCode: null,
+      nature: "debit",
+      type: "asset",
+      isPostable: false,
+    });
+    assert.equal(made.statusCode, 200, made.body);
+    assert.equal(made.json().level, "group");
+
+    // ویرایش نام، همان حساب را عوض می‌کند
+    const edited = await put("8", {
+      name: "گروه آزمایشی ویرایش‌شده",
+      level: "group",
+      parentCode: null,
+      nature: "debit",
+      type: "asset",
+      isPostable: false,
+    });
+    assert.equal(edited.statusCode, 200, edited.body);
+    assert.equal(edited.json().name, "گروه آزمایشی ویرایش‌شده");
+
+    // غیرفعال‌سازی به‌جای حذف
+    const off = await app.inject({
+      method: "PATCH",
+      url: "/accounts/8/active",
+      ...s,
+      payload: { isActive: false },
+    });
+    assert.equal(off.statusCode, 200, off.body);
+    assert.equal(off.json().isActive, false);
+  });
+
+  test("درختِ خراب ۴۰۹ می‌گیرد، نه ۵۰۰", async () => {
+    // نگهبان‌های مهاجرت ۰۱۹ باید از راه API هم پیام فارسی بدهند، نه
+    // «خطای داخلی» — همان الگویی که این مخزن سه بار اصلاحش کرده.
+    const s = await loginAs(admin);
+    const bad = await app.inject({
+      method: "PUT",
+      url: "/accounts/9999",
+      ...s,
+      payload: {
+        name: "کدِ بی‌ربط به والد",
+        level: "moin",
+        parentCode: "11",
+        nature: "debit",
+        type: "asset",
+        isPostable: true,
+      },
+    });
+    assert.equal(bad.statusCode, 409, bad.body);
+    assert.equal(bad.json().error.code, "rule_violation");
+  });
+
+  test("صندوق‌دار کدینگ حساب را عوض نمی‌کند", async () => {
+    const s = await loginAs(cashier);
+    const r = await app.inject({
+      method: "PUT",
+      url: "/accounts/8",
+      ...s,
+      payload: {
+        name: "تلاش صندوق‌دار",
+        level: "group",
+        parentCode: null,
+        nature: "debit",
+        type: "asset",
+        isPostable: false,
+      },
+    });
+    assert.equal(r.statusCode, 403, r.body);
+  });
+
+  // ── سقف مجوزها ──────────────────────────────────────────────────
+
+  test("ماتریس مجوز از API می‌آید و پول رشته است", async () => {
+    const s = await loginAs(admin);
+    const r = await app.inject({ method: "GET", url: "/permission-rules", ...s });
+    assert.equal(r.statusCode, 200, r.body);
+
+    const rules = r.json().rules as Array<Record<string, unknown>>;
+    assert.ok(rules.length > 0, "ماتریس خالی است");
+
+    for (const rule of rules) {
+      if (rule.maxAmount !== null) {
+        assert.equal(typeof rule.maxAmount, "string", `${rule.operation}: پول باید رشته باشد`);
+      }
+    }
+  });
+
+  test("سقف تخفیف از API عوض می‌شود", async () => {
+    const s = await loginAs(admin);
+    const r = await app.inject({
+      method: "PUT",
+      url: "/permission-rules/cashier/sale.discount",
+      ...s,
+      payload: {
+        allowed: true,
+        maxAmount: null,
+        maxPercent: 15,
+        needsApprovalFrom: null,
+        reason: "تست سقف تخفیف",
+      },
+    });
+    assert.equal(r.statusCode, 200, r.body);
+    assert.equal(r.json().maxPercent, 15);
+  });
+
+  test("بستن آخرین نقشِ دارای «settings.security» ۴۰۹ می‌گیرد", async () => {
+    // مهم‌ترین نگهبان این صفحه: بی‌آن، یک کلیک می‌توانست همه را برای
+    // همیشه از تغییر مجوزها بیرون بگذارد و تنها راه بازگشت psql بود.
+    const s = await loginAs(admin);
+    const r = await app.inject({
+      method: "PUT",
+      url: "/permission-rules/admin/settings.security",
+      ...s,
+      payload: {
+        allowed: false,
+        maxAmount: null,
+        maxPercent: null,
+        needsApprovalFrom: null,
+        reason: "تست قفل‌شدن",
+      },
+    });
+    assert.equal(r.statusCode, 409, r.body);
+    assert.equal(r.json().error.code, "rule_violation");
+  });
+
+  test("حسابدار سقف مجوز را عوض نمی‌کند", async () => {
+    const s = await loginAs(accountant);
+    const r = await app.inject({
+      method: "PUT",
+      url: "/permission-rules/cashier/sale.discount",
+      ...s,
+      payload: {
+        allowed: true,
+        maxAmount: null,
+        maxPercent: 90,
+        needsApprovalFrom: null,
+      },
+    });
+    assert.equal(r.statusCode, 403, r.body);
+  });
 });
