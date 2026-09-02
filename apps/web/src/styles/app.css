@@ -1045,3 +1045,61 @@ select.set-input {
   margin: 0;
   color: var(--crit);
 }
+
+/* ═══ افتتاحیه و تفصیلی ═════════════════════════════════════════════ */
+
+.open-head {
+  display: flex;
+  gap: var(--s-3);
+  flex-wrap: wrap;
+  margin-block: var(--s-3);
+}
+
+.open-head select,
+.open-head input {
+  padding: var(--s-1) var(--s-2);
+  border-radius: var(--r-sm);
+  border: 1px solid var(--ring);
+  background: var(--surface-solid);
+  color: var(--ink);
+}
+
+.open-legs {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(15rem, 1fr));
+  gap: var(--s-3);
+}
+
+.open-legs input {
+  padding: var(--s-1) var(--s-2);
+  border-radius: var(--r-sm);
+  border: 1px solid var(--ring);
+  background: var(--surface-solid);
+  color: var(--ink);
+  width: 100%;
+}
+
+/* شکل نشانه هم فرق می‌کند (● در برابر ▲)، نه فقط رنگ. */
+.open-balanced { color: var(--good); }
+.open-off      { color: var(--warn); }
+
+.taf-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+
+.taf-row {
+  display: flex;
+  align-items: center;
+  gap: var(--s-2);
+  padding-block: var(--s-2);
+  border-block-end: 1px solid var(--ring);
+}
+
+.taf-balance {
+  margin-inline-start: auto;
+}

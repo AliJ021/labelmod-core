@@ -61,6 +61,25 @@ const ruleBody = z.object({
   reason: z.string().trim().max(500).optional(),
 });
 
+/**
+ * سند افتتاحیه.
+ *
+ * مبالغ **رشته**‌اند چون پول‌اند. مؤلفه‌های مجاز از `posting_rule`
+ * می‌آیند و همان‌جا سنجیده می‌شوند — اینجا فقط شکل بدنه گرفته می‌شود.
+ */
+const openingBody = z.object({
+  branchId: z.string().uuid("شناسه شعبه نامعتبر"),
+  fiscalYear: z.number().int().min(1300).max(1500),
+  legs: z
+    .array(
+      z.object({
+        leg: z.string().trim().min(1).max(40),
+        amount: z.string().regex(/^\d+$/, "مبلغ باید رقم باشد"),
+      }),
+    )
+    .min(1, "سند افتتاحیه بدون سطر معنا ندارد"),
+});
+
 export interface AdminRouteDeps {
   db: Db;
 }
@@ -76,6 +95,18 @@ interface AccountRow {
   is_active: boolean;
   has_children: boolean;
   has_entries: boolean;
+}
+
+interface TafsiliRow {
+  parent_code: string;
+  parent_name: string;
+  code: string;
+  party_type: string;
+  party_id: string;
+  party_name: string | null;
+  debit: string;
+  credit: string;
+  balance: string;
 }
 
 interface MatrixRow {
@@ -245,5 +276,60 @@ export function registerAdminRoutes(app: FastifyInstance, deps: AdminRouteDeps):
       maxPercent: row.max_percent === null ? null : Number(row.max_percent),
       needsApprovalFrom: row.needs_approval_from,
     };
+  });
+
+  // ── تفصیلی اشخاص ─────────────────────────────────────────────────
+
+  /**
+   * مانده هر شخص، زیر حساب معین خودش.
+   *
+   * این همان چیزی است که در هلو زیر «بدهکاران» دیده می‌شود. ولی
+   * **حساب جدا نیست** — از `party_id` سطر سند ساخته می‌شود، تا مانده
+   * هر مشتری دو منبع پیدا نکند و دیر یا زود از هم جدا نیفتند.
+   */
+  app.get("/tafsili", async (req) => {
+    const s = session(req);
+    await requireForSession(db, s, "settings.view");
+
+    const rows = await sql<TafsiliRow>`
+      SELECT * FROM ledger.party_tafsili ORDER BY parent_code, tafsili_no`.execute(db);
+
+    return {
+      rows: rows.rows.map((r) => ({
+        parentCode: r.parent_code,
+        parentName: r.parent_name,
+        code: r.code,
+        partyType: r.party_type,
+        partyId: r.party_id,
+        partyName: r.party_name,
+        debit: serializeMoney(BigInt(r.debit)),
+        credit: serializeMoney(BigInt(r.credit)),
+        balance: serializeMoney(BigInt(r.balance)),
+      })),
+    };
+  });
+
+  // ── سند افتتاحیه ─────────────────────────────────────────────────
+
+  /**
+   * مانده اول دوره — همان چیزی که موقع کوچ از سیستم قبلی لازم است.
+   *
+   * پشت `settings.security`: این سند پایه همه گزارش‌های سال است.
+   */
+  app.post("/opening-balance", async (req) => {
+    const s = session(req);
+    const body = openingBody.parse(req.body);
+    await requireForSession(db, s, "settings.security");
+
+    const entry = await withActor(db, { userId: s.userId, ip: req.ip }, async (trx) => {
+      const r = await sql<{ post_opening_balance: string }>`
+        SELECT ledger.post_opening_balance(
+          ${body.branchId}::uuid, ${body.fiscalYear}::smallint,
+          ${JSON.stringify(body.legs)}::jsonb, ${s.userId}::uuid)`.execute(trx);
+      return r.rows[0]?.post_opening_balance ?? null;
+    });
+
+    if (!entry) throw new Error("ledger.post_opening_balance سندی برنگرداند");
+    return { entryId: entry };
   });
 }

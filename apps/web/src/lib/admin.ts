@@ -67,7 +67,46 @@ export interface PermissionRule {
   hasRule: boolean;
 }
 
+export interface Tafsili {
+  parentCode: string;
+  parentName: string;
+  code: string;
+  partyType: string;
+  partyId: string;
+  partyName: string | null;
+  debit: string;
+  credit: string;
+  balance: string;
+}
+
+export interface OpeningLeg {
+  leg: string;
+  amount: string;
+}
+
+/**
+ * مؤلفه‌های سند افتتاحیه.
+ *
+ * این فهرست از `db/seed/020_posting_rules.sql` می‌آید و همان‌جا هم
+ * اجبار می‌شود؛ اگر روزی مؤلفه‌ای اضافه شود، سرور مؤلفه ناشناخته را رد
+ * می‌کند و اینجا هم باید اضافه شود. برچسب فارسی‌اش اینجاست چون
+ * **متن رابط کاربری** است، نه قاعده مالی.
+ */
+export const OPENING_LEGS: Array<{ leg: string; label: string; side: "debit" | "credit" }> = [
+  { leg: "cash", label: "موجودی صندوق", side: "debit" },
+  { leg: "bank", label: "موجودی بانک", side: "debit" },
+  { leg: "inventory", label: "موجودی کالا", side: "debit" },
+  { leg: "receivable", label: "مانده بدهکاران", side: "debit" },
+  { leg: "payable", label: "مانده بستانکاران", side: "credit" },
+  { leg: "equity", label: "سود و زیان انباشته", side: "credit" },
+];
+
 export const admin = {
+  tafsili: () => api.get<{ rows: Tafsili[] }>("/tafsili"),
+
+  postOpening: (input: { branchId: string; fiscalYear: number; legs: OpeningLeg[] }) =>
+    api.post<{ entryId: string }>("/opening-balance", input),
+
   accounts: () => api.get<{ accounts: Account[] }>("/accounts"),
 
   saveAccount: (code: string, input: AccountInput) =>

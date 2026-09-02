@@ -544,4 +544,72 @@ describe("تنظیمات از مسیر API", { skip }, () => {
     });
     assert.equal(r.statusCode, 403, r.body);
   });
+  // ── تفصیلی و افتتاحیه ───────────────────────────────────────────
+
+  test("تفصیلی اشخاص از API می‌آید و پول رشته است", async () => {
+    const s = await loginAs(admin);
+    const r = await app.inject({ method: "GET", url: "/tafsili", ...s });
+    assert.equal(r.statusCode, 200, r.body);
+    const rows = r.json().rows as Array<Record<string, unknown>>;
+    for (const row of rows) {
+      assert.equal(typeof row.balance, "string", "مانده باید رشته باشد");
+      assert.equal(typeof row.code, "string");
+    }
+  });
+
+  test("سند افتتاحیه نامتوازن ۴۰۹ فارسی می‌گیرد", async () => {
+    // توازن **پیش از ثبت** سنجیده می‌شود تا کاربر پیام قابل فهم
+    // بگیرد، نه خطای فنی قید معوق دفتر.
+    const s = await loginAs(admin);
+    const r = await app.inject({
+      method: "POST",
+      url: "/opening-balance",
+      ...s,
+      payload: {
+        branchId: BRANCH,
+        fiscalYear: 1405,
+        legs: [
+          { leg: "cash", amount: "5000000" },
+          { leg: "equity", amount: "4000000" },
+        ],
+      },
+    });
+    assert.equal(r.statusCode, 409, r.body);
+    assert.equal(r.json().error.code, "rule_violation");
+    assert.match(r.json().error.message, /متوازن/);
+  });
+
+  test("سند افتتاحیه متوازن ثبت می‌شود", async () => {
+    const s = await loginAs(admin);
+    const r = await app.inject({
+      method: "POST",
+      url: "/opening-balance",
+      ...s,
+      payload: {
+        branchId: BRANCH,
+        fiscalYear: 1405,
+        legs: [
+          { leg: "cash", amount: "5000000" },
+          { leg: "equity", amount: "5000000" },
+        ],
+      },
+    });
+    assert.equal(r.statusCode, 200, r.body);
+    assert.equal(typeof r.json().entryId, "string");
+  });
+
+  test("صندوق‌دار سند افتتاحیه نمی‌زند", async () => {
+    const s = await loginAs(cashier);
+    const r = await app.inject({
+      method: "POST",
+      url: "/opening-balance",
+      ...s,
+      payload: {
+        branchId: BRANCH,
+        fiscalYear: 1405,
+        legs: [{ leg: "cash", amount: "1" }, { leg: "equity", amount: "1" }],
+      },
+    });
+    assert.equal(r.statusCode, 403, r.body);
+  });
 });

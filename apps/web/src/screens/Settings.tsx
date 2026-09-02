@@ -17,6 +17,7 @@ import { Glass, Solid } from "../components/Glass.tsx";
 import { Accounts } from "./Accounts.tsx";
 import { Terminals } from "./Terminals.tsx";
 import { Permissions } from "./Permissions.tsx";
+import { Opening } from "./Opening.tsx";
 import { api, ApiError } from "../lib/api.ts";
 import {
   describeValue,
@@ -374,6 +375,7 @@ const TABS = [
   { key: "accounts", label: "کدینگ حساب" },
   { key: "terminals", label: "پایانه‌ها" },
   { key: "permissions", label: "مجوزها" },
+  { key: "opening", label: "افتتاحیه و تفصیلی" },
 ] as const;
 
 type Tab = (typeof TABS)[number]["key"];
@@ -404,8 +406,10 @@ export function Settings() {
         <Accounts />
       ) : tab === "terminals" ? (
         <Terminals />
-      ) : (
+      ) : tab === "permissions" ? (
         <Permissions />
+      ) : (
+        <Opening />
       )}
     </div>
   );
