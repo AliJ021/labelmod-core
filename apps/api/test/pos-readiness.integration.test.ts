@@ -1273,6 +1273,48 @@ describe("آمادگی API صندوق", { skip }, () => {
     assert.equal(c.json().invoice.lines[0].qty, "2.000");
   });
 
+  test("اسکنی که پاسخش گم شود، از GET دیده می‌شود", async () => {
+    // قراردادی که صفحه صندوق روی آن حساب می‌کند.
+    //
+    // اسکن **تنها عمل افزایشی** صندوق است؛ بقیه مطلق‌اند. پس فقط
+    // اینجا این حالت ممکن است: سرور اسکن را اعمال می‌کند ولی پاسخ در
+    // راه گم می‌شود — همان چیزی که روی اینترنت همراهِ ضعیف می‌افتد.
+    //
+    // آن‌وقت صندوق‌دار خطا می‌بیند و سبدش هنوز قلم را ندارد. اگر
+    // دوباره بکشد، `ScanCounter` نام عمل تازه می‌دهد و کلید
+    // Idempotency هم تازه است — یعنی سرور دومی را هم می‌شمارد و
+    // **مشتری دو تا حساب می‌شود**. کلید نمی‌تواند نجاتش دهد: کلیدِ
+    // ثابت، اسکن دوم عمدی را Replay می‌کرد.
+    //
+    // تنها راه این است که صندوق‌دار پیش از تصمیم وضعیت واقعی سرور را
+    // ببیند. این تست همان را می‌سنجد: اثر اسکن باید از مسیر خواندن
+    // فاکتور دیده شود، نه فقط در پاسخی که گم شده.
+    const s = await loginAs(cashier);
+    const invoiceId = (
+      await app.inject({
+        method: "POST",
+        url: "/invoices",
+        ...s,
+        payload: { branchId: BRANCH, warehouseId: STORE_WH, channel: "pos" },
+      })
+    ).json().id as string;
+
+    await app.inject({
+      method: "POST",
+      url: `/invoices/${invoiceId}/scan`,
+      ...s,
+      headers: { ...s.headers, "idempotency-key": `lost-${suffix}-${invoiceId}` },
+      payload: { barcode: BARCODE },
+    });
+
+    // پاسخ بالا را عمداً نادیده می‌گیریم — فرض این است که به دست
+    // کلاینت نرسیده.
+    const seen = await app.inject({ method: "GET", url: `/invoices/${invoiceId}`, ...s });
+    assert.equal(seen.statusCode, 200, seen.body);
+    assert.equal(seen.json().lines.length, 1, "قلم باید از GET دیده شود");
+    assert.equal(seen.json().lines[0].qty, "1.000", "و با تعداد واقعی، نه صفر");
+  });
+
   test("دو اسکن هم‌زمان با کلیدهای متفاوت، هر دو شمرده می‌شوند", async () => {
     const s = await loginAs(cashier);
     const invoiceId = (
