@@ -196,9 +196,14 @@ PERFORM pg_temp.assert_txt('روش قیمت تمام‌شده',
 PERFORM platform.set_setting('costing.method', '"moving_weighted_average"'::jsonb, 'بازگشت');
 
 -- سند فروش: هر دو حالت باید انتخاب‌شدنی باشند.
-PERFORM platform.set_setting('ledger.sale_posting', '"per_invoice"'::jsonb, 'تست');
-PERFORM pg_temp.assert_txt('سند فروش', platform.setting_text('ledger.sale_posting'), 'per_invoice');
-PERFORM platform.set_setting('ledger.sale_posting', '"per_shift"'::jsonb, 'بازگشت');
+-- «per_invoice» تا مهاجرت ۰۲۴ یک گزینه بود که **هیچ کدی نمی‌خواندش**؛
+-- انتخابش هیچ اثری نداشت. حالا برداشته شده تا تنظیم دروغ نگوید، و
+-- همین ادعا قفلش می‌کند: گزینه‌ای که پیاده نشده، نباید انتخاب‌شدنی
+-- باشد.
+PERFORM pg_temp.assert_raises('گزینه پیاده‌نشده انتخاب نمی‌شود',
+  $$SELECT platform.set_setting('ledger.sale_posting', '"per_invoice"'::jsonb, 'تست')$$);
+PERFORM pg_temp.assert_txt('سند فروش تجمیعی می‌ماند',
+  platform.setting_text('ledger.sale_posting'), 'per_shift');
 
 -- سیاست PIN قابل تغییر است، ولی فقط با گزینه‌های شناخته‌شده.
 PERFORM platform.set_setting('auth.pin_forbidden_operations',

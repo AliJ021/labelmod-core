@@ -194,12 +194,13 @@ describe("تنظیمات از مسیر API", { skip }, () => {
     assert.equal(find(gs, "sales.auto_close_channel_day").kind, "bool");
     assert.equal(find(gs, "sales.auto_close_after_hours").unit, "ساعت");
 
-    // سند فروش باید از داخل تنظیمات قابل انتخاب باشد.
+    // سند فروش: فقط گزینه‌ای که **واقعاً پیاده شده** در فهرست است.
+    //
+    // تا مهاجرت ۰۲۴، «per_invoice» هم بود ولی هیچ کدی نمی‌خواندش —
+    // مالک می‌توانست انتخابش کند و سیستم بی‌سروصدا همان تجمیعی را
+    // ادامه دهد. تنظیمی که کار نکند از نبودنش بدتر است.
     const posting = find(gs, "ledger.sale_posting");
-    assert.deepEqual(
-      posting.options?.map((o) => o.value).sort(),
-      ["per_invoice", "per_shift"],
-    );
+    assert.deepEqual(posting.options?.map((o) => o.value), ["per_shift"]);
   });
 
   test("صندوق‌دار و انباردار حتی صفحه تنظیمات را نمی‌بینند", async () => {
