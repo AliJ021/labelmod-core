@@ -59,6 +59,40 @@ services:
       start_period: 20s
     restart: unless-stopped
 
+  # ── Worker ──────────────────────────────────────────────────────
+  #
+  # همان ایمیج API، با دستور دیگر. ADR-001: «Worker: همان کدبیس» —
+  # و اینجا خیلی ملموس است، چون تنظیمات، اتصال دیتابیس و صفحه فاکتور
+  # را با API مشترک دارد.
+  #
+  # چرا یک فرآیند **جدا** از API: ارسال پیامک ثانیه‌ها طول می‌کشد و
+  # داخل فرآیند API همان Event Loop که باید فاکتور صندوق را جواب بدهد
+  # منتظر سرویس پیامک می‌ماند. بودجه «افزودن قلم زیر ۱۰۰ میلی‌ثانیه»
+  # (ADR-002) با یک قطعی سرویس پیامک از بین می‌رفت.
+  worker:
+    build:
+      context: .
+      dockerfile: apps/api/Dockerfile
+    command: ["node", "--experimental-strip-types", "apps/api/src/worker.ts"]
+    environment:
+      NODE_ENV: production
+      TZ: ${TZ:-Asia/Tehran}
+      DATABASE_URL: postgres://labelmod:${DB_PASSWORD:?DB_PASSWORD لازم است}@db:5432/labelmod
+      LOG_LEVEL: ${LOG_LEVEL:-info}
+      # ⚠️ کلید سرویس پیامک یک **راز** است، نه یک تنظیم: در
+      #    `platform.setting` نمی‌نشیند چون مقدار هر تنظیم در
+      #    `audit_log` و صفحه تنظیمات دیده می‌شود. انتخاب سرویس‌دهنده
+      #    و شماره فرستنده اما تصمیم‌اند و در جدول‌اند.
+      SMS_API_KEY: ${SMS_API_KEY:-}
+      WORKER_INTERVAL_MS: ${WORKER_INTERVAL_MS:-5000}
+      WORKER_BATCH: ${WORKER_BATCH:-20}
+      WORKER_LEASE_SECONDS: ${WORKER_LEASE_SECONDS:-120}
+    depends_on:
+      db:
+        condition: service_healthy
+    # هیچ پورتی، هیچ Healthcheck HTTP: این یک حلقه است، نه یک سرور.
+    restart: unless-stopped
+
   caddy:
     build:
       context: .

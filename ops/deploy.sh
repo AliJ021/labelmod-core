@@ -58,6 +58,11 @@ case "${1:-}" in
     echo
     echo "── درآمد ثبت‌نشده (باید خالی باشد) ──"
     in_db_tools "psql -d \"\$DATABASE_URL\" -c 'SELECT * FROM sales.unposted_revenue LIMIT 20'" || true
+    # ⚠️ نامه مرده همان نقشی را دارد که «درآمد ثبت‌نشده» برای دفتر
+    #    دارد: خالی‌نبودنش یعنی پیامی هست که هرگز نرفت و کسی هم خبر
+    #    ندارد. زنگ خطری که دیده نشود، زنگ خطر نیست.
+    echo "── پیام‌های نرفته (باید خالی باشد) ──"
+    in_db_tools "psql -d \"\$DATABASE_URL\" -c 'SELECT id, topic, attempts, left(last_error,60) AS error, age FROM platform.outbox_dead LIMIT 20'" || true
     echo "── چک سررسیدشده ──"
     in_db_tools "psql -d \"\$DATABASE_URL\" -c \"SELECT * FROM treasury.cheque_due WHERE urgency <> 'future' LIMIT 20\"" || true
     ;;

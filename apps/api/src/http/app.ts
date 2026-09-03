@@ -21,6 +21,7 @@ import { registerSettingsRoutes } from "./settings-routes.ts";
 import { registerScopeRoutes } from "./scope-routes.ts";
 import { registerAdminRoutes } from "./admin-routes.ts";
 import { registerWebRoutes } from "./web-routes.ts";
+import { registerPublicRoutes, PUBLIC_ROUTE_PATHS } from "./public-routes.ts";
 import { InvoiceService } from "../sales/invoice.ts";
 import { ShiftService } from "../sales/shift.ts";
 import { ReturnService } from "../sales/return.ts";
@@ -73,6 +74,9 @@ const PUBLIC_PATHS = new Set([
   // و دفاع CSRF هم رویشان اعمال می‌شود.
   "/auth/unlock",
   "/auth/reauth",
+  // صفحه فاکتور مشتری. مشتری حساب کاربری ندارد و نباید داشته باشد؛
+  // جای احراز هویت را توکن ۲۴ بایتی روی خودِ فاکتور می‌گیرد.
+  ...PUBLIC_ROUTE_PATHS,
 ]);
 
 export interface AppDeps {
@@ -259,6 +263,7 @@ export async function buildApp(deps: AppDeps): Promise<FastifyInstance> {
     webOrders: new WebOrderService(deps.db, invoices),
     invoices,
   });
+  registerPublicRoutes(app, { db: deps.db });
   registerScopeRoutes(app, { db: deps.db });
   registerAdminRoutes(app, { db: deps.db });
   return app;
