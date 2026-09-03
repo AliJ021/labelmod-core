@@ -95,8 +95,12 @@ VALUES (v_inv, 2, v_var2, 2, 500000, 1000000) RETURNING id INTO v_line2;
 --
 -- کل دلیل وجود این تابع: Snapshot قیمت دست نمی‌خورد. تنها راه دیگر
 -- حذف سطر و افزودن دوباره‌اش بود، و آن قیمت را دوباره می‌خواند.
+--
+-- ⚠️ تغییر قیمت از `catalog.set_price()` می‌رود، نه `UPDATE` مستقیم:
+--    از مهاجرت ۰۳۲ تاریخچه قیمت تغییرناپذیر است. این تازه نزدیک‌تر
+--    به واقعیت هم هست — همان مسیری که مدیر واقعاً از آن رد می‌شود.
 
-UPDATE catalog.price SET amount = 9999999 WHERE variation_id = v_var2;
+PERFORM catalog.set_price(v_var2, 9999999);
 PERFORM sales.set_line_discount(v_inv, v_line2, 50000, 'مشتری قدیمی');
 
 PERFORM pg_temp.assert_eq('قیمت سطر پس از تخفیف دست‌نخورده ماند',
@@ -108,7 +112,7 @@ PERFORM pg_temp.assert_eq('مبلغ سطر = ناخالص منهای تخفیف'
 PERFORM pg_temp.assert_eq('دلیل تخفیف ثبت شد',
   (SELECT CASE WHEN discount_reason = 'مشتری قدیمی' THEN 1 ELSE 0 END
      FROM sales.invoice_line WHERE id = v_line2), 1);
-UPDATE catalog.price SET amount = 500000 WHERE variation_id = v_var2;
+PERFORM catalog.set_price(v_var2, 500000);
 
 PERFORM pg_temp.assert_raises('تخفیف بیشتر از مبلغ قلم رد می‌شود',
   format('SELECT sales.set_line_discount(%L,%L,99999999)', v_inv, v_line2));
@@ -155,7 +159,7 @@ RAISE NOTICE E'\n═══ ۲. Snapshot قیمت دست نمی‌خورد ══
 -- قیمت فهرست را عوض می‌کنیم. اگر set_line_qty قیمت را دوباره بخواند،
 -- ادعای بعدی می‌شکند — و همان چیزی است که حذف و افزودن دوباره
 -- بی‌صدا انجام می‌داد.
-UPDATE catalog.price SET amount = 9999999 WHERE variation_id = v_var;
+PERFORM catalog.set_price(v_var, 9999999);
 
 PERFORM sales.set_line_qty(v_inv, v_line, 2);
 
@@ -164,7 +168,7 @@ PERFORM pg_temp.assert_eq('قیمت سطر همان قیمت لحظه فروش �
 PERFORM pg_temp.assert_eq('مبلغ از همان Snapshot ساخته شد',
   (SELECT net_amount FROM sales.invoice_line WHERE id = v_line), 2000002);
 
-UPDATE catalog.price SET amount = 1000001 WHERE variation_id = v_var;
+PERFORM catalog.set_price(v_var, 1000001);
 
 PERFORM pg_temp.assert_eq('تعداد اعشاری هم پذیرفته می‌شود (دیتابیس واحد فروش را محدود نمی‌کند)',
   (SELECT 1 FROM (SELECT sales.set_line_qty(v_inv, v_line2, 2.5)) x), 1);
