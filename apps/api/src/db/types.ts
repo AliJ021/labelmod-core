@@ -138,7 +138,8 @@ export interface ProductTable {
   code: string;
   name_internal: string;
   name_web: string | null;
-  tax_rate_code: string;
+  /** پیش‌فرض `'standard'` در دیتابیس — روی درج لازم نیست. */
+  tax_rate_code: Generated<string>;
 }
 
 export interface VariationTable {
@@ -148,16 +149,19 @@ export interface VariationTable {
   size: string | null;
   sku: string;
   barcode: string | null;
-  status: string;
+  /** پیش‌فرض `'active'` در دیتابیس. */
+  status: Generated<string>;
 }
 
 export interface PriceTable {
   id: Generated<string>;
   variation_id: string;
-  price_list: string;
+  /** پیش‌فرض `'default'` در دیتابیس. */
+  price_list: Generated<string>;
   /** رشته، نه عدد — پارسر NUMERIC رشته می‌دهد و همان‌جا می‌ماند. */
   amount: string;
-  kind: "regular" | "markdown" | "promo";
+  /** پیش‌فرض `'regular'` در دیتابیس. */
+  kind: Generated<"regular" | "markdown" | "promo">;
   reason: string | null;
   /** پیش‌فرض `now()` در دیتابیس — روی درج لازم نیست. */
   valid_from: Generated<Date>;
@@ -369,6 +373,20 @@ export interface InboxMessageTable {
 
 // ── خرید ──────────────────────────────────────────────────────────────
 
+/**
+ * سال مالی — دروازه‌ای که سند را از دوره بسته بیرون نگه می‌دارد.
+ *
+ * `id` عمداً `smallint` است و توسط دیتابیس ساخته **نمی‌شود**: سال مالی
+ * ۱۴۰۵ را آدم تعریف می‌کند، نه یک Sequence.
+ */
+export interface FiscalYearTable {
+  id: number;
+  starts_on: Date;
+  ends_on: Date;
+  /** پیش‌فرض `'open'` در دیتابیس. */
+  status: Generated<string>;
+}
+
 export interface SupplierTable {
   id: Generated<string>;
   code: string;
@@ -377,7 +395,8 @@ export interface SupplierTable {
   phone: string | null;
   address: string | null;
   national_id: string | null;
-  is_active: boolean;
+  /** پیش‌فرض `true` در دیتابیس. */
+  is_active: Generated<boolean>;
   tafsili_no: Generated<number>;
 }
 
@@ -550,6 +569,7 @@ export interface StockCountLineTable {
 }
 
 export interface Database {
+  "ledger.fiscal_year": FiscalYearTable;
   "catalog.product": ProductTable;
   "catalog.variation": VariationTable;
   "catalog.price": PriceTable;
