@@ -1,0 +1,103 @@
+# =====================================================================
+# Caddy — TLS خودکار، سرو رابط کاربری، Reverse Proxy روی API
+# =====================================================================
+# چرا یک مبدأ برای هر دو: کوکی نشست `SameSite=Strict` است و کلاینت
+# `/api` را نسبی صدا می‌زند (apps/web/src/lib/api.ts). اگر UI و API
+# روی دو دامنه بنشینند، هر درخواست بین‌سایتی می‌شود و کوکی اصلاً
+# فرستاده نمی‌شود — یعنی ورود کار نمی‌کند و دلیلش هم پیدا نیست.
+# ---------------------------------------------------------------------
+{
+	# ایمیل ACME برای هشدار انقضای گواهی Let's Encrypt.
+	email {$ACME_EMAIL}
+
+	# TLS 1.3 به بالا — بند ۲ SECURITY.md. Caddy پیش‌فرض 1.2 را هم
+	# می‌پذیرد؛ اینجا صریح بسته می‌شود.
+	servers {
+		protocols h1 h2 h3
+	}
+}
+
+{$SITE_ADDRESS} {
+	tls {
+		protocols tls1.3
+	}
+
+	encode zstd gzip
+
+	log {
+		output stdout
+		format json
+	}
+
+	# ── هدرهایی که همه‌جا لازم‌اند ────────────────────────────────────
+	header {
+		# بند ۲ SECURITY.md
+		Strict-Transport-Security "max-age=31536000; includeSubDomains"
+		X-Content-Type-Options "nosniff"
+		Referrer-Policy "same-origin"
+		Cross-Origin-Opener-Policy "same-origin"
+		-Server
+	}
+
+	# ── API ──────────────────────────────────────────────────────────
+	# `/api` جدا می‌شود چون کلاینت با پیشوند صدا می‌زند ولی سرور
+	# مسیرهایش را بدون پیشوند تعریف کرده است.
+	handle_path /api/* {
+		# `?` یعنی «فقط اگر خودِ پاسخ نگذاشته باشد». صفحه چاپ برچسب
+		# CSP سخت‌گیرتر خودش را می‌فرستد (catalog/label.ts) و نباید با
+		# CSP سست‌ترِ SPA بازنویسی شود.
+		header ?Content-Security-Policy "default-src 'none'; frame-ancestors 'none'; base-uri 'none'"
+		header ?Permissions-Policy "camera=(), microphone=(), geolocation=(), payment=()"
+		# پاسخ API هرگز کش نمی‌شود: مانده صندوق و موجودی، داده لحظه‌ای‌اند.
+		header Cache-Control "no-store"
+
+		# ⚠️ عمداً بدون `health_uri`. با یک Upstream تنها، بررسی سلامت
+		# فعال هیچ چیزی را متعادل نمی‌کند و فقط یک پنجره خرابی می‌سازد:
+		# تا اولین بررسی موفق، API سالمِ تازه‌بالاآمده «پایین» شمرده
+		# می‌شود و Caddy یک ۵۰۳ خالی می‌دهد — آزموده شد، نه فرض.
+		# به‌جایش چند ثانیه تلاش دوباره، تا Restart هنگام Deploy به
+		# صندوق‌دار به‌شکل مکث دیده شود نه خطا.
+		reverse_proxy api:3000 {
+			lb_try_duration 5s
+			lb_try_interval 250ms
+		}
+	}
+
+	# ── رابط کاربری ──────────────────────────────────────────────────
+	handle {
+		root * /srv
+
+		header {
+			# ── CSP ───────────────────────────────────────────────────
+			# `wasm-unsafe-eval` اختیاری نیست (بند ۶ SECURITY.md):
+			# اسکنر بارکد موبایل روی هر مرورگری که `BarcodeDetector`
+			# بومی ندارد — از جمله **آیفون** — از WebAssembly استفاده
+			# می‌کند. فایل WASM محلی سرو می‌شود، ولی محلی‌بودن جای
+			# اجازه اجرا را نمی‌گیرد: بدون این کلیدواژه دوربین بی‌صدا
+			# از کار می‌افتد.
+			#
+			# `unsafe-inline` روی اسکریپت **نیست** — اسکریپت بوت تم به
+			# `public/boot.js` منتقل شد تا همین ممکن باشد.
+			#
+			# سبک دو شاخه دارد: `style-src-elem` سخت‌گیر می‌ماند و
+			# `style-src-attr` باز است، چون React سبک را روی صفت
+			# `style` می‌نشاند. مرورگر قدیمی که این دو را نمی‌شناسد از
+			# `style-src` استفاده می‌کند.
+			Content-Security-Policy "default-src 'none'; script-src 'self' 'wasm-unsafe-eval'; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; style-src-elem 'self' https://fonts.googleapis.com; style-src-attr 'unsafe-inline'; font-src 'self' https://fonts.gstatic.com; img-src 'self' data: blob:; media-src 'self' blob:; worker-src 'self' blob:; connect-src 'self'; manifest-src 'self'; object-src 'none'; base-uri 'none'; form-action 'self'; frame-ancestors 'none'"
+
+			# دوربین لازم است — اسکن بارکد با موبایل. بقیه بسته.
+			Permissions-Policy "camera=(self), microphone=(), geolocation=(), payment=(), usb=()"
+		}
+
+		# دارایی‌های Hash‌دار Vite تا ابد کش می‌شوند؛ index.html هرگز.
+		@hashed path /assets/*
+		header @hashed Cache-Control "public, max-age=31536000, immutable"
+		@html path / /index.html
+		header @html Cache-Control "no-cache"
+
+		# SPA: هر مسیر ناشناخته به index.html می‌رسد تا Refresh روی
+		# مسیر داخلی ۴۰۴ ندهد.
+		try_files {path} /index.html
+		file_server
+	}
+}

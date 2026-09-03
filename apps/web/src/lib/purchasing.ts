@@ -1,0 +1,495 @@
+/**
+ * لایه داده خرید — تایپ‌ها و تماس‌ها، بدون منطق UI.
+ *
+ * ── قاعده‌ای که اینجا وارونه است ────────────────────────────────────
+ *
+ * `lib/pos.ts` صریح می‌گوید «قیمت از کلاینت نمی‌آید». **در خرید
+ * می‌آید و باید بیاید**: قیمت خرید تصمیم تأمین‌کننده است و هیچ‌جا در
+ * دیتابیس ما نیست؛ انباردار آن را از روی فاکتور کاغذی وارد می‌کند.
+ *
+ * تفاوت را عمداً در دو فایل جدا نگه داشتیم تا کسی که `pos.ts` را
+ * می‌خواند فکر نکند قاعده شکسته شده.
+ *
+ * ── آنچه تغییر نمی‌کند ──────────────────────────────────────────────
+ *
+ * **پول رشته است.** هر مبلغی که می‌آید یا می‌رود `string` است، نه
+ * `number`. تبدیل فقط در `lib/money.ts` و فقط برای نمایش.
+ *
+ * **جمع‌ها از پاسخ سرور خوانده می‌شوند.** هر تماسی که رسید را عوض
+ * می‌کند، **کل رسید** را برمی‌گرداند. دو تعریف از یک جمع، دیر یا زود
+ * از هم جدا می‌افتند.
+ */
+import { api, type RequestOptions } from "./api.ts";
+
+export interface Supplier {
+  id: string;
+  code: string;
+  name: string;
+  mobile: string | null;
+  phone: string | null;
+  isActive: boolean;
+}
+
+export interface PayAccount {
+  id: string;
+  code: string;
+  name: string;
+  kind: string;
+}
+
+export interface ExpenseAccount {
+  code: string;
+  name: string;
+}
+
+export interface ReceiptLine {
+  id: string;
+  variationId: string;
+  sku: string;
+  barcode: string | null;
+  productName: string;
+  color: string | null;
+  size: string | null;
+  qty: string;
+  unitPrice: string;
+  lineAmount: string;
+  /** سهم این سطر از هزینه جانبی — پیش از ثبت صفر است. */
+  chargeAlloc: string;
+  /** بهای تمام‌شده هر واحد پس از تخصیص هزینه — پیش از ثبت صفر است. */
+  landedUnitCost: string;
+}
+
+export interface ReceiptCharge {
+  id: string;
+  chargeType: string;
+  amount: string;
+  allocation: string;
+  paidFrom: string;
+  payeeType: string;
+  payeeName: string | null;
+  paidAccountId: string | null;
+  paidAccountName: string | null;
+  /** سرفصل هزینه دوره — فقط برای تخصیص «بدون تخصیص». */
+  expenseAccountCode: string | null;
+  expenseAccountName: string | null;
+}
+
+export interface Receipt {
+  id: string;
+  /** تا لحظه ثبت `null` — پیش‌نویس رهاشده شماره نمی‌سوزاند. */
+  number: string | null;
+  status: string;
+  branchId: string;
+  warehouseId: string;
+  warehouseName: string;
+  supplierId: string;
+  supplierName: string;
+  supplierInvoiceNo: string | null;
+  occurredAt: string;
+  postedAt: string | null;
+  note: string | null;
+  taxAmount: string;
+  goodsAmount: string;
+  chargesAmount: string;
+  supplierPayable: string;
+  thirdPartyPayable: string;
+  lines: ReceiptLine[];
+  charges: ReceiptCharge[];
+}
+
+export interface ReceiptSummary {
+  id: string;
+  number: string | null;
+  status: string;
+  supplierName: string;
+  warehouseName: string;
+  occurredAt: string;
+  supplierInvoiceNo: string | null;
+  lineCount: number;
+  goodsAmount: string;
+}
+
+/** برچسب فارسی وضعیت — یک تعریف، نه یکی در هر کامپوننت. */
+export const RECEIPT_STATUS: Record<string, string> = {
+  draft: "پیش‌نویس",
+  posted: "ثبت‌شده",
+  cancelled: "باطل",
+};
+
+/** برچسب فارسی روش تخصیص هزینه. */
+export const ALLOCATION_LABEL: Record<string, string> = {
+  by_value: "به نسبت مبلغ",
+  by_qty: "به نسبت تعداد",
+  none: "بدون تخصیص",
+};
+
+export const purchasing = {
+  suppliers: (q?: string) =>
+    api.get<Supplier[]>(`/suppliers${q ? `?q=${encodeURIComponent(q)}` : ""}`),
+
+  createSupplier: (
+    input: { code: string; name: string; mobile?: string; phone?: string },
+    opts?: RequestOptions,
+  ) => api.post<{ id: string; code: string; name: string; tafsiliNo: number }>(
+    "/suppliers",
+    input,
+    opts,
+  ),
+
+  /**
+   * حساب‌هایی که می‌شود هزینه رسید را از آن‌ها پرداخت کرد.
+   *
+   * صندوق فروشگاه در این فهرست نیست و نباید باشد: پول کشو فقط از
+   * فروش و بازپرداخت حرکت می‌کند، وگرنه شمارش صندوق مغایرت کاذب
+   * می‌دهد. دیتابیس هم ردش می‌کند.
+   */
+  payAccounts: () => api.get<PayAccount[]>("/purchasing/pay-accounts"),
+
+  /**
+   * سرفصل‌های هزینه دوره — برای هزینه‌ای که به بهای کالا نمی‌رود.
+   *
+   * تا مهاجرت ۰۲۶ گزینه «بدون تخصیص» وجود داشت ولی کار نمی‌کرد:
+   * تمام مبلغ روی آخرین قلم می‌نشست. حالا سطر سند خودش را دارد و
+   * سرفصلش انتخابی است.
+   */
+  expenseAccounts: () => api.get<ExpenseAccount[]>("/purchasing/expense-accounts"),
+
+  receipts: (status?: string) =>
+    api.get<ReceiptSummary[]>(`/receipts${status ? `?status=${status}` : ""}`),
+
+  receipt: (id: string) => api.get<Receipt>(`/receipts/${id}`),
+
+  /**
+   * یافتن رسید از روی **شماره** — نقطه شروع برگشت از خرید.
+   *
+   * شماره در سطح شعبه یکتاست، نه سراسری، پس `branchId` اجباری است.
+   * سمت سرور می‌گردد نه در فهرست مرورگر: فهرست سقف دارد و رسید سه ماه
+   * پیش در آن نیست.
+   */
+  receiptByNumber: (number: string, branchId: string) =>
+    api.get<Receipt>(
+      `/receipts/lookup?number=${encodeURIComponent(number)}&branchId=${encodeURIComponent(branchId)}`,
+    ),
+
+  createReceipt: (
+    input: {
+      branchId: string;
+      warehouseId: string;
+      supplierId: string;
+      supplierInvoiceNo?: string;
+      note?: string;
+    },
+    opts?: RequestOptions,
+  ) => api.post<Receipt & { replayed: boolean }>("/receipts", input, opts),
+
+  updateHead: (
+    id: string,
+    input: { taxAmount?: string; supplierInvoiceNo?: string | null; note?: string | null },
+  ) => api.patch<Receipt>(`/receipts/${id}`, input),
+
+  /**
+   * افزودن قلم — با بارکد یا شناسه، همیشه همراه قیمت.
+   *
+   * کالای تکراری **با همان قیمت** روی یک سطر جمع می‌شود؛ با قیمت
+   * متفاوت، سطر تازه. دو نرخ روی یک فاکتور تأمین‌کننده، دو سطر
+   * واقعی‌اند.
+   */
+  addLine: (
+    id: string,
+    input: { barcode?: string; variationId?: string; qty: string; unitPrice: string },
+    opts?: RequestOptions,
+  ) => api.post<Receipt & { replayed: boolean }>(`/receipts/${id}/lines`, input, opts),
+
+  /** تعداد و قیمت **مطلق** است، نه دلتا. */
+  setLine: (
+    id: string,
+    lineId: string,
+    input: { qty?: string; unitPrice?: string },
+  ) => api.patch<Receipt>(`/receipts/${id}/lines/${lineId}`, input),
+
+  removeLine: (id: string, lineId: string) =>
+    api.del<Receipt>(`/receipts/${id}/lines/${lineId}`),
+
+  addCharge: (
+    id: string,
+    input: {
+      chargeType: string;
+      amount: string;
+      allocation: string;
+      paidFrom: string;
+      payeeType: string;
+      payeeName?: string;
+      paidAccountId?: string;
+      expenseAccountCode?: string;
+    },
+    opts?: RequestOptions,
+  ) => api.post<Receipt & { replayed: boolean }>(`/receipts/${id}/charges`, input, opts),
+
+  removeCharge: (id: string, chargeId: string) =>
+    api.del<Receipt>(`/receipts/${id}/charges/${chargeId}`),
+
+  /** ثبت — کالا به انبار، سند به دفتر. Idempotent. */
+  post: (id: string, opts?: RequestOptions) =>
+    api.post<Receipt & { entryId: string; replayed: boolean }>(`/receipts/${id}/post`, {}, opts),
+
+  cancel: (id: string) => api.post<Receipt>(`/receipts/${id}/cancel`),
+};
+
+// ── انبارگردانی ─────────────────────────────────────────────────────
+
+export interface StockCountLine {
+  id: string;
+  variationId: string;
+  sku: string;
+  barcode: string | null;
+  productName: string;
+  color: string | null;
+  size: string | null;
+  countedQty: string;
+  /**
+   * تا لحظه ثبت `null` — و این عمدی است، نه یک شکاف.
+   *
+   * موجودی سیستم در لحظه ثبت و روی سطر قفل‌شده خوانده می‌شود. نشان
+   * دادن یک عددِ پیش‌بینی روی پیش‌نویس یعنی انباردار روی عددی تصمیم
+   * بگیرد که تا ثبت عوض می‌شود.
+   */
+  systemQty: string | null;
+  diffQty: string | null;
+  unitCost: string | null;
+  valueDelta: string | null;
+}
+
+export interface StockCount {
+  id: string;
+  number: string | null;
+  status: string;
+  branchId: string;
+  warehouseId: string;
+  warehouseName: string;
+  startedAt: string;
+  postedAt: string | null;
+  note: string | null;
+  lines: StockCountLine[];
+}
+
+export interface StockCountSummary {
+  id: string;
+  number: string | null;
+  status: string;
+  warehouseName: string;
+  startedAt: string;
+  lineCount: number;
+  diffCount: number;
+}
+
+export const stockCounts = {
+  list: (status?: string) =>
+    api.get<StockCountSummary[]>(`/stock-counts${status ? `?status=${status}` : ""}`),
+
+  get: (id: string) => api.get<StockCount>(`/stock-counts/${id}`),
+
+  create: (
+    input: { branchId: string; warehouseId: string; note?: string },
+    opts?: RequestOptions,
+  ) => api.post<StockCount & { replayed: boolean }>("/stock-counts", input, opts),
+
+  /**
+   * شمارش یک کالا — **مطلق**، نه افزایشی.
+   *
+   * `PUT` است و `Idempotency-Key` نمی‌خواهد: همان بارکد با همان عدد،
+   * هر چند بار که فرستاده شود یک نتیجه دارد. اسکن دوباره یعنی
+   * «دوباره شمردم و این عدد است»، نه «یکی دیگر پیدا کردم».
+   */
+  setLine: (id: string, input: { barcode?: string; variationId?: string; countedQty: string }) =>
+    api.put<StockCount>(`/stock-counts/${id}/lines`, input),
+
+  removeLine: (id: string, lineId: string) =>
+    api.del<StockCount>(`/stock-counts/${id}/lines/${lineId}`),
+
+  post: (id: string, opts?: RequestOptions) =>
+    api.post<StockCount & { replayed: boolean }>(`/stock-counts/${id}/post`, {}, opts),
+
+  cancel: (id: string) => api.post<StockCount>(`/stock-counts/${id}/cancel`),
+};
+
+// ── برگشت از خرید ───────────────────────────────────────────────────
+
+export interface ReturnableLine {
+  receiptLineId: string;
+  variationId: string;
+  sku: string;
+  productName: string;
+  color: string | null;
+  size: string | null;
+  receivedQty: string;
+  returnedQty: string;
+  /** از سرور می‌آید، نه از تفریق در مرورگر. */
+  remainingQty: string;
+  unitPrice: string;
+  /** بهای دفتری — کالا با همین نرخ خارج می‌شود، نه میانگین جاری. */
+  landedUnitCost: string;
+}
+
+export interface Returnable {
+  receiptId: string;
+  number: string | null;
+  supplierName: string;
+  warehouseId: string;
+  warehouseName: string;
+  occurredAt: string;
+  lines: ReturnableLine[];
+}
+
+export interface PurchaseReturn {
+  id: string;
+  number: string | null;
+  status: string;
+  receiptId: string;
+  receiptNumber: string | null;
+  supplierName: string;
+  warehouseName: string;
+  reasonCode: string;
+  reasonNote: string | null;
+  occurredAt: string;
+  postedAt: string | null;
+  goodsAmount: string;
+  costAmount: string;
+  taxAmount: string;
+  /** حملِ کالای پس‌فرستاده — پرداختیم و باربری برنمی‌گرداند. */
+  chargeLoss: string;
+  lines: {
+    id: string;
+    receiptLineId: string;
+    sku: string;
+    productName: string;
+    color: string | null;
+    size: string | null;
+    qty: string;
+    unitPrice: string | null;
+    unitCost: string | null;
+    goodsAmount: string | null;
+    costAmount: string | null;
+  }[];
+}
+
+export const purchaseReturns = {
+  /** چه چیزی از یک رسید هنوز قابل برگشت است. */
+  returnable: (receiptId: string) =>
+    api.get<Returnable>(`/receipts/${receiptId}/returnable`),
+
+  get: (id: string) => api.get<PurchaseReturn>(`/purchase-returns/${id}`),
+
+  /**
+   * ساخت و ثبت در یک درخواست.
+   *
+   * جداکردنشان یک پنجره باز می‌کرد: برگه‌ای ساخته و ثبت‌نشده که نه
+   * موجودی را کم کرده نه بدهی را، ولی در فهرست هست.
+   */
+  create: (
+    input: {
+      receiptId: string;
+      reasonCode: string;
+      reasonNote?: string;
+      lines: { receiptLineId: string; qty: string }[];
+    },
+    opts?: RequestOptions,
+  ) => api.post<PurchaseReturn & { replayed: boolean }>("/purchase-returns", input, opts),
+};
+
+// ── سفارش خرید ──────────────────────────────────────────────────────
+
+export interface OrderLine {
+  id: string;
+  variationId: string;
+  sku: string;
+  barcode: string | null;
+  productName: string;
+  color: string | null;
+  size: string | null;
+  qty: string;
+  unitPrice: string;
+  lineAmount: string;
+  /** رسیده منهای برگشتی — از نمای سرور، نه تفریق در مرورگر. */
+  receivedQty: string;
+  remainingQty: string;
+  /** بیش‌تحویل بسته نیست، ولی دیده می‌شود. */
+  overQty: string;
+}
+
+export interface Order {
+  id: string;
+  number: string | null;
+  status: string;
+  branchId: string;
+  supplierId: string;
+  supplierName: string;
+  warehouseId: string;
+  warehouseName: string;
+  expectedAt: string | null;
+  note: string | null;
+  createdAt: string;
+  sentAt: string | null;
+  closedAt: string | null;
+  closeReason: string | null;
+  /** جمع توافقی — یک عدد برای مقایسه، نه یک بدهی. */
+  orderedAmount: string;
+  lines: OrderLine[];
+}
+
+export interface OrderSummary {
+  id: string;
+  number: string | null;
+  status: string;
+  supplierName: string;
+  expectedAt: string | null;
+  createdAt: string;
+  lineCount: number;
+  pendingLines: number;
+}
+
+/** برچسب فارسی وضعیت سفارش. */
+export const ORDER_STATUS: Record<string, string> = {
+  draft: "پیش‌نویس",
+  sent: "فرستاده‌شده",
+  closed: "بسته",
+  cancelled: "باطل",
+};
+
+export const purchaseOrders = {
+  list: (status?: string) =>
+    api.get<OrderSummary[]>(`/purchase-orders${status ? `?status=${status}` : ""}`),
+
+  get: (id: string) => api.get<Order>(`/purchase-orders/${id}`),
+
+  create: (
+    input: {
+      branchId: string;
+      supplierId: string;
+      warehouseId: string;
+      expectedAt?: string;
+      note?: string;
+    },
+    opts?: RequestOptions,
+  ) => api.post<Order & { replayed: boolean }>("/purchase-orders", input, opts),
+
+  /** قلم مطلق است: «۱۰ تا» یعنی همان ۱۰ تا، نه ۱۰ تای دیگر. */
+  setLine: (
+    id: string,
+    input: { barcode?: string; variationId?: string; qty: string; unitPrice: string },
+  ) => api.put<Order>(`/purchase-orders/${id}/lines`, input),
+
+  removeLine: (id: string, lineId: string) =>
+    api.del<Order>(`/purchase-orders/${id}/lines/${lineId}`),
+
+  /** فرستادن — شماره می‌گیرد. هیچ سندی و هیچ حرکت انباری. */
+  send: (id: string, opts?: RequestOptions) =>
+    api.post<Order>(`/purchase-orders/${id}/send`, {}, opts),
+
+  /** «محموله رسید» — پیش‌نویس رسید از روی باقی‌مانده. */
+  makeReceipt: (id: string, opts?: RequestOptions) =>
+    api.post<Receipt & { replayed: boolean }>(`/purchase-orders/${id}/receipt`, {}, opts),
+
+  /** بستن یک تصمیم انسانی است. سفارش نیمه‌رسیده دلیل می‌خواهد. */
+  close: (id: string, reason?: string) =>
+    api.post<Order>(`/purchase-orders/${id}/close`, reason ? { reason } : {}),
+};

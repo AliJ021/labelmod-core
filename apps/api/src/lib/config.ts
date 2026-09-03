@@ -28,6 +28,23 @@ const schema = z.object({
   CSRF_COOKIE_NAME: z.string().default("labelmod_csrf"),
 
   LOG_LEVEL: z.enum(["fatal", "error", "warn", "info", "debug", "trace"]).default("info"),
+
+  // ── Worker ──────────────────────────────────────────────────────
+  //
+  // ⚠️ کلید سرویس پیامک اینجاست و نه در `platform.setting` — چون یک
+  //    **راز** است، نه یک تصمیم. مقدار هر تنظیم در `audit_log`
+  //    می‌نشیند و صفحه تنظیمات نشانش می‌دهد؛ کلید نباید هیچ‌کدام را
+  //    ببیند. انتخاب سرویس‌دهنده و شماره فرستنده اما تصمیم‌اند و در
+  //    جدول‌اند.
+  SMS_API_KEY: z.string().optional(),
+
+  // این سه عدد عمداً محیطی‌اند، نه تنظیم: به **ظرفیت ماشین** مربوطند،
+  // نه به کسب‌وکار. مالک هیچ‌وقت نمی‌خواهد اندازه دسته را عوض کند.
+  WORKER_INTERVAL_MS: z.coerce.number().int().min(500).max(600_000).default(5_000),
+  WORKER_BATCH: z.coerce.number().int().min(1).max(200).default(20),
+  // اجاره باید از بدترین زمان ارسال بلندتر باشد، وگرنه پیامی که هنوز
+  // در حال رفتن است دوباره برداشته می‌شود و مشتری دو پیامک می‌گیرد.
+  WORKER_LEASE_SECONDS: z.coerce.number().int().min(30).max(3_600).default(120),
 });
 
 export type Config = z.infer<typeof schema> & { isProduction: boolean };

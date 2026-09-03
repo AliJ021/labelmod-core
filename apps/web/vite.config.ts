@@ -9,5 +9,13 @@ export default defineConfig({
     // می‌بیند و کوکی نشستِ SameSite=Strict بدون تنظیم اضافه کار می‌کند.
     proxy: { "/api": { target: "http://127.0.0.1:3000", changeOrigin: false, rewrite: (p) => p.replace(/^\/api/, "") } },
   },
-  build: { target: "es2022", sourcemap: true },
+  build: {
+    target: "es2022",
+    sourcemap: true,
+    // ⚠️ Polyfill مربوط به modulepreload یک <script> **درون‌خطی** در
+    // index.html تزریق می‌کند. CSP تولیدی `unsafe-inline` ندارد، پس آن
+    // اسکریپت بی‌صدا اجرا نمی‌شود. مرورگرهای هدف (es2022) خودشان
+    // modulepreload را دارند و Polyfill لازم نیست.
+    modulePreload: { polyfill: false },
+  },
 });

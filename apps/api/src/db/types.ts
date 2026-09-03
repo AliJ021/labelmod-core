@@ -34,6 +34,20 @@ export interface UserRoleTable {
   branch_id: string | null;
 }
 
+export interface ApiClientTable {
+  id: Generated<string>;
+  name: string;
+  /** کاربر پشتی — همه مجوزها و ردّ حسابرسی از او می‌آید (مهاجرت ۰۳۰). */
+  user_id: string;
+  /** SHA-256 کلید. خودِ کلید هرگز ذخیره نمی‌شود. */
+  key_hash: string;
+  is_active: Generated<boolean>;
+  created_at: Generated<Date>;
+  created_by: string | null;
+  last_used_at: Date | null;
+  note: string | null;
+}
+
 export interface DeviceTable {
   id: Generated<string>;
   fingerprint: string;
@@ -124,7 +138,8 @@ export interface ProductTable {
   code: string;
   name_internal: string;
   name_web: string | null;
-  tax_rate_code: string;
+  /** پیش‌فرض `'standard'` در دیتابیس — روی درج لازم نیست. */
+  tax_rate_code: Generated<string>;
 }
 
 export interface VariationTable {
@@ -134,16 +149,19 @@ export interface VariationTable {
   size: string | null;
   sku: string;
   barcode: string | null;
-  status: string;
+  /** پیش‌فرض `'active'` در دیتابیس. */
+  status: Generated<string>;
 }
 
 export interface PriceTable {
   id: Generated<string>;
   variation_id: string;
-  price_list: string;
+  /** پیش‌فرض `'default'` در دیتابیس. */
+  price_list: Generated<string>;
   /** رشته، نه عدد — پارسر NUMERIC رشته می‌دهد و همان‌جا می‌ماند. */
   amount: string;
-  kind: "regular" | "markdown" | "promo";
+  /** پیش‌فرض `'regular'` در دیتابیس. */
+  kind: Generated<"regular" | "markdown" | "promo">;
   reason: string | null;
   /** پیش‌فرض `now()` در دیتابیس — روی درج لازم نیست. */
   valid_from: Generated<Date>;
@@ -309,7 +327,7 @@ export interface CustomerTable {
   id: Generated<string>;
   mobile_normalized: string;
   full_name: string | null;
-  credit_limit: string;
+  credit_limit: Generated<string>;
 }
 
 // ── خزانه ─────────────────────────────────────────────────────────
@@ -353,7 +371,205 @@ export interface InboxMessageTable {
   result_ref: string | null;
 }
 
+// ── خرید ──────────────────────────────────────────────────────────────
+
+/**
+ * سال مالی — دروازه‌ای که سند را از دوره بسته بیرون نگه می‌دارد.
+ *
+ * `id` عمداً `smallint` است و توسط دیتابیس ساخته **نمی‌شود**: سال مالی
+ * ۱۴۰۵ را آدم تعریف می‌کند، نه یک Sequence.
+ */
+export interface FiscalYearTable {
+  id: number;
+  starts_on: Date;
+  ends_on: Date;
+  /** پیش‌فرض `'open'` در دیتابیس. */
+  status: Generated<string>;
+}
+
+export interface SupplierTable {
+  id: Generated<string>;
+  code: string;
+  name: string;
+  mobile: string | null;
+  phone: string | null;
+  address: string | null;
+  national_id: string | null;
+  /** پیش‌فرض `true` در دیتابیس. */
+  is_active: Generated<boolean>;
+  tafsili_no: Generated<number>;
+}
+
+export interface ReceiptTable {
+  id: Generated<string>;
+  /** تا لحظه ثبت NULL است — پیش‌نویس رهاشده شماره نمی‌سوزاند (مهاجرت ۰۲۵). */
+  number: string | null;
+  branch_id: string;
+  supplier_id: string;
+  warehouse_id: string;
+  supplier_invoice_no: string | null;
+  occurred_at: Generated<Date>;
+  goods_amount: Generated<string>;
+  charges_amount: Generated<string>;
+  tax_amount: Generated<string>;
+  total_payable: Generated<string>;
+  third_party_payable: Generated<string>;
+  status: Generated<string>;
+  posted_at: Date | null;
+  created_by: string | null;
+  note: string | null;
+  /** سفارشی که این رسید بابتش آمده. تهی = خرید بدون سفارش. */
+  order_id: string | null;
+}
+
+export interface ReceiptLineTable {
+  id: Generated<string>;
+  receipt_id: string;
+  variation_id: string;
+  qty: string;
+  unit_price: string;
+  line_amount: string;
+  charge_alloc: Generated<string>;
+  landed_unit_cost: Generated<string>;
+  /** جمع برگشتی‌ها. فقط `post_purchase_return()` بالایش می‌برد (مهاجرت ۰۲۸). */
+  returned_qty: Generated<string>;
+  /** سطر سفارشی که این قلم بابتش آمده. باید به همان سفارشِ رسید باشد. */
+  order_line_id: string | null;
+}
+
+export interface PurchaseOrderTable {
+  id: Generated<string>;
+  /** تا لحظه **فرستادن** NULL — پیش‌نویس رهاشده شماره نمی‌سوزاند. */
+  number: string | null;
+  branch_id: string;
+  supplier_id: string;
+  warehouse_id: string;
+  status: Generated<string>;
+  expected_at: string | null;
+  note: string | null;
+  created_by: string | null;
+  created_at: Generated<Date>;
+  sent_at: Date | null;
+  closed_at: Date | null;
+  close_reason: string | null;
+}
+
+export interface PurchaseOrderLineTable {
+  id: Generated<string>;
+  order_id: string;
+  variation_id: string;
+  qty: string;
+  /** قیمت توافقی سفارش. بها را رسید تعیین می‌کند، نه این. */
+  unit_price: string;
+}
+
+/** نما — «چقدرش رسیده» محاسبه است، نه ستون (مهاجرت ۰۲۹). */
+export interface OrderProgressView {
+  order_line_id: string;
+  order_id: string;
+  variation_id: string;
+  ordered_qty: string;
+  ordered_unit_price: string;
+  received_qty: string;
+  remaining_qty: string;
+  over_qty: string;
+}
+
+export interface PurchaseReturnTable {
+  id: Generated<string>;
+  /** تا لحظه ثبت NULL — برگه رهاشده شماره نمی‌سوزاند. */
+  number: string | null;
+  branch_id: string;
+  receipt_id: string;
+  warehouse_id: string;
+  goods_amount: Generated<string>;
+  cost_amount: Generated<string>;
+  tax_amount: Generated<string>;
+  charge_loss: Generated<string>;
+  reason_code: string;
+  reason_note: string | null;
+  status: Generated<string>;
+  occurred_at: Generated<Date>;
+  posted_at: Date | null;
+  created_by: string | null;
+}
+
+export interface PurchaseReturnLineTable {
+  id: Generated<string>;
+  return_id: string;
+  receipt_line_id: string;
+  qty: string;
+  /** Snapshot در لحظه ثبت. تا آن موقع NULL. */
+  unit_price: string | null;
+  unit_cost: string | null;
+  goods_amount: string | null;
+  cost_amount: string | null;
+}
+
+export interface ReceiptChargeTable {
+  id: Generated<string>;
+  receipt_id: string;
+  charge_type: string;
+  amount: string;
+  allocation: Generated<string>;
+  paid_from: string | null;
+  payee_type: Generated<string>;
+  payee_name: string | null;
+  paid_account_id: string | null;
+  /** فقط برای allocation = none — تهی یعنی حساب پیش‌فرض قاعده ثبت. */
+  expense_account_code: string | null;
+}
+
+export interface LedgerAccountTable {
+  code: string;
+  parent_code: string | null;
+  name: string;
+  level: string;
+  nature: string;
+  type: string;
+  is_postable: boolean;
+  is_active: boolean;
+}
+
+export interface TreasuryAccountTable {
+  id: Generated<string>;
+  code: string;
+  name: string;
+  kind: string;
+  branch_id: string | null;
+  ledger_account_code: string;
+  is_active: boolean;
+}
+
+// ── انبارگردانی ───────────────────────────────────────────────────────
+
+export interface StockCountTable {
+  id: Generated<string>;
+  /** تا لحظه ثبت NULL — برگه رهاشده شماره نمی‌سوزاند (مهاجرت ۰۲۷). */
+  number: string | null;
+  branch_id: string;
+  warehouse_id: string;
+  status: Generated<string>;
+  started_at: Generated<Date>;
+  posted_at: Date | null;
+  created_by: string | null;
+  note: string | null;
+}
+
+export interface StockCountLineTable {
+  id: Generated<string>;
+  count_id: string;
+  variation_id: string;
+  counted_qty: string;
+  /** این چهار ستون را فقط `post_stock_count()` پر می‌کند، در لحظه ثبت. */
+  system_qty: string | null;
+  diff_qty: string | null;
+  unit_cost: string | null;
+  value_delta: string | null;
+}
+
 export interface Database {
+  "ledger.fiscal_year": FiscalYearTable;
   "catalog.product": ProductTable;
   "catalog.variation": VariationTable;
   "catalog.price": PriceTable;
@@ -374,9 +590,23 @@ export interface Database {
   "identity.role": RoleTable;
   "identity.user_role": UserRoleTable;
   "identity.device": DeviceTable;
+  "identity.api_client": ApiClientTable;
   "identity.session": SessionTable;
   "identity.auth_attempt": AuthAttemptTable;
   "platform.setting": SettingTable;
   "platform.setting_group": SettingGroupTable;
   "platform.branch": BranchTable;
+  "purchasing.supplier": SupplierTable;
+  "purchasing.receipt": ReceiptTable;
+  "purchasing.receipt_line": ReceiptLineTable;
+  "purchasing.receipt_charge": ReceiptChargeTable;
+  "treasury.account": TreasuryAccountTable;
+  "ledger.account": LedgerAccountTable;
+  "inventory.stock_count": StockCountTable;
+  "inventory.stock_count_line": StockCountLineTable;
+  "purchasing.purchase_order": PurchaseOrderTable;
+  "purchasing.purchase_order_line": PurchaseOrderLineTable;
+  "purchasing.order_progress": OrderProgressView;
+  "purchasing.purchase_return": PurchaseReturnTable;
+  "purchasing.purchase_return_line": PurchaseReturnLineTable;
 }

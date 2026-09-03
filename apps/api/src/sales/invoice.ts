@@ -101,6 +101,17 @@ export interface AddLineInput {
   actorId: string;
 }
 
+/**
+ * هرچه بتواند کوئری اجرا کند — Pool یا تراکنش باز.
+ *
+ * چند متد این کلاس باید هم از بیرون صدا زده شوند و هم **داخل تراکنش
+ * فراخوان**. الگویش از `addPaymentIn` می‌آید و دلیلش همان است: اثر و
+ * درج Inbox باید در یک تراکنش باشند، پس خواندن‌های میانی هم باید همان
+ * تراکنش را ببینند — وگرنه کدی که داخل تراکنش می‌نویسد، بیرونش
+ * می‌خواند و چیزی را می‌بیند که هنوز Commit نشده یا عوض شده.
+ */
+export type Executor = Db | Transaction<Database>;
+
 /** سهم تخفیف از مبلغ ناخالص سطر، برای سنجش سقف نقش. */
 export interface DiscountCheck {
   percent: number;
@@ -114,15 +125,15 @@ export class InvoiceService {
     this.#db = db;
   }
 
-  async byId(invoiceId: string): Promise<Invoice | null> {
-    const inv = await this.#db
+  async byId(invoiceId: string, ex: Executor = this.#db): Promise<Invoice | null> {
+    const inv = await ex
       .selectFrom("sales.invoice")
       .selectAll()
       .where("id", "=", invoiceId)
       .executeTakeFirst();
     if (!inv) return null;
 
-    const lines = await this.#db
+    const lines = await ex
       .selectFrom("sales.invoice_line as l")
       .innerJoin("catalog.variation as v", "v.id", "l.variation_id")
       .innerJoin("catalog.product as p", "p.id", "v.product_id")
@@ -250,8 +261,12 @@ export class InvoiceService {
    * آخرین قیمت معتبر در همان لحظه. اگر کالا قیمت ندارد، فروش رد
    * می‌شود — قیمت صفر یک تصمیم است، نه یک پیش‌فرض.
    */
-  async currentPrice(variationId: string, at: Date = new Date()): Promise<bigint> {
-    const row = await this.#db
+  async currentPrice(
+    variationId: string,
+    at: Date = new Date(),
+    ex: Executor = this.#db,
+  ): Promise<bigint> {
+    const row = await ex
       .selectFrom("catalog.price")
       .select("amount")
       .where("variation_id", "=", variationId)
@@ -272,12 +287,15 @@ export class InvoiceService {
   }
 
   /** شناسه تنوع از بارکد — مسیر اسکنر صندوق. */
-  async resolveVariation(input: {
-    variationId?: string | undefined;
-    barcode?: string | undefined;
-  }): Promise<string> {
+  async resolveVariation(
+    input: {
+      variationId?: string | undefined;
+      barcode?: string | undefined;
+    },
+    ex: Executor = this.#db,
+  ): Promise<string> {
     if (input.variationId) {
-      const v = await this.#db
+      const v = await ex
         .selectFrom("catalog.variation")
         .select(["id", "status"])
         .where("id", "=", input.variationId)
@@ -292,7 +310,7 @@ export class InvoiceService {
     if (!input.barcode) {
       throw new InvoiceError("no_variation", "کالا مشخص نشده است", 400);
     }
-    const v = await this.#db
+    const v = await ex
       .selectFrom("catalog.variation")
       .select(["id", "status"])
       .where("barcode", "=", input.barcode)
@@ -361,17 +379,39 @@ export class InvoiceService {
    * می‌شود. یک مرجع، یک گرد کردن — قاعده «round() صریح» در
    * .claude/rules/sql.md.
    */
-  private async grossOf(unitPrice: bigint, qty: string): Promise<bigint> {
+  private async grossOf(
+    unitPrice: bigint,
+    qty: string,
+    ex: Executor = this.#db,
+  ): Promise<bigint> {
     const r = await sql<{ gross: string }>`
       SELECT round(${qty}::numeric * ${serializeMoney(unitPrice)}::numeric) AS gross
-    `.execute(this.#db);
+    `.execute(ex);
     return parseMoney(r.rows[0]?.gross ?? "0");
   }
 
   async addLine(input: AddLineInput): Promise<Invoice> {
-    const inv = await this.requireDraft(input.invoiceId);
-    const variationId = await this.resolveVariation(input);
-    const listPrice = await this.currentPrice(variationId, inv.occurredAt);
+    await this.#db.transaction().execute((trx) => this.addLineIn(trx, input));
+    return (await this.byId(input.invoiceId)) as Invoice;
+  }
+
+  /**
+   * همان افزودن قلم، داخل تراکنش فراخوان.
+   *
+   * الگویش از `addPaymentIn` می‌آید و دلیلش همان است: مسیر سفارش
+   * سایت باید کل فاکتور — پیش‌نویس، اقلام، پرداخت، نهایی‌سازی — را با
+   * درج Inbox در **یک** تراکنش انجام دهد. اگر هر قلم تراکنش خودش را
+   * باز کند، خرابی میانه یک پیش‌نویس نیمه‌کاره جا می‌گذارد که کلید
+   * Idempotency هم ندارد، پس تلاش دوباره پیش‌نویس دوم می‌سازد.
+   *
+   * خواندن‌ها هم روی همان تراکنش‌اند، نه روی Pool: کدی که داخل
+   * تراکنش می‌نویسد و بیرونش می‌خواند، چیزی را می‌بیند که هنوز
+   * Commit نشده.
+   */
+  async addLineIn(trx: Transaction<Database>, input: AddLineInput): Promise<void> {
+    const inv = await this.requireDraft(input.invoiceId, trx);
+    const variationId = await this.resolveVariation(input, trx);
+    const listPrice = await this.currentPrice(variationId, inv.occurredAt, trx);
     const discount = input.discountAmount ?? 0n;
 
     const qty = Number(input.qty);
@@ -391,12 +431,12 @@ export class InvoiceService {
     const overridden = input.unitPrice !== undefined && input.unitPrice !== listPrice;
     const price = overridden ? (input.unitPrice as bigint) : listPrice;
 
-    const gross = await this.grossOf(price, input.qty);
+    const gross = await this.grossOf(price, input.qty, trx);
     if (discount > gross) {
       throw new InvoiceError("discount_exceeds_line", "تخفیف از مبلغ خودِ قلم بیشتر است", 422);
     }
 
-    await this.#db.transaction().execute(async (trx) => {
+    {
       await setActor(trx, input.actorId);
       const nextNo = await nextLineNo(trx, input.invoiceId);
       await trx
@@ -435,9 +475,7 @@ export class InvoiceService {
         `.execute(trx);
       }
       await refreshTotals(trx, input.invoiceId);
-    });
-
-    return (await this.byId(input.invoiceId)) as Invoice;
+    }
   }
 
   /**
@@ -685,12 +723,19 @@ export class InvoiceService {
       clientEventId?: string | undefined;
     },
   ): Promise<string> {
-    const inv = await this.requireDraft(input.invoiceId);
+    // ⚠️ خواندن‌ها روی **همان تراکنش**، نه روی Pool.
+    //
+    // تا امروز اینجا `this.#db` بود و کار می‌کرد، چون تنها مشتری‌اش
+    // صندوق بود و فاکتور از پیش Commit شده. مسیر سفارش سایت کل فاکتور
+    // را در یک تراکنش می‌سازد: پیش‌نویسی که هنوز Commit نشده، از Pool
+    // دیده نمی‌شود و پرداخت با «فاکتور یافت نشد» رد می‌شد — خطایی که
+    // هیچ ربطی به واقعیت نداشت.
+    const inv = await this.requireDraft(input.invoiceId, trx);
     if (input.amount <= 0n) {
       throw new InvoiceError("bad_amount", "مبلغ پرداخت باید مثبت باشد", 400);
     }
 
-    const method = await this.#db
+    const method = await trx
       .selectFrom("treasury.payment_method")
       .select(["code", "requires_ref"])
       .where("code", "=", input.methodCode)
@@ -819,8 +864,8 @@ export class InvoiceService {
     return number;
   }
 
-  private async requireDraft(invoiceId: string): Promise<Invoice> {
-    const inv = await this.byId(invoiceId);
+  private async requireDraft(invoiceId: string, ex: Executor = this.#db): Promise<Invoice> {
+    const inv = await this.byId(invoiceId, ex);
     if (!inv) throw new InvoiceError("invoice_not_found", "فاکتور یافت نشد", 404);
     if (inv.status !== "draft") {
       throw new InvoiceError(

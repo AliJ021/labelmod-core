@@ -1,0 +1,62 @@
+/**
+ * تنظیمات اطلاع‌رسانی — از `platform.setting`، در هر دور تازه.
+ *
+ * ── چرا هر دور، و نه یک بار در آغاز ─────────────────────────────────
+ *
+ * مالک تنظیم را از صفحه تنظیمات عوض می‌کند و انتظار دارد کار کند.
+ * خواندنِ یک‌باره یعنی «پیامک را روشن کردم ولی نمی‌رود» تا وقتی کسی
+ * سرویس را دوباره راه‌اندازی کند — و آن کس معمولاً همان مالک است که
+ * نمی‌داند باید این کار را بکند.
+ *
+ * هزینه‌اش یک SELECT کوچک در هر چند ثانیه است. ارزشش را دارد.
+ */
+import { sql } from "kysely";
+import type { Db } from "../db/client.ts";
+
+export interface NotifySettings {
+  smsEnabled: boolean;
+  provider: string;
+  sender: string;
+  invoiceSms: boolean;
+  invoiceSmsRequiresConsent: boolean;
+  chequeDueSms: boolean;
+  managerMobile: string;
+  publicUrl: string;
+  maxAttempts: number;
+}
+
+export async function readNotifySettings(db: Db): Promise<NotifySettings> {
+  const r = await sql<{ key: string; value: unknown }>`
+    SELECT key, value FROM platform.setting
+     WHERE key IN (
+       'notify.sms_enabled', 'notify.sms_provider', 'notify.sms_sender',
+       'notify.invoice_sms', 'notify.invoice_sms_requires_consent',
+       'notify.cheque_due_sms', 'notify.manager_mobile',
+       'notify.max_attempts', 'platform.public_url'
+     )
+  `.execute(db);
+
+  const map = new Map(r.rows.map((x) => [x.key, x.value]));
+  const bool = (k: string, dflt: boolean): boolean => {
+    const v = map.get(k);
+    return typeof v === "boolean" ? v : dflt;
+  };
+  const text = (k: string): string => {
+    const v = map.get(k);
+    return typeof v === "string" ? v.trim() : "";
+  };
+
+  return {
+    smsEnabled: bool("notify.sms_enabled", false),
+    provider: text("notify.sms_provider") || "log",
+    sender: text("notify.sms_sender"),
+    invoiceSms: bool("notify.invoice_sms", false),
+    // پیش‌فرض سخت‌گیرانه: بدون رضایت، پیامکی نمی‌رود.
+    invoiceSmsRequiresConsent: bool("notify.invoice_sms_requires_consent", true),
+    chequeDueSms: bool("notify.cheque_due_sms", false),
+    managerMobile: text("notify.manager_mobile"),
+    // اسلش پایانی برداشته می‌شود تا لینک «…//i/token» نشود.
+    publicUrl: text("platform.public_url").replace(/\/+$/, ""),
+    maxAttempts: Number(map.get("notify.max_attempts") ?? 8) || 8,
+  };
+}
