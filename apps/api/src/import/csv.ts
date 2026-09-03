@@ -64,15 +64,36 @@ export function detectDelimiter(head: string): string {
  * می‌شود و «سطر بدون داده» یک خطای گیج‌کننده بود.
  */
 export function parseCsv(input: string, delimiter?: string): string[][] {
+  return parseCsvWithLines(input, delimiter).map((r) => r.cells);
+}
+
+/**
+ * همان Parser، ولی **شماره خط فیزیکی** هر سطر را هم نگه می‌دارد.
+ *
+ * ⚠️ چرا لازم شد: `parseCsv` سطر خالی را دور می‌ریزد، پس اندیس آرایه
+ *    دیگر شماره خط فایل نیست. نسخه اول همین اندیس را در پیام خطا
+ *    می‌نوشت و کاربر را به خط اشتباه می‌فرستاد — روی فایلی که از اکسل
+ *    آمده و وسطش خط خالی دارد، عملاً همیشه.
+ *
+ *    و خط تازه‌ی **داخل نقل‌قول** هم خط می‌شمارد ولی سطر تازه نمی‌سازد؛
+ *    آدرسی که دو خطی نوشته شده، همه شماره‌های بعدی را جابه‌جا می‌کرد.
+ */
+export function parseCsvWithLines(
+  input: string,
+  delimiter?: string,
+): { cells: string[]; line: number }[] {
   // BOM — اکسل فارسی همیشه می‌گذاردش.
   const text = input.charCodeAt(0) === 0xfeff ? input.slice(1) : input;
   const delim = delimiter ?? detectDelimiter(text.split(/\r?\n/, 1)[0] ?? "");
 
-  const rows: string[][] = [];
+  const rows: { cells: string[]; line: number }[] = [];
   let row: string[] = [];
   let field = "";
   let inQuotes = false;
   let line = 1;
+  // خطی که سطر جاری از آن **شروع** شده. سطری که فیلد چندخطی دارد،
+  // باید با خط اولش گزارش شود، نه خط آخرش.
+  let rowStartLine = 1;
   let started = false;
 
   const endField = () => {
@@ -83,8 +104,9 @@ export function parseCsv(input: string, delimiter?: string): string[][] {
   const endRow = () => {
     endField();
     // سطر تک‌فیلدیِ خالی = خط خالی.
-    if (!(row.length === 1 && row[0] === "")) rows.push(row);
+    if (!(row.length === 1 && row[0] === "")) rows.push({ cells: row, line: rowStartLine });
     row = [];
+    rowStartLine = line + 1;
   };
 
   for (let i = 0; i < text.length; i++) {
@@ -116,10 +138,12 @@ export function parseCsv(input: string, delimiter?: string): string[][] {
       if (text[i + 1] !== "\n") {
         endRow();
         line++;
+        rowStartLine = line;
       }
     } else if (ch === "\n") {
       endRow();
       line++;
+      rowStartLine = line;
     } else {
       field += ch;
       started = true;
@@ -149,25 +173,28 @@ export interface CsvTable {
  *    فرقی برایش داشته باشد.
  */
 export function toTable(input: string): CsvTable {
-  const rows = parseCsv(input);
+  const rows = parseCsvWithLines(input);
   if (rows.length === 0) throw new CsvError("فایل خالی است", 1);
 
-  const headers = (rows[0] as string[]).map((h) => h.trim().toLowerCase());
+  const head = rows[0] as { cells: string[]; line: number };
+  const headers = head.cells.map((h) => h.trim().toLowerCase());
   const dupes = headers.filter((h, i) => h !== "" && headers.indexOf(h) !== i);
   if (dupes.length > 0) {
-    throw new CsvError(`ستون تکراری: ${[...new Set(dupes)].join("، ")}`, 1);
+    throw new CsvError(`ستون تکراری: ${[...new Set(dupes)].join("، ")}`, head.line);
   }
 
   const out: CsvTable = { headers, rows: [] };
   for (let i = 1; i < rows.length; i++) {
-    const cells = rows[i] as string[];
+    const row = rows[i] as { cells: string[]; line: number };
     const values: Record<string, string> = {};
     headers.forEach((h, j) => {
-      if (h !== "") values[h] = (cells[j] ?? "").trim();
+      if (h !== "") values[h] = (row.cells[j] ?? "").trim();
     });
     // سطری که همه ستون‌هایش خالی است، داده نیست.
     if (Object.values(values).some((v) => v !== "")) {
-      out.rows.push({ values, line: i + 1 });
+      // ⚠️ خط **فیزیکی** فایل، نه اندیس آرایه: کاربر باید بتواند
+      //    همان خط را در اکسل باز کند.
+      out.rows.push({ values, line: row.line });
     }
   }
   return out;

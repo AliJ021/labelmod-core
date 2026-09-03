@@ -140,7 +140,16 @@ async function main(): Promise<void> {
     for (const name of Object.keys(FILES) as FileName[]) {
       try {
         files[name] = await readFile(join(args.dir, name), "utf8");
-      } catch {
+      } catch (err) {
+        // ⚠️ فقط «فایل نیست» رد می‌شود. نسخه اول هر خطایی را «نیست»
+        //    تعبیر می‌کرد — یعنی فایلی که به‌خاطر دسترسی (EACCES) یا
+        //    خرابی خوانده نمی‌شد، بی‌صدا از واردات جا می‌ماند و
+        //    مهاجرت **ناقص** ادامه پیدا می‌کرد. دقیقاً همان چیزی که
+        //    قاعده «همه یا هیچ» قرار بود جلویش را بگیرد.
+        const code = (err as NodeJS.ErrnoException).code;
+        if (code !== "ENOENT") {
+          throw new Error(`خواندن «${name}» ناموفق بود (${code}): ${String(err)}`);
+        }
         w(`  — ${name} نیست، رد شد`);
       }
     }
@@ -185,7 +194,14 @@ async function main(): Promise<void> {
       return;
     }
 
-    w(`  ✓ سند افتتاحیه ثبت شد: ${result.openingEntryId}`);
+    if (result.openingEntryId === null) {
+      // واردات فقط کاتالوگ — سندی لازم نبود. این یک حالت
+      // پشتیبانی‌شده است، نه یک نیمه‌کاره.
+      w("  ✓ کالاها و اشخاص نوشته شدند. سند افتتاحیه لازم نبود");
+      w("    (نه موجودی اول دوره‌ای بود و نه مانده‌ای).");
+    } else {
+      w(`  ✓ سند افتتاحیه ثبت شد: ${result.openingEntryId}`);
+    }
     w("");
     w("  گام بعد — این دو باید خالی باشند:");
     w("    SELECT * FROM inventory.balance_check WHERE qty_diff <> 0 OR value_diff <> 0;");
@@ -197,5 +213,12 @@ async function main(): Promise<void> {
 }
 
 if (process.argv[1]?.endsWith("import-legacy.ts")) {
-  await main();
+  // ⚠️ خطا باید پیام فارسی بدهد، نه Stack Trace: کسی که این را اجرا
+  //    می‌کند انباردار یا مالک است، نه توسعه‌دهنده.
+  try {
+    await main();
+  } catch (err) {
+    process.stderr.write(`\n✗ ${err instanceof Error ? err.message : String(err)}\n\n`);
+    process.exit(1);
+  }
 }

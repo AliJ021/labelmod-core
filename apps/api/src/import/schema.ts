@@ -40,6 +40,27 @@ const qty = z
     message: "تعداد نامعتبر است",
   });
 
+/**
+ * مبلغ **اجباری و نامنفی** — برای بهای تمام‌شده.
+ *
+ * ⚠️ چرا جدا از `money`: آن یکی سلول خالی را `0` می‌گیرد، که برای
+ *    «حد اعتبار» و «قیمت فروش» درست است (خالی یعنی صفر یعنی ندارد).
+ *    برای **بهای تمام‌شده** فاجعه است: سلولی که کسی فراموش کرده پر
+ *    کند، بی‌صدا به «کالای بی‌ارزش» تبدیل می‌شود و اولین فروشش سودِ
+ *    صددرصد نشان می‌دهد. CLAUDE.md این را «غیرقابل مذاکره» خوانده.
+ *
+ *    منفی هم رد می‌شود: بهای منفی یعنی کالایی که داشتنش پول می‌آورد.
+ */
+const requiredMoney = z
+  .string()
+  .transform((v) => normalizeDigits(v))
+  .refine((v) => v !== "", { message: "خالی است — بهای تمام‌شده اجباری است" })
+  .refine((v) => /^-?\d+$/.test(v), {
+    message: "باید عدد صحیح ریالی باشد (بدون اعشار)",
+  })
+  .refine((v) => !v.startsWith("-"), { message: "نمی‌تواند منفی باشد" })
+  .transform((v) => BigInt(v));
+
 const required = (label: string) =>
   z.string().trim().min(1, `${label} خالی است`);
 
@@ -78,8 +99,15 @@ export const productRow = z.object({
 export const stockRow = z.object({
   sku: required("SKU"),
   qty,
-  /** بهای تمام‌شده **هر واحد**، به ریال. */
-  unit_cost: money,
+  /**
+   * بهای تمام‌شده **هر واحد**، به ریال.
+   *
+   * ⚠️ سلول خالی **خطا** است، نه صفر. اولین نسخه این را `money`
+   *    می‌گرفت و خالی را بی‌صدا صفر می‌کرد — یعنی همان چیزی که این
+   *    ستون قرار بود جلویش را بگیرد. بهای صفرِ **نوشته‌شده** فقط
+   *    هشدار می‌گیرد، چون یک تصمیم است نه یک فراموشی.
+   */
+  unit_cost: requiredMoney,
 });
 
 export const customerRow = z.object({
@@ -143,6 +171,13 @@ export const FILES = {
 
 export type FileName = keyof typeof FILES;
 
+/** یک سطر معتبر، همراه خطی که از آن آمده. */
+export interface ValidRow<T> {
+  value: T;
+  /** خط فیزیکی فایل — برای پیام خطای سنجش‌های میان‌فایلی. */
+  line: number;
+}
+
 /** یک خطای اعتبارسنجی، با محل دقیقش در فایل. */
 export interface RowError {
   file: string;
@@ -161,14 +196,18 @@ export function validateRows<T extends z.ZodType>(
   file: string,
   schema: T,
   rows: { values: Record<string, string>; line: number }[],
-): { ok: z.infer<T>[]; errors: RowError[] } {
-  const ok: z.infer<T>[] = [];
+): { ok: ValidRow<z.infer<T>>[]; errors: RowError[] } {
+  const ok: ValidRow<z.infer<T>>[] = [];
   const errors: RowError[] = [];
 
   for (const row of rows) {
     const parsed = schema.safeParse(row.values);
     if (parsed.success) {
-      ok.push(parsed.data);
+      // ⚠️ شماره خط با سطر می‌ماند، نه اینکه بعداً از اندیس آرایه
+      //    بازسازی شود. سنجش‌های میان‌فایلی روی آرایه **فیلترشده**
+      //    کار می‌کنند؛ با یک سطر ردشده، اندیس دیگر خط فایل نیست و
+      //    کاربر به خط اشتباه فرستاده می‌شد.
+      ok.push({ value: parsed.data, line: row.line });
       continue;
     }
     for (const issue of parsed.error.issues) {

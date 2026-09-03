@@ -19,6 +19,7 @@ import { describe, test } from "node:test";
 import assert from "node:assert/strict";
 import { parseCsv, toTable, detectDelimiter, normalizeDigits, CsvError } from "../src/import/csv.ts";
 import { productRow, openingRow, stockRow, validateRows } from "../src/import/schema.ts";
+import { mobileKey } from "../src/import/run.ts";
 
 describe("Parser فایل CSV", () => {
   test("سطر و ستون ساده", () => {
@@ -92,6 +93,57 @@ describe("Parser فایل CSV", () => {
     assert.equal(t.rows[0]!.values["sku"], "A-1");
     assert.equal(t.rows[0]!.values["name"], "x");
   });
+
+  // ── شماره خط: بازگشت‌ها ────────────────────────────────────────
+  //
+  // ⚠️ پیام خطایی که کاربر را به خط اشتباه بفرستد، از نبودنش بدتر
+  //    است: او همان خط را باز می‌کند، چیزی نمی‌بیند، و به کل ابزار
+  //    بی‌اعتماد می‌شود.
+
+  test("خط خالیِ وسط فایل، شماره خط بعدی‌ها را جابه‌جا نمی‌کند", () => {
+    const t = toTable("sku,name\nA-1,x\n\nA-2,y\n");
+    assert.deepEqual(
+      t.rows.map((r) => r.line),
+      [2, 4],
+      "سطر دوم فیزیکاً روی خط ۴ است",
+    );
+  });
+
+  test("فیلد چندخطی، شماره خط بعدی‌ها را جابه‌جا نمی‌کند", () => {
+    const t = toTable('sku,name\nA-1,"دو\nخطی"\nA-2,y\n');
+    assert.deepEqual(
+      t.rows.map((r) => r.line),
+      [2, 4],
+    );
+  });
+});
+
+describe("کلید تطبیق موبایل", () => {
+  test("رقم فارسی و عربی هم به همان کلید می‌رسند", () => {
+    // ⚠️ بازگشت: نسخه اول مستقیم `\D` را حذف می‌کرد و
+    //    «۰۹۱۲۱۱۱۲۲۳۳» را به رشته **خالی** تبدیل می‌کرد — یعنی
+    //    مشتریِ فارسی‌نوشته هرگز «موجود» شناخته نمی‌شد، و مانده
+    //    افتتاحیه‌اش «مشتری در فایل نیست» می‌گرفت.
+    const expected = "09121112233";
+    for (const m of [
+      "09121112233",
+      "۰۹۱۲۱۱۱۲۲۳۳",
+      "٠٩١٢١١١٢٢٣٣",
+      "+989121112233",
+      "00989121112233",
+      "9121112233",
+      "0912 111 2233",
+    ]) {
+      assert.equal(mobileKey(m), expected, `«${m}» باید به ${expected} برسد`);
+    }
+  });
+
+  test("چیزی که موبایل نیست، کلید خالی می‌دهد", () => {
+    // کلید خالی یعنی خطای اعتبارسنجی، نه یک تطبیق تصادفی.
+    for (const m of ["02188776655", "", "سلام", "091234567890"]) {
+      assert.equal(mobileKey(m), "", `«${m}» نباید کلید بگیرد`);
+    }
+  });
 });
 
 describe("نرمال‌سازی رقم", () => {
@@ -118,7 +170,7 @@ describe("قرارداد فایل‌ها", () => {
   test("کالا: SKU و نام اجباری، بقیه اختیاری", () => {
     const r = validateRows("products.csv", productRow, rows([{ sku: "A-1", name: "پیراهن" }]));
     assert.equal(r.errors.length, 0);
-    assert.equal(r.ok[0]!.color, "");
+    assert.equal(r.ok[0]!.value.color, "");
   });
 
   test("کالا بدون SKU رد می‌شود", () => {
@@ -134,7 +186,7 @@ describe("قرارداد فایل‌ها", () => {
       rows([{ sku: "A-1", name: "x", price: "۱٬۵۰۰٬۰۰۰" }]),
     );
     assert.equal(r.errors.length, 0);
-    assert.equal(r.ok[0]!.price, 1500000n);
+    assert.equal(r.ok[0]!.value.price, 1500000n);
   });
 
   test("قیمت اعشاری رد می‌شود — پول ریالی اعشار ندارد", () => {
@@ -166,6 +218,54 @@ describe("قرارداد فایل‌ها", () => {
     //    می‌دهد و ترازنامه دارایی‌ای دارد که ارزشش صفر است.
     const r = validateRows("opening-stock.csv", stockRow, rows([{ sku: "A-1", qty: "5" }]));
     assert.ok(r.errors.length > 0);
+  });
+
+  test("سلولِ **خالی** بهای تمام‌شده هم رد می‌شود، نه اینکه صفر شود", () => {
+    // ⚠️ بازگشت: نسخه اول این ستون را با `money` می‌گرفت که خالی را
+    //    بی‌صدا `0` می‌کرد — یعنی دقیقاً همان چیزی که این ستون قرار
+    //    بود جلویش را بگیرد. «ستون غایب» و «سلول خالی» دو حالت
+    //    متفاوت‌اند و حالت واقعیِ فایل اکسل، دومی است.
+    const r = validateRows(
+      "opening-stock.csv",
+      stockRow,
+      rows([{ sku: "A-1", qty: "5", unit_cost: "" }]),
+    );
+    assert.ok(r.errors.length > 0, "سلول خالی باید خطا بدهد");
+    assert.equal(r.ok.length, 0, "و سطر نباید وارد شود");
+  });
+
+  test("بهای تمام‌شده منفی رد می‌شود", () => {
+    // بهای منفی یعنی کالایی که داشتنش پول می‌آورد.
+    const r = validateRows(
+      "opening-stock.csv",
+      stockRow,
+      rows([{ sku: "A-1", qty: "5", unit_cost: "-900000" }]),
+    );
+    assert.ok(r.errors.length > 0);
+  });
+
+  test("بهای تمام‌شده با رقم فارسی خوانده می‌شود", () => {
+    const r = validateRows(
+      "opening-stock.csv",
+      stockRow,
+      rows([{ sku: "A-1", qty: "5", unit_cost: "۹۰۰٬۰۰۰" }]),
+    );
+    assert.equal(r.errors.length, 0);
+    assert.equal(r.ok[0]!.value.unit_cost, 900000n);
+  });
+
+  test("سطر معتبر شماره خط خودش را نگه می‌دارد", () => {
+    // سنجش‌های میان‌فایلی روی آرایه فیلترشده کار می‌کنند؛ بدون این،
+    // اندیس آرایه به‌جای خط فایل گزارش می‌شد.
+    const r = validateRows(
+      "products.csv",
+      productRow,
+      [
+        { values: { sku: "", name: "بد" }, line: 5 },
+        { values: { sku: "A-1", name: "خوب" }, line: 9 },
+      ],
+    );
+    assert.equal(r.ok[0]!.line, 9);
   });
 
   test("مؤلفه افتتاحیه فقط چهار مقدار می‌گیرد", () => {

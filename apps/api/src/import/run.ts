@@ -28,7 +28,7 @@ import type { Transaction } from "kysely";
 import type { Db } from "../db/client.ts";
 import type { Database } from "../db/types.ts";
 import { serializeMoney } from "../lib/money.ts";
-import { toTable, CsvError } from "./csv.ts";
+import { toTable, CsvError, normalizeDigits } from "./csv.ts";
 import {
   FILES,
   validateRows,
@@ -39,6 +39,7 @@ import {
   type RowError,
   type StockRow,
   type SupplierRow,
+  type ValidRow,
 } from "./schema.ts";
 
 /** منبع در `platform.external_id_map`. */
@@ -92,7 +93,7 @@ export class ImportError extends Error {
 function readFile<K extends FileName>(
   files: Partial<Record<FileName, string>>,
   name: K,
-): { rows: unknown[]; errors: RowError[] } {
+): { rows: ValidRow<unknown>[]; errors: RowError[] } {
   const raw = files[name];
   if (raw === undefined) return { rows: [], errors: [] };
 
@@ -129,11 +130,11 @@ export async function runImport(db: Db, input: ImportInput): Promise<ImportResul
 
   errors.push(...p.errors, ...c.errors, ...s.errors, ...st.errors, ...ob.errors);
 
-  const products = p.rows as ProductRow[];
-  const customers = c.rows as CustomerRow[];
-  const suppliers = s.rows as SupplierRow[];
-  const stock = st.rows as StockRow[];
-  const opening = ob.rows as OpeningRow[];
+  const products = p.rows as ValidRow<ProductRow>[];
+  const customers = c.rows as ValidRow<CustomerRow>[];
+  const suppliers = s.rows as ValidRow<SupplierRow>[];
+  const stock = st.rows as ValidRow<StockRow>[];
+  const opening = ob.rows as ValidRow<OpeningRow>[];
 
   const warnings: string[] = [];
 
@@ -143,11 +144,11 @@ export async function runImport(db: Db, input: ImportInput): Promise<ImportResul
   // و دقیقاً همان‌هایی‌اند که در اجرای واقعی نصفه‌کاره‌شان می‌کنند.
 
   const skus = new Set<string>();
-  for (const [i, row] of products.entries()) {
+  for (const { value: row, line } of products) {
     if (skus.has(row.sku)) {
       errors.push({
         file: "products.csv",
-        line: i + 2,
+        line,
         column: "sku",
         message: `SKU تکراری: ${row.sku}`,
       });
@@ -155,37 +156,109 @@ export async function runImport(db: Db, input: ImportInput): Promise<ImportResul
     skus.add(row.sku);
   }
 
+  // ⚠️ بارکد تکراری هم رد می‌شود، و اینجا نه وسط تراکنش.
+  //
+  //    `catalog.variation.barcode` قید یکتایی دارد. بدون این سنجش،
+  //    فایلی با دو بارکد یکسان تا **وسط نوشتن** می‌رفت و بعد با یک
+  //    خطای خام پستگرس می‌مرد — بدون نام فایل، بدون شماره خط، و
+  //    بدون اینکه معلوم باشد کدام دو سطر مقصرند.
+  const barcodes = new Map<string, number>();
+  for (const { value: row, line } of products) {
+    if (row.barcode === "") continue;
+    const first = barcodes.get(row.barcode);
+    if (first !== undefined) {
+      errors.push({
+        file: "products.csv",
+        line,
+        column: "barcode",
+        message: `بارکد «${row.barcode}» تکراری است — خط ${first} هم همین را دارد`,
+      });
+    } else {
+      barcodes.set(row.barcode, line);
+    }
+  }
+
+  // بارکدی که از قبل روی کالای دیگری نشسته، همان قید را می‌شکند.
+  if (barcodes.size > 0) {
+    const taken = await db
+      .selectFrom("catalog.variation")
+      .select(["barcode", "sku"])
+      .where("barcode", "in", [...barcodes.keys()])
+      .execute();
+    const bySku = new Map(products.map((x) => [x.value.barcode, x.value.sku]));
+    for (const t of taken) {
+      if (t.barcode === null) continue;
+      // همان کالا با همان بارکد، تکرار نیست — اجرای دوباره است.
+      if (bySku.get(t.barcode) === t.sku) continue;
+      errors.push({
+        file: "products.csv",
+        line: barcodes.get(t.barcode) as number,
+        column: "barcode",
+        message: `بارکد «${t.barcode}» از قبل روی کالای «${t.sku}» است`,
+      });
+    }
+  }
+
   // موجودیِ کالایی که در فایل کالاها نیست، جایی برای نشستن ندارد.
-  for (const [i, row] of stock.entries()) {
+  for (const { value: row, line } of stock) {
     if (!skus.has(row.sku)) {
       errors.push({
         file: "opening-stock.csv",
-        line: i + 2,
+        line,
         column: "sku",
         message: `SKU «${row.sku}» در فایل کالاها نیست`,
       });
     }
     if (Number(row.qty) <= 0) {
       warnings.push(`موجودی «${row.sku}» صفر یا منفی است و رد می‌شود`);
+    } else if (row.unit_cost === 0n) {
+      // بهای صفرِ **نوشته‌شده** یک تصمیم است، نه یک فراموشی (سلول
+      // خالی خطا می‌گیرد). ولی باید دیده شود: اولین فروش این کالا
+      // سودِ صددرصد نشان می‌دهد.
+      warnings.push(
+        `بهای تمام‌شده «${row.sku}» صفر نوشته شده — اولین فروشش سودِ صددرصد نشان می‌دهد`,
+      );
     }
   }
 
-  const mobiles = new Set(customers.map((x) => x.mobile));
-  const codes = new Set(suppliers.map((x) => x.code));
-  for (const [i, row] of opening.entries()) {
+  // ── تطبیق شخص ───────────────────────────────────────────────────
+  //
+  // ⚠️ کلید تطبیق **نرمال‌شده** است، نه رشته خام. فایل مشتریان و فایل
+  //    مانده‌ها را یک نفر در دو Sheet می‌سازد و هیچ تضمینی نیست که
+  //    شماره را در هر دو یک‌شکل بنویسد: یکی «۰۹۱۲…» فارسی و دیگری
+  //    «0912…» لاتین. با مقایسه خام، مشتریِ موجود «در فایل مشتریان
+  //    نیست» گزارش می‌شد — خطایی که کاربر هرچه نگاه کند دلیلش را
+  //    نمی‌فهمد، چون هر دو شماره «به نظر» یکی‌اند.
+  const mobiles = new Set(customers.map((x) => mobileKey(x.value.mobile)));
+  const codes = new Set(suppliers.map((x) => x.value.code));
+
+  for (const { value: row, line } of customers) {
+    // موبایل نامعتبر باید **اینجا** گرفته شود، نه هنگام نوشتن:
+    // اجرای آزمایشی سبز می‌داد و اجرای واقعی وسط کار می‌شکست.
+    if (mobileKey(row.mobile) === "") {
+      errors.push({
+        file: "customers.csv",
+        line,
+        column: "mobile",
+        message: `«${row.mobile}» شماره موبایل معتبری نیست`,
+      });
+    }
+  }
+
+  for (const { value: row, line } of opening) {
     const needsParty = row.leg === "receivable" || row.leg === "payable";
     if (needsParty && row.party === "") {
       errors.push({
         file: "opening-balances.csv",
-        line: i + 2,
+        line,
         column: "party",
         message: `مؤلفه «${row.leg}» بدون شخص ثبت نمی‌شود — گردش حساب اشخاص از دفتر ساختنی نیست`,
       });
     }
-    if (row.leg === "receivable" && row.party !== "" && !mobiles.has(row.party)) {
+    if (row.leg === "receivable" && row.party !== "" && !mobiles.has(mobileKey(row.party))) {
       errors.push({
         file: "opening-balances.csv",
-        line: i + 2,
+        line,
         column: "party",
         message: `مشتری با موبایل «${row.party}» در فایل مشتریان نیست`,
       });
@@ -193,7 +266,7 @@ export async function runImport(db: Db, input: ImportInput): Promise<ImportResul
     if (row.leg === "payable" && row.party !== "" && !codes.has(row.party)) {
       errors.push({
         file: "opening-balances.csv",
-        line: i + 2,
+        line,
         column: "party",
         message: `تأمین‌کننده با کد «${row.party}» در فایل تأمین‌کنندگان نیست`,
       });
@@ -201,7 +274,7 @@ export async function runImport(db: Db, input: ImportInput): Promise<ImportResul
     if (row.amount <= 0n) {
       errors.push({
         file: "opening-balances.csv",
-        line: i + 2,
+        line,
         column: "amount",
         message: "مانده افتتاحیه باید مثبت باشد — جهت از مؤلفه می‌آید، نه از علامت",
       });
@@ -211,7 +284,7 @@ export async function runImport(db: Db, input: ImportInput): Promise<ImportResul
   // ── نقشه ────────────────────────────────────────────────────────
 
   const sum = (leg: OpeningRow["leg"]) =>
-    opening.filter((x) => x.leg === leg).reduce((a, x) => a + x.amount, 0n);
+    opening.filter((x) => x.value.leg === leg).reduce((a, x) => a + x.value.amount, 0n);
 
   // ارزش موجودی در **SQL** حساب می‌شود، نه اینجا: `qty` اعشاری است و
   // تقسیم صحیح bigint نتیجه‌ای می‌دهد که با جمع دیتابیس یکی نیست.
@@ -220,8 +293,8 @@ export async function runImport(db: Db, input: ImportInput): Promise<ImportResul
     const r = await sql<{ total: string }>`
       SELECT coalesce(sum(round(q::numeric * c::numeric)), 0)::text AS total
         FROM unnest(
-          ${sql.val(stock.map((x) => x.qty))}::text[],
-          ${sql.val(stock.map((x) => serializeMoney(x.unit_cost)))}::text[]
+          ${sql.val(stock.map((x) => x.value.qty))}::text[],
+          ${sql.val(stock.map((x) => serializeMoney(x.value.unit_cost)))}::text[]
         ) AS t(q, c)
        WHERE q::numeric > 0
     `.execute(db);
@@ -248,21 +321,19 @@ export async function runImport(db: Db, input: ImportInput): Promise<ImportResul
 
   const plan: ImportPlan = {
     products: {
-      create: products.filter((x) => !existing.skus.has(x.sku)).length,
-      existing: products.filter((x) => existing.skus.has(x.sku)).length,
+      create: products.filter((x) => !existing.skus.has(x.value.sku)).length,
+      existing: products.filter((x) => existing.skus.has(x.value.sku)).length,
     },
     customers: {
-      create: customers.filter((x) => !existing.mobiles.has(normalizeMobileKey(x.mobile)))
-        .length,
-      existing: customers.filter((x) => existing.mobiles.has(normalizeMobileKey(x.mobile)))
-        .length,
+      create: customers.filter((x) => !existing.mobiles.has(mobileKey(x.value.mobile))).length,
+      existing: customers.filter((x) => existing.mobiles.has(mobileKey(x.value.mobile))).length,
     },
     suppliers: {
-      create: suppliers.filter((x) => !existing.codes.has(x.code)).length,
-      existing: suppliers.filter((x) => existing.codes.has(x.code)).length,
+      create: suppliers.filter((x) => !existing.codes.has(x.value.code)).length,
+      existing: suppliers.filter((x) => existing.codes.has(x.value.code)).length,
     },
     stock: {
-      lines: stock.filter((x) => Number(x.qty) > 0).length,
+      lines: stock.filter((x) => Number(x.value.qty) > 0).length,
       totalValue: inventoryValue,
     },
     opening: { cash, bank, receivable, payable, inventory: inventoryValue, equity },
@@ -285,16 +356,36 @@ export async function runImport(db: Db, input: ImportInput): Promise<ImportResul
   return { plan, errors, committed: true, openingEntryId };
 }
 
-/** کلید تطبیق موبایل — همان نرمال‌سازی دیتابیس، نه یک نسخه دوم. */
-function normalizeMobileKey(raw: string): string {
-  return raw.replace(/\D/g, "").replace(/^98/, "0").replace(/^0098/, "0");
+/**
+ * کلید تطبیق موبایل — فقط برای **مقایسه داخل همین ابزار**.
+ *
+ * ⚠️ این جایگزین `sales.normalize_mobile()` نیست و نباید باشد: مرجعِ
+ *    ذخیره همان تابع دیتابیس است و `upsertCustomer` از آن استفاده
+ *    می‌کند. اینجا فقط باید بشود فهمید «آیا این شماره در فایل
+ *    مشتریان هست» — بدون یک رفت‌وبرگشت دیتابیس به‌ازای هر سطر.
+ *
+ * ⚠️ **رقم فارسی اول لاتین می‌شود.** نسخه اول مستقیم `\D` را حذف
+ *    می‌کرد و «۰۹۱۲۱۱۱۲۲۳۳» را به رشته **خالی** تبدیل می‌کرد — یعنی
+ *    مشتریِ فارسی‌نوشته هرگز «موجود» شناخته نمی‌شد و در هر اجرای
+ *    دوباره «تازه» شمرده می‌شد.
+ *
+ * رشته خالی یعنی «موبایل نیست» و خطای اعتبارسنجی می‌سازد.
+ */
+export function mobileKey(raw: string): string {
+  const digits = normalizeDigits(raw).replace(/\D/g, "");
+  // ترتیب مهم است: «0098…» با الگوی «98…» هم می‌خواند.
+  if (/^0098\d{10}$/.test(digits)) return `0${digits.slice(4)}`;
+  if (/^98\d{10}$/.test(digits)) return `0${digits.slice(2)}`;
+  if (/^09\d{9}$/.test(digits)) return digits;
+  if (/^9\d{9}$/.test(digits)) return `0${digits}`;
+  return "";
 }
 
 async function existingKeys(
   db: Db,
-  products: ProductRow[],
-  customers: CustomerRow[],
-  suppliers: SupplierRow[],
+  products: ValidRow<ProductRow>[],
+  customers: ValidRow<CustomerRow>[],
+  suppliers: ValidRow<SupplierRow>[],
 ): Promise<{ skus: Set<string>; mobiles: Set<string>; codes: Set<string> }> {
   const skus = new Set<string>();
   const mobiles = new Set<string>();
@@ -307,7 +398,7 @@ async function existingKeys(
       .where(
         "sku",
         "in",
-        products.map((x) => x.sku),
+        products.map((x) => x.value.sku),
       )
       .execute();
     for (const x of r) skus.add(x.sku);
@@ -317,9 +408,9 @@ async function existingKeys(
       SELECT mobile_normalized AS m FROM sales.customer
        WHERE mobile_normalized = ANY(
          SELECT sales.normalize_mobile(x) FROM unnest(
-           ${sql.val(customers.map((c) => c.mobile))}::text[]) AS x)
+           ${sql.val(customers.map((c) => c.value.mobile))}::text[]) AS x)
     `.execute(db);
-    for (const x of r.rows) mobiles.add(normalizeMobileKey(x.m));
+    for (const x of r.rows) mobiles.add(mobileKey(x.m));
   }
   if (suppliers.length > 0) {
     const r = await db
@@ -328,7 +419,7 @@ async function existingKeys(
       .where(
         "code",
         "in",
-        suppliers.map((x) => x.code),
+        suppliers.map((x) => x.value.code),
       )
       .execute();
     for (const x of r) codes.add(x.code);
@@ -346,29 +437,32 @@ async function write(
   db: Db,
   input: ImportInput,
   data: {
-    products: ProductRow[];
-    customers: CustomerRow[];
-    suppliers: SupplierRow[];
-    stock: StockRow[];
-    opening: OpeningRow[];
+    products: ValidRow<ProductRow>[];
+    customers: ValidRow<CustomerRow>[];
+    suppliers: ValidRow<SupplierRow>[];
+    stock: ValidRow<StockRow>[];
+    opening: ValidRow<OpeningRow>[];
     equity: bigint;
   },
-): Promise<string> {
+): Promise<string | null> {
   return await db.transaction().execute(async (trx) => {
     await sql`SELECT platform.set_actor(${input.actorId}::uuid)`.execute(trx);
 
     const variationBySku = new Map<string, string>();
-    for (const row of data.products) {
+    for (const { value: row } of data.products) {
       variationBySku.set(row.sku, await upsertProduct(trx, row));
     }
 
+    // ⚠️ کلید نگاشت **نرمال‌شده** است، همان کلیدی که اعتبارسنجی با آن
+    //    تطبیق داد. با کلید خام، مانده‌ای که شماره‌اش لاتین نوشته شده
+    //    مشتریِ فارسی‌نوشته را پیدا نمی‌کرد و `party_id` تهی می‌ماند.
     const customerByMobile = new Map<string, string>();
-    for (const row of data.customers) {
-      customerByMobile.set(row.mobile, await upsertCustomer(trx, row));
+    for (const { value: row } of data.customers) {
+      customerByMobile.set(mobileKey(row.mobile), await upsertCustomer(trx, row));
     }
 
     const supplierByCode = new Map<string, string>();
-    for (const row of data.suppliers) {
+    for (const { value: row } of data.suppliers) {
       supplierByCode.set(row.code, await upsertSupplier(trx, row));
     }
 
@@ -377,7 +471,7 @@ async function write(
     // ⚠️ `apply_movement` تنها راه تغییر موجودی است. اگر روزی کسی
     //    اینجا `INSERT` مستقیم بزند، Trigger دیتابیس ردش می‌کند —
     //    و باید بکند.
-    for (const row of data.stock) {
+    for (const { value: row } of data.stock) {
       if (Number(row.qty) <= 0) continue;
       const variationId = variationBySku.get(row.sku);
       if (!variationId) throw new ImportError(`SKU «${row.sku}» یافت نشد`);
@@ -413,14 +507,14 @@ async function write(
       legs.push({ leg: "inventory", amount: serializeMoney(invValue) });
     }
 
-    for (const row of data.opening) {
+    for (const { value: row } of data.opening) {
       const base: Record<string, unknown> = {
         leg: row.leg,
         amount: serializeMoney(row.amount),
       };
       if (row.leg === "receivable") {
         base["party_type"] = "customer";
-        base["party_id"] = customerByMobile.get(row.party);
+        base["party_id"] = customerByMobile.get(mobileKey(row.party));
       } else if (row.leg === "payable") {
         base["party_type"] = "supplier";
         base["party_id"] = supplierByCode.get(row.party);
@@ -431,19 +525,19 @@ async function write(
     // سرمایه از **موجودی واقعیِ ثبت‌شده** دوباره حساب می‌شود، نه از
     // عددی که در مرحله نقشه ساخته شد: اگر بخشی از موجودی به‌خاطر
     // Idempotency رد شده باشد، آن عدد دیگر درست نیست.
-    const cash = data.opening.filter((x) => x.leg === "cash").reduce((a, x) => a + x.amount, 0n);
-    const bank = data.opening.filter((x) => x.leg === "bank").reduce((a, x) => a + x.amount, 0n);
-    const recv = data.opening
-      .filter((x) => x.leg === "receivable")
-      .reduce((a, x) => a + x.amount, 0n);
-    const pay = data.opening
-      .filter((x) => x.leg === "payable")
-      .reduce((a, x) => a + x.amount, 0n);
-    const equity = invValue + cash + bank + recv - pay;
+    const legSum = (leg: OpeningRow["leg"]) =>
+      data.opening.filter((x) => x.value.leg === leg).reduce((a, x) => a + x.value.amount, 0n);
+    const equity =
+      invValue + legSum("cash") + legSum("bank") + legSum("receivable") - legSum("payable");
 
-    if (legs.length === 0) {
-      throw new ImportError("سند افتتاحیه بدون سطر معنا ندارد");
-    }
+    // ⚠️ واردات **فقط کاتالوگ** یک حالت پشتیبانی‌شده است: کسی که
+    //    می‌خواهد اول کالاها را بیاورد و مانده‌ها را بعداً.
+    //
+    //    نسخه اول اینجا خطا می‌داد و کل تراکنش را برمی‌گرداند — یعنی
+    //    هیچ کالایی هم نوشته نمی‌شد، و CLI با Stack Trace می‌مرد.
+    //    سند بدون سطر معنا ندارد، ولی «سندی لازم نیست» یک شکست نیست.
+    if (legs.length === 0) return null;
+
     legs.push({ leg: "equity", amount: serializeMoney(equity) });
 
     const entry = await sql<{ post_opening_balance: string }>`

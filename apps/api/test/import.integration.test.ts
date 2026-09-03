@@ -302,6 +302,122 @@ describe("مهاجرت داده از سیستم فعلی", { skip }, () => {
     assert.equal(BigInt(eq.rows[0]!.balance), EQUITY, "سرمایه نباید دو برابر شده باشد");
   });
 
+  // ── بازگشت‌های بازبینی کد ────────────────────────────────────────
+
+  test("واردات فقط کاتالوگ کار می‌کند و سند نمی‌سازد", async () => {
+    // ⚠️ بازگشت: نسخه اول اینجا خطا می‌داد و کل تراکنش را برمی‌گرداند
+    //    — یعنی هیچ کالایی هم نوشته نمی‌شد. «سندی لازم نیست» یک شکست
+    //    نیست؛ کسی که می‌خواهد اول کالاها را بیاورد و مانده‌ها را
+    //    بعداً، یک حالت پشتیبانی‌شده است.
+    //
+    // انبار **دیگری** انتخاب می‌شود، نه STORE: تست‌های بالاتر موجودی
+    // افتتاحیه را در STORE نشانده‌اند و ارزش همان انبار به سند
+    // می‌آید — که رفتار درستی است، ولی این ادعا را بی‌معنا می‌کند.
+    const empty = await sql<{ id: string }>`
+      SELECT w.id FROM inventory.warehouse w
+       WHERE w.branch_id = ${BRANCH}::uuid
+         AND NOT EXISTS (SELECT 1 FROM inventory.stock_movement m
+                          WHERE m.warehouse_id = w.id AND m.kind = 'opening')
+       LIMIT 1`.execute(handle.db);
+    assert.ok(empty.rows[0], "انباری بدون موجودی افتتاحیه لازم است");
+
+    const r = await runImport(handle.db, {
+      ...input({ "products.csv": "sku,name\nONLY-1,فقط کاتالوگ\n" }, true),
+      warehouseId: empty.rows[0].id,
+    });
+    assert.equal(r.errors.length, 0, JSON.stringify(r.errors));
+    assert.equal(r.committed, true);
+    assert.equal(r.openingEntryId, null, "سند افتتاحیه نباید ساخته شود");
+
+    const n = await sql<{ n: string }>`
+      SELECT count(*)::text AS n FROM catalog.variation WHERE sku = 'ONLY-1'`
+      .execute(handle.db);
+    assert.equal(n.rows[0]!.n, "1", "کالا باید نوشته شده باشد");
+  });
+
+  test("موبایل فارسی در یک فایل و لاتین در دیگری، همان مشتری است", async () => {
+    // ⚠️ بازگشت: تطبیق `party` با مقایسه **رشته خام** بود. فایل
+    //    مشتریان و فایل مانده‌ها را یک نفر در دو Sheet می‌سازد و هیچ
+    //    تضمینی نیست که شماره را یک‌شکل بنویسد. با مقایسه خام،
+    //    «مشتری در فایل مشتریان نیست» می‌گرفت — خطایی که کاربر هرچه
+    //    نگاه کند دلیلش را نمی‌فهمد، چون هر دو شماره «به نظر» یکی‌اند.
+    const r = await runImport(
+      handle.db,
+      input(
+        {
+          "customers.csv": "mobile,name\n۰۹۳۵۹۹۹۸۸۷۷,مشتری فارسی\n",
+          "opening-balances.csv": "leg,amount,party\nreceivable,5000000,09359998877\n",
+        },
+        false,
+      ),
+    );
+    assert.equal(r.errors.length, 0, JSON.stringify(r.errors));
+  });
+
+  test("موبایل نامعتبر در اجرای آزمایشی گرفته می‌شود، نه وسط نوشتن", async () => {
+    // ⚠️ بازگشت: فقط هنگام نوشتن گرفته می‌شد — اجرای آزمایشی سبز
+    //    می‌داد و اجرای واقعی وسط کار می‌شکست.
+    const r = await runImport(
+      handle.db,
+      input({ "customers.csv": "mobile,name\n02188776655,تلفن ثابت\n" }, false),
+    );
+    assert.ok(
+      r.errors.some((e) => e.column === "mobile"),
+      `باید خطای موبایل بدهد: ${JSON.stringify(r.errors)}`,
+    );
+  });
+
+  test("بارکد تکراری پیش از نوشتن گرفته می‌شود", async () => {
+    // ⚠️ بازگشت: قید یکتایی `barcode` وسط تراکنش می‌شکست و خطای خام
+    //    پستگرس بیرون می‌آمد — بدون نام فایل و بدون شماره خط.
+    const r = await runImport(
+      handle.db,
+      input(
+        {
+          "products.csv":
+            "sku,name,barcode\nDUP-1,اول,6229999999999\nDUP-2,دوم,6229999999999\n",
+        },
+        true,
+      ),
+    );
+    const bad = r.errors.find((e) => e.column === "barcode");
+    assert.ok(bad, `باید خطای بارکد بدهد: ${JSON.stringify(r.errors)}`);
+    assert.equal(r.committed, false);
+    // و پیام باید بگوید خط دیگر کجاست.
+    assert.match(bad.message, /خط \d+/);
+  });
+
+  test("شماره خط خطا، خط فیزیکی فایل است", async () => {
+    // خط ۱ عنوان، ۲ سالم، ۳ خالی، ۴ خراب → باید ۴ گزارش شود.
+    const r = await runImport(
+      handle.db,
+      input({ "products.csv": "sku,name\nOK-1,سالم\n\n,بدون کد\n" }, false),
+    );
+    const bad = r.errors.find((e) => e.column === "sku");
+    assert.ok(bad, JSON.stringify(r.errors));
+    assert.equal(bad.line, 4, "باید خط فیزیکی فایل باشد، نه اندیس آرایه");
+  });
+
+  test("بهای صفرِ نوشته‌شده هشدار می‌گیرد، نه خطا", async () => {
+    // خالی خطا است (فراموشی)، ولی صفرِ نوشته‌شده یک تصمیم است — و
+    // باید دیده شود، چون اولین فروشش سودِ صددرصد نشان می‌دهد.
+    const r = await runImport(
+      handle.db,
+      input(
+        {
+          "products.csv": "sku,name\nFREE-1,نمونه رایگان\n",
+          "opening-stock.csv": "sku,qty,unit_cost\nFREE-1,3,0\n",
+        },
+        false,
+      ),
+    );
+    assert.equal(r.errors.length, 0, JSON.stringify(r.errors));
+    assert.ok(
+      r.plan.warnings.some((w) => w.includes("FREE-1") && w.includes("صددرصد")),
+      `باید هشدار بدهد: ${JSON.stringify(r.plan.warnings)}`,
+    );
+  });
+
   test("کالای موجود به‌روز نمی‌شود", async () => {
     // مهاجرت یک بار انجام می‌شود؛ اجرای دوم نباید نامی را که کسی در
     // سیستم اصلاح کرده، به مقدار فایل قدیمی برگرداند.
