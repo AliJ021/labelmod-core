@@ -1152,3 +1152,55 @@ select.set-input {
 .cnt-ok    { color: var(--good); white-space: nowrap; }
 .cnt-short { color: var(--crit); white-space: nowrap; }
 .cnt-over  { color: var(--warn); white-space: nowrap; }
+
+/* ── جدول داده ──────────────────────────────────────────────────────
+   تا امروز هیچ صفحه‌ای جدول نداشت؛ همه از `.lines` استفاده می‌کردند.
+   ولی کاتالوگ واقعاً جدولی است: SKU، رنگ، سایز، بارکد و قیمت شش ستون
+   موازی‌اند و در فهرست تک‌ستونی گم می‌شوند.
+
+   ADR-002 این را پیش‌بینی کرده: «جدول عدد باید مات و پرتضاد باشد».
+   پس هیچ شیشه‌ای اینجا نیست — `.grid` همیشه داخل یک `<Solid>` می‌نشیند.
+
+   ⚠️ `direction` دست‌نخورده می‌ماند (RTL). فقط خانه‌های عددی
+      `class="num"` می‌گیرند که خودش `direction: ltr` دارد — وگرنه
+      «۴۳۸٬۰۰۰» یا یک بارکد ۱۳ رقمی وارونه خوانده می‌شود. */
+.grid {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 0.95rem;
+}
+
+.grid th,
+.grid td {
+  padding: var(--s-2) var(--s-2);
+  text-align: start;
+  border-bottom: 1px solid var(--rule);
+  vertical-align: middle;
+}
+
+.grid th {
+  font-weight: 600;
+  color: var(--ink-2);
+  font-size: 0.85rem;
+  white-space: nowrap;
+}
+
+.grid tbody tr:last-child td {
+  border-bottom: 0;
+}
+
+/* هدف لمسی: دکمه داخل سطر جدول هم باید ۴۴px بماند. */
+.grid td .btn {
+  min-height: var(--touch);
+}
+
+/* روی موبایل جدول افقی اسکرول می‌شود به‌جای اینکه ستون‌ها را له کند.
+   شش ستون در ۳۶۰px جا نمی‌شود و کوچک‌کردن فونت یعنی عددی که خوانده
+   نمی‌شود — همان چیزی که ADR-002 درباره‌اش هشدار داده. */
+@media (max-width: 640px) {
+  .grid {
+    display: block;
+    overflow-x: auto;
+    white-space: nowrap;
+  }
+}

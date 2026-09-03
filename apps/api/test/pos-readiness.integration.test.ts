@@ -346,21 +346,35 @@ describe("آمادگی API صندوق", { skip }, () => {
     assert.equal(typeof inv.netAmount, "string", "پول در JSON رشته است");
   });
 
+  /**
+   * تغییر قیمت فهرست — از همان مسیری که مدیر واقعاً می‌رود.
+   *
+   * ⚠️ `UPDATE catalog.price` مستقیم بود و از مهاجرت ۰۳۲ دیگر ممکن
+   *    نیست: تاریخچه قیمت تغییرناپذیر است. این نسخه به واقعیت
+   *    نزدیک‌تر هم هست — سطر قبلی بسته و سطر تازه باز می‌شود، دقیقاً
+   *    همان چیزی که `currentPrice` باید با آن کنار بیاید.
+   */
+  async function reprice(amount: string): Promise<void> {
+    await handle.db.transaction().execute(async (trx) => {
+      await sql`SELECT platform.set_actor(${cashierId}::uuid)`.execute(trx);
+      await sql`SELECT catalog.set_price(
+        ${variationId}::uuid, ${amount}::platform.money)`.execute(trx);
+    });
+  }
+
   test("تغییر تعداد قیمت را دوباره از فهرست نمی‌خواند", async () => {
     const { s, invoiceId, body } = await newCart("1");
     const lineId = body.lines[0]!.id;
 
     // قیمت فهرست بالا می‌رود؛ فاکتور باز نباید تکان بخورد.
-    await sql`UPDATE catalog.price SET amount = 7777777 WHERE variation_id = ${variationId}`
-      .execute(handle.db);
+    await reprice("7777777");
     const r = await app.inject({
       method: "PATCH",
       url: `/invoices/${invoiceId}/lines/${lineId}`,
       ...s,
       payload: { qty: "2" },
     });
-    await sql`UPDATE catalog.price SET amount = 1000001 WHERE variation_id = ${variationId}`
-      .execute(handle.db);
+    await reprice("1000001");
 
     assert.equal(r.statusCode, 200, r.body);
     assert.equal(r.json().lines[0].unitPrice, "1000001");
@@ -705,8 +719,7 @@ describe("آمادگی API صندوق", { skip }, () => {
 
     // قیمت فهرست را عوض می‌کنیم: اگر تخفیف باعث بازقیمت‌گذاری شود،
     // ادعای بعدی می‌شکند.
-    await sql`UPDATE catalog.price SET amount = 9999999 WHERE variation_id = ${variationId}::uuid`
-      .execute(handle.db);
+    await reprice("9999999");
 
     const r = await app.inject({
       method: "PATCH",
@@ -715,8 +728,7 @@ describe("آمادگی API صندوق", { skip }, () => {
       payload: { discountAmount: "100000", discountReason: "مشتری قدیمی" },
     });
 
-    await sql`UPDATE catalog.price SET amount = 1000001 WHERE variation_id = ${variationId}::uuid`
-      .execute(handle.db);
+    await reprice("1000001");
 
     assert.equal(r.statusCode, 200, r.body);
     const line = (r.json().lines as Array<Record<string, string>>)[0]!;
@@ -1177,44 +1189,88 @@ describe("آمادگی API صندوق", { skip }, () => {
   });
 
   test("سطری که قیمتش با قیمت‌گذاری امروز یکی نیست، ادغام نمی‌شود", async () => {
+    /**
+     * ⚠️ این تست تا مهاجرت ۰۳۲ ناهمخوانیِ قیمت را با عوض‌کردن
+     *    `catalog.price` می‌ساخت. آن راه دیگر وجود ندارد — و مهم‌تر،
+     *    **هرگز واقعی نبود**: قیمت را با `UPDATE` عوض می‌کرد، پس
+     *    `valid_from` سطر سرِ جای قدیمش می‌ماند و خوانشِ «در لحظه
+     *    occurred_at» مبلغِ تازه را برمی‌گرداند. یعنی تاریخچه بازنویسی
+     *    می‌شد.
+     *
+     *    با تاریخچه تغییرناپذیر، تغییر قیمتِ امروز روی فاکتوری که
+     *    دیروز (یا یک ساعت پیش) باز شده اثر ندارد — و این دقیقاً همان
+     *    چیزی است که `scanIn` می‌خواست: «ادغام یعنی بازقیمت‌گذاری
+     *    بی‌صدای چیزی که مشتری قبلاً دیده».
+     *
+     *    پس ناهمخوانی از راه واقعی‌اش ساخته می‌شود: **قیمت دستی**.
+     *    سرپرست `sale.price_override` دارد؛ صندوق‌دار ندارد.
+     */
+    // صندوق‌دار سبد را باز می‌کند (شیفت مالِ اوست)، سرپرست فقط سطرِ
+    // قیمت‌دستی را می‌زند — همان کاری که در مغازه واقعاً می‌شود.
     const s = await loginAs(cashier);
-    const invoiceId = (
-      await app.inject({
-        method: "POST",
-        url: "/invoices",
-        ...s,
-        payload: { branchId: BRANCH, warehouseId: STORE_WH, channel: "pos" },
-      })
-    ).json().id as string;
-    await app.inject({
+    const sup = await loginAs(supervisor);
+    const opened = await app.inject({
       method: "POST",
-      url: `/invoices/${invoiceId}/scan`,
+      url: "/invoices",
       ...s,
-      payload: { barcode: BARCODE },
+      payload: { branchId: BRANCH, warehouseId: STORE_WH, channel: "pos" },
     });
+    assert.equal(opened.statusCode, 201, opened.body);
+    const invoiceId = opened.json().id as string;
 
-    // قیمت عوض می‌شود. قرارداد واقعی قیمت‌گذاری این است که
-    // `currentPrice` ردیف معتبر در `occurred_at` را می‌خواند — پس
-    // قیمت حل‌شده هم عوض می‌شود و دیگر با Snapshot سطر یکی نیست.
-    await sql`UPDATE catalog.price SET amount = 2000000 WHERE variation_id = ${variationId}`
-      .execute(handle.db);
+    // سطر اول با قیمت دستی — زیر قیمت فهرست
+    const manual = await app.inject({
+      method: "POST",
+      url: `/invoices/${invoiceId}/lines`,
+      ...sup,
+      payload: {
+        barcode: BARCODE,
+        qty: "1",
+        unitPrice: "900000",
+        priceOverrideReason: "توافق با مشتری",
+      },
+    });
+    assert.equal(manual.statusCode, 201, manual.body);
+    assert.equal(manual.json().lines[0].unitPrice, "900000");
+
+    // اسکن بعدی قیمت فهرست را می‌گیرد، پس نباید داخل سطر دستی برود
     const r = await app.inject({
       method: "POST",
       url: `/invoices/${invoiceId}/scan`,
       ...s,
       payload: { barcode: BARCODE },
     });
-    await sql`UPDATE catalog.price SET amount = 1000001 WHERE variation_id = ${variationId}`
-      .execute(handle.db);
 
     assert.equal(r.statusCode, 200, r.body);
     const lines = r.json().invoice.lines as Array<{ unitPrice: string }>;
     assert.equal(lines.length, 2, "بازقیمت‌گذاری بی‌صدا رخ نداد");
     assert.deepEqual(
       lines.map((l) => l.unitPrice).sort(),
-      ["1000001", "2000000"],
-      "هر سطر قیمت لحظه خودش را نگه داشت",
+      ["1000001", "900000"],
+      "هر سطر قیمت خودش را نگه داشت",
     );
+  });
+
+  test("تغییر قیمت امروز، فاکتور بازِ همین حالا را تکان نمی‌دهد", async () => {
+    // نتیجه مستقیم تاریخچه تغییرناپذیر (مهاجرت ۰۳۲): قیمت در لحظه
+    // `occurred_at` حل می‌شود، پس یک فاکتور یک قیمت دارد — حتی اگر
+    // وسط کار مدیر حراج بزند.
+    const { s, invoiceId } = await newCart("1");
+
+    await reprice("2000000");
+    const r = await app.inject({
+      method: "POST",
+      url: `/invoices/${invoiceId}/scan`,
+      ...s,
+      payload: { barcode: BARCODE },
+    });
+    await reprice("1000001");
+
+    assert.equal(r.statusCode, 200, r.body);
+    const lines = r.json().invoice.lines as Array<{ unitPrice: string; qty: string }>;
+    assert.equal(lines.length, 1, "همان سطر، نه یک سطر دوم");
+    assert.equal(lines[0]!.unitPrice, "1000001", "قیمتِ لحظه بازشدن فاکتور");
+    assert.equal(lines[0]!.qty, "2.000");
   });
 
   test("سطر تخفیف‌دار سازگار نیست و ادغام نمی‌شود", async () => {

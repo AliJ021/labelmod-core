@@ -30,6 +30,13 @@ case "${1:-}" in
     echo "⚠️  اگر اولین بار است:  ops/deploy.sh migrate && ops/deploy.sh seed"
     ;;
   migrate) in_db_tools "cd /app && ops/db.sh migrate" ;;
+  # فقط یک بار، روی سروری که پیش از آمدنِ دفتر مهاجرت بالا آمده.
+  # شماره آخرین مهاجرتِ اجراشده اجباری است — بدون آن، مهاجرت‌های
+  # اجرانشده هم «اجراشده» ثبت می‌شوند و هرگز اجرا نمی‌شوند.
+  #     ops/deploy.sh baseline 031
+  baseline)
+    [ -n "${2:-}" ] || { echo "استفاده: ops/deploy.sh baseline <شماره آخرین مهاجرت اجراشده>"; exit 1; }
+    in_db_tools "cd /app && ops/db.sh baseline $2" ;;
   seed)    in_db_tools "cd /app && ops/db.sh seed" ;;
   user)
     # seed هیچ حساب انسانی نمی‌سازد و نباید بسازد — رمز پیش‌فرضِ

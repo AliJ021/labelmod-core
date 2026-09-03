@@ -138,8 +138,31 @@ export interface ProductTable {
   code: string;
   name_internal: string;
   name_web: string | null;
+  brand_id: string | null;
+  category_id: string | null;
+  season: string | null;
+  collection: string | null;
+  fabric: string | null;
+  /** جذب، رگولار، استریت، نیم‌بگ، بگ */
+  fit: string | null;
+  origin_country: string | null;
   /** پیش‌فرض `'standard'` در دیتابیس — روی درج لازم نیست. */
   tax_rate_code: Generated<string>;
+  notes: string | null;
+  /** پیش‌فرض `'active'` در دیتابیس (مهاجرت ۰۳۲). archived یعنی بایگانی، نه حذف. */
+  status: Generated<string>;
+}
+
+export interface BrandTable {
+  id: Generated<string>;
+  name: string;
+}
+
+export interface CategoryTable {
+  id: Generated<string>;
+  parent_id: string | null;
+  name: string;
+  path: string;
 }
 
 export interface VariationTable {
@@ -570,6 +593,8 @@ export interface StockCountLineTable {
 
 export interface Database {
   "ledger.fiscal_year": FiscalYearTable;
+  "catalog.brand": BrandTable;
+  "catalog.category": CategoryTable;
   "catalog.product": ProductTable;
   "catalog.variation": VariationTable;
   "catalog.price": PriceTable;
