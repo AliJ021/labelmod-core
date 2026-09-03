@@ -139,7 +139,8 @@ UI دیده می‌شود. اگر وسوسه شدی فهرست کلیدها را
 docker compose up -d db                      # فقط پستگرس
 export DATABASE_URL='postgres://labelmod:<رمز>@localhost:5432/labelmod'
 
-ops/db.sh migrate     # اسکیما
+ops/db.sh migrate     # فقط مهاجرت‌های اجرانشده (دفتر: public.schema_migration)
+ops/db.sh baseline 031 # یک بار روی دیتابیسی که پیش از دفتر بالا آمده
 ops/db.sh seed        # کدینگ حساب، قواعد ثبت، تنظیمات، داده مرجع
 ops/db.sh test        # تست‌های مالی — روی دیتابیس یک‌بارمصرف
 ops/db.sh reset       # بازسازی کامل
@@ -204,7 +205,9 @@ pnpm --filter @labelmod/api dev
   ۳۴ مسیر خرید ماه‌ها بدون Diff Merge شدند.
   `apps/api/test/source-hygiene.test.ts` و بند ۳ هوک pre-push حالا
   کلاسِ این باگ را می‌بندند.
-- **مهاجرت موجود ویرایش نمی‌شود.** ۰۰۳ و ۰۰۴ توابع قبلی را با
+- **مهاجرت موجود ویرایش نمی‌شود** — و حالا `ops/db.sh migrate` هم
+  اجبارش می‌کند: هش هر فایلِ اجراشده در `public.schema_migration`
+  می‌نشیند و ویرایشِ بعدی، مهاجرت را با پیام صریح متوقف می‌کند. ۰۰۳ و ۰۰۴ توابع قبلی را با
   `CREATE OR REPLACE` جایگزین کرده‌اند؛ نسخه معتبر هر تابع آخرین تعریف
   آن است. برای دیدن نسخه جاری: `\sf sales.post_batch`
 - **داده مرجع در `db/seed/` است، نه در مهاجرت.** بعد از هر مهاجرتی که
