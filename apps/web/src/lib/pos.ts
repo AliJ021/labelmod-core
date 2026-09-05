@@ -325,6 +325,20 @@ export const pos = {
     opts?: RequestOptions,
   ) => api.patch<Invoice>(`/invoices/${invoiceId}/lines/${lineId}/price`, input, opts),
 
+  /**
+   * چسباندن مشتری به سبد — اختیاری.
+   *
+   * نرمال‌سازی شماره در **دیتابیس** انجام می‌شود، نه اینجا: دو تعریف
+   * یعنی مشتری‌ای که یک بار آنلاین و یک بار حضوری خرید کند دو حساب
+   * داشته باشد. اینجا فقط رقم فارسی به لاتین می‌شود، چون صفحه‌کلید
+   * فارسی «۰۹۱۲…» می‌فرستد.
+   */
+  attachCustomer: (
+    invoiceId: string,
+    input: { mobile: string; fullName?: string },
+    opts?: RequestOptions,
+  ) => api.patch<Invoice>(`/invoices/${invoiceId}/customer`, input, opts),
+
   removeLine: (invoiceId: string, lineId: string, opts?: RequestOptions) =>
     api.del<Invoice>(`/invoices/${invoiceId}/lines/${lineId}`, opts),
 

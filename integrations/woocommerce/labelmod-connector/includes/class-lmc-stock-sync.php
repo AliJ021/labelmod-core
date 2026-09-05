@@ -8,11 +8,26 @@
  * اگر روزی جهت برعکس هم اضافه شود، دو مرجع برای یک عدد داریم و اولین
  * قطعی شبکه معلوم می‌کند کدام برنده است — که هیچ‌کس نخواسته بود.
  *
- * ── قیمت اینجا نیست، و نباید باشد ───────────────────────────────────
+ * ── اتصال با کلید، نه با SKU و نه با نام ────────────────────────────
  *
- * قیمت سایت می‌تواند از قیمت فروشگاه فرق کند: کمپین، ارسال رایگانِ
- * بسته‌شده در قیمت، قیمت آنلاین متفاوت. همگام‌سازی خودکار قیمت یک
- * تصمیم تجاری است که مالک باید بگیرد، نه چیزی که بی‌صدا اتفاق بیفتد.
+ * نام کالا در سایت و در حسابداری عمداً یکی **نیست** — تصمیم سئویی
+ * مالک. SKU هم می‌تواند روزی عوض شود. پس هر کالای سایت متای
+ * `_lmc_variation_id` می‌گیرد و از آن به بعد اتصال به آن بسته است:
+ * نام و SKU هر دو می‌توانند آزادانه فرق کنند.
+ *
+ * SKU فقط برای **یک بار** برقرار کردن اتصال روی سایتی که هنوز متا
+ * ندارد به کار می‌رود و همان لحظه متا نوشته می‌شود. پس از آن، متا حرف
+ * آخر را می‌زند و SKU دیگر تطبیق نمی‌دهد.
+ *
+ * ── قیمت حالا همگام می‌شود ─────────────────────────────────────────
+ *
+ * تصمیم مالک: قیمت مرجع در حسابداری است و سایت از آن به‌روز می‌شود.
+ * پیش از این عمداً نبود؛ حالا با یک کلید تنظیمات جدا روشن می‌شود تا
+ * سایتی که کمپین مستقل دارد بتواند خاموشش کند.
+ *
+ * ⚠️ قیمت **صفر نوشته نمی‌شود.** `null` در خوراک یعنی «این کالا در آن
+ *    فهرست قیمت ندارد»، نه «مجانی است». نوشتن صفر یعنی ویترین کالا را
+ *    رایگان بفروشد.
  *
  * ── مکان‌نما، نه ساعت ───────────────────────────────────────────────
  *
@@ -29,6 +44,8 @@ class LMC_Stock_Sync
 {
     const CURSOR_OPTION = 'lmc_stock_cursor';
     const BATCH         = 500;
+    /** کلید اتصال، روی خودِ کالای سایت. */
+    const META_KEY      = '_lmc_variation_id';
 
     public static function init(): void
     {
@@ -43,7 +60,7 @@ class LMC_Stock_Sync
      */
     public static function run(): array
     {
-        $out = ['updated' => 0, 'skipped' => 0, 'error' => ''];
+        $out = ['updated' => 0, 'skipped' => 0, 'linked' => 0, 'error' => ''];
 
         if (lmc_setting('sync_stock') !== 'yes') {
             return $out;
@@ -55,6 +72,10 @@ class LMC_Stock_Sync
         }
 
         $query = ['warehouseId' => $warehouse, 'limit' => self::BATCH];
+        $list  = (string) lmc_setting('price_list');
+        if ($list !== '') {
+            $query['priceList'] = $list;
+        }
         $since = get_option(self::CURSOR_OPTION, '');
         if (is_string($since) && $since !== '') {
             $query['since'] = $since;
@@ -67,19 +88,34 @@ class LMC_Stock_Sync
             return $out;
         }
 
+        $sync_price = lmc_setting('sync_price') === 'yes';
+
         $items = isset($res['items']) && is_array($res['items']) ? $res['items'] : [];
         foreach ($items as $item) {
-            $sku = isset($item['sku']) ? (string) $item['sku'] : '';
-            if ($sku === '' || !isset($item['available'])) {
+            $variation_id = isset($item['variationId']) ? (string) $item['variationId'] : '';
+            $sku          = isset($item['sku']) ? (string) $item['sku'] : '';
+            if ($variation_id === '' || !isset($item['available'])) {
                 continue;
             }
             // عدد در JSON **رشته** است — پول و تعداد هر دو. تبدیل صریح،
             // نه اتکا به تبدیل ضمنی PHP.
             $available = max(0, (int) $item['available']);
 
-            $product_id = wc_get_product_id_by_sku($sku);
+            $product_id = self::find_by_meta($variation_id);
+
+            if (!$product_id && $sku !== '' && lmc_setting('link_by_sku') === 'yes') {
+                // پل یک‌بارمصرف: روی سایتی که هنوز متا ندارد، اتصال با
+                // SKU برقرار و همان لحظه در متا نوشته می‌شود. از دور
+                // بعد، متا کافی است و SKU می‌تواند آزادانه عوض شود.
+                $product_id = wc_get_product_id_by_sku($sku);
+                if ($product_id) {
+                    update_post_meta($product_id, self::META_KEY, $variation_id);
+                    $out['linked']++;
+                }
+            }
+
             if (!$product_id) {
-                // SKUهایی که در سایت نیستند طبیعی‌اند: انبار فروشگاه
+                // کالاهایی که در سایت نیستند طبیعی‌اند: انبار فروشگاه
                 // کالاهایی دارد که آنلاین فروخته نمی‌شوند.
                 $out['skipped']++;
                 continue;
@@ -91,6 +127,8 @@ class LMC_Stock_Sync
                 continue;
             }
 
+            $changed = false;
+
             // مدیریت موجودی باید روشن باشد وگرنه عدد نوشته می‌شود و
             // ووکامرس نادیده‌اش می‌گیرد — بدترین حالت: عدد درست در
             // دیتابیس، فروش نامحدود در ویترین.
@@ -98,14 +136,28 @@ class LMC_Stock_Sync
                 $product->set_manage_stock(true);
             }
 
-            if ((int) $product->get_stock_quantity() === $available) {
-                continue;
+            if ((int) $product->get_stock_quantity() !== $available) {
+                $product->set_stock_quantity($available);
+                $product->set_stock_status($available > 0 ? 'instock' : 'outofstock');
+                $changed = true;
             }
 
-            $product->set_stock_quantity($available);
-            $product->set_stock_status($available > 0 ? 'instock' : 'outofstock');
-            $product->save();
-            $out['updated']++;
+            if ($sync_price) {
+                $price = self::price_for_site($item);
+                // `null` یعنی «قیمت ندارد» و دست نمی‌خورد. صفر نوشتن
+                // یعنی ویترین کالا را مجانی بفروشد.
+                if ($price !== null && $product->get_regular_price() !== $price) {
+                    $product->set_regular_price($price);
+                    // فروش ویژه سایت دست نمی‌خورد: آن تصمیم بازاریابی
+                    // سایت است، نه عددی که از انبار می‌آید.
+                    $changed = true;
+                }
+            }
+
+            if ($changed) {
+                $product->save();
+                $out['updated']++;
+            }
         }
 
         // مکان‌نما فقط وقتی جلو می‌رود که واقعاً سطری آمده باشد.
@@ -115,7 +167,8 @@ class LMC_Stock_Sync
             update_option(self::CURSOR_OPTION, (string) $res['cursor'], false);
         }
 
-        lmc_log(sprintf('موجودی: %d به‌روز، %d رد شد', $out['updated'], $out['skipped']));
+        lmc_log(sprintf('موجودی: %d به‌روز، %d رد شد، %d اتصال تازه',
+            $out['updated'], $out['skipped'], $out['linked']));
 
         // صفحه پر بود؟ یعنی احتمالاً باز هم هست. زودتر دوباره اجرا
         // شود تا عقب‌ماندگی روی چند ساعت پخش نشود.
@@ -124,6 +177,61 @@ class LMC_Stock_Sync
         }
 
         return $out;
+    }
+
+
+    /**
+     * کالای سایت از روی کلید اتصال.
+     *
+     * `wc_get_products` با `meta_key` هم کار می‌کند ولی تنوع‌ها
+     * (`product_variation`) را برنمی‌گرداند، و در یک فروشگاه پوشاک
+     * دقیقاً همان‌ها مهم‌اند. `get_posts` با هر دو نوع پست کار می‌کند.
+     */
+    public static function find_by_meta(string $variation_id): int
+    {
+        $found = get_posts([
+            'post_type'      => ['product', 'product_variation'],
+            'post_status'    => 'any',
+            'numberposts'    => 1,
+            'fields'         => 'ids',
+            'meta_key'       => self::META_KEY,
+            'meta_value'     => $variation_id,
+            'no_found_rows'  => true,
+        ]);
+        return empty($found) ? 0 : (int) $found[0];
+    }
+
+    /**
+     * ریال خوراک → واحد پول سایت، به‌شکل رشته.
+     *
+     * ⚠️ عکسِ `LMC_Order_Sync::to_rial()` و دقیقاً به همان اندازه
+     *    حساس: غلط بودنش یعنی **همه** قیمت‌ها یک صفر کم یا زیاد
+     *    داشته باشند. تقسیم بر ۱۰ در PHP اگر با `/` نوشته شود شناور
+     *    می‌دهد و `1234567/10` را `123456.7` می‌کند — که برای تومان
+     *    درست است ولی اگر مبلغ بر ۱۰ بخش‌پذیر نباشد، عددی با اعشار
+     *    به ویترین می‌رود. `intdiv` این را صریح می‌کند.
+     *
+     * @param array $item یک سطر خوراک
+     * @return string|null رشته قیمت، یا `null` اگر قیمتی نبود
+     */
+    public static function price_for_site(array $item): ?string
+    {
+        if (!isset($item['price']) || $item['price'] === null || $item['price'] === '') {
+            return null;
+        }
+        $rial = (string) $item['price'];
+        if (!preg_match('/^\d+$/', $rial)) {
+            // خوراک باید رقم صحیح بدهد. هر چیز دیگری یعنی چیزی عوض
+            // شده و قیمت **نوشته نمی‌شود** — بهتر از نوشتن یک عدد
+            // حدسی روی ویترین.
+            return null;
+        }
+        if (lmc_setting('currency_unit') === 'rial') {
+            return $rial;
+        }
+        // تومان: تقسیم صحیح. باقی‌مانده ریالی روی ویترین معنا ندارد و
+        // قیمت‌های واقعی پوشاک همیشه مضرب ۱۰ ریال‌اند.
+        return (string) intdiv((int) $rial, 10);
     }
 
     /** «همین حالا همگام کن» از صفحه تنظیمات. */

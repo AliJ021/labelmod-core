@@ -654,6 +654,73 @@ export class InvoiceService {
     return (await this.byId(input.invoiceId)) as Invoice;
   }
 
+  /**
+   * چسباندن مشتری به سبدِ باز — با شماره موبایل.
+   *
+   * ── چرا وسط فروش و نه هنگام ساخت سبد ──────────────────────────
+   *
+   * صندوق‌دار اول کالا را اسکن می‌کند و شماره را وقتی می‌پرسد که سبد
+   * بسته می‌شود. اگر تنها راه، ساختِ سبد با مشتری بود، هر بار باید
+   * سبد را دور می‌انداخت و از نو می‌ساخت.
+   *
+   * ── چرا مشتری تازه بی‌صدا ساخته می‌شود ────────────────────────
+   *
+   * ⚠️ نرمال‌سازی و یکتایی هر دو **در دیتابیس**‌اند
+   *    (`sales.normalize_mobile` و قید یکتای `mobile_normalized`)، نه
+   *    اینجا. دو تعریف یعنی مشتری‌ای که یک بار آنلاین و یک بار حضوری
+   *    خرید کند دو حساب داشته باشد و مانده‌اش بینشان گم شود.
+   *
+   * نامِ داده‌شده فقط برای مشتری **تازه** است: بازنویسی نام یک مشتری
+   * موجود از پای صندوق یعنی یک غلط تایپی، پرونده‌ای را که ماه‌ها
+   * درست بوده خراب کند.
+   */
+  async attachCustomer(input: {
+    invoiceId: string;
+    mobile: string;
+    fullName?: string | undefined;
+    actorId: string;
+  }): Promise<Invoice> {
+    await this.requireDraft(input.invoiceId);
+    await this.#db.transaction().execute(async (trx) => {
+      await setActor(trx, input.actorId);
+      // ⚠️ ورودی‌ای که اصلاً شماره نیست باید **پیش از** درج رد شود.
+      //    `mobile_normalized` می‌تواند NULL باشد و قید یکتایی روی
+      //    NULL اعمال نمی‌شود — پس هر غلط تایپی پای صندوق یک مشتری
+      //    تازه و بی‌شماره می‌ساخت، با شماره تفصیلی خودش، که هیچ‌کس
+      //    بعداً نمی‌فهمید از کجا آمده.
+      const norm = await sql<{ m: string | null }>`
+        SELECT nullif(sales.normalize_mobile(${input.mobile}), '') AS m
+      `.execute(trx);
+      if (!norm.rows[0]?.m) {
+        throw new InvoiceError("bad_mobile", "شماره موبایل معتبر نیست", 400);
+      }
+
+      const r = await sql<{ id: string }>`
+        WITH norm AS (SELECT sales.normalize_mobile(${input.mobile}) AS m),
+        ins AS (
+          INSERT INTO sales.customer (mobile_normalized, full_name)
+          SELECT m, nullif(${input.fullName ?? null}::text, '') FROM norm
+          ON CONFLICT (mobile_normalized) DO NOTHING
+          RETURNING id
+        )
+        SELECT id FROM ins
+        UNION ALL
+        SELECT c.id FROM sales.customer c, norm
+         WHERE c.mobile_normalized = norm.m
+        LIMIT 1
+      `.execute(trx);
+      const customerId = r.rows[0]?.id;
+      if (!customerId) {
+        throw new InvoiceError("bad_mobile", "شماره موبایل معتبر نیست", 400);
+      }
+      await sql`
+        UPDATE sales.invoice SET customer_id = ${customerId}::uuid
+         WHERE id = ${input.invoiceId}::uuid
+      `.execute(trx);
+    });
+    return (await this.byId(input.invoiceId)) as Invoice;
+  }
+
   async removeLine(invoiceId: string, lineId: string, actorId: string): Promise<Invoice> {
     await this.requireDraft(invoiceId);
     await this.#db.transaction().execute(async (trx) => {
