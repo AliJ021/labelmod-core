@@ -18,6 +18,8 @@ import { registerPostingRoutes } from "./posting-routes.ts";
 import { registerCatalogRoutes } from "./catalog-routes.ts";
 import { registerProductRoutes } from "./product-routes.ts";
 import { registerTreasuryRoutes } from "./treasury-routes.ts";
+import { registerReportRoutes } from "./report-routes.ts";
+import { ReportService } from "../reports/service.ts";
 import { DeviceService } from "../auth/devices.ts";
 import { registerPurchasingRoutes } from "./purchasing-routes.ts";
 import { registerSettingsRoutes } from "./settings-routes.ts";
@@ -262,6 +264,10 @@ export async function buildApp(deps: AppDeps): Promise<FastifyInstance> {
     treasury: new TreasuryService(deps.db),
     cheques: new ChequeService(deps.db),
     shifts,
+  });
+  registerReportRoutes(app, {
+    db: deps.db,
+    reports: new ReportService(deps.db),
   });
   registerPurchasingRoutes(app, {
     db: deps.db,
