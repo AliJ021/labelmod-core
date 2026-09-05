@@ -192,6 +192,36 @@ export const reports = {
 };
 
 /**
+ * نشانی دانلود CSV همان گزارش.
+ *
+ * ── چرا لینک، و نه `fetch` و ساخت Blob ────────────────────────────
+ *
+ * دانلود با `fetch` یعنی کل فایل اول در حافظه مرورگر بنشیند و بعد یک
+ * `Blob` و یک `<a>` موقت ساخته شود. برای گزارشی که می‌تواند هزاران
+ * سطر باشد این هم کند است هم بی‌دلیل: مرورگر خودش می‌تواند مستقیم
+ * ذخیره کند، چون سرور `Content-Disposition: attachment` می‌فرستد.
+ *
+ * کوکی نشست `SameSite=Strict` و هم‌دامنه است، پس با یک پیمایش ساده
+ * هم فرستاده می‌شود. `GET` است، پس توکن CSRF هم لازم ندارد.
+ *
+ * ⚠️ نشانی **همان** Endpoint صفحه است، فقط با `format=csv`. مسیر
+ *    دانلود جدا یعنی دو نسخه از همان دروازه‌ها، و آن که عقب می‌ماند
+ *    همان است که دور زده می‌شود.
+ */
+export function csvUrl(path: string, query: string): string {
+  return `/api${path}?${query}${query === "" ? "" : "&"}format=csv`;
+}
+
+/** نشانی CSV برای گزارش‌های بازه‌دار. */
+export function periodCsvUrl(
+  path: string,
+  p: Period,
+  extra: Record<string, string | number | undefined> = {},
+): string {
+  return csvUrl(path, qs(p, extra));
+}
+
+/**
  * بازه پیش‌فرض: از اول همین ماه میلادی تا امروز.
  *
  * ⚠️ «امروز» **از سرور** می‌آید، نه از `new Date()` مرورگر. تبلتی که

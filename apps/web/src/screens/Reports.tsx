@@ -35,7 +35,9 @@ import {
   CHANNEL_LABEL,
   MOVEMENT_KIND,
   PARTY_LABEL,
+  csvUrl,
   defaultPeriod,
+  periodCsvUrl,
   reports,
   type LedgerRow,
   type PartyRow,
@@ -234,15 +236,33 @@ function useReport<T>(load: () => Promise<T[]>, deps: unknown[]) {
   return { rows, error };
 }
 
+/**
+ * دکمه دانلود CSV.
+ *
+ * یک `<a download>` ساده، نه `fetch` و `Blob`: سرور
+ * `Content-Disposition: attachment` می‌فرستد و مرورگر خودش ذخیره
+ * می‌کند — بدون اینکه هزاران سطر اول در حافظه بنشیند.
+ */
+function CsvLink({ href }: { href: string }) {
+  return (
+    <a className="btn btn--quiet csv-link" href={href} download>
+      دانلود CSV
+    </a>
+  );
+}
+
 function Frame({
   rows,
   error,
   empty,
+  csv,
   children,
 }: {
   rows: unknown[] | null;
   error: string | null;
   empty: string;
+  /** نشانی CSV همین گزارش — وقتی سطری هست. */
+  csv?: string;
   children: ReactNode;
 }) {
   if (error !== null) {
@@ -255,8 +275,19 @@ function Frame({
     );
   }
   if (rows === null) return <Solid className="pad">در حال بارگذاری…</Solid>;
+  // گزارش خالی دکمه دانلود نمی‌گیرد: فایلی با فقط سرستون، کاربر را
+  // به این فکر می‌اندازد که دانلود خراب بوده.
   if (rows.length === 0) return <Solid className="pad muted">{empty}</Solid>;
-  return <>{children}</>;
+  return (
+    <>
+      {csv === undefined ? null : (
+        <div className="row" style={{ justifyContent: "flex-start" }}>
+          <CsvLink href={csv} />
+        </div>
+      )}
+      {children}
+    </>
+  );
 }
 
 // ── فروش دوره‌ای ─────────────────────────────────────────────────────
@@ -278,7 +309,12 @@ function SalesReport({ period }: { period: Period }) {
   );
 
   return (
-    <Frame rows={rows} error={error} empty="در این بازه فروشی ثبت نشده است.">
+    <Frame
+      rows={rows}
+      error={error}
+      empty="در این بازه فروشی ثبت نشده است."
+      csv={periodCsvUrl("/reports/sales", period)}
+    >
       <Solid className="pad">
         <div className="grid-wrap">
           <table className="grid">
@@ -349,6 +385,7 @@ function ProfitReport({ period }: { period: Period }) {
       rows={rows}
       error={error}
       empty="در این بازه کالایی فروخته نشده — یا دسترسی بهای تمام‌شده ندارید."
+      csv={periodCsvUrl("/reports/profit-by-product", period)}
     >
       <Solid className="pad">
         <div className="grid-wrap">
@@ -438,6 +475,10 @@ function StockReport({ period, branches }: { period: Period; branches: Branch[] 
         rows={rows}
         error={error}
         empty="موجودی‌ای برای نمایش نیست — یا دسترسی بهای تمام‌شده ندارید."
+        csv={csvUrl(
+          "/reports/inventory-valuation",
+          warehouseId === "" ? "" : `warehouseId=${encodeURIComponent(warehouseId)}`,
+        )}
       >
         <Solid className="pad">
           <div className="grid-wrap">
@@ -519,7 +560,12 @@ function Kardex({
   );
 
   return (
-    <Frame rows={rows} error={error} empty="در این بازه حرکتی برای این کالا ثبت نشده است.">
+    <Frame
+      rows={rows}
+      error={error}
+      empty="در این بازه حرکتی برای این کالا ثبت نشده است."
+      csv={periodCsvUrl("/reports/stock-movements", period, { variationId, warehouseId })}
+    >
       <Solid className="pad">
         <h3 style={{ fontSize: "0.95rem", marginTop: 0 }}>کاردکس — {title}</h3>
         <div className="grid-wrap">
@@ -597,7 +643,12 @@ function LedgerReport({ period }: { period: Period }) {
       </Solid>
 
       {applied === "" ? null : (
-        <Frame rows={rows} error={error} empty="این حساب در این بازه گردشی نداشته است.">
+        <Frame
+          rows={rows}
+          error={error}
+          empty="این حساب در این بازه گردشی نداشته است."
+          csv={periodCsvUrl("/reports/account-ledger", period, { code: applied })}
+        >
           <Solid className="pad">
             <div className="grid-wrap">
               <table className="grid">
@@ -646,7 +697,12 @@ function TrialReport({ period }: { period: Period }) {
   const cr = (rows ?? []).reduce((a, r) => a + parseRial(r.credit), 0n);
 
   return (
-    <Frame rows={rows} error={error} empty="در این بازه سندی ثبت نشده است.">
+    <Frame
+      rows={rows}
+      error={error}
+      empty="در این بازه سندی ثبت نشده است."
+      csv={periodCsvUrl("/reports/trial-balance", period)}
+    >
       <Solid className="pad">
         <div className="grid-wrap">
           <table className="grid">
@@ -728,7 +784,15 @@ function PartyReport() {
         </p>
       </Solid>
 
-      <Frame rows={rows} error={error} empty="مانده‌ای برای نمایش نیست.">
+      <Frame
+        rows={rows}
+        error={error}
+        empty="مانده‌ای برای نمایش نیست."
+        csv={csvUrl(
+          "/reports/party-balances",
+          kind === "" ? "" : `partyType=${encodeURIComponent(kind)}`,
+        )}
+      >
         <Solid className="pad">
           <div className="grid-wrap">
             <table className="grid">
@@ -773,7 +837,12 @@ function CashReport({ period }: { period: Period }) {
   );
 
   return (
-    <Frame rows={rows} error={error} empty="در این بازه شیفتی باز نشده است.">
+    <Frame
+      rows={rows}
+      error={error}
+      empty="در این بازه شیفتی باز نشده است."
+      csv={periodCsvUrl("/reports/cash-reconciliation", period)}
+    >
       <Solid className="pad">
         <div className="grid-wrap">
           <table className="grid">
