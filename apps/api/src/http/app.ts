@@ -22,6 +22,7 @@ import { registerReportRoutes } from "./report-routes.ts";
 import { registerTransferRoutes } from "./transfer-routes.ts";
 import { registerPeopleRoutes } from "./people-routes.ts";
 import { TwoFactorService } from "../auth/two-factor.ts";
+import { WebauthnService } from "../auth/webauthn.ts";
 import { UserService } from "../people/user.ts";
 import { CustomerService } from "../people/customer.ts";
 import { TransferService } from "../inventory/transfer.ts";
@@ -83,6 +84,8 @@ const CSRF_EXEMPT_PATHS = new Set([
   // پاسخ مرحله اول ست می‌کند و مهاجم از سایت دیگر نمی‌تواند بخواندش.
   "/auth/2fa/totp",
   "/auth/2fa/recovery",
+  "/auth/2fa/webauthn/begin",
+  "/auth/2fa/webauthn/verify",
 ]);
 
 /** مسیرهایی که پیش از ورود هم باید کار کنند. */
@@ -99,6 +102,12 @@ const PUBLIC_PATHS = new Set([
   // بلیت `labelmod_pending` را می‌خوانند، نه کوکی نشست را.
   "/auth/2fa/totp",
   "/auth/2fa/recovery",
+  // ⚠️ مسیر **ورود** با کلید عمداً نامش `/verify` است، نه همان
+  //    `/auth/2fa/webauthn`. آن یکی فهرست کلیدهای کاربر را می‌دهد و
+  //    باید پشت نشست بماند؛ اگر هر دو یک مسیر بودند، عمومی‌کردن
+  //    ورود، فهرست را هم از گیت بیرون می‌برد.
+  "/auth/2fa/webauthn/begin",
+  "/auth/2fa/webauthn/verify",
   // صفحه فاکتور مشتری. مشتری حساب کاربری ندارد و نباید داشته باشد؛
   // جای احراز هویت را توکن ۲۴ بایتی روی خودِ فاکتور می‌گیرد.
   ...PUBLIC_ROUTE_PATHS,
@@ -261,6 +270,7 @@ export async function buildApp(deps: AppDeps): Promise<FastifyInstance> {
     ...deps,
     devices: new DeviceService(deps.db),
     twoFactor: new TwoFactorService(deps.db),
+    webauthn: new WebauthnService(deps.db),
   });
   registerSalesRoutes(app, { db: deps.db, invoices, shifts });
   registerReturnRoutes(app, {

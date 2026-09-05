@@ -178,6 +178,32 @@ PERFORM pg_temp.assert_eq('نماهای دارای current_date',
                          'purchasing','sales','treasury','ledger')
       AND regexp_replace(definition, '--[^\n]*', '', 'g') ~ '\mcurrent_date\M'), 0);
 
+-- ═══════════════════════════════════════════════════════════════════
+-- و همان ادعا برای `::date` روی یک ستون زمان‌دار.
+--
+-- `current_date` تنها راه گرفتن تاریخِ سرور نبود — `occurred_at::date`
+-- هم همان کار را می‌کند و از چشم ادعای بالا افتاده بود. مهاجرت ۰۱۴
+-- این کلاس را یک بار بست و ۰۲۳ دوباره، ولی هر مهاجرتِ **بعدی**
+-- دوباره نوشتش: نُه تابع مالی با تاریخ سرور سند می‌زدند تا مهاجرت
+-- ۰۳۹ پیدایشان کرد.
+--
+-- کلاس را همین‌جا می‌بندیم، نه با یادآوری در سند: هر `::date` روی
+-- ستونی که `_at` تمام می‌شود، از این پس قرمز است.
+PERFORM pg_temp.assert_eq('توابعی که تاریخ را از منطقه زمانی سرور می‌گیرند',
+  (SELECT count(*) FROM pg_proc p
+     JOIN pg_namespace n ON n.oid = p.pronamespace
+    WHERE n.nspname IN ('platform','identity','catalog','inventory',
+                        'purchasing','sales','treasury','ledger')
+      AND regexp_replace(p.prosrc, '--[^\n]*', '', 'g')
+          ~ '(\m\w*_at\M\s*::\s*date|\mnow\s*\(\s*\)\s*::\s*date)'), 0);
+
+PERFORM pg_temp.assert_eq('نماهایی که تاریخ را از منطقه زمانی سرور می‌گیرند',
+  (SELECT count(*) FROM pg_views
+    WHERE schemaname IN ('platform','identity','catalog','inventory',
+                         'purchasing','sales','treasury','ledger')
+      AND regexp_replace(definition, '--[^\n]*', '', 'g')
+          ~ '(\m\w*_at\M\s*::\s*date|\mnow\s*\(\s*\)\s*::\s*date)'), 0);
+
 RAISE NOTICE E'\n✔ تاریخ کاری — همه ادعاها پاس شدند';
 END $test$;
 

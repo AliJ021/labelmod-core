@@ -9,6 +9,7 @@ import { AuthError, type AuthService } from "../auth/service.ts";
 import { can, requireForSession } from "../auth/permission.ts";
 import { DeviceError, type DeviceService } from "../auth/devices.ts";
 import type { TwoFactorService } from "../auth/two-factor.ts";
+import type { WebauthnService } from "../auth/webauthn.ts";
 import { csrfCookieOptions, deviceCookieOptions, sessionCookieOptions } from "../auth/token.ts";
 import type { Db } from "../db/client.ts";
 import type { Config } from "../lib/config.ts";
@@ -50,10 +51,11 @@ export interface AuthRouteDeps {
   config: Config;
   devices: DeviceService;
   twoFactor: TwoFactorService;
+  webauthn: WebauthnService;
 }
 
 export function registerAuthRoutes(app: FastifyInstance, deps: AuthRouteDeps): void {
-  const { auth, db, config, devices, twoFactor } = deps;
+  const { auth, db, config, devices, twoFactor, webauthn } = deps;
 
   app.post("/auth/login", {
     config: { rateLimit: { max: 5, timeWindow: "1 minute" } },
@@ -164,7 +166,7 @@ export function registerAuthRoutes(app: FastifyInstance, deps: AuthRouteDeps): v
     req: FastifyRequest,
     reply: FastifyReply,
     verify: (userId: string, code: string) => Promise<boolean>,
-    method: "totp" | "otp",
+    method: "totp" | "otp" | "webauthn",
   ) => {
     const pendingToken = (req.cookies as Record<string, string | undefined>)[PENDING_COOKIE];
     if (!pendingToken) {
@@ -323,6 +325,102 @@ export function registerAuthRoutes(app: FastifyInstance, deps: AuthRouteDeps): v
       recoveryCodes: await twoFactor.regenerateRecoveryCodes(s.userId),
       note: "کدهای قبلی از همین لحظه بی‌اعتبارند.",
     };
+  });
+
+  // ── WebAuthn / Passkey ──────────────────────────────────────────
+  //
+  // ⚠️ **EXTERNAL VERIFICATION REQUIRED.** مراسم واقعی به یک دامنه
+  //    واقعی و یک Authenticator واقعی نیاز دارد. آنچه در این مخزن
+  //    سنجیده می‌شود: چرخه چالش، یک‌بارمصرف بودنش، رد شمارنده نزولی،
+  //    دامنه و مجوز. خودِ مراسم باید یک بار با کلید واقعی آزموده شود.
+
+  app.get("/auth/2fa/webauthn", async (req) => {
+    const s = req.session;
+    if (!s) throw new AuthError("no_session", "وارد نشده‌اید");
+    return { credentials: await webauthn.list(s.userId) };
+  });
+
+  app.post("/auth/2fa/webauthn/register/begin", async (req) => {
+    const s = req.session;
+    if (!s) throw new AuthError("no_session", "وارد نشده‌اید");
+    if (s.pinUnlocked) {
+      throw new AuthError("pin_not_allowed", "برای ثبت کلید، با رمز کامل وارد شوید.");
+    }
+    const u = await db
+      .selectFrom("identity.app_user")
+      .select(["username", "full_name"])
+      .where("id", "=", s.userId)
+      .executeTakeFirstOrThrow();
+    return await webauthn.beginRegistration({
+      userId: s.userId,
+      username: u.username,
+      fullName: u.full_name,
+    });
+  });
+
+  app.post("/auth/2fa/webauthn/register/finish", async (req) => {
+    const s = req.session;
+    if (!s) throw new AuthError("no_session", "وارد نشده‌اید");
+    if (s.pinUnlocked) {
+      throw new AuthError("pin_not_allowed", "برای ثبت کلید، با رمز کامل وارد شوید.");
+    }
+    const body = z
+      .object({
+        // شکل پاسخ را کتابخانه می‌سنجد؛ Zod اینجا فقط «شیء است» را
+        // تضمین می‌کند. سنجش دوباره‌اش یعنی دو تعریف از یک قاعده.
+        response: z.record(z.string(), z.unknown()),
+        name: z.string().trim().max(60).optional(),
+      })
+      .parse(req.body);
+    return await webauthn.finishRegistration({
+      userId: s.userId,
+      response: body.response,
+      ...(body.name === undefined ? {} : { name: body.name }),
+    });
+  });
+
+  app.delete("/auth/2fa/webauthn/:id", async (req) => {
+    const s = req.session;
+    if (!s) throw new AuthError("no_session", "وارد نشده‌اید");
+    if (s.pinUnlocked) {
+      throw new AuthError("pin_not_allowed", "برای حذف کلید، با رمز کامل وارد شوید.");
+    }
+    const { id } = z.object({ id: z.string().uuid() }).parse(req.params);
+    await webauthn.remove(s.userId, id, s.userId);
+    return { ok: true };
+  });
+
+  /** مرحله دوم ورود با کلید — بلیت از کوکی، مثل TOTP. */
+  app.post("/auth/2fa/webauthn/begin", {
+    config: { rateLimit: { max: 10, timeWindow: "1 minute" } },
+    handler: async (req) => {
+      const pendingToken = (req.cookies as Record<string, string | undefined>)[
+        PENDING_COOKIE
+      ];
+      if (!pendingToken) {
+        throw new AuthError("pending_expired", "مهلت این ورود تمام شده. دوباره وارد شوید.");
+      }
+      const pending = await auth.pendingUser(pendingToken);
+      if (!pending) {
+        throw new AuthError("pending_expired", "مهلت این ورود تمام شده. دوباره وارد شوید.");
+      }
+      return await webauthn.beginAuthentication(pending.userId);
+    },
+  });
+
+  app.post("/auth/2fa/webauthn/verify", {
+    config: { rateLimit: { max: 10, timeWindow: "1 minute" } },
+    handler: async (req, reply) => {
+      const body = z
+        .object({ response: z.record(z.string(), z.unknown()) })
+        .parse(req.body);
+      return secondFactorHandler(
+        req,
+        reply,
+        (userId) => webauthn.finishAuthentication({ userId, response: body.response }),
+        "webauthn",
+      );
+    },
   });
 
   /** برداشتن عامل دوم — حساب خودِ کاربر، با رمز کامل. */

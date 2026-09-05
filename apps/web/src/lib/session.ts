@@ -134,6 +134,22 @@ export interface SecondFactorNeeded {
   expiresAt: string;
 }
 
+/**
+ * یک کلید امنیتی ثبت‌شده.
+ *
+ * `publicKey` و `counter` عمداً اینجا نیستند چون در **پاسخ سرور** هم
+ * نیستند — مثل `identity.device_overview` که ستون راز را ندارد.
+ */
+export interface WebauthnKey {
+  id: string;
+  credentialId: string;
+  name: string | null;
+  createdAt: string;
+  lastUsedAt: string | null;
+  deviceType: string | null;
+  backedUp: boolean;
+}
+
 export interface TwoFactorStatus {
   enabled: boolean;
   pending: boolean;
@@ -207,6 +223,43 @@ export const session = {
 
   disableTwoFactor(): Promise<{ ok: boolean }> {
     return api.del<{ ok: boolean }>("/auth/2fa");
+  },
+
+  // ── کلید امنیتی ───────────────────────────────────────────────
+  //
+  // گزینه‌ها و پاسخ‌ها عمداً `Record<string, unknown>` می‌مانند: شکل
+  // دقیقشان را استاندارد تعیین می‌کند و `lib/webauthn.ts` ترجمه‌شان
+  // می‌کند. تعریف دوباره‌شان اینجا یعنی دو نسخه از یک قرارداد.
+
+  webauthnKeys(): Promise<{ credentials: WebauthnKey[] }> {
+    return api.get<{ credentials: WebauthnKey[] }>("/auth/2fa/webauthn");
+  },
+
+  beginWebauthnRegistration(): Promise<Record<string, unknown>> {
+    return api.post<Record<string, unknown>>("/auth/2fa/webauthn/register/begin", {});
+  },
+
+  finishWebauthnRegistration(
+    response: Record<string, unknown>,
+    name?: string,
+  ): Promise<{ id: string }> {
+    return api.post<{ id: string }>("/auth/2fa/webauthn/register/finish", {
+      response,
+      ...(name === undefined || name.trim() === "" ? {} : { name: name.trim() }),
+    });
+  },
+
+  removeWebauthnKey(id: string): Promise<{ ok: boolean }> {
+    return api.del<{ ok: boolean }>(`/auth/2fa/webauthn/${encodeURIComponent(id)}`);
+  },
+
+  /** مرحله دوم ورود — بلیت در کوکی است، پس بدنه‌ای لازم نیست. */
+  beginWebauthnLogin(): Promise<Record<string, unknown>> {
+    return api.post<Record<string, unknown>>("/auth/2fa/webauthn/begin", {});
+  },
+
+  verifyWebauthnLogin(response: Record<string, unknown>): Promise<unknown> {
+    return api.post<unknown>("/auth/2fa/webauthn/verify", { response });
   },
 
   unlock(input: { pin: string; deviceFingerprint: string }): Promise<{ ok: boolean }> {
