@@ -168,3 +168,34 @@ test("دو رگرسیون تأییدشده: Regex نویسه کنترلی و ج�
     "جداکننده کلید مجوز باید \\u0000 نوشته شود، نه بایت خام NUL",
   );
 });
+
+
+/**
+ * ردیف تکراری در Seed مجوزها — یک شکست کاملاً بی‌صدا.
+ *
+ * `INSERT ... ON CONFLICT (role_code, operation) DO NOTHING` دو ردیف
+ * یکسان در **همان** VALUES را بی‌هیچ خطایی رد می‌کند. یعنی می‌شود یک
+ * قاعده مجوز را دوباره نوشت — با مقدار **متفاوت** — و هیچ‌کس نفهمد
+ * کدام‌یک واقعاً نشسته است. آنکه می‌نشیند اولی است، نه آنکه نویسنده
+ * فکر می‌کند.
+ *
+ * یک بار همین اتفاق افتاد: `stock.transfer` برای انباردار و مدیر از
+ * قبل در Seed بود و یک ویرایش بعدی دوباره اضافه‌اش کرد.
+ */
+test("Seed مجوزها ردیف تکراری ندارد", () => {
+  const seed = readFileSync(join(ROOT, "db/seed/040_reference.sql"), "utf8");
+
+  // فقط ردیف‌های ('نقش','عملیات', ... — کامنت و بقیه جدول‌ها را نمی‌گیرد.
+  const rows = [...seed.matchAll(/^\('([a-z_]+)','([a-z_]+\.[a-z_]+)',/gm)].map(
+    (m) => `${m[1]} ${m[2]}`,
+  );
+  assert.ok(rows.length > 50, `ردیف مجوز پیدا نشد (${rows.length})`);
+
+  const seen = new Set<string>();
+  const dupes: string[] = [];
+  for (const r of rows) {
+    if (seen.has(r)) dupes.push(r);
+    seen.add(r);
+  }
+  assert.deepEqual(dupes, [], `ردیف مجوز تکراری: ${dupes.join("، ")}`);
+});
