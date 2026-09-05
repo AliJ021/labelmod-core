@@ -321,7 +321,7 @@ SELECT * FROM (VALUES
  60, 'settings.security', true),
 
 ('auth.pin_forbidden_operations',
- '["refund.cash","invoice.cancel","price.change","stock.adjust","period.close","period.reopen","user.manage","device.manage","treasury.manage","cheque.manage","journal.manual","return.late","settings.manage","settings.security","sale.price_override"]'::jsonb,
+ '["refund.cash","invoice.cancel","price.change","stock.adjust","period.close","period.reopen","user.manage","device.manage","treasury.manage","cheque.manage","journal.manual","return.late","settings.manage","settings.security","sale.price_override","customer.manage"]'::jsonb,
  'عملیاتی که با PIN هرگز مجاز نیستند و احراز هویت کامل می‌خواهند — بند ۱ SECURITY.md.', true,
  'multichoice', 'کارهایی که با PIN انجام نمی‌شوند', 'security',
  '[{"value":"refund.cash","label":"بازپرداخت نقدی"},
@@ -342,6 +342,8 @@ SELECT * FROM (VALUES
    {"value":"device.manage","label":"تأیید و ابطال دستگاه"},
    {"value":"treasury.manage","label":"جابه‌جایی پول خزانه"},
    {"value":"cheque.manage","label":"ثبت و وصول چک"},
+   {"value":"customer.manage","label":"پرونده مشتری و سقف اعتبار"},
+   {"value":"report.view","label":"دیدن گزارش‌ها"},
    {"value":"cost.view","label":"دیدن قیمت خرید"},
    {"value":"shift.close","label":"بستن شیفت صندوق"},
    {"value":"settings.manage","label":"تغییر تنظیمات"},

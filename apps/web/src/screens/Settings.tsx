@@ -19,6 +19,7 @@ import { Terminals } from "./Terminals.tsx";
 import { Permissions } from "./Permissions.tsx";
 import { Opening } from "./Opening.tsx";
 import { Devices } from "./Devices.tsx";
+import { Staff } from "./Staff.tsx";
 import { api, ApiError } from "../lib/api.ts";
 import {
   describeValue,
@@ -378,6 +379,7 @@ const TABS = [
   { key: "permissions", label: "مجوزها" },
   { key: "opening", label: "افتتاحیه و تفصیلی" },
   { key: "devices", label: "دستگاه‌ها" },
+  { key: "staff", label: "پرسنل" },
 ] as const;
 
 type Tab = (typeof TABS)[number]["key"];
@@ -410,6 +412,8 @@ export function Settings() {
         <Terminals />
       ) : tab === "permissions" ? (
         <Permissions />
+      ) : tab === "staff" ? (
+        <Staff />
       ) : tab === "devices" ? (
         <Devices />
       ) : (

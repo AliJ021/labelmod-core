@@ -18,6 +18,8 @@ import { DeviceError } from "../auth/devices.ts";
 import { TreasuryError } from "../treasury/transaction.ts";
 import { ChequeError } from "../treasury/cheque.ts";
 import { TransferError } from "../inventory/transfer.ts";
+import { UserError } from "../people/user.ts";
+import { CustomerError } from "../people/customer.ts";
 import { SettingError } from "../platform/settings.ts";
 import { IdempotencyConflictError, IdempotencyInFlightError } from "../lib/idempotency.ts";
 import { ZodError } from "zod";
@@ -71,6 +73,8 @@ export function registerErrorHandler(app: FastifyInstance): void {
       err instanceof TreasuryError ||
       err instanceof ChequeError ||
       err instanceof TransferError ||
+      err instanceof UserError ||
+      err instanceof CustomerError ||
       err instanceof SettingError ||
       err instanceof IdempotencyInFlightError ||
       err instanceof IdempotencyConflictError
