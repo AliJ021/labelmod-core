@@ -370,11 +370,32 @@ export interface UnpostedRevenueView {
   business_date: Date | null;
 }
 
+/**
+ * پرونده مشتری.
+ *
+ * ⚠️ `mobile_normalized` را **دیتابیس** می‌سازد
+ *    (`sales.normalize_mobile`)، نه لایه اپلیکیشن. دو تعریف از
+ *    نرمال‌سازی یعنی مشتری دو حساب پیدا کند و مانده‌اش بینشان گم شود.
+ *
+ * `consent_sms` و `consent_marketing` عمداً جدا هستند: پیامک فاکتور
+ * با اولی می‌رود و تبلیغات با دومی.
+ */
 export interface CustomerTable {
   id: Generated<string>;
   mobile_normalized: string;
   full_name: string | null;
+  email: string | null;
+  birth_date: Date | null;
+  status: Generated<string>;
+  merged_into: string | null;
   credit_limit: Generated<string>;
+  due_days: Generated<number>;
+  consent_sms: Generated<boolean>;
+  consent_marketing: Generated<boolean>;
+  tags: string[] | null;
+  internal_note: string | null;
+  created_at: Generated<Date>;
+  tafsili_no: Generated<number>;
 }
 
 // ── خزانه ─────────────────────────────────────────────────────────
