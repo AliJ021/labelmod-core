@@ -101,6 +101,46 @@ export const OPENING_LEGS: Array<{ leg: string; label: string; side: "debit" | "
   { leg: "equity", label: "سود و زیان انباشته", side: "credit" },
 ];
 
+/**
+ * دستگاه مورد اعتماد.
+ *
+ * ⚠️ راز دستگاه هرگز اینجا نمی‌آید — نه خودش، نه هشش. `enrolled` فقط
+ *    می‌گوید ثبت‌نام کامل شده یا نه. نمای `identity.device_overview`
+ *    اصلاً ستونش را ندارد.
+ */
+export interface Device {
+  id: string;
+  fingerprint: string;
+  label: string;
+  kind: string;
+  branchId: string | null;
+  branchName: string | null;
+  isApproved: boolean;
+  approvedAt: string | null;
+  approvedByName: string | null;
+  enrolled: boolean;
+  enrolledAt: string | null;
+  lastSeenAt: string | null;
+  createdAt: string;
+  activeSessions: number;
+}
+
+export interface LiveSession {
+  id: string;
+  userId: string;
+  username: string;
+  fullName: string;
+  deviceId: string | null;
+  deviceLabel: string | null;
+  authMethod: string;
+  /** نشستی که با PIN باز شده — عملیات حساس رویش بسته است. */
+  pinUnlocked: boolean;
+  ip: string | null;
+  createdAt: string;
+  expiresAt: string;
+  lastSeenAt: string | null;
+}
+
 export const admin = {
   tafsili: () => api.get<{ rows: Tafsili[] }>("/tafsili"),
 
@@ -126,6 +166,28 @@ export const admin = {
   ) => api.patch<SettlementTerm>(`/settlement-terms/${encodeURIComponent(id)}`, input),
 
   permissionRules: () => api.get<{ rules: PermissionRule[] }>("/permission-rules"),
+
+  // ── دستگاه و نشست ────────────────────────────────────────────────
+  devices: (pending = false) =>
+    api.get<{ devices: Device[] }>(`/devices${pending ? "?pending=true" : ""}`),
+
+  approveDevice: (id: string, input: { label?: string; branchId?: string } = {}) =>
+    api.post<{ ok: boolean }>(`/devices/${id}/approve`, input),
+
+  revokeDevice: (id: string, reason?: string) =>
+    api.post<{ sessionsRevoked: number }>(`/devices/${id}/revoke`, {
+      ...(reason ? { reason } : {}),
+    }),
+
+  sessions: (userId?: string) =>
+    api.get<{ sessions: LiveSession[] }>(
+      `/sessions${userId ? `?userId=${encodeURIComponent(userId)}` : ""}`,
+    ),
+
+  revokeUserSessions: (userId: string, reason?: string) =>
+    api.post<{ revoked: number }>(`/users/${userId}/revoke-sessions`, {
+      ...(reason ? { reason } : {}),
+    }),
 
   savePermissionRule: (
     role: string,

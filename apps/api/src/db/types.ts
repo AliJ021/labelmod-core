@@ -153,6 +153,30 @@ export interface ProductTable {
   status: Generated<string>;
 }
 
+/**
+ * نمای `identity.device_overview` (مهاجرت ۰۳۳) — فقط خواندنی.
+ *
+ * ⚠️ `secret_hash` عمداً اینجا نیست. راز دستگاه است و حتی هشش هم به
+ *    لایه API نمی‌آید؛ `enrolled` فقط می‌گوید هست یا نه.
+ */
+export interface DeviceOverviewView {
+  id: string;
+  fingerprint: string;
+  label: string;
+  kind: string;
+  branch_id: string | null;
+  branch_name: string | null;
+  is_approved: boolean;
+  approved_at: Date | null;
+  approved_by: string | null;
+  approved_by_name: string | null;
+  enrolled: boolean;
+  enrolled_at: Date | null;
+  last_seen_at: Date | null;
+  created_at: Date;
+  active_sessions: number;
+}
+
 export interface BrandTable {
   id: Generated<string>;
   name: string;
@@ -593,6 +617,7 @@ export interface StockCountLineTable {
 
 export interface Database {
   "ledger.fiscal_year": FiscalYearTable;
+  "identity.device_overview": DeviceOverviewView;
   "catalog.brand": BrandTable;
   "catalog.category": CategoryTable;
   "catalog.product": ProductTable;
