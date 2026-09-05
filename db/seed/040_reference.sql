@@ -151,6 +151,7 @@ INSERT INTO identity.permission_rule
 ('supervisor','stock.transfer',    true,  NULL,   NULL,  NULL),
 
 ('warehouse','stock.receive',      true,  NULL,   NULL,  NULL),
+-- انتقال قفسه به انبار پشتیبان، کار روزمره انباردار است.
 ('warehouse','stock.transfer',     true,  NULL,   NULL,  NULL),
 ('warehouse','catalog.manage',     true,  NULL,   NULL,  NULL),
 ('warehouse','device.manage',      false, NULL,   NULL,  NULL),
@@ -161,8 +162,6 @@ INSERT INTO identity.permission_rule
 ('warehouse','cost.view',          false, NULL,   NULL,  NULL),
 -- انباردار کاردکس و موجودی را لازم دارد؛ ارزش ریالی را نه.
 ('warehouse','report.view',        true,  NULL,   NULL,  NULL),
--- انتقال قفسه به انبار پشتیبان، کار روزمره انباردار است.
-('warehouse','stock.transfer',     true,  NULL,   NULL,  NULL),
 
 ('accountant','journal.manual',    true,  NULL,   NULL,  NULL),
 ('accountant','period.close',      true,  NULL,   NULL,  'admin'),
@@ -187,7 +186,6 @@ INSERT INTO identity.permission_rule
 ('admin','deadletter.replay',      true,  NULL,   NULL,  NULL),
 ('admin','cost.view',              true,  NULL,   NULL,  NULL),
 ('admin','report.view',            true,  NULL,   NULL,  NULL),
-('admin','stock.transfer',         true,  NULL,   NULL,  NULL),
 
 -- هفت ردیفی که در فهرست دستیِ بالا جا افتاده بودند و شکافشان فقط با
 -- ساخته‌شدن مسیر مرجوعی معلوم شد. سه‌تایشان **ناسازگار** بودند، نه فقط
