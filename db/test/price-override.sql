@@ -199,6 +199,96 @@ PERFORM pg_temp.assert_eq('سطر عادی list_price ندارد',
   (SELECT count(*) FROM sales.invoice_line
     WHERE invoice_id = v_inv AND line_no = 2 AND list_price IS NULL), 1);
 
+RAISE NOTICE E'\n═══ ۷. set_line_price — قیمت دستی روی سطری که در سبد است ═══';
+
+INSERT INTO sales.invoice (branch_id, warehouse_id, shift_id, occurred_at, created_by)
+VALUES (BR, WH, v_shift, '2026-06-02 14:00+03:30', v_user) RETURNING id INTO v_inv;
+INSERT INTO sales.invoice_line (invoice_id, line_no, variation_id, qty,
+                                unit_price, net_amount)
+VALUES (v_inv, 1, v_var, 2, 1000000, 2000000) RETURNING id INTO v_line;
+
+-- ۹۵۰٬۰۰۰ یعنی ۵٪ کاهش — زیر آستانه ۱۰٪، پس دلیل لازم نیست.
+PERFORM sales.set_line_price(v_inv, v_line, 950000);
+PERFORM pg_temp.assert_eq('قیمت تازه روی سطر می‌نشیند',
+  (SELECT unit_price FROM sales.invoice_line WHERE id = v_line), 950000);
+PERFORM pg_temp.assert_eq('قیمت فهرست Snapshot می‌شود',
+  (SELECT list_price FROM sales.invoice_line WHERE id = v_line), 1000000);
+PERFORM pg_temp.assert_eq('مبلغ سطر از قیمت تازه ساخته می‌شود',
+  (SELECT net_amount FROM sales.invoice_line WHERE id = v_line), 1900000);
+PERFORM pg_temp.assert_eq('جمع فاکتور همان لحظه تازه می‌شود',
+  (SELECT net_amount FROM sales.invoice WHERE id = v_inv), 1900000);
+
+-- تغییر دوم: Snapshot اول **دست نمی‌خورد**. اگر هر بار قیمت جاری سطر
+-- را فهرست می‌گرفت، تایپ اشتباه ۹۵۰ و اصلاحش به ۹۲۰، کاهش واقعی
+-- نسبت به ۱٬۰۰۰٬۰۰۰ را از دست می‌داد و سقف تخفیف سوراخ می‌شد.
+PERFORM sales.set_line_price(v_inv, v_line, 920000);
+PERFORM pg_temp.assert_eq('قیمت فهرست پس از تغییر دوم همان اولی است',
+  (SELECT list_price FROM sales.invoice_line WHERE id = v_line), 1000000);
+PERFORM pg_temp.assert_eq('کاهش کل از فهرست اصلی سنجیده می‌شود',
+  sales.line_markdown((SELECT l FROM sales.invoice_line l WHERE l.id = v_line)), 160000);
+
+-- دلیل تازه جای قبلی را می‌گیرد، ولی دلیل خالی پاکش نمی‌کند.
+PERFORM sales.set_line_price(v_inv, v_line, 930000, 'کالای نمایشگاهی');
+PERFORM pg_temp.assert_eq('دلیل ثبت می‌شود',
+  (SELECT count(*) FROM sales.invoice_line
+    WHERE id = v_line AND price_override_reason = 'کالای نمایشگاهی'), 1);
+PERFORM sales.set_line_price(v_inv, v_line, 940000);
+PERFORM pg_temp.assert_eq('دلیل خالی، دلیل قبلی را پاک نمی‌کند',
+  (SELECT count(*) FROM sales.invoice_line
+    WHERE id = v_line AND price_override_reason = 'کالای نمایشگاهی'), 1);
+
+-- برگشت به قیمت فهرست: سطر دوباره «دست‌نخورده» می‌شود.
+PERFORM sales.set_line_price(v_inv, v_line, 1000000);
+PERFORM pg_temp.assert_eq('برگشت به فهرست، Snapshot را پاک می‌کند',
+  (SELECT count(*) FROM sales.invoice_line
+    WHERE id = v_line AND list_price IS NULL AND price_override_reason IS NULL), 1);
+PERFORM pg_temp.assert_eq('و مبلغ سطر به قیمت فهرست برمی‌گردد',
+  (SELECT net_amount FROM sales.invoice_line WHERE id = v_line), 2000000);
+
+RAISE NOTICE E'\n═══ ۸. set_line_price — نگهبان‌ها ═══';
+
+PERFORM pg_temp.assert_raises('قیمت صفر',
+  format($$SELECT sales.set_line_price(%L, %L, 0)$$, v_inv, v_line));
+PERFORM pg_temp.assert_raises('قیمت منفی',
+  format($$SELECT sales.set_line_price(%L, %L, -1000)$$, v_inv, v_line));
+PERFORM pg_temp.assert_raises('سطری که در این فاکتور نیست',
+  format($$SELECT sales.set_line_price(%L, %L, 900000)$$,
+         v_inv, '00000000-0000-7000-8000-0000000009ff'::uuid));
+
+-- کاهش ۲۰٪ بدون دلیل: Trigger مهاجرت ۰۱۰ روی این UPDATE هم اجرا
+-- می‌شود. این تابع دور نمی‌زندش.
+PERFORM pg_temp.assert_raises('کاهش ۲۰٪ بدون دلیل از این مسیر هم رد می‌شود',
+  format($$SELECT sales.set_line_price(%L, %L, 800000)$$, v_inv, v_line));
+PERFORM sales.set_line_price(v_inv, v_line, 800000, 'مدیر تأیید کرد');
+PERFORM pg_temp.assert_eq('با دلیل، همان کاهش می‌نشیند',
+  (SELECT unit_price FROM sales.invoice_line WHERE id = v_line), 800000);
+
+-- تخفیفی که با قیمت قبلی مجاز بود، با قیمت پایین‌تر از مبلغ قلم
+-- بیشتر می‌شود. سطر نباید منفی شود.
+PERFORM sales.set_line_price(v_inv, v_line, 1000000);
+PERFORM sales.set_line_discount(v_inv, v_line, 1500000, 'تخفیف بزرگ');
+PERFORM pg_temp.assert_raises('قیمتی که تخفیف ثبت‌شده را از مبلغ قلم بیشتر کند',
+  format($$SELECT sales.set_line_price(%L, %L, 700000, 'دلیل')$$, v_inv, v_line));
+PERFORM pg_temp.assert_eq('و سطر دست‌نخورده می‌ماند',
+  (SELECT unit_price FROM sales.invoice_line WHERE id = v_line), 1000000);
+PERFORM sales.set_line_discount(v_inv, v_line, 0);
+
+-- ردّ حسابرسی: هر تغییر قیمت یک سطر در `audit_log` می‌گذارد، با
+-- مقدار پیش و پس. سطر عادی سبد چنین ردی نمی‌سازد.
+SELECT count(*) INTO v_n FROM platform.audit_log
+ WHERE action = 'sale.price_override' AND entity = 'invoice_line'
+   AND entity_id = v_line::text;
+PERFORM pg_temp.assert_eq('هر تغییر قیمت یک ردّ حسابرسی دارد', v_n, 7);
+PERFORM pg_temp.assert_eq('ردّ حسابرسی مقدار پیش و پس دارد',
+  (SELECT count(*) FROM platform.audit_log
+    WHERE entity_id = v_line::text AND action = 'sale.price_override'
+      AND before ? 'unitPrice' AND after ? 'unitPrice'), 7);
+
+-- فاکتور نهایی‌شده سبد ندارد.
+PERFORM sales.finalize_invoice(v_inv, v_user);
+PERFORM pg_temp.assert_raises('فاکتور نهایی‌شده قیمت عوض نمی‌کند',
+  format($$SELECT sales.set_line_price(%L, %L, 900000, 'دلیل')$$, v_inv, v_line));
+
 RAISE NOTICE E'\n═══ ادعاهای پایدار ═══';
 
 SELECT count(*) INTO v_n FROM sales.invoice_line l

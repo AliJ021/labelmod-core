@@ -343,8 +343,16 @@ export class InvoiceService {
     qty: string,
     discountAmount: bigint,
     unitPrice?: bigint | undefined,
+    at?: Date | undefined,
   ): Promise<DiscountCheck> {
-    const list = await this.currentPrice(variationId);
+    // `at` یعنی «قیمت فهرست در لحظه همین فاکتور»، نه قیمت امروز.
+    //
+    // بدون آن، حراجی که وسط یک پیش‌نویس باز شروع شود، سقف را با عددی
+    // می‌سنجید که با `list_price` نشسته روی سطر یکی نیست: دروازه از
+    // یک قیمت حساب می‌کرد و نگهبان دیتابیس از قیمتی دیگر. پیش‌فرض
+    // «حالا» است، برای مسیرهایی که هنوز فاکتوری ندارند (سفارش سایت).
+    const list =
+      at === undefined ? await this.currentPrice(variationId) : await this.currentPrice(variationId, at);
     const listGross = await this.grossOf(list, qty);
     const soldGross = unitPrice === undefined ? listGross : await this.grossOf(unitPrice, qty);
 
@@ -611,6 +619,36 @@ export class InvoiceService {
       await sql`SELECT sales.set_line_discount(
         ${input.invoiceId}::uuid, ${input.lineId}::uuid,
         ${input.discountAmount}::numeric, ${input.discountReason ?? null}::text)`
+        .execute(trx);
+    });
+    return (await this.byId(input.invoiceId)) as Invoice;
+  }
+
+  /**
+   * قیمت دستی روی سطری که همین حالا در سبد است — «مثل دشت».
+   *
+   * مجوز `sale.price_override` و سقف «کاهش کل» اینجا **نیستند**:
+   * `assertMarkdownAllowed` در لایه مسیر می‌سنجدشان، با همان دروازه‌ای
+   * که `POST /lines` و سفارش سایت از آن می‌گذرند.
+   *
+   * Snapshot قیمت فهرست، ردّ حسابرسی و اجبار دلیل همه در
+   * `sales.set_line_price()` هستند — زیر قفل فاکتور، جایی که مسیر
+   * تازه‌ای نمی‌تواند فراموششان کند.
+   */
+  async setLinePrice(input: {
+    invoiceId: string;
+    lineId: string;
+    unitPrice: bigint;
+    priceOverrideReason?: string | undefined;
+    actorId: string;
+  }): Promise<Invoice> {
+    await this.requireDraft(input.invoiceId);
+    await this.#db.transaction().execute(async (trx) => {
+      await setActor(trx, input.actorId);
+      await sql`SELECT sales.set_line_price(
+        ${input.invoiceId}::uuid, ${input.lineId}::uuid,
+        ${serializeMoney(input.unitPrice)}::numeric,
+        ${input.priceOverrideReason ?? null}::text)`
         .execute(trx);
     });
     return (await this.byId(input.invoiceId)) as Invoice;

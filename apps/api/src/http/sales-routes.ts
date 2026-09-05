@@ -93,6 +93,18 @@ const scanBody = z
     message: "کالا باید با شناسه یا بارکد مشخص شود",
   });
 
+/**
+ * قیمت دستی روی سطری که همین حالا در سبد است.
+ *
+ * `unitPrice` اجباری است — این مسیر فقط یک کار می‌کند. «برگرداندن به
+ * قیمت فهرست» هم همین مسیر است: کافی است قیمت فهرست فرستاده شود و
+ * تابع دیتابیس خودش Snapshot را پاک می‌کند.
+ */
+const setLinePriceBody = z.object({
+  unitPrice: moneyString,
+  priceOverrideReason: z.string().max(200).optional(),
+});
+
 /** تخفیف روی سطری که همین حالا در سبد است. */
 const setLineDiscountBody = z.object({
   discountAmount: moneyString,
@@ -454,6 +466,59 @@ export function registerSalesRoutes(app: FastifyInstance, deps: SalesRouteDeps):
         discountAmount: body.discountAmount,
         actorId: s.userId,
         ...(body.discountReason === undefined ? {} : { discountReason: body.discountReason }),
+      }),
+    );
+  });
+
+  /**
+   * قیمت دستی روی سطری که همین حالا در سبد است — «مثل دشت».
+   *
+   * تا امروز قیمت دستی فقط در لحظه **افزودن** قلم ممکن بود، و صندوق
+   * از آن مسیر استفاده نمی‌کرد: صندوق‌دار اسکن می‌کرد و بعد راهی
+   * نداشت جز حذف سطر و ثبت دوباره‌اش. آن راه قیمت فهرست را از
+   * `catalog.price` **دوباره** می‌خواند، پس حراجِ وسط شیفت، عددی را
+   * که سقف تخفیف از آن سنجیده می‌شود بی‌صدا عوض می‌کرد.
+   *
+   * دروازه همان `assertMarkdownAllowed` است — هیچ منطق تازه‌ای اینجا
+   * نیست. `settingPrice` یعنی «الان دارد قیمت نوشته می‌شود»، پس هم
+   * `sale.price_override` سنجیده می‌شود و هم سقف کاهش کل؛ تخفیفِ
+   * ثبت‌شده سطر هم در همان عدد می‌آید، وگرنه ترکیبِ تخفیف مجاز و
+   * قیمت پایین‌تر از سقف رد می‌شد.
+   */
+  app.patch("/invoices/:id/lines/:lineId/price", async (req) => {
+    const s = session(req);
+    const { id, lineId } = z.object({ id: uuid, lineId: uuid }).parse(req.params);
+    const body = setLinePriceBody.parse(req.body);
+    await assertInvoiceInScope(db, s.userId, id, invoices);
+    await requireForSession(db, s, "sale.create");
+
+    const inv = await invoices.byId(id);
+    if (!inv) throw new InvoiceError("invoice_not_found", "فاکتور یافت نشد", 404);
+    const line = inv.lines.find((l) => l.id === lineId);
+    if (!line) throw new InvoiceError("line_not_found", "این قلم در فاکتور نیست", 404);
+
+    await assertMarkdownAllowed(s, {
+      variationId: line.variationId,
+      qty: line.qty,
+      discount: line.discountAmount,
+      settingPrice: parseMoney(body.unitPrice),
+      // قیمت فهرست **در لحظه همین فاکتور** خوانده می‌شود، نه امروز.
+      // `set_line_price` هم Snapshot را از خودِ سطر می‌گیرد؛ اگر
+      // دروازه از قیمت امروز حساب می‌کرد، حراجِ وسط شیفت دو عدد
+      // متفاوت می‌ساخت و سقف با عددی سنجیده می‌شد که روی فاکتور
+      // ننشسته.
+      at: inv.occurredAt,
+    });
+
+    return invoiceToJson(
+      await invoices.setLinePrice({
+        invoiceId: id,
+        lineId,
+        unitPrice: parseMoney(body.unitPrice),
+        actorId: s.userId,
+        ...(body.priceOverrideReason === undefined
+          ? {}
+          : { priceOverrideReason: body.priceOverrideReason }),
       }),
     );
   });

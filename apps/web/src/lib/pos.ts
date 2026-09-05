@@ -9,10 +9,11 @@
  * ریال با جمع سطرها فرق می‌کند. تبدیل فقط در `lib/money.ts` و فقط
  * برای **نمایش**.
  *
- * **قیمت از کلاینت نمی‌آید.** هیچ‌کدام از توابع اینجا `unitPrice`
- * نمی‌فرستند. صندوق فقط می‌گوید «این بارکد، این تعداد»؛ قیمت را
- * سرور از `catalog.price` می‌خواند. قیمت دستی مسیر مجوزدار خودش را
- * دارد و مرحله ۳ است.
+ * **قیمت از کلاینت نمی‌آید — مگر از یک مسیر، و آن مسیر مجوزدار است.**
+ * `scan`، `setLineQty` و `setLineDiscount` هیچ‌وقت قیمت نمی‌فرستند؛
+ * صندوق فقط می‌گوید «این بارکد، این تعداد» و قیمت را سرور از
+ * `catalog.price` می‌خواند. تنها استثنا `setLinePrice` است که پشت
+ * `sale.price_override` و سقف «کاهش کل» نشسته و با PIN باز نمی‌شود.
  *
  * **جمع‌ها از پاسخ سرور خوانده می‌شوند، نه دوباره حساب.** هر تماسی که
  * سبد را عوض می‌کند، **کل فاکتور** را برمی‌گرداند. دو تعریف از یک
@@ -179,6 +180,48 @@ export interface UnpostedRow {
   cogsAmount: string;
 }
 
+/**
+ * آیا این دوره از داشبورد بسته می‌شود؟
+ *
+ * سه شرط، و هر سه دلیل مالی دارند — نه سلیقه UI:
+ *
+ * **فقط دوره کانال.** دوره شیفت با شمردن پول کشو بسته می‌شود؛
+ * `sales.close_channel_day` هم فقط `kind = 'channel_day'` را می‌شناسد
+ * و برای دوره شیفت خطا می‌دهد.
+ *
+ * **دوره امروز نه.** بستن دوره یعنی هر فاکتور بعدیِ همان روز و همان
+ * کانال با «دوره ثبت این فاکتور قبلاً بسته شده است» رد می‌شود —
+ * `sales.resolve_posting_batch` این را اجبار می‌کند. کار شبانه هم به
+ * همین دلیل امروز را رد می‌کند. `today` باید از **سرور** بیاید
+ * (`platform.business_date()`)، نه از ساعت مرورگر: تبلتی که ساعتش
+ * عقب است، دوره امروز را «دیروز» می‌دید.
+ *
+ * **مجوز `period.close`.** که فقط یک راحتی است؛ دروازه سرور است.
+ */
+export function canClosePeriod(
+  row: UnpostedRow,
+  today: string,
+  mayClose: boolean,
+): boolean {
+  return row.batchKind === "channel_day" && row.businessDate !== today && mayClose;
+}
+
+/**
+ * چرا دکمه‌ای نیست — «هیچ» بدتر از یک جمله است.
+ *
+ * `undefined` یعنی دکمه هست و توضیحی لازم نیست.
+ */
+export function periodNote(
+  row: UnpostedRow,
+  today: string,
+  mayClose: boolean,
+): string | undefined {
+  if (row.batchKind !== "channel_day") return "با بستن شیفت صندوق بسته می‌شود";
+  if (row.businessDate === today) return "دوره امروز هنوز باز است";
+  if (!mayClose) return "بستن دوره دسترسی حسابدار می‌خواهد";
+  return undefined;
+}
+
 export interface ScanResult {
   invoice: Invoice;
   /** درخواست تازه اجرا شد یا پاسخ قبلی برگشت. */
@@ -265,6 +308,23 @@ export const pos = {
     opts?: RequestOptions,
   ) => api.patch<Invoice>(`/invoices/${invoiceId}/lines/${lineId}/discount`, input, opts),
 
+  /**
+   * قیمت دستی روی سطر — «مثل دشت».
+   *
+   * تنها جایی در این فایل که قیمت به سرور می‌رود، و عمداً مسیر خودش
+   * را دارد: مجوز `sale.price_override` جدا از سقف تخفیف سنجیده
+   * می‌شود و با PIN هم باز نمی‌شود.
+   *
+   * فرستادن **قیمت فهرست** یعنی «برگرد به فهرست» — سرور خودش
+   * Snapshot و دلیل را پاک می‌کند.
+   */
+  setLinePrice: (
+    invoiceId: string,
+    lineId: string,
+    input: { unitPrice: string; priceOverrideReason?: string },
+    opts?: RequestOptions,
+  ) => api.patch<Invoice>(`/invoices/${invoiceId}/lines/${lineId}/price`, input, opts),
+
   removeLine: (invoiceId: string, lineId: string, opts?: RequestOptions) =>
     api.del<Invoice>(`/invoices/${invoiceId}/lines/${lineId}`, opts),
 
@@ -297,6 +357,25 @@ export const pos = {
    * آن را یک «خطا» نداند، بلکه فقط کارت را نشان ندهد.
    */
   unpostedRevenue: () => api.get<{ rows: UnpostedRow[] }>("/posting-batches/unposted"),
+
+  /**
+   * بستن دوره ثبت یک کانال در یک روز — سند فروش و بهای تمام‌شده.
+   *
+   * **موجودی را دست نمی‌زند.** کالا همان لحظه فروش از انبار خارج شده؛
+   * آنچه اینجا بسته می‌شود فقط سند حسابداری است.
+   *
+   * `Idempotency-Key` نمی‌فرستد و نباید بفرستد: سرور کلید را از
+   * (شعبه، کانال، تاریخ) می‌سازد و هدر کلاینت را عمداً نادیده
+   * می‌گیرد. هویت این عملیات همان سه‌تایی است، نه هدری که مرورگر
+   * تولید کرده.
+   */
+  closeChannelDay: (input: { branchId: string; channel: string; date: string }) =>
+    api.post<{
+      batchId: string;
+      saleEntry: string | null;
+      cogsEntry: string | null;
+      replayed: boolean;
+    }>("/posting-batches/close-channel-day", input),
 
   /** علت‌های مجاز مرجوعی با برچسب فارسی — از `platform.setting`. */
   returnReasons: () => api.get<{ reasons: ReturnReason[] }>("/return-reasons"),

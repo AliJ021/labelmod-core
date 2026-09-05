@@ -28,6 +28,7 @@ const BRANCH = "00000000-0000-7000-8000-000000000001";
 const STORE_WH = "00000000-0000-7000-8000-000000000101";
 
 interface Line {
+  id: string;
   unitPrice: string;
   discountAmount: string;
   netAmount: string;
@@ -121,6 +122,29 @@ describe("قیمت دستی روی سطر فاکتور", { skip }, () => {
       ...s,
       payload,
     });
+  }
+
+  async function setPrice(
+    username: string,
+    invoiceId: string,
+    lineId: string,
+    payload: Record<string, string>,
+  ) {
+    const s = await loginAs(username);
+    return await app.inject({
+      method: "PATCH",
+      url: `/invoices/${invoiceId}/lines/${lineId}/price`,
+      ...s,
+      payload,
+    });
+  }
+
+  /** یک پیش‌نویس با یک سطر به قیمت فهرست — نقطه شروع تست‌های قیمت دستی. */
+  async function draftWithLine(username: string, qty = "1") {
+    const invoiceId = await newDraft(username);
+    const r = await addLine(username, invoiceId, { variationId, qty });
+    assert.equal(r.statusCode, 201, r.body);
+    return { invoiceId, lineId: (JSON.parse(r.body) as InvoiceJson).lines[0]!.id };
   }
 
   before(async () => {
@@ -315,5 +339,216 @@ describe("قیمت دستی روی سطر فاکتور", { skip }, () => {
       SELECT count(*) AS n FROM platform.audit_log WHERE action = 'sale.price_override'`
       .execute(handle.db);
     assert.equal(Number(afterRows.rows[0]!.n), Number(before.rows[0]!.n) + 1);
+  });
+  // ── قیمت دستی روی سطری که همین حالا در سبد است ────────────────────
+  //
+  // مسیر `PATCH /lines/:id/price` همان دروازه `POST /lines` را دارد.
+  // این تست‌ها ثابت می‌کنند «همان» یعنی همان، نه یک کپی که عقب مانده.
+
+  test("صندوق‌دار قیمت سطر را هم عوض نمی‌کند", async () => {
+    const { invoiceId, lineId } = await draftWithLine(cashier);
+    const r = await setPrice(cashier, invoiceId, lineId, { unitPrice: "950000" });
+    assert.equal(r.statusCode, 403, r.body);
+    assert.equal((JSON.parse(r.body) as { error: { code: string } }).error.code, "deny");
+  });
+
+  test("سرپرست قیمت سطر اسکن‌شده را عوض می‌کند", async () => {
+    const { invoiceId, lineId } = await draftWithLine(supervisor, "2");
+    const r = await setPrice(supervisor, invoiceId, lineId, { unitPrice: "900000" });
+    assert.equal(r.statusCode, 200, r.body);
+    const body = JSON.parse(r.body) as InvoiceJson;
+    const line = body.lines[0] as Line;
+    assert.equal(line.unitPrice, "900000", "قیمت تازه روی سطر نشسته");
+    assert.equal(line.discountAmount, "0", "به تخفیف تبدیل نشده");
+    assert.equal(line.listPrice, "1000000", "قیمت فهرست Snapshot شده");
+    assert.equal(line.netAmount, "1800000");
+    assert.equal(body.netAmount, "1800000", "جمع فاکتور همان لحظه تازه شده");
+  });
+
+  test("تغییر دوم، Snapshot اول را دست نمی‌زند — و سقف را دور نمی‌زند", async () => {
+    // **ادعای مرکزی این بخش.**
+    //
+    // اگر هر تغییر، قیمت جاری سطر را «فهرست» می‌گرفت، این دنباله سقف
+    // ۲۵٪ سرپرست را دور می‌زد: ۹۰۰٬۰۰۰ یعنی ۱۰٪ (مجاز)، و بعد
+    // ۷۰۰٬۰۰۰ نسبت به ۹۰۰٬۰۰۰ یعنی ۲۲٪ (باز هم مجاز) — در حالی که
+    // کاهش واقعی نسبت به فهرست ۳۰٪ است.
+    const { invoiceId, lineId } = await draftWithLine(supervisor);
+    assert.equal(
+      (await setPrice(supervisor, invoiceId, lineId, { unitPrice: "900000" })).statusCode,
+      200,
+    );
+    const r = await setPrice(supervisor, invoiceId, lineId, {
+      unitPrice: "700000",
+      priceOverrideReason: "تست سقف",
+    });
+    assert.equal(r.statusCode, 428, r.body);
+    assert.equal((JSON.parse(r.body) as { error: { code: string } }).error.code, "needs_approval");
+
+    // و سطر دست‌نخورده مانده — رد شدن یعنی هیچ‌چیز ننوشته شد.
+    const after = await app.inject({
+      method: "GET",
+      url: `/invoices/${invoiceId}`,
+      ...(await loginAs(supervisor)),
+    });
+    assert.equal((JSON.parse(after.body) as InvoiceJson).lines[0]?.unitPrice, "900000");
+  });
+
+  test("برگشت به قیمت فهرست، Snapshot و دلیل را پاک می‌کند", async () => {
+    const { invoiceId, lineId } = await draftWithLine(supervisor);
+    await setPrice(supervisor, invoiceId, lineId, {
+      unitPrice: "920000",
+      priceOverrideReason: "اشتباه تایپی",
+    });
+    const r = await setPrice(supervisor, invoiceId, lineId, { unitPrice: "1000000" });
+    assert.equal(r.statusCode, 200, r.body);
+    const line = (JSON.parse(r.body) as InvoiceJson).lines[0] as Line;
+    assert.equal(line.listPrice, null, "سطر دوباره دست‌نخورده است");
+    assert.equal(line.priceOverrideReason, null);
+    assert.equal(line.netAmount, "1000000");
+  });
+
+  test("تخفیفِ ثبت‌شده در سقفِ قیمت تازه هم می‌آید", async () => {
+    // ۱۵٪ تخفیف مجاز است، و ۱۵٪ کاهش قیمت هم. با هم ۳۰٪ می‌شوند و
+    // باید همان تأیید مدیر را بخواهند.
+    const { invoiceId, lineId } = await draftWithLine(supervisor);
+    const d = await app.inject({
+      method: "PATCH",
+      url: `/invoices/${invoiceId}/lines/${lineId}/discount`,
+      ...(await loginAs(supervisor)),
+      payload: { discountAmount: "150000", discountReason: "تخفیف پرسنلی" },
+    });
+    assert.equal(d.statusCode, 200, d.body);
+    const r = await setPrice(supervisor, invoiceId, lineId, {
+      unitPrice: "850000",
+      priceOverrideReason: "تست جمع",
+    });
+    assert.equal(r.statusCode, 428, r.body);
+  });
+
+  test("کاهش بالای آستانه بدون دلیل، از دیتابیس ۴۰۹ می‌گیرد", async () => {
+    const { invoiceId, lineId } = await draftWithLine(supervisor);
+    const r = await setPrice(supervisor, invoiceId, lineId, { unitPrice: "800000" });
+    assert.equal(r.statusCode, 409, r.body);
+    const b = JSON.parse(r.body) as { error: { code: string; message: string } };
+    assert.equal(b.error.code, "rule_violation");
+    assert.match(b.error.message, /دلیل/);
+  });
+
+  test("قیمت صفر و سطر ناموجود", async () => {
+    const { invoiceId, lineId } = await draftWithLine(supervisor);
+    assert.equal(
+      (await setPrice(supervisor, invoiceId, lineId, { unitPrice: "0" })).statusCode,
+      422,
+    );
+    const r = await setPrice(
+      supervisor,
+      invoiceId,
+      "00000000-0000-7000-8000-0000000009ff",
+      { unitPrice: "900000" },
+    );
+    assert.equal(r.statusCode, 404, r.body);
+  });
+
+  test("تغییر قیمت سطر، ردّ حسابرسی با مقدار پیش و پس می‌گذارد", async () => {
+    const { invoiceId, lineId } = await draftWithLine(supervisor);
+    const r = await setPrice(supervisor, invoiceId, lineId, {
+      unitPrice: "930000",
+      priceOverrideReason: "کالای ویترینی",
+    });
+    assert.equal(r.statusCode, 200, r.body);
+
+    const rows = await sql<{
+      reason: string | null;
+      before: Record<string, string | null>;
+      after: Record<string, string>;
+    }>`SELECT reason, before, after FROM platform.audit_log
+        WHERE action = 'sale.price_override' AND entity_id = ${lineId}
+        ORDER BY id DESC LIMIT 1`.execute(handle.db);
+    assert.equal(rows.rows.length, 1, "ردّ حسابرسی از خودِ تابع دیتابیس می‌آید");
+    assert.equal(rows.rows[0]?.reason, "کالای ویترینی");
+    assert.equal(rows.rows[0]?.before.unitPrice, "1000000");
+    assert.equal(rows.rows[0]?.after.unitPrice, "930000");
+  });
+
+  test("حراجِ وسط پیش‌نویس، سقف را جابه‌جا نمی‌کند", async () => {
+    // سناریوی واقعی: مشتری ساعت ۱۰ کالا را آورده و قیمت ۱٬۰۰۰٬۰۰۰
+    // بوده. ساعت ۱۰:۳۰ مالک حراج می‌گذارد و قیمت فهرست ۵۰۰٬۰۰۰
+    // می‌شود. حالا سرپرست روی همان پیش‌نویس ۷۵۰٬۰۰۰ می‌نویسد.
+    //
+    // اگر دروازه قیمت **امروز** را فهرست بگیرد، ۷۵۰٬۰۰۰ گران‌تر از
+    // فهرست است و هیچ سقفی فعال نمی‌شود — در حالی که `list_price`
+    // نشسته روی سطر ۱٬۰۰۰٬۰۰۰ است و نگهبان دیتابیس همان را می‌بیند.
+    // دو لایه، دو عدد.
+    const prod = await sql<{ id: string }>`
+      INSERT INTO catalog.product (code, name_internal)
+      VALUES (${`P-SALE-${suffix}`}, 'کالای حراج') RETURNING id`.execute(handle.db);
+    const v = await sql<{ id: string }>`
+      INSERT INTO catalog.variation (product_id, color, size, sku)
+      VALUES (${prod.rows[0]!.id}, 'سفید', 'M', ${`SKU-SALE-${suffix}`}) RETURNING id`
+      .execute(handle.db);
+    const saleVar = v.rows[0]!.id;
+    // `platform.set_actor()` با `is_local = true` ست می‌شود، پس فقط
+    // داخل همان تراکنش معنا دارد — روی Pool اشتراکی به دستور بعدی
+    // نمی‌رسد. به همین دلیل هر دو در یک تراکنش‌اند.
+    await handle.db.transaction().execute(async (trx) => {
+      await sql`SELECT platform.set_actor(${supervisorId}::uuid)`.execute(trx);
+      await sql`SELECT catalog.set_price(${saleVar}::uuid, 1000000)`.execute(trx);
+      await sql`SELECT inventory.apply_movement(
+                  ${saleVar}::uuid, ${STORE_WH}::uuid, 10, 'purchase_receipt',
+                  NULL, NULL, ${supervisorId}::uuid, 400000)`.execute(trx);
+    });
+
+    const invoiceId = await newDraft(supervisor);
+    const added = await addLine(supervisor, invoiceId, { variationId: saleVar, qty: "1" });
+    assert.equal(added.statusCode, 201, added.body);
+    const lineId = (JSON.parse(added.body) as InvoiceJson).lines[0]!.id;
+
+    // حراج، **بعد از** باز شدن پیش‌نویس
+    await handle.db.transaction().execute(async (trx) => {
+      await sql`SELECT platform.set_actor(${supervisorId}::uuid)`.execute(trx);
+      await sql`SELECT catalog.set_price(${saleVar}::uuid, 500000, 'markdown',
+                  'حراج وسط شیفت')`.execute(trx);
+    });
+
+    // ۷۰۰٬۰۰۰ نسبت به فهرستِ لحظه فاکتور (۱٬۰۰۰٬۰۰۰) یعنی ۳۰٪ — بالای
+    // سقف ۲۵٪ سرپرست، پس باید ۴۲۸ «نیازمند تأیید» بگیرد.
+    //
+    // **دلیل عمداً فرستاده می‌شود** تا نگهبان دیتابیس از سر راه کنار
+    // برود و فقط نردبان مجوز سنجیده شود. بدون دلیل، ۴۰۹ دیتابیس
+    // هر دو حالت را می‌پوشاند و این تست هیچ‌چیز را ثابت نمی‌کرد.
+    //
+    // اگر دروازه قیمت **امروز** (۵۰۰٬۰۰۰) را فهرست بگیرد، ۷۰۰٬۰۰۰
+    // گران‌تر از فهرست است، کاهش صفر می‌شود و پاسخ ۲۰۰ — یعنی همان
+    // سقفی که کل این مسیر برایش وجود دارد، بی‌صدا دور زده می‌شود.
+    const r = await setPrice(supervisor, invoiceId, lineId, {
+      unitPrice: "700000",
+      priceOverrideReason: "حراج",
+    });
+    assert.equal(r.statusCode, 428, `سقف باید از قیمت لحظه فاکتور سنجیده شود: ${r.body}`);
+  });
+
+  test("فاکتور نهایی‌شده قیمت عوض نمی‌کند", async () => {
+    const { invoiceId, lineId } = await draftWithLine(supervisor);
+    const s = await loginAs(supervisor);
+    const pay = await app.inject({
+      method: "POST",
+      url: `/invoices/${invoiceId}/payments`,
+      ...s,
+      payload: { methodCode: "cash", amount: "1000000" },
+    });
+    assert.equal(pay.statusCode, 201, pay.body);
+    const fin = await app.inject({
+      method: "POST",
+      url: `/invoices/${invoiceId}/finalize`,
+      ...s,
+      payload: {},
+    });
+    assert.equal(fin.statusCode, 200, fin.body);
+
+    const r = await setPrice(supervisor, invoiceId, lineId, {
+      unitPrice: "900000",
+      priceOverrideReason: "دیر شد",
+    });
+    assert.equal(r.statusCode, 409, r.body);
   });
 });

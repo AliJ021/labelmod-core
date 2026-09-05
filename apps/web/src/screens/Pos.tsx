@@ -42,6 +42,20 @@ function message(err: unknown): string {
   return "ارتباط با سرور برقرار نشد.";
 }
 
+/**
+ * سطری که دیگر تعدادش از مسیر «+/−» عوض نمی‌شود.
+ *
+ * همان شرطی که `sales.set_line_qty` و `InvoiceService.setLineQty`
+ * دارند. اینجا تکرار شده تا کاربر **پیش از** کلیک بفهمد؛ دروازه
+ * همچنان سرور است.
+ */
+function adjusted(line: { discountAmount: string; listPrice: string | null }): boolean {
+  return line.listPrice !== null || parseRial(line.discountAmount) > 0n;
+}
+
+const QTY_LOCKED =
+  "تعداد سطری که تخفیف خورده یا قیمتش دستی عوض شده از اینجا تغییر نمی‌کند؛ سطر را حذف و دوباره ثبت کنید.";
+
 /** انبار پیش‌فرض: قفسه فروشگاه، نه انبار پشتیبان یا کالای معیوب. */
 function defaultWarehouse(b: Branch) {
   return b.warehouses.find((w) => w.kind === "store") ?? b.warehouses[0];
@@ -61,6 +75,7 @@ export function Pos() {
   const [note, setNote] = useState<string | null>(null);
   const [closing, setClosing] = useState(false);
   const [discounting, setDiscounting] = useState<string | null>(null);
+  const [pricing, setPricing] = useState<string | null>(null);
   const [camera, setCamera] = useState(false);
 
   // بیرون از چرخه Render: کلیدی که داخل Render ساخته شود، دقیقاً روی
@@ -297,6 +312,28 @@ export function Pos() {
       setDiscounting(null);
     });
 
+  /**
+   * قیمت دستی روی سطر — «مثل دشت».
+   *
+   * `Idempotency-Key` نمی‌گیرد و لازم هم ندارد: مقدار **مطلق** است،
+   * پس تلاش دوباره همان قیمت را می‌نویسد نه یک اثر دوم — همان دلیلی
+   * که `setLineQty` و تخفیف هم کلید ندارند.
+   *
+   * سقف کاهش، مجوز نوشتن قیمت و اجبار دلیل هیچ‌کدام اینجا نیستند.
+   * سرور ۴۰۳/۴۲۸/۴۰۹ فارسی می‌دهد و همان در نوار خطا دیده می‌شود.
+   */
+  const applyPrice = (lineId: string, priceRial: bigint, why: string) =>
+    guarded(async () => {
+      if (!invoice) return;
+      setInvoice(
+        await pos.setLinePrice(invoice.id, lineId, {
+          unitPrice: priceRial.toString(),
+          ...(why.trim() === "" ? {} : { priceOverrideReason: why.trim() }),
+        }),
+      );
+      setPricing(null);
+    });
+
   const takePayment = (methodCode: string, amountRial: bigint, refNo?: string) =>
     guarded(async () => {
       if (!invoice) return;
@@ -463,14 +500,46 @@ export function Pos() {
               <li key={l.id}>
                 <div className="line-name">
                   <strong>{l.productName}</strong>
-                  <span className="muted small">{l.sku}</span>
+                  <span className="muted small">
+                    {l.sku}
+                    {/*
+                      قیمت فهرست فقط وقتی نوشته می‌شود که سطر واقعاً
+                      دستکاری شده باشد. صندوق‌دار باید ببیند از چه
+                      عددی پایین آمده — وگرنه تایپ اشتباه تا لحظه
+                      پرداخت پیدا نمی‌شود.
+
+                      این **دو قیمت روی فاکتور** نیست: فاکتور چاپی
+                      همان یک عدد را دارد و این فقط روی صفحه سبد است.
+                    */}
+                    {l.listPrice === null ? null : (
+                      <>
+                        {" · "}
+                        <span className="num">{toman(parseRial(l.unitPrice))}</span>
+                        {" به‌جای "}
+                        <span className="num">{toman(parseRial(l.listPrice))}</span>
+                      </>
+                    )}
+                  </span>
                 </div>
+                {/*
+                  سطری که تخفیف خورده یا قیمتش دستی عوض شده، تعدادش
+                  از این مسیر عوض نمی‌شود — و این تصمیم سرور است، نه
+                  سلیقه صفحه: تخفیف یک **مبلغ مطلق** برای تعدادِ آن
+                  لحظه است و با تغییر تعداد یا درصد کاهش بی‌صدا عوض
+                  می‌شود یا مبلغ ثبت‌شده.
+
+                  دکمه‌ها غیرفعال‌اند نه پنهان: صندوق‌دار باید بفهمد
+                  چرا، نه اینکه دکمه ناپدید شود. بدون این، کلیک روی
+                  «+» فقط یک خطای سرور می‌داد که همان حرف را دیرتر
+                  می‌زد.
+                */}
                 <div className="qty">
                   <button
                     type="button"
                     onClick={() => void changeQty(l.id, l.qty, -1)}
                     aria-label={`کم کردن ${l.productName}`}
-                    disabled={busy}
+                    disabled={busy || adjusted(l)}
+                    title={adjusted(l) ? QTY_LOCKED : undefined}
                   >
                     −
                   </button>
@@ -481,7 +550,8 @@ export function Pos() {
                     type="button"
                     onClick={() => void changeQty(l.id, l.qty, 1)}
                     aria-label={`اضافه کردن ${l.productName}`}
-                    disabled={busy}
+                    disabled={busy || adjusted(l)}
+                    title={adjusted(l) ? QTY_LOCKED : undefined}
                   >
                     +
                   </button>
@@ -490,7 +560,23 @@ export function Pos() {
                 <button
                   type="button"
                   className="line-drop"
-                  onClick={() => setDiscounting(discounting === l.id ? null : l.id)}
+                  onClick={() => {
+                    setDiscounting(null);
+                    setPricing(pricing === l.id ? null : l.id);
+                  }}
+                  aria-label={`تغییر قیمت ${l.productName}`}
+                  title="قیمت دستی"
+                  disabled={busy}
+                >
+                  ﷼
+                </button>
+                <button
+                  type="button"
+                  className="line-drop"
+                  onClick={() => {
+                    setPricing(null);
+                    setDiscounting(discounting === l.id ? null : l.id);
+                  }}
                   aria-label={`تخفیف ${l.productName}`}
                   title="تخفیف"
                   disabled={busy}
@@ -506,6 +592,15 @@ export function Pos() {
                 >
                   ✕
                 </button>
+                {pricing === l.id ? (
+                  <PricePanel
+                    unitPrice={parseRial(l.unitPrice)}
+                    listPrice={l.listPrice === null ? null : parseRial(l.listPrice)}
+                    busy={busy}
+                    onApply={(price, why) => void applyPrice(l.id, price, why)}
+                    onCancel={() => setPricing(null)}
+                  />
+                ) : null}
                 {discounting === l.id ? (
                   <DiscountPanel
                     gross={lineGross(l)}
@@ -752,6 +847,99 @@ function CloseShiftPanel({
  * است، و آن هم فقط برای اینکه کاربر پیش از کلیک بفهمد. سرور و
  * دیتابیس هر دو دوباره می‌سنجندش.
  */
+/**
+ * قیمت دستی روی یک سطر — «مثل دشت».
+ *
+ * ── چرا قیمت واحد، نه مبلغ سطر ────────────────────────────────────
+ *
+ * صندوق‌دار قیمتی را می‌نویسد که روی برچسب یا در ذهن مشتری است، و آن
+ * قیمت **یک عدد** است نه جمع دو تا. اگر مبلغ سطر گرفته می‌شد، برای
+ * تعداد ۳ باید تقسیم می‌کردیم — و تقسیم ریالی باقی‌مانده دارد که یا
+ * روی یک قلم می‌نشیند یا گم می‌شود.
+ *
+ * ── چه چیزی اینجا سنجیده **نمی‌شود** ──────────────────────────────
+ *
+ * سقف کاهش، مجوز `sale.price_override` و اجبار ثبت دلیل. هر سه سرور
+ * و دیتابیس‌اند. تکرارشان اینجا یعنی دو تعریف از یک قاعده مالی، و
+ * آنکه عقب می‌ماند همان است که دور زده می‌شود. تنها چیزی که این فرم
+ * می‌داند: قیمت باید عددی مثبت باشد.
+ *
+ * ورودی `type="text"` است نه `type="number"` — صفحه‌کلید فارسی «۴۸»
+ * می‌فرستد و ورودی عددی مرورگر آن را دور می‌اندازد.
+ */
+function PricePanel({
+  unitPrice,
+  listPrice,
+  busy,
+  onApply,
+  onCancel,
+}: {
+  unitPrice: bigint;
+  listPrice: bigint | null;
+  busy: boolean;
+  onApply: (price: bigint, why: string) => void;
+  onCancel: () => void;
+}) {
+  const [amount, setAmount] = useState(toman(unitPrice).replace(/٬/g, ""));
+  const [why, setWhy] = useState("");
+  const rial = amount.trim() === "" ? null : rialFromTomanInput(amount);
+  const bad = rial === null || rial <= 0n;
+
+  return (
+    <Solid className="line-discount stack" style={{ gap: "var(--s-2)" }}>
+      <label className="auth-field">
+        <span>
+          قیمت واحد (تومان)
+          {listPrice === null ? null : ` — قیمت فهرست ${toman(listPrice)}`}
+        </span>
+        <input
+          type="text"
+          inputMode="numeric"
+          value={amount}
+          onChange={(e) => setAmount(e.target.value)}
+          autoFocus
+        />
+      </label>
+      <label className="auth-field">
+        <span>دلیل — بالای آستانه اجباری است</span>
+        <input value={why} onChange={(e) => setWhy(e.target.value)} />
+      </label>
+      {bad && amount.trim() !== "" ? (
+        <p className="auth-error" role="alert">
+          <span className="dot dot--crit" aria-hidden="true">●</span> قیمت باید عددی بزرگ‌تر
+          از صفر باشد.
+        </p>
+      ) : null}
+      <button
+        type="button"
+        className="btn btn--primary"
+        disabled={busy || bad}
+        onClick={() => rial !== null && rial > 0n && onApply(rial, why)}
+      >
+        ثبت قیمت
+      </button>
+      {/*
+        برگرداندن به فهرست همان مسیر است — سرور با دیدنِ قیمت فهرست،
+        Snapshot و دلیل را پاک می‌کند. دکمه جدا لازم است چون
+        صندوق‌داری که اشتباه تایپ کرده، عدد اصلی را از حفظ نمی‌داند.
+      */}
+      {listPrice === null ? null : (
+        <button
+          type="button"
+          className="btn btn--quiet"
+          disabled={busy}
+          onClick={() => onApply(listPrice, "")}
+        >
+          برگرداندن به قیمت فهرست
+        </button>
+      )}
+      <button type="button" className="btn btn--quiet" onClick={onCancel} disabled={busy}>
+        انصراف
+      </button>
+    </Solid>
+  );
+}
+
 function DiscountPanel({
   gross,
   current,
