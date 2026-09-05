@@ -82,8 +82,16 @@ class LMC_Settings
             ? sanitize_textarea_field(wp_unslash($_POST['payment_map']))
             : '';
 
-        $new['sync_stock'] = empty($_POST['sync_stock']) ? 'no' : 'yes';
-        $new['debug_log']  = empty($_POST['debug_log']) ? 'no' : 'yes';
+        $new['sync_stock']   = empty($_POST['sync_stock']) ? 'no' : 'yes';
+        $new['sync_price']   = empty($_POST['sync_price']) ? 'no' : 'yes';
+        $new['link_by_sku']  = empty($_POST['link_by_sku']) ? 'no' : 'yes';
+        $new['sync_instore'] = empty($_POST['sync_instore']) ? 'no' : 'yes';
+        $new['debug_log']    = empty($_POST['debug_log']) ? 'no' : 'yes';
+
+        $list = isset($_POST['price_list'])
+            ? sanitize_text_field(wp_unslash($_POST['price_list']))
+            : 'default';
+        $new['price_list'] = $list === '' ? 'default' : $list;
 
         update_option(LMC_OPTION, $new);
 
@@ -91,6 +99,19 @@ class LMC_Settings
         // اشاره می‌کرد و نگه‌داشتنش یعنی موجودی انبار تازه ناقص بیاید.
         if ($new['warehouse_id'] !== $old['warehouse_id']) {
             delete_option(LMC_Stock_Sync::CURSOR_OPTION);
+        }
+
+        // فهرست قیمت هم همین‌طور: مکان‌نما فقط تغییرات موجودی را دنبال
+        // می‌کند، پس کالایی که فقط قیمتش در فهرست تازه فرق دارد هرگز
+        // دوباره نمی‌آمد و ویترین با قیمت فهرست قبلی می‌ماند.
+        if (($new['price_list'] ?? '') !== ($old['price_list'] ?? '')) {
+            delete_option(LMC_Stock_Sync::CURSOR_OPTION);
+        }
+
+        // شعبه عوض شد؟ مکان‌نمای خرید حضوری به شعبه قبلی اشاره می‌کرد.
+        if ($new['branch_id'] !== $old['branch_id']) {
+            delete_option(LMC_Instore::CURSOR_OPTION);
+            delete_option(LMC_Instore::CURSOR_ID);
         }
 
         wp_safe_redirect(add_query_arg('lmc_msg', 'saved', admin_url('admin.php?page=' . self::PAGE)));
@@ -168,7 +189,38 @@ class LMC_Settings
             '<label><input type="checkbox" name="sync_stock" value="1" '
                 . checked($s['sync_stock'], 'yes', false) . '> '
                 . esc_html__('موجودی سایت هر ۱۵ دقیقه از انبار به‌روز شود', 'labelmod-connector') . '</label>',
-            __('انبار مرجع است. قیمت هرگز همگام نمی‌شود — آن یک تصمیم تجاری است، نه یک کار خودکار.', 'labelmod-connector')
+            __('انبار مرجع است. اتصال با کلید «_lmc_variation_id» روی کالای سایت برقرار می‌شود، نه با نام و نه با SKU — پس نام سایت می‌تواند برای سئو آزادانه فرق کند.', 'labelmod-connector')
+        );
+
+        self::row(
+            __('همگام‌سازی قیمت', 'labelmod-connector'),
+            '<label><input type="checkbox" name="sync_price" value="1" '
+                . checked($s['sync_price'], 'yes', false) . '> '
+                . esc_html__('قیمت کالاهای سایت از حسابداری به‌روز شود', 'labelmod-connector') . '</label>',
+            __('قیمت مرجع در حسابداری است. «فروش ویژه» ووکامرس دست نمی‌خورد؛ فقط قیمت اصلی نوشته می‌شود. کالایی که در فهرست قیمت انتخاب‌شده قیمت ندارد، دست‌نخورده می‌ماند — صفر نوشته نمی‌شود.', 'labelmod-connector')
+        );
+
+        self::row(
+            __('فهرست قیمت', 'labelmod-connector'),
+            '<input type="text" name="price_list" class="regular-text" dir="ltr" value="'
+                . esc_attr($s['price_list']) . '">',
+            __('کدام فهرست قیمت به سایت برود. پیش‌فرض «default» — اگر قیمت آنلاین جدا دارید، کد همان فهرست را بنویسید.', 'labelmod-connector')
+        );
+
+        self::row(
+            __('اتصال اولیه با SKU', 'labelmod-connector'),
+            '<label><input type="checkbox" name="link_by_sku" value="1" '
+                . checked($s['link_by_sku'], 'yes', false) . '> '
+                . esc_html__('کالاهایی که هنوز کلید اتصال ندارند، یک بار با SKU پیدا شوند', 'labelmod-connector') . '</label>',
+            __('پلی برای سایتی که تازه وصل می‌شود: کلید اتصال همان لحظه نوشته می‌شود. پس از یک دور کامل می‌توانید خاموشش کنید تا SKU سایت آزادانه عوض شود.', 'labelmod-connector')
+        );
+
+        self::row(
+            __('خریدهای حضوری در حساب کاربری', 'labelmod-connector'),
+            '<label><input type="checkbox" name="sync_instore" value="1" '
+                . checked($s['sync_instore'], 'yes', false) . '> '
+                . esc_html__('خرید حضوری مشتری در حساب کاربری سایت دیده شود', 'labelmod-connector') . '</label>',
+            __('با شماره موبایل به حساب مشتری وصل می‌شود و اگر حسابی نباشد ساخته می‌شود. این رکورد **سفارش ووکامرس نیست**: موجودی را کم نمی‌کند، ایمیل نمی‌فرستد و در گزارش فروش سایت نمی‌آید.', 'labelmod-connector')
         );
 
         self::row(

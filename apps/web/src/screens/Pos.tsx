@@ -35,6 +35,7 @@ import { canFinalize, changeRial, lineGross, remainingRial, steppedQty } from ".
 import { parseRial, rialFromTomanInput, toman } from "../lib/money.ts";
 import { forgetCart, readCart, rememberCart } from "../lib/open-cart.ts";
 import { pos, type Branch, type Invoice, type PaymentMethod, type Shift } from "../lib/pos.ts";
+import { normalizeDigits } from "../lib/settings-value.ts";
 import { ScanBuffer } from "../lib/scanner.ts";
 
 function message(err: unknown): string {
@@ -77,6 +78,8 @@ export function Pos() {
   const [discounting, setDiscounting] = useState<string | null>(null);
   const [pricing, setPricing] = useState<string | null>(null);
   const [camera, setCamera] = useState(false);
+  /** شماره مشتری — **اختیاری**. فروش ناشناس کارِ عادی است. */
+  const [mobile, setMobile] = useState("");
 
   // بیرون از چرخه Render: کلیدی که داخل Render ساخته شود، دقیقاً روی
   // همان Retry که باید نجاتش بدهد عوض می‌شود.
@@ -332,6 +335,22 @@ export function Pos() {
         }),
       );
       setPricing(null);
+    });
+
+  /**
+   * چسباندن مشتری به سبد.
+   *
+   * نرمال‌سازی واقعی در دیتابیس است (`sales.normalize_mobile`)؛
+   * `normalizeDigits` فقط رقم فارسی و عربی را لاتین می‌کند چون
+   * صفحه‌کلید فارسی «۰۹۱۲…» می‌فرستد.
+   */
+  const attachCustomer = () =>
+    guarded(async () => {
+      if (!invoice) return;
+      const m = normalizeDigits(mobile).trim();
+      if (m === "") return;
+      setInvoice(await pos.attachCustomer(invoice.id, { mobile: m }));
+      setNote("مشتری به این فاکتور وصل شد.");
     });
 
   const takePayment = (methodCode: string, amountRial: bigint, refNo?: string) =>
@@ -614,6 +633,51 @@ export function Pos() {
             ))}
             {lines.length === 0 && <li className="empty">سبد خالی است — بارکد را اسکن کنید</li>}
           </ul>
+
+          {/*
+            شماره مشتری — **اختیاری**، و عمداً پایین سبد.
+
+            بالای صفحه یعنی صندوق‌دار حس کند باید اول شماره بگیرد و
+            صف بایستد. اینجا یعنی وقتی سبد بسته می‌شود پرسیده شود، یا
+            اصلاً نشود: فروش ناشناس کارِ عادی است.
+
+            فایده‌اش دو چیز است و هر دو برای مشتری: سابقه خرید، و
+            دیده‌شدن همین خرید در حساب کاربری سایت.
+          */}
+          {invoice ? (
+            <div className="pos-customer row" style={{ gap: "var(--s-2)" }}>
+              <label className="sr-only" htmlFor="pos-mobile">
+                شماره موبایل مشتری (اختیاری)
+              </label>
+              {/*
+                `type="text"` نه `type="tel"` و نه `type="number"` —
+                صفحه‌کلید فارسی «۰۹۱۲» می‌فرستد و ورودی عددی مرورگر
+                آن را دور می‌اندازد.
+              */}
+              <input
+                id="pos-mobile"
+                type="text"
+                inputMode="numeric"
+                autoComplete="off"
+                placeholder={
+                  invoice.customerId === null
+                    ? "موبایل مشتری (اختیاری)"
+                    : "مشتری وصل است — برای تغییر شماره تازه بزنید"
+                }
+                value={mobile}
+                onChange={(e) => setMobile(e.target.value)}
+                disabled={busy}
+              />
+              <button
+                type="button"
+                className="btn btn--quiet"
+                onClick={() => void attachCustomer()}
+                disabled={busy || normalizeDigits(mobile).trim() === ""}
+              >
+                {invoice.customerId === null ? "افزودن مشتری" : "تغییر مشتری"}
+              </button>
+            </div>
+          ) : null}
         </Solid>
 
         <PayPanel

@@ -12,12 +12,19 @@
  *
  * می‌کند:
  *   • سفارشِ **پرداخت‌شده** را به `POST /web/orders` می‌فرستد
- *   • موجودی را از `GET /web/stock` می‌گیرد و روی SKU می‌نشاند
+ *   • موجودی و قیمت را از `GET /web/stock` می‌گیرد و با کلید اتصال
+ *     (`_lmc_variation_id`) روی کالای سایت می‌نشاند — نه با نام و نه
+ *     با SKU، چون نام سایت و نام حسابداری عمداً یکی نیستند
+ *   • خرید **حضوری** را از `GET /web/instore-purchases` می‌گیرد و در
+ *     حساب کاربری مشتری نشان می‌دهد، با برچسب «سفارش حضوری»
  *
  * نمی‌کند، و عمداً:
- *   • **قیمت را به سایت نمی‌نویسد.** قیمت سایت می‌تواند از قیمت
- *     فروشگاه فرق کند (کمپین، ارسال رایگان) و همگام‌سازی خودکارش
- *     تصمیمی است که مالک باید بگیرد، نه چیزی که بی‌صدا اتفاق بیفتد.
+ *   • **خرید حضوری را `shop_order` نمی‌کند.** ساختن سفارش ووکامرس
+ *     برای خریدی که در فروشگاه انجام شده، موجودی را دوباره کم می‌کند،
+ *     ایمیل می‌فرستد، در گزارش سایت دوباره شمرده می‌شود، و از همه
+ *     بدتر یک **حلقه بازگشتی** می‌سازد چون همان Hookهایی را می‌زند که
+ *     این افزونه به آن‌ها گوش می‌دهد. رکورد در نوع پست جدای
+ *     `lmc_instore_purchase` می‌نشیند که هیچ Hook ووکامرسی ندارد.
  *   • **سفارش پرداخت‌نشده را نمی‌فرستد.** فاکتور در آن سیستم کالا را
  *     از انبار خارج می‌کند؛ سفارشی که هرگز پرداخت نشود، موجودی را
  *     بی‌دلیل می‌خورد.
@@ -48,11 +55,14 @@ define('LMC_OPTION', 'labelmod_connector_settings');
 define('LMC_ORDER_EVENT', 'lmc_send_order');
 /** رویداد Cron همگام‌سازی موجودی. */
 define('LMC_STOCK_EVENT', 'lmc_sync_stock');
+/** رویداد Cron دریافت خرید حضوری. */
+define('LMC_INSTORE_EVENT', 'lmc_sync_instore');
 
 require_once LMC_PATH . 'includes/class-lmc-client.php';
 require_once LMC_PATH . 'includes/class-lmc-settings.php';
 require_once LMC_PATH . 'includes/class-lmc-order-sync.php';
 require_once LMC_PATH . 'includes/class-lmc-stock-sync.php';
+require_once LMC_PATH . 'includes/class-lmc-instore.php';
 
 /**
  * بدون ووکامرس این افزونه بی‌معناست — و با فعال‌ماندنش، خطای مرگبار
@@ -71,6 +81,7 @@ add_action('plugins_loaded', function () {
     LMC_Settings::init();
     LMC_Order_Sync::init();
     LMC_Stock_Sync::init();
+    LMC_Instore::init();
 });
 
 /**
@@ -84,10 +95,19 @@ register_activation_hook(__FILE__, function () {
     if (!wp_next_scheduled(LMC_STOCK_EVENT)) {
         wp_schedule_event(time() + 60, 'lmc_quarter_hour', LMC_STOCK_EVENT);
     }
+    if (!wp_next_scheduled(LMC_INSTORE_EVENT)) {
+        wp_schedule_event(time() + 120, 'lmc_quarter_hour', LMC_INSTORE_EVENT);
+    }
+    // نقطه پایان تازه بدون این، ۴۰۴ می‌دهد — و کسی نمی‌فهمد چرا.
+    LMC_Instore::register_post_type();
+    LMC_Instore::register_endpoint();
+    flush_rewrite_rules();
 });
 
 register_deactivation_hook(__FILE__, function () {
     wp_clear_scheduled_hook(LMC_STOCK_EVENT);
+    wp_clear_scheduled_hook(LMC_INSTORE_EVENT);
+    flush_rewrite_rules();
 });
 
 add_filter('cron_schedules', function ($schedules) {
@@ -117,6 +137,15 @@ function lmc_settings(): array
         'currency_unit' => 'toman',
         'payment_map'   => '',
         'sync_stock'    => 'yes',
+        // قیمت پیش‌فرض **خاموش** است: سایتی که کمپین مستقل دارد نباید
+        // با نصب افزونه بی‌صدا قیمت‌هایش عوض شود. روشن‌کردنش یک تصمیم
+        // آگاهانه است.
+        'sync_price'    => 'no',
+        'price_list'    => 'default',
+        // پل یک‌بارمصرف SKU → متا. پس از یک دور کامل می‌شود خاموشش
+        // کرد تا SKU سایت آزادانه عوض شود.
+        'link_by_sku'   => 'yes',
+        'sync_instore'  => 'yes',
         'debug_log'     => 'no',
     ], $saved);
 }

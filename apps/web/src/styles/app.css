@@ -1251,3 +1251,26 @@ select.set-input {
     white-space: nowrap;
   }
 }
+
+/*
+  ردیف شماره مشتری در صندوق.
+
+  ورودی فضای باقی‌مانده را می‌گیرد و دکمه به اندازه خودش می‌ماند.
+  ارتفاع ۴۴ پیکسل، چون هدف لمسی زیر آن روی تبلت پای صندوق قابل زدن
+  نیست — همان بودجه‌ای که `design.md` گذاشته.
+*/
+.pos-customer {
+  margin-block-start: var(--s-2);
+  align-items: center;
+}
+
+.pos-customer input {
+  flex: 1 1 auto;
+  min-height: 44px;
+  min-width: 0;
+}
+
+.pos-customer .btn {
+  min-height: 44px;
+  white-space: nowrap;
+}

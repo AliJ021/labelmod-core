@@ -534,6 +534,42 @@ export function registerSalesRoutes(app: FastifyInstance, deps: SalesRouteDeps):
    * تازه باشد: دو بار اسکن عمدی یعنی دو عدد. کلید فقط برای این است
    * که Retry شبکه، عدد سوم نسازد.
    */
+  /**
+   * چسباندن مشتری به سبد — **اختیاری**، با شماره موبایل.
+   *
+   * تصمیم مالک: پرسیدن شماره پای صندوق اجباری نیست. فروش ناشناس
+   * کارِ عادی است و این مسیر فقط وقتی صدا زده می‌شود که مشتری شماره
+   * داده باشد.
+   *
+   * فایده‌اش دو چیز است: سابقه خرید مشتری، و دیده‌شدن همان خرید در
+   * حساب کاربری سایت (`GET /web/instore-purchases`).
+   *
+   * مجوزش `sale.create` است، نه `customer.manage`: صندوق‌دار باید
+   * بتواند شماره بگیرد بدون اینکه بتواند پرونده مشتری را ویرایش کند.
+   */
+  app.patch("/invoices/:id/customer", async (req) => {
+    const s = session(req);
+    const { id } = z.object({ id: uuid }).parse(req.params);
+    await assertInvoiceInScope(db, s.userId, id, invoices);
+    await requireForSession(db, s, "sale.create");
+
+    const body = z
+      .object({
+        mobile: z.string().trim().min(1).max(20),
+        fullName: z.string().trim().max(120).optional(),
+      })
+      .parse(req.body);
+
+    return invoiceToJson(
+      await invoices.attachCustomer({
+        invoiceId: id,
+        mobile: body.mobile,
+        ...(body.fullName === undefined ? {} : { fullName: body.fullName }),
+        actorId: s.userId,
+      }),
+    );
+  });
+
   app.post("/invoices/:id/scan", async (req) => {
     const s = session(req);
     const { id } = z.object({ id: uuid }).parse(req.params);
