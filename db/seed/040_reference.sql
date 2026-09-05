@@ -123,6 +123,9 @@ INSERT INTO identity.permission_rule
 ('cashier','report.view',          false, NULL,   NULL,  NULL),
 -- انتقال بین انبار کار انباردار است، نه صندوق.
 ('cashier','stock.transfer',       false, NULL,   NULL,  NULL),
+-- ساخت کاربر و پرونده مشتری، هیچ‌کدام کار صندوق نیست.
+('cashier','user.manage',          false, NULL,   NULL,  NULL),
+('cashier','customer.manage',      false, NULL,   NULL,  NULL),
 
 ('supervisor','sale.create',       true,  NULL,   NULL,  NULL),
 ('supervisor','sale.discount',     true,  NULL,   25.00, NULL),
@@ -149,6 +152,10 @@ INSERT INTO identity.permission_rule
 -- `null` می‌کند، نه صفر.
 ('supervisor','report.view',       true,  NULL,   NULL,  NULL),
 ('supervisor','stock.transfer',    true,  NULL,   NULL,  NULL),
+-- سرپرست پرونده مشتری را می‌بیند و رضایت پیامکش را عوض می‌کند،
+-- ولی کاربر نمی‌سازد: ساخت پرسنل تصمیم مالک است.
+('supervisor','user.manage',       false, NULL,   NULL,  NULL),
+('supervisor','customer.manage',   true,  NULL,   NULL,  NULL),
 
 ('warehouse','stock.receive',      true,  NULL,   NULL,  NULL),
 -- انتقال قفسه به انبار پشتیبان، کار روزمره انباردار است.
@@ -162,6 +169,8 @@ INSERT INTO identity.permission_rule
 ('warehouse','cost.view',          false, NULL,   NULL,  NULL),
 -- انباردار کاردکس و موجودی را لازم دارد؛ ارزش ریالی را نه.
 ('warehouse','report.view',        true,  NULL,   NULL,  NULL),
+('warehouse','user.manage',        false, NULL,   NULL,  NULL),
+('warehouse','customer.manage',    false, NULL,   NULL,  NULL),
 
 ('accountant','journal.manual',    true,  NULL,   NULL,  NULL),
 ('accountant','period.close',      true,  NULL,   NULL,  'admin'),
@@ -169,6 +178,9 @@ INSERT INTO identity.permission_rule
 ('accountant','report.view',       true,  NULL,   NULL,  NULL),
 -- حسابدار موجودی را جابه‌جا نمی‌کند؛ گزارشش را می‌بیند.
 ('accountant','stock.transfer',    false, NULL,   NULL,  NULL),
+-- حسابدار سقف اعتبار و مهلت مشتری را تعیین می‌کند؛ آن یک تصمیم
+-- مالی است، نه یک ویرایش پرونده.
+('accountant','customer.manage',   true,  NULL,   NULL,  NULL),
 ('accountant','settings.security', false, NULL,   NULL,  NULL),
 
 ('admin','sale.create',            true,  NULL,   NULL,  NULL),
@@ -220,6 +232,7 @@ INSERT INTO identity.permission_rule
 ('admin','stock.count',            true,  NULL,   NULL,  NULL),
 ('admin','stock.receive',          true,  NULL,   NULL,  NULL),
 ('admin','stock.transfer',         true,  NULL,   NULL,  NULL),
+('admin','customer.manage',        true,  NULL,   NULL,  NULL),
 
 -- تعریف کالا و ساخت خودکار تنوع‌ها.
 --
