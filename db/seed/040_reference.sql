@@ -116,6 +116,9 @@ INSERT INTO identity.permission_rule
 ('cashier','refund.cash',          false, NULL,   NULL,  NULL),
 ('cashier','invoice.cancel',       false, NULL,   NULL,  NULL),
 ('cashier','cost.view',            false, NULL,   NULL,  NULL),
+-- صندوق‌دار گزارش نمی‌بیند: کارش فروش است و «خلاصه امروز» را از
+-- داشبورد دارد. گزارش دوره‌ای تصمیم مالک و حسابدار است.
+('cashier','report.view',          false, NULL,   NULL,  NULL),
 
 ('supervisor','sale.create',       true,  NULL,   NULL,  NULL),
 ('supervisor','sale.discount',     true,  NULL,   25.00, NULL),
@@ -137,6 +140,10 @@ INSERT INTO identity.permission_rule
 ('supervisor','stock.adjust',      true,  NULL,   NULL,  'admin'),
 ('supervisor','shift.close',       true,  NULL,   NULL,  NULL),
 ('supervisor','cost.view',         false, NULL,   NULL,  NULL),
+-- سرپرست فروش شعبه‌اش را می‌بیند ولی نه بها و سود را — همان تفکیکی
+-- که `cost.view` از روز اول داشت. مسیر گزارش ستون‌های بها را برایش
+-- `null` می‌کند، نه صفر.
+('supervisor','report.view',       true,  NULL,   NULL,  NULL),
 
 ('warehouse','stock.receive',      true,  NULL,   NULL,  NULL),
 ('warehouse','stock.transfer',     true,  NULL,   NULL,  NULL),
@@ -147,10 +154,13 @@ INSERT INTO identity.permission_rule
 ('warehouse','stock.count',        true,  NULL,   NULL,  NULL),
 ('warehouse','stock.adjust',       true,  NULL,   NULL,  'admin'),
 ('warehouse','cost.view',          false, NULL,   NULL,  NULL),
+-- انباردار کاردکس و موجودی را لازم دارد؛ ارزش ریالی را نه.
+('warehouse','report.view',        true,  NULL,   NULL,  NULL),
 
 ('accountant','journal.manual',    true,  NULL,   NULL,  NULL),
 ('accountant','period.close',      true,  NULL,   NULL,  'admin'),
 ('accountant','cost.view',         true,  NULL,   NULL,  NULL),
+('accountant','report.view',       true,  NULL,   NULL,  NULL),
 ('accountant','settings.security', false, NULL,   NULL,  NULL),
 
 ('admin','sale.create',            true,  NULL,   NULL,  NULL),
@@ -167,6 +177,7 @@ INSERT INTO identity.permission_rule
 ('admin','user.manage',            true,  NULL,   NULL,  NULL),
 ('admin','deadletter.replay',      true,  NULL,   NULL,  NULL),
 ('admin','cost.view',              true,  NULL,   NULL,  NULL),
+('admin','report.view',            true,  NULL,   NULL,  NULL),
 
 -- هفت ردیفی که در فهرست دستیِ بالا جا افتاده بودند و شکافشان فقط با
 -- ساخته‌شدن مسیر مرجوعی معلوم شد. سه‌تایشان **ناسازگار** بودند، نه فقط
