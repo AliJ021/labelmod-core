@@ -167,9 +167,22 @@ export function registerScopeRoutes(app: FastifyInstance, deps: ScopeRouteDeps):
       profit_amount: string;
       invoice_count: string;
       return_count: string;
-    }>`SELECT * FROM sales.daily_summary(
-         ${q.branchId}::uuid,
-         coalesce(${q.date ?? null}::date, platform.business_date()))`.execute(db);
+      // ⚠️ `business_date::text` — و این «سلیقه» نیست.
+      //
+      // درایور، ستون `date` را به `Date` جاوااسکریپت تبدیل می‌کند و
+      // `JSON.stringify` آن را «۲۰۲۶-۰۹-۰۵T۰۰:۰۰:۰۰.۰۰۰Z» می‌نویسد،
+      // نه «۲۰۲۶-۰۹-۰۵». دو اثر داشت و هر دو بی‌صدا بودند: داشبورد
+      // یک برچسب زشت نشان می‌داد، و مقایسه «آیا این دوره مالِ امروز
+      // است؟» **هیچ‌وقت** برابر نمی‌شد — یعنی دکمه بستن دوره برای
+      // دوره امروز هم ظاهر می‌شد، دقیقاً همان چیزی که آن نگهبان
+      // برای جلوگیری‌اش هست.
+      //
+      // `posting-batch.ts` از قبل همین Cast را داشت با همین دلیل.
+    }>`SELECT business_date::text, sales_amount, received_amount,
+              profit_amount, invoice_count, return_count
+         FROM sales.daily_summary(
+           ${q.branchId}::uuid,
+           coalesce(${q.date ?? null}::date, platform.business_date()))`.execute(db);
 
     // `daily_summary` یک CROSS JOIN از سه CTE تک‌سطری است، پس همیشه
     // **دقیقاً** یک سطر می‌دهد — حتی برای روزی که هیچ فروشی نداشته

@@ -14,7 +14,15 @@ import { useEffect, useState } from "react";
 import { Glass, Solid } from "../components/Glass.tsx";
 import { ApiError } from "../lib/api.ts";
 import { parseRial, toman } from "../lib/money.ts";
-import { pos, type Branch, type DailyReport, type UnpostedRow } from "../lib/pos.ts";
+import {
+  canClosePeriod,
+  periodNote,
+  pos,
+  type Branch,
+  type DailyReport,
+  type UnpostedRow,
+} from "../lib/pos.ts";
+import { session } from "../lib/session.ts";
 
 export function Dashboard() {
   const [branch, setBranch] = useState<Branch | null>(null);
@@ -28,6 +36,21 @@ export function Dashboard() {
    * اطمینان بی‌پشتوانه است.
    */
   const [unposted, setUnposted] = useState<UnpostedRow[] | null>(null);
+  /**
+   * آیا این کاربر اجازه بستن دوره را دارد؟
+   *
+   * `cost.view` (که فهرست را نشان می‌دهد) و `period.close` دو چیزند:
+   * صندوق‌دار هیچ‌کدام را ندارد، ولی حسابدارِ فقط‌خوان می‌تواند اولی را
+   * داشته باشد و دومی را نه. دکمه‌ای که سرور بعداً ۴۰۳ بدهد، بدتر از
+   * نبودنش است.
+   *
+   * ⚠️ این یک **راحتی** است، نه دروازه. سرور در لحظه اجرا دوباره
+   *    مجوز می‌گیرد.
+   */
+  const [mayClose, setMayClose] = useState(false);
+  const [closing, setClosing] = useState<string | null>(null);
+  const [closeError, setCloseError] = useState<string | null>(null);
+  const [closed, setClosed] = useState<string | null>(null);
 
   useEffect(() => {
     void (async () => {
@@ -48,6 +71,15 @@ export function Dashboard() {
         } catch {
           setUnposted(null);
         }
+
+        // جدا از بالا: اگر پرسش مجوز شکست بخورد، کارت باید همچنان
+        // دیده شود — فقط بدون دکمه. یکی‌کردن این دو `try` یعنی یک
+        // خطای بی‌ربط، زنگ خطر «درآمد ثبت‌نشده» را خاموش کند.
+        try {
+          setMayClose((await session.can("period.close")).verdict === "allow");
+        } catch {
+          setMayClose(false);
+        }
       } catch (err) {
         setError(err instanceof ApiError ? err.message : "ارتباط با سرور برقرار نشد.");
       }
@@ -65,6 +97,45 @@ export function Dashboard() {
   }
 
   if (!report) return <Solid className="pad">در حال بارگذاری…</Solid>;
+
+  /**
+   * بستن دوره یک کانال — همان دکمه‌ای که تا امروز هیچ کاری نمی‌کرد.
+   *
+   * سه چیز که این تابع نگه می‌دارد:
+   *
+   * **کلید Idempotency نمی‌فرستد.** سرور آن را از (شعبه، کانال،
+   * تاریخ) می‌سازد و هدر کلاینت را نادیده می‌گیرد؛ فرستادنش فقط
+   * توهم می‌ساخت.
+   *
+   * **دو بار کلیک، یک بار اثر.** `closing` پیش از تماس ست می‌شود و
+   * دکمه غیرفعال؛ و حتی اگر از دستمان در برود، سرور Replay می‌دهد نه
+   * سند دوم.
+   *
+   * **پیام سرور همان‌طور که هست دیده می‌شود.** «دوره ثبتی برای این
+   * کانال وجود ندارد» و «هیچ فاکتوری نهایی نشده» جمله‌های فارسیِ
+   * دیتابیس‌اند و ترجمه دوباره‌شان فقط دقت را کم می‌کرد.
+   */
+  async function closeDay(row: UnpostedRow) {
+    if (closing !== null) return;
+    setClosing(row.batchId);
+    setCloseError(null);
+    setClosed(null);
+    try {
+      await pos.closeChannelDay({
+        branchId: row.branchId,
+        channel: row.channel,
+        date: row.businessDate,
+      });
+      setClosed(`دوره ${row.channel} در ${row.businessDate} بسته شد.`);
+      // فهرست از سرور دوباره خوانده می‌شود، نه اینکه سطر را از حافظه
+      // برداریم: اگر بستن نیمه‌کاره مانده باشد، سطر باید بماند.
+      setUnposted((await pos.unpostedRevenue()).rows);
+    } catch (err) {
+      setCloseError(err instanceof ApiError ? err.message : "ارتباط با سرور برقرار نشد.");
+    } finally {
+      setClosing(null);
+    }
+  }
 
   const sales = parseRial(report.salesAmount);
   const received = parseRial(report.receivedAmount);
@@ -142,22 +213,39 @@ export function Dashboard() {
       */}
       <Glass as="section" className="pad">
         <h2 style={{ fontSize: "1rem" }}>نیاز به رسیدگی</h2>
+        {closeError ? (
+          <p className="auth-error" role="alert">
+            <span className="dot dot--crit" aria-hidden="true">●</span> {closeError}
+          </p>
+        ) : null}
+        {closed ? (
+          <p className="muted small" role="status">
+            <Dot tone="good" />
+            {closed}
+          </p>
+        ) : null}
         <ul className="tasks">
           {unposted === null ? (
             <Task
               tone="warn"
               label="برای دیدن درآمد ثبت‌نشده، دسترسی بهای تمام‌شده لازم است"
-              action=""
             />
           ) : unposted.length === 0 ? (
-            <Task tone="good" label="همه درآمدها به دفتر رفته‌اند" action="" />
+            <Task tone="good" label="همه درآمدها به دفتر رفته‌اند" />
           ) : (
             unposted.map((r) => (
               <Task
                 key={r.batchId}
                 tone="crit"
                 label={`${r.invoiceCount} فاکتور ${r.channel} در ${r.businessDate} هنوز به دفتر نرفته`}
-                action="بستن دوره"
+                note={periodNote(r, report.businessDate, mayClose)}
+                {...(canClosePeriod(r, report.businessDate, mayClose)
+                  ? {
+                      action: closing === r.batchId ? "در حال بستن…" : "بستن دوره",
+                      onAction: () => void closeDay(r),
+                      busy: closing !== null,
+                    }
+                  : {})}
               />
             ))
           )}
@@ -193,19 +281,35 @@ function Kpi({
 function Task({
   tone,
   label,
+  note,
   action,
+  onAction,
+  busy,
 }: {
   tone: "good" | "warn" | "crit";
   label: string;
-  action: string;
+  note?: string | undefined;
+  action?: string | undefined;
+  onAction?: (() => void) | undefined;
+  busy?: boolean | undefined;
 }) {
   return (
     <li>
       <Dot tone={tone} />
       <span>{label}</span>
-      <button type="button" className="link">
-        {action}
-      </button>
+      {/*
+        دکمه فقط وقتی ساخته می‌شود که کاری برای انجام باشد. نسخه
+        قبلی همیشه یک `<button>` می‌گذاشت — بی `onClick` و گاهی با
+        متن خالی — یعنی صفحه‌خوان یک دکمه بی‌نام اعلام می‌کرد و کلیک
+        روی «بستن دوره» بی‌صدا هیچ کاری نمی‌کرد.
+      */}
+      {action === undefined || onAction === undefined ? (
+        note === undefined ? null : <span className="muted small task-note">{note}</span>
+      ) : (
+        <button type="button" className="link" onClick={onAction} disabled={busy === true}>
+          {action}
+        </button>
+      )}
     </li>
   );
 }

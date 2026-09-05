@@ -185,6 +185,14 @@
   flex: 1;
 }
 
+/*
+  یادداشت کنار یک کار — جای **دکمه** را می‌گیرد، نه جای عنوان.
+  بدون این، `.tasks span { flex: 1 }` عرض را با برچسب نصف می‌کرد.
+*/
+.tasks .task-note {
+  flex: 0 0 auto;
+}
+
 .link {
   border: 0;
   background: none;
@@ -193,6 +201,12 @@
   min-height: var(--touch);
   padding-inline: var(--s-2);
   border-radius: var(--r-xs);
+}
+
+/* دکمه‌ای که کار می‌کند باید از دکمه‌ای که منتظر است جدا دیده شود. */
+.link:disabled {
+  color: var(--ink-2);
+  cursor: default;
 }
 
 .pill {

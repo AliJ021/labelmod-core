@@ -109,6 +109,18 @@ export function isNoSession(err: unknown): boolean {
   return err instanceof ApiError && (err.status === 401 || err.code === "no_session");
 }
 
+/**
+ * پاسخ موتور مجوز — همان چیزی که `identity.can()` برمی‌گرداند.
+ *
+ * `needs_approval` از `deny` جداست: اولی یعنی «کسی باید تأیید کند» و
+ * دومی یعنی «نه». یکی‌کردنشان یعنی سرپرست هیچ‌وقت پرسیده نمی‌شود.
+ */
+export interface Decision {
+  verdict: "allow" | "deny" | "needs_approval";
+  approver: string | null;
+  reason: string;
+}
+
 export const session = {
   /** `null` یعنی وارد نشده یا قفل — از هم قابل تفکیک نیستند. */
   async me(): Promise<Me | null> {
@@ -118,6 +130,17 @@ export const session = {
       if (isNoSession(err)) return null;
       throw err;
     }
+  },
+
+  /**
+   * «آیا می‌توانم؟» — تا صفحه دکمه‌ای نشان ندهد که سرور بعداً ردش کند.
+   *
+   * ⚠️ **دروازه نیست.** هر عملیات حساس در لحظه اجرا دوباره مجوز
+   *    می‌گیرد؛ این فقط برای اینکه کاربر به بن‌بست نخورد. صفحه‌ای که
+   *    فقط به این تکیه کند، با یک درخواست مستقیم دور زده می‌شود.
+   */
+  can(operation: string): Promise<Decision> {
+    return api.get<Decision>(`/auth/can?operation=${encodeURIComponent(operation)}`);
   },
 
   login(input: {
