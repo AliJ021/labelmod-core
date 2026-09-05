@@ -89,7 +89,7 @@ export interface ReturnRouteDeps {
 }
 
 export function registerReturnRoutes(app: FastifyInstance, deps: ReturnRouteDeps): void {
-  const { db, returns, shifts } = deps;
+  const { db, returns } = deps;
 
   const session = (req: { session: unknown }) => {
     const s = req.session as

@@ -61,6 +61,21 @@ function isValid(v: string | null): v is string {
 }
 
 /**
+ * خواندنی که هرگز پرتاب نمی‌کند.
+ *
+ * `localStorage` در حالت ناشناس و با «مسدودکردن داده سایت» خودش
+ * پرتاب می‌کند — نه اینکه `null` بدهد. بدون این پوشش، صفحه ورود
+ * **سفید** می‌شد: به‌جای «PIN کار نمی‌کند»، «هیچ‌چیز کار نمی‌کند».
+ */
+export function safeRead(store: DeviceStore, key: string): string | null {
+  try {
+    return store.read(key);
+  } catch {
+    return null;
+  }
+}
+
+/**
  * شناسه پایدار این مرورگر. اگر نبود یا خراب بود، تازه ساخته می‌شود.
  *
  * شناسه تازه یعنی دستگاه از دید سرور **ناشناس** است: ورود کامل کار
@@ -72,12 +87,7 @@ export function deviceFingerprint(store: DeviceStore = browserStore): string {
   // پرتاب نمی‌کند» است و نباید به پیاده‌سازی Store وابسته باشد. اگر
   // این تابع پرتاب کند، کل صفحه ورود سفید می‌شود — یعنی حالت ناشناس
   // مرورگر به‌جای «PIN کار نمی‌کند»، «هیچ‌چیز کار نمی‌کند» می‌شد.
-  let existing: string | null = null;
-  try {
-    existing = store.read(KEY);
-  } catch {
-    existing = null;
-  }
+  const existing = safeRead(store, KEY);
   if (isValid(existing)) return existing;
 
   const fresh = randomId();

@@ -41,6 +41,7 @@ import {
   type TreasuryService,
 } from "../treasury/transaction.ts";
 import { CHEQUE_ACTIONS, ChequeError, type ChequeService } from "../treasury/cheque.ts";
+import { CONTROL_CHARS } from "../lib/text.ts";
 
 const uuid = z.string().uuid("شناسه نامعتبر");
 
@@ -51,8 +52,6 @@ const moneyString = z
   .refine((v) => v.length <= 18, { message: "مبلغ بزرگ‌تر از حد مجاز است" });
 
 /** نویسه‌های کنترلی و جهت‌دهی — همان فهرست بقیه مرزهای API. */
-const CONTROL_CHARS = /[\u0000-\u001f\u007f-\u009f\u200e\u200f\u202a-\u202e\u2066-\u2069]/;
-
 const text = (max: number) =>
   z
     .string()

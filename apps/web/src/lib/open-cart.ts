@@ -18,7 +18,7 @@
  * دیگر مال این نشست نیست و بازگرداندنش یعنی فروش را به شیفت اشتباه
  * چسبانده‌ایم.
  */
-import { browserStore, type DeviceStore } from "./device.ts";
+import { safeRead, browserStore, type DeviceStore } from "./device.ts";
 
 const KEY = "labelmod_open_cart";
 
@@ -57,12 +57,8 @@ export function forgetCart(store: DeviceStore = browserStore): void {
  * یادداشت هم پاک می‌شود تا دفعه بعد دوباره سنجیده نشود.
  */
 export function readCart(shiftId: string, store: DeviceStore = browserStore): OpenCart | null {
-  let raw: string | null = null;
-  try {
-    raw = store.read(KEY);
-  } catch {
-    return null;
-  }
+  // همان پوششی که `deviceFingerprint` دارد — یک تعریف، نه دو تا.
+  const raw = safeRead(store, KEY);
   if (raw === null || raw === "") return null;
 
   let parsed: unknown;

@@ -28,6 +28,7 @@ import { PurchasingError, type ReceiptService } from "../purchasing/receipt.ts";
 import { StockCountError, type StockCountService } from "../inventory/stock-count.ts";
 import type { PurchaseReturnService } from "../purchasing/return.ts";
 import type { PurchaseOrderService } from "../purchasing/order.ts";
+import { CONTROL_CHARS } from "../lib/text.ts";
 
 const uuid = z.string().uuid("شناسه نامعتبر");
 
@@ -41,15 +42,6 @@ const qtyString = z
   .string()
   .regex(/^\d+(\.\d{1,3})?$/, "تعداد نامعتبر")
   .refine((v) => Number(v) > 0, { message: "تعداد باید بزرگ‌تر از صفر باشد" });
-
-/**
- * نویسه‌های کنترلی و جهت‌دهی — همان فهرستی که مسیر کالا رد می‌کند.
- *
- * نام تأمین‌کننده روی سند حسابداری و در گردش حساب اشخاص می‌نشیند. یک
- * نشانه جهت‌دهی راست‌به‌چپ می‌تواند ظاهر متن را وارونه نشان دهد بدون
- * اینکه محتوا عوض شود.
- */
-const CONTROL_CHARS = /[\u0000-\u001f\u007f-\u009f\u200e\u200f\u202a-\u202e\u2066-\u2069]/;
 
 const cleanText = (max: number) =>
   z

@@ -23,7 +23,7 @@
  * سرور ۴۰۳ با پیام فارسی می‌دهد و همان نشان داده می‌شود.
  */
 import { useCallback, useEffect, useState } from "react";
-import { Glass, Solid } from "../components/Glass.tsx";
+import { Solid } from "../components/Glass.tsx";
 import { ApiError } from "../lib/api.ts";
 import { ActionKeys, actionFor } from "../lib/action-key.ts";
 import { rialFromTomanInput, toman } from "../lib/money.ts";

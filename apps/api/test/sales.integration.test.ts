@@ -31,7 +31,7 @@ describe("فروش و صندوق روی دیتابیس واقعی", { skip }, ()
   const PASSWORD = "رمز-فروش-و-به‌قدر-کافی-بلند";
   const cashier = `cashier_${suffix}`;
   const supervisor = `sup_${suffix}`;
-  let cashierId = "";
+
   let supervisorId = "";
   let variationId = "";
   let customerId = "";
@@ -96,8 +96,8 @@ describe("فروش و صندوق روی دیتابیس واقعی", { skip }, ()
         .insertInto("identity.user_role")
         .values({ user_id: u.id, role_code: role, branch_id: BRANCH })
         .execute();
-      if (role === "cashier") cashierId = u.id;
-      else supervisorId = u.id;
+
+      if (role !== "cashier") supervisorId = u.id;
     }
 
     // کالا، قیمت، موجودی و مشتری

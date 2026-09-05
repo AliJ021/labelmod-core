@@ -31,7 +31,6 @@
  */
 import { sql } from "kysely";
 import type { Transaction } from "kysely";
-import type { Db } from "../db/client.ts";
 import type { Database } from "../db/types.ts";
 import { parseMoney, serializeMoney } from "../lib/money.ts";
 import { InvoiceError, type Executor, type InvoiceService } from "./invoice.ts";
@@ -63,11 +62,18 @@ export interface WebOrderInput {
 }
 
 export class WebOrderService {
-  readonly #db: Db;
   readonly #invoices: InvoiceService;
 
-  constructor(db: Db, invoices: InvoiceService) {
-    this.#db = db;
+  /**
+   * ⚠️ این سرویس عمداً `Db` نگه **نمی‌دارد**.
+   *
+   * کل سفارش سایت داخل **یک تراکنش** ساخته می‌شود و هر خواندنی باید
+   * روی همان تراکنش باشد. نگه‌داشتن یک Pool اینجا دقیقاً همان تله را
+   * باز می‌گذاشت که یک بار افتادیم: کدی که داخل تراکنش بنویسد و
+   * بیرونش بخواند، پیش‌نویسِ Commit‌نشده را نمی‌بیند و با «فاکتور
+   * یافت نشد» رد می‌شود — خطایی که هیچ ربطی به واقعیت ندارد.
+   */
+  constructor(invoices: InvoiceService) {
     this.#invoices = invoices;
   }
 

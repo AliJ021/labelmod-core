@@ -172,8 +172,9 @@ ops/deploy.sh status  # درآمد ثبت‌نشده + پیام‌های نرف�
 
 corepack enable       # یک بار — نسخه pnpm از packageManager خوانده می‌شود
 pnpm install
-pnpm check            # typecheck + test
-                      # ⚠️ `lint` امروز no-op است: هیچ ESLint در مخزن نیست
+pnpm check            # lint + typecheck + test
+pnpm lint             # ESLint — از ریشه، روی کل مخزن
+pnpm lint:fix
 pnpm --filter @labelmod/api dev
 ```
 
@@ -188,7 +189,7 @@ pnpm --filter @labelmod/api dev
 ## گلوگاه‌ها
 
 - **پیش از هر تغییر در `db/migrations/0[01][0-9]_*.sql`، `ops/db.sh test` را
-  اجرا کن و بعد از تغییر دوباره.** ۹۲۴ ادعای SQL به‌علاوه ۶۷۸ تست Node و ۶۰ ادعای PHP افزونه باید پاس شوند.
+  اجرا کن و بعد از تغییر دوباره.** ۹۲۴ ادعای SQL به‌علاوه ۶۸۰ تست Node و ۶۰ ادعای PHP افزونه باید پاس شوند.
 - `db/test/purchase-receipt.sql` شماره‌گذاری و تخصیص هزینه رسید خرید را،
   `db/test/purchase-return.sql` برگشت از خرید را،
   `db/test/purchase-order.sql` سفارش خرید را، و
@@ -271,6 +272,25 @@ pnpm --filter @labelmod/api dev
   تعریف توابع و نماها رد می‌کند. **بازه تاریخی روی یک ستون زمان‌دار هم
   همین است:** مرزش از `platform.business_day_start()` می‌آید، نه از
   `p_from::timestamptz` (مهاجرت ۰۳۸).
+
+- **`pnpm lint` دیگر no-op نیست — و یک تست جلوی برگشتنش را می‌گیرد.**
+  اسکریپت ریشه `pnpm -r --if-present lint` بود و `--if-present` روی
+  پکیجی که اسکریپت ندارد **بی‌صدا صفر برمی‌گرداند**؛ یعنی CI ماه‌ها سبز
+  می‌شد بی‌آنکه یک خط Lint شده باشد. حالا `eslint .` از ریشه اجرا
+  می‌شود و `source-hygiene.test.ts` می‌سنجد که اسکریپت واقعاً ESLint را
+  صدا بزند و CI اجرایش کند.
+  ⚠️ **قاعده‌های تایپ‌آگاه روشن نیستند:** هیچ نسخه‌ای از
+  `typescript-eslint` هنوز TypeScript 7 را پشتیبانی نمی‌کند، پس یک
+  نسخه TS 6 فقط برای Lint در `pnpm.overrides` پین شده — همان راهی که
+  خودِ TypeScript مستند کرده. هرگاه پشتیبانی آمد، Override برداشته و
+  `projectService` روشن می‌شود.
+- **زیرمجموعه strip-only حالا در Lint اجبار می‌شود.** `enum`،
+  `namespace` و parameter property از `tsc` رد می‌شوند ولی Node با
+  `ERR_UNSUPPORTED_TYPESCRIPT_SYNTAX` می‌ایستد — خطایی که فقط در زمان
+  اجرا دیده می‌شود. حالا در زمان Lint گرفته می‌شود.
+- **نویسه‌های ممنوع ورودی یک تعریف دارند: `apps/api/src/lib/text.ts`.**
+  همان الگو در چهار مسیر کپی شده بود؛ یک فیلتر امنیتی با چهار نسخه،
+  چهار برابر شانس عقب‌ماندن دارد.
 
 - **مهاجرت موجود ویرایش نمی‌شود** — و حالا `ops/db.sh migrate` هم
   اجبارش می‌کند: هش هر فایلِ اجراشده در `public.schema_migration`

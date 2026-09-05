@@ -7,7 +7,7 @@ import type { FastifyInstance, FastifyReply, FastifyRequest } from "fastify";
 import { z } from "zod";
 import { AuthError, type AuthService } from "../auth/service.ts";
 import { can, requireForSession } from "../auth/permission.ts";
-import { DeviceError, type DeviceService } from "../auth/devices.ts";
+import type { DeviceService } from "../auth/devices.ts";
 import type { TwoFactorService } from "../auth/two-factor.ts";
 import type { WebauthnService } from "../auth/webauthn.ts";
 import { csrfCookieOptions, deviceCookieOptions, sessionCookieOptions } from "../auth/token.ts";

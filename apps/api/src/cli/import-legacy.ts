@@ -148,7 +148,11 @@ async function main(): Promise<void> {
         //    قاعده «همه یا هیچ» قرار بود جلویش را بگیرد.
         const code = (err as NodeJS.ErrnoException).code;
         if (code !== "ENOENT") {
-          throw new Error(`خواندن «${name}» ناموفق بود (${code}): ${String(err)}`);
+          // `cause` نگه داشته می‌شود: پیام فارسی برای کاربر است و
+          // خطای اصلی برای کسی که باید دیباگ کند.
+          throw new Error(`خواندن «${name}» ناموفق بود (${code}): ${String(err)}`, {
+            cause: err,
+          });
         }
         w(`  — ${name} نیست، رد شد`);
       }

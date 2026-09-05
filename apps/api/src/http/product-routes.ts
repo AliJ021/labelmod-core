@@ -29,18 +29,9 @@ import type { Db } from "../db/client.ts";
 import { parseMoney } from "../lib/money.ts";
 import { runOnce } from "../lib/idempotency.ts";
 import type { ProductService } from "../catalog/product.ts";
+import { CONTROL_CHARS } from "../lib/text.ts";
 
 const uuid = z.string().uuid("شناسه نامعتبر");
-
-/**
- * نویسه‌های کنترلی و جهت‌دهی — همان فهرستی که مسیر تنوع و مسیر خرید
- * رد می‌کنند.
- *
- * صریح با Escape نوشته شده، نه با خودِ نویسه: نویسه کنترلیِ خام در
- * سورس نامرئی است و فایل را از نظر گیت باینری می‌کند — آن‌وقت نه
- * `git diff` کار می‌کند نه اسکن راز. یک بار همین اتفاق افتاد.
- */
-const CONTROL_CHARS = /[\u0000-\u001f\u007f-\u009f\u200e\u200f\u202a-\u202e\u2066-\u2069]/;
 
 const cleanText = (max: number) =>
   z

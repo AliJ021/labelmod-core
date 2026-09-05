@@ -208,6 +208,12 @@ jobs:
         # بتواند نسخه‌ای بیرون از Lockfile بیاورد.
         run: pnpm install --frozen-lockfile
 
+      - name: Lint
+        # ⚠️ تا امروز `pnpm lint` یک no-op بود: `pnpm -r --if-present lint`
+        #    روی مخزنی که هیچ اسکریپت `lint` ندارد بی‌صدا **صفر**
+        #    برمی‌گرداند. یعنی CI سبز می‌شد بی‌آنکه چیزی Lint شده باشد.
+        run: pnpm lint
+
       - name: بررسی تایپ
         run: pnpm typecheck
 
