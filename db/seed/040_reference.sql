@@ -107,6 +107,10 @@ INSERT INTO identity.permission_rule
 ('cashier','sale.credit',          false, NULL,   NULL,  NULL),
 ('cashier','catalog.manage',       false, NULL,   NULL,  NULL),
 ('cashier','device.manage',        false, NULL,   NULL,  NULL),
+-- صندوق‌دار پول کشو را جابه‌جا نمی‌کند و چک ثبت نمی‌کند؛ هر دو کار
+-- سند حسابداری می‌زنند و تصمیم مالک‌اند.
+('cashier','treasury.manage',      false, NULL,   NULL,  NULL),
+('cashier','cheque.manage',        false, NULL,   NULL,  NULL),
 ('cashier','return.same_day',      true,  NULL,   NULL,  NULL),
 ('cashier','return.late',          false, NULL,   NULL,  NULL),
 ('cashier','refund.cash',          false, NULL,   NULL,  NULL),
@@ -121,6 +125,10 @@ INSERT INTO identity.permission_rule
 -- تأیید دستگاه پیش‌فرض فقط دست مدیر است (بند ۱ SECURITY.md).
 -- مالک می‌تواند از صفحه «مجوزها» به سرپرست هم بدهد — یک UPDATE.
 ('supervisor','device.manage',     false, NULL,   NULL,  NULL),
+-- سرپرست هزینه روزمره صندوق را می‌زند (کرایه، پیک) ولی چک نه —
+-- چک تعهد بلندمدت است و دفتر اشخاص را حرکت می‌دهد.
+('supervisor','treasury.manage',   true,  NULL,   NULL,  NULL),
+('supervisor','cheque.manage',     false, NULL,   NULL,  NULL),
 ('supervisor','return.same_day',   true,  NULL,   NULL,  NULL),
 ('supervisor','return.late',       true,  NULL,   NULL,  'admin'),
 ('supervisor','refund.cash',       true,  NULL,   NULL,  NULL),
@@ -134,6 +142,8 @@ INSERT INTO identity.permission_rule
 ('warehouse','stock.transfer',     true,  NULL,   NULL,  NULL),
 ('warehouse','catalog.manage',     true,  NULL,   NULL,  NULL),
 ('warehouse','device.manage',      false, NULL,   NULL,  NULL),
+('warehouse','treasury.manage',    false, NULL,   NULL,  NULL),
+('warehouse','cheque.manage',      false, NULL,   NULL,  NULL),
 ('warehouse','stock.count',        true,  NULL,   NULL,  NULL),
 ('warehouse','stock.adjust',       true,  NULL,   NULL,  'admin'),
 ('warehouse','cost.view',          false, NULL,   NULL,  NULL),
@@ -203,6 +213,8 @@ INSERT INTO identity.permission_rule
 -- می‌تواند، چون کالای تازه معمولاً همراه رسید خرید می‌آید.
 ('admin','catalog.manage',         true,  NULL,   NULL,  NULL),
 ('admin','device.manage',          true,  NULL,   NULL,  NULL),
+('admin','treasury.manage',        true,  NULL,   NULL,  NULL),
+('admin','cheque.manage',          true,  NULL,   NULL,  NULL),
 
 -- صفحه تنظیمات — سه عملیات، نه یکی.
 --

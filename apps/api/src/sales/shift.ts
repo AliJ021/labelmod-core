@@ -63,6 +63,29 @@ export class ShiftService {
     return row ? toShift(row) : null;
   }
 
+  /**
+   * همه شیفت‌های **باز** یک شعبه — نه فقط شیفت خودِ کاربر.
+   *
+   * `one_open_shift_per_user` فقط می‌گوید هر کاربر یک شیفت باز دارد؛
+   * دو صندوق‌دار می‌توانند هم‌زمان دو کشوی جدا داشته باشند.
+   *
+   * لازمش این است: پول نقدی که از کشو خارج می‌شود، لزوماً به دست
+   * صاحب همان کشو خارج نمی‌شود. مدیر برای کرایه پیک از کشوی
+   * صندوق‌دار برمی‌دارد و خودش شیفتی ندارد. بدون این تابع، آن هزینه
+   * یا اصلاً ثبت نمی‌شد یا بی‌شیفت ثبت می‌شد — و شمارش پایان شیفت
+   * مغایرت کاذب می‌داد.
+   */
+  async openInBranch(branchId: string): Promise<Shift[]> {
+    const rows = await this.#db
+      .selectFrom("sales.cash_shift")
+      .selectAll()
+      .where("branch_id", "=", branchId)
+      .where("status", "=", "open")
+      .orderBy("opened_at")
+      .execute();
+    return rows.map(toShift);
+  }
+
   async byId(shiftId: string): Promise<Shift | null> {
     const row = await this.#db
       .selectFrom("sales.cash_shift")

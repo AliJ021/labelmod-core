@@ -578,6 +578,114 @@ export interface LedgerAccountTable {
   is_active: boolean;
 }
 
+/**
+ * حرکت نقدِ غیرفروشی.
+ *
+ * ⚠️ `status` و `entry_id` را **فقط** `treasury.post_transaction()`
+ *    عوض می‌کند. اینجا فقط برای درج پیش‌نویس و خواندن ثبت شده‌اند؛
+ *    نوشتن مستقیم رویشان یعنی سندی که در دفتر نیست.
+ */
+export interface TreasuryTransactionTable {
+  id: Generated<string>;
+  /** تا لحظه ثبت NULL — پیش‌نویس رهاشده شماره نمی‌سوزاند. */
+  number: string | null;
+  branch_id: string;
+  purpose:
+    | "supplier_payment"
+    | "customer_receipt"
+    | "expense"
+    | "capital"
+    | "transfer";
+  from_account_id: string | null;
+  to_account_id: string | null;
+  party_type: "supplier" | "customer" | "user" | "other" | null;
+  party_id: string | null;
+  expense_account_code: string | null;
+  /** رشته، نه عدد — پارسر NUMERIC رشته می‌دهد و همان‌جا می‌ماند. */
+  amount: string;
+  /**
+   * اگر پول از کشوی یک شیفت باز رد شده، شیفت باید بداند. بدون این،
+   * هر هزینه نقدی یک مغایرت کاذب در شمارش پایان شیفت می‌سازد.
+   */
+  shift_id: string | null;
+  occurred_at: Generated<Date>;
+  status: Generated<"draft" | "posted" | "cancelled">;
+  entry_id: string | null;
+  client_event_id: string | null;
+  ref_no: string | null;
+  note: string | null;
+  created_by: string | null;
+}
+
+/**
+ * چک — دریافتی و پرداختی.
+ *
+ * ⚠️ `status` یک **Projection** از زنجیره `cheque_event` است، نه یک
+ *    ستون آزاد. `UPDATE` مستقیم رویش با CONSTRAINT TRIGGER معوق رد
+ *    می‌شود (ADR-004). تنها راه حرکتش `treasury.post_cheque_event()`.
+ */
+export interface ChequeTable {
+  id: Generated<string>;
+  number: string | null;
+  direction: "received" | "issued";
+  branch_id: string;
+  cheque_no: string;
+  sayad_id: string | null;
+  bank_name: string;
+  bank_branch: string | null;
+  account_no: string | null;
+  drawer_name: string | null;
+  amount: string;
+  issued_on: string;
+  due_on: string;
+  party_type: "customer" | "supplier";
+  party_id: string;
+  bank_account_id: string | null;
+  deposit_account_id: string | null;
+  status: Generated<string>;
+  client_event_id: string | null;
+  note: string | null;
+  created_by: string | null;
+  created_at: Generated<Date>;
+}
+
+/** زنجیره رویداد چک — تغییرناپذیر، فقط از post_cheque_event پر می‌شود. */
+export interface ChequeEventTable {
+  id: Generated<string>;
+  cheque_id: string;
+  seq: number;
+  action: string;
+  from_status: string | null;
+  to_status: string;
+  occurred_on: string;
+  amount: string;
+  entry_id: string | null;
+  account_id: string | null;
+  party_type: string | null;
+  party_id: string | null;
+  note: string | null;
+  created_by: string | null;
+  created_at: Generated<Date>;
+}
+
+/** نمای سررسید — `urgency` را دیتابیس حساب می‌کند، نه مرورگر. */
+export interface ChequeDueView {
+  id: string;
+  number: string | null;
+  direction: string;
+  cheque_no: string;
+  sayad_id: string | null;
+  bank_name: string;
+  amount: string;
+  due_on: string;
+  status: string;
+  party_type: string;
+  party_id: string;
+  party_name: string | null;
+  days_left: number;
+  urgency: string;
+}
+
 export interface TreasuryAccountTable {
   id: Generated<string>;
   code: string;
@@ -651,6 +759,10 @@ export interface Database {
   "purchasing.receipt_line": ReceiptLineTable;
   "purchasing.receipt_charge": ReceiptChargeTable;
   "treasury.account": TreasuryAccountTable;
+  "treasury.transaction": TreasuryTransactionTable;
+  "treasury.cheque": ChequeTable;
+  "treasury.cheque_event": ChequeEventTable;
+  "treasury.cheque_due": ChequeDueView;
   "ledger.account": LedgerAccountTable;
   "inventory.stock_count": StockCountTable;
   "inventory.stock_count_line": StockCountLineTable;

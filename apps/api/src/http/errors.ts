@@ -14,6 +14,9 @@ import { ScopeError } from "../sales/scope.ts";
 import { ReturnError } from "../sales/return.ts";
 import { BatchError } from "../sales/posting-batch.ts";
 import { CatalogError } from "../catalog/variation.ts";
+import { DeviceError } from "../auth/devices.ts";
+import { TreasuryError } from "../treasury/transaction.ts";
+import { ChequeError } from "../treasury/cheque.ts";
 import { SettingError } from "../platform/settings.ts";
 import { IdempotencyConflictError, IdempotencyInFlightError } from "../lib/idempotency.ts";
 import { ZodError } from "zod";
@@ -63,6 +66,9 @@ export function registerErrorHandler(app: FastifyInstance): void {
       err instanceof ReturnError ||
       err instanceof BatchError ||
       err instanceof CatalogError ||
+      err instanceof DeviceError ||
+      err instanceof TreasuryError ||
+      err instanceof ChequeError ||
       err instanceof SettingError ||
       err instanceof IdempotencyInFlightError ||
       err instanceof IdempotencyConflictError
