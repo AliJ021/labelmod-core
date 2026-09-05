@@ -121,6 +121,28 @@ export interface Decision {
   reason: string;
 }
 
+/**
+ * پاسخ مرحله اول ورود — نشست، یا «کد دوم لازم است».
+ *
+ * `needsSecondFactor` یک اتحاد تفکیک‌شده در TypeScript نیست چون از
+ * JSON می‌آید، ولی همان نقش را دارد: صفحه باید هر دو حالت را بنویسد.
+ */
+export interface SecondFactorNeeded {
+  needsSecondFactor: true;
+  fullName: string;
+  methods: Array<"totp" | "webauthn" | "recovery">;
+  expiresAt: string;
+}
+
+export interface TwoFactorStatus {
+  enabled: boolean;
+  pending: boolean;
+  recoveryCodesLeft: number;
+  webauthnKeys: number;
+  /** نقشش در فهرست الزام است ولی هنوز راه نینداخته — هشدار، نه قفل. */
+  shouldHave: boolean;
+}
+
 export const session = {
   /** `null` یعنی وارد نشده یا قفل — از هم قابل تفکیک نیستند. */
   async me(): Promise<Me | null> {
@@ -147,8 +169,44 @@ export const session = {
     username: string;
     password: string;
     deviceFingerprint: string;
-  }): Promise<LoginResult> {
-    return api.post<LoginResult>("/auth/login", input);
+  }): Promise<LoginResult | SecondFactorNeeded> {
+    return api.post<LoginResult | SecondFactorNeeded>("/auth/login", input);
+  },
+
+  /**
+   * مرحله دوم — بلیت از **کوکی** می‌رود، نه از بدنه.
+   *
+   * کوکی `labelmod_pending` را سرور HttpOnly ست کرده و مرورگر خودش
+   * برمی‌گرداند. اسکریپت صفحه هرگز نمی‌بیندش.
+   */
+  secondFactor(
+    method: "totp" | "recovery",
+    input: { code: string; deviceFingerprint: string },
+  ): Promise<LoginResult> {
+    return api.post<LoginResult>(`/auth/2fa/${method}`, input);
+  },
+
+  twoFactor(): Promise<TwoFactorStatus> {
+    return api.get<TwoFactorStatus>("/auth/2fa");
+  },
+
+  beginTotp(): Promise<{ secret: string; uri: string }> {
+    return api.post<{ secret: string; uri: string }>("/auth/2fa/totp/begin", {});
+  },
+
+  confirmTotp(code: string): Promise<{ enabled: boolean; recoveryCodes: string[] }> {
+    return api.post<{ enabled: boolean; recoveryCodes: string[] }>(
+      "/auth/2fa/totp/confirm",
+      { code },
+    );
+  },
+
+  regenerateRecovery(): Promise<{ recoveryCodes: string[] }> {
+    return api.post<{ recoveryCodes: string[] }>("/auth/2fa/recovery/regenerate", {});
+  },
+
+  disableTwoFactor(): Promise<{ ok: boolean }> {
+    return api.del<{ ok: boolean }>("/auth/2fa");
   },
 
   unlock(input: { pin: string; deviceFingerprint: string }): Promise<{ ok: boolean }> {

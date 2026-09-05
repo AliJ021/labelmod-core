@@ -19,6 +19,7 @@ import { Glass, Solid } from "../components/Glass.tsx";
 import { ApiError } from "../lib/api.ts";
 import { deviceFingerprint } from "../lib/device.ts";
 import { isNoSession, session } from "../lib/session.ts";
+import { normalizeDigits } from "../lib/settings-value.ts";
 
 /** پیام خطای کاربرپسند از هر چیزی که پرتاب شده. */
 function message(err: unknown): string {
@@ -33,6 +34,20 @@ export function Login({ onDone }: { onDone: () => void }) {
   const [error, setError] = useState<string | null>(null);
   const first = useRef<HTMLInputElement>(null);
 
+  /**
+   * مرحله دوم.
+   *
+   * `null` یعنی هنوز رمز داده نشده. مقدار داشتن یعنی رمز **درست** بوده
+   * و حالا کد لازم است — و در این حالت هیچ نشستی وجود ندارد؛ بلیتش در
+   * کوکی HttpOnly است و این کد هرگز نمی‌بیندش.
+   */
+  const [second, setSecond] = useState<{
+    fullName: string;
+    methods: Array<"totp" | "webauthn" | "recovery">;
+  } | null>(null);
+  const [code, setCode] = useState("");
+  const [useRecovery, setUseRecovery] = useState(false);
+
   useEffect(() => first.current?.focus(), []);
 
   async function submit(e: React.FormEvent) {
@@ -41,19 +56,104 @@ export function Login({ onDone }: { onDone: () => void }) {
     setBusy(true);
     setError(null);
     try {
-      await session.login({
+      const out = await session.login({
         username: username.trim(),
         password,
         deviceFingerprint: deviceFingerprint(),
       });
-      // رمز حتی یک لحظه بیشتر از لازم در حافظه نمی‌ماند.
+      // رمز حتی یک لحظه بیشتر از لازم در حافظه نمی‌ماند — چه ورود
+      // تمام شده باشد چه به مرحله دوم رفته باشیم.
       setPassword("");
+
+      if ("needsSecondFactor" in out) {
+        setSecond({ fullName: out.fullName, methods: out.methods });
+        return;
+      }
       onDone();
     } catch (err) {
       setError(message(err));
     } finally {
       setBusy(false);
     }
+  }
+
+  async function submitCode(e: React.FormEvent) {
+    e.preventDefault();
+    if (busy || second === null) return;
+    setBusy(true);
+    setError(null);
+    try {
+      await session.secondFactor(useRecovery ? "recovery" : "totp", {
+        code: normalizeDigits(code),
+        deviceFingerprint: deviceFingerprint(),
+      });
+      setCode("");
+      onDone();
+    } catch (err) {
+      setError(message(err));
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  if (second !== null) {
+    return (
+      <div className="auth-wrap">
+        <Glass as="section" radius="lg" className="pad auth-card" live>
+          <h1 className="auth-title">کد دومرحله‌ای</h1>
+          <p className="muted" style={{ marginTop: 0 }}>
+            {second.fullName} — {useRecovery
+              ? "یکی از کدهای بازیابی را وارد کنید."
+              : "کد شش‌رقمی برنامه Authenticator را وارد کنید."}
+          </p>
+
+          <form onSubmit={submitCode} className="stack" style={{ gap: "var(--s-3)" }}>
+            <Solid className="auth-field">
+              <label htmlFor="lm-code">{useRecovery ? "کد بازیابی" : "کد شش‌رقمی"}</label>
+              {/*
+                `type="text"` نه `type="number"` — صفحه‌کلید فارسی «۴۸»
+                می‌فرستد و ورودی عددی مرورگر آن را دور می‌اندازد.
+                `normalizeDigits` رقم فارسی و عربی را می‌فهمد.
+              */}
+              <input
+                id="lm-code"
+                type="text"
+                inputMode={useRecovery ? "text" : "numeric"}
+                autoComplete="one-time-code"
+                value={code}
+                onChange={(e) => setCode(e.target.value)}
+                autoFocus
+                required
+              />
+            </Solid>
+
+            {error ? (
+              <p className="auth-error" role="alert">
+                <span className="dot dot--crit" aria-hidden="true">●</span> {error}
+              </p>
+            ) : null}
+
+            <button type="submit" className="btn btn--primary" disabled={busy}>
+              {busy ? "در حال بررسی…" : "ورود"}
+            </button>
+          </form>
+
+          {second.methods.includes("recovery") ? (
+            <button
+              type="button"
+              className="link"
+              onClick={() => {
+                setUseRecovery((v) => !v);
+                setCode("");
+                setError(null);
+              }}
+            >
+              {useRecovery ? "برگشت به کد Authenticator" : "گوشی‌ام در دسترس نیست"}
+            </button>
+          ) : null}
+        </Glass>
+      </div>
+    );
   }
 
   return (

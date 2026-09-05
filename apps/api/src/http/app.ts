@@ -21,6 +21,7 @@ import { registerTreasuryRoutes } from "./treasury-routes.ts";
 import { registerReportRoutes } from "./report-routes.ts";
 import { registerTransferRoutes } from "./transfer-routes.ts";
 import { registerPeopleRoutes } from "./people-routes.ts";
+import { TwoFactorService } from "../auth/two-factor.ts";
 import { UserService } from "../people/user.ts";
 import { CustomerService } from "../people/customer.ts";
 import { TransferService } from "../inventory/transfer.ts";
@@ -75,7 +76,14 @@ const SAFE_METHODS = new Set(["GET", "HEAD", "OPTIONS"]);
  *
  * این در آزمایش زنده پیدا شد، نه در تست.
  */
-const CSRF_EXEMPT_PATHS = new Set(["/auth/login"]);
+const CSRF_EXEMPT_PATHS = new Set([
+  "/auth/login",
+  // مرحله دوم ورود: هنوز نشستی نیست، پس توکن Double-Submit هم نیست.
+  // دفاع اینجا خودِ بلیت است — کوکی HttpOnly و یک‌بارمصرف که فقط
+  // پاسخ مرحله اول ست می‌کند و مهاجم از سایت دیگر نمی‌تواند بخواندش.
+  "/auth/2fa/totp",
+  "/auth/2fa/recovery",
+]);
 
 /** مسیرهایی که پیش از ورود هم باید کار کنند. */
 const PUBLIC_PATHS = new Set([
@@ -87,6 +95,10 @@ const PUBLIC_PATHS = new Set([
   // و دفاع CSRF هم رویشان اعمال می‌شود.
   "/auth/unlock",
   "/auth/reauth",
+  // مرحله دوم ورود. رمز درست بوده ولی هنوز نشستی نیست — این مسیرها
+  // بلیت `labelmod_pending` را می‌خوانند، نه کوکی نشست را.
+  "/auth/2fa/totp",
+  "/auth/2fa/recovery",
   // صفحه فاکتور مشتری. مشتری حساب کاربری ندارد و نباید داشته باشد؛
   // جای احراز هویت را توکن ۲۴ بایتی روی خودِ فاکتور می‌گیرد.
   ...PUBLIC_ROUTE_PATHS,
@@ -245,7 +257,11 @@ export async function buildApp(deps: AppDeps): Promise<FastifyInstance> {
   const shifts = new ShiftService(deps.db);
   const invoices = new InvoiceService(deps.db);
 
-  registerAuthRoutes(app, { ...deps, devices: new DeviceService(deps.db) });
+  registerAuthRoutes(app, {
+    ...deps,
+    devices: new DeviceService(deps.db),
+    twoFactor: new TwoFactorService(deps.db),
+  });
   registerSalesRoutes(app, { db: deps.db, invoices, shifts });
   registerReturnRoutes(app, {
     db: deps.db,

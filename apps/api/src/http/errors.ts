@@ -48,8 +48,30 @@ export function registerErrorHandler(app: FastifyInstance): void {
       // ۴۲۹ برای قفل: کاربر باید بداند مشکل نرخ است نه اعتبارنامه،
       // بدون اینکه بفهمد کدام نام کاربری وجود دارد.
       // ۴۰۳ برای PIN: اعتبارنامه درست بود، ولی این مسیر مجاز نیست.
+      // ۴۲۹ برای قفل، ۴۰۳ برای PIN — و برای عامل دوم، سه دسته که
+      // اگر همه ۴۰۱ می‌شدند کاربرِ **وارد‌شده** را از صفحه بیرون
+      // می‌انداختند: کلاینت ۴۰۱ را «نشست رفته» می‌فهمد.
+      //
+      //   ۴۰۴  کاربر نیست
+      //   ۴۰۹  وضعیت جور نیست (قبلاً فعال است، ثبت‌نامی در جریان نیست)
+      //   ۴۲۲  کد ثبت‌نام غلط — یک غلط تایپی، نه یک شکست احراز هویت
+      //
+      // `bad_code` و `pending_expired` عمداً ۴۰۱ می‌مانند: آن‌ها در
+      // مرحله دوم **ورود** رخ می‌دهند، جایی که هنوز نشستی نیست.
       const status =
-        err.code === "locked" ? 429 : err.code === "pin_not_allowed" ? 403 : 401;
+        err.code === "locked"
+          ? 429
+          : err.code === "pin_not_allowed"
+            ? 403
+            : err.code === "user_not_found"
+              ? 404
+              : err.code === "totp_already_enabled" ||
+                  err.code === "totp_not_enabled" ||
+                  err.code === "no_enrollment"
+                ? 409
+                : err.code === "bad_totp_setup"
+                  ? 422
+                  : 401;
       req.log.info({ code: err.code, correlationId }, "شکست احراز هویت");
       return reply.code(status).send(body(err.code, err.message, correlationId));
     }

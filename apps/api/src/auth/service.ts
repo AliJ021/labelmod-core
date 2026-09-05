@@ -10,6 +10,7 @@
  * ندارد و MD5/SHA خام برای رمز ممنوع است.
  */
 import { sql } from "kysely";
+import { hashPendingToken, newPendingToken } from "./two-factor.ts";
 import type { Db } from "../db/client.ts";
 import { hashSecret, verifySecret } from "./password.ts";
 import { hashToken, newToken } from "./token.ts";
@@ -19,7 +20,19 @@ export type AuthFailure =
   | "locked"
   | "inactive"
   | "pin_not_allowed"
-  | "no_session";
+  | "no_session"
+  // ── عامل دوم (مهاجرت ۰۳۷) ────────────────────────────────────────
+  //
+  // این‌ها عمداً از `bad_credentials` جدا هستند و مبهم‌بودن را نقض
+  // نمی‌کنند: تا اینجا رمز **درست** بوده و مهاجم قبلاً می‌داند حساب
+  // وجود دارد. پیام دقیق‌تر فقط به کسی می‌رسد که از مرحله اول گذشته.
+  | "user_not_found"
+  | "totp_already_enabled"
+  | "totp_not_enabled"
+  | "no_enrollment"
+  | "bad_code"
+  | "bad_totp_setup"
+  | "pending_expired";
 
 export class AuthError extends Error {
   readonly code: AuthFailure;
@@ -91,6 +104,22 @@ export interface Session extends ResolvedSession {
   csrfToken: string;
 }
 
+/**
+ * نتیجه مرحله اول ورود — نشست، یا بلیت مرحله دوم.
+ *
+ * هرگز هر دو، و هرگز هیچ‌کدام.
+ */
+export type LoginOutcome =
+  | { kind: "session"; session: Session }
+  | {
+      kind: "second_factor";
+      userId: string;
+      fullName: string;
+      pendingToken: string;
+      expiresAt: Date;
+      methods: Array<"totp" | "webauthn" | "recovery">;
+    };
+
 export class AuthService {
   readonly #db: Db;
 
@@ -98,7 +127,15 @@ export class AuthService {
     this.#db = db;
   }
 
-  async login(input: LoginInput): Promise<Session> {
+  /**
+   * نتیجه مرحله اول ورود.
+   *
+   * **اتحاد تفکیک‌شده، نه یک `Session` با یک پرچم.** اگر نتیجه همیشه
+   * `Session` بود، هر مسیری که فراموش می‌کرد پرچم را بسنجد، عامل دوم
+   * را بی‌صدا دور می‌زد. با این شکل، کامپایلر مجبورت می‌کند هر دو
+   * حالت را بنویسی.
+   */
+  async login(input: LoginInput): Promise<LoginOutcome> {
     const device = input.deviceFingerprint
       ? await this.resolveDevice(input.deviceFingerprint)
       : null;
@@ -148,12 +185,141 @@ export class AuthService {
 
     await this.record("password", input, user.id, deviceId, true, null);
 
+    // ── عامل دوم ──────────────────────────────────────────────────
+    //
+    // رمز درست بود. اگر این کاربر عامل دومی راه انداخته باشد، اینجا
+    // **هیچ نشستی ساخته نمی‌شود** — فقط یک بلیت کوتاه‌عمر که
+    // می‌گوید «رمزش را داده است».
+    //
+    // ⚠️ راز ثبت‌نام دستگاه هم اینجا صادر **نمی‌شود**. بند ۱
+    //    SECURITY.md می‌گوید راز فقط پس از یک ورود **کامل** صادر
+    //    شود؛ ورودی که هنوز عامل دومش نیامده کامل نیست.
+    if (await this.needsSecondFactor(user.id)) {
+      const pending = await this.startPendingLogin(user.id, deviceId, input.ip ?? null);
+      return {
+        kind: "second_factor",
+        userId: user.id,
+        fullName: user.full_name,
+        pendingToken: pending.token,
+        expiresAt: pending.expiresAt,
+        methods: await this.secondFactorMethods(user.id),
+      };
+    }
+
     // ثبت‌نام دستگاه: راز فقط پس از یک ورود **کامل** روی دستگاه
-    // تأییدشده صادر می‌شود، و فقط یک بار. پس هرگز به کسی که صرفاً
-    // رشته fingerprint را می‌داند نمی‌رسد.
+    // تأییدشده صادر می‌شود، و فقط یک بار.
     const enrolled = device ? await this.enrollIfDue(device, user.id) : null;
 
-    return this.openSession(user.id, user.full_name, "password", enrolled, input);
+    return {
+      kind: "session",
+      session: await this.openSession(user.id, user.full_name, "password", enrolled, input),
+    };
+  }
+
+  /** آیا این کاربر عامل دومی راه انداخته؟ — از دیتابیس، نه از کد. */
+  async needsSecondFactor(userId: string): Promise<boolean> {
+    const r = await sql<{ needs: boolean }>`
+      SELECT identity.needs_second_factor(${userId}::uuid) AS needs
+    `.execute(this.#db);
+    return r.rows[0]?.needs === true;
+  }
+
+  async secondFactorMethods(userId: string): Promise<Array<"totp" | "webauthn" | "recovery">> {
+    const r = await sql<{ totp: boolean; webauthn: boolean; recovery: boolean }>`
+      SELECT (u.totp_secret IS NOT NULL) AS totp,
+             EXISTS (SELECT 1 FROM identity.webauthn_credential w WHERE w.user_id = u.id)
+               AS webauthn,
+             EXISTS (SELECT 1 FROM identity.recovery_code c
+                      WHERE c.user_id = u.id AND c.used_at IS NULL) AS recovery
+        FROM identity.app_user u WHERE u.id = ${userId}::uuid
+    `.execute(this.#db);
+    const row = r.rows[0];
+    const out: Array<"totp" | "webauthn" | "recovery"> = [];
+    if (row?.totp) out.push("totp");
+    if (row?.webauthn) out.push("webauthn");
+    if (row?.recovery) out.push("recovery");
+    return out;
+  }
+
+  /**
+   * بلیت مرحله دوم.
+   *
+   * عمرش از `auth.pending_login_seconds` می‌آید — داده، نه ثابت. تنها
+   * کارش رساندن کاربر به مرحله دوم است، پس کوتاه.
+   */
+  private async startPendingLogin(
+    userId: string,
+    deviceId: string | null,
+    ip: string | null,
+  ): Promise<{ token: string; expiresAt: Date }> {
+    const token = newPendingToken();
+    const r = await sql<{ expires_at: Date }>`
+      INSERT INTO identity.pending_login (token_hash, user_id, device_id, ip, expires_at)
+      VALUES (${hashPendingToken(token)}, ${userId}::uuid, ${deviceId}::uuid,
+              ${ip}::inet,
+              now() + make_interval(secs =>
+                platform.setting_num('auth.pending_login_seconds', 300)))
+      RETURNING expires_at
+    `.execute(this.#db);
+    return { token, expiresAt: r.rows[0]!.expires_at };
+  }
+
+  /**
+   * تمام‌کردن ورود پس از عامل دوم.
+   *
+   * بلیت **همان‌جا مصرف می‌شود** — چه ورود موفق باشد چه نه، بلیتی که
+   * یک بار به مرحله دوم رسیده دیگر نباید تلاش دوم بدهد. تلاش دوباره
+   * یعنی ورود از اول.
+   */
+  async completeSecondFactor(input: {
+    pendingToken: string;
+    method: "totp" | "webauthn" | "otp";
+    deviceFingerprint?: string | undefined;
+    ip?: string | undefined;
+    userAgent?: string | undefined;
+  }): Promise<Session> {
+    const hash = hashPendingToken(input.pendingToken);
+    const row = await this.#db
+      .selectFrom("identity.pending_login as p")
+      .innerJoin("identity.app_user as u", "u.id", "p.user_id")
+      .select(["p.id", "p.user_id", "p.device_id", "u.full_name", "u.is_active"])
+      .where("p.token_hash", "=", hash)
+      .where("p.expires_at", ">", sql<Date>`now()`)
+      .executeTakeFirst();
+
+    if (!row || !row.is_active) {
+      throw new AuthError("pending_expired", "مهلت این ورود تمام شده. دوباره وارد شوید.");
+    }
+
+    await this.#db.deleteFrom("identity.pending_login").where("id", "=", row.id).execute();
+
+    const device = input.deviceFingerprint
+      ? await this.resolveDevice(input.deviceFingerprint)
+      : null;
+    // حالا ورود **کامل** است، پس راز ثبت‌نام دستگاه می‌تواند صادر شود.
+    const enrolled = device ? await this.enrollIfDue(device, row.user_id) : null;
+
+    return this.openSession(row.user_id, row.full_name, input.method, enrolled, {
+      username: "",
+      password: "",
+      ...(input.deviceFingerprint === undefined
+        ? {}
+        : { deviceFingerprint: input.deviceFingerprint }),
+      ...(input.ip === undefined ? {} : { ip: input.ip }),
+      ...(input.userAgent === undefined ? {} : { userAgent: input.userAgent }),
+    });
+  }
+
+  /** کاربر پشت یک بلیت مرحله دوم — بدون مصرف‌کردنش. */
+  async pendingUser(pendingToken: string): Promise<{ userId: string; username: string } | null> {
+    const r = await this.#db
+      .selectFrom("identity.pending_login as p")
+      .innerJoin("identity.app_user as u", "u.id", "p.user_id")
+      .select(["p.user_id", "u.username"])
+      .where("p.token_hash", "=", hashPendingToken(pendingToken))
+      .where("p.expires_at", ">", sql<Date>`now()`)
+      .executeTakeFirst();
+    return r === undefined ? null : { userId: r.user_id, username: r.username };
   }
 
   /**

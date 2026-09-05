@@ -20,6 +20,7 @@ import { Permissions } from "./Permissions.tsx";
 import { Opening } from "./Opening.tsx";
 import { Devices } from "./Devices.tsx";
 import { Staff } from "./Staff.tsx";
+import { TwoFactor } from "./TwoFactor.tsx";
 import { api, ApiError } from "../lib/api.ts";
 import {
   describeValue,
@@ -380,6 +381,7 @@ const TABS = [
   { key: "opening", label: "افتتاحیه و تفصیلی" },
   { key: "devices", label: "دستگاه‌ها" },
   { key: "staff", label: "پرسنل" },
+  { key: "twofactor", label: "ورود دومرحله‌ای" },
 ] as const;
 
 type Tab = (typeof TABS)[number]["key"];
@@ -414,6 +416,8 @@ export function Settings() {
         <Permissions />
       ) : tab === "staff" ? (
         <Staff />
+      ) : tab === "twofactor" ? (
+        <TwoFactor />
       ) : tab === "devices" ? (
         <Devices />
       ) : (
