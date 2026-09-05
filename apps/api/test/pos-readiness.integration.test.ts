@@ -642,6 +642,27 @@ describe("آمادگی API صندوق", { skip }, () => {
     assert.equal(body.profitAmount, null, "سود بدون cost.view دیده نمی‌شود");
   });
 
+  test("`businessDate` یک تاریخ است، نه یک timestamp", async () => {
+    // درایور ستون `date` را به `Date` جاوااسکریپت تبدیل می‌کند و
+    // `JSON.stringify` آن را «…T۰۰:۰۰:۰۰.۰۰۰Z» می‌نویسد. دو اثر
+    // بی‌صدا داشت: داشبورد برچسب زشت نشان می‌داد، و مقایسه «آیا این
+    // دوره مالِ امروز است؟» هیچ‌وقت برابر نمی‌شد — یعنی دکمه «بستن
+    // دوره» برای دوره **امروز** هم ظاهر می‌شد، و بستنش هر فروش بعدیِ
+    // همان روز را رد می‌کرد.
+    const s = await loginAs(cashier);
+    const r = await app.inject({
+      method: "GET",
+      url: `/reports/daily?branchId=${BRANCH}`,
+      ...s,
+    });
+    assert.equal(r.statusCode, 200, r.body);
+    assert.match(
+      r.json().businessDate as string,
+      /^\d{4}-\d{2}-\d{2}$/,
+      "باید دقیقاً YYYY-MM-DD باشد",
+    );
+  });
+
   test("سود `null` است، نه صفر", async () => {
     // صفر یک ادعای مالی است («امروز سودی نبود»)؛ «اجازه نداری» ادعای
     // دیگری است. یکی‌کردنشان یعنی صندوق‌دار فکر کند فروشگاه ضرر کرده.
