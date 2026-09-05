@@ -13,6 +13,7 @@ import { Dashboard } from "./screens/Dashboard.tsx";
 import { Login, LockScreen, ReauthPanel } from "./screens/Login.tsx";
 import { Pos } from "./screens/Pos.tsx";
 import { Catalog } from "./screens/Catalog.tsx";
+import { Reports } from "./screens/Reports.tsx";
 import { Treasury } from "./screens/Treasury.tsx";
 import { Warehouse } from "./screens/Warehouse.tsx";
 import { Returns } from "./screens/Returns.tsx";
@@ -42,6 +43,7 @@ type Zone =
   | "catalog"
   | "purchasing"
   | "treasury"
+  | "reports"
   | "settings";
 
 /**
@@ -60,6 +62,8 @@ const ZONE_NOTE: Record<Zone, string> = {
     "ناحیه متوسط — کار انبار طولانی است و خستگی چشم مهم، پس عدد و سطر مات می‌مانند.",
   treasury:
     "ناحیه متوسط — پول و چک، پس هر عدد و هر فرم مات می‌ماند.",
+  reports:
+    "ناحیه متوسط — نوار و کارت شیشه‌ای، ولی جدول عدد کاملاً مات و پرتضاد.",
   settings: "شیشه فقط روی کارت گروه — ورودی‌ها مات‌اند تا عدد و دکمه پرتضاد بمانند.",
 };
 
@@ -300,6 +304,15 @@ export function App() {
             <button
               type="button"
               role="tab"
+              aria-selected={zone === "reports"}
+              className={zone === "reports" ? "on" : ""}
+              onClick={() => switchZone("reports")}
+            >
+              گزارش‌ها
+            </button>
+            <button
+              type="button"
+              role="tab"
               aria-selected={zone === "settings"}
               className={zone === "settings" ? "on" : ""}
               onClick={() => switchZone("settings")}
@@ -362,6 +375,8 @@ export function App() {
             <Warehouse />
           ) : zone === "treasury" ? (
             <Treasury />
+          ) : zone === "reports" ? (
+            <Reports />
           ) : (
             <Settings />
           )}
