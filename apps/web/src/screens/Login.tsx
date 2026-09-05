@@ -19,6 +19,8 @@ import { Glass, Solid } from "../components/Glass.tsx";
 import { ApiError } from "../lib/api.ts";
 import { deviceFingerprint } from "../lib/device.ts";
 import { isNoSession, session } from "../lib/session.ts";
+import { getAssertion, webauthnAvailable } from "../lib/webauthn.ts";
+import { normalizeDigits } from "../lib/settings-value.ts";
 
 /** پیام خطای کاربرپسند از هر چیزی که پرتاب شده. */
 function message(err: unknown): string {
@@ -33,6 +35,20 @@ export function Login({ onDone }: { onDone: () => void }) {
   const [error, setError] = useState<string | null>(null);
   const first = useRef<HTMLInputElement>(null);
 
+  /**
+   * مرحله دوم.
+   *
+   * `null` یعنی هنوز رمز داده نشده. مقدار داشتن یعنی رمز **درست** بوده
+   * و حالا کد لازم است — و در این حالت هیچ نشستی وجود ندارد؛ بلیتش در
+   * کوکی HttpOnly است و این کد هرگز نمی‌بیندش.
+   */
+  const [second, setSecond] = useState<{
+    fullName: string;
+    methods: Array<"totp" | "webauthn" | "recovery">;
+  } | null>(null);
+  const [code, setCode] = useState("");
+  const [useRecovery, setUseRecovery] = useState(false);
+
   useEffect(() => first.current?.focus(), []);
 
   async function submit(e: React.FormEvent) {
@@ -41,19 +57,182 @@ export function Login({ onDone }: { onDone: () => void }) {
     setBusy(true);
     setError(null);
     try {
-      await session.login({
+      const out = await session.login({
         username: username.trim(),
         password,
         deviceFingerprint: deviceFingerprint(),
       });
-      // رمز حتی یک لحظه بیشتر از لازم در حافظه نمی‌ماند.
+      // رمز حتی یک لحظه بیشتر از لازم در حافظه نمی‌ماند — چه ورود
+      // تمام شده باشد چه به مرحله دوم رفته باشیم.
       setPassword("");
+
+      if ("needsSecondFactor" in out) {
+        setSecond({ fullName: out.fullName, methods: out.methods });
+        return;
+      }
       onDone();
     } catch (err) {
       setError(message(err));
     } finally {
       setBusy(false);
     }
+  }
+
+  /**
+   * ورود با کلید امنیتی.
+   *
+   * انصراف کاربر (`NotAllowedError`) خطا نیست و پیام قرمز نمی‌گیرد —
+   * کاربر همان‌جا می‌ماند و می‌تواند راه دیگری را انتخاب کند.
+   */
+  async function submitKey() {
+    if (busy || second === null) return;
+    setBusy(true);
+    setError(null);
+    try {
+      const options = await session.beginWebauthnLogin();
+      let response: Record<string, unknown>;
+      try {
+        response = await getAssertion(options);
+      } catch (err) {
+        if ((err as { name?: string }).name === "NotAllowedError") return;
+        throw new Error("مرورگر نتوانست کلید را بخواند. دوباره تلاش کنید.");
+      }
+      await session.verifyWebauthnLogin(response);
+      onDone();
+    } catch (err) {
+      setError(message(err));
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function submitCode(e: React.FormEvent) {
+    e.preventDefault();
+    if (busy || second === null) return;
+    setBusy(true);
+    setError(null);
+    try {
+      await session.secondFactor(useRecovery ? "recovery" : "totp", {
+        code: normalizeDigits(code),
+        deviceFingerprint: deviceFingerprint(),
+      });
+      setCode("");
+      onDone();
+    } catch (err) {
+      setError(message(err));
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  if (second !== null) {
+    // «چه چیزی نشان داده شود» از **روش‌های همین کاربر** می‌آید، نه از
+    // یک فرض ثابت که همه TOTP دارند.
+    const codeMethod = useRecovery || second.methods.includes("totp");
+    const showKey = !useRecovery && second.methods.includes("webauthn") && webauthnAvailable();
+    return (
+      <div className="auth-wrap">
+        <Glass as="section" radius="lg" className="pad auth-card" live>
+          <h1 className="auth-title">مرحله دوم</h1>
+          <p className="muted" style={{ marginTop: 0 }}>
+            {second.fullName} — {useRecovery
+              ? "یکی از کدهای بازیابی را وارد کنید."
+              : codeMethod
+                ? "کد شش‌رقمی برنامه Authenticator را وارد کنید."
+                : "با کلید امنیتی خود ادامه دهید."}
+          </p>
+
+          {/*
+            کلید اول می‌آید چون بند ۱ SECURITY.md آن را **اولویت اول**
+            گذاشته: مقاوم در برابر فیشینگ. کد شش‌رقمی در یک صفحه جعلی
+            تایپ شود، همان لحظه لو رفته است.
+          */}
+          {showKey ? (
+            <button
+              type="button"
+              className="btn btn--primary"
+              disabled={busy}
+              onClick={() => void submitKey()}
+              style={{ marginBottom: "var(--s-3)" }}
+            >
+              {busy ? "در حال بررسی…" : "ورود با کلید امنیتی"}
+            </button>
+          ) : null}
+
+          {/*
+            کاربری که فقط کلید دارد نباید فرم کدی ببیند که هرگز
+            نمی‌تواند پرش کند — یک بن‌بست بی‌صدا.
+          */}
+          {codeMethod ? (
+          <form onSubmit={submitCode} className="stack" style={{ gap: "var(--s-3)" }}>
+            <Solid className="auth-field">
+              <label htmlFor="lm-code">{useRecovery ? "کد بازیابی" : "کد شش‌رقمی"}</label>
+              {/*
+                `type="text"` نه `type="number"` — صفحه‌کلید فارسی «۴۸»
+                می‌فرستد و ورودی عددی مرورگر آن را دور می‌اندازد.
+                `normalizeDigits` رقم فارسی و عربی را می‌فهمد.
+              */}
+              <input
+                id="lm-code"
+                type="text"
+                inputMode={useRecovery ? "text" : "numeric"}
+                autoComplete="one-time-code"
+                value={code}
+                onChange={(e) => setCode(e.target.value)}
+                autoFocus
+                required
+              />
+            </Solid>
+
+            <button type="submit" className="btn btn--primary" disabled={busy}>
+              {busy ? "در حال بررسی…" : "ورود"}
+            </button>
+          </form>
+          ) : null}
+
+          {/*
+            بن‌بست واقعی: کاربر فقط کلید دارد و این مرورگر کلید
+            نمی‌فهمد. صفحه‌ای که در این حالت خالی بماند، کاربر را بدون
+            هیچ توضیحی رها می‌کند.
+          */}
+          {!codeMethod && !showKey ? (
+            <p className="auth-error" role="alert">
+              <span className="dot dot--warn" aria-hidden="true">▲</span> این مرورگر کلید
+              امنیتی را پشتیبانی نمی‌کند. از مرورگری روی اتصال امن (HTTPS) وارد شوید یا
+              از کد بازیابی استفاده کنید.
+            </p>
+          ) : null}
+
+          {/*
+            خطا بیرون از فرم است، وگرنه در حالت «فقط کلید» — که فرمی
+            ندارد — هیچ خطایی دیده نمی‌شد.
+          */}
+          {error ? (
+            <p className="auth-error" role="alert">
+              <span className="dot dot--crit" aria-hidden="true">●</span> {error}
+            </p>
+          ) : null}
+
+          {second.methods.includes("recovery") ? (
+            <button
+              type="button"
+              className="link"
+              onClick={() => {
+                setUseRecovery((v) => !v);
+                setCode("");
+                setError(null);
+              }}
+            >
+              {useRecovery
+                ? codeMethod
+                  ? "برگشت به کد Authenticator"
+                  : "برگشت"
+                : "گوشی‌ام در دسترس نیست"}
+            </button>
+          ) : null}
+        </Glass>
+      </div>
+    );
   }
 
   return (

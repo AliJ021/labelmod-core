@@ -320,6 +320,35 @@ SELECT * FROM (VALUES
  'PIN فقط قفل صفحهٔ نشستِ باز را برمی‌دارد؛ نشست تازه نمی‌سازد. هر رقم بیشتر، حدس‌زدنش را ده برابر سخت‌تر می‌کند.',
  60, 'settings.security', true),
 
+-- ── عامل دوم (مهاجرت ۰۳۷) ────────────────────────────────────────────
+-- «چه کسی باید عامل دوم داشته باشد» یک تصمیم است، نه یک ثابت. بند ۱
+-- SECURITY.md مدیر و حسابدار را می‌گوید و همان پیش‌فرض است.
+--
+-- ⚠️ این فهرست کسی را **قفل نمی‌کند** — فقط هشدار می‌سازد. اگر قفل
+--    می‌کرد، اولین بار که مالک این تنظیم را روشن کند خودش هم بیرون
+--    می‌ماند. اجبار وقتی معنا دارد که راه‌اندازی ممکن باشد.
+('auth.require_2fa_roles', '["admin","accountant"]'::jsonb,
+ 'نقش‌هایی که باید احراز هویت دومرحله‌ای داشته باشند — بند ۱ SECURITY.md. هشدار می‌سازد، نه قفل.',
+ true, 'multichoice', 'نقش‌هایی که ۲FA لازم دارند', 'security',
+ '[{"value":"admin","label":"مدیر کل"},
+   {"value":"accountant","label":"حسابدار"},
+   {"value":"supervisor","label":"سرپرست فروشگاه"},
+   {"value":"cashier","label":"صندوق‌دار"},
+   {"value":"warehouse","label":"انباردار"},
+   {"value":"marketing","label":"بازاریاب"}]'::jsonb,
+ NULL, NULL, NULL,
+ 'کاربری که نقشش اینجا باشد و هنوز کد دومرحله‌ای راه نینداخته، در صفحه خودش هشدار می‌بیند. ورودش بسته نمی‌شود.',
+ 71, 'settings.security', true),
+
+-- عمر بلیت مرحله دوم. کوتاه است چون تنها کارش رساندن کاربر از رمز به
+-- کد است؛ بلندکردنش فقط پنجره حمله را باز می‌کند.
+('auth.pending_login_seconds', '300'::jsonb,
+ 'مهلت مرحله دوم ورود به ثانیه. پس از آن باید از اول وارد شد.',
+ true, 'int', 'مهلت مرحله دوم ورود', 'security',
+ NULL, 60, 900, 'ثانیه',
+ 'رمز درست بود ولی کد دومرحله‌ای نیامده. پس از این مهلت باید از اول وارد شد. کمتر از یک دقیقه برای کسی که باید گوشی را دربیاورد کم است.',
+ 72, 'settings.security', true),
+
 ('auth.pin_forbidden_operations',
  '["refund.cash","invoice.cancel","price.change","stock.adjust","period.close","period.reopen","user.manage","device.manage","treasury.manage","cheque.manage","journal.manual","return.late","settings.manage","settings.security","sale.price_override","customer.manage"]'::jsonb,
  'عملیاتی که با PIN هرگز مجاز نیستند و احراز هویت کامل می‌خواهند — بند ۱ SECURITY.md.', true,

@@ -3,14 +3,25 @@
  *
  * هر ورودی از Zod می‌گذرد (قاعده لایه API). هیچ Endpoint‌ای بدون Schema.
  */
-import type { FastifyInstance } from "fastify";
+import type { FastifyInstance, FastifyReply, FastifyRequest } from "fastify";
 import { z } from "zod";
 import { AuthError, type AuthService } from "../auth/service.ts";
 import { can, requireForSession } from "../auth/permission.ts";
 import { DeviceError, type DeviceService } from "../auth/devices.ts";
+import type { TwoFactorService } from "../auth/two-factor.ts";
+import type { WebauthnService } from "../auth/webauthn.ts";
 import { csrfCookieOptions, deviceCookieOptions, sessionCookieOptions } from "../auth/token.ts";
 import type { Db } from "../db/client.ts";
 import type { Config } from "../lib/config.ts";
+
+/**
+ * کوکی بلیت مرحله دوم.
+ *
+ * نامش عمداً از `COOKIE_NAME` جداست و پیکربندی‌پذیر نیست: یک چیز
+ * موقت و داخلی است، نه یک تصمیم استقرار. اگر با کوکی نشست یکی بود،
+ * یک بلیت نیمه‌ساخته جای یک نشست کامل می‌نشست.
+ */
+const PENDING_COOKIE = "labelmod_pending";
 
 const loginBody = z.object({
   username: z.string().min(1).max(64),
@@ -39,21 +50,50 @@ export interface AuthRouteDeps {
   db: Db;
   config: Config;
   devices: DeviceService;
+  twoFactor: TwoFactorService;
+  webauthn: WebauthnService;
 }
 
 export function registerAuthRoutes(app: FastifyInstance, deps: AuthRouteDeps): void {
-  const { auth, db, config, devices } = deps;
+  const { auth, db, config, devices, twoFactor, webauthn } = deps;
 
   app.post("/auth/login", {
     config: { rateLimit: { max: 5, timeWindow: "1 minute" } },
     handler: async (req, reply) => {
       const input = loginBody.parse(req.body);
-      const session = await auth.login({
+      const outcome = await auth.login({
         ...input,
         ip: req.ip,
         userAgent: req.headers["user-agent"],
       });
 
+      // ── عامل دوم: هیچ کوکی نشستی ساخته نمی‌شود ──────────────────
+      //
+      // بلیت مرحله دوم در کوکی **HttpOnly** می‌نشیند، نه در بدنه:
+      // اسکریپت صفحه — خودی یا تزریق‌شده — نباید بتواند بخواندش.
+      // عمرش کوتاه است و تنها کارش رساندن کاربر به مرحله دوم.
+      if (outcome.kind === "second_factor") {
+        reply.setCookie(
+          PENDING_COOKIE,
+          outcome.pendingToken,
+          sessionCookieOptions({
+            secure: config.isProduction,
+            maxAgeSeconds: Math.max(
+              1,
+              Math.floor((outcome.expiresAt.getTime() - Date.now()) / 1000),
+            ),
+            domain: config.COOKIE_DOMAIN,
+          }),
+        );
+        return reply.code(200).send({
+          needsSecondFactor: true,
+          fullName: outcome.fullName,
+          methods: outcome.methods,
+          expiresAt: outcome.expiresAt.toISOString(),
+        });
+      }
+
+      const session = outcome.session;
       const maxAge = Math.max(
         1,
         Math.floor((session.expiresAt.getTime() - Date.now()) / 1000),
@@ -112,6 +152,304 @@ export function registerAuthRoutes(app: FastifyInstance, deps: AuthRouteDeps): v
           : null,
       };
     },
+  });
+
+  // ── مرحله دوم ورود ────────────────────────────────────────────
+  //
+  // بلیت از کوکی خوانده می‌شود، نه از بدنه: HttpOnly است تا اسکریپت
+  // صفحه نتواند بخواندش، و همان‌طور که آمده خودکار برمی‌گردد.
+  //
+  // ⚠️ محدودیت نرخ اینجا **لازم است و از ورود جداست**: کد شش‌رقمی
+  //    یک میلیون حالت دارد و بدون سقف، حدس‌زدنش با یک اسکریپت کار
+  //    چند دقیقه است. پنجره ±۱ گام هم فضای حدس را سه برابر می‌کند.
+  const secondFactorHandler = async (
+    req: FastifyRequest,
+    reply: FastifyReply,
+    verify: (userId: string, code: string) => Promise<boolean>,
+    method: "totp" | "otp" | "webauthn",
+  ) => {
+    const pendingToken = (req.cookies as Record<string, string | undefined>)[PENDING_COOKIE];
+    if (!pendingToken) {
+      throw new AuthError("pending_expired", "مهلت این ورود تمام شده. دوباره وارد شوید.");
+    }
+    const body = z.object({ code: z.string().trim().min(4).max(64) }).parse(req.body);
+
+    const pending = await auth.pendingUser(pendingToken);
+    if (!pending) {
+      throw new AuthError("pending_expired", "مهلت این ورود تمام شده. دوباره وارد شوید.");
+    }
+
+    if (!(await verify(pending.userId, body.code))) {
+      // بلیت **مصرف نمی‌شود**: کد را می‌شود اشتباه تایپ کرد و
+      // فرستادن کاربر به اول مسیر برای یک غلط تایپی، فقط آزار است.
+      // دفاع واقعی محدودیت نرخ همین Endpoint است.
+      throw new AuthError("bad_code", "کد وارد‌شده درست نیست.");
+    }
+
+    const session = await auth.completeSecondFactor({
+      pendingToken,
+      method,
+      deviceFingerprint: (req.body as { deviceFingerprint?: string }).deviceFingerprint,
+      ip: req.ip,
+      userAgent: req.headers["user-agent"] as string | undefined,
+    });
+
+    reply.clearCookie(PENDING_COOKIE, { path: "/" });
+    const maxAge = Math.max(1, Math.floor((session.expiresAt.getTime() - Date.now()) / 1000));
+    reply.setCookie(
+      config.COOKIE_NAME,
+      session.token,
+      sessionCookieOptions({
+        secure: config.isProduction,
+        maxAgeSeconds: maxAge,
+        domain: config.COOKIE_DOMAIN,
+      }),
+    );
+    reply.setCookie(
+      config.CSRF_COOKIE_NAME,
+      session.csrfToken,
+      csrfCookieOptions({
+        secure: config.isProduction,
+        maxAgeSeconds: maxAge,
+        domain: config.COOKIE_DOMAIN,
+      }),
+    );
+    if (session.device?.issuedSecret) {
+      reply.setCookie(
+        config.DEVICE_COOKIE_NAME,
+        session.device.issuedSecret,
+        deviceCookieOptions({ secure: config.isProduction, domain: config.COOKIE_DOMAIN }),
+      );
+    }
+
+    return {
+      user: { id: session.userId, fullName: session.fullName, roles: session.roles },
+      expiresAt: session.expiresAt.toISOString(),
+      device: session.device
+        ? {
+            registered: true,
+            approved: session.device.approved,
+            enrolled: session.device.enrolled,
+            pinAvailable: session.device.approved && session.device.enrolled,
+          }
+        : null,
+    };
+  };
+
+  app.post("/auth/2fa/totp", {
+    config: { rateLimit: { max: 5, timeWindow: "1 minute" } },
+    handler: async (req, reply) =>
+      secondFactorHandler(
+        req,
+        reply,
+        (userId, code) => twoFactor.verifyTotpFor(userId, code),
+        "totp",
+      ),
+  });
+
+  /**
+   * کد بازیابی — وقتی گوشی گم شده.
+   *
+   * سقفش از TOTP **سخت‌گیرانه‌تر** است: کد بازیابی عمر طولانی دارد و
+   * برخلاف TOTP هر ۳۰ ثانیه عوض نمی‌شود.
+   */
+  app.post("/auth/2fa/recovery", {
+    config: { rateLimit: { max: 3, timeWindow: "5 minutes" } },
+    handler: async (req, reply) =>
+      secondFactorHandler(
+        req,
+        reply,
+        (userId, code) => twoFactor.consumeRecoveryCode(userId, code),
+        "otp",
+      ),
+  });
+
+  // ── راه‌اندازی عامل دوم — روی نشست باز ────────────────────────────
+  //
+  // ⚠️ همه این مسیرها روی **حساب خودِ کاربر** کار می‌کنند، نه روی
+  //    کاربر دیگر. مدیر نمی‌تواند برای کسی TOTP راه بیندازد: راز باید
+  //    فقط به گوشی همان آدم برسد. برداشتنش اما کار مدیر هم هست
+  //    (`user.manage`) — کسی که گوشی‌اش را گم کرده باید راهی داشته
+  //    باشد.
+
+  app.get("/auth/2fa", async (req) => {
+    const s = req.session;
+    if (!s) throw new AuthError("no_session", "وارد نشده‌اید");
+    return await twoFactor.status(s.userId);
+  });
+
+  app.post("/auth/2fa/totp/begin", async (req) => {
+    const s = req.session;
+    if (!s) throw new AuthError("no_session", "وارد نشده‌اید");
+    // نشستی که با PIN باز شده نباید بتواند عامل دوم راه بیندازد.
+    if (s.pinUnlocked) {
+      throw new AuthError(
+        "pin_not_allowed",
+        "برای راه‌اندازی کد دومرحله‌ای، با رمز کامل وارد شوید.",
+      );
+    }
+    const u = await db
+      .selectFrom("identity.app_user")
+      .select("username")
+      .where("id", "=", s.userId)
+      .executeTakeFirstOrThrow();
+    return await twoFactor.beginTotp({
+      userId: s.userId,
+      username: u.username,
+      issuer: "Label Mod",
+    });
+  });
+
+  app.post("/auth/2fa/totp/confirm", {
+    config: { rateLimit: { max: 5, timeWindow: "1 minute" } },
+    handler: async (req) => {
+      const s = req.session;
+      if (!s) throw new AuthError("no_session", "وارد نشده‌اید");
+      const body = z.object({ code: z.string().trim().min(4).max(10) }).parse(req.body);
+      const codes = await twoFactor.confirmTotp(s.userId, body.code);
+      return {
+        enabled: true,
+        recoveryCodes: codes,
+        note: "این کدها فقط همین یک بار نشان داده می‌شوند. جایی امن نگهشان دارید.",
+      };
+    },
+  });
+
+  app.post("/auth/2fa/recovery/regenerate", async (req) => {
+    const s = req.session;
+    if (!s) throw new AuthError("no_session", "وارد نشده‌اید");
+    if (s.pinUnlocked) {
+      throw new AuthError("pin_not_allowed", "با رمز کامل وارد شوید.");
+    }
+    return {
+      recoveryCodes: await twoFactor.regenerateRecoveryCodes(s.userId),
+      note: "کدهای قبلی از همین لحظه بی‌اعتبارند.",
+    };
+  });
+
+  // ── WebAuthn / Passkey ──────────────────────────────────────────
+  //
+  // ⚠️ **EXTERNAL VERIFICATION REQUIRED.** مراسم واقعی به یک دامنه
+  //    واقعی و یک Authenticator واقعی نیاز دارد. آنچه در این مخزن
+  //    سنجیده می‌شود: چرخه چالش، یک‌بارمصرف بودنش، رد شمارنده نزولی،
+  //    دامنه و مجوز. خودِ مراسم باید یک بار با کلید واقعی آزموده شود.
+
+  app.get("/auth/2fa/webauthn", async (req) => {
+    const s = req.session;
+    if (!s) throw new AuthError("no_session", "وارد نشده‌اید");
+    return { credentials: await webauthn.list(s.userId) };
+  });
+
+  app.post("/auth/2fa/webauthn/register/begin", async (req) => {
+    const s = req.session;
+    if (!s) throw new AuthError("no_session", "وارد نشده‌اید");
+    if (s.pinUnlocked) {
+      throw new AuthError("pin_not_allowed", "برای ثبت کلید، با رمز کامل وارد شوید.");
+    }
+    const u = await db
+      .selectFrom("identity.app_user")
+      .select(["username", "full_name"])
+      .where("id", "=", s.userId)
+      .executeTakeFirstOrThrow();
+    return await webauthn.beginRegistration({
+      userId: s.userId,
+      username: u.username,
+      fullName: u.full_name,
+    });
+  });
+
+  app.post("/auth/2fa/webauthn/register/finish", async (req) => {
+    const s = req.session;
+    if (!s) throw new AuthError("no_session", "وارد نشده‌اید");
+    if (s.pinUnlocked) {
+      throw new AuthError("pin_not_allowed", "برای ثبت کلید، با رمز کامل وارد شوید.");
+    }
+    const body = z
+      .object({
+        // شکل پاسخ را کتابخانه می‌سنجد؛ Zod اینجا فقط «شیء است» را
+        // تضمین می‌کند. سنجش دوباره‌اش یعنی دو تعریف از یک قاعده.
+        response: z.record(z.string(), z.unknown()),
+        name: z.string().trim().max(60).optional(),
+      })
+      .parse(req.body);
+    return await webauthn.finishRegistration({
+      userId: s.userId,
+      response: body.response,
+      ...(body.name === undefined ? {} : { name: body.name }),
+    });
+  });
+
+  app.delete("/auth/2fa/webauthn/:id", async (req) => {
+    const s = req.session;
+    if (!s) throw new AuthError("no_session", "وارد نشده‌اید");
+    if (s.pinUnlocked) {
+      throw new AuthError("pin_not_allowed", "برای حذف کلید، با رمز کامل وارد شوید.");
+    }
+    const { id } = z.object({ id: z.string().uuid() }).parse(req.params);
+    await webauthn.remove(s.userId, id, s.userId);
+    return { ok: true };
+  });
+
+  /** مرحله دوم ورود با کلید — بلیت از کوکی، مثل TOTP. */
+  app.post("/auth/2fa/webauthn/begin", {
+    config: { rateLimit: { max: 10, timeWindow: "1 minute" } },
+    handler: async (req) => {
+      const pendingToken = (req.cookies as Record<string, string | undefined>)[
+        PENDING_COOKIE
+      ];
+      if (!pendingToken) {
+        throw new AuthError("pending_expired", "مهلت این ورود تمام شده. دوباره وارد شوید.");
+      }
+      const pending = await auth.pendingUser(pendingToken);
+      if (!pending) {
+        throw new AuthError("pending_expired", "مهلت این ورود تمام شده. دوباره وارد شوید.");
+      }
+      return await webauthn.beginAuthentication(pending.userId);
+    },
+  });
+
+  app.post("/auth/2fa/webauthn/verify", {
+    config: { rateLimit: { max: 10, timeWindow: "1 minute" } },
+    handler: async (req, reply) => {
+      const body = z
+        .object({ response: z.record(z.string(), z.unknown()) })
+        .parse(req.body);
+      return secondFactorHandler(
+        req,
+        reply,
+        (userId) => webauthn.finishAuthentication({ userId, response: body.response }),
+        "webauthn",
+      );
+    },
+  });
+
+  /** برداشتن عامل دوم — حساب خودِ کاربر، با رمز کامل. */
+  app.delete("/auth/2fa", async (req) => {
+    const s = req.session;
+    if (!s) throw new AuthError("no_session", "وارد نشده‌اید");
+    if (s.pinUnlocked) {
+      throw new AuthError(
+        "pin_not_allowed",
+        "برای برداشتن کد دومرحله‌ای، با رمز کامل وارد شوید.",
+      );
+    }
+    await twoFactor.disableTotp(s.userId, s.userId);
+    return { ok: true };
+  });
+
+  /**
+   * برداشتن عامل دوم **کاربر دیگر** — گوشی گم شده و کد بازیابی هم نیست.
+   *
+   * پشت `user.manage` است و ردّ حسابرسی‌اش کاربر عامل را می‌نویسد.
+   * بدون این مسیر، تنها راه `psql` روی سرور بود.
+   */
+  app.delete("/users/:id/2fa", async (req) => {
+    const s = req.session;
+    if (!s) throw new AuthError("no_session", "وارد نشده‌اید");
+    const { id } = z.object({ id: z.string().uuid() }).parse(req.params);
+    await requireForSession(db, s, "user.manage");
+    await twoFactor.disableTotp(id, s.userId);
+    return { ok: true };
   });
 
   app.post("/auth/logout", async (req, reply) => {

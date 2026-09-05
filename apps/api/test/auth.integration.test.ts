@@ -12,7 +12,7 @@ import assert from "node:assert/strict";
 import { sql } from "kysely";
 import { createDb, type DbHandle } from "../src/db/client.ts";
 import { createDisposableDb, type DisposableDb } from "./helpers/disposable-db.ts";
-import { AuthService } from "../src/auth/service.ts";
+import { AuthService, type LoginOutcome, type Session } from "../src/auth/service.ts";
 import { can } from "../src/auth/permission.ts";
 import { hashSecret } from "../src/auth/password.ts";
 import { buildApp } from "../src/http/app.ts";
@@ -21,6 +21,18 @@ import type { FastifyInstance } from "fastify";
 
 const DATABASE_URL = process.env.DATABASE_URL;
 const skip = DATABASE_URL ? false : "DATABASE_URL تنظیم نشده — تست یکپارچه رد شد";
+
+/**
+ * نشست از خروجی ورود — و ادعای اینکه عامل دوم خواسته **نشده**.
+ *
+ * `login()` عمداً یک اتحاد تفکیک‌شده برمی‌گرداند تا هیچ مسیری نتواند
+ * عامل دوم را بی‌صدا نادیده بگیرد. اینجا هم همان را می‌سنجیم: این
+ * کاربرها ۲FA ندارند، پس هر پاسخ دیگری یک تغییر رفتار است.
+ */
+function expectSession(outcome: LoginOutcome): Session {
+  assert.equal(outcome.kind, "session", "این کاربر نباید عامل دوم بخواهد");
+  return (outcome as { kind: "session"; session: Session }).session;
+}
 
 describe("احراز هویت روی دیتابیس واقعی", { skip }, () => {
   let disposable: DisposableDb | null = null;
@@ -99,7 +111,7 @@ describe("احراز هویت روی دیتابیس واقعی", { skip }, () =>
   });
 
   test("ورود درست نشست می‌سازد و توکن در دیتابیس هش‌شده می‌نشیند", async () => {
-    const s = await auth.login({ username, password: PASSWORD, deviceFingerprint: fingerprint });
+    const s = expectSession(await auth.login({ username, password: PASSWORD, deviceFingerprint: fingerprint }));
     assert.equal(s.userId, userId);
     assert.deepEqual(s.roles, ["cashier"]);
     assert.ok(s.expiresAt > new Date());
@@ -125,7 +137,7 @@ describe("احراز هویت روی دیتابیس واقعی", { skip }, () =>
     // فیلد تصمیم می‌گیرد گزینه PIN را نشان بدهد — و صندوق‌دار را به
     // مسیری می‌فرستد که همیشه شکست می‌خورد.
     const fp = `${fingerprint}-fresh`;
-    const s = await auth.login({ username, password: PASSWORD, deviceFingerprint: fp });
+    const s = expectSession(await auth.login({ username, password: PASSWORD, deviceFingerprint: fp }));
     assert.equal(s.device?.registered, true, "دستگاه تازه باید ثبت شود");
     assert.equal(s.device?.approved, false, "ولی هرگز خودبه‌خود تأیید نمی‌شود");
 
@@ -144,7 +156,7 @@ describe("احراز هویت روی دیتابیس واقعی", { skip }, () =>
     await sql`SELECT identity.approve_device(
                 (SELECT id FROM identity.device WHERE fingerprint = ${fp}),
                 ${adminId}::uuid)`.execute(handle.db);
-    const after = await auth.login({ username, password: PASSWORD, deviceFingerprint: fp });
+    const after = expectSession(await auth.login({ username, password: PASSWORD, deviceFingerprint: fp }));
     assert.equal(after.device?.approved, true, "پس از تأیید مدیر باید true شود");
     assert.ok(after.device?.issuedSecret, "و همان ورود باید راز ثبت‌نام بدهد");
 
@@ -200,11 +212,13 @@ describe("احراز هویت روی دیتابیس واقعی", { skip }, () =>
     assert.equal(err, "locked", "رمز درستِ حساب قفل هم نباید باز کند");
 
     // قفل روی «کاربر + دستگاه» است، نه فقط کاربر
-    const other = await auth.login({
-      username,
-      password: PASSWORD,
-      deviceFingerprint: `${fingerprint}-other`,
-    });
+    const other = expectSession(
+      await auth.login({
+        username,
+        password: PASSWORD,
+        deviceFingerprint: `${fingerprint}-other`,
+      }),
+    );
     assert.ok(other.token, "دستگاه دیگرِ همان کاربر نباید قفل باشد");
     await auth.logout(other.token);
   });
@@ -215,7 +229,7 @@ describe("احراز هویت روی دیتابیس واقعی", { skip }, () =>
     // می‌دانست، می‌توانست نشستش را روی «دستگاه مورد اعتماد» بنشاند
     // بدون اینکه فیزیکی به آن دسترسی داشته باشد.
     const fp = `${fingerprint}-enroll`;
-    const s1 = await auth.login({ username, password: PASSWORD, deviceFingerprint: fp });
+    const s1 = expectSession(await auth.login({ username, password: PASSWORD, deviceFingerprint: fp }));
     assert.equal(s1.device?.approved, false);
     assert.equal(s1.device?.enrolled, false);
     assert.equal(s1.device?.issuedSecret, undefined, "دستگاه تأییدنشده راز نمی‌گیرد");
@@ -233,12 +247,12 @@ describe("احراز هویت روی دیتابیس واقعی", { skip }, () =>
     );
 
     // ورود کامل بعدی راز را صادر می‌کند — و فقط همان یک بار
-    const s2 = await auth.login({ username, password: PASSWORD, deviceFingerprint: fp });
+    const s2 = expectSession(await auth.login({ username, password: PASSWORD, deviceFingerprint: fp }));
     const secret = s2.device?.issuedSecret;
     assert.ok(secret, "اولین ورود کامل پس از تأیید باید راز صادر کند");
     assert.equal(s2.device?.enrolled, true);
 
-    const s3 = await auth.login({ username, password: PASSWORD, deviceFingerprint: fp });
+    const s3 = expectSession(await auth.login({ username, password: PASSWORD, deviceFingerprint: fp }));
     assert.equal(s3.device?.issuedSecret, undefined, "راز فقط یک بار صادر می‌شود");
     assert.equal(s3.device?.enrolled, true);
 
@@ -264,11 +278,11 @@ describe("احراز هویت روی دیتابیس واقعی", { skip }, () =>
     // داشت و تست هم داشت، ولی هیچ مسیر واقعی‌ای true نمی‌فرستاد —
     // یعنی شرط چهارم دفاع PIN در سیستم در حال اجرا مرده بود.
     const fp = `${fingerprint}-elev`;
-    await auth.login({ username: adminName, password: PASSWORD, deviceFingerprint: fp });
+    expectSession(await auth.login({ username: adminName, password: PASSWORD, deviceFingerprint: fp }));
     await sql`SELECT identity.approve_device(
                 (SELECT id FROM identity.device WHERE fingerprint = ${fp}),
                 ${adminId}::uuid)`.execute(handle.db);
-    const s = await auth.login({ username: adminName, password: PASSWORD, deviceFingerprint: fp });
+    const s = expectSession(await auth.login({ username: adminName, password: PASSWORD, deviceFingerprint: fp }));
     const secret = s.device?.issuedSecret;
     assert.ok(secret);
 
@@ -317,8 +331,10 @@ describe("احراز هویت روی دیتابیس واقعی", { skip }, () =>
   });
 
   test("ابطال همه نشست‌ها — الزام «گوشی مفقودی»", async () => {
-    const a = await auth.login({ username, password: PASSWORD, deviceFingerprint: fingerprint });
-    const b = await auth.login({ username, password: PASSWORD, deviceFingerprint: `${fingerprint}-2` });
+    const a = expectSession(await auth.login({ username, password: PASSWORD, deviceFingerprint: fingerprint }));
+    const b = expectSession(
+      await auth.login({ username, password: PASSWORD, deviceFingerprint: `${fingerprint}-2` }),
+    );
 
     const n = await auth.revokeAll(userId, "device_lost", adminId);
     assert.ok(n >= 2, `انتظار حداقل ۲ نشست باطل‌شده، واقعی ${n}`);
@@ -430,7 +446,7 @@ describe("احراز هویت روی دیتابیس واقعی", { skip }, () =>
     // یافته بازبینی امنیتی، مورد ۴: بند ۶ SECURITY.md دو لایه خواسته —
     // SameSite=Strict **به‌علاوه** توکن Double-Submit. لایه دوم فقط در
     // یک کامنت ادعا شده بود.
-    const s = await auth.login({ username, password: PASSWORD, deviceFingerprint: fingerprint });
+    const s = expectSession(await auth.login({ username, password: PASSWORD, deviceFingerprint: fingerprint }));
     const csrfValue = "توکن-csrf-ساختگی-برای-تست";
 
     const noHeader = await app.inject({
@@ -474,7 +490,7 @@ describe("احراز هویت روی دیتابیس واقعی", { skip }, () =>
     //
     // آن بررسی هیچ محافظتی هم اضافه نمی‌کرد: با SameSite=Strict،
     // درخواست بین‌سایتی اصلاً کوکی نمی‌فرستد.
-    const stale = await auth.login({ username, password: PASSWORD, deviceFingerprint: fingerprint });
+    const stale = expectSession(await auth.login({ username, password: PASSWORD, deviceFingerprint: fingerprint }));
 
     const relogin = await app.inject({
       method: "POST",
@@ -497,11 +513,11 @@ describe("احراز هویت روی دیتابیس واقعی", { skip }, () =>
     // عمل خاموش است. و این برای هر تابع مالی آینده هم صدق می‌کند —
     // apply_movement، post_entry، post_cheque_event همه P0001 می‌زنند.
     const fp = `${fingerprint}-p0001`;
-    await auth.login({ username, password: PASSWORD, deviceFingerprint: fp });
+    expectSession(await auth.login({ username, password: PASSWORD, deviceFingerprint: fp }));
     await sql`SELECT identity.approve_device(
                 (SELECT id FROM identity.device WHERE fingerprint = ${fp}),
                 ${adminId}::uuid)`.execute(handle.db);
-    const s = await auth.login({ username, password: PASSWORD, deviceFingerprint: fp });
+    const s = expectSession(await auth.login({ username, password: PASSWORD, deviceFingerprint: fp }));
     assert.ok(s.device?.issuedSecret);
 
     await auth.lock(s.token);
@@ -570,7 +586,7 @@ describe("احراز هویت روی دیتابیس واقعی", { skip }, () =>
     // سفارشی، نهایی‌سازی فاکتور و قفل صفحه ۴۰۰ می‌گرفتند با پیامی
     // انگلیسی. تست‌ها `payload: {}` می‌فرستادند و هرگز به حالت واقعی
     // نمی‌رسیدند.
-    const s = await auth.login({ username, password: PASSWORD, deviceFingerprint: fingerprint });
+    const s = expectSession(await auth.login({ username, password: PASSWORD, deviceFingerprint: fingerprint }));
     const csrf = "csrf-empty-body";
     const r = await app.inject({
       method: "POST",
@@ -583,7 +599,7 @@ describe("احراز هویت روی دیتابیس واقعی", { skip }, () =>
 
     // نشست تازه: درخواست بالا نشست قبلی را **قفل** کرد، پس با همان
     // نمی‌شود ادامه داد — و ۴۰۱ گرفتن اینجا رفتار درست است.
-    const s2 = await auth.login({ username, password: PASSWORD, deviceFingerprint: fingerprint });
+    const s2 = expectSession(await auth.login({ username, password: PASSWORD, deviceFingerprint: fingerprint }));
 
     // ولی JSON خراب همچنان رد می‌شود — با پیام فارسی
     const bad = await app.inject({
@@ -609,7 +625,7 @@ describe("احراز هویت روی دیتابیس واقعی", { skip }, () =>
     // نشست از خودِ سرویس گرفته می‌شود، نه از مسیر HTTP: تست محدودیت
     // نرخ پیش از این اجرا شده و سهمیه /auth/login را خرج کرده است.
     // تستی که به ترتیب اجرا وابسته باشد، روزی بی‌دلیل قرمز می‌شود.
-    const s = await auth.login({ username, password: PASSWORD, deviceFingerprint: fingerprint });
+    const s = expectSession(await auth.login({ username, password: PASSWORD, deviceFingerprint: fingerprint }));
     const known = await app.inject({
       method: "GET",
       url: "/مسیر-ناموجود",

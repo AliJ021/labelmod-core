@@ -380,6 +380,67 @@ export interface UnpostedRevenueView {
  * `consent_sms` و `consent_marketing` عمداً جدا هستند: پیامک فاکتور
  * با اولی می‌رود و تبلیغات با دومی.
  */
+/**
+ * راز TOTP در جریان ثبت‌نام (مهاجرت ۰۳۷).
+ *
+ * ⚠️ جدا از `app_user.totp_secret` است و باید بماند: آن ستون فقط راز
+ *    **تأییدشده** را نگه می‌دارد. اگر یکی بودند، کاربری که وسط
+ *    ثبت‌نام رها می‌کرد دفعه بعد پشت کدی قفل می‌شد که هرگز اسکن نکرده.
+ */
+export interface TotpEnrollmentTable {
+  user_id: string;
+  secret: string;
+  created_at: Generated<Date>;
+}
+
+export interface RecoveryCodeTable {
+  id: Generated<string>;
+  user_id: string;
+  /** SHA-256 — کد یک راز تصادفی است، نه رمز انسانی. */
+  code_hash: string;
+  used_at: Date | null;
+  created_at: Generated<Date>;
+}
+
+export interface WebauthnCredentialTable {
+  id: Generated<string>;
+  user_id: string;
+  credential_id: string;
+  public_key: string;
+  /** صعودی می‌ماند؛ نزولش یعنی کلید Clone شده. */
+  counter: Generated<string>;
+  transports: string[] | null;
+  device_type: string | null;
+  backed_up: Generated<boolean>;
+  name: string | null;
+  created_at: Generated<Date>;
+  last_used_at: Date | null;
+}
+
+export interface WebauthnChallengeTable {
+  id: Generated<string>;
+  user_id: string;
+  challenge: string;
+  kind: "register" | "login";
+  expires_at: Date;
+  created_at: Generated<Date>;
+}
+
+/**
+ * رمز درست بود، عامل دوم نه.
+ *
+ * **نشست نیست** و هیچ مسیری را باز نمی‌کند — فقط پل مرحله دوم است.
+ */
+export interface PendingLoginTable {
+  id: Generated<string>;
+  token_hash: string;
+  user_id: string;
+  device_id: string | null;
+  ip: string | null;
+  expires_at: Date;
+  created_at: Generated<Date>;
+}
+
 export interface CustomerTable {
   id: Generated<string>;
   mobile_normalized: string;
@@ -788,6 +849,11 @@ export interface Database {
   "sales.cash_shift": CashShiftTable;
   "sales.invoice": InvoiceTable;
   "sales.invoice_line": InvoiceLineTable;
+  "identity.totp_enrollment": TotpEnrollmentTable;
+  "identity.recovery_code": RecoveryCodeTable;
+  "identity.webauthn_credential": WebauthnCredentialTable;
+  "identity.webauthn_challenge": WebauthnChallengeTable;
+  "identity.pending_login": PendingLoginTable;
   "sales.customer": CustomerTable;
   "sales.sale_return": SaleReturnTable;
   "sales.sale_return_line": SaleReturnLineTable;
