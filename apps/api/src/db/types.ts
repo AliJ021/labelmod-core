@@ -711,6 +711,37 @@ export interface StockCountTable {
   note: string | null;
 }
 
+/**
+ * برگه انتقال بین انبارها (مهاجرت ۰۳۶).
+ *
+ * ⚠️ `number` تا لحظه ثبت `NULL` است — برگه رهاشده شماره نمی‌سوزاند.
+ *    و `unit_cost`/`value_delta` روی سطر هم تا ثبت `NULL`اند: بها در
+ *    لحظه خروج معلوم می‌شود، نه پیش از آن.
+ */
+export interface TransferTable {
+  id: Generated<string>;
+  number: string | null;
+  branch_id: string;
+  from_warehouse_id: string;
+  to_warehouse_id: string;
+  status: Generated<string>;
+  occurred_at: Generated<Date>;
+  posted_at: Date | null;
+  note: string | null;
+  created_by: string | null;
+  posted_by: string | null;
+  client_event_id: string | null;
+}
+
+export interface TransferLineTable {
+  id: Generated<string>;
+  transfer_id: string;
+  variation_id: string;
+  qty: string;
+  unit_cost: string | null;
+  value_delta: string | null;
+}
+
 export interface StockCountLineTable {
   id: Generated<string>;
   count_id: string;
@@ -766,6 +797,8 @@ export interface Database {
   "ledger.account": LedgerAccountTable;
   "inventory.stock_count": StockCountTable;
   "inventory.stock_count_line": StockCountLineTable;
+  "inventory.transfer": TransferTable;
+  "inventory.transfer_line": TransferLineTable;
   "purchasing.purchase_order": PurchaseOrderTable;
   "purchasing.purchase_order_line": PurchaseOrderLineTable;
   "purchasing.order_progress": OrderProgressView;

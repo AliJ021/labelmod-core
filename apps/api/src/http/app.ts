@@ -19,6 +19,8 @@ import { registerCatalogRoutes } from "./catalog-routes.ts";
 import { registerProductRoutes } from "./product-routes.ts";
 import { registerTreasuryRoutes } from "./treasury-routes.ts";
 import { registerReportRoutes } from "./report-routes.ts";
+import { registerTransferRoutes } from "./transfer-routes.ts";
+import { TransferService } from "../inventory/transfer.ts";
 import { ReportService } from "../reports/service.ts";
 import { DeviceService } from "../auth/devices.ts";
 import { registerPurchasingRoutes } from "./purchasing-routes.ts";
@@ -268,6 +270,10 @@ export async function buildApp(deps: AppDeps): Promise<FastifyInstance> {
   registerReportRoutes(app, {
     db: deps.db,
     reports: new ReportService(deps.db),
+  });
+  registerTransferRoutes(app, {
+    db: deps.db,
+    transfers: new TransferService(deps.db),
   });
   registerPurchasingRoutes(app, {
     db: deps.db,

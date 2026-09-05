@@ -16,6 +16,7 @@
  */
 import type { FastifyInstance } from "fastify";
 import { z } from "zod";
+import { resolveVariationId } from "../catalog/resolve.ts";
 import { AuthError } from "../auth/service.ts";
 import { requireForSession } from "../auth/permission.ts";
 import type { Db } from "../db/client.ts";
@@ -1132,27 +1133,22 @@ export function registerPurchasingRoutes(
   });
 }
 
-/** بارکد یا شناسه → شناسه تنوع. کالای بایگانی‌شده رد می‌شود. */
+/**
+ * بارکد یا شناسه → شناسه تنوع.
+ *
+ * منطقش به `catalog/resolve.ts` منتقل شد چون مسیر انتقال بین انبارها
+ * هم دقیقاً همان را می‌خواست. کلاس خطا همان `PurchasingError` می‌ماند،
+ * پس کد و پیام این مسیرها دست‌نخورده است.
+ */
 async function resolveVariation(
   db: Db,
   input: { variationId?: string | undefined; barcode?: string | undefined },
 ): Promise<string> {
-  const row = await db
-    .selectFrom("catalog.variation")
-    .select(["id", "status"])
-    .$if(input.variationId !== undefined, (q) =>
-      q.where("id", "=", input.variationId as string),
-    )
-    .$if(input.variationId === undefined, (q) =>
-      q.where("barcode", "=", input.barcode as string),
-    )
-    .executeTakeFirst();
-
-  if (!row) throw new PurchasingError("variation_not_found", "کالا یافت نشد", 404);
-  if (row.status === "archived") {
-    throw new PurchasingError("variation_archived", "این کالا بایگانی شده است");
-  }
-  return row.id;
+  return await resolveVariationId(
+    db,
+    input,
+    (code, message, status) => new PurchasingError(code, message, status),
+  );
 }
 
 function idempotencyKey(req: { headers: Record<string, unknown> }): string | undefined {
