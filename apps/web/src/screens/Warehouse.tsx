@@ -6,6 +6,7 @@
  *   سفارش خرید     تعهد — **هیچ اثر مالی و انباری ندارد**
  *   رسید خرید      کالا می‌آید، با سند تأمین‌کننده
  *   برگشت از خرید  کالا برمی‌گردد، با بهای همان رسید
+ *   انتقال         کالا جابه‌جا می‌شود، **بدون هیچ سند حسابداری**
  *   انبارگردانی    موجودی اصلاح می‌شود، **بدون هیچ سندی جز شمارش**
  *
  * اولی و آخری دو سرِ طیف‌اند: سفارش هیچ‌چیز را عوض نمی‌کند،
@@ -21,8 +22,9 @@ import { Purchasing } from "./Purchasing.tsx";
 import { StockCount } from "./StockCount.tsx";
 import { PurchaseReturn } from "./PurchaseReturn.tsx";
 import { PurchaseOrder } from "./PurchaseOrder.tsx";
+import { Transfer } from "./Transfer.tsx";
 
-type Tab = "orders" | "receipts" | "returns" | "count";
+type Tab = "orders" | "receipts" | "returns" | "transfer" | "count";
 
 export function Warehouse() {
   const [tab, setTab] = useState<Tab>("receipts");
@@ -60,6 +62,15 @@ export function Warehouse() {
         <button
           type="button"
           role="tab"
+          aria-selected={tab === "transfer"}
+          className={tab === "transfer" ? "on" : ""}
+          onClick={() => setTab("transfer")}
+        >
+          انتقال بین انبار
+        </button>
+        <button
+          type="button"
+          role="tab"
           aria-selected={tab === "count"}
           className={tab === "count" ? "on" : ""}
           onClick={() => setTab("count")}
@@ -74,6 +85,8 @@ export function Warehouse() {
         <Purchasing />
       ) : tab === "returns" ? (
         <PurchaseReturn />
+      ) : tab === "transfer" ? (
+        <Transfer />
       ) : (
         <StockCount />
       )}

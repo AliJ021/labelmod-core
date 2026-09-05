@@ -37,7 +37,9 @@ INSERT INTO platform.document_counter (branch_id, doc_type, fiscal_year, prefix)
 -- برگشت از خرید (مهاجرت ۰۲۸)
 ('00000000-0000-7000-8000-000000000001', 'purchase_return', 1405, 'PR-1405-'),
 -- سفارش خرید (مهاجرت ۰۲۹). شماره در لحظه **فرستادن** به تأمین‌کننده.
-('00000000-0000-7000-8000-000000000001', 'purchase_order',  1405, 'PO-1405-')
+('00000000-0000-7000-8000-000000000001', 'purchase_order',  1405, 'PO-1405-'),
+-- انتقال بین انبارها (مهاجرت ۰۳۶). شماره در لحظه ثبت.
+('00000000-0000-7000-8000-000000000001', 'transfer',        1405, 'TR-1405-')
 ON CONFLICT (branch_id, doc_type, fiscal_year) DO NOTHING;
 
 -- حساب‌های خزانه ------------------------------------------------------
@@ -119,6 +121,8 @@ INSERT INTO identity.permission_rule
 -- صندوق‌دار گزارش نمی‌بیند: کارش فروش است و «خلاصه امروز» را از
 -- داشبورد دارد. گزارش دوره‌ای تصمیم مالک و حسابدار است.
 ('cashier','report.view',          false, NULL,   NULL,  NULL),
+-- انتقال بین انبار کار انباردار است، نه صندوق.
+('cashier','stock.transfer',       false, NULL,   NULL,  NULL),
 
 ('supervisor','sale.create',       true,  NULL,   NULL,  NULL),
 ('supervisor','sale.discount',     true,  NULL,   25.00, NULL),
@@ -144,8 +148,10 @@ INSERT INTO identity.permission_rule
 -- که `cost.view` از روز اول داشت. مسیر گزارش ستون‌های بها را برایش
 -- `null` می‌کند، نه صفر.
 ('supervisor','report.view',       true,  NULL,   NULL,  NULL),
+('supervisor','stock.transfer',    true,  NULL,   NULL,  NULL),
 
 ('warehouse','stock.receive',      true,  NULL,   NULL,  NULL),
+-- انتقال قفسه به انبار پشتیبان، کار روزمره انباردار است.
 ('warehouse','stock.transfer',     true,  NULL,   NULL,  NULL),
 ('warehouse','catalog.manage',     true,  NULL,   NULL,  NULL),
 ('warehouse','device.manage',      false, NULL,   NULL,  NULL),
@@ -161,6 +167,8 @@ INSERT INTO identity.permission_rule
 ('accountant','period.close',      true,  NULL,   NULL,  'admin'),
 ('accountant','cost.view',         true,  NULL,   NULL,  NULL),
 ('accountant','report.view',       true,  NULL,   NULL,  NULL),
+-- حسابدار موجودی را جابه‌جا نمی‌کند؛ گزارشش را می‌بیند.
+('accountant','stock.transfer',    false, NULL,   NULL,  NULL),
 ('accountant','settings.security', false, NULL,   NULL,  NULL),
 
 ('admin','sale.create',            true,  NULL,   NULL,  NULL),
