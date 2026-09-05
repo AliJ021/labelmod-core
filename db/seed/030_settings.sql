@@ -321,7 +321,7 @@ SELECT * FROM (VALUES
  60, 'settings.security', true),
 
 ('auth.pin_forbidden_operations',
- '["refund.cash","invoice.cancel","price.change","stock.adjust","period.close","period.reopen","user.manage","journal.manual","return.late","settings.manage","settings.security","sale.price_override"]'::jsonb,
+ '["refund.cash","invoice.cancel","price.change","stock.adjust","period.close","period.reopen","user.manage","device.manage","journal.manual","return.late","settings.manage","settings.security","sale.price_override"]'::jsonb,
  'عملیاتی که با PIN هرگز مجاز نیستند و احراز هویت کامل می‌خواهند — بند ۱ SECURITY.md.', true,
  'multichoice', 'کارهایی که با PIN انجام نمی‌شوند', 'security',
  '[{"value":"refund.cash","label":"بازپرداخت نقدی"},
@@ -339,6 +339,7 @@ SELECT * FROM (VALUES
    {"value":"stock.receive","label":"رسید انبار"},
    {"value":"stock.transfer","label":"انتقال بین انبار"},
    {"value":"catalog.manage","label":"تعریف کالا"},
+   {"value":"device.manage","label":"تأیید و ابطال دستگاه"},
    {"value":"cost.view","label":"دیدن قیمت خرید"},
    {"value":"shift.close","label":"بستن شیفت صندوق"},
    {"value":"settings.manage","label":"تغییر تنظیمات"},

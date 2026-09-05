@@ -8,7 +8,7 @@
 > پیش از ورود داده واقعی، بخش «تصمیم‌های باز» پایین را بخوانید.
 
 ```
-۷۹۰ ادعای SQL  ·  ۵۲۶ تست Node  ·  ۲۶ ادعای PHP افزونه  ·  همه در CI
+۸۲۱ ادعای SQL  ·  ۵۳۶ تست Node  ·  ۲۶ ادعای PHP افزونه  ·  همه در CI
 ```
 
 ---
@@ -36,13 +36,14 @@
 
 ### لایه API — ساخته شده
 
-Fastify + Kysely، ۸۹ مسیر. احراز هویت با توکن مات، مجوز از
+Fastify + Kysely، ۹۴ مسیر. احراز هویت با توکن مات، مجوز از
 `identity.permission_rule` (هیچ شرط دسترسی در کد نیست)، CSRF دولایه،
 Idempotency روی هر مسیر تغییردهنده وضعیت.
 
 | گروه | مسیرها |
 | --- | --- |
 | احراز هویت | ورود، خروج، قفل، بازگشایی با PIN، احراز مجدد، ابطال همه نشست‌ها |
+| دستگاه و نشست | **تأیید و ابطال دستگاه، فهرست نشست‌های باز، قطع دسترسی گوشی مفقودی** |
 | فروش و صندوق | سبد، افزودن قلم، پرداخت، نهایی‌سازی، ابطال، باز و بستن شیفت |
 | مرجوعی | پیش‌نمایش، برگ مرجوعی، ثبت، ابطال |
 | دوره ثبت | درآمد ثبت‌نشده، بستن دوره کانال، **بستن خودکار سررسیدشده‌ها** |
@@ -248,11 +249,11 @@ docker compose up -d db
 export DATABASE_URL='postgres://labelmod:رمز@localhost:5432/labelmod'
 ops/db.sh migrate         # ساخت اسکیما
 ops/db.sh seed            # کدینگ حساب، قواعد ثبت، تنظیمات
-ops/db.sh test            # ۷۹۰ ادعا — باید همه پاس شوند
+ops/db.sh test            # ۸۲۱ ادعا — باید همه پاس شوند
 
 corepack enable
 pnpm install
-pnpm check                # typecheck + ۵۲۶ تست  (⚠️ lint هنوز واقعی نیست)
+pnpm check                # typecheck + ۵۳۶ تست  (⚠️ lint هنوز واقعی نیست)
 pnpm --filter @labelmod/api dev
 pnpm --filter @labelmod/web dev
 
@@ -400,7 +401,6 @@ WebAssembly استفاده می‌کند. بدون آن کلیدواژه، دو�
 | صفحه گزارش‌ها | — |
 | گزارش‌های مالی | — |
 | خزانه و چک در UI | تابع دیتابیس و تست کامل‌اند؛ Route و صفحه نیست |
-| تأیید و ابطال دستگاه | `identity.approve_device` مسیر تولیدی ندارد، پس PIN عملاً باز نمی‌شود |
 | انتقال بین انبارها | فقط یک مقدار در `stock_movement.kind` |
 | مدیریت کاربر و مشتری در UI | ساخت کاربر فقط از CLI |
 | ۲FA مدیر و حسابدار | الزام بند ۱ SECURITY.md، هنوز پیاده نشده |
@@ -422,7 +422,7 @@ Microservice · Redis · Kubernetes · حالت آفلاین کامل · Windows
 ```
 db/migrations/   اسکیما و توابع — شماره‌دار، SQL خام، قابل حسابرسی
 db/seed/         کدینگ حساب، قواعد ثبت، تنظیمات، داده مرجع
-db/test/         ۲۳ فایل تست مالی — در CI و pre-push اجرا می‌شوند
+db/test/         ۲۴ فایل تست مالی — در CI و pre-push اجرا می‌شوند
 docs/            ADR-001 تا ADR-006 · SECURITY.md · DEPLOYMENT.md
 ops/             db.sh · deploy.sh · install-hooks.sh · close-due-days.sh
                  deploy/ — Caddyfile، زمان‌بند شبانه

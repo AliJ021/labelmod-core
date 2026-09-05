@@ -106,6 +106,7 @@ INSERT INTO identity.permission_rule
 ('cashier','sale.discount_high',   true,  NULL,   25.00, 'supervisor'),
 ('cashier','sale.credit',          false, NULL,   NULL,  NULL),
 ('cashier','catalog.manage',       false, NULL,   NULL,  NULL),
+('cashier','device.manage',        false, NULL,   NULL,  NULL),
 ('cashier','return.same_day',      true,  NULL,   NULL,  NULL),
 ('cashier','return.late',          false, NULL,   NULL,  NULL),
 ('cashier','refund.cash',          false, NULL,   NULL,  NULL),
@@ -117,6 +118,9 @@ INSERT INTO identity.permission_rule
 ('supervisor','sale.discount_high',true,  NULL,   NULL,  'admin'),
 ('supervisor','sale.credit',       true,  NULL,   NULL,  NULL),
 ('supervisor','catalog.manage',    true,  NULL,   NULL,  NULL),
+-- تأیید دستگاه پیش‌فرض فقط دست مدیر است (بند ۱ SECURITY.md).
+-- مالک می‌تواند از صفحه «مجوزها» به سرپرست هم بدهد — یک UPDATE.
+('supervisor','device.manage',     false, NULL,   NULL,  NULL),
 ('supervisor','return.same_day',   true,  NULL,   NULL,  NULL),
 ('supervisor','return.late',       true,  NULL,   NULL,  'admin'),
 ('supervisor','refund.cash',       true,  NULL,   NULL,  NULL),
@@ -129,6 +133,7 @@ INSERT INTO identity.permission_rule
 ('warehouse','stock.receive',      true,  NULL,   NULL,  NULL),
 ('warehouse','stock.transfer',     true,  NULL,   NULL,  NULL),
 ('warehouse','catalog.manage',     true,  NULL,   NULL,  NULL),
+('warehouse','device.manage',      false, NULL,   NULL,  NULL),
 ('warehouse','stock.count',        true,  NULL,   NULL,  NULL),
 ('warehouse','stock.adjust',       true,  NULL,   NULL,  'admin'),
 ('warehouse','cost.view',          false, NULL,   NULL,  NULL),
@@ -197,6 +202,7 @@ INSERT INTO identity.permission_rule
 -- نباید بتواند وسط شیفت کالای تازه بسازد و بارکد چاپ کند. انباردار
 -- می‌تواند، چون کالای تازه معمولاً همراه رسید خرید می‌آید.
 ('admin','catalog.manage',         true,  NULL,   NULL,  NULL),
+('admin','device.manage',          true,  NULL,   NULL,  NULL),
 
 -- صفحه تنظیمات — سه عملیات، نه یکی.
 --
