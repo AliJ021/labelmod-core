@@ -150,7 +150,7 @@ REVOKE UPDATE, DELETE ON inventory.stock_movement  FROM labelmod_app;
 نیست — یک فایل است با یک فرض.
 
 `ops/restore-drill.sh` دامپ را در یک دیتابیس یک‌بارمصرف برمی‌گرداند و
-هشت ادعا رویش می‌راند — از جمله زنجیره حسابرسی، حلقه‌به‌حلقه. سابقه در
+نه ادعا رویش می‌راند — از جمله زنجیره حسابرسی، حلقه‌به‌حلقه. سابقه در
 `platform.restore_drill` (تغییرناپذیر) می‌نشیند و
 `platform.restore_drill_status` عبور از `backup.restore_drill_days` را
 `overdue` اعلام می‌کند؛ نبودِ هر تمرینی `never` است.
