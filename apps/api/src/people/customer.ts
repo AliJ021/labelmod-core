@@ -40,6 +40,23 @@ export class CustomerError extends Error {
   }
 }
 
+/** یک کلید اندازه، با فراداده‌ای که فرم از آن ساخته می‌شود. */
+export interface MeasureKey {
+  key: string;
+  label: string;
+  unit: string;
+  minValue: string;
+  maxValue: string;
+  groupKey: string;
+  sortOrder: number;
+}
+
+/** اندازه ثبت‌شده یک مشتری. */
+export interface CustomerMeasure {
+  key: string;
+  valueCm: string;
+}
+
 export interface Customer {
   id: string;
   mobile: string;
@@ -50,6 +67,12 @@ export interface Customer {
   dueDays: number;
   consentSms: boolean;
   consentMarketing: boolean;
+  /** نشانی متن آزاد است — نشانی ایرانی قالب ثابت ندارد. */
+  address: string | null;
+  /** ده رقم، نرمال‌شده در دیتابیس. `null` یعنی نداریم، نه «خالی». */
+  postalCode: string | null;
+  city: string | null;
+  province: string | null;
   tags: string[];
   internalNote: string | null;
   createdAt: string;
@@ -68,6 +91,10 @@ interface Row {
   credit_limit: string;
   due_days: number;
   consent_sms: boolean;
+  address: string | null;
+  postal_code: string | null;
+  city: string | null;
+  province: string | null;
   consent_marketing: boolean;
   tags: string[] | null;
   internal_note: string | null;
@@ -88,6 +115,10 @@ function toJson(r: Row): Customer {
     dueDays: Number(r.due_days),
     consentSms: r.consent_sms,
     consentMarketing: r.consent_marketing,
+    address: r.address,
+    postalCode: r.postal_code,
+    city: r.city,
+    province: r.province,
     tags: r.tags ?? [],
     internalNote: r.internal_note,
     createdAt: r.created_at.toISOString(),
@@ -150,6 +181,66 @@ export class CustomerService {
       LIMIT ${input.limit}
     `.execute(this.#db);
     return rows.rows.map(toJson);
+  }
+
+  /**
+   * کلیدهای اندازه — با برچسب، واحد و بازه.
+   *
+   * فرم شناسنامه از همین ساخته می‌شود. اگر لازم شد فهرست کلیدها در
+   * React نوشته شود، یعنی یک ستون در `sales.measure_key` کم است.
+   */
+  async measureKeys(): Promise<MeasureKey[]> {
+    const r = await sql<{
+      key: string; label: string; unit: string;
+      min_value: string; max_value: string;
+      group_key: string; sort_order: number;
+    }>`SELECT key, label, unit, min_value::text, max_value::text,
+              group_key, sort_order
+         FROM sales.measure_key WHERE is_active
+        ORDER BY sort_order, key`.execute(this.#db);
+    return r.rows.map((x) => ({
+      key: x.key,
+      label: x.label,
+      unit: x.unit,
+      minValue: x.min_value,
+      maxValue: x.max_value,
+      groupKey: x.group_key,
+      sortOrder: Number(x.sort_order),
+    }));
+  }
+
+  async measuresOf(customerId: string): Promise<CustomerMeasure[]> {
+    const r = await sql<{ key: string; value_cm: string }>`
+      SELECT m.key, m.value_cm::text
+        FROM sales.customer_measure m
+        JOIN sales.measure_key k ON k.key = m.key
+       WHERE m.customer_id = ${customerId}::uuid
+       ORDER BY k.sort_order, m.key
+    `.execute(this.#db);
+    return r.rows.map((x) => ({ key: x.key, valueCm: x.value_cm }));
+  }
+
+  /**
+   * جایگزینی کامل اندازه‌ها.
+   *
+   * اعتبارسنجی بازه در **دیتابیس** است، نه در Zod: بازه از
+   * `sales.measure_key` می‌آید و مالک می‌تواند عوضش کند. دو نسخه از
+   * یک قاعده یعنی آن که در psql دور زده می‌شود همان است که اهمیت
+   * دارد.
+   */
+  async setMeasures(input: {
+    id: string;
+    values: Record<string, number>;
+    actorId: string;
+  }): Promise<CustomerMeasure[]> {
+    await this.#db.transaction().execute(async (trx) => {
+      await setActor(trx, input.actorId);
+      await sql`
+        SELECT sales.set_customer_measures(
+          ${input.id}::uuid, ${JSON.stringify(input.values)}::jsonb, ${input.actorId}::uuid)
+      `.execute(trx);
+    });
+    return await this.measuresOf(input.id);
   }
 
   async byId(id: string): Promise<Customer | null> {
@@ -236,6 +327,11 @@ export class CustomerService {
     consentSms?: boolean | undefined;
     consentMarketing?: boolean | undefined;
     internalNote?: string | null | undefined;
+    address?: string | null | undefined;
+    /** خام از کاربر — نرمال‌سازی در دیتابیس انجام می‌شود، نه اینجا. */
+    postalCode?: string | null | undefined;
+    city?: string | null | undefined;
+    province?: string | null | undefined;
     actorId: string;
   }): Promise<void> {
     const before = await this.byId(input.id);
@@ -243,6 +339,22 @@ export class CustomerService {
 
     await this.#db.transaction().execute(async (trx) => {
       await setActor(trx, input.actorId);
+      // ⚠️ کد پستی **پیش از درج** نرمال می‌شود و اگر ده رقم نبود رد
+      // می‌شود — نه اینکه نصفه بنشیند. کد پستی نصفه یعنی برچسب پستی
+      // غلط چاپ شود و بسته برنگردد؛ بدتر از خالی بودنش.
+      let postal: string | null | undefined = input.postalCode;
+      if (typeof input.postalCode === "string" && input.postalCode.trim() !== "") {
+        const n = await sql<{ p: string | null }>`
+          SELECT sales.normalize_postal_code(${input.postalCode}) AS p
+        `.execute(trx);
+        postal = n.rows[0]?.p ?? null;
+        if (postal === null) {
+          throw new CustomerError("bad_postal_code", "کد پستی باید ده رقم باشد", 422);
+        }
+      } else if (input.postalCode !== undefined) {
+        postal = null;
+      }
+
       await trx
         .updateTable("sales.customer")
         .set({
@@ -258,6 +370,10 @@ export class CustomerService {
             ? {}
             : { consent_marketing: input.consentMarketing }),
           ...(input.internalNote === undefined ? {} : { internal_note: input.internalNote }),
+          ...(input.address === undefined ? {} : { address: input.address }),
+          ...(postal === undefined ? {} : { postal_code: postal }),
+          ...(input.city === undefined ? {} : { city: input.city }),
+          ...(input.province === undefined ? {} : { province: input.province }),
         })
         .where("id", "=", input.id)
         .execute();

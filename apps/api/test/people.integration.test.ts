@@ -567,4 +567,143 @@ describe("پرسنل و مشتری", { skip }, () => {
     });
     assert.equal(r.statusCode, 403, r.body);
   });
+
+  // ═══════════════════════════════════════════════════════════════════
+  // شناسنامه مشتری
+  // ═══════════════════════════════════════════════════════════════════
+
+  const customerId = async (sess: Awaited<ReturnType<typeof loginAs>>) => {
+    const list = await app.inject({ method: "GET", url: "/customers?q=0912123", ...sess });
+    return (JSON.parse(list.body) as { customers: Array<{ id: string }> }).customers[0]!.id;
+  };
+
+  test("نشانی و کد پستی روی پرونده می‌نشینند — کد پستی نرمال‌شده", async () => {
+    const s = await loginAs(supervisor);
+    const id = await customerId(s);
+    const r = await app.inject({
+      method: "PATCH",
+      url: `/customers/${id}`,
+      ...s,
+      // رقم فارسی با خط تیره — همان چیزی که صفحه‌کلید فارسی می‌فرستد.
+      payload: {
+        address: "تهران، خیابان نمونه، پلاک ۱",
+        postalCode: "۱۲۳۴۵-۶۷۸۹۰",
+        city: "تهران",
+        province: "تهران",
+      },
+    });
+    assert.equal(r.statusCode, 200, r.body);
+    const c = JSON.parse(r.body) as { postalCode: string; city: string; address: string };
+    assert.equal(c.postalCode, "1234567890", "کد پستی باید در دیتابیس نرمال شود");
+    assert.equal(c.city, "تهران");
+    assert.match(c.address, /پلاک/);
+  });
+
+  test("کد پستی نُه‌رقمی ۴۲۲ می‌گیرد، نه اینکه نصفه ذخیره شود", async () => {
+    // کد پستی نصفه یعنی برچسب پستی غلط چاپ شود و بسته برنگردد —
+    // بدتر از خالی بودنش.
+    const s = await loginAs(supervisor);
+    const id = await customerId(s);
+    const r = await app.inject({
+      method: "PATCH",
+      url: `/customers/${id}`,
+      ...s,
+      payload: { postalCode: "123456789" },
+    });
+    assert.equal(r.statusCode, 422, r.body);
+
+    // و مقدار قبلی دست‌نخورده مانده.
+    const after = await app.inject({ method: "GET", url: `/customers/${id}`, ...s });
+    const c = (JSON.parse(after.body) as { customer: { postalCode: string } }).customer;
+    assert.equal(c.postalCode, "1234567890", "ردِ اعتبارسنجی نباید مقدار قبلی را پاک کند");
+  });
+
+  test("کد پستی خالی یعنی پاک کردن، نه خطا", async () => {
+    const s = await loginAs(supervisor);
+    const id = await customerId(s);
+    const r = await app.inject({
+      method: "PATCH", url: `/customers/${id}`, ...s, payload: { postalCode: null },
+    });
+    assert.equal(r.statusCode, 200, r.body);
+    assert.equal((JSON.parse(r.body) as { postalCode: string | null }).postalCode, null);
+  });
+
+  test("کلیدهای اندازه از دیتابیس می‌آیند، با برچسب و بازه", async () => {
+    const s = await loginAs(supervisor);
+    const r = await app.inject({ method: "GET", url: "/measure-keys", ...s });
+    assert.equal(r.statusCode, 200, r.body);
+    const keys = (JSON.parse(r.body) as {
+      keys: Array<{ key: string; label: string; minValue: string; groupKey: string }>;
+    }).keys;
+    assert.ok(keys.length >= 13, `انتظار دست‌کم ۱۳ کلید، واقعی ${keys.length}`);
+    // سه گروهی که مالک نام برد: پا، پایین‌تنه، بالاتنه.
+    const groups = new Set(keys.map((k) => k.groupKey));
+    for (const g of ["foot", "lower", "upper"]) {
+      assert.ok(groups.has(g), `گروه «${g}» باید باشد`);
+    }
+    const height = keys.find((k) => k.key === "height");
+    assert.ok(height, "کلید قد باید باشد");
+    assert.equal(height.label, "قد", "برچسب فارسی از دیتابیس می‌آید، نه از React");
+  });
+
+  test("اندازه‌ها ثبت و کامل جایگزین می‌شوند", async () => {
+    const s = await loginAs(supervisor);
+    const id = await customerId(s);
+
+    const put = await app.inject({
+      method: "PUT",
+      url: `/customers/${id}/measures`,
+      ...s,
+      payload: { values: { height: 178, chest: 102, inseam: 81, shoe_size: 43 } },
+    });
+    assert.equal(put.statusCode, 200, put.body);
+    assert.equal(
+      (JSON.parse(put.body) as { measures: unknown[] }).measures.length, 4);
+
+    // جایگزینی کامل، نه ادغام: فرمی که یک اندازه را پاک می‌کند باید
+    // واقعاً پاکش کند.
+    const again = await app.inject({
+      method: "PUT", url: `/customers/${id}/measures`, ...s,
+      payload: { values: { height: 180 } },
+    });
+    assert.equal(again.statusCode, 200, again.body);
+    const m = (JSON.parse(again.body) as { measures: Array<{ key: string; valueCm: string }> })
+      .measures;
+    assert.equal(m.length, 1, "اندازه‌های قبلی باید رفته باشند");
+    assert.equal(m[0]!.key, "height");
+  });
+
+  test("اندازه بیرون بازه ۴۰۹ می‌گیرد و پیامش فارسی است", async () => {
+    // نگهبان دیتابیس ۴۰۹ می‌دهد نه ۵۰۰ — دفاعی که شبیه خرابی سرور
+    // گزارش شود، در عمل خاموش است.
+    const s = await loginAs(supervisor);
+    const id = await customerId(s);
+    const r = await app.inject({
+      method: "PUT", url: `/customers/${id}/measures`, ...s,
+      payload: { values: { height: 17 } },
+    });
+    assert.equal(r.statusCode, 409, r.body);
+    assert.match(r.body, /بازه مجاز/, "پیام باید فارسی و برای کاربر باشد");
+  });
+
+  test("کلید اندازه تعریف‌نشده رد می‌شود", async () => {
+    const s = await loginAs(supervisor);
+    const id = await customerId(s);
+    const r = await app.inject({
+      method: "PUT", url: `/customers/${id}/measures`, ...s,
+      payload: { values: { wrist: 18 } },
+    });
+    assert.equal(r.statusCode, 409, r.body);
+  });
+
+  test("اندازه پشت همان دروازه پرونده مشتری است", async () => {
+    // صندوق‌دار `customer.manage` ندارد — پس نه پرونده می‌بیند و نه
+    // اندازه. اگر روزی این دو دروازه از هم جدا شوند، همین‌جا قرمز
+    // می‌شود و آن یک تصمیم آگاهانه خواهد بود، نه یک لغزش.
+    const s = await loginAs(cashier);
+    for (const url of ["/measure-keys", "/customers"]) {
+      const r = await app.inject({ method: "GET", url, ...s });
+      assert.equal(r.statusCode, 403, `${url}: ${r.body}`);
+    }
+  });
 });
