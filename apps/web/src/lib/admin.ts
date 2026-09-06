@@ -66,6 +66,24 @@ export interface DeviceDriver {
   notes: string | null;
   /** ⚠️ `false` یعنی مستنداتش ثبت شده ولی کدش نوشته نشده. */
   isImplemented: boolean;
+  /** `false` یعنی بازنشسته — در فهرست انتخاب پایانه نمی‌آید. */
+  isActive: boolean;
+}
+
+/**
+ * ورودی افزودن یا ویرایش یک درایور.
+ *
+ * ⚠️ `isImplemented` عمداً اینجا نیست. آن یک واقعیت درباره کد سرور
+ * است، نه یک تنظیم — و سرور هم از این مسیر دست‌نخورده رهایش می‌کند.
+ */
+export interface DriverInput {
+  label: string;
+  deviceKind: string;
+  vendor: string | null;
+  sdkDocUrl: string | null;
+  notes: string | null;
+  sortOrder?: number;
+  reason?: string;
 }
 
 export interface TerminalDriver {
@@ -187,7 +205,27 @@ export const admin = {
 
   settlementTerms: () => api.get<{ terms: SettlementTerm[] }>("/settlement-terms"),
 
-  deviceDrivers: () => api.get<{ drivers: DeviceDriver[] }>("/device-drivers"),
+  /** `includeRetired` بازنشسته‌ها را هم می‌آورد تا بشود برشان گرداند. */
+  deviceDrivers: (includeRetired = false) =>
+    api.get<{ drivers: DeviceDriver[] }>(
+      `/device-drivers${includeRetired ? "?includeRetired=1" : ""}`,
+    ),
+
+  /**
+   * افزودن یا ویرایش یک درایور و مستندات SDK آن.
+   *
+   * `PUT` است چون هویت عملیات خودِ `code` است و بدنه حالت **مطلق**
+   * درایور را می‌گوید — ارسال دوباره همان بدنه همان نتیجه را می‌دهد.
+   */
+  saveDriver: (code: string, input: DriverInput) =>
+    api.put<DeviceDriver>(`/device-drivers/${encodeURIComponent(code)}`, input),
+
+  /** بازنشستگی یا بازگرداندن. حذف نیست — پایانه‌ها به آن ارجاع دارند. */
+  setDriverActive: (code: string, isActive: boolean, reason?: string) =>
+    api.patch<DeviceDriver>(
+      `/device-drivers/${encodeURIComponent(code)}/active`,
+      { isActive, reason },
+    ),
 
   terminalDrivers: () => api.get<{ terminals: TerminalDriver[] }>("/terminal-drivers"),
 

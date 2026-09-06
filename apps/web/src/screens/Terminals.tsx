@@ -20,6 +20,7 @@ import { ApiError } from "../lib/api.ts";
 import {
   admin,
   type DeviceDriver,
+  type DriverInput,
   type SettlementTerm,
   type TerminalDriver,
 } from "../lib/admin.ts";
@@ -152,7 +153,9 @@ function DriverSection() {
   const [busy, setBusy] = useState(false);
 
   const load = async () => {
-    const [d, t] = await Promise.all([admin.deviceDrivers(), admin.terminalDrivers()]);
+    // بازنشسته‌ها هم می‌آیند تا بشود برشان گرداند؛ فهرست انتخاب پایانه
+    // پایین‌تر خودش فیلترشان می‌کند.
+    const [d, t] = await Promise.all([admin.deviceDrivers(true), admin.terminalDrivers()]);
     setDrivers(d.drivers);
     setTerminals(t.terminals);
   };
@@ -186,11 +189,43 @@ function DriverSection() {
     }
   }
 
+  async function save(code: string, input: DriverInput) {
+    setBusy(true);
+    setError(null);
+    try {
+      await admin.saveDriver(code, input);
+      await load();
+      return true;
+    } catch (err) {
+      // اعتبارسنجی در دیتابیس است و پیامش فارسی و برای کاربر —
+      // «نشانی مستندات باید با https:// شروع شود» دقیقاً همان چیزی
+      // است که باید خوانده شود.
+      setError(message(err));
+      return false;
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function setActive(code: string, isActive: boolean) {
+    setBusy(true);
+    setError(null);
+    try {
+      await admin.setDriverActive(code, isActive);
+      await load();
+    } catch (err) {
+      setError(message(err));
+    } finally {
+      setBusy(false);
+    }
+  }
+
   if (drivers === null) {
     return <Solid as="section" className="pad muted">در حال بارگذاری درایورها…</Solid>;
   }
 
-  const ready = drivers.filter((d) => d.isImplemented).length;
+  const live = drivers.filter((d) => d.isActive);
+  const ready = live.filter((d) => d.isImplemented).length;
 
   return (
     <Solid as="section" className="pad">
@@ -204,7 +239,7 @@ function DriverSection() {
         // رنگ به‌تنهایی حامل معنا نیست — آیکون و متن هم هست.
         <p className="solid pos-alert" role="status">
           <span className="dot dot--warn" aria-hidden="true">●</span>{" "}
-          <strong>هیچ درایوری هنوز پیاده نشده است.</strong> {drivers.length} دستگاه
+          <strong>هیچ درایوری هنوز پیاده نشده است.</strong> {live.length} دستگاه
           شناخته‌شده ثبت شده‌اند ولی کدشان نوشته نشده — تا مستندات کتبی SDK از
           شرکت پرداخت نرسد، ارتباط با دستگاه حدس است و حدس در مسیر پول یعنی
           پرداختی که وضعیتش معلوم نیست.
@@ -235,7 +270,10 @@ function DriverSection() {
                 >
                   <option value="">— بدون دستگاه —</option>
                   {drivers
-                    .filter((d) => d.deviceKind === "card_terminal")
+                    // بازنشسته در فهرست انتخاب نمی‌آید — ولی اگر همین
+                    // پایانه از قبل به آن وصل بوده، سرور هم اجازه
+                    // بازنشستگی‌اش را نمی‌داد، پس چیزی گم نمی‌شود.
+                    .filter((d) => d.deviceKind === "card_terminal" && d.isActive)
                     .map((d) => (
                       <option key={d.code} value={d.code}>
                         {d.label}
@@ -255,48 +293,235 @@ function DriverSection() {
       </ul>
 
       <details style={{ marginTop: "var(--s-3)" }}>
-        <summary className="muted small">مستندات SDK دستگاه‌های شناخته‌شده</summary>
-        <div className="tw" style={{ marginTop: "var(--s-2)" }}>
-          <table>
-            <thead>
-              <tr>
-                <th>دستگاه</th>
-                <th>سازنده</th>
-                <th>وضعیت</th>
-                <th>مستندات</th>
-              </tr>
-            </thead>
-            <tbody>
-              {drivers.map((d) => (
-                <tr key={d.code}>
-                  <td>{d.label}</td>
-                  <td>{d.vendor ?? "—"}</td>
-                  <td>
-                    {d.isImplemented ? (
-                      <span className="pill trend trend--good">
-                        <span aria-hidden="true">✓</span> پیاده‌شده
-                      </span>
-                    ) : (
-                      <span className="pill trend trend--warn">
-                        <span aria-hidden="true">■</span> فقط ثبت‌شده
-                      </span>
-                    )}
-                  </td>
-                  <td>
-                    {d.sdkDocUrl === null ? (
-                      <span className="muted">هنوز دریافت نشده</span>
-                    ) : (
-                      <a href={d.sdkDocUrl} target="_blank" rel="noreferrer noopener">
-                        سند SDK
-                      </a>
-                    )}
-                  </td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
+        <summary className="muted small">
+          مستندات SDK دستگاه‌های شناخته‌شده — افزودن و ویرایش
+        </summary>
+
+        <p className="muted small" style={{ marginTop: "var(--s-2)" }}>
+          کارت‌خوان‌ها عوض می‌شوند و زیادتر می‌شوند. رسیدن یک دستگاه تازه یک ردیف
+          در همین فهرست است، نه یک نسخه تازه نرم‌افزار.
+        </p>
+
+        <p className="muted small">
+          ⚠️ «پیاده‌شده» از اینجا روشن نمی‌شود. ثبت یک دستگاه یعنی مستنداتش را
+          داریم؛ کدِ ارتباط با آن جدا نوشته می‌شود و تا نوشته نشود، وصل‌کردن
+          پایانه به آن رد می‌شود. کلید و رمز API هم اینجا نمی‌نشیند — از متغیر
+          محیطی سرور می‌آید.
+        </p>
+
+        <ul className="term-list" style={{ marginTop: "var(--s-2)" }}>
+          {drivers.map((d) => (
+            <DriverRow key={d.code} driver={d} busy={busy} onSave={save} onActive={setActive} />
+          ))}
+        </ul>
+
+        <DriverNew busy={busy} onSave={save} />
       </details>
+    </Solid>
+  );
+}
+
+/** انواع دستگاه — همان فهرستی که دیتابیس هم می‌سنجد. */
+const KINDS: ReadonlyArray<[string, string]> = [
+  ["card_terminal", "کارت‌خوان"],
+  ["printer", "چاپگر"],
+  ["scale", "ترازو"],
+  ["scanner", "بارکدخوان"],
+];
+
+/**
+ * یک ردیف از رجیستری درایور — ویرایش مستندات و بازنشستگی.
+ *
+ * ⚠️ «پیاده‌شده» فقط **نمایش** داده می‌شود، ورودی ندارد. اگر ورودی
+ * داشت، مالک می‌توانست دستگاهی را که کدش نوشته نشده «پیاده‌شده»
+ * علامت بزند، پایانه را به آن وصل کند، و اولین پرداخت واقعی در سکوت
+ * شکست بخورد.
+ */
+function DriverRow(props: {
+  driver: DeviceDriver;
+  busy: boolean;
+  onSave: (code: string, input: DriverInput) => Promise<boolean>;
+  onActive: (code: string, isActive: boolean) => void;
+}) {
+  const { driver: d, busy } = props;
+  const [label, setLabel] = useState(d.label);
+  const [vendor, setVendor] = useState(d.vendor ?? "");
+  const [url, setUrl] = useState(d.sdkDocUrl ?? "");
+  const [notes, setNotes] = useState(d.notes ?? "");
+
+  const dirty =
+    label !== d.label ||
+    vendor !== (d.vendor ?? "") ||
+    url !== (d.sdkDocUrl ?? "") ||
+    notes !== (d.notes ?? "");
+
+  return (
+    <li>
+      <Solid className="pad stack" style={{ gap: "var(--s-2)" }}>
+        <div className="row between">
+          <strong>{d.label}</strong>
+          <span className="row" style={{ gap: "var(--s-1)" }}>
+            {d.isImplemented ? (
+              <span className="pill trend trend--good">
+                <span aria-hidden="true">✓</span> پیاده‌شده
+              </span>
+            ) : (
+              <span className="pill trend trend--warn">
+                <span aria-hidden="true">■</span> فقط ثبت‌شده
+              </span>
+            )}
+            {!d.isActive ? (
+              <span className="pill set-lock">
+                <span aria-hidden="true">■</span> بازنشسته
+              </span>
+            ) : null}
+            <code className="set-key">{d.code}</code>
+          </span>
+        </div>
+
+        <label className="auth-field">
+          <span>نام</span>
+          <input className="set-input" type="text" value={label}
+                 onChange={(e) => setLabel(e.target.value)} />
+        </label>
+        <label className="auth-field">
+          <span>سازنده</span>
+          <input className="set-input" type="text" value={vendor}
+                 onChange={(e) => setVendor(e.target.value)} />
+        </label>
+        <label className="auth-field">
+          <span>نشانی مستندات SDK</span>
+          <input className="set-input" type="text" dir="ltr" value={url}
+                 placeholder="https://…"
+                 onChange={(e) => setUrl(e.target.value)} />
+        </label>
+        <label className="auth-field">
+          <span>یادداشت فنی</span>
+          <textarea className="set-input" rows={2} value={notes}
+                    onChange={(e) => setNotes(e.target.value)} />
+        </label>
+
+        <div className="row" style={{ gap: "var(--s-2)" }}>
+          <button
+            type="button"
+            className="btn"
+            disabled={busy || !dirty}
+            onClick={() =>
+              void props.onSave(d.code, {
+                label,
+                deviceKind: d.deviceKind,
+                vendor: vendor.trim() === "" ? null : vendor,
+                sdkDocUrl: url.trim() === "" ? null : url,
+                notes: notes.trim() === "" ? null : notes,
+              })
+            }
+          >
+            ذخیره
+          </button>
+          <button
+            type="button"
+            className="btn btn--ghost"
+            disabled={busy}
+            onClick={() => props.onActive(d.code, !d.isActive)}
+          >
+            {d.isActive ? "بازنشسته کن" : "برگردان"}
+          </button>
+        </div>
+      </Solid>
+    </li>
+  );
+}
+
+/** افزودن یک دستگاه تازه — «ممکن است زیادتر شوند». */
+function DriverNew(props: {
+  busy: boolean;
+  onSave: (code: string, input: DriverInput) => Promise<boolean>;
+}) {
+  const [open, setOpen] = useState(false);
+  const [code, setCode] = useState("");
+  const [label, setLabel] = useState("");
+  const [kind, setKind] = useState("card_terminal");
+  const [vendor, setVendor] = useState("");
+  const [url, setUrl] = useState("");
+
+  if (!open) {
+    return (
+      <button type="button" className="btn" style={{ marginTop: "var(--s-2)" }}
+              onClick={() => setOpen(true)}>
+        افزودن دستگاه تازه
+      </button>
+    );
+  }
+
+  return (
+    <Solid className="pad stack" style={{ gap: "var(--s-2)", marginTop: "var(--s-2)" }}>
+      <strong>دستگاه تازه</strong>
+      <label className="auth-field">
+        <span>کد (انگلیسی، بدون فاصله)</span>
+        <input className="set-input" type="text" dir="ltr" value={code}
+               placeholder="samankish" onChange={(e) => setCode(e.target.value)} />
+      </label>
+      <label className="auth-field">
+        <span>نام</span>
+        <input className="set-input" type="text" value={label}
+               onChange={(e) => setLabel(e.target.value)} />
+      </label>
+      <label className="auth-field">
+        <span>نوع</span>
+        <select className="set-input" value={kind} onChange={(e) => setKind(e.target.value)}>
+          {KINDS.map(([v, t]) => <option key={v} value={v}>{t}</option>)}
+        </select>
+      </label>
+      <label className="auth-field">
+        <span>سازنده</span>
+        <input className="set-input" type="text" value={vendor}
+               onChange={(e) => setVendor(e.target.value)} />
+      </label>
+      <label className="auth-field">
+        <span>نشانی مستندات SDK</span>
+        <input className="set-input" type="text" dir="ltr" value={url}
+               placeholder="https://…" onChange={(e) => setUrl(e.target.value)} />
+      </label>
+
+      <p className="muted small" style={{ margin: 0 }}>
+        دستگاه تازه «فقط ثبت‌شده» ساخته می‌شود. تا کدِ ارتباط با آن نوشته نشود،
+        وصل‌کردن پایانه به آن رد می‌شود.
+      </p>
+
+      <div className="row" style={{ gap: "var(--s-2)" }}>
+        <button
+          type="button"
+          className="btn"
+          disabled={props.busy || code.trim() === "" || label.trim() === ""}
+          onClick={() => {
+            void (async () => {
+              const ok = await props.onSave(code.trim(), {
+                label,
+                deviceKind: kind,
+                vendor: vendor.trim() === "" ? null : vendor,
+                sdkDocUrl: url.trim() === "" ? null : url,
+                notes: null,
+              });
+              // ⚠️ فقط وقتی بسته می‌شود که سرور پذیرفته باشد. بستنِ
+              //    فرم روی خطا یعنی کاربر پیام را ببیند و ورودی‌اش
+              //    رفته باشد.
+              if (ok) {
+                setOpen(false);
+                setCode("");
+                setLabel("");
+                setVendor("");
+                setUrl("");
+              }
+            })();
+          }}
+        >
+          افزودن
+        </button>
+        <button type="button" className="btn btn--ghost" disabled={props.busy}
+                onClick={() => setOpen(false)}>
+          انصراف
+        </button>
+      </div>
     </Solid>
   );
 }

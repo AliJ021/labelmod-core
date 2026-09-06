@@ -334,6 +334,136 @@ describe("تنظیمات از مسیر API", { skip }, () => {
     assert.equal(bad.statusCode, 409, bad.body);
   });
 
+  test("دستگاه تازه از تنظیمات اضافه می‌شود و «پیاده‌شده» نمی‌آید", async () => {
+    // خواسته مالک: «مستندات SDK درایور کارت‌خوان باید از طریق تنظیمات
+    // قابل جایگزاری یا تغییر باشد، چون هم ممکن است کارت‌خوان‌ها عوض
+    // شوند و هم ممکن است زیادتر شوند.» تا مهاجرت ۰۴۷، جدولش بود ولی
+    // دستگیره‌اش نه — رسیدن یک PSP تازه باز هم psql می‌خواست.
+    const s = await loginAs(admin);
+    const put = await app.inject({
+      method: "PUT",
+      url: "/device-drivers/novinpay",
+      ...s,
+      payload: {
+        label: "پرداخت نوین",
+        deviceKind: "card_terminal",
+        vendor: "نوین",
+        sdkDocUrl: "https://docs.example.com/novinpay",
+        notes: "پروتکل نسخه ۲.۱",
+        reason: "کارت‌خوان تازه",
+      },
+    });
+    assert.equal(put.statusCode, 200, put.body);
+    const made = JSON.parse(put.body) as { code: string; isImplemented: boolean; isActive: boolean };
+    assert.equal(made.code, "novinpay");
+    // ⚠️ بحرانی. ثبت یعنی «مستنداتش را داریم»، نه «کار می‌کند». اگر
+    // این از صفحه تنظیمات روشن می‌شد، مالک پایانه را به دستگاهی وصل
+    // می‌کرد که کدش نوشته نشده و اولین پرداخت واقعی در سکوت شکست
+    // می‌خورد.
+    assert.equal(made.isImplemented, false, "دستگاه تازه نباید پیاده‌شده باشد");
+    assert.equal(made.isActive, true);
+
+    // ویرایش: همان کد، مستندات تازه.
+    const edit = await app.inject({
+      method: "PUT",
+      url: "/device-drivers/novinpay",
+      ...s,
+      payload: {
+        label: "پرداخت نوین",
+        deviceKind: "card_terminal",
+        sdkDocUrl: "https://docs.example.com/novinpay/v3",
+        reason: "مستندات تازه رسید",
+      },
+    });
+    assert.equal(edit.statusCode, 200, edit.body);
+    assert.equal(
+      (JSON.parse(edit.body) as { sdkDocUrl: string }).sdkDocUrl,
+      "https://docs.example.com/novinpay/v3",
+    );
+
+    // اتصال پایانه به دستگاهی که کدش نوشته نشده، رد می‌شود.
+    const terms = await app.inject({ method: "GET", url: "/terminal-drivers", ...s });
+    const t = (JSON.parse(terms.body) as { terminals: Array<{ accountId: string }> }).terminals[0];
+    const bad = await app.inject({
+      method: "PATCH",
+      url: `/terminal-drivers/${t!.accountId}`,
+      ...s,
+      payload: { driverCode: "novinpay" },
+    });
+    assert.equal(bad.statusCode, 409, bad.body);
+
+    // بازنشستگی: از فهرست انتخاب بیرون می‌رود ولی حذف نمی‌شود.
+    const off = await app.inject({
+      method: "PATCH",
+      url: "/device-drivers/novinpay/active",
+      ...s,
+      payload: { isActive: false, reason: "قرارداد لغو شد" },
+    });
+    assert.equal(off.statusCode, 200, off.body);
+    assert.equal((JSON.parse(off.body) as { isActive: boolean }).isActive, false);
+
+    const live = await app.inject({ method: "GET", url: "/device-drivers", ...s });
+    const liveCodes = (JSON.parse(live.body) as { drivers: Array<{ code: string }> })
+      .drivers.map((d) => d.code);
+    assert.ok(!liveCodes.includes("novinpay"), "بازنشسته در فهرست پیش‌فرض نمی‌آید");
+
+    // ⚠️ بدون این، برگرداندن یک درایور بازنشسته فقط از psql ممکن بود.
+    const withRetired = await app.inject({
+      method: "GET", url: "/device-drivers?includeRetired=1", ...s,
+    });
+    const allCodes = (JSON.parse(withRetired.body) as { drivers: Array<{ code: string }> })
+      .drivers.map((d) => d.code);
+    assert.ok(allCodes.includes("novinpay"), "بازنشسته باید با پرچم دیده شود");
+
+    const on = await app.inject({
+      method: "PATCH",
+      url: "/device-drivers/novinpay/active",
+      ...s,
+      payload: { isActive: true },
+    });
+    assert.equal(on.statusCode, 200, on.body);
+  });
+
+  test("ورودی بد رجیستری درایور ۴۰۹ می‌گیرد، نه ۵۰۰", async () => {
+    // دفاعی که شبیه خرابی سرور گزارش شود، در عمل خاموش است.
+    const s = await loginAs(admin);
+    const cases: Array<[string, Record<string, unknown>]> = [
+      // نشانی مستندات را مالک کلیک می‌کند — https اجباری است.
+      ["httpurl", { label: "x", deviceKind: "card_terminal", sdkDocUrl: "http://a.example" }],
+      // نوع ناشناخته: CHECK جدول ۲۳۵۱۴ می‌داد که ۵۰۰ گزارش می‌شود.
+      ["badkind", { label: "x", deviceKind: "robot" }],
+      // ⚠️ راز در `audit_log` می‌نشیند و صفحه تنظیمات نشانش می‌دهد.
+      ["secretnote", { label: "x", deviceKind: "card_terminal", notes: "api_key: ABC123" }],
+    ];
+    for (const [code, payload] of cases) {
+      const r = await app.inject({
+        method: "PUT", url: `/device-drivers/${code}`, ...s, payload,
+      });
+      assert.equal(r.statusCode, 409, `${code}: ${r.body}`);
+    }
+    const live = await app.inject({
+      method: "GET", url: "/device-drivers?includeRetired=1", ...s,
+    });
+    const codes = (JSON.parse(live.body) as { drivers: Array<{ code: string }> })
+      .drivers.map((d) => d.code);
+    for (const [code] of cases) {
+      assert.ok(!codes.includes(code), `${code} نباید نشسته باشد`);
+    }
+  });
+
+  test("حسابدار درایور اضافه نمی‌کند", async () => {
+    // فهرست درایورها تعیین می‌کند مالک از میان چه چیزهایی کارت‌خوان
+    // فروشگاه را انتخاب کند — پشت همان `settings.security`.
+    const s = await loginAs(accountant);
+    const r = await app.inject({
+      method: "PUT",
+      url: "/device-drivers/sneaky",
+      ...s,
+      payload: { label: "x", deviceKind: "card_terminal" },
+    });
+    assert.equal(r.statusCode, 403, r.body);
+  });
+
   test("حسابدار کارمزد را نمی‌بیند-قابل-تغییر و نمی‌تواند عوضش کند", async () => {
     const s = await loginAs(accountant);
     const r = await app.inject({ method: "GET", url: "/settlement-terms", ...s });
