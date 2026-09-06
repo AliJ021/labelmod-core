@@ -12,19 +12,25 @@
 -- به پیش‌فرض برنمی‌گردد.
 -- =====================================================================
 
-INSERT INTO sales.measure_key (key, label, unit, min_value, max_value, group_key, sort_order)
+-- ── تحمل (tolerance) ────────────────────────────────────────────────
+-- «چند واحد اختلاف هنوز می‌خورد؟» جوابش برای هر اندازه فرق دارد: دو
+-- سانت روی دور سینه هیچ است، روی طول کف پا یک سایز کامل. مالک
+-- می‌تواند هرکدام را با یک `UPDATE` عوض کند.
+
+INSERT INTO sales.measure_key
+  (key, label, unit, min_value, max_value, group_key, sort_order, tolerance_cm)
 VALUES
-  ('height',        'قد',                'cm',  80,  230, 'general',  10),
-  ('weight',        'وزن',               'kg',  20,  250, 'general',  20),
-  ('chest',         'دور سینه',          'cm',  50,  200, 'upper',    30),
-  ('waist',         'دور کمر',           'cm',  40,  200, 'lower',    40),
-  ('hip',           'دور باسن',          'cm',  50,  200, 'lower',    50),
-  ('shoulder',      'عرض شانه',          'cm',  25,   80, 'upper',    60),
-  ('sleeve',        'قد آستین',          'cm',  30,   90, 'upper',    70),
-  ('neck',          'دور یقه',           'cm',  25,   60, 'upper',    80),
-  ('inseam',        'قد داخل پا',        'cm',  40,  120, 'lower',    90),
-  ('outseam',       'قد بیرون شلوار',    'cm',  60,  140, 'lower',   100),
-  ('thigh',         'دور ران',           'cm',  30,  100, 'lower',   110),
-  ('foot_length',   'طول کف پا',         'cm',  15,   35, 'foot',    120),
-  ('shoe_size',     'سایز کفش',          'EU',  20,   50, 'foot',    130)
+  ('height',        'قد',                'cm',  80,  230, 'general',  10,  5.0),
+  ('weight',        'وزن',               'kg',  20,  250, 'general',  20,  5.0),
+  ('chest',         'دور سینه',          'cm',  50,  200, 'upper',    30,  4.0),
+  ('waist',         'دور کمر',           'cm',  40,  200, 'lower',    40,  4.0),
+  ('hip',           'دور باسن',          'cm',  50,  200, 'lower',    50,  4.0),
+  ('shoulder',      'عرض شانه',          'cm',  25,   80, 'upper',    60,  2.0),
+  ('sleeve',        'قد آستین',          'cm',  30,   90, 'upper',    70,  3.0),
+  ('neck',          'دور یقه',           'cm',  25,   60, 'upper',    80,  1.5),
+  ('inseam',        'قد داخل پا',        'cm',  40,  120, 'lower',    90,  3.0),
+  ('outseam',       'قد بیرون شلوار',    'cm',  60,  140, 'lower',   100,  3.0),
+  ('thigh',         'دور ران',           'cm',  30,  100, 'lower',   110,  3.0),
+  ('foot_length',   'طول کف پا',         'cm',  15,   35, 'foot',    120,  0.7),
+  ('shoe_size',     'سایز کفش',          'EU',  20,   50, 'foot',    130,  1.0)
 ON CONFLICT (key) DO NOTHING;

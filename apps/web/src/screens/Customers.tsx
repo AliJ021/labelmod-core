@@ -26,6 +26,7 @@ import {
   people,
   type Customer,
   type CustomerInvoice,
+  type FittingVariation,
   type MeasureKey,
 } from "../lib/people.ts";
 
@@ -392,6 +393,111 @@ function Measures({ customerId }: { customerId: string }) {
   );
 }
 
+/**
+ * کالاهای مناسب این مشتری.
+ *
+ * ── این «AI» نیست و ادعایش را هم نمی‌کند ──────────────────────────
+ *
+ * حساب فاصله است: هر اندازه بدن با اندازه همان کلید روی کالا مقایسه
+ * می‌شود، تقسیم بر تحملِ همان کلید. صفحه هم همین را می‌نویسد، چون
+ * فروشنده‌ای که فکر کند سیستم «می‌داند»، پیشنهاد را بی‌چون‌وچرا به
+ * مشتری می‌گوید.
+ *
+ * ⚠️ کالای بدون اندازه «—» می‌گیرد، نه صفر. صفر یعنی «نمی‌خورد» و
+ * آن یک ادعاست؛ «—» یعنی «اندازه‌اش ثبت نشده».
+ */
+function Fitting({ customerId }: { customerId: string }) {
+  const [rows, setRows] = useState<FittingVariation[] | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  const [open, setOpen] = useState(false);
+
+  useEffect(() => {
+    if (!open) return;
+    let alive = true;
+    void (async () => {
+      try {
+        const r = await people.fitting(customerId, { limit: 30 });
+        if (alive) setRows(r.variations);
+      } catch (err) {
+        if (alive) setError(message(err));
+      }
+    })();
+    return () => {
+      alive = false;
+    };
+  }, [open, customerId]);
+
+  if (!open) {
+    return (
+      <button type="button" className="btn btn--quiet" onClick={() => setOpen(true)}>
+        کالاهای مناسب این مشتری
+      </button>
+    );
+  }
+
+  return (
+    <div className="stack" style={{ gap: "var(--s-2)" }}>
+      <div className="row between">
+        <strong style={{ fontSize: ".95rem" }}>کالاهای مناسب</strong>
+        <button type="button" className="btn btn--quiet" onClick={() => setOpen(false)}>
+          بستن
+        </button>
+      </div>
+      <p className="muted small" style={{ margin: 0 }}>
+        بر اساس فاصله اندازه‌ها حساب می‌شود، نه پیش‌بینی. «—» یعنی اندازه آن کالا
+        هنوز ثبت نشده.
+      </p>
+
+      {error !== null ? (
+        <p className="muted" style={{ margin: 0 }} role="alert">
+          <span className="dot dot--crit" aria-hidden="true">●</span> {error}
+        </p>
+      ) : rows === null ? (
+        <p className="muted small" style={{ margin: 0 }}>در حال محاسبه…</p>
+      ) : rows.length === 0 ? (
+        <p className="muted small" style={{ margin: 0 }}>
+          هیچ کالای موجودی نیست.
+        </p>
+      ) : (
+        <div className="tw">
+          <table>
+            <thead>
+              <tr>
+                <th>کالا</th>
+                <th>رنگ</th>
+                <th>سایز</th>
+                <th className="num">موجودی</th>
+                <th className="num">تناسب</th>
+                <th className="num">بر پایه</th>
+              </tr>
+            </thead>
+            <tbody>
+              {rows.map((r) => (
+                <tr key={r.variationId}>
+                  <td>{r.productName}</td>
+                  <td>{r.color}</td>
+                  <td>{r.size}</td>
+                  <td className="num">{r.onHand}</td>
+                  <td className="num">
+                    {r.matchScore === null
+                      ? "—"
+                      : `${Math.round(r.matchScore * 100).toLocaleString("fa-IR")}٪`}
+                  </td>
+                  <td className="num">
+                    {r.matchScore === null
+                      ? "—"
+                      : `${r.matchedKeys.toLocaleString("fa-IR")} اندازه`}
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
+    </div>
+  );
+}
+
 function CustomerFile({
   data,
   busy,
@@ -519,6 +625,7 @@ function CustomerFile({
         </div>
 
         <Measures customerId={c.id} />
+        <Fitting customerId={c.id} />
 
         {/*
           دو رضایت، دو تیک.

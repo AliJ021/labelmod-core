@@ -371,6 +371,38 @@ export function registerPeopleRoutes(app: FastifyInstance, deps: PeopleRouteDeps
    * همین پاسخ ساخته می‌شود، پس اندازه تازه‌ای که فردا در Seed اضافه
    * شود بدون یک خط کد UI دیده می‌شود.
    */
+  /**
+   * کالاهای مناسب یک مشتری — «برای خودش می‌خرد».
+   *
+   * ⚠️ این **پیشنهاد** است نه حکم، و **AI نیست**.
+   *
+   * CLAUDE.md صریح می‌گوید «AI پیشنهاد سایز» ساخته نشود، و درست
+   * است: مدلی که سایز پیشنهاد دهد باید روی داده فروش و مرجوعیِ همین
+   * فروشگاه آموزش ببیند، و آن داده هنوز وجود ندارد.
+   *
+   * آنچه اینجا هست حساب فاصله است: هر اندازه بدن با اندازه همان کلید
+   * روی کالا مقایسه می‌شود، تقسیم بر تحملِ همان کلید. قابل توضیح،
+   * قابل بازرسی، بدون ادعایی که نتواند اثباتش کند.
+   *
+   * ⚠️ کالای بدون اندازه **حذف نمی‌شود** — `matchScore: null` می‌گیرد
+   * و آخر فهرست می‌نشیند. حذفش یعنی فروشگاه نصف ویترینش را نشان
+   * ندهد چون انباردار هنوز اندازه‌ها را وارد نکرده.
+   */
+  app.get("/customers/:id/fitting", async (req) => {
+    const s = session(req);
+    const { id } = z.object({ id: uuid }).parse(req.params);
+    const q = z
+      .object({
+        warehouseId: uuid.optional(),
+        minScore: z.coerce.number().min(0).max(1).optional(),
+        limit: z.coerce.number().int().min(1).max(200).default(50),
+      })
+      .parse(req.query);
+    await requireForSession(db, s, "customer.manage");
+
+    return { variations: await customers.fitting(id, q) };
+  });
+
   app.get("/measure-keys", async (req) => {
     const s = session(req);
     await requireForSession(db, s, "customer.manage");
