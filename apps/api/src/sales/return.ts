@@ -86,6 +86,27 @@ export class ReturnService {
     this.#db = db;
   }
 
+  /**
+   * مقصد کالای سالمِ برگشتی.
+   *
+   * سنجش‌ها در دیتابیس‌اند (`sales.set_return_warehouse`): پیش‌نویس
+   * بودن، هم‌شعبه بودن انبار، و «در راه» نبودنش. اینجا فقط تراکنش و
+   * کاربر عامل.
+   */
+  async setWarehouse(input: {
+    id: string;
+    warehouseId: string;
+    actorId: string;
+  }): Promise<void> {
+    await this.#db.transaction().execute(async (trx) => {
+      await setActor(trx, input.actorId);
+      await sql`
+        SELECT sales.set_return_warehouse(
+          ${input.id}::uuid, ${input.warehouseId}::uuid, ${input.actorId}::uuid)
+      `.execute(trx);
+    });
+  }
+
   async byId(returnId: string): Promise<SaleReturn | null> {
     const r = await this.#db
       .selectFrom("sales.sale_return")

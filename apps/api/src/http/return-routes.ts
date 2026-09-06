@@ -20,7 +20,7 @@ import { requireForSession } from "../auth/permission.ts";
 import type { Db } from "../db/client.ts";
 import { parseMoney } from "../lib/money.ts";
 import { runOnce } from "../lib/idempotency.ts";
-import { assertBranch } from "../sales/scope.ts";
+import { assertBranch, assertWarehouseInBranch } from "../sales/scope.ts";
 import {
   ReturnError,
   returnToJson,
@@ -173,6 +173,50 @@ export function registerReturnRoutes(app: FastifyInstance, deps: ReturnRouteDeps
     if (!r) throw new ReturnError("return_not_found", "برگ مرجوعی یافت نشد", 404);
     await assertBranch(db, s.userId, r.branchId);
     return returnToJson(r);
+  });
+
+  /**
+   * مقصد کالای سالمِ برگشتی — قفسه یا آوتلت.
+   *
+   * ⚠️ کالای **معیوب** اینجا نمی‌آید: `post_return` خودش هر سطری را
+   * که `condition = 'defective'` باشد به انبار معیوب می‌فرستد، فارغ
+   * از این انتخاب. مقصد اینجا فقط برای کالای قابل فروش است.
+   *
+   * تصمیم «به قفسه یا به آوتلت» انسانی است، نه نتیجه یک محاسبه —
+   * مثل بستن سفارش خرید. سیستمی که خودش تصمیم بگیرد، کالای نو را
+   * حراج می‌کند یا کالای فصل‌گذشته را به قفسه برمی‌گرداند.
+   *
+   * `Idempotency-Key` نمی‌خواهد: تعیین مقصد مطلق است نه افزایشی، و
+   * ارسال دوباره همان نتیجه را می‌دهد. به همین دلیل `PUT` است.
+   */
+  app.put("/returns/:id/warehouse", async (req) => {
+    const s = session(req);
+    const { id } = z.object({ id: uuid }).parse(req.params);
+    const body = z.object({ warehouseId: uuid }).parse(req.body);
+
+    const r = await returns.byId(id);
+    if (!r) throw new ReturnError("return_not_found", "برگ مرجوعی یافت نشد", 404);
+
+    // سه سنجش، نه یکی — همان الگوی `transfer-routes.ts`:
+    // شعبه برگه، مجوز عملیات، و انبار مقصد.
+    //
+    // ⚠️ مجوزش همان `return.same_day` / `return.late` است که ساخت
+    // پیش‌نویس می‌خواهد، نه یک عملیات تازه: تعیین مقصد بخشی از همان
+    // برگه است و هیچ پولی جابه‌جا نمی‌کند. یک مجوز تازه یعنی یک ردیف
+    // بیشتر در `permission_rule` که هیچ تصمیم متمایزی را نمایندگی
+    // نمی‌کند — و مالک باید بفهمد تفاوتش با آن یکی چیست.
+    await assertBranch(db, s.userId, r.branchId);
+    const w = await returns.returnWindow(r.invoiceId);
+    await requireForSession(db, s, w.late ? "return.late" : "return.same_day");
+    await assertWarehouseInBranch(db, body.warehouseId, r.branchId);
+
+    await returns.setWarehouse({
+      id,
+      warehouseId: body.warehouseId,
+      actorId: s.userId,
+    });
+    const after = await returns.byId(id);
+    return returnToJson(after!);
   });
 
   /**

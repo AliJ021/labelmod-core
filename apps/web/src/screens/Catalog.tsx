@@ -31,6 +31,7 @@ import { Glass, Solid } from "../components/Glass.tsx";
 import { ApiError } from "../lib/api.ts";
 import { ActionKeys, actionFor } from "../lib/action-key.ts";
 import { rialFromTomanInput, toman } from "../lib/money.ts";
+import { pos } from "../lib/pos.ts";
 import {
   catalog,
   splitList,
@@ -237,7 +238,28 @@ function ProductForm({
   const [nameWeb, setNameWeb] = useState("");
   const [fit, setFit] = useState("");
   const [season, setSeason] = useState("");
+  /** فهرست فصل‌ها از سرور — این کامپوننت هیچ فصلی را نمی‌شناسد. */
+  const [seasons, setSeasons] = useState<
+    Array<{ code: string; label: string; climate: string }>
+  >([]);
   const [busy, setBusy] = useState(false);
+
+  useEffect(() => {
+    let alive = true;
+    void (async () => {
+      try {
+        const r = await pos.seasons();
+        if (alive) setSeasons(r.seasons);
+      } catch {
+        // فهرست فصل نیامد؟ انتخاب‌گر خالی می‌ماند و «بدون فصل»
+        // انتخاب می‌شود. ساخت کالا نباید به‌خاطر یک میدان اختیاری
+        // متوقف شود.
+      }
+    })();
+    return () => {
+      alive = false;
+    };
+  }, []);
   /**
    * کلید Idempotency داخل کامپوننت، نه در سطح ماژول — مثل بقیه
    * صفحات. کلیدی که در سطح ماژول بنشیند، پس از خروج و ورودِ کاربرِ
@@ -315,14 +337,28 @@ function ProductForm({
               placeholder="رگولار"
             />
           </label>
+          {/*
+            فصل یک **انتخاب** است، نه متن آزاد.
+
+            تا پیش از این، «پاییز»، «پاييز» (با ی عربی) و «Autumn» سه
+            فصل متفاوت می‌شدند و فیلتر انبار هیچ‌کدام را کامل
+            نمی‌گرفت. حالا فهرست از `GET /seasons` می‌آید — افزودن
+            فصل تازه یک `INSERT` در Seed است، نه یک خط اینجا.
+          */}
           <label style={{ flex: 1 }}>
             <span>فصل — اختیاری</span>
-            <input
-              type="text"
+            <select
+              className="set-input"
               value={season}
               onChange={(e) => setSeason(e.target.value)}
-              placeholder="پاییز ۱۴۰۵"
-            />
+            >
+              <option value="">بدون فصل</option>
+              {seasons.map((x) => (
+                <option key={x.code} value={x.code}>
+                  {x.label} ({x.climate === "warm" ? "گرم" : x.climate === "cold" ? "سرد" : "چهارفصل"})
+                </option>
+              ))}
+            </select>
           </label>
         </div>
         <button type="submit" className="btn btn--primary" disabled={busy}>

@@ -225,6 +225,31 @@ export function registerScopeRoutes(app: FastifyInstance, deps: ScopeRouteDeps):
    * (`value` و `label`) بیرون می‌رود — نه خودِ ردیف تنظیم با
    * `permission`، `help` و ردّ حسابرسی‌اش.
    */
+  /**
+   * فصل‌های مجاز کالا — با تفکیک گرم و سرد.
+   *
+   * از `catalog.season` می‌آید نه از یک فهرست در کد: افزودن فصل یک
+   * `INSERT` در Seed است. متن آزاد بودنِ قبلی یعنی «پاییز»، «پاييز»
+   * (با ی عربی) و «Autumn» سه فصل متفاوت شوند و فیلتر انبار هیچ‌کدام
+   * را کامل نگیرد.
+   */
+  app.get("/seasons", async (req) => {
+    session(req);
+    const r = await db
+      .selectFrom("catalog.season")
+      .select(["code", "label", "climate", "sort_order"])
+      .where("is_active", "=", true)
+      .orderBy("sort_order")
+      .execute();
+    return {
+      seasons: r.map((x) => ({
+        code: x.code,
+        label: x.label,
+        climate: x.climate,
+      })),
+    };
+  });
+
   app.get("/return-reasons", async (req) => {
     session(req);
     const row = await db
