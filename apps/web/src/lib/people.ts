@@ -48,6 +48,10 @@ export interface Customer {
   dueDays: number;
   consentSms: boolean;
   consentMarketing: boolean;
+  address: string | null;
+  postalCode: string | null;
+  city: string | null;
+  province: string | null;
   tags: string[];
   internalNote: string | null;
   createdAt: string;
@@ -55,6 +59,29 @@ export interface Customer {
   totalPurchased: string;
   balance: string;
 }
+
+/** فراداده یک اندازه — فرم از همین ساخته می‌شود، نه از فهرستی در React. */
+export interface MeasureKey {
+  key: string;
+  label: string;
+  unit: string;
+  minValue: string;
+  maxValue: string;
+  groupKey: string;
+  sortOrder: number;
+}
+
+export interface CustomerMeasure {
+  key: string;
+  valueCm: string;
+}
+
+export const MEASURE_GROUP: Record<string, string> = {
+  general: "عمومی",
+  upper: "بالاتنه",
+  lower: "پایین‌تنه",
+  foot: "پا",
+};
 
 export interface CustomerInvoice {
   id: string;
@@ -126,8 +153,22 @@ export const people = {
       consentSms?: boolean;
       consentMarketing?: boolean;
       internalNote?: string | null;
+      address?: string | null;
+      /** خام فرستاده می‌شود — نرمال‌سازی و سنجش ده رقم در دیتابیس است. */
+      postalCode?: string | null;
+      city?: string | null;
+      province?: string | null;
     },
   ) => api.patch<Customer>(`/customers/${id}`, input),
+
+  measureKeys: () => api.get<{ keys: MeasureKey[] }>("/measure-keys"),
+
+  measures: (id: string) =>
+    api.get<{ measures: CustomerMeasure[] }>(`/customers/${id}/measures`),
+
+  /** جایگزینی کامل — همان قاعده انبارگردانی: مطلق است، نه افزایشی. */
+  setMeasures: (id: string, values: Record<string, number>) =>
+    api.put<{ measures: CustomerMeasure[] }>(`/customers/${id}/measures`, { values }),
 };
 
 export const CUSTOMER_STATUS: Record<string, string> = {

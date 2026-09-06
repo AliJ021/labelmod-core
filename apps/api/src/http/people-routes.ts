@@ -103,6 +103,31 @@ const updateCustomerBody = z.object({
   consentSms: z.boolean().optional(),
   consentMarketing: z.boolean().optional(),
   internalNote: z.string().max(1000).nullable().optional(),
+  address: z.string().trim().max(500).nullable().optional(),
+  // ⚠️ کد پستی اینجا فقط طول می‌گیرد، نه قالب: نرمال‌سازی و سنجش ده
+  // رقم در `sales.normalize_postal_code` است. اگر Zod هم می‌سنجید، دو
+  // تعریف داشتیم و آن که در psql دور زده می‌شود همان است که اهمیت
+  // دارد — همان قاعده تنظیمات.
+  postalCode: z.string().trim().max(20).nullable().optional(),
+  city: z.string().trim().max(60).nullable().optional(),
+  province: z.string().trim().max(60).nullable().optional(),
+});
+
+/**
+ * اندازه‌های بدن — نگاشت کلید به عدد.
+ *
+ * مقدار `number` است نه رشته، و این با قاعده «پول رشته است» تعارضی
+ * ندارد: اندازه پول نیست. `numeric(6,1)` است و در محدوده‌ای که
+ * `number` جاوااسکریپت دقیق نگهش می‌دارد.
+ *
+ * بازه‌ها اینجا **سنجیده نمی‌شوند** — از `sales.measure_key` می‌آیند و
+ * مالک می‌تواند عوضشان کند.
+ */
+const measuresBody = z.object({
+  values: z.record(
+    z.string().min(1).max(40),
+    z.number().finite().min(0).max(10000),
+  ),
 });
 
 export interface PeopleRouteDeps {
@@ -331,7 +356,52 @@ export function registerPeopleRoutes(app: FastifyInstance, deps: PeopleRouteDeps
         ? {}
         : { consentMarketing: body.consentMarketing }),
       ...(body.internalNote === undefined ? {} : { internalNote: body.internalNote }),
+      ...(body.address === undefined ? {} : { address: body.address }),
+      ...(body.postalCode === undefined ? {} : { postalCode: body.postalCode }),
+      ...(body.city === undefined ? {} : { city: body.city }),
+      ...(body.province === undefined ? {} : { province: body.province }),
     });
     return await customers.byId(id);
+  });
+
+  /**
+   * کلیدهای اندازه — برچسب، واحد و بازه.
+   *
+   * پشت `customer.manage` مثل بقیه پرونده مشتری. فرم شناسنامه از
+   * همین پاسخ ساخته می‌شود، پس اندازه تازه‌ای که فردا در Seed اضافه
+   * شود بدون یک خط کد UI دیده می‌شود.
+   */
+  app.get("/measure-keys", async (req) => {
+    const s = session(req);
+    await requireForSession(db, s, "customer.manage");
+    return { keys: await customers.measureKeys() };
+  });
+
+  app.get("/customers/:id/measures", async (req) => {
+    const s = session(req);
+    const { id } = z.object({ id: uuid }).parse(req.params);
+    await requireForSession(db, s, "customer.manage");
+    return { measures: await customers.measuresOf(id) };
+  });
+
+  /**
+   * جایگزینی کامل اندازه‌ها.
+   *
+   * `PUT` است نه `PATCH` و `Idempotency-Key` نمی‌خواهد — همان قاعده
+   * انبارگردانی: «دوباره اندازه گرفتم و این عدد است». ارسال دوباره
+   * همان بدنه، همان نتیجه را می‌دهد.
+   */
+  app.put("/customers/:id/measures", async (req) => {
+    const s = session(req);
+    const { id } = z.object({ id: uuid }).parse(req.params);
+    const body = measuresBody.parse(req.body);
+    await requireForSession(db, s, "customer.manage");
+    return {
+      measures: await customers.setMeasures({
+        id,
+        values: body.values,
+        actorId: s.userId,
+      }),
+    };
   });
 }
