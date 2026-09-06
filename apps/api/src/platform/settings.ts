@@ -117,6 +117,33 @@ export interface SettlementTermsView {
   canEdit: boolean;
 }
 
+/** یک درایور شناخته‌شده. */
+export interface DeviceDriverView {
+  code: string;
+  label: string;
+  deviceKind: string;
+  vendor: string | null;
+  sdkDocUrl: string | null;
+  notes: string | null;
+  /** ⚠️ `false` یعنی مستنداتش ثبت شده ولی کدش نوشته نشده. */
+  isImplemented: boolean;
+}
+
+/** یک پایانه و درایورش. */
+export interface TerminalDriverView {
+  accountId: string;
+  accountCode: string;
+  accountName: string;
+  kind: string;
+  driverCode: string | null;
+  driverLabel: string | null;
+  vendor: string | null;
+  sdkDocUrl: string | null;
+  isImplemented: boolean | null;
+  driverConfig: Record<string, unknown>;
+  canEdit: boolean;
+}
+
 export class SettingService {
   readonly #db: Db;
 
@@ -225,6 +252,78 @@ export class SettingService {
       settlesTo: t.settles_to,
       canEdit,
     }));
+  }
+
+  /**
+   * درایورهای شناخته‌شده.
+   *
+   * ⚠️ `isImplemented` را حتماً به کاربر نشان دهید. ثبت یک درایور
+   * یعنی «مستنداتش را داریم»، نه «کار می‌کند» — و آن تفاوت، تفاوتِ
+   * یک پرداخت موفق با یک پرداخت معلق است.
+   */
+  async deviceDrivers(): Promise<DeviceDriverView[]> {
+    const r = await this.#db
+      .selectFrom("platform.device_driver")
+      .select([
+        "code", "label", "device_kind", "vendor",
+        "sdk_doc_url", "notes", "is_implemented",
+      ])
+      .where("is_active", "=", true)
+      .orderBy("sort_order")
+      .execute();
+    return r.map((x) => ({
+      code: x.code,
+      label: x.label,
+      deviceKind: x.device_kind,
+      vendor: x.vendor,
+      sdkDocUrl: x.sdk_doc_url,
+      notes: x.notes,
+      isImplemented: x.is_implemented,
+    }));
+  }
+
+  async terminalDrivers(canEdit: boolean): Promise<TerminalDriverView[]> {
+    const r = await sql<{
+      account_id: string; account_code: string; account_name: string;
+      kind: string; driver_code: string | null; driver_label: string | null;
+      vendor: string | null; sdk_doc_url: string | null;
+      is_implemented: boolean | null; driver_config: Record<string, unknown>;
+    }>`SELECT * FROM treasury.terminal_driver ORDER BY kind, account_code`
+      .execute(this.#db);
+    return r.rows.map((x) => ({
+      accountId: x.account_id,
+      accountCode: x.account_code,
+      accountName: x.account_name,
+      kind: x.kind,
+      driverCode: x.driver_code,
+      driverLabel: x.driver_label,
+      vendor: x.vendor,
+      sdkDocUrl: x.sdk_doc_url,
+      isImplemented: x.is_implemented,
+      driverConfig: x.driver_config,
+      canEdit,
+    }));
+  }
+
+  /**
+   * اتصال یک پایانه به یک درایور.
+   *
+   * سنجش‌ها در دیتابیس‌اند: پایانه بودن، پیاده‌شده بودن درایور، و
+   * نبودِ راز در `config`. یک تعریف، نه دو.
+   */
+  async setDriverIn(
+    trx: Transaction<Database>,
+    accountId: string,
+    driverCode: string | null,
+    config: Record<string, unknown>,
+    reason: string | null,
+    actorId: string,
+  ): Promise<void> {
+    await sql`
+      SELECT treasury.set_device_driver(
+        ${accountId}::uuid, ${driverCode}::text,
+        ${JSON.stringify(config)}::jsonb, ${reason}::text, ${actorId}::uuid)
+    `.execute(trx);
   }
 
   /** نوشتن شرایط تسویه — تنها از مسیر `treasury.set_settlement_terms()`. */

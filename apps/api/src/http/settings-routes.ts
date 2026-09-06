@@ -139,6 +139,67 @@ export function registerSettingsRoutes(app: FastifyInstance, deps: SettingsRoute
    * **به‌ازای هر پایانه** معنا دارد: کارت‌خوان فروشگاه و درگاه سایت
    * معمولاً قرارداد متفاوت دارند.
    */
+  /**
+   * درایورهای شناخته‌شده دستگاه.
+   *
+   * ⚠️ `isImplemented` بخش اصلی پاسخ است، نه یک جزئیات.
+   *
+   * ثبت یک درایور در جدول یعنی «مستنداتش را داریم»، نه «کار می‌کند».
+   * صفحه باید این را صریح نشان دهد، وگرنه مالک یک کارت‌خوان را
+   * انتخاب می‌کند و اولین پرداخت واقعی در سکوت شکست می‌خورد — یا
+   * بدتر، معلق می‌ماند و پول مشتری بلاتکلیف.
+   */
+  app.get("/device-drivers", async (req) => {
+    const s = session(req);
+    await requireForSession(db, s, "settings.view");
+    return { drivers: await settings.deviceDrivers() };
+  });
+
+  app.get("/terminal-drivers", async (req) => {
+    const s = session(req);
+    await requireForSession(db, s, "settings.view");
+    const d = await can(db, {
+      userId: s.userId,
+      operation: "settings.security",
+      viaPin: s.pinUnlocked,
+    });
+    return { terminals: await settings.terminalDrivers(d.verdict === "allow") };
+  });
+
+  /**
+   * اتصال یک پایانه به یک درایور.
+   *
+   * پشت `settings.security` مثل شرایط تسویه، و به همان دلیل: این
+   * تنظیم تعیین می‌کند پول از کدام مسیر به سیستم گزارش شود.
+   *
+   * ⚠️ راز اینجا نمی‌آید. کلید و رمز API از متغیر محیطی می‌آیند، مثل
+   * `SMS_API_KEY` — چون مقدار این ستون در `audit_log` می‌نشیند و
+   * صفحه تنظیمات نشانش می‌دهد. دیتابیس هم مستقل ردش می‌کند.
+   */
+  app.patch("/terminal-drivers/:id", async (req) => {
+    const s = session(req);
+    const { id } = z.object({ id: z.string().uuid("شناسه نامعتبر") }).parse(req.params);
+    const body = z
+      .object({
+        driverCode: z.string().trim().min(1).max(40).nullable(),
+        // ⚠️ `unknown` عمدی است: اعتبارسنجی در دیتابیس است. اگر Zod هم
+        // می‌سنجید، دو نسخه از یک قاعده داشتیم — و آن که در psql دور
+        // زده می‌شود همان است که اهمیت دارد.
+        config: z.record(z.string(), z.unknown()).default({}),
+        reason: z.string().max(500).optional(),
+      })
+      .parse(req.body);
+    await requireForSession(db, s, "settings.security");
+
+    await withActor(db, { userId: s.userId, ip: req.ip }, (trx) =>
+      settings.setDriverIn(
+        trx, id, body.driverCode, body.config, body.reason ?? null, s.userId,
+      ),
+    );
+    const list = await settings.terminalDrivers(true);
+    return list.find((t) => t.accountId === id) ?? null;
+  });
+
   app.get("/settlement-terms", async (req) => {
     const s = session(req);
     await requireForSession(db, s, "settings.view");

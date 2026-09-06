@@ -57,6 +57,31 @@ export interface SettlementTerm {
   canEdit: boolean;
 }
 
+export interface DeviceDriver {
+  code: string;
+  label: string;
+  deviceKind: string;
+  vendor: string | null;
+  sdkDocUrl: string | null;
+  notes: string | null;
+  /** ⚠️ `false` یعنی مستنداتش ثبت شده ولی کدش نوشته نشده. */
+  isImplemented: boolean;
+}
+
+export interface TerminalDriver {
+  accountId: string;
+  accountCode: string;
+  accountName: string;
+  kind: string;
+  driverCode: string | null;
+  driverLabel: string | null;
+  vendor: string | null;
+  sdkDocUrl: string | null;
+  isImplemented: boolean | null;
+  driverConfig: Record<string, unknown>;
+  canEdit: boolean;
+}
+
 export interface PermissionRule {
   roleCode: string;
   roleName: string;
@@ -161,6 +186,16 @@ export const admin = {
     ),
 
   settlementTerms: () => api.get<{ terms: SettlementTerm[] }>("/settlement-terms"),
+
+  deviceDrivers: () => api.get<{ drivers: DeviceDriver[] }>("/device-drivers"),
+
+  terminalDrivers: () => api.get<{ terminals: TerminalDriver[] }>("/terminal-drivers"),
+
+  /** راز اینجا نمی‌رود — کلید و رمز از متغیر محیطی سرور می‌آیند. */
+  setTerminalDriver: (
+    accountId: string,
+    input: { driverCode: string | null; config?: Record<string, unknown>; reason?: string },
+  ) => api.patch<TerminalDriver>(`/terminal-drivers/${accountId}`, input),
 
   saveTerms: (
     id: string,

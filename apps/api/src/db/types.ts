@@ -234,6 +234,20 @@ export interface InvoiceGiftTable {
   created_at: Date;
 }
 
+/** درایورهای شناخته‌شده دستگاه. ثبت ≠ پیاده‌سازی. */
+export interface DeviceDriverTable {
+  code: string;
+  label: string;
+  device_kind: string;
+  vendor: string | null;
+  sdk_doc_url: string | null;
+  notes: string | null;
+  /** ⚠️ `false` یعنی مستنداتش هست ولی کدش نوشته نشده. */
+  is_implemented: boolean;
+  is_active: boolean;
+  sort_order: number;
+}
+
 export interface GiftOptionTable {
   code: string;
   /** wrap | color | flower */
@@ -893,6 +907,7 @@ export interface Database {
   "catalog.price": PriceTable;
   "catalog.season": SeasonTable;
   "sales.gift_option": GiftOptionTable;
+  "platform.device_driver": DeviceDriverTable;
   "sales.invoice_gift": InvoiceGiftTable;
   "sales.measure_key": MeasureKeyTable;
   "inventory.stock_balance": StockBalanceTable;

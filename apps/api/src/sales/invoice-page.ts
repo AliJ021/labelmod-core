@@ -27,9 +27,31 @@
  */
 import { esc } from "../catalog/label.ts";
 
-/** همان قفلِ صفحه برچسب. این صفحه هم جاوااسکریپت لازم ندارد. */
+/**
+ * متن **دقیق** اسکریپت دکمه چاپ.
+ *
+ * ⚠️ hash در CSP از همین رشته ساخته می‌شود. اگر یک کاراکتر — حتی یک
+ * فاصله — عوض شود، مرورگر اسکریپت را رد می‌کند و دکمه **بی‌صدا** کار
+ * نمی‌کند. به همین دلیل رشته و hash کنار هم‌اند و یک تست هم‌خوانی‌شان
+ * را می‌سنجد.
+ */
+export const PRINT_SCRIPT =
+  "document.getElementById('print-btn').addEventListener('click',function(){window.print()});";
+
+/**
+ * CSP این صفحه — همان قفلِ صفحه برچسب، به‌علاوه یک hash.
+ *
+ * `unsafe-inline` **نمی‌آید**. hash فقط همان یک اسکریپت را اجازه
+ * می‌دهد و هر اسکریپت دیگری — از جمله یکی که از راه نام کالا تزریق
+ * شود — رد می‌شود.
+ *
+ * ⚠️ hash روی `onclick` کار نمی‌کند، فقط روی بلوک `<script>`. اگر
+ * روزی کسی دکمه را به `onclick` برگرداند، CSP ردش می‌کند و هیچ
+ * خطایی هم در کنسول کاربر نیست.
+ */
 export const INVOICE_PAGE_CSP =
-  "default-src 'none'; style-src 'unsafe-inline'; img-src data:; base-uri 'none'; form-action 'none'";
+  "default-src 'none'; style-src 'unsafe-inline'; img-src data:; " +
+  "script-src 'sha256-C6GFxpc4C8wAFuTjDFCf1w9qX86XJLIfCeDnOu9zelE='; base-uri 'none'; form-action 'none'";
 
 export interface InvoicePageLine {
   productName: string;
@@ -164,6 +186,27 @@ export function invoicePage(data: InvoicePageData, timeZone: string): string {
     .sheet { border: none; border-radius: 0; max-width: none; }
     .foot { display: none; }
   }
+
+  /* ── آماده چاپ ────────────────────────────────────────────────────
+     این صفحه راهِ رسیدن به PDF است، پس باید روی کاغذ هم درست
+     دربیاید: بدون پس‌زمینه رنگی که جوهر می‌سوزاند، و بدون دکمه‌ای
+     که خودش چاپ شود. */
+  .print-bar { margin: 14px auto 0; max-width: 640px; text-align: center; }
+  .print-btn {
+    font: inherit; padding: 9px 18px; border-radius: 10px; cursor: pointer;
+    /* هدف لمسی دست‌کم ۴۴px — مشتری این صفحه را روی گوشی باز می‌کند. */
+    min-height: 44px;
+    border: 1px solid rgba(20,18,28,.18); background: #FFFFFF; color: #14121C;
+  }
+  .print-btn:focus-visible { outline: 2px solid #8A6214; outline-offset: 2px; }
+  @media print {
+    .print-bar { display: none !important; }
+    body { background: #FFFFFF; padding: 0; }
+    .sheet { max-width: none; border: 0; border-radius: 0; padding: 0; }
+    /* یک قلم نباید وسطش به صفحه بعد بشکند. */
+    tr { break-inside: avoid; }
+    thead { display: table-header-group; }
+  }
 </style>
 <div class="sheet">
   <h1>${esc(data.shopName)}</h1>
@@ -190,5 +233,20 @@ ${rows}
 
   <div class="foot">همه مبالغ به تومان است.</div>
 </div>
+
+<!--
+  دکمه چاپ — راه رسیدن به PDF.
+
+  CLAUDE.md می‌گوید «PDF ساخته نمی‌شود؛ لینک می‌رود» چون شکل‌دهی حروف
+  فارسی در کتابخانه‌های PDF جاوااسکریپت یا نیست یا شکسته است. این
+  دکمه آن تصمیم را کامل می‌کند نه نقض: موتور شکل‌دهی فارسیِ خودِ
+  مرورگر کار را می‌کند و «چاپ در فایل» یک PDF درست می‌دهد.
+
+  اسکریپت با hash در CSP اجازه گرفته، نه با unsafe-inline.
+-->
+<div class="print-bar">
+  <button type="button" class="print-btn" id="print-btn">چاپ یا ذخیره PDF</button>
+</div>
+<script>${PRINT_SCRIPT}</script>
 </html>`;
 }

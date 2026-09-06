@@ -8,7 +8,7 @@
 > پیش از ورود داده واقعی، بخش «تصمیم‌های باز» پایین را بخوانید.
 
 ```
-۱۰۵۶ ادعای SQL  ·  ۷۴۶ تست Node  ·  ۶۰ ادعای PHP افزونه  ·  همه در CI
+۱۰۷۶ ادعای SQL  ·  ۷۶۲ تست Node  ·  ۶۰ ادعای PHP افزونه  ·  همه در CI
 ```
 
 ---
@@ -119,6 +119,10 @@ React + Vite، RTL کامل، زبان طراحی Liquid Glass ناحیه‌بن
 | خرید برای دیگری — گیرنده یک مشتری واقعی می‌شود | ✅ وصل به API |
 | بسته هدیه — کاغذ، رنگ، گل، یادداشت، پنهان‌کردن قیمت | ✅ وصل به API |
 | پیشنهاد سایز — حساب فاصله، نه AI | ✅ وصل به API |
+| رجیستری درایور کارت‌خوان — از تنظیمات، بدون Deploy | ✅ ظرفش ساخته · ⚠️ هیچ درایوری پیاده نشده |
+| PDF فاکتور — با چاپ مرورگر، بدون کتابخانه | ✅ در صفحه `/i/<توکن>` |
+| پل پیام‌رسان (Webhook) | ✅ وصل به Outbox · ⚠️ اتصال به واتساپ/تلگرام کار همان سرویس است |
+| صف امن فروش هنگام قطعی شبکه | ✅ با همان Idempotency-Key |
 | ورود دومرحله‌ای TOTP + کد بازیابی | ✅ وصل به API |
 | کلید امنیتی (WebAuthn / Passkey) — ثبت، ورود، حذف | ✅ وصل به API · ⚠️ مراسم واقعی هنوز با کلید فیزیکی آزموده نشده |
 | موبایل — چیدمان واکنش‌گرا و بارکد با دوربین | ✅ اندروید و آیفون |
@@ -286,11 +290,11 @@ docker compose up -d db
 export DATABASE_URL='postgres://labelmod:رمز@localhost:5432/labelmod'
 ops/db.sh migrate         # ساخت اسکیما
 ops/db.sh seed            # کدینگ حساب، قواعد ثبت، تنظیمات
-ops/db.sh test            # ۱۰۵۶ ادعا — باید همه پاس شوند
+ops/db.sh test            # ۱۰۷۶ ادعا — باید همه پاس شوند
 
 corepack enable
 pnpm install
-pnpm check                # lint + typecheck + ۷۴۶ تست
+pnpm check                # lint + typecheck + ۷۶۲ تست
 pnpm --filter @labelmod/api dev
 pnpm --filter @labelmod/web dev
 
@@ -445,6 +449,7 @@ WebAssembly استفاده می‌کند. بدون آن کلیدواژه، دو�
 | | |
 | --- | --- |
 | Monitoring و هشدار خودکار | `ops/deploy.sh status` هست؛ ارسال هشدار (ایمیل/پیامک) نه |
+| کد ارتباط با کارت‌خوان | ظرفش هست (`platform.device_driver`)؛ تا SDK نرسد، کدی نوشته نمی‌شود |
 
 **عمداً ساخته نشده:** «چک به‌عنوان روش پرداخت داخل فاکتور فروش». چک
 سند مستقل دارد و بدهی مشتری را تسویه می‌کند؛ گنجاندنش در tender
@@ -461,7 +466,7 @@ Microservice · Redis · Kubernetes · حالت آفلاین کامل · Windows
 ```
 db/migrations/   اسکیما و توابع — شماره‌دار، SQL خام، قابل حسابرسی
 db/seed/         کدینگ حساب، قواعد ثبت، تنظیمات، داده مرجع
-db/test/         ۳۲ فایل تست مالی — در CI و pre-push اجرا می‌شوند
+db/test/         ۳۳ فایل تست مالی — در CI و pre-push اجرا می‌شوند
 docs/            ADR-001 تا ADR-006 · SECURITY.md · DEPLOYMENT.md
 ops/             db.sh · deploy.sh · install-hooks.sh · close-due-days.sh
                  restore-drill.sh — بکاپ را واقعاً برمی‌گرداند
