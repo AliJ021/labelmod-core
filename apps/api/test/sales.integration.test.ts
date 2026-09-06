@@ -590,4 +590,142 @@ describe("فروش و صندوق روی دیتابیس واقعی", { skip }, ()
       assert.equal(r.statusCode, 401, `${method} ${url} بدون نشست باید ۴۰۱ بدهد`);
     }
   });
+
+  // ═══════════════════════════════════════════════════════════════════
+  // خرید برای دیگری، و بسته‌بندی هدیه
+  // ═══════════════════════════════════════════════════════════════════
+
+  /** یک فاکتور باز با شیفت باز — پایه تست‌های زیر. */
+  async function openInvoice(sess: Awaited<ReturnType<typeof loginAs>>) {
+    await app.inject({
+      method: "POST", url: "/shifts", ...sess,
+      payload: { branchId: BRANCH, openingCash: "0" },
+    });
+    const inv = await app.inject({
+      method: "POST", url: "/invoices", ...sess,
+      payload: { branchId: BRANCH, warehouseId: STORE_WH, channel: "pos" },
+    });
+    assert.equal(inv.statusCode, 201, inv.body);
+    return inv.json().id as string;
+  }
+
+  test("گزینه‌های هدیه از دیتابیس می‌آیند، با دسته", async () => {
+    const s = await loginAs(cashier);
+    const r = await app.inject({ method: "GET", url: "/gift-options", ...s });
+    assert.equal(r.statusCode, 200, r.body);
+    const opts = (JSON.parse(r.body) as {
+      options: Array<{ code: string; kind: string; label: string; price: string }>;
+    }).options;
+    for (const k of ["wrap", "color", "flower"]) {
+      assert.ok(opts.some((o) => o.kind === k), `دسته «${k}» باید باشد`);
+    }
+    // پول رشته است، حتی وقتی صفر است.
+    assert.equal(typeof opts[0]!.price, "string");
+  });
+
+  test("گیرنده یک مشتری واقعی می‌شود، نه چند ستون روی فاکتور", async () => {
+    const s = await loginAs(cashier);
+    const id = await openInvoice(s);
+
+    const r = await app.inject({
+      method: "PATCH", url: `/invoices/${id}/recipient`, ...s,
+      payload: { mobile: "۰۹۱۲۳۰۰۰۰۰۱", fullName: "گیرنده هدیه" },
+    });
+    assert.equal(r.statusCode, 200, r.body);
+    const recipientId = r.json().recipientId as string;
+    assert.ok(recipientId, "گیرنده باید شناسه بگیرد");
+
+    // ⚠️ ادعای واقعی: گیرنده در **پرونده مشتری** نشسته، پس اندازه‌اش
+    // سال بعد که خودش آمد پیدا می‌شود. با ستون روی فاکتور، هرگز.
+    const c = await sql<{ mobile: string }>`
+      SELECT mobile_normalized AS mobile FROM sales.customer WHERE id = ${recipientId}::uuid
+    `.execute(handle.db);
+    assert.equal(c.rows[0]?.mobile, "09123000001", "شماره فارسی باید در دیتابیس نرمال شود");
+  });
+
+  test("گیرنده نمی‌تواند خودِ خریدار باشد — ۴۰۹ نه ۵۰۰", async () => {
+    const s = await loginAs(cashier);
+    const id = await openInvoice(s);
+    const mob = `09124${String(Date.now()).slice(-6)}`;
+    await app.inject({
+      method: "PATCH", url: `/invoices/${id}/customer`, ...s,
+      payload: { mobile: mob, fullName: "خریدار" },
+    });
+    const r = await app.inject({
+      method: "PATCH", url: `/invoices/${id}/recipient`, ...s, payload: { mobile: mob },
+    });
+    assert.equal(r.statusCode, 409, r.body);
+    assert.match(r.body, /خودِ خریدار/);
+  });
+
+  test("شماره گیرنده‌ی نامعتبر مشتری بی‌شماره نمی‌سازد", async () => {
+    const s = await loginAs(cashier);
+    const id = await openInvoice(s);
+    const before = await sql<{ n: string }>`
+      SELECT count(*)::text AS n FROM sales.customer
+    `.execute(handle.db);
+    const r = await app.inject({
+      method: "PATCH", url: `/invoices/${id}/recipient`, ...s, payload: { mobile: "سلام" },
+    });
+    assert.equal(r.statusCode, 400, r.body);
+    const after = await sql<{ n: string }>`
+      SELECT count(*)::text AS n FROM sales.customer
+    `.execute(handle.db);
+    assert.equal(after.rows[0]!.n, before.rows[0]!.n, "نباید مشتری تازه ساخته باشد");
+  });
+
+  test("بسته‌بندی هدیه ثبت می‌شود و قیمت پیش‌فرض پنهان است", async () => {
+    const s = await loginAs(cashier);
+    const id = await openInvoice(s);
+    const r = await app.inject({
+      method: "PUT", url: `/invoices/${id}/gift`, ...s,
+      payload: {
+        wrapCode: "wrap_box", colorCode: "color_gold",
+        flowerCode: "flower_rose", note: "تولدت مبارک",
+      },
+    });
+    assert.equal(r.statusCode, 200, r.body);
+    const g = r.json().gift as {
+      wrapCode: string; note: string; hidePrices: boolean;
+    };
+    assert.equal(g.wrapCode, "wrap_box");
+    assert.equal(g.note, "تولدت مبارک");
+    assert.equal(g.hidePrices, true, "قیمت روی برگه هدیه پیش‌فرض پنهان است");
+  });
+
+  test("کد از دسته اشتباه رد می‌شود — «گل رز» شیوه بسته‌بندی نیست", async () => {
+    const s = await loginAs(cashier);
+    const id = await openInvoice(s);
+    const r = await app.inject({
+      method: "PUT", url: `/invoices/${id}/gift`, ...s,
+      payload: { wrapCode: "flower_rose" },
+    });
+    assert.equal(r.statusCode, 409, r.body);
+    assert.match(r.body, /شیوه بسته‌بندی نیست/);
+  });
+
+  test("نویسه کنترلی در یادداشت رد می‌شود، نه بی‌صدا پاک", async () => {
+    // یادداشت روی کارت چاپ می‌شود. پاک‌کردن خاموش یعنی متنی چاپ شود
+    // که کاربر ننوشته.
+    const s = await loginAs(cashier);
+    const id = await openInvoice(s);
+    const r = await app.inject({
+      method: "PUT", url: `/invoices/${id}/gift`, ...s,
+      payload: { note: "تولدت\u202eمبارک" },
+    });
+    assert.equal(r.statusCode, 400, r.body);
+  });
+
+  test("isGift=false سطر هدیه را پاک می‌کند", async () => {
+    const s = await loginAs(cashier);
+    const id = await openInvoice(s);
+    await app.inject({
+      method: "PUT", url: `/invoices/${id}/gift`, ...s, payload: { wrapCode: "wrap_bag" },
+    });
+    const r = await app.inject({
+      method: "PUT", url: `/invoices/${id}/gift`, ...s, payload: { isGift: false },
+    });
+    assert.equal(r.statusCode, 200, r.body);
+    assert.equal(r.json().gift, null, "فاکتور معمولی سطر هدیه ندارد");
+  });
 });

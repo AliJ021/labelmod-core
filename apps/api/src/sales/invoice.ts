@@ -67,6 +67,14 @@ export interface InvoiceLine {
   priceOverrideReason: string | null;
 }
 
+export interface InvoiceGift {
+  wrapCode: string | null;
+  colorCode: string | null;
+  flowerCode: string | null;
+  note: string | null;
+  hidePrices: boolean;
+}
+
 export interface Invoice {
   id: string;
   number: string | null;
@@ -74,6 +82,10 @@ export interface Invoice {
   warehouseId: string;
   shiftId: string | null;
   customerId: string | null;
+  /** گیرنده، وقتی خرید برای دیگری است. `null` یعنی خریدار خودش گیرنده است. */
+  recipientId: string | null;
+  /** بسته‌بندی هدیه. `null` یعنی این فاکتور هدیه نیست. */
+  gift: InvoiceGift | null;
   channel: string;
   status: string;
   grossAmount: bigint;
@@ -133,6 +145,13 @@ export class InvoiceService {
       .executeTakeFirst();
     if (!inv) return null;
 
+    // نبودِ سطر یعنی هدیه نیست — نه یک سطر با همه ستون‌های خالی.
+    const gift = await ex
+      .selectFrom("sales.invoice_gift")
+      .select(["wrap_code", "color_code", "flower_code", "note", "hide_prices"])
+      .where("invoice_id", "=", invoiceId)
+      .executeTakeFirst();
+
     const lines = await ex
       .selectFrom("sales.invoice_line as l")
       .innerJoin("catalog.variation as v", "v.id", "l.variation_id")
@@ -162,6 +181,17 @@ export class InvoiceService {
       warehouseId: inv.warehouse_id,
       shiftId: inv.shift_id,
       customerId: inv.customer_id,
+      recipientId: inv.recipient_id,
+      gift:
+        gift === undefined
+          ? null
+          : {
+              wrapCode: gift.wrap_code,
+              colorCode: gift.color_code,
+              flowerCode: gift.flower_code,
+              note: gift.note,
+              hidePrices: gift.hide_prices,
+            },
       channel: inv.channel,
       status: inv.status,
       grossAmount: parseMoney(inv.gross_amount),
@@ -721,6 +751,91 @@ export class InvoiceService {
     return (await this.byId(input.invoiceId)) as Invoice;
   }
 
+  /**
+   * گیرنده — وقتی خرید برای دیگری است.
+   *
+   * همان مسیر `attachCustomer`: شماره از `sales.normalize_mobile`
+   * می‌گذرد و شماره تکراری مشتری دوم نمی‌سازد. گیرنده **یک مشتری
+   * واقعی** است، پس اندازه‌هایی که برای هدیه ثبت می‌شود در پرونده
+   * خودش می‌نشیند و سال بعد که خودش آمد، پیدا می‌شود.
+   *
+   * `mobile === null` یعنی «گیرنده ندارد» و ارجاع را پاک می‌کند.
+   */
+  async setRecipient(input: {
+    invoiceId: string;
+    mobile: string | null;
+    fullName?: string | undefined;
+    actorId: string;
+  }): Promise<Invoice> {
+    await this.#db.transaction().execute(async (trx) => {
+      await setActor(trx, input.actorId);
+
+      let recipientId: string | null = null;
+      if (input.mobile !== null) {
+        const norm = await sql<{ m: string | null }>`
+          SELECT nullif(sales.normalize_mobile(${input.mobile}), '') AS m
+        `.execute(trx);
+        if (!norm.rows[0]?.m) {
+          throw new InvoiceError("bad_mobile", "شماره موبایل گیرنده معتبر نیست", 400);
+        }
+        const r = await sql<{ id: string }>`
+          WITH norm AS (SELECT sales.normalize_mobile(${input.mobile}) AS m),
+          ins AS (
+            INSERT INTO sales.customer (mobile_normalized, full_name)
+            SELECT m, nullif(${input.fullName ?? null}::text, '') FROM norm
+            ON CONFLICT (mobile_normalized) DO NOTHING
+            RETURNING id
+          )
+          SELECT id FROM ins
+          UNION ALL
+          SELECT c.id FROM sales.customer c, norm WHERE c.mobile_normalized = norm.m
+          LIMIT 1
+        `.execute(trx);
+        recipientId = r.rows[0]?.id ?? null;
+        if (recipientId === null) {
+          throw new InvoiceError("bad_mobile", "شماره موبایل گیرنده معتبر نیست", 400);
+        }
+      }
+
+      // سنجش‌ها (باز بودن فاکتور، خودارجاع نبودن) در دیتابیس‌اند —
+      // یک تعریف، نه دو.
+      await sql`
+        SELECT sales.set_invoice_recipient(
+          ${input.invoiceId}::uuid, ${recipientId}::uuid, ${input.actorId}::uuid)
+      `.execute(trx);
+    });
+    return (await this.byId(input.invoiceId)) as Invoice;
+  }
+
+  /** بسته‌بندی هدیه. `isGift = false` سطر را پاک می‌کند. */
+  async setGift(input: {
+    invoiceId: string;
+    isGift: boolean;
+    wrapCode: string | null;
+    colorCode: string | null;
+    flowerCode: string | null;
+    note: string | null;
+    hidePrices: boolean;
+    actorId: string;
+  }): Promise<Invoice> {
+    await this.#db.transaction().execute(async (trx) => {
+      await setActor(trx, input.actorId);
+      if (input.isGift) {
+        await sql`
+          SELECT sales.set_invoice_gift(
+            ${input.invoiceId}::uuid, ${input.wrapCode}::text, ${input.colorCode}::text,
+            ${input.flowerCode}::text, ${input.note}::text, ${input.hidePrices}::boolean,
+            ${input.actorId}::uuid)
+        `.execute(trx);
+      } else {
+        await sql`
+          SELECT sales.clear_invoice_gift(${input.invoiceId}::uuid, ${input.actorId}::uuid)
+        `.execute(trx);
+      }
+    });
+    return (await this.byId(input.invoiceId)) as Invoice;
+  }
+
   async removeLine(invoiceId: string, lineId: string, actorId: string): Promise<Invoice> {
     await this.requireDraft(invoiceId);
     await this.#db.transaction().execute(async (trx) => {
@@ -1014,6 +1129,8 @@ export function invoiceToJson(inv: Invoice) {
     warehouseId: inv.warehouseId,
     shiftId: inv.shiftId,
     customerId: inv.customerId,
+    recipientId: inv.recipientId,
+    gift: inv.gift,
     channel: inv.channel,
     status: inv.status,
     grossAmount: serializeMoney(inv.grossAmount),

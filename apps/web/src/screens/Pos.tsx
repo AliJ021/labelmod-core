@@ -678,6 +678,8 @@ export function Pos() {
               </button>
             </div>
           ) : null}
+
+          {invoice ? <GiftPanel invoice={invoice} onChange={setInvoice} /> : null}
         </Solid>
 
         <PayPanel
@@ -702,6 +704,235 @@ export function Pos() {
 }
 
 /** انتخاب شعبه و انبار — فقط وقتی بیش از یکی باشد. */
+/**
+ * «خرید برای خودم یا برای دیگری؟» و بسته‌بندی هدیه.
+ *
+ * ── چرا بسته و پیش‌فرض خاموش ───────────────────────────────────────
+ *
+ * بیشتر فروش‌ها هدیه نیستند. اگر این پنل همیشه باز باشد، صندوق‌دار
+ * هر بار از کنارش رد می‌شود و صف می‌ایستد — همان دلیلی که ورودی
+ * شماره مشتری هم پایین سبد است، نه بالای صفحه.
+ *
+ * ── این کامپوننت هیچ کاغذ و رنگی را نمی‌شناسد ──────────────────────
+ *
+ * فهرست از `GET /gift-options` می‌آید. فروشگاه امسال سه رنگ کاغذ
+ * دارد و سال بعد پنج تا؛ افزودنش یک `INSERT` در Seed است.
+ */
+function GiftPanel({
+  invoice,
+  onChange,
+}: {
+  invoice: Invoice;
+  onChange: (inv: Invoice) => void;
+}) {
+  const [open, setOpen] = useState(false);
+  const [options, setOptions] = useState<
+    Array<{ code: string; kind: string; label: string; price: string }>
+  >([]);
+  const [recipient, setRecipient] = useState("");
+  const [recipientName, setRecipientName] = useState("");
+  const [wrap, setWrap] = useState(invoice.gift?.wrapCode ?? "");
+  const [color, setColor] = useState(invoice.gift?.colorCode ?? "");
+  const [flower, setFlower] = useState(invoice.gift?.flowerCode ?? "");
+  const [note, setNote] = useState(invoice.gift?.note ?? "");
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (!open || options.length > 0) return;
+    let alive = true;
+    void (async () => {
+      try {
+        const r = await pos.giftOptions();
+        if (alive) setOptions(r.options);
+      } catch (err) {
+        if (alive) setError(message(err));
+      }
+    })();
+    return () => {
+      alive = false;
+    };
+  }, [open, options.length]);
+
+  const of = (kind: string) => options.filter((o) => o.kind === kind);
+
+  async function run(fn: () => Promise<Invoice>) {
+    setBusy(true);
+    setError(null);
+    try {
+      onChange(await fn());
+    } catch (err) {
+      // پیام نگهبان دیتابیس فارسی و برای کاربر است — همان را نشان
+      // می‌دهیم، نه یک «خطا» عمومی.
+      setError(message(err));
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  if (!open) {
+    return (
+      <div className="row" style={{ gap: "var(--s-2)" }}>
+        <button type="button" className="btn btn--quiet" onClick={() => setOpen(true)}>
+          🎁 خرید برای دیگری یا هدیه
+        </button>
+        {invoice.recipientId !== null || invoice.gift !== null ? (
+          <span className="pill">
+            <span aria-hidden="true">✓</span>{" "}
+            {invoice.recipientId !== null && invoice.gift !== null
+              ? "گیرنده و بسته ثبت شد"
+              : invoice.recipientId !== null
+                ? "گیرنده ثبت شد"
+                : "بسته هدیه ثبت شد"}
+          </span>
+        ) : null}
+      </div>
+    );
+  }
+
+  return (
+    <Solid className="pad stack" style={{ gap: "var(--s-3)" }}>
+      <div className="row between">
+        <strong style={{ fontSize: ".95rem" }}>خرید برای دیگری و هدیه</strong>
+        <button type="button" className="btn btn--quiet" onClick={() => setOpen(false)}>
+          بستن
+        </button>
+      </div>
+
+      {/*
+        گیرنده — یک مشتری واقعی می‌شود، نه چند ستون روی فاکتور. پس
+        اندازه‌هایش در پرونده خودش می‌نشیند و سال بعد که خودش آمد،
+        پیدا می‌شود.
+      */}
+      <div className="filters">
+        <label className="auth-field">
+          <span>موبایل گیرنده</span>
+          <input
+            type="text"
+            inputMode="numeric"
+            className="num"
+            value={recipient}
+            onChange={(e) => setRecipient(e.target.value)}
+            placeholder="اختیاری"
+            disabled={busy}
+          />
+        </label>
+        <label className="auth-field">
+          <span>نام گیرنده</span>
+          <input
+            value={recipientName}
+            onChange={(e) => setRecipientName(e.target.value)}
+            disabled={busy}
+          />
+        </label>
+        <button
+          type="button"
+          className="btn"
+          disabled={busy || normalizeDigits(recipient).trim() === ""}
+          onClick={() =>
+            void run(() =>
+              pos.setRecipient(invoice.id, {
+                mobile: normalizeDigits(recipient).trim(),
+                ...(recipientName.trim() === "" ? {} : { fullName: recipientName.trim() }),
+              }),
+            )
+          }
+        >
+          ثبت گیرنده
+        </button>
+        {invoice.recipientId !== null ? (
+          <button
+            type="button"
+            className="btn btn--quiet"
+            disabled={busy}
+            onClick={() => void run(() => pos.setRecipient(invoice.id, { mobile: null }))}
+          >
+            حذف گیرنده
+          </button>
+        ) : null}
+      </div>
+
+      <div className="filters">
+        {[
+          ["wrap", "شیوه بسته‌بندی", wrap, setWrap] as const,
+          ["color", "رنگ بسته", color, setColor] as const,
+          ["flower", "گل همراه", flower, setFlower] as const,
+        ].map(([kind, label, value, set]) => (
+          <label key={kind} className="auth-field">
+            <span>{label}</span>
+            <select
+              className="set-input"
+              value={value}
+              disabled={busy}
+              onChange={(e) => set(e.target.value)}
+            >
+              <option value="">—</option>
+              {of(kind).map((o) => (
+                <option key={o.code} value={o.code}>{o.label}</option>
+              ))}
+            </select>
+          </label>
+        ))}
+      </div>
+
+      <label className="auth-field">
+        <span>یادداشت روی کارت</span>
+        <input
+          value={note}
+          onChange={(e) => setNote(e.target.value)}
+          maxLength={500}
+          disabled={busy}
+          placeholder="اختیاری — روی کارت چاپ می‌شود"
+        />
+      </label>
+
+      <div className="row" style={{ gap: "var(--s-2)" }}>
+        <button
+          type="button"
+          className="btn btn--primary"
+          disabled={busy}
+          onClick={() =>
+            void run(() =>
+              pos.setGift(invoice.id, {
+                wrapCode: wrap === "" ? null : wrap,
+                colorCode: color === "" ? null : color,
+                flowerCode: flower === "" ? null : flower,
+                note: note.trim() === "" ? null : note.trim(),
+              }),
+            )
+          }
+        >
+          ثبت بسته هدیه
+        </button>
+        {invoice.gift !== null ? (
+          <button
+            type="button"
+            className="btn btn--quiet"
+            disabled={busy}
+            onClick={() => void run(() => pos.setGift(invoice.id, { isGift: false }))}
+          >
+            هدیه نیست
+          </button>
+        ) : null}
+        {error !== null ? (
+          <span className="set-msg set-msg--crit" role="alert">
+            <span aria-hidden="true">⚠</span> {error}
+          </span>
+        ) : null}
+      </div>
+
+      {/*
+        قیمت روی برگه هدیه پیش‌فرض پنهان است — درخواست همیشگی خریدار
+        هدیه. اینجا فقط گفته می‌شود، چون تصمیمش در سرور پیش‌فرض دارد
+        و کسی که بخواهد عوضش کند نادر است.
+      */}
+      <p className="muted small" style={{ margin: 0 }}>
+        قیمت روی برگه هدیه چاپ نمی‌شود.
+      </p>
+    </Solid>
+  );
+}
+
 function SetupPanel({
   branches,
   branchId,
