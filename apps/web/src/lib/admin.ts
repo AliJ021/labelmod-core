@@ -53,6 +53,8 @@ export interface SettlementTerm {
   /** رشته است، نه عدد: `numeric(5,3)` و `number` جاوااسکریپت ۰٫۲۳۵ را دقیق نگه نمی‌دارد. */
   feePercent: string;
   settlementDays: number;
+  /** از `settings.security` می‌آید — سرور تصمیم می‌گیرد، نه کلاینت. */
+  canEdit: boolean;
 }
 
 export interface PermissionRule {

@@ -22,6 +22,8 @@ import { Devices } from "./Devices.tsx";
 import { Staff } from "./Staff.tsx";
 import { TwoFactor } from "./TwoFactor.tsx";
 import { api, ApiError } from "../lib/api.ts";
+import { admin, type SettlementTerm } from "../lib/admin.ts";
+import { isZeroFee } from "../lib/settlement.ts";
 import {
   describeValue,
   fromInput,
@@ -59,7 +61,7 @@ type Status =
   | { kind: "saved" }
   | { kind: "error"; message: string };
 
-function SettingKeys() {
+function SettingKeys({ onOpenTerminals }: { onOpenTerminals: () => void }) {
   const [groups, setGroups] = useState<Group[] | null>(null);
   const [loadError, setLoadError] = useState<string | null>(null);
   const [openGroup, setOpenGroup] = useState<string | null>(null);
@@ -146,7 +148,146 @@ function SettingKeys() {
           ) : null}
         </Glass>
       ))}
+
+      <SettlementGroup
+        open={openGroup === TERMINALS_GROUP}
+        onToggle={() => setOpenGroup((k) => (k === TERMINALS_GROUP ? null : TERMINALS_GROUP))}
+        onOpenTerminals={onOpenTerminals}
+      />
     </div>
+  );
+}
+
+/**
+ * کلید گروهِ «کارمزد و دوره تسویه» در آکاردئون تنظیمات.
+ *
+ * عمداً دو نقطه دارد: `group_key` در دیتابیس شناسه‌ای بدون نقطه‌دونقطه
+ * است، پس این مقدار هرگز با گروهی که از سرور می‌آید یکی نمی‌شود.
+ */
+const TERMINALS_GROUP = "terminals:settlement";
+
+/**
+ * کارمزد و دوره تسویه، **به‌ازای هر پایانه** — اینجا فقط دیده می‌شود.
+ *
+ * ── چرا اینجا هست ────────────────────────────────────────────────────
+ *
+ * این دو عدد در `platform.setting` نیستند و نباید بروند: کارت‌خوان
+ * فروشگاه و درگاه سایت دو قرارداد جدا با PSP دارند و یک کلید سراسری
+ * فقط **یک** عدد نگه می‌دارد — یعنی نرخ یکی روی سند دیگری بنشیند، هر
+ * روز، بی‌آنکه چیزی قرمز شود.
+ *
+ * ولی کسی که دنبال «کارمزد» می‌گردد اول همین فهرست را می‌بیند. نبودنش
+ * اینجا یعنی به این نتیجه برسد که از تنظیمات عوض نمی‌شود و سراغ کد
+ * برود. پس سطرش هست، مقدارِ واقعیِ هر پایانه را نشان می‌دهد، و راه
+ * تغییر را می‌گوید.
+ *
+ * ── چه چیزی اینجا hardcode است و چه چیزی نیست ────────────────────────
+ *
+ * فقط **وجود** این گروه و عنوانش — مثل فهرست `TABS`، یک تصمیم صفحه‌ای.
+ * پایانه‌ها، مقدارها، شمارشگر و «آیا این کاربر می‌تواند عوضش کند»
+ * همه از `GET /settlement-terms` می‌آیند. پایانه تازه‌ای که فردا در
+ * `treasury.account` ساخته شود، بدون یک خط تغییر اینجا دیده می‌شود.
+ */
+function SettlementGroup({
+  open,
+  onToggle,
+  onOpenTerminals,
+}: {
+  open: boolean;
+  onToggle: () => void;
+  onOpenTerminals: () => void;
+}) {
+  const [terms, setTerms] = useState<SettlementTerm[] | null>(null);
+  const [error, setError] = useState<string | null>(null);
+
+  useEffect(() => {
+    let alive = true;
+    admin
+      .settlementTerms()
+      .then((r) => alive && setTerms(r.terms))
+      .catch((e: unknown) => {
+        if (!alive) return;
+        setError(e instanceof ApiError ? e.message : "ارتباط با سرور برقرار نشد");
+      });
+    return () => {
+      alive = false;
+    };
+  }, []);
+
+  return (
+    <Glass as="section" refract={false} className="pad set-group">
+      <button type="button" className="set-group-head" aria-expanded={open} onClick={onToggle}>
+        <span className="stack" style={{ gap: 2, textAlign: "start" }}>
+          <strong>کارمزد و دوره تسویه</strong>
+          <span className="muted small">
+            به‌ازای هر پایانه — کارت‌خوان فروشگاه و درگاه سایت یک قرارداد ندارند
+          </span>
+        </span>
+        <span className="set-count">{terms === null ? "…" : terms.length}</span>
+      </button>
+
+      {open ? (
+        <div className="stack" style={{ gap: "var(--s-3)", marginTop: "var(--s-4)" }}>
+          {error !== null ? (
+            <p className="muted" style={{ margin: 0 }}>
+              <span className="dot dot--crit" aria-hidden="true">●</span> {error}
+            </p>
+          ) : terms === null ? (
+            <p className="muted" style={{ margin: 0 }}>در حال بارگذاری پایانه‌ها…</p>
+          ) : terms.length === 0 ? (
+            <p className="muted" style={{ margin: 0 }}>هیچ پایانه‌ای تعریف نشده است.</p>
+          ) : (
+            terms.map((t) => (
+              <TermRow key={t.id} term={t} onOpenTerminals={onOpenTerminals} />
+            ))
+          )}
+        </div>
+      ) : null}
+    </Glass>
+  );
+}
+
+function TermRow({
+  term,
+  onOpenTerminals,
+}: {
+  term: SettlementTerm;
+  onOpenTerminals: () => void;
+}) {
+  const zeroFee = isZeroFee(term.feePercent);
+
+  return (
+    <Solid className="set-row">
+      <div className="set-row-head">
+        <div className="stack" style={{ gap: 2, minWidth: 0 }}>
+          <span className="set-label">{term.name}</span>
+          <code className="set-key">{term.code}</code>
+        </div>
+        {!term.canEdit ? (
+          <span className="pill set-lock">
+            <span aria-hidden="true">🔒</span> دسترسی ندارید
+          </span>
+        ) : null}
+      </div>
+
+      {zeroFee ? (
+        // رنگ به‌تنهایی حامل معنا نیست: آیکون و متن هم هست.
+        <p className="set-help">
+          <span aria-hidden="true">⚠</span> کارمزد صفر است. اگر قرارداد PSP کارمزد دارد،
+          دفتر کل مبلغ را درآمد می‌بیند و بانک کمتر واریز می‌کند — تفاوتش جایی ثبت
+          نمی‌شود.
+        </p>
+      ) : null}
+
+      <div className="set-foot">
+        <span className="small muted">
+          کارمزد: {term.feePercent}٪ · دوره تسویه: {term.settlementDays} روز
+        </span>
+        <button type="button" className="btn" onClick={onOpenTerminals}>
+          تغییر در زبانه پایانه‌ها
+        </button>
+      </div>
+    </Solid>
   );
 }
 
@@ -407,7 +548,7 @@ export function Settings() {
       </div>
 
       {tab === "keys" ? (
-        <SettingKeys />
+        <SettingKeys onOpenTerminals={() => setTab("terminals")} />
       ) : tab === "accounts" ? (
         <Accounts />
       ) : tab === "terminals" ? (
