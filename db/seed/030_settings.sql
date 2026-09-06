@@ -373,6 +373,7 @@ SELECT * FROM (VALUES
    {"value":"cheque.manage","label":"ثبت و وصول چک"},
    {"value":"customer.manage","label":"پرونده مشتری و سقف اعتبار"},
    {"value":"report.view","label":"دیدن گزارش‌ها"},
+   {"value":"report.customer_insight","label":"دیدن تحلیل سبد و خرید هر مشتری"},
    {"value":"cost.view","label":"دیدن قیمت خرید"},
    {"value":"shift.close","label":"بستن شیفت صندوق"},
    {"value":"settings.manage","label":"تغییر تنظیمات"},

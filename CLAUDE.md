@@ -194,7 +194,7 @@ pnpm --filter @labelmod/api dev
 ## گلوگاه‌ها
 
 - **پیش از هر تغییر در `db/migrations/0[01][0-9]_*.sql`، `ops/db.sh test` را
-  اجرا کن و بعد از تغییر دوباره.** ۹۳۵ ادعای SQL به‌علاوه ۷۰۷ تست Node و ۶۰ ادعای PHP افزونه باید پاس شوند.
+  اجرا کن و بعد از تغییر دوباره.** ۹۷۰ ادعای SQL به‌علاوه ۷۲۴ تست Node و ۶۰ ادعای PHP افزونه باید پاس شوند.
 - `db/test/purchase-receipt.sql` شماره‌گذاری و تخصیص هزینه رسید خرید را،
   `db/test/purchase-return.sql` برگشت از خرید را،
   `db/test/purchase-order.sql` سفارش خرید را، و

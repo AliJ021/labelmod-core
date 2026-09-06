@@ -1290,3 +1290,29 @@ select.set-input {
   min-height: 44px;
   text-decoration: none;
 }
+
+/* ── پنل مدیریتی ───────────────────────────────────────────────────
+   نشانگر رشد/افت. رنگ به‌تنهایی حامل معنا نیست — آیکون و واژه در
+   خودِ کامپوننت هستند و این کلاس فقط رنگشان می‌کند (بند ADR-002:
+   «هشدار همیشه با آیکون و برچسب»).
+   رنگ از توکن پالت می‌آید نه Hex؛ پالت در CI سنجیده می‌شود. */
+.trend {
+  align-self: flex-start;
+  font-size: .82rem;
+  gap: .3rem;
+}
+.trend--good { color: var(--good); }
+.trend--crit { color: var(--crit); }
+.trend--warn { color: var(--warn); }
+
+/* میله نسبت در جدول ساعتی.
+   روی سطح **مات** جدول می‌نشیند نه روی شیشه — رنگ نمودار در تم روشن
+   روی شیشه فقط ۲٫۷۷:۱ تضاد می‌دهد و روی سطح مات ۳٫۵۳:۱. سنجیده شده،
+   نه سلیقه. */
+.hbar {
+  display: block;
+  min-width: 2px;
+  height: .55rem;
+  border-radius: 999px;
+  background: var(--chart-1);
+}

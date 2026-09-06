@@ -160,8 +160,66 @@ function qs(p: Period, extra: Record<string, string | number | undefined> = {}):
   return q.toString();
 }
 
+export interface HourlyRow {
+  businessDate: string;
+  hourOfDay: number;
+  channel: string;
+  invoiceCount: number;
+  itemQty: string;
+  netAmount: string;
+}
+
+export interface CompareRow {
+  channel: string;
+  invoiceCount: number;
+  netAmount: string;
+  profitAmount: string | null;
+  prevInvoiceCount: number;
+  prevNetAmount: string;
+  prevProfitAmount: string | null;
+  deltaAmount: string;
+  /** `null` یعنی دوره مبنا صفر بود — با «صفر درصد» یکی نیست. */
+  deltaPercent: number | null;
+  direction: "up" | "down" | "flat";
+}
+
+export interface BasketRow {
+  businessDate: string;
+  channel: string;
+  invoiceCount: number;
+  knownCustomers: number;
+  anonymousCount: number;
+  itemQty: string;
+  lineCount: number;
+  netAmount: string;
+  qtyPerInvoice: string;
+}
+
+export interface CustomerBasketRow {
+  customerId: string;
+  fullName: string | null;
+  mobile: string | null;
+  invoiceCount: number;
+  itemQty: string;
+  netAmount: string;
+  lastPurchase: string;
+}
+
 export const reports = {
   sales: (p: Period) => api.get<{ rows: SalesRow[] }>(`/reports/sales?${qs(p)}`),
+
+  hourly: (p: Period) => api.get<{ rows: HourlyRow[] }>(`/reports/hourly?${qs(p)}`),
+
+  /** هر دو بازه صریح‌اند — تقویم جلالی در `lib/jalali-period.ts` حسابشان می‌کند. */
+  compare: (p: Period, prev: { from: string; to: string }) =>
+    api.get<{ rows: CompareRow[] }>(
+      `/reports/compare?${qs(p, { prevFrom: prev.from, prevTo: prev.to })}`,
+    ),
+
+  basket: (p: Period) => api.get<{ rows: BasketRow[] }>(`/reports/basket?${qs(p)}`),
+
+  customerBasket: (p: Period, limit = 50) =>
+    api.get<{ rows: CustomerBasketRow[] }>(`/reports/customer-basket?${qs(p, { limit })}`),
 
   profitByProduct: (p: Period, limit = 50) =>
     api.get<{ rows: ProfitRow[] }>(`/reports/profit-by-product?${qs(p, { limit })}`),
