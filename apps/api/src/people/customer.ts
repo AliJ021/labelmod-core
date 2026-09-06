@@ -57,6 +57,21 @@ export interface CustomerMeasure {
   valueCm: string;
 }
 
+/** یک کالای پیشنهادی، با امتیاز تناسب. */
+export interface FittingVariation {
+  variationId: string;
+  sku: string;
+  productName: string;
+  color: string;
+  size: string;
+  season: string | null;
+  onHand: string;
+  /** ۰ تا ۱. `null` یعنی اندازه مشترکی نبود — با «نمی‌خورد» یکی نیست. */
+  matchScore: number | null;
+  /** حکم بر چند پایه استوار است. */
+  matchedKeys: number;
+}
+
 export interface Customer {
   id: string;
   mobile: string;
@@ -241,6 +256,35 @@ export class CustomerService {
       `.execute(trx);
     });
     return await this.measuresOf(input.id);
+  }
+
+  async fitting(
+    customerId: string,
+    q: { warehouseId?: string | undefined; minScore?: number | undefined; limit: number },
+  ): Promise<FittingVariation[]> {
+    const r = await sql<{
+      variation_id: string; sku: string; product_name: string;
+      color: string; size: string; season: string | null;
+      on_hand: string; match_score: string | null; matched_keys: number | null;
+    }>`SELECT variation_id, sku, product_name, color, size, season,
+              on_hand::text, match_score::text, matched_keys
+         FROM catalog.fitting_variations(
+           ${customerId}::uuid, ${q.warehouseId ?? null}::uuid,
+           ${q.minScore ?? null}::numeric, ${q.limit}::int)`
+      .execute(this.#db);
+    return r.rows.map((x) => ({
+      variationId: x.variation_id,
+      sku: x.sku,
+      productName: x.product_name,
+      color: x.color,
+      size: x.size,
+      season: x.season,
+      // تعداد رشته می‌ماند: `platform.qty` اعشار دارد.
+      onHand: x.on_hand,
+      // امتیاز یک نسبت است نه پول — ولی `null` باید `null` بماند.
+      matchScore: x.match_score === null ? null : Number(x.match_score),
+      matchedKeys: Number(x.matched_keys ?? 0),
+    }));
   }
 
   async byId(id: string): Promise<Customer | null> {

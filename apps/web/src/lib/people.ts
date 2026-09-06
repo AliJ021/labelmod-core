@@ -83,6 +83,19 @@ export const MEASURE_GROUP: Record<string, string> = {
   foot: "پا",
 };
 
+/** یک کالای پیشنهادی. `matchScore = null` یعنی اندازه‌اش ثبت نشده. */
+export interface FittingVariation {
+  variationId: string;
+  sku: string;
+  productName: string;
+  color: string;
+  size: string;
+  season: string | null;
+  onHand: string;
+  matchScore: number | null;
+  matchedKeys: number;
+}
+
 export interface CustomerInvoice {
   id: string;
   number: string | null;
@@ -162,6 +175,22 @@ export const people = {
   ) => api.patch<Customer>(`/customers/${id}`, input),
 
   measureKeys: () => api.get<{ keys: MeasureKey[] }>("/measure-keys"),
+
+  /**
+   * کالاهای مناسب این مشتری — «برای خودش می‌خرد».
+   *
+   * پیشنهاد است نه حکم: کالای بدون اندازه حذف نمی‌شود و
+   * `matchScore: null` می‌گیرد.
+   */
+  fitting: (id: string, opts: { minScore?: number; limit?: number } = {}) => {
+    const q = new URLSearchParams();
+    if (opts.minScore !== undefined) q.set("minScore", String(opts.minScore));
+    if (opts.limit !== undefined) q.set("limit", String(opts.limit));
+    const qs = q.toString();
+    return api.get<{ variations: FittingVariation[] }>(
+      `/customers/${id}/fitting${qs === "" ? "" : `?${qs}`}`,
+    );
+  },
 
   measures: (id: string) =>
     api.get<{ measures: CustomerMeasure[] }>(`/customers/${id}/measures`),

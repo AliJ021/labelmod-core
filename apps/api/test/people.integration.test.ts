@@ -706,4 +706,88 @@ describe("پرسنل و مشتری", { skip }, () => {
       assert.equal(r.statusCode, 403, `${url}: ${r.body}`);
     }
   });
+
+  test("پیشنهاد سایز — کالای بدون اندازه حذف نمی‌شود", async () => {
+    const s = await loginAs(supervisor);
+    const id = await customerId(s);
+    await app.inject({
+      method: "PUT", url: `/customers/${id}/measures`, ...s,
+      payload: { values: { chest: 100, waist: 84 } },
+    });
+
+    // ⚠️ تست باید داده‌اش را خودش بسازد.
+    //
+    // بدون موجودی، فهرست قانوناً خالی است و ادعای «حذف نمی‌شود»
+    // روی هیچ اجرا می‌شد — یک تست که خودش را گول می‌زند. پس دو
+    // تنوع ساخته می‌شود: یکی با اندازه، یکی **بدون**؛ و هر دو با
+    // موجودی، از راه رسید خرید که تنها مسیر ورود کالاست.
+    await sql`
+      DO $fit$
+      DECLARE v_wh uuid; v_sup uuid; v_p uuid; v_a uuid; v_b uuid;
+              v_r uuid; v_u uuid; v_br uuid;
+      BEGIN
+        SELECT id INTO v_wh FROM inventory.warehouse
+         WHERE kind = 'store' LIMIT 1;
+        SELECT id INTO v_u FROM identity.app_user WHERE username = 'system';
+        PERFORM platform.set_actor(v_u, NULL, NULL);
+
+        INSERT INTO purchasing.supplier (code, name)
+        VALUES ('S-FITAPI', 'تأمین تست تناسب')
+        ON CONFLICT (code) DO UPDATE SET name = EXCLUDED.name
+        RETURNING id INTO v_sup;
+
+        INSERT INTO catalog.product (code, name_internal)
+        VALUES ('P-FITAPI', 'پیراهن تست تناسب') RETURNING id INTO v_p;
+        INSERT INTO catalog.variation (product_id, color, size, sku)
+        VALUES (v_p, 'سفید', 'M', 'FITAPI-M') RETURNING id INTO v_a;
+        INSERT INTO catalog.variation (product_id, color, size, sku)
+        VALUES (v_p, 'سفید', 'S', 'FITAPI-S') RETURNING id INTO v_b;
+
+        -- فقط یکی اندازه دارد. دیگری عمداً ندارد.
+        INSERT INTO catalog.variation_measure (variation_id, key, value_cm)
+        VALUES (v_a, 'chest', 100), (v_a, 'waist', 84);
+
+        SELECT branch_id INTO v_br FROM inventory.warehouse WHERE id = v_wh;
+        INSERT INTO purchasing.receipt (number, branch_id, supplier_id, warehouse_id, occurred_at)
+        VALUES (platform.next_document_no(v_br, 'purchase', 1405::smallint),
+                v_br, v_sup, v_wh, now())
+        RETURNING id INTO v_r;
+        INSERT INTO purchasing.receipt_line (receipt_id, variation_id, qty, unit_price, line_amount)
+        VALUES (v_r, v_a, 3, 300000, 900000), (v_r, v_b, 3, 300000, 900000);
+        PERFORM purchasing.post_receipt(v_r, v_u);
+      END $fit$;
+    `.execute(handle.db);
+
+    const r = await app.inject({ method: "GET", url: `/customers/${id}/fitting`, ...s });
+    assert.equal(r.statusCode, 200, r.body);
+    const rows = (JSON.parse(r.body) as {
+      variations: Array<{ sku: string; matchScore: number | null; matchedKeys: number }>;
+    }).variations;
+
+    // ⚠️ ادعای مرکزی: کالاهای بدون اندازه هم می‌آیند، با
+    // `matchScore: null`. اگر حذف می‌شدند، فروشگاه نصف ویترینش را
+    // نشان نمی‌داد چون انباردار هنوز اندازه‌ها را وارد نکرده.
+    assert.ok(rows.length > 0, "فهرست نباید خالی باشد");
+    assert.ok(
+      rows.some((x) => x.matchScore === null),
+      "کالای بدون اندازه باید با matchScore=null بیاید، نه حذف شود",
+    );
+
+    // و NULLها آخر می‌نشینند، نه اول.
+    const firstNull = rows.findIndex((x) => x.matchScore === null);
+    const lastScored = rows.map((x) => x.matchScore !== null).lastIndexOf(true);
+    if (firstNull >= 0 && lastScored >= 0) {
+      assert.ok(firstNull > lastScored, "کالای بی‌اندازه باید آخر فهرست باشد");
+    }
+  });
+
+  test("پیشنهاد سایز پشت همان دروازه پرونده مشتری است", async () => {
+    const s = await loginAs(cashier);
+    const r = await app.inject({
+      method: "GET",
+      url: "/customers/00000000-0000-7000-8000-000000000001/fitting",
+      ...s,
+    });
+    assert.equal(r.statusCode, 403, r.body);
+  });
 });
