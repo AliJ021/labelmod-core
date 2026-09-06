@@ -152,7 +152,91 @@ export function registerSettingsRoutes(app: FastifyInstance, deps: SettingsRoute
   app.get("/device-drivers", async (req) => {
     const s = session(req);
     await requireForSession(db, s, "settings.view");
-    return { drivers: await settings.deviceDrivers() };
+    const q = z
+      .object({ includeRetired: z.enum(["0", "1"]).optional() })
+      .parse(req.query);
+    return { drivers: await settings.deviceDrivers(q.includeRetired === "1") };
+  });
+
+  /**
+   * افزودن یا ویرایش یک درایور و **مستندات SDK** آن.
+   *
+   * ── چرا `PUT` و چرا بدون `Idempotency-Key` ────────────────────────
+   *
+   * هویت این عملیات خودِ `code` است و بدنه، حالت **مطلق** درایور را
+   * می‌گوید — نه یک تغییر افزایشی. ارسال دوباره همان بدنه دقیقاً
+   * همان نتیجه را می‌دهد، پس کلیدی لازم نیست که تکرار را بگیرد.
+   * همان دلیلی که مسیر انبارگردانی `PUT` است.
+   *
+   * پشت `settings.security` مثل اتصال پایانه به درایور، و به همان
+   * دلیل: این فهرست تعیین می‌کند مالک از میان چه چیزهایی کارت‌خوان
+   * فروشگاه را انتخاب کند.
+   *
+   * ⚠️ `isImplemented` در بدنه پذیرفته نمی‌شود. اگر کسی بفرستدش،
+   * Zod ردش نمی‌کند — ولی هیچ‌جا خوانده هم نمی‌شود، و دیتابیس آن
+   * ستون را از این مسیر اصلاً دست نمی‌زند.
+   */
+  app.put("/device-drivers/:code", async (req) => {
+    const s = session(req);
+    const { code } = z
+      .object({ code: z.string().trim().min(2).max(40) })
+      .parse(req.params);
+    const body = z
+      .object({
+        label: z.string().trim().min(1).max(100),
+        // ⚠️ فهرست نوع اینجا **تکرار نشده**. دیتابیس می‌سنجدش و
+        //    پیام فارسی می‌دهد؛ دو نسخه از یک قاعده یعنی آن که در
+        //    psql دور زده می‌شود همان است که اهمیت دارد.
+        deviceKind: z.string().trim().min(1).max(20),
+        vendor: z.string().trim().max(100).nullable().default(null),
+        sdkDocUrl: z.string().trim().max(500).nullable().default(null),
+        notes: z.string().max(2000).nullable().default(null),
+        sortOrder: z.number().int().min(0).max(9999).default(100),
+        reason: z.string().max(500).optional(),
+      })
+      .parse(req.body);
+    await requireForSession(db, s, "settings.security");
+
+    await withActor(db, { userId: s.userId, ip: req.ip }, (trx) =>
+      settings.upsertDriverIn(
+        trx,
+        { code, ...body, vendor: body.vendor, sdkDocUrl: body.sdkDocUrl },
+        body.reason ?? null,
+        s.userId,
+      ),
+    );
+    const list = await settings.deviceDrivers(true);
+    return list.find((d) => d.code === code.trim().toLowerCase()) ?? null;
+  });
+
+  /**
+   * بازنشستگی یا بازگرداندن یک درایور.
+   *
+   * حذف نیست — `treasury.account.driver_code` به آن ارجاع دارد و
+   * `audit_log` تاریخچه‌اش را نگه داشته. درایوری که پایانه‌ای به آن
+   * وصل است بازنشسته نمی‌شود؛ دیتابیس ردش می‌کند و پیامش می‌گوید
+   * اول پایانه را جدا کنید.
+   */
+  app.patch("/device-drivers/:code/active", async (req) => {
+    const s = session(req);
+    const { code } = z
+      .object({ code: z.string().trim().min(2).max(40) })
+      .parse(req.params);
+    const body = z
+      .object({
+        isActive: z.boolean(),
+        reason: z.string().max(500).optional(),
+      })
+      .parse(req.body);
+    await requireForSession(db, s, "settings.security");
+
+    await withActor(db, { userId: s.userId, ip: req.ip }, (trx) =>
+      settings.setDriverActiveIn(
+        trx, code, body.isActive, body.reason ?? null, s.userId,
+      ),
+    );
+    const list = await settings.deviceDrivers(true);
+    return list.find((d) => d.code === code.trim().toLowerCase()) ?? null;
   });
 
   app.get("/terminal-drivers", async (req) => {

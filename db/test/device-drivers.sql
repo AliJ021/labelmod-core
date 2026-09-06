@@ -127,6 +127,105 @@ BEGIN
   IF v_n < 3 THEN RAISE EXCEPTION '✗ تغییر درایور ردّ حسابرسی ندارد: %', v_n; END IF;
   RAISE NOTICE '  ✓ ردّ حسابرسی ثبت شد = %', v_n;
 
+  -- ===================================================================
+  -- نوشتن در رجیستری — مهاجرت ۰۴۷
+  -- ===================================================================
+  -- خواسته مالک: «مستندات SDK باید از طریق تنظیمات قابل جایگزاری یا
+  -- تغییر باشد، چون هم ممکن است کارت‌خوان‌ها عوض شوند و هم ممکن است
+  -- زیادتر شوند.» ۰۴۶ جدولش را ساخت، ۰۴۷ دستگیره‌اش را.
+
+  RAISE NOTICE E'\n═══ ۹. افزودن یک دستگاه تازه ═══';
+  PERFORM platform.upsert_device_driver(
+    'novinpay', 'پرداخت نوین', 'card_terminal', 'نوین',
+    'https://docs.example.com/novinpay', 'پروتکل نسخه ۲.۱', 15::smallint,
+    'کارت‌خوان تازه نصب شد', v_user);
+  SELECT label INTO v_t FROM platform.device_driver WHERE code='novinpay';
+  PERFORM pg_temp.assert_txt('دستگاه تازه ثبت شد', v_t, 'پرداخت نوین');
+  -- ⚠️ بحرانی‌ترین ادعای این بخش. اگر `is_implemented` از این مسیر
+  --    روشن می‌شد، مالک دستگاهی را که کدش نوشته نشده وصل می‌کرد و
+  --    اولین پرداخت واقعی در سکوت شکست می‌خورد.
+  SELECT is_implemented INTO v_b FROM platform.device_driver WHERE code='novinpay';
+  IF v_b THEN RAISE EXCEPTION '✗ دستگاه تازه نباید «پیاده‌شده» باشد'; END IF;
+  RAISE NOTICE '  ✓ دستگاه تازه «فقط ثبت‌شده» است، نه «پیاده‌شده»';
+  PERFORM pg_temp.assert_raises('وصل‌کردن دستگاه تازه، رد',
+    format($q$SELECT treasury.set_device_driver(%L::uuid, 'novinpay')$q$, v_gw));
+
+  RAISE NOTICE E'\n═══ ۱۰. ویرایش مستندات SDK ═══';
+  PERFORM platform.upsert_device_driver(
+    'novinpay', 'پرداخت نوین', 'card_terminal', 'نوین',
+    'https://docs.example.com/novinpay/v3', 'پروتکل نسخه ۳', 15::smallint,
+    'مستندات تازه رسید', v_user);
+  SELECT sdk_doc_url INTO v_t FROM platform.device_driver WHERE code='novinpay';
+  PERFORM pg_temp.assert_txt('نشانی مستندات عوض شد', v_t,
+    'https://docs.example.com/novinpay/v3');
+  -- ویرایش هم نباید `is_implemented` را جابه‌جا کند — حتی وقتی از
+  -- قبل روشن است. `sep` در بخش ۳ روشن شد.
+  PERFORM platform.upsert_device_driver('sep', 'سامان کیش (SEP)', 'card_terminal',
+    'سامان کیش', NULL, NULL, 10::smallint, 'تغییر نام', v_user);
+  SELECT is_implemented INTO v_b FROM platform.device_driver WHERE code='sep';
+  IF NOT v_b THEN RAISE EXCEPTION '✗ ویرایش نباید is_implemented را خاموش کند'; END IF;
+  RAISE NOTICE '  ✓ ویرایش، is_implemented را دست نمی‌زند';
+
+  RAISE NOTICE E'\n═══ ۱۱. آنچه رد می‌شود ═══';
+  PERFORM pg_temp.assert_raises('کد با فاصله، رد',
+    $q$SELECT platform.upsert_device_driver('bad code', 'x', 'card_terminal')$q$);
+  PERFORM pg_temp.assert_raises('کد خالی، رد',
+    $q$SELECT platform.upsert_device_driver('  ', 'x', 'card_terminal')$q$);
+  PERFORM pg_temp.assert_raises('نام خالی، رد',
+    $q$SELECT platform.upsert_device_driver('okcode', '   ', 'card_terminal')$q$);
+  PERFORM pg_temp.assert_raises('نوع ناشناخته، رد',
+    $q$SELECT platform.upsert_device_driver('okcode', 'x', 'robot')$q$);
+  -- نشانی مستندات را مالک کلیک می‌کند؛ `https` اجباری است.
+  PERFORM pg_temp.assert_raises('نشانی http، رد',
+    $q$SELECT platform.upsert_device_driver('okcode','x','card_terminal',NULL,'http://a.example')$q$);
+  -- ⚠️ `notes` در `audit_log` می‌نشیند و صفحه تنظیمات نشانش می‌دهد.
+  PERFORM pg_temp.assert_raises('راز در یادداشت، رد',
+    $q$SELECT platform.upsert_device_driver('okcode','x','card_terminal',NULL,NULL,'api_key: ABC123')$q$);
+  PERFORM pg_temp.assert_raises('رمز در یادداشت، رد',
+    $q$SELECT platform.upsert_device_driver('okcode','x','card_terminal',NULL,NULL,'password = 1234')$q$);
+  -- نویسه جهت‌دهی دوطرفه می‌تواند نام را وارونه نشان دهد بدون اینکه
+  -- محتوا عوض شود — روی فهرستی که مالک از رویش انتخاب می‌کند، یعنی
+  -- انتخابِ چیزی غیر از آنچه چشم خوانده.
+  PERFORM pg_temp.assert_raises('نویسه جهت‌دهی در نام، رد',
+    format($q$SELECT platform.upsert_device_driver('okcode', %L, 'card_terminal')$q$,
+           'کارت' || chr(8238) || 'خوان'));
+  SELECT count(*) INTO v_n FROM platform.device_driver WHERE code='okcode';
+  PERFORM pg_temp.assert_eq('هیچ‌کدام از ورودی‌های بد ننشست', v_n, 0);
+  IF NOT platform.has_control_chars(chr(8206)) THEN
+    RAISE EXCEPTION '✗ آشکارساز نویسه کنترلی باید LRM را بگیرد';
+  END IF;
+  IF platform.has_control_chars('کارت‌خوان سامان') THEN
+    RAISE EXCEPTION '✗ آشکارساز نباید متن سالم را رد کند';
+  END IF;
+  RAISE NOTICE '  ✓ آشکارساز نویسه کنترلی تفکیک می‌کند، نه اینکه همیشه رد کند';
+
+  RAISE NOTICE E'\n═══ ۱۲. بازنشستگی ═══';
+  -- ⚠️ `set_device_driver()` فقط در لحظه اتصال فعال‌بودن را می‌سنجد.
+  --    بازنشستگی بی‌صدای درایورِ در استفاده یعنی پایانه‌ای که به چیزی
+  --    اشاره می‌کند که در هیچ فهرستی نیست.
+  PERFORM pg_temp.assert_raises('بازنشستگی درایورِ در استفاده، رد',
+    $q$SELECT platform.set_device_driver_active('sep', false)$q$);
+  PERFORM platform.set_device_driver_active('novinpay', false, 'قرارداد لغو شد', v_user);
+  SELECT is_active INTO v_b FROM platform.device_driver WHERE code='novinpay';
+  IF v_b THEN RAISE EXCEPTION '✗ درایور بازنشسته نشد'; END IF;
+  RAISE NOTICE '  ✓ درایور بی‌استفاده بازنشسته شد';
+  -- حذف نمی‌شود — سطرش می‌ماند تا بشود برش گرداند و تا ارجاع
+  -- `treasury.account.driver_code` نشکند.
+  SELECT count(*) INTO v_n FROM platform.device_driver WHERE code='novinpay';
+  PERFORM pg_temp.assert_eq('سطر بازنشسته حذف نشد', v_n, 1);
+  PERFORM platform.set_device_driver_active('novinpay', true, 'قرارداد برگشت', v_user);
+  SELECT is_active INTO v_b FROM platform.device_driver WHERE code='novinpay';
+  IF NOT v_b THEN RAISE EXCEPTION '✗ درایور برنگشت'; END IF;
+  RAISE NOTICE '  ✓ درایور بازنشسته برگشت';
+  PERFORM pg_temp.assert_raises('بازنشستگی درایور ناشناخته، رد',
+    $q$SELECT platform.set_device_driver_active('nope', false)$q$);
+
+  SELECT count(*) INTO v_n FROM platform.audit_log
+   WHERE action IN ('platform.add_driver','platform.edit_driver','platform.driver_active');
+  -- دقیقاً پنج: افزودن novinpay، ویرایش novinpay، ویرایش sep، و دو بار
+  -- تغییر وضعیت. ورودی‌های ردشده ردّی نمی‌گذارند چون اصلاً ننشستند.
+  PERFORM pg_temp.assert_eq('ردّ حسابرسی رجیستری', v_n, 5);
+
   RAISE NOTICE E'\n✓ رجیستری درایور — همه ادعاها پاس شدند';
 END $outer$;
 

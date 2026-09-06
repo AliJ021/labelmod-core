@@ -127,6 +127,19 @@ export interface DeviceDriverView {
   notes: string | null;
   /** ⚠️ `false` یعنی مستنداتش ثبت شده ولی کدش نوشته نشده. */
   isImplemented: boolean;
+  /** `false` یعنی بازنشسته — در فهرست انتخاب پایانه نمی‌آید. */
+  isActive: boolean;
+}
+
+/** ورودی افزودن یا ویرایش یک درایور. */
+export interface DriverInput {
+  code: string;
+  label: string;
+  deviceKind: string;
+  vendor: string | null;
+  sdkDocUrl: string | null;
+  notes: string | null;
+  sortOrder: number;
 }
 
 /** یک پایانه و درایورش. */
@@ -261,16 +274,19 @@ export class SettingService {
    * یعنی «مستنداتش را داریم»، نه «کار می‌کند» — و آن تفاوت، تفاوتِ
    * یک پرداخت موفق با یک پرداخت معلق است.
    */
-  async deviceDrivers(): Promise<DeviceDriverView[]> {
-    const r = await this.#db
+  async deviceDrivers(includeRetired = false): Promise<DeviceDriverView[]> {
+    let q = this.#db
       .selectFrom("platform.device_driver")
       .select([
         "code", "label", "device_kind", "vendor",
-        "sdk_doc_url", "notes", "is_implemented",
-      ])
-      .where("is_active", "=", true)
-      .orderBy("sort_order")
-      .execute();
+        "sdk_doc_url", "notes", "is_implemented", "is_active",
+      ]);
+    // ⚠️ پیش‌فرض فقط فعال‌ها — همان فهرستی که پایانه از رویش انتخاب
+    //    می‌کند. صفحه مدیریت درایورها `includeRetired` می‌فرستد تا
+    //    بتوان یک درایور بازنشسته را برگرداند؛ اگر بازنشسته‌ها اصلاً
+    //    دیده نمی‌شدند، برگرداندنشان فقط از psql ممکن بود.
+    if (!includeRetired) q = q.where("is_active", "=", true);
+    const r = await q.orderBy("sort_order").orderBy("code").execute();
     return r.map((x) => ({
       code: x.code,
       label: x.label,
@@ -279,7 +295,60 @@ export class SettingService {
       sdkDocUrl: x.sdk_doc_url,
       notes: x.notes,
       isImplemented: x.is_implemented,
+      isActive: x.is_active,
     }));
+  }
+
+  /**
+   * افزودن یا ویرایش یک درایور و مستندات SDK آن.
+   *
+   * ── چرا این مسیر وجود دارد ────────────────────────────────────────
+   *
+   * خواسته مالک: «مستندات SDK درایور کارت‌خوان باید از طریق تنظیمات
+   * قابل جایگزاری یا تغییر باشد، چون هم ممکن است کارت‌خوان‌ها عوض
+   * شوند و هم ممکن است زیادتر شوند.» بدون این، رسیدن یک PSP تازه
+   * یک مهاجرت و یک Deploy می‌خواست.
+   *
+   * ⚠️ `isImplemented` پارامتر نیست و از هیچ ورودی‌ای خوانده
+   * نمی‌شود. آن ستون یک واقعیت درباره **کد این مخزن** است، نه یک
+   * تنظیم؛ روشن‌شدنش از صفحه تنظیمات یعنی دور زدن همان نگهبانی که
+   * `treasury.set_device_driver()` دارد.
+   *
+   * اعتبارسنجی — کد، نوع، https، طول، نویسه کنترلی، و نبودِ راز —
+   * همه در دیتابیس‌اند. یک تعریف، نه دو.
+   */
+  async upsertDriverIn(
+    trx: Transaction<Database>,
+    input: DriverInput,
+    reason: string | null,
+    actorId: string,
+  ): Promise<void> {
+    await sql`
+      SELECT platform.upsert_device_driver(
+        ${input.code}::text, ${input.label}::text, ${input.deviceKind}::text,
+        ${input.vendor}::text, ${input.sdkDocUrl}::text, ${input.notes}::text,
+        ${input.sortOrder}::smallint, ${reason}::text, ${actorId}::uuid)
+    `.execute(trx);
+  }
+
+  /**
+   * بازنشستگی یا بازگرداندن یک درایور.
+   *
+   * حذف نیست: `treasury.account.driver_code` به آن ارجاع دارد.
+   * درایوری که پایانه‌ای به آن وصل است، بازنشسته نمی‌شود — دیتابیس
+   * ردش می‌کند.
+   */
+  async setDriverActiveIn(
+    trx: Transaction<Database>,
+    code: string,
+    isActive: boolean,
+    reason: string | null,
+    actorId: string,
+  ): Promise<void> {
+    await sql`
+      SELECT platform.set_device_driver_active(
+        ${code}::text, ${isActive}::boolean, ${reason}::text, ${actorId}::uuid)
+    `.execute(trx);
   }
 
   async terminalDrivers(canEdit: boolean): Promise<TerminalDriverView[]> {
