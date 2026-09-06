@@ -39,6 +39,10 @@ import {
   defaultPeriod,
   periodCsvUrl,
   reports,
+  type BasketRow,
+  type CompareRow,
+  type CustomerBasketRow,
+  type HourlyRow,
   type LedgerRow,
   type PartyRow,
   type Period,
@@ -48,8 +52,10 @@ import {
   type TrialRow,
   type ValuationRow,
 } from "../lib/reports.ts";
+import { previousPeriod } from "../lib/jalali-period.ts";
 
 const TABS = [
+  { key: "manager", label: "پنل مدیریتی" },
   { key: "sales", label: "فروش" },
   { key: "profit", label: "سود کالا" },
   { key: "stock", label: "موجودی" },
@@ -184,7 +190,9 @@ export function Reports() {
         </p>
       </Glass>
 
-      {tab === "sales" ? (
+      {tab === "manager" ? (
+        <ManagerPanel period={p} />
+      ) : tab === "sales" ? (
         <SalesReport period={p} />
       ) : tab === "profit" ? (
         <ProfitReport period={p} />
@@ -287,6 +295,271 @@ function Frame({
       )}
       {children}
     </>
+  );
+}
+
+// ── پنل مدیریتی ─────────────────────────────────────────────────────
+
+/**
+ * سه پرسشی که با جدول فروش جواب ندارند: کدام ساعت شلوغ است، نسبت به
+ * ماه قبل بهتر شدیم یا بدتر، و ده قلمِ امروز را چند نفر بردند.
+ *
+ * ⚠️ این زبانه پشت `report.customer_insight` است و در Seed فقط مدیر
+ * داردش. کاربری که ندارد ۴۰۳ می‌گیرد و پیام سرور را می‌بیند — نه یک
+ * صفحه خالی که شبیه خرابی است.
+ */
+function ManagerPanel({ period }: { period: Period }) {
+  const prev = previousPeriod({ from: period.from, to: period.to });
+
+  return (
+    <div className="stack" style={{ gap: "var(--s-4)" }}>
+      <CompareCards period={period} prev={prev} />
+      <HourlyReport period={period} />
+      <BasketReport period={period} />
+      <CustomerBasketReport period={period} />
+    </div>
+  );
+}
+
+/**
+ * مقایسه با دوره مبنا.
+ *
+ * دوره مبنا **همان بازه، یک ماه جلالی عقب‌تر** است و در
+ * `lib/jalali-period.ts` حساب می‌شود — نه در سرور، چون حساب ماه
+ * میلادی با تقویمی که مالک می‌بیند نمی‌خواند.
+ */
+function CompareCards({
+  period,
+  prev,
+}: {
+  period: Period;
+  prev: { from: string; to: string };
+}) {
+  const { rows, error } = useReport<CompareRow>(
+    async () => (await reports.compare(period, prev)).rows,
+    [period.from, period.to, period.branchId, prev.from, prev.to],
+  );
+
+  return (
+    <Frame
+      rows={rows}
+      error={error}
+      empty="در این بازه و دوره مبنا، فروشی ثبت نشده است."
+    >
+      <p className="muted small" style={{ margin: 0 }}>
+        دوره مبنا: {prev.from} تا {prev.to} — همان بازه، یک ماه جلالی عقب‌تر.
+      </p>
+      <div className="kpis">
+        {(rows ?? []).map((r) => (
+          <Solid key={r.channel} className="pad stack" style={{ gap: "var(--s-2)" }}>
+            <span className="muted small">{CHANNEL_LABEL[r.channel] ?? r.channel}</span>
+            <strong style={{ fontSize: "1.3rem" }}>
+              <Money value={r.netAmount} />
+            </strong>
+            <Trend row={r} />
+            <span className="muted small">
+              دوره مبنا: <Money value={r.prevNetAmount} /> · {r.prevInvoiceCount} فاکتور
+            </span>
+          </Solid>
+        ))}
+      </div>
+    </Frame>
+  );
+}
+
+/**
+ * فلش رشد یا افت.
+ *
+ * ⚠️ رنگ به‌تنهایی حامل معنا نیست — آیکون و متن هم هست. یک مدیرِ
+ * کوررنگ باید همان چیزی را بفهمد که بقیه می‌فهمند.
+ *
+ * ⚠️ `deltaPercent === null` یعنی دوره مبنا صفر بوده. «—» نشان داده
+ * می‌شود، نه «۰٪»: رشد از هیچ به فروش، صفر درصد نیست.
+ */
+function Trend({ row }: { row: CompareRow }) {
+  const cls =
+    row.direction === "up" ? "good" : row.direction === "down" ? "crit" : "warn";
+  const icon = row.direction === "up" ? "▲" : row.direction === "down" ? "▼" : "■";
+  const word =
+    row.direction === "up" ? "رشد" : row.direction === "down" ? "افت" : "بدون تغییر";
+
+  return (
+    <span className={`pill trend trend--${cls}`}>
+      <span aria-hidden="true">{icon}</span> {word}
+      {row.deltaPercent === null
+        ? " — دوره مبنا صفر بود"
+        : ` ${Math.abs(row.deltaPercent).toLocaleString("fa-IR")}٪`}
+    </span>
+  );
+}
+
+/** فروش به تفکیک ساعتِ کاری. ساعت از سرور می‌آید، نه از ساعت مرورگر. */
+function HourlyReport({ period }: { period: Period }) {
+  const { rows, error } = useReport<HourlyRow>(
+    async () => (await reports.hourly(period)).rows,
+    [period.from, period.to, period.branchId],
+  );
+
+  // بیشینه برای مقیاس میله‌ها. صفر بودنش یعنی هیچ فروشی نبوده و
+  // `Frame` جدول را اصلاً نشان نمی‌دهد.
+  const max = (rows ?? []).reduce((m, r) => {
+    const v = parseRial(r.netAmount);
+    return v > m ? v : m;
+  }, 0n);
+
+  return (
+    <Frame
+      rows={rows}
+      error={error}
+      empty="در این بازه فروشی ثبت نشده است."
+      csv={periodCsvUrl("/reports/hourly", period)}
+    >
+      <Glass radius="md" className="pad">
+        <h2 style={{ fontSize: "1rem", marginTop: 0 }}>فروش به تفکیک ساعت</h2>
+        <div className="tw">
+          <table>
+            <thead>
+              <tr>
+                <th>تاریخ</th>
+                <th>ساعت</th>
+                <th>کانال</th>
+                <th className="num">فاکتور</th>
+                <th className="num">قلم</th>
+                <th className="num">فروش خالص</th>
+                <th>نسبت</th>
+              </tr>
+            </thead>
+            <tbody>
+              {(rows ?? []).map((r) => (
+                <tr key={`${r.businessDate}-${r.hourOfDay}-${r.channel}`}>
+                  <td>{r.businessDate}</td>
+                  <td className="num">{`${String(r.hourOfDay).padStart(2, "0")}:۰۰`}</td>
+                  <td>{CHANNEL_LABEL[r.channel] ?? r.channel}</td>
+                  <td className="num">{r.invoiceCount.toLocaleString("fa-IR")}</td>
+                  <td className="num">{r.itemQty}</td>
+                  <td className="num"><Money value={r.netAmount} /></td>
+                  <td>
+                    {/* میله روی سطح مات می‌نشیند، نه شیشه — بند
+                        «نمودار روی شیشه نمی‌نشیند» در ADR-002. */}
+                    <span
+                      className="hbar"
+                      style={{
+                        width:
+                          max === 0n
+                            ? "0%"
+                            : `${Number((parseRial(r.netAmount) * 100n) / max)}%`,
+                      }}
+                      aria-hidden="true"
+                    />
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      </Glass>
+    </Frame>
+  );
+}
+
+/** «ده قلم را یک نفر برد یا ده نفر؟» */
+function BasketReport({ period }: { period: Period }) {
+  const { rows, error } = useReport<BasketRow>(
+    async () => (await reports.basket(period)).rows,
+    [period.from, period.to, period.branchId],
+  );
+
+  return (
+    <Frame
+      rows={rows}
+      error={error}
+      empty="در این بازه فروشی ثبت نشده است."
+      csv={periodCsvUrl("/reports/basket", period)}
+    >
+      <Glass radius="md" className="pad">
+        <h2 style={{ fontSize: "1rem", marginTop: 0 }}>تحلیل سبد</h2>
+        <p className="muted small" style={{ marginTop: 0 }}>
+          فاکتور بی‌شماره جدا شمرده می‌شود — نه «یک مشتری» فرض.
+        </p>
+        <div className="tw">
+          <table>
+            <thead>
+              <tr>
+                <th>تاریخ</th>
+                <th>کانال</th>
+                <th className="num">فاکتور</th>
+                <th className="num">مشتری شناخته</th>
+                <th className="num">بی‌شماره</th>
+                <th className="num">قلم</th>
+                <th className="num">میانگین قلم</th>
+                <th className="num">فروش خالص</th>
+              </tr>
+            </thead>
+            <tbody>
+              {(rows ?? []).map((r) => (
+                <tr key={`${r.businessDate}-${r.channel}`}>
+                  <td>{r.businessDate}</td>
+                  <td>{CHANNEL_LABEL[r.channel] ?? r.channel}</td>
+                  <td className="num">{r.invoiceCount.toLocaleString("fa-IR")}</td>
+                  <td className="num">{r.knownCustomers.toLocaleString("fa-IR")}</td>
+                  <td className="num">{r.anonymousCount.toLocaleString("fa-IR")}</td>
+                  <td className="num">{r.itemQty}</td>
+                  <td className="num">{r.qtyPerInvoice}</td>
+                  <td className="num"><Money value={r.netAmount} /></td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      </Glass>
+    </Frame>
+  );
+}
+
+/** همان پرسش، در سطح شخص. */
+function CustomerBasketReport({ period }: { period: Period }) {
+  const { rows, error } = useReport<CustomerBasketRow>(
+    async () => (await reports.customerBasket(period)).rows,
+    [period.from, period.to, period.branchId],
+  );
+
+  return (
+    <Frame
+      rows={rows}
+      error={error}
+      empty="در این بازه هیچ خریدی به نام مشتری ثبت نشده است."
+      csv={periodCsvUrl("/reports/customer-basket", period)}
+    >
+      <Glass radius="md" className="pad">
+        <h2 style={{ fontSize: "1rem", marginTop: 0 }}>خرید هر مشتری</h2>
+        <div className="tw">
+          <table>
+            <thead>
+              <tr>
+                <th>نام</th>
+                <th>موبایل</th>
+                <th className="num">فاکتور</th>
+                <th className="num">قلم</th>
+                <th className="num">مبلغ خرید</th>
+                <th>آخرین خرید</th>
+              </tr>
+            </thead>
+            <tbody>
+              {(rows ?? []).map((r) => (
+                <tr key={r.customerId}>
+                  <td>{r.fullName ?? "—"}</td>
+                  <td className="num">{r.mobile ?? "—"}</td>
+                  <td className="num">{r.invoiceCount.toLocaleString("fa-IR")}</td>
+                  <td className="num">{r.itemQty}</td>
+                  <td className="num"><Money value={r.netAmount} /></td>
+                  <td>{r.lastPurchase}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      </Glass>
+    </Frame>
   );
 }
 

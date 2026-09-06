@@ -398,9 +398,107 @@ describe("گزارش‌ها", { skip }, () => {
       `/reports/party-balances`,
       `/reports/cash-reconciliation?from=${today}&to=${today}`,
       `/reports/account-ledger?code=${code}&from=${today}&to=${today}`,
+      `/reports/hourly?from=${today}&to=${today}`,
+      `/reports/compare?from=${today}&to=${today}&prevFrom=${today}&prevTo=${today}`,
     ];
     for (const u of urls) {
       const r = await get(admin, `${u}${u.includes("?") ? "&" : "?"}format=csv`);
+      assert.equal(r.statusCode, 200, `${u}: ${r.body.slice(0, 150)}`);
+      assert.match(r.headers["content-type"] as string, /text\/csv/, u);
+      assert.equal(r.body.codePointAt(0), 0xfeff, `${u} بدون BOM`);
+    }
+  });
+
+  // ═══════════════════════════════════════════════════════════════════
+  // پنل مدیریتی
+  // ═══════════════════════════════════════════════════════════════════
+
+  test("گزارش ساعتی، ساعت را از دیتابیس می‌دهد نه از کلاینت", async () => {
+    const r = await get(admin, `/reports/hourly?from=${today}&to=${today}`);
+    assert.equal(r.statusCode, 200, r.body);
+    const rows = JSON.parse(r.body).rows as { hourOfDay: number; netAmount: string }[];
+    assert.ok(rows.length > 0, "فروش امروز باید ساعتی هم دیده شود");
+    for (const x of rows) {
+      assert.ok(Number.isInteger(x.hourOfDay) && x.hourOfDay >= 0 && x.hourOfDay <= 23,
+        `ساعت نامعتبر: ${x.hourOfDay}`);
+      // پول رشته است، نه عدد — همان قاعده هر مبلغ دیگری.
+      assert.equal(typeof x.netAmount, "string", "مبلغ باید رشته باشد");
+    }
+  });
+
+  test("مقایسه دوره، هر دو بازه را از کلاینت می‌گیرد", async () => {
+    const r = await get(
+      admin,
+      `/reports/compare?from=${today}&to=${today}&prevFrom=2020-01-01&prevTo=2020-01-31`,
+    );
+    assert.equal(r.statusCode, 200, r.body);
+    const rows = JSON.parse(r.body).rows as {
+      netAmount: string; prevNetAmount: string; deltaPercent: number | null; direction: string;
+    }[];
+    const pos = rows.find((x) => x.direction === "up");
+    assert.ok(pos, "فروش امروز در برابر بازه خالی باید رشد باشد");
+    assert.equal(pos.prevNetAmount, "0");
+    // رشد از صفر درصد ندارد. اگر روزی کسی `?? 0` بگذارد، مالک
+    // «۰٪ رشد» می‌بیند در حالی که از هیچ به فروش رسیده.
+    assert.equal(pos.deltaPercent, null, "رشد از صفر نباید درصد داشته باشد");
+  });
+
+  test("دوره مبنای وارونه ۴۰۰ می‌گیرد", async () => {
+    const r = await get(
+      admin,
+      `/reports/compare?from=${today}&to=${today}&prevFrom=2020-02-01&prevTo=2020-01-01`,
+    );
+    assert.equal(r.statusCode, 400, r.body);
+  });
+
+  test("مقایسه بدون cost.view سود را null می‌دهد، نه صفر", async () => {
+    const r = await get(
+      supervisor,
+      `/reports/compare?from=${today}&to=${today}&prevFrom=${today}&prevTo=${today}`,
+    );
+    assert.equal(r.statusCode, 200, r.body);
+    const rows = JSON.parse(r.body).rows as { profitAmount: string | null }[];
+    assert.ok(rows.length > 0);
+    for (const x of rows) assert.equal(x.profitAmount, null, "سود باید پوشانده شود");
+  });
+
+  test("تحلیل سبد فقط برای مدیر است — سرپرست ۴۰۳ می‌گیرد", async () => {
+    // این یک شرط در کد نیست: `report.customer_insight` در Seed فقط
+    // به admin داده شده. مالک می‌تواند از صفحه «مجوزها» عوضش کند.
+    const ok = await get(admin, `/reports/basket?from=${today}&to=${today}`);
+    assert.equal(ok.statusCode, 200, ok.body);
+    const no = await get(supervisor, `/reports/basket?from=${today}&to=${today}`);
+    assert.equal(no.statusCode, 403, no.body);
+    const nope = await get(cashier, `/reports/basket?from=${today}&to=${today}`);
+    assert.equal(nope.statusCode, 403, nope.body);
+  });
+
+  test("خرید هر مشتری هم پشت همان دروازه است", async () => {
+    const ok = await get(admin, `/reports/customer-basket?from=${today}&to=${today}`);
+    assert.equal(ok.statusCode, 200, ok.body);
+    const no = await get(supervisor, `/reports/customer-basket?from=${today}&to=${today}`);
+    assert.equal(no.statusCode, 403, no.body);
+  });
+
+  test("تحلیل سبد، فاکتور بی‌شماره را «یک مشتری» نمی‌شمارد", async () => {
+    const r = await get(admin, `/reports/basket?from=${today}&to=${today}`);
+    assert.equal(r.statusCode, 200, r.body);
+    const rows = JSON.parse(r.body).rows as {
+      invoiceCount: number; knownCustomers: number; anonymousCount: number;
+    }[];
+    assert.ok(rows.length > 0);
+    for (const x of rows) {
+      assert.ok(x.knownCustomers + x.anonymousCount <= x.invoiceCount,
+        "مشتری شناخته + بی‌شماره نباید از تعداد فاکتور بیشتر شود");
+    }
+  });
+
+  test("CSV تحلیل سبد هم از همان مسیر و با BOM می‌آید", async () => {
+    for (const u of [
+      `/reports/basket?from=${today}&to=${today}`,
+      `/reports/customer-basket?from=${today}&to=${today}`,
+    ]) {
+      const r = await get(admin, `${u}&format=csv`);
       assert.equal(r.statusCode, 200, `${u}: ${r.body.slice(0, 150)}`);
       assert.match(r.headers["content-type"] as string, /text\/csv/, u);
       assert.equal(r.body.codePointAt(0), 0xfeff, `${u} بدون BOM`);

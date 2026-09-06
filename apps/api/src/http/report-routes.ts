@@ -45,9 +45,14 @@ import type {
   Period,
   ReportService,
   SalesRow,
+  CompareRow,
 } from "../reports/service.ts";
 import { contentDisposition, rowsToCsv } from "../lib/csv.ts";
 import {
+  BASKET_COLUMNS,
+  COMPARE_COLUMNS,
+  CUSTOMER_BASKET_COLUMNS,
+  HOURLY_COLUMNS,
   LEDGER_COLUMNS,
   MOVEMENT_COLUMNS,
   PARTY_COLUMNS,
@@ -87,6 +92,23 @@ const periodQuery = z
   })
   .refine((v) => v.from <= v.to, {
     message: "تاریخ پایان نمی‌تواند پیش از تاریخ شروع باشد",
+  });
+
+/**
+ * دوره مبنای مقایسه — **صریح از کلاینت**، نه محاسبه در سرور.
+ *
+ * وسوسه‌اش این بود که سرور «ماه قبل» را خودش حساب کند. ولی این
+ * فروشگاه تاریخ را جلالی می‌بیند و «یک ماه قبلِ» میلادی با آن
+ * نمی‌خواند: ۳۱ مرداد منهای یک ماه میلادی وسط تیر می‌افتد. مالک عددی
+ * می‌دید که با تقویم خودش نمی‌خواند و هیچ خطایی هم نمی‌گرفت.
+ *
+ * پس مرزهای تقویمی جایی حساب می‌شوند که تقویم را می‌فهمد — مرورگر با
+ * `Intl` — و اینجا فقط جمع مالی انجام می‌شود.
+ */
+const compareQuery = periodQuery
+  .extend({ prevFrom: isoDate, prevTo: isoDate })
+  .refine((v: { prevFrom: string; prevTo: string }) => v.prevFrom <= v.prevTo, {
+    message: "تاریخ پایان دوره مبنا نمی‌تواند پیش از شروعش باشد",
   });
 
 export interface ReportRouteDeps {
@@ -174,6 +196,87 @@ export function registerReportRoutes(app: FastifyInstance, deps: ReportRouteDeps
   }
 
   // ── فروش دوره‌ای ────────────────────────────────────────────────
+
+  /**
+   * فروش به تفکیک ساعتِ کاری.
+   *
+   * پشت `report.view` مثل بقیه، و بها ندارد — پس دروازه دوم لازم
+   * نیست. پرسشش «چه ساعتی شلوغ است؟» است، نه «چقدر سود کردیم؟».
+   */
+  app.get("/reports/hourly", async (req, reply) => {
+    const s = session(req);
+    await requireForSession(db, s, "report.view");
+    const q = periodQuery.parse(req.query);
+    const { format } = formatQuery.parse(req.query);
+    const rows = await reports.hourly(await period(s.userId, q));
+    return respond(reply, format, { fa: "فروش ساعتی", ascii: "hourly" }, HOURLY_COLUMNS, rows);
+  });
+
+  /**
+   * مقایسه دو دوره.
+   *
+   * سود در این گزارش یک ستون است نه ستون اصلی، پس بدون `cost.view`
+   * همان ستون‌ها `null` می‌شوند — نه صفر. صفر یعنی «سودی نبود».
+   */
+  app.get("/reports/compare", async (req, reply) => {
+    const s = session(req);
+    await requireForSession(db, s, "report.view");
+    const q = compareQuery.parse(req.query);
+    const { format } = formatQuery.parse(req.query);
+    const raw = await reports.compare(await period(s.userId, q), {
+      from: q.prevFrom,
+      to: q.prevTo,
+    });
+
+    const rows: readonly Masked<CompareRow, "profitAmount" | "prevProfitAmount">[] =
+      (await seesCost(s))
+        ? raw
+        : raw.map((r) => ({ ...r, profitAmount: null, prevProfitAmount: null }));
+
+    return respond(reply, format, { fa: "مقایسه دوره", ascii: "compare" }, COMPARE_COLUMNS, rows);
+  });
+
+  /**
+   * تحلیل سبد — «ده قلم را یک نفر برد یا ده نفر؟»
+   *
+   * ⚠️ پشت `report.customer_insight` است، نه `report.view`.
+   *
+   * دلیلش رفتار مشتری است، نه عدد فروش: این گزارش می‌گوید چه کسی چه
+   * چیزی خریده. صندوق‌دار برای کارش لازمش ندارد و سرپرست هم. مالک
+   * می‌تواند در صفحه «مجوزها» به هر نقشی بدهدش — همان‌طور که هر
+   * مجوز دیگری. **هیچ شرط دسترسی در کد نیست**؛ این یک ردیف در
+   * `permission_rule` است.
+   */
+  app.get("/reports/basket", async (req, reply) => {
+    const s = session(req);
+    await requireForSession(db, s, "report.customer_insight");
+    const q = periodQuery.parse(req.query);
+    const { format } = formatQuery.parse(req.query);
+    const rows = await reports.basket(await period(s.userId, q));
+    return respond(reply, format, { fa: "تحلیل سبد", ascii: "basket" }, BASKET_COLUMNS, rows);
+  });
+
+  /**
+   * همان پرسش، در سطح شخص — با نام و موبایل مشتری.
+   *
+   * پشت همان دروازه، و به همان دلیل: این داده **شخصی** است.
+   */
+  app.get("/reports/customer-basket", async (req, reply) => {
+    const s = session(req);
+    await requireForSession(db, s, "report.customer_insight");
+    const q = periodQuery
+      .extend({ limit: z.coerce.number().int().min(1).max(500).default(100) })
+      .parse(req.query);
+    const { format } = formatQuery.parse(req.query);
+    const rows = await reports.customerBasket(await period(s.userId, q), q.limit);
+    return respond(
+      reply,
+      format,
+      { fa: "خرید هر مشتری", ascii: "customer-basket" },
+      CUSTOMER_BASKET_COLUMNS,
+      rows,
+    );
+  });
 
   app.get("/reports/sales", async (req, reply) => {
     const s = session(req);

@@ -22,6 +22,54 @@ import { sql } from "kysely";
 import type { Db } from "../db/client.ts";
 
 /** یک بازه تاریخ — همیشه شامل هر دو سر. */
+/** یک ساعت از یک روز، به تفکیک کانال. */
+export interface HourlyRow {
+  businessDate: string;
+  hourOfDay: number;
+  channel: string;
+  invoiceCount: number;
+  itemQty: string;
+  netAmount: string;
+}
+
+/** دو دوره کنار هم. `deltaPercent` وقتی مبنا صفر است `null` می‌شود. */
+export interface CompareRow {
+  channel: string;
+  invoiceCount: number;
+  netAmount: string;
+  profitAmount: string;
+  prevInvoiceCount: number;
+  prevNetAmount: string;
+  prevProfitAmount: string;
+  deltaAmount: string;
+  deltaPercent: number | null;
+  direction: "up" | "down" | "flat";
+}
+
+/** «ده قلم را چند نفر بردند؟» */
+export interface BasketRow {
+  businessDate: string;
+  channel: string;
+  invoiceCount: number;
+  knownCustomers: number;
+  anonymousCount: number;
+  itemQty: string;
+  lineCount: number;
+  netAmount: string;
+  qtyPerInvoice: string;
+}
+
+/** همان پرسش، در سطح شخص. */
+export interface CustomerBasketRow {
+  customerId: string;
+  fullName: string | null;
+  mobile: string | null;
+  invoiceCount: number;
+  itemQty: string;
+  netAmount: string;
+  lastPurchase: string;
+}
+
 export interface Period {
   from: string;
   to: string;
@@ -166,6 +214,132 @@ export class ReportService {
       returnAmount: x.return_amount,
       cogsAmount: x.cogs_amount,
       profitAmount: x.profit_amount,
+    }));
+  }
+
+  /**
+   * فروش به تفکیک ساعتِ کاری.
+   *
+   * ساعت را دیتابیس می‌دهد، نه `new Date().getHours()` — سرور تولید
+   * UTC است و ساعت مرورگر هم دست کاربر. یک تعریف: `business_hour`.
+   */
+  async hourly(p: Period): Promise<HourlyRow[]> {
+    const r = await sql<{
+      business_date: string;
+      hour_of_day: number;
+      channel: string;
+      invoice_count: string;
+      item_qty: string;
+      net_amount: string;
+    }>`SELECT business_date::text, hour_of_day, channel, invoice_count,
+              item_qty::text, net_amount::text
+         FROM sales.report_hourly(${p.from}::date, ${p.to}::date,
+                                  ${p.branchId ?? null}::uuid)`
+      .execute(this.#db);
+    return r.rows.map((x) => ({
+      businessDate: x.business_date,
+      hourOfDay: Number(x.hour_of_day),
+      channel: x.channel,
+      invoiceCount: Number(x.invoice_count),
+      itemQty: x.item_qty,
+      netAmount: x.net_amount,
+    }));
+  }
+
+  /**
+   * مقایسه دو دوره.
+   *
+   * هر دو بازه از بالادست می‌آیند. تقویم این فروشگاه جلالی است و
+   * «ماه قبلِ» میلادی با آن نمی‌خواند؛ انتخاب دوره جای دیگری است.
+   */
+  async compare(p: Period, prev: { from: string; to: string }): Promise<CompareRow[]> {
+    const r = await sql<{
+      channel: string;
+      invoice_count: string;
+      net_amount: string;
+      profit_amount: string;
+      prev_invoice_count: string;
+      prev_net_amount: string;
+      prev_profit_amount: string;
+      delta_amount: string;
+      delta_percent: string | null;
+      direction: string;
+    }>`SELECT channel, invoice_count, net_amount::text, profit_amount::text,
+              prev_invoice_count, prev_net_amount::text, prev_profit_amount::text,
+              delta_amount::text, delta_percent::text, direction
+         FROM sales.report_compare(${p.from}::date, ${p.to}::date,
+                                   ${prev.from}::date, ${prev.to}::date,
+                                   ${p.branchId ?? null}::uuid)`
+      .execute(this.#db);
+    return r.rows.map((x) => ({
+      channel: x.channel,
+      invoiceCount: Number(x.invoice_count),
+      netAmount: x.net_amount,
+      profitAmount: x.profit_amount,
+      prevInvoiceCount: Number(x.prev_invoice_count),
+      prevNetAmount: x.prev_net_amount,
+      prevProfitAmount: x.prev_profit_amount,
+      deltaAmount: x.delta_amount,
+      // درصد یک نسبت است نه پول، پس `number` می‌شود — ولی `null` باید
+      // `null` بماند: «مبنا صفر بود» با «صفر درصد» یکی نیست.
+      deltaPercent: x.delta_percent === null ? null : Number(x.delta_percent),
+      direction: x.direction as CompareRow["direction"],
+    }));
+  }
+
+  async basket(p: Period): Promise<BasketRow[]> {
+    const r = await sql<{
+      business_date: string;
+      channel: string;
+      invoice_count: string;
+      known_customers: string;
+      anonymous_count: string;
+      item_qty: string;
+      line_count: string;
+      net_amount: string;
+      qty_per_invoice: string;
+    }>`SELECT business_date::text, channel, invoice_count, known_customers,
+              anonymous_count, item_qty::text, line_count, net_amount::text,
+              qty_per_invoice::text
+         FROM sales.report_basket(${p.from}::date, ${p.to}::date,
+                                  ${p.branchId ?? null}::uuid)`
+      .execute(this.#db);
+    return r.rows.map((x) => ({
+      businessDate: x.business_date,
+      channel: x.channel,
+      invoiceCount: Number(x.invoice_count),
+      knownCustomers: Number(x.known_customers),
+      anonymousCount: Number(x.anonymous_count),
+      itemQty: x.item_qty,
+      lineCount: Number(x.line_count),
+      netAmount: x.net_amount,
+      qtyPerInvoice: x.qty_per_invoice,
+    }));
+  }
+
+  async customerBasket(p: Period, limit: number): Promise<CustomerBasketRow[]> {
+    const r = await sql<{
+      customer_id: string;
+      full_name: string | null;
+      mobile: string | null;
+      invoice_count: string;
+      item_qty: string;
+      net_amount: string;
+      last_purchase: string;
+    }>`SELECT customer_id, full_name, mobile, invoice_count, item_qty::text,
+              net_amount::text, last_purchase::text
+         FROM sales.report_customer_basket(${p.from}::date, ${p.to}::date,
+                                           ${p.branchId ?? null}::uuid,
+                                           ${limit}::int)`
+      .execute(this.#db);
+    return r.rows.map((x) => ({
+      customerId: x.customer_id,
+      fullName: x.full_name,
+      mobile: x.mobile,
+      invoiceCount: Number(x.invoice_count),
+      itemQty: x.item_qty,
+      netAmount: x.net_amount,
+      lastPurchase: x.last_purchase,
     }));
   }
 

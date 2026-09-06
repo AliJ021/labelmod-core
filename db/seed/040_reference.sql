@@ -121,6 +121,7 @@ INSERT INTO identity.permission_rule
 -- صندوق‌دار گزارش نمی‌بیند: کارش فروش است و «خلاصه امروز» را از
 -- داشبورد دارد. گزارش دوره‌ای تصمیم مالک و حسابدار است.
 ('cashier','report.view',          false, NULL,   NULL,  NULL),
+('cashier','report.customer_insight', false, NULL, NULL,  NULL),
 -- انتقال بین انبار کار انباردار است، نه صندوق.
 ('cashier','stock.transfer',       false, NULL,   NULL,  NULL),
 -- ساخت کاربر و پرونده مشتری، هیچ‌کدام کار صندوق نیست.
@@ -151,6 +152,7 @@ INSERT INTO identity.permission_rule
 -- که `cost.view` از روز اول داشت. مسیر گزارش ستون‌های بها را برایش
 -- `null` می‌کند، نه صفر.
 ('supervisor','report.view',       true,  NULL,   NULL,  NULL),
+('supervisor','report.customer_insight', false, NULL, NULL, NULL),
 ('supervisor','stock.transfer',    true,  NULL,   NULL,  NULL),
 -- سرپرست پرونده مشتری را می‌بیند و رضایت پیامکش را عوض می‌کند،
 -- ولی کاربر نمی‌سازد: ساخت پرسنل تصمیم مالک است.
@@ -169,6 +171,7 @@ INSERT INTO identity.permission_rule
 ('warehouse','cost.view',          false, NULL,   NULL,  NULL),
 -- انباردار کاردکس و موجودی را لازم دارد؛ ارزش ریالی را نه.
 ('warehouse','report.view',        true,  NULL,   NULL,  NULL),
+('warehouse','report.customer_insight', false, NULL, NULL, NULL),
 ('warehouse','user.manage',        false, NULL,   NULL,  NULL),
 ('warehouse','customer.manage',    false, NULL,   NULL,  NULL),
 
@@ -176,6 +179,7 @@ INSERT INTO identity.permission_rule
 ('accountant','period.close',      true,  NULL,   NULL,  'admin'),
 ('accountant','cost.view',         true,  NULL,   NULL,  NULL),
 ('accountant','report.view',       true,  NULL,   NULL,  NULL),
+('accountant','report.customer_insight', false, NULL, NULL, NULL),
 -- حسابدار موجودی را جابه‌جا نمی‌کند؛ گزارشش را می‌بیند.
 ('accountant','stock.transfer',    false, NULL,   NULL,  NULL),
 -- حسابدار سقف اعتبار و مهلت مشتری را تعیین می‌کند؛ آن یک تصمیم
@@ -198,6 +202,7 @@ INSERT INTO identity.permission_rule
 ('admin','deadletter.replay',      true,  NULL,   NULL,  NULL),
 ('admin','cost.view',              true,  NULL,   NULL,  NULL),
 ('admin','report.view',            true,  NULL,   NULL,  NULL),
+('admin','report.customer_insight', true,  NULL,   NULL,  NULL),
 
 -- هفت ردیفی که در فهرست دستیِ بالا جا افتاده بودند و شکافشان فقط با
 -- ساخته‌شدن مسیر مرجوعی معلوم شد. سه‌تایشان **ناسازگار** بودند، نه فقط

@@ -115,3 +115,46 @@ export const SHIFT_COLUMNS: Columns = [
   ["variance", "مغایرت (ریال)"],
   ["status", "وضعیت"],
 ];
+
+export const HOURLY_COLUMNS: Columns = [
+  ["businessDate", "تاریخ"],
+  ["hourOfDay", "ساعت"],
+  ["channel", "کانال"],
+  ["invoiceCount", "تعداد فاکتور"],
+  ["itemQty", "تعداد قلم"],
+  ["netAmount", "فروش خالص (ریال)"],
+];
+
+export const COMPARE_COLUMNS: Columns = [
+  ["channel", "کانال"],
+  ["invoiceCount", "تعداد فاکتور"],
+  ["netAmount", "فروش خالص (ریال)"],
+  ["profitAmount", "سود ناخالص (ریال)"],
+  ["prevInvoiceCount", "تعداد فاکتور دوره مبنا"],
+  ["prevNetAmount", "فروش خالص دوره مبنا (ریال)"],
+  ["prevProfitAmount", "سود ناخالص دوره مبنا (ریال)"],
+  ["deltaAmount", "تفاوت (ریال)"],
+  ["deltaPercent", "تفاوت (٪)"],
+  ["direction", "جهت"],
+];
+
+export const BASKET_COLUMNS: Columns = [
+  ["businessDate", "تاریخ"],
+  ["channel", "کانال"],
+  ["invoiceCount", "تعداد فاکتور"],
+  ["knownCustomers", "مشتری شناخته‌شده"],
+  ["anonymousCount", "فاکتور بی‌شماره"],
+  ["itemQty", "تعداد قلم"],
+  ["lineCount", "تعداد سطر"],
+  ["netAmount", "فروش خالص (ریال)"],
+  ["qtyPerInvoice", "میانگین قلم در فاکتور"],
+];
+
+export const CUSTOMER_BASKET_COLUMNS: Columns = [
+  ["fullName", "نام"],
+  ["mobile", "موبایل"],
+  ["invoiceCount", "تعداد فاکتور"],
+  ["itemQty", "تعداد قلم"],
+  ["netAmount", "مبلغ خرید (ریال)"],
+  ["lastPurchase", "آخرین خرید"],
+];
