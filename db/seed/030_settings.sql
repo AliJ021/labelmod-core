@@ -218,6 +218,18 @@ SELECT * FROM (VALUES
  'با «log» هیچ پیامکی واقعاً نمی‌رود و متنش در لاگ دیده می‌شود. برای آزمایش پیش از خرید اعتبار.',
  20, 'settings.manage', true),
 
+('notify.webhook_enabled', 'false'::jsonb,
+ 'ارسال لینک فاکتور به یک Webhook — پل به پیام‌رسان.', false,
+ 'bool', 'ارسال به پیام‌رسان (Webhook) فعال باشد', 'notify', NULL, NULL, NULL, NULL,
+ 'یک درخواست POST با لینک فاکتور به نشانی زیر می‌رود. اتصالش به واتساپ یا تلگرام کارِ همان سرویس است، نه این نرم‌افزار — چون هر پیام‌رسان قواعد تجاری و مجوز خودش را دارد و انتخابش تصمیم مالک است.',
+ 40, 'settings.manage', true),
+
+('notify.webhook_url', '""'::jsonb,
+ 'نشانی Webhook پیام‌رسان. خالی یعنی خاموش.', false,
+ 'text', 'نشانی Webhook', 'notify', NULL, NULL, NULL, NULL,
+ 'باید https باشد. راز در این نشانی نگذارید — مقدارش در سابقه تغییرات دیده می‌شود؛ کلید از متغیر محیطی NOTIFY_WEBHOOK_TOKEN می‌آید.',
+ 50, 'settings.manage', true),
+
 ('notify.sms_sender', '""'::jsonb,
  'شماره فرستنده در پنل سرویس‌دهنده. خالی یعنی شماره پیش‌فرض پنل.', false,
  'text', 'شماره فرستنده', 'notify', NULL, NULL, NULL, NULL,
