@@ -75,6 +75,14 @@ export interface InvoiceLine {
   priceOverrideReason: string | null;
 }
 
+export interface InvoiceGift {
+  wrapCode: string | null;
+  colorCode: string | null;
+  flowerCode: string | null;
+  note: string | null;
+  hidePrices: boolean;
+}
+
 export interface Invoice {
   id: string;
   number: string | null;
@@ -82,6 +90,9 @@ export interface Invoice {
   warehouseId: string;
   shiftId: string | null;
   customerId: string | null;
+  /** گیرنده، وقتی خرید برای دیگری است. */
+  recipientId: string | null;
+  gift: InvoiceGift | null;
   channel: string;
   status: string;
   grossAmount: string;
@@ -338,6 +349,36 @@ export const pos = {
     input: { mobile: string; fullName?: string },
     opts?: RequestOptions,
   ) => api.patch<Invoice>(`/invoices/${invoiceId}/customer`, input, opts),
+
+  /**
+   * گیرنده — «خرید برای دیگری».
+   *
+   * `mobile: null` یعنی گیرنده ندارد و ارجاع پاک می‌شود. شماره از
+   * همان `normalize_mobile` دیتابیس می‌گذرد، پس گیرنده یک **مشتری
+   * واقعی** می‌شود و اندازه‌هایش در پرونده خودش می‌نشیند.
+   */
+  setRecipient: (
+    invoiceId: string,
+    input: { mobile: string | null; fullName?: string },
+  ) => api.patch<Invoice>(`/invoices/${invoiceId}/recipient`, input),
+
+  giftOptions: () =>
+    api.get<{
+      options: Array<{ code: string; kind: string; label: string; price: string }>;
+    }>("/gift-options"),
+
+  /** بسته‌بندی هدیه. `isGift: false` سطر را پاک می‌کند. */
+  setGift: (
+    invoiceId: string,
+    input: {
+      isGift?: boolean;
+      wrapCode?: string | null;
+      colorCode?: string | null;
+      flowerCode?: string | null;
+      note?: string | null;
+      hidePrices?: boolean;
+    },
+  ) => api.put<Invoice>(`/invoices/${invoiceId}/gift`, input),
 
   removeLine: (invoiceId: string, lineId: string, opts?: RequestOptions) =>
     api.del<Invoice>(`/invoices/${invoiceId}/lines/${lineId}`, opts),

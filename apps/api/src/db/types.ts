@@ -222,6 +222,29 @@ export interface MeasureKeyTable {
   is_active: boolean;
 }
 
+/** کاغذ، رنگ و گلِ بسته هدیه — داده مرجع. */
+/** بسته‌بندی هدیه یک فاکتور. نبودِ سطر یعنی هدیه نیست. */
+export interface InvoiceGiftTable {
+  invoice_id: string;
+  wrap_code: string | null;
+  color_code: string | null;
+  flower_code: string | null;
+  note: string | null;
+  hide_prices: boolean;
+  created_at: Date;
+}
+
+export interface GiftOptionTable {
+  code: string;
+  /** wrap | color | flower */
+  kind: string;
+  label: string;
+  /** پول رشته است، حتی وقتی صفر است. */
+  price: string;
+  sort_order: number;
+  is_active: boolean;
+}
+
 export interface PriceTable {
   id: Generated<string>;
   variation_id: string;
@@ -281,6 +304,8 @@ export interface InvoiceTable {
   warehouse_id: string;
   shift_id: string | null;
   customer_id: string | null;
+  /** گیرنده، وقتی خرید برای دیگری است. */
+  recipient_id: string | null;
   channel: string;
   status: string;
   gross_amount: string;
@@ -867,6 +892,8 @@ export interface Database {
   "catalog.variation": VariationTable;
   "catalog.price": PriceTable;
   "catalog.season": SeasonTable;
+  "sales.gift_option": GiftOptionTable;
+  "sales.invoice_gift": InvoiceGiftTable;
   "sales.measure_key": MeasureKeyTable;
   "inventory.stock_balance": StockBalanceTable;
   "inventory.warehouse": WarehouseTable;

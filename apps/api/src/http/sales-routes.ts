@@ -15,6 +15,7 @@ import { requireForSession } from "../auth/permission.ts";
 import type { Db } from "../db/client.ts";
 import { parseMoney, serializeMoney } from "../lib/money.ts";
 import { runOnce } from "../lib/idempotency.ts";
+import { CONTROL_CHARS_MESSAGE, hasControlChars } from "../lib/text.ts";
 import { InvoiceError, invoiceToJson, type InvoiceService } from "../sales/invoice.ts";
 import { ShiftError, shiftToJson, type ShiftService } from "../sales/shift.ts";
 import { assertBranch, assertWarehouseInBranch } from "../sales/scope.ts";
@@ -565,6 +566,122 @@ export function registerSalesRoutes(app: FastifyInstance, deps: SalesRouteDeps):
         invoiceId: id,
         mobile: body.mobile,
         ...(body.fullName === undefined ? {} : { fullName: body.fullName }),
+        actorId: s.userId,
+      }),
+    );
+  });
+
+  /**
+   * گیرنده — وقتی خرید برای دیگری است.
+   *
+   * ⚠️ گیرنده **یک مشتری است**، نه چند ستون روی فاکتور.
+   *
+   * وسوسه‌اش `recipientName` و `recipientMobile` بود. ولی گیرنده خودش
+   * یک مشتری است: همان کسی که پارسال برایش خریدند، امسال ممکن است
+   * خودش بیاید. با ستون روی فاکتور آن دو هرگز یکی نمی‌شدند و
+   * اندازه‌هایی که برای هدیه ثبت شده بود، در پرونده خودش پیدا
+   * نمی‌شد.
+   *
+   * پس شماره از همان `sales.normalize_mobile` می‌گذرد و شماره تکراری
+   * مشتری دوم نمی‌سازد — همان قاعده‌ای که کل پرونده مشتری بر آن است.
+   *
+   * مجوزش `sale.create` است مثل مسیر مشتری: صندوق‌دار باید بتواند
+   * گیرنده را ثبت کند بدون اینکه پرونده مشتری را ویرایش کند.
+   */
+  app.patch("/invoices/:id/recipient", async (req) => {
+    const s = session(req);
+    const { id } = z.object({ id: uuid }).parse(req.params);
+    await assertInvoiceInScope(db, s.userId, id, invoices);
+    await requireForSession(db, s, "sale.create");
+
+    const body = z
+      .object({
+        mobile: z.string().trim().min(1).max(20).nullable(),
+        fullName: z.string().trim().max(120).optional(),
+      })
+      .parse(req.body);
+
+    return invoiceToJson(
+      await invoices.setRecipient({
+        invoiceId: id,
+        mobile: body.mobile,
+        ...(body.fullName === undefined ? {} : { fullName: body.fullName }),
+        actorId: s.userId,
+      }),
+    );
+  });
+
+  /**
+   * گزینه‌های بسته‌بندی هدیه.
+   *
+   * از `sales.gift_option` می‌آید نه از فهرستی در کد: فروشگاه امسال
+   * سه رنگ کاغذ دارد و سال بعد پنج تا.
+   */
+  app.get("/gift-options", async (req) => {
+    session(req);
+    const r = await db
+      .selectFrom("sales.gift_option")
+      .select(["code", "kind", "label", "price", "sort_order"])
+      .where("is_active", "=", true)
+      .orderBy("sort_order")
+      .execute();
+    return {
+      options: r.map((x) => ({
+        code: x.code,
+        kind: x.kind,
+        label: x.label,
+        // پول در JSON رشته است — حتی وقتی صفر است.
+        price: x.price,
+      })),
+    };
+  });
+
+  /**
+   * بسته‌بندی هدیه یک فاکتور.
+   *
+   * `PUT` است و `Idempotency-Key` نمی‌خواهد: مطلق است نه افزایشی، و
+   * ارسال دوباره همان نتیجه را می‌دهد. بدنه خالی یعنی «هدیه نیست» و
+   * سطر را پاک می‌کند.
+   *
+   * ⚠️ فقط روی فاکتور **باز**. برگه هدیه بخشی از همان سند است؛
+   * تغییرش پس از تحویل یعنی آنچه مشتری برد با آنچه در سیستم است فرق
+   * کند. سنجشش در دیتابیس است، نه اینجا.
+   */
+  app.put("/invoices/:id/gift", async (req) => {
+    const s = session(req);
+    const { id } = z.object({ id: uuid }).parse(req.params);
+    await assertInvoiceInScope(db, s.userId, id, invoices);
+    await requireForSession(db, s, "sale.create");
+
+    const body = z
+      .object({
+        isGift: z.boolean().default(true),
+        wrapCode: z.string().trim().max(40).nullable().optional(),
+        colorCode: z.string().trim().max(40).nullable().optional(),
+        flowerCode: z.string().trim().max(40).nullable().optional(),
+        note: z.string().max(500).nullable().optional(),
+        hidePrices: z.boolean().optional(),
+      })
+      .parse(req.body ?? {});
+
+    // ⚠️ نویسه کنترلی **رد** می‌شود، نه بی‌صدا پاک.
+    //
+    // یادداشت روی کارت هدیه چاپ می‌شود و ورودی کاربر است. پاک‌کردن
+    // خاموش یعنی متنی چاپ شود که کاربر ننوشته؛ همان قاعده‌ای که
+    // بقیه مسیرها دارند و تعریفش یک جاست: `lib/text.ts`.
+    if (typeof body.note === "string" && hasControlChars(body.note)) {
+      throw new InvoiceError("bad_note", `یادداشت ${CONTROL_CHARS_MESSAGE}`, 400);
+    }
+
+    return invoiceToJson(
+      await invoices.setGift({
+        invoiceId: id,
+        isGift: body.isGift,
+        wrapCode: body.wrapCode ?? null,
+        colorCode: body.colorCode ?? null,
+        flowerCode: body.flowerCode ?? null,
+        note: body.note ?? null,
+        hidePrices: body.hidePrices ?? true,
         actorId: s.userId,
       }),
     );
