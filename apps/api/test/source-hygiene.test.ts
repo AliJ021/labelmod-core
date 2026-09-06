@@ -19,7 +19,7 @@
  * داخل یک بسته باشد تا `pnpm -r test` اجرایش کند.
  */
 import { execFileSync } from "node:child_process";
-import { existsSync, readFileSync } from "node:fs";
+import { existsSync, readdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import assert from "node:assert/strict";
 import { test } from "node:test";
@@ -322,4 +322,56 @@ test("استثناهای CSRF و مسیرهای عمومی، همان‌اند �
     "/auth/unlock",
     "/health",
   ]);
+});
+
+/**
+ * عددی که در README نوشته شده، با واقعیت مخزن یکی است.
+ *
+ * ── چرا این تست وجود دارد ────────────────────────────────────────────
+ *
+ * README گفته بود «۲۴ فایل تست مالی» و «۶۱ حساب» در حالی که ۲۷ و ۵۸
+ * بودند، و «lint هنوز واقعی نیست» ماه‌ها پس از واقعی‌شدنش آنجا مانده
+ * بود. هیچ‌کدام خطا نمی‌دادند — فقط خواننده را به نتیجه غلط
+ * می‌رساندند. همان چیزی که CLAUDE.md می‌گوید: سندی که عقب بماند
+ * **غلط** می‌شود، نه فقط قدیمی.
+ *
+ * ── چرا فقط این دو عدد ───────────────────────────────────────────────
+ *
+ * عمداً شمار تست‌ها (۹۳۵ / ۷۰۶ / ۶۰) قفل **نشده**. آن سه با هر تست
+ * تازه‌ای عوض می‌شوند و قفل‌کردنشان یعنی هر PR ناچار README را هم دست
+ * بزند — سر و صدایی که خودش باعث می‌شود کسی عدد را بی‌فکر به‌روز کند.
+ *
+ * این دو فرق دارند: **ساختاری‌اند و به‌ندرت عوض می‌شوند.** فایل تست
+ * مالی تازه یا حساب تازه در کدینگ، هر دو تصمیم‌اند نه جزئیات — و
+ * دقیقاً همان دو تایی بودند که بی‌صدا عقب ماندند.
+ */
+test("عددهای ساختاری README با واقعیت مخزن می‌خوانند", () => {
+  const readme = readFileSync(join(ROOT, "README.md"), "utf8");
+
+  // رقم فارسی به لاتین، تا مقایسه با شمارش واقعی ممکن باشد.
+  const toLatin = (s: string): string =>
+    s.replace(/[۰-۹]/g, (d) => String("۰۱۲۳۴۵۶۷۸۹".indexOf(d)));
+
+  const sqlTests = readdirSync(join(ROOT, "db/test")).filter((f) =>
+    f.endsWith(".sql"),
+  ).length;
+  const claimedTests = /([۰-۹]+) فایل تست مالی/.exec(readme);
+  assert.ok(claimedTests !== null, "README دیگر شمار فایل‌های تست مالی را نمی‌گوید");
+  assert.equal(
+    Number(toLatin(claimedTests[1] ?? "")),
+    sqlTests,
+    `README می‌گوید ${claimedTests[1]} فایل تست مالی، ولی db/test/ الان ${sqlTests} تا دارد`,
+  );
+
+  // حساب‌ها از خودِ Seed شمرده می‌شوند، نه از یک دیتابیس زنده: این
+  // تست باید بدون DATABASE_URL هم معنا داشته باشد.
+  const seed = readFileSync(join(ROOT, "db/seed/010_accounts.sql"), "utf8");
+  const accounts = (seed.match(/^\s*\('[0-9]+'/gm) ?? []).length;
+  const claimedAccounts = /\| کدینگ حساب \| ([۰-۹]+) حساب/.exec(readme);
+  assert.ok(claimedAccounts !== null, "README دیگر شمار حساب‌ها را نمی‌گوید");
+  assert.equal(
+    Number(toLatin(claimedAccounts[1] ?? "")),
+    accounts,
+    `README می‌گوید ${claimedAccounts[1]} حساب، ولی Seed الان ${accounts} تا دارد`,
+  );
 });
