@@ -272,3 +272,54 @@ test("قاعده‌های strip-only در پیکربندی Lint هستند", () 
     assert.ok(cfg.includes(selector), `قاعده ${selector} از پیکربندی افتاده است`);
   }
 });
+
+/**
+ * فهرست استثناهای CSRF و مسیرهای عمومی قفل است.
+ *
+ * ── چرا ادعا روی خودِ فهرست است ────────────────────────────────────
+ *
+ * رفتار CSRF جای دیگری سنجیده می‌شود: مسیری بدون توکن ۴۰۳ می‌گیرد.
+ * ولی آن تست چیزی درباره **اندازه فهرست استثنا** نمی‌گوید — و خطر
+ * واقعی همان‌جاست: کسی که فردا یک مسیر تازه را «چون کار نمی‌کرد» به
+ * `CSRF_EXEMPT_PATHS` اضافه کند، هیچ تستی را قرمز نمی‌کند و دفاع
+ * بی‌صدا یک سوراخ پیدا می‌کند.
+ *
+ * پس فهرست اینجا **عیناً** نوشته شده. افزودن یک مسیر تازه باید این
+ * تست را قرمز کند تا تصمیم دیده شود، نه اینکه در یک Diff بزرگ گم
+ * شود. اگر افزودن درست بود، هر دو جا با هم عوض می‌شوند — و آن یک
+ * تصمیم آگاهانه است، نه یک لغزش.
+ */
+test("استثناهای CSRF و مسیرهای عمومی، همان‌اند که باید", () => {
+  const src = readFileSync(join(ROOT, "apps/api/src/http/app.ts"), "utf8");
+
+  const listOf = (name: string): string[] => {
+    const m = new RegExp(`const ${name} = new Set\\(\\[(.*?)\\]\\)`, "s").exec(src);
+    assert.ok(m, `${name} پیدا نشد`);
+    return [...m[1]!.matchAll(/"([^"]+)"/g)].map((x) => x[1]!).sort();
+  };
+
+  // CSRF فقط جایی برداشته می‌شود که **هنوز نشستی نیست** — پس توکن
+  // Double-Submit هم وجود ندارد. دفاع آنجا خودِ بلیت HttpOnly است.
+  assert.deepEqual(listOf("CSRF_EXEMPT_PATHS"), [
+    "/auth/2fa/recovery",
+    "/auth/2fa/totp",
+    "/auth/2fa/webauthn/begin",
+    "/auth/2fa/webauthn/verify",
+    "/auth/login",
+  ]);
+
+  // ⚠️ `/auth/2fa/webauthn` (بدون پسوند) عمداً **نیست**: آن مسیر
+  //    فهرست کلیدهای کاربر را می‌دهد و باید پشت نشست بماند. اگر
+  //    روزی کسی نامش را ساده کند، همین‌جا قرمز می‌شود.
+  assert.deepEqual(listOf("PUBLIC_PATHS"), [
+    "/auth/2fa/recovery",
+    "/auth/2fa/totp",
+    "/auth/2fa/webauthn/begin",
+    "/auth/2fa/webauthn/verify",
+    "/auth/login",
+    "/auth/logout",
+    "/auth/reauth",
+    "/auth/unlock",
+    "/health",
+  ]);
+});
