@@ -409,6 +409,21 @@ export const pos = {
     opts?: RequestOptions,
   ) => api.post<SaleReturn>("/returns", input, opts),
 
+  /**
+   * مقصد کالای سالمِ برگشتی — قفسه یا آوتلت.
+   *
+   * فقط روی پیش‌نویس کار می‌کند: پس از ثبت، حرکت انبار ثبت شده و
+   * تغییرناپذیر است. کالای **معیوب** فارغ از این انتخاب به انبار
+   * معیوب می‌رود.
+   */
+  setReturnWarehouse: (returnId: string, warehouseId: string) =>
+    api.put<SaleReturn>(`/returns/${returnId}/warehouse`, { warehouseId }),
+
+  seasons: () =>
+    api.get<{ seasons: Array<{ code: string; label: string; climate: string }> }>(
+      "/seasons",
+    ),
+
   /** ثبت — اینجاست که کالا برمی‌گردد و پول از کشو بیرون می‌رود. */
   postReturn: (returnId: string, opts?: RequestOptions) =>
     api.post<SaleReturn & { replayed: boolean }>(`/returns/${returnId}/post`, {}, opts),

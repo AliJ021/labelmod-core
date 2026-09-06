@@ -8,7 +8,7 @@
 > پیش از ورود داده واقعی، بخش «تصمیم‌های باز» پایین را بخوانید.
 
 ```
-۹۹۳ ادعای SQL  ·  ۷۳۲ تست Node  ·  ۶۰ ادعای PHP افزونه  ·  همه در CI
+۱۰۱۶ ادعای SQL  ·  ۷۳۶ تست Node  ·  ۶۰ ادعای PHP افزونه  ·  همه در CI
 ```
 
 ---
@@ -114,6 +114,8 @@ React + Vite، RTL کامل، زبان طراحی Liquid Glass ناحیه‌بن
 | پرسنل — ساخت، نقش، رمز، PIN، فعال و غیرفعال | ✅ وصل به API |
 | پرونده مشتری — جست‌وجو، سقف اعتبار، رضایت، سابقه خرید | ✅ وصل به API |
 | شناسنامه مشتری — نشانی، کد پستی، اندازه بدن (۱۳ کلید) | ✅ وصل به API |
+| فصل کالا (گرم/سرد) و انبار آوتلت | ✅ وصل به API |
+| مقصد کالای سالمِ برگشتی — قفسه یا آوتلت | ✅ وصل به API |
 | ورود دومرحله‌ای TOTP + کد بازیابی | ✅ وصل به API |
 | کلید امنیتی (WebAuthn / Passkey) — ثبت، ورود، حذف | ✅ وصل به API · ⚠️ مراسم واقعی هنوز با کلید فیزیکی آزموده نشده |
 | موبایل — چیدمان واکنش‌گرا و بارکد با دوربین | ✅ اندروید و آیفون |
@@ -281,11 +283,11 @@ docker compose up -d db
 export DATABASE_URL='postgres://labelmod:رمز@localhost:5432/labelmod'
 ops/db.sh migrate         # ساخت اسکیما
 ops/db.sh seed            # کدینگ حساب، قواعد ثبت، تنظیمات
-ops/db.sh test            # ۹۹۳ ادعا — باید همه پاس شوند
+ops/db.sh test            # ۱۰۱۶ ادعا — باید همه پاس شوند
 
 corepack enable
 pnpm install
-pnpm check                # lint + typecheck + ۷۳۲ تست
+pnpm check                # lint + typecheck + ۷۳۶ تست
 pnpm --filter @labelmod/api dev
 pnpm --filter @labelmod/web dev
 
@@ -456,7 +458,7 @@ Microservice · Redis · Kubernetes · حالت آفلاین کامل · Windows
 ```
 db/migrations/   اسکیما و توابع — شماره‌دار، SQL خام، قابل حسابرسی
 db/seed/         کدینگ حساب، قواعد ثبت، تنظیمات، داده مرجع
-db/test/         ۲۹ فایل تست مالی — در CI و pre-push اجرا می‌شوند
+db/test/         ۳۰ فایل تست مالی — در CI و pre-push اجرا می‌شوند
 docs/            ADR-001 تا ADR-006 · SECURITY.md · DEPLOYMENT.md
 ops/             db.sh · deploy.sh · install-hooks.sh · close-due-days.sh
                  restore-drill.sh — بکاپ را واقعاً برمی‌گرداند

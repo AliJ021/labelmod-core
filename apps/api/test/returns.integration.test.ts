@@ -791,4 +791,134 @@ describe("برگشت از فروش و دوره ثبت", { skip }, () => {
       .execute(handle.db);
     return Number(r.rows[0]?.on_hand ?? 0);
   }
+
+  // ═══════════════════════════════════════════════════════════════════
+  // مقصد کالای برگشتی — قفسه یا آوتلت
+  // ═══════════════════════════════════════════════════════════════════
+
+  test("کالای سالم به آوتلت می‌رود، نه به قفسه", async () => {
+    const s = await loginAs(supervisor);
+    const outlet = await sql<{ id: string }>`
+      SELECT id FROM inventory.warehouse WHERE code = 'OUTLET'
+    `.execute(handle.db);
+    const outletId = outlet.rows[0]?.id;
+    assert.ok(outletId, "انبار آوتلت باید در Seed باشد");
+
+    const { invoiceId, lineId } = await soldInvoice({
+      who: supervisor, qty: "2", paid: "2000000",
+    });
+    const shelfBefore = await stockOf(STORE_WH);
+
+    const draft = await app.inject({
+      method: "POST", url: "/returns", ...s,
+      payload: {
+        invoiceId, reasonCode: "color_mismatch", refundAmount: "1000000",
+        refundMethod: "cash", lines: [{ invoiceLineId: lineId, qty: "1" }],
+      },
+    });
+    assert.equal(draft.statusCode, 201, draft.body);
+    const id = draft.json().id as string;
+
+    const put = await app.inject({
+      method: "PUT", url: `/returns/${id}/warehouse`, ...s,
+      payload: { warehouseId: outletId },
+    });
+    assert.equal(put.statusCode, 200, put.body);
+    assert.equal(put.json().warehouseId, outletId);
+
+    const post = await app.inject({
+      method: "POST", url: `/returns/${id}/post`,
+      cookies: s.cookies,
+      headers: { ...s.headers, "idempotency-key": `out-${suffix}-${Date.now()}` },
+    });
+    assert.equal(post.statusCode, 200, post.body);
+
+    // ادعای واقعی: کالا در آوتلت است و قفسه **دست‌نخورده** مانده.
+    // اگر مقصد نادیده گرفته می‌شد، هر دو عدد عوض می‌شدند.
+    const outletQty = await stockOf(outletId);
+    assert.ok(outletQty >= 1, `آوتلت باید کالا بگیرد، واقعی ${outletQty}`);
+    assert.equal(await stockOf(STORE_WH), shelfBefore, "قفسه نباید تکان بخورد");
+  });
+
+  test("پس از ثبت، مقصد قفل است — ۴۰۹ نه ۵۰۰", async () => {
+    // حرکت انبار تغییرناپذیر است؛ جابه‌جایی پس از ثبت یعنی موجودی
+    // جایی بنشیند که حرکتش جای دیگری ثبت شده.
+    const s = await loginAs(supervisor);
+    const { invoiceId, lineId } = await soldInvoice({
+      who: supervisor, qty: "2", paid: "2000000",
+    });
+    const draft = await app.inject({
+      method: "POST", url: "/returns", ...s,
+      payload: {
+        invoiceId, reasonCode: "color_mismatch", refundAmount: "1000000",
+        refundMethod: "cash", lines: [{ invoiceLineId: lineId, qty: "1" }],
+      },
+    });
+    const id = draft.json().id as string;
+    await app.inject({
+      method: "POST", url: `/returns/${id}/post`,
+      cookies: s.cookies,
+      headers: { ...s.headers, "idempotency-key": `lock-${suffix}-${Date.now()}` },
+    });
+
+    const outlet = await sql<{ id: string }>`
+      SELECT id FROM inventory.warehouse WHERE code = 'OUTLET'
+    `.execute(handle.db);
+    const r = await app.inject({
+      method: "PUT", url: `/returns/${id}/warehouse`, ...s,
+      payload: { warehouseId: outlet.rows[0]!.id },
+    });
+    assert.equal(r.statusCode, 409, r.body);
+    assert.match(r.body, /ثبت‌شده/, "پیام باید فارسی و برای کاربر باشد");
+  });
+
+  test("انبار شعبه دیگر رد می‌شود", async () => {
+    const s = await loginAs(supervisor);
+    const { invoiceId, lineId } = await soldInvoice({
+      who: supervisor, qty: "2", paid: "2000000",
+    });
+    const draft = await app.inject({
+      method: "POST", url: "/returns", ...s,
+      payload: {
+        invoiceId, reasonCode: "color_mismatch", refundAmount: "1000000",
+        refundMethod: "cash", lines: [{ invoiceLineId: lineId, qty: "1" }],
+      },
+    });
+    const id = draft.json().id as string;
+
+    const other = await sql<{ id: string }>`
+      INSERT INTO platform.branch (code, name)
+      VALUES (${`BR-${suffix}`}, 'شعبه دیگر')
+      RETURNING id
+    `.execute(handle.db);
+    const wh = await sql<{ id: string }>`
+      INSERT INTO inventory.warehouse (branch_id, code, name, kind)
+      VALUES (${other.rows[0]!.id}::uuid, ${`WH-${suffix}`}, 'انبار شعبه دیگر', 'outlet')
+      RETURNING id
+    `.execute(handle.db);
+
+    const r = await app.inject({
+      method: "PUT", url: `/returns/${id}/warehouse`, ...s,
+      payload: { warehouseId: wh.rows[0]!.id },
+    });
+    // ۴۰۳ از دامنه شعبه، پیش از آنکه به دیتابیس برسد.
+    assert.ok([403, 409].includes(r.statusCode), `${r.statusCode}: ${r.body}`);
+  });
+
+  test("فصل‌ها از دیتابیس می‌آیند، با تفکیک گرم و سرد", async () => {
+    const s = await loginAs(supervisor);
+    const r = await app.inject({ method: "GET", url: "/seasons", ...s });
+    assert.equal(r.statusCode, 200, r.body);
+    const seasons = (JSON.parse(r.body) as {
+      seasons: Array<{ code: string; label: string; climate: string }>;
+    }).seasons;
+    assert.ok(seasons.length >= 7, `انتظار دست‌کم ۷ فصل، واقعی ${seasons.length}`);
+    const climates = new Set(seasons.map((x) => x.climate));
+    for (const c of ["warm", "cold", "all"]) {
+      assert.ok(climates.has(c), `اقلیم «${c}» باید باشد`);
+    }
+    const winter = seasons.find((x) => x.code === "winter");
+    assert.equal(winter?.climate, "cold", "زمستان باید فصل سرد باشد");
+    assert.equal(winter?.label, "زمستان", "برچسب فارسی از دیتابیس می‌آید");
+  });
 });

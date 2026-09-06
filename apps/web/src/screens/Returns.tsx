@@ -38,6 +38,7 @@ import {
   type PaymentMethod,
   type Returnable as ReturnableView,
   type ReturnReason,
+  type Warehouse,
   type SaleReturn,
 } from "../lib/pos.ts";
 import {
@@ -71,6 +72,9 @@ export function Returns() {
   const [method, setMethod] = useState("");
 
   const [draft, setDraft] = useState<SaleReturn | null>(null);
+  /** مقصد کالای سالم. `""` یعنی همان انبار فاکتور. */
+  const [destWh, setDestWh] = useState("");
+  const [outlets, setOutlets] = useState<Warehouse[]>([]);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [done, setDone] = useState<string | null>(null);
@@ -88,6 +92,12 @@ export function Returns() {
         setBranches(b.branches);
         setMethods(m.methods);
         setReasons(r.reasons);
+        // انبارهای آوتلت همه شعبه‌ها. فهرست شعبه `warehouses` را با
+        // `kind` می‌دهد، پس فیلتر اینجا یک تصمیم نمایشی است نه یک
+        // دروازه — دروازه سمت سرور است.
+        setOutlets(
+          b.branches.flatMap((x) => x.warehouses.filter((w) => w.kind === "outlet")),
+        );
         if (b.branches.length === 1) setBranchId(b.branches[0]?.id ?? "");
       } catch (err) {
         setError(message(err));
@@ -166,12 +176,20 @@ export function Returns() {
         ));
       setDraft(sheet);
 
+      // مقصد پیش از ثبت تعیین می‌شود — پس از ثبت، حرکت انبار نشسته و
+      // تغییرناپذیر است. `""` یعنی «همان‌جا که فروخته شد»، پس هیچ
+      // درخواستی نمی‌رود.
+      if (destWh !== "") {
+        await pos.setReturnWarehouse(sheet.id, destWh);
+      }
+
       const posted = await keys.run(`return-post:${sheet.id}`, (key) =>
         pos.postReturn(sheet.id, { idempotencyKey: key }),
       );
 
       setDone(`برگ مرجوعی ${posted.number ?? ""} ثبت شد.`);
       setDraft(null);
+      setDestWh("");
       setInvoice(null);
       setView(null);
       setSelection(new Map());
@@ -365,6 +383,33 @@ export function Returns() {
                 بازپرداخت نقدی شیفت باز می‌خواهد — وگرنه پول از کشو می‌رود ولی در شمارش
                 نمی‌آید.
               </p>
+            ) : null}
+
+            {/*
+              مقصد کالای سالم — قفسه یا آوتلت.
+
+              ⚠️ فقط وقتی نشان داده می‌شود که آوتلتی تعریف شده باشد.
+              یک انتخاب‌گر تک‌گزینه‌ای فقط جای صفحه را می‌گیرد و
+              صندوق‌دار را به فکر می‌اندازد که چیزی را جا انداخته.
+
+              کالای **معیوب** اینجا نمی‌آید: آن فارغ از این انتخاب به
+              انبار معیوب می‌رود و صندوق‌دار تصمیمی درباره‌اش ندارد.
+            */}
+            {outlets.length > 0 ? (
+              <label className="auth-field">
+                <span>کالای سالم کجا برگردد؟</span>
+                <select
+                  className="set-input"
+                  value={destWh}
+                  disabled={busy}
+                  onChange={(e) => setDestWh(e.target.value)}
+                >
+                  <option value="">همان‌جا که فروخته شد</option>
+                  {outlets.map((w) => (
+                    <option key={w.id} value={w.id}>{w.name}</option>
+                  ))}
+                </select>
+              </label>
             ) : null}
 
             <button

@@ -141,7 +141,7 @@ describe("چرخه حیات کالا و قیمت", { skip }, () => {
         nameInternal: "شلوار پارچه‌ای رگولار کمر ایتالیایی",
         nameWeb: "Regular Trouser",
         fit: "رگولار",
-        season: "پاییز ۱۴۰۵",
+        season: "autumn",
       },
     });
     assert.equal(created.statusCode, 201, created.body);

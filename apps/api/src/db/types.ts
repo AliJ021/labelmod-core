@@ -200,6 +200,28 @@ export interface VariationTable {
   status: Generated<string>;
 }
 
+/** فصل‌های مجاز کالا — داده مرجع، نه CHECK. */
+export interface SeasonTable {
+  code: string;
+  label: string;
+  /** warm | cold | all — «چهارفصل» نه گرم است نه سرد. */
+  climate: string;
+  sort_order: number;
+  is_active: boolean;
+}
+
+/** کلیدهای مجاز اندازه بدن، با برچسب و بازه. */
+export interface MeasureKeyTable {
+  key: string;
+  label: string;
+  unit: string;
+  min_value: string;
+  max_value: string;
+  group_key: string;
+  sort_order: number;
+  is_active: boolean;
+}
+
 export interface PriceTable {
   id: Generated<string>;
   variation_id: string;
@@ -844,6 +866,8 @@ export interface Database {
   "catalog.product": ProductTable;
   "catalog.variation": VariationTable;
   "catalog.price": PriceTable;
+  "catalog.season": SeasonTable;
+  "sales.measure_key": MeasureKeyTable;
   "inventory.stock_balance": StockBalanceTable;
   "inventory.warehouse": WarehouseTable;
   "sales.cash_shift": CashShiftTable;
