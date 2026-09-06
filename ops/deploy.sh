@@ -74,6 +74,14 @@ case "${1:-}" in
     #    جمله در سند بود: تنظیم `backup.restore_drill_days` وجود داشت
     #    و هیچ‌جا خوانده نمی‌شد. حالا زنگش اینجاست، جایی که دیده
     #    می‌شود — زنگی که کسی نبیند، زنگ نیست.
+    # ⚠️ قوی‌ترین ثابتِ انبار: مانده باید با **جمع حرکت‌ها** بخواند.
+    #    این در CI سنجیده می‌شود ولی روی سیستم زنده هیچ‌کس نمی‌دیدش —
+    #    و `stock_balance` تنها جدول مالی است که Trigger تغییرناپذیری
+    #    ندارد (نمی‌تواند داشته باشد؛ `apply_movement` خودش می‌نویسدش).
+    #    پس اگر روزی واگرا شود — از یک باگ، یک psql دستی، یا یک خرابی
+    #    نیمه‌کاره — تنها راه فهمیدنش همین است.
+    echo "── مغایرت مانده انبار با حرکت‌ها (باید خالی باشد) ──"
+    in_db_tools "psql -d \"\$DATABASE_URL\" -c 'SELECT * FROM inventory.balance_check WHERE qty_diff <> 0 OR value_diff <> 0 LIMIT 20'" || true
     echo "── تمرین بازیابی (never یا overdue یعنی اقدام لازم است) ──"
     in_db_tools "psql -d \"\$DATABASE_URL\" -c 'SELECT * FROM platform.restore_drill_status'" || true
     echo "── چک سررسیدشده ──"

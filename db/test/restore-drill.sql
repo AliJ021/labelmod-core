@@ -31,6 +31,7 @@ DECLARE
   v_status text;
   v_n      int;
   v_id     uuid;
+  v_var    uuid;
 BEGIN
 
 -- ═══════════════════════════════════════════════════════════════════
@@ -144,6 +145,44 @@ EXCEPTION WHEN sqlstate 'P0001' THEN
     RAISE;
   END IF;
 END;
+
+-- ═══════════════════════════════════════════════════════════════════
+RAISE NOTICE E'\n═══ ۷. آشکارساز مغایرت مانده واقعاً می‌گیرد ═══';
+-- ═══════════════════════════════════════════════════════════════════
+-- `inventory.balance_check` تنها راه دیدن واگراییِ مانده از حرکت‌هاست،
+-- و پنج پرونده تست ادعا می‌کنند خالی است. ولی «خالی است» وقتی ارزش
+-- دارد که ثابت شود **می‌توانست خالی نباشد**.
+--
+-- ⚠️ `stock_balance` تنها جدول مالی است که Trigger تغییرناپذیری
+--    **ندارد** — و نمی‌تواند داشته باشد، چون `apply_movement` خودش
+--    می‌نویسدش. پس تنها دفاع، همین نما و کسی است که نگاهش کند:
+--    `ops/deploy.sh status` روی سیستم زنده و `ops/restore-drill.sh`
+--    روی بکاپ.
+
+INSERT INTO catalog.product (code, name_internal)
+VALUES ('BCHK', 'کالای آشکارساز') RETURNING id INTO v_id;
+
+INSERT INTO catalog.variation (product_id, color, size, sku)
+VALUES (v_id, 'سبز', 'L', 'BCHK-SKU') RETURNING id INTO v_var;
+
+PERFORM platform.set_actor(
+  (SELECT id FROM identity.app_user WHERE username = 'system'));
+PERFORM inventory.apply_movement(
+  v_var, '00000000-0000-7000-8000-000000000101'::uuid, 10, 'purchase_receipt',
+  NULL, NULL, (SELECT id FROM identity.app_user WHERE username = 'system'), 500000);
+
+SELECT count(*)::int INTO v_n FROM inventory.balance_check
+ WHERE qty_diff <> 0 OR value_diff <> 0;
+PERFORM pg_temp.assert_txt('پس از حرکت سالم، مغایرتی نیست', v_n::text, '0');
+
+-- حالا مانده را دستی خراب می‌کنیم — همان کاری که یک باگ یا یک psql
+-- دستی می‌تواند بکند، و دیتابیس جلویش را **نمی‌گیرد**.
+UPDATE inventory.stock_balance SET on_hand = on_hand + 7
+ WHERE variation_id = v_var;
+
+SELECT count(*)::int INTO v_n FROM inventory.balance_check
+ WHERE qty_diff <> 0 OR value_diff <> 0;
+PERFORM pg_temp.assert_txt('مانده دستکاری‌شده دیده می‌شود', v_n::text, '1');
 
 RAISE NOTICE E'\n✔ تمرین بازیابی — همه ادعاها پاس شدند';
 END $test$;
