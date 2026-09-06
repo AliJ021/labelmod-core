@@ -1,0 +1,170 @@
+#!/usr/bin/env bash
+# =====================================================================
+# تمرین بازیابی — بکاپ را واقعاً برمی‌گرداند و ادعاهای مالی را می‌راند
+# =====================================================================
+#
+#   ops/restore-drill.sh <فایل.dump>
+#   ops/restore-drill.sh              # آخرین دامپ در $BACKUP_DIR
+#
+# ── چرا این اسکریپت وجود دارد ─────────────────────────────────────────
+#
+# بند ۴ `docs/SECURITY.md`: «بکاپی که Restore آن تست نشده، بکاپ نیست —
+# یک فایل است با یک فرض.»
+#
+# تا امروز آن جمله فقط یک جمله بود: تنظیم `backup.restore_drill_days`
+# وجود داشت و **هیچ‌جا خوانده نمی‌شد**. سند وعده هشدار می‌داد و کد
+# هشداری نمی‌ساخت.
+#
+# ── چه چیزی واقعاً سنجیده می‌شود ──────────────────────────────────────
+#
+# «فایل باز شد» کافی نیست. یک دامپ می‌تواند بی‌خطا بازیابی شود و باز هم
+# بی‌فایده باشد: جدولی خالی، سندی نامتوازن، یا زنجیره حسابرسی شکسته.
+# پس پس از بازیابی، **همان ادعاهایی** که CI روی دیتابیس زنده می‌راند
+# اینجا هم رانده می‌شوند.
+#
+# ⚠️ بازیابی در یک دیتابیس **یک‌بارمصرف** انجام می‌شود که در پایان
+#    انداخته می‌شود. این اسکریپت هرگز روی دیتابیس عملیاتی نمی‌نویسد —
+#    یک تمرین بازیابی که داده واقعی را خراب کند، از نداشتنش بدتر است.
+# =====================================================================
+set -euo pipefail
+cd "$(dirname "$0")/.."
+: "${DATABASE_URL:?DATABASE_URL تنظیم نشده است}"
+export PGCLIENTENCODING="${PGCLIENTENCODING:-UTF8}"
+
+PSQL="psql -v ON_ERROR_STOP=1 -qtA"
+
+# ── انتخاب فایل ──────────────────────────────────────────────────────
+DUMP="${1:-}"
+if [ -z "$DUMP" ]; then
+  DIR="${BACKUP_DIR:-./backup}"
+  # جدیدترین دامپ. `ls -t` روی نام فایل با فاصله می‌شکند، پس `find`.
+  DUMP="$(find "$DIR" -maxdepth 1 -name '*.dump' -printf '%T@ %p\n' 2>/dev/null \
+          | sort -rn | head -1 | cut -d' ' -f2-)"
+fi
+if [ -z "$DUMP" ] || [ ! -f "$DUMP" ]; then
+  echo "✗ فایل بکاپ پیدا نشد. یک مسیر بدهید یا BACKUP_DIR را تنظیم کنید."
+  exit 1
+fi
+
+BYTES=$(stat -c%s "$DUMP" 2>/dev/null || echo 0)
+echo "── تمرین بازیابی ──────────────────────────────────────────"
+echo "  فایل: $DUMP"
+echo "  حجم: $BYTES بایت"
+echo
+
+# ── دیتابیس یک‌بارمصرف ───────────────────────────────────────────────
+# نامش تصادفی است تا دو اجرای هم‌زمان به هم نخورند.
+TARGET="labelmod_drill_$$_$(date +%s)"
+ADMIN_URL="${DATABASE_URL%/*}/postgres"
+
+cleanup () {
+  psql -q -d "$ADMIN_URL" -c "DROP DATABASE IF EXISTS \"$TARGET\" WITH (FORCE)" >/dev/null 2>&1 || true
+}
+trap cleanup EXIT
+
+echo "  ساخت دیتابیس یک‌بارمصرف: $TARGET"
+psql -q -d "$ADMIN_URL" -c "CREATE DATABASE \"$TARGET\"" >/dev/null
+
+DRILL_URL="${DATABASE_URL%/*}/$TARGET"
+
+echo "  بازیابی…"
+# ⚠️ بدون `--exit-on-error`: یک دامپ سالم هم ممکن است روی نقش‌ها و
+#    افزونه‌هایی که در این دیتابیس نیستند هشدار بدهد. آنچه اهمیت دارد
+#    ادعاهای زیر است، نه بی‌صدا بودن pg_restore.
+RESTORE_LOG="$(mktemp)"
+if ! pg_restore --no-owner --no-privileges -d "$DRILL_URL" "$DUMP" >"$RESTORE_LOG" 2>&1; then
+  echo "  ⚠️ pg_restore هشدار داد (چند سطر آخر):"
+  tail -5 "$RESTORE_LOG" | sed 's/^/     /'
+fi
+rm -f "$RESTORE_LOG"
+
+# ── ادعاها روی داده بازیابی‌شده ──────────────────────────────────────
+PASSED=0
+FAILED=0
+
+check () {                       # check "توضیح" "SQL که یک عدد می‌دهد" "مقدار انتظار"
+  local label="$1" sql="$2" want="$3" got
+  got="$($PSQL -d "$DRILL_URL" -c "$sql" 2>/dev/null || echo "ERR")"
+  if [ "$got" = "$want" ]; then
+    echo "  ✓ $label"
+    PASSED=$((PASSED + 1))
+  else
+    echo "  ✗ $label — انتظار «$want»، واقعی «$got»"
+    FAILED=$((FAILED + 1))
+  fi
+}
+
+at_least () {                    # at_least "توضیح" "SQL" حداقل
+  local label="$1" sql="$2" min="$3" got
+  got="$($PSQL -d "$DRILL_URL" -c "$sql" 2>/dev/null || echo "ERR")"
+  if [ "$got" != "ERR" ] && [ "$got" -ge "$min" ] 2>/dev/null; then
+    echo "  ✓ $label = $got"
+    PASSED=$((PASSED + 1))
+  else
+    echo "  ✗ $label — انتظار دست‌کم $min، واقعی «$got»"
+    FAILED=$((FAILED + 1))
+  fi
+}
+
+echo
+echo "── ادعاها روی داده بازیابی‌شده ─────────────────────────────"
+
+# ۱. اسکیما آمده است. دامپی که جدول‌ها را نیاورد، بی‌خطا هم که باشد
+#    بی‌فایده است.
+at_least "جدول‌های مالی برگشته‌اند" \
+  "SELECT count(*) FROM information_schema.tables
+    WHERE table_schema IN ('platform','identity','catalog','inventory',
+                           'purchasing','sales','treasury','ledger')" 40
+
+# ۲. کدینگ حساب و قواعد ثبت — بدون این‌ها هیچ سندی ساختنی نیست.
+at_least "کدینگ حساب برگشته" "SELECT count(*) FROM ledger.account" 10
+at_least "قواعد ثبت برگشته"  "SELECT count(*) FROM ledger.posting_rule" 5
+at_least "تنظیمات برگشته"    "SELECT count(*) FROM platform.setting" 20
+
+# ۳. همان ادعاهای پایداری که CI روی دیتابیس زنده می‌راند.
+check "هیچ سند نامتوازنی نیست" \
+  "SELECT count(*) FROM (SELECT entry_id FROM ledger.journal_line
+     GROUP BY entry_id HAVING sum(debit) <> sum(credit)) x" 0
+
+check "هیچ موجودی منفی‌ای نیست" \
+  "SELECT count(*) FROM inventory.stock_balance WHERE on_hand < 0" 0
+
+# ۴. زنجیره هش لاگ حسابرسی — **حلقه به حلقه**، نه فقط «هش وجود دارد».
+#    `prev_hash` هر سطر باید دقیقاً `hash` سطر پیشین باشد. دامپی که
+#    وسطش افتاده یا سطری از آن حذف شده، همین‌جا لو می‌رود — و این تنها
+#    ادعایی است که دستکاری تاریخچه را می‌گیرد.
+check "زنجیره حسابرسی حلقه‌به‌حلقه سالم است" \
+  "SELECT count(*) FROM (
+     SELECT a.prev_hash,
+            lag(a.hash) OVER (ORDER BY a.id) AS expected
+       FROM platform.audit_log a) x
+    WHERE x.expected IS NOT NULL
+      AND x.prev_hash IS DISTINCT FROM x.expected" 0
+
+# ۵. توابع مالی هم آمده‌اند، نه فقط جدول‌ها. دامپ فقط-داده اینجا رد
+#    می‌شود — و آن دقیقاً همان بکاپی است که در روز بد به درد نمی‌خورد.
+at_least "توابع مالی برگشته‌اند" \
+  "SELECT count(*) FROM pg_proc p JOIN pg_namespace n ON n.oid = p.pronamespace
+    WHERE n.nspname IN ('platform','sales','inventory','treasury','ledger')" 30
+
+echo
+if [ "$FAILED" -gt 0 ]; then
+  echo "✗ تمرین بازیابی ناموفق: $FAILED ادعا شکست خورد ($PASSED پاس)"
+  OK=false
+else
+  echo "✓ تمرین بازیابی موفق — $PASSED ادعا پاس شد"
+  OK=true
+fi
+
+# ── ثبت در دیتابیس **عملیاتی** ───────────────────────────────────────
+# ⚠️ تنها نوشتنِ این اسکریپت روی دیتابیس واقعی، همین یک سطر است.
+NOTE="$(basename "$DUMP")"
+psql -q -d "$DATABASE_URL" -c \
+  "SELECT platform.record_restore_drill(
+     \$\$$NOTE\$\$, $OK, $PASSED, $BYTES, NULL, NULL)" >/dev/null
+
+echo
+echo "── وضعیت مهلت ─────────────────────────────────────────────"
+psql -d "$DATABASE_URL" -c "SELECT * FROM platform.restore_drill_status"
+
+[ "$FAILED" -eq 0 ]

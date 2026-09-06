@@ -325,4 +325,85 @@ describe("گزارش‌ها", { skip }, () => {
     const rows = (JSON.parse(r.body) as { rows: Array<{ partyType: string }> }).rows;
     for (const x of rows) assert.equal(x.partyType, "supplier", "فیلتر نوع شخص کار می‌کند");
   });
+
+  // ── خروجی CSV ───────────────────────────────────────────────────
+
+  test("CSV از همان مسیر می‌آید و BOM دارد", async () => {
+    const r = await get(admin, `/reports/sales?from=${today}&to=${today}&format=csv`);
+    assert.equal(r.statusCode, 200, r.body);
+    assert.match(r.headers["content-type"] as string, /text\/csv/);
+    // بدون BOM، اکسل ویندوز فارسی را نامفهوم نشان می‌دهد.
+    assert.equal(r.body.codePointAt(0), 0xfeff, "BOM باید اولین نویسه باشد");
+    assert.ok(r.body.includes("فروش ناخالص (ریال)"), r.body.slice(0, 200));
+    assert.ok(r.body.includes("2000000"), "مبلغ باید در فایل باشد");
+  });
+
+  test("هدر دانلود نام فارسی و ASCII هر دو را می‌دهد", async () => {
+    const r = await get(admin, `/reports/sales?from=${today}&to=${today}&format=csv`);
+    const cd = r.headers["content-disposition"] as string;
+    assert.match(cd, /attachment;/);
+    assert.match(cd, /filename="sales\.csv"/);
+    assert.match(cd, /filename\*=UTF-8''/);
+    // فایل مالی نباید در حافظه پنهان بماند.
+    assert.equal(r.headers["cache-control"], "no-store");
+  });
+
+  test("CSV همان چیزی را می‌دهد که JSON می‌دهد — نه بیشتر", async () => {
+    // **ادعای مرکزی.** اگر CSV مسیر جدایی داشت، دروازه‌هایش دیر یا زود
+    // از مسیر JSON عقب می‌ماندند — و آن همان است که دور زده می‌شود.
+    // سرپرست `cost.view` ندارد، پس ستون بها و سود باید در فایل هم
+    // **خالی** باشند، نه صفر و نه عدد واقعی.
+    const json = await get(supervisor, `/reports/sales?from=${today}&to=${today}`);
+    const rows = (JSON.parse(json.body) as { rows: Array<Record<string, unknown>> }).rows;
+    assert.equal(rows[0]?.cogsAmount, null, "JSON باید بها را پوشانده باشد");
+
+    const csv = await get(supervisor, `/reports/sales?from=${today}&to=${today}&format=csv`);
+    assert.equal(csv.statusCode, 200, csv.body);
+    const line = csv.body.trim().split("\r\n").at(-1) ?? "";
+    // دو ستون آخر بها و سودند و باید خالی باشند.
+    assert.ok(line.endsWith(",,"), `دو ستون آخر باید خالی باشند: ${line}`);
+    assert.ok(!line.includes("800000"), "بهای واقعی نباید در فایل باشد");
+  });
+
+  test("CSV بدون مجوز هم بسته است", async () => {
+    // مجوز **پیش از** تصمیم قالب سنجیده می‌شود.
+    const r = await get(supervisor, `/reports/profit-by-product?from=${today}&to=${today}&format=csv`);
+    assert.equal(r.statusCode, 403, "سرپرست سود کالا را در CSV هم نمی‌بیند");
+    assert.ok(!(r.headers["content-type"] as string).includes("csv"), "پاسخ خطا CSV نیست");
+  });
+
+  test("قالب ناشناخته رد می‌شود، نه اینکه JSON فرض شود", async () => {
+    const r = await get(admin, `/reports/sales?from=${today}&to=${today}&format=xlsx`);
+    assert.equal(r.statusCode, 400, r.body);
+  });
+
+  test("هر هشت گزارش CSV می‌دهند", async () => {
+    // کد حساب از **قاعده ثبت** گرفته می‌شود، نه Hardcode: کدینگ حساب
+    // یک تصمیم باز است و در جدول می‌نشیند، نه در کد. گزارش دفتر هم
+    // برای حسابی که گردش ندارد باید ۲۰۰ با جدول خالی بدهد، نه خطا.
+    const acc = await sql<{ code: string }>`
+      SELECT account_code AS code FROM ledger.posting_rule LIMIT 1
+    `.execute(handle.db);
+    const code = acc.rows[0]?.code;
+    assert.ok(code, "قاعده ثبت باید حساب داشته باشد");
+
+    // گزارشی که خروجی CSV نداشته باشد، همان است که حسابدار دستی
+    // رونویسی‌اش می‌کند.
+    const urls = [
+      `/reports/sales?from=${today}&to=${today}`,
+      `/reports/profit-by-product?from=${today}&to=${today}`,
+      `/reports/inventory-valuation?warehouseId=${STORE_WH}`,
+      `/reports/stock-movements?variationId=${variationId}&from=${today}&to=${today}`,
+      `/reports/trial-balance?from=${today}&to=${today}`,
+      `/reports/party-balances`,
+      `/reports/cash-reconciliation?from=${today}&to=${today}`,
+      `/reports/account-ledger?code=${code}&from=${today}&to=${today}`,
+    ];
+    for (const u of urls) {
+      const r = await get(admin, `${u}${u.includes("?") ? "&" : "?"}format=csv`);
+      assert.equal(r.statusCode, 200, `${u}: ${r.body.slice(0, 150)}`);
+      assert.match(r.headers["content-type"] as string, /text\/csv/, u);
+      assert.equal(r.body.codePointAt(0), 0xfeff, `${u} بدون BOM`);
+    }
+  });
 });

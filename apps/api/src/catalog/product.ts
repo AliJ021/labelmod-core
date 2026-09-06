@@ -209,7 +209,7 @@ export class ProductService {
           .on("pr.valid_to", "is", null)
           .on("pr.price_list", "=", "default"),
       )
-      .select((eb) => [
+      .select((_eb) => [
         "v.id",
         "v.color",
         "v.size",

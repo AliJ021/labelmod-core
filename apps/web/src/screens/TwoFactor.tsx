@@ -109,9 +109,13 @@ export function TwoFactor() {
         const name = (err as { name?: string }).name;
         if (name === "NotAllowedError") return;
         if (name === "InvalidStateError") {
-          throw new Error("این کلید از قبل روی همین حساب ثبت شده است.");
+          throw new Error("این کلید از قبل روی همین حساب ثبت شده است.", {
+            cause: err,
+          });
         }
-        throw new Error("مرورگر نتوانست کلید را بسازد. دوباره تلاش کنید.");
+        throw new Error("مرورگر نتوانست کلید را بسازد. دوباره تلاش کنید.", {
+          cause: err,
+        });
       }
       await session.finishWebauthnRegistration(response, keyName);
       setKeyName("");

@@ -70,6 +70,12 @@ case "${1:-}" in
     #    ندارد. زنگ خطری که دیده نشود، زنگ خطر نیست.
     echo "── پیام‌های نرفته (باید خالی باشد) ──"
     in_db_tools "psql -d \"\$DATABASE_URL\" -c 'SELECT id, topic, attempts, left(last_error,60) AS error, age FROM platform.outbox_dead LIMIT 20'" || true
+    # ⚠️ «بکاپی که Restore آن تست نشده، بکاپ نیست» تا امروز فقط یک
+    #    جمله در سند بود: تنظیم `backup.restore_drill_days` وجود داشت
+    #    و هیچ‌جا خوانده نمی‌شد. حالا زنگش اینجاست، جایی که دیده
+    #    می‌شود — زنگی که کسی نبیند، زنگ نیست.
+    echo "── تمرین بازیابی (never یا overdue یعنی اقدام لازم است) ──"
+    in_db_tools "psql -d \"\$DATABASE_URL\" -c 'SELECT * FROM platform.restore_drill_status'" || true
     echo "── چک سررسیدشده ──"
     in_db_tools "psql -d \"\$DATABASE_URL\" -c \"SELECT * FROM treasury.cheque_due WHERE urgency <> 'future' LIMIT 20\"" || true
     ;;

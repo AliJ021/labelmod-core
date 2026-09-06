@@ -1274,3 +1274,19 @@ select.set-input {
   min-height: 44px;
   white-space: nowrap;
 }
+
+/*
+  دکمه دانلود CSV.
+
+  یک `<a>` است، نه `<button>` — چون واقعاً یک پیمایش است و باید با
+  «باز کردن در زبانه تازه» و کلید میانی موس هم کار کند. ولی مثل دکمه
+  دیده می‌شود، چون کاربر آن را یک عمل می‌بیند نه یک پیوند.
+
+  ارتفاع ۴۴ پیکسل: همان بودجه هدف لمسی که بقیه دکمه‌ها دارند.
+*/
+.csv-link {
+  display: inline-flex;
+  align-items: center;
+  min-height: 44px;
+  text-decoration: none;
+}

@@ -322,7 +322,7 @@ export async function buildApp(deps: AppDeps): Promise<FastifyInstance> {
   });
   registerWebRoutes(app, {
     db: deps.db,
-    webOrders: new WebOrderService(deps.db, invoices),
+    webOrders: new WebOrderService(invoices),
     invoices,
   });
   registerPublicRoutes(app, { db: deps.db });

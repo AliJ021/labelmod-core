@@ -95,7 +95,9 @@ export function Login({ onDone }: { onDone: () => void }) {
         response = await getAssertion(options);
       } catch (err) {
         if ((err as { name?: string }).name === "NotAllowedError") return;
-        throw new Error("مرورگر نتوانست کلید را بخواند. دوباره تلاش کنید.");
+        throw new Error("مرورگر نتوانست کلید را بخواند. دوباره تلاش کنید.", {
+          cause: err,
+        });
       }
       await session.verifyWebauthnLogin(response);
       onDone();

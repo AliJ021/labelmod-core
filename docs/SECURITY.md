@@ -147,8 +147,15 @@ REVOKE UPDATE, DELETE ON inventory.stock_movement  FROM labelmod_app;
 ```
 
 **تمرین Restore ماهانه اجباری است.** بکاپی که Restore آن تست نشده، بکاپ
-نیست — یک فایل است با یک فرض. تنظیم `backup.restore_drill_days` عبور از
-مهلت را هشدار می‌دهد.
+نیست — یک فایل است با یک فرض.
+
+`ops/restore-drill.sh` دامپ را در یک دیتابیس یک‌بارمصرف برمی‌گرداند و
+هشت ادعا رویش می‌راند — از جمله زنجیره حسابرسی، حلقه‌به‌حلقه. سابقه در
+`platform.restore_drill` (تغییرناپذیر) می‌نشیند و
+`platform.restore_drill_status` عبور از `backup.restore_drill_days` را
+`overdue` اعلام می‌کند؛ نبودِ هر تمرینی `never` است.
+
+⚠️ تمرین **ناموفق** زنگ را خاموش نمی‌کند.
 
 ---
 
