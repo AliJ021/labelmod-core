@@ -466,7 +466,7 @@ Microservice · Redis · Kubernetes · حالت آفلاین کامل · Windows
 ```
 db/migrations/   اسکیما و توابع — شماره‌دار، SQL خام، قابل حسابرسی
 db/seed/         کدینگ حساب، قواعد ثبت، تنظیمات، داده مرجع
-db/test/         ۳۳ فایل تست مالی — در CI و pre-push اجرا می‌شوند
+db/test/         ۳۴ فایل تست مالی — در CI و pre-push اجرا می‌شوند
 docs/            ADR-001 تا ADR-006 · SECURITY.md · DEPLOYMENT.md
 ops/             db.sh · deploy.sh · install-hooks.sh · close-due-days.sh
                  restore-drill.sh — بکاپ را واقعاً برمی‌گرداند
