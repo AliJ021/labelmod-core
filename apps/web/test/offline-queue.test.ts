@@ -118,13 +118,13 @@ describe("صف آفلاین", () => {
     assert.equal(out.sent, 1);
     assert.equal(out.rejected.length, 1);
     assert.equal(out.rejected[0]!.id, "a");
-    assert.equal((await q.pending()).length, 0, "هر دو باید از صف رفته باشند");
+    const pending = await q.pending();
+    assert.equal(pending.length, 1, "فقط درخواست تأییدشده از صف خارج می‌شود");
+    assert.equal(pending[0]!.id, "a");
+    assert.equal(pending[0]!.pausedReason, "response_error");
   });
 
-  test("شکست بی‌پایان صف را برای همیشه نگه نمی‌دارد", async () => {
-    // ده بار شکست شبکه‌ای پشت‌سرهم یعنی چیزی جز شبکه ایراد دارد.
-    // نگه‌داشتنش تا ابد یعنی صف هرگز خالی نشود و کاربر هرگز نفهمد
-    // فروشش ثبت نشده.
+  test("سقف تلاش ارسال خودکار را متوقف می‌کند و داده را نگه می‌دارد", async () => {
     const q = new OfflineQueue({
       store: memoryStore(),
       send: async () => {
@@ -138,8 +138,9 @@ describe("صف آفلاین", () => {
     await q.flush();
     const last = await q.flush();
 
-    assert.equal(last.rejected.length, 1, "پس از سقف تلاش باید بیرون برود");
-    assert.equal((await q.pending()).length, 0);
+    assert.equal(last.rejected.length, 1, "پس از سقف تلاش نیازمند رسیدگی است");
+    assert.equal((await q.pending()).length, 1);
+    assert.equal((await q.pending())[0]!.pausedReason, "retry_limit");
   });
 
   test("صف خالی، تلاشی نمی‌کند", async () => {
