@@ -40,8 +40,11 @@ HITS=$(git grep -anE "$PATTERNS" -- \
       | grep -v 'ci_only_not_a_real_secret' \
       | while IFS= read -r hit; do
           path=${hit%%:*}; rest=${hit#*:}; text=${rest#*:}
+          # CRLF is a line ending, not part of the exact fixture text.
+          # Strip one terminal CR only; embedded bytes still affect the hash.
+          text=${text%$'\r'}
           digest=$(printf '%s\t%s' "$path" "$text" | sha256sum | cut -d' ' -f1)
-          grep -qxF "$digest" "$ALLOWLIST" 2>/dev/null || printf '%s\n' "$hit"
+          sed 's/\r$//' "$ALLOWLIST" 2>/dev/null | grep -xF "$digest" >/dev/null || printf '%s\n' "$hit"
         done || true)
 
 if [ -n "$HITS" ]; then

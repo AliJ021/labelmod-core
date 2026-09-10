@@ -12,13 +12,13 @@ const hook = readFileSync(path.join(repo, "ops/hooks/pre-push"), "utf8");
 const line = 'const secret = "synthetic-fixture-value";';
 const digest = createHash("sha256").update(`sample.ts\t${line}`).digest("hex");
 
-function scan(eol: string, file = "sample.ts", text = line, allow = digest): number | null {
+function scan(eol: string, file = "sample.ts", text = line, allow = digest, allowEol = eol): number | null {
   // این مخزن کوچک فقط اسکن Hook را می‌سنجد؛ package.json و دیتابیس محصول ندارد.
   const dir = mkdtempSync(path.join(tmpdir(), "labelmod-secret-fixture-"));
   try {
     mkdirSync(path.join(dir, "ops/hooks"), { recursive: true });
     writeFileSync(path.join(dir, "ops/hooks/pre-push"), hook.replace(/\r\n/g, "\n"));
-    writeFileSync(path.join(dir, "ops/secret-allowlist.txt"), allow + eol);
+    writeFileSync(path.join(dir, "ops/secret-allowlist.txt"), allow + allowEol);
     mkdirSync(path.dirname(path.join(dir, file)), { recursive: true });
     writeFileSync(path.join(dir, file), text + eol);
     const env = { ...process.env, DATABASE_URL: "" };
@@ -38,6 +38,9 @@ function scan(eol: string, file = "sample.ts", text = line, allow = digest): num
 
 test("استثنای دقیق با LF پذیرفته می‌شود", () => assert.equal(scan("\n"), 0));
 test("همان استثنا با CRLF ویندوز هم پذیرفته می‌شود", () => assert.equal(scan("\r\n"), 0));
+test("فایل CRLF و فهرست LF همان استثنای دقیق‌اند", () => assert.equal(scan("\r\n", "sample.ts", line, digest, "\n"), 0));
+test("فایل LF و فهرست CRLF همان استثنای دقیق‌اند", () => assert.equal(scan("\n", "sample.ts", line, digest, "\r\n"), 0));
+test("CR داخل متن بخشی از هش است و آزاد نمی‌شود", () => assert.equal(scan("\n", "sample.ts", line.replace("fixture", "fix\rture")), 1));
 test("انتقال همان متن به مسیر دیگر مجاز نمی‌شود", () => assert.equal(scan("\n", "other.ts"), 1));
 test("مقدار تازه در همان مسیر مجاز نمی‌شود", () => assert.equal(scan("\n", "sample.ts", line.replace("fixture", "changed")), 1));
 test("نبود استثنا شکست می‌دهد", () => assert.equal(scan("\n", "sample.ts", line, ""), 1));
