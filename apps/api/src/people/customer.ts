@@ -261,6 +261,7 @@ export class CustomerService {
   async fitting(
     customerId: string,
     q: { warehouseId?: string | undefined; minScore?: number | undefined; limit: number },
+    allowedBranches: readonly string[] | "all",
   ): Promise<FittingVariation[]> {
     const r = await sql<{
       variation_id: string; sku: string; product_name: string;
@@ -270,7 +271,8 @@ export class CustomerService {
               on_hand::text, match_score::text, matched_keys
          FROM catalog.fitting_variations(
            ${customerId}::uuid, ${q.warehouseId ?? null}::uuid,
-           ${q.minScore ?? null}::numeric, ${q.limit}::int)`
+           ${q.minScore ?? null}::numeric, ${q.limit}::int,
+           ${allowedBranches === "all" ? null : allowedBranches}::uuid[])`
       .execute(this.#db);
     return r.rows.map((x) => ({
       variationId: x.variation_id,

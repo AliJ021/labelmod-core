@@ -31,7 +31,7 @@ import { AuthError } from "../auth/service.ts";
 import { requireForSession } from "../auth/permission.ts";
 import type { Db } from "../db/client.ts";
 import { parseMoney } from "../lib/money.ts";
-import { assertBranch, branchesOf } from "../sales/scope.ts";
+import { assertBranch, branchesOf, ScopeError } from "../sales/scope.ts";
 import { UserError, type UserService } from "../people/user.ts";
 import { CustomerError, type CustomerService } from "../people/customer.ts";
 
@@ -400,7 +400,17 @@ export function registerPeopleRoutes(app: FastifyInstance, deps: PeopleRouteDeps
       .parse(req.query);
     await requireForSession(db, s, "customer.manage");
 
-    return { variations: await customers.fitting(id, q) };
+    const allowed = await branchesOf(db, s.userId);
+    if (q.warehouseId !== undefined) {
+      const warehouse = await db.selectFrom("inventory.warehouse")
+        .select("branch_id").where("id", "=", q.warehouseId).executeTakeFirst();
+      if (!warehouse) throw new ScopeError("انبار یافت نشد");
+      if (allowed !== "all" && !allowed.includes(warehouse.branch_id)) {
+        throw new ScopeError("به این شعبه دسترسی ندارید");
+      }
+    }
+    // دامنه پیش از جمع موجودی و LIMIT اعمال می‌شود، نه روی نتیجه محدودشده.
+    return { variations: await customers.fitting(id, q, allowed) };
   });
 
   app.get("/measure-keys", async (req) => {
