@@ -446,6 +446,11 @@ async function write(
   },
 ): Promise<string | null> {
   return await db.transaction().execute(async (trx) => {
+    // بررسی «افتتاحیه قبلاً ثبت شده؟» و اثر آن باید یک واحد سریالی باشند.
+    // قفل داخل apply_movement دیر است: دو واردات پیش از رسیدن به آن،
+    // هر دو count=0 می‌بینند. قفل تراکنشی با Commit یا Rollback آزاد می‌شود.
+    await sql`SELECT pg_advisory_xact_lock(
+      hashtextextended(${"legacy-import:" + input.warehouseId}::text, 0))`.execute(trx);
     await sql`SELECT platform.set_actor(${input.actorId}::uuid)`.execute(trx);
 
     const variationBySku = new Map<string, string>();
