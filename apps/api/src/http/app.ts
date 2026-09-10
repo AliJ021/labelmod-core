@@ -125,6 +125,19 @@ export async function buildApp(deps: AppDeps): Promise<FastifyInstance> {
   const app = Fastify({
     logger: {
       level: config.LOG_LEVEL,
+      // Log route templates, never bearer capabilities or private query values.
+      // Unmatched paths are arbitrary input and have no safe route template.
+      serializers: {
+        req(request) {
+          const remotePort = request.socket?.remotePort;
+          return {
+            method: request.method,
+            url: request.routeOptions?.url ?? "[unmatched]",
+            remoteAddress: request.ip,
+            ...(remotePort === undefined ? {} : { remotePort }),
+          };
+        },
+      },
       // رمز، توکن، PIN و کوکی هرگز نباید در لاگ بنشینند.
       redact: {
         paths: [
@@ -242,7 +255,7 @@ export async function buildApp(deps: AppDeps): Promise<FastifyInstance> {
         safeEqual(cookieToken, headerToken);
 
       if (!ok) {
-        req.log.warn({ correlationId: req.id, path: req.url }, "توکن CSRF نامعتبر");
+        req.log.warn({ correlationId: req.id, path: req.routeOptions.url ?? "[unmatched]" }, "توکن CSRF نامعتبر");
         return reply.code(403).send({
           error: {
             code: "csrf_failed",
