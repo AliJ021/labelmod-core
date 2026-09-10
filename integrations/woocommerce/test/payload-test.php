@@ -489,6 +489,8 @@ assert_eq('مبلغ بی‌شکل صفر می‌شود', LMC_Instore::to_site_am
 // ── خلاصه ───────────────────────────────────────────────────────────
 
 echo "\n";
+require __DIR__ . '/stock-run-test.php';
+
 if ($failed > 0) {
     printf("✗ %d ادعا شکست خورد (%d پاس)\n", $failed, $passed);
     exit(1);

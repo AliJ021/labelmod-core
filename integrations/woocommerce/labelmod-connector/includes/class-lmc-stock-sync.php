@@ -134,11 +134,16 @@ class LMC_Stock_Sync
             // دیتابیس، فروش نامحدود در ویترین.
             if (!$product->get_manage_stock()) {
                 $product->set_manage_stock(true);
+                $changed = true;
             }
 
-            if ((int) $product->get_stock_quantity() !== $available) {
+            if ($product->get_stock_quantity() === null || (int) $product->get_stock_quantity() !== $available) {
                 $product->set_stock_quantity($available);
-                $product->set_stock_status($available > 0 ? 'instock' : 'outofstock');
+                $changed = true;
+            }
+            $stock_status = $available > 0 ? 'instock' : 'outofstock';
+            if ($product->get_stock_status() !== $stock_status) {
+                $product->set_stock_status($stock_status);
                 $changed = true;
             }
 
