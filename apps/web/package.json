@@ -7,7 +7,7 @@
     "build": "tsc -p tsconfig.json --noEmit && vite build",
     "preview": "vite preview",
     "typecheck": "tsc -p tsconfig.json --noEmit",
-    "test": "node --experimental-strip-types --test 'test/**/*.test.ts'"
+    "test": "node --experimental-strip-types --test \"test/**/*.test.ts\""
   },
   "dependencies": {
     "barcode-detector": "3.2.2",
