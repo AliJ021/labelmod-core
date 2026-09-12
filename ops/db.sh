@@ -190,10 +190,15 @@ run_tests () {
     grep -q '✗' <<<"$out" && fail=1 || true
   done
 
-  if [ -f db/test/concurrency.sh ]; then
-    echo; echo "═══ db/test/concurrency.sh ═══"
-    DATABASE_URL="$TESTURL" bash db/test/concurrency.sh || fail=1
-  fi
+  # تست‌های پوسته‌ای: آن‌هایی که به **دو نشست مجزا** یا به نقش دیگری
+  # نیاز دارند و داخل یک تراکنش psql بیان‌شدنی نیستند.
+  # ⚠️ حلقه است، نه نام ثابت: پیش از این فقط `concurrency.sh` صدا زده
+  #    می‌شد، پس تست پوسته‌ای تازه **بی‌صدا** اجرا نمی‌شد.
+  for f in db/test/*.sh; do
+    [ -f "$f" ] || continue
+    echo; echo "═══ $f ═══"
+    DATABASE_URL="$TESTURL" bash "$f" || fail=1
+  done
 
   cleanup; trap - EXIT
   echo

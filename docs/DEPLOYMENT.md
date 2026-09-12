@@ -407,10 +407,67 @@ ops/deploy.sh logs scheduler
 - [ ] کپی رمزنشده بکاپ **خارج از سرور** می‌رود، کلید هم جای دیگری است
 - [ ] ۲FA مدیر و حسابدار فعال
 - [ ] محدودیت نرخ روی ورود و OTP فعال
+- [ ] `ops/db-roles.sh` اجرا شده **و** `DATABASE_URL` برنامه به
+      `labelmod_app` عوض شده — بخش ۱۱
 - [ ] `SELECT * FROM sales.unposted_revenue;` خالی است
+- [ ] `SELECT * FROM inventory.ledger_check WHERE diff <> 0;` خالی است
 - [ ] `SELECT key, value FROM platform.setting WHERE requires_approval;` مرور شده
 - [ ] **یک بار با بارکدخوان فیزیکی و یک بار با دوربین آیفون روی HTTPS
       امتحان شده** — هیچ تستی جای این را نمی‌گیرد
+
+---
+
+## ۱۱. نقش برنامه بدون حق نوشتن مستقیم
+
+بند ۳ `docs/SECURITY.md` می‌گوید نقش اپلیکیشن نباید DDL بزند و نباید روی
+جدول‌های تغییرناپذیر بنویسد. **تا شهریور ۱۴۰۵ این فقط یک جمله بود** — نه
+نقشی ساخته می‌شد، نه `REVOKE`ای اجرا. `docker-compose.yml` یک کاربر
+می‌سازد که **مالک** دیتابیس است و همه‌چیز را می‌تواند، از جمله
+`UPDATE inventory.stock_balance SET on_hand = 999`.
+
+```bash
+# با DATABASE_URL مالک — همان که مهاجرت با آن اجرا می‌شود
+APP_PASSWORD='یک رمز تصادفی بلند' ops/db-roles.sh
+```
+
+اسکریپت Idempotent است: اجرای دوباره فقط GRANT/REVOKE را تازه می‌کند و
+رمز را تنها وقتی عوض می‌کند که `APP_PASSWORD` داده شده باشد.
+
+سپس در `.env`، متغیر اتصال **برنامه** (و فقط برنامه) به نقش تازه عوض شود.
+مهاجرت‌ها با همان نقش مالک قبلی اجرا می‌شوند:
+
+```
+DATABASE_URL=postgres://labelmod_app:<رمز>@db:5432/labelmod   # api و worker
+MIGRATION_DATABASE_URL=postgres://labelmod:<رمز>@db:5432/labelmod
+```
+
+⚠️ **تا این متغیر عوض نشود، اجرای اسکریپت هیچ محدودیتی فعال نمی‌کند.**
+نقش ساخته می‌شود و بی‌استفاده می‌ماند.
+
+⚠️ **پس از هر مهاجرتی که جدول تازه بسازد**، اسکریپت را دوباره اجرا کنید.
+`ALTER DEFAULT PRIVILEGES` بیشتر موارد را پوشش می‌دهد، ولی جدولی که پیش
+از تنظیم آن ساخته شده باشد GRANT نمی‌گیرد.
+
+### چه چیزی واقعاً بسته می‌شود
+
+هفت حمله که با نقش مالک همه‌شان موفق می‌شوند:
+
+| حمله | با نقش برنامه |
+|---|---|
+| `UPDATE`/`DELETE`/`INSERT` روی `inventory.stock_movement` | رد |
+| `UPDATE`/`DELETE` روی `platform.audit_log` | رد |
+| `CREATE TABLE` در اسکیمای مالی | رد |
+| **`UPDATE` مستقیم روی `inventory.stock_balance`** | رد |
+| `SELECT inventory.apply_movement(…)` | **کار می‌کند** |
+
+سطر آخر مهم‌ترین است: بی‌آن، قفل دروازه را هم بسته بود. مهاجرت ۰۵۰ آن
+تابع را `SECURITY DEFINER` کرد تا هر دو هم‌زمان ممکن شوند.
+`db/test/db-roles.sh` همین جدول را در CI می‌سنجد.
+
+⚠️ برای نقش **مالک** هیچ‌کدام بسته نیست و نباید باشد — مهاجرت با همان
+نقش اجرا می‌شود. پس نماهای `inventory.balance_check` و
+`inventory.ledger_check` هنوز لازم‌اند و `ops/deploy.sh status` نشانشان
+می‌دهد.
 
 ---
 
