@@ -82,6 +82,10 @@ case "${1:-}" in
     #    نیمه‌کاره — تنها راه فهمیدنش همین است.
     echo "── مغایرت مانده انبار با حرکت‌ها (باید خالی باشد) ──"
     in_db_tools "psql -d \"\$DATABASE_URL\" -c 'SELECT * FROM inventory.balance_check WHERE qty_diff <> 0 OR value_diff <> 0 LIMIT 20'" || true
+
+  echo "── واگرایی دفتر با ارزش واقعی انبار ──"
+  # balance_check انبار را با حرکت‌هایش می‌سنجد؛ این یکی انبار را با **دفتر**.
+  in_db_tools "psql -d \"\$DATABASE_URL\" -c 'SELECT * FROM inventory.ledger_check WHERE diff <> 0'" || true
     echo "── تمرین بازیابی (never یا overdue یعنی اقدام لازم است) ──"
     in_db_tools "psql -d \"\$DATABASE_URL\" -c 'SELECT * FROM platform.restore_drill_status'" || true
     echo "── چک سررسیدشده ──"

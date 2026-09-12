@@ -430,3 +430,137 @@ describe("مهاجرت داده از سیستم فعلی", { skip }, () => {
     assert.equal(n.rows[0]!.name, "نام اصلاح‌شده");
   });
 });
+
+/**
+ * سند افتتاحیه در واردات چندمرحله‌ای — رگرسیون یک باگ اثبات‌شده.
+ *
+ * ⚠️ این باگ واقعاً در دفتر دیده شد. سطر موجودیِ سند افتتاحیه با
+ * `warehouse_id = <انبار جاری>` جمع می‌شد، ولی سند افتتاحیه **per
+ * branch** است و `post_opening_balance` سند باز قبلی را **کامل**
+ * معکوس می‌کند. پس واردات دومِ یک شعبهٔ دو‌انباره:
+ *
+ *   run 1 (STORE, 10×1000) → سند با موجودی ۱۰٬۰۰۰
+ *   run 2 (STOCK, 20×1000) → سند ۱ معکوس شد، سند تازه فقط ۲۰٬۰۰۰ داشت
+ *
+ *   stock_balance = ۳۰٬۰۰۰   ولی حساب ۱۳۰۱ = ۲۰٬۰۰۰
+ *
+ * ارزش موجودی انبار اول از **دفتر** حذف شد بی‌آنکه از **انبار** برود —
+ * و `inventory.balance_check` نمی‌گرفتش، چون آن نما `stock_balance` را
+ * با `stock_movement` می‌سنجد، نه با دفتر. آشکارسازش
+ * `inventory.ledger_check` است (مهاجرت ۰۴۹).
+ *
+ * این بلوک دیتابیس یک‌بارمصرف **خودش** را می‌گیرد: ادعاهایش به ترتیب
+ * اجرا و به دادهٔ باقی‌ماندهٔ بلوک بالا وابسته نیستند.
+ */
+describe("سند افتتاحیه در واردات چندمرحله‌ای", { skip }, () => {
+  let disposable: DisposableDb | null = null;
+  let handle: DbHandle;
+
+  const STOCK_WH = "00000000-0000-7000-8000-000000000102";
+  const cash = "leg,amount,party,note\ncash,500000,,موجودی صندوق\n";
+  const run = (warehouseId: string, files: Record<string, string>) =>
+    runImport(handle.db, {
+      files, branchId: BRANCH, warehouseId, fiscalYear: 1405,
+      actorId: SYSTEM_USER, commit: true,
+    });
+
+  before(async () => {
+    disposable = createDisposableDb(DATABASE_URL as string);
+    if (!disposable) throw new Error("ساخت دیتابیس یک‌بارمصرف ممکن نشد");
+    handle = createDb(disposable.url, 5);
+  });
+
+  after(async () => {
+    await handle?.close();
+    disposable?.drop();
+  });
+
+  test("واردات دو انبار پشت سر هم، دفتر را با ارزش واقعی انبار یکی نگه می‌دارد", async () => {
+    const a = await run(STORE_WH, {
+      "products.csv": "sku,name\nMW-A,کالای انبار الف\n",
+      "opening-stock.csv": "sku,qty,unit_cost\nMW-A,10,1000\n",
+      "opening-balances.csv": cash,
+    });
+    assert.deepEqual(a.errors, []);
+
+    const b = await run(STOCK_WH, {
+      "products.csv": "sku,name\nMW-B,کالای انبار ب\n",
+      "opening-stock.csv": "sku,qty,unit_cost\nMW-B,20,1000\n",
+      "opening-balances.csv": cash,
+    });
+    assert.deepEqual(b.errors, []);
+
+    // مرجع مستقل: ارزش واقعی انبار از stock_balance، نه از همان تابعی
+    // که سند را ساخته.
+    const real = await sql<{ v: string }>`
+      SELECT coalesce(sum(total_value), 0)::text AS v FROM inventory.stock_balance`
+      .execute(handle.db);
+    assert.equal(real.rows[0]!.v, "30000", "ارزش واقعی انبار");
+
+    const check = await sql<{ ledger_value: string; stock_value: string; diff: string }>`
+      SELECT ledger_value::text, stock_value::text, diff::text FROM inventory.ledger_check`
+      .execute(handle.db);
+    assert.equal(check.rows[0]!.diff, "0",
+      `دفتر با انبار واگرا شد: دفتر ${check.rows[0]!.ledger_value} ` +
+      `در برابر انبار ${check.rows[0]!.stock_value}`);
+
+    // نقدِ سند اول نباید در جانشینی گم شود.
+    const cashNet = await sql<{ v: string }>`
+      SELECT coalesce(sum(l.debit - l.credit), 0)::text AS v
+        FROM ledger.journal_line l JOIN ledger.journal_entry e ON e.id = l.entry_id
+       WHERE e.kind = 'opening' AND l.account_code = '1101'`.execute(handle.db);
+    assert.equal(cashNet.rows[0]!.v, "500000", "مانده خالص نقد افتتاحیه");
+
+    // و دقیقاً یک سند افتتاحیهٔ باز بماند.
+    const open = await sql<{ n: number }>`
+      SELECT count(*)::int AS n FROM ledger.journal_entry e
+       WHERE e.kind = 'opening' AND e.reverses_id IS NULL
+         AND NOT EXISTS (SELECT 1 FROM ledger.journal_entry r WHERE r.reverses_id = e.id)`
+      .execute(handle.db);
+    assert.equal(open.rows[0]!.n, 1, "سند افتتاحیه باز");
+  });
+
+  test("واردات فقط کاتالوگ، سند افتتاحیه موجود را دست نمی‌زند", async () => {
+    const before_ = await sql<{ v: string }>`
+      SELECT coalesce(sum(l.debit - l.credit), 0)::text AS v
+        FROM ledger.journal_line l JOIN ledger.journal_entry e ON e.id = l.entry_id
+       WHERE e.kind = 'opening' AND l.account_code = '1101'`.execute(handle.db);
+
+    const r = await run(STOCK_WH, { "products.csv": "sku,name\nMW-C,فقط کاتالوگ\n" });
+    assert.deepEqual(r.errors, []);
+    assert.equal(r.openingEntryId, null, "واردات کاتالوگی نباید سند بسازد");
+
+    const after_ = await sql<{ v: string }>`
+      SELECT coalesce(sum(l.debit - l.credit), 0)::text AS v
+        FROM ledger.journal_line l JOIN ledger.journal_entry e ON e.id = l.entry_id
+       WHERE e.kind = 'opening' AND l.account_code = '1101'`.execute(handle.db);
+    assert.equal(after_.rows[0]!.v, before_.rows[0]!.v, "نقد افتتاحیه نباید عوض شود");
+  });
+
+  test("جانشینی بدون فایل مانده‌ها رد می‌شود، نه اینکه نقد را بی‌صدا پاک کند", async () => {
+    // این اجرا موجودی می‌آورد ولی مانده‌ها را نه. چون سند موجود نقد
+    // دارد و جانشینی آن را حذف می‌کرد، باید صریح رد شود.
+    // ⚠️ نگهبان‌های مرحلهٔ نوشتن در این ماژول **پرتاب** می‌کنند، نه اینکه
+    //    در `errors` بنشینند (همان رفتار «SKU یافت نشد»). تراکنش
+    //    برمی‌گردد، پس هیچ‌چیز نوشته نمی‌شود.
+    await assert.rejects(
+      run(STORE_WH, {
+        "products.csv": "sku,name\nMW-D,کالای بی‌مانده\n",
+        "opening-stock.csv": "sku,qty,unit_cost\nMW-D,3,1000\n",
+      }),
+      (err: Error) => err.message.includes("opening-balances.csv"),
+    );
+
+    // تراکنش برگشت، پس حرکت انبار هم ثبت نشده.
+    const moved = await sql<{ n: number }>`
+      SELECT count(*)::int AS n FROM inventory.stock_movement m
+      JOIN catalog.variation v ON v.id = m.variation_id WHERE v.sku = 'MW-D'`
+      .execute(handle.db);
+    assert.equal(moved.rows[0]!.n, 0, "اجرای ردشده نباید حرکت انبار بگذارد");
+
+    // و هیچ اثری نگذاشته باشد.
+    const check = await sql<{ diff: string }>`
+      SELECT diff::text FROM inventory.ledger_check`.execute(handle.db);
+    assert.equal(check.rows[0]!.diff, "0", "پس از رد شدن هم دفتر و انبار یکی‌اند");
+  });
+});

@@ -159,6 +159,69 @@ TOTAL=$(run -c "SELECT i.net_amount - (SELECT sum(l.net_amount) FROM sales.invoi
 [ "${QTY%%.*}" = "3" ] && echo "  ✓ هر دو اسکن شمرده شدند (تعداد ۳)" || { echo "  ✗ تعداد: $QTY (انتظار ۳ — یک افزایش گم شد)"; FAIL=1; }
 [ "${TOTAL%%.*}" = "0" ] && echo "  ✓ جمع فاکتور با جمع سطرها یکی ماند" || { echo "  ✗ اختلاف جمع: $TOTAL"; FAIL=1; }
 
+echo
+echo "═══ سناریوی سوم: دو سند افتتاحیه هم‌زمان ═══"
+# ⚠️ این باگ واقعاً اتفاق افتاد و در دفتر دیده شد. قاعده «یک سند
+# افتتاحیه باز در هر (شعبه، سال)» با یک SELECT بدون قفل اجبار می‌شد،
+# پس دو تراکنش هم‌زمان هر دو NULL می‌دیدند و هر دو سند می‌زدند:
+# نقد و سرمایه **دو برابر** می‌شدند و هیچ آشکارسازی نمی‌گرفتش.
+#
+# قید معوق این را نمی‌گیرد (هر دو در COMMIT «۱» می‌شمارند — Write Skew)،
+# پس شاهدِ درست، قفل مشورتی تراکنشی داخل post_opening_balance است.
+#
+# سال مالی تازه لازم است: سال ۱۴۰۵ در تست‌های دیگر سند خورده و
+# post_opening_balance عمداً جانشینی روی سالِ دارای سند را رد می‌کند.
+OPEN_USER=$(run -v rid="$RID" <<'SQL' | tr -d ' '
+INSERT INTO identity.app_user (username, full_name)
+VALUES ('conc-open-'||:'rid', 'تست افتتاحیه همزمان') RETURNING id;
+SQL
+)
+OPEN_YEAR=$(run <<'SQL' | tr -d ' '
+INSERT INTO ledger.fiscal_year (id, starts_on, ends_on, status)
+SELECT y, make_date(2030, 3, 21), make_date(2031, 3, 20), 'open'
+  FROM (SELECT coalesce(max(id), 1405) + 1 AS y FROM ledger.fiscal_year) n
+RETURNING id;
+SQL
+)
+run -c "INSERT INTO identity.user_role (user_id, role_code, branch_id)
+        VALUES ('$OPEN_USER'::uuid, 'admin', '00000000-0000-7000-8000-000000000001');" > /dev/null
+# سال تازه شمارندهٔ سند خودش را لازم دارد؛ Seed فقط ۱۴۰۵ را می‌سازد.
+run -c "INSERT INTO platform.document_counter (branch_id, doc_type, fiscal_year, prefix)
+        VALUES ('00000000-0000-7000-8000-000000000001','journal',$OPEN_YEAR,'J-$OPEN_YEAR-')
+        ON CONFLICT DO NOTHING;" > /dev/null
+
+open_once () {
+  psql -q -t -A -d "$CONN" <<SQL 2>&1 | tr '\n' ' '
+BEGIN;
+SELECT platform.set_actor('$OPEN_USER'::uuid);
+SELECT ledger.post_opening_balance(
+  '00000000-0000-7000-8000-000000000001'::uuid, $OPEN_YEAR::smallint,
+  '[{"leg":"cash","amount":"1000000"},{"leg":"equity","amount":"1000000"}]'::jsonb,
+  '$OPEN_USER'::uuid);
+SELECT pg_sleep($1);
+COMMIT;
+SQL
+}
+
+open_once 0.6 > /tmp/c5.out &
+O1=$!
+open_once 0.6 > /tmp/c6.out &
+O2=$!
+wait $O1 $O2
+
+# مانده **خالص** باید یک برابر باشد، نه دو برابر. جانشینی مجاز است
+# (سند اول معکوس می‌شود)، تکرار نه.
+OPEN_N=$(run -c "SELECT count(*) FROM ledger.journal_entry e
+  WHERE e.kind='opening' AND e.fiscal_year=$OPEN_YEAR
+    AND e.reverses_id IS NULL
+    AND NOT EXISTS (SELECT 1 FROM ledger.journal_entry r WHERE r.reverses_id=e.id);" | tr -d ' ')
+CASH_NET=$(run -c "SELECT coalesce(sum(l.debit-l.credit),0) FROM ledger.journal_line l
+  JOIN ledger.journal_entry e ON e.id=l.entry_id
+ WHERE e.kind='opening' AND e.fiscal_year=$OPEN_YEAR AND l.account_code='1101';" | tr -d ' ')
+
+[ "$OPEN_N" = "1" ] && echo "  ✓ دقیقاً ۱ سند افتتاحیه باز ماند" || { echo "  ✗ سند افتتاحیه باز: $OPEN_N (انتظار ۱ — افتتاحیه تکرار شد)"; FAIL=1; }
+[ "$CASH_NET" = "1000000" ] && echo "  ✓ مانده خالص نقد یک برابر است، نه دو برابر" || { echo "  ✗ مانده خالص نقد: $CASH_NET (انتظار 1000000)"; FAIL=1; }
+
 run -c "DELETE FROM platform.setting WHERE key LIKE '_conc_test_%';" > /dev/null 2>&1 || true
 
 echo

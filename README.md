@@ -8,7 +8,7 @@
 > پیش از ورود داده واقعی، بخش «تصمیم‌های باز» پایین را بخوانید.
 
 ```
-۱۰۹۷ ادعای SQL  ·  ۷۶۵ تست Node  ·  ۶۰ ادعای PHP افزونه  ·  همه در CI
+۱۱۱۳ ادعای SQL  ·  ۷۹۰ تست Node  ·  ۸۴ ادعای PHP افزونه  ·  همه در CI
 ```
 
 ---
@@ -290,11 +290,11 @@ docker compose up -d db
 export DATABASE_URL='postgres://labelmod:رمز@localhost:5432/labelmod'
 ops/db.sh migrate         # ساخت اسکیما
 ops/db.sh seed            # کدینگ حساب، قواعد ثبت، تنظیمات
-ops/db.sh test            # ۱۰۹۷ ادعا — باید همه پاس شوند
+ops/db.sh test            # ۱۱۱۳ ادعا — باید همه پاس شوند
 
 corepack enable
 pnpm install
-pnpm check                # lint + typecheck + ۷۶۵ تست
+pnpm check                # lint + typecheck + ۷۹۰ تست
 pnpm --filter @labelmod/api dev
 pnpm --filter @labelmod/web dev
 
@@ -361,8 +361,9 @@ WebAssembly استفاده می‌کند. بدون آن کلیدواژه، دو�
 استقرار.
 
 **تمرین بازیابی یک رکورد است، نه یک جمله.** `ops/restore-drill.sh` دامپ
-را در یک دیتابیس یک‌بارمصرف برمی‌گرداند، نه ادعا رویش می‌راند — از
-جمله زنجیره حسابرسی حلقه‌به‌حلقه و خواندن مانده انبار با جمع حرکت‌ها —
+را در یک دیتابیس یک‌بارمصرف برمی‌گرداند، ده ادعا رویش می‌راند — از
+جمله زنجیره حسابرسی حلقه‌به‌حلقه، خواندن مانده انبار با جمع حرکت‌ها، و
+خواندن ارزش موجودی در دفتر با ارزش واقعی انبار (مهاجرت ۰۴۹) —
 و نتیجه را در `platform.restore_drill` ثبت می‌کند.
 `ops/deploy.sh status` عبور از `backup.restore_drill_days` را
 `overdue` نشان می‌دهد؛ نبودِ هر تمرینی `never` است.

@@ -101,8 +101,18 @@ jobs:
                 RAISE EXCEPTION 'سطر سند با نوع شخص ولی بدون شناسه شخص: %', n;
               END IF;
 
+              -- ارزش موجودی در دفتر باید با ارزش واقعی انبار بخواند.
+              -- ⚠️ balance_check این را **نمی‌سنجد**: آن stock_balance را با
+              -- stock_movement مقایسه می‌کند — هر دو درون ماژول انبار. تا
+              -- مهاجرت ۰۴۹ هیچ ثابتی دفتر را با انبار تطبیق نمی‌داد، و سند
+              -- افتتاحیهٔ ناقص دقیقاً از همین شکاف رد شد.
+              SELECT count(*) INTO n FROM inventory.ledger_check WHERE diff <> 0;
+              IF n > 0 THEN
+                RAISE EXCEPTION 'واگرایی دفتر با ارزش واقعی انبار: %',
+                  (SELECT diff FROM inventory.ledger_check);
+              END IF;
+
               -- مانده حساب‌های چک در دفتر باید با جمع برگه‌های باز بخواند.
-              -- همان چیزی که balance_check برای انبار می‌سنجد.
               SELECT count(*) INTO n FROM treasury.cheque_check WHERE diff <> 0;
               IF n > 0 THEN
                 RAISE EXCEPTION 'اختلاف دفتر با پرونده چک: % حساب', n;
