@@ -65,6 +65,33 @@ require_once LMC_PATH . 'includes/class-lmc-stock-sync.php';
 require_once LMC_PATH . 'includes/class-lmc-instore.php';
 
 /**
+ * سازگاری با HPOS را **اعلام** کن.
+ *
+ * این افزونه از روز اول با HPOS سازگار **است**: مسیر سفارش تمامش از
+ * CRUD ووکامرس می‌گذرد (`wc_get_order`، `$order->get_meta()`،
+ * `update_meta_data()`، `$order->save()`) و هیچ‌جا `get_post_meta` روی
+ * سفارش نمی‌زند. `update_post_meta` فقط روی نوع پستِ خودمان
+ * (`lmc_instore_purchase`) است که سفارش نیست و HPOS به آن کاری ندارد.
+ *
+ * ولی **سازگار بودن و اعلام‌کردنش دو چیزند.** بدون این اعلام، ووکامرس
+ * افزونه را در فهرست «ناسازگار» نشان می‌دهد و مالکی که می‌خواهد HPOS را
+ * روشن کند، هشدار می‌بیند یا از روشن‌کردنش منع می‌شود — برای
+ * ناسازگاری‌ای که وجود ندارد.
+ *
+ * ⚠️ باید روی `before_woocommerce_init` باشد، نه `plugins_loaded`:
+ *    ووکامرس فهرست سازگاری را پیش از آن می‌بندد.
+ */
+add_action('before_woocommerce_init', function () {
+    if (class_exists(\Automattic\WooCommerce\Utilities\FeaturesUtil::class)) {
+        \Automattic\WooCommerce\Utilities\FeaturesUtil::declare_compatibility(
+            'custom_order_tables',
+            __FILE__,
+            true
+        );
+    }
+});
+
+/**
  * بدون ووکامرس این افزونه بی‌معناست — و با فعال‌ماندنش، خطای مرگبار
  * روی هر بارگذاری صفحه می‌داد.
  */
