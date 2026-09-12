@@ -137,6 +137,43 @@ export async function buildApp(deps: AppDeps): Promise<FastifyInstance> {
             ...(remotePort === undefined ? {} : { remotePort }),
           };
         },
+        // ── خطا: پیام و رد تشخیصی بماند، **مقدارِ ستون** نه ─────────
+        //
+        // ⚠️ اینجا جایی است که نشت واقعی رخ می‌دهد، نه در لاگ موفق.
+        // `errors.ts` دقیقاً **دو** قید یکتا را به‌اسم می‌شناسد
+        // (`payment_client_event_unique` و `one_open_shift_per_user`)؛
+        // ۴۱ قید یکتای دیگر اسکیما به `log.error({ err })` می‌افتند.
+        //
+        // و خطای `pg` یک شیء با خصیصه‌های شمردنی است که Pino همه‌شان را
+        // Serialize می‌کند — از جمله `detail`، که **مقدار ستون متعارض را
+        // در خودش دارد**:
+        //
+        //     detail = 'Key (mobile_normalized)=(09121119999) already exists.'
+        //
+        // یازده قید یکتا روی ستون‌های راز یا PII نشسته‌اند، از جمله
+        // `invoice_public_token_key` — همان توکنی که سریالایزر `req`
+        // بالا برای بیرون نگه‌داشتنش نوشته شد. حذفش از خط درخواست و
+        // جا گذاشتنش در خط خطا، نیم‌دفاع است.
+        //
+        // ⚠️ Redaction نباید ردیابی را بکشد: `message`، `code`،
+        // `constraint`، `table`، `schema`، `routine` و `stack` می‌مانند —
+        // برای رسیدگی به یک تراکنش کافی‌اند. فقط میدان‌های
+        // **مقدار‌حمل‌کن** می‌روند.
+        err(error) {
+          const e = error as unknown as Record<string, unknown>;
+          const out: { type: string; message: string; stack: string; [k: string]: unknown } = {
+            type: typeof e["name"] === "string" ? (e["name"] as string) : "Error",
+            message: typeof e["message"] === "string" ? (e["message"] as string) : String(error),
+            stack: typeof e["stack"] === "string" ? (e["stack"] as string) : "",
+          };
+          // فهرست **مجاز**، نه فهرست ممنوع: خصیصه تازه‌ای که فردا یک
+          // درایور اضافه کند، خودبه‌خود بیرون می‌ماند نه داخل.
+          for (const k of ["code", "constraint", "table", "schema", "routine",
+                           "severity", "statusCode", "operation", "rule"]) {
+            if (e[k] !== undefined) out[k] = e[k];
+          }
+          return out;
+        },
       },
       // رمز، توکن، PIN و کوکی هرگز نباید در لاگ بنشینند.
       redact: {
