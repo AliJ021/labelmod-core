@@ -9,9 +9,9 @@
  * به همین دلیل set_actor فقط داخل یک تراکنش معنا دارد؛ این تابع اجازه
  * نمی‌دهد بیرون از تراکنش صدا زده شود.
  */
-import { sql } from "kysely";
 import type { Transaction } from "kysely";
 import type { Database } from "./types.ts";
+import { setActor as setActorIn } from "../lib/idempotency.ts";
 
 export interface Actor {
   userId: string;
@@ -19,10 +19,15 @@ export interface Actor {
   device?: string | undefined;
 }
 
+/**
+ * ⚠️ **یک تعریف، نه دو تا.** این تابع خودش SQL نمی‌زند و به
+ * `lib/idempotency.ts` تکیه می‌کند. پیش از این هر دو نسخهٔ خودشان را
+ * داشتند و همان شد که قاعدهٔ «دروازه یک تعریف دارد» درباره‌اش هشدار
+ * می‌دهد: نسخهٔ پرکاربردتر `ip` و `device` را اختیاری داشت و ~۷۰
+ * فراخوان ندادنشان، پس لاگ حسابرسی هر دو را NULL می‌نوشت.
+ */
 export async function setActor(trx: Transaction<Database>, actor: Actor): Promise<void> {
-  await sql`SELECT platform.set_actor(${actor.userId}::uuid, ${
-    actor.ip ?? null
-  }::inet, ${actor.device ?? null}::text)`.execute(trx);
+  await setActorIn(trx, actor.userId, actor.ip, actor.device);
 }
 
 /**
