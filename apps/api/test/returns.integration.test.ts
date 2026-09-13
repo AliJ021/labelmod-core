@@ -40,6 +40,7 @@ describe("برگشت از فروش و دوره ثبت", { skip }, () => {
   const ids: Record<string, string> = {};
   let variationId = "";
   let customerId = "";
+  let supervisorShift = "";
 
   const sessions = new Map<
     string,
@@ -185,7 +186,14 @@ describe("برگشت از فروش و دوره ثبت", { skip }, () => {
     });
     await app.ready();
 
-    // شیفت باز برای سرپرست و صندوق‌دار
+    // شیفت باز برای سرپرست و صندوق‌دار.
+    //
+    // ⚠️ **دو کشوی باز عمدی است** و یادگارِ دروازهٔ قدیمی نیست: فاکتور
+    //    صندوق به شیفتِ خودِ فروشنده می‌چسبد، پس هر دو نفر برای فروش
+    //    کشو لازم دارند. ولی بازپرداخت نقدی از **شعبه** کشو می‌گیرد، و
+    //    با دو کشوی باز حدس‌زدن ممنوع است — پس هر بازپرداخت نقدیِ این
+    //    پرونده `shiftId` را صریح می‌فرستد، همان‌طور که رابط واقعی
+    //    می‌فرستد. (`treasury/cash-drawer.ts`)
     for (const who of [supervisor, cashier]) {
       const s = await loginAs(who);
       const r = await app.inject({
@@ -195,6 +203,7 @@ describe("برگشت از فروش و دوره ثبت", { skip }, () => {
         payload: { branchId: BRANCH, openingCash: "10000000" },
       });
       assert.equal(r.statusCode, 201, r.body);
+      if (who === supervisor) supervisorShift = (r.json() as { id: string }).id;
     }
   });
 
@@ -294,6 +303,7 @@ describe("برگشت از فروش و دوره ثبت", { skip }, () => {
         reasonNote: "رنگ با عکس سایت فرق داشت",
         refundAmount: "2000000",
         refundMethod: "cash",
+        shiftId: supervisorShift,
         lines: [{ invoiceLineId: lineId, qty: "2" }],
       },
     });
@@ -364,6 +374,7 @@ describe("برگشت از فروش و دوره ثبت", { skip }, () => {
         reasonCode: "quality",
         refundAmount: "2000000",
         refundMethod: "cash",
+        shiftId: supervisorShift,
         lines: [{ invoiceLineId: lineId, qty: "2" }],
       },
     });
@@ -437,6 +448,7 @@ describe("برگشت از فروش و دوره ثبت", { skip }, () => {
         reasonCode: "quality",
         refundAmount: "1000000",
         refundMethod: "cash",
+        shiftId: supervisorShift,
         lines: [{ invoiceLineId: lineId, qty: "1", condition: "defective" }],
       },
     });
@@ -551,8 +563,80 @@ describe("برگشت از فروش و دوره ثبت", { skip }, () => {
     assert.equal(badMethod.json().error.code, "bad_refund_method");
   });
 
-  test("بازپرداخت نقدی بدون شیفت باز ممکن نیست", async () => {
-    // مدیر شیفت ندارد و باز هم نمی‌کند
+  /**
+   * ⚠️ این تست پیش از این ادعا می‌کرد «مدیرِ بی‌کشو نمی‌تواند بازپرداخت
+   *    بدهد» و ۴۲۲ `no_open_shift` انتظار داشت. **همان باگ بود**: کشو
+   *    از شعبه پیدا می‌شود نه از کاربر عامل، و چون `refund.cash` را
+   *    صندوق‌دار ندارد، آن ادعا یعنی «بازپرداخت نقدی هرگز».
+   *
+   *    ادعای درست: مجوزدارِ بی‌کشو **می‌تواند**، و پول از کشوی نام‌برده
+   *    کم می‌شود. «هیچ کشوی بازی در شعبه نیست» جای دیگری سنجیده
+   *    می‌شود: `cash-drawer.integration.test.ts`.
+   */
+  test("مدیرِ بی‌کشو بازپرداخت می‌دهد و پول از کشوی نام‌برده کم می‌شود", async () => {
+    const s = await loginAs(admin);
+    const { invoiceId, lineId } = await soldInvoice({
+      who: supervisor,
+      qty: "1",
+      paid: "1000000",
+    });
+
+    const r = await app.inject({
+      method: "POST",
+      url: "/returns",
+      ...s,
+      payload: {
+        invoiceId,
+        reasonCode: "quality",
+        refundAmount: "1000000",
+        refundMethod: "cash",
+        shiftId: supervisorShift,
+        lines: [{ invoiceLineId: lineId, qty: "1" }],
+      },
+    });
+    assert.equal(r.statusCode, 201, r.body);
+    const rid = (r.json() as { id: string }).id;
+
+    const posted = await app.inject({
+      method: "POST",
+      url: `/returns/${rid}/post`,
+      ...s,
+      headers: { ...s.headers, "idempotency-key": `admin-refund-${rid}` },
+    });
+    assert.equal(posted.statusCode, 200, posted.body);
+
+    const pay = await sql<{ s: string | null }>`
+      SELECT shift_id::text AS s FROM treasury.payment WHERE return_id = ${rid}::uuid`
+      .execute(handle.db);
+    assert.equal(pay.rows[0]!.s, supervisorShift, "پول باید از همان کشوی نام‌برده کم شود");
+  });
+
+  test("کشویی که در این شعبه باز نیست، رد می‌شود", async () => {
+    const s = await loginAs(admin);
+    const { invoiceId, lineId } = await soldInvoice({
+      who: supervisor,
+      qty: "1",
+      paid: "1000000",
+    });
+
+    const r = await app.inject({
+      method: "POST",
+      url: "/returns",
+      ...s,
+      payload: {
+        invoiceId,
+        reasonCode: "quality",
+        refundAmount: "1000000",
+        refundMethod: "cash",
+        shiftId: "00000000-0000-7000-8000-0000000000ee",
+        lines: [{ invoiceLineId: lineId, qty: "1" }],
+      },
+    });
+    assert.equal(r.statusCode, 422, r.body);
+    assert.equal(r.json().error.code, "wrong_shift");
+  });
+
+  test("با دو کشوی باز، نام‌نبردنِ کشو ۴۲۲ می‌گیرد — حدس ممنوع", async () => {
     const s = await loginAs(admin);
     const { invoiceId, lineId } = await soldInvoice({
       who: supervisor,
@@ -573,7 +657,7 @@ describe("برگشت از فروش و دوره ثبت", { skip }, () => {
       },
     });
     assert.equal(r.statusCode, 422, r.body);
-    assert.equal(r.json().error.code, "no_open_shift");
+    assert.equal(r.json().error.code, "ambiguous_shift");
   });
 
   test("بستن خودکار: موجودی دست نمی‌خورد، فقط سند بسته می‌شود", async () => {
@@ -813,7 +897,7 @@ describe("برگشت از فروش و دوره ثبت", { skip }, () => {
       method: "POST", url: "/returns", ...s,
       payload: {
         invoiceId, reasonCode: "color_mismatch", refundAmount: "1000000",
-        refundMethod: "cash", lines: [{ invoiceLineId: lineId, qty: "1" }],
+        refundMethod: "cash", shiftId: supervisorShift, lines: [{ invoiceLineId: lineId, qty: "1" }],
       },
     });
     assert.equal(draft.statusCode, 201, draft.body);
@@ -851,7 +935,7 @@ describe("برگشت از فروش و دوره ثبت", { skip }, () => {
       method: "POST", url: "/returns", ...s,
       payload: {
         invoiceId, reasonCode: "color_mismatch", refundAmount: "1000000",
-        refundMethod: "cash", lines: [{ invoiceLineId: lineId, qty: "1" }],
+        refundMethod: "cash", shiftId: supervisorShift, lines: [{ invoiceLineId: lineId, qty: "1" }],
       },
     });
     const id = draft.json().id as string;
@@ -881,7 +965,7 @@ describe("برگشت از فروش و دوره ثبت", { skip }, () => {
       method: "POST", url: "/returns", ...s,
       payload: {
         invoiceId, reasonCode: "color_mismatch", refundAmount: "1000000",
-        refundMethod: "cash", lines: [{ invoiceLineId: lineId, qty: "1" }],
+        refundMethod: "cash", shiftId: supervisorShift, lines: [{ invoiceLineId: lineId, qty: "1" }],
       },
     });
     const id = draft.json().id as string;
