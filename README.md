@@ -8,7 +8,7 @@
 > پیش از ورود داده واقعی، بخش «تصمیم‌های باز» پایین را بخوانید.
 
 ```
-۱۱۲۹ ادعای SQL  ·  ۷۹۱ تست Node  ·  ۱۰۲ ادعای PHP افزونه  ·  همه در CI
+۱۱۳۱ ادعای SQL  ·  ۷۹۱ تست Node  ·  ۱۰۲ ادعای PHP افزونه  ·  همه در CI
 ```
 
 ---
@@ -290,7 +290,7 @@ docker compose up -d db
 export DATABASE_URL='postgres://labelmod:رمز@localhost:5432/labelmod'
 ops/db.sh migrate         # ساخت اسکیما
 ops/db.sh seed            # کدینگ حساب، قواعد ثبت، تنظیمات
-ops/db.sh test            # ۱۱۲۹ ادعا — باید همه پاس شوند
+ops/db.sh test            # ۱۱۳۱ ادعا — باید همه پاس شوند
 
 corepack enable
 pnpm install
