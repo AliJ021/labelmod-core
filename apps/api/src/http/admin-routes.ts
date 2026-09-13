@@ -47,6 +47,25 @@ const accountBody = z.object({
 const accountCode = z.string().regex(/^\d{1,12}$/, "کد حساب فقط رقم است");
 
 /**
+ * نگاشت حساب.
+ *
+ * تنها میدانِ نوشتنی `accountCode` است — و این عمدی است.
+ * `event_type`/`leg`/`side` قرارداد کدند نه تصمیم حسابدار
+ * (`sales.post_batch()` مؤلفه را به نام می‌خواند)، پس در مسیر
+ * می‌نشینند نه در بدنه: چیزی که عوض نمی‌شود، جای عوض‌شدن هم ندارد.
+ *
+ * `reason` اختیاری **نیست**. دیتابیس هم اجبارش می‌کند، ولی گرفتنش در
+ * Zod یعنی کاربر پیام فارسی فرم را می‌بیند نه ۴۰۹ سرور.
+ */
+const postingRuleBody = z.object({
+  accountCode,
+  reason: z.string().trim().min(3, "دلیل تغییر نگاشت لازم است").max(500),
+});
+
+/** یک قطعه از کلید قاعده. حروف و زیرخط — نه هر چیزی. */
+const ruleKeyPart = z.string().regex(/^[a-z_]{1,40}$/, "کلید قاعده نامعتبر است");
+
+/**
  * سقف مجوز.
  *
  * `maxAmount` **رشته** است چون پول است — همان قاعده‌ای که کل پروژه
@@ -107,6 +126,23 @@ interface TafsiliRow {
   debit: string;
   credit: string;
   balance: string;
+}
+
+interface PostingRuleRow {
+  id: number;
+  event_type: string;
+  leg: string;
+  side: string;
+  account_code: string;
+  account_name: string;
+  account_type: string;
+  account_nature: string;
+  party_type: string | null;
+  description: string;
+  sort_order: number;
+  is_active: boolean;
+  allow_account_override: boolean;
+  entry_count: string;
 }
 
 interface MatrixRow {
@@ -210,6 +246,104 @@ export function registerAdminRoutes(app: FastifyInstance, deps: AdminRouteDeps):
 
     if (!row) throw new Error("ledger.set_account_active سطری برنگرداند");
     return { code: row.code, isActive: row.is_active };
+  });
+
+  // ── نگاشت حساب ────────────────────────────────────────────────────
+
+  /**
+   * «درآمد به کدام حساب بخورد، بهای تمام‌شده به کدام.»
+   *
+   * `ledger.account` از قبل صفحه داشت، این نداشت — یعنی حسابدار
+   * می‌توانست حساب بسازد ولی نمی‌توانست سند را به آن وصل کند. آن یک
+   * `UPDATE` دستی در psql بود، بی ردّ حسابرسی و بی نگهبان.
+   *
+   * ⚠️ مجوزش `ledger.mapping` است، نه `settings.security`. دلیلش
+   *    عملی است: این کارِ **حسابدار** است، ولی نرخ مالیات و روش بهای
+   *    تمام‌شده کارِ مالک. یک عملیات جدا یعنی مالک می‌تواند نگاشت را به
+   *    حسابدار بدهد بی‌آنکه کلیدهای امنیتی تنظیمات را هم داده باشد.
+   *    در Seed فقط مدیر داردش؛ دادنش به حسابدار یک ردیف در صفحهٔ
+   *    «مجوزها» است.
+   */
+  app.get("/posting-rules", async (req) => {
+    const s = session(req);
+    await requireForSession(db, s, "settings.view");
+
+    const rows = await sql<PostingRuleRow>`
+      SELECT * FROM ledger.posting_rule_overview
+       ORDER BY event_type, sort_order, leg`.execute(db);
+
+    /*
+     * فهرست حساب‌های **مجاز برای هر قاعده** هم می‌رود، چون قاعده‌اش
+     * همان است که تابع اجبار می‌کند: هم‌نوع، قابل ثبت، فعال. اگر صفحه
+     * فهرست را خودش می‌ساخت، دو تعریف از یک قاعده داشتیم.
+     */
+    const choices = await sql<{
+      code: string;
+      name: string;
+      type: string;
+    }>`
+      SELECT code, name, type FROM ledger.account
+       WHERE is_postable AND is_active
+       ORDER BY code`.execute(db);
+
+    return {
+      rules: rows.rows.map((r) => ({
+        id: r.id,
+        eventType: r.event_type,
+        leg: r.leg,
+        side: r.side,
+        accountCode: r.account_code,
+        accountName: r.account_name,
+        accountType: r.account_type,
+        accountNature: r.account_nature,
+        partyType: r.party_type,
+        description: r.description,
+        isActive: r.is_active,
+        allowAccountOverride: r.allow_account_override,
+        // شمار سطرهای سند روی همان حساب — عدد است نه پول، پس رشته‌سازی
+        // پول به آن ربطی ندارد؛ ولی `bigint` پستگرس از درایور رشته
+        // می‌آید و `Number` امن است (شمار سطر سند از حد `number` بیرون
+        // نمی‌زند).
+        entryCount: Number(r.entry_count),
+      })),
+      accounts: choices.rows.map((a) => ({
+        code: a.code,
+        name: a.name,
+        type: a.type,
+      })),
+    };
+  });
+
+  /**
+   * تغییر نگاشت.
+   *
+   * کلید قاعده در مسیر است و فقط `accountCode` در بدنه — همان تفکیکی
+   * که تابع دیتابیس دارد. هفت نگهبانش هم آنجاست (نوع حساب، قابل ثبت
+   * بودن، فعال بودن، دلیل اجباری و …)، نه اینجا: قاعده‌ای که در psql
+   * دور زده می‌شود همان است که اهمیت دارد.
+   */
+  app.put("/posting-rules/:eventType/:leg/:side", async (req) => {
+    const s = session(req);
+    const { eventType, leg, side } = z
+      .object({
+        eventType: ruleKeyPart,
+        leg: ruleKeyPart,
+        side: z.enum(["debit", "credit"]),
+      })
+      .parse(req.params);
+    const body = postingRuleBody.parse(req.body);
+    await requireForSession(db, s, "ledger.mapping");
+
+    const row = await withActor(db, { userId: s.userId, ip: req.ip }, async (trx) => {
+      const r = await sql<{ account_code: string }>`
+        SELECT account_code FROM ledger.set_posting_rule(
+          ${eventType}, ${leg}, ${side}, ${body.accountCode},
+          ${body.reason}, ${s.userId}::uuid)`.execute(trx);
+      return r.rows[0];
+    });
+
+    if (!row) throw new Error("ledger.set_posting_rule سطری برنگرداند");
+    return { eventType, leg, side, accountCode: row.account_code };
   });
 
   // ── سقف مجوزها ────────────────────────────────────────────────────

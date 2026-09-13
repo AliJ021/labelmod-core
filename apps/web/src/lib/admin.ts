@@ -36,6 +36,64 @@ export interface Account {
   hasEntries: boolean;
 }
 
+/**
+ * یک سطر نگاشت حساب.
+ *
+ * `eventType`/`leg`/`side` **کلید**اند نه میدان قابل ویرایش: قرارداد
+ * کدند و `sales.post_batch()` مؤلفه را به نام می‌خواند. تنها چیزی که
+ * صفحه عوض می‌کند `accountCode` است.
+ */
+export interface PostingRule {
+  id: number;
+  eventType: string;
+  leg: string;
+  side: "debit" | "credit";
+  accountCode: string;
+  accountName: string;
+  accountType: AccountType;
+  accountNature: AccountNature;
+  partyType: string | null;
+  description: string;
+  isActive: boolean;
+  /** روشن یعنی تراکنش هم می‌تواند حساب را تعیین کند (کدام صندوق، کدام بانک). */
+  allowAccountOverride: boolean;
+  /**
+   * شمار سطرهای سند روی **حساب فعلی** — نه روی این قاعده.
+   *
+   * ⚠️ تغییر نگاشت سندهای قبلی را بازنویسی نمی‌کند و نباید بکند؛ این
+   *    عدد فقط به کاربر می‌گوید انتظار نداشته باشد عوض شوند.
+   */
+  entryCount: number;
+}
+
+/** یک زنگ خطر سیستم — از `platform.health_alerts()`. */
+export interface HealthAlert {
+  code: string;
+  severity: "critical" | "warn";
+  title: string;
+  /** شمار سطرهای مشکل‌دار. عدد است نه پول. */
+  count: number;
+  detail: string;
+}
+
+/** یک پیام که پس از سقف تلاش نرفت. */
+export interface DeadLetter {
+  /** ⚠️ رشته است، نه عدد: `bigint` صف از حد امن `number` می‌گذرد. */
+  id: string;
+  topic: string;
+  attempts: number;
+  lastError: string | null;
+  createdAt: string;
+  age: string;
+}
+
+/** حسابی که می‌شود نگاشت را به آن برد: قابل ثبت و فعال. */
+export interface PostingAccount {
+  code: string;
+  name: string;
+  type: AccountType;
+}
+
 export interface AccountInput {
   name: string;
   level: AccountLevel;
@@ -201,6 +259,42 @@ export const admin = {
     api.patch<{ code: string; isActive: boolean }>(
       `/accounts/${encodeURIComponent(code)}/active`,
       { isActive },
+    ),
+
+  postingRules: () =>
+    api.get<{ rules: PostingRule[]; accounts: PostingAccount[] }>("/posting-rules"),
+
+  /**
+   * تغییر نگاشت یک قاعده.
+   *
+   * `PUT` است چون هویت عملیات همان کلید (رویداد، مؤلفه، سمت) است و
+   * بدنه حالت **مطلق** را می‌گوید. `reason` اختیاری نیست — دیتابیس
+   * بی‌آن رد می‌کند.
+   */
+  setPostingRule: (
+    key: { eventType: string; leg: string; side: string },
+    accountCode: string,
+    reason: string,
+  ) =>
+    api.put<{ eventType: string; leg: string; side: string; accountCode: string }>(
+      `/posting-rules/${encodeURIComponent(key.eventType)}/${encodeURIComponent(key.leg)}/${encodeURIComponent(key.side)}`,
+      { accountCode, reason },
+    ),
+
+  healthAlerts: () => api.get<{ alerts: HealthAlert[] }>("/health/alerts"),
+
+  deadLetters: () => api.get<{ messages: DeadLetter[] }>("/health/dead-letters"),
+
+  /**
+   * زنده‌کردن یک پیامِ مرده.
+   *
+   * `POST` است نه `PUT`: هر فراخوان یک تلاش تازه با ردّ حسابرسی خودش
+   * است، پس `Idempotency-Key` هم نمی‌گیرد.
+   */
+  requeueDeadLetter: (id: string, reason: string) =>
+    api.post<{ id: string; status: string; attempts: number }>(
+      `/health/dead-letters/${encodeURIComponent(id)}/requeue`,
+      { reason },
     ),
 
   settlementTerms: () => api.get<{ terms: SettlementTerm[] }>("/settlement-terms"),

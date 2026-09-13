@@ -23,6 +23,7 @@ import type { Db } from "../db/client.ts";
 import { HANDLERS, type OutboxMessage } from "./handlers.ts";
 import { makeSender, SmsError } from "./sms.ts";
 import { readNotifySettings } from "./settings.ts";
+import { makeWebhookSender } from "./webhook.ts";
 
 export interface LoopOptions {
   db: Db;
@@ -30,6 +31,12 @@ export interface LoopOptions {
   workerName: string;
   /** کلید سرویس پیامک. راز است و از محیط می‌آید، نه از تنظیمات. */
   smsApiKey: string;
+  /**
+   * توکن Webhook. مثل کلید پیامک راز است و از محیط می‌آید
+   * (`NOTIFY_WEBHOOK_TOKEN`)، نه از `platform.setting` — مقدار هر تنظیم
+   * در `audit_log` می‌نشیند و صفحهٔ تنظیمات نشانش می‌دهد.
+   */
+  webhookToken: string | undefined;
   batchSize: number;
   leaseSeconds: number;
   log: (line: string) => void;
@@ -41,6 +48,7 @@ export interface TickResult {
   failed: number;
   dead: number;
   enqueuedCheques: number;
+  enqueuedAlerts: number;
 }
 
 /**
@@ -58,6 +66,7 @@ export async function tick(opts: LoopOptions): Promise<TickResult> {
     failed: 0,
     dead: 0,
     enqueuedCheques: 0,
+    enqueuedAlerts: 0,
   };
 
   const settings = await readNotifySettings(opts.db);
@@ -68,6 +77,19 @@ export async function tick(opts: LoopOptions): Promise<TickResult> {
     SELECT treasury.enqueue_due_cheque_alerts() AS n
   `.execute(opts.db);
   out.enqueuedCheques = Number(cheques.rows[0]?.n ?? 0);
+
+  /*
+   * زنگ خطر سیستم — همان‌جا و به همان دلیل که هشدار چک اینجاست.
+   *
+   * هشت زنگ از قبل بودند و کار می‌کردند؛ آنچه نبود، رسیدنشان به آدم
+   * بود: همه فقط با اجرای دستی `ops/deploy.sh status` دیده می‌شدند.
+   * `enqueue_health_alerts()` روی کلید (کد زنگ، روز کاری) Idempotent
+   * است، پس فراخوانی ساعتی‌اش حداکثر یک پیام در روز می‌سازد.
+   */
+  const alerts = await sql<{ n: number }>`
+    SELECT platform.enqueue_health_alerts() AS n
+  `.execute(opts.db);
+  out.enqueuedAlerts = Number(alerts.rows[0]?.n ?? 0);
 
   const claimed = await sql<{
     id: string;
@@ -103,7 +125,18 @@ export async function tick(opts: LoopOptions): Promise<TickResult> {
     return out;
   }
 
-  const ctx = { db: opts.db, settings, sms: sender };
+  /*
+   * ⚠️ فرستندهٔ Webhook هم مثل فرستندهٔ پیامک **بعد از** برداشتن پیام‌ها
+   *    ساخته می‌شود. خاموش‌بودنش خطا نیست — `makeWebhookSender` خودش
+   *    بی‌صدا برمی‌گردد — پس اینجا `try` لازم ندارد.
+   */
+  const webhook = makeWebhookSender({
+    enabled: settings.webhookEnabled,
+    url: settings.webhookUrl,
+    token: opts.webhookToken,
+  });
+
+  const ctx = { db: opts.db, settings, sms: sender, webhook };
 
   for (const row of claimed.rows) {
     const msg: OutboxMessage = {

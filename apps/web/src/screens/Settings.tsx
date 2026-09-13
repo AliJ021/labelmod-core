@@ -15,6 +15,8 @@
 import { useEffect, useState } from "react";
 import { Glass, Solid } from "../components/Glass.tsx";
 import { Accounts } from "./Accounts.tsx";
+import { PostingRules } from "./PostingRules.tsx";
+import { Health } from "./Health.tsx";
 import { Terminals } from "./Terminals.tsx";
 import { Permissions } from "./Permissions.tsx";
 import { Opening } from "./Opening.tsx";
@@ -503,7 +505,7 @@ function Field({
 }
 
 /**
- * پوسته ناحیه تنظیمات — چهار زیرتب.
+ * پوسته ناحیه تنظیمات — ده زیرتب.
  *
  * چرا زیرتب و نه ناحیه سطح‌بالا: نوار بالای صفحه را صندوق‌دار هم
  * می‌بیند، و سه تبِ تازه‌ای که اجازه بازکردنشان را ندارد فقط شلوغی
@@ -517,10 +519,12 @@ function Field({
 const TABS = [
   { key: "keys", label: "تنظیمات" },
   { key: "accounts", label: "کدینگ حساب" },
+  { key: "mapping", label: "نگاشت حساب" },
   { key: "terminals", label: "پایانه‌ها" },
   { key: "permissions", label: "مجوزها" },
   { key: "opening", label: "افتتاحیه و تفصیلی" },
   { key: "devices", label: "دستگاه‌ها" },
+  { key: "health", label: "سلامت سیستم" },
   { key: "staff", label: "پرسنل" },
   { key: "twofactor", label: "ورود دومرحله‌ای" },
 ] as const;
@@ -551,6 +555,8 @@ export function Settings() {
         <SettingKeys onOpenTerminals={() => setTab("terminals")} />
       ) : tab === "accounts" ? (
         <Accounts />
+      ) : tab === "mapping" ? (
+        <PostingRules />
       ) : tab === "terminals" ? (
         <Terminals />
       ) : tab === "permissions" ? (
@@ -561,6 +567,8 @@ export function Settings() {
         <TwoFactor />
       ) : tab === "devices" ? (
         <Devices />
+      ) : tab === "health" ? (
+        <Health />
       ) : (
         <Opening />
       )}

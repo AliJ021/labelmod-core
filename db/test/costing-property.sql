@@ -1,9 +1,9 @@
 -- =====================================================================
--- خصوصیت هزینه‌یابی: «جمع سود با هر دو روش یکی است»
+-- خصوصیت هزینه‌یابی: «جمع سود با هر سه روش یکی است»
 -- =====================================================================
 -- `CLAUDE.md` و ADR-006 این را به‌عنوان یک **واقعیت** اعلام می‌کنند:
 --
---   «جمع سود با هر دو روش یکی است؛ فقط زمان شناسایی فرق می‌کند.»
+--   «جمع سود با هر سه روش یکی است؛ فقط زمان شناسایی فرق می‌کند.»
 --
 -- این یک ادعای **قابل آزمون** است و تا امروز با **یک مثال دستی**
 -- سنجیده می‌شد. `db/test/costing.sql` بند ۴ آن مثال است و کارش را
@@ -21,13 +21,20 @@
 --
 --   • سود از **دفتر** خوانده می‌شود (`pg_temp.profit()`)، نه با حساب
 --     دستی و نه از تابع تحت آزمون.
---   • همان سناریو **واقعاً دو بار اجرا می‌شود** — یک بار با هر روش —
---     و هر دو بار کالا تا آخر فروخته و دوره ثبت بسته می‌شود.
+--   • همان سناریو **واقعاً سه بار اجرا می‌شود** — یک بار با هر روش —
+--     و هر سه بار کالا تا آخر فروخته و دوره ثبت بسته می‌شود.
+--
+-- ⚠️ روش سوم (**FIFO**، مهاجرت ۰۲۰) تا امروز در این حلقه **نبود**:
+--    حلقه `1..2` می‌چرخید و فقط میانگین موزون و آخرین قیمت خرید را
+--    می‌سنجید. FIFO فقط یک سناریوی ثابت در `db/test/fifo.sql` بند ۴
+--    داشت. یعنی از سه گزینه‌ای که صفحهٔ تنظیمات نشان می‌دهد، یکی از
+--    آزمون ۱۵۰ سناریویی بیرون بود — و همان یکی تنها روشی است که
+--    لایه‌های بها را نگه می‌دارد، پس بیشترین جای خطا را دارد.
 --   • ۱۵۰ سناریوی تصادفی و بازتولیدپذیر (`setseed`)، نه یک مثال.
 --
 -- ⚠️ **بند ۲ کنترل حساسیت است و حذف نمی‌شود.** یک آزمونِ برابری که
 --    هرگز نتواند نابرابری را ببیند، سبزِ بی‌معناست. بند ۲ عمداً نیمی
---    از موجودی را نمی‌فروشد و ادعا می‌کند دو روش **باید فرق کنند** —
+--    از موجودی را نمی‌فروشد و ادعا می‌کند هر سه روش **باید فرق کنند** —
 --    چون آن‌وقت ارزش دفتری باقی‌مانده یکی نیست. این هم‌زمان نیمهٔ دومِ
 --    ادعای سند را می‌سنجد: «فقط زمان شناسایی فرق می‌کند».
 -- =====================================================================
@@ -62,10 +69,13 @@ DECLARE
   v_user uuid; v_sup uuid; v_prod uuid;
   v_var uuid; v_rcpt uuid; v_inv uuid; v_shift uuid;
   v_method text; v_p0 numeric; v_delta numeric;
-  v_wa numeric; v_lp numeric;
+  -- سه روش، سه سود. آرایه به‌جای سه متغیر، تا افزودن روش چهارم یک
+  -- عضو در `METHODS` باشد نه یک متغیر تازه و یک `IF` تازه.
+  METHODS text[] := ARRAY['moving_weighted_average','last_purchase','fifo'];
+  v_prof numeric[];
   v_rcount int; v_qty numeric; v_price numeric; v_sale numeric;
   v_total numeric; v_units numeric; v_sell numeric;
-  v_bad int := 0; v_same int := 0; v_i int; v_j int; v_m int;
+  v_bad int := 0; v_same int := 0; v_tie int := 0; v_i int; v_j int; v_m int;
   v_part boolean;
 BEGIN
   INSERT INTO identity.app_user (username, full_name)
@@ -77,7 +87,7 @@ BEGIN
   INSERT INTO catalog.product (code, name_internal) VALUES ('P-PROP','کالای خصوصیت')
     RETURNING id INTO v_prod;
 
-  RAISE NOTICE E'\n═══ ۱. فروش کامل: جمع سود دو روش باید یکی باشد ═══';
+  RAISE NOTICE E'\n═══ ۱. فروش کامل: جمع سود هر سه روش باید یکی باشد ═══';
 
   FOR v_part IN SELECT * FROM (VALUES (false), (true)) AS x(b) LOOP
   IF v_part THEN
@@ -86,7 +96,7 @@ BEGIN
   END IF;
 
   PERFORM setseed(0.4271);
-  v_bad := 0; v_same := 0;
+  v_bad := 0; v_same := 0; v_tie := 0;
 
   FOR v_i IN 1..N LOOP
     -- پارامترها یک بار قید می‌شوند و برای **هر دو روش** یکی می‌مانند،
@@ -97,8 +107,9 @@ BEGIN
                      ELSE 1 + floor(random() * 4) END;
     v_sale   := 50000 + floor(random() * 900000);
 
-    FOR v_m IN 1..2 LOOP
-      v_method := CASE v_m WHEN 1 THEN 'moving_weighted_average' ELSE 'last_purchase' END;
+    v_prof := '{}';
+    FOR v_m IN 1..array_length(METHODS, 1) LOOP
+      v_method := METHODS[v_m];
       PERFORM platform.set_setting('costing.method', to_jsonb(v_method), 'آزمون خصوصیت');
 
       -- تنوع تازه: لایه‌های بهای سناریوی قبلی دخالت نکنند.
@@ -143,24 +154,48 @@ BEGIN
       PERFORM sales.finalize_invoice(v_inv, v_user);
       PERFORM sales.close_shift(v_shift, v_total, v_user, NULL);
 
-      v_delta := pg_temp.profit() - v_p0;
-      IF v_m = 1 THEN v_wa := v_delta; ELSE v_lp := v_delta; END IF;
+      v_prof := v_prof || (pg_temp.profit() - v_p0);
     END LOOP;
 
-    IF v_wa IS DISTINCT FROM v_lp THEN v_bad := v_bad + 1; ELSE v_same := v_same + 1; END IF;
+    -- بند ۱: «همه یکی‌اند» یعنی شمار مقدارهای متمایز ۱ است. با آرایه،
+    -- افزودن روش چهارم این سنجش را عوض نمی‌کند.
+    IF (SELECT count(DISTINCT p) FROM unnest(v_prof) AS p) > 1
+      THEN v_bad := v_bad + 1; ELSE v_same := v_same + 1; END IF;
+
+    -- بند ۲ (کنترل حساسیت): هر روش باید از **میانگین موزون** فرق کند.
+    --
+    -- ⚠️ «هر سه دوبه‌دو فرق کنند» ادعای درستی **نیست** و اندازه‌گیری شد:
+    --    در ۶ سناریو از ۱۲، «آخرین قیمت خرید» و FIFO به یک عدد رسیدند
+    --    (مثلاً {11756864, 12668048, 12668048}). با سه رسید یا بیشتر،
+    --    زنجیرهٔ تجدید ارزیابی و مصرف لایه‌ها می‌توانند به یک جا برسند.
+    --    گذاشتن آن ادعا یعنی یک کنترلِ **غلط** که هر بار قرمز می‌شود.
+    --    آنچه در هر ۱۲ سناریو برقرار بود، فرقِ هر روش با میانگین موزون
+    --    است — و همین FIFO را واقعاً وارد کنترل حساسیت می‌کند.
+    IF v_part THEN
+      FOR v_m IN 2..array_length(METHODS, 1) LOOP
+        IF v_prof[v_m] IS NOT DISTINCT FROM v_prof[1] THEN
+          v_tie := v_tie + 1;
+        END IF;
+      END LOOP;
+    END IF;
   END LOOP;
 
   IF NOT v_part THEN
     PERFORM pg_temp.assert_eq(
-      format('سناریوهایی که جمع سودشان فرق کرد (از %s فروش کامل)', N), v_bad, 0);
+      format('سناریوهایی که جمع سود سه روش فرق کرد (از %s فروش کامل)', N), v_bad, 0);
   ELSE
     -- حساسیت: با موجودیِ باقی‌مانده، **هر** سناریو باید فرق کند.
     PERFORM pg_temp.assert_eq(
-      format('سناریوهایی که با فروش نیمی یکی ماندند (از %s)', N), v_same, 0);
+      format('سناریوهایی که با فروش نیمی هر سه یکی ماندند (از %s)', N), v_same, 0);
+    -- و هیچ روشی نباید با میانگین موزون یکی دربیاید — وگرنه آن روش از
+    -- کنترل حساسیت بیرون است و برابریِ بند ۱ برایش بی‌معنا سبز می‌شود.
+    PERFORM pg_temp.assert_eq(
+      format('روش‌هایی که با فروش نیمی به میانگین موزون چسبیدند (از %s×%s)',
+             N, array_length(METHODS,1) - 1), v_tie, 0);
   END IF;
   END LOOP;
 
-  RAISE NOTICE E'\n✔ خصوصیت هزینه‌یابی — هر دو نیمه ادعا اندازه‌گیری شد';
+  RAISE NOTICE E'\n✔ خصوصیت هزینه‌یابی — هر سه روش، هر دو نیمهٔ ادعا';
 END $t$;
 
 ROLLBACK;

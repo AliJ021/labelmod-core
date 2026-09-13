@@ -9,8 +9,10 @@ import assert from "node:assert/strict";
 import { SmsError } from "../src/worker/sms.ts";
 import { assertHttps, makeWebhookSender } from "../src/worker/webhook.ts";
 
+// `as const` لازم است: `WebhookPayload` یک Union است و `string` خام با
+// شاخهٔ `"invoice"` نمی‌خواند.
 const payload = {
-  kind: "invoice",
+  kind: "invoice" as const,
   invoiceNumber: "۱۴۰۵-۰۰۱",
   customerName: null,
   mobile: "09120000000",

@@ -63,6 +63,12 @@ case "${1:-}" in
   status)
     "${COMPOSE[@]}" ps
     echo
+    # ⚠️ خلاصهٔ هشت زنگ، از **همان** تابعی که صفحهٔ «سلامت سیستم» و
+    #    تولیدکنندهٔ هشدار از آن می‌خوانند. سه مصرف‌کننده و یک تعریف —
+    #    وگرنه زنگ تازه‌ای اضافه می‌شد و دو جا عقب می‌ماندند، بی‌صدا.
+    echo "── خلاصه زنگ‌های خطر (تعداد صفر یعنی خاموش) ──"
+    in_db_tools "psql -d \"\$DATABASE_URL\" -c 'SELECT code, severity, n, detail FROM platform.health_alerts() ORDER BY CASE severity WHEN '\''critical'\'' THEN 0 ELSE 1 END, code'" || true
+    echo
     echo "── درآمد ثبت‌نشده (باید خالی باشد) ──"
     in_db_tools "psql -d \"\$DATABASE_URL\" -c 'SELECT * FROM sales.unposted_revenue LIMIT 20'" || true
     # ⚠️ نامه مرده همان نقشی را دارد که «درآمد ثبت‌نشده» برای دفتر

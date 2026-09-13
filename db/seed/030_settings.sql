@@ -230,6 +230,36 @@ SELECT * FROM (VALUES
  'باید https باشد. راز در این نشانی نگذارید — مقدارش در سابقه تغییرات دیده می‌شود؛ کلید از متغیر محیطی NOTIFY_WEBHOOK_TOKEN می‌آید.',
  50, 'settings.manage', true),
 
+-- هشدار سلامت سیستم — زنگی که کسی نبیندش، زنگ نیست.
+--
+-- هشت زنگ خطر از قبل بودند و کار می‌کردند؛ آنچه نبود، **رسیدنشان به
+-- آدم** بود: همه فقط با اجرای دستی `ops/deploy.sh status` دیده می‌شدند.
+('notify.health_alerts', 'false'::jsonb,
+ 'ارسال خودکار هشدار سلامت سیستم به مدیر — درآمد ثبت‌نشده، مغایرت انبار، دست‌کاری دفتر حسابرسی و …', false,
+ 'bool', 'هشدار خودکار سلامت سیستم', 'notify', NULL, NULL, NULL, NULL,
+ 'روشن‌کردنش یعنی هر زنگ خطرِ فعال، حداکثر یک بار در روز، از راه پیامک یا Webhook به مدیر می‌رسد. مقصدش همان شماره موبایل مدیر و نشانی Webhook است که بالاتر تنظیم می‌شوند — اگر هر دو خالی باشند، پیام ساخته می‌شود و با «مقصدی تنظیم نشده» بسته می‌شود، نه اینکه بی‌صدا گم شود.',
+ 60, 'settings.manage', true),
+
+-- ⚠️ فهرست گزینه‌ها **باید** با کدهای `platform.health_alerts()` یکی
+--    بماند. `apps/api/test/health-alerts.integration.test.ts` همین را
+--    ادعا می‌کند — وگرنه زنگ تازه‌ای اضافه می‌شد که هیچ‌کس نمی‌توانست
+--    روشن یا خاموشش کند.
+('notify.health_alert_codes',
+ '["unposted_revenue","outbox_dead","stock_mismatch","ledger_divergence","party_orphan","audit_tamper","restore_drill"]'::jsonb,
+ 'کدام زنگ‌های خطر پیام بفرستند.', false,
+ 'multichoice', 'زنگ‌هایی که پیام می‌فرستند', 'notify',
+ '[{"value":"unposted_revenue","label":"درآمد ثبت‌نشده در دفتر"},
+   {"value":"outbox_dead","label":"پیام‌های نرفته"},
+   {"value":"stock_mismatch","label":"مغایرت مانده انبار با حرکت‌ها"},
+   {"value":"ledger_divergence","label":"واگرایی دفتر با ارزش انبار"},
+   {"value":"party_orphan","label":"سطر سند با شخص ناموجود"},
+   {"value":"audit_tamper","label":"دست‌کاری در دفتر حسابرسی"},
+   {"value":"restore_drill","label":"تمرین بازیابی بکاپ عقب‌افتاده"},
+   {"value":"cheque_due","label":"چک سررسیدشده یا نزدیک"}]'::jsonb,
+ NULL, NULL, NULL,
+ 'پیش‌فرض همه را دارد جز «چک سررسیدشده»، چون آن از قبل پیامک جدای خودش را دارد (کلید بالاتر) و دو پیام برای یک چک یعنی مالک هر دو را نادیده بگیرد. اگر پیامک چک را خاموش کرده‌اید، این را روشن کنید تا دست‌کم خلاصهٔ روزانه برسد.',
+ 70, 'settings.manage', true),
+
 ('notify.sms_sender', '""'::jsonb,
  'شماره فرستنده در پنل سرویس‌دهنده. خالی یعنی شماره پیش‌فرض پنل.', false,
  'text', 'شماره فرستنده', 'notify', NULL, NULL, NULL, NULL,
@@ -362,7 +392,7 @@ SELECT * FROM (VALUES
  72, 'settings.security', true),
 
 ('auth.pin_forbidden_operations',
- '["refund.cash","invoice.cancel","price.change","stock.adjust","period.close","period.reopen","user.manage","device.manage","treasury.manage","cheque.manage","journal.manual","return.late","settings.manage","settings.security","sale.price_override","customer.manage"]'::jsonb,
+ '["refund.cash","invoice.cancel","price.change","stock.adjust","period.close","period.reopen","user.manage","device.manage","treasury.manage","cheque.manage","journal.manual","return.late","settings.manage","settings.security","ledger.mapping","sale.price_override","customer.manage"]'::jsonb,
  'عملیاتی که با PIN هرگز مجاز نیستند و احراز هویت کامل می‌خواهند — بند ۱ SECURITY.md.', true,
  'multichoice', 'کارهایی که با PIN انجام نمی‌شوند', 'security',
  '[{"value":"refund.cash","label":"بازپرداخت نقدی"},
@@ -389,7 +419,8 @@ SELECT * FROM (VALUES
    {"value":"cost.view","label":"دیدن قیمت خرید"},
    {"value":"shift.close","label":"بستن شیفت صندوق"},
    {"value":"settings.manage","label":"تغییر تنظیمات"},
-   {"value":"settings.security","label":"تغییر تنظیمات امنیتی و مالی"}]'::jsonb,
+   {"value":"settings.security","label":"تغییر تنظیمات امنیتی و مالی"},
+   {"value":"ledger.mapping","label":"تغییر نگاشت حساب (درآمد و بهای تمام‌شده)"}]'::jsonb,
  NULL, NULL, NULL,
  'صندوق‌داری که با PIN صفحه را باز کرده، این کارها را نمی‌تواند بکند و باید رمز کامل بزند. هرچه بیشتر انتخاب کنید سخت‌گیرانه‌تر است. حذف «بازپرداخت نقدی» یا «ابطال فاکتور» از این فهرست به‌شدت توصیه نمی‌شود.',
  70, 'settings.security', true),

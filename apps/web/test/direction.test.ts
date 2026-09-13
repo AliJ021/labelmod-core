@@ -90,6 +90,12 @@ describe("جهت رابط", () => {
       "screens/Staff.tsx",     // نام کاربری
       "screens/Terminals.tsx", // نشانی و کد دستگاه
       "screens/Customers.tsx", // شماره موبایل
+      // کد حساب، نام مؤلفه (`leg`) و کد رویداد — سه شناسهٔ لاتین، و هر
+      // سه روی یک `<span>`، نه روی سطر یا ظرف.
+      "screens/PostingRules.tsx",
+      // کد زنگ و موضوع پیام (`topic`) — دو شناسهٔ لاتین، روی `<span>` و
+      // `<strong>`، نه روی سطر.
+      "screens/Health.tsx",
     ]);
     const unexpected = [...new Set(found)].filter((f) => !allowed.has(f));
     assert.deepEqual(unexpected, [],

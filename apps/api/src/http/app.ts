@@ -32,6 +32,7 @@ import { registerPurchasingRoutes } from "./purchasing-routes.ts";
 import { registerSettingsRoutes } from "./settings-routes.ts";
 import { registerScopeRoutes } from "./scope-routes.ts";
 import { registerAdminRoutes } from "./admin-routes.ts";
+import { registerHealthRoutes } from "./health-routes.ts";
 import { registerWebRoutes } from "./web-routes.ts";
 import { registerPublicRoutes, PUBLIC_ROUTE_PATHS } from "./public-routes.ts";
 import { InvoiceService } from "../sales/invoice.ts";
@@ -391,6 +392,7 @@ export async function buildApp(deps: AppDeps): Promise<FastifyInstance> {
     db: deps.db,
     reports: new ReportService(deps.db),
   });
+  registerHealthRoutes(app, { db: deps.db });
   registerTransferRoutes(app, {
     db: deps.db,
     transfers: new TransferService(deps.db),
