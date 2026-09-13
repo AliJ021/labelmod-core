@@ -8,7 +8,7 @@
 > پیش از ورود داده واقعی، بخش «تصمیم‌های باز» پایین را بخوانید.
 
 ```
-۱۱۳۱ ادعای SQL  ·  ۷۹۱ تست Node  ·  ۱۰۲ ادعای PHP افزونه  ·  همه در CI
+۱۱۳۱ ادعای SQL  ·  ۷۹۶ تست Node  ·  ۱۰۲ ادعای PHP افزونه  ·  همه در CI
 ```
 
 ---
@@ -294,7 +294,7 @@ ops/db.sh test            # ۱۱۳۱ ادعا — باید همه پاس شون�
 
 corepack enable
 pnpm install
-pnpm check                # lint + typecheck + ۷۹۱ تست
+pnpm check                # lint + typecheck + ۷۹۶ تست
 pnpm --filter @labelmod/api dev
 pnpm --filter @labelmod/web dev
 
@@ -467,7 +467,7 @@ Microservice · Redis · Kubernetes · حالت آفلاین کامل · Windows
 ```
 db/migrations/   اسکیما و توابع — شماره‌دار، SQL خام، قابل حسابرسی
 db/seed/         کدینگ حساب، قواعد ثبت، تنظیمات، داده مرجع
-db/test/         ۳۴ فایل تست مالی — در CI و pre-push اجرا می‌شوند
+db/test/         ۳۵ فایل تست مالی — در CI و pre-push اجرا می‌شوند
 docs/            ADR-001 تا ADR-006 · SECURITY.md · DEPLOYMENT.md
 ops/             db.sh · deploy.sh · install-hooks.sh · close-due-days.sh
                  restore-drill.sh — بکاپ را واقعاً برمی‌گرداند
