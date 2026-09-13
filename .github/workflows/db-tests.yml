@@ -105,6 +105,16 @@ jobs:
                 RAISE EXCEPTION 'سطر سند با نوع شخص ولی بدون شناسه شخص: %', n;
               END IF;
 
+              -- و «داشتن شناسه» با «درست بودن» یکی نیست: party_id عمداً
+              -- FK ندارد (چندریختی است) پس تا مهاجرت ۰۵۲ هیچ‌چیز نمی‌سنجید
+              -- که آن شناسه واقعاً کسی باشد. یک مانده در گردش اشخاص با
+              -- نام NULL، که از هیچ‌کس وصول نمی‌شود.
+              SELECT count(*) INTO n FROM ledger.party_check;
+              IF n > 0 THEN
+                RAISE EXCEPTION 'سطر سند با شناسه شخصی که وجود ندارد: % سطر (%)', n,
+                  (SELECT string_agg(DISTINCT problem, ', ') FROM ledger.party_check);
+              END IF;
+
               -- ارزش موجودی در دفتر باید با ارزش واقعی انبار بخواند.
               -- ⚠️ balance_check این را **نمی‌سنجد**: آن stock_balance را با
               -- stock_movement مقایسه می‌کند — هر دو درون ماژول انبار. تا

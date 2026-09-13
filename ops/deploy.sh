@@ -89,6 +89,10 @@ case "${1:-}" in
     # ⚠️ دست‌کاری دفتر حسابرسی روی سیستم زنده هیچ نگاه‌کننده‌ای نداشت.
     #    زنجیره هش از روز اول بود ولی هیچ‌جا **بازمحاسبه** نمی‌شد، پس
     #    تغییر محتوای یک سطر بی‌صدا رد می‌شد (مهاجرت ۰۵۱).
+    # ⚠️ `party_id` کلید خارجی ندارد (چندریختی است)، پس شناسه‌ای که به
+    #    هیچ‌کس اشاره کند، مانده‌ای در گردش اشخاص می‌سازد که مالک ندارد.
+    echo "── سطر سند با شخص ناموجود (باید خالی باشد) ──"
+    in_db_tools "psql -d \"\$DATABASE_URL\" -c 'SELECT entry_id, account_code, party_type, problem FROM ledger.party_check LIMIT 20'" || true
     echo "── دست‌کاری دفتر حسابرسی (باید خالی باشد) ──"
     in_db_tools "psql -d \"\$DATABASE_URL\" -c 'SELECT id, at, action, entity_id, problem FROM platform.audit_check LIMIT 20'" || true
     echo "── تمرین بازیابی (never یا overdue یعنی اقدام لازم است) ──"
