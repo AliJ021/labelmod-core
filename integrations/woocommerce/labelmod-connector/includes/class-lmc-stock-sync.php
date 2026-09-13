@@ -141,6 +141,21 @@ class LMC_Stock_Sync
                 $product->set_stock_quantity($available);
                 $changed = true;
             }
+            // ⚠️ سفارش معوق (Backorder) باید خاموش باشد، وگرنه دو تای بالا
+            //    بی‌اثرند. ووکامرس در `validate_props()` وضعیت را از
+            //    `backorders` بازمی‌سازد: با `yes` یا `notify`، موجودی صفر
+            //    به `onbackorder` می‌نشیند و `is_in_stock()` **درست**
+            //    برمی‌گرداند — یعنی ویترین کالای تمام‌شده را می‌فروشد و
+            //    ما هرگز آن فروش را در انبار نداریم.
+            //
+            //    مرجع نهایی موجودی Core است، پس فروش بیش از عدد Core
+            //    معنا ندارد. اگر مالک روزی واقعاً سفارش معوق بخواهد،
+            //    آن یک تصمیم تازه است و جایش یک تنظیم است، نه این خط.
+            if ($product->get_backorders() !== 'no') {
+                $product->set_backorders('no');
+                $changed = true;
+            }
+
             $stock_status = $available > 0 ? 'instock' : 'outofstock';
             if ($product->get_stock_status() !== $stock_status) {
                 $product->set_stock_status($stock_status);

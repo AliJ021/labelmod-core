@@ -120,15 +120,30 @@ export class WebOrderService {
     trx: Transaction<Database>,
     mobile: string,
     fullName: string | undefined,
-  ): Promise<string> {
+  ): Promise<string | null> {
     // نرمال‌سازی در **دیتابیس**، نه اینجا: `sales.normalize_mobile()`
     // از روز اول وجود دارد و «۰۹۱۲…» و «+98912…» را یکی می‌کند. یک
     // نسخه دوم در TypeScript یعنی دو تعریف از یک قاعده — و آنکه
     // در psql دور زده می‌شود همان است که اهمیت دارد.
+    // ⚠️ `normalize_mobile` **نرمال‌ساز** است، نه اعتبارسنج: هر چیزی که
+    //    رقم نداشته باشد به رشته **خالی** تبدیل می‌شود، نه NULL. و
+    //    رشته خالی NULL نیست، پس قید یکتایی رویش **اعمال می‌شود**.
+    //
+    //    نتیجه‌اش یک باگ واقعی بود که دیده شد: سفارش سایت با تلفن
+    //    قلابی («-»، «N/A»، «ندارد»، یک نقطه) همه به **یک** پرونده
+    //    مشتری با `mobile_normalized = ''` می‌چسبیدند — پنج شماره
+    //    متفاوت، یک مشتری. سابقه خرید، مانده و امتیاز چند نفرِ بی‌ربط
+    //    زیر یک پرونده جمع می‌شد، با نام هرکسی که اول آمده بود.
+    //
+    //    درستش «خطا» نیست: سفارش سایت باید ثبت شود (قاعده حاکم افزونه
+    //    می‌گوید ارسال نباید Checkout را خراب کند) و تلفنِ بی‌معنا
+    //    دقیقاً یعنی **تلفنی نداریم** — همان حالت فروش ناشناس که
+    //    فراخوان برای `customerMobile` تهی از قبل داشت.
     const norm = await sql<{ m: string | null }>`
-      SELECT sales.normalize_mobile(${mobile}) AS m
+      SELECT nullif(sales.normalize_mobile(${mobile}), '') AS m
     `.execute(trx);
-    const normalized = norm.rows[0]?.m ?? mobile;
+    const normalized = norm.rows[0]?.m;
+    if (!normalized) return null;
 
     const existing = await trx
       .selectFrom("sales.customer")
@@ -159,9 +174,12 @@ export class WebOrderService {
       throw new InvoiceError("empty_order", "سفارش بدون قلم ثبت نمی‌شود", 422);
     }
 
-    const customerId = input.customerMobile
-      ? await this.resolveCustomer(trx, input.customerMobile, input.customerName)
-      : undefined;
+    // `null` از `resolveCustomer` یعنی «تلفن بی‌معنا بود» و با «تلفن
+    // نفرستاد» یک‌طور رفتار می‌شود: فروش ناشناس، نه مشتریِ مشترک.
+    const customerId =
+      (input.customerMobile
+        ? await this.resolveCustomer(trx, input.customerMobile, input.customerName)
+        : null) ?? undefined;
 
     const invoiceId = await this.#invoices.createDraftIn(trx, {
       branchId: input.branchId,

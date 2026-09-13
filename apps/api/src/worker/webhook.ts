@@ -27,14 +27,33 @@ export interface WebhookConfig {
   token: string | undefined;
 }
 
-export interface WebhookPayload {
-  kind: string;
-  invoiceNumber: string | null;
-  customerName: string | null;
-  mobile: string | null;
-  amountRial: string;
-  link: string;
-}
+/**
+ * بدنهٔ Webhook — یک Union، نه یک شکل با میدان‌های اختیاری.
+ *
+ * دو نوع پیام از این پل می‌روند و هیچ میدان مشترکی جز `kind` ندارند.
+ * یک Interface با همه‌چیزِ اختیاری یعنی هر مصرف‌کننده باید حدس بزند
+ * کدام میدان‌ها پر است؛ Union یعنی کامپایلر خودش می‌گوید.
+ */
+export type WebhookPayload =
+  | {
+      kind: "invoice";
+      invoiceNumber: string | null;
+      customerName: string | null;
+      mobile: string | null;
+      amountRial: string;
+      link: string;
+    }
+  | {
+      kind: "health";
+      /** کد زنگ — همان کدهای `platform.health_alerts()`. */
+      code: string;
+      severity: string;
+      title: string;
+      /** شمار سطرهای مشکل‌دار. عدد است نه پول. */
+      count: number;
+      detail: string;
+      businessDate: string;
+    };
 
 export interface WebhookSender {
   send(payload: WebhookPayload): Promise<void>;

@@ -449,8 +449,14 @@ async function write(
     // بررسی «افتتاحیه قبلاً ثبت شده؟» و اثر آن باید یک واحد سریالی باشند.
     // قفل داخل apply_movement دیر است: دو واردات پیش از رسیدن به آن،
     // هر دو count=0 می‌بینند. قفل تراکنشی با Commit یا Rollback آزاد می‌شود.
+    //
+    // ⚠️ دامنهٔ قفل **شعبه** است، نه انبار. با قفلِ انباری، دو واردات
+    //    به دو انبارِ همان شعبه موازی می‌شدند و هر دو جمع موجودی را
+    //    **پیش از** قفلِ داخلی `post_opening_balance` می‌خواندند — پس
+    //    دومی سند اول را معکوس می‌کرد و سند ناقص می‌نشاند. قفل باید کل
+    //    «بخوان، حساب کن، ثبت کن» را در بر بگیرد، نه فقط حرکت انبار را.
     await sql`SELECT pg_advisory_xact_lock(
-      hashtextextended(${"legacy-import:" + input.warehouseId}::text, 0))`.execute(trx);
+      hashtextextended(${"legacy-import:" + input.branchId}::text, 0))`.execute(trx);
     await sql`SELECT platform.set_actor(${input.actorId}::uuid)`.execute(trx);
 
     const variationBySku = new Map<string, string>();
@@ -500,12 +506,28 @@ async function write(
     }
 
     // ── سند افتتاحیه: فقط از دروازه ─────────────────────────────
+    //
+    // ⚠️ این اجرا فقط وقتی به سند افتتاحیه دست می‌زند که **خودش دادهٔ
+    //    افتتاحیه آورده باشد**. واردات «فقط کاتالوگ» یک حالت
+    //    پشتیبانی‌شده است و نباید سندی بسازد — و حالا که جمع موجودی
+    //    دامنهٔ **شعبه** دارد، بدون این دروازه یک واردات کاتالوگیِ
+    //    بعدی سند موجود را با سندی که فقط سطر موجودی دارد جانشین
+    //    می‌کرد و نقد و بانک و دریافتنی را از دفتر می‌انداخت.
+    if (data.stock.length === 0 && data.opening.length === 0) return null;
+
     const legs: Record<string, unknown>[] = [];
 
+    // ⚠️ دامنه **شعبه** است، نه انبار جاری. سند افتتاحیه per branch
+    //    ثبت می‌شود و `post_opening_balance` سند باز قبلی را کامل
+    //    معکوس می‌کند. اگر این جمع فقط انبار جاری را می‌دید، واردات
+    //    دومِ یک شعبهٔ دو‌انباره سند اول را معکوس می‌کرد و موجودی انبار
+    //    اول را **از دفتر حذف** می‌کرد بی‌آنکه از انبار برود:
+    //    stock_balance = ۳۰٬۰۰۰ ولی حساب ۱۳۰۱ = ۲۰٬۰۰۰. یک بار همین شد.
     const inventoryValue = await sql<{ total: string }>`
-      SELECT coalesce(sum(value_delta), 0)::text AS total
-        FROM inventory.stock_movement
-       WHERE warehouse_id = ${input.warehouseId}::uuid AND kind = 'opening'
+      SELECT coalesce(sum(m.value_delta), 0)::text AS total
+        FROM inventory.stock_movement m
+        JOIN inventory.warehouse w ON w.id = m.warehouse_id
+       WHERE w.branch_id = ${input.branchId}::uuid AND m.kind = 'opening'
     `.execute(trx);
     const invValue = BigInt(inventoryValue.rows[0]?.total ?? "0");
     if (invValue > 0n) {
@@ -542,6 +564,37 @@ async function write(
     //    هیچ کالایی هم نوشته نمی‌شد، و CLI با Stack Trace می‌مرد.
     //    سند بدون سطر معنا ندارد، ولی «سندی لازم نیست» یک شکست نیست.
     if (legs.length === 0) return null;
+
+    // ── جانشینیِ ناقص: صریح رد می‌شود، بی‌صدا نه ──────────────────
+    // `post_opening_balance` سند باز قبلی را **کامل** معکوس می‌کند. پس
+    // اگر این اجرا مانده‌های غیرانباری نیاورده باشد ولی سند موجود
+    // داشته باشدشان، جانشینی آن‌ها را از دفتر پاک می‌کرد — نقدِ
+    // ثبت‌شده بی‌صدا ناپدید می‌شد. واردات چندمرحله‌ای مجاز است، ولی
+    // هر اجرایی که سند را جانشین می‌کند باید تصویر کامل مانده‌ها را
+    // همراه داشته باشد.
+    if (data.opening.length === 0) {
+      const prior = await sql<{ n: string }>`
+        SELECT count(*)::text AS n
+          FROM ledger.journal_entry e
+          JOIN ledger.journal_line l ON l.entry_id = e.id
+          JOIN ledger.posting_rule r ON r.event_type = 'opening'
+                                    AND r.account_code = l.account_code
+                                    AND r.is_active
+         WHERE e.kind = 'opening' AND e.branch_id = ${input.branchId}::uuid
+           AND e.fiscal_year = ${input.fiscalYear}::smallint
+           AND e.reverses_id IS NULL
+           AND NOT EXISTS (SELECT 1 FROM ledger.journal_entry rv
+                            WHERE rv.reverses_id = e.id)
+           AND r.leg NOT IN ('inventory', 'equity')
+      `.execute(trx);
+      if (prior.rows[0]!.n !== "0") {
+        throw new ImportError(
+          "سند افتتاحیه این شعبه از قبل مانده‌های نقد یا بانک یا اشخاص دارد. " +
+            "این اجرا آن سند را جانشین می‌کند، پس باید فایل opening-balances.csv " +
+            "را هم با تصویر کامل مانده‌ها همراه داشته باشد — وگرنه آن مانده‌ها از دفتر حذف می‌شوند.",
+        );
+      }
+    }
 
     legs.push({ leg: "equity", amount: serializeMoney(equity) });
 

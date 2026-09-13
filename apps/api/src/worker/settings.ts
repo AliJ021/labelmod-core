@@ -23,6 +23,16 @@ export interface NotifySettings {
   managerMobile: string;
   publicUrl: string;
   maxAttempts: number;
+  /**
+   * ⚠️ `notify.webhook_*` از روز اول در تنظیمات بودند و
+   *    `makeWebhookSender` هم نوشته و تست شده بود — ولی **هیچ Handlerی
+   *    صدایش نمی‌زد**. یعنی روشن‌کردن آن کلید هیچ کاری نمی‌کرد، در حالی
+   *    که متن خودش وعدهٔ «ارسال لینک فاکتور» می‌داد. حالا خوانده می‌شود.
+   */
+  webhookEnabled: boolean;
+  webhookUrl: string;
+  /** هشدار سلامت سیستم — مهاجرت ۰۵۵. */
+  healthAlerts: boolean;
 }
 
 export async function readNotifySettings(db: Db): Promise<NotifySettings> {
@@ -32,7 +42,9 @@ export async function readNotifySettings(db: Db): Promise<NotifySettings> {
        'notify.sms_enabled', 'notify.sms_provider', 'notify.sms_sender',
        'notify.invoice_sms', 'notify.invoice_sms_requires_consent',
        'notify.cheque_due_sms', 'notify.manager_mobile',
-       'notify.max_attempts', 'platform.public_url'
+       'notify.max_attempts', 'platform.public_url',
+       'notify.webhook_enabled', 'notify.webhook_url',
+       'notify.health_alerts'
      )
   `.execute(db);
 
@@ -58,5 +70,8 @@ export async function readNotifySettings(db: Db): Promise<NotifySettings> {
     // اسلش پایانی برداشته می‌شود تا لینک «…//i/token» نشود.
     publicUrl: text("platform.public_url").replace(/\/+$/, ""),
     maxAttempts: Number(map.get("notify.max_attempts") ?? 8) || 8,
+    webhookEnabled: bool("notify.webhook_enabled", false),
+    webhookUrl: text("notify.webhook_url"),
+    healthAlerts: bool("notify.health_alerts", false),
   };
 }

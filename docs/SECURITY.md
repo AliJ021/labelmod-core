@@ -114,19 +114,50 @@ Argon2id
 
 ### نقش‌های پایگاه داده
 
-نقش اپلیکیشن **مالک اسکیما نیست**:
+نقش اپلیکیشن **مالک اسکیما نیست**.
+
+⚠️ **این بند تا شهریور ۱۴۰۵ فقط یک جمله در همین سند بود.** نه نقشی ساخته
+می‌شد، نه `REVOKE`ای اجرا: `docker-compose.yml` یک کاربر می‌سازد که **مالک**
+دیتابیس است و همه‌چیز را می‌تواند. «دو لایه دفاع» یک لایه بود.
+
+حالا یک فرمان است، نه SQL دستی:
+
+```bash
+APP_PASSWORD='…' ops/db-roles.sh     # با DATABASE_URL مالک اجرا شود
+```
+
+اسکریپت Idempotent است و این‌ها را می‌گیرد:
 
 ```sql
--- بدون DDL
 REVOKE CREATE ON SCHEMA platform,identity,catalog,inventory,
                         purchasing,sales,treasury,ledger FROM labelmod_app;
 
--- بدون حذف روی جداول تغییرناپذیر (علاوه بر Trigger — دو لایه دفاع)
+-- جداول تغییرناپذیر — علاوه بر Trigger، یعنی واقعاً دو لایه
 REVOKE UPDATE, DELETE ON platform.audit_log        FROM labelmod_app;
-REVOKE UPDATE, DELETE ON inventory.stock_movement  FROM labelmod_app;
+
+-- و سه‌تایی که این سند نگفته بود ولی خطرشان بیشتر است
+REVOKE INSERT, UPDATE, DELETE ON inventory.stock_movement FROM labelmod_app;
+REVOKE INSERT, UPDATE, DELETE ON inventory.stock_balance  FROM labelmod_app;
+REVOKE INSERT, UPDATE, DELETE ON inventory.cost_layer     FROM labelmod_app;
 ```
 
-مهاجرت‌ها با نقش جداگانه `labelmod_migrator` اجرا می‌شوند.
+سه سطر آخر تا مهاجرت ۰۵۰ **ممکن نبودند**: اگر حق نوشتن روی `stock_balance`
+را می‌گرفتید، `inventory.apply_movement()` هم می‌شکست — یعنی قفل، دروازه را
+هم می‌بست. مهاجرت ۰۵۰ آن تابع را `SECURITY DEFINER` با `search_path` پین‌شده
+کرد، پس حالا هر دو ممکن است: نوشتن مستقیم رد می‌شود و دروازه کار می‌کند.
+
+`db/test/db-roles.sh` هر دو جهت را قفل کرده — هفت حمله با **نقش برنامه**
+(نه مالک، نه superuser) روی **سطر موجود** و تا **COMMIT**، به‌علاوهٔ ادعای
+اینکه دروازه هنوز کار می‌کند. بی‌آن ادعای دوم، یک `REVOKE` بی‌رویه هم «پاس»
+می‌شد و فروش را می‌شکست.
+
+⚠️ **اجرای اسکریپت به‌تنهایی هیچ محدودیتی فعال نمی‌کند.** تا وقتی
+`DATABASE_URL` برنامه نقش مالک است، همه‌چیز مثل قبل است. فعال‌شدن واقعی با
+عوض‌کردن آن متغیر است — یک تصمیم استقرار، عمداً بیرون از مهاجرت، تا سیستم
+زنده با یک مهاجرت از کار نیفتد.
+
+مهاجرت‌ها با همان نقش مالک (`labelmod_migrator` در نقش‌بندی این سند) اجرا
+می‌شوند، نه با نقش برنامه.
 
 ### لنگر انداختن زنجیره حسابرسی
 
@@ -150,7 +181,8 @@ REVOKE UPDATE, DELETE ON inventory.stock_movement  FROM labelmod_app;
 نیست — یک فایل است با یک فرض.
 
 `ops/restore-drill.sh` دامپ را در یک دیتابیس یک‌بارمصرف برمی‌گرداند و
-نه ادعا رویش می‌راند — از جمله زنجیره حسابرسی، حلقه‌به‌حلقه. سابقه در
+یازده ادعا رویش می‌راند — از جمله زنجیره حسابرسی، حلقه‌به‌حلقه، و تطبیق
+ارزش موجودی دفتر با انبار. سابقه در
 `platform.restore_drill` (تغییرناپذیر) می‌نشیند و
 `platform.restore_drill_status` عبور از `backup.restore_drill_days` را
 `overdue` اعلام می‌کند؛ نبودِ هر تمرینی `never` است.
@@ -221,7 +253,8 @@ REVOKE UPDATE, DELETE ON inventory.stock_movement  FROM labelmod_app;
 - [ ] TLS فعال، HTTP به HTTPS ریدایرکت، HSTS ست
 - [ ] بکاپ خودکار کار می‌کند **و یک بار Restore واقعی تست شده**
 - [ ] ۲FA مدیر و حسابدار فعال
-- [ ] نقش DB اپلیکیشن بدون DDL و بدون DELETE روی جداول تغییرناپذیر
+- [ ] `ops/db-roles.sh` اجرا شده **و** `DATABASE_URL` برنامه به `labelmod_app` عوض شده
+      (اجرای اسکریپت بدون عوض‌کردن متغیر، هیچ محدودیتی فعال نمی‌کند)
 - [ ] محدودیت نرخ روی ورود و OTP فعال
 - [ ] لاگ‌ها بدون رمز، توکن، OTP و شماره کارت
 - [ ] هر نقش تلاش کرده به مسیر ممنوعه برود و ۴۰۳ گرفته — به‌صورت تست خودکار

@@ -337,6 +337,70 @@ describe("سفارش سایت (ووکامرس)", { skip }, () => {
     assert.equal(c.rows[0]!.n, "1", "یک مشتری، نه دو تا");
   });
 
+  test("تلفن قلابی سفارش سایت، مشتری مشترک نمی‌سازد", async () => {
+    // ⚠️ رگرسیون یک باگ اثبات‌شده. `sales.normalize_mobile` نرمال‌ساز
+    //    است نه اعتبارسنج: هر چیزی بی‌رقم به رشته **خالی** تبدیل
+    //    می‌شود، نه NULL — و رشته خالی NULL نیست، پس قید یکتایی رویش
+    //    اعمال می‌شود.
+    //
+    //    نتیجه: پنج سفارش با تلفن قلابیِ **متفاوت** («-»، «abc»،
+    //    «N/A»، «   .»، «ندارد») همه به **یک** پرونده با
+    //    `mobile_normalized = ''` می‌چسبیدند، با نام هرکسی که اول
+    //    آمده بود. سابقه خرید و مانده چند نفر بی‌ربط زیر یک پرونده.
+    // ⚠️ SKU **اختصاصی** این ادعا، نه SKU مشترک: پنج فروش روی کالای
+    //    مشترک، عددِ «موجودی در دسترس» را برای ادعای بعدی عوض می‌کرد و
+    //    آن را قرمز می‌کرد. تستی که به ترتیب اجرا یا به باقی‌ماندهٔ
+    //    تستِ دیگر وابسته باشد، خودش یک نقص است (بند ۷۲ الحاقیه).
+    const junkSku = `SKU-${suffix}-junk`;
+    const jv = await sql<{ id: string }>`
+      INSERT INTO catalog.variation (product_id, color, size, sku)
+      SELECT p.id, 'سبز', 'XL', ${junkSku} FROM catalog.product p
+       WHERE p.code = ${`P-${suffix}`} RETURNING id`.execute(handle.db);
+    const jid = jv.rows[0]!.id;
+    await sql`INSERT INTO catalog.price (variation_id, price_list, amount)
+              VALUES (${jid}, 'default', 1000000)`.execute(handle.db);
+    await sql`SELECT platform.set_actor(${SYSTEM_USER}::uuid)`.execute(handle.db);
+    await sql`SELECT inventory.apply_movement(
+                ${jid}::uuid, ${STORE_WH}::uuid, 20, 'purchase_receipt',
+                NULL, NULL, ${SYSTEM_USER}::uuid, 500000)`.execute(handle.db);
+
+    const junk = ["-", "abc", "N/A", "   .", "ندارد"];
+    for (const [i, phone] of junk.entries()) {
+      const r = await order({
+        branchId: BRANCH,
+        warehouseId: STORE_WH,
+        externalId: `wc-${suffix}-junk-${i}`,
+        customerMobile: phone,
+        customerName: `مشتری ${phone}`,
+        lines: [{ sku: junkSku, qty: "1", unitPrice: "1000000" }],
+        paymentMethod: "gateway",
+        paymentRef: `ref-${suffix}-j${i}`,
+        paidAmount: "1000000",
+      });
+      // سفارش باید **ثبت شود** — تلفن بی‌معنا نباید سفارش سایت را
+      // بشکند. قاعده حاکم افزونه: ارسال نباید Checkout را خراب کند.
+      assert.equal(r.statusCode, 201, `تلفن «${phone}»: ${r.body}`);
+    }
+
+    const empty = await sql<{ n: string }>`
+      SELECT count(*)::text AS n FROM sales.customer
+       WHERE mobile_normalized = ''`.execute(handle.db);
+    assert.equal(empty.rows[0]!.n, "0",
+      "هیچ مشتری‌ای با موبایل خالی ساخته نشود — آن پرونده مشترک می‌شد");
+
+    // و آن فاکتورها باید **ناشناس** باشند، نه چسبیده به یک پرونده.
+    // شناسه سفارش سایت روی **پرداخت** می‌نشیند، نه روی فاکتور.
+    const anon = await sql<{ n: string }>`
+      SELECT count(*)::text AS n
+        FROM sales.invoice i
+        JOIN treasury.payment p ON p.invoice_id = i.id
+       WHERE p.client_event_id LIKE ${`woo:wc-${suffix}-junk-%`}
+         AND i.customer_id IS NULL`
+      .execute(handle.db);
+    assert.equal(anon.rows[0]!.n, String(junk.length),
+      "هر پنج فاکتور باید بدون مشتری بمانند");
+  });
+
   test("Webhook تکراری فاکتور دوم نمی‌سازد", async () => {
     const payload = {
       branchId: BRANCH,

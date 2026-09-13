@@ -25,11 +25,19 @@ import { parseMoney } from "../lib/money.ts";
 import { toToman } from "../sales/invoice-page.ts";
 import { SmsError, toLocalMobile, type SmsSender } from "./sms.ts";
 import type { NotifySettings } from "./settings.ts";
+import type { WebhookSender } from "./webhook.ts";
 
 export interface HandlerContext {
   db: Db;
   settings: NotifySettings;
   sms: SmsSender;
+  /**
+   * ⚠️ تا امروز اینجا نبود و **هیچ Handlerی Webhook نمی‌فرستاد** — در
+   *    حالی که `notify.webhook_enabled` در صفحهٔ تنظیمات وعدهٔ «ارسال
+   *    لینک فاکتور» می‌داد و `makeWebhookSender` نوشته و تست شده بود.
+   *    یک کلید تنظیم که روشن‌کردنش هیچ کاری نمی‌کند، بدتر از نبودنش است.
+   */
+  webhook: WebhookSender;
 }
 
 export interface OutboxMessage {
@@ -135,6 +143,28 @@ export async function handleInvoiceFinalized(
     `${shop}\nفاکتور ${row.number} ثبت شد.\nمبلغ: ${amount} تومان\n${link}`,
   );
 
+  /*
+   * و همان لینک به پیام‌رسان.
+   *
+   * ⚠️ **ترتیب عمدی است: پیامک اول، Webhook بعد.** پیامک راهِ تضمینیِ
+   *    رسیدن به مشتری است و Webhook یک پل اختیاری به سرویس مالک. اگر
+   *    Webhook اول بود و ۵xx می‌داد، کل پیام Backoff می‌گرفت و پیامکِ
+   *    مشتری هم تا تلاش بعدی معلق می‌ماند.
+   *
+   * ⚠️ و اگر Webhook شکست بخورد، پیام **دوباره** برداشته می‌شود و
+   *    پیامک هم دوباره می‌رود — تحویل «حداقل یک بار» است. پیامک تکراری
+   *    آزاردهنده است ولی بی‌ضرر؛ راه‌حل واقعی‌اش یک ستون «چه چیزی رفت»
+   *    روی صف است که امروز لازم نیست و پیچیدگی‌اش را نمی‌ارزد.
+   */
+  await ctx.webhook.send({
+    kind: "invoice",
+    invoiceNumber: row.number,
+    customerName: null,
+    mobile: to,
+    amountRial: row.payable_amount,
+    link,
+  });
+
   return { done: true, note: `فاکتور ${row.number} → ${to}` };
 }
 
@@ -198,6 +228,74 @@ export async function handleChequeDue(
   return { done: true, note: `چک ${no} → ${to}` };
 }
 
+/**
+ * زنگ خطر سیستم → مدیر.
+ *
+ * ── چرا متن از payload ساخته می‌شود و زنگ دوباره خوانده نمی‌شود ──────
+ *
+ * همان دلیل هشدار چک: payload عکسِ لحظه‌ای است که زنگ به صدا درآمد.
+ * ولی برخلاف چک، اینجا **دوباره سنجیده نمی‌شود** که زنگ هنوز فعال است
+ * یا نه — و این عمدی است: «درآمد ثبت‌نشدهٔ دیروز حالا ثبت شده» یعنی
+ * کسی دستی حلش کرده، و مالک باید بداند که چنین چیزی پیش آمده بود.
+ * هشداری که پس از رفع مشکل بی‌صدا حذف شود، تاریخِ حادثه را پاک می‌کند.
+ *
+ * ⚠️ **خاموش‌بودن یک شکست نیست.** کلید خاموش، مقصد تنظیم‌نشده — هر دو
+ *    با `complete` بسته می‌شوند نه `fail`. وگرنه `outbox_dead` پر
+ *    می‌شد از هشدارهایی که قرار نبود بروند و خطای واقعی همان‌جا گم
+ *    می‌شد.
+ */
+export async function handleHealthAlert(
+  ctx: HandlerContext,
+  msg: OutboxMessage,
+): Promise<HandlerResult> {
+  if (!ctx.settings.healthAlerts) {
+    return { done: true, note: "هشدار سلامت خاموش است" };
+  }
+
+  const code = String(msg.payload["code"] ?? "");
+  const title = String(msg.payload["title"] ?? "");
+  if (code === "" || title === "") {
+    // پیام بی‌کد با تلاش دوباره کد پیدا نمی‌کند.
+    throw new SmsError("پیام هشدار بدون کد یا عنوان", true);
+  }
+
+  const severity = String(msg.payload["severity"] ?? "warn");
+  const count = Number(msg.payload["count"] ?? 0);
+  const detail = String(msg.payload["detail"] ?? "");
+  const businessDate = String(msg.payload["business_date"] ?? "");
+  const mark = severity === "critical" ? "⛔" : "⚠️";
+
+  const to = toLocalMobile(ctx.settings.managerMobile);
+  const canWebhook = ctx.settings.webhookEnabled && ctx.settings.webhookUrl !== "";
+
+  // هیچ مقصدی تنظیم نشده: پیام بسته می‌شود با یادداشتی که در لاگ
+  // دیده می‌شود. ناموفق‌کردنش یعنی نامهٔ مرده پر شود از هشدارهایی که
+  // مقصد نداشتند — و همان‌جا یک خطای واقعی گم شود.
+  if (!to && !canWebhook) {
+    return { done: true, note: `هشدار ${code}: مقصدی تنظیم نشده` };
+  }
+
+  if (to) {
+    await ctx.sms.send(
+      to,
+      `${mark} ${title}\nتعداد: ${count.toLocaleString("fa-IR")}` +
+        (detail === "" || detail === "—" ? "" : `\n${detail}`),
+    );
+  }
+
+  await ctx.webhook.send({
+    kind: "health",
+    code,
+    severity,
+    title,
+    count,
+    detail,
+    businessDate,
+  });
+
+  return { done: true, note: `هشدار ${code} → ${to || "Webhook"}` };
+}
+
 /** موضوع → Handler. موضوع ناشناخته یک خطای دائمی است، نه یک حلقه. */
 export const HANDLERS: Record<
   string,
@@ -205,4 +303,5 @@ export const HANDLERS: Record<
 > = {
   "invoice.finalized": handleInvoiceFinalized,
   "cheque.due": handleChequeDue,
+  "health.alert": handleHealthAlert,
 };

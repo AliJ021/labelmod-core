@@ -17,6 +17,7 @@
 import { sql } from "kysely";
 import type { Transaction } from "kysely";
 import type { Database } from "../db/types.ts";
+import { currentRequestContext } from "./request-context.ts";
 import type { Db } from "../db/client.ts";
 
 /** خطای درج تکراری در پستگرس. */
@@ -186,14 +187,26 @@ export class IdempotencyInFlightError extends Error {
   }
 }
 
-/** کاربر عامل را داخل همان تراکنشِ اثر ست می‌کند. */
+/**
+ * کاربر عامل را داخل همان تراکنشِ اثر ست می‌کند.
+ *
+ * ⚠️ `ip` و `device` اگر داده نشوند از **زمینهٔ درخواست** برداشته
+ *    می‌شوند. دلیلش در `lib/request-context.ts` آمده: ~۷۰ فراخوان در
+ *    همهٔ ماژول‌های مالی فقط دو آرگومان اول را می‌دهند، پس `audit_log.ip`
+ *    و `.device` عملاً همیشه NULL بودند و معیار پذیرش ۱۳ سند برقرار
+ *    نبود. حالا بی دست‌زدن به آن ۷۰ جا پر می‌شوند.
+ *
+ *    بیرون از درخواست HTTP (Worker، CLI) زمینه‌ای نیست و NULL می‌مانند —
+ *    که درست است: آن‌جا آدمی پشت مرورگر نیست.
+ */
 export async function setActor(
   trx: Transaction<Database>,
   userId: string,
   ip?: string | undefined,
   device?: string | undefined,
 ): Promise<void> {
-  await sql`SELECT platform.set_actor(${userId}::uuid, ${ip ?? null}::inet, ${
-    device ?? null
-  }::text)`.execute(trx);
+  const ctx = currentRequestContext();
+  await sql`SELECT platform.set_actor(${userId}::uuid, ${
+    ip ?? ctx.ip ?? null
+  }::inet, ${device ?? ctx.device ?? null}::text)`.execute(trx);
 }

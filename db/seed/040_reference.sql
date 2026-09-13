@@ -186,6 +186,12 @@ INSERT INTO identity.permission_rule
 -- مالی است، نه یک ویرایش پرونده.
 ('accountant','customer.manage',   true,  NULL,   NULL,  NULL),
 ('accountant','settings.security', false, NULL,   NULL,  NULL),
+-- ⚠️ نگاشت حساب («درآمد به کدام حساب بخورد») ذاتاً کارِ حسابدار است و
+--    اینجا با این حال `false` است. دلیلش محافظه‌کاری عمدی است: پیش‌فرضِ
+--    Seed نباید دسترسی‌ای بدهد که مالک انتخابش نکرده. دادنش **یک ردیف**
+--    در صفحهٔ «مجوزها» است و هیچ کدی لازم ندارد — و همان دیده‌شدن، تمام
+--    نکته است.
+('accountant','ledger.mapping',    false, NULL,   NULL,  NULL),
 
 ('admin','sale.create',            true,  NULL,   NULL,  NULL),
 ('admin','sale.discount',          true,  NULL,   NULL,  NULL),
@@ -234,6 +240,12 @@ INSERT INTO identity.permission_rule
 ('admin','sale.discount_high',     true,  NULL,   NULL,  NULL),
 ('admin','shift.close',            true,  NULL,   NULL,  NULL),
 ('admin','settings.security',      true,  NULL,   NULL,  NULL),
+('admin','ledger.mapping',         true,  NULL,   NULL,  NULL),
+-- اجرای مجدد نامهٔ مرده. عمداً در `auth.pin_forbidden_operations`
+-- **نیست**: پولی جابه‌جا نمی‌کند و امنیتی را عوض نمی‌کند — یک پیام را
+-- دوباره می‌فرستد. آن فهرست برای عملیات مالی و امنیتی است و پر کردنش
+-- با هر کار حساسی، معنایش را رقیق می‌کند.
+('admin','outbox.requeue',         true,  NULL,   NULL,  NULL),
 ('admin','stock.count',            true,  NULL,   NULL,  NULL),
 ('admin','stock.receive',          true,  NULL,   NULL,  NULL),
 ('admin','stock.transfer',         true,  NULL,   NULL,  NULL),

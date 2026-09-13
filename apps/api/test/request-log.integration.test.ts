@@ -20,6 +20,8 @@ test("production request logs omit bearer URLs and queries while retaining corre
   const actor = "00000000-0000-7000-8000-0000000000f1";
   const loginValue = randomBytes(24).toString("base64url");
   const privateQuery = randomBytes(24).toString("base64url");
+  // مقدارِ ستونی که خطای پستگرس در `detail` خودش می‌گذارد.
+  const errorValue = `audit-${randomBytes(12).toString("hex")}`;
   try {
     const passwordHash = await hashSecret(loginValue);
     await sql`INSERT INTO identity.app_user(username,full_name,password_hash)
@@ -40,7 +42,7 @@ test("production request logs omit bearer URLs and queries while retaining corre
     const result = await sql<{ token: string }>`SELECT sales.ensure_public_token(${id}::uuid) AS token`.execute(handle.db);
     const token = result.rows[0]!.token;
     const child = spawnSync(process.execPath, ["--experimental-strip-types", fileURLToPath(new URL("./helpers/request-log-child.ts", import.meta.url))], {
-      env: { ...process.env, DATABASE_URL: disposable.url, AUDIT_PUBLIC_TOKEN: token, AUDIT_PRIVATE_QUERY: privateQuery, AUDIT_LOGIN_VALUE: loginValue },
+      env: { ...process.env, DATABASE_URL: disposable.url, AUDIT_PUBLIC_TOKEN: token, AUDIT_PRIVATE_QUERY: privateQuery, AUDIT_LOGIN_VALUE: loginValue, AUDIT_ERROR_VALUE: errorValue },
       encoding: "utf8", timeout: 30_000,
     });
     assert.ifError(child.error);
@@ -59,6 +61,20 @@ test("production request logs omit bearer URLs and queries while retaining corre
       assert.ok(entry.reqId);
       assert.ok(logs.some((l) => l.reqId === entry.reqId && l.msg === "request completed" && Number.isInteger(l.res?.statusCode)));
     }
+    // ── مسیر خطا: مقدار ستون نباید بیرون برود، تشخیص باید بماند ────
+    // ⚠️ `detail` خطای پستگرس مقدار ستون متعارض را حمل می‌کند
+    // («Key (username)=(…) already exists»). سریالایزر `err` فهرست
+    // مجاز دارد، پس خصیصه تازه‌ای که فردا یک درایور اضافه کند هم
+    // خودبه‌خود بیرون می‌ماند.
+    assert.equal(output.includes(errorValue), false, "مقدار ستون از راه detail خطا بیرون رفت");
+    const failure = logs.find((l) => l.msg === "خطای پیش‌بینی‌نشده");
+    assert.ok(failure, "لاگ خطای پیش‌بینی‌نشده باید نوشته شود");
+    assert.equal(failure.err.code, "23505", "کد خطا باید بماند");
+    assert.ok(failure.err.constraint, "نام قید باید بماند — وگرنه ریشه‌یابی ممکن نیست");
+    assert.ok(failure.err.stack, "Stack باید بماند");
+    assert.equal(failure.err.detail, undefined, "detail نباید در لاگ باشد");
+    assert.equal(failure.correlationId, "audit-error-path", "ردیابی نباید کشته شود");
+
     const csrf = logs.find((l) => l.msg === "توکن CSRF نامعتبر");
     assert.equal(csrf?.path, "/auth/logout");
     assert.equal(csrf?.correlationId, incoming[3].reqId);

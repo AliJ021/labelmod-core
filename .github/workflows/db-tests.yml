@@ -77,12 +77,16 @@ jobs:
               SELECT count(*) INTO n FROM sales.unposted_revenue;
               IF n > 0 THEN RAISE EXCEPTION 'درآمد ثبت‌نشده در دفتر: % فاکتور', n; END IF;
 
-              -- زنجیره حسابرسی نباید گسست داشته باشد
-              SELECT count(*) INTO n FROM (
-                SELECT prev_hash, lag(hash) OVER (ORDER BY id) AS expected_prev
-                  FROM platform.audit_log) x
-               WHERE prev_hash IS DISTINCT FROM expected_prev;
-              IF n > 0 THEN RAISE EXCEPTION 'گسست در زنجیره هش حسابرسی: %', n; END IF;
+              -- دفتر حسابرسی نباید دست‌کاری شده باشد — **پیوند و محتوا**.
+              -- ⚠️ نسخه قبلی فقط prev_hash = lag(hash) را می‌سنجید، یعنی
+              -- فقط پیوندها؛ تغییر محتوای یک سطر بی‌صدا رد می‌شد.
+              -- مهاجرت ۰۵۱ بازمحاسبه را آورد. db/test/audit-chain.sql
+              -- اثبات می‌کند آشکارساز واقعاً می‌گیرد.
+              SELECT count(*) INTO n FROM platform.audit_check;
+              IF n > 0 THEN
+                RAISE EXCEPTION 'دست‌کاری در دفتر حسابرسی: % سطر (%)', n,
+                  (SELECT string_agg(DISTINCT problem, ', ') FROM platform.audit_check);
+              END IF;
 
               -- هیچ مؤلفه درآمدی، مالیاتی یا انبار نباید اجازه تغییر حساب بگیرد
               SELECT count(*) INTO n FROM ledger.posting_rule
@@ -101,8 +105,28 @@ jobs:
                 RAISE EXCEPTION 'سطر سند با نوع شخص ولی بدون شناسه شخص: %', n;
               END IF;
 
+              -- و «داشتن شناسه» با «درست بودن» یکی نیست: party_id عمداً
+              -- FK ندارد (چندریختی است) پس تا مهاجرت ۰۵۲ هیچ‌چیز نمی‌سنجید
+              -- که آن شناسه واقعاً کسی باشد. یک مانده در گردش اشخاص با
+              -- نام NULL، که از هیچ‌کس وصول نمی‌شود.
+              SELECT count(*) INTO n FROM ledger.party_check;
+              IF n > 0 THEN
+                RAISE EXCEPTION 'سطر سند با شناسه شخصی که وجود ندارد: % سطر (%)', n,
+                  (SELECT string_agg(DISTINCT problem, ', ') FROM ledger.party_check);
+              END IF;
+
+              -- ارزش موجودی در دفتر باید با ارزش واقعی انبار بخواند.
+              -- ⚠️ balance_check این را **نمی‌سنجد**: آن stock_balance را با
+              -- stock_movement مقایسه می‌کند — هر دو درون ماژول انبار. تا
+              -- مهاجرت ۰۴۹ هیچ ثابتی دفتر را با انبار تطبیق نمی‌داد، و سند
+              -- افتتاحیهٔ ناقص دقیقاً از همین شکاف رد شد.
+              SELECT count(*) INTO n FROM inventory.ledger_check WHERE diff <> 0;
+              IF n > 0 THEN
+                RAISE EXCEPTION 'واگرایی دفتر با ارزش واقعی انبار: %',
+                  (SELECT diff FROM inventory.ledger_check);
+              END IF;
+
               -- مانده حساب‌های چک در دفتر باید با جمع برگه‌های باز بخواند.
-              -- همان چیزی که balance_check برای انبار می‌سنجد.
               SELECT count(*) INTO n FROM treasury.cheque_check WHERE diff <> 0;
               IF n > 0 THEN
                 RAISE EXCEPTION 'اختلاف دفتر با پرونده چک: % حساب', n;

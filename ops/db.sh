@@ -162,7 +162,7 @@ swap_db () {
 # ---------------------------------------------------------------------
 # چرا دیتابیس تازه: تست همزمانی به‌ناچار Commit واقعی می‌کند (به دو نشست
 # مجزا نیاز دارد و نمی‌تواند Rollback شود). اگر تست‌ها روی یک دیتابیس
-# مشترک اجرا شوند، همان داده Commit‌شده ادعاهای مقدارِ مشخصِ سناریوی
+# مشترک اجرا شوند، همان داده Commit‌شیازده ادعاهای مقدارِ مشخصِ سناریوی
 # طلایی را در اجرای بعدی می‌شکند. دیتابیس تازه، هر اجرا را قطعی می‌کند.
 run_tests () {
   TESTDB="labelmod_test_$$"          # سراسری، نه local — trap بعد از خروج از scope اجرا می‌شود
@@ -190,10 +190,15 @@ run_tests () {
     grep -q '✗' <<<"$out" && fail=1 || true
   done
 
-  if [ -f db/test/concurrency.sh ]; then
-    echo; echo "═══ db/test/concurrency.sh ═══"
-    DATABASE_URL="$TESTURL" bash db/test/concurrency.sh || fail=1
-  fi
+  # تست‌های پوسته‌ای: آن‌هایی که به **دو نشست مجزا** یا به نقش دیگری
+  # نیاز دارند و داخل یک تراکنش psql بیان‌شدنی نیستند.
+  # ⚠️ حلقه است، نه نام ثابت: پیش از این فقط `concurrency.sh` صدا زده
+  #    می‌شد، پس تست پوسته‌ای تازه **بی‌صدا** اجرا نمی‌شد.
+  for f in db/test/*.sh; do
+    [ -f "$f" ] || continue
+    echo; echo "═══ $f ═══"
+    DATABASE_URL="$TESTURL" bash "$f" || fail=1
+  done
 
   cleanup; trap - EXIT
   echo

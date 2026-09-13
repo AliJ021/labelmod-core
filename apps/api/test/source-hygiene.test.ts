@@ -375,3 +375,57 @@ test("عددهای ساختاری README با واقعیت مخزن می‌خو�
     `README می‌گوید ${claimedAccounts[1]} حساب، ولی Seed الان ${accounts} تا دارد`,
   );
 });
+
+/**
+ * ابزارِ موقت نباید در مخزن جا بماند — و این یک بار CI را شکست.
+ *
+ * ── چه شد ───────────────────────────────────────────────────────────
+ *
+ * وسط یک ممیزی، دو اسکریپت سنجش عملکرد به `apps/api/` کپی شدند (فقط
+ * برای اینکه `import` شان `kysely` را پیدا کند) و ناخواسته Commit شدند.
+ * CI روی همان کامیت مرحلهٔ **Lint** را شکست:
+ *
+ *     apps/api/bench-pos.mjs   'process' is not defined   no-undef
+ *                              'console' is not defined   no-undef
+ *     ⇒ مراحل «بررسی تایپ»، «تست‌ها»، «Build» و «pnpm audit» همه skip
+ *
+ * یعنی یک فایل دورریختنی، **کل** سنجش‌های بعدی را از اجرا انداخت.
+ *
+ * ── چرا `.mjs` ──────────────────────────────────────────────────────
+ *
+ * این مخزن هیچ `.mjs` مجازی ندارد و لازم هم ندارد: TypeScript بی مرحلهٔ
+ * Build اجرا می‌شود (`--experimental-strip-types`) و هر کد واقعی `.ts`
+ * است. پس وجود یک `.mjs` **همیشه** یعنی یک ابزار موقت جا مانده.
+ *
+ * ⚠️ اگر روزی `.mjs` واقعاً لازم شد، این ادعا باید **عمداً** عوض شود —
+ *    و همان دیده‌شدن، تمام نکتهٔ این تست است.
+ */
+test("هیچ ابزار موقتی در مخزن جا نمانده", () => {
+  const tracked = execFileSync("git", ["ls-files"], { cwd: ROOT, encoding: "utf8" })
+    .split("\n")
+    .filter(Boolean);
+
+  const stray = tracked.filter((f) => f.endsWith(".mjs"));
+  assert.deepEqual(
+    stray,
+    [],
+    `فایل .mjs در مخزن — ابزار موقت جا مانده؟\n${stray.join("\n")}\n` +
+      "کد واقعی این مخزن .ts است و بی مرحلهٔ Build اجرا می‌شود.",
+  );
+
+  // و ریشهٔ هر پکیج فقط چیزهای شناخته‌شده دارد. یک اسکریپت رهاشده
+  // اینجا می‌نشیند، نه داخل `src/` یا `test/`.
+  const allowedAtPackageRoot = new Set([
+    "package.json",
+    "tsconfig.json",
+    "Dockerfile",
+    "index.html",
+    "vite.config.ts",
+    ".dockerignore",
+  ]);
+  const junk = tracked.filter((f) => {
+    const m = /^apps\/(api|web)\/([^/]+)$/.exec(f);
+    return m !== null && !allowedAtPackageRoot.has(m[2] as string);
+  });
+  assert.deepEqual(junk, [], `فایل ناشناخته در ریشهٔ پکیج:\n${junk.join("\n")}`);
+});

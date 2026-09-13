@@ -63,6 +63,12 @@ case "${1:-}" in
   status)
     "${COMPOSE[@]}" ps
     echo
+    # ⚠️ خلاصهٔ هشت زنگ، از **همان** تابعی که صفحهٔ «سلامت سیستم» و
+    #    تولیدکنندهٔ هشدار از آن می‌خوانند. سه مصرف‌کننده و یک تعریف —
+    #    وگرنه زنگ تازه‌ای اضافه می‌شد و دو جا عقب می‌ماندند، بی‌صدا.
+    echo "── خلاصه زنگ‌های خطر (تعداد صفر یعنی خاموش) ──"
+    in_db_tools "psql -d \"\$DATABASE_URL\" -c 'SELECT code, severity, n, detail FROM platform.health_alerts() ORDER BY CASE severity WHEN '\''critical'\'' THEN 0 ELSE 1 END, code'" || true
+    echo
     echo "── درآمد ثبت‌نشده (باید خالی باشد) ──"
     in_db_tools "psql -d \"\$DATABASE_URL\" -c 'SELECT * FROM sales.unposted_revenue LIMIT 20'" || true
     # ⚠️ نامه مرده همان نقشی را دارد که «درآمد ثبت‌نشده» برای دفتر
@@ -82,6 +88,19 @@ case "${1:-}" in
     #    نیمه‌کاره — تنها راه فهمیدنش همین است.
     echo "── مغایرت مانده انبار با حرکت‌ها (باید خالی باشد) ──"
     in_db_tools "psql -d \"\$DATABASE_URL\" -c 'SELECT * FROM inventory.balance_check WHERE qty_diff <> 0 OR value_diff <> 0 LIMIT 20'" || true
+
+  echo "── واگرایی دفتر با ارزش واقعی انبار ──"
+  # balance_check انبار را با حرکت‌هایش می‌سنجد؛ این یکی انبار را با **دفتر**.
+  in_db_tools "psql -d \"\$DATABASE_URL\" -c 'SELECT * FROM inventory.ledger_check WHERE diff <> 0'" || true
+    # ⚠️ دست‌کاری دفتر حسابرسی روی سیستم زنده هیچ نگاه‌کننده‌ای نداشت.
+    #    زنجیره هش از روز اول بود ولی هیچ‌جا **بازمحاسبه** نمی‌شد، پس
+    #    تغییر محتوای یک سطر بی‌صدا رد می‌شد (مهاجرت ۰۵۱).
+    # ⚠️ `party_id` کلید خارجی ندارد (چندریختی است)، پس شناسه‌ای که به
+    #    هیچ‌کس اشاره کند، مانده‌ای در گردش اشخاص می‌سازد که مالک ندارد.
+    echo "── سطر سند با شخص ناموجود (باید خالی باشد) ──"
+    in_db_tools "psql -d \"\$DATABASE_URL\" -c 'SELECT entry_id, account_code, party_type, problem FROM ledger.party_check LIMIT 20'" || true
+    echo "── دست‌کاری دفتر حسابرسی (باید خالی باشد) ──"
+    in_db_tools "psql -d \"\$DATABASE_URL\" -c 'SELECT id, at, action, entity_id, problem FROM platform.audit_check LIMIT 20'" || true
     echo "── تمرین بازیابی (never یا overdue یعنی اقدام لازم است) ──"
     in_db_tools "psql -d \"\$DATABASE_URL\" -c 'SELECT * FROM platform.restore_drill_status'" || true
     echo "── چک سررسیدشده ──"

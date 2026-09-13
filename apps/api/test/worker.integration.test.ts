@@ -57,6 +57,7 @@ describe("Worker — صف پیام، پیامک و هشدار چک", { skip }, (
     db: handle.db,
     workerName: "test",
     smsApiKey: "",
+      webhookToken: undefined,
     batchSize: 20,
     leaseSeconds: 120,
     log: () => {},

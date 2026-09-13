@@ -33,6 +33,7 @@ import { requireForSession } from "../auth/permission.ts";
 import type { Db } from "../db/client.ts";
 import { parseMoney } from "../lib/money.ts";
 import { runOnce } from "../lib/idempotency.ts";
+import { resolveCashDrawer } from "../treasury/cash-drawer.ts";
 import { assertBranch, branchesOf } from "../sales/scope.ts";
 import type { ShiftService } from "../sales/shift.ts";
 import {
@@ -310,39 +311,12 @@ export function registerTreasuryRoutes(
         return null;
       }
 
-      const open = await shifts.openInBranch(body.branchId);
-
-      if (given !== undefined) {
-        if (!open.some((x) => x.id === given)) {
-          throw new TreasuryError(
-            "wrong_shift",
-            "شیفت فرستاده‌شده در این شعبه باز نیست.",
-            422,
-          );
-        }
-        return given;
-      }
-
-      if (open.length === 0) {
-        // بدون شیفت باز، کشویی هم باز نیست. این یک خطاست، نه اجازه:
-        // پولی که ادعا می‌شود از کشو رفته ولی کشو بسته بوده، یا
-        // اشتباه است یا باید به حساب دیگری بخورد.
-        throw new TreasuryError(
-          "no_open_shift",
-          "برای جابه‌جایی پول نقد، شیفت صندوق باید باز باشد.",
-          422,
-        );
-      }
-      if (open.length > 1) {
-        // دو کشوی باز یعنی نمی‌شود حدس زد پول از کدام رفته. حدس‌زدن
-        // اینجا یعنی مغایرت را از یک صندوق‌دار به دیگری منتقل کنیم.
-        throw new TreasuryError(
-          "ambiguous_shift",
-          `${open.length} شیفت در این شعبه باز است؛ مشخص کنید پول از کدام کشو رفته.`,
-          422,
-        );
-      }
-      return open[0]!.id;
+      // تصمیم «کدام کشو» یک تعریف دارد: `treasury/cash-drawer.ts`.
+      // مسیر مرجوعی هم از همان می‌گذرد — نسخه دومش شیفتِ خودِ کاربر را
+      // می‌خواست و بازپرداخت نقدی را عملاً ناممکن کرده بود.
+      const drawer = await resolveCashDrawer(shifts, body.branchId, given);
+      if (!drawer.ok) throw new TreasuryError(drawer.code, drawer.message, drawer.status);
+      return drawer.shiftId;
     }
   });
 

@@ -32,6 +32,7 @@ import { registerPurchasingRoutes } from "./purchasing-routes.ts";
 import { registerSettingsRoutes } from "./settings-routes.ts";
 import { registerScopeRoutes } from "./scope-routes.ts";
 import { registerAdminRoutes } from "./admin-routes.ts";
+import { registerHealthRoutes } from "./health-routes.ts";
 import { registerWebRoutes } from "./web-routes.ts";
 import { registerPublicRoutes, PUBLIC_ROUTE_PATHS } from "./public-routes.ts";
 import { InvoiceService } from "../sales/invoice.ts";
@@ -50,6 +51,10 @@ import { SettingService } from "../platform/settings.ts";
 import { WebOrderService } from "../sales/web-order.ts";
 import { safeEqual } from "../auth/password.ts";
 import { apiKeyFrom, resolveApiKey } from "../auth/api-key.ts";
+import {
+  currentRequestContext,
+  runInRequestContext,
+} from "../lib/request-context.ts";
 
 declare module "fastify" {
   interface FastifyRequest {
@@ -137,6 +142,43 @@ export async function buildApp(deps: AppDeps): Promise<FastifyInstance> {
             ...(remotePort === undefined ? {} : { remotePort }),
           };
         },
+        // ── خطا: پیام و رد تشخیصی بماند، **مقدارِ ستون** نه ─────────
+        //
+        // ⚠️ اینجا جایی است که نشت واقعی رخ می‌دهد، نه در لاگ موفق.
+        // `errors.ts` دقیقاً **دو** قید یکتا را به‌اسم می‌شناسد
+        // (`payment_client_event_unique` و `one_open_shift_per_user`)؛
+        // ۴۱ قید یکتای دیگر اسکیما به `log.error({ err })` می‌افتند.
+        //
+        // و خطای `pg` یک شیء با خصیصه‌های شمردنی است که Pino همه‌شان را
+        // Serialize می‌کند — از جمله `detail`، که **مقدار ستون متعارض را
+        // در خودش دارد**:
+        //
+        //     detail = 'Key (mobile_normalized)=(09121119999) already exists.'
+        //
+        // یازده قید یکتا روی ستون‌های راز یا PII نشسته‌اند، از جمله
+        // `invoice_public_token_key` — همان توکنی که سریالایزر `req`
+        // بالا برای بیرون نگه‌داشتنش نوشته شد. حذفش از خط درخواست و
+        // جا گذاشتنش در خط خطا، نیم‌دفاع است.
+        //
+        // ⚠️ Redaction نباید ردیابی را بکشد: `message`، `code`،
+        // `constraint`، `table`، `schema`، `routine` و `stack` می‌مانند —
+        // برای رسیدگی به یک تراکنش کافی‌اند. فقط میدان‌های
+        // **مقدار‌حمل‌کن** می‌روند.
+        err(error) {
+          const e = error as unknown as Record<string, unknown>;
+          const out: { type: string; message: string; stack: string; [k: string]: unknown } = {
+            type: typeof e["name"] === "string" ? (e["name"] as string) : "Error",
+            message: typeof e["message"] === "string" ? (e["message"] as string) : String(error),
+            stack: typeof e["stack"] === "string" ? (e["stack"] as string) : "",
+          };
+          // فهرست **مجاز**، نه فهرست ممنوع: خصیصه تازه‌ای که فردا یک
+          // درایور اضافه کند، خودبه‌خود بیرون می‌ماند نه داخل.
+          for (const k of ["code", "constraint", "table", "schema", "routine",
+                           "severity", "statusCode", "operation", "rule"]) {
+            if (e[k] !== undefined) out[k] = e[k];
+          }
+          return out;
+        },
       },
       // رمز، توکن، PIN و کوکی هرگز نباید در لاگ بنشینند.
       redact: {
@@ -201,10 +243,41 @@ export async function buildApp(deps: AppDeps): Promise<FastifyInstance> {
 
   registerErrorHandler(app);
 
+  // ── زمینهٔ درخواست ────────────────────────────────────────────────
+  //
+  // تا `ip` و `device` به لاگ حسابرسی برسند. ستون‌ها از قبل بودند و
+  // `platform.set_actor` هر دو را می‌گرفت، ولی ~۷۰ فراخوان
+  // `setActor(trx, actorId)` در ماژول‌های مالی فقط دو آرگومان اول را
+  // می‌دادند. اندازه‌گیری: `session.open` هر دو را داشت، `shift.open`
+  // هیچ‌کدام. پس معیار پذیرش ۱۳ سند برقرار نبود.
+  //
+  // ⚠️ Hook به‌شکل **Callback** است نه `async`: `done` داخل
+  //    `AsyncLocalStorage.run` صدا زده می‌شود، پس بقیهٔ چرخهٔ عمر
+  //    درخواست داخل همان زمینه می‌ماند و **با پایانش تمام می‌شود**.
+  //    نسخهٔ اول `enterWith` می‌زد و زمینه بیرون از درخواست نشت می‌کرد.
+  app.addHook("onRequest", (req, _reply, done) => {
+    runInRequestContext({ ip: req.ip }, done);
+  });
+
   // نشست را برای همه مسیرها حل می‌کند، ولی فقط برای مسیرهای غیرعمومی
   // اجباری‌اش می‌کند. اینجا تنها جایی است که کوکی خوانده می‌شود.
   app.addHook("onRequest", async (req, reply) => {
     req.session = null;
+
+    // ── زمینهٔ درخواست: تا `ip` و `device` به لاگ حسابرسی برسند ───────
+    //
+    // `audit_log.ip` و `.device` از قبل ستون داشتند و
+    // `platform.set_actor` هر دو را می‌گرفت، ولی **تقریباً هیچ عملیات
+    // مالی‌ای پرشان نمی‌کرد**: ~۷۰ فراخوان `setActor(trx, actorId)` فقط
+    // دو آرگومان اول را می‌دادند. اندازه‌گیری شد:
+    //
+    //     session.open  ۲۱ سطر → ip و device هر دو پر
+    //     shift.open     ۱ سطر → هر دو NULL
+    //
+    // ⚠️ `ip` و `device` خصوصیتِ **درخواست**اند نه پارامتر منطق
+    //    کسب‌وکار، پس جایشان همین‌جاست نه در امضای ۷۰ متد سرویس —
+    //    وگرنه هر متد تازه‌ای هم می‌توانست فراموششان کند.
+    //
 
     // ── کلید API: راه ورود ماشین ────────────────────────────────────
     //
@@ -235,6 +308,12 @@ export async function buildApp(deps: AppDeps): Promise<FastifyInstance> {
 
     const token = req.cookies[config.COOKIE_NAME];
     if (token) req.session = await auth.resolve(token);
+
+    // حالا که نشست حل شده، شناسهٔ دستگاه روی **همان** شیء زمینه نوشته
+    // می‌شود. `device` پیش از این لحظه معلوم نیست.
+    // ⚠️ شناسهٔ **دستگاه** است، نه Fingerprint خام: Fingerprint یک ادعای
+    //    کلاینت است و `identity.device.id` یک رکورد تأییدشدنی.
+    if (req.session?.device?.id) currentRequestContext().device = req.session.device.id;
 
     // ── دفاع CSRF: Double-Submit ─────────────────────────────────────
     // بند ۶ SECURITY.md دو لایه خواسته: SameSite=Strict **به‌علاوه**
@@ -313,6 +392,7 @@ export async function buildApp(deps: AppDeps): Promise<FastifyInstance> {
     db: deps.db,
     reports: new ReportService(deps.db),
   });
+  registerHealthRoutes(app, { db: deps.db });
   registerTransferRoutes(app, {
     db: deps.db,
     transfers: new TransferService(deps.db),

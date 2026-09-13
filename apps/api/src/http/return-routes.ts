@@ -17,6 +17,7 @@ import type { FastifyInstance } from "fastify";
 import { z } from "zod";
 import { AuthError } from "../auth/service.ts";
 import { requireForSession } from "../auth/permission.ts";
+import { resolveCashDrawer } from "../treasury/cash-drawer.ts";
 import type { Db } from "../db/client.ts";
 import { parseMoney } from "../lib/money.ts";
 import { runOnce } from "../lib/idempotency.ts";
@@ -69,6 +70,16 @@ const createReturnBody = z.object({
   reasonNote: z.string().max(500).optional(),
   refundAmount: moneyString.default("0"),
   refundMethod: dataCode.optional(),
+  /**
+   * کدام کشو؟ — فقط وقتی **چند** کشو در شعبه باز است.
+   *
+   * با یک کشوی باز لازم نیست و دروازه خودش پیدایش می‌کند. با دو کشو،
+   * حدس‌زدن یعنی مغایرت را از یک صندوق‌دار به دیگری منتقل کنیم، پس
+   * کلاینت باید بگوید پول از کدام کشو رفت — همان قراری که مسیر خزانه
+   * دارد. مقدار فرستاده‌شده اعتبارسنجی می‌شود: باید در **همین شعبه**
+   * باز باشد.
+   */
+  shiftId: uuid.optional(),
   lines: z
     .array(
       z.object({
@@ -151,6 +162,7 @@ export function registerReturnRoutes(app: FastifyInstance, deps: ReturnRouteDeps
       branchId: inv.branch_id,
       refund,
       ...(body.refundMethod === undefined ? {} : { refundMethod: body.refundMethod }),
+      ...(body.shiftId === undefined ? {} : { shiftId: body.shiftId }),
     });
 
     const r = await returns.createDraft({
@@ -246,7 +258,8 @@ export function registerReturnRoutes(app: FastifyInstance, deps: ReturnRouteDeps
         branchId: r.branchId,
         refund: r.refundAmount,
         ...(r.refundMethod === null ? {} : { refundMethod: r.refundMethod }),
-        expectShiftId: r.shiftId,
+        ...(r.shiftId === null ? {} : { shiftId: r.shiftId }),
+        atPost: true,
       });
     }
 
@@ -298,7 +311,14 @@ export function registerReturnRoutes(app: FastifyInstance, deps: ReturnRouteDeps
       branchId: string;
       refund: bigint;
       refundMethod?: string | undefined;
-      expectShiftId?: string | null | undefined;
+      /**
+       * کشوی انتخاب‌شده — از بدنه درخواست (ساخت پیش‌نویس) یا از خودِ
+       * برگ (لحظه ثبت). `undefined` یعنی «خودت پیدا کن»، که فقط با یک
+       * کشوی باز ممکن است.
+       */
+      shiftId?: string | undefined;
+      /** لحظه ثبت: کشوی برگ باید همان باشد، وگرنه ۴۰۹ روشن‌تر است. */
+      atPost?: boolean;
     },
   ): Promise<{ shiftId: string | undefined }> {
     // ۱. مهلت. `return.same_day` را صندوق‌دار دارد؛ `return.late` را نه
@@ -323,25 +343,35 @@ export function registerReturnRoutes(app: FastifyInstance, deps: ReturnRouteDeps
     const { kind } = await d.returns.assertRefundMethod(method);
     if (kind !== "cash") return { shiftId: undefined };
 
-    // ۳. بازپرداخت نقدی باید در یک شیفت **باز** بنشیند.
-    const shift = await d.shifts.current(s.userId, input.branchId);
-    if (!shift) {
+    // ۳. بازپرداخت نقدی باید در یک شیفت **باز** بنشیند — و کشو از
+    //    **شعبه** پیدا می‌شود، نه از کاربر عامل. همان تعریفی که مسیر
+    //    خزانه از آن می‌گذرد: `treasury/cash-drawer.ts`.
+    //
+    //    ⚠️ نسخه قبلی `shifts.current(s.userId, branchId)` می‌خواست —
+    //    شیفت **خودِ کاربر**. و چون `refund.cash` را صندوق‌دار ندارد،
+    //    نتیجه‌اش این بود که در یک روز عادی با یک کشو هیچ‌کس نمی‌توانست
+    //    بازپرداخت نقدی بزند: صاحب کشو ۴۰۳ و مجوزدارِ بی‌کشو ۴۲۲.
+    const drawer = await resolveCashDrawer(d.shifts, input.branchId, input.shiftId);
+    if (!drawer.ok) {
+      // پیش‌نویسی که برای شیفت دیروز ساخته شده، امروز ثبت نمی‌شود:
+      // شیفت دیروز بسته و شمارشش انجام شده است. آنجا «کشوی اشتباه»
+      // پیام درستی نیست — «شیفتت عوض شده» است.
+      if (input.atPost === true && drawer.code === "wrong_shift") {
+        throw new ReturnError(
+          "shift_changed",
+          "شیفت این برگ مرجوعی دیگر باز نیست. برگ تازه بزنید.",
+          409,
+        );
+      }
       throw new ReturnError(
-        "no_open_shift",
-        "بازپرداخت نقدی بدون شیفت باز ممکن نیست — پول از کشو خارج می‌شود و در شمارش نمی‌آید.",
-        422,
+        drawer.code,
+        drawer.code === "no_open_shift"
+          ? "بازپرداخت نقدی بدون شیفت باز ممکن نیست — پول از کشو خارج می‌شود و در شمارش نمی‌آید."
+          : drawer.message,
+        drawer.status,
       );
     }
-    // پیش‌نویسی که برای شیفت دیروز ساخته شده، امروز ثبت نمی‌شود:
-    // شیفت دیروز بسته و شمارشش انجام شده است.
-    if (input.expectShiftId !== undefined && input.expectShiftId !== shift.id) {
-      throw new ReturnError(
-        "shift_changed",
-        "شیفت این برگ مرجوعی دیگر باز نیست. برگ تازه بزنید.",
-        409,
-      );
-    }
-    return { shiftId: shift.id };
+    return { shiftId: drawer.shiftId };
   }
 }
 
