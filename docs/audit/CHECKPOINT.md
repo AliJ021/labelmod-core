@@ -413,3 +413,35 @@ SECURITY.md** را هم رد می‌کرد. مهاجرت ۰۵۱ + نمای `audi
 بی‌اثر بود و هم زمینه بیرون از درخواست **نشت** می‌کرد.
 
     pnpm check   کد خروج ۰   ۲۰۴ web + ۶۱۹ api
+
+## Full Regression نهایی (بخش ۱۳) — روی SHA `6fd756a`
+
+پس از **بازسازی کامل دیتابیس از صفر** (`ops/db.sh reset`):
+
+    ۱ ops/db.sh reset                    کد خروج ۰
+    ۲ ops/db.sh test                     کد خروج ۰   ۱۱۵۵ ✓ / ۰ ✗
+    ۳ php payload-test.php               کد خروج ۰   ۱۰۲ ادعا (Mock)
+    ۴ pnpm check                         کد خروج ۰   ۲۰۴ web + ۶۱۹ api، ۰ skip
+    ۵ pnpm audit --prod --audit-level high  کد خروج ۰   No known vulnerabilities
+    ۶ ops/restore-drill.sh               کد خروج ۰   ۱۱ ادعا
+    ۷ full-store-day.integration.test.ts کد خروج ۰   ۱۸/۱۸ + ۱۲ تطبیق ×۲
+
+**Skip: صفر.** هیچ تستی به‌خاطر نبودِ `DATABASE_URL` رد نشد.
+
+## اسناد تحویلی — بخش ۱۴
+
+    docs/audit/REPORT.md           گزارش نهایی، ۱۴ بخش
+    docs/audit/FINDINGS.md         ۲۰ یافته با شاهد
+    docs/audit/ACCEPTANCE.md       ۱۴ معیار پذیرش بخش ۳۵
+    docs/audit/CLAUSES-74.md       هر ۷۴ بند با وضعیت و شاهد
+    docs/audit/DOMAINS-8.md        هشت حوزهٔ اجباری
+    docs/audit/THREAT-MODEL.md     ۲۸ آزمون تهدید
+    docs/audit/RELATIONSHIPS.md    مدل روابط و همگرایی
+    docs/audit/UI-UX.md            ۹ صفحه × ۷ عرض
+    docs/audit/QUESTIONS.md        یازده تصمیم مالک
+    docs/audit/IRAN-COMPLIANCE.md  فقط اطلاعاتی
+    docs/ADR-007-realtime-sync.md  طراحی Push (کد ساخته نشد)
+    docs/audit/CHECKPOINT.md       همین پرونده
+
+**ممیزی به پایان رسید.** معیار بند ۵۴: همهٔ بندها وضعیت دارند و یک دور
+نهایی اجرا شد. «احتمال وجود باگ» مجوز چرخهٔ بی‌پایان نشد.
