@@ -334,3 +334,64 @@ SECURITY.md** را هم رد می‌کرد. مهاجرت ۰۵۱ + نمای `audi
 اشاره کند. مهاجرت ۰۵۲ + `ledger.party_check` + `db/test/party-exists.sql`
 (هفت بند). و بند ۷ یک واقعیت دوم را نشان داد: حذف مشتری سطر دفترش را
 یتیم می‌کند — امروز از API ممکن نیست، حالا دست‌کم دیده می‌شود.
+
+## بخش ۸٫۹ WooCommerce واقعی — ⛔ مانع بیرونی، **اثبات‌شده نه فرض‌شده**
+
+پرامپت می‌گوید: «اگر ممکن نیست، صریح بنویس کدام ادعا فقط با Mock سنجیده
+شده.» تلاش شد و **ممکن نیست**. هر سه راه آزموده شد:
+
+    ۱. دانلود مستقیم
+       downloads.wordpress.org/release/wordpress-6.9.tar.gz   → 000 (Proxy)
+       wordpress.org/wordpress-latest.tar.gz                  → 000
+       downloads.wordpress.org/plugin/woocommerce.zip         → 000
+       github.com/.../archive/refs/tags/10.3.0.tar.gz          → 403
+
+    ۲. git (که کار می‌کند — Push همین شعبه از آن می‌رود)
+       git clone WordPress/WordPress          ✔ موفق (۲۱۲MB، ولی trunk 7.2-alpha)
+       git clone woocommerce/woocommerce      ✔ موفق (۱۷۶MB، **Monorepo**)
+       ⚠️ Monorepo افزونهٔ قابل‌نصب نیست؛ Build خودش را می‌خواهد.
+
+    ۳. دیتابیس و ماژول‌های PHP — **اینجا قطعی شکست**
+       apt-get install mariadb-server php-mysql …
+         archive.ubuntu.com      → 404 روی چند بسته
+         ppa.launchpadcontent.net → 403 از Proxy روی همهٔ ماژول‌های PHP
+       ⇒ نه MariaDB، نه `php-mysql`، نه Docker daemon.
+       WordPress بی MySQL بالا نمی‌آید.
+
+**PHP 8.4.19 CLI هست**، پس آنچه **اجرا شد**:
+
+    php -l روی همهٔ فایل‌های افزونه           ✓ (در CI)
+    php integrations/woocommerce/test/payload-test.php
+      → ۱۰۲ ادعا پاس، کد خروج ۰
+      (و `stock-run-test.php` را در خط ۴۹۲ require می‌کند، پس
+       تست‌های همگام‌سازی موجودی هم در CI اجرا می‌شوند)
+
+### پس کدام ادعا فقط با Mock سنجیده شده — صریح
+
+| ادعا | وضعیت |
+|---|---|
+| واحد پول، قیمت واحد، نگاشت درگاه | **Mock** — با Double در `payload-test.php` |
+| موجودی صفر ذخیره می‌شود (PR #51) | **Mock** — با `LMC_Stored_Product` |
+| `backorders` اجباراً `no` می‌شود | **Mock** |
+| قیمت `null` یعنی «قیمت ندارد» نه صفر | **Mock** |
+| HPOS روشن/خاموش | **سنجیده نشده** — `declare_compatibility` فقط ثابت شد که فراخوانی می‌شود |
+| چرخهٔ عمر افزونه (فعال/غیرفعال/حذف) | **سنجیده نشده** |
+| نگاشت `_lmc_variation_id` روی متای واقعی | **سنجیده نشده** |
+| `lmc_instore_purchase` و جلوگیری از حلقه | **Mock** (سه نگهبان بازبینی ایستا شد) |
+| امضای Webhook با Body واقعی / امضای غلط / Replay | **سنجیده نشده** |
+| Export/Erase حریم خصوصی وردپرس | **سنجیده نشده** |
+
+⚠️ `integrations/woocommerce/test/stock-integration.php` از قبل برای
+همین هست و WordPress زنده می‌خواهد (`wp-load.php`). ابزارش آماده است؛
+محیطش اینجا نیست. **این را «پاس» نمی‌نامم.**
+
+## بخش ۸٫۱۳ همگام‌سازی لحظه‌ای — وابسته به ۸٫۹
+
+خودِ پرامپت بخش ۸٫۹ می‌گوید: «این محیط برای بخش ۸٫۱۳ هم لازم است.»
+ساختن کدِ Push بی محیطی که در آن آزمایش شود، یعنی تحویل کد **اجرانشده**
+— دقیقاً چیزی که قواعد شاهد §۴ ممنوع کرده («Mock ≠ Integration واقعی»).
+
+پس تصمیم: **ADR-007 نوشته می‌شود** (تصمیم طراحی، پیش‌تأییدشده در §۱۰ و
+بی نیاز به Woo زنده) و **کد همگام‌سازی نوشته نمی‌شود** تا محیط واقعی
+فراهم شود. ده قید الزامی بخش ۸٫۱۳ در همان ADR به‌عنوان شرط پذیرش
+می‌نشیند.
