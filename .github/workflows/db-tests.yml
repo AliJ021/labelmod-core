@@ -77,12 +77,16 @@ jobs:
               SELECT count(*) INTO n FROM sales.unposted_revenue;
               IF n > 0 THEN RAISE EXCEPTION 'درآمد ثبت‌نشده در دفتر: % فاکتور', n; END IF;
 
-              -- زنجیره حسابرسی نباید گسست داشته باشد
-              SELECT count(*) INTO n FROM (
-                SELECT prev_hash, lag(hash) OVER (ORDER BY id) AS expected_prev
-                  FROM platform.audit_log) x
-               WHERE prev_hash IS DISTINCT FROM expected_prev;
-              IF n > 0 THEN RAISE EXCEPTION 'گسست در زنجیره هش حسابرسی: %', n; END IF;
+              -- دفتر حسابرسی نباید دست‌کاری شده باشد — **پیوند و محتوا**.
+              -- ⚠️ نسخه قبلی فقط prev_hash = lag(hash) را می‌سنجید، یعنی
+              -- فقط پیوندها؛ تغییر محتوای یک سطر بی‌صدا رد می‌شد.
+              -- مهاجرت ۰۵۱ بازمحاسبه را آورد. db/test/audit-chain.sql
+              -- اثبات می‌کند آشکارساز واقعاً می‌گیرد.
+              SELECT count(*) INTO n FROM platform.audit_check;
+              IF n > 0 THEN
+                RAISE EXCEPTION 'دست‌کاری در دفتر حسابرسی: % سطر (%)', n,
+                  (SELECT string_agg(DISTINCT problem, ', ') FROM platform.audit_check);
+              END IF;
 
               -- هیچ مؤلفه درآمدی، مالیاتی یا انبار نباید اجازه تغییر حساب بگیرد
               SELECT count(*) INTO n FROM ledger.posting_rule

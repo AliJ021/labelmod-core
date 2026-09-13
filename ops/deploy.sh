@@ -86,6 +86,11 @@ case "${1:-}" in
   echo "── واگرایی دفتر با ارزش واقعی انبار ──"
   # balance_check انبار را با حرکت‌هایش می‌سنجد؛ این یکی انبار را با **دفتر**.
   in_db_tools "psql -d \"\$DATABASE_URL\" -c 'SELECT * FROM inventory.ledger_check WHERE diff <> 0'" || true
+    # ⚠️ دست‌کاری دفتر حسابرسی روی سیستم زنده هیچ نگاه‌کننده‌ای نداشت.
+    #    زنجیره هش از روز اول بود ولی هیچ‌جا **بازمحاسبه** نمی‌شد، پس
+    #    تغییر محتوای یک سطر بی‌صدا رد می‌شد (مهاجرت ۰۵۱).
+    echo "── دست‌کاری دفتر حسابرسی (باید خالی باشد) ──"
+    in_db_tools "psql -d \"\$DATABASE_URL\" -c 'SELECT id, at, action, entity_id, problem FROM platform.audit_check LIMIT 20'" || true
     echo "── تمرین بازیابی (never یا overdue یعنی اقدام لازم است) ──"
     in_db_tools "psql -d \"\$DATABASE_URL\" -c 'SELECT * FROM platform.restore_drill_status'" || true
     echo "── چک سررسیدشده ──"
