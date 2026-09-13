@@ -423,7 +423,33 @@ describe("پرسنل و مشتری", { skip }, () => {
     const after2 = await app.inject({ method: "GET", url: `/users/${id}`, ...s });
     const u = JSON.parse(after2.body) as UserJson;
     assert.equal(u.hasPin, true, "«دارد» برمی‌گردد");
-    assert.equal(after2.body.includes("4271"), false, "خودِ PIN هرگز");
+
+    // ⚠️ زیررشته‌جویی روی **کل بدنه** برای یک PIN چهاررقمی گاه‌به‌گاه
+    //    شکست می‌دهد، و شکستش هیچ ربطی به نشت ندارد: بدنه نام کاربری
+    //    را دارد، نام کاربری از `Date.now()` ساخته می‌شود، و هر وقت آن
+    //    رشتهٔ رقمی اتفاقاً «4271» را در خودش داشته باشد ادعا قرمز
+    //    می‌شود. اثبات شد — با `suffix = u4271…` این تست شکست، بی‌آنکه
+    //    چیزی لو رفته باشد.
+    //
+    //    برای رازِ پرآنتروپی (بالاتر، ۲۴ بایت تصادفی) زیررشته درست است
+    //    چون برخورد عملاً ممکن نیست. برای چهار رقم نیست.
+    //
+    //    تستی که فقط گاهی پاس شود خودش یک نقص است، نه یک مزاحمت.
+    const leaks: string[] = [];
+    const scan = (node: unknown, path: string): void => {
+      if (typeof node === "string" || typeof node === "number") {
+        if (String(node) === "4271") leaks.push(path);
+      } else if (Array.isArray(node)) {
+        node.forEach((v, i) => scan(v, `${path}[${i}]`));
+      } else if (node !== null && typeof node === "object") {
+        for (const [k, v] of Object.entries(node)) {
+          if (/pin/i.test(k) && k !== "hasPin") leaks.push(`${path}.${k} (کلید)`);
+          scan(v, `${path}.${k}`);
+        }
+      }
+    };
+    scan(u, "user");
+    assert.deepEqual(leaks, [], `خودِ PIN یا کلید PIN در پاسخ: ${leaks.join(", ")}`);
 
     const clear = await app.inject({
       method: "PUT",

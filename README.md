@@ -8,7 +8,7 @@
 > پیش از ورود داده واقعی، بخش «تصمیم‌های باز» پایین را بخوانید.
 
 ```
-۱۱۲۹ ادعای SQL  ·  ۷۹۰ تست Node  ·  ۱۰۲ ادعای PHP افزونه  ·  همه در CI
+۱۱۲۹ ادعای SQL  ·  ۷۹۱ تست Node  ·  ۱۰۲ ادعای PHP افزونه  ·  همه در CI
 ```
 
 ---
@@ -294,7 +294,7 @@ ops/db.sh test            # ۱۱۲۹ ادعا — باید همه پاس شون�
 
 corepack enable
 pnpm install
-pnpm check                # lint + typecheck + ۷۹۰ تست
+pnpm check                # lint + typecheck + ۷۹۱ تست
 pnpm --filter @labelmod/api dev
 pnpm --filter @labelmod/web dev
 
