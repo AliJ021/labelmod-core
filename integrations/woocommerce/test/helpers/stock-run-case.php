@@ -1,5 +1,26 @@
 <?php
-/** Isolated persistence/HTTP doubles; real WooCommerce coverage runs separately. */
+/**
+ * دابل‌های ذخیره‌سازی و HTTP — **یک پروندهٔ کمکی است، نه یک تست.**
+ *
+ * `payload-test.php` آن را `require` می‌کند و توابع مشترک (`set_settings`
+ * و بقیه) را همان‌جا تعریف کرده. اجرای مستقیم این پرونده یعنی
+ * `Call to undefined function set_settings()` و کد خروج ۲۵۵.
+ *
+ * ⚠️ به همین دلیل از `test/` به `test/helpers/` منتقل شد و نامش دیگر
+ *    «test» ندارد: هر کسی که `for f in test/*.php` بزند، دیگر با یک
+ *    Fatal روبه‌رو نمی‌شود و گمان نمی‌کند چیزی شکسته است.
+ *    `apps/api/test/source-hygiene.test.ts` این را قفل کرده.
+ *
+ * ⚠️ و نگهبان پایین لازم است چون انتقال به‌تنهایی کافی نیست — کسی
+ *    می‌تواند مستقیم همین مسیر را هم اجرا کند.
+ */
+
+if (!function_exists('set_settings')) {
+    fwrite(STDERR,
+        "این پرونده یک کمکی است، نه یک تست — مستقل اجرا نمی‌شود.\n" .
+        "  اجرا کنید:  php integrations/woocommerce/test/payload-test.php\n");
+    exit(2);
+}
 
 class LMC_Stored_Product
 {

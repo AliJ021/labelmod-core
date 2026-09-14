@@ -429,3 +429,103 @@ test("هیچ ابزار موقتی در مخزن جا نمانده", () => {
   });
   assert.deepEqual(junk, [], `فایل ناشناخته در ریشهٔ پکیج:\n${junk.join("\n")}`);
 });
+
+/**
+ * سرجمع معیارهای پذیرش از **خودِ جدول** شمرده می‌شود، نه با دست.
+ *
+ * ⚠️ این بار سوم است. سرجمع دستیِ ۷۴ بند یک بار غلط بود، جدول شدت
+ *    یافته‌ها یک بار، و سرجمع معیارهای پذیرش یک بار — و هر سه
+ *    **خودسازگار** به نظر می‌رسیدند، که دقیقاً دلیل دیده‌نشدنشان بود.
+ *
+ * ⚠️ و ادعا فقط «جمع = ۱۴» نیست. «پیاده‌سازی‌شده ولی راستی‌آزمایی‌نشده»
+ *    یک وضعیت **جدا** از «کامل و آزموده‌شده» است و بخش ۴ پرامپت صریح
+ *    گفته این دو یکی نوشته نشوند. پس سطر خلاصه باید **هر دو عدد** را
+ *    بگوید، وگرنه یک معیارِ مسدود به ووکامرس واقعی، «برقرار» شمرده
+ *    می‌شود.
+ */
+test("سرجمع معیارهای پذیرش با خودِ جدول می‌خواند", () => {
+  const md = readFileSync(join(ROOT, "docs/audit/ACCEPTANCE.md"), "utf8");
+
+  const rows = [...md.matchAll(/^\|\s*([۰-۹]+)\s*\|([^|]*)\|([^|]*)\|\s*$/gm)];
+  assert.equal(rows.length, 14, `جدول معیارها ${rows.length} ردیف دارد، نه ۱۴`);
+
+  let verified = 0;
+  let unverified = 0;
+  for (const r of rows) {
+    const status = (r[3] as string).trim();
+    if (status.startsWith("کامل و آزموده")) verified += 1;
+    else if (status.startsWith("پیاده‌سازی‌شده")) unverified += 1;
+    else assert.fail(`وضعیت ناشناخته در ردیف ${r[1]}: «${status}»`);
+  }
+  assert.equal(verified + unverified, 14, "جمع وضعیت‌ها ۱۴ نشد");
+
+  // سطر خلاصه باید همین دو عدد را بگوید.
+  const fa = (n: number) => String(n).replace(/\d/g, (d) => "۰۱۲۳۴۵۶۷۸۹"[Number(d)] as string);
+  const summary = /⇒ \*\*([۰-۹]+) از ۱۴ برقرار/.exec(md);
+  assert.ok(summary !== null, "ACCEPTANCE.md دیگر سطر خلاصه ندارد");
+  assert.equal(
+    summary[1],
+    fa(verified),
+    `خلاصه می‌گوید ${summary[1]} برقرار، ولی جدول ${fa(verified)} «کامل و آزموده‌شده» دارد`,
+  );
+
+  if (unverified > 0) {
+    assert.ok(
+      md.includes(`${fa(unverified)} راستی‌آزمایی‌نشده`),
+      `${fa(unverified)} معیار راستی‌آزمایی‌نشده هست و خلاصه نامش را نمی‌برد`,
+    );
+  }
+
+  // و REPORT.md همان عدد را بگوید — دو سند، یک حقیقت.
+  const rep = readFileSync(join(ROOT, "docs/audit/REPORT.md"), "utf8");
+  assert.ok(
+    rep.includes(`${fa(verified)} از ۱۴`),
+    `REPORT.md عدد ${fa(verified)} از ۱۴ را ندارد`,
+  );
+});
+
+/**
+ * هر پروندهٔ `integrations/woocommerce/test/*.php` باید مستقل اجرا شود.
+ *
+ * `stock-run-case.php` یک کمکی است که `payload-test.php` آن را
+ * `require` می‌کند. تا وقتی نامش `stock-run-test.php` بود و در همان
+ * پوشه می‌نشست، هر `for f in test/*.php` یک **PHP Fatal** (کد ۲۵۵)
+ * می‌داد و آدم فکر می‌کرد چیزی شکسته است. CI اثری نمی‌دید چون فهرست
+ * خودش را دارد — یعنی نگهبانی که فقط برای آدم‌ها خراب بود.
+ *
+ * ⚠️ ادعا **رفتاری** است نه ساختاری: هر پرونده واقعاً اجرا می‌شود.
+ *    نسخهٔ اول این تست می‌خواست از روی محتوا حدس بزند کدام «کمکی» است
+ *    و `payload-test.php` را قرمز کرد — چون آن **قانوناً** خودش
+ *    `set_settings` را تعریف می‌کند. حدس، جای اجرا را نمی‌گیرد.
+ *
+ * ⚠️ کد خروج ۲ مجاز است: `stock-integration.php` بی وردپرس واقعی
+ *    عمداً رد می‌شود و «پاس» وانمود نمی‌کند. آنچه مجاز **نیست** یک
+ *    Fatal است.
+ */
+test("هر تست PHP افزونه مستقل اجرا می‌شود", () => {
+  const dir = join(ROOT, "integrations/woocommerce/test");
+  const files = readdirSync(dir)
+    .filter((f) => f.endsWith(".php"))
+    .sort();
+  assert.ok(files.length >= 3, `انتظار دست‌کم ۳ پرونده، ${files.length} پیدا شد`);
+
+  for (const f of files) {
+    let code = 0;
+    let out: string;
+    try {
+      out = execFileSync("php", [join(dir, f)], {
+        encoding: "utf8",
+        stdio: ["ignore", "pipe", "pipe"],
+      });
+    } catch (err) {
+      const e = err as { status?: number; stdout?: string; stderr?: string };
+      code = e.status ?? -1;
+      out = `${e.stdout ?? ""}${e.stderr ?? ""}`;
+    }
+    assert.ok(
+      !/Fatal error/i.test(out),
+      `${f} با PHP Fatal می‌شکند — اگر کمکی است جایش test/helpers/ است:\n${out.slice(0, 300)}`,
+    );
+    assert.notEqual(code, 255, `${f} کد خروج ۲۵۵ داد (Fatal)`);
+  }
+});
