@@ -110,10 +110,37 @@ REVOKE INSERT, UPDATE, DELETE ON inventory.stock_movement FROM $APP_ROLE;
 REVOKE INSERT, UPDATE, DELETE ON inventory.stock_balance  FROM $APP_ROLE;
 REVOKE INSERT, UPDATE, DELETE ON inventory.cost_layer     FROM $APP_ROLE;
 
--- پیش‌فرض‌های آینده هم همین را بگیرند.
-ALTER DEFAULT PRIVILEGES IN SCHEMA inventory
-  REVOKE INSERT, UPDATE, DELETE ON TABLES FROM $APP_ROLE;
+-- ۴. و `public` — که در فهرست اسکیماهای بالا **نیست** و باید باشد.
+--    هر شش تابع `SECURITY DEFINER` این پروژه `public` را در
+--    `search_path` پین‌شدهٔ خود دارند (چون `pgcrypto` آنجاست و
+--    `platform.uuid_v7()` به `gen_random_bytes()` نیاز دارد). اگر نقش
+--    برنامه بتواند در `public` شیء بسازد، می‌تواند تابعی هم‌نام
+--    بگذارد که **به‌نام مالک** اجرا شود — یعنی دقیقاً همان ارتقای
+--    دسترسی که پین‌کردن search_path قرار بود ببندد.
+--
+--    پستگرس ۱۵ به بعد این را پیش‌فرض بسته، ولی «پیش‌فرضِ درست» یک
+--    دفاع نیست: دیتابیسی که از نسخهٔ قدیمی‌تر ارتقا داده شده باشد
+--    هنوز بازش دارد، و یک `GRANT` سهوی هم کافی است.
+REVOKE CREATE ON SCHEMA public FROM $APP_ROLE;
 SQL
+
+# ⚠️ اینجا عمداً `ALTER DEFAULT PRIVILEGES … REVOKE … IN SCHEMA inventory`
+#    **نیست**، و یک بار بود و اشتباه بود.
+#
+#    پیش‌فرض به **نام جدول** کار نمی‌کند، به **اسکیما** کار می‌کند. پس آن
+#    سطر، حق نوشتن را از هر جدول تازه‌ای در `inventory` می‌گرفت — از
+#    جمله `stock_count`، `transfer` و هر چیزی که مهاجرت بعدی بسازد — در
+#    حالی که چند سطر بالاتر همین اسکریپت وعده داده «جدولی که مهاجرت
+#    بعدی بسازد خودبه‌خود پوشیده شود».
+#
+#    اندازه‌گیری شد: یک `CREATE TABLE inventory.probe(...)` به‌نام مالک،
+#    و بعد `has_table_privilege('labelmod_app', …, 'INSERT')` = false،
+#    در حالی که همان جدول در `sales` = true. یعنی اولین نوشتن روی آن
+#    جدول تازه، **پس از استقرار** و روی سیستم زنده، ۵۰۰ می‌داد.
+#
+#    سه جدول تغییرناپذیر با نامشان بسته شده‌اند، مثل `audit_log` — یک
+#    تصمیم صریح به‌ازای هر جدول، نه یک قاعدهٔ نانوشته روی کل اسکیما.
+#    `db/test/db-roles.sh` هر دو جهت را می‌سنجد.
 
 echo
 echo "✓ نقش $APP_ROLE آماده است."

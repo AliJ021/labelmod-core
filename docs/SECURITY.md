@@ -139,6 +139,10 @@ REVOKE UPDATE, DELETE ON platform.audit_log        FROM labelmod_app;
 REVOKE INSERT, UPDATE, DELETE ON inventory.stock_movement FROM labelmod_app;
 REVOKE INSERT, UPDATE, DELETE ON inventory.stock_balance  FROM labelmod_app;
 REVOKE INSERT, UPDATE, DELETE ON inventory.cost_layer     FROM labelmod_app;
+
+-- و `public`، که در فهرست بالا نیست: هر تابع SECURITY DEFINER این
+-- پروژه آن را در search_path پین‌شده‌اش دارد (pgcrypto آنجاست).
+REVOKE CREATE ON SCHEMA public FROM labelmod_app;
 ```
 
 سه سطر آخر تا مهاجرت ۰۵۰ **ممکن نبودند**: اگر حق نوشتن روی `stock_balance`
@@ -146,10 +150,29 @@ REVOKE INSERT, UPDATE, DELETE ON inventory.cost_layer     FROM labelmod_app;
 هم می‌بست. مهاجرت ۰۵۰ آن تابع را `SECURITY DEFINER` با `search_path` پین‌شده
 کرد، پس حالا هر دو ممکن است: نوشتن مستقیم رد می‌شود و دروازه کار می‌کند.
 
-`db/test/db-roles.sh` هر دو جهت را قفل کرده — هفت حمله با **نقش برنامه**
+`db/test/db-roles.sh` هر دو جهت را قفل کرده — ده حمله با **نقش برنامه**
 (نه مالک، نه superuser) روی **سطر موجود** و تا **COMMIT**، به‌علاوهٔ ادعای
-اینکه دروازه هنوز کار می‌کند. بی‌آن ادعای دوم، یک `REVOKE` بی‌رویه هم «پاس»
-می‌شد و فروش را می‌شکست.
+اینکه دروازه‌ها هنوز کار می‌کنند. بی‌آن ادعای دوم، یک `REVOKE` بی‌رویه هم
+«پاس» می‌شد و فروش را می‌شکست. حق‌ها را هم از **خودِ `ops/db-roles.sh`**
+می‌گیرد، نه از یک کپی: نسخهٔ اول GRANTها را دوباره می‌نوشت و دربارهٔ
+اسکریپت تولیدی هیچ‌چیز ثابت نمی‌کرد.
+
+⚠️ **ولی آن تست فقط یک دروازه را می‌شناخت.** کل مجموعهٔ یکپارچهٔ API با
+نقش **مالک** اجرا می‌شد، و مالک همه‌چیز را می‌تواند. با اجرای همان مجموعه
+زیر نقش محدود (`LMC_TEST_DB_ROLE=app`، حالا در CI) ۳۰ شکست بیرون آمد:
+`inventory.revalue_to_cost()` و `inventory.post_stock_count()` به
+`stock_balance` می‌نویسند و `SECURITY DEFINER` نبودند. اولی را
+`purchasing.post_receipt()` صدا می‌زند و `costing.method` پیش‌فرض
+`last_purchase` است — یعنی در لحظهٔ سوییچ، **هیچ رسید خریدی ثبت نمی‌شد**.
+مهاجرت ۰۵۸ بستشان و `db/test/write-gate.sql` کلاسشان را.
+
+⚠️ `SELECT … FOR UPDATE` در پستگرس حق **UPDATE** می‌خواهد، نه SELECT.
+ظریف‌ترین حالت این کلاس همین است، چون خطا هیچ اشاره‌ای به `FOR UPDATE`
+ندارد.
+
+⚠️ **بکاپ با نقش مالک گرفته می‌شود.** `pg_dump` روی
+`public.schema_migration` هم `LOCK TABLE` می‌زند و نقش برنامه آنجا حقی
+ندارد.
 
 ⚠️ **اجرای اسکریپت به‌تنهایی هیچ محدودیتی فعال نمی‌کند.** تا وقتی
 `DATABASE_URL` برنامه نقش مالک است، همه‌چیز مثل قبل است. فعال‌شدن واقعی با

@@ -448,9 +448,16 @@ MIGRATION_DATABASE_URL=postgres://labelmod:<رمز>@db:5432/labelmod
 `ALTER DEFAULT PRIVILEGES` بیشتر موارد را پوشش می‌دهد، ولی جدولی که پیش
 از تنظیم آن ساخته شده باشد GRANT نمی‌گیرد.
 
+⚠️ **بکاپ با نقش مالک گرفته می‌شود، نه با نقش برنامه.** `pg_dump` روی
+`public.schema_migration` هم `LOCK TABLE` می‌زند و نقش برنامه آنجا حقی
+ندارد. اگر `DATABASE_URL` را در `.env` عوض کنید و `ops/db.sh backup` هم
+همان را بخواند، بکاپ شبانه با
+«permission denied for table schema_migration» می‌ایستد. `ops/deploy.sh`
+از متغیر مالک استفاده می‌کند؛ هر cron دستی هم باید همان را بگیرد.
+
 ### چه چیزی واقعاً بسته می‌شود
 
-هفت حمله که با نقش مالک همه‌شان موفق می‌شوند:
+ده حمله که با نقش مالک همه‌شان موفق می‌شوند:
 
 | حمله | با نقش برنامه |
 |---|---|
@@ -458,11 +465,52 @@ MIGRATION_DATABASE_URL=postgres://labelmod:<رمز>@db:5432/labelmod
 | `UPDATE`/`DELETE` روی `platform.audit_log` | رد |
 | `CREATE TABLE` در اسکیمای مالی | رد |
 | **`UPDATE` مستقیم روی `inventory.stock_balance`** | رد |
+| `INSERT`/`UPDATE` روی `inventory.cost_layer` | رد |
+| `CREATE TABLE` در اسکیمای `public` | رد |
 | `SELECT inventory.apply_movement(…)` | **کار می‌کند** |
+| `SELECT inventory.revalue_to_cost(…)` | **کار می‌کند** |
 
-سطر آخر مهم‌ترین است: بی‌آن، قفل دروازه را هم بسته بود. مهاجرت ۰۵۰ آن
-تابع را `SECURITY DEFINER` کرد تا هر دو هم‌زمان ممکن شوند.
-`db/test/db-roles.sh` همین جدول را در CI می‌سنجد.
+دو سطر آخر مهم‌ترین‌اند: بی‌آن‌ها، قفل دروازه را هم بسته بود.
+
+⚠️ سطر `public` هم یک نگهبان واقعی است، نه تشریفات: هر شش تابع
+`SECURITY DEFINER` این پروژه `public` را در `search_path` پین‌شدهٔ خود
+دارند (چون `pgcrypto` آنجاست). نقشی که بتواند در `public` شیء بسازد،
+می‌تواند تابعی هم‌نام بگذارد که **به‌نام مالک** اجرا شود — یعنی دقیقاً
+همان ارتقای دسترسی که پین‌کردن `search_path` قرار بود ببندد. پستگرس ۱۵
+به بعد پیش‌فرض بسته‌اش کرده، ولی دیتابیسِ ارتقایافته از نسخهٔ قدیمی‌تر
+هنوز بازش دارد.
+
+### چرا این بار واقعاً سنجیده شد
+
+تا امروز تنها چیزی که با نقش برنامه سنجیده می‌شد `db/test/db-roles.sh`
+بود و آن فقط `apply_movement` را به‌عنوان «دروازه» می‌شناخت. بقیهٔ
+مجموعه — ۱۲۴۵ ادعای SQL و ۶۵۴ ادعای API — با نقش **مالک** اجرا می‌شدند،
+و مالک همه‌چیز را می‌تواند.
+
+حالا کل مجموعهٔ یکپارچهٔ API یک بار با نقش محدود اجرا می‌شود:
+
+```bash
+LMC_TEST_DB_ROLE=app pnpm --filter @labelmod/api test
+```
+
+`test/helpers/disposable-db.ts` در این حالت پس از مهاجرت و Seed، همان
+`ops/db-roles.sh` تولیدی را روی دیتابیس یک‌بارمصرف اجرا می‌کند و برنامه
+را با نقش محدود وصل می‌کند — مهاجرت با مالک، برنامه با نقش محدود، دقیقاً
+شکل تولید.
+
+**اولین اجرا ۳۰ شکست داد** و دو ریشه داشت، هر دو در مسیر تولید:
+
+| ریشه | اثر در تولید |
+|---|---|
+| `inventory.revalue_to_cost()` `SECURITY DEFINER` نبود | با `costing.method = last_purchase` (پیش‌فرض) **هیچ رسید خریدی ثبت نمی‌شد** |
+| `inventory.post_stock_count()` `SELECT … FOR UPDATE` روی `stock_balance` دارد | هیچ انبارگردانی‌ای بسته نمی‌شد |
+
+مهاجرت ۰۵۸ هر دو را بست. `SELECT … FOR UPDATE` در پستگرس حق **UPDATE**
+می‌خواهد نه SELECT — و خطایش هیچ اشاره‌ای به `FOR UPDATE` ندارد.
+
+و `db/test/write-gate.sql` این **کلاس** را بست، نه این دو مورد را:
+کاتالوگ را می‌خواند و هر تابعی را که به سه جدول قفل‌شده بنویسد یا
+قفلشان کند و `SECURITY DEFINER` نباشد، رد می‌کند.
 
 ⚠️ برای نقش **مالک** هیچ‌کدام بسته نیست و نباید باشد — مهاجرت با همان
 نقش اجرا می‌شود. پس نماهای `inventory.balance_check` و
@@ -474,8 +522,6 @@ MIGRATION_DATABASE_URL=postgres://labelmod:<رمز>@db:5432/labelmod
 ## آنچه این استقرار عمداً ندارد
 
 - **Redis، Kubernetes، Microservice** — ADR-001.
-- **Worker** — هنوز ساخته نشده. تا آن موقع، هشدار سررسید چک دستی دیده
-  می‌شود: `SELECT * FROM treasury.cheque_due WHERE urgency <> 'future';`
 - **چند سرور یا Failover.** یک فروشگاه، یک سرور. اگر روزی لازم شد، یک
   ADR می‌خواهد نه یک فایل Compose.
 - **فونت محلی.** `index.html` هنوز Vazirmatn را از Google Fonts می‌گیرد
