@@ -155,7 +155,7 @@ describe("دروازه کشو: بازپرداخت نقدی و حرکت نقد غ
     await sql`SELECT platform.set_actor(${SYSTEM_USER}::uuid)`.execute(handle.db);
     await sql`SELECT inventory.apply_movement(
                 ${variationId}::uuid, ${STORE_WH}::uuid, 60, 'purchase_receipt',
-                NULL, NULL, ${SYSTEM_USER}::uuid, 600000)`.execute(handle.db);
+                'test_receipt', '00000000-0000-7000-8000-00000000fa11'::uuid, ${SYSTEM_USER}::uuid, 600000)`.execute(handle.db);
 
     app = await buildApp({
       db: handle.db,

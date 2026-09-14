@@ -30,7 +30,7 @@ test("production request logs omit bearer URLs and queries while retaining corre
       VALUES ('REQUEST-LOG','کالای آزمون لاگ') RETURNING id`.execute(handle.db);
     const v = await sql<{ id: string }>`INSERT INTO catalog.variation(product_id,sku,color,size)
       VALUES (${p.rows[0]!.id}::uuid,'REQUEST-LOG-M','آبی','M') RETURNING id`.execute(handle.db);
-    await sql`SELECT inventory.apply_movement(${v.rows[0]!.id}::uuid,${warehouse}::uuid,5,'purchase_receipt',NULL,NULL,${actor}::uuid,1000)`.execute(handle.db);
+    await sql`SELECT inventory.apply_movement(${v.rows[0]!.id}::uuid,${warehouse}::uuid,5,'purchase_receipt','test_receipt', '00000000-0000-7000-8000-00000000fa11'::uuid,${actor}::uuid,1000)`.execute(handle.db);
     const inv = await sql<{ id: string }>`INSERT INTO sales.invoice(branch_id,warehouse_id,channel,created_by)
       VALUES (${branch}::uuid,${warehouse}::uuid,'web',${actor}::uuid) RETURNING id`.execute(handle.db);
     const id = inv.rows[0]!.id;

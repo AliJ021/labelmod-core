@@ -25,8 +25,10 @@ BEGIN
   INSERT INTO catalog.product(code,name_internal) VALUES('SCOPE-FIT','محصول مصنوعی') RETURNING id INTO product;
   INSERT INTO catalog.variation(product_id,color,size,sku)
     VALUES(product,'آبی','M','SCOPE-FIT-M') RETURNING id INTO variation;
-  PERFORM inventory.apply_movement(variation,wh,5,'purchase_receipt',NULL,NULL,actor,1000);
-  PERFORM inventory.apply_movement(variation,other_wh,77,'purchase_receipt',NULL,NULL,actor,1000);
+  PERFORM inventory.apply_movement(variation,wh,5,'purchase_receipt',
+    'test_receipt','00000000-0000-7000-8000-00000000fa11'::uuid,actor,1000);
+  PERFORM inventory.apply_movement(variation,other_wh,77,'purchase_receipt',
+    'test_receipt','00000000-0000-7000-8000-00000000fa11'::uuid,actor,1000);
   SELECT on_hand INTO qty FROM catalog.fitting_variations(customer,NULL,NULL,50,ARRAY[br])
     WHERE variation_id=variation;
   PERFORM pg_temp.assert_eq('جمع فقط شعبه مجاز',qty,5);

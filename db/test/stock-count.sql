@@ -132,7 +132,8 @@ PERFORM pg_temp.assert_eq('system_qty تا ثبت خالی است',
     WHERE count_id = v_count AND system_qty IS NULL), 1);
 
 -- فروش یک عدد، پس از ورود سطر شمارش
-PERFORM inventory.apply_movement(v_a, WH, -1, 'sale', NULL, NULL, v_user);
+PERFORM inventory.apply_movement(v_a, WH, -1, 'sale',
+  'test_invoice', '00000000-0000-7000-8000-00000000fa11'::uuid, v_user);
 PERFORM pg_temp.assert_eq('موجودی پس از فروش',
   (SELECT on_hand FROM inventory.stock_balance
     WHERE variation_id = v_a AND warehouse_id = WH), 9);

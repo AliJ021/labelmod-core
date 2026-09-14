@@ -243,7 +243,8 @@ INSERT INTO purchasing.purchase_return
 VALUES (BR, v_rcpt, WH, 'quality') RETURNING id INTO v_ret;
 INSERT INTO purchasing.purchase_return_line (return_id, receipt_line_id, qty)
 VALUES (v_ret, v_line, 8);
-PERFORM inventory.apply_movement(v_var, WH, -12, 'sale', NULL, NULL, v_user);
+PERFORM inventory.apply_movement(v_var, WH, -12, 'sale',
+  'test_invoice', '00000000-0000-7000-8000-00000000fa11'::uuid, v_user);
 PERFORM pg_temp.assert_raises('موجودی منفی نمی‌شود',
   format('SELECT purchasing.post_purchase_return(%L::uuid, %L::uuid)', v_ret, v_user));
 

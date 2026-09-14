@@ -115,7 +115,7 @@ describe("Worker — صف پیام، پیامک و هشدار چک", { skip }, (
     await sql`SELECT platform.set_actor(${SYSTEM_USER}::uuid)`.execute(handle.db);
     await sql`SELECT inventory.apply_movement(
                 ${variationId}::uuid, ${STORE_WH}::uuid, 50, 'purchase_receipt',
-                NULL, NULL, ${SYSTEM_USER}::uuid, 600000)`.execute(handle.db);
+                'test_receipt', '00000000-0000-7000-8000-00000000fa11'::uuid, ${SYSTEM_USER}::uuid, 600000)`.execute(handle.db);
 
     const c = await sql<{ id: string }>`
       INSERT INTO sales.customer (mobile_normalized, full_name, consent_sms)

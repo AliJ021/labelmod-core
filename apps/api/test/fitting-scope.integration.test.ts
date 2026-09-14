@@ -63,7 +63,7 @@ describe("دامنه موجودی پیشنهاد سایز با ورود واقع
       if (code === "FIT-SHARED") shared = v.rows[0]!.id;
       for (const [warehouse, qty] of quantities) {
         await sql`SELECT inventory.apply_movement(${v.rows[0]!.id}::uuid,${warehouse}::uuid,
-          ${qty}::numeric,'purchase_receipt',NULL,NULL,${ACTOR}::uuid,1000)`.execute(db);
+          ${qty}::numeric,'purchase_receipt','test_receipt', '00000000-0000-7000-8000-00000000fa11'::uuid,${ACTOR}::uuid,1000)`.execute(db);
       }
     }
     app = await buildApp({ db, auth: new AuthService(db),

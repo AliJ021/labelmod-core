@@ -191,7 +191,7 @@ describe("قیمت دستی روی سطر فاکتور", { skip }, () => {
     await sql`SELECT platform.set_actor(${supervisorId}::uuid)`.execute(handle.db);
     await sql`SELECT inventory.apply_movement(
                 ${variationId}::uuid, ${STORE_WH}::uuid, 100, 'purchase_receipt',
-                NULL, NULL, ${supervisorId}::uuid, 400000)`.execute(handle.db);
+                'test_receipt', '00000000-0000-7000-8000-00000000fa11'::uuid, ${supervisorId}::uuid, 400000)`.execute(handle.db);
 
     app = await buildApp({
       db: handle.db,
@@ -495,7 +495,7 @@ describe("قیمت دستی روی سطر فاکتور", { skip }, () => {
       await sql`SELECT catalog.set_price(${saleVar}::uuid, 1000000)`.execute(trx);
       await sql`SELECT inventory.apply_movement(
                   ${saleVar}::uuid, ${STORE_WH}::uuid, 10, 'purchase_receipt',
-                  NULL, NULL, ${supervisorId}::uuid, 400000)`.execute(trx);
+                  'test_receipt', '00000000-0000-7000-8000-00000000fa11'::uuid, ${supervisorId}::uuid, 400000)`.execute(trx);
     });
 
     const invoiceId = await newDraft(supervisor);

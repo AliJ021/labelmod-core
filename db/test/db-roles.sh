@@ -66,8 +66,11 @@ INSERT INTO catalog.variation (product_id, sku, color, size)
 SELECT id, 'RT-$RID-M', 'آبی', 'M' FROM p RETURNING id;
 SQL
 )
+# مرجع مصنوعی اجباری است (مهاجرت ۰۵۹): حرکتِ بی سند از دروازه هم رد
+# می‌شود، نه فقط از درج مستقیم.
 run -c "SELECT inventory.apply_movement('$VAR_ID'::uuid,
-  '00000000-0000-7000-8000-000000000101'::uuid, 5, 'purchase_receipt', NULL, NULL,
+  '00000000-0000-7000-8000-000000000101'::uuid, 5, 'purchase_receipt',
+  'test_receipt', '00000000-0000-7000-8000-00000000fa11'::uuid,
   '$USER_ID'::uuid, 1000);" >/dev/null
 
 MOVES=$(run -c "SELECT count(*) FROM inventory.stock_movement;")
@@ -122,7 +125,8 @@ echo "═══ و دروازهٔ قانونی باید هنوز کار کند �
 # می‌شکست. قفل بی‌دروازه، امنیت نیست.
 if psql -v ON_ERROR_STOP=1 -q -d "$APP_CONN" -tAc \
    "SELECT inventory.apply_movement('$VAR_ID'::uuid,
-      '00000000-0000-7000-8000-000000000101'::uuid, 3, 'purchase_receipt', NULL, NULL,
+      '00000000-0000-7000-8000-000000000101'::uuid, 3, 'purchase_receipt',
+      'test_receipt', '00000000-0000-7000-8000-00000000fa11'::uuid,
       '$USER_ID'::uuid, 1000);" >/dev/null 2>&1; then
   echo "  ✓ apply_movement با نقش برنامه کار کرد"
 else
@@ -135,7 +139,8 @@ fi
 # بی این، هیچ رسید خریدی ثبت نمی‌شد.
 if psql -v ON_ERROR_STOP=1 -q -d "$APP_CONN" -tAc \
    "SELECT inventory.revalue_to_cost('$VAR_ID'::uuid,
-      '00000000-0000-7000-8000-000000000101'::uuid, 1200, '$USER_ID'::uuid);" >/dev/null 2>&1; then
+      '00000000-0000-7000-8000-000000000101'::uuid, 1200, '$USER_ID'::uuid,
+      'test_receipt', '00000000-0000-7000-8000-00000000fa11'::uuid);" >/dev/null 2>&1; then
   echo "  ✓ revalue_to_cost با نقش برنامه کار کرد"
 else
   echo "  ✗ revalue_to_cost با نقش برنامه شکست — رسید خرید در تولید می‌شکند"; FAIL=1

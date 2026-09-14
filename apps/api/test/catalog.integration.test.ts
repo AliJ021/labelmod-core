@@ -272,7 +272,7 @@ describe("ساخت خودکار تنوع و ماتریس موجودی", { skip }
     await sql`SELECT platform.set_actor(${ids["supervisor"]}::uuid)`.execute(handle.db);
     await sql`SELECT inventory.apply_movement(
                 ${variation.id}::uuid, ${STORE_WH}::uuid, 5, 'purchase_receipt',
-                NULL, NULL, ${ids["supervisor"]}::uuid, 900000)`.execute(handle.db);
+                'test_receipt', '00000000-0000-7000-8000-00000000fa11'::uuid, ${ids["supervisor"]}::uuid, 900000)`.execute(handle.db);
 
     await app.inject({
       method: "POST",
@@ -331,7 +331,7 @@ describe("ساخت خودکار تنوع و ماتریس موجودی", { skip }
     ] as const) {
       await sql`SELECT inventory.apply_movement(
                   ${made.get(key)}::uuid, ${STORE_WH}::uuid, ${qty},
-                  'purchase_receipt', NULL, NULL,
+                  'purchase_receipt', 'test_receipt', '00000000-0000-7000-8000-00000000fa11'::uuid,
                   ${ids["supervisor"]}::uuid, 500000)`.execute(handle.db);
     }
 
@@ -379,10 +379,10 @@ describe("ساخت خودکار تنوع و ماتریس موجودی", { skip }
 
     await sql`SELECT platform.set_actor(${ids["supervisor"]}::uuid)`.execute(handle.db);
     await sql`SELECT inventory.apply_movement(${v.id}::uuid, ${STORE_WH}::uuid, 3,
-                'purchase_receipt', NULL, NULL, ${ids["supervisor"]}::uuid, 100000)`
+                'purchase_receipt', 'test_receipt', '00000000-0000-7000-8000-00000000fa11'::uuid, ${ids["supervisor"]}::uuid, 100000)`
       .execute(handle.db);
     await sql`SELECT inventory.apply_movement(${v.id}::uuid, ${STOCK_WH}::uuid, 7,
-                'purchase_receipt', NULL, NULL, ${ids["supervisor"]}::uuid, 100000)`
+                'purchase_receipt', 'test_receipt', '00000000-0000-7000-8000-00000000fa11'::uuid, ${ids["supervisor"]}::uuid, 100000)`
       .execute(handle.db);
 
     const all = await app.inject({

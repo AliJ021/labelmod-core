@@ -129,7 +129,7 @@ describe("گزارش‌ها", { skip }, () => {
       await sql`SELECT catalog.set_price(${variationId}::uuid, 1000000)`.execute(trx);
       await sql`SELECT inventory.apply_movement(
                   ${variationId}::uuid, ${STORE_WH}::uuid, 20, 'purchase_receipt',
-                  NULL, NULL, ${adminId}::uuid, 400000)`.execute(trx);
+                  'test_receipt', '00000000-0000-7000-8000-00000000fa11'::uuid, ${adminId}::uuid, 400000)`.execute(trx);
     });
 
     app = await buildApp({

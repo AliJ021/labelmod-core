@@ -207,7 +207,7 @@ describe("خوراک‌های همگام‌سازی سایت", { skip }, () => {
       await sql`SELECT platform.set_actor(${SYSTEM_USER}::uuid)`.execute(handle.db);
       await sql`SELECT inventory.apply_movement(
                   ${id}::uuid, ${STORE_WH}::uuid, 10, 'purchase_receipt',
-                  NULL, NULL, ${SYSTEM_USER}::uuid, 800000)`.execute(handle.db);
+                  'test_receipt', '00000000-0000-7000-8000-00000000fa11'::uuid, ${SYSTEM_USER}::uuid, 800000)`.execute(handle.db);
     }
 
     const u = await handle.db

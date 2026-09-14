@@ -144,7 +144,7 @@ describe("آمادگی API صندوق", { skip }, () => {
     await sql`SELECT platform.set_actor(${cashierId}::uuid)`.execute(handle.db);
     await sql`SELECT inventory.apply_movement(
                 ${variationId}::uuid, ${STORE_WH}::uuid, 100, 'purchase_receipt',
-                NULL, NULL, ${cashierId}::uuid, 400000)`.execute(handle.db);
+                'test_receipt', '00000000-0000-7000-8000-00000000fa11'::uuid, ${cashierId}::uuid, 400000)`.execute(handle.db);
 
     app = await buildApp({
       db: handle.db,
