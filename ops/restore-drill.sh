@@ -37,12 +37,42 @@ PSQL="psql -v ON_ERROR_STOP=1 -qtA"
 DUMP="${1:-}"
 if [ -z "$DUMP" ]; then
   DIR="${BACKUP_DIR:-./backup}"
-  # جدیدترین دامپ. `ls -t` روی نام فایل با فاصله می‌شکند، پس `find`.
+
+  # ⚠️ `|| true` اجباری است و یک اصلاح است، نه احتیاط.
+  #
+  #    با `set -euo pipefail` (سطر بالای همین فایل)، اگر پوشهٔ بکاپ
+  #    **وجود نداشته باشد** `find` کد ۱ می‌دهد، `pipefail` آن را به کل
+  #    لوله می‌برد، و `set -e` اسکریپت را همان‌جا می‌کشد — **پیش از**
+  #    رسیدن به پیام خطای پایین.
+  #
+  #    یعنی پیام وجود داشت و هرگز چاپ نمی‌شد: خروجی **صفر بایت** و کد ۱.
+  #    روی سرور، یک cron شبانه هر شب شکست می‌خورد و هیچ‌کس یک کلمه
+  #    نمی‌دید. (`head -1` هم می‌تواند به `sort` سیگنال SIGPIPE بدهد و
+  #    همان اثر را بسازد.)
+  #
+  #    اندازه‌گیری شد: با پوشهٔ **موجود ولی خالی** پیام چاپ می‌شد، با
+  #    پوشهٔ **ناموجود** نه. `db/test/restore-drill-guard.sh` هر دو حالت
+  #    را قفل کرده، به‌علاوهٔ کنترل مثبت.
+  #
+  #    جدیدترین دامپ. `ls -t` روی نام فایل با فاصله می‌شکند، پس `find`.
   DUMP="$(find "$DIR" -maxdepth 1 -name '*.dump' -printf '%T@ %p\n' 2>/dev/null \
-          | sort -rn | head -1 | cut -d' ' -f2-)"
+          | sort -rn | head -1 | cut -d' ' -f2- || true)"
+
+  if [ -z "$DUMP" ]; then
+    if [ ! -d "$DIR" ]; then
+      echo "✗ پوشهٔ بکاپ «$DIR» وجود ندارد." >&2
+    else
+      echo "✗ هیچ فایل «*.dump» در «$DIR» پیدا نشد." >&2
+    fi
+    echo "  اول یک بکاپ بگیرید:  ops/db.sh backup" >&2
+    echo "  یا مسیر را بدهید:     ops/restore-drill.sh <فایل.dump>" >&2
+    echo "  یا پوشه را تعیین کنید: BACKUP_DIR=... ops/restore-drill.sh" >&2
+    exit 1
+  fi
 fi
-if [ -z "$DUMP" ] || [ ! -f "$DUMP" ]; then
-  echo "✗ فایل بکاپ پیدا نشد. یک مسیر بدهید یا BACKUP_DIR را تنظیم کنید."
+if [ ! -f "$DUMP" ]; then
+  echo "✗ فایل بکاپ «$DUMP» پیدا نشد." >&2
+  echo "  اول یک بکاپ بگیرید:  ops/db.sh backup" >&2
   exit 1
 fi
 
