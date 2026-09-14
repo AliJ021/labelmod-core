@@ -194,7 +194,8 @@ describe("ارسال لحظه‌ای به سایت — از حرکت انبار 
       await sql`
         SELECT inventory.apply_movement(
           ${variation}::uuid, ${STORE_WH}::uuid, ${qty}::platform.qty,
-          ${qty > 0 ? "purchase_receipt" : "sale"}, 'test', NULL, ${SYSTEM_USER}::uuid,
+          ${qty > 0 ? "purchase_receipt" : "sale"}, 'test',
+          '00000000-0000-7000-8000-00000000fa11'::uuid, ${SYSTEM_USER}::uuid,
           ${qty > 0 ? 500000 : null}::platform.money)
       `.execute(trx);
     });

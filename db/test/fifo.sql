@@ -70,9 +70,9 @@ RAISE NOTICE E'\n═══ ۱. هر ورود یک لایه می‌سازد ═�
 -- ═══════════════════════════════════════════════════════════════════
 
 PERFORM inventory.apply_movement(v_var, WH, 10, 'purchase_receipt',
-  NULL, NULL, v_user, 100000, false, '2026-06-01'::timestamptz);
+  'test_doc', '00000000-0000-7000-8000-00000000fa11'::uuid, v_user, 100000, false, '2026-06-01'::timestamptz);
 PERFORM inventory.apply_movement(v_var, WH, 10, 'purchase_receipt',
-  NULL, NULL, v_user, 200000, false, '2026-06-10'::timestamptz);
+  'test_doc', '00000000-0000-7000-8000-00000000fa11'::uuid, v_user, 200000, false, '2026-06-10'::timestamptz);
 
 SELECT count(*) INTO v_n FROM inventory.cost_layer
  WHERE variation_id = v_var AND warehouse_id = WH;
@@ -91,7 +91,7 @@ RAISE NOTICE E'\n═══ ۲. فروش از قدیمی‌ترین لایه می
 
 SELECT abs(value_delta) INTO v_cogs FROM (
   SELECT (inventory.apply_movement(v_var, WH, -15, 'sale',
-            NULL, NULL, v_user, NULL, false, '2026-06-20'::timestamptz)).value_delta
+            'test_doc', '00000000-0000-7000-8000-00000000fa11'::uuid, v_user, NULL, false, '2026-06-20'::timestamptz)).value_delta
 ) x(value_delta);
 
 PERFORM pg_temp.assert_eq('بهای فروش FIFO = ۱۰×۱۰۰هزار + ۵×۲۰۰هزار', v_cogs, 2000000);
@@ -129,7 +129,7 @@ RAISE NOTICE E'\n═══ ۴. جمع سود با هر سه روش یکی است
 
 -- باقی‌مانده را هم می‌فروشیم تا عمر کالا تمام شود
 PERFORM inventory.apply_movement(v_var, WH, -5, 'sale',
-  NULL, NULL, v_user, NULL, false, '2026-06-25'::timestamptz);
+  'test_doc', '00000000-0000-7000-8000-00000000fa11'::uuid, v_user, NULL, false, '2026-06-25'::timestamptz);
 
 SELECT on_hand, total_value INTO v_qty, v_val
   FROM inventory.stock_balance WHERE variation_id = v_var AND warehouse_id = WH;
@@ -157,7 +157,7 @@ INSERT INTO catalog.variation (product_id, color, size, sku)
   VALUES (v_prod,'سبز','M','FIFO-SWITCH') RETURNING id INTO v_var;
 
 PERFORM inventory.apply_movement(v_var, WH, 10, 'purchase_receipt',
-  NULL, NULL, v_user, 100000, false, '2026-07-01'::timestamptz);
+  'test_doc', '00000000-0000-7000-8000-00000000fa11'::uuid, v_user, 100000, false, '2026-07-01'::timestamptz);
 
 PERFORM platform.set_setting('costing.method', '"fifo"'::jsonb, 'سوییچ به FIFO');
 
@@ -168,7 +168,7 @@ PERFORM pg_temp.assert_eq('لایه ورودِ پیش از سوییچ موجود
 
 SELECT abs(value_delta) INTO v_cogs FROM (
   SELECT (inventory.apply_movement(v_var, WH, -4, 'sale',
-            NULL, NULL, v_user, NULL, false, '2026-07-05'::timestamptz)).value_delta
+            'test_doc', '00000000-0000-7000-8000-00000000fa11'::uuid, v_user, NULL, false, '2026-07-05'::timestamptz)).value_delta
 ) x(value_delta);
 PERFORM pg_temp.assert_eq('فروش پس از سوییچ، از لایه خورد', v_cogs, 400000);
 
@@ -184,7 +184,7 @@ RAISE NOTICE E'\n═══ ۶. مرجوعی لایه تازه می‌سازد، 
 -- دوباره پر کند، که ترتیب FIFO را به‌هم می‌زد.
 
 PERFORM inventory.apply_movement(v_var, WH, 2, 'sale_return',
-  NULL, NULL, v_user, 100000, false, '2026-07-06'::timestamptz);
+  'test_doc', '00000000-0000-7000-8000-00000000fa11'::uuid, v_user, 100000, false, '2026-07-06'::timestamptz);
 
 PERFORM pg_temp.assert_eq('مرجوعی لایه تازه ساخت',
   (SELECT count(*) FROM inventory.cost_layer WHERE variation_id = v_var), 2);

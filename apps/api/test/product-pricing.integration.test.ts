@@ -190,7 +190,7 @@ describe("چرخه حیات کالا و قیمت", { skip }, () => {
     const variationId = vars[0]!.id;
     await sql`SELECT inventory.apply_movement(
       ${variationId}::uuid, ${STORE_WH}::uuid, 5, 'purchase_receipt',
-      NULL, NULL, ${ids["admin"]}::uuid, 20000000)`.execute(handle.db);
+      'test_receipt', '00000000-0000-7000-8000-00000000fa11'::uuid, ${ids["admin"]}::uuid, 20000000)`.execute(handle.db);
 
     const shift = await app.inject({
       method: "POST",
@@ -284,7 +284,7 @@ describe("چرخه حیات کالا و قیمت", { skip }, () => {
     await setPrice(s, variationId, "7000000");
     await sql`SELECT inventory.apply_movement(
       ${variationId}::uuid, ${STORE_WH}::uuid, 3, 'purchase_receipt',
-      NULL, NULL, ${ids["admin"]}::uuid, 3000000)`.execute(handle.db);
+      'test_receipt', '00000000-0000-7000-8000-00000000fa11'::uuid, ${ids["admin"]}::uuid, 3000000)`.execute(handle.db);
 
     const inv = await app.inject({
       method: "POST",
@@ -611,7 +611,7 @@ describe("چرخه حیات کالا و قیمت", { skip }, () => {
 
     await sql`SELECT inventory.apply_movement(
       ${variationId}::uuid, ${STORE_WH}::uuid, 1, 'purchase_receipt',
-      NULL, NULL, ${ids["admin"]}::uuid, 1000000)`.execute(handle.db);
+      'test_receipt', '00000000-0000-7000-8000-00000000fa11'::uuid, ${ids["admin"]}::uuid, 1000000)`.execute(handle.db);
 
     const blocked = await app.inject({
       method: "PATCH",
@@ -633,7 +633,7 @@ describe("چرخه حیات کالا و قیمت", { skip }, () => {
 
     await sql`SELECT inventory.apply_movement(
       ${variationId}::uuid, ${STORE_WH}::uuid, 1, 'purchase_receipt',
-      NULL, NULL, ${ids["admin"]}::uuid, 1000000)`.execute(handle.db);
+      'test_receipt', '00000000-0000-7000-8000-00000000fa11'::uuid, ${ids["admin"]}::uuid, 1000000)`.execute(handle.db);
 
     const after2 = await app.inject({ method: "GET", url: `/products/${productId}`, ...s });
     const v1 = (after2.json().variations as VariationOut[]).find((v) => v.id === variationId);

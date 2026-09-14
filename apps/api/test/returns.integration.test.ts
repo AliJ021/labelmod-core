@@ -171,7 +171,7 @@ describe("برگشت از فروش و دوره ثبت", { skip }, () => {
     await sql`SELECT platform.set_actor(${ids["admin"]}::uuid)`.execute(handle.db);
     await sql`SELECT inventory.apply_movement(
                 ${variationId}::uuid, ${STORE_WH}::uuid, 200, 'purchase_receipt',
-                NULL, NULL, ${ids["admin"]}::uuid, 400000)`.execute(handle.db);
+                'test_receipt', '00000000-0000-7000-8000-00000000fa11'::uuid, ${ids["admin"]}::uuid, 400000)`.execute(handle.db);
 
     const c = await sql<{ id: string }>`
       INSERT INTO sales.customer (mobile_normalized, full_name, credit_limit)

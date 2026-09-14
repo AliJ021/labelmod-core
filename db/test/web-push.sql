@@ -224,7 +224,7 @@ RAISE NOTICE E'\n═══ ۴. تجمیع — ۵۰ حرکت، یک سطر معل
 
 DELETE FROM platform.outbox_message;
 FOR v_n IN 1..50 LOOP
-  PERFORM inventory.apply_movement(v_var, WEB, -1, 'sale', 'test', NULL, v_user);
+  PERFORM inventory.apply_movement(v_var, WEB, -1, 'sale', 'test', '00000000-0000-7000-8000-00000000fa11'::uuid, v_user);
 END LOOP;
 
 PERFORM pg_temp.assert_eq('۵۰ حرکت → یک سطر معلق',
@@ -254,7 +254,7 @@ RAISE NOTICE E'\n═══ ۵. سطر در حال ارسال بازنویسی ن
 UPDATE platform.outbox_message SET status = 'sending'
  WHERE topic = 'web.stock_push' AND payload->>'variationId' = v_var::text;
 
-PERFORM inventory.apply_movement(v_var, WEB, -3, 'sale', 'test', NULL, v_user);
+PERFORM inventory.apply_movement(v_var, WEB, -3, 'sale', 'test', '00000000-0000-7000-8000-00000000fa11'::uuid, v_user);
 
 PERFORM pg_temp.assert_eq('سطر sending دست‌نخورده ماند',
   (SELECT count(*) FROM platform.outbox_message
@@ -274,7 +274,7 @@ RAISE NOTICE E'\n═══ ۶. نسخه صعودی است و تکرار نمی�
 -- نباید عدد کهنه را بنشانند.
 
 v_v1 := (pg_temp.field('web.stock_push', v_var, 'version'))::bigint;
-PERFORM inventory.apply_movement(v_var, WEB, -1, 'sale', 'test', NULL, v_user);
+PERFORM inventory.apply_movement(v_var, WEB, -1, 'sale', 'test', '00000000-0000-7000-8000-00000000fa11'::uuid, v_user);
 v_v2 := (pg_temp.field('web.stock_push', v_var, 'version'))::bigint;
 PERFORM pg_temp.assert_eq('نسخه پس از حرکت تازه بزرگ‌تر شد',
   CASE WHEN v_v2 > v_v1 THEN 1 ELSE 0 END, 1);
@@ -354,7 +354,7 @@ RAISE NOTICE E'\n═══ ۱۰. موجودی سایت با خوراک ۱۵ دق
 UPDATE inventory.stock_balance SET reserved = 6
  WHERE variation_id = v_var AND warehouse_id = WEB;
 DELETE FROM platform.outbox_message;
-PERFORM inventory.apply_movement(v_var, WEB, -1, 'sale', 'test', NULL, v_user);
+PERFORM inventory.apply_movement(v_var, WEB, -1, 'sale', 'test', '00000000-0000-7000-8000-00000000fa11'::uuid, v_user);
 
 -- ⚠️ `trim_scale` در هر دو طرف: `platform.qty` مقیاس ۳ دارد و بی آن
 --    این ادعا «40 ≠ 40.000» می‌داد — یک قرمزیِ دروغین دربارهٔ قالب، نه
@@ -388,7 +388,7 @@ PERFORM pg_temp.assert_eq('Push روشن ولی انبار تعیین‌نشده
 
 -- و در همان حالت، هیچ پیامی هم ساخته نمی‌شود — که همان خطر است.
 DELETE FROM platform.outbox_message;
-PERFORM inventory.apply_movement(v_var, WEB, -1, 'sale', 'test', NULL, v_user);
+PERFORM inventory.apply_movement(v_var, WEB, -1, 'sale', 'test', '00000000-0000-7000-8000-00000000fa11'::uuid, v_user);
 PERFORM pg_temp.assert_eq('و واقعاً هیچ پیامی نمی‌سازد',
   pg_temp.pending('web.stock_push', v_var), 0);
 

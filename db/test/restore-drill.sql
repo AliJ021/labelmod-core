@@ -169,7 +169,7 @@ PERFORM platform.set_actor(
   (SELECT id FROM identity.app_user WHERE username = 'system'));
 PERFORM inventory.apply_movement(
   v_var, '00000000-0000-7000-8000-000000000101'::uuid, 10, 'purchase_receipt',
-  NULL, NULL, (SELECT id FROM identity.app_user WHERE username = 'system'), 500000);
+  'test_doc', '00000000-0000-7000-8000-00000000fa11'::uuid, (SELECT id FROM identity.app_user WHERE username = 'system'), 500000);
 
 SELECT count(*)::int INTO v_n FROM inventory.balance_check
  WHERE qty_diff <> 0 OR value_diff <> 0;

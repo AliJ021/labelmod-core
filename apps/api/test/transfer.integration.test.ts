@@ -170,7 +170,7 @@ describe("انتقال بین انبارها", { skip }, () => {
       // نرخی که تقسیمش باقی‌مانده دارد — عمداً.
       await sql`SELECT inventory.apply_movement(
                   ${variationId}::uuid, ${STORE_WH}::uuid, 30, 'purchase_receipt',
-                  NULL, NULL, ${keeperId}::uuid, 333333)`.execute(trx);
+                  'test_receipt', '00000000-0000-7000-8000-00000000fa11'::uuid, ${keeperId}::uuid, 333333)`.execute(trx);
     });
 
     app = await buildApp({

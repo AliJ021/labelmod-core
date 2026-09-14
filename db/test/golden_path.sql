@@ -246,7 +246,8 @@ END;
 -- ═══════════════════════════════════════════════════════════════════
 RAISE NOTICE E'\n═══ ۶. کنترل موجودی منفی ═══';
 BEGIN
-  PERFORM inventory.apply_movement(v_var, WH, -100, 'sale', NULL, NULL, v_user);
+  PERFORM inventory.apply_movement(v_var, WH, -100, 'sale',
+    'test_invoice', '00000000-0000-7000-8000-00000000fa11'::uuid, v_user);
   RAISE EXCEPTION '✗ فروش بیش از موجودی پذیرفته شد';
 EXCEPTION WHEN raise_exception THEN
   IF sqlerrm LIKE '✗%' THEN RAISE; END IF;

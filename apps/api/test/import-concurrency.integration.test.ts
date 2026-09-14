@@ -35,7 +35,7 @@ test("دو واردات هم‌زمان موجودی افتتاحیه را فق�
       VALUES(${p.rows[0]!.id},'IMPORT-RACE','آبی','M') RETURNING id`.execute(db);
     const id = v.rows[0]!.id;
     await sql`SELECT inventory.apply_movement(${id}::uuid,${WH}::uuid,1,
-      'purchase_receipt',NULL,NULL,${ACTOR}::uuid,1000)`.execute(db);
+      'purchase_receipt','test_receipt', '00000000-0000-7000-8000-00000000fa11'::uuid,${ACTOR}::uuid,1000)`.execute(db);
     await gate.connect();
     await gate.query("BEGIN");
     await gate.query("SELECT 1 FROM inventory.stock_balance WHERE variation_id=$1 AND warehouse_id=$2 FOR UPDATE", [id, WH]);
