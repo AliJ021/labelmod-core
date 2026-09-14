@@ -127,51 +127,10 @@ class LMC_Stock_Sync
                 continue;
             }
 
-            $changed = false;
-
-            // مدیریت موجودی باید روشن باشد وگرنه عدد نوشته می‌شود و
-            // ووکامرس نادیده‌اش می‌گیرد — بدترین حالت: عدد درست در
-            // دیتابیس، فروش نامحدود در ویترین.
-            if (!$product->get_manage_stock()) {
-                $product->set_manage_stock(true);
-                $changed = true;
-            }
-
-            if ($product->get_stock_quantity() === null || (int) $product->get_stock_quantity() !== $available) {
-                $product->set_stock_quantity($available);
-                $changed = true;
-            }
-            // ⚠️ سفارش معوق (Backorder) باید خاموش باشد، وگرنه دو تای بالا
-            //    بی‌اثرند. ووکامرس در `validate_props()` وضعیت را از
-            //    `backorders` بازمی‌سازد: با `yes` یا `notify`، موجودی صفر
-            //    به `onbackorder` می‌نشیند و `is_in_stock()` **درست**
-            //    برمی‌گرداند — یعنی ویترین کالای تمام‌شده را می‌فروشد و
-            //    ما هرگز آن فروش را در انبار نداریم.
-            //
-            //    مرجع نهایی موجودی Core است، پس فروش بیش از عدد Core
-            //    معنا ندارد. اگر مالک روزی واقعاً سفارش معوق بخواهد،
-            //    آن یک تصمیم تازه است و جایش یک تنظیم است، نه این خط.
-            if ($product->get_backorders() !== 'no') {
-                $product->set_backorders('no');
-                $changed = true;
-            }
-
-            $stock_status = $available > 0 ? 'instock' : 'outofstock';
-            if ($product->get_stock_status() !== $stock_status) {
-                $product->set_stock_status($stock_status);
-                $changed = true;
-            }
+            $changed = self::apply_stock($product, $available);
 
             if ($sync_price) {
-                $price = self::price_for_site($item);
-                // `null` یعنی «قیمت ندارد» و دست نمی‌خورد. صفر نوشتن
-                // یعنی ویترین کالا را مجانی بفروشد.
-                if ($price !== null && $product->get_regular_price() !== $price) {
-                    $product->set_regular_price($price);
-                    // فروش ویژه سایت دست نمی‌خورد: آن تصمیم بازاریابی
-                    // سایت است، نه عددی که از انبار می‌آید.
-                    $changed = true;
-                }
+                $changed = self::apply_price($product, self::price_for_site($item)) || $changed;
             }
 
             if ($changed) {
@@ -207,6 +166,74 @@ class LMC_Stock_Sync
      * (`product_variation`) را برنمی‌گرداند، و در یک فروشگاه پوشاک
      * دقیقاً همان‌ها مهم‌اند. `get_posts` با هر دو نوع پست کار می‌کند.
      */
+    /**
+     * نشاندن موجودی روی یک کالا — **تنها تعریف**.
+     *
+     * ⚠️ این متد از دو مسیر صدا زده می‌شود: خوراک ۱۵ دقیقه‌ای (Pull) و
+     *    مسیر REST ارسال لحظه‌ای (Push). دو نسخه از این منطق یعنی یکی
+     *    از دو مسیر دیر یا زود عقب بماند — و چون هر دو «کار می‌کنند»،
+     *    تفاوتشان فقط وقتی دیده می‌شود که ویترین عدد اشتباه نشان دهد.
+     *
+     * برمی‌گرداند: آیا چیزی واقعاً عوض شد.
+     */
+    public static function apply_stock($product, int $available): bool
+    {
+        $changed = false;
+
+        // مدیریت موجودی باید روشن باشد وگرنه عدد نوشته می‌شود و
+        // ووکامرس نادیده‌اش می‌گیرد — بدترین حالت: عدد درست در
+        // دیتابیس، فروش نامحدود در ویترین.
+        if (!$product->get_manage_stock()) {
+            $product->set_manage_stock(true);
+            $changed = true;
+        }
+
+        if ($product->get_stock_quantity() === null || (int) $product->get_stock_quantity() !== $available) {
+            $product->set_stock_quantity($available);
+            $changed = true;
+        }
+        // ⚠️ سفارش معوق (Backorder) باید خاموش باشد، وگرنه دو تای بالا
+        //    بی‌اثرند. ووکامرس در `validate_props()` وضعیت را از
+        //    `backorders` بازمی‌سازد: با `yes` یا `notify`، موجودی صفر
+        //    به `onbackorder` می‌نشیند و `is_in_stock()` **درست**
+        //    برمی‌گرداند — یعنی ویترین کالای تمام‌شده را می‌فروشد و
+        //    ما هرگز آن فروش را در انبار نداریم.
+        //
+        //    مرجع نهایی موجودی Core است، پس فروش بیش از عدد Core
+        //    معنا ندارد. اگر مالک روزی واقعاً سفارش معوق بخواهد،
+        //    آن یک تصمیم تازه است و جایش یک تنظیم است، نه این خط.
+        if ($product->get_backorders() !== 'no') {
+            $product->set_backorders('no');
+            $changed = true;
+        }
+
+        $stock_status = $available > 0 ? 'instock' : 'outofstock';
+        if ($product->get_stock_status() !== $stock_status) {
+            $product->set_stock_status($stock_status);
+            $changed = true;
+        }
+
+        return $changed;
+    }
+
+    /**
+     * نشاندن قیمت — **تنها تعریف**، مثل بالا.
+     *
+     * ⚠️ `null` یعنی «قیمت ندارد» و دست نمی‌خورد. صفر نوشتن یعنی ویترین
+     *    کالا را مجانی بفروشد. این با ارسال لحظه‌ای از «گاهی» به
+     *    «همیشه» می‌رود، پس حساس‌تر هم شده.
+     */
+    public static function apply_price($product, ?string $price): bool
+    {
+        if ($price === null || $product->get_regular_price() === $price) {
+            return false;
+        }
+        $product->set_regular_price($price);
+        // فروش ویژه سایت دست نمی‌خورد: آن تصمیم بازاریابی سایت است، نه
+        // عددی که از انبار می‌آید.
+        return true;
+    }
+
     public static function find_by_meta(string $variation_id): int
     {
         $found = get_posts([

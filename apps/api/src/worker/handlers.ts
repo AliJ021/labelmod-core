@@ -26,6 +26,7 @@ import { toToman } from "../sales/invoice-page.ts";
 import { SmsError, toLocalMobile, type SmsSender } from "./sms.ts";
 import type { NotifySettings } from "./settings.ts";
 import type { WebhookSender } from "./webhook.ts";
+import type { WebPushMessage, WebPushSender } from "./web-push.ts";
 
 export interface HandlerContext {
   db: Db;
@@ -38,6 +39,8 @@ export interface HandlerContext {
    *    یک کلید تنظیم که روشن‌کردنش هیچ کاری نمی‌کند، بدتر از نبودنش است.
    */
   webhook: WebhookSender;
+  /** ارسال لحظه‌ای موجودی و قیمت به سایت — ADR-007. */
+  webPush: WebPushSender;
 }
 
 export interface OutboxMessage {
@@ -265,7 +268,14 @@ export async function handleHealthAlert(
   const businessDate = String(msg.payload["business_date"] ?? "");
   const mark = severity === "critical" ? "⛔" : "⚠️";
 
-  const to = toLocalMobile(ctx.settings.managerMobile);
+  /*
+   * ⚠️ `smsEnabled` اینجا هم سنجیده می‌شود، نه فقط در حلقه: تا امروز
+   *    حلقه همهٔ پیام‌ها را با خاموشیِ پیامک می‌بست، پس این Handler
+   *    هرگز با پیامکِ خاموش اجرا نمی‌شد. حالا که آن شرط فقط برای
+   *    موضوع‌های پیامکی است، این Handler با پیامکِ خاموش هم می‌رسد — و
+   *    بی این خط، تلاش می‌کرد پیامکی بفرستد که مالک خاموشش کرده.
+   */
+  const to = ctx.settings.smsEnabled ? toLocalMobile(ctx.settings.managerMobile) : null;
   const canWebhook = ctx.settings.webhookEnabled && ctx.settings.webhookUrl !== "";
 
   // هیچ مقصدی تنظیم نشده: پیام بسته می‌شود با یادداشتی که در لاگ
@@ -297,6 +307,53 @@ export async function handleHealthAlert(
 }
 
 /** موضوع → Handler. موضوع ناشناخته یک خطای دائمی است، نه یک حلقه. */
+/**
+ * موجودی یا قیمت یک تنوع عوض شد → سایت خبردار شود (ADR-007).
+ *
+ * ── چرا یک Handler برای دو موضوع ────────────────────────────────────
+ *
+ * تفاوتشان فقط مسیر REST مقصد است، و آن در `web-push.ts` از روی
+ * `topic` انتخاب می‌شود. دو Handler یعنی دو نسخه از همان سه سنجش
+ * (خاموشی، نشانی، امضا) و یکی‌شان دیر یا زود عقب می‌ماند.
+ *
+ * ⚠️ **خاموش‌بودن یک شکست نیست.** اگر `web.push_enabled` خاموش باشد یا
+ *    نشانی سایت خالی، پیام با `complete_outbox` بسته می‌شود نه
+ *    `fail_outbox` — وگرنه `platform.outbox_dead` پر می‌شد از چیزهایی
+ *    که قرار نبود بروند و خطای واقعی همان‌جا گم می‌شد.
+ *
+ * ⚠️ و تحویل **«حداقل یک بار»** است. این Handler عمداً هیچ قفلی
+ *    نمی‌گذارد، چون Payload **مقدار مطلق** می‌برد: تحویل تکراری همان
+ *    عدد را دوباره می‌نشاند و بی‌ضرر است. با «−۱» قفل لازم بود و باز هم
+ *    کافی نبود.
+ */
+export async function handleWebPush(
+  ctx: HandlerContext,
+  msg: OutboxMessage,
+): Promise<HandlerResult> {
+  if (!ctx.settings.webPushEnabled) {
+    return { done: true, note: "ارسال لحظه‌ای به سایت خاموش است" };
+  }
+  if (ctx.settings.webSiteUrl === "") {
+    // ⚠️ دائمی **نیست**: مالک می‌تواند نشانی را پر کند و پیام‌های در صف
+    //    بعداً بروند. دائمی‌کردنش یعنی موجودی امروز برای همیشه نرود.
+    throw new SmsError("نشانی سایت (web.site_url) تنظیم نشده است");
+  }
+
+  const variationId = String(msg.payload["variationId"] ?? "");
+  if (variationId === "") {
+    // بی شناسهٔ تنوع، افزونه نمی‌داند به کدام کالا بخورد. هیچ تلاشی
+    // درستش نمی‌کند.
+    throw new SmsError("پیام Push بدون variationId", true);
+  }
+
+  await ctx.webPush.send({
+    topic: msg.topic as WebPushMessage["topic"],
+    payload: msg.payload,
+  });
+
+  return { done: true, note: `سایت به‌روز شد (${variationId.slice(0, 8)}…)` };
+}
+
 export const HANDLERS: Record<
   string,
   (ctx: HandlerContext, msg: OutboxMessage) => Promise<HandlerResult>
@@ -304,4 +361,6 @@ export const HANDLERS: Record<
   "invoice.finalized": handleInvoiceFinalized,
   "cheque.due": handleChequeDue,
   "health.alert": handleHealthAlert,
+  "web.stock_push": handleWebPush,
+  "web.price_push": handleWebPush,
 };

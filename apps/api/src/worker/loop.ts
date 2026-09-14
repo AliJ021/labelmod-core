@@ -24,6 +24,7 @@ import { HANDLERS, type OutboxMessage } from "./handlers.ts";
 import { makeSender, SmsError } from "./sms.ts";
 import { readNotifySettings } from "./settings.ts";
 import { makeWebhookSender } from "./webhook.ts";
+import { makeWebPushSender } from "./web-push.ts";
 
 export interface LoopOptions {
   db: Db;
@@ -37,6 +38,26 @@ export interface LoopOptions {
    * در `audit_log` می‌نشیند و صفحهٔ تنظیمات نشانش می‌دهد.
    */
   webhookToken: string | undefined;
+  /**
+   * کلید امضای Push سایت — از `WEB_PUSH_SECRET`.
+   *
+   * ⚠️ همان قاعدهٔ `SMS_API_KEY`: مقدار هر `platform.setting` در
+   *    `audit_log` می‌نشیند و صفحهٔ تنظیمات نشانش می‌دهد. یک راز
+   *    نباید هیچ‌کدام را ببیند.
+   */
+  webPushSecret: string | undefined;
+  /**
+   * وابستگی‌های فرستندهٔ Push — **فقط برای تست یکپارچه**.
+   *
+   * ⚠️ هیچ مسیر تولیدی این را ست نمی‌کند و `worker.ts` اصلاً پاسش
+   *    نمی‌دهد؛ یک بند در `source-hygiene.test.ts` همین را قفل کرده.
+   *    دلیل وجودش این است که تست یکپارچه باید به یک گیرندهٔ **واقعی
+   *    روی 127.0.0.1** برسد، و نگهبان SSRF (به‌درستی) نشانی داخلی را
+   *    رد می‌کند. ضعیف‌کردن آن نگهبان برای تست، همان کلاسی است که این
+   *    مخزن جای دیگر ممنوع کرده — پس به‌جایش مقصد در خودِ تست نگاشت
+   *    می‌شود و نگهبان دست‌نخورده می‌ماند.
+   */
+  webPushDeps?: Parameters<typeof makeWebPushSender>[1];
   batchSize: number;
   leaseSeconds: number;
   log: (line: string) => void;
@@ -59,6 +80,15 @@ export interface TickResult {
  * فقط با `sleep` تست می‌شود — و تستی که `sleep` دارد، دیر یا زود
  * ناپایدار می‌شود.
  */
+/**
+ * موضوع‌هایی که **تنها** کانالشان پیامک است.
+ *
+ * ⚠️ افزودن موضوع تازه به اینجا یعنی «اگر پیامک خاموش باشد، این پیام
+ *    اصلاً کاری ندارد». برای موضوعی که کانال دیگری هم دارد (Webhook،
+ *    Push سایت) این **غلط** است و پیام را بی‌صدا می‌بلعد.
+ */
+const SMS_ONLY_TOPICS = new Set(["invoice.finalized", "cheque.due"]);
+
 export async function tick(opts: LoopOptions): Promise<TickResult> {
   const out: TickResult = {
     claimed: 0,
@@ -136,7 +166,13 @@ export async function tick(opts: LoopOptions): Promise<TickResult> {
     token: opts.webhookToken,
   });
 
-  const ctx = { db: opts.db, settings, sms: sender, webhook };
+  const webPush = makeWebPushSender({
+    enabled: settings.webPushEnabled,
+    baseUrl: settings.webSiteUrl,
+    secret: opts.webPushSecret,
+  }, opts.webPushDeps);
+
+  const ctx = { db: opts.db, settings, sms: sender, webhook, webPush };
 
   for (const row of claimed.rows) {
     const msg: OutboxMessage = {
@@ -161,10 +197,21 @@ export async function tick(opts: LoopOptions): Promise<TickResult> {
       continue;
     }
 
-    // ⚠️ خاموش‌بودن پیامک یک شکست نیست: پیام موفق بسته می‌شود.
-    //    Handler هم خودش همین را می‌کند، ولی این بررسی زودتر است و
-    //    یک رفت‌وبرگشت دیتابیس کمتر می‌خورد.
-    if (!settings.smsEnabled) {
+    /*
+     * ⚠️ خاموش‌بودن پیامک یک شکست نیست: پیام موفق بسته می‌شود.
+     *
+     * ⚠️ **ولی فقط برای موضوع‌هایی که تنها کانالشان پیامک است.** نسخهٔ
+     *    قبلی این شرط را روی **همهٔ** موضوع‌ها می‌زد، و آن یک باگ واقعی
+     *    بود که با ADR-007 پیدا شد:
+     *
+     *      notify.sms_enabled = false  +  notify.webhook_enabled = true
+     *      → هشدار سلامت **بی‌صدا بسته می‌شد** و هیچ Webhookی نمی‌رفت.
+     *
+     *    یعنی همان کلاس FND-021 دوباره: یک کلید تنظیم که روشن است و
+     *    هیچ کاری نمی‌کند. Push سایت هم از همین‌جا رد می‌شد — پیام
+     *    `sent` علامت می‌خورد بی‌آنکه هرگز فرستاده شود.
+     */
+    if (!settings.smsEnabled && SMS_ONLY_TOPICS.has(msg.topic)) {
       await complete(opts, msg.id);
       out.sent++;
       continue;

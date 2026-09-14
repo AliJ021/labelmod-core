@@ -33,6 +33,9 @@ export interface NotifySettings {
   webhookUrl: string;
   /** هشدار سلامت سیستم — مهاجرت ۰۵۵. */
   healthAlerts: boolean;
+  /** ارسال لحظه‌ای به سایت — ADR-007، مهاجرت ۰۵۷. */
+  webPushEnabled: boolean;
+  webSiteUrl: string;
 }
 
 export async function readNotifySettings(db: Db): Promise<NotifySettings> {
@@ -44,7 +47,8 @@ export async function readNotifySettings(db: Db): Promise<NotifySettings> {
        'notify.cheque_due_sms', 'notify.manager_mobile',
        'notify.max_attempts', 'platform.public_url',
        'notify.webhook_enabled', 'notify.webhook_url',
-       'notify.health_alerts'
+       'notify.health_alerts',
+       'web.push_enabled', 'web.site_url'
      )
   `.execute(db);
 
@@ -73,5 +77,7 @@ export async function readNotifySettings(db: Db): Promise<NotifySettings> {
     webhookEnabled: bool("notify.webhook_enabled", false),
     webhookUrl: text("notify.webhook_url"),
     healthAlerts: bool("notify.health_alerts", false),
+    webPushEnabled: bool("web.push_enabled", false),
+    webSiteUrl: text("web.site_url").replace(/\/+$/, ""),
   };
 }

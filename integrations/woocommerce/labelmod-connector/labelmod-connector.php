@@ -63,6 +63,7 @@ require_once LMC_PATH . 'includes/class-lmc-settings.php';
 require_once LMC_PATH . 'includes/class-lmc-order-sync.php';
 require_once LMC_PATH . 'includes/class-lmc-stock-sync.php';
 require_once LMC_PATH . 'includes/class-lmc-instore.php';
+require_once LMC_PATH . 'includes/class-lmc-push-receiver.php';
 
 /**
  * سازگاری با HPOS را **اعلام** کن.
@@ -109,6 +110,8 @@ add_action('plugins_loaded', function () {
     LMC_Order_Sync::init();
     LMC_Stock_Sync::init();
     LMC_Instore::init();
+    // گیرندهٔ ارسال لحظه‌ای (ADR-007) — مسیر REST خودش را ثبت می‌کند.
+    LMC_Push_Receiver::init();
 });
 
 /**

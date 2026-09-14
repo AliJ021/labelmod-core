@@ -46,6 +46,15 @@ const schema = z.object({
    */
   NOTIFY_WEBHOOK_TOKEN: z.string().optional(),
 
+  /**
+   * کلید امضای Push سایت (ADR-007، مهاجرت ۰۵۷).
+   *
+   * ⚠️ همان قاعده: نشانی سایت یک **تصمیم** است و در `platform.setting`
+   *    می‌نشیند؛ کلید امضا یک **راز** است و در محیط. سمت افزونه هم در
+   *    `wp-config.php` به‌عنوان ثابت، نه در `wp_options`.
+   */
+  WEB_PUSH_SECRET: z.string().optional(),
+
   // این سه عدد عمداً محیطی‌اند، نه تنظیم: به **ظرفیت ماشین** مربوطند،
   // نه به کسب‌وکار. مالک هیچ‌وقت نمی‌خواهد اندازه دسته را عوض کند.
   WORKER_INTERVAL_MS: z.coerce.number().int().min(500).max(600_000).default(5_000),

@@ -26,6 +26,8 @@ const BASE: NotifySettings = {
   webhookEnabled: false,
   webhookUrl: "",
   healthAlerts: true,
+  webPushEnabled: false,
+  webSiteUrl: "",
 };
 
 const PAYLOAD = {
@@ -52,6 +54,7 @@ function ctx(over: Partial<NotifySettings>) {
           sms.push({ to, text });
         },
       },
+      webPush: { send: async () => {} },
       webhook: {
         send: async (p: WebhookPayload) => {
           hooks.push(p);
