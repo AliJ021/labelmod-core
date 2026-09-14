@@ -31,6 +31,7 @@ if ! run -c "CREATE ROLE \"$ROLE\" LOGIN PASSWORD 'roletest';" >/dev/null 2>&1; 
   echo "  ✗ ساخت نقش آزمون ممکن نشد — این تست به CREATEROLE نیاز دارد و Skip نمی‌شود"
   exit 1
 fi
+run -c "DROP ROLE \"$ROLE\";" >/dev/null 2>&1
 cleanup () {
   run -c "REASSIGN OWNED BY \"$ROLE\" TO CURRENT_USER;" >/dev/null 2>&1
   run -c "DROP OWNED BY \"$ROLE\";" >/dev/null 2>&1
@@ -38,21 +39,16 @@ cleanup () {
 }
 trap cleanup EXIT
 
-SCHEMAS="platform,identity,catalog,inventory,purchasing,sales,treasury,ledger"
-DBNAME=$(run -c "SELECT current_database();")
+# ⚠️ حق‌ها از **خودِ `ops/db-roles.sh`** گرفته می‌شوند، نه از یک کپی
+#    در همین فایل. نسخهٔ اول اینجا GRANT و REVOKE را دوباره می‌نوشت و
+#    نتیجه‌اش این بود که تست دربارهٔ اسکریپتِ تولیدی **هیچ‌چیز** ثابت
+#    نمی‌کرد: اگر آن اسکریپت یک GRANT کم می‌گذاشت یا یکی زیادی
+#    می‌گرفت، این تست همچنان سبز بود.
+APP_PASSWORD='roletest' APP_ROLE="$ROLE" DATABASE_URL="$CONN" \
+  bash "$(dirname "$0")/../../ops/db-roles.sh" >/dev/null 2>&1 \
+  || { echo "  ✗ ops/db-roles.sh شکست خورد"; exit 1; }
 
-run >/dev/null 2>&1 <<SQL
-GRANT CONNECT ON DATABASE "$DBNAME" TO "$ROLE";
-GRANT USAGE ON SCHEMA $SCHEMAS TO "$ROLE";
-GRANT SELECT, INSERT, UPDATE, DELETE ON ALL TABLES    IN SCHEMA $SCHEMAS TO "$ROLE";
-GRANT USAGE, SELECT                  ON ALL SEQUENCES IN SCHEMA $SCHEMAS TO "$ROLE";
-GRANT EXECUTE                        ON ALL FUNCTIONS IN SCHEMA $SCHEMAS TO "$ROLE";
-REVOKE CREATE ON SCHEMA $SCHEMAS FROM "$ROLE";
-REVOKE UPDATE, DELETE         ON platform.audit_log       FROM "$ROLE";
-REVOKE INSERT, UPDATE, DELETE ON inventory.stock_movement FROM "$ROLE";
-REVOKE INSERT, UPDATE, DELETE ON inventory.stock_balance  FROM "$ROLE";
-REVOKE INSERT, UPDATE, DELETE ON inventory.cost_layer     FROM "$ROLE";
-SQL
+DBNAME=$(run -c "SELECT current_database();")
 
 # دادهٔ واقعی، تا حمله روی سطر موجود بیفتد.
 IDS=$(run <<SQL
@@ -80,12 +76,24 @@ MOVES=$(run -c "SELECT count(*) FROM inventory.stock_movement;")
 APP_CONN="postgresql://$ROLE:roletest@localhost:5432/$DBNAME"
 
 echo "═══ حمله با نقش برنامه، روی سطر موجود، تا COMMIT ═══"
+# ⚠️ «شکست خورد» کافی نیست — **دلیلِ** شکست سنجیده می‌شود.
+#    نسخهٔ اول فقط Exit Code را می‌دید، و یک حملهٔ تازه که ستونش را
+#    اشتباه نوشته بودم (`qty_remaining` به‌جای `qty_left`) با
+#    «column does not exist» شکست خورد و تست **سبز** شد: یعنی ادعایی
+#    که هیچ‌وقت هیچ حقی را نسنجیده بود. حالا SQLSTATE باید 42501
+#    (insufficient_privilege) باشد.
 attack () {
-  local label="$1" sql="$2"
-  if psql -v ON_ERROR_STOP=1 -q -d "$APP_CONN" -c "BEGIN;" -c "$sql" -c "COMMIT;" >/dev/null 2>&1; then
+  local label="$1" sql="$2" out rc
+  out=$(psql -v ON_ERROR_STOP=1 -q -d "$APP_CONN" \
+        -c "BEGIN;" -c "$sql" -c "COMMIT;" 2>&1); rc=$?
+  if [ $rc -eq 0 ]; then
     echo "  ✗ $label — موفق شد، یعنی راه باز است"; FAIL=1
-  else
+  elif printf '%s' "$out" | grep -q "permission denied"; then
     echo "  ✓ $label — رد شد"
+  else
+    echo "  ✗ $label — شکست خورد ولی نه از بابت دسترسی:"
+    printf '      %s\n' "$(printf '%s' "$out" | grep -m1 -i "ERROR")"
+    FAIL=1
   fi
 }
 
@@ -98,6 +106,15 @@ attack "DDL در اسکیمای مالی"                "CREATE TABLE identity.
 # ⚠️ این یکی تا مهاجرت ۰۵۰ **موفق می‌شد** و CLAUDE.md اعتراف کرده بود
 #    که «دیتابیس جلویش را نمی‌گیرد».
 attack "UPDATE مستقیم روی مانده موجودی"     "UPDATE inventory.stock_balance SET on_hand = 999;"
+# `cost_layer` هم در همان REVOKE هست ولی تا امروز سنجیده نمی‌شد — یعنی
+# یک‌سومِ ادعای اسکریپت بی‌شاهد بود. FIFO لایه‌هایش را همان‌جا نگه می‌دارد.
+attack "INSERT مستقیم در لایه بهای تمام‌شده" "INSERT INTO inventory.cost_layer (variation_id, warehouse_id, qty_in, qty_left, unit_cost, occurred_at) SELECT variation_id, warehouse_id, 1, 1, 1000, now() FROM inventory.stock_balance LIMIT 1;"
+attack "UPDATE روی لایه بهای تمام‌شده"      "UPDATE inventory.cost_layer SET qty_left = 0;"
+# ⚠️ `public` در `search_path` پین‌شدهٔ هر شش تابع `SECURITY DEFINER`
+#    هست. اگر نقش برنامه بتواند آنجا شیء بسازد، می‌تواند تابعی هم‌نام
+#    بگذارد که به‌نام **مالک** اجرا شود — یعنی پین‌کردن search_path
+#    بی‌اثر می‌شد.
+attack "DDL در اسکیمای public"              "CREATE TABLE public.evil (x int);"
 
 echo
 echo "═══ و دروازهٔ قانونی باید هنوز کار کند ═══"
@@ -111,6 +128,30 @@ if psql -v ON_ERROR_STOP=1 -q -d "$APP_CONN" -tAc \
 else
   echo "  ✗ apply_movement با نقش برنامه شکست — دروازه هم بسته شد"; FAIL=1
 fi
+
+# دو دروازهٔ دیگر که تا مهاجرت ۰۵۸ `SECURITY DEFINER` نبودند و با نقش
+# برنامه می‌شکستند. `revalue_to_cost` را `purchasing.post_receipt()`
+# صدا می‌زند و `costing.method` **پیش‌فرض** `last_purchase` است — یعنی
+# بی این، هیچ رسید خریدی ثبت نمی‌شد.
+if psql -v ON_ERROR_STOP=1 -q -d "$APP_CONN" -tAc \
+   "SELECT inventory.revalue_to_cost('$VAR_ID'::uuid,
+      '00000000-0000-7000-8000-000000000101'::uuid, 1200, '$USER_ID'::uuid);" >/dev/null 2>&1; then
+  echo "  ✓ revalue_to_cost با نقش برنامه کار کرد"
+else
+  echo "  ✗ revalue_to_cost با نقش برنامه شکست — رسید خرید در تولید می‌شکند"; FAIL=1
+fi
+
+# ⚠️ و جدولی که **مهاجرت بعدی** بسازد باید نوشتنی بماند. نسخهٔ اول
+#    `ops/db-roles.sh` یک `ALTER DEFAULT PRIVILEGES … REVOKE` روی کل
+#    اسکیمای inventory داشت؛ پیش‌فرض به **اسکیما** کار می‌کند نه به
+#    **نام جدول**، پس هر جدول تازه‌ای بی‌صدا فقط‌خواندنی می‌شد و اولین
+#    نوشتن روی آن، پس از استقرار، ۵۰۰ می‌داد.
+run -c "CREATE TABLE inventory.roletest_future (id int);" >/dev/null 2>&1
+FUTURE=$(run -c "SELECT has_table_privilege('$ROLE','inventory.roletest_future','INSERT');")
+run -c "DROP TABLE inventory.roletest_future;" >/dev/null 2>&1
+[ "$FUTURE" = "t" ] \
+  && echo "  ✓ جدول تازه در inventory برای نقش برنامه نوشتنی است" \
+  || { echo "  ✗ جدول تازه در inventory فقط‌خواندنی شد — پیش‌فرض بیش از حد بسته است"; FAIL=1; }
 
 ONHAND=$(run -c "SELECT on_hand FROM inventory.stock_balance WHERE variation_id='$VAR_ID';")
 [ "${ONHAND%%.*}" = "8" ] \

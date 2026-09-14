@@ -19,7 +19,13 @@ test("دو واردات هم‌زمان موجودی افتتاحیه را فق�
   const disposable = createDisposableDb(url!);
   assert.ok(disposable, "دیتابیس یک‌بارمصرف لازم است");
   const handle = createDb(disposable.url, 6);
-  const gate = new Client({ connectionString: disposable.url });
+  // ⚠️ دروازهٔ تصادم با نقش **مالک** وصل می‌شود، نه با نقش برنامه.
+  // این اتصال یک بازیگر بیرونی است که عمداً قفل نگه می‌دارد تا واردات
+  // دوم پشتش بماند؛ کدِ تحت آزمون نیست. و `SELECT … FOR UPDATE` در
+  // پستگرس حق UPDATE می‌خواهد، که نقش برنامه روی `stock_balance`
+  // ندارد (ops/db-roles.sh) — پس با آن نقش، خودِ **داربست** می‌شکست،
+  // نه چیزی که سنجیده می‌شود.
+  const gate = new Client({ connectionString: disposable.ownerUrl });
   let pending: Promise<PromiseSettledResult<ImportResult>[]> | undefined;
   try {
     const db = handle.db;

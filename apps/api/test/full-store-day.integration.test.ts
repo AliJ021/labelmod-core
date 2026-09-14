@@ -949,7 +949,12 @@ describe("یک روز کامل فروشگاه", { skip, timeout: 300_000 }, () =
       });
 
     try {
-      execFileSync("pg_dump", ["--no-owner", "--no-privileges", "-f", dump, disposable!.url], {
+      // ⚠️ بکاپ با نقش **مالک** گرفته می‌شود، نه با نقش برنامه — و این
+      // یک واقعیت استقرار است نه یک راحتیِ تست: `pg_dump` روی
+      // `public.schema_migration` هم `LOCK TABLE` می‌زند و نقش برنامه
+      // آنجا حقی ندارد. اگر روزی `DATABASE_URL` بکاپ را هم به نقش
+      // برنامه عوض کنند، همین خطا را می‌گیرند. docs/DEPLOYMENT.md.
+      execFileSync("pg_dump", ["--no-owner", "--no-privileges", "-f", dump, disposable!.ownerUrl], {
         stdio: "pipe",
         env: { ...process.env, PGCLIENTENCODING: "UTF8" },
       });
