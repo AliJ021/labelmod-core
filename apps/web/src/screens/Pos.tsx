@@ -26,15 +26,17 @@
  * **هر عمل کاربر یک کلید Idempotency دارد** که روی Retry ثابت می‌ماند
  * و برای عمل بعدی تازه می‌شود — `lib/action-key.ts`.
  */
-import { useCallback, useEffect, useRef, useState } from "react";
+import { memo, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { CameraScan } from "../components/CameraScan.tsx";
 import { Glass, Solid } from "../components/Glass.tsx";
 import { ApiError } from "../lib/api.ts";
 import { ActionKeys, ScanCounter } from "../lib/action-key.ts";
 import { canFinalize, changeRial, lineGross, remainingRial, steppedQty } from "../lib/cart.ts";
 import { parseRial, rialFromTomanInput, toman } from "../lib/money.ts";
+import { isNetworkFailure } from "../lib/offline-queue.ts";
 import { forgetCart, readCart, rememberCart } from "../lib/open-cart.ts";
-import { pos, type Branch, type Invoice, type PaymentMethod, type Shift } from "../lib/pos.ts";
+import { pendingLabel, saleQueue, summarize, type PendingSummary } from "../lib/sale-queue.ts";
+import { pos, type Branch, type Invoice, type InvoiceLine, type PaymentMethod, type Shift } from "../lib/pos.ts";
 import { normalizeDigits } from "../lib/settings-value.ts";
 import { ScanBuffer } from "../lib/scanner.ts";
 
@@ -53,6 +55,176 @@ function message(err: unknown): string {
 function adjusted(line: { discountAmount: string; listPrice: string | null }): boolean {
   return line.listPrice !== null || parseRial(line.discountAmount) > 0n;
 }
+
+/**
+ * یک سطر سبد — کامپوننت جدا و **memo**شده.
+ *
+ * ── چرا جدا شد (FND-016) ────────────────────────────────────────────
+ *
+ * بودجهٔ مصوب ADR-002: «افزودن قلم به سبد زیر ۱۰۰ میلی‌ثانیه روی
+ * ضعیف‌ترین دستگاه هدف. هر افکتی که این را بشکند، حذف می‌شود — بدون
+ * بحث.» اندازه‌گیری در مرورگر واقعی نشان داد از ۵۰ قلم شکسته می‌شود و
+ * هزینه **کارِ جاوااسکریپت کلاینت** است، نه شبکه و نه نوشتن DOM:
+ * React سطرهای قبلی را دوباره Render می‌کرد حتی وقتی خروجی‌شان عوض
+ * نشده بود.
+ *
+ * ── و چرا مقایسه‌کنندهٔ دستی، نه memo پیش‌فرض ────────────────────────
+ *
+ * ⚠️ `setInvoice(out.invoice)` کل فاکتور را از **پاسخ سرور** می‌نشاند،
+ *    پس هر سطر یک شیء **تازه** است و مقایسهٔ سطحیِ پیش‌فرض همیشه
+ *    «عوض شده» می‌گفت. یعنی `memo` بی مقایسه‌کنندهٔ خودش هیچ اثری
+ *    نداشت — یک بهینه‌سازی که به‌نظر انجام شده و نشده.
+ *
+ *    پس مقایسه روی همان میدان‌هایی است که این سطر واقعاً می‌کشد.
+ *    میدان تازه‌ای که به نمایش اضافه شود، باید اینجا هم اضافه شود —
+ *    وگرنه سطر به‌روز نمی‌شود. به همین دلیل فهرست صریح است، نه
+ *    `JSON.stringify`.
+ */
+export interface RowActions {
+  changeQty: (lineId: string, current: string, delta: number) => void;
+  remove: (lineId: string) => void;
+  applyPrice: (lineId: string, priceRial: bigint, why: string) => void;
+  applyDiscount: (lineId: string, amountRial: bigint, why: string) => void;
+  openPrice: (lineId: string) => void;
+  openDiscount: (lineId: string) => void;
+  closePanels: () => void;
+}
+
+function sameLine(a: Readonly<CartLineProps>, b: Readonly<CartLineProps>): boolean {
+  if (a.panel !== b.panel || a.on !== b.on) return false;
+  const x = a.line;
+  const y = b.line;
+  return (
+    x.id === y.id &&
+    x.productName === y.productName &&
+    x.sku === y.sku &&
+    x.qty === y.qty &&
+    x.unitPrice === y.unitPrice &&
+    x.listPrice === y.listPrice &&
+    x.discountAmount === y.discountAmount &&
+    x.netAmount === y.netAmount
+  );
+}
+
+interface CartLineProps {
+  line: InvoiceLine;
+  /** پنل بازِ همین سطر — یا هیچ. */
+  panel: "price" | "discount" | null;
+  /** دیسپچر **پایدار**؛ اگر هر Render تازه ساخته شود، memo بی‌اثر است. */
+  on: RowActions;
+}
+
+const CartLine = memo(function CartLine({ line: l, panel, on }: CartLineProps) {
+  const locked = adjusted(l);
+  return (
+    <li>
+      <div className="line-name">
+        <strong>{l.productName}</strong>
+        <span className="muted small">
+          {l.sku}
+          {/*
+            قیمت فهرست فقط وقتی نوشته می‌شود که سطر واقعاً دستکاری شده
+            باشد. صندوق‌دار باید ببیند از چه عددی پایین آمده — وگرنه
+            تایپ اشتباه تا لحظه پرداخت پیدا نمی‌شود.
+
+            این **دو قیمت روی فاکتور** نیست: فاکتور چاپی همان یک عدد را
+            دارد و این فقط روی صفحه سبد است.
+          */}
+          {l.listPrice === null ? null : (
+            <>
+              {" · "}
+              <span className="num">{toman(parseRial(l.unitPrice))}</span>
+              {" به‌جای "}
+              <span className="num">{toman(parseRial(l.listPrice))}</span>
+            </>
+          )}
+        </span>
+      </div>
+      {/*
+        سطری که تخفیف خورده یا قیمتش دستی عوض شده، تعدادش از این مسیر
+        عوض نمی‌شود — و این تصمیم سرور است، نه سلیقه صفحه: تخفیف یک
+        **مبلغ مطلق** برای تعدادِ آن لحظه است و با تغییر تعداد یا درصد
+        کاهش بی‌صدا عوض می‌شود یا مبلغ ثبت‌شده.
+
+        دکمه‌ها غیرفعال‌اند نه پنهان: صندوق‌دار باید بفهمد چرا، نه اینکه
+        دکمه ناپدید شود. بدون این، کلیک روی «+» فقط یک خطای سرور می‌داد
+        که همان حرف را دیرتر می‌زد.
+
+        ⚠️ `disabled={busy}` اینجا **نیست**: `fieldset[disabled]` بالادست
+           همین کار را بومی می‌کند و وابستگی سطر به `busy` را قطع
+           می‌کند — همان چیزی که memo را واقعی کرد (FND-016).
+      */}
+      <div className="qty">
+        <button
+          type="button"
+          onClick={() => on.changeQty(l.id, l.qty, -1)}
+          aria-label={`کم کردن ${l.productName}`}
+          disabled={locked}
+          title={locked ? QTY_LOCKED : undefined}
+        >
+          −
+        </button>
+        <span className="num" aria-live="polite">
+          {Number(l.qty)}
+        </span>
+        <button
+          type="button"
+          onClick={() => on.changeQty(l.id, l.qty, 1)}
+          aria-label={`اضافه کردن ${l.productName}`}
+          disabled={locked}
+          title={locked ? QTY_LOCKED : undefined}
+        >
+          +
+        </button>
+      </div>
+      <span className="num line-total">{toman(parseRial(l.netAmount))}</span>
+      <button
+        type="button"
+        className="line-drop"
+        onClick={() => on.openPrice(l.id)}
+        aria-label={`تغییر قیمت ${l.productName}`}
+        title="قیمت دستی"
+      >
+        ﷼
+      </button>
+      <button
+        type="button"
+        className="line-drop"
+        onClick={() => on.openDiscount(l.id)}
+        aria-label={`تخفیف ${l.productName}`}
+        title="تخفیف"
+      >
+        ٪
+      </button>
+      <button
+        type="button"
+        className="line-drop"
+        onClick={() => on.remove(l.id)}
+        aria-label={`حذف ${l.productName}`}
+      >
+        ✕
+      </button>
+      {panel === "price" ? (
+        <PricePanel
+          unitPrice={parseRial(l.unitPrice)}
+          listPrice={l.listPrice === null ? null : parseRial(l.listPrice)}
+          busy={false}
+          onApply={(price, why) => on.applyPrice(l.id, price, why)}
+          onCancel={on.closePanels}
+        />
+      ) : null}
+      {panel === "discount" ? (
+        <DiscountPanel
+          gross={lineGross(l)}
+          current={parseRial(l.discountAmount)}
+          busy={false}
+          onApply={(amount, why) => on.applyDiscount(l.id, amount, why)}
+          onCancel={on.closePanels}
+        />
+      ) : null}
+    </li>
+  );
+}, sameLine);
 
 const QTY_LOCKED =
   "تعداد سطری که تخفیف خورده یا قیمتش دستی عوض شده از اینجا تغییر نمی‌کند؛ سطر را حذف و دوباره ثبت کنید.";
@@ -80,6 +252,17 @@ export function Pos() {
   const [camera, setCamera] = useState(false);
   /** شماره مشتری — **اختیاری**. فروش ناشناس کارِ عادی است. */
   const [mobile, setMobile] = useState("");
+  /**
+   * فروش‌های معلق در صف آفلاین (FND-002).
+   *
+   * ⚠️ جدا از `error` است و جدا می‌ماند: `error` با هر عمل تازه پاک
+   *    می‌شود (`guarded` صریح `setError(null)` می‌زند) ولی فروشِ معلق
+   *    با عمل بعدی از بین نمی‌رود. یکی‌کردنشان یعنی صندوق‌دار پس از
+   *    اسکن بعدی دیگر نبیند که فروش قبلی نرفته است.
+   */
+  const [pending, setPending] = useState<PendingSummary>({ total: 0, parked: 0 });
+  /** صف خوانده نشد — دادهٔ خراب، یا مرورگری بدون ذخیرهٔ پایدار. */
+  const [queueError, setQueueError] = useState<string | null>(null);
 
   // بیرون از چرخه Render: کلیدی که داخل Render ساخته شود، دقیقاً روی
   // همان Retry که باید نجاتش بدهد عوض می‌شود.
@@ -246,6 +429,73 @@ export function Pos() {
 
   // ── عمل‌ها ────────────────────────────────────────────────────────
 
+  /**
+   * خواندن صف معلق‌ها.
+   *
+   * ⚠️ خطای خواندن **نمایش داده می‌شود** و صف را پاک نمی‌کند. «۰ در
+   *    انتظار» برای صفی که خوانده نشده، دروغ است — و از هر خطایی
+   *    خطرناک‌تر، چون آرام‌بخش است.
+   */
+  const refreshPending = useCallback(async () => {
+    try {
+      setPending(summarize(await saleQueue().pending()));
+      setQueueError(null);
+    } catch (err) {
+      setQueueError(message(err));
+    }
+  }, []);
+
+  /**
+   * تلاش برای ارسال صف.
+   *
+   * بی‌صدا اجرا می‌شود: شکست شبکه یعنی «هنوز قطع است»، نه یک خطای تازه
+   * که روی صفحه بیاید. همان `pending` کافی است.
+   */
+  const flushQueue = useCallback(async () => {
+    try {
+      await saleQueue().flush();
+    } catch {
+      /* خطای ارسال در همان ردیف صف ثبت می‌شود؛ نشانگر معلق‌ها نشانش می‌دهد. */
+    }
+    await refreshPending();
+  }, [refreshPending]);
+
+  /**
+   * تلاش دستی روی ردیف‌های پارک‌شده.
+   *
+   * ⚠️ ردیف پارک‌شده با `flush` خودکار **برداشته نمی‌شود** — و این
+   *    درست است: علتش یک «نه»ی سرور بوده، نه قطعی شبکه. پس آزادکردنش
+   *    باید تصمیم آدم باشد. `retry()` همان شناسه، همان کلید و همان
+   *    بدنه را نگه می‌دارد، پس اگر سرور بار اول کارش را کرده باشد،
+   *    Replay می‌گیرد نه اثر دوم.
+   */
+  const retryParked = useCallback(async () => {
+    try {
+      const q = saleQueue();
+      for (const r of await q.pending()) {
+        if (r.pausedReason !== undefined) await q.retry(r.id);
+      }
+    } catch (err) {
+      setQueueError(message(err));
+      return;
+    }
+    await flushQueue();
+  }, [flushQueue]);
+
+  /**
+   * وصل‌شدن شبکه → تلاش خودکار. و یک تلاش هنگام باز شدن صفحه.
+   *
+   * ⚠️ رویداد `online` مرورگر **تضمین نیست** (Wi-Fi وصل و اینترنت قطع،
+   *    همان چیزی است که `navigator.onLine` نمی‌فهمد). پس دکمهٔ دستی هم
+   *    هست و تکیهٔ کامل به این رویداد نمی‌شود.
+   */
+  useEffect(() => {
+    void flushQueue();
+    const onOnline = () => void flushQueue();
+    window.addEventListener("online", onOnline);
+    return () => window.removeEventListener("online", onOnline);
+  }, [flushQueue]);
+
   async function guarded(fn: () => Promise<void>) {
     if (busy) return;
     setBusy(true);
@@ -338,6 +588,44 @@ export function Pos() {
     });
 
   /**
+   * دیسپچرِ **پایدار** سطر سبد.
+   *
+   * ⚠️ بی این، `React.memo` روی `CartLine` بی‌اثر بود: Handlerهای بالا
+   *    در هر Render تازه ساخته می‌شوند، پس Prop سطر عوض می‌شد و
+   *    مقایسهٔ memo همیشه «تغییر کرده» می‌گفت.
+   *
+   * `useRef` آخرین نسخهٔ Handlerها را نگه می‌دارد و شیء بیرونی
+   * **یک بار** ساخته می‌شود. پس سطر یک Prop ثابت می‌بیند و همیشه
+   * تازه‌ترین تابع را صدا می‌زند — نه یک Closure کهنه.
+   */
+  const live = useRef({ changeQty, removeLine, applyPrice, applyDiscount,
+                        setPricing, setDiscounting });
+  live.current = { changeQty, removeLine, applyPrice, applyDiscount,
+                   setPricing, setDiscounting };
+
+  const rowActions = useMemo<RowActions>(
+    () => ({
+      changeQty: (id, qty, d) => void live.current.changeQty(id, qty, d),
+      remove: (id) => void live.current.removeLine(id),
+      applyPrice: (id, p, why) => void live.current.applyPrice(id, p, why),
+      applyDiscount: (id, a, why) => void live.current.applyDiscount(id, a, why),
+      openPrice: (id) => {
+        live.current.setDiscounting(null);
+        live.current.setPricing((cur) => (cur === id ? null : id));
+      },
+      openDiscount: (id) => {
+        live.current.setPricing(null);
+        live.current.setDiscounting((cur) => (cur === id ? null : id));
+      },
+      closePanels: () => {
+        live.current.setPricing(null);
+        live.current.setDiscounting(null);
+      },
+    }),
+    [],
+  );
+
+  /**
    * چسباندن مشتری به سبد.
    *
    * نرمال‌سازی واقعی در دیتابیس است (`sales.normalize_mobile`)؛
@@ -388,13 +676,55 @@ export function Pos() {
       setReceived(parseRial(out.receivedAmount));
     });
 
+  /**
+   * نهایی‌کردن فاکتور — و تنها عملی که هنگام قطعی شبکه **صف** می‌شود.
+   *
+   * ── چرا فقط همین یکی (FND-002) ────────────────────────────────────
+   *
+   * سطرها و پرداخت‌ها همه آنلاین ثبت شده‌اند، پس فاکتور یک پیش‌نویس
+   * کامل **روی سرور** است و نهایی‌کردنش هیچ تصمیمی در مرورگر لازم
+   * ندارد. صف‌کردن اسکن یا پرداخت یعنی صفحه عددی نشان بدهد که سرور
+   * تأییدش نکرده — همان «حالت آفلاین کامل» که ممنوع است.
+   *
+   * ⚠️ کلید Idempotency **همان کلید تلاش ناموفق** است، نه یک کلید
+   *    تازه: اگر شبکه پس از رسیدن درخواست به سرور قطع شده باشد، فاکتور
+   *    همان‌جا نهایی شده و ارسال دوبارهٔ صف باید **Replay** بگیرد، نه
+   *    فاکتور دوم. `keyFor` در شکست کلید را نگه می‌دارد؛ به همین دلیل
+   *    اینجا از `keys.current.run` استفاده نمی‌شود — آن در موفقیت کلید
+   *    را پاک می‌کند و ما باید در **هر دو** مسیر خودمان تصمیم بگیریم.
+   */
   const finalize = () =>
     guarded(async () => {
       if (!invoice) return;
-      const done = await keys.current.run(`finalize:${invoice.id}`, (key) =>
-        pos.finalize(invoice.id, { idempotencyKey: key }),
-      );
-      setNote(`فاکتور ${done.number ?? ""} ثبت شد.`);
+      const action = `finalize:${invoice.id}`;
+      const key = keys.current.keyFor(action);
+      const amount = parseRial(invoice.payableAmount);
+      try {
+        const done = await pos.finalize(invoice.id, { idempotencyKey: key });
+        setNote(`فاکتور ${done.number ?? ""} ثبت شد.`);
+      } catch (err) {
+        // خطای قاعده‌ای (موجودی، دوره بسته، پرداخت ناکافی) صف نمی‌شود:
+        // سرور جواب داده و جوابش «نه» است.
+        if (!isNetworkFailure(err)) throw err;
+        /*
+         * ⚠️ ترتیب مهم است: اول صف، بعد پاک‌کردن سبد. اگر `enqueue`
+         *    خطا بدهد (سهم ذخیره پر، یا مرورگر بدون ذخیرهٔ پایدار)،
+         *    خطا بالا می‌رود و سبد **سر جایش می‌ماند** — پس صندوق‌دار
+         *    می‌تواند دوباره تلاش کند. برعکسش یعنی فروش هم از صفحه
+         *    برود و هم در صف نباشد.
+         */
+        await saleQueue().enqueue({
+          id: action,
+          method: "POST",
+          path: `/invoices/${invoice.id}/finalize`,
+          body: {},
+          idempotencyKey: key,
+          label: `فروش ${toman(amount)} تومان`,
+        });
+        await refreshPending();
+        setNote("شبکه قطع است — فروش در صف نشست و با وصل‌شدن خودکار ارسال می‌شود.");
+      }
+      keys.current.clear(action);
       forgetCart();
       setInvoice(null);
       setReceived(0n);
@@ -498,6 +828,41 @@ export function Pos() {
         </p>
       ) : null}
 
+      {/*
+        نشانگر فروش‌های معلق (FND-002).
+
+        ⚠️ وقتی صف خالی است **هیچ‌چیز** نشان داده نمی‌شود: نشانگری که
+           همیشه روی صفحه باشد، دیده نمی‌شود. و `role="status"` نه
+           `alert`: صفِ در حال ارسال یک خطا نیست.
+
+        ⚠️ و رنگ تنها حامل معنا نیست — برچسب متنی خودش عدد و وضعیت را
+           می‌گوید (بند ۳ قواعد رابط).
+      */}
+      {pendingLabel(pending) !== null ? (
+        <p className="solid pos-alert" role="status">
+          <span
+            className={pending.parked > 0 ? "dot dot--crit" : "dot dot--warn"}
+            aria-hidden="true"
+          >
+            ●
+          </span>{" "}
+          {pendingLabel(pending)}
+          <button type="button" className="tool" onClick={() => void flushQueue()}>
+            ارسال دوباره
+          </button>
+          {pending.parked > 0 ? (
+            <button type="button" className="tool" onClick={() => void retryParked()}>
+              آزادکردن ردیف‌های پارک‌شده
+            </button>
+          ) : null}
+        </p>
+      ) : null}
+      {queueError ? (
+        <p className="solid pos-alert" role="alert">
+          <span className="dot dot--crit" aria-hidden="true">●</span> {queueError}
+        </p>
+      ) : null}
+
       {camera ? (
         <CameraScan onCode={(code) => void addByBarcode(code)} onClose={() => setCamera(false)} />
       ) : null}
@@ -514,125 +879,39 @@ export function Pos() {
       <div className="pos-body">
         <Solid as="section" className="cart">
           <h2 className="sr-only">سبد خرید</h2>
-          <ul className="lines">
-            {lines.map((l) => (
-              <li key={l.id}>
-                <div className="line-name">
-                  <strong>{l.productName}</strong>
-                  <span className="muted small">
-                    {l.sku}
-                    {/*
-                      قیمت فهرست فقط وقتی نوشته می‌شود که سطر واقعاً
-                      دستکاری شده باشد. صندوق‌دار باید ببیند از چه
-                      عددی پایین آمده — وگرنه تایپ اشتباه تا لحظه
-                      پرداخت پیدا نمی‌شود.
+          {/*
+            ⚠️ `fieldset[disabled]` — یک جا، نه ۲۰۰ جا (FND-016).
 
-                      این **دو قیمت روی فاکتور** نیست: فاکتور چاپی
-                      همان یک عدد را دارد و این فقط روی صفحه سبد است.
-                    */}
-                    {l.listPrice === null ? null : (
-                      <>
-                        {" · "}
-                        <span className="num">{toman(parseRial(l.unitPrice))}</span>
-                        {" به‌جای "}
-                        <span className="num">{toman(parseRial(l.listPrice))}</span>
-                      </>
-                    )}
-                  </span>
-                </div>
-                {/*
-                  سطری که تخفیف خورده یا قیمتش دستی عوض شده، تعدادش
-                  از این مسیر عوض نمی‌شود — و این تصمیم سرور است، نه
-                  سلیقه صفحه: تخفیف یک **مبلغ مطلق** برای تعدادِ آن
-                  لحظه است و با تغییر تعداد یا درصد کاهش بی‌صدا عوض
-                  می‌شود یا مبلغ ثبت‌شده.
+            پیش از این هر دکمهٔ هر سطر `disabled={busy}` داشت، پس هر
+            سطر به `busy` وابسته بود و `React.memo` هیچ اثری نداشت:
+            هر اسکن، هر ۲۰۰ سطر را دوباره Render می‌کرد. اندازه‌گیری،
+            نه فرض — سهم شبکه و سرور با اندازهٔ سبد عوض نمی‌شد و کار
+            جاوااسکریپت کلاینت **پنج برابر** می‌شد:
 
-                  دکمه‌ها غیرفعال‌اند نه پنهان: صندوق‌دار باید بفهمد
-                  چرا، نه اینکه دکمه ناپدید شود. بدون این، کلیک روی
-                  «+» فقط یک خطای سرور می‌داد که همان حرف را دیرتر
-                  می‌زد.
-                */}
-                <div className="qty">
-                  <button
-                    type="button"
-                    onClick={() => void changeQty(l.id, l.qty, -1)}
-                    aria-label={`کم کردن ${l.productName}`}
-                    disabled={busy || adjusted(l)}
-                    title={adjusted(l) ? QTY_LOCKED : undefined}
-                  >
-                    −
-                  </button>
-                  <span className="num" aria-live="polite">
-                    {Number(l.qty)}
-                  </span>
-                  <button
-                    type="button"
-                    onClick={() => void changeQty(l.id, l.qty, 1)}
-                    aria-label={`اضافه کردن ${l.productName}`}
-                    disabled={busy || adjusted(l)}
-                    title={adjusted(l) ? QTY_LOCKED : undefined}
-                  >
-                    +
-                  </button>
-                </div>
-                <span className="num line-total">{toman(parseRial(l.netAmount))}</span>
-                <button
-                  type="button"
-                  className="line-drop"
-                  onClick={() => {
-                    setDiscounting(null);
-                    setPricing(pricing === l.id ? null : l.id);
-                  }}
-                  aria-label={`تغییر قیمت ${l.productName}`}
-                  title="قیمت دستی"
-                  disabled={busy}
-                >
-                  ﷼
-                </button>
-                <button
-                  type="button"
-                  className="line-drop"
-                  onClick={() => {
-                    setPricing(null);
-                    setDiscounting(discounting === l.id ? null : l.id);
-                  }}
-                  aria-label={`تخفیف ${l.productName}`}
-                  title="تخفیف"
-                  disabled={busy}
-                >
-                  ٪
-                </button>
-                <button
-                  type="button"
-                  className="line-drop"
-                  onClick={() => void removeLine(l.id)}
-                  aria-label={`حذف ${l.productName}`}
-                  disabled={busy}
-                >
-                  ✕
-                </button>
-                {pricing === l.id ? (
-                  <PricePanel
-                    unitPrice={parseRial(l.unitPrice)}
-                    listPrice={l.listPrice === null ? null : parseRial(l.listPrice)}
-                    busy={busy}
-                    onApply={(price, why) => void applyPrice(l.id, price, why)}
-                    onCancel={() => setPricing(null)}
-                  />
-                ) : null}
-                {discounting === l.id ? (
-                  <DiscountPanel
-                    gross={lineGross(l)}
-                    current={parseRial(l.discountAmount)}
-                    busy={busy}
-                    onApply={(amount, why) => void applyDiscount(l.id, amount, why)}
-                    onCancel={() => setDiscounting(null)}
-                  />
-                ) : null}
-              </li>
-            ))}
-            {lines.length === 0 && <li className="empty">سبد خالی است — بارکد را اسکن کنید</li>}
-          </ul>
+                سبد   کل p50   شبکه+سرور   کلاینت
+                  1     61.9        21.1     40.8
+                 50    112.6        21.9     90.7   ✗ بودجه ۱۰۰ms
+                200    225.1        25.3    199.8   ✗
+
+            `fieldset[disabled]` همهٔ دکمه‌های فرزند را **بومی**
+            غیرفعال می‌کند، پس معنای دسترس‌پذیری حفظ می‌شود و هیچ سطری
+            به `busy` وابسته نمی‌ماند.
+          */}
+          <fieldset className="lines-wrap" disabled={busy}>
+            <ul className="lines">
+              {lines.map((l) => (
+                <CartLine
+                  key={l.id}
+                  line={l}
+                  panel={pricing === l.id ? "price" : discounting === l.id ? "discount" : null}
+                  on={rowActions}
+                />
+              ))}
+              {lines.length === 0 && (
+                <li className="empty">سبد خالی است — بارکد را اسکن کنید</li>
+              )}
+            </ul>
+          </fieldset>
 
           {/*
             شماره مشتری — **اختیاری**، و عمداً پایین سبد.

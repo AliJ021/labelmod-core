@@ -10,6 +10,7 @@
  * ندارد و MD5/SHA خام برای رمز ممنوع است.
  */
 import { sql } from "kysely";
+import { setActor } from "../lib/idempotency.ts";
 import { hashPendingToken, newPendingToken } from "./two-factor.ts";
 import type { Db } from "../db/client.ts";
 import { hashSecret, verifySecret } from "./password.ts";
@@ -364,7 +365,7 @@ export class AuthService {
     }
 
     await this.#db.transaction().execute(async (trx) => {
-      await sql`SELECT platform.set_actor(${row.user_id}::uuid)`.execute(trx);
+      await setActor(trx, row.user_id);
       await sql`SELECT identity.reauth_session(${tokenHash}, ${row.user_id}::uuid)`
         .execute(trx);
     });
@@ -376,7 +377,7 @@ export class AuthService {
 
     const secret = newToken();
     const done = await this.#db.transaction().execute(async (trx) => {
-      await sql`SELECT platform.set_actor(${userId}::uuid)`.execute(trx);
+      await setActor(trx, userId);
       const r = await sql<{ enroll_device: boolean }>`
         SELECT identity.enroll_device(
           ${device.id}::uuid, ${hashToken(secret)}, ${userId}::uuid)
@@ -455,7 +456,7 @@ export class AuthService {
     // P0001). آن خطا اینجا به AuthError ترجمه می‌شود تا مسیر PIN یک
     // ۴۰۳ روشن بدهد، نه یک ۵۰۰ که شبیه خرابی سرور است.
     await this.#db.transaction().execute(async (trx) => {
-      await sql`SELECT platform.set_actor(${row.user_id}::uuid)`.execute(trx);
+      await setActor(trx, row.user_id);
       const unlocked = await sql<{ unlock_session: boolean }>`
         SELECT identity.unlock_session(
           ${tokenHash}, ${row.user_id}::uuid, ${hashToken(deviceSecret)})
@@ -544,7 +545,7 @@ export class AuthService {
     }
     const hash = await hashSecret(plain);
     await this.#db.transaction().execute(async (trx) => {
-      await sql`SELECT platform.set_actor(${actorId}::uuid)`.execute(trx);
+      await setActor(trx, actorId);
       await trx
         .updateTable("identity.app_user")
         .set({ password_hash: hash })
@@ -562,7 +563,7 @@ export class AuthService {
     }
     const hash = await hashSecret(pin);
     await this.#db.transaction().execute(async (trx) => {
-      await sql`SELECT platform.set_actor(${actorId}::uuid)`.execute(trx);
+      await setActor(trx, actorId);
       await trx
         .updateTable("identity.app_user")
         .set({ pin_hash: hash })
@@ -585,9 +586,7 @@ export class AuthService {
     const tokenHash = hashToken(token);
 
     const { sessionId, expiresAt } = await this.#db.transaction().execute(async (trx) => {
-      await sql`SELECT platform.set_actor(${userId}::uuid, ${input.ip ?? null}::inet, ${
-        input.deviceFingerprint ?? null
-      }::text)`.execute(trx);
+      await setActor(trx, userId, input.ip, input.deviceFingerprint);
 
       const r = await sql<{ open_session: string }>`
         SELECT identity.open_session(

@@ -8,7 +8,7 @@
 > پیش از ورود داده واقعی، بخش «تصمیم‌های باز» پایین را بخوانید.
 
 ```
-۱۱۹۹ ادعای SQL  ·  ۸۳۷ تست Node  ·  ۱۰۲ ادعای PHP افزونه  ·  همه در CI
+۱۱۹۹ ادعای SQL  ·  ۸۶۱ تست Node  ·  ۱۰۲ ادعای PHP افزونه  ·  همه در CI
 ```
 
 ---
@@ -471,7 +471,7 @@ Microservice · Redis · Kubernetes · حالت آفلاین کامل · Windows
 ```
 db/migrations/   اسکیما و توابع — شماره‌دار، SQL خام، قابل حسابرسی
 db/seed/         کدینگ حساب، قواعد ثبت، تنظیمات، داده مرجع
-db/test/         ۴۰ فایل تست مالی — در CI و pre-push اجرا می‌شوند
+db/test/         ۴۱ فایل تست مالی — در CI و pre-push اجرا می‌شوند
 db/reconcile/    تطبیق پایانی «یک روز کامل» — از تست E2E صدا زده می‌شود
 docs/            ADR-001 تا ADR-006 · SECURITY.md · DEPLOYMENT.md
 ops/             db.sh · deploy.sh · install-hooks.sh · close-due-days.sh

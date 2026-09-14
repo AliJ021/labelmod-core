@@ -255,8 +255,11 @@ export async function buildApp(deps: AppDeps): Promise<FastifyInstance> {
   //    `AsyncLocalStorage.run` صدا زده می‌شود، پس بقیهٔ چرخهٔ عمر
   //    درخواست داخل همان زمینه می‌ماند و **با پایانش تمام می‌شود**.
   //    نسخهٔ اول `enterWith` می‌زد و زمینه بیرون از درخواست نشت می‌کرد.
+  //
+  // و `correlationId` — همان `req.id` که تا مهاجرت ۰۵۶ فقط در لاگ و
+  // پاسخ خطا بود و هیچ میدان مشترکی با `audit_log` نداشت (FND-018).
   app.addHook("onRequest", (req, _reply, done) => {
-    runInRequestContext({ ip: req.ip }, done);
+    runInRequestContext({ ip: req.ip, correlationId: req.id }, done);
   });
 
   // نشست را برای همه مسیرها حل می‌کند، ولی فقط برای مسیرهای غیرعمومی
