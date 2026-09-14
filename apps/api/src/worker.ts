@@ -45,6 +45,7 @@ async function main(): Promise<void> {
     workerName,
     smsApiKey: config.SMS_API_KEY ?? "",
     webhookToken: config.NOTIFY_WEBHOOK_TOKEN,
+    webPushSecret: config.WEB_PUSH_SECRET,
     batchSize: config.WORKER_BATCH,
     leaseSeconds: config.WORKER_LEASE_SECONDS,
     intervalMs: config.WORKER_INTERVAL_MS,
