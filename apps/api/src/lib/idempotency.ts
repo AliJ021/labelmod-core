@@ -206,7 +206,18 @@ export async function setActor(
   device?: string | undefined,
 ): Promise<void> {
   const ctx = currentRequestContext();
+  /*
+   * ⚠️ شناسهٔ پیگیری **پارامتر نیست** و عمداً فقط از زمینه می‌آید.
+   *    دادنش به امضا یعنی ~۷۰ فراخوان باز هم می‌توانستند فراموشش کنند —
+   *    همان دلیلی که `ip` و `device` را به اینجا آورد (FND-020).
+   *
+   * ⚠️ و آرگومان چهارم حتی وقتی `null` است هم پاس داده می‌شود: تابع
+   *    دیتابیس با آن GUC را **پاک** می‌کند، پس شناسهٔ درخواست قبلی روی
+   *    اتصال Pool‌شده نمی‌ماند.
+   */
   await sql`SELECT platform.set_actor(${userId}::uuid, ${
     ip ?? ctx.ip ?? null
-  }::inet, ${device ?? ctx.device ?? null}::text)`.execute(trx);
+  }::inet, ${device ?? ctx.device ?? null}::text, ${
+    ctx.correlationId ?? null
+  }::text)`.execute(trx);
 }

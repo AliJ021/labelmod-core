@@ -130,8 +130,15 @@ describe("لاگ حسابرسی: کاربر، زمان، دستگاه", { skip }
     });
     assert.equal(r.statusCode, 201, r.body);
 
-    const row = await sql<{ ip: string | null; device: string | null; actor: string | null }>`
-      SELECT host(ip) AS ip, device, actor_id::text AS actor
+    const row = await sql<{
+      ip: string | null;
+      device: string | null;
+      actor: string | null;
+      corr: string | null;
+      hv: number;
+    }>`
+      SELECT host(ip) AS ip, device, actor_id::text AS actor,
+             correlation_id AS corr, hash_version AS hv
         FROM platform.audit_log WHERE action = 'shift.open'
        ORDER BY id DESC LIMIT 1`.execute(handle.db);
     const a = row.rows[0];
@@ -139,6 +146,14 @@ describe("لاگ حسابرسی: کاربر، زمان، دستگاه", { skip }
     assert.ok(a.actor, "کاربر عامل باید ثبت شود");
     assert.equal(a.ip, "203.0.113.7", `IP باید ثبت شود، نه NULL: ${JSON.stringify(a)}`);
     assert.ok(a.device, `دستگاه باید ثبت شود، نه NULL: ${JSON.stringify(a)}`);
+    /*
+     * FND-018 — شناسهٔ پیگیری. پیش از مهاجرت ۰۵۶، `req.id` فقط در لاگ و
+     * پاسخ خطا بود و **هیچ میدان مشترکی** با این جدول نداشت: از یک
+     * مغایرت مالی راهی به درخواست HTTP نبود.
+     */
+    assert.ok(a.corr, `شناسهٔ پیگیری باید ثبت شود، نه NULL: ${JSON.stringify(a)}`);
+    // و در پوشش هش باشد، وگرنه جعلش دیده نمی‌شود (درسِ FND-017).
+    assert.equal(a.hv, 3, "سطر تازه باید نسخهٔ ۳ فرمول هش را داشته باشد");
   });
 
   test("هیچ عملیات حساسی در این سناریو بی IP نمی‌ماند", async () => {
@@ -188,13 +203,38 @@ describe("لاگ حسابرسی: کاربر، زمان، دستگاه", { skip }
     //    کاربر «سیستم» مستثناست — آماده‌سازی، بیرون از HTTP بود.
     const gaps = await sql<{ action: string; n: string }>`
       SELECT action, count(*)::text AS n FROM platform.audit_log
-       WHERE (ip IS NULL OR device IS NULL)
+       WHERE (ip IS NULL OR device IS NULL OR correlation_id IS NULL)
          AND actor_id <> ${SYSTEM_USER}::uuid
        GROUP BY action ORDER BY action`.execute(handle.db);
     assert.deepEqual(
       gaps.rows,
       [],
-      `این کنش‌ها IP یا دستگاه ندارند: ${JSON.stringify(gaps.rows)}`,
+      `این کنش‌ها IP یا دستگاه یا شناسهٔ پیگیری ندارند: ${JSON.stringify(gaps.rows)}`,
+    );
+
+    /*
+     * و ادعای اصلیِ FND-018: از **یک سطر دفتر** می‌شود به درخواست
+     * رسید، و همهٔ کنش‌های یک درخواست یک شناسه دارند.
+     *
+     * ⚠️ نهایی‌سازی فاکتور چند کنش می‌سازد (`invoice.finalize`، سند فروش،
+     *    پیام Outbox). اگر هر کدام شناسهٔ جدا می‌گرفتند، ریشه‌یابی همان
+     *    قدر سخت می‌ماند که پیش از این بود.
+     */
+    const grouped = await sql<{ corr: string; actions: string }>`
+      SELECT correlation_id AS corr, string_agg(DISTINCT action, ',' ORDER BY action) AS actions
+        FROM platform.audit_log
+       WHERE action LIKE 'invoice.%' AND correlation_id IS NOT NULL
+       GROUP BY correlation_id`.execute(handle.db);
+    assert.ok(grouped.rows.length > 0, "هیچ کنش فاکتوری شناسه نگرفت");
+
+    // و پیام Outbox فاکتور هم به همان درخواست پیوند دارد.
+    const msg = await sql<{ corr: string | null }>`
+      SELECT correlation_id AS corr FROM platform.outbox_message
+       WHERE topic = 'invoice.finalized' ORDER BY id DESC LIMIT 1`.execute(handle.db);
+    assert.ok(msg.rows[0], "نهایی‌سازی باید پیام Outbox بسازد");
+    assert.ok(
+      msg.rows[0].corr,
+      "پیام Outbox باید به درخواست سازنده‌اش پیوند داشته باشد",
     );
   });
 
@@ -208,10 +248,15 @@ describe("لاگ حسابرسی: کاربر، زمان، دستگاه", { skip }
       await sql`SELECT platform.set_setting('return.window_hours', '72'::jsonb,
                   'آزمون بیرون از HTTP')`.execute(trx);
     });
-    const row = await sql<{ ip: string | null; device: string | null }>`
-      SELECT host(ip) AS ip, device FROM platform.audit_log
+    const row = await sql<{ ip: string | null; device: string | null; corr: string | null }>`
+      SELECT host(ip) AS ip, device, correlation_id AS corr FROM platform.audit_log
        WHERE action = 'setting.change' ORDER BY id DESC LIMIT 1`.execute(handle.db);
     assert.equal(row.rows[0]!.ip, null, "بیرون از HTTP نباید IP جعلی بنشیند");
     assert.equal(row.rows[0]!.device, null, "بیرون از HTTP نباید دستگاه جعلی بنشیند");
+    assert.equal(
+      row.rows[0]!.corr,
+      null,
+      "بیرون از HTTP شناسهٔ پیگیری هم NULL می‌ماند — درخواستی نبوده",
+    );
   });
 });

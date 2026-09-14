@@ -22,6 +22,7 @@
  */
 import { createHash, randomBytes, randomInt, timingSafeEqual } from "node:crypto";
 import { sql } from "kysely";
+import { setActor } from "../lib/idempotency.ts";
 import type { Db } from "../db/client.ts";
 import { newTotpSecret, otpauthUri, verifyTotp } from "./totp.ts";
 import { AuthError } from "./service.ts";
@@ -151,7 +152,7 @@ export class TwoFactorService {
 
     const codes = generateRecoveryCodes();
     await this.#db.transaction().execute(async (trx) => {
-      await sql`SELECT platform.set_actor(${userId}::uuid)`.execute(trx);
+      await setActor(trx, userId);
       await trx
         .updateTable("identity.app_user")
         .set({ totp_secret: enrollment.secret })
@@ -181,7 +182,7 @@ export class TwoFactorService {
    */
   async disableTotp(userId: string, actorId: string): Promise<void> {
     await this.#db.transaction().execute(async (trx) => {
-      await sql`SELECT platform.set_actor(${actorId}::uuid)`.execute(trx);
+      await setActor(trx, actorId);
       await trx
         .updateTable("identity.app_user")
         .set({ totp_secret: null })
@@ -204,7 +205,7 @@ export class TwoFactorService {
     }
     const codes = generateRecoveryCodes();
     await this.#db.transaction().execute(async (trx) => {
-      await sql`SELECT platform.set_actor(${userId}::uuid)`.execute(trx);
+      await setActor(trx, userId);
       await trx.deleteFrom("identity.recovery_code").where("user_id", "=", userId).execute();
       await trx
         .insertInto("identity.recovery_code")
@@ -256,7 +257,7 @@ export class TwoFactorService {
       }
       if (matched === null) return false;
 
-      await sql`SELECT platform.set_actor(${userId}::uuid)`.execute(trx);
+      await setActor(trx, userId);
       await sql`
         UPDATE identity.recovery_code SET used_at = now() WHERE id = ${matched}::uuid
       `.execute(trx);

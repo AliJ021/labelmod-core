@@ -44,6 +44,15 @@ export interface RequestContext {
   ip?: string | undefined;
   /** شناسه دستگاهِ نشست — از `identity.device`، نه یک رشتهٔ دلخواه. */
   device?: string | undefined;
+  /**
+   * شناسهٔ پیگیری همان درخواست (`req.id`) — FND-018.
+   *
+   * تا مهاجرت ۰۵۶، این شناسه فقط در لاگ و پاسخ خطا بود و **هیچ میدان
+   * مشترکی** با `audit_log` نداشت. یعنی از رسید خطای کاربر می‌شد به لاگ
+   * رسید، ولی از یک **مغایرت مالی** که چند روز بعد پیدا می‌شد، به
+   * درخواست HTTP نه.
+   */
+  correlationId?: string | undefined;
 }
 
 const storage = new AsyncLocalStorage<RequestContext>();
