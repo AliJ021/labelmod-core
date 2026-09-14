@@ -338,9 +338,17 @@ export function Pos() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [shift]);
 
+  /**
+   * سبد جاری — **یک تعریف**، و عمداً یک مقدار همگام.
+   *
+   * ⚠️ این را `ensureInvoice` و `addByBarcode` هر دو می‌خوانند. اگر
+   *    شرطش دو جا نوشته می‌شد، یکی‌شان دیر یا زود عقب می‌ماند.
+   */
+  const openDraft = invoice && invoice.status === "draft" ? invoice : null;
+
   /** فاکتور پیش‌نویس، در صورت نبود ساخته می‌شود. */
   const ensureInvoice = useCallback(async (): Promise<Invoice> => {
-    if (invoice && invoice.status === "draft") return invoice;
+    if (openDraft) return openDraft;
     const created = await keys.current.run(`create:${shift?.id ?? branchId}`, (key) =>
       pos.createInvoice({ branchId, warehouseId, channel: "pos" }, { idempotencyKey: key }),
     );
@@ -350,7 +358,7 @@ export function Pos() {
     // شناسه در حافظه مرورگر می‌نشیند تا Reload آن را یتیم نکند.
     if (shift) rememberCart({ invoiceId: created.id, shiftId: shift.id });
     return created;
-  }, [invoice, shift, branchId, warehouseId]);
+  }, [openDraft, shift, branchId, warehouseId]);
 
   const addByBarcode = useCallback(
     async (barcode: string) => {
@@ -359,7 +367,30 @@ export function Pos() {
       // بیرون از `try` تا مسیر خطا هم بتواند سبد را تازه کند.
       let invoiceId: string | null = null;
       try {
-        const inv = await ensureInvoice();
+        /*
+         * ── چرا `await` وقتی سبد باز است زده نمی‌شود ────────────────
+         *
+         * اندازه‌گیری شد، نه سلیقه: با سبد ۲۰۰ قلمی، زمان **از اسکن تا
+         * بیرون‌رفتن درخواست** ۴۰ میلی‌ثانیه بود — و با سبد ۵۰ قلمی
+         * ۱۸. یعنی این تکه با اندازهٔ سبد بزرگ می‌شد، در حالی که بقیهٔ
+         * عمل‌های صندوق (تغییر تعداد، حذف، تخفیف) روی ۳ میلی‌ثانیه
+         * ثابت بودند.
+         *
+         * علتش `await` بود: یک `await` — حتی وقتی `ensureInvoice`
+         * بی‌درنگ برمی‌گردد — یک Microtask می‌سازد، و React همان‌جا
+         * Render معلقِ `busy = true` را Flush می‌کند. آن Render
+         * `fieldset[disabled]` را روشن می‌کند و مرورگر باید وضعیت
+         * **همهٔ** دکمه‌های فرزند را دوباره حساب کند؛ سبد ۲۰۰ قلمی
+         * یعنی حدود هزار دکمه. پس کاربر پیش از آنکه درخواست حتی
+         * فرستاده شود منتظر می‌ماند.
+         *
+         * سه عمل دیگر این مشکل را نداشتند چون درخواستشان **همگام**
+         * فرستاده می‌شود و آن Render زیر زمان شبکه پنهان می‌ماند.
+         *
+         * ⚠️ مسیر «سبد باز نیست» همچنان `await` دارد و باید داشته
+         *    باشد — آنجا واقعاً یک درخواست ساخت فاکتور در کار است.
+         */
+        const inv = openDraft ?? (await ensureInvoice());
         invoiceId = inv.id;
         // هر کشیدن اسکنر یک عمل تازه است: بدون شمارنده، اسکن دوم
         // Replay اسکن اول می‌شد و تعداد روی یک می‌ماند.
@@ -402,7 +433,7 @@ export function Pos() {
         setBusy(false);
       }
     },
-    [ensureInvoice],
+    [openDraft, ensureInvoice],
   );
 
   // ── بارکدخوان ─────────────────────────────────────────────────────
