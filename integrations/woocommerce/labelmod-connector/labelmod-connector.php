@@ -64,6 +64,7 @@ require_once LMC_PATH . 'includes/class-lmc-order-sync.php';
 require_once LMC_PATH . 'includes/class-lmc-stock-sync.php';
 require_once LMC_PATH . 'includes/class-lmc-instore.php';
 require_once LMC_PATH . 'includes/class-lmc-push-receiver.php';
+require_once LMC_PATH . 'includes/class-lmc-push-guard.php';
 
 /**
  * سازگاری با HPOS را **اعلام** کن.
@@ -110,6 +111,11 @@ add_action('plugins_loaded', function () {
     LMC_Order_Sync::init();
     LMC_Stock_Sync::init();
     LMC_Instore::init();
+    // ⚠️ **پیش از** ثبت مسیر: نگهبان Nonce به یک جدول نیاز دارد و
+    //    افزونه‌ای که فقط **به‌روزرسانی** شود Hook فعال‌سازی را اجرا
+    //    نمی‌کند. بی این سطر، جدول هرگز ساخته نمی‌شد و هر Push با ۵۰۳
+    //    رد می‌شد — یک قابلیتِ بی‌صدا خاموش.
+    LMC_Push_Guard::ensure_schema();
     // گیرندهٔ ارسال لحظه‌ای (ADR-007) — مسیر REST خودش را ثبت می‌کند.
     LMC_Push_Receiver::init();
 });
@@ -128,6 +134,8 @@ register_activation_hook(__FILE__, function () {
     if (!wp_next_scheduled(LMC_INSTORE_EVENT)) {
         wp_schedule_event(time() + 120, 'lmc_quarter_hour', LMC_INSTORE_EVENT);
     }
+    // جدول Nonce گیرندهٔ Push — بی آن، هر Push با ۵۰۳ رد می‌شود.
+    LMC_Push_Guard::install();
     // نقطه پایان تازه بدون این، ۴۰۴ می‌دهد — و کسی نمی‌فهمد چرا.
     LMC_Instore::register_post_type();
     LMC_Instore::register_endpoint();

@@ -23,6 +23,7 @@ import { sql } from "kysely";
 import { createDb, type DbHandle } from "../src/db/client.ts";
 import { createDisposableDb, type DisposableDb } from "./helpers/disposable-db.ts";
 import { tick, type LoopOptions } from "../src/worker/loop.ts";
+import { makePinnedPost } from "../src/worker/web-push.ts";
 
 const DATABASE_URL = process.env.DATABASE_URL;
 const skip = DATABASE_URL ? false : "DATABASE_URL تنظیم نشده — تست یکپارچه رد شد";
@@ -63,7 +64,14 @@ describe("ارسال لحظه‌ای به سایت — از حرکت انبار 
    */
   const to = (target: number) => async (raw: string) => ({
     url: new URL(raw.replace(SITE, `http://127.0.0.1:${target}`)),
-    ip: "203.0.113.10",
+    ip: "127.0.0.1",
+    /*
+     * ⚠️ از FND-R60-02 به بعد، اتصال به **همین فهرست** پین می‌شود. پس
+     *    این تست حالا ادعای بیشتری هم دارد: اگر پین به لایهٔ اتصال
+     *    نرسد، هیچ درخواستی به گیرندهٔ محلی نمی‌رسد و کل پرونده قرمز
+     *    می‌شود.
+     */
+    ips: ["127.0.0.1"],
   });
 
   const opts = (deps?: LoopOptions["webPushDeps"]): LoopOptions => ({
@@ -347,14 +355,14 @@ describe("ارسال لحظه‌ای به سایت — از حرکت انبار 
     const v = await makeVariation("PUSH-9");
     await move(v, 4);
 
-    const realFetch = globalThis.fetch;
+    const realPost = makePinnedPost();
     await tick(opts({
       resolveTarget: to(port),
-      fetch: (async (u: string | URL, init?: RequestInit) => {
-        const h = { ...(init?.headers as Record<string, string>) };
-        h["x-lmc-signature"] = `sha256=${"0".repeat(64)}`;   // امضای خراب
-        return await realFetch(u as string, { ...init, headers: h });
-      }) as typeof fetch,
+      post: async (t, init) => await realPost(t, {
+        ...init,
+        // امضای خراب — بقیهٔ مسیر (پین، اتصال، هدرها) واقعی می‌ماند.
+        headers: { ...init.headers, "x-lmc-signature": `sha256=${"0".repeat(64)}` },
+      }),
     }));
 
     const row = await sql<{ status: string }>`

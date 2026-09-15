@@ -141,6 +141,7 @@ CREATE OR REPLACE VIEW pg_temp.definer_fns AS
 SELECT p.oid,
        n.nspname || '.' || p.proname AS fn,
        p.proacl,
+       pg_get_userbyid(p.proowner) AS owner,
        (SELECT count(*) FROM aclexplode(p.proacl) a
          WHERE a.grantee = 0 AND a.privilege_type = 'EXECUTE') AS public_exec
   FROM pg_proc p JOIN pg_namespace n ON n.oid = p.pronamespace
@@ -169,6 +170,31 @@ BEGIN
     RAISE EXCEPTION E'\n  ✗ % تابع DEFINER برای PUBLIC قابل فراخوان است (مهاجرت ۰۶۰)', v_bad;
   END IF;
   RAISE NOTICE '  ✓ هیچ تابع DEFINERی برای PUBLIC قابل فراخوان نیست';
+END $$;
+
+\echo '── ۵.۱ و مالکِ هر DEFINER همان مالک اسکیماست ──'
+-- ⚠️ `SECURITY DEFINER` به‌نام **مالک تابع** اجرا می‌شود. پس مالک خودش
+--    بخشی از قرارداد امنیتی است، نه یک جزئیات اداری: تابعی که به‌نام
+--    یک نقش کم‌دسترس ساخته شده باشد، دروازه را می‌بندد؛ و تابعی که
+--    مالکش superuser باشد، در را از آنچه لازم است بازتر می‌کند.
+--
+--    محمول اینجا «همهٔ DEFINERها یک مالک دارند، و آن مالکِ اسکیماست»
+--    است — نه یک نام سخت‌کدشده، چون نام نقش در تولید و در CI یکی نیست.
+DO $$
+DECLARE r record; v_owner text; v_bad int := 0;
+BEGIN
+  SELECT pg_get_userbyid(n.nspowner) INTO v_owner
+    FROM pg_namespace n WHERE n.nspname = 'inventory';
+
+  FOR r IN SELECT fn, owner FROM pg_temp.definer_fns WHERE owner <> v_owner LOOP
+    RAISE WARNING '  ✗ % — مالکش «%» است، نه مالک اسکیما («%»)', r.fn, r.owner, v_owner;
+    v_bad := v_bad + 1;
+  END LOOP;
+
+  IF v_bad > 0 THEN
+    RAISE EXCEPTION E'\n  ✗ % تابع DEFINER مالکِ نامنتظره دارد', v_bad;
+  END IF;
+  RAISE NOTICE '  ✓ هر DEFINER به‌نام مالک اسکیما («%») اجرا می‌شود', v_owner;
 END $$;
 
 \echo '── ۶. ضدپوچی: فهرست DEFINERها خالی نیست ──'
