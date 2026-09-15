@@ -229,8 +229,8 @@ ops/deploy.sh status      # درآمد ثبت‌نشده + پیام‌های ن�
 **۲. تمرین Restore ماهانه — با یک دستور.**
 
 ```bash
-ops/restore-drill.sh                 # جدیدترین دامپ در $BACKUP_DIR
-ops/restore-drill.sh backup/x.dump   # یک فایل مشخص
+ops/deploy.sh drill                  # جدیدترین دامپ در $BACKUP_DIR
+ops/deploy.sh drill backup/x.dump    # یک فایل مشخص
 ```
 
 اسکریپت یک دیتابیس **یک‌بارمصرف** می‌سازد، دامپ را در آن برمی‌گرداند،
@@ -268,7 +268,7 @@ ok        در مهلت
 برای cron شبانه یا هفتگی:
 
 ```cron
-0 4 * * 0  cd /srv/labelmod && ops/restore-drill.sh >> /var/log/labelmod-drill.log 2>&1
+0 4 * * 0  cd /srv/labelmod/app && ops/deploy.sh drill >> /var/log/labelmod-drill.log 2>&1
 ```
 
 اسکریپت روی شکست کد خروج غیرصفر می‌دهد، پس cron می‌تواند ایمیل بزند.
@@ -425,23 +425,37 @@ ops/deploy.sh logs scheduler
 می‌سازد که **مالک** دیتابیس است و همه‌چیز را می‌تواند، از جمله
 `UPDATE inventory.stock_balance SET on_hand = 999`.
 
+در `.env` ابتدا یک رمز مستقل بگذارید، ولی نام اتصال برنامه را تا ساخته‌شدن
+نقش همان مالک نگه دارید:
+
+```dotenv
+APP_DB_USER=labelmod
+APP_DB_PASSWORD=<خروجی openssl rand -hex 24>
+```
+
+سپس نقش را با اتصال مالک داخل ظرف ابزار بسازید:
+
 ```bash
-# با DATABASE_URL مالک — همان که مهاجرت با آن اجرا می‌شود
-APP_PASSWORD='یک رمز تصادفی بلند' ops/db-roles.sh
+ops/deploy.sh roles
 ```
 
 اسکریپت Idempotent است: اجرای دوباره فقط GRANT/REVOKE را تازه می‌کند و
 رمز را تنها وقتی عوض می‌کند که `APP_PASSWORD` داده شده باشد.
 
-سپس در `.env`، متغیر اتصال **برنامه** (و فقط برنامه) به نقش تازه عوض شود.
-مهاجرت‌ها با همان نقش مالک قبلی اجرا می‌شوند:
+سپس در `.env` فقط نام اتصال **برنامه** را عوض کنید. Scheduler برای
+مهاجرت، Seed، بکاپ و Restore اتصال مالک جداگانهٔ خودش را نگه می‌دارد:
 
 ```
-DATABASE_URL=postgres://labelmod_app:<رمز>@db:5432/labelmod   # api و worker
-MIGRATION_DATABASE_URL=postgres://labelmod:<رمز>@db:5432/labelmod
+APP_DB_USER=labelmod_app
+APP_DB_PASSWORD=<همان رمز مستقل بالا>
 ```
 
-⚠️ **تا این متغیر عوض نشود، اجرای اسکریپت هیچ محدودیتی فعال نمی‌کند.**
+```bash
+ops/deploy.sh up
+ops/deploy.sh status
+```
+
+⚠️ **تا `APP_DB_USER` عوض نشود، اجرای اسکریپت هیچ محدودیتی فعال نمی‌کند.**
 نقش ساخته می‌شود و بی‌استفاده می‌ماند.
 
 ⚠️ **پس از هر مهاجرتی که جدول تازه بسازد**، اسکریپت را دوباره اجرا کنید.

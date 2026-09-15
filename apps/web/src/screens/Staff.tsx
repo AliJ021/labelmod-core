@@ -51,6 +51,9 @@ export function Staff() {
   const [newBranch, setNewBranch] = useState("");
 
   const [editing, setEditing] = useState<AppUser | null>(null);
+  const [passwordUser, setPasswordUser] = useState<AppUser | null>(null);
+  const [chosenPassword, setChosenPassword] = useState("");
+  const [confirmPassword, setConfirmPassword] = useState("");
 
   const reload = useCallback(async () => {
     setUsers((await people.users(includeInactive)).users);
@@ -108,10 +111,13 @@ export function Staff() {
       await reload();
     });
 
-  const resetPassword = (u: AppUser) =>
+  const resetPassword = (u: AppUser, password?: string) =>
     guarded(async () => {
-      const out = await people.resetPassword(u.id);
+      const out = await people.resetPassword(u.id, password);
       setSecret({ title: `رمز تازه ${u.username}`, password: out.password });
+      setPasswordUser(null);
+      setChosenPassword("");
+      setConfirmPassword("");
       await reload();
     });
 
@@ -156,6 +162,77 @@ export function Staff() {
           <button type="button" className="btn btn--quiet" onClick={() => setSecret(null)}>
             دیدم، ببند
           </button>
+        </Solid>
+      ) : null}
+
+      {passwordUser ? (
+        <Solid className="pad stack" style={{ gap: "var(--s-2)" }}>
+          <h3 style={{ margin: 0, fontSize: "1rem" }}>
+            تغییر رمز {passwordUser.fullName}
+          </h3>
+          <label className="auth-field">
+            <span>رمز دلخواه (حداقل ۱۲ کاراکتر)</span>
+            <input
+              type="password"
+              value={chosenPassword}
+              onChange={(e) => setChosenPassword(e.target.value)}
+              autoComplete="new-password"
+              minLength={12}
+              maxLength={256}
+              dir="ltr"
+            />
+          </label>
+          <label className="auth-field">
+            <span>تکرار رمز دلخواه</span>
+            <input
+              type="password"
+              value={confirmPassword}
+              onChange={(e) => setConfirmPassword(e.target.value)}
+              autoComplete="new-password"
+              minLength={12}
+              maxLength={256}
+              dir="ltr"
+            />
+          </label>
+          {confirmPassword !== "" && chosenPassword !== confirmPassword ? (
+            <p className="small" role="alert" style={{ margin: 0 }}>
+              دو رمز یکسان نیستند.
+            </p>
+          ) : null}
+          <div className="row" style={{ gap: "var(--s-2)" }}>
+            <button
+              type="button"
+              className="btn btn--primary"
+              disabled={
+                busy
+                || chosenPassword.length < 12
+                || chosenPassword !== confirmPassword
+              }
+              onClick={() => void resetPassword(passwordUser, chosenPassword)}
+            >
+              ثبت رمز دلخواه
+            </button>
+            <button
+              type="button"
+              className="btn btn--quiet"
+              disabled={busy}
+              onClick={() => void resetPassword(passwordUser)}
+            >
+              پیشنهاد رمز امن
+            </button>
+            <button
+              type="button"
+              className="btn btn--quiet"
+              disabled={busy}
+              onClick={() => {
+                setPasswordUser(null);
+                setChosenPassword("");
+                setConfirmPassword("");
+              }}
+            >
+              انصراف
+            </button>
+          </div>
         </Solid>
       ) : null}
 
@@ -313,7 +390,11 @@ export function Staff() {
                     <button
                       type="button"
                       className="link"
-                      onClick={() => void resetPassword(u)}
+                      onClick={() => {
+                        setPasswordUser(u);
+                        setChosenPassword("");
+                        setConfirmPassword("");
+                      }}
                       disabled={busy}
                     >
                       رمز تازه

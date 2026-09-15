@@ -71,6 +71,10 @@ const updateUserBody = z.object({
   isActive: z.boolean().optional(),
 });
 
+const resetPasswordBody = z.object({
+  password: z.string().min(12, "رمز عبور حداقل ۱۲ کاراکتر").max(256).optional(),
+});
+
 /**
  * PIN — چهار تا شش رقم، یا `null` برای برداشتن.
  *
@@ -261,9 +265,10 @@ export function registerPeopleRoutes(app: FastifyInstance, deps: PeopleRouteDeps
   app.post("/users/:id/reset-password", async (req) => {
     const s = session(req);
     const { id } = z.object({ id: uuid }).parse(req.params);
+    const body = resetPasswordBody.parse(req.body ?? {});
     await requireForSession(db, s, "user.manage");
 
-    const password = await users.resetPassword(id, s.userId);
+    const password = await users.resetPassword(id, s.userId, body.password);
     return {
       password,
       note: "این رمز فقط همین یک بار نشان داده می‌شود. همه نشست‌های این کاربر بسته شد.",

@@ -324,6 +324,7 @@ cp .env.example .env      # DB_PASSWORD · SITE_ADDRESS · ACME_EMAIL
 ops/deploy.sh up          # Build و اجرا
 ops/deploy.sh migrate
 ops/deploy.sh seed
+ops/deploy.sh roles        # سپس APP_DB_USER=labelmod_app و دوباره up
 ops/deploy.sh user --username ali --name 'علی جوادی' --role admin --branch MAIN
 ops/deploy.sh status
 ```

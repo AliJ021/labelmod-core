@@ -3,8 +3,9 @@
  *
  * ── رمز اینجا **ساخته نمی‌شود** ───────────────────────────────────
  *
- * هیچ تابعی رمز نمی‌فرستد. سرور می‌سازدش و **یک بار** در پاسخ
- * برمی‌گرداند. صفحه هم فقط نشانش می‌دهد و هیچ‌جا نگهش نمی‌دارد —
+ * در ساخت کاربر، سرور رمز را می‌سازد. در تغییر رمز، مدیر می‌تواند رمز
+ * دلخواه بفرستد یا پیشنهاد امن سرور را بخواهد. پاسخ آن را **یک بار**
+ * برمی‌گرداند و صفحه فقط نشانش می‌دهد و هیچ‌جا نگهش نمی‌دارد —
  * نه در `localStorage`، نه در State پس از بسته‌شدن پنجره.
  *
  * ── راز خوانده نمی‌شود ────────────────────────────────────────────
@@ -132,8 +133,11 @@ export const people = {
   setRoles: (id: string, roles: RoleAssignment[]) =>
     api.put<AppUser>(`/users/${id}/roles`, { roles }),
 
-  resetPassword: (id: string) =>
-    api.post<{ password: string; note: string }>(`/users/${id}/reset-password`, {}),
+  resetPassword: (id: string, password?: string) =>
+    api.post<{ password: string; note: string }>(
+      `/users/${id}/reset-password`,
+      password === undefined ? {} : { password },
+    ),
 
   setPin: (id: string, pin: string | null) =>
     api.put<{ ok: boolean; hasPin: boolean }>(`/users/${id}/pin`, { pin }),

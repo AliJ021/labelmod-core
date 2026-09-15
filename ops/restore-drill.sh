@@ -55,7 +55,11 @@ if [ -z "$DUMP" ]; then
   #    را قفل کرده، به‌علاوهٔ کنترل مثبت.
   #
   #    جدیدترین دامپ. `ls -t` روی نام فایل با فاصله می‌شکند، پس `find`.
-  DUMP="$(find "$DIR" -maxdepth 1 -name '*.dump' -printf '%T@ %p\n' 2>/dev/null \
+  # `-printf` مخصوص GNU find است؛ تصویر scheduler بر Alpine/BusyBox است
+  # و همان گزینه را نمی‌شناسد. زمان را با `stat` می‌گیریم که در هر دو
+  # محیط GNU و BusyBox پشتیبانی می‌شود.
+  DUMP="$(find "$DIR" -maxdepth 1 -type f -name '*.dump' \
+          -exec stat -c '%Y %n' {} + 2>/dev/null \
           | sort -rn | head -1 | cut -d' ' -f2- || true)"
 
   if [ -z "$DUMP" ]; then
