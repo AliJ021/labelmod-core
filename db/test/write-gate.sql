@@ -123,6 +123,134 @@ SELECT pg_temp.assert_eq(
   'web_stock_qty فقط می‌خواند و در فهرست نیست',
   (SELECT count(*) FROM pg_temp.locked_table_writers WHERE fn = 'inventory.web_stock_qty'), 0);
 
+\echo '── ۵. هیچ تابع DEFINER، EXECUTE برای PUBLIC ندارد ──'
+-- ⚠️ یافتهٔ FND-R60-04. `SECURITY DEFINER` به‌نام **مالک** اجرا می‌شود،
+--    و ACL پیش‌فرض یک تابع در پستگرس `EXECUTE` برای `PUBLIC` است. پس
+--    هر تابع DEFINERی که ACL نگیرد، برای هر نقشی که فقط `USAGE` روی
+--    اسکیما دارد یک راه دورزدنِ کاملِ حق جدول است.
+--
+--    اندازه‌گیری شد: نقشی با فقط `USAGE ON SCHEMA platform` — بی هیچ
+--    حقی روی هیچ جدولی — `platform.enqueue_web_push()` را صدا زد و یک
+--    پیام دلخواه با `version = 999999999` در صف گذاشت. افزونه پیامِ
+--    با نسخهٔ کوچک‌تر را دور می‌اندازد، پس آن یک فراخوان هر Push
+--    **بعدیِ** آن کالا را تا ابد بی‌صدا می‌بست.
+--
+-- ⚠️ `has_function_privilege` اینجا به‌کار نمی‌آید: `PUBLIC` یک نقش
+--    واقعی نیست. گرانتیِ صفر در ACL خودِ PUBLIC است.
+CREATE OR REPLACE VIEW pg_temp.definer_fns AS
+SELECT p.oid,
+       n.nspname || '.' || p.proname AS fn,
+       p.proacl,
+       (SELECT count(*) FROM aclexplode(p.proacl) a
+         WHERE a.grantee = 0 AND a.privilege_type = 'EXECUTE') AS public_exec
+  FROM pg_proc p JOIN pg_namespace n ON n.oid = p.pronamespace
+ WHERE p.prosecdef
+   AND p.prokind = 'f'
+   AND n.nspname IN ('platform','identity','catalog','inventory',
+                     'purchasing','sales','treasury','ledger');
+
+DO $$
+DECLARE r record; v_bad int := 0;
+BEGIN
+  FOR r IN SELECT * FROM pg_temp.definer_fns LOOP
+    -- ⚠️ `proacl IS NULL` یعنی **پیش‌فرض**، و پیش‌فرض همان
+    --    «EXECUTE برای PUBLIC» است. سنجیدن فقط aclexplode کافی نیست:
+    --    روی ACL تهی، aclexplode صفر سطر می‌دهد و تابعِ باز «پاس»
+    --    می‌شد. این دقیقاً همان حالتی بود که یافته را ساخت.
+    IF r.proacl IS NULL THEN
+      RAISE WARNING '  ✗ % — ACL پیش‌فرض دارد، یعنی EXECUTE برای PUBLIC', r.fn;
+      v_bad := v_bad + 1;
+    ELSIF r.public_exec > 0 THEN
+      RAISE WARNING '  ✗ % — EXECUTE صریح برای PUBLIC دارد', r.fn;
+      v_bad := v_bad + 1;
+    END IF;
+  END LOOP;
+  IF v_bad > 0 THEN
+    RAISE EXCEPTION E'\n  ✗ % تابع DEFINER برای PUBLIC قابل فراخوان است (مهاجرت ۰۶۰)', v_bad;
+  END IF;
+  RAISE NOTICE '  ✓ هیچ تابع DEFINERی برای PUBLIC قابل فراخوان نیست';
+END $$;
+
+\echo '── ۶. ضدپوچی: فهرست DEFINERها خالی نیست ──'
+-- بی این بند، یک اشتباه در شرط `prosecdef` یا در فهرست اسکیماها بند ۵
+-- را برای همیشه سبزِ بی‌معنا می‌کرد.
+DO $$
+DECLARE v_n int;
+BEGIN
+  SELECT count(*) INTO v_n FROM pg_temp.definer_fns;
+  IF v_n < 6 THEN
+    RAISE EXCEPTION E'\n  ✗ انتظار دست‌کم ۶ تابع DEFINER بود، % پیدا شد', v_n;
+  END IF;
+  RAISE NOTICE '  ✓ % تابع DEFINER سنجیده شد', v_n;
+END $$;
+
+\echo '── ۷. سه کمکیِ درونی Push، DEFINER و پین‌شده‌اند ──'
+-- این‌ها نویسندهٔ سه جدول قفل‌شده نیستند، پس بند ۱ نمی‌بیندشان — ولی
+-- روی `platform.outbox_message` می‌نویسند و نقش برنامه نباید بتواند
+-- مستقیم صدایشان بزند. `ops/db-roles.sh` حقشان را می‌گیرد و
+-- `db/test/db-roles.sh` رفتارش را می‌سنجد؛ اینجا فقط وجود و پین.
+SELECT pg_temp.assert_eq(
+  'platform.enqueue_web_push — DEFINER و پین‌شده',
+  (SELECT count(*) FROM pg_temp.definer_fns d
+     JOIN pg_proc p ON p.oid = d.oid
+    WHERE d.fn = 'platform.enqueue_web_push'
+      AND coalesce((SELECT bool_or(c ~* '^search_path=') FROM unnest(p.proconfig) c), false)), 1);
+SELECT pg_temp.assert_eq(
+  'inventory.push_web_stock — DEFINER و پین‌شده',
+  (SELECT count(*) FROM pg_temp.definer_fns d
+     JOIN pg_proc p ON p.oid = d.oid
+    WHERE d.fn = 'inventory.push_web_stock'
+      AND coalesce((SELECT bool_or(c ~* '^search_path=') FROM unnest(p.proconfig) c), false)), 1);
+SELECT pg_temp.assert_eq(
+  'catalog.push_web_price — DEFINER و پین‌شده',
+  (SELECT count(*) FROM pg_temp.definer_fns d
+     JOIN pg_proc p ON p.oid = d.oid
+    WHERE d.fn = 'catalog.push_web_price'
+      AND coalesce((SELECT bool_or(c ~* '^search_path=') FROM unnest(p.proconfig) c), false)), 1);
+
+\echo '── ۸. کنترل مثبت آشکارسازِ بند ۵ ──'
+-- بند ۵ فقط وقتی معنا دارد که بتواند یک تابعِ **باز** را ببیند. یک
+-- تابع DEFINERِ موقت می‌سازیم، ACL پیش‌فرضش را نگه می‌داریم، و ادعا
+-- می‌کنیم آشکارساز می‌گیردش. (تراکنش Rollback می‌شود، پس چیزی نمی‌ماند.)
+--
+-- ⚠️ شرط همان شرط بند ۵ است: `proacl IS NULL` **یا** گرانتیِ صفر. و
+--    این دو حالتِ یک چیزند، نه دو ادعا: اگر `ops/db-roles.sh` روی این
+--    دیتابیس اجرا شده باشد، `ALTER DEFAULT PRIVILEGES` باعث می‌شود
+--    تابع تازه ACL **صریح** بگیرد — و PUBLIC همان‌جا با `=X/` داخلش
+--    است. نسخهٔ اول این بند فقط `IS NULL` را می‌سنجید و روی همان
+--    دیتابیس قرمز شد؛ یعنی یک آشکارسازِ درست را «شکسته» نشان می‌داد.
+CREATE FUNCTION platform.wg_probe_open() RETURNS int
+LANGUAGE sql SECURITY DEFINER SET search_path = pg_catalog AS $$ SELECT 1 $$;
+
+DO $$
+DECLARE v_seen int;
+BEGIN
+  SELECT count(*) INTO v_seen
+    FROM pg_temp.definer_fns
+   WHERE fn = 'platform.wg_probe_open'
+     AND (proacl IS NULL OR public_exec > 0);
+  IF v_seen <> 1 THEN
+    RAISE EXCEPTION E'\n  ✗ آشکارساز بند ۵ یک تابع DEFINERِ باز را ندید — بند ۵ سبزِ بی‌معناست';
+  END IF;
+  RAISE NOTICE '  ✓ آشکارساز بند ۵ تابع DEFINERِ باز را می‌گیرد';
+END $$;
+
+-- و پس از REVOKE دیگر نباید بگیردش — یعنی ادعا واقعاً به ACL حساس است.
+REVOKE ALL ON FUNCTION platform.wg_probe_open() FROM PUBLIC;
+DO $$
+DECLARE v_seen int;
+BEGIN
+  SELECT count(*) INTO v_seen
+    FROM pg_temp.definer_fns
+   WHERE fn = 'platform.wg_probe_open'
+     AND (proacl IS NULL OR public_exec > 0);
+  IF v_seen <> 0 THEN
+    RAISE EXCEPTION E'\n  ✗ پس از REVOKE هم باز شمرده شد — ادعا به ACL حساس نیست';
+  END IF;
+  RAISE NOTICE '  ✓ پس از REVOKE دیگر باز شمرده نمی‌شود';
+END $$;
+DROP FUNCTION platform.wg_probe_open();
+
 \echo ''
 \echo '╔══════════════════════════════════════╗'
 \echo '║   دروازهٔ نوشتن پاس شد              ║'
