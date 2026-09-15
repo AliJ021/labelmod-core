@@ -345,7 +345,9 @@ describe("پرسنل و مشتری", { skip }, () => {
 
   test("مدیر می‌تواند رمز دلخواه بگذارد و رمز کوتاه رد می‌شود", async () => {
     const s = await loginAs(admin);
-    const username = `chosen_password_${suffix}`;
+    // سقف نام کاربری ۳۲ کاراکتر است؛ پیشوند بلندِ قبلی همراه Date.now
+    // از سقف رد می‌شد و تست پیش از رسیدن به تغییر رمز، کاربر را نمی‌ساخت.
+    const username = `cp_${suffix}`;
     const created = await app.inject({
       method: "POST",
       url: "/users",
@@ -356,6 +358,7 @@ describe("پرسنل و مشتری", { skip }, () => {
         roles: [{ roleCode: "cashier", branchId: BRANCH }],
       },
     });
+    assert.equal(created.statusCode, 201, created.body);
     const { id } = JSON.parse(created.body) as { id: string };
 
     const tooShort = await app.inject({
