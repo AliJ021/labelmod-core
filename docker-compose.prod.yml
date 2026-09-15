@@ -40,7 +40,7 @@ services:
       HOST: 0.0.0.0
       PORT: 3000
       TZ: ${TZ:-Asia/Tehran}
-      DATABASE_URL: postgres://labelmod:${DB_PASSWORD:?DB_PASSWORD لازم است}@db:5432/labelmod
+      DATABASE_URL: postgres://${APP_DB_USER:-labelmod}:${APP_DB_PASSWORD:-${DB_PASSWORD:?DB_PASSWORD لازم است}}@db:5432/labelmod
       DB_POOL_MAX: ${DB_POOL_MAX:-10}
       LOG_LEVEL: ${LOG_LEVEL:-info}
       COOKIE_NAME: ${COOKIE_NAME:-labelmod_session}
@@ -77,7 +77,7 @@ services:
     environment:
       NODE_ENV: production
       TZ: ${TZ:-Asia/Tehran}
-      DATABASE_URL: postgres://labelmod:${DB_PASSWORD:?DB_PASSWORD لازم است}@db:5432/labelmod
+      DATABASE_URL: postgres://${APP_DB_USER:-labelmod}:${APP_DB_PASSWORD:-${DB_PASSWORD:?DB_PASSWORD لازم است}}@db:5432/labelmod
       LOG_LEVEL: ${LOG_LEVEL:-info}
       # ⚠️ کلید سرویس پیامک یک **راز** است، نه یک تنظیم: در
       #    `platform.setting` نمی‌نشیند چون مقدار هر تنظیم در
@@ -120,6 +120,8 @@ services:
     environment:
       TZ: ${TZ:-Asia/Tehran}
       DATABASE_URL: postgres://labelmod:${DB_PASSWORD:?DB_PASSWORD لازم است}@db:5432/labelmod
+      MIGRATION_DATABASE_URL: postgres://labelmod:${DB_PASSWORD:?DB_PASSWORD لازم است}@db:5432/labelmod
+      APP_PASSWORD: ${APP_DB_PASSWORD:-}
       BACKUP_DIR: /backup
       CLOSE_HOUR: ${CLOSE_HOUR:-3}
       BACKUP_HOUR: ${BACKUP_HOUR:-4}

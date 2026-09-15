@@ -13,9 +13,9 @@
  * شوند. همان الگوی `identity.device_overview` که اصلاً ستون راز را
  * ندارد.
  *
- * **رمز یک بار دیده می‌شود و تمام.** سرور می‌سازدش (نه کاربر)، هش
- * Argon2id ذخیره می‌کند، و متن خام را **فقط در همان پاسخ** برمی‌گرداند.
- * جایی ذخیره نمی‌شود و از هیچ مسیری دوباره خواندنی نیست.
+ * **رمز یک بار دیده می‌شود و تمام.** رمز ساخت اولیه را سرور می‌سازد؛
+ * در تغییر رمز، مدیر می‌تواند مقدار دلخواه بدهد یا پیشنهاد سرور را
+ * بخواهد. فقط هش Argon2id ذخیره می‌شود و متن خام فقط در همان پاسخ است.
  *
  * **غیرفعال‌کردن، حذف نیست.** فاکتور پارسال به `created_by` ارجاع
  * می‌دهد. `is_active = false` یعنی نمی‌تواند وارد شود؛ ردّ حسابرسی‌اش
@@ -284,12 +284,12 @@ export class UserService {
     // نیست — ولی اگر روزی Cache اضافه شد، این کامنت جای درستش است.
   }
 
-  /** رمز تازه — یک بار برمی‌گردد و هیچ‌جا نمی‌ماند. */
-  async resetPassword(id: string, actorId: string): Promise<string> {
+  /** رمز تازه — انتخاب مدیر یا پیشنهاد امن سرور؛ هیچ‌جا خام ذخیره نمی‌شود. */
+  async resetPassword(id: string, actorId: string, chosenPassword?: string): Promise<string> {
     const user = await this.byId(id);
     if (!user) throw new UserError("user_not_found", "کاربر یافت نشد", 404);
 
-    const password = generatePassword();
+    const password = chosenPassword ?? generatePassword();
     const hash = await hashSecret(password);
 
     await this.#db.transaction().execute(async (trx) => {

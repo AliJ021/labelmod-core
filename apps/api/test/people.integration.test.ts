@@ -343,6 +343,51 @@ describe("پرسنل و مشتری", { skip }, () => {
     assert.equal(old.statusCode, 401, "نشست قبلی باید بسته شده باشد");
   });
 
+  test("مدیر می‌تواند رمز دلخواه بگذارد و رمز کوتاه رد می‌شود", async () => {
+    const s = await loginAs(admin);
+    // سقف نام کاربری ۳۲ کاراکتر است؛ پیشوند بلندِ قبلی همراه Date.now
+    // از سقف رد می‌شد و تست پیش از رسیدن به تغییر رمز، کاربر را نمی‌ساخت.
+    const username = `cp_${suffix}`;
+    const created = await app.inject({
+      method: "POST",
+      url: "/users",
+      ...s,
+      payload: {
+        username,
+        fullName: "کاربر رمز دلخواه",
+        roles: [{ roleCode: "cashier", branchId: BRANCH }],
+      },
+    });
+    assert.equal(created.statusCode, 201, created.body);
+    const { id } = JSON.parse(created.body) as { id: string };
+
+    const tooShort = await app.inject({
+      method: "POST",
+      url: `/users/${id}/reset-password`,
+      ...s,
+      payload: { password: "short" },
+    });
+    assert.equal(tooShort.statusCode, 400, tooShort.body);
+
+    const chosen = "رمز-دلخواه-امن-برای-کاربر-۱۲۳";
+    const reset = await app.inject({
+      method: "POST",
+      url: `/users/${id}/reset-password`,
+      ...s,
+      payload: { password: chosen },
+    });
+    assert.equal(reset.statusCode, 200, reset.body);
+    assert.equal((JSON.parse(reset.body) as { password: string }).password, chosen);
+
+    const login = await app.inject({
+      method: "POST",
+      url: "/auth/login",
+      remoteAddress: ipFor(username),
+      payload: { username, password: chosen, deviceFingerprint: `fp-${username}` },
+    });
+    assert.notEqual(login.statusCode, 401, login.body);
+  });
+
   test("نقش‌ها مطلق‌اند: فهرست تازه جای قبلی می‌نشیند", async () => {
     const s = await loginAs(admin);
     const created = await app.inject({

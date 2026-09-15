@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # =====================================================================
-# استقرار — up | migrate | seed | logs | backup | down | status
+# استقرار — up | migrate | seed | roles | logs | backup | drill | down | status
 # =====================================================================
 # لایه نازکی روی docker compose، فقط برای اینکه ترتیب درست فراموش
 # نشود: اول دیتابیس سالم، بعد مهاجرت، بعد seed، بعد سرویس‌ها.
@@ -38,6 +38,11 @@ case "${1:-}" in
     [ -n "${2:-}" ] || { echo "استفاده: ops/deploy.sh baseline <شماره آخرین مهاجرت اجراشده>"; exit 1; }
     in_db_tools "cd /app && ops/db.sh baseline $2" ;;
   seed)    in_db_tools "cd /app && ops/db.sh seed" ;;
+  roles)
+    # نقش با اتصال مالک ساخته می‌شود. رمز از .env وارد ظرف می‌شود و در
+    # آرگومان فرمان یا history شل ظاهر نمی‌شود.
+    in_db_tools 'cd /app && DATABASE_URL="$MIGRATION_DATABASE_URL" APP_PASSWORD="$APP_PASSWORD" ops/db-roles.sh'
+    ;;
   user)
     # seed هیچ حساب انسانی نمی‌سازد و نباید بسازد — رمز پیش‌فرضِ
     # کامیت‌شده دقیقاً همان چیزی است که بند ۸ SECURITY.md ممنوع کرده.
@@ -59,6 +64,17 @@ case "${1:-}" in
     ;;
   psql)    "${COMPOSE[@]}" exec db psql -U labelmod -d labelmod ;;
   backup)  in_db_tools "cd /app && BACKUP_DIR=/backup ops/db.sh backup" ;;
+  drill)
+    if [ -n "${2:-}" ]; then
+      # پوشهٔ بکاپ میزبان در ظرف همیشه `/backup` است؛ کاربر می‌تواند
+      # `backup/x.dump` یا فقط نام فایل را بدهد.
+      DUMP_PATH="/backup/$(basename "$2")"
+      "${COMPOSE[@]}" run --rm --entrypoint bash -e DUMP_PATH scheduler \
+        -lc 'cd /app && BACKUP_DIR=/backup ops/restore-drill.sh "$DUMP_PATH"'
+    else
+      in_db_tools 'cd /app && BACKUP_DIR=/backup ops/restore-drill.sh'
+    fi
+    ;;
   logs)    "${COMPOSE[@]}" logs -f --tail=100 "${2:-}" ;;
   status)
     "${COMPOSE[@]}" ps
@@ -107,5 +123,5 @@ case "${1:-}" in
     in_db_tools "psql -d \"\$DATABASE_URL\" -c \"SELECT * FROM treasury.cheque_due WHERE urgency <> 'future' LIMIT 20\"" || true
     ;;
   down)    "${COMPOSE[@]}" down ;;
-  *) echo "استفاده: ops/deploy.sh {up|migrate|seed|user|api-client|psql|backup|logs|status|down}"; exit 1 ;;
+  *) echo "استفاده: ops/deploy.sh {up|migrate|seed|roles|user|api-client|psql|backup|drill|logs|status|down}"; exit 1 ;;
 esac
