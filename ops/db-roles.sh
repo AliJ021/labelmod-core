@@ -70,6 +70,15 @@ fi
 # نقش برنامه هرگز مالک نیست و هرگز DDL نمی‌زند.
 $PSQL -c "ALTER ROLE \"$APP_ROLE\" NOSUPERUSER NOCREATEDB NOCREATEROLE NOBYPASSRLS;"
 
+# ⚠️ **در بدنهٔ دو heredoc زیر (`<<SQL`، بی نقل‌قول) Backtick نگذار.**
+#    آن‌ها برای `$APP_ROLE` و `$SCHEMAS` عمداً بی‌نقل‌قول‌اند، پس bash
+#    محتوایشان را بسط می‌دهد و یک Backtick در **کامنت SQL** تبدیل به
+#    Command Substitution می‌شود. نسخهٔ قبلی همین فایل ۱۳ سطر کامنت با
+#    Backtick داشت و خروجی‌اش ۹ خط `command not found` به‌علاوهٔ یک
+#    `syntax error: unexpected end of file` بود — یعنی متنی که به psql
+#    می‌رسید **همان چیزی نبود که در فایل نوشته شده**. اینجا کامنت بود و
+#    بی‌ضرر؛ یک Backtick در خودِ دستور REVOKE بی‌صدا حذفش می‌کرد.
+#    داخل heredoc از « » استفاده کن. کامنت‌های `#` بیرون heredoc آزادند.
 echo "── حق‌های عادی DML ───────────────────────────────────────────"
 $PSQL <<SQL
 GRANT CONNECT ON DATABASE "$DBNAME" TO $APP_ROLE;
@@ -110,18 +119,37 @@ REVOKE INSERT, UPDATE, DELETE ON inventory.stock_movement FROM $APP_ROLE;
 REVOKE INSERT, UPDATE, DELETE ON inventory.stock_balance  FROM $APP_ROLE;
 REVOKE INSERT, UPDATE, DELETE ON inventory.cost_layer     FROM $APP_ROLE;
 
--- ۴. و `public` — که در فهرست اسکیماهای بالا **نیست** و باید باشد.
---    هر شش تابع `SECURITY DEFINER` این پروژه `public` را در
---    `search_path` پین‌شدهٔ خود دارند (چون `pgcrypto` آنجاست و
---    `platform.uuid_v7()` به `gen_random_bytes()` نیاز دارد). اگر نقش
---    برنامه بتواند در `public` شیء بسازد، می‌تواند تابعی هم‌نام
+-- ۴. و «public» — که در فهرست اسکیماهای بالا **نیست** و باید باشد.
+--    هر شش تابع «SECURITY DEFINER» این پروژه «public» را در
+--    «search_path» پین‌شدهٔ خود دارند (چون «pgcrypto» آنجاست و
+--    «platform.uuid_v7()» به «gen_random_bytes()» نیاز دارد). اگر نقش
+--    برنامه بتواند در «public» شیء بسازد، می‌تواند تابعی هم‌نام
 --    بگذارد که **به‌نام مالک** اجرا شود — یعنی دقیقاً همان ارتقای
 --    دسترسی که پین‌کردن search_path قرار بود ببندد.
 --
 --    پستگرس ۱۵ به بعد این را پیش‌فرض بسته، ولی «پیش‌فرضِ درست» یک
 --    دفاع نیست: دیتابیسی که از نسخهٔ قدیمی‌تر ارتقا داده شده باشد
---    هنوز بازش دارد، و یک `GRANT` سهوی هم کافی است.
+--    هنوز بازش دارد، و یک «GRANT» سهوی هم کافی است.
 REVOKE CREATE ON SCHEMA public FROM $APP_ROLE;
+
+-- ۵. و سه **کمکیِ درونیِ** Push سایت. این‌ها «SECURITY DEFINER»اند —
+--    یعنی به‌نام **مالک** اجرا می‌شوند و روی «platform.outbox_message»
+--    می‌نویسند بی‌آنکه حق جدولِ فراخوان سنجیده شود. هیچ مسیر برنامه‌ای
+--    صدایشان نمی‌زند؛ «apply_movement» و «set_price» از **داخل**
+--    دیتابیس می‌زنندشان و آنجا فراخوان همان مالک است.
+--
+--    ⚠️ مهاجرت ۰۶۰ «EXECUTE» را از «PUBLIC» گرفت و **آن کافی نیست**:
+--       «GRANT EXECUTE ON ALL FUNCTIONS» بالای همین فایل — که پس از
+--       مهاجرت اجرا می‌شود — آن را برای نقش برنامه دوباره باز می‌کند.
+--       پس REVOKE باید **اینجا** باشد، دقیقاً مثل سه جدول بند ۳.
+--
+--    خطرش اندازه‌گیری شد (FND-R60-04): نقشی با فقط
+--    «USAGE ON SCHEMA platform» می‌توانست
+--    «enqueue_web_push('web.stock_push', '{"onHand":9999,…}')» بزند،
+--    Worker امضایش می‌کرد، و موجودی واقعی سایت ۹۹۹۹ می‌شد.
+REVOKE EXECUTE ON FUNCTION platform.enqueue_web_push(text, jsonb) FROM $APP_ROLE;
+REVOKE EXECUTE ON FUNCTION inventory.push_web_stock(uuid, uuid)   FROM $APP_ROLE;
+REVOKE EXECUTE ON FUNCTION catalog.push_web_price(uuid)           FROM $APP_ROLE;
 SQL
 
 # ⚠️ اینجا عمداً `ALTER DEFAULT PRIVILEGES … REVOKE … IN SCHEMA inventory`

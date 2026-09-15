@@ -392,6 +392,76 @@ PERFORM inventory.apply_movement(v_var, WEB, -1, 'sale', 'test', '00000000-0000-
 PERFORM pg_temp.assert_eq('و واقعاً هیچ پیامی نمی‌سازد',
   pg_temp.pending('web.stock_push', v_var), 0);
 
+-- ═══════════════════════════════════════════════════════════════════
+RAISE NOTICE E'\n═══ ۱۲. دروازهٔ صف: موضوع بسته، Payload سنجیده، نسخه از دنباله ═══';
+-- ═══════════════════════════════════════════════════════════════════
+--
+-- ⚠️ یافتهٔ FND-R60-04، لایهٔ دوم. مهاجرت ۰۶۰ `EXECUTE` را از `PUBLIC`
+--    گرفت، ولی ACL یک مرز دسترسی است و مرز دسترسی روزی اشتباه تنظیم
+--    می‌شود. پس خودِ تابع هم به فراخوانش اعتماد نمی‌کند.
+--
+-- ⚠️ مهم‌ترینش `version` است: افزونه پیام با نسخهٔ کوچک‌تر‌یا‌مساوی را
+--    **دور می‌اندازد**، پس یک `version = 999999999` هر Push بعدیِ آن
+--    کالا را تا ابد بی‌صدا می‌بست. حالا مقدار ورودی بازنویسی می‌شود.
+
+PERFORM platform.set_setting('web.stock_warehouse', '"WEB"'::jsonb, 'تست', v_user);
+
+-- موضوع بیرون از فهرست — از جمله `health.alert`، که مسیر خودش را دارد
+-- (`platform.enqueue_health_alerts` مستقیم درج می‌کند و DEFINER نیست).
+PERFORM pg_temp.assert_raises('موضوع health.alert از این صف ساخته نمی‌شود',
+  format('SELECT platform.enqueue_web_push(''health.alert'', ''{"variationId":"%s"}''::jsonb)', v_var));
+PERFORM pg_temp.assert_raises('موضوع دلخواه رد می‌شود',
+  format('SELECT platform.enqueue_web_push(''sms.invoice'', ''{"variationId":"%s"}''::jsonb)', v_var));
+
+-- شناسهٔ تنوع: نه بی‌شکل، نه ناموجود.
+PERFORM pg_temp.assert_raises('variationId بی‌شکل رد می‌شود',
+  'SELECT platform.enqueue_web_push(''web.stock_push'', ''{"variationId":"نه-یک-uuid","onHand":1}''::jsonb)');
+PERFORM pg_temp.assert_raises('تنوع ناموجود رد می‌شود',
+  'SELECT platform.enqueue_web_push(''web.stock_push'',
+     ''{"variationId":"11111111-1111-1111-1111-111111111111","onHand":1}''::jsonb)');
+
+-- شکل Payload، به‌ازای هر موضوع.
+PERFORM pg_temp.assert_raises('Push موجودی بی onHand عددی رد می‌شود',
+  format('SELECT platform.enqueue_web_push(''web.stock_push'', ''{"variationId":"%s"}''::jsonb)', v_var));
+PERFORM pg_temp.assert_raises('onHand رشته‌ای رد می‌شود',
+  format('SELECT platform.enqueue_web_push(''web.stock_push'', ''{"variationId":"%s","onHand":"7"}''::jsonb)', v_var));
+PERFORM pg_temp.assert_raises('onHand منفی رد می‌شود',
+  format('SELECT platform.enqueue_web_push(''web.stock_push'', ''{"variationId":"%s","onHand":-1}''::jsonb)', v_var));
+PERFORM pg_temp.assert_raises('Push قیمت بی کلید priceRial رد می‌شود',
+  format('SELECT platform.enqueue_web_push(''web.price_push'', ''{"variationId":"%s"}''::jsonb)', v_var));
+-- ⚠️ پول در JSON **رشته** است. عدد رد می‌شود، چون مبالغ ریالی از دقت
+--    `number` جاوااسکریپت بیرون می‌زنند و افزونه همان را می‌خواند.
+PERFORM pg_temp.assert_raises('priceRial عددی رد می‌شود',
+  format('SELECT platform.enqueue_web_push(''web.price_push'', ''{"variationId":"%s","priceRial":1000}''::jsonb)', v_var));
+PERFORM pg_temp.assert_raises('priceRial غیررقمی رد می‌شود',
+  format('SELECT platform.enqueue_web_push(''web.price_push'', ''{"variationId":"%s","priceRial":"۱۰۰۰ تومان"}''::jsonb)', v_var));
+
+-- ── کنترل مثبت: Payload درست هنوز قبول می‌شود ───────────────────────
+-- بی این بند، یک نگهبانِ بیش از حد سخت‌گیر هم «پاس» می‌شد و کل
+-- همگام‌سازی سایت را بی‌صدا می‌بست.
+DELETE FROM platform.outbox_message;
+PERFORM pg_temp.assert_eq('Payload درستِ موجودی قبول می‌شود',
+  CASE WHEN platform.enqueue_web_push('web.stock_push',
+         jsonb_build_object('variationId', v_var::text, 'onHand', 5)) IS NULL
+       THEN 0 ELSE 1 END, 1);
+PERFORM pg_temp.assert_eq('priceRial تهی قبول می‌شود (قیمت ندارد ≠ مجانی)',
+  CASE WHEN platform.enqueue_web_push('web.price_push',
+         jsonb_build_object('variationId', v_var::text, 'priceRial', NULL)) IS NULL
+       THEN 0 ELSE 1 END, 1);
+
+-- ── نسخهٔ ورودی بازنویسی می‌شود ─────────────────────────────────────
+DELETE FROM platform.outbox_message;
+PERFORM platform.enqueue_web_push('web.stock_push',
+  jsonb_build_object('variationId', v_var::text, 'onHand', 5, 'version', 999999999));
+PERFORM pg_temp.assert_eq('نسخهٔ تحمیلیِ فراخوان بازنویسی شد',
+  CASE WHEN pg_temp.field('web.stock_push', v_var, 'version') = '999999999'
+       THEN 1 ELSE 0 END, 0);
+-- و مقداری که نشست، از دنباله است: از `last_value` بیشتر نیست.
+PERFORM pg_temp.assert_eq('نسخهٔ نشسته از دنبالهٔ web_push_version است',
+  CASE WHEN pg_temp.field('web.stock_push', v_var, 'version')::bigint
+            <= (SELECT last_value FROM platform.web_push_version)
+       THEN 1 ELSE 0 END, 1);
+
 RAISE NOTICE E'\n✓ همه ادعاهای Push سایت پاس شدند';
 END $test$;
 

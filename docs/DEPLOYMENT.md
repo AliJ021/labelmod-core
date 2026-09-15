@@ -484,7 +484,7 @@ MIGRATION_DATABASE_URL=postgres://labelmod:<رمز>@db:5432/labelmod
 
 تا امروز تنها چیزی که با نقش برنامه سنجیده می‌شد `db/test/db-roles.sh`
 بود و آن فقط `apply_movement` را به‌عنوان «دروازه» می‌شناخت. بقیهٔ
-مجموعه — ۱۲۵۵ ادعای SQL و ۶۵۶ ادعای API — با نقش **مالک** اجرا می‌شدند،
+مجموعه — ۱۲۸۵ ادعای SQL و ۶۶۱ ادعای API — با نقش **مالک** اجرا می‌شدند،
 و مالک همه‌چیز را می‌تواند.
 
 حالا کل مجموعهٔ یکپارچهٔ API یک بار با نقش محدود اجرا می‌شود:
@@ -516,6 +516,112 @@ LMC_TEST_DB_ROLE=app pnpm --filter @labelmod/api test
 نقش اجرا می‌شود. پس نماهای `inventory.balance_check` و
 `inventory.ledger_check` هنوز لازم‌اند و `ops/deploy.sh status` نشانشان
 می‌دهد.
+
+### ACL توابع `SECURITY DEFINER` — و اینکه چرا REVOKE در مهاجرت کافی نیست
+
+مهاجرت ۰۵۰ و ۰۵۸ شش تابع را `SECURITY DEFINER` کردند. ACL **پیش‌فرض** یک
+تابع در پستگرس `EXECUTE` برای `PUBLIC` است، پس هر شش تا برای هر نقشی که
+فقط `USAGE` روی اسکیما داشت قابل فراخوان بودند. اندازه‌گیری شد:
+
+```
+CREATE ROLE probe LOGIN PASSWORD '…';
+GRANT USAGE ON SCHEMA platform TO probe;
+
+-- بی هیچ حقی روی هیچ جدولی:
+INSERT INTO platform.outbox_message …      → permission denied
+SELECT platform.enqueue_web_push(
+  'web.stock_push',
+  '{"variationId":"…","onHand":9999,
+    "version":999999999}')                  → id = 1     ← قبول شد
+```
+
+Worker آن پیام را امضا می‌کرد و موجودی واقعی سایت ۹۹۹۹ می‌شد. و بدتر:
+افزونه پیام با نسخهٔ کوچک‌تر‌یا‌مساوی را دور می‌اندازد، پس آن `version`
+هر Push **بعدیِ** آن کالا را تا ابد بی‌صدا می‌بست.
+
+مهاجرت ۰۶۰ `EXECUTE` را از `PUBLIC` گرفت. **و آن به‌تنهایی بی‌اثر است:**
+`ops/db-roles.sh` پس از مهاجرت اجرا می‌شود و
+`GRANT EXECUTE ON ALL FUNCTIONS` دارد. پس همان اسکریپت سه کمکیِ درونی را
+دوباره می‌گیرد:
+
+```sql
+REVOKE EXECUTE ON FUNCTION platform.enqueue_web_push(text, jsonb) FROM labelmod_app;
+REVOKE EXECUTE ON FUNCTION inventory.push_web_stock(uuid, uuid)   FROM labelmod_app;
+REVOKE EXECUTE ON FUNCTION catalog.push_web_price(uuid)           FROM labelmod_app;
+```
+
+⚠️ **و بستن یکی از آن‌ها یک دروازه را بست.** `catalog.set_price()` خودش
+`SECURITY DEFINER` نبود، پس با نقش برنامه فراخوانش به `push_web_price`
+رد می‌شد — یعنی **هر تغییر قیمتی در تولید ۵۰۰ می‌داد**. هیچ ادعای SQLی
+این را ندید؛ فقط `LMC_TEST_DB_ROLE=app` دیدش. مهاجرت ۰۶۰ آن را هم
+دروازه کرد.
+
+---
+
+## ۱۲. مهاجرت ۰۵۹ روی داده واقعی — قفل کل جدول
+
+مهاجرت ۰۵۹ قید `stock_movement_ref_required` را **یک‌مرحله‌ای** اضافه
+می‌کند:
+
+```sql
+ALTER TABLE inventory.stock_movement
+  ADD CONSTRAINT stock_movement_ref_required CHECK (…);
+```
+
+پستگرس برای این دستور کل جدول را زیر **`ACCESS EXCLUSIVE`** می‌خواند و
+اعتبارسنجی می‌کند. روی دیتابیس خالیِ CI میکروثانیه است؛ روی
+`inventory.stock_movement` — پرسطرترین جدول این اسکیما — به‌اندازهٔ کل
+جدول طول می‌کشد، و در تمام آن مدت **هر** `SELECT`، هر فروش و هر اسکن
+مسدود است.
+
+**۰۵۹ ویرایش نمی‌شود** — هشش در `public.schema_migration` نشسته و قاعدهٔ
+پروژه مهاجرت اجراشده را دست‌نخورده می‌خواهد. پس اجرای امنش یک رویه است:
+
+**۱. اندازه را بسنجید.** روی همان سرور، پیش از مهاجرت:
+
+```sql
+SELECT count(*)                                  AS rows,
+       pg_size_pretty(pg_total_relation_size('inventory.stock_movement')) AS size
+  FROM inventory.stock_movement;
+```
+
+تا چند صد هزار سطر روی SSD، کمتر از یک ثانیه است و نگرانی ندارد. از
+میلیون به بالا، قدم ۳ را جدی بگیرید.
+
+**۲. پنجرهٔ کم‌ترافیک.** فروشگاه بسته، شیفتی باز نیست، cron شبانه
+تمام‌شده. `ops/deploy.sh status` باید تمیز باشد.
+
+**۳. با مهلت قفل، نه بی‌مهلت.** مهاجرت را با این دو متغیر اجرا کنید:
+
+```bash
+PGOPTIONS='-c lock_timeout=5s -c statement_timeout=120s' ops/deploy.sh migrate
+```
+
+⚠️ `lock_timeout` مهم‌تر از `statement_timeout` است: بی آن، مهاجرت
+بی‌نهایت در **صف قفل** می‌ماند، و پستگرس هر درخواست تازه را هم پشت آن
+صف می‌کند — یعنی یک قفلِ **گرفته‌نشده** هم می‌تواند جدول را بخواباند.
+با مهلت، مهاجرت شکست می‌خورد و دوباره اجرا می‌شود؛ فروشگاه نمی‌خوابد.
+
+**۴. اگر شکست خورد**، یعنی تراکنشی جدول را باز نگه داشته. پیدایش کنید و
+دوباره بزنید؛ قید را دستی نسازید:
+
+```sql
+SELECT pid, state, wait_event_type, left(query, 80)
+  FROM pg_stat_activity
+ WHERE datname = current_database() AND pid <> pg_backend_pid()
+ ORDER BY xact_start;
+```
+
+**برای مهاجرت‌های بعدی، قاعده دو‌مرحله‌ای است** و در `CLAUDE.md` نشسته:
+
+```sql
+ALTER TABLE … ADD CONSTRAINT … CHECK (…) NOT VALID;  -- فوری، بی اعتبارسنجی
+ALTER TABLE … VALIDATE CONSTRAINT …;                 -- SHARE UPDATE EXCLUSIVE
+```
+
+مرحلهٔ دوم `ACCESS EXCLUSIVE` نمی‌گیرد، پس فروش در طولش ادامه دارد.
+⚠️ و `NOT VALID` سطرهای **تازه** را از همان لحظه می‌سنجد — فقط سطرهای
+موجود بی‌بررسی می‌مانند تا `VALIDATE`.
 
 ---
 

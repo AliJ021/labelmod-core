@@ -33,6 +33,7 @@ if ! run -c "CREATE ROLE \"$ROLE\" LOGIN PASSWORD 'roletest';" >/dev/null 2>&1; 
 fi
 run -c "DROP ROLE \"$ROLE\";" >/dev/null 2>&1
 cleanup () {
+  run -c "DROP ROLE IF EXISTS \"lmc_probe_$RID\";" >/dev/null 2>&1
   run -c "REASSIGN OWNED BY \"$ROLE\" TO CURRENT_USER;" >/dev/null 2>&1
   run -c "DROP OWNED BY \"$ROLE\";" >/dev/null 2>&1
   run -c "DROP ROLE IF EXISTS \"$ROLE\";" >/dev/null 2>&1
@@ -119,6 +120,55 @@ attack "UPDATE روی لایه بهای تمام‌شده"      "UPDATE inventor
 #    بی‌اثر می‌شد.
 attack "DDL در اسکیمای public"              "CREATE TABLE public.evil (x int);"
 
+# ⚠️ یافتهٔ FND-R60-04 — سه **کمکیِ درونیِ** Push سایت.
+#    این‌ها `SECURITY DEFINER`اند، یعنی به‌نام مالک روی
+#    `platform.outbox_message` می‌نویسند و حق جدولِ فراخوان سنجیده
+#    نمی‌شود. تا مهاجرت ۰۶۰ ACL پیش‌فرض داشتند (EXECUTE برای PUBLIC) و
+#    نقش برنامه — و هر نقش دیگری با `USAGE` روی اسکیما — می‌توانست یک
+#    پیام دلخواه در صف بگذارد. Worker امضایش می‌کرد و موجودی واقعی
+#    سایت عوض می‌شد.
+attack "enqueue_web_push با نقش برنامه" \
+  "SELECT platform.enqueue_web_push('web.stock_push','{\"variationId\":\"$VAR_ID\",\"onHand\":9999}'::jsonb);"
+attack "push_web_stock با نقش برنامه" \
+  "SELECT inventory.push_web_stock('$VAR_ID'::uuid,'00000000-0000-7000-8000-000000000101'::uuid);"
+attack "push_web_price با نقش برنامه" \
+  "SELECT catalog.push_web_price('$VAR_ID'::uuid);"
+
+echo
+echo "═══ و نقشی که فقط USAGE روی یک اسکیما دارد ═══"
+# ⚠️ این همان بازتولید یافته است، عیناً: نقشی **بی هیچ حقی روی هیچ
+#    جدولی**. پیش از ۰۶۰ درج مستقیمش رد می‌شد و فراخوان تابع قبول —
+#    یعنی ACL تابع تنها چیزی بود که آن نقش را بیرون نگه می‌داشت، و
+#    نداشتش.
+PROBE="lmc_probe_$RID"
+run -c "CREATE ROLE \"$PROBE\" LOGIN PASSWORD 'probetest';" >/dev/null
+run -c "GRANT CONNECT ON DATABASE \"$DBNAME\" TO \"$PROBE\";" >/dev/null
+run -c "GRANT USAGE ON SCHEMA platform TO \"$PROBE\";" >/dev/null
+PROBE_CONN="postgresql://$PROBE:probetest@localhost:5432/$DBNAME"
+
+probe_denied () {
+  local label="$1" sql="$2" out rc
+  out=$(psql -v ON_ERROR_STOP=1 -q -d "$PROBE_CONN" -tAc "$sql" 2>&1); rc=$?
+  if [ $rc -eq 0 ]; then
+    echo "  ✗ $label — موفق شد، یعنی ارتقای دسترسی باز است"; FAIL=1
+  elif printf '%s' "$out" | grep -q "permission denied"; then
+    echo "  ✓ $label — رد شد"
+  else
+    echo "  ✗ $label — شکست خورد ولی نه از بابت دسترسی:"
+    printf '      %s\n' "$(printf '%s' "$out" | grep -m1 -i 'ERROR')"
+    FAIL=1
+  fi
+}
+
+# کنترل مثبت: درج مستقیم هم باید رد شود. بی این، اگر روزی نقش probe
+# سهواً حق جدول بگیرد، ادعای پایین دربارهٔ **تابع** چیزی ثابت نمی‌کند.
+probe_denied "درج مستقیم در صف پیام" \
+  "INSERT INTO platform.outbox_message (topic, payload) VALUES ('web.stock_push','{}'::jsonb);"
+probe_denied "enqueue_web_push با نقشِ فقط-USAGE" \
+  "SELECT platform.enqueue_web_push('web.stock_push','{\"variationId\":\"$VAR_ID\",\"onHand\":9999,\"version\":999999999}'::jsonb);"
+
+run -c "DROP ROLE IF EXISTS \"$PROBE\";" >/dev/null 2>&1
+
 echo
 echo "═══ و دروازهٔ قانونی باید هنوز کار کند ═══"
 # بی‌این ادعا، تست بالا با یک REVOKE بی‌رویه هم «پاس» می‌شد و فروش را
@@ -146,6 +196,20 @@ else
   echo "  ✗ revalue_to_cost با نقش برنامه شکست — رسید خرید در تولید می‌شکند"; FAIL=1
 fi
 
+# ⚠️ و دروازهٔ سوم: `catalog.set_price()`. مهاجرت ۰۶۰ آن را DEFINER کرد
+#    چون `catalog.push_web_price()` را از نقش برنامه گرفت — و بی آن،
+#    **هر تغییر قیمتی در تولید ۵۰۰ می‌داد**:
+#        permission denied for function push_web_price
+#    این ادعا همان شکست را قفل می‌کند.
+if psql -v ON_ERROR_STOP=1 -q -d "$APP_CONN" -tAc \
+   "SELECT platform.set_actor('$USER_ID'::uuid, NULL, NULL, NULL);
+    SELECT catalog.set_price('$VAR_ID'::uuid, 250000, 'regular', 'تست نقش');" >/dev/null 2>&1; then
+  echo "  ✓ set_price با نقش برنامه کار کرد"
+else
+  echo "  ✗ set_price با نقش برنامه شکست — تغییر قیمت در تولید می‌شکند"; FAIL=1
+fi
+
+
 # ⚠️ و جدولی که **مهاجرت بعدی** بسازد باید نوشتنی بماند. نسخهٔ اول
 #    `ops/db-roles.sh` یک `ALTER DEFAULT PRIVILEGES … REVOKE` روی کل
 #    اسکیمای inventory داشت؛ پیش‌فرض به **اسکیما** کار می‌کند نه به
@@ -167,6 +231,49 @@ DIVERGED=$(run -c "SELECT count(*) FROM inventory.balance_check WHERE qty_diff <
 [ "$DIVERGED" = "0" ] \
   && echo "  ✓ بدون واگرایی مانده از حرکت‌ها" \
   || { echo "  ✗ واگرایی: $DIVERGED"; FAIL=1; }
+
+# ⚠️ و Push سایت باید از **همان دروازه** پر شود. مهاجرت ۰۶۰ حق فراخوانِ
+#    مستقیمِ سه کمکی را از نقش برنامه گرفت؛ اگر همین‌جا نسنجیم که Push
+#    از داخل `apply_movement` هنوز کار می‌کند، یک REVOKE بیش از حد
+#    می‌توانست همگام‌سازی سایت را **بی‌صدا** خاموش کند و هر سیزده حملهٔ
+#    بالا همچنان سبز بمانند.
+#
+# ⚠️ عمداً **پس از** ادعای موجودی است: این بند یک حرکت دیگر می‌زند و
+#    اگر بالاتر می‌بود، ادعای «۸ = ۵+۳» را ۱۰ می‌خواند.
+#
+# ⚠️ و تنظیم از `platform.set_setting()` عوض می‌شود، نه با UPDATE:
+#    یک Trigger روی `platform.setting` جلوی UPDATE مستقیم را می‌گیرد.
+#    نسخهٔ اول این بند UPDATE می‌زد و دو خطای فارسی گرفت.
+run -c "SELECT platform.set_setting('web.push_enabled', 'true'::jsonb,
+          'تست نقش', '$USER_ID'::uuid);" >/dev/null
+run -c "SELECT platform.set_setting('web.stock_warehouse', '\"STORE\"'::jsonb,
+          'تست نقش', '$USER_ID'::uuid);" >/dev/null
+
+MAX_Q=$(run -c "SELECT coalesce(max(id),0) FROM platform.outbox_message;")
+psql -v ON_ERROR_STOP=1 -q -d "$APP_CONN" -tAc \
+  "SELECT inventory.apply_movement('$VAR_ID'::uuid,
+     '00000000-0000-7000-8000-000000000101'::uuid, 2, 'purchase_receipt',
+     'test_receipt', '00000000-0000-7000-8000-00000000fa11'::uuid,
+     '$USER_ID'::uuid, 1000);" >/dev/null 2>&1
+NEW_Q=$(run -c "SELECT count(*) FROM platform.outbox_message
+                 WHERE id > $MAX_Q AND topic = 'web.stock_push';")
+[ "$NEW_Q" -ge 1 ] \
+  && echo "  ✓ Push سایت از داخل apply_movement پر شد (نقش برنامه)" \
+  || { echo "  ✗ Push سایت پر نشد — REVOKE بیش از حد، همگام‌سازی سایت خاموش"; FAIL=1; }
+
+# و نسخه از **دنباله** می‌آید. ادعا روی سطرِ تازه است، نه آخرین سطر:
+# سطر قدیمی‌تر می‌تواند نسخهٔ دلخواه یک مهاجمِ قبلی را داشته باشد.
+SEQ_NOW=$(run -c "SELECT last_value FROM platform.web_push_version;")
+PUSH_VER=$(run -c "SELECT payload->>'version' FROM platform.outbox_message
+                    WHERE id > $MAX_Q AND topic = 'web.stock_push'
+                    ORDER BY id DESC LIMIT 1;")
+[ -n "$PUSH_VER" ] && [ "$PUSH_VER" -le "$SEQ_NOW" ] 2>/dev/null \
+  && echo "  ✓ نسخهٔ Push از دنباله آمد ($PUSH_VER ≤ $SEQ_NOW)" \
+  || { echo "  ✗ نسخهٔ Push از دنباله نیامد: '$PUSH_VER' (دنباله: $SEQ_NOW)"; FAIL=1; }
+
+run -c "SELECT platform.set_setting('web.push_enabled', 'false'::jsonb,
+          'تست نقش', '$USER_ID'::uuid);" >/dev/null
+
 
 echo
 if [ $FAIL -eq 0 ]; then

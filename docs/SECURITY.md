@@ -143,6 +143,14 @@ REVOKE INSERT, UPDATE, DELETE ON inventory.cost_layer     FROM labelmod_app;
 -- و `public`، که در فهرست بالا نیست: هر تابع SECURITY DEFINER این
 -- پروژه آن را در search_path پین‌شده‌اش دارد (pgcrypto آنجاست).
 REVOKE CREATE ON SCHEMA public FROM labelmod_app;
+
+-- و سه کمکیِ درونیِ Push سایت. این‌ها SECURITY DEFINERاند و روی
+-- platform.outbox_message به‌نام مالک می‌نویسند؛ هیچ مسیر برنامه‌ای
+-- صدایشان نمی‌زند و apply_movement / set_price از داخل دیتابیس
+-- می‌زنندشان. (مهاجرت ۰۶۰ همین‌ها را از PUBLIC هم گرفت.)
+REVOKE EXECUTE ON FUNCTION platform.enqueue_web_push(text, jsonb) FROM labelmod_app;
+REVOKE EXECUTE ON FUNCTION inventory.push_web_stock(uuid, uuid)   FROM labelmod_app;
+REVOKE EXECUTE ON FUNCTION catalog.push_web_price(uuid)           FROM labelmod_app;
 ```
 
 سه سطر آخر تا مهاجرت ۰۵۰ **ممکن نبودند**: اگر حق نوشتن روی `stock_balance`
@@ -169,6 +177,40 @@ REVOKE CREATE ON SCHEMA public FROM labelmod_app;
 ⚠️ `SELECT … FOR UPDATE` در پستگرس حق **UPDATE** می‌خواهد، نه SELECT.
 ظریف‌ترین حالت این کلاس همین است، چون خطا هیچ اشاره‌ای به `FOR UPDATE`
 ندارد.
+
+⚠️ **و `SECURITY DEFINER` بی ACL خودش یک راه ارتقای دسترسی است.** ACL
+پیش‌فرض یک تابع در پستگرس `EXECUTE` برای `PUBLIC` است، پس تا مهاجرت ۰۶۰
+هر شش تابع DEFINER برای هر نقشی که فقط `USAGE` روی اسکیما داشت قابل
+فراخوان بود. اندازه‌گیری شد: نقشی با `GRANT USAGE ON SCHEMA platform` و
+**هیچ حقی روی هیچ جدولی**، `INSERT` مستقیمش رد می‌شد و
+`platform.enqueue_web_push('web.stock_push', '{"onHand":9999,
+"version":999999999}')`اش قبول — Worker امضا می‌کرد و موجودی واقعی سایت
+۹۹۹۹ می‌شد. و چون افزونه پیامِ با نسخهٔ کوچک‌تر را دور می‌اندازد، آن یک
+فراخوان هر Push بعدیِ آن کالا را **تا ابد بی‌صدا** می‌بست.
+
+مهاجرت ۰۶۰:
+
+```sql
+REVOKE ALL ON FUNCTION … FROM PUBLIC;   -- هر تابع DEFINER، از کاتالوگ
+```
+
+و سه کمکیِ درونی در **`ops/db-roles.sh`** هم از نقش برنامه گرفته
+می‌شوند، چون آن اسکریپت پس از مهاجرت اجرا می‌شود و
+`GRANT EXECUTE ON ALL FUNCTIONS` دارد — یک `REVOKE` که فقط در مهاجرت
+باشد، همان‌جا دوباره باز می‌شود.
+
+⚠️ و بستن `catalog.push_web_price()` یک دروازه را بست:
+`catalog.set_price()` خودش DEFINER نبود، پس **هر تغییر قیمتی با نقش
+برنامه ۵۰۰ می‌داد**. فقط `LMC_TEST_DB_ROLE=app` دیدش. ۰۶۰ آن را هم
+دروازه کرد.
+
+`db/test/write-gate.sql` بند ۵ تا ۸ این کلاس را بست: ACL هر تابع DEFINER
+از کاتالوگ سنجیده می‌شود — **هم** `proacl IS NULL` (پیش‌فرض) **و هم**
+گرانتیِ صفر در `aclexplode` (PUBLIC صریح)، چون روی دیتابیسی که
+`ALTER DEFAULT PRIVILEGES` خورده ACL صریح است و سنجش `IS NULL` هیچ‌چیز
+نمی‌گیرد. `db/test/db-roles.sh` هم همان نقش probe را واقعاً می‌سازد و
+ثابت می‌کند نمی‌تواند صدا بزند، **و** اینکه Push از داخل
+`apply_movement` هنوز صف را پر می‌کند.
 
 ⚠️ **بکاپ با نقش مالک گرفته می‌شود.** `pg_dump` روی
 `public.schema_migration` هم `LOCK TABLE` می‌زند و نقش برنامه آنجا حقی

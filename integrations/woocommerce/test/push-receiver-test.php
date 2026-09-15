@@ -46,9 +46,106 @@ class WP_Error
     public function status(): int { return (int) ($this->data['status'] ?? 0); }
 }
 
-$GLOBALS['lmc_transients'] = [];
-function get_transient(string $k) { return $GLOBALS['lmc_transients'][$k] ?? false; }
-function set_transient(string $k, $v, int $ttl): bool { $GLOBALS['lmc_transients'][$k] = $v; return true; }
+$GLOBALS['lmc_options'] = [];
+function get_option(string $k, $default = false) { return $GLOBALS['lmc_options'][$k] ?? $default; }
+function update_option(string $k, $v, $autoload = null): bool { $GLOBALS['lmc_options'][$k] = $v; return true; }
+function dbDelta(string $sql): array { $GLOBALS['lmc_ddl'][] = $sql; return []; }
+
+/**
+ * `$wpdb` ساختگی — فقط همان چهار چیزی که `LMC_Push_Guard` لمس می‌کند.
+ *
+ * ⚠️ این کلاس **رفتار** MySQL را تقلید می‌کند، نه فقط امضایش: درج
+ *    تکراری روی کلید اصلی «۰ سطر + خطای Duplicate» می‌دهد، و
+ *    `GET_LOCK` دوباره روی نامی که گرفته شده `0` برمی‌گرداند. ادعاهای
+ *    بند ۹ و ۱۰ بی این رفتار چیزی ثابت نمی‌کردند.
+ */
+class Fake_Wpdb
+{
+    public string $prefix = 'wp_';
+    public string $last_error = '';
+    /** Nonceهای ثبت‌شده — نقش جدول با کلید اصلی. */
+    public array $nonces = [];
+    /** قفل‌های گرفته‌شده. */
+    public array $locks = [];
+    /** خطای تحمیلی برای درج Nonce: رشتهٔ خطا، یا null. */
+    public ?string $force_insert_error = null;
+    /** قفل‌هایی که **نباید** گرفته شوند — تقلید Worker دیگر. */
+    public array $deny_locks = [];
+    /** تابعی که در لحظهٔ گرفتن قفل اجرا می‌شود — برای اثبات «زیر قفل». */
+    public $on_acquire = null;
+    public array $queries = [];
+
+    public function get_charset_collate(): string { return ''; }
+
+    public function prepare(string $sql, ...$args): string
+    {
+        // ترتیب جانشینی همان ترتیب آرگومان‌ها است؛ برای این تست کافی.
+        $out = '';
+        $i = 0;
+        $len = strlen($sql);
+        for ($k = 0; $k < $len; $k++) {
+            if ($sql[$k] === '%' && $k + 1 < $len && ($sql[$k + 1] === 's' || $sql[$k + 1] === 'd')) {
+                $v = $args[$i++] ?? '';
+                $out .= $sql[$k + 1] === 'd' ? (string) (int) $v : "'" . $v . "'";
+                $k++;
+                continue;
+            }
+            $out .= $sql[$k];
+        }
+        return $out;
+    }
+
+    public function query(string $sql)
+    {
+        $this->queries[] = $sql;
+
+        if (stripos($sql, 'INSERT INTO') === 0 && strpos($sql, 'lmc_push_nonce') !== false) {
+            if ($this->force_insert_error !== null) {
+                $this->last_error = $this->force_insert_error;
+                return false;
+            }
+            preg_match("/VALUES \\('([^']*)'/", $sql, $m);
+            $nonce = $m[1] ?? '';
+            if (isset($this->nonces[$nonce])) {
+                // همان چیزی که MySQL می‌دهد.
+                $this->last_error = "Duplicate entry '{$nonce}' for key 'PRIMARY'";
+                return false;
+            }
+            $this->nonces[$nonce] = time();
+            $this->last_error = '';
+            return 1;
+        }
+
+        if (stripos($sql, 'RELEASE_LOCK') !== false) {
+            preg_match("/RELEASE_LOCK\\('([^']*)'/", $sql, $m);
+            unset($this->locks[$m[1] ?? '']);
+            return 1;
+        }
+
+        // DELETE پاک‌سازی و هر چیز دیگر
+        return 0;
+    }
+
+    public function get_var(string $sql)
+    {
+        $this->queries[] = $sql;
+        if (stripos($sql, 'GET_LOCK') !== false) {
+            preg_match("/GET_LOCK\\('([^']*)'/", $sql, $m);
+            $name = $m[1] ?? '';
+            if (in_array($name, $this->deny_locks, true) || isset($this->locks[$name])) {
+                return '0';
+            }
+            $this->locks[$name] = true;
+            if (is_callable($this->on_acquire)) {
+                ($this->on_acquire)($name);
+            }
+            return '1';
+        }
+        return null;
+    }
+}
+
+$GLOBALS['wpdb'] = new Fake_Wpdb();
 
 $GLOBALS['lmc_meta'] = [];
 function get_post_meta(int $id, string $key, bool $single = false)
@@ -108,11 +205,19 @@ class Fake_Request
 }
 
 require_once __DIR__ . '/../labelmod-connector/includes/class-lmc-stock-sync.php';
+require_once __DIR__ . '/../labelmod-connector/includes/class-lmc-push-guard.php';
 require_once __DIR__ . '/../labelmod-connector/includes/class-lmc-push-receiver.php';
 
-// `find_by_meta` به دیتابیس وردپرس می‌رود؛ اینجا با نگاشت ساده جایگزین
-// می‌شود. (کلاس اصلی دست نمی‌خورد — فقط جدول نگاشت تست.)
+// `find_by_meta` به دیتابیس وردپرس می‌رود؛ اینجا `get_posts` با همان
+// نگاشت جایگزین می‌شود. (کلاس اصلی دست نمی‌خورد و همان مسیر واقعی
+// اجرا می‌شود — فقط منبع پاسخ عوض شده.)
 $GLOBALS['lmc_link'] = [];
+function get_posts(array $args): array
+{
+    $want = (string) ($args['meta_value'] ?? '');
+    $id   = $GLOBALS['lmc_link'][$want] ?? 0;
+    return $id === 0 ? [] : [$id];
+}
 
 // ── چارچوب ادعا ─────────────────────────────────────────────────────
 
@@ -227,6 +332,121 @@ ok('همان قیمت دوباره → بدون تغییر', LMC_Stock_Sync::app
 
 // ⚠️ و تبدیل ریال به واحد سایت هم `null` را نگه می‌دارد.
 ok('price_for_site(null) = null', LMC_Stock_Sync::price_for_site(['price' => null]), null);
+
+// ═══════════════════════════════════════════════════════════════════
+echo "\n═══ ۵. Nonce اتمیک است و fail-open نمی‌دهد (FND-R60-03) ═══\n";
+// ═══════════════════════════════════════════════════════════════════
+//
+// ⚠️ نسخهٔ قبلی `get_transient()` و بعد `set_transient()` بود — دو عمل
+//    جدا با یک پنجرهٔ باز وسطش. و روی نصب پیش‌فرض وردپرس Object Cache
+//    درون‌حافظه‌ای و تک‌درخواستی است، پس آن نگهبان **بین دو درخواست
+//    اصلاً وجود نداشت**. حالا یک `INSERT` روی کلید اصلی.
+
+$wpdb = $GLOBALS['wpdb'];
+
+$n1 = bin2hex(random_bytes(8));
+ok('Nonce تازه ثبت می‌شود', LMC_Push_Guard::claim_nonce($n1), 'new');
+// همان Nonce دوباره: خطای کلید یکتا، نه یک «خواندنِ قبلی».
+ok('همان Nonce → replay', LMC_Push_Guard::claim_nonce($n1), 'replay');
+
+// ⚠️ **کنترل منفی و مهم‌ترین بند این بخش:** اگر جدول نباشد یا دیتابیس
+//    خطا بدهد، نتیجه «نمی‌دانم» است — و «نمی‌دانم» اجازه نیست.
+$wpdb->force_insert_error = "Table 'wp_lmc_push_nonce' doesn't exist";
+ok('خطای دیتابیس → unavailable، نه new',
+   LMC_Push_Guard::claim_nonce(bin2hex(random_bytes(8))), 'unavailable');
+
+// و در همان حالت، خودِ درخواست باید **رد** شود (۵۰۳)، نه پذیرفته.
+$r = LMC_Push_Receiver::verify_request(req($p));
+ok('و درخواست fail-closed می‌شود → ۵۰۳', $r instanceof WP_Error ? $r->status() : 0, 503);
+$wpdb->force_insert_error = null;
+
+// کنترل مثبت: با دیتابیس سالم، همان درخواست پذیرفته می‌شود. بی این،
+// یک «همیشه ۵۰۳ بده» هم از بند بالا رد می‌شد و کل Push را می‌بست.
+ok('با دیتابیس سالم، درخواست درست پذیرفته می‌شود',
+   LMC_Push_Receiver::verify_request(req($p)), true);
+
+// ═══════════════════════════════════════════════════════════════════
+echo "\n═══ ۶. نسخه زیر قفل خوانده می‌شود (FND-R60-01) ═══\n";
+// ═══════════════════════════════════════════════════════════════════
+//
+// ⚠️ نسخهٔ قبلی نسخه را در `resolve()` می‌خواند — **بیرون** از هر قفلی —
+//    و `update_post_meta()` تازه پس از `save()` اجرا می‌شد. دو Worker
+//    هم‌زمان (که `loop.ts` صریح پیش‌بینی‌اش کرده) هر دو `stored` قدیمی
+//    را می‌دیدند و ترتیب اعمال به بخت واگذار می‌شد.
+
+$GLOBALS['lmc_products'][77] = new Fake_Product();
+$GLOBALS['lmc_link']['v-77'] = 77;
+$lock77 = LMC_Push_Guard::lock_name(77, LMC_Push_Receiver::STOCK_VERSION_META);
+
+// ── ۶.۱ قفل پیش از خواندن نسخه گرفته می‌شود ────────────────────────
+//
+// ⚠️ **این ادعا همان اصلاح است، نه یک جزئیات.** نسخهٔ ذخیره‌شده را در
+//    لحظهٔ *گرفتن قفل* بالا می‌بریم. اگر کد نسخه را بیرون از قفل بخواند،
+//    مقدار قدیمی (۰) را دیده و پیام را **اعمال** می‌کند. اگر زیر قفل
+//    بخواند، مقدار تازه (۵۰) را می‌بیند و ردش می‌کند.
+$wpdb->on_acquire = static function (string $name) use ($lock77) {
+    if ($name === $lock77) {
+        update_post_meta(77, LMC_Push_Receiver::PRICE_VERSION_META, 0); // بی‌اثر
+        update_post_meta(77, LMC_Push_Receiver::STOCK_VERSION_META, 50);
+    }
+};
+$out = LMC_Push_Receiver::handle_stock(req(['variationId' => 'v-77', 'onHand' => 9999, 'version' => 30]));
+$wpdb->on_acquire = null;
+ok('نسخه‌ای که هنگام قفل جلو رفته دیده می‌شود → اعمال نمی‌شود',
+   is_array($out) ? $out['applied'] : 'خطا', false);
+ok('  و موجودی دست‌نخورده ماند', $GLOBALS['lmc_products'][77]->qty, null);
+ok('  و نسخهٔ ذخیره‌شده عقب نرفت',
+   (int) get_post_meta(77, LMC_Push_Receiver::STOCK_VERSION_META, true), 50);
+
+// ── ۶.۲ قفل گرفته‌نشده → ۵۰۳، و هیچ نوشتنی ─────────────────────────
+$wpdb->deny_locks = [$lock77];
+$busy = LMC_Push_Receiver::handle_stock(req(['variationId' => 'v-77', 'onHand' => 1, 'version' => 999]));
+$wpdb->deny_locks = [];
+ok('قفل در دست Worker دیگر → ۵۰۳ (موقت، نه دائمی)',
+   $busy instanceof WP_Error ? $busy->status() : 0, 503);
+ok('  و نسخه جلو نرفت',
+   (int) get_post_meta(77, LMC_Push_Receiver::STOCK_VERSION_META, true), 50);
+
+// ── ۶.۳ نسخهٔ تازه واقعاً اعمال می‌شود (کنترل مثبت) ────────────────
+// بی این بند، یک «همیشه رد کن» هم از دو بند بالا رد می‌شد.
+$out = LMC_Push_Receiver::handle_stock(req(['variationId' => 'v-77', 'onHand' => 12, 'version' => 51]));
+ok('نسخهٔ جلوتر اعمال می‌شود', is_array($out) ? $out['applied'] : 'خطا', true);
+ok('  و موجودی نوشته شد', $GLOBALS['lmc_products'][77]->qty, 12);
+ok('  و نسخه ثبت شد',
+   (int) get_post_meta(77, LMC_Push_Receiver::STOCK_VERSION_META, true), 51);
+
+// ── ۶.۴ قفل در هر مسیری آزاد می‌شود ───────────────────────────────
+ok('قفل پس از پایان کار آزاد است', isset($wpdb->locks[$lock77]), false);
+
+// ⚠️ و حتی وقتی `save()` استثنا بدهد: بی `finally`، قفل تا پایان
+//    درخواست PHP روی اتصال می‌ماند و کالا قابل نوشتن نیست.
+class Exploding_Product extends Fake_Product
+{
+    public function save(): void { throw new RuntimeException('ذخیره نشد'); }
+}
+$GLOBALS['lmc_products'][78] = new Exploding_Product();
+$GLOBALS['lmc_link']['v-78'] = 78;
+$lock78 = LMC_Push_Guard::lock_name(78, LMC_Push_Receiver::STOCK_VERSION_META);
+$threw = false;
+try {
+    LMC_Push_Receiver::handle_stock(req(['variationId' => 'v-78', 'onHand' => 3, 'version' => 5]));
+} catch (RuntimeException $e) {
+    $threw = true;
+}
+ok('استثنای save بالا می‌رود (پیام دوباره تلاش می‌شود)', $threw, true);
+ok('  و قفل باز هم آزاد شد', isset($wpdb->locks[$lock78]), false);
+// ⚠️ و نسخه **جلو نرفت**: جابه‌جا کردن `update_post_meta()` به قبل از
+//    `save()` دقیقاً همین را می‌شکست.
+ok('  و نسخه جلو نرفت',
+   (int) get_post_meta(78, LMC_Push_Receiver::STOCK_VERSION_META, true), 0);
+
+// ── ۶.۵ دو مسیر، دو قفل ───────────────────────────────────────────
+// موجودی و قیمت همان کالا نباید هم‌دیگر را مسدود کنند.
+ok('قفل موجودی و قفل قیمت یکی نیستند',
+   LMC_Push_Guard::lock_name(77, LMC_Push_Receiver::STOCK_VERSION_META)
+     === LMC_Push_Guard::lock_name(77, LMC_Push_Receiver::PRICE_VERSION_META), false);
+// و نام قفل از محدودیت ۶۴ بایتی MySQL بیرون نمی‌زند.
+ok('نام قفل ≤ ۶۴ بایت', strlen(LMC_Push_Guard::lock_name(999999999, '_lmc_stock_version')) <= 64, true);
 
 echo "\n";
 if ($failed > 0) {
