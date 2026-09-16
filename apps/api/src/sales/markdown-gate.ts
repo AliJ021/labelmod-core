@@ -30,8 +30,7 @@
  * کد فقط می‌داند «یک پله بالاتر هم هست»، نه اینکه پله کجاست.
  */
 import { can, requireForSession } from "../auth/permission.ts";
-import type { Db } from "../db/client.ts";
-import { InvoiceError, type InvoiceService } from "./invoice.ts";
+import { InvoiceError, type Executor, type InvoiceService } from "./invoice.ts";
 
 export interface MarkdownActor {
   userId: string;
@@ -66,10 +65,12 @@ export interface MarkdownInput {
    * را نمی‌فرستد و پیش‌فرض «حالا» درست است.
    */
   at?: Date | undefined;
+  /** قیمت فهرستِ Snapshot شده زیر قفل سطر موجود. */
+  listPrice?: bigint | undefined;
 }
 
 export async function assertMarkdownAllowed(
-  db: Db,
+  db: Executor,
   invoices: InvoiceService,
   s: MarkdownActor,
   input: MarkdownInput,
@@ -90,6 +91,8 @@ export async function assertMarkdownAllowed(
     input.discount,
     priceForMath,
     input.at,
+    db,
+    input.listPrice,
   );
   if (check.grossAmount <= 0n) return;
 
