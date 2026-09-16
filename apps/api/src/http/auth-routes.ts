@@ -150,6 +150,7 @@ export function registerAuthRoutes(app: FastifyInstance, deps: AuthRouteDeps): v
               pinAvailable: session.device.approved && session.device.enrolled,
             }
           : null,
+        enrollmentRequired: session.enrollmentOnly,
       };
     },
   });
@@ -516,6 +517,7 @@ export function registerAuthRoutes(app: FastifyInstance, deps: AuthRouteDeps): v
       // صندوق باید بداند نشست ارتقایافته است یا نه، تا دکمه‌ای را
       // نشان ندهد که سرور بعداً ردش می‌کند.
       elevated: !session.pinUnlocked,
+      enrollmentRequired: session.enrollmentOnly,
       device: session.device
         ? { approved: session.device.approved, enrolled: session.device.enrolled }
         : null,

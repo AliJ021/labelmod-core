@@ -132,14 +132,31 @@ describe("احراز هویت دومرحله‌ای", { skip }, () => {
     disposable?.drop();
   });
 
-  test("بدون ۲FA، ورود مثل قبل نشست می‌سازد", async () => {
+  test("نقش اجباری بدون ۲FA فقط نشست راه‌اندازی می‌گیرد", async () => {
     const r = await step1(plain);
     assert.equal(r.statusCode, 200, r.body);
     assert.equal(JSON.parse(r.body).needsSecondFactor, undefined);
+    assert.equal(JSON.parse(r.body).enrollmentRequired, true);
     assert.ok(
       r.cookies.some((c) => c.name === "labelmod_session"),
-      "کوکی نشست باید ست شود",
+      "کوکی نشست محدود باید ست شود",
     );
+
+    const token = r.cookies.find((c) => c.name === "labelmod_session")!.value;
+    const blocked = await app.inject({
+      method: "GET",
+      url: "/auth/can?operation=settings.security",
+      cookies: { labelmod_session: token },
+    });
+    assert.equal(blocked.statusCode, 403, blocked.body);
+    assert.equal(blocked.json().error.code, "second_factor_enrollment_required");
+
+    const enrollment = await app.inject({
+      method: "GET",
+      url: "/auth/2fa",
+      cookies: { labelmod_session: token },
+    });
+    assert.equal(enrollment.statusCode, 200, enrollment.body);
   });
 
   test("راز تأییدنشده کسی را قفل نمی‌کند", async () => {
