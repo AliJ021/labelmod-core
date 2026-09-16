@@ -192,7 +192,7 @@ export function App() {
   // نشست راه‌اندازی هیچ بخش دیگری را باز نمی‌کند. این نمای مستقل
   // تضمین می‌کند کاربر بدون عبور از مسیرهای مسدودشده بتواند عامل دوم
   // را ثبت کند.
-  if (me.enrollmentRequired) {
+  if (me?.enrollmentRequired) {
     return (
       <>
         <GlassFilters />

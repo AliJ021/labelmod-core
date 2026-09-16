@@ -7,7 +7,7 @@ import type { PermissionRule } from "../src/lib/admin";
 
 export const product: Product = { id: "11111111-1111-4111-8111-111111111111", code: "TR-1405", nameInternal: "شلوار پارچه‌ای رگولار با نام طولانی برای بررسی چیدمان", nameWeb: null, brandId: null, brandName: null, categoryId: null, categoryName: null, season: null, collection: null, fabric: null, fit: null, originCountry: null, taxRateCode: "standard", notes: null, status: "active", variationCount: 1, pricedCount: 1 };
 const variation: Variation = { id: "v1", color: "سرمه‌ای", size: "XL", sku: "TR-1405-NAVY-XL", barcode: "1234567890123", status: "active", price: "1234000", priceKind: "regular", priceSince: "2026-09-16T00:00:00Z", locked: false };
-const me: Me = { id: "22222222-2222-4222-8222-222222222222", fullName: "مدیر آزمایشی", roles: ["admin"], expiresAt: "2027-01-01T00:00:00Z", elevated: true, device: null };
+const me: Me = { id: "22222222-2222-4222-8222-222222222222", fullName: "مدیر آزمایشی", roles: ["admin"], expiresAt: "2027-01-01T00:00:00Z", elevated: true, enrollmentRequired: false, device: null };
 const branches: Branch[] = [{ id: "b1", code: "TEST", name: "شعبه آزمایشی", warehouses: [{ id: "w1", code: "STORE", name: "انبار آزمایشی", kind: "store" }] }];
 const daily: DailyReport = { businessDate: "2026-09-16", salesAmount: "12340000", receivedAmount: "11000000", profitAmount: "2340000", invoiceCount: 12, returnCount: 1 };
 export const staff: AppUser = { id: "33333333-3333-4333-8333-333333333333", username: "synthetic_staff", fullName: "پرسنل آزمایشی", mobile: null, isActive: true, createdAt: "2026-01-01T00:00:00Z", hasPin: false, hasTotp: false, roles: [{ roleCode: "cashier", roleName: "صندوق‌دار", branchId: null, branchName: null }], activeSessions: 1 };

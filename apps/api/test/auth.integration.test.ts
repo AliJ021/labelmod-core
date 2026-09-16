@@ -279,11 +279,18 @@ describe("احراز هویت روی دیتابیس واقعی", { skip }, () =>
     // داشت و تست هم داشت، ولی هیچ مسیر واقعی‌ای true نمی‌فرستاد —
     // یعنی شرط چهارم دفاع PIN در سیستم در حال اجرا مرده بود.
     const fp = `${fingerprint}-elev`;
-    expectSession(await auth.login({ username: adminName, password: PASSWORD, deviceFingerprint: fp }));
+    const adminSession = async () => {
+      const r = await loginWithMfa(app, { method: "POST", url: "/auth/login", remoteAddress: "10.99.1.1",
+        payload: { username: adminName, password: PASSWORD, deviceFingerprint: fp } });
+      assert.equal(r.statusCode, 200, r.body);
+      return { token: r.cookies.find(c => c.name === "labelmod_session")!.value,
+        device: { issuedSecret: r.cookies.find(c => c.name === "labelmod_device")?.value } };
+    };
+    await adminSession();
     await sql`SELECT identity.approve_device(
                 (SELECT id FROM identity.device WHERE fingerprint = ${fp}),
                 ${adminId}::uuid)`.execute(handle.db);
-    const s = expectSession(await auth.login({ username: adminName, password: PASSWORD, deviceFingerprint: fp }));
+    const s = await adminSession();
     const secret = s.device?.issuedSecret;
     assert.ok(secret);
 

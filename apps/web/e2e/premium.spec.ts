@@ -336,3 +336,13 @@ test("staff password reset needs review; current user gets personal flow", async
   await expect(page.getByRole("status")).toContainText("همهٔ نشست‌های او بسته شدند");
   expect(api.calls.filter(x => x.startsWith("POST"))).toHaveLength(1);
 });
+
+test("نشست محدود فقط صفحه ثبت عامل دوم را می‌بیند", async ({ page, api }) => {
+  api.defaults["GET /auth/me"] = { ...(api.defaults["GET /auth/me"] as object), enrollmentRequired: true };
+  api.defaults["GET /auth/2fa"] = { enabled: false, pending: false, recoveryCodesLeft: 0, webauthnKeys: 0, shouldHave: true };
+  api.defaults["GET /auth/2fa/webauthn"] = { credentials: [] };
+  await page.goto("/");
+  await expect(page.getByRole("heading", { name: "راه‌اندازی احراز هویت دومرحله‌ای" })).toBeVisible();
+  await expect(page.getByRole("tablist", { name: "بخش‌ها" })).toHaveCount(0);
+  expect(api.calls.some(x => x.includes("/reports/") || x.includes("/customers") || x.includes("/branches"))).toBe(false);
+});
