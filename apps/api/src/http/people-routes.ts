@@ -201,14 +201,14 @@ export function registerPeopleRoutes(app: FastifyInstance, deps: PeopleRouteDeps
     const q = z
       .object({ includeInactive: z.coerce.boolean().default(false) })
       .parse(req.query);
-    return { users: await users.list(q.includeInactive) };
+    return { users: await users.list(q.includeInactive, s.userId) };
   });
 
   app.get("/users/:id", async (req) => {
     const s = session(req);
     const { id } = z.object({ id: uuid }).parse(req.params);
     await requireForSession(db, s, "user.manage");
-    const u = await users.byId(id);
+    const u = await users.byId(id, s.userId);
     if (!u) throw new UserError("user_not_found", "کاربر یافت نشد", 404);
     return u;
   });
@@ -260,7 +260,7 @@ export function registerPeopleRoutes(app: FastifyInstance, deps: PeopleRouteDeps
       ...(body.mobile === undefined ? {} : { mobile: body.mobile }),
       ...(body.isActive === undefined ? {} : { isActive: body.isActive }),
     });
-    return await users.byId(id);
+    return await users.byId(id, s.userId);
   });
 
   app.put("/users/:id/roles", async (req) => {
@@ -271,7 +271,7 @@ export function registerPeopleRoutes(app: FastifyInstance, deps: PeopleRouteDeps
     await assertRolesInScope(s.userId, body.roles);
 
     await users.setRoles({ id, roles: body.roles, actorId: s.userId });
-    return await users.byId(id);
+    return await users.byId(id, s.userId);
   });
 
   app.post("/users/:id/reset-password", async (req) => {
