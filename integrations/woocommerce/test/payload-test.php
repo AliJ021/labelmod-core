@@ -36,6 +36,14 @@ $GLOBALS['lmc_test_settings'] = [];
 $GLOBALS['lmc_test_actions'] = [];
 $GLOBALS['lmc_test_orders'] = [];
 $GLOBALS['lmc_test_scheduled'] = [];
+$GLOBALS['lmc_test_confirm_allowed'] = false;
+
+function current_user_can(string $capability, ...$args): bool
+{
+    return $GLOBALS['lmc_test_confirm_allowed'];
+}
+
+function get_current_user_id(): int { return 42; }
 
 function add_action(string $hook, $callback): void
 {
@@ -337,6 +345,27 @@ $GLOBALS['lmc_test_orders'][$cod_order->id] = $cod_order;
 LMC_Order_Sync::send($cod_order->id);
 assert_eq('پرداخت در محل بدون payment_complete ثبت نمی‌شود', $cod_order->get_meta(LMC_Order_Sync::META_INVOICE), '');
 assert_eq('پرداخت در محل حتی به ساخت بدنه نمی‌رسد', $cod_order->get_meta(LMC_Order_Sync::META_ERROR), '');
+
+$legacy_order = new WC_Order();
+$legacy_order->id = 1003;
+$denied = LMC_Order_Sync::confirm_legacy_payment($legacy_order, 'BANK-123');
+assert_eq('تأیید دستی بدون دسترسی رد می‌شود', $denied->get_error_code(), 'payment_confirmation_forbidden');
+assert_eq('رد مجوز هیچ نشان پرداختی نمی‌سازد', $legacy_order->get_meta(LMC_Order_Sync::META_PAID), '');
+$GLOBALS['lmc_test_confirm_allowed'] = true;
+$empty = LMC_Order_Sync::confirm_legacy_payment($legacy_order, ' ');
+assert_eq('بدون سند دریافت وجه تأیید نمی‌شود', $empty->get_error_code(), 'payment_confirmation_invalid');
+$legacy_order->status = 'cancelled';
+$cancelled = LMC_Order_Sync::confirm_legacy_payment($legacy_order, 'BANK-123');
+assert_eq('سفارش لغوشده دستی هم ثبت نمی‌شود', $cancelled->get_error_code(), 'payment_confirmation_invalid');
+$legacy_order->status = 'completed';
+assert_eq('سفارش قدیمی با تأیید صریح بازیابی می‌شود', LMC_Order_Sync::confirm_legacy_payment($legacy_order, 'BANK-123'), true);
+assert_eq('مدرک دریافت وجه نگهداری می‌شود', $legacy_order->get_meta('_lmc_payment_evidence')['reference'], 'BANK-123');
+assert_eq('عامل تأیید دریافت وجه ثبت می‌شود', $legacy_order->get_meta('_lmc_payment_evidence')['actor'], 42);
+assert_eq('تأیید دستی نشان پرداخت را می‌سازد', $legacy_order->get_meta(LMC_Order_Sync::META_PAID), 'yes');
+$queued = count($GLOBALS['lmc_test_scheduled']);
+LMC_Order_Sync::confirm_legacy_payment($legacy_order, 'BANK-123');
+assert_eq('تأیید دوباره صف را تکراری نمی‌کند', count($GLOBALS['lmc_test_scheduled']), $queued);
+$GLOBALS['lmc_test_confirm_allowed'] = false;
 
 // ── واحد پول ────────────────────────────────────────────────────────
 

@@ -48,6 +48,7 @@ class LMC_Order_Sync
 
         add_action('add_meta_boxes', [__CLASS__, 'meta_box']);
         add_action('admin_post_lmc_resend', [__CLASS__, 'handle_resend']);
+        add_action('admin_post_lmc_confirm_payment', [__CLASS__, 'handle_confirm_payment']);
     }
 
     /**
@@ -407,6 +408,17 @@ class LMC_Order_Sync
             return;
         }
 
+        if ($order->get_meta(self::META_PAID) !== 'yes') {
+            $confirm_url = wp_nonce_url(
+                admin_url('admin-post.php?action=lmc_confirm_payment&order=' . $order->get_id()),
+                'lmc_confirm_payment_' . $order->get_id()
+            );
+            printf('<p>%s</p><p><a class="button" href="%s">%s</a></p>',
+                esc_html__('تأیید دریافت وجه موجود نیست. برای سفارش قدیمی، ابتدا سند دریافت وجه را بررسی کنید.', 'labelmod-connector'),
+                esc_url($confirm_url), esc_html__('بررسی و تأیید دریافت وجه', 'labelmod-connector'));
+            return;
+        }
+
         if ($error !== '') {
             printf('<p style="color:#b32d2e">⛔ %s</p>', esc_html($error));
         } else {
@@ -449,6 +461,65 @@ class LMC_Order_Sync
         }
 
         wp_safe_redirect(wp_get_referer() ?: admin_url('admin.php?page=wc-orders'));
+        exit;
+    }
+
+    /** مسیر صریح بازیابی سفارش قدیمی؛ وضعیت سفارش هرگز مدرک دریافت پول نیست. */
+    public static function confirm_legacy_payment(WC_Order $order, string $reference)
+    {
+        if (!current_user_can('manage_woocommerce') || !current_user_can('edit_shop_order', $order->get_id())) {
+            return new WP_Error('payment_confirmation_forbidden', 'اجازه تأیید دریافت وجه ندارید.');
+        }
+        $reference = trim($reference);
+        if ($reference === '' || strlen($reference) > 500 || !$order->has_status(['processing', 'completed'])) {
+            return new WP_Error('payment_confirmation_invalid', 'سفارش و شماره سند دریافت وجه را بررسی کنید.');
+        }
+        if ($order->get_meta(self::META_PAID) === 'yes') {
+            return true;
+        }
+        $order->add_order_note(sprintf('لیبل مد: دریافت وجه با بررسی دستی تأیید شد. کاربر %d؛ سند: %s', get_current_user_id(), $reference));
+        $order->update_meta_data('_lmc_payment_evidence', [
+            'reference' => $reference, 'actor' => get_current_user_id(), 'at' => gmdate('c'),
+        ]);
+        $order->update_meta_data(self::META_PAID, 'yes');
+        $order->save();
+        if (!wp_next_scheduled(LMC_ORDER_EVENT, [$order->get_id()])) {
+            wp_schedule_single_event(time() + 10, LMC_ORDER_EVENT, [$order->get_id()]);
+        }
+        return true;
+    }
+
+    public static function handle_confirm_payment(): void
+    {
+        $order_id = absint($_GET['order'] ?? $_POST['order'] ?? 0);
+        if ($order_id <= 0 || !current_user_can('manage_woocommerce') || !current_user_can('edit_shop_order', $order_id)) {
+            wp_die(esc_html__('دسترسی ندارید.', 'labelmod-connector'));
+        }
+        check_admin_referer('lmc_confirm_payment_' . $order_id);
+        $order = wc_get_order($order_id);
+        if (!$order) {
+            wp_die(esc_html__('سفارش یافت نشد.', 'labelmod-connector'));
+        }
+        if (($_SERVER['REQUEST_METHOD'] ?? '') === 'POST') {
+            $reference = isset($_POST['reference']) && is_string($_POST['reference'])
+                ? sanitize_text_field(wp_unslash($_POST['reference'])) : '';
+            $result = self::confirm_legacy_payment($order, $reference);
+            if (is_wp_error($result)) {
+                wp_die(esc_html($result->get_error_message()));
+            }
+            wp_safe_redirect(admin_url('admin.php?page=wc-orders&action=edit&id=' . $order_id));
+            exit;
+        }
+        header('Content-Type: text/html; charset=UTF-8');
+        echo '<!doctype html><html lang="fa" dir="rtl"><meta charset="utf-8"><title>تأیید دریافت وجه</title><body>';
+        echo '<h1>تأیید دریافت وجه سفارش ' . esc_html((string) $order_id) . '</h1>';
+        echo '<p>فقط پس از تطبیق مبلغ با رسید بانک یا دریافت واقعی وجه، شماره سند را وارد کنید. وضعیت «در حال انجام» به‌تنهایی کافی نیست.</p>';
+        echo '<form method="post" action="' . esc_url(admin_url('admin-post.php')) . '">';
+        echo '<input type="hidden" name="action" value="lmc_confirm_payment">';
+        echo '<input type="hidden" name="order" value="' . esc_attr((string) $order_id) . '">';
+        wp_nonce_field('lmc_confirm_payment_' . $order_id);
+        echo '<label>شماره سند دریافت وجه <input name="reference" required maxlength="150"></label> ';
+        echo '<button type="submit">دریافت وجه را بررسی و تأیید کردم</button></form></body></html>';
         exit;
     }
 }
