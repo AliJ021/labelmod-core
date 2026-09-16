@@ -32,6 +32,7 @@ import { sql } from "kysely";
 import type { Transaction } from "kysely";
 import type { Db } from "../db/client.ts";
 import type { Database } from "../db/types.ts";
+import { requirePermission } from "../auth/permission.ts";
 import { hashSecret } from "../auth/password.ts";
 import { setActor } from "../lib/idempotency.ts";
 
@@ -170,13 +171,18 @@ export class UserService {
     id: string,
     actorId: string,
   ): Promise<void> {
-    const target = await trx
+    const locked = await trx
       .selectFrom("identity.app_user")
-      .select("id")
-      .where("id", "=", id)
+      .select(["id", "is_active"])
+      .where("id", "in", [id, actorId])
+      .orderBy("id")
       .forUpdate()
-      .executeTakeFirst();
-    if (!target) throw new UserError("user_not_found", "کاربر یافت نشد", 404);
+      .execute();
+    if (!locked.some(row => row.id === actorId && row.is_active)) {
+      throw new UserError("user_scope_forbidden", "کاربر عامل فعال نیست", 403);
+    }
+    await requirePermission(trx, { userId: actorId, operation: "user.manage" });
+    if (!locked.some(row => row.id === id)) throw new UserError("user_not_found", "کاربر یافت نشد", 404);
 
     const allowed = await sql<{ allowed: boolean }>`
       SELECT (
@@ -201,6 +207,16 @@ export class UserService {
     }
   }
 
+  /** پس از قفل عامل دوباره می‌سنجیم؛ کنترل HTTP به‌تنهایی با ابطال نقش مسابقه دارد. */
+  async #assertNewRolesInScope(trx: Transaction<Database>, actorId: string, roles: Array<{ branchId: string | null }>): Promise<void> {
+    const own = await trx.selectFrom("identity.user_role").select("branch_id").where("user_id", "=", actorId).execute();
+    if (own.some(role => role.branch_id === null)) return;
+    const branches = new Set(own.map(role => role.branch_id));
+    if (roles.some(role => role.branchId === null || !branches.has(role.branchId))) {
+      throw new UserError("scope_escalation", "نقش تازه خارج از دامنه شعبه شماست", 403);
+    }
+  }
+
   /**
    * کاربر تازه — رمز را **سرور** می‌سازد.
    *
@@ -222,6 +238,8 @@ export class UserService {
     const hash = await hashSecret(password);
 
     const id = await this.#db.transaction().execute(async (trx) => {
+      await this.#assertTargetInScope(trx, input.actorId, input.actorId);
+      await this.#assertNewRolesInScope(trx, input.actorId, input.roles);
       await setActor(trx, input.actorId);
 
       const dup = await trx
@@ -333,6 +351,7 @@ export class UserService {
     await this.#db.transaction().execute(async (trx) => {
       await this.#assertTargetInScope(trx, input.id, input.actorId);
       await setActor(trx, input.actorId);
+      await this.#assertNewRolesInScope(trx, input.actorId, input.roles);
       await trx.deleteFrom("identity.user_role").where("user_id", "=", input.id).execute();
       await this.#writeRoles(trx, input.id, input.roles);
       await sql`

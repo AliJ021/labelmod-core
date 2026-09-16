@@ -11,6 +11,8 @@ export default defineConfig({
   },
   build: {
     target: "es2022",
+    // موتورهای هدف CSS صریح‌اند تا minifier ویژگی استاندارد شیشه را حذف نکند.
+    cssTarget: ["chrome111", "safari16.4"],
     sourcemap: true,
     // ⚠️ Polyfill مربوط به modulepreload یک <script> **درون‌خطی** در
     // index.html تزریق می‌کند. CSP تولیدی `unsafe-inline` ندارد، پس آن

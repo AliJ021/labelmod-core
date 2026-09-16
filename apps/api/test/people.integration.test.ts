@@ -1,3 +1,4 @@
+import { UserService } from "../src/people/user.ts";
 /**
  * تست یکپارچه مدیریت پرسنل و مشتری — روی پستگرس واقعی.
  *
@@ -467,6 +468,9 @@ describe("پرسنل و مشتری", { skip }, () => {
       .values({ user_id: foreign.id, role_code: "cashier", branch_id: OTHER_BRANCH })
       .execute();
 
+    const service = new UserService(handle.db);
+    await assert.rejects(service.setRoles({ id: adminId, actorId: adminId,
+      roles: [{ roleCode: "admin", branchId: OTHER_BRANCH }] }), { code: "scope_escalation" });
     const s = await loginAs(admin);
     const list = await app.inject({ method: "GET", url: "/users", ...s });
     assert.equal(list.statusCode, 200, list.body);

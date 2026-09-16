@@ -117,12 +117,12 @@ export function splitList(raw: string): string[] {
 }
 
 export const catalog = {
-  products: (opts: { search?: string; status?: string } = {}) => {
+  products: (opts: { search?: string; status?: string } = {}, request?: RequestOptions) => {
     const q = new URLSearchParams();
     if (opts.search) q.set("search", opts.search);
     if (opts.status) q.set("status", opts.status);
     const qs = q.toString();
-    return api.get<{ products: Product[] }>(`/products${qs ? `?${qs}` : ""}`);
+    return api.get<{ products: Product[] }>(`/products${qs ? `?${qs}` : ""}`, request);
   },
 
   product: (id: string) =>

@@ -50,6 +50,7 @@ interface ErrorBody {
 }
 
 export interface RequestOptions {
+  signal?: AbortSignal;
   /**
    * کلید Idempotency برای این **عمل**.
    *
@@ -79,6 +80,7 @@ async function request<T>(
 
   const res = await fetch(`${BASE}${path}`, {
     method,
+    ...(opts.signal ? { signal: opts.signal } : {}),
     credentials: "include",
     headers,
     ...(body === undefined ? {} : { body: JSON.stringify(body) }),
@@ -108,7 +110,7 @@ function safeParse(text: string): unknown {
 }
 
 export const api = {
-  get: <T>(path: string) => request<T>("GET", path),
+  get: <T>(path: string, opts?: RequestOptions) => request<T>("GET", path, undefined, opts),
   post: <T>(path: string, body?: unknown, opts?: RequestOptions) =>
     request<T>("POST", path, body ?? {}, opts),
   patch: <T>(path: string, body: unknown, opts?: RequestOptions) =>
