@@ -42,7 +42,7 @@ CREATE TRIGGER transaction_account_branch_t
 
 -- دامنه حساب استفاده‌شده تغییر نمی‌کند؛ قفل مشترک بالا با این UPDATE تعارض دارد.
 CREATE OR REPLACE FUNCTION treasury.guard_used_transaction_account_branch()
-RETURNS trigger LANGUAGE plpgsql AS $
+RETURNS trigger LANGUAGE plpgsql AS $$
 BEGIN
   IF NEW.branch_id IS DISTINCT FROM OLD.branch_id AND EXISTS (
     SELECT 1 FROM treasury.transaction
@@ -52,7 +52,7 @@ BEGIN
       USING ERRCODE = '23514', CONSTRAINT = 'used_transaction_account_branch';
   END IF;
   RETURN NEW;
-END $;
+END $$;
 CREATE TRIGGER used_transaction_account_branch_t
   BEFORE UPDATE OF branch_id ON treasury.account
   FOR EACH ROW EXECUTE FUNCTION treasury.guard_used_transaction_account_branch();
