@@ -571,6 +571,11 @@ describe("فروش و صندوق روی دیتابیس واقعی", { skip }, ()
     // مدیر (نقش بدون شعبه) به همه شعب دسترسی دارد
     await sql`INSERT INTO identity.user_role (user_id, role_code, branch_id)
               VALUES (${supervisorId}::uuid, 'admin', NULL)`.execute(handle.db);
+    // نقش تازه الزام MFA دارد؛ نشست قدیمی نباید خودکار ارتقا یابد.
+    const limited = await app.inject({ method: "GET", url: "/auth/can?operation=sale.create", ...(await loginAs(supervisor)) });
+    assert.equal(limited.statusCode, 403, limited.body);
+    assert.equal(limited.json().error.code, "second_factor_enrollment_required");
+    sessions.delete(supervisor);
     const asAdmin = await app.inject({
       method: "POST",
       url: "/invoices",

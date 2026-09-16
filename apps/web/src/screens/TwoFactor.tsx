@@ -84,7 +84,6 @@ export function TwoFactor({ onEnrolled }: { onEnrolled?: () => void } = {}) {
       setSecret(null);
       setCode("");
       await reload();
-      onEnrolled?.();
     });
 
   const regenerate = () =>
@@ -263,7 +262,7 @@ export function TwoFactor({ onEnrolled }: { onEnrolled?: () => void } = {}) {
               <li key={c} dir="ltr">{c}</li>
             ))}
           </ul>
-          <button type="button" className="btn btn--quiet" onClick={() => setCodes(null)}>
+          <button type="button" className="btn btn--quiet" onClick={() => { setCodes(null); onEnrolled?.(); }}>
             نوشتمشان، ببند
           </button>
         </Solid>

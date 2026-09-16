@@ -56,7 +56,7 @@ test("production request logs omit bearer URLs and queries while retaining corre
     assert.deepEqual(logs.find((l) => l.auditCase)?.statuses, [200, 200, 200, 403, 404]);
     const incoming = logs.filter((l) => l.msg === "incoming request");
     assert.equal(incoming.length, 5);
-    assert.deepEqual(incoming.map((l) => l.req.url), ["/i/:token", "/health", "/auth/login", "/auth/2fa/totp/begin", "/auth/2fa/totp/confirm", "/auth/me", "/auth/logout", "[unmatched]"]);
+    assert.deepEqual(incoming.map((l) => l.req.url), ["/i/:token", "/health", "/auth/login", "/auth/logout", "[unmatched]"]);
     for (const entry of incoming) {
       assert.ok(entry.reqId);
       assert.ok(logs.some((l) => l.reqId === entry.reqId && l.msg === "request completed" && Number.isInteger(l.res?.statusCode)));
