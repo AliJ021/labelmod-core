@@ -854,4 +854,48 @@ describe("رسید خرید", { skip }, () => {
     assert.ok(!kinds.includes("cash_box"), "صندوق فروشگاه نباید در فهرست باشد");
     assert.ok(kinds.length > 0, "فهرست نباید خالی باشد");
   });
+
+  test("حساب پرداخت شعبه دیگر نه افشا می‌شود و نه روی رسید پذیرفته", async () => {
+    const otherBranch = await handle.db
+      .insertInto("platform.branch")
+      .values({ code: `OTHER-${suffix}`, name: "شعبه دیگر", is_active: true })
+      .returning("id")
+      .executeTakeFirstOrThrow();
+    const foreignAccount = await handle.db
+      .insertInto("treasury.account")
+      .values({
+        code: `FOREIGN-${suffix}`,
+        name: "بانک شعبه دیگر",
+        kind: "bank",
+        branch_id: otherBranch.id,
+        ledger_account_code: "1102",
+        is_active: true,
+      })
+      .returning("id")
+      .executeTakeFirstOrThrow();
+
+    const s = await loginAs(keeper);
+    const listed = await app.inject({ method: "GET", url: "/purchasing/pay-accounts", ...s });
+    assert.equal(listed.statusCode, 200, listed.body);
+    assert.ok(
+      !(listed.json() as { id: string }[]).some((account) => account.id === foreignAccount.id),
+      "حساب شعبه دیگر نباید افشا شود",
+    );
+
+    const receipt = await newDraft(keeper);
+    const added = await app.inject({
+      method: "POST",
+      url: `/receipts/${receipt.id}/charges`,
+      ...s,
+      headers: { ...s.headers, "idempotency-key": `foreign-account-${suffix}` },
+      payload: {
+        chargeType: "حمل",
+        amount: "1000",
+        paidFrom: "treasury",
+        paidAccountId: foreignAccount.id,
+      },
+    });
+    assert.equal(added.statusCode, 403, added.body);
+    assert.equal(added.json().error.code, "pay_account_forbidden");
+  });
 });
