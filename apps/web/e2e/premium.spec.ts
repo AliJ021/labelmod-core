@@ -224,6 +224,7 @@ test("live reduced motion, transparency and persisted performance mode", async (
   await page.locator(".topbar").dispatchEvent("pointermove", { clientX: 120, clientY: 40 });
   expect(await page.locator(".topbar").getAttribute("style")).toBe(angle);
   await page.getByRole("tab", { name: "کالا و قیمت", exact: true }).click();
+  await expect(page.locator(".zone-panel:not([hidden])")).toHaveCSS("animation-name", "none");
   expect(await page.evaluate(() => document.getAnimations().filter(a => a.effect instanceof KeyframeEffect && a.effect.pseudoElement?.startsWith("::view-transition")).length)).toBe(0);
   await page.emulateMedia({ reducedMotion: "no-preference" });
   await expect(page.locator(".mesh i").first()).not.toHaveCSS("animation-name", "none");

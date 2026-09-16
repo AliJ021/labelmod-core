@@ -189,16 +189,7 @@ export function App() {
   }
 
   function switchZone(next: Zone) {
-    // گذار سیال میان نماها. اگر مرورگر پشتیبانی نکند، بی‌سروصدا
-    // همان تغییر فوری اتفاق می‌افتد — نه خطا، نه صفحه سفید.
-    const doc = document as Document & {
-      startViewTransition?: (cb: () => void) => void;
-    };
-    if (typeof doc.startViewTransition === "function" && !matchMedia("(prefers-reduced-motion: reduce)").matches && document.documentElement.dataset.perf !== "on") {
-      doc.startViewTransition(() => setZone(next));
-    } else {
-      setZone(next);
-    }
+    setZone(next);
   }
 
   function cycleTheme() {
@@ -229,7 +220,7 @@ export function App() {
         </Glass>
 
         <main>
-        <TabPanels id={tabsId} items={ZONES} value={zone} style={{ viewTransitionName: "zone" }}>
+        <TabPanels id={tabsId} items={ZONES} value={zone} className="zone-panel">
           {zone === "dashboard" ? (
             <Dashboard />
           ) : zone === "pos" ? (

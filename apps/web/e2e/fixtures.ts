@@ -71,13 +71,16 @@ export async function openCatalog(page: Page) {
 }
 export async function settings(page: Page, value: string, label: string) {
   await page.getByRole("tablist", { name: "بخش‌ها", exact: true }).getByRole("tab", { name: "تنظیمات", exact: true }).click();
+  await expect(page.locator(".settings-nav")).toBeVisible();
   const picker = page.getByRole("combobox", { name: "بخش تنظیمات" });
   if (await picker.isVisible()) await picker.selectOption(value);
   else await page.getByRole("tab", { name: label, exact: true }).click();
 }
 export async function fontsReady(page: Page) {
   await page.evaluate(async () => {
-    await Promise.all([document.fonts.load('400 16px Vazirmatn', "کالا"), ...[400, 500, 600, 700].map(w => document.fonts.load(w + ' 16px "IBM Plex Mono"', "12345"))]);
+    for (const weight of [300, 400, 500, 600, 700, 800]) await document.fonts.load(weight + " 16px Vazirmatn", "کالا");
+    for (const weight of [400, 500, 600, 700]) await document.fonts.load(weight + ' 16px "IBM Plex Mono"', "12345");
     await document.fonts.ready;
   });
+  await expect.poll(() => page.evaluate(() => [...document.fonts].every(font => font.status === "loaded"))).toBe(true);
 }
