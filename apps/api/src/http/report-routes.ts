@@ -148,6 +148,35 @@ export function registerReportRoutes(app: FastifyInstance, deps: ReportRouteDeps
     throw new ScopeError("شعبه را مشخص کنید");
   }
 
+  /**
+   * فیلتر انباری که می‌توانیم ایمن به توابع گزارش بدهیم.
+   *
+   * این توابع `NULL` را «همه انبارها» می‌فهمند و فیلتر شعبه ندارند.
+   * پس برای کاربر محدود حذف `warehouseId` نباید به `NULL` تبدیل شود:
+   * انبار باید صریح انتخاب شود. فقط دامنهٔ سراسری می‌تواند `NULL`
+   * بفرستد.
+   */
+  async function resolveWarehouse(
+    userId: string,
+    asked: string | undefined,
+  ): Promise<string | undefined> {
+    if (asked !== undefined) {
+      const warehouse = await db
+        .selectFrom("inventory.warehouse")
+        .select("branch_id")
+        .where("id", "=", asked)
+        .executeTakeFirst();
+      if (!warehouse) throw new ScopeError("انبار یافت نشد");
+      await assertBranch(db, userId, warehouse.branch_id);
+      return asked;
+    }
+
+    const scope = await branchesOf(db, userId);
+    if (scope === "all") return undefined;
+    if (scope.length === 0) throw new ScopeError("به هیچ شعبه‌ای دسترسی ندارید");
+    throw new ScopeError("انبار را مشخص کنید");
+  }
+
   const period = async (userId: string, q: z.infer<typeof periodQuery>): Promise<Period> => ({
     from: q.from,
     to: q.to,
@@ -315,23 +344,9 @@ export function registerReportRoutes(app: FastifyInstance, deps: ReportRouteDeps
     await requireForSession(db, s, "report.view");
     await requireForSession(db, s, "cost.view");
     const q = z.object({ warehouseId: uuid.optional() }).parse(req.query);
-    // انبار به شعبه بسته است و `assertWarehouseInBranch` همان را
-    // می‌سنجد؛ اینجا دامنه از راه شعبهٔ انبار اعمال می‌شود.
-    if (q.warehouseId !== undefined) {
-      const w = await db
-        .selectFrom("inventory.warehouse")
-        .select("branch_id")
-        .where("id", "=", q.warehouseId)
-        .executeTakeFirst();
-      if (!w) throw new ScopeError("انبار یافت نشد");
-      await assertBranch(db, s.userId, w.branch_id);
-    } else {
-      // بدون انتخاب انبار، فقط کسی که دامنه‌اش همه شعبه‌هاست می‌تواند
-      // کل ارزش موجودی را ببیند.
-      await resolveBranch(s.userId, undefined);
-    }
+    const warehouseId = await resolveWarehouse(s.userId, q.warehouseId);
     const { format } = formatQuery.parse(req.query);
-    const rows = await reports.valuation(q.warehouseId);
+    const rows = await reports.valuation(warehouseId);
     return respond(
       reply,
       format,
@@ -349,22 +364,13 @@ export function registerReportRoutes(app: FastifyInstance, deps: ReportRouteDeps
     const q = periodQuery
       .extend({ variationId: uuid, warehouseId: uuid.optional() })
       .parse(req.query);
-
-    if (q.warehouseId !== undefined) {
-      const w = await db
-        .selectFrom("inventory.warehouse")
-        .select("branch_id")
-        .where("id", "=", q.warehouseId)
-        .executeTakeFirst();
-      if (!w) throw new ScopeError("انبار یافت نشد");
-      await assertBranch(db, s.userId, w.branch_id);
-    }
+    const warehouseId = await resolveWarehouse(s.userId, q.warehouseId);
 
     const rows = await reports.movements({
       variationId: q.variationId,
       from: q.from,
       to: q.to,
-      ...(q.warehouseId === undefined ? {} : { warehouseId: q.warehouseId }),
+      ...(warehouseId === undefined ? {} : { warehouseId }),
     });
 
     const { format } = formatQuery.parse(req.query);
