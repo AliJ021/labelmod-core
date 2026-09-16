@@ -1,3 +1,4 @@
+import { loginWithMfa } from "./helpers/login-with-mfa.ts";
 /**
  * تست یکپارچه ساخت خودکار تنوع و ماتریس موجودی — روی پستگرس واقعی.
  *
@@ -53,7 +54,7 @@ describe("ساخت خودکار تنوع و ماتریس موجودی", { skip }
   async function loginAs(username: string) {
     const cached = sessions.get(username);
     if (cached) return cached;
-    const r = await app.inject({
+    const r = await loginWithMfa(app, {
       method: "POST",
       url: "/auth/login",
       payload: {

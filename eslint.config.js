@@ -40,6 +40,8 @@ export default tseslint.config(
     // خروجی Build، وابستگی‌ها و فایل‌های تولیدشده Lint نمی‌شوند.
     ignores: [
       "**/dist/**",
+      "**/test-results*/**",
+      "**/playwright-report/**",
       "**/node_modules/**",
       "**/*.d.ts",
       "apps/web/public/**",

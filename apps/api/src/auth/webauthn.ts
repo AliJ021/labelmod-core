@@ -37,6 +37,7 @@ import {
 } from "@simplewebauthn/server";
 import { sql } from "kysely";
 import type { Db } from "../db/client.ts";
+import { lockEnrollment, proveEnrollment } from "./enrollment.ts";
 import { AuthError } from "./service.ts";
 
 export interface WebauthnConfig {
@@ -196,6 +197,7 @@ export class WebauthnService {
 
   async finishRegistration(input: {
     userId: string;
+    sessionId: string;
     response: Record<string, unknown>;
     name?: string | undefined;
   }): Promise<{ id: string }> {
@@ -225,7 +227,9 @@ export class WebauthnService {
     }
 
     const info = verification.registrationInfo;
-    const row = await this.#db
+    return await this.#db.transaction().execute(async (trx) => {
+    await lockEnrollment(trx, input.userId, input.sessionId);
+    const row = await trx
       .insertInto("identity.webauthn_credential")
       .values({
         user_id: input.userId,
@@ -244,9 +248,11 @@ export class WebauthnService {
       SELECT platform.audit('auth.webauthn_register', 'app_user', ${input.userId}::text,
         ${JSON.stringify({ credentialId: info.credential.id })}::jsonb,
         ${input.userId}::uuid)
-    `.execute(this.#db);
+    `.execute(trx);
 
+    await proveEnrollment(trx, input.userId, input.sessionId, "webauthn");
     return { id: row.id };
+    });
   }
 
   async beginAuthentication(userId: string): Promise<Record<string, unknown>> {

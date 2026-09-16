@@ -274,6 +274,10 @@ export const session = {
     return api.post<{ ok: boolean; elevated: boolean }>("/auth/reauth", { password });
   },
 
+  changePassword(currentPassword: string, password: string): Promise<{ ok: boolean }> {
+    return api.post<{ ok: boolean }>("/auth/change-password", { currentPassword, password });
+  },
+
   lock(): Promise<{ locked: boolean }> {
     return api.post<{ locked: boolean }>("/auth/lock");
   },

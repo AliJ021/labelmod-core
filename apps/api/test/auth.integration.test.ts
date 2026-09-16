@@ -1,3 +1,4 @@
+import { loginWithMfa } from "./helpers/login-with-mfa.ts";
 /**
  * تست یکپارچه احراز هویت — روی پستگرس واقعی.
  *
@@ -141,7 +142,7 @@ describe("احراز هویت روی دیتابیس واقعی", { skip }, () =>
     assert.equal(s.device?.registered, true, "دستگاه تازه باید ثبت شود");
     assert.equal(s.device?.approved, false, "ولی هرگز خودبه‌خود تأیید نمی‌شود");
 
-    const r = await app.inject({
+    const r = await loginWithMfa(app, {
       method: "POST",
       url: "/auth/login",
       payload: { username, password: PASSWORD, deviceFingerprint: fp },
@@ -377,7 +378,7 @@ describe("احراز هویت روی دیتابیس واقعی", { skip }, () =>
   });
 
   test("HTTP: ورود، me، خروج", async () => {
-    const login = await app.inject({
+    const login = await loginWithMfa(app, {
       method: "POST",
       url: "/auth/login",
       payload: { username, password: PASSWORD, deviceFingerprint: fingerprint },
@@ -427,7 +428,7 @@ describe("احراز هویت روی دیتابیس واقعی", { skip }, () =>
   });
 
   test("HTTP: ورودی نامعتبر ۴۰۰ می‌گیرد، نه ۵۰۰", async () => {
-    const r = await app.inject({
+    const r = await loginWithMfa(app, {
       method: "POST",
       url: "/auth/login",
       payload: { username: "", password: "x" },
@@ -492,7 +493,7 @@ describe("احراز هویت روی دیتابیس واقعی", { skip }, () =>
     // درخواست بین‌سایتی اصلاً کوکی نمی‌فرستد.
     const stale = expectSession(await auth.login({ username, password: PASSWORD, deviceFingerprint: fingerprint }));
 
-    const relogin = await app.inject({
+    const relogin = await loginWithMfa(app, {
       method: "POST",
       url: "/auth/login",
       // کوکی نشست هست، کوکی و سرآیند CSRF نیست
@@ -560,7 +561,7 @@ describe("احراز هویت روی دیتابیس واقعی", { skip }, () =>
     // در عمل خاموش است — کسی به لاگ ۵۰۰ اعتماد نمی‌کند.
     const codes: number[] = [];
     for (let i = 0; i < 8; i++) {
-      const r = await app.inject({
+      const r = await loginWithMfa(app, {
         method: "POST",
         url: "/auth/login",
         payload: { username: `nobody_${suffix}`, password: "x", deviceFingerprint: "rate-limit-fp" },
@@ -570,7 +571,7 @@ describe("احراز هویت روی دیتابیس واقعی", { skip }, () =>
     assert.ok(codes.includes(429), `انتظار ۴۲۹ در ${codes.join(",")}`);
     assert.ok(!codes.includes(500), `هیچ ۵۰۰ نباید باشد: ${codes.join(",")}`);
 
-    const limited = await app.inject({
+    const limited = await loginWithMfa(app, {
       method: "POST",
       url: "/auth/login",
       payload: { username: `nobody_${suffix}`, password: "x", deviceFingerprint: "rate-limit-fp" },

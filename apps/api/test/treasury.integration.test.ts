@@ -1,3 +1,4 @@
+import { loginWithMfa } from "./helpers/login-with-mfa.ts";
 /**
  * تست یکپارچه خزانه و چک — روی پستگرس واقعی.
  *
@@ -53,7 +54,7 @@ describe("خزانه و چک", { skip }, () => {
   async function loginAs(username: string): Promise<Jar> {
     const cached = jars.get(username);
     if (cached) return cached;
-    const r = await app.inject({
+    const r = await loginWithMfa(app, {
       method: "POST",
       url: "/auth/login",
       remoteAddress: `10.9.0.${(jars.size % 250) + 1}`,

@@ -1,3 +1,4 @@
+import { loginWithMfa } from "./helpers/login-with-mfa.ts";
 /**
  * تست یکپارچه قیمت دستی روی سطر فاکتور — روی پستگرس واقعی.
  *
@@ -61,7 +62,7 @@ describe("قیمت دستی روی سطر فاکتور", { skip }, () => {
   async function loginAs(username: string) {
     const cached = sessions.get(username);
     if (cached) return cached;
-    const r = await app.inject({
+    const r = await loginWithMfa(app, {
       method: "POST",
       url: "/auth/login",
       payload: { username, password: PASSWORD, deviceFingerprint: `fp-${suffix}-${username}` },

@@ -197,6 +197,7 @@ export async function buildApp(deps: AppDeps): Promise<FastifyInstance> {
           "req.headers.cookie",
           "req.headers.authorization",
           "req.body.password",
+          "req.body.currentPassword",
           "req.body.pin",
           "res.headers['set-cookie']",
         ],

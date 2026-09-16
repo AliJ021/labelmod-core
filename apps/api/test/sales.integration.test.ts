@@ -1,3 +1,4 @@
+import { loginWithMfa } from "./helpers/login-with-mfa.ts";
 /**
  * تست یکپارچه فروش و صندوق — روی پستگرس واقعی، دیتابیس یک‌بارمصرف.
  *
@@ -49,7 +50,7 @@ describe("فروش و صندوق روی دیتابیس واقعی", { skip }, ()
   async function loginAs(username: string) {
     const cached = sessions.get(username);
     if (cached) return cached;
-    const r = await app.inject({
+    const r = await loginWithMfa(app, {
       method: "POST",
       url: "/auth/login",
       payload: { username, password: PASSWORD, deviceFingerprint: `fp-${suffix}-${username}` },

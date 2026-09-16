@@ -38,6 +38,14 @@ const reauthBody = z.object({
   password: z.string().min(1).max(256),
 });
 
+const changePasswordBody = z.object({
+  currentPassword: z.string().min(1).max(256),
+  password: z.string().min(12, "رمز تازه باید حداقل ۱۲ کاراکتر باشد").max(256),
+}).strict().refine((value) => value.currentPassword !== value.password, {
+  message: "رمز تازه باید با رمز فعلی متفاوت باشد",
+  path: ["password"],
+});
+
 const permissionQuery = z.object({
   operation: z.string().min(1).max(64),
   // پول در JSON رشته است، نه عدد — همان قاعده سراسری.
@@ -307,7 +315,7 @@ export function registerAuthRoutes(app: FastifyInstance, deps: AuthRouteDeps): v
       const s = req.session;
       if (!s) throw new AuthError("no_session", "وارد نشده‌اید");
       const body = z.object({ code: z.string().trim().min(4).max(10) }).parse(req.body);
-      const codes = await twoFactor.confirmTotp(s.userId, body.code);
+      const codes = await twoFactor.confirmTotp(s.userId, body.code, s.sessionId);
       return {
         enabled: true,
         recoveryCodes: codes,
@@ -374,6 +382,7 @@ export function registerAuthRoutes(app: FastifyInstance, deps: AuthRouteDeps): v
       })
       .parse(req.body);
     return await webauthn.finishRegistration({
+      sessionId: s.sessionId,
       userId: s.userId,
       response: body.response,
       ...(body.name === undefined ? {} : { name: body.name }),
@@ -503,6 +512,21 @@ export function registerAuthRoutes(app: FastifyInstance, deps: AuthRouteDeps): v
       const input = reauthBody.parse(req.body);
       await auth.reauthenticate(token, input.password);
       return { ok: true, elevated: true };
+    },
+  });
+
+  /** تغییر رمز شخصی؛ شناسهٔ کاربر فقط از نشست معتبر می‌آید. */
+  app.post("/auth/change-password", {
+    config: { rateLimit: { max: 5, timeWindow: "1 minute" } },
+    handler: async (req, reply) => {
+      const token = req.cookies[config.COOKIE_NAME];
+      if (!token || !req.session) throw new AuthError("no_session", "وارد نشده‌اید");
+      const input = changePasswordBody.parse(req.body);
+      await auth.changePassword(token, input.currentPassword, input.password);
+      const cookieScope = { path: "/", ...(config.COOKIE_DOMAIN ? { domain: config.COOKIE_DOMAIN } : {}) };
+      reply.clearCookie(config.COOKIE_NAME, cookieScope);
+      reply.clearCookie(config.CSRF_COOKIE_NAME, cookieScope);
+      return { ok: true };
     },
   });
 

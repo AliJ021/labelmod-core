@@ -1,3 +1,4 @@
+import { loginWithMfa } from "./helpers/login-with-mfa.ts";
 import { after, before, describe, test } from "node:test";
 import assert from "node:assert/strict";
 import { randomBytes } from "node:crypto";
@@ -69,7 +70,7 @@ describe("دامنه موجودی پیشنهاد سایز با ورود واقع
     app = await buildApp({ db, auth: new AuthService(db),
       config: loadConfig({ ...process.env, NODE_ENV: "test", LOG_LEVEL: "fatal" }) });
     for (const username of ["fitting_scope_user", "fitting_scope_admin"]) {
-      const response = await app.inject({ method: "POST", url: "/auth/login",
+      const response = await loginWithMfa(app, { method: "POST", url: "/auth/login",
         payload: { username, password, deviceFingerprint: `device-${username}` } });
       assert.equal(response.statusCode, 200, "ورود از مسیر واقعی باید موفق باشد");
       sessions.set(username, Object.fromEntries(response.cookies.map(c => [c.name, c.value])));

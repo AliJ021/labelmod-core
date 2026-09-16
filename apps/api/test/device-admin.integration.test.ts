@@ -1,3 +1,4 @@
+import { loginWithMfa } from "./helpers/login-with-mfa.ts";
 /**
  * تست یکپارچه مدیریت دستگاه و چرخه PIN — روی پستگرس واقعی.
  *
@@ -66,7 +67,7 @@ describe("مدیریت دستگاه و چرخه PIN", { skip }, () => {
 
   /** ورود کامل — کوکی نشست، CSRF و (اگر صادر شد) کوکی دستگاه. */
   async function login(username: string, fingerprint: string): Promise<Jar> {
-    const r = await app.inject({
+    const r = await loginWithMfa(app, {
       method: "POST",
       url: "/auth/login",
       remoteAddress: ipFor(fingerprint),

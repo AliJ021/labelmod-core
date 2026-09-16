@@ -1,3 +1,4 @@
+import { loginWithMfa } from "./helpers/login-with-mfa.ts";
 /**
  * تست یکپارچه سفارش سایت — روی پستگرس واقعی.
  *
@@ -240,7 +241,7 @@ describe("سفارش سایت (ووکامرس)", { skip }, () => {
   // ── مجوز ────────────────────────────────────────────────────────
 
   test("صندوق‌دار با کوکی خودش هم این مسیر را ندارد", async () => {
-    const login = await app.inject({
+    const login = await loginWithMfa(app, {
       method: "POST",
       url: "/auth/login",
       payload: { username: cashier, password: PASSWORD, deviceFingerprint: `fp-${suffix}` },
