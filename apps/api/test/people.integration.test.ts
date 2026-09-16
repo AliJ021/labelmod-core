@@ -447,7 +447,7 @@ describe("پرسنل و مشتری", { skip }, () => {
   test("مدیر شعبه کاربر شعبه دیگر را نمی‌بیند یا تغییر نمی‌دهد", async () => {
     await handle.db
       .insertInto("platform.branch")
-      .values({ id: OTHER_BRANCH, code: `other_${suffix}`, name: "شعبه دیگر" })
+      .values({ id: OTHER_BRANCH, code: `other_${suffix}`, name: "شعبه دیگر", is_active: true })
       .execute();
     const foreign = await handle.db
       .insertInto("identity.app_user")
