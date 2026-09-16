@@ -159,3 +159,12 @@ describe("قواعد ساختاری توکن‌ها", () => {
     assert.match(CSS, /@supports not \(backdrop-filter/);
   });
 });
+
+for (const theme of ["light", "dark"] as const) {
+  test("مرز کنترل و فوکوس روی سطوح مات — " + theme, () => {
+    for (const surface of ["surface-solid", "surface-solid-2"]) {
+      assert.ok(contrast(hex("control-border", theme), hex(surface, theme)) >= 3);
+      assert.ok(contrast(hex("accent", theme), hex(surface, theme)) >= 3);
+    }
+  });
+}

@@ -1,3 +1,4 @@
+import { TabList, TabPanels, useTabsId } from "../components/Tabs.tsx";
 /**
  * گزارش‌ها — ناحیه متوسط.
  *
@@ -90,8 +91,10 @@ function when(iso: string): string {
 }
 
 export function Reports() {
+  const tabsId = useTabsId();
   const [tab, setTab] = useState<Tab>("sales");
   const [branches, setBranches] = useState<Branch[]>([]);
+  const [allBranches, setAllBranches] = useState(false);
   const [branchId, setBranchId] = useState("");
   const [period, setPeriod] = useState<{ from: string; to: string } | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -99,7 +102,8 @@ export function Reports() {
   useEffect(() => {
     void (async () => {
       try {
-        const { branches: list } = await pos.branches();
+        const { branches: list, allBranches: all } = await pos.branches();
+        setAllBranches(all);
         setBranches(list);
         const first = list[0];
         if (!first) {
@@ -133,20 +137,8 @@ export function Reports() {
 
   return (
     <div className="stack" style={{ gap: "var(--s-4)" }}>
-      <div className="subtabs" role="tablist" aria-label="گزارش‌ها">
-        {TABS.map((t) => (
-          <button
-            key={t.key}
-            type="button"
-            role="tab"
-            aria-selected={tab === t.key}
-            className={tab === t.key ? "on" : ""}
-            onClick={() => setTab(t.key)}
-          >
-            {t.label}
-          </button>
-        ))}
-      </div>
+      <TabList id={tabsId} items={TABS} value={tab} onChange={setTab} label="گزارش‌ها" />
+      <TabPanels id={tabsId} items={TABS} value={tab} className="stack section-stack">
 
       {/* فیلترها روی سطح شیشه‌ای — لایه کنترلی، نه محتوا. */}
       <Glass radius="md" className="pad">
@@ -197,7 +189,7 @@ export function Reports() {
       ) : tab === "profit" ? (
         <ProfitReport period={p} />
       ) : tab === "stock" ? (
-        <StockReport period={p} branches={branches} />
+        <StockReport period={p} branches={branches} allBranches={allBranches} />
       ) : tab === "ledger" ? (
         <LedgerReport period={p} />
       ) : tab === "trial" ? (
@@ -207,6 +199,7 @@ export function Reports() {
       ) : (
         <CashReport period={p} />
       )}
+      </TabPanels>
     </div>
   );
 }
@@ -714,26 +707,29 @@ function ProfitReport({ period }: { period: Period }) {
 
 // ── موجودی و کاردکس ──────────────────────────────────────────────────
 
-function StockReport({ period, branches }: { period: Period; branches: Branch[] }) {
+function StockReport({ period, branches, allBranches }: { period: Period; branches: Branch[]; allBranches: boolean }) {
   const warehouses: Warehouse[] = branches.flatMap((b) => b.warehouses);
-  const [warehouseId, setWarehouseId] = useState("");
+  const [warehouseId, setWarehouseId] = useState(allBranches ? "" : (warehouses[0]?.id ?? ""));
   const [picked, setPicked] = useState<ValuationRow | null>(null);
 
   const { rows, error } = useReport<ValuationRow>(
-    async () => (await reports.valuation(warehouseId === "" ? undefined : warehouseId)).rows,
-    [warehouseId],
+    async () => {
+      if (!allBranches && warehouseId === "") return [];
+      return (await reports.valuation(warehouseId === "" ? undefined : warehouseId)).rows;
+    },
+    [warehouseId, allBranches],
   );
 
   const totalValue = (rows ?? []).reduce((a, r) => a + parseRial(r.totalValue), 0n);
 
   return (
     <div className="stack" style={{ gap: "var(--s-3)" }}>
-      {warehouses.length > 1 ? (
+      {warehouses.length > 0 ? (
         <Solid className="pad">
           <label className="auth-field">
             <span>انبار</span>
             <select value={warehouseId} onChange={(e) => setWarehouseId(e.target.value)}>
-              <option value="">همه انبارها</option>
+              {allBranches ? <option value="">همه انبارها</option> : null}
               {warehouses.map((w) => (
                 <option key={w.id} value={w.id}>
                   {w.name}
