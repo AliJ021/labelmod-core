@@ -1,4 +1,4 @@
-import { test, expect, product, rule, openCatalog, settings, fontsReady } from "./fixtures";
+import { test, expect, product, rule, customer, staff, openCatalog, settings, fontsReady } from "./fixtures";
 import type { Page, Route, Locator } from "@playwright/test";
 
 async function noOverflow(page: Page) {
@@ -203,6 +203,7 @@ test("RTL keyboard tabs, activation, one tab stop and responsive settings focus"
     await main.getByRole("tab", { name, exact: true }).click();
     await expect(page.getByRole("tablist", { name: list, exact: true })).toBeVisible();
     await tabContract(page.getByRole("tablist", { name: list, exact: true }));
+    await screenshot(page, name);
   }
 });
 
@@ -293,3 +294,44 @@ async function transparency(page: Page, engine: string, reduce: boolean) {
     }
   }, reduce);
 }
+
+test("populated customers, empty permissions and clear actions", async ({ page, api }) => {
+  api.defaults["GET /customers"] = { customers: [customer] };
+  api.permissionRows = [];
+  await page.goto("/");
+  await page.getByRole("tab", { name: "مشتریان", exact: true }).click();
+  await expect(page.getByRole("cell", { name: customer.fullName!, exact: true })).toBeVisible();
+  await noOverflow(page);
+  await screenshot(page, "customers");
+  await settings(page, "permissions", "مجوزها");
+  await expect(page.getByText("مجوزی برای نمایش وجود ندارد.")).toBeVisible();
+  await screenshot(page, "permissions-empty");
+});
+
+test("staff password reset needs review; current user gets personal flow", async ({ page, api }) => {
+  await page.goto("/");
+  await settings(page, "staff", "پرسنل");
+  const ownRow = page.getByRole("row").filter({ hasText: "synthetic_admin" });
+  await ownRow.getByRole("button", { name: "رمز تازه" }).click();
+  await expect(page.getByLabel("رمز فعلی", { exact: true })).toBeVisible();
+  await page.getByRole("button", { name: "انصراف", exact: true }).click();
+  const row = page.getByRole("row").filter({ hasText: staff.username });
+  await row.getByRole("button", { name: "رمز تازه" }).click();
+  await expect(page.getByLabel("رمز فعلی", { exact: true })).toHaveCount(0);
+  await page.getByRole("button", { name: "پیشنهاد رمز امن" }).click();
+  expect(api.calls.filter(x => x.startsWith("POST"))).toHaveLength(0);
+  await page.getByRole("button", { name: "بررسی و ادامه" }).click();
+  await expect(page.getByRole("button", { name: "تأیید نهایی و تغییر رمز" })).toBeDisabled();
+  await page.getByRole("checkbox", { name: /رمز تازه را نگه داشته‌ام/ }).check();
+  await screenshot(page, "password-review");
+  let submitted: unknown;
+  api.handlers.set("POST /users/" + staff.id + "/reset-password", async route => {
+    const body = route.request().postDataJSON() as { password: string };
+    submitted = body; await route.fulfill({ json: { password: body.password, note: "test" } });
+  });
+  await page.getByRole("button", { name: "تأیید نهایی و تغییر رمز" }).click();
+  await expect(page.getByRole("dialog")).toHaveCount(0);
+  expect(submitted).toEqual({ password: expect.stringMatching(/.{12,}/) });
+  await expect(page.getByRole("status")).toContainText("همهٔ نشست‌های او بسته شدند");
+  expect(api.calls.filter(x => x.startsWith("POST"))).toHaveLength(1);
+});
