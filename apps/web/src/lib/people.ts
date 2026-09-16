@@ -12,7 +12,7 @@
  *
  * `hasPin` و `hasTotp` بولی‌اند: «دارد یا ندارد»، نه خودِ مقدار.
  */
-import { api } from "./api.ts";
+import { api, type RequestOptions } from "./api.ts";
 
 export interface UserRole {
   roleCode: string;
@@ -142,9 +142,10 @@ export const people = {
   setPin: (id: string, pin: string | null) =>
     api.put<{ ok: boolean; hasPin: boolean }>(`/users/${id}/pin`, { pin }),
 
-  customers: (q = "") =>
+  customers: (q = "", opts?: RequestOptions) =>
     api.get<{ customers: Customer[] }>(
       `/customers${q.trim() === "" ? "" : `?q=${encodeURIComponent(q.trim())}`}`,
+      opts,
     ),
 
   customer: (id: string) =>

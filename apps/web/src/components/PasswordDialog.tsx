@@ -23,8 +23,9 @@ export function PasswordDialog({ name, own = false, onCancel, onApply }: {
   const [error, setError] = useState<string | null>(null);
   useEffect(() => {
     const node = dialog.current;
+    const previous = document.activeElement instanceof HTMLElement ? document.activeElement : null;
     node?.showModal();
-    return () => node?.close();
+    return () => { node?.close(); if (previous?.isConnected) previous.focus(); };
   }, []);
   useEffect(() => {
     dialog.current?.querySelector<HTMLInputElement>("input")?.focus();

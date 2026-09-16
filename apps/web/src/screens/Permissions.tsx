@@ -20,6 +20,7 @@
  */
 import { useEffect, useMemo, useState } from "react";
 import { SearchField } from "../components/SearchField.tsx";
+import { ResultState } from "../components/ResultState.tsx";
 import { Solid } from "../components/Glass.tsx";
 import { ApiError } from "../lib/api.ts";
 import { admin, type PermissionRule } from "../lib/admin.ts";
@@ -41,9 +42,11 @@ export function Permissions() {
   const [editing, setEditing] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const [filter, setFilter] = useState("");
+  const [revision, setRevision] = useState(0);
 
   useEffect(() => {
     let alive = true;
+    setError(null);
     admin
       .permissionRules()
       .then((r) => alive && setRules(r.rules))
@@ -51,7 +54,7 @@ export function Permissions() {
     return () => {
       alive = false;
     };
-  }, []);
+  }, [revision]);
 
   /** گروه‌بندی بر اساس عملیات — چون سؤال همیشه «چه کسی می‌تواند X» است. */
   const byOperation = useMemo(() => {
@@ -101,19 +104,13 @@ export function Permissions() {
   if (error && !rules) {
     return (
       <Solid as="section" className="pad">
-        <p className="pos-alert" role="alert">
-          <span className="dot dot--crit" aria-hidden="true">●</span> {error}
-        </p>
+        <ResultState kind="error" title={error} actionLabel="تلاش دوباره" onAction={() => setRevision(v => v + 1)} />
       </Solid>
     );
   }
 
   if (!rules) {
-    return (
-      <Solid as="section" className="pad">
-        <p className="muted">در حال بارگذاری مجوزها…</p>
-      </Solid>
-    );
+    return <div aria-busy="true"><Solid as="section" className="pad"><ResultState kind="loading" title="در حال بارگذاری مجوزها…" /></Solid></div>;
   }
 
   return (
@@ -137,6 +134,7 @@ export function Permissions() {
         </p>
 
         <SearchField label="جست‌وجوی عملیات یا نقش" value={filter} onChange={setFilter} />
+        {byOperation.size === 0 ? <ResultState title={filter ? "برای این جست‌وجو مجوزی پیدا نشد." : "مجوزی برای نمایش وجود ندارد."} actionLabel={filter ? "پاک‌کردن جست‌وجو" : undefined} onAction={() => setFilter("")} /> : null}
 
         {[...byOperation.entries()].map(([operation, list]) => (
           <section key={operation} className="perm-group">
@@ -172,7 +170,7 @@ export function Permissions() {
                         </>
                       )}
                     </span>
-                    <button type="button" onClick={() => setEditing(key(r))} disabled={busy}>
+                    <button type="button" className="btn btn--quiet" onClick={() => setEditing(key(r))} disabled={busy}>
                       ویرایش
                     </button>
                   </li>

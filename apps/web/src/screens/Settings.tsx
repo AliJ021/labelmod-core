@@ -1,3 +1,5 @@
+import { SettingsNavigation, TabPanels, useTabsId } from "../components/Tabs.tsx";
+import { useMediaQuery } from "../lib/use-media-query.ts";
 /**
  * تنظیمات — ناحیه «متوسط» ADR-002.
  *
@@ -518,40 +520,30 @@ function Field({
  * hardcode نمی‌کند.
  */
 const TABS = [
-  { key: "keys", label: "تنظیمات" },
-  { key: "appearance", label: "نمایش و عملکرد" },
-  { key: "accounts", label: "کدینگ حساب" },
-  { key: "mapping", label: "نگاشت حساب" },
-  { key: "terminals", label: "پایانه‌ها" },
-  { key: "permissions", label: "مجوزها" },
-  { key: "opening", label: "افتتاحیه و تفصیلی" },
-  { key: "devices", label: "دستگاه‌ها" },
-  { key: "health", label: "سلامت سیستم" },
-  { key: "staff", label: "پرسنل" },
-  { key: "twofactor", label: "ورود دومرحله‌ای" },
+  { key: "keys", label: "تنظیمات", group: "عمومی" },
+  { key: "appearance", label: "نمایش و عملکرد", group: "عمومی" },
+  { key: "health", label: "سلامت سیستم", group: "عمومی" },
+  { key: "accounts", label: "کدینگ حساب", group: "مالی و فروش" },
+  { key: "mapping", label: "نگاشت حساب", group: "مالی و فروش" },
+  { key: "terminals", label: "پایانه‌ها", group: "مالی و فروش" },
+  { key: "opening", label: "افتتاحیه و تفصیلی", group: "مالی و فروش" },
+  { key: "staff", label: "پرسنل", group: "کاربران و امنیت" },
+  { key: "permissions", label: "مجوزها", group: "کاربران و امنیت" },
+  { key: "devices", label: "دستگاه‌ها", group: "کاربران و امنیت" },
+  { key: "twofactor", label: "ورود دومرحله‌ای", group: "کاربران و امنیت" },
 ] as const;
 
 type Tab = (typeof TABS)[number]["key"];
 
 export function Settings({ currentUserId, onOwnPassword }: { currentUserId: string; onOwnPassword: () => void }) {
   const [tab, setTab] = useState<Tab>("keys");
+  const tabsId = useTabsId();
+  const mobile = useMediaQuery("(max-width: 767px)");
 
   return (
-    <div className="stack" style={{ gap: "var(--s-4)" }}>
-      <div className="subtabs" role="tablist" aria-label="بخش‌های تنظیمات">
-        {TABS.map((t) => (
-          <button
-            key={t.key}
-            type="button"
-            role="tab"
-            aria-selected={tab === t.key}
-            className={tab === t.key ? "on" : ""}
-            onClick={() => setTab(t.key)}
-          >
-            {t.label}
-          </button>
-        ))}
-      </div>
+    <div className="settings-layout">
+      <SettingsNavigation id={tabsId} items={TABS} value={tab} onChange={setTab} mobile={mobile} />
+      <TabPanels id={tabsId} items={TABS} value={tab} className="settings-content" mobileLabel={mobile}>
 
       {tab === "keys" ? (
         <SettingKeys onOpenTerminals={() => setTab("terminals")} />
@@ -576,6 +568,7 @@ export function Settings({ currentUserId, onOwnPassword }: { currentUserId: stri
       ) : (
         <Opening />
       )}
+      </TabPanels>
     </div>
   );
 }

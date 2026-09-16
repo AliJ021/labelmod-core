@@ -83,7 +83,7 @@
 			# `style-src-attr` باز است، چون React سبک را روی صفت
 			# `style` می‌نشاند. مرورگر قدیمی که این دو را نمی‌شناسد از
 			# `style-src` استفاده می‌کند.
-			Content-Security-Policy "default-src 'none'; script-src 'self' 'wasm-unsafe-eval'; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; style-src-elem 'self' https://fonts.googleapis.com; style-src-attr 'unsafe-inline'; font-src 'self' https://fonts.gstatic.com; img-src 'self' data: blob:; media-src 'self' blob:; worker-src 'self' blob:; connect-src 'self'; manifest-src 'self'; object-src 'none'; base-uri 'none'; form-action 'self'; frame-ancestors 'none'"
+			Content-Security-Policy "default-src 'none'; script-src 'self' 'wasm-unsafe-eval'; style-src 'self' 'unsafe-inline'; style-src-elem 'self'; style-src-attr 'unsafe-inline'; font-src 'self'; img-src 'self' data: blob:; media-src 'self' blob:; worker-src 'self' blob:; connect-src 'self'; manifest-src 'self'; object-src 'none'; base-uri 'none'; form-action 'self'; frame-ancestors 'none'"
 
 			# دوربین لازم است — اسکن بارکد با موبایل. بقیه بسته.
 			Permissions-Policy "camera=(self), microphone=(), geolocation=(), payment=(), usb=()"

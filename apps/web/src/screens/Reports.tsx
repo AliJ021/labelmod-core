@@ -1,3 +1,4 @@
+import { TabList, TabPanels, useTabsId } from "../components/Tabs.tsx";
 /**
  * گزارش‌ها — ناحیه متوسط.
  *
@@ -90,6 +91,7 @@ function when(iso: string): string {
 }
 
 export function Reports() {
+  const tabsId = useTabsId();
   const [tab, setTab] = useState<Tab>("sales");
   const [branches, setBranches] = useState<Branch[]>([]);
   const [branchId, setBranchId] = useState("");
@@ -133,20 +135,8 @@ export function Reports() {
 
   return (
     <div className="stack" style={{ gap: "var(--s-4)" }}>
-      <div className="subtabs" role="tablist" aria-label="گزارش‌ها">
-        {TABS.map((t) => (
-          <button
-            key={t.key}
-            type="button"
-            role="tab"
-            aria-selected={tab === t.key}
-            className={tab === t.key ? "on" : ""}
-            onClick={() => setTab(t.key)}
-          >
-            {t.label}
-          </button>
-        ))}
-      </div>
+      <TabList id={tabsId} items={TABS} value={tab} onChange={setTab} label="گزارش‌ها" />
+      <TabPanels id={tabsId} items={TABS} value={tab} className="stack section-stack">
 
       {/* فیلترها روی سطح شیشه‌ای — لایه کنترلی، نه محتوا. */}
       <Glass radius="md" className="pad">
@@ -207,6 +197,7 @@ export function Reports() {
       ) : (
         <CashReport period={p} />
       )}
+      </TabPanels>
     </div>
   );
 }

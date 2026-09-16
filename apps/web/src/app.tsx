@@ -1,14 +1,7 @@
-/**
- * پوسته برنامه — و جایی که «ناحیه‌بندی» ADR-002 دیده می‌شود.
- *
- * دو نما با دو قاعده متفاوت، در یک برنامه:
- *   داشبورد  شیشه کامل — خوانده می‌شود، عجله‌ای نیست
- *   صندوق    مات — عمل می‌شود، زیر نور فروشگاه، با صف پشت سر
- *
- * همین کنار هم بودن، دلیل ناحیه‌بندی را نشان می‌دهد بهتر از هر سندی.
- */
+/** پوسته: ناوبری شیشه‌ای، محتوای مالی مات و دسترس‌پذیر. */
 import { useCallback, useEffect, useState } from "react";
 import { Glass, GlassFilters } from "./components/Glass.tsx";
+import { TabList, TabPanels, useTabsId } from "./components/Tabs.tsx";
 import { HeaderTools } from "./components/HeaderTools.tsx";
 import { PasswordDialog } from "./components/PasswordDialog.tsx";
 import { Dashboard } from "./screens/Dashboard.tsx";
@@ -46,7 +39,16 @@ type Zone =
   | "customers"
   | "settings";
 
+const ZONES = [
+  { key: "dashboard", label: "داشبورد" }, { key: "pos", label: "صندوق" },
+  { key: "returns", label: "مرجوعی" }, { key: "catalog", label: "کالا و قیمت" },
+  { key: "purchasing", label: "انبار و خرید" }, { key: "treasury", label: "خزانه و چک" },
+  { key: "customers", label: "مشتریان" }, { key: "reports", label: "گزارش‌ها" },
+  { key: "settings", label: "تنظیمات" },
+] as const;
+
 export function App() {
+  const tabsId = useTabsId();
   const [zone, setZone] = useState<Zone>("dashboard");
   const [theme, setThemeState] = useState<Theme>("system");
   const [passwordOpen, setPasswordOpen] = useState(false);
@@ -192,7 +194,7 @@ export function App() {
     const doc = document as Document & {
       startViewTransition?: (cb: () => void) => void;
     };
-    if (typeof doc.startViewTransition === "function") {
+    if (typeof doc.startViewTransition === "function" && !matchMedia("(prefers-reduced-motion: reduce)").matches && document.documentElement.dataset.perf !== "on") {
       doc.startViewTransition(() => setZone(next));
     } else {
       setZone(next);
@@ -221,94 +223,13 @@ export function App() {
         <Glass as="nav" radius="md" className="topbar" refract={false} live>
           <strong className="brand">لیبل مد</strong>
 
-          <div className="zones" role="tablist" aria-label="بخش‌ها">
-            <button
-              type="button"
-              role="tab"
-              aria-selected={zone === "dashboard"}
-              className={zone === "dashboard" ? "on" : ""}
-              onClick={() => switchZone("dashboard")}
-            >
-              داشبورد
-            </button>
-            <button
-              type="button"
-              role="tab"
-              aria-selected={zone === "pos"}
-              className={zone === "pos" ? "on" : ""}
-              onClick={() => switchZone("pos")}
-            >
-              صندوق
-            </button>
-            <button
-              type="button"
-              role="tab"
-              aria-selected={zone === "returns"}
-              className={zone === "returns" ? "on" : ""}
-              onClick={() => switchZone("returns")}
-            >
-              مرجوعی
-            </button>
-            <button
-              type="button"
-              role="tab"
-              aria-selected={zone === "catalog"}
-              className={zone === "catalog" ? "on" : ""}
-              onClick={() => switchZone("catalog")}
-            >
-              کالا و قیمت
-            </button>
-            <button
-              type="button"
-              role="tab"
-              aria-selected={zone === "purchasing"}
-              className={zone === "purchasing" ? "on" : ""}
-              onClick={() => switchZone("purchasing")}
-            >
-              انبار و خرید
-            </button>
-            <button
-              type="button"
-              role="tab"
-              aria-selected={zone === "treasury"}
-              className={zone === "treasury" ? "on" : ""}
-              onClick={() => switchZone("treasury")}
-            >
-              خزانه و چک
-            </button>
-            <button
-              type="button"
-              role="tab"
-              aria-selected={zone === "customers"}
-              className={zone === "customers" ? "on" : ""}
-              onClick={() => switchZone("customers")}
-            >
-              مشتریان
-            </button>
-            <button
-              type="button"
-              role="tab"
-              aria-selected={zone === "reports"}
-              className={zone === "reports" ? "on" : ""}
-              onClick={() => switchZone("reports")}
-            >
-              گزارش‌ها
-            </button>
-            <button
-              type="button"
-              role="tab"
-              aria-selected={zone === "settings"}
-              className={zone === "settings" ? "on" : ""}
-              onClick={() => switchZone("settings")}
-            >
-              تنظیمات
-            </button>
-          </div>
+          <TabList id={tabsId} items={ZONES} value={zone} onChange={switchZone} label="بخش‌ها" className="zones" />
 
           {me ? <HeaderTools me={me} theme={theme} onTheme={cycleTheme} onLock={() => void lockScreen()} onLogout={() => void signOut()} onPassword={() => setPasswordOpen(true)} onReauth={() => setUpgrading(true)} /> : null}
         </Glass>
 
-        <main style={{ viewTransitionName: "zone" }}>
+        <main>
+        <TabPanels id={tabsId} items={ZONES} value={zone} style={{ viewTransitionName: "zone" }}>
           {zone === "dashboard" ? (
             <Dashboard />
           ) : zone === "pos" ? (
@@ -328,6 +249,7 @@ export function App() {
           ) : (
             <Settings currentUserId={me?.id ?? ""} onOwnPassword={() => setPasswordOpen(true)} />
           )}
+        </TabPanels>
         </main>
 
         {passwordOpen && me ? <PasswordDialog name={me.fullName} own onCancel={() => setPasswordOpen(false)} onApply={async (password, currentPassword) => {

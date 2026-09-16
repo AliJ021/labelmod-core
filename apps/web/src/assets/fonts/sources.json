@@ -1,0 +1,44 @@
+[
+  {
+    "name": "Vazirmatn-variable.woff2",
+    "url": "https://raw.githubusercontent.com/rastikerdar/vazirmatn/v33.003/fonts/webfonts/Vazirmatn%5Bwght%5D.woff2",
+    "sha256": "4e3fa217d38fdafc1fea4414ceb58ca5e662cf0ab5fa735a8c8c20e8b42cad92",
+    "bytes": 111152
+  },
+  {
+    "name": "Vazirmatn-OFL.txt",
+    "url": "https://raw.githubusercontent.com/rastikerdar/vazirmatn/v33.003/OFL.txt",
+    "sha256": "17e355067c8284f47743a1ee3b1ef7ff684ff0601eda357f9353b10b3016ab31",
+    "bytes": 4391
+  },
+  {
+    "name": "IBMPlexMono-Regular.woff2",
+    "url": "https://raw.githubusercontent.com/IBM/plex/03dea6f4809b5b8b8e3cc3afbedf825379d97900/packages/plex-mono/fonts/complete/woff2/IBMPlexMono-Regular.woff2",
+    "sha256": "49ce58b41a0e1cb921c0f58d9a5b8b96a2cc21437c7066f3ba4f24873076d131",
+    "bytes": 45640
+  },
+  {
+    "name": "IBMPlexMono-Medium.woff2",
+    "url": "https://raw.githubusercontent.com/IBM/plex/03dea6f4809b5b8b8e3cc3afbedf825379d97900/packages/plex-mono/fonts/complete/woff2/IBMPlexMono-Medium.woff2",
+    "sha256": "8c2c290cbd998fa1f647e4572aca6ebbd72589551b0f3f9f8bb8628fbb8219d5",
+    "bytes": 46724
+  },
+  {
+    "name": "IBMPlexMono-SemiBold.woff2",
+    "url": "https://raw.githubusercontent.com/IBM/plex/03dea6f4809b5b8b8e3cc3afbedf825379d97900/packages/plex-mono/fonts/complete/woff2/IBMPlexMono-SemiBold.woff2",
+    "sha256": "ed5eaca7522336959d6c3810bd9bb78424f0d964082d581bfbea169ee08d14e3",
+    "bytes": 47016
+  },
+  {
+    "name": "IBMPlexMono-Bold.woff2",
+    "url": "https://raw.githubusercontent.com/IBM/plex/03dea6f4809b5b8b8e3cc3afbedf825379d97900/packages/plex-mono/fonts/complete/woff2/IBMPlexMono-Bold.woff2",
+    "sha256": "5788454f0ba4bd6300752c474215c4dd926682fa173ae1c6252d57828b6a235d",
+    "bytes": 46684
+  },
+  {
+    "name": "IBMPlexMono-OFL.txt",
+    "url": "https://raw.githubusercontent.com/IBM/plex/03dea6f4809b5b8b8e3cc3afbedf825379d97900/LICENSE.txt",
+    "sha256": "7e6b2818edbd8f6a01ae80641cc8f16a51080d08fb4e532be3a0b6f74adb07da",
+    "bytes": 4456
+  }
+]
