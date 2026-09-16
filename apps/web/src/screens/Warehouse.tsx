@@ -1,3 +1,4 @@
+import { TabList, TabPanels, useTabsId } from "../components/Tabs.tsx";
 /**
  * ناحیه انبار و خرید — چهار کار، یک ناحیه.
  *
@@ -26,58 +27,20 @@ import { Transfer } from "./Transfer.tsx";
 
 type Tab = "orders" | "receipts" | "returns" | "transfer" | "count";
 
+const TABS = [
+  { key: "orders", label: "سفارش خرید" }, { key: "receipts", label: "رسید خرید" },
+  { key: "returns", label: "برگشت از خرید" }, { key: "transfer", label: "انتقال بین انبار" },
+  { key: "count", label: "انبارگردانی" },
+] as const;
+
 export function Warehouse() {
+  const tabsId = useTabsId();
   const [tab, setTab] = useState<Tab>("receipts");
 
   return (
     <div className="stack" style={{ gap: "var(--s-3)" }}>
-      <div className="zones wh-tabs" role="tablist" aria-label="انبار و خرید">
-        <button
-          type="button"
-          role="tab"
-          aria-selected={tab === "orders"}
-          className={tab === "orders" ? "on" : ""}
-          onClick={() => setTab("orders")}
-        >
-          سفارش خرید
-        </button>
-        <button
-          type="button"
-          role="tab"
-          aria-selected={tab === "receipts"}
-          className={tab === "receipts" ? "on" : ""}
-          onClick={() => setTab("receipts")}
-        >
-          رسید خرید
-        </button>
-        <button
-          type="button"
-          role="tab"
-          aria-selected={tab === "returns"}
-          className={tab === "returns" ? "on" : ""}
-          onClick={() => setTab("returns")}
-        >
-          برگشت از خرید
-        </button>
-        <button
-          type="button"
-          role="tab"
-          aria-selected={tab === "transfer"}
-          className={tab === "transfer" ? "on" : ""}
-          onClick={() => setTab("transfer")}
-        >
-          انتقال بین انبار
-        </button>
-        <button
-          type="button"
-          role="tab"
-          aria-selected={tab === "count"}
-          className={tab === "count" ? "on" : ""}
-          onClick={() => setTab("count")}
-        >
-          انبارگردانی
-        </button>
-      </div>
+      <TabList id={tabsId} items={TABS} value={tab} onChange={setTab} label="انبار و خرید" className="zones wh-tabs" />
+      <TabPanels id={tabsId} items={TABS} value={tab}>
 
       {tab === "orders" ? (
         <PurchaseOrder />
@@ -90,6 +53,7 @@ export function Warehouse() {
       ) : (
         <StockCount />
       )}
+      </TabPanels>
     </div>
   );
 }

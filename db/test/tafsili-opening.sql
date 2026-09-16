@@ -231,11 +231,11 @@ PERFORM pg_temp.assert_eq('جمع تفصیلی = مانده معین', v_taf, v_
 
 -- کد نمایشی همان شکلی است که آدم‌ها می‌نویسند: معین + کد تفصیلی
 PERFORM pg_temp.assert_txt('کد نمایشی تفصیلی ساخته می‌شود',
-  (SELECT (code LIKE '%-%')::text FROM ledger.party_tafsili
+  (SELECT bool_and(code LIKE '%-%')::text FROM ledger.party_tafsili
     WHERE party_id = v_c1), 'true');
 
 PERFORM pg_temp.assert_txt('نام شخص در تفصیلی می‌آید',
-  (SELECT party_name FROM ledger.party_tafsili WHERE party_id = v_c1), 'مشتری الف');
+  (SELECT bool_and(party_name = 'مشتری الف')::text FROM ledger.party_tafsili WHERE party_id = v_c1), 'true');
 
 -- ═══════════════════════════════════════════════════════════════════
 RAISE NOTICE E'\n═══ ادعاهای پایدار ═══';
