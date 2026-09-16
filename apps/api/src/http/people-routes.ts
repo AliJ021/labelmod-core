@@ -181,6 +181,21 @@ export function registerPeopleRoutes(app: FastifyInstance, deps: PeopleRouteDeps
     }
   }
 
+  /**
+   * Customer records are company-wide: the table has no branch key and a
+   * single customer may buy from several branches.  Until that model carries
+   * an explicit per-branch association, a branch-bound role must not read or
+   * mutate the global record (or its cross-branch financial history).
+   */
+  async function requireGlobalCustomerAccess(
+    s: { userId: string; pinUnlocked: boolean },
+  ): Promise<void> {
+    await requireForSession(db, s, "customer.manage");
+    if ((await branchesOf(db, s.userId)) !== "all") {
+      throw new ScopeError("پرونده مشتریان سراسری است و به دسترسی همه شعبه‌ها نیاز دارد");
+    }
+  }
+
   // ── پرسنل ────────────────────────────────────────────────────────
 
   app.get("/users", async (req) => {
@@ -289,7 +304,7 @@ export function registerPeopleRoutes(app: FastifyInstance, deps: PeopleRouteDeps
 
   app.get("/customers", async (req) => {
     const s = session(req);
-    await requireForSession(db, s, "customer.manage");
+    await requireGlobalCustomerAccess(s);
     const q = z
       .object({
         q: z.string().trim().max(64).optional(),
@@ -307,7 +322,7 @@ export function registerPeopleRoutes(app: FastifyInstance, deps: PeopleRouteDeps
   app.get("/customers/:id", async (req) => {
     const s = session(req);
     const { id } = z.object({ id: uuid }).parse(req.params);
-    await requireForSession(db, s, "customer.manage");
+    await requireGlobalCustomerAccess(s);
     const c = await customers.byId(id);
     if (!c) throw new CustomerError("customer_not_found", "مشتری یافت نشد", 404);
     return { customer: c, invoices: await customers.invoices(id, 50) };
@@ -323,7 +338,7 @@ export function registerPeopleRoutes(app: FastifyInstance, deps: PeopleRouteDeps
   app.post("/customers", async (req, reply) => {
     const s = session(req);
     const body = upsertCustomerBody.parse(req.body);
-    await requireForSession(db, s, "customer.manage");
+    await requireGlobalCustomerAccess(s);
 
     const out = await customers.upsert({
       mobile: body.mobile,
@@ -344,7 +359,7 @@ export function registerPeopleRoutes(app: FastifyInstance, deps: PeopleRouteDeps
     const s = session(req);
     const { id } = z.object({ id: uuid }).parse(req.params);
     const body = updateCustomerBody.parse(req.body);
-    await requireForSession(db, s, "customer.manage");
+    await requireGlobalCustomerAccess(s);
 
     await customers.update({
       id,
@@ -403,7 +418,7 @@ export function registerPeopleRoutes(app: FastifyInstance, deps: PeopleRouteDeps
         limit: z.coerce.number().int().min(1).max(200).default(50),
       })
       .parse(req.query);
-    await requireForSession(db, s, "customer.manage");
+    await requireGlobalCustomerAccess(s);
 
     const allowed = await branchesOf(db, s.userId);
     if (q.warehouseId !== undefined) {
@@ -427,7 +442,7 @@ export function registerPeopleRoutes(app: FastifyInstance, deps: PeopleRouteDeps
   app.get("/customers/:id/measures", async (req) => {
     const s = session(req);
     const { id } = z.object({ id: uuid }).parse(req.params);
-    await requireForSession(db, s, "customer.manage");
+    await requireGlobalCustomerAccess(s);
     return { measures: await customers.measuresOf(id) };
   });
 
@@ -442,7 +457,7 @@ export function registerPeopleRoutes(app: FastifyInstance, deps: PeopleRouteDeps
     const s = session(req);
     const { id } = z.object({ id: uuid }).parse(req.params);
     const body = measuresBody.parse(req.body);
-    await requireForSession(db, s, "customer.manage");
+    await requireGlobalCustomerAccess(s);
     return {
       measures: await customers.setMeasures({
         id,

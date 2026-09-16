@@ -51,6 +51,7 @@ describe("پرسنل و مشتری", { skip }, () => {
   const admin = `uadm_${suffix}`;
   const cashier = `ucash_${suffix}`;
   const supervisor = `usup_${suffix}`;
+  const branchSupervisor = `ubrsup_${suffix}`;
   let adminId = "";
 
   const sessions = new Map<
@@ -103,6 +104,7 @@ describe("پرسنل و مشتری", { skip }, () => {
       [admin, "مدیر پرسنل", "admin"],
       [cashier, "صندوق‌دار پرسنل", "cashier"],
       [supervisor, "سرپرست پرسنل", "supervisor"],
+      [branchSupervisor, "سرپرست شعبه", "supervisor"],
     ] as const) {
       const u = await handle.db
         .insertInto("identity.app_user")
@@ -119,7 +121,11 @@ describe("پرسنل و مشتری", { skip }, () => {
         .executeTakeFirstOrThrow();
       await handle.db
         .insertInto("identity.user_role")
-        .values({ user_id: u.id, role_code: role, branch_id: BRANCH })
+        .values({
+          user_id: u.id,
+          role_code: role,
+          branch_id: username === supervisor ? null : BRANCH,
+        })
         .execute();
       if (role === "admin") adminId = u.id;
     }
@@ -517,6 +523,31 @@ describe("پرسنل و مشتری", { skip }, () => {
   });
 
   // ── مشتری ──────────────────────────────────────────────────────
+
+  test("نقش شعبه‌ای به پرونده سراسری مشتری دسترسی ندارد", async () => {
+    const s = await loginAs(branchSupervisor);
+    for (const request of [
+      { method: "GET" as const, url: "/customers" },
+      {
+        method: "GET" as const,
+        url: "/customers/00000000-0000-7000-8000-000000000001",
+      },
+      {
+        method: "POST" as const,
+        url: "/customers",
+        payload: { mobile: "09120000000" },
+      },
+      {
+        method: "PATCH" as const,
+        url: "/customers/00000000-0000-7000-8000-000000000001",
+        payload: { internalNote: "نباید نوشته شود" },
+      },
+    ]) {
+      const r = await app.inject({ ...request, ...s });
+      assert.equal(r.statusCode, 403, `${request.method} ${request.url}: ${r.body}`);
+      assert.equal(JSON.parse(r.body).error.code, "branch_forbidden");
+    }
+  });
 
   test("شماره تکراری، مشتری دوم نمی‌سازد", async () => {
     // **ادعای مرکزی مشتری.** اگر جدا بود، مشتری‌ای که یک بار آنلاین و
