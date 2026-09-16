@@ -12,6 +12,7 @@
  */
 import { after, before, describe, test } from "node:test";
 import assert from "node:assert/strict";
+import { sql } from "kysely";
 import type { FastifyInstance } from "fastify";
 import { createDb, type DbHandle } from "../src/db/client.ts";
 import { createDisposableDb, type DisposableDb } from "./helpers/disposable-db.ts";
@@ -686,6 +687,44 @@ describe("تنظیمات از مسیر API", { skip }, () => {
       assert.equal(typeof row.balance, "string", "مانده باید رشته باشد");
       assert.equal(typeof row.code, "string");
     }
+  });
+
+  test("تفصیلی فقط گردش شعبه‌های مجاز را جمع می‌زند", async () => {
+    const user = await handle.db
+      .selectFrom("identity.app_user")
+      .select("id")
+      .where("username", "=", admin)
+      .executeTakeFirstOrThrow();
+    const customer = await sql<{ id: string }>`
+      INSERT INTO sales.customer (mobile_normalized, full_name, credit_limit)
+      VALUES (${`0912${suffix.slice(-7)}`}, 'مشتری دامنه تفصیلی', 0)
+      RETURNING id`.execute(handle.db);
+    const otherBranch = await sql<{ id: string }>`
+      INSERT INTO platform.branch (code, name)
+      VALUES (${`TAF-${suffix}`}, 'شعبه نامجاز تفصیلی')
+      RETURNING id`.execute(handle.db);
+    const partyId = customer.rows[0]!.id;
+    const foreignBranchId = otherBranch.rows[0]!.id;
+
+    for (const [branchId, amount] of [[BRANCH, 300_000], [foreignBranchId, 700_000]] as const) {
+      await sql`
+        SELECT ledger.post_entry(
+          'loyalty_grant', ${branchId}::uuid, now()::date, 'آزمون دامنه تفصیلی',
+          jsonb_build_array(
+            jsonb_build_object('leg', 'expense', 'amount', ${amount}),
+            jsonb_build_object('leg', 'liability', 'amount', ${amount},
+                               'party_type', 'customer', 'party_id', ${partyId}::uuid)),
+          NULL, NULL, ${user.id}::uuid)`.execute(handle.db);
+    }
+
+    const s = await loginAs(admin);
+    const r = await app.inject({ method: "GET", url: "/tafsili", ...s });
+    assert.equal(r.statusCode, 200, r.body);
+    const row = (r.json().rows as Array<Record<string, unknown>>).find(
+      (candidate) => candidate.partyId === partyId,
+    );
+    assert.ok(row, "تفصیلی شعبه مجاز برنگشت");
+    assert.equal(row.balance, "300000", "گردش شعبه نامجاز در مانده جمع شده است");
   });
 
   test("سند افتتاحیه نامتوازن ۴۰۹ فارسی می‌گیرد", async () => {
