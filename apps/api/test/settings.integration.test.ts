@@ -706,6 +706,12 @@ describe("تنظیمات از مسیر API", { skip }, () => {
     const partyId = customer.rows[0]!.id;
     const foreignBranchId = otherBranch.rows[0]!.id;
 
+    await sql`
+      INSERT INTO platform.document_counter (branch_id, doc_type, fiscal_year, prefix)
+      SELECT ${foreignBranchId}::uuid, doc_type, fiscal_year, prefix
+        FROM platform.document_counter WHERE branch_id = ${BRANCH}::uuid
+    `.execute(handle.db);
+
     for (const [branchId, amount] of [[BRANCH, 300_000], [foreignBranchId, 700_000]] as const) {
       await sql`
         SELECT ledger.post_entry(

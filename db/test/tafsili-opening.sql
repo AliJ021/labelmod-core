@@ -194,6 +194,9 @@ PERFORM ledger.post_entry('loyalty_grant', BR, now()::date,
 -- را پیش از آن‌که API دامنه کاربر را اعمال کند جدا نگه دارد.
 INSERT INTO platform.branch (code, name)
 VALUES ('TAF-B2', 'شعبه دوم تفصیلی') RETURNING id INTO v_branch2;
+INSERT INTO platform.document_counter (branch_id, doc_type, fiscal_year, prefix)
+SELECT v_branch2, doc_type, fiscal_year, prefix
+  FROM platform.document_counter WHERE branch_id = BR;
 PERFORM ledger.post_entry('loyalty_grant', v_branch2, now()::date,
   'امتیاز مشتری الف در شعبه دوم',
   jsonb_build_array(
