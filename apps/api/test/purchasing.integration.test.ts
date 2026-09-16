@@ -624,6 +624,25 @@ describe("رسید خرید", { skip }, () => {
     assert.equal(r.statusCode, 400, r.body);
   });
 
+  test("سرفصل غیرهزینه برای هزینه بدون تخصیص رد می‌شود", async () => {
+    const s = await loginAs(keeper);
+    const draft = await newDraft(keeper);
+    const r = await app.inject({
+      method: "POST",
+      url: `/receipts/${draft.id}/charges`,
+      ...s,
+      payload: {
+        chargeType: "بسته‌بندی",
+        amount: "1000",
+        allocation: "none",
+        expenseAccountCode: "1101",
+      },
+    });
+
+    assert.equal(r.statusCode, 400, r.body);
+    assert.equal(r.json().error.code, "expense_account_invalid");
+  });
+
   // ── برگشت از خرید ─────────────────────────────────────────────────
 
   test("برگشت از خرید: بدهی به بهای فاکتور، انبار به بهای دفتری", async () => {
@@ -850,12 +869,6 @@ describe("رسید خرید", { skip }, () => {
         kind: "bank",
         branch_id: otherBranch.id,
         ledger_account_code: "1102",
-        bank_name: null,
-        account_no: null,
-        iban: null,
-        settlement_account_id: null,
-        settlement_days: 0,
-        fee_percent: "0",
         is_active: true,
       })
       .returning("id")

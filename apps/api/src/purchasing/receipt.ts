@@ -560,13 +560,33 @@ export class ReceiptService {
            AND a.is_active
            AND a.kind <> 'cash_box'
            AND (a.branch_id IS NULL OR a.branch_id = r.branch_id)
-         FOR KEY SHARE OF a
+         FOR SHARE OF a
       `.execute(trx);
       if (!account.rows[0]) {
         throw new PurchasingError(
           "pay_account_forbidden",
           "حساب پرداخت باید فعال و متعلق به شعبه رسید باشد",
           403,
+        );
+      }
+    }
+
+    if (input.expenseAccountCode !== undefined) {
+      const expenseAccount = await trx
+        .selectFrom("ledger.account")
+        .select("code")
+        .where("code", "=", input.expenseAccountCode)
+        .where("type", "=", "expense")
+        .where("is_active", "=", true)
+        .where("is_postable", "=", true)
+        .forShare()
+        .executeTakeFirst();
+
+      if (!expenseAccount) {
+        throw new PurchasingError(
+          "expense_account_invalid",
+          "سرفصل هزینه باید حساب هزینه فعال و قابل ثبت باشد",
+          400,
         );
       }
     }

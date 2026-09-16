@@ -28,6 +28,9 @@
  */
 import { useCallback, useEffect, useState } from "react";
 import { Glass, Solid } from "../components/Glass.tsx";
+import { SearchField } from "../components/SearchField.tsx";
+import { ResultState } from "../components/ResultState.tsx";
+import { useLatestQuery } from "../lib/use-latest-query.ts";
 import { ApiError } from "../lib/api.ts";
 import { ActionKeys, actionFor } from "../lib/action-key.ts";
 import { rialFromTomanInput, toman } from "../lib/money.ts";
@@ -71,33 +74,19 @@ function shortDate(iso: string): string {
 }
 
 export function Catalog() {
-  const [products, setProducts] = useState<Product[]>([]);
   const [search, setSearch] = useState("");
   const [showArchived, setShowArchived] = useState(false);
   const [selected, setSelected] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [note, setNote] = useState<string | null>(null);
-  const [loading, setLoading] = useState(true);
   const [creating, setCreating] = useState(false);
-
-  const reload = useCallback(async () => {
-    try {
-      const r = await catalog.products({
-        search,
-        status: showArchived ? "all" : "active",
-      });
-      setProducts(r.products);
-      setError(null);
-    } catch (err) {
-      setError(message(err));
-    } finally {
-      setLoading(false);
-    }
-  }, [search, showArchived]);
-
-  useEffect(() => {
-    void reload();
-  }, [reload]);
+  const [revision, setRevision] = useState(0);
+  const [delay, setDelay] = useState(0);
+  const load = useCallback(async (signal: AbortSignal) => (await catalog.products({ search, status: showArchived ? "all" : "active" }, { signal })).products, [search, showArchived]);
+  const query = useLatestQuery({ key: JSON.stringify([search, showArchived]), version: revision, load, delay, enabled: selected === null });
+  const products = query.data ?? [];
+  function reload() { setDelay(0); setRevision(v => v + 1); }
+  function changeSearch(value: string) { setSearch(value); setDelay(value === "" ? 0 : 250); }
 
   if (selected !== null) {
     return (
@@ -105,14 +94,14 @@ export function Catalog() {
         productId={selected}
         onBack={() => {
           setSelected(null);
-          void reload();
+          reload();
         }}
       />
     );
   }
 
   return (
-    <div className="stack">
+    <div className="stack catalog-page">
       <Glass as="section" className="pad">
         <div className="row" style={{ justifyContent: "space-between", alignItems: "center" }}>
           <h2 style={{ fontSize: "1rem", margin: 0 }}>کالا و قیمت</h2>
@@ -121,20 +110,13 @@ export function Catalog() {
           </button>
         </div>
 
-        <div className="row" style={{ gap: ".5rem", marginTop: ".75rem" }}>
-          <input
-            type="text"
-            inputMode="search"
-            value={search}
-            onChange={(e) => setSearch(e.target.value)}
-            placeholder="جست‌وجوی کد یا نام کالا"
-            style={{ flex: 1 }}
-          />
-          <label className="row" style={{ gap: ".35rem", alignItems: "center" }}>
+        <div className="catalog-toolbar">
+          <SearchField label="جست‌وجوی کد یا نام کالا" value={search} onChange={changeSearch} onSearch={reload} onClear={reload} />
+          <label className="filter-check">
             <input
               type="checkbox"
               checked={showArchived}
-              onChange={(e) => setShowArchived(e.target.checked)}
+              onChange={(e) => { setShowArchived(e.target.checked); setDelay(0); }}
             />
             <span>بایگانی‌شده‌ها هم</span>
           </label>
@@ -163,13 +145,14 @@ export function Catalog() {
         </p>
       ) : null}
 
+      <div aria-busy={query.loading}>
       <Solid className="pad">
-        {loading ? (
-          <p className="muted" style={{ margin: 0 }}>
-            در حال بارگذاری کالاها…
-          </p>
+        {query.loading ? (
+          <ResultState kind="loading" title="در حال جست‌وجوی کالاها…" />
+        ) : query.error ? (
+          <ResultState kind="error" title={message(query.error)} actionLabel="تلاش دوباره" onAction={reload} />
         ) : products.length === 0 ? (
-          <p className="empty">کالایی یافت نشد.</p>
+          <ResultState title={search ? "برای این جست‌وجو کالایی پیدا نشد." : "کالایی برای نمایش در این فهرست نیست."} description={search ? "کد یا نام دیگری را امتحان کنید." : "با افزودن کالا، تعریف تنوع‌ها و قیمت‌گذاری را شروع کنید."} actionLabel={search ? "پاک‌کردن جست‌وجو" : "افزودن کالا"} onAction={() => { if (search) { changeSearch(""); reload(); } else setCreating(true); }} />
         ) : (
           <table className="grid">
             <thead>
@@ -220,6 +203,7 @@ export function Catalog() {
           </table>
         )}
       </Solid>
+      </div>
     </div>
   );
 }
@@ -378,6 +362,7 @@ function ProductDetail({
   productId: string;
   onBack: () => void;
 }) {
+  const [statusBusy, setStatusBusy] = useState(false);
   const [product, setProduct] = useState<Product | null>(null);
   const [variations, setVariations] = useState<Variation[]>([]);
   const [error, setError] = useState<string | null>(null);
@@ -429,7 +414,7 @@ function ProductDetail({
   }
 
   return (
-    <div className="stack">
+    <div className="stack catalog-detail">
       <Glass as="section" className="pad">
         <div className="row" style={{ justifyContent: "space-between", alignItems: "center" }}>
           <div>
@@ -519,6 +504,7 @@ function ProductDetail({
                   <td>
                     <button
                       type="button"
+                      className="btn btn--quiet"
                       onClick={() => setHistoryOf(historyOf === v.id ? null : v.id)}
                     >
                       {historyOf === v.id ? "بستن تاریخچه" : "تاریخچه قیمت"}
@@ -552,7 +538,12 @@ function ProductDetail({
         </p>
         <button
           type="button"
+          className="btn"
+          disabled={statusBusy}
+          aria-busy={statusBusy}
           onClick={async () => {
+            if (statusBusy) return;
+            setStatusBusy(true);
             const next = product.status === "archived" ? "active" : "archived";
             try {
               await catalog.setProductStatus(productId, next);
@@ -560,10 +551,10 @@ function ProductDetail({
               await load();
             } catch (err) {
               setError(message(err));
-            }
+            } finally { setStatusBusy(false); }
           }}
         >
-          {product.status === "archived" ? "فعال‌کردن کالا" : "بایگانی‌کردن کالا"}
+          {statusBusy ? "در حال ثبت…" : product.status === "archived" ? "فعال‌کردن کالا" : "بایگانی‌کردن کالا"}
         </button>
       </Solid>
     </div>

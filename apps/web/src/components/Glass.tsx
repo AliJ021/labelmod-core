@@ -82,6 +82,7 @@ export function Glass({
    */
   const onPointerMove = live
     ? (e: React.PointerEvent<HTMLElement>) => {
+        if (matchMedia("(prefers-reduced-motion: reduce)").matches || document.documentElement.dataset.perf === "on") return;
         const el = ref.current;
         if (!el) return;
         const r = el.getBoundingClientRect();

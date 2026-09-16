@@ -23,7 +23,7 @@ BEGIN
     INTO v_kind, v_code, v_active, v_account_branch
     FROM treasury.account
    WHERE id = NEW.paid_account_id
-   FOR KEY SHARE;
+   FOR SHARE;
 
   IF v_kind = 'cash_box' THEN
     RAISE EXCEPTION
@@ -37,7 +37,7 @@ BEGIN
   SELECT branch_id INTO v_receipt_branch
     FROM purchasing.receipt
    WHERE id = NEW.receipt_id
-   FOR KEY SHARE;
+   FOR SHARE;
 
   IF v_kind IS NULL OR NOT coalesce(v_active, false) THEN
     RAISE EXCEPTION 'حساب خزانه پرداخت فعال نیست';
@@ -64,5 +64,30 @@ BEGIN
     RAISE EXCEPTION 'هزینه خرید دارای حساب خزانه نامعتبر یا خارج از شعبه است';
   END IF;
 END $$;
+
+CREATE OR REPLACE FUNCTION purchasing.guard_used_charge_branch()
+RETURNS trigger LANGUAGE plpgsql AS $
+BEGIN
+  IF NEW.branch_id IS DISTINCT FROM OLD.branch_id THEN
+    IF TG_TABLE_SCHEMA = 'treasury' THEN
+      IF EXISTS (SELECT 1 FROM purchasing.receipt_charge WHERE paid_account_id = OLD.id) THEN
+        RAISE EXCEPTION 'شعبه حساب دارای هزینه خرید قابل تغییر نیست'
+          USING ERRCODE = '23514', CONSTRAINT = 'used_charge_account_branch';
+      END IF;
+    ELSE
+      IF EXISTS (SELECT 1 FROM purchasing.receipt_charge WHERE receipt_id = OLD.id) THEN
+        RAISE EXCEPTION 'شعبه رسید دارای هزینه قابل تغییر نیست'
+          USING ERRCODE = '23514', CONSTRAINT = 'used_charge_receipt_branch';
+      END IF;
+    END IF;
+  END IF;
+  RETURN NEW;
+END $;
+CREATE TRIGGER used_charge_account_branch_t
+  BEFORE UPDATE OF branch_id ON treasury.account
+  FOR EACH ROW EXECUTE FUNCTION purchasing.guard_used_charge_branch();
+CREATE TRIGGER used_charge_receipt_branch_t
+  BEFORE UPDATE OF branch_id ON purchasing.receipt
+  FOR EACH ROW EXECUTE FUNCTION purchasing.guard_used_charge_branch();
 
 COMMIT;

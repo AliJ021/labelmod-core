@@ -359,7 +359,9 @@ export function registerPurchasingRoutes(
       .where("is_active", "=", true)
       .where("kind", "!=", "cash_box")
       .orderBy("code");
-    if (scope !== "all") {
+    if (scope !== "all" && scope.length === 0) {
+      query = query.where("branch_id", "is", null);
+    } else if (scope !== "all") {
       query = query.where((eb) =>
         eb.or([eb("branch_id", "is", null), eb("branch_id", "in", scope)]),
       );

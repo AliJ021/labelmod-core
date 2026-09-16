@@ -425,6 +425,8 @@ test("هیچ ابزار موقتی در مخزن جا نمانده", () => {
   ]);
   const junk = tracked.filter((f) => {
     const m = /^apps\/(api|web)\/([^/]+)$/.exec(f);
+    // پیکربندی آزمون مرورگر، فایل دائمی و مشخص پکیج وب است.
+    if (f === "apps/web/playwright.config.ts") return false;
     return m !== null && !allowedAtPackageRoot.has(m[2] as string);
   });
   assert.deepEqual(junk, [], `فایل ناشناخته در ریشهٔ پکیج:\n${junk.join("\n")}`);

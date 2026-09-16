@@ -81,11 +81,10 @@ button {
   white-space: nowrap;
 }
 
-/* گذار سیال میان نماها — روی transform و opacity، نه layout. */
+/* ورود کوتاه محتوا؛ بدون snapshot صفحه که در WebKit ناپایدار است. */
+@keyframes zone-enter { from { opacity: .65; } to { opacity: 1; } }
 @media (prefers-reduced-motion: no-preference) {
-  ::view-transition-old(zone),
-  ::view-transition-new(zone) {
-    animation-duration: var(--t-slow);
-    animation-timing-function: var(--ease-out);
+  :root:not([data-perf="on"]) .zone-panel:not([hidden]) {
+    animation: zone-enter var(--t-base) var(--ease-out);
   }
 }
