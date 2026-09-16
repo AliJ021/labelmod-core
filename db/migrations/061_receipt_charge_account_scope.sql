@@ -66,7 +66,7 @@ BEGIN
 END $$;
 
 CREATE OR REPLACE FUNCTION purchasing.guard_used_charge_branch()
-RETURNS trigger LANGUAGE plpgsql AS $
+RETURNS trigger LANGUAGE plpgsql AS $$
 BEGIN
   IF NEW.branch_id IS DISTINCT FROM OLD.branch_id THEN
     IF TG_TABLE_SCHEMA = 'treasury' THEN
@@ -82,7 +82,7 @@ BEGIN
     END IF;
   END IF;
   RETURN NEW;
-END $;
+END $$;
 CREATE TRIGGER used_charge_account_branch_t
   BEFORE UPDATE OF branch_id ON treasury.account
   FOR EACH ROW EXECUTE FUNCTION purchasing.guard_used_charge_branch();
