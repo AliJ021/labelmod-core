@@ -251,7 +251,7 @@ describe("گزارش‌ها", { skip }, () => {
   });
 
   test("کاردکس بدون cost.view تعداد را می‌دهد و بها را نه", async () => {
-    const url = `/reports/stock-movements?warehouseId=${STORE_WH}&variationId=${variationId}&from=${today}&to=${today}&warehouseId=${STORE_WH}`;
+    const url = `/reports/stock-movements?variationId=${variationId}&from=${today}&to=${today}&warehouseId=${STORE_WH}`;
     const ok = await get(admin, url);
     assert.equal(ok.statusCode, 200, ok.body);
     const rows = (JSON.parse(ok.body) as { rows: Array<Record<string, unknown>> }).rows;
@@ -272,7 +272,7 @@ describe("گزارش‌ها", { skip }, () => {
 
     const movements = await get(
       supervisor,
-      `/reports/stock-movements?warehouseId=${STORE_WH}&variationId=${variationId}&from=${today}&to=${today}`,
+      `/reports/stock-movements?variationId=${variationId}&from=${today}&to=${today}`,
     );
     assert.equal(movements.statusCode, 403, movements.body);
   });
