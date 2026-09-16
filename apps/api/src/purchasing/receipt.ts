@@ -551,6 +551,26 @@ export class ReceiptService {
     await setActor(trx, input.actorId);
     await this.assertDraft(trx, input.receiptId);
 
+    if (input.paidFrom === "treasury" && input.paidAccountId !== undefined) {
+      const account = await sql<{ id: string }>`
+        SELECT a.id
+          FROM treasury.account a
+          JOIN purchasing.receipt r ON r.id = ${input.receiptId}::uuid
+         WHERE a.id = ${input.paidAccountId}::uuid
+           AND a.is_active
+           AND a.kind <> 'cash_box'
+           AND (a.branch_id IS NULL OR a.branch_id = r.branch_id)
+         FOR KEY SHARE OF a
+      `.execute(trx);
+      if (!account.rows[0]) {
+        throw new PurchasingError(
+          "pay_account_forbidden",
+          "حساب پرداخت باید فعال و متعلق به شعبه رسید باشد",
+          403,
+        );
+      }
+    }
+
     const row = await trx
       .insertInto("purchasing.receipt_charge")
       .values({

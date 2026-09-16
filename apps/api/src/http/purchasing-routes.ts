@@ -351,13 +351,20 @@ export function registerPurchasingRoutes(
     const s = session(req);
     await requireForSession(db, s, "stock.receive");
 
-    const rows = await db
+    const scope = await branchesOf(db, s.userId);
+
+    let query = db
       .selectFrom("treasury.account")
       .select(["id", "code", "name", "kind"])
       .where("is_active", "=", true)
       .where("kind", "!=", "cash_box")
-      .orderBy("code")
-      .execute();
+      .orderBy("code");
+    if (scope !== "all") {
+      query = query.where((eb) =>
+        eb.or([eb("branch_id", "is", null), eb("branch_id", "in", scope)]),
+      );
+    }
+    const rows = await query.execute();
 
     return rows.map((r) => ({ id: r.id, code: r.code, name: r.name, kind: r.kind }));
   });
