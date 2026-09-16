@@ -17,6 +17,7 @@
  */
 import { useCallback, useEffect, useState } from "react";
 import { Solid } from "../components/Glass.tsx";
+import { SearchField } from "../components/SearchField.tsx";
 import { ApiError } from "../lib/api.ts";
 import { parseRial, rialFromTomanInput, toman } from "../lib/money.ts";
 import { normalizeDigits } from "../lib/settings-value.ts";
@@ -143,10 +144,10 @@ export function Customers() {
             void search();
           }}
         >
-          <label className="auth-field">
+          <div className="auth-field">
             <span>جست‌وجو — شماره یا نام</span>
-            <input value={q} onChange={(e) => setQ(e.target.value)} />
-          </label>
+            <SearchField label="جست‌وجوی شماره یا نام مشتری" value={q} onChange={setQ} />
+          </div>
           <button type="submit" className="btn btn--primary" disabled={busy}>
             جست‌وجو
           </button>
@@ -159,7 +160,7 @@ export function Customers() {
           </button>
         </form>
         <p className="muted small" style={{ margin: 0 }}>
-          جست‌وجو سمت سرور است — مشتری دو سال پیش هم پیدا می‌شود.
+          نام یا شمارهٔ مشتری را برای پیدا کردن پرونده‌اش وارد کنید.
         </p>
       </Solid>
 

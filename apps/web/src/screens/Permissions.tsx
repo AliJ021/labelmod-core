@@ -19,6 +19,7 @@
  * دسترسی را باز کند یا ببندد.
  */
 import { useEffect, useMemo, useState } from "react";
+import { SearchField } from "../components/SearchField.tsx";
 import { Solid } from "../components/Glass.tsx";
 import { ApiError } from "../lib/api.ts";
 import { admin, type PermissionRule } from "../lib/admin.ts";
@@ -135,14 +136,7 @@ export function Permissions() {
           مجاز نیست</strong>. این دو یکی نیستند.
         </p>
 
-        <label className="perm-filter">
-          <span className="sr-only">جست‌وجو</span>
-          <input
-            value={filter}
-            onChange={(e) => setFilter(e.target.value)}
-            placeholder="جست‌وجوی عملیات یا نقش…"
-          />
-        </label>
+        <SearchField label="جست‌وجوی عملیات یا نقش" value={filter} onChange={setFilter} />
 
         {[...byOperation.entries()].map(([operation, list]) => (
           <section key={operation} className="perm-group">

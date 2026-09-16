@@ -28,6 +28,7 @@
  */
 import { useCallback, useEffect, useState } from "react";
 import { Glass, Solid } from "../components/Glass.tsx";
+import { SearchField } from "../components/SearchField.tsx";
 import { ApiError } from "../lib/api.ts";
 import { ActionKeys, actionFor } from "../lib/action-key.ts";
 import { rialFromTomanInput, toman } from "../lib/money.ts";
@@ -112,7 +113,7 @@ export function Catalog() {
   }
 
   return (
-    <div className="stack">
+    <div className="stack catalog-page">
       <Glass as="section" className="pad">
         <div className="row" style={{ justifyContent: "space-between", alignItems: "center" }}>
           <h2 style={{ fontSize: "1rem", margin: 0 }}>کالا و قیمت</h2>
@@ -121,16 +122,9 @@ export function Catalog() {
           </button>
         </div>
 
-        <div className="row" style={{ gap: ".5rem", marginTop: ".75rem" }}>
-          <input
-            type="text"
-            inputMode="search"
-            value={search}
-            onChange={(e) => setSearch(e.target.value)}
-            placeholder="جست‌وجوی کد یا نام کالا"
-            style={{ flex: 1 }}
-          />
-          <label className="row" style={{ gap: ".35rem", alignItems: "center" }}>
+        <div className="catalog-toolbar">
+          <SearchField label="جست‌وجوی کد یا نام کالا" value={search} onChange={setSearch} />
+          <label className="filter-check">
             <input
               type="checkbox"
               checked={showArchived}

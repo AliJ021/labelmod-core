@@ -21,6 +21,7 @@ import { Terminals } from "./Terminals.tsx";
 import { Permissions } from "./Permissions.tsx";
 import { Opening } from "./Opening.tsx";
 import { Devices } from "./Devices.tsx";
+import { Appearance } from "./Appearance.tsx";
 import { Staff } from "./Staff.tsx";
 import { TwoFactor } from "./TwoFactor.tsx";
 import { api, ApiError } from "../lib/api.ts";
@@ -518,6 +519,7 @@ function Field({
  */
 const TABS = [
   { key: "keys", label: "تنظیمات" },
+  { key: "appearance", label: "نمایش و عملکرد" },
   { key: "accounts", label: "کدینگ حساب" },
   { key: "mapping", label: "نگاشت حساب" },
   { key: "terminals", label: "پایانه‌ها" },
@@ -531,7 +533,7 @@ const TABS = [
 
 type Tab = (typeof TABS)[number]["key"];
 
-export function Settings() {
+export function Settings({ currentUserId, onOwnPassword }: { currentUserId: string; onOwnPassword: () => void }) {
   const [tab, setTab] = useState<Tab>("keys");
 
   return (
@@ -553,6 +555,8 @@ export function Settings() {
 
       {tab === "keys" ? (
         <SettingKeys onOpenTerminals={() => setTab("terminals")} />
+      ) : tab === "appearance" ? (
+        <Appearance />
       ) : tab === "accounts" ? (
         <Accounts />
       ) : tab === "mapping" ? (
@@ -562,7 +566,7 @@ export function Settings() {
       ) : tab === "permissions" ? (
         <Permissions />
       ) : tab === "staff" ? (
-        <Staff />
+        <Staff currentUserId={currentUserId} onOwnPassword={onOwnPassword} />
       ) : tab === "twofactor" ? (
         <TwoFactor />
       ) : tab === "devices" ? (

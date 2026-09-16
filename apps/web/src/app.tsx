@@ -9,6 +9,8 @@
  */
 import { useCallback, useEffect, useState } from "react";
 import { Glass, GlassFilters } from "./components/Glass.tsx";
+import { HeaderTools } from "./components/HeaderTools.tsx";
+import { PasswordDialog } from "./components/PasswordDialog.tsx";
 import { Dashboard } from "./screens/Dashboard.tsx";
 import { Login, LockScreen, ReauthPanel } from "./screens/Login.tsx";
 import { Pos } from "./screens/Pos.tsx";
@@ -28,12 +30,8 @@ import {
   type Me,
 } from "./lib/session.ts";
 import {
-  getPerf,
   getTheme,
-  glassIsOff,
-  setPerf,
   setTheme,
-  type Perf,
   type Theme,
 } from "./lib/theme.ts";
 
@@ -48,34 +46,11 @@ type Zone =
   | "customers"
   | "settings";
 
-/**
- * چرا هر ناحیه این‌قدر شیشه دارد — ADR-002، به زبان خودِ صفحه.
- *
- * تنظیمات ناحیه «متوسط» است: کارت گروه شیشه‌ای، ولی هر ورودی فرم مات.
- * عددی که تایپ می‌شود باید پرتضاد باشد، حتی وقتی عجله‌ای در کار نیست.
- */
-const ZONE_NOTE: Record<Zone, string> = {
-  dashboard: "این ناحیه شیشه کامل دارد — خوانده می‌شود، نه عمل.",
-  pos: "این ناحیه عمداً مات است — زیر نور فروشگاه باید در کسری از ثانیه خوانده شود.",
-  returns: "ناحیه متوسط — کارت شیشه‌ای، ولی هر سطر و مبلغی که خوانده می‌شود مات.",
-  catalog:
-    "ناحیه متوسط — تعریف کالا و قیمت کار دقتی است، پس هر فرم و هر عددی مات می‌ماند.",
-  purchasing:
-    "ناحیه متوسط — کار انبار طولانی است و خستگی چشم مهم، پس عدد و سطر مات می‌مانند.",
-  treasury:
-    "ناحیه متوسط — پول و چک، پس هر عدد و هر فرم مات می‌ماند.",
-  reports:
-    "ناحیه متوسط — نوار و کارت شیشه‌ای، ولی جدول عدد کاملاً مات و پرتضاد.",
-  customers:
-    "ناحیه کامل شیشه — پرونده مشتری تعامل آرام است، نه کار زیر فشار.",
-  settings: "شیشه فقط روی کارت گروه — ورودی‌ها مات‌اند تا عدد و دکمه پرتضاد بمانند.",
-};
-
 export function App() {
   const [zone, setZone] = useState<Zone>("dashboard");
   const [theme, setThemeState] = useState<Theme>("system");
-  const [perf, setPerfState] = useState<Perf>("system");
-  const [glassOff, setGlassOff] = useState(false);
+  const [passwordOpen, setPasswordOpen] = useState(false);
+  const [loginNotice, setLoginNotice] = useState<string | null>(null);
 
   const [me, setMe] = useState<Me | null>(null);
   const [loaded, setLoaded] = useState(false);
@@ -85,8 +60,6 @@ export function App() {
   // ترجیح‌ها فقط در مرورگر خوانده می‌شوند، پس بعد از Mount.
   useEffect(() => {
     setThemeState(getTheme());
-    setPerfState(getPerf());
-    setGlassOff(glassIsOff());
     setLockedUser(readLockedUser());
   }, []);
 
@@ -102,6 +75,7 @@ export function App() {
       const who = await session.me();
       setMe(who);
       if (who) {
+        setLoginNotice(null);
         forgetLock();
         setLockedUser(null);
       }
@@ -203,7 +177,10 @@ export function App() {
             onSwitchUser={switchUser}
           />
         ) : (
-          <Login onDone={() => void refresh()} />
+          <>
+            {loginNotice ? <p className="session-notice solid" role="status">{loginNotice}</p> : null}
+            <Login onDone={() => void refresh()} />
+          </>
         )}
       </>
     );
@@ -229,12 +206,6 @@ export function App() {
     setThemeState(next);
   }
 
-  function togglePerf() {
-    const next: Perf = perf === "on" ? "off" : "on";
-    setPerf(next);
-    setPerfState(next);
-    setGlassOff(glassIsOff());
-  }
 
   return (
     <>
@@ -334,45 +305,7 @@ export function App() {
             </button>
           </div>
 
-          <div className="tools">
-            {/*
-              «نشست با PIN باز شده» یک هشدار نیست، یک واقعیت است که
-              صندوق‌دار باید ببیند: بازپرداخت و ابطال و تغییر قیمت تا
-              احراز کامل مجدد بسته‌اند. اگر پنهانش کنیم، کاربر دکمه
-              می‌زند و خطای سرور می‌گیرد بی‌آنکه بفهمد چرا.
-            */}
-            {me !== null && !me.elevated ? (
-              <button
-                type="button"
-                className="tool"
-                onClick={() => setUpgrading(true)}
-                title="برای عملیات حساس، احراز هویت کامل لازم است — برای ارتقا کلیک کنید"
-              >
-                <span className="dot dot--warn" aria-hidden="true">●</span> نشست PIN
-              </button>
-            ) : null}
-            <span className="tool" title={me?.roles.join("، ") ?? ""}>
-              {me?.fullName}
-            </span>
-            <button type="button" onClick={() => void lockScreen()} className="tool">
-              قفل صفحه
-            </button>
-            <button type="button" onClick={() => void signOut()} className="tool">
-              خروج
-            </button>
-            <button type="button" onClick={cycleTheme} className="tool">
-              {theme === "system" ? "تم: سیستم" : theme === "light" ? "تم: روشن" : "تم: تیره"}
-            </button>
-            <button
-              type="button"
-              onClick={togglePerf}
-              className="tool"
-              aria-pressed={glassOff}
-              title="شیشه را خاموش می‌کند — برای دستگاه ضعیف یا راحتی چشم"
-            >
-              حالت عملکرد: {glassOff ? "روشن" : "خاموش"}
-            </button>
-          </div>
+          {me ? <HeaderTools me={me} theme={theme} onTheme={cycleTheme} onLock={() => void lockScreen()} onLogout={() => void signOut()} onPassword={() => setPasswordOpen(true)} onReauth={() => setUpgrading(true)} /> : null}
         </Glass>
 
         <main style={{ viewTransitionName: "zone" }}>
@@ -393,11 +326,19 @@ export function App() {
           ) : zone === "customers" ? (
             <Customers />
           ) : (
-            <Settings />
+            <Settings currentUserId={me?.id ?? ""} onOwnPassword={() => setPasswordOpen(true)} />
           )}
         </main>
 
-        <p className="zone-note">{ZONE_NOTE[zone]}</p>
+        {passwordOpen && me ? <PasswordDialog name={me.fullName} own onCancel={() => setPasswordOpen(false)} onApply={async (password, currentPassword) => {
+          await session.changePassword(currentPassword, password);
+          setPasswordOpen(false);
+          forgetLock();
+          setLockedUser(null);
+          setMe(null);
+          setZone("dashboard");
+          setLoginNotice("رمز شما تغییر کرد و همهٔ نشست‌ها بسته شدند. با رمز تازه وارد شوید.");
+        }} /> : null}
       </div>
     </>
   );
