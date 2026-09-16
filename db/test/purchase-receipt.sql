@@ -242,6 +242,45 @@ PERFORM pg_temp.assert_raises(
              (receipt_id, charge_type, amount, allocation, expense_account_code)
            VALUES (%L::uuid, 'حمل', 1, 'by_value', '6103')$q$, v_b));
 
+-- کلاینت قابل اعتماد نیست: کد صندوق، بانک یا هر حساب غیرهزینه نباید
+-- از مسیر مستقیم درج هم به مؤلفهٔ expensed_charge راه پیدا کند.
+PERFORM pg_temp.assert_raises(
+  'حساب دارایی به‌عنوان سرفصل هزینه رد می‌شود',
+  format($q$INSERT INTO purchasing.receipt_charge
+             (receipt_id, charge_type, amount, allocation, expense_account_code)
+           VALUES (%L::uuid, 'بسته‌بندی', 1, 'none', '1101')$q$, v_b));
+
+-- حساب پرداخت شعبه دیگر حتی با نوشتن مستقیم SQL پذیرفته نمی‌شود.
+INSERT INTO platform.branch (id, code, name)
+VALUES ('00000000-0000-7000-8000-000000000099', 'OTHER-PR', 'شعبه دیگر');
+INSERT INTO treasury.account
+  (id, code, name, kind, branch_id, ledger_account_code)
+VALUES
+  ('00000000-0000-7000-8000-000000000299', 'BANK-OTHER-PR', 'بانک شعبه دیگر',
+   'bank', '00000000-0000-7000-8000-000000000099', '1102');
+INSERT INTO purchasing.receipt (branch_id, supplier_id, warehouse_id, occurred_at)
+VALUES (BR, v_sup, WH, '2026-06-15') RETURNING id INTO v_c;
+PERFORM pg_temp.assert_raises(
+  'حساب خزانه شعبه دیگر روی رسید رد می‌شود',
+  format($q$INSERT INTO purchasing.receipt_charge
+             (receipt_id, charge_type, amount, allocation, paid_from,
+              payee_type, paid_account_id)
+           VALUES (%L::uuid, 'حمل', 1, 'by_value', 'treasury', 'other',
+                   '00000000-0000-7000-8000-000000000299'::uuid)$q$, v_c));
+
+UPDATE treasury.account SET branch_id = BR
+ WHERE id = '00000000-0000-7000-8000-000000000299';
+INSERT INTO purchasing.receipt_charge
+  (receipt_id, charge_type, amount, allocation, paid_from, payee_type, paid_account_id)
+VALUES (v_c, 'حمل', 1, 'by_value', 'treasury', 'other',
+        '00000000-0000-7000-8000-000000000299');
+PERFORM pg_temp.assert_raises('شعبه حساب استفاده‌شده ثابت می‌ماند',
+  $q$UPDATE treasury.account SET branch_id = '00000000-0000-7000-8000-000000000099'
+      WHERE id = '00000000-0000-7000-8000-000000000299'$q$);
+PERFORM pg_temp.assert_raises('شعبه رسید دارای هزینه ثابت می‌ماند',
+  format($q$UPDATE purchasing.receipt SET branch_id = '00000000-0000-7000-8000-000000000099'
+       WHERE id = %L::uuid$q$, v_c));
+
 RAISE NOTICE E'\n╔══════════════════════════════════════════╗';
 RAISE NOTICE   '║   تست رسید خرید پاس شد                  ║';
 RAISE NOTICE   '╚══════════════════════════════════════════╝';

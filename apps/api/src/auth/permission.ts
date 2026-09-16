@@ -8,8 +8,9 @@
  * اگر وسوسه شدی اینجا شرطی بنویسی، یعنی یک ردیف در permission_rule کم
  * است. ردیف را اضافه کن، نه شرط را.
  */
-import { sql } from "kysely";
+import { sql, type Transaction } from "kysely";
 import type { Db } from "../db/client.ts";
+import type { Database } from "../db/types.ts";
 import { serializeMoney } from "../lib/money.ts";
 
 export type Verdict = "allow" | "deny" | "needs_approval";
@@ -29,7 +30,9 @@ export interface PermissionQuery {
   viaPin?: boolean | undefined;
 }
 
-export async function can(db: Db, q: PermissionQuery): Promise<Decision> {
+type PermissionExecutor = Db | Transaction<Database>;
+
+export async function can(db: PermissionExecutor, q: PermissionQuery): Promise<Decision> {
   const r = await sql<Decision>`
     SELECT verdict, approver, reason
       FROM identity.can(
@@ -64,7 +67,7 @@ export class ForbiddenError extends Error {
 }
 
 /** مجوز یا خطا. عبور از سقف هم خطاست — ولی خطای «نیازمند تأیید». */
-export async function requirePermission(db: Db, q: PermissionQuery): Promise<Decision> {
+export async function requirePermission(db: PermissionExecutor, q: PermissionQuery): Promise<Decision> {
   const decision = await can(db, q);
   if (decision.verdict !== "allow") throw new ForbiddenError(decision, q.operation);
   return decision;
@@ -79,7 +82,7 @@ export async function requirePermission(db: Db, q: PermissionQuery): Promise<Dec
  * کند یا اشتباه بفرستد.
  */
 export async function requireForSession(
-  db: Db,
+  db: PermissionExecutor,
   session: { userId: string; pinUnlocked: boolean },
   operation: string,
   opts: { amount?: bigint | undefined; percent?: number | undefined } = {},

@@ -25,11 +25,13 @@ import { AuthService } from "../src/auth/service.ts";
 import { hashSecret } from "../src/auth/password.ts";
 import { buildApp } from "../src/http/app.ts";
 import { loadConfig } from "../src/lib/config.ts";
+import { UserService } from "../src/people/user.ts";
 
 const DATABASE_URL = process.env.DATABASE_URL;
 const skip = DATABASE_URL ? false : "DATABASE_URL تنظیم نشده — تست یکپارچه رد شد";
 
 const BRANCH = "00000000-0000-7000-8000-000000000001";
+const OTHER_BRANCH = "00000000-0000-7000-8000-000000000002";
 
 interface UserJson {
   id: string;
@@ -52,6 +54,7 @@ describe("پرسنل و مشتری", { skip }, () => {
   const admin = `uadm_${suffix}`;
   const cashier = `ucash_${suffix}`;
   const supervisor = `usup_${suffix}`;
+  const branchSupervisor = `ubrsup_${suffix}`;
   let adminId = "";
 
   const sessions = new Map<
@@ -104,6 +107,7 @@ describe("پرسنل و مشتری", { skip }, () => {
       [admin, "مدیر پرسنل", "admin"],
       [cashier, "صندوق‌دار پرسنل", "cashier"],
       [supervisor, "سرپرست پرسنل", "supervisor"],
+      [branchSupervisor, "سرپرست شعبه", "supervisor"],
     ] as const) {
       const u = await handle.db
         .insertInto("identity.app_user")
@@ -444,6 +448,69 @@ describe("پرسنل و مشتری", { skip }, () => {
     assert.equal(JSON.parse(r.body).error.code, "scope_escalation");
   });
 
+  test("مدیر شعبه کاربر شعبه دیگر را نمی‌بیند یا تغییر نمی‌دهد", async () => {
+    await handle.db
+      .insertInto("platform.branch")
+      .values({ id: OTHER_BRANCH, code: `other_${suffix}`, name: "شعبه دیگر", is_active: true })
+      .execute();
+    const foreign = await handle.db
+      .insertInto("identity.app_user")
+      .values({
+        username: `foreign_${suffix}`,
+        full_name: "کاربر شعبه دیگر",
+        password_hash: await hashSecret(PASSWORD),
+        is_active: true,
+        mobile: null,
+        pin_hash: null,
+        totp_secret: null,
+      })
+      .returning("id")
+      .executeTakeFirstOrThrow();
+    await handle.db
+      .insertInto("identity.user_role")
+      .values({ user_id: foreign.id, role_code: "cashier", branch_id: OTHER_BRANCH })
+      .execute();
+
+    const service = new UserService(handle.db);
+    await assert.rejects(service.setRoles({ id: adminId, actorId: adminId,
+      roles: [{ roleCode: "admin", branchId: OTHER_BRANCH }] }), { code: "scope_escalation" });
+    const s = await loginAs(admin);
+    const list = await app.inject({ method: "GET", url: "/users", ...s });
+    assert.equal(list.statusCode, 200, list.body);
+    assert.equal(list.body.includes(foreign.id), false, "کاربر بیرون دامنه نباید فهرست شود");
+
+    const attempts = [
+      app.inject({ method: "GET", url: `/users/${foreign.id}`, ...s }),
+      app.inject({
+        method: "PATCH",
+        url: `/users/${foreign.id}`,
+        ...s,
+        payload: { fullName: "دستکاری" },
+      }),
+      app.inject({
+        method: "PUT",
+        url: `/users/${foreign.id}/roles`,
+        ...s,
+        payload: { roles: [{ roleCode: "cashier", branchId: BRANCH }] },
+      }),
+      app.inject({
+        method: "POST",
+        url: `/users/${foreign.id}/reset-password`,
+        ...s,
+        payload: {},
+      }),
+      app.inject({
+        method: "PUT",
+        url: `/users/${foreign.id}/pin`,
+        ...s,
+        payload: { pin: "4271" },
+      }),
+    ];
+    for (const response of await Promise.all(attempts)) {
+      assert.equal(response.statusCode, 404, response.body);
+    }
+  });
+
   test("PIN تعیین و برداشته می‌شود، و خودش هرگز برنمی‌گردد", async () => {
     const s = await loginAs(admin);
     const created = await app.inject({
@@ -518,6 +585,30 @@ describe("پرسنل و مشتری", { skip }, () => {
   });
 
   // ── مشتری ──────────────────────────────────────────────────────
+
+  test("نقش شعبه‌ای به پرونده سراسری مشتری دسترسی ندارد", async () => {
+    const result = await sql<{ id: string }>`INSERT INTO sales.customer (mobile_normalized, full_name)
+      VALUES ('09120000000', 'پرونده بدون رابطه شعبه') RETURNING id`.execute(handle.db);
+    const id = result.rows[0]!.id;
+    const s = await loginAs(branchSupervisor);
+    const list = await app.inject({ method: "GET", url: "/customers?q=09120000000", ...s });
+    assert.equal(list.statusCode, 200, list.body);
+    assert.deepEqual(list.json().customers, [], "پرونده سراسری نباید از جست‌وجو افشا شود");
+    for (const request of [
+      { method: "GET", url: `/customers/${id}` },
+      { method: "GET", url: `/customers/${id}/measures` },
+      { method: "GET", url: `/customers/${id}/fitting` },
+      { method: "POST", url: "/customers", payload: { mobile: "09120000000" } },
+      { method: "PATCH", url: `/customers/${id}`, payload: { internalNote: "نباید نوشته شود" } },
+      { method: "PUT", url: `/customers/${id}/measures`, payload: { values: { height: 180 } } },
+    ] as const) {
+      const r = await app.inject({ ...request, ...s });
+      assert.equal(r.statusCode, 403, r.body);
+    }
+    const unchanged = await handle.db.selectFrom("sales.customer").select("internal_note")
+      .where("id", "=", id).executeTakeFirstOrThrow();
+    assert.equal(unchanged.internal_note, null);
+  });
 
   test("شماره تکراری، مشتری دوم نمی‌سازد", async () => {
     // **ادعای مرکزی مشتری.** اگر جدا بود، مشتری‌ای که یک بار آنلاین و
@@ -777,6 +868,82 @@ describe("پرسنل و مشتری", { skip }, () => {
       const r = await app.inject({ method: "GET", url, ...s });
       assert.equal(r.statusCode, 403, `${url}: ${r.body}`);
     }
+  });
+
+  test("سرپرست شعبه دیگر نه پرونده را می‌بیند و نه تغییر می‌دهد", async () => {
+    const ownerSession = await loginAs(supervisor);
+    const id = await customerId(ownerSession);
+    const branch = await sql<{ id: string }>`
+      INSERT INTO platform.branch (code, name)
+      VALUES (${`OTHER-${suffix}`}, 'شعبه دیگر') RETURNING id
+    `.execute(handle.db);
+    const outsider = `uother_${suffix}`;
+    const user = await handle.db.insertInto("identity.app_user").values({
+      username: outsider,
+      full_name: "سرپرست شعبه دیگر",
+      password_hash: await hashSecret(PASSWORD),
+      is_active: true,
+      mobile: null,
+      pin_hash: null,
+      totp_secret: null,
+    }).returning("id").executeTakeFirstOrThrow();
+    await handle.db.insertInto("identity.user_role").values({
+      user_id: user.id,
+      role_code: "supervisor",
+      branch_id: branch.rows[0]!.id,
+    }).execute();
+    const outsiderSession = await loginAs(outsider);
+    const warehouse = await sql<{ id: string }>`
+      INSERT INTO inventory.warehouse (branch_id, code, name, kind)
+      VALUES (${branch.rows[0]!.id}::uuid, ${`OTHER-WH-${suffix}`}, 'انبار شعبه دیگر', 'store') RETURNING id
+    `.execute(handle.db);
+    const draft = await app.inject({ method: "POST", url: "/invoices", ...outsiderSession,
+      payload: { branchId: branch.rows[0]!.id, warehouseId: warehouse.rows[0]!.id,
+        channel: "phone", customerId: id } });
+    assert.equal(draft.statusCode, 201, draft.body);
+    const linked = await app.inject({ method: "PATCH", url: `/invoices/${draft.json().id}/customer`,
+      ...outsiderSession, payload: { mobile: "09121234567" } });
+    assert.equal(linked.statusCode, 200, linked.body);
+    const grant = await sql<{ n: string }>`SELECT count(*)::text AS n
+      FROM sales.customer_branch WHERE customer_id = ${id}::uuid
+        AND branch_id = ${branch.rows[0]!.id}::uuid`.execute(handle.db);
+    assert.equal(grant.rows[0]!.n, "0", "اتصال فاکتور نباید مجوز پرونده بسازد");
+
+    const search = await app.inject({
+      method: "GET", url: "/customers?q=0912123", ...outsiderSession,
+    });
+    assert.equal(search.statusCode, 200, search.body);
+    assert.deepEqual(
+      (JSON.parse(search.body) as { customers: unknown[] }).customers,
+      [],
+      "جست‌وجو نباید شناسه یا نشانی مشتری شعبه دیگر را فاش کند",
+    );
+
+    const rediscover = await app.inject({
+      method: "POST",
+      url: "/customers",
+      ...outsiderSession,
+      payload: { mobile: "09121234567", fullName: "نام مهاجم" },
+    });
+    assert.equal(rediscover.statusCode, 403, rediscover.body);
+
+    for (const request of [
+      { method: "GET", url: `/customers/${id}` },
+      { method: "GET", url: `/customers/${id}/measures` },
+      { method: "PATCH", url: `/customers/${id}`, payload: { address: "نشانی مهاجم" } },
+      { method: "PUT", url: `/customers/${id}/measures`, payload: { values: { height: 190 } } },
+    ] as const) {
+      const response = await app.inject({ ...request, ...outsiderSession });
+      assert.equal(response.statusCode, 403, `${request.method} ${request.url}: ${response.body}`);
+    }
+
+    const after = await app.inject({ method: "GET", url: `/customers/${id}`, ...ownerSession });
+    assert.equal(after.statusCode, 200, after.body);
+    assert.notEqual(
+      (JSON.parse(after.body) as { customer: { address: string | null } }).customer.address,
+      "نشانی مهاجم",
+      "درخواست ردشده نباید پرونده را تغییر دهد",
+    );
   });
 
   test("پیشنهاد سایز — کالای بدون اندازه حذف نمی‌شود", async () => {

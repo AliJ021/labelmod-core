@@ -57,6 +57,8 @@ export interface CustomerMeasure {
   valueCm: string;
 }
 
+export type CustomerBranchScope = readonly string[] | "all";
+
 /** یک کالای پیشنهادی، با امتیاز تناسب. */
 export interface FittingVariation {
   variationId: string;
@@ -151,18 +153,24 @@ function toJson(r: Row): Customer {
  * از دیگری عقب می‌ماند — همان دلیلی که «چقدرش رسیده» هم یک نما است
  * نه یک ستون.
  */
-const SELECT = sql`
+const selectCustomer = (branches: CustomerBranchScope) => sql`
   SELECT c.*,
          (SELECT count(*) FROM sales.invoice i
            WHERE i.customer_id = c.id
+             AND (${branches === "all"} OR i.branch_id = ANY(${branches === "all" ? [] : branches}::uuid[]))
              AND i.status IN ('finalized','paid','partially_returned','returned'))::text
            AS invoice_count,
          coalesce((SELECT sum(i.net_amount) FROM sales.invoice i
                     WHERE i.customer_id = c.id
+             AND (${branches === "all"} OR i.branch_id = ANY(${branches === "all" ? [] : branches}::uuid[]))
                       AND i.status IN ('finalized','paid','partially_returned','returned')), 0)::text
            AS total_purchased,
-         coalesce((SELECT sum(t.balance) FROM ledger.party_tafsili t
-                    WHERE t.party_type = 'customer' AND t.party_id = c.id), 0)::text
+         coalesce((SELECT sum(CASE WHEN a.nature = 'debit' THEN l.debit - l.credit ELSE l.credit - l.debit END)
+                    FROM ledger.journal_line l
+                    JOIN ledger.journal_entry e ON e.id = l.entry_id
+                    JOIN ledger.account a ON a.code = l.account_code
+                   WHERE l.party_type = 'customer' AND l.party_id = c.id
+                     AND (${branches === "all"} OR e.branch_id = ANY(${branches === "all" ? [] : branches}::uuid[]))), 0)::text
            AS balance
     FROM sales.customer c
 `;
@@ -180,22 +188,51 @@ export class CustomerService {
    * فهرست سقف دارد و مشتری‌ای که دو سال پیش خرید کرده در آن نمی‌آید؛
    * همان درسی که `GET /receipts/lookup` داد.
    */
-  async search(input: { q?: string | undefined; limit: number }): Promise<Customer[]> {
+  async search(input: {
+    q?: string | undefined;
+    limit: number;
+    branches: CustomerBranchScope;
+  }): Promise<Customer[]> {
     const term = (input.q ?? "").trim();
+    const branchFilter = input.branches === "all"
+      ? sql``
+      : sql`AND (
+          EXISTS (SELECT 1 FROM sales.customer_branch cb
+                   WHERE cb.customer_id = c.id
+                     AND cb.branch_id = ANY(${input.branches}::uuid[]))
+        )`;
     const rows = await sql<Row>`
-      ${SELECT}
+      ${selectCustomer(input.branches)}
       ${
         term === ""
-          ? sql`WHERE c.status <> 'merged'`
+          ? sql`WHERE c.status <> 'merged' ${branchFilter}`
           : sql`WHERE c.status <> 'merged'
                   AND (c.mobile_normalized LIKE ${`%${term}%`}
                        OR c.full_name ILIKE ${`%${term}%`}
-                       OR sales.normalize_mobile(${term}) = c.mobile_normalized)`
+                       OR sales.normalize_mobile(${term}) = c.mobile_normalized)
+                  ${branchFilter}`
       }
       ORDER BY c.created_at DESC
       LIMIT ${input.limit}
     `.execute(this.#db);
     return rows.rows.map(toJson);
+  }
+
+  /**
+   * پرونده برای شعبه‌ای قابل دسترس است که مشتری در آن ساخته شده یا
+   * رابطه صریح شعبه دارد. ساخت فاکتور مجوز پرونده ایجاد نمی‌کند. مشتری بی‌شعبه فقط برای نقش‌های
+   * سراسری قابل دسترس می‌ماند.
+   */
+  async isAccessible(id: string, branches: CustomerBranchScope): Promise<boolean> {
+    if (branches === "all") return true;
+    const r = await sql<{ allowed: boolean }>`
+      SELECT EXISTS (
+        SELECT 1 FROM sales.customer_branch cb
+         WHERE cb.customer_id = ${id}::uuid
+           AND cb.branch_id = ANY(${branches}::uuid[])
+      ) AS allowed
+    `.execute(this.#db);
+    return r.rows[0]?.allowed ?? false;
   }
 
   /**
@@ -289,8 +326,8 @@ export class CustomerService {
     }));
   }
 
-  async byId(id: string): Promise<Customer | null> {
-    const r = await sql<Row>`${SELECT} WHERE c.id = ${id}::uuid`.execute(this.#db);
+  async byId(id: string, branches: CustomerBranchScope = "all"): Promise<Customer | null> {
+    const r = await sql<Row>`${selectCustomer(branches)} WHERE c.id = ${id}::uuid`.execute(this.#db);
     const row = r.rows[0];
     return row === undefined ? null : toJson(row);
   }
@@ -309,6 +346,7 @@ export class CustomerService {
     consentSms?: boolean | undefined;
     consentMarketing?: boolean | undefined;
     actorId: string;
+    branches: CustomerBranchScope;
   }): Promise<{ id: string; created: boolean }> {
     return await this.#db.transaction().execute(async (trx) => {
       await setActor(trx, input.actorId);
@@ -329,6 +367,22 @@ export class CustomerService {
         .executeTakeFirst();
 
       if (existing) {
+        if (input.branches !== "all") {
+          const access = await sql<{ allowed: boolean }>`
+            SELECT EXISTS (
+              SELECT 1 FROM sales.customer_branch cb
+               WHERE cb.customer_id = ${existing.id}::uuid
+                 AND cb.branch_id = ANY(${input.branches}::uuid[])
+            ) AS allowed
+          `.execute(trx);
+          if (!(access.rows[0]?.allowed ?? false)) {
+            throw new CustomerError(
+              "customer_branch_forbidden",
+              "به پرونده این مشتری دسترسی ندارید",
+              403,
+            );
+          }
+        }
         // نام تازه فقط وقتی می‌نشیند که قبلاً نامی نبوده. بازنویسی
         // نام یک مشتری قدیمی با نامی که صندوق‌دار عجله‌ای تایپ کرده،
         // پرونده را خراب می‌کند — ویرایش مسیر خودش را دارد.
@@ -353,6 +407,14 @@ export class CustomerService {
         })
         .returning("id")
         .executeTakeFirstOrThrow();
+
+      if (input.branches !== "all" && input.branches.length > 0) {
+        await sql`
+          INSERT INTO sales.customer_branch (customer_id, branch_id)
+          SELECT ${c.id}::uuid, unnest(${input.branches}::uuid[])
+          ON CONFLICT DO NOTHING
+        `.execute(trx);
+      }
 
       await sql`
         SELECT platform.audit('customer.create', 'customer', ${c.id}::text,
@@ -447,7 +509,7 @@ export class CustomerService {
   }
 
   /** فاکتورهای یک مشتری — تازه‌ترین اول. */
-  async invoices(id: string, limit: number): Promise<
+  async invoices(id: string, limit: number, branches: CustomerBranchScope = "all"): Promise<
     Array<{
       id: string;
       number: string | null;
@@ -470,6 +532,7 @@ export class CustomerService {
       SELECT id, number, channel, status, net_amount::text, paid_amount::text, occurred_at
         FROM sales.invoice
        WHERE customer_id = ${id}::uuid AND status <> 'draft'
+         ${branches === "all" ? sql`` : sql`AND branch_id = ANY(${branches}::uuid[])`}
        ORDER BY occurred_at DESC
        LIMIT ${limit}
     `.execute(this.#db);

@@ -130,6 +130,20 @@ export interface DiscountCheck {
   grossAmount: bigint;
 }
 
+export interface LockedLineMarkdownState {
+  variationId: string;
+  qty: string;
+  unitPrice: bigint;
+  discountAmount: bigint;
+  listPrice: bigint;
+  occurredAt: Date;
+}
+
+export type LineMarkdownAuthorizer = (
+  trx: Transaction<Database>,
+  line: LockedLineMarkdownState,
+) => Promise<void>;
+
 export class InvoiceService {
   readonly #db: Db;
 
@@ -374,6 +388,8 @@ export class InvoiceService {
     discountAmount: bigint,
     unitPrice?: bigint | undefined,
     at?: Date | undefined,
+    ex: Executor = this.#db,
+    listPrice?: bigint | undefined,
   ): Promise<DiscountCheck> {
     // `at` یعنی «قیمت فهرست در لحظه همین فاکتور»، نه قیمت امروز.
     //
@@ -381,10 +397,12 @@ export class InvoiceService {
     // می‌سنجید که با `list_price` نشسته روی سطر یکی نیست: دروازه از
     // یک قیمت حساب می‌کرد و نگهبان دیتابیس از قیمتی دیگر. پیش‌فرض
     // «حالا» است، برای مسیرهایی که هنوز فاکتوری ندارند (سفارش سایت).
-    const list =
-      at === undefined ? await this.currentPrice(variationId) : await this.currentPrice(variationId, at);
-    const listGross = await this.grossOf(list, qty);
-    const soldGross = unitPrice === undefined ? listGross : await this.grossOf(unitPrice, qty);
+    const list = listPrice ??
+      (at === undefined
+        ? await this.currentPrice(variationId, new Date(), ex)
+        : await this.currentPrice(variationId, at, ex));
+    const listGross = await this.grossOf(list, qty, ex);
+    const soldGross = unitPrice === undefined ? listGross : await this.grossOf(unitPrice, qty, ex);
 
     if (discountAmount > soldGross) {
       throw new InvoiceError(
@@ -631,10 +649,9 @@ export class InvoiceService {
    * تنها راه دیگر، حذف سطر و افزودن دوباره‌اش با تخفیف بود، و آن
    * قیمت را از `catalog.price` دوباره می‌خواند.
    *
-   * سقف و مجوز اینجا **نیستند**: لایه مسیر با همان دروازه‌ای
-   * می‌سنجدشان که افزودن قلم می‌سنجد. آنچه دیتابیس اجبار می‌کند
-   * (تخفیف بیشتر از مبلغ قلم، و دلیل اجباری بالای آستانه) سر جایش
-   * می‌ماند و این متد دورش نمی‌زند.
+   * مسیر همان دروازه افزودن قلم را به‌صورت callback می‌دهد. این متد
+   * ابتدا سطر را قفل می‌کند، سپس دروازه را روی همان Snapshot می‌راند
+   * و پیش از آزادکردن قفل می‌نویسد؛ سنجش و اثر یک تراکنش‌اند.
    */
   async setLineDiscount(input: {
     invoiceId: string;
@@ -642,10 +659,11 @@ export class InvoiceService {
     discountAmount: string;
     discountReason?: string | undefined;
     actorId: string;
-  }): Promise<Invoice> {
-    await this.requireDraft(input.invoiceId);
+  }, authorize: LineMarkdownAuthorizer): Promise<Invoice> {
     await this.#db.transaction().execute(async (trx) => {
       await setActor(trx, input.actorId);
+      const line = await this.lockLineMarkdownState(trx, input.invoiceId, input.lineId);
+      await authorize(trx, line);
       await sql`SELECT sales.set_line_discount(
         ${input.invoiceId}::uuid, ${input.lineId}::uuid,
         ${input.discountAmount}::numeric, ${input.discountReason ?? null}::text)`
@@ -657,9 +675,10 @@ export class InvoiceService {
   /**
    * قیمت دستی روی سطری که همین حالا در سبد است — «مثل دشت».
    *
-   * مجوز `sale.price_override` و سقف «کاهش کل» اینجا **نیستند**:
-   * `assertMarkdownAllowed` در لایه مسیر می‌سنجدشان، با همان دروازه‌ای
-   * که `POST /lines` و سفارش سایت از آن می‌گذرند.
+   * مجوز `sale.price_override` و سقف «کاهش کل» را callback همان
+   * `assertMarkdownAllowed` مسیر می‌سنجد، اما تنها پس از قفل سطر و
+   * داخل تراکنش نوشتن؛ بنابراین دو تغییر هم‌زمان Snapshot کهنه
+   * نمی‌بینند.
    *
    * Snapshot قیمت فهرست، ردّ حسابرسی و اجبار دلیل همه در
    * `sales.set_line_price()` هستند — زیر قفل فاکتور، جایی که مسیر
@@ -671,10 +690,11 @@ export class InvoiceService {
     unitPrice: bigint;
     priceOverrideReason?: string | undefined;
     actorId: string;
-  }): Promise<Invoice> {
-    await this.requireDraft(input.invoiceId);
+  }, authorize: LineMarkdownAuthorizer): Promise<Invoice> {
     await this.#db.transaction().execute(async (trx) => {
       await setActor(trx, input.actorId);
+      const line = await this.lockLineMarkdownState(trx, input.invoiceId, input.lineId);
+      await authorize(trx, line);
       await sql`SELECT sales.set_line_price(
         ${input.invoiceId}::uuid, ${input.lineId}::uuid,
         ${serializeMoney(input.unitPrice)}::numeric,
@@ -682,6 +702,45 @@ export class InvoiceService {
         .execute(trx);
     });
     return (await this.byId(input.invoiceId)) as Invoice;
+  }
+
+  /** Snapshot قفل‌شده‌ای که هم مجوز و هم نوشتن باید از آن استفاده کنند. */
+  private async lockLineMarkdownState(
+    trx: Transaction<Database>,
+    invoiceId: string,
+    lineId: string,
+  ): Promise<LockedLineMarkdownState> {
+    const inv = await trx
+      .selectFrom("sales.invoice")
+      .select(["status", "occurred_at"])
+      .where("id", "=", invoiceId)
+      .forUpdate()
+      .executeTakeFirst();
+    if (!inv) throw new InvoiceError("invoice_not_found", "فاکتور یافت نشد", 404);
+    if (inv.status !== "draft") {
+      throw new InvoiceError(
+        "invoice_not_draft",
+        `فاکتور در وضعیت «${inv.status}» است و دیگر تغییر نمی‌کند`,
+      );
+    }
+
+    const line = await trx
+      .selectFrom("sales.invoice_line")
+      .select(["variation_id", "qty", "unit_price", "discount_amount", "list_price"])
+      .where("invoice_id", "=", invoiceId)
+      .where("id", "=", lineId)
+      .forUpdate()
+      .executeTakeFirst();
+    if (!line) throw new InvoiceError("line_not_found", "این قلم در فاکتور نیست", 404);
+
+    return {
+      variationId: line.variation_id,
+      qty: line.qty,
+      unitPrice: parseMoney(line.unit_price),
+      discountAmount: parseMoney(line.discount_amount),
+      listPrice: parseMoney(line.list_price ?? line.unit_price),
+      occurredAt: inv.occurred_at,
+    };
   }
 
   /**
@@ -725,7 +784,7 @@ export class InvoiceService {
         throw new InvoiceError("bad_mobile", "شماره موبایل معتبر نیست", 400);
       }
 
-      const r = await sql<{ id: string }>`
+      const r = await sql<{ id: string; created: boolean }>`
         WITH norm AS (SELECT sales.normalize_mobile(${input.mobile}) AS m),
         ins AS (
           INSERT INTO sales.customer (mobile_normalized, full_name)
@@ -733,15 +792,20 @@ export class InvoiceService {
           ON CONFLICT (mobile_normalized) DO NOTHING
           RETURNING id
         )
-        SELECT id FROM ins
+        SELECT id, true AS created FROM ins
         UNION ALL
-        SELECT c.id FROM sales.customer c, norm
+        SELECT c.id, false AS created FROM sales.customer c, norm
          WHERE c.mobile_normalized = norm.m
         LIMIT 1
       `.execute(trx);
       const customerId = r.rows[0]?.id;
       if (!customerId) {
         throw new InvoiceError("bad_mobile", "شماره موبایل معتبر نیست", 400);
+      }
+      if (r.rows[0]?.created) {
+        await sql`INSERT INTO sales.customer_branch (customer_id, branch_id)
+          SELECT ${customerId}::uuid, branch_id FROM sales.invoice
+           WHERE id = ${input.invoiceId}::uuid ON CONFLICT DO NOTHING`.execute(trx);
       }
       await sql`
         UPDATE sales.invoice SET customer_id = ${customerId}::uuid
@@ -778,7 +842,7 @@ export class InvoiceService {
         if (!norm.rows[0]?.m) {
           throw new InvoiceError("bad_mobile", "شماره موبایل گیرنده معتبر نیست", 400);
         }
-        const r = await sql<{ id: string }>`
+        const r = await sql<{ id: string; created: boolean }>`
           WITH norm AS (SELECT sales.normalize_mobile(${input.mobile}) AS m),
           ins AS (
             INSERT INTO sales.customer (mobile_normalized, full_name)
@@ -786,12 +850,17 @@ export class InvoiceService {
             ON CONFLICT (mobile_normalized) DO NOTHING
             RETURNING id
           )
-          SELECT id FROM ins
+          SELECT id, true AS created FROM ins
           UNION ALL
-          SELECT c.id FROM sales.customer c, norm WHERE c.mobile_normalized = norm.m
+          SELECT c.id, false AS created FROM sales.customer c, norm WHERE c.mobile_normalized = norm.m
           LIMIT 1
         `.execute(trx);
         recipientId = r.rows[0]?.id ?? null;
+        if (recipientId !== null && r.rows[0]?.created) {
+          await sql`INSERT INTO sales.customer_branch (customer_id, branch_id)
+            SELECT ${recipientId}::uuid, branch_id FROM sales.invoice
+             WHERE id = ${input.invoiceId}::uuid ON CONFLICT DO NOTHING`.execute(trx);
+        }
         if (recipientId === null) {
           throw new InvoiceError("bad_mobile", "شماره موبایل گیرنده معتبر نیست", 400);
         }

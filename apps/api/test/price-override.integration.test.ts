@@ -140,6 +140,21 @@ describe("قیمت دستی روی سطر فاکتور", { skip }, () => {
     });
   }
 
+  async function setDiscount(
+    username: string,
+    invoiceId: string,
+    lineId: string,
+    payload: Record<string, string>,
+  ) {
+    const s = await loginAs(username);
+    return await app.inject({
+      method: "PATCH",
+      url: `/invoices/${invoiceId}/lines/${lineId}/discount`,
+      ...s,
+      payload,
+    });
+  }
+
   /** یک پیش‌نویس با یک سطر به قیمت فهرست — نقطه شروع تست‌های قیمت دستی. */
   async function draftWithLine(username: string, qty = "1") {
     const invoiceId = await newDraft(username);
@@ -424,6 +439,34 @@ describe("قیمت دستی روی سطر فاکتور", { skip }, () => {
       priceOverrideReason: "تست جمع",
     });
     assert.equal(r.statusCode, 428, r.body);
+  });
+
+  test("قیمت و تخفیف هم‌زمان سقف کاهش کل را دور نمی‌زنند", async () => {
+    const { invoiceId, lineId } = await draftWithLine(supervisor);
+    const [price, discount] = await Promise.all([
+      setPrice(supervisor, invoiceId, lineId, {
+        unitPrice: "750000",
+        priceOverrideReason: "تست هم‌زمانی",
+      }),
+      setDiscount(supervisor, invoiceId, lineId, {
+        discountAmount: "250000",
+        discountReason: "تست هم‌زمانی",
+      }),
+    ]);
+
+    assert.deepEqual(
+      [price.statusCode, discount.statusCode].sort((a, b) => a - b),
+      [200, 428],
+      `price=${price.body}; discount=${discount.body}`,
+    );
+
+    const after = await app.inject({
+      method: "GET",
+      url: `/invoices/${invoiceId}`,
+      ...(await loginAs(supervisor)),
+    });
+    const line = (JSON.parse(after.body) as InvoiceJson).lines[0] as Line;
+    assert.equal(line.netAmount, "750000", "فقط یکی از دو کاهش ۲۵٪ ثبت شده است");
   });
 
   test("کاهش بالای آستانه بدون دلیل، از دیتابیس ۴۰۹ می‌گیرد", async () => {

@@ -203,7 +203,13 @@ export function registerTreasuryRoutes(
         kind: z.enum(["cash_box", "bank", "card_terminal", "gateway"]).optional(),
       })
       .parse(req.query ?? {});
-    return { accounts: await treasury.accounts(q) };
+    const branchIds = await scopeOf(s.userId);
+    return {
+      accounts: await treasury.accounts({
+        ...q,
+        ...(branchIds === undefined ? {} : { branchIds }),
+      }),
+    };
   });
 
   // ── حرکت نقد ───────────────────────────────────────────────────────
