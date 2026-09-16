@@ -51,6 +51,7 @@ describe("پرسنل و مشتری", { skip }, () => {
   const admin = `uadm_${suffix}`;
   const cashier = `ucash_${suffix}`;
   const supervisor = `usup_${suffix}`;
+  const branchSupervisor = `ubrsup_${suffix}`;
   let adminId = "";
 
   const sessions = new Map<
@@ -103,6 +104,7 @@ describe("پرسنل و مشتری", { skip }, () => {
       [admin, "مدیر پرسنل", "admin"],
       [cashier, "صندوق‌دار پرسنل", "cashier"],
       [supervisor, "سرپرست پرسنل", "supervisor"],
+      [branchSupervisor, "سرپرست شعبه", "supervisor"],
     ] as const) {
       const u = await handle.db
         .insertInto("identity.app_user")
@@ -517,6 +519,30 @@ describe("پرسنل و مشتری", { skip }, () => {
   });
 
   // ── مشتری ──────────────────────────────────────────────────────
+
+  test("نقش شعبه‌ای به پرونده سراسری مشتری دسترسی ندارد", async () => {
+    const result = await sql<{ id: string }>`INSERT INTO sales.customer (mobile_normalized, full_name)
+      VALUES ('09120000000', 'پرونده بدون رابطه شعبه') RETURNING id`.execute(handle.db);
+    const id = result.rows[0]!.id;
+    const s = await loginAs(branchSupervisor);
+    const list = await app.inject({ method: "GET", url: "/customers?q=09120000000", ...s });
+    assert.equal(list.statusCode, 200, list.body);
+    assert.deepEqual(list.json().customers, [], "پرونده سراسری نباید از جست‌وجو افشا شود");
+    for (const request of [
+      { method: "GET", url: `/customers/${id}` },
+      { method: "GET", url: `/customers/${id}/measures` },
+      { method: "GET", url: `/customers/${id}/fitting` },
+      { method: "POST", url: "/customers", payload: { mobile: "09120000000" } },
+      { method: "PATCH", url: `/customers/${id}`, payload: { internalNote: "نباید نوشته شود" } },
+      { method: "PUT", url: `/customers/${id}/measures`, payload: { values: { height: 180 } } },
+    ] as const) {
+      const r = await app.inject({ ...request, ...s });
+      assert.equal(r.statusCode, 403, r.body);
+    }
+    const unchanged = await handle.db.selectFrom("sales.customer").select("internal_note")
+      .where("id", "=", id).executeTakeFirstOrThrow();
+    assert.equal(unchanged.internal_note, null);
+  });
 
   test("شماره تکراری، مشتری دوم نمی‌سازد", async () => {
     // **ادعای مرکزی مشتری.** اگر جدا بود، مشتری‌ای که یک بار آنلاین و
