@@ -717,8 +717,8 @@ describe("تنظیمات از مسیر API", { skip }, () => {
         SELECT ledger.post_entry(
           'loyalty_grant', ${branchId}::uuid, now()::date, 'آزمون دامنه تفصیلی',
           jsonb_build_array(
-            jsonb_build_object('leg', 'expense', 'amount', ${amount}),
-            jsonb_build_object('leg', 'liability', 'amount', ${amount},
+            jsonb_build_object('leg', 'expense', 'amount', ${amount}::numeric),
+            jsonb_build_object('leg', 'liability', 'amount', ${amount}::numeric,
                                'party_type', 'customer', 'party_id', ${partyId}::uuid)),
           NULL, NULL, ${user.id}::uuid)`.execute(handle.db);
     }
