@@ -21,7 +21,8 @@ BEGIN
 
     SELECT branch_id INTO v_account_branch
       FROM treasury.account
-     WHERE id = v_account_id;
+     WHERE id = v_account_id
+     FOR SHARE;
 
     IF v_account_branch IS NOT NULL AND v_account_branch <> NEW.branch_id THEN
       RAISE EXCEPTION
@@ -38,5 +39,22 @@ CREATE TRIGGER transaction_account_branch_t
   BEFORE INSERT OR UPDATE OF branch_id, from_account_id, to_account_id
   ON treasury.transaction
   FOR EACH ROW EXECUTE FUNCTION treasury.assert_transaction_account_branch();
+
+-- دامنه حساب استفاده‌شده تغییر نمی‌کند؛ قفل مشترک بالا با این UPDATE تعارض دارد.
+CREATE OR REPLACE FUNCTION treasury.guard_used_transaction_account_branch()
+RETURNS trigger LANGUAGE plpgsql AS $
+BEGIN
+  IF NEW.branch_id IS DISTINCT FROM OLD.branch_id AND EXISTS (
+    SELECT 1 FROM treasury.transaction
+     WHERE from_account_id = OLD.id OR to_account_id = OLD.id
+  ) THEN
+    RAISE EXCEPTION 'شعبه حساب دارای تراکنش قابل تغییر نیست'
+      USING ERRCODE = '23514', CONSTRAINT = 'used_transaction_account_branch';
+  END IF;
+  RETURN NEW;
+END $;
+CREATE TRIGGER used_transaction_account_branch_t
+  BEFORE UPDATE OF branch_id ON treasury.account
+  FOR EACH ROW EXECUTE FUNCTION treasury.guard_used_transaction_account_branch();
 
 COMMIT;

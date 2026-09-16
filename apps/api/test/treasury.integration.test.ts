@@ -805,8 +805,15 @@ describe("خزانه و چک", { skip }, () => {
           VALUES (${BRANCH}::uuid, 'supplier_payment', ${foreign.rows[0]!.id}::uuid,
                   'supplier', ${supplierId}::uuid, 1000, ${ids.admin}::uuid)`
         .execute(handle.db),
-      /متعلق به شعبه تراکنش نیست/,
+      { code: "23514", constraint: "transaction_account_branch" },
       "پایگاه داده نیز درج مستقیم با حساب شعبه دیگر را رد می‌کند",
     );
+    await sql`INSERT INTO treasury.transaction
+      (branch_id, purpose, from_account_id, party_type, party_id, amount, created_by)
+      VALUES (${other.rows[0]!.id}::uuid, 'supplier_payment', ${foreign.rows[0]!.id}::uuid,
+        'supplier', ${supplierId}::uuid, 1000, ${ids.admin}::uuid)`.execute(handle.db);
+    await assert.rejects(sql`UPDATE treasury.account SET branch_id = ${BRANCH}::uuid
+      WHERE id = ${foreign.rows[0]!.id}::uuid`.execute(handle.db),
+      { code: "23514", constraint: "used_transaction_account_branch" });
   });
 });
