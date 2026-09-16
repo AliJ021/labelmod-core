@@ -18,6 +18,7 @@
  */
 import { useCallback, useEffect, useState } from "react";
 import { Solid } from "../components/Glass.tsx";
+import { PasswordDialog } from "../components/PasswordDialog.tsx";
 import { ApiError } from "../lib/api.ts";
 import { pos, type Branch } from "../lib/pos.ts";
 import {
@@ -32,7 +33,7 @@ function message(err: unknown): string {
   return "ارتباط با سرور برقرار نشد.";
 }
 
-export function Staff() {
+export function Staff({ currentUserId, onOwnPassword }: { currentUserId: string; onOwnPassword: () => void }) {
   const [users, setUsers] = useState<AppUser[]>([]);
   const [roles, setRoles] = useState<Role[]>([]);
   const [branches, setBranches] = useState<Branch[]>([]);
@@ -52,8 +53,7 @@ export function Staff() {
 
   const [editing, setEditing] = useState<AppUser | null>(null);
   const [passwordUser, setPasswordUser] = useState<AppUser | null>(null);
-  const [chosenPassword, setChosenPassword] = useState("");
-  const [confirmPassword, setConfirmPassword] = useState("");
+  const [notice, setNotice] = useState<string | null>(null);
 
   const reload = useCallback(async () => {
     setUsers((await people.users(includeInactive)).users);
@@ -111,16 +111,6 @@ export function Staff() {
       await reload();
     });
 
-  const resetPassword = (u: AppUser, password?: string) =>
-    guarded(async () => {
-      const out = await people.resetPassword(u.id, password);
-      setSecret({ title: `رمز تازه ${u.username}`, password: out.password });
-      setPasswordUser(null);
-      setChosenPassword("");
-      setConfirmPassword("");
-      await reload();
-    });
-
   const saveRoles = (u: AppUser, next: RoleAssignment[]) =>
     guarded(async () => {
       await people.setRoles(u.id, next);
@@ -157,7 +147,7 @@ export function Staff() {
           </p>
           <p className="small" role="alert" style={{ margin: 0 }}>
             <span className="dot dot--warn" aria-hidden="true">▲</span> این رمز فقط همین
-            یک بار نشان داده می‌شود. آن را به کاربر بدهید و جایی ذخیره‌اش نکنید.
+            یک بار نشان داده می‌شود. آن را از راه امن به کاربر بدهید تا در مدیر رمزها نگه دارد.
           </p>
           <button type="button" className="btn btn--quiet" onClick={() => setSecret(null)}>
             دیدم، ببند
@@ -165,76 +155,13 @@ export function Staff() {
         </Solid>
       ) : null}
 
-      {passwordUser ? (
-        <Solid className="pad stack" style={{ gap: "var(--s-2)" }}>
-          <h3 style={{ margin: 0, fontSize: "1rem" }}>
-            تغییر رمز {passwordUser.fullName}
-          </h3>
-          <label className="auth-field">
-            <span>رمز دلخواه (حداقل ۱۲ کاراکتر)</span>
-            <input
-              type="password"
-              value={chosenPassword}
-              onChange={(e) => setChosenPassword(e.target.value)}
-              autoComplete="new-password"
-              minLength={12}
-              maxLength={256}
-              dir="ltr"
-            />
-          </label>
-          <label className="auth-field">
-            <span>تکرار رمز دلخواه</span>
-            <input
-              type="password"
-              value={confirmPassword}
-              onChange={(e) => setConfirmPassword(e.target.value)}
-              autoComplete="new-password"
-              minLength={12}
-              maxLength={256}
-              dir="ltr"
-            />
-          </label>
-          {confirmPassword !== "" && chosenPassword !== confirmPassword ? (
-            <p className="small" role="alert" style={{ margin: 0 }}>
-              دو رمز یکسان نیستند.
-            </p>
-          ) : null}
-          <div className="row" style={{ gap: "var(--s-2)" }}>
-            <button
-              type="button"
-              className="btn btn--primary"
-              disabled={
-                busy
-                || chosenPassword.length < 12
-                || chosenPassword !== confirmPassword
-              }
-              onClick={() => void resetPassword(passwordUser, chosenPassword)}
-            >
-              ثبت رمز دلخواه
-            </button>
-            <button
-              type="button"
-              className="btn btn--quiet"
-              disabled={busy}
-              onClick={() => void resetPassword(passwordUser)}
-            >
-              پیشنهاد رمز امن
-            </button>
-            <button
-              type="button"
-              className="btn btn--quiet"
-              disabled={busy}
-              onClick={() => {
-                setPasswordUser(null);
-                setChosenPassword("");
-                setConfirmPassword("");
-              }}
-            >
-              انصراف
-            </button>
-          </div>
-        </Solid>
-      ) : null}
+      {notice ? <p className="solid pos-alert" role="status">{notice}</p> : null}
+      {passwordUser ? <PasswordDialog name={passwordUser.fullName} onCancel={() => setPasswordUser(null)} onApply={async (password) => {
+        await people.resetPassword(passwordUser.id, password);
+        setNotice(`رمز ${passwordUser.fullName} تغییر کرد و همهٔ نشست‌های او بسته شدند.`);
+        setPasswordUser(null);
+        void reload().catch((err: unknown) => setError(message(err)));
+      }} /> : null}
 
       <Solid className="pad">
         <div className="row between">
@@ -391,9 +318,8 @@ export function Staff() {
                       type="button"
                       className="link"
                       onClick={() => {
-                        setPasswordUser(u);
-                        setChosenPassword("");
-                        setConfirmPassword("");
+                        if (u.id === currentUserId) onOwnPassword();
+                        else { setNotice(null); setPasswordUser(u); }
                       }}
                       disabled={busy}
                     >

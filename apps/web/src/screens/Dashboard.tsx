@@ -1,17 +1,6 @@
-/**
- * داشبورد — ناحیه شیشه کامل.
- *
- * ADR-002 اینجا را «شیشه کامل» گذاشته و دلیلش عملیاتی است: این صفحه
- * **خوانده می‌شود، نه عمل**. روی دسکتاپ باز می‌شود، کسی پشتش صف
- * نایستاده، و هیچ تصمیمی در کسری از ثانیه گرفته نمی‌شود.
- *
- * `.claude/rules/design.md` یک قاعده زبانی هم گذاشته که اینجا اجرا
- * می‌شود: **فروش**، **وجه دریافتی** و **سود** هر کدام برچسب صریح خودشان
- * را دارند و هرگز زیر «دخل» جمع نمی‌شوند. سه عدد متفاوت‌اند و یکی
- * کردنشان همان جایی است که مغازه‌دار فکر می‌کند پول دارد ولی ندارد.
- */
+/** داشبورد: اعداد مالی و هشدارها روی سطح مات خوانده می‌شوند. */
 import { useEffect, useState } from "react";
-import { Glass, Solid } from "../components/Glass.tsx";
+import { Solid } from "../components/Glass.tsx";
 import { ApiError } from "../lib/api.ts";
 import { parseRial, toman } from "../lib/money.ts";
 import {
@@ -145,7 +134,7 @@ export function Dashboard() {
 
   return (
     <div className="stack" style={{ gap: "var(--s-5)" }}>
-      <Glass as="section" live className="pad">
+      <Solid as="section" className="pad">
         <header className="row between">
           <div>
             <h1 style={{ fontSize: "1.35rem" }}>امروز</h1>
@@ -160,8 +149,7 @@ export function Dashboard() {
         </header>
 
         {/*
-          سه کارت، سه برچسب صریح. کارت‌ها داخل شیشه‌اند، پس `Glass`
-          خودش به تینت تبدیلشان می‌کند — بلور دوم نمی‌گیرند.
+          سه کارت با برچسب صریح و سطح مات مستقل از زمینه.
         */}
         <div className="kpis">
           <Kpi
@@ -195,7 +183,7 @@ export function Dashboard() {
             tone={report.profitAmount === null ? "warn" : "good"}
           />
         </div>
-      </Glass>
+      </Solid>
 
       {/*
         دو چیزی که قبلاً اینجا بودند — نمودار «فروش در ساعت» و فهرست
@@ -211,7 +199,7 @@ export function Dashboard() {
         آن جمع می‌شود. تاریخچه git نگهش داشته و بازگرداندنش یک
         `git show` است.
       */}
-      <Glass as="section" className="pad">
+      <Solid as="section" className="pad">
         <h2 style={{ fontSize: "1rem" }}>نیاز به رسیدگی</h2>
         {closeError ? (
           <p className="auth-error" role="alert">
@@ -250,7 +238,7 @@ export function Dashboard() {
             ))
           )}
         </ul>
-      </Glass>
+      </Solid>
     </div>
   );
 }
@@ -267,14 +255,14 @@ function Kpi({
   tone?: "good" | "warn";
 }) {
   return (
-    <Glass radius="md" className="kpi">
+    <Solid className="kpi">
       <span className="muted">{label}</span>
       <strong className="num kpi-value">{value}</strong>
       <span className="muted small">
         {tone ? <Dot tone={tone} /> : null}
         {note}
       </span>
-    </Glass>
+    </Solid>
   );
 }
 

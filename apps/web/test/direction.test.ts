@@ -40,7 +40,7 @@ function walk(dir: string, out: string[] = []): string[] {
 }
 
 const FILES = walk(SRC);
-const rel = (p: string) => path.relative(SRC, p);
+const rel = (p: string) => path.relative(SRC, p).split(path.sep).join("/");
 
 describe("جهت رابط", () => {
   /**
@@ -87,6 +87,7 @@ describe("جهت رابط", () => {
       "styles/base.css",      // .num — ستون عدد
       "styles/app.css",       // .set-key — کلید تنظیم
       "screens/TwoFactor.tsx", // کد بازیابی و راز TOTP
+      "components/PasswordDialog.tsx", // فقط ورودی و نمایش رمز، نه ظرف
       "screens/Staff.tsx",     // نام کاربری
       "screens/Terminals.tsx", // نشانی و کد دستگاه
       "screens/Customers.tsx", // شماره موبایل
