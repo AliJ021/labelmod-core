@@ -1,4 +1,3 @@
-import { UserService } from "../src/people/user.ts";
 /**
  * تست یکپارچه مدیریت پرسنل و مشتری — روی پستگرس واقعی.
  *
@@ -25,6 +24,7 @@ import { AuthService } from "../src/auth/service.ts";
 import { hashSecret } from "../src/auth/password.ts";
 import { buildApp } from "../src/http/app.ts";
 import { loadConfig } from "../src/lib/config.ts";
+import { UserService } from "../src/people/user.ts";
 
 const DATABASE_URL = process.env.DATABASE_URL;
 const skip = DATABASE_URL ? false : "DATABASE_URL تنظیم نشده — تست یکپارچه رد شد";
