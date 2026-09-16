@@ -778,6 +778,67 @@ describe("پرسنل و مشتری", { skip }, () => {
     }
   });
 
+  test("سرپرست شعبه دیگر نه پرونده را می‌بیند و نه تغییر می‌دهد", async () => {
+    const ownerSession = await loginAs(supervisor);
+    const id = await customerId(ownerSession);
+    const branch = await sql<{ id: string }>`
+      INSERT INTO platform.branch (code, name)
+      VALUES (${`OTHER-${suffix}`}, 'شعبه دیگر') RETURNING id
+    `.execute(handle.db);
+    const outsider = `uother_${suffix}`;
+    const user = await handle.db.insertInto("identity.app_user").values({
+      username: outsider,
+      full_name: "سرپرست شعبه دیگر",
+      password_hash: await hashSecret(PASSWORD),
+      is_active: true,
+      mobile: null,
+      pin_hash: null,
+      totp_secret: null,
+    }).returning("id").executeTakeFirstOrThrow();
+    await handle.db.insertInto("identity.user_role").values({
+      user_id: user.id,
+      role_code: "supervisor",
+      branch_id: branch.rows[0]!.id,
+    }).execute();
+    const outsiderSession = await loginAs(outsider);
+
+    const search = await app.inject({
+      method: "GET", url: "/customers?q=0912123", ...outsiderSession,
+    });
+    assert.equal(search.statusCode, 200, search.body);
+    assert.deepEqual(
+      (JSON.parse(search.body) as { customers: unknown[] }).customers,
+      [],
+      "جست‌وجو نباید شناسه یا نشانی مشتری شعبه دیگر را فاش کند",
+    );
+
+    const rediscover = await app.inject({
+      method: "POST",
+      url: "/customers",
+      ...outsiderSession,
+      payload: { mobile: "09121234567", fullName: "نام مهاجم" },
+    });
+    assert.equal(rediscover.statusCode, 403, rediscover.body);
+
+    for (const request of [
+      { method: "GET", url: `/customers/${id}` },
+      { method: "GET", url: `/customers/${id}/measures` },
+      { method: "PATCH", url: `/customers/${id}`, payload: { address: "نشانی مهاجم" } },
+      { method: "PUT", url: `/customers/${id}/measures`, payload: { values: { height: 190 } } },
+    ] as const) {
+      const response = await app.inject({ ...request, ...outsiderSession });
+      assert.equal(response.statusCode, 403, `${request.method} ${request.url}: ${response.body}`);
+    }
+
+    const after = await app.inject({ method: "GET", url: `/customers/${id}`, ...ownerSession });
+    assert.equal(after.statusCode, 200, after.body);
+    assert.notEqual(
+      (JSON.parse(after.body) as { customer: { address: string | null } }).customer.address,
+      "نشانی مهاجم",
+      "درخواست ردشده نباید پرونده را تغییر دهد",
+    );
+  });
+
   test("پیشنهاد سایز — کالای بدون اندازه حذف نمی‌شود", async () => {
     const s = await loginAs(supervisor);
     const id = await customerId(s);
