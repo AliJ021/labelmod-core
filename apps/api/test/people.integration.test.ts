@@ -29,6 +29,7 @@ const DATABASE_URL = process.env.DATABASE_URL;
 const skip = DATABASE_URL ? false : "DATABASE_URL تنظیم نشده — تست یکپارچه رد شد";
 
 const BRANCH = "00000000-0000-7000-8000-000000000001";
+const OTHER_BRANCH = "00000000-0000-7000-8000-000000000002";
 
 interface UserJson {
   id: string;
@@ -441,6 +442,66 @@ describe("پرسنل و مشتری", { skip }, () => {
     });
     assert.equal(r.statusCode, 403, r.body);
     assert.equal(JSON.parse(r.body).error.code, "scope_escalation");
+  });
+
+  test("مدیر شعبه کاربر شعبه دیگر را نمی‌بیند یا تغییر نمی‌دهد", async () => {
+    await handle.db
+      .insertInto("platform.branch")
+      .values({ id: OTHER_BRANCH, code: `other_${suffix}`, name: "شعبه دیگر" })
+      .execute();
+    const foreign = await handle.db
+      .insertInto("identity.app_user")
+      .values({
+        username: `foreign_${suffix}`,
+        full_name: "کاربر شعبه دیگر",
+        password_hash: await hashSecret(PASSWORD),
+        is_active: true,
+        mobile: null,
+        pin_hash: null,
+        totp_secret: null,
+      })
+      .returning("id")
+      .executeTakeFirstOrThrow();
+    await handle.db
+      .insertInto("identity.user_role")
+      .values({ user_id: foreign.id, role_code: "cashier", branch_id: OTHER_BRANCH })
+      .execute();
+
+    const s = await loginAs(admin);
+    const list = await app.inject({ method: "GET", url: "/users", ...s });
+    assert.equal(list.statusCode, 200, list.body);
+    assert.equal(list.body.includes(foreign.id), false, "کاربر بیرون دامنه نباید فهرست شود");
+
+    const attempts = [
+      app.inject({ method: "GET", url: `/users/${foreign.id}`, ...s }),
+      app.inject({
+        method: "PATCH",
+        url: `/users/${foreign.id}`,
+        ...s,
+        payload: { fullName: "دستکاری" },
+      }),
+      app.inject({
+        method: "PUT",
+        url: `/users/${foreign.id}/roles`,
+        ...s,
+        payload: { roles: [{ roleCode: "cashier", branchId: BRANCH }] },
+      }),
+      app.inject({
+        method: "POST",
+        url: `/users/${foreign.id}/reset-password`,
+        ...s,
+        payload: {},
+      }),
+      app.inject({
+        method: "PUT",
+        url: `/users/${foreign.id}/pin`,
+        ...s,
+        payload: { pin: "4271" },
+      }),
+    ];
+    for (const response of await Promise.all(attempts)) {
+      assert.equal(response.statusCode, 404, response.body);
+    }
   });
 
   test("PIN تعیین و برداشته می‌شود، و خودش هرگز برنمی‌گردد", async () => {

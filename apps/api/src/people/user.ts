@@ -21,10 +21,11 @@
  * می‌دهد. `is_active = false` یعنی نمی‌تواند وارد شود؛ ردّ حسابرسی‌اش
  * سر جایش می‌ماند.
  *
- * **هیچ شرط دسترسی اینجا نیست.** مجوز کار `identity.can()` است. تنها
- * چیزی که این لایه می‌سنجد، **قفل‌شدن خودِ کاربر** است — و آن یک قاعده
- * ایمنی است، نه یک قاعده دسترسی: کسی که آخرین مدیر است نباید بتواند
- * خودش را از سیستم بیرون بیندازد.
+ * **مجوز عملیات و دامنه دو چیزند.** مسیر HTTP مجوز `identity.can()` را
+ * می‌سنجد؛ این سرویس نیز کاربر هدف را به شعبه‌های عامل محدود می‌کند و
+ * برای تغییرها آن را قفل می‌گیرد تا بررسی و نوشتن از هم جدا نیفتند.
+ * قفل‌شدن خودِ کاربر نیز یک قاعده ایمنی جداست: کسی که آخرین مدیر است
+ * نباید بتواند خودش را از سیستم بیرون بیندازد.
  */
 import { randomInt } from "node:crypto";
 import { sql } from "kysely";
@@ -88,7 +89,7 @@ export class UserService {
     this.#db = db;
   }
 
-  async list(includeInactive: boolean): Promise<AppUser[]> {
+  async list(includeInactive: boolean, actorId: string): Promise<AppUser[]> {
     const rows = await sql<{
       id: string;
       username: string;
@@ -116,8 +117,28 @@ export class UserService {
                 JOIN identity.role ro ON ro.code = r.role_code
                 LEFT JOIN platform.branch b ON b.id = r.branch_id
                WHERE r.user_id = u.id) AS roles
-        FROM identity.app_user u
+       FROM identity.app_user u
        WHERE ${includeInactive ? sql`true` : sql`u.is_active`}
+         AND (
+           EXISTS (
+             SELECT 1 FROM identity.user_role actor_role
+              WHERE actor_role.user_id = ${actorId}::uuid
+                AND actor_role.branch_id IS NULL
+           )
+           OR (
+             EXISTS (SELECT 1 FROM identity.user_role target_role
+                      WHERE target_role.user_id = u.id)
+             AND NOT EXISTS (
+               SELECT 1 FROM identity.user_role target_role
+                WHERE target_role.user_id = u.id
+                  AND (target_role.branch_id IS NULL OR NOT EXISTS (
+                    SELECT 1 FROM identity.user_role actor_role
+                     WHERE actor_role.user_id = ${actorId}::uuid
+                       AND actor_role.branch_id = target_role.branch_id
+                  ))
+             )
+           )
+         )
        ORDER BY u.is_active DESC, u.full_name
     `.execute(this.#db);
 
@@ -135,9 +156,49 @@ export class UserService {
     }));
   }
 
-  async byId(id: string): Promise<AppUser | null> {
-    const all = await this.list(true);
+  async byId(id: string, actorId: string): Promise<AppUser | null> {
+    const all = await this.list(true, actorId);
     return all.find((u) => u.id === id) ?? null;
+  }
+
+  /**
+   * قفل کاربر، هم بررسی دامنه را با تغییر بعدی اتمی می‌کند و هم تغییر
+   * هم‌زمان نقش‌ها را سریالی می‌کند (setRoles نیز نخست همین قفل را می‌گیرد).
+   */
+  async #assertTargetInScope(
+    trx: Transaction<Database>,
+    id: string,
+    actorId: string,
+  ): Promise<void> {
+    const target = await trx
+      .selectFrom("identity.app_user")
+      .select("id")
+      .where("id", "=", id)
+      .forUpdate()
+      .executeTakeFirst();
+    if (!target) throw new UserError("user_not_found", "کاربر یافت نشد", 404);
+
+    const allowed = await sql<{ allowed: boolean }>`
+      SELECT (
+        EXISTS (SELECT 1 FROM identity.user_role ar
+                 WHERE ar.user_id = ${actorId}::uuid AND ar.branch_id IS NULL)
+        OR (
+          EXISTS (SELECT 1 FROM identity.user_role tr WHERE tr.user_id = ${id}::uuid)
+          AND NOT EXISTS (
+            SELECT 1 FROM identity.user_role tr
+             WHERE tr.user_id = ${id}::uuid
+               AND (tr.branch_id IS NULL OR NOT EXISTS (
+                 SELECT 1 FROM identity.user_role ar
+                  WHERE ar.user_id = ${actorId}::uuid
+                    AND ar.branch_id = tr.branch_id
+               ))
+          )
+        )
+      ) AS allowed
+    `.execute(trx);
+    if (!allowed.rows[0]?.allowed) {
+      throw new UserError("user_scope_forbidden", "این کاربر خارج از دامنه شعبه شماست", 403);
+    }
   }
 
   /**
@@ -207,7 +268,7 @@ export class UserService {
     isActive?: boolean | undefined;
     actorId: string;
   }): Promise<void> {
-    const before = await this.byId(input.id);
+    const before = await this.byId(input.id, input.actorId);
     if (!before) throw new UserError("user_not_found", "کاربر یافت نشد", 404);
 
     // **قفل‌شدن خودِ کاربر.** این یک قاعده ایمنی است نه دسترسی: مدیری
@@ -221,6 +282,7 @@ export class UserService {
     }
 
     await this.#db.transaction().execute(async (trx) => {
+      await this.#assertTargetInScope(trx, input.id, input.actorId);
       await setActor(trx, input.actorId);
       await trx
         .updateTable("identity.app_user")
@@ -262,13 +324,14 @@ export class UserService {
     roles: Array<{ roleCode: string; branchId: string | null }>;
     actorId: string;
   }): Promise<void> {
-    const before = await this.byId(input.id);
+    const before = await this.byId(input.id, input.actorId);
     if (!before) throw new UserError("user_not_found", "کاربر یافت نشد", 404);
     if (input.roles.length === 0) {
       throw new UserError("no_role", "کاربر بدون نقش نمی‌ماند", 422);
     }
 
     await this.#db.transaction().execute(async (trx) => {
+      await this.#assertTargetInScope(trx, input.id, input.actorId);
       await setActor(trx, input.actorId);
       await trx.deleteFrom("identity.user_role").where("user_id", "=", input.id).execute();
       await this.#writeRoles(trx, input.id, input.roles);
@@ -286,13 +349,14 @@ export class UserService {
 
   /** رمز تازه — انتخاب مدیر یا پیشنهاد امن سرور؛ هیچ‌جا خام ذخیره نمی‌شود. */
   async resetPassword(id: string, actorId: string, chosenPassword?: string): Promise<string> {
-    const user = await this.byId(id);
+    const user = await this.byId(id, actorId);
     if (!user) throw new UserError("user_not_found", "کاربر یافت نشد", 404);
 
     const password = chosenPassword ?? generatePassword();
     const hash = await hashSecret(password);
 
     await this.#db.transaction().execute(async (trx) => {
+      await this.#assertTargetInScope(trx, id, actorId);
       await setActor(trx, actorId);
       await trx
         .updateTable("identity.app_user")
@@ -321,11 +385,12 @@ export class UserService {
    * پیشین، قفل پس از ۵ تلاش، و ممنوع‌بودن عملیات حساس.
    */
   async setPin(id: string, pin: string | null, actorId: string): Promise<void> {
-    const user = await this.byId(id);
+    const user = await this.byId(id, actorId);
     if (!user) throw new UserError("user_not_found", "کاربر یافت نشد", 404);
 
     const hash = pin === null ? null : await hashSecret(pin);
     await this.#db.transaction().execute(async (trx) => {
+      await this.#assertTargetInScope(trx, id, actorId);
       await setActor(trx, actorId);
       await trx
         .updateTable("identity.app_user")
