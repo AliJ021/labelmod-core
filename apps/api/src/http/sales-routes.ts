@@ -446,20 +446,6 @@ export function registerSalesRoutes(app: FastifyInstance, deps: SalesRouteDeps):
     await assertInvoiceInScope(db, s.userId, id, invoices);
     await requireForSession(db, s, "sale.create");
 
-    const inv = await invoices.byId(id);
-    if (!inv) throw new InvoiceError("invoice_not_found", "فاکتور یافت نشد", 404);
-    const line = inv.lines.find((l) => l.id === lineId);
-    if (!line) throw new InvoiceError("line_not_found", "این قلم در فاکتور نیست", 404);
-
-    await assertMarkdownAllowed(s, {
-      variationId: line.variationId,
-      qty: line.qty,
-      discount: parseMoney(body.discountAmount),
-      // قیمت دستیِ **قبلی** فقط وارد ریاضی سقف می‌شود، نه وارد
-      // دروازه مجوز: کسی الان قیمتی نمی‌نویسد.
-      ...(line.listPrice === null ? {} : { effectivePrice: line.unitPrice }),
-    });
-
     return invoiceToJson(
       await invoices.setLineDiscount({
         invoiceId: id,
@@ -467,7 +453,13 @@ export function registerSalesRoutes(app: FastifyInstance, deps: SalesRouteDeps):
         discountAmount: body.discountAmount,
         actorId: s.userId,
         ...(body.discountReason === undefined ? {} : { discountReason: body.discountReason }),
-      }),
+      }, (trx, line) => markdownGate(trx, invoices, s, {
+        variationId: line.variationId,
+        qty: line.qty,
+        discount: parseMoney(body.discountAmount),
+        effectivePrice: line.unitPrice,
+        listPrice: line.listPrice,
+      })),
     );
   });
 
@@ -493,24 +485,6 @@ export function registerSalesRoutes(app: FastifyInstance, deps: SalesRouteDeps):
     await assertInvoiceInScope(db, s.userId, id, invoices);
     await requireForSession(db, s, "sale.create");
 
-    const inv = await invoices.byId(id);
-    if (!inv) throw new InvoiceError("invoice_not_found", "فاکتور یافت نشد", 404);
-    const line = inv.lines.find((l) => l.id === lineId);
-    if (!line) throw new InvoiceError("line_not_found", "این قلم در فاکتور نیست", 404);
-
-    await assertMarkdownAllowed(s, {
-      variationId: line.variationId,
-      qty: line.qty,
-      discount: line.discountAmount,
-      settingPrice: parseMoney(body.unitPrice),
-      // قیمت فهرست **در لحظه همین فاکتور** خوانده می‌شود، نه امروز.
-      // `set_line_price` هم Snapshot را از خودِ سطر می‌گیرد؛ اگر
-      // دروازه از قیمت امروز حساب می‌کرد، حراجِ وسط شیفت دو عدد
-      // متفاوت می‌ساخت و سقف با عددی سنجیده می‌شد که روی فاکتور
-      // ننشسته.
-      at: inv.occurredAt,
-    });
-
     return invoiceToJson(
       await invoices.setLinePrice({
         invoiceId: id,
@@ -520,7 +494,14 @@ export function registerSalesRoutes(app: FastifyInstance, deps: SalesRouteDeps):
         ...(body.priceOverrideReason === undefined
           ? {}
           : { priceOverrideReason: body.priceOverrideReason }),
-      }),
+      }, (trx, line) => markdownGate(trx, invoices, s, {
+        variationId: line.variationId,
+        qty: line.qty,
+        discount: line.discountAmount,
+        settingPrice: parseMoney(body.unitPrice),
+        at: line.occurredAt,
+        listPrice: line.listPrice,
+      })),
     );
   });
 
