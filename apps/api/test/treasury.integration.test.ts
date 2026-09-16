@@ -762,31 +762,51 @@ describe("خزانه و چک", { skip }, () => {
 
   // ── دامنه شعبه ───────────────────────────────────────────────────────
 
-  test("شعبه‌ای که کاربر دسترسی ندارد رد می‌شود", async () => {
+  test("حساب شعبه دیگر نه فهرست می‌شود و نه در تراکنش پذیرفته می‌شود", async () => {
     const a = await loginAs(admin);
     const other = await sql<{ id: string }>`
       INSERT INTO platform.branch (code, name)
       VALUES (${`B-${suffix}`.slice(0, 12)}, 'شعبه دوم') RETURNING id`
       .execute(handle.db);
 
+    const foreign = await sql<{ id: string }>`
+      INSERT INTO treasury.account
+        (code, name, kind, branch_id, ledger_account_code)
+      VALUES (${`BANK-${suffix}`.slice(0, 30)}, 'بانک شعبه دوم', 'bank',
+              ${other.rows[0]!.id}::uuid, '1102')
+      RETURNING id`.execute(handle.db);
+
+    const listed = await app.inject({ method: "GET", url: "/treasury/accounts", ...a });
+    assert.equal(listed.statusCode, 200, listed.body);
+    assert.ok(
+      !(listed.json().accounts as AccountOut[]).some((x) => x.id === foreign.rows[0]!.id),
+      "شناسه حساب شعبه دیگر نباید افشا شود",
+    );
+
     const r = await app.inject({
       method: "POST",
       url: "/treasury/transactions",
       ...a,
       payload: {
-        branchId: other.rows[0]!.id,
+        branchId: BRANCH,
         purpose: "supplier_payment",
         amount: "1000",
-        fromAccountId: bank.id,
+        fromAccountId: foreign.rows[0]!.id,
         partyType: "supplier",
         partyId: supplierId,
       },
     });
-    // مدیر دامنه «همه» دارد، پس این باید بگذرد؛ ادعا این است که
-    // مسیر دامنه را **می‌سنجد**، نه اینکه نادیده بگیرد.
-    assert.ok(
-      r.statusCode === 201 || r.statusCode === 403,
-      `پاسخ باید ۲۰۱ یا ۴۰۳ باشد، نه ${r.statusCode}: ${r.body}`,
+    assert.equal(r.statusCode, 403, r.body);
+    assert.equal(r.json().error.code, "account_branch_mismatch");
+
+    await assert.rejects(
+      sql`INSERT INTO treasury.transaction
+            (branch_id, purpose, from_account_id, party_type, party_id, amount, created_by)
+          VALUES (${BRANCH}::uuid, 'supplier_payment', ${foreign.rows[0]!.id}::uuid,
+                  'supplier', ${supplierId}::uuid, 1000, ${ids.admin}::uuid)`
+        .execute(handle.db),
+      /متعلق به شعبه تراکنش نیست/,
+      "پایگاه داده نیز درج مستقیم با حساب شعبه دیگر را رد می‌کند",
     );
   });
 });

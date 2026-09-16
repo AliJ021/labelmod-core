@@ -116,7 +116,9 @@ export class TreasuryService {
   }
 
   /** حساب‌های خزانه — صندوق، بانک، کارت‌خوان، درگاه. */
-  async accounts(opts: { kind?: string | undefined } = {}): Promise<TreasuryAccount[]> {
+  async accounts(
+    opts: { kind?: string | undefined; branchIds?: string[] | undefined } = {},
+  ): Promise<TreasuryAccount[]> {
     let q = this.#db
       .selectFrom("treasury.account")
       .select([
@@ -133,6 +135,20 @@ export class TreasuryService {
       .orderBy("code");
 
     if (opts.kind !== undefined) q = q.where("kind", "=", opts.kind);
+    // حساب سراسری (`NULL`) در همه شعب قابل استفاده است؛ حساب شعبه‌ای
+    // فقط باید برای شعب مجاز کاربر دیده شود. آرایه تهی یعنی فقط سراسری.
+    const branchIds = opts.branchIds;
+    if (branchIds !== undefined) {
+      q =
+        branchIds.length === 0
+          ? q.where("branch_id", "is", null)
+          : q.where((eb) =>
+              eb.or([
+                eb("branch_id", "is", null),
+                eb("branch_id", "in", branchIds),
+              ]),
+            );
+    }
 
     const rows = await q.execute();
     return rows.map((r) => ({
@@ -160,6 +176,12 @@ export class TreasuryService {
       .select("id")
       .where("id", "in", ids)
       .where("kind", "=", "cash_box")
+      .where((eb) =>
+        eb.or([
+          eb("branch_id", "is", null),
+          eb("branch_id", "=", input.branchId),
+        ]),
+      )
       .execute();
     return rows.length > 0;
   }
@@ -205,7 +227,7 @@ export class TreasuryService {
     if (ids.length > 0) {
       const found = await this.#db
         .selectFrom("treasury.account")
-        .select(["id", "is_active"])
+        .select(["id", "is_active", "branch_id"])
         .where("id", "in", ids)
         .execute();
       for (const id of ids) {
@@ -218,6 +240,13 @@ export class TreasuryService {
             "account_inactive",
             "این حساب خزانه غیرفعال است و پول از آن جابه‌جا نمی‌شود.",
             422,
+          );
+        }
+        if (row.branch_id !== null && row.branch_id !== input.branchId) {
+          throw new TreasuryError(
+            "account_branch_mismatch",
+            "حساب خزانه متعلق به شعبه این تراکنش نیست.",
+            403,
           );
         }
       }
