@@ -784,7 +784,7 @@ export class InvoiceService {
         throw new InvoiceError("bad_mobile", "شماره موبایل معتبر نیست", 400);
       }
 
-      const r = await sql<{ id: string }>`
+      const r = await sql<{ id: string; created: boolean }>`
         WITH norm AS (SELECT sales.normalize_mobile(${input.mobile}) AS m),
         ins AS (
           INSERT INTO sales.customer (mobile_normalized, full_name)
@@ -792,15 +792,20 @@ export class InvoiceService {
           ON CONFLICT (mobile_normalized) DO NOTHING
           RETURNING id
         )
-        SELECT id FROM ins
+        SELECT id, true AS created FROM ins
         UNION ALL
-        SELECT c.id FROM sales.customer c, norm
+        SELECT c.id, false AS created FROM sales.customer c, norm
          WHERE c.mobile_normalized = norm.m
         LIMIT 1
       `.execute(trx);
       const customerId = r.rows[0]?.id;
       if (!customerId) {
         throw new InvoiceError("bad_mobile", "شماره موبایل معتبر نیست", 400);
+      }
+      if (r.rows[0]?.created) {
+        await sql`INSERT INTO sales.customer_branch (customer_id, branch_id)
+          SELECT ${customerId}::uuid, branch_id FROM sales.invoice
+           WHERE id = ${input.invoiceId}::uuid ON CONFLICT DO NOTHING`.execute(trx);
       }
       await sql`
         UPDATE sales.invoice SET customer_id = ${customerId}::uuid
@@ -837,7 +842,7 @@ export class InvoiceService {
         if (!norm.rows[0]?.m) {
           throw new InvoiceError("bad_mobile", "شماره موبایل گیرنده معتبر نیست", 400);
         }
-        const r = await sql<{ id: string }>`
+        const r = await sql<{ id: string; created: boolean }>`
           WITH norm AS (SELECT sales.normalize_mobile(${input.mobile}) AS m),
           ins AS (
             INSERT INTO sales.customer (mobile_normalized, full_name)
@@ -845,12 +850,17 @@ export class InvoiceService {
             ON CONFLICT (mobile_normalized) DO NOTHING
             RETURNING id
           )
-          SELECT id FROM ins
+          SELECT id, true AS created FROM ins
           UNION ALL
-          SELECT c.id FROM sales.customer c, norm WHERE c.mobile_normalized = norm.m
+          SELECT c.id, false AS created FROM sales.customer c, norm WHERE c.mobile_normalized = norm.m
           LIMIT 1
         `.execute(trx);
         recipientId = r.rows[0]?.id ?? null;
+        if (recipientId !== null && r.rows[0]?.created) {
+          await sql`INSERT INTO sales.customer_branch (customer_id, branch_id)
+            SELECT ${recipientId}::uuid, branch_id FROM sales.invoice
+             WHERE id = ${input.invoiceId}::uuid ON CONFLICT DO NOTHING`.execute(trx);
+        }
         if (recipientId === null) {
           throw new InvoiceError("bad_mobile", "شماره موبایل گیرنده معتبر نیست", 400);
         }

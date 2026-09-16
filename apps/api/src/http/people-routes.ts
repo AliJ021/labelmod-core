@@ -181,6 +181,18 @@ export function registerPeopleRoutes(app: FastifyInstance, deps: PeopleRouteDeps
     }
   }
 
+  /**
+   * مجوز عملیاتی به‌تنهایی کافی نیست: نقش شعبه‌ای فقط پرونده‌ای را
+   * می‌بیند که در یکی از شعبه‌هایش ساخته شده یا فاکتور دارد.
+   */
+  async function assertCustomerInScope(userId: string, customerId: string) {
+    const scope = await branchesOf(db, userId);
+    if (!(await customers.isAccessible(customerId, scope))) {
+      throw new ScopeError("به پرونده این مشتری دسترسی ندارید");
+    }
+    return scope;
+  }
+
   // ── پرسنل ────────────────────────────────────────────────────────
 
   app.get("/users", async (req) => {
@@ -296,9 +308,11 @@ export function registerPeopleRoutes(app: FastifyInstance, deps: PeopleRouteDeps
         limit: z.coerce.number().int().min(1).max(200).default(50),
       })
       .parse(req.query);
+    const branches = await branchesOf(db, s.userId);
     return {
       customers: await customers.search({
         limit: q.limit,
+        branches,
         ...(q.q === undefined ? {} : { q: q.q }),
       }),
     };
@@ -308,9 +322,10 @@ export function registerPeopleRoutes(app: FastifyInstance, deps: PeopleRouteDeps
     const s = session(req);
     const { id } = z.object({ id: uuid }).parse(req.params);
     await requireForSession(db, s, "customer.manage");
-    const c = await customers.byId(id);
+    const branches = await assertCustomerInScope(s.userId, id);
+    const c = await customers.byId(id, branches);
     if (!c) throw new CustomerError("customer_not_found", "مشتری یافت نشد", 404);
-    return { customer: c, invoices: await customers.invoices(id, 50) };
+    return { customer: c, invoices: await customers.invoices(id, 50, branches) };
   });
 
   /**
@@ -324,10 +339,12 @@ export function registerPeopleRoutes(app: FastifyInstance, deps: PeopleRouteDeps
     const s = session(req);
     const body = upsertCustomerBody.parse(req.body);
     await requireForSession(db, s, "customer.manage");
+    const branches = await branchesOf(db, s.userId);
 
     const out = await customers.upsert({
       mobile: body.mobile,
       actorId: s.userId,
+      branches,
       ...(body.fullName === undefined ? {} : { fullName: body.fullName }),
       ...(body.email === undefined ? {} : { email: body.email }),
       ...(body.consentSms === undefined ? {} : { consentSms: body.consentSms }),
@@ -336,7 +353,8 @@ export function registerPeopleRoutes(app: FastifyInstance, deps: PeopleRouteDeps
         : { consentMarketing: body.consentMarketing }),
     });
 
-    const c = await customers.byId(out.id);
+    await assertCustomerInScope(s.userId, out.id);
+    const c = await customers.byId(out.id, branches);
     return reply.code(out.created ? 201 : 200).send({ ...c, created: out.created });
   });
 
@@ -345,6 +363,7 @@ export function registerPeopleRoutes(app: FastifyInstance, deps: PeopleRouteDeps
     const { id } = z.object({ id: uuid }).parse(req.params);
     const body = updateCustomerBody.parse(req.body);
     await requireForSession(db, s, "customer.manage");
+    const branches = await assertCustomerInScope(s.userId, id);
 
     await customers.update({
       id,
@@ -366,7 +385,7 @@ export function registerPeopleRoutes(app: FastifyInstance, deps: PeopleRouteDeps
       ...(body.city === undefined ? {} : { city: body.city }),
       ...(body.province === undefined ? {} : { province: body.province }),
     });
-    return await customers.byId(id);
+    return await customers.byId(id, branches);
   });
 
   /**
@@ -405,6 +424,8 @@ export function registerPeopleRoutes(app: FastifyInstance, deps: PeopleRouteDeps
       .parse(req.query);
     await requireForSession(db, s, "customer.manage");
 
+    await assertCustomerInScope(s.userId, id);
+
     const allowed = await branchesOf(db, s.userId);
     if (q.warehouseId !== undefined) {
       const warehouse = await db.selectFrom("inventory.warehouse")
@@ -428,6 +449,7 @@ export function registerPeopleRoutes(app: FastifyInstance, deps: PeopleRouteDeps
     const s = session(req);
     const { id } = z.object({ id: uuid }).parse(req.params);
     await requireForSession(db, s, "customer.manage");
+    await assertCustomerInScope(s.userId, id);
     return { measures: await customers.measuresOf(id) };
   });
 
@@ -443,6 +465,7 @@ export function registerPeopleRoutes(app: FastifyInstance, deps: PeopleRouteDeps
     const { id } = z.object({ id: uuid }).parse(req.params);
     const body = measuresBody.parse(req.body);
     await requireForSession(db, s, "customer.manage");
+    await assertCustomerInScope(s.userId, id);
     return {
       measures: await customers.setMeasures({
         id,
