@@ -33,6 +33,34 @@ define('LMC_ORDER_EVENT', 'lmc_send_order');
 define('MINUTE_IN_SECONDS', 60);
 
 $GLOBALS['lmc_test_settings'] = [];
+$GLOBALS['lmc_test_actions'] = [];
+$GLOBALS['lmc_test_orders'] = [];
+$GLOBALS['lmc_test_scheduled'] = [];
+
+function add_action(string $hook, $callback): void
+{
+    $GLOBALS['lmc_test_actions'][$hook] = $callback;
+}
+
+function wc_get_order(int $order_id)
+{
+    return $GLOBALS['lmc_test_orders'][$order_id] ?? false;
+}
+
+function wp_next_scheduled(string $hook, array $args)
+{
+    foreach ($GLOBALS['lmc_test_scheduled'] as $event) {
+        if ($event['hook'] === $hook && $event['args'] === $args) {
+            return $event['timestamp'];
+        }
+    }
+    return false;
+}
+
+function wp_schedule_single_event(int $timestamp, string $hook, array $args): void
+{
+    $GLOBALS['lmc_test_scheduled'][] = compact('timestamp', 'hook', 'args');
+}
 
 function lmc_setting(string $key, $default = '')
 {
@@ -149,6 +177,7 @@ class WC_Order
     public string $txn = '';
     public string $customer_note = '';
     public int $id = 1001;
+    public string $status = 'processing';
     private array $meta = [];
 
     public function get_items(): array
@@ -204,6 +233,11 @@ class WC_Order
     public function get_order_number(): string
     {
         return (string) $this->id;
+    }
+
+    public function has_status($status): bool
+    {
+        return in_array($this->status, (array) $status, true);
     }
 
     public function get_meta(string $key)
@@ -267,6 +301,42 @@ function set_settings(array $s): void
         'payment_map'   => '',
     ], $s);
 }
+
+// ── احراز پرداخت و بازبینی وضعیت ───────────────────────────────────
+
+echo "── احراز پرداخت سفارش ───────────────────────────────────────\n";
+
+LMC_Order_Sync::init();
+assert_eq(
+    'فقط رویداد موفق پرداخت سفارش را صف می‌کند',
+    isset($GLOBALS['lmc_test_actions']['woocommerce_payment_complete']),
+    true
+);
+assert_eq(
+    'processing به‌تنهایی hook ارسال نیست',
+    isset($GLOBALS['lmc_test_actions']['woocommerce_order_status_processing']),
+    false
+);
+
+$paid_order = new WC_Order();
+$GLOBALS['lmc_test_orders'][$paid_order->id] = $paid_order;
+LMC_Order_Sync::payment_complete($paid_order->id);
+assert_eq('تأیید پرداخت ثبت می‌شود', $paid_order->get_meta(LMC_Order_Sync::META_PAID), 'yes');
+assert_eq('پرداخت موفق یک کار می‌سازد', count($GLOBALS['lmc_test_scheduled']), 1);
+
+// کار صف‌شده بعد از لغو باید پیش از ساخت payload و POST متوقف شود.
+$paid_order->status = 'cancelled';
+LMC_Order_Sync::send($paid_order->id);
+assert_eq('سفارش لغوشده ثبت نمی‌شود', $paid_order->get_meta(LMC_Order_Sync::META_INVOICE), '');
+assert_eq('سفارش لغوشده حتی به ساخت بدنه نمی‌رسد', $paid_order->get_meta(LMC_Order_Sync::META_ERROR), '');
+
+$cod_order = new WC_Order();
+$cod_order->id = 1002;
+$cod_order->method = 'cod';
+$GLOBALS['lmc_test_orders'][$cod_order->id] = $cod_order;
+LMC_Order_Sync::send($cod_order->id);
+assert_eq('پرداخت در محل بدون payment_complete ثبت نمی‌شود', $cod_order->get_meta(LMC_Order_Sync::META_INVOICE), '');
+assert_eq('پرداخت در محل حتی به ساخت بدنه نمی‌رسد', $cod_order->get_meta(LMC_Order_Sync::META_ERROR), '');
 
 // ── واحد پول ────────────────────────────────────────────────────────
 

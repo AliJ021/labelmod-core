@@ -4,7 +4,8 @@
  *
  * ── چه وقت فرستاده می‌شود ───────────────────────────────────────────
  *
- * فقط وقتی **پول واقعاً گرفته شده**: `processing` یا `completed`.
+ * فقط وقتی **پول واقعاً گرفته شده**: رویداد `payment_complete` ووکامرس
+ * و وضعیت فعلی `processing` یا `completed`.
  * سفارش `pending` و `on-hold` فرستاده نمی‌شود، چون فاکتور در آن سامانه
  * کالا را همان لحظه از انبار خارج می‌کند — سفارشی که هرگز پرداخت نشود،
  * موجودی را می‌خورد و کسی هم نمی‌فهمد چرا.
@@ -35,14 +36,14 @@ class LMC_Order_Sync
     const META_NUMBER   = '_lmc_invoice_number';
     const META_ATTEMPTS = '_lmc_attempts';
     const META_ERROR    = '_lmc_last_error';
+    const META_PAID     = '_lmc_payment_complete';
 
     /** سقف تلاش. بعد از این، سفارش دست انسان است نه صف. */
     const MAX_ATTEMPTS = 6;
 
     public static function init(): void
     {
-        add_action('woocommerce_order_status_processing', [__CLASS__, 'queue']);
-        add_action('woocommerce_order_status_completed', [__CLASS__, 'queue']);
+        add_action('woocommerce_payment_complete', [__CLASS__, 'payment_complete']);
         add_action(LMC_ORDER_EVENT, [__CLASS__, 'send']);
 
         add_action('add_meta_boxes', [__CLASS__, 'meta_box']);
@@ -56,7 +57,7 @@ class LMC_Order_Sync
      * ممکن است متای پرداخت را ننوشته باشد و `get_transaction_id()`
      * تهی برگردد — شماره پیگیری‌ای که بعداً هیچ‌جا پیدا نمی‌شود.
      */
-    public static function queue($order_id): void
+    public static function payment_complete($order_id): void
     {
         $order_id = (int) $order_id;
         if ($order_id <= 0) {
@@ -66,6 +67,13 @@ class LMC_Order_Sync
         if (!$order || $order->get_meta(self::META_INVOICE) !== '') {
             return;
         }
+
+        // خود status برای اثبات پرداخت کافی نیست: پرداخت در محل هم
+        // پیش از دریافت پول وارد processing می‌شود. این نشان فقط از
+        // رویداد موفق پرداخت ووکامرس نوشته می‌شود.
+        $order->update_meta_data(self::META_PAID, 'yes');
+        $order->save();
+
         if (!wp_next_scheduled(LMC_ORDER_EVENT, [$order_id])) {
             wp_schedule_single_event(time() + 10, LMC_ORDER_EVENT, [$order_id]);
         }
@@ -79,7 +87,7 @@ class LMC_Order_Sync
         if (!$order) {
             return;
         }
-        if ($order->get_meta(self::META_INVOICE) !== '') {
+        if ($order->get_meta(self::META_INVOICE) !== '' || !self::is_eligible($order)) {
             return;
         }
 
@@ -124,6 +132,16 @@ class LMC_Order_Sync
 
         $order->save();
         lmc_log(sprintf('سفارش %d ثبت شد → %s', $order_id, (string) ($res['number'] ?? '')));
+    }
+
+    /**
+     * شرط ارسال در لحظه اجرای هر کار و Retry دوباره بررسی می‌شود.
+     * به این ترتیب سفارش لغوشده پس از صف‌شدن نیز ارسال نمی‌شود.
+     */
+    private static function is_eligible(WC_Order $order): bool
+    {
+        return $order->get_meta(self::META_PAID) === 'yes'
+            && $order->has_status(['processing', 'completed']);
     }
 
     /**
