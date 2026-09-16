@@ -551,6 +551,26 @@ export class ReceiptService {
     await setActor(trx, input.actorId);
     await this.assertDraft(trx, input.receiptId);
 
+    if (input.expenseAccountCode !== undefined) {
+      const expenseAccount = await trx
+        .selectFrom("ledger.account")
+        .select("code")
+        .where("code", "=", input.expenseAccountCode)
+        .where("type", "=", "expense")
+        .where("is_active", "=", true)
+        .where("is_postable", "=", true)
+        .forShare()
+        .executeTakeFirst();
+
+      if (!expenseAccount) {
+        throw new PurchasingError(
+          "expense_account_invalid",
+          "سرفصل هزینه باید حساب هزینه فعال و قابل ثبت باشد",
+          400,
+        );
+      }
+    }
+
     const row = await trx
       .insertInto("purchasing.receipt_charge")
       .values({

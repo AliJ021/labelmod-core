@@ -242,6 +242,14 @@ PERFORM pg_temp.assert_raises(
              (receipt_id, charge_type, amount, allocation, expense_account_code)
            VALUES (%L::uuid, 'حمل', 1, 'by_value', '6103')$q$, v_b));
 
+-- کلاینت قابل اعتماد نیست: کد صندوق، بانک یا هر حساب غیرهزینه نباید
+-- از مسیر مستقیم درج هم به مؤلفهٔ expensed_charge راه پیدا کند.
+PERFORM pg_temp.assert_raises(
+  'حساب دارایی به‌عنوان سرفصل هزینه رد می‌شود',
+  format($q$INSERT INTO purchasing.receipt_charge
+             (receipt_id, charge_type, amount, allocation, expense_account_code)
+           VALUES (%L::uuid, 'بسته‌بندی', 1, 'none', '1101')$q$, v_b));
+
 RAISE NOTICE E'\n╔══════════════════════════════════════════╗';
 RAISE NOTICE   '║   تست رسید خرید پاس شد                  ║';
 RAISE NOTICE   '╚══════════════════════════════════════════╝';
