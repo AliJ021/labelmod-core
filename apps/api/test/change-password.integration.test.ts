@@ -6,6 +6,7 @@ import { createDb, type DbHandle } from "../src/db/client.ts";
 import { createDisposableDb, type DisposableDb } from "./helpers/disposable-db.ts";
 import { AuthService, type LoginOutcome } from "../src/auth/service.ts";
 import { hashSecret } from "../src/auth/password.ts";
+import { newTotpSecret } from "../src/auth/totp.ts";
 import { buildApp } from "../src/http/app.ts";
 import { loadConfig } from "../src/lib/config.ts";
 
@@ -100,6 +101,35 @@ describe("تغییر رمز شخصی و رگرسیون نشست", { skip: DATABA
       await auth.lock(f.session.token);
       await assert.rejects(() => auth.changePassword(f.session.token, OLD, NEXT));
       live(await auth.login({ username: f.username, password: OLD }));
+    } finally { await f.app.close(); }
+  });
+
+  test("Authenticator فعال پس از تغییر رمز همچنان برای ورود لازم است", async () => {
+    const f = await fixture();
+    try {
+      const secret = newTotpSecret();
+      await handle.db.updateTable("identity.app_user").set({ totp_secret: secret }).where("id", "=", f.user.id).execute();
+      assert.equal((await f.request({ currentPassword: OLD, password: NEXT })).statusCode, 200);
+      const user = await handle.db.selectFrom("identity.app_user").select("totp_secret").where("id", "=", f.user.id).executeTakeFirstOrThrow();
+      assert.equal(user.totp_secret, secret);
+      const login = await auth.login({ username: f.username, password: NEXT });
+      assert.equal(login.kind, "second_factor");
+    } finally { await f.app.close(); }
+  });
+
+  test("بازنشانی هم‌زمان پس از بررسی رمز فعلی، با رمز قدیمی بازنویسی نمی‌شود", async () => {
+    const f = await fixture();
+    const isolatedAuth = new AuthService(handle.db);
+    const original = isolatedAuth.reauthenticate.bind(isolatedAuth);
+    isolatedAuth.reauthenticate = async (token, current) => {
+      await original(token, current);
+      // جابه‌جایی قطعی دو درخواست در همان فاصله‌ای که باید محافظت شود.
+      await auth.setPassword(f.user.id, NEXT, f.user.id);
+    };
+    try {
+      await assert.rejects(() => isolatedAuth.changePassword(f.session.token, OLD, WRONG));
+      live(await auth.login({ username: f.username, password: NEXT }));
+      await assert.rejects(() => auth.login({ username: f.username, password: WRONG }));
     } finally { await f.app.close(); }
   });
 });

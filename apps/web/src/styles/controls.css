@@ -1,4 +1,6 @@
 /* فرم‌های مات و یکدست، مستقل از ظرف صفحه. */
+:root[data-theme="light"] { color-scheme: light; }
+:root[data-theme="dark"] { color-scheme: dark; }
 :is(input, select, textarea):not([type="checkbox"], [type="radio"], [type="range"], [type="file"], [type="hidden"], [type="color"], [type="button"], [type="submit"]) {
   min-inline-size: 0;
   max-inline-size: 100%;
@@ -21,18 +23,31 @@ input[type="checkbox"], input[type="radio"] { accent-color: var(--accent); inlin
 :is(input, select, textarea):disabled { opacity: 0.55; cursor: not-allowed; }
 input[aria-invalid="true"] { border-color: var(--crit); }
 .auth-field { min-inline-size: 0; }
+.filters > .auth-field { flex: 1 1 200px; }
+form.stack { gap: var(--s-4); }
+label:has(> :is(input, select, textarea)):not(:has(> input:is([type="checkbox"], [type="radio"]))):not(.row):not(.preference-row) {
+  display: flex;
+  flex-direction: column;
+  align-items: stretch;
+  gap: var(--s-2);
+  min-inline-size: 0;
+}
+label:has(> :is(input, select, textarea)):not(:has(> input:is([type="checkbox"], [type="radio"]))):not(.row):not(.preference-row) > :is(input, select, textarea) { inline-size: 100%; }
+form.stack > .row:has(> label) { flex-wrap: wrap; align-items: flex-start; }
+form.stack > .row > label { min-inline-size: min(100%, 160px); }
 .auth-field > span:first-child { font-size: 0.86rem; font-weight: 600; color: var(--ink-2); }
 .icon { inline-size: 21px; block-size: 21px; flex: 0 0 auto; }
 .icon-button { position: relative; display: inline-flex; align-items: center; justify-content: center; flex: 0 0 var(--touch); inline-size: var(--touch); block-size: var(--touch); border: 1px solid transparent; border-radius: var(--r-sm); padding: 0; background: transparent; color: var(--ink-2); }
 .icon-button:hover, .icon-button[aria-expanded="true"] { color: var(--ink); border-color: var(--rule); background: var(--surface-glass-2); }
 button:focus-visible, summary:focus-visible { outline: 2px solid var(--accent); outline-offset: 3px; }
-.search-field { display: flex; align-items: center; gap: var(--s-2); flex: 1 1 260px; min-inline-size: 0; padding-inline: 14px 4px; border: 1px solid var(--rule-2); border-radius: 14px; background: var(--surface-solid); color: var(--ink-2); box-shadow: 0 2px 5px color-mix(in srgb, var(--ink) 3%, transparent); }
+.search-field { display: flex; align-items: center; gap: var(--s-2); min-inline-size: 0; inline-size: 100%; padding-inline: 14px 4px; border: 1px solid var(--rule-2); border-radius: 14px; background: var(--surface-solid); color: var(--ink-2); box-shadow: 0 2px 5px color-mix(in srgb, var(--ink) 3%, transparent); }
 .search-field:focus-within { outline: 2px solid var(--accent); outline-offset: 3px; }
 .search-field input { flex: 1; inline-size: 100%; block-size: 48px; padding: 10px 0; border: 0; box-shadow: none; background: transparent; outline: none; }
 .search-field input:focus-visible { outline: none; }
 .search-field input::-webkit-search-cancel-button { -webkit-appearance: none; }
 .search-clear { flex-basis: 40px; inline-size: 40px; }
 .catalog-toolbar { display: flex; align-items: center; gap: var(--s-4); margin-block-start: var(--s-5); flex-wrap: wrap; }
+.catalog-toolbar .search-field { flex: 1 1 260px; }
 .filter-check { display: inline-flex; align-items: center; gap: var(--s-2); min-block-size: var(--touch); color: var(--ink-2); cursor: pointer; font-size: 0.9rem; }
 .catalog-page { gap: var(--s-4); }
 .catalog-page h2, .preference-card h2 { font-size: 1.12rem; }
