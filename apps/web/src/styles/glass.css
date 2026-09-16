@@ -22,8 +22,8 @@
   isolation: isolate;
   border-radius: var(--r-lg);
   background: var(--surface-glass);
-  backdrop-filter: blur(var(--glass-blur)) saturate(var(--glass-sat));
   -webkit-backdrop-filter: blur(var(--glass-blur)) saturate(var(--glass-sat));
+  backdrop-filter: blur(var(--glass-blur)) saturate(var(--glass-sat));
   box-shadow:
     var(--glass-shadow),
     inset 0 1px 0 var(--glass-rim),
@@ -62,9 +62,8 @@
    سافاری `url()` را در `-webkit-backdrop-filter` نمی‌پذیرد، پس آنجا
    فقط بلور و اشباع می‌ماند — که افت زیبایی است، نه شکست. */
 .glass--refract {
-  backdrop-filter: blur(var(--glass-blur)) saturate(var(--glass-sat))
-    url("#lm-refract");
   -webkit-backdrop-filter: blur(var(--glass-blur)) saturate(var(--glass-sat));
+  backdrop-filter: blur(var(--glass-blur)) saturate(var(--glass-sat)) url("#lm-refract");
 }
 
 /* در حالت عملکرد و کم‌شفافیت، فیلتر باید **واقعاً** برداشته شود.
@@ -72,15 +71,15 @@
    همان است که روی تبلت ارزان فریم می‌اندازد. */
 :root[data-perf="on"] .glass,
 :root[data-perf="on"] .glass--refract {
-  backdrop-filter: none;
   -webkit-backdrop-filter: none;
+  backdrop-filter: none;
 }
 
 @media (prefers-reduced-transparency: reduce) {
   :root:not([data-perf="off"]) .glass,
   :root:not([data-perf="off"]) .glass--refract {
-    backdrop-filter: none;
     -webkit-backdrop-filter: none;
+    backdrop-filter: none;
   }
 }
 
@@ -188,4 +187,17 @@
   outline: 2px solid var(--accent);
   outline-offset: 2px;
   box-shadow: 0 0 0 4px color-mix(in srgb, var(--accent) 24%, transparent);
+}
+
+/* حالت عملکرد زمینه ثابت دارد و هیچ لایه فیلترشده‌ای نمی‌سازد. */
+:root[data-perf="on"] .mesh { display: none; }
+:root[data-perf="on"] .mesh > i { filter: none; animation: none; will-change: auto; }
+:root[data-perf="on"] .glass::after { display: none; }
+:root[data-perf="on"]::view-transition-group(*),
+:root[data-perf="on"]::view-transition-old(*),
+:root[data-perf="on"]::view-transition-new(*) { animation: none !important; }
+@media (prefers-reduced-motion: reduce) {
+  .mesh > i { animation: none; will-change: auto; }
+  .glass::after { transition: none; }
+  ::view-transition-group(*), ::view-transition-old(*), ::view-transition-new(*) { animation: none !important; }
 }

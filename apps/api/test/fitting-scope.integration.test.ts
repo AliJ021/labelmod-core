@@ -51,6 +51,8 @@ describe("دامنه موجودی پیشنهاد سایز با ورود واقع
     const c = await sql<{ id: string }>`INSERT INTO sales.customer(full_name)
       VALUES('مشتری مصنوعی') RETURNING id`.execute(db);
     customer = c.rows[0]!.id;
+    await sql`INSERT INTO sales.customer_branch (customer_id, branch_id)
+      VALUES (${customer}::uuid, ${BRANCH}::uuid), (${customer}::uuid, ${otherBranch}::uuid)`.execute(db);
     // کالای فقط شعبه دوم پیش از کالای مجاز مرتب می‌شود؛ scope باید قبل از LIMIT باشد.
     for (const [code, name, quantities] of [
       ["FIT-HIDDEN", "AAA", [[otherWh, 999]]],

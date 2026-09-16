@@ -100,3 +100,10 @@ test("مبدأهای بیرونیِ index.html در CSP مجازند", () => {
     assert.ok(csp.includes(origin), `مبدأ ${origin} در index.html هست ولی در CSP نیست`);
   }
 });
+
+test("فونت و سبک فقط از میزبان برنامه می‌آیند", () => {
+  const csp = header("Content-Security-Policy");
+  assert.equal(directive(csp, "font-src"), "font-src 'self'");
+  assert.equal(directive(csp, "style-src-elem"), "style-src-elem 'self'");
+  assert.doesNotMatch(indexHtml, /fonts\.googleapis|fonts\.gstatic/);
+});

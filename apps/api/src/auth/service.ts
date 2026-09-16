@@ -537,6 +537,39 @@ export class AuthService {
     return r.rows[0]?.revoke_all_sessions ?? 0;
   }
 
+  /** تغییر رمز خود کاربر؛ تأیید رمز فعلی و ابطال نشست‌ها اتمیک‌اند. */
+  async changePassword(token: string, currentPassword: string, plain: string): Promise<void> {
+    const min = await this.settingNumber("auth.min_password_length", 12);
+    if (plain.length < min || plain.length > 256 || plain === currentPassword) {
+      throw new AuthError("bad_credentials", `رمز تازه باید متفاوت و بین ${min} تا ۲۵۶ کاراکتر باشد`);
+    }
+    const session = await this.resolve(token);
+    if (!session) throw new AuthError("no_session", "نشستی وجود ندارد");
+    // شمارش تلاش ناموفق و قفل حساب، همان مسیر احراز مجدد است.
+    await this.reauthenticate(token, currentPassword);
+    const hash = await hashSecret(plain);
+    await this.#db.transaction().execute(async (trx) => {
+      const user = await trx.selectFrom("identity.app_user")
+        .select(["password_hash", "is_active"]).where("id", "=", session.userId)
+        .forUpdate().executeTakeFirst();
+      const live = await trx.selectFrom("identity.session").select("id")
+        .where("token_hash", "=", hashToken(token)).where("user_id", "=", session.userId)
+        .where("revoked_at", "is", null).where("locked_at", "is", null)
+        .where("expires_at", ">", sql<Date>`clock_timestamp()`)
+        .forUpdate().executeTakeFirst();
+      if (!live || !user?.is_active) throw new AuthError("no_session", "نشست پایان یافته است");
+      // بازنشانی هم‌زمان مدیر نباید با رمز قدیمی بازنویسی شود.
+      if (!await verifySecret(user.password_hash, currentPassword)) {
+        throw new AuthError("bad_credentials", VAGUE);
+      }
+      await setActor(trx, session.userId);
+      await trx.updateTable("identity.app_user").set({ password_hash: hash })
+        .where("id", "=", session.userId).execute();
+      await sql`SELECT identity.revoke_all_sessions(${session.userId}::uuid, 'password_changed', ${session.userId}::uuid)`.execute(trx);
+      await sql`SELECT platform.audit('user.change_password', 'app_user', ${session.userId}::text, NULL, ${session.userId}::uuid)`.execute(trx);
+    });
+  }
+
   /** رمز تازه — پس از تغییر، همه نشست‌های قبلی می‌میرند. */
   async setPassword(userId: string, plain: string, actorId: string): Promise<void> {
     const min = await this.settingNumber("auth.min_password_length", 12);
