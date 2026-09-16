@@ -247,7 +247,7 @@ export interface CreatedInvoice extends Invoice {
 
 /** فقط شعبه‌های مجاز همین کاربر، با انبارهای فعالشان. */
 export const pos = {
-  branches: () => api.get<{ branches: Branch[] }>("/branches"),
+  branches: () => api.get<{ branches: Branch[]; allBranches: boolean }>("/branches"),
 
   paymentMethods: () => api.get<{ methods: PaymentMethod[] }>("/payment-methods"),
 

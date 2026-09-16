@@ -52,7 +52,7 @@ export function registerScopeRoutes(app: FastifyInstance, deps: ScopeRouteDeps):
   app.get("/branches", async (req) => {
     const s = session(req);
     const scope = await branchesOf(db, s.userId);
-    if (scope !== "all" && scope.length === 0) return { branches: [] };
+    if (scope !== "all" && scope.length === 0) return { branches: [], allBranches: false };
 
     let q = db
       .selectFrom("platform.branch")
@@ -61,7 +61,7 @@ export function registerScopeRoutes(app: FastifyInstance, deps: ScopeRouteDeps):
     if (scope !== "all") q = q.where("id", "in", scope);
     const branches = await q.orderBy("code").execute();
 
-    if (branches.length === 0) return { branches: [] };
+    if (branches.length === 0) return { branches: [], allBranches: scope === "all" };
 
     const warehouses = await db
       .selectFrom("inventory.warehouse")
@@ -76,6 +76,7 @@ export function registerScopeRoutes(app: FastifyInstance, deps: ScopeRouteDeps):
       .execute();
 
     return {
+      allBranches: scope === "all",
       branches: branches.map((b) => ({
         id: b.id,
         code: b.code,

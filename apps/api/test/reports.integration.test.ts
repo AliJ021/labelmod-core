@@ -251,7 +251,7 @@ describe("گزارش‌ها", { skip }, () => {
   });
 
   test("کاردکس بدون cost.view تعداد را می‌دهد و بها را نه", async () => {
-    const url = `/reports/stock-movements?variationId=${variationId}&from=${today}&to=${today}`;
+    const url = `/reports/stock-movements?variationId=${variationId}&from=${today}&to=${today}&warehouseId=${STORE_WH}`;
     const ok = await get(admin, url);
     assert.equal(ok.statusCode, 200, ok.body);
     const rows = (JSON.parse(ok.body) as { rows: Array<Record<string, unknown>> }).rows;
@@ -264,6 +264,17 @@ describe("گزارش‌ها", { skip }, () => {
     assert.equal(supRows[0]?.runningQty, "20.000", "تعداد را می‌بیند");
     assert.equal(supRows[0]?.unitCost, null, "بها را نه");
     assert.equal(supRows[0]?.valueDelta, null);
+  });
+
+  test("کاربر محدود باید انبار گزارش موجودی را صریح انتخاب کند", async () => {
+    const valuation = await get(admin, "/reports/inventory-valuation");
+    assert.equal(valuation.statusCode, 403, valuation.body);
+
+    const movements = await get(
+      supervisor,
+      `/reports/stock-movements?variationId=${variationId}&from=${today}&to=${today}`,
+    );
+    assert.equal(movements.statusCode, 403, movements.body);
   });
 
   test("تراز آزمایشی متوازن است و از همین مسیر هم متوازن می‌ماند", async () => {
@@ -393,7 +404,7 @@ describe("گزارش‌ها", { skip }, () => {
       `/reports/sales?from=${today}&to=${today}`,
       `/reports/profit-by-product?from=${today}&to=${today}`,
       `/reports/inventory-valuation?warehouseId=${STORE_WH}`,
-      `/reports/stock-movements?variationId=${variationId}&from=${today}&to=${today}`,
+      `/reports/stock-movements?warehouseId=${STORE_WH}&variationId=${variationId}&from=${today}&to=${today}`,
       `/reports/trial-balance?from=${today}&to=${today}`,
       `/reports/party-balances`,
       `/reports/cash-reconciliation?from=${today}&to=${today}`,
