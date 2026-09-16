@@ -34,6 +34,7 @@ import { requireForSession } from "../auth/permission.ts";
 import { withActor } from "../db/actor.ts";
 import type { Db } from "../db/client.ts";
 import { serializeMoney } from "../lib/money.ts";
+import { branchesOf } from "../sales/scope.ts";
 
 const accountBody = z.object({
   name: z.string().trim().min(1, "نام حساب لازم است").max(120),
@@ -425,8 +426,21 @@ export function registerAdminRoutes(app: FastifyInstance, deps: AdminRouteDeps):
     const s = session(req);
     await requireForSession(db, s, "settings.view");
 
+    const branches = await branchesOf(db, s.userId);
+    if (branches !== "all" && branches.length === 0) return { rows: [] };
+
+    // نما ابتدا به تفکیک شعبه جمع می‌زند. محدودیت دامنه باید پیش از
+    // جمع نهایی اعمال شود؛ وگرنه مانده مجاز هنوز گردش شعب دیگر را دارد.
+    const branchFilter =
+      branches === "all" ? sql`` : sql`WHERE branch_id IN (${sql.join(branches)})`;
+
     const rows = await sql<TafsiliRow>`
-      SELECT * FROM ledger.party_tafsili ORDER BY parent_code, tafsili_no`.execute(db);
+      SELECT parent_code, parent_name, code, party_type, party_id, party_name,
+             sum(debit) AS debit, sum(credit) AS credit, sum(balance) AS balance
+        FROM ledger.party_tafsili
+        ${branchFilter}
+       GROUP BY parent_code, parent_name, code, party_type, party_id, party_name, tafsili_no
+       ORDER BY parent_code, tafsili_no`.execute(db);
 
     return {
       rows: rows.rows.map((r) => ({

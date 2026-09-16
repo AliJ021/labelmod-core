@@ -48,7 +48,7 @@ END $$;
 DO $test$
 DECLARE
   BR uuid := '00000000-0000-7000-8000-000000000001';
-  v_user uuid; v_c1 uuid; v_c2 uuid;
+  v_user uuid; v_c1 uuid; v_c2 uuid; v_branch2 uuid;
   v_n int; v_entry uuid; v_rev uuid;
   v_moin platform.money;
   v_taf  platform.money;
@@ -190,8 +190,26 @@ PERFORM ledger.post_entry('loyalty_grant', BR, now()::date,
                        'party_type','customer','party_id', v_c2)),
   NULL, NULL, v_user);
 
+-- یک شخص ممکن است در چند شعبه گردش داشته باشد. نما باید این گردش‌ها
+-- را پیش از آن‌که API دامنه کاربر را اعمال کند جدا نگه دارد.
+INSERT INTO platform.branch (code, name)
+VALUES ('TAF-B2', 'شعبه دوم تفصیلی') RETURNING id INTO v_branch2;
+INSERT INTO platform.document_counter (branch_id, doc_type, fiscal_year, prefix)
+SELECT v_branch2, doc_type, fiscal_year, prefix
+  FROM platform.document_counter WHERE branch_id = BR;
+PERFORM ledger.post_entry('loyalty_grant', v_branch2, now()::date,
+  'امتیاز مشتری الف در شعبه دوم',
+  jsonb_build_array(
+    jsonb_build_object('leg','expense','amount', 100000),
+    jsonb_build_object('leg','liability','amount', 100000,
+                       'party_type','customer','party_id', v_c1)),
+  NULL, NULL, v_user);
+
+PERFORM pg_temp.assert_eq('گردش تفصیلی پیش از فیلتر به تفکیک شعبه است',
+  (SELECT count(*) FROM ledger.party_tafsili WHERE party_id = v_c1), 2);
+
 PERFORM pg_temp.assert_eq('دو تفصیلی زیر همان معین دیده می‌شوند',
-  (SELECT count(*) FROM ledger.party_tafsili WHERE party_type = 'customer'), 2);
+  (SELECT count(DISTINCT party_id) FROM ledger.party_tafsili WHERE party_type = 'customer'), 2);
 
 -- جمع تفصیلی‌ها باید **دقیقاً** با مانده معین بخواند. این همان چیزی
 -- است که با حساب تفصیلیِ جدا دیر یا زود می‌شکست.
@@ -213,11 +231,11 @@ PERFORM pg_temp.assert_eq('جمع تفصیلی = مانده معین', v_taf, v_
 
 -- کد نمایشی همان شکلی است که آدم‌ها می‌نویسند: معین + کد تفصیلی
 PERFORM pg_temp.assert_txt('کد نمایشی تفصیلی ساخته می‌شود',
-  (SELECT (code LIKE '%-%')::text FROM ledger.party_tafsili
+  (SELECT bool_and(code LIKE '%-%')::text FROM ledger.party_tafsili
     WHERE party_id = v_c1), 'true');
 
 PERFORM pg_temp.assert_txt('نام شخص در تفصیلی می‌آید',
-  (SELECT party_name FROM ledger.party_tafsili WHERE party_id = v_c1), 'مشتری الف');
+  (SELECT bool_and(party_name = 'مشتری الف')::text FROM ledger.party_tafsili WHERE party_id = v_c1), 'true');
 
 -- ═══════════════════════════════════════════════════════════════════
 RAISE NOTICE E'\n═══ ادعاهای پایدار ═══';
