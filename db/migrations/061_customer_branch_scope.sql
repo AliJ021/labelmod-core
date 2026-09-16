@@ -1,3 +1,4 @@
+BEGIN;
 -- شعبه‌ای که پرونده مشتری را ساخته است.
 --
 -- خود مشتری در کل کسب‌وکار با موبایل یکتا می‌ماند، اما این رابطه تعیین
@@ -15,7 +16,10 @@ INSERT INTO sales.customer_branch (customer_id, branch_id)
 SELECT DISTINCT customer_id, branch_id
   FROM sales.invoice
  WHERE customer_id IS NOT NULL
+   AND status IN ('finalized', 'paid', 'partially_returned', 'returned')
 ON CONFLICT DO NOTHING;
 
 CREATE INDEX customer_branch_branch_idx
   ON sales.customer_branch (branch_id, customer_id);
+
+COMMIT;

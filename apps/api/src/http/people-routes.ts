@@ -323,7 +323,7 @@ export function registerPeopleRoutes(app: FastifyInstance, deps: PeopleRouteDeps
     const { id } = z.object({ id: uuid }).parse(req.params);
     await requireForSession(db, s, "customer.manage");
     const branches = await assertCustomerInScope(s.userId, id);
-    const c = await customers.byId(id);
+    const c = await customers.byId(id, branches);
     if (!c) throw new CustomerError("customer_not_found", "مشتری یافت نشد", 404);
     return { customer: c, invoices: await customers.invoices(id, 50, branches) };
   });
@@ -354,7 +354,7 @@ export function registerPeopleRoutes(app: FastifyInstance, deps: PeopleRouteDeps
     });
 
     await assertCustomerInScope(s.userId, out.id);
-    const c = await customers.byId(out.id);
+    const c = await customers.byId(out.id, branches);
     return reply.code(out.created ? 201 : 200).send({ ...c, created: out.created });
   });
 
@@ -363,7 +363,7 @@ export function registerPeopleRoutes(app: FastifyInstance, deps: PeopleRouteDeps
     const { id } = z.object({ id: uuid }).parse(req.params);
     const body = updateCustomerBody.parse(req.body);
     await requireForSession(db, s, "customer.manage");
-    await assertCustomerInScope(s.userId, id);
+    const branches = await assertCustomerInScope(s.userId, id);
 
     await customers.update({
       id,
@@ -385,7 +385,7 @@ export function registerPeopleRoutes(app: FastifyInstance, deps: PeopleRouteDeps
       ...(body.city === undefined ? {} : { city: body.city }),
       ...(body.province === undefined ? {} : { province: body.province }),
     });
-    return await customers.byId(id);
+    return await customers.byId(id, branches);
   });
 
   /**

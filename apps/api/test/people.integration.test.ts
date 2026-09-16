@@ -801,6 +801,21 @@ describe("پرسنل و مشتری", { skip }, () => {
       branch_id: branch.rows[0]!.id,
     }).execute();
     const outsiderSession = await loginAs(outsider);
+    const warehouse = await sql<{ id: string }>`
+      INSERT INTO inventory.warehouse (branch_id, code, name, kind)
+      VALUES (${branch.rows[0]!.id}::uuid, ${`OTHER-WH-${suffix}`}, 'انبار شعبه دیگر', 'store') RETURNING id
+    `.execute(handle.db);
+    const draft = await app.inject({ method: "POST", url: "/invoices", ...outsiderSession,
+      payload: { branchId: branch.rows[0]!.id, warehouseId: warehouse.rows[0]!.id,
+        channel: "phone", customerId: id } });
+    assert.equal(draft.statusCode, 201, draft.body);
+    const linked = await app.inject({ method: "PATCH", url: `/invoices/${draft.json().id}/customer`,
+      ...outsiderSession, payload: { mobile: "09121234567" } });
+    assert.equal(linked.statusCode, 200, linked.body);
+    const grant = await sql<{ n: string }>`SELECT count(*)::text AS n
+      FROM sales.customer_branch WHERE customer_id = ${id}::uuid
+        AND branch_id = ${branch.rows[0]!.id}::uuid`.execute(handle.db);
+    assert.equal(grant.rows[0]!.n, "0", "اتصال فاکتور نباید مجوز پرونده بسازد");
 
     const search = await app.inject({
       method: "GET", url: "/customers?q=0912123", ...outsiderSession,

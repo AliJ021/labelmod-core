@@ -17,6 +17,9 @@
  */
 import { useCallback, useEffect, useState } from "react";
 import { Solid } from "../components/Glass.tsx";
+import { SearchField } from "../components/SearchField.tsx";
+import { ResultState } from "../components/ResultState.tsx";
+import { useLatestQuery } from "../lib/use-latest-query.ts";
 import { ApiError } from "../lib/api.ts";
 import { parseRial, rialFromTomanInput, toman } from "../lib/money.ts";
 import { normalizeDigits } from "../lib/settings-value.ts";
@@ -46,8 +49,9 @@ function shortDate(iso: string): string {
 const CHANNEL: Record<string, string> = { pos: "صندوق", web: "سایت", phone: "تلفنی" };
 
 export function Customers() {
-  const [rows, setRows] = useState<Customer[]>([]);
   const [q, setQ] = useState("");
+  const [submitted, setSubmitted] = useState("");
+  const [revision, setRevision] = useState(0);
   const [open, setOpen] = useState<{ customer: Customer; invoices: CustomerInvoice[] } | null>(
     null,
   );
@@ -60,19 +64,10 @@ export function Customers() {
   const [mobile, setMobile] = useState("");
   const [fullName, setFullName] = useState("");
 
-  const reload = useCallback(async (term: string) => {
-    setRows((await people.customers(term)).customers);
-  }, []);
-
-  useEffect(() => {
-    void (async () => {
-      try {
-        await reload("");
-      } catch (err) {
-        setError(message(err));
-      }
-    })();
-  }, [reload]);
+  const load = useCallback(async (signal: AbortSignal) => (await people.customers(submitted, { signal })).customers, [submitted]);
+  const query = useLatestQuery({ key: submitted, version: revision, load });
+  const rows = query.data ?? [];
+  function reload(term: string) { setSubmitted(term); setRevision(v => v + 1); }
 
   async function guarded(fn: () => Promise<void>) {
     if (busy) return;
@@ -87,7 +82,7 @@ export function Customers() {
     }
   }
 
-  const search = () => guarded(async () => { await reload(q); });
+  const search = () => { setError(null); reload(q); };
 
   const create = () =>
     guarded(async () => {
@@ -105,7 +100,7 @@ export function Customers() {
       setCreating(false);
       setMobile("");
       setFullName("");
-      await reload(q);
+      reload(q);
       setOpen(await people.customer(out.id));
     });
 
@@ -119,7 +114,7 @@ export function Customers() {
     guarded(async () => {
       await people.updateCustomer(id, input);
       setOpen(await people.customer(id));
-      await reload(q);
+      reload(q);
     });
 
   return (
@@ -143,10 +138,10 @@ export function Customers() {
             void search();
           }}
         >
-          <label className="auth-field">
+          <div className="auth-field">
             <span>جست‌وجو — شماره یا نام</span>
-            <input value={q} onChange={(e) => setQ(e.target.value)} />
-          </label>
+            <SearchField label="جست‌وجوی شماره یا نام مشتری" value={q} onChange={setQ} onClear={() => reload("")} />
+          </div>
           <button type="submit" className="btn btn--primary" disabled={busy}>
             جست‌وجو
           </button>
@@ -159,7 +154,7 @@ export function Customers() {
           </button>
         </form>
         <p className="muted small" style={{ margin: 0 }}>
-          جست‌وجو سمت سرور است — مشتری دو سال پیش هم پیدا می‌شود.
+          نام یا شمارهٔ مشتری را برای پیدا کردن پرونده‌اش وارد کنید.
         </p>
       </Solid>
 
@@ -200,9 +195,10 @@ export function Customers() {
         </Solid>
       ) : null}
 
+      <div aria-busy={query.loading}>
       <Solid className="pad">
-        {rows.length === 0 ? (
-          <p className="muted" style={{ margin: 0 }}>مشتری‌ای پیدا نشد.</p>
+        {query.loading ? <ResultState kind="loading" title="در حال بارگذاری مشتریان…" /> : query.error ? <ResultState kind="error" title={message(query.error)} actionLabel="تلاش دوباره" onAction={() => reload(submitted)} /> : rows.length === 0 ? (
+          <ResultState title={submitted ? "برای این جست‌وجو مشتری‌ای پیدا نشد." : "فهرست مشتریان خالی است."} actionLabel={submitted ? "پاک‌کردن جست‌وجو" : "افزودن مشتری"} onAction={() => { if (submitted) { setQ(""); reload(""); } else setCreating(true); }} />
         ) : (
           <div className="grid-wrap">
             <table className="grid">
@@ -244,6 +240,7 @@ export function Customers() {
           </div>
         )}
       </Solid>
+      </div>
 
       {open ? (
         <CustomerFile

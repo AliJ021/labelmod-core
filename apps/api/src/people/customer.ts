@@ -153,18 +153,24 @@ function toJson(r: Row): Customer {
  * از دیگری عقب می‌ماند — همان دلیلی که «چقدرش رسیده» هم یک نما است
  * نه یک ستون.
  */
-const SELECT = sql`
+const selectCustomer = (branches: CustomerBranchScope) => sql`
   SELECT c.*,
          (SELECT count(*) FROM sales.invoice i
            WHERE i.customer_id = c.id
+             AND (${branches === "all"} OR i.branch_id = ANY(${branches === "all" ? [] : branches}::uuid[]))
              AND i.status IN ('finalized','paid','partially_returned','returned'))::text
            AS invoice_count,
          coalesce((SELECT sum(i.net_amount) FROM sales.invoice i
                     WHERE i.customer_id = c.id
+             AND (${branches === "all"} OR i.branch_id = ANY(${branches === "all" ? [] : branches}::uuid[]))
                       AND i.status IN ('finalized','paid','partially_returned','returned')), 0)::text
            AS total_purchased,
-         coalesce((SELECT sum(t.balance) FROM ledger.party_tafsili t
-                    WHERE t.party_type = 'customer' AND t.party_id = c.id), 0)::text
+         coalesce((SELECT sum(CASE WHEN a.nature = 'debit' THEN l.debit - l.credit ELSE l.credit - l.debit END)
+                    FROM ledger.journal_line l
+                    JOIN ledger.journal_entry e ON e.id = l.entry_id
+                    JOIN ledger.account a ON a.code = l.account_code
+                   WHERE l.party_type = 'customer' AND l.party_id = c.id
+                     AND (${branches === "all"} OR e.branch_id = ANY(${branches === "all" ? [] : branches}::uuid[]))), 0)::text
            AS balance
     FROM sales.customer c
 `;
@@ -194,12 +200,9 @@ export class CustomerService {
           EXISTS (SELECT 1 FROM sales.customer_branch cb
                    WHERE cb.customer_id = c.id
                      AND cb.branch_id = ANY(${input.branches}::uuid[]))
-          OR EXISTS (SELECT 1 FROM sales.invoice si
-                      WHERE si.customer_id = c.id
-                        AND si.branch_id = ANY(${input.branches}::uuid[]))
         )`;
     const rows = await sql<Row>`
-      ${SELECT}
+      ${selectCustomer(input.branches)}
       ${
         term === ""
           ? sql`WHERE c.status <> 'merged' ${branchFilter}`
@@ -217,7 +220,7 @@ export class CustomerService {
 
   /**
    * پرونده برای شعبه‌ای قابل دسترس است که مشتری در آن ساخته شده یا
-   * فاکتوری (حتی پیش‌نویس) در آن دارد. مشتری بی‌شعبه فقط برای نقش‌های
+   * رابطه صریح شعبه دارد. ساخت فاکتور مجوز پرونده ایجاد نمی‌کند. مشتری بی‌شعبه فقط برای نقش‌های
    * سراسری قابل دسترس می‌ماند.
    */
   async isAccessible(id: string, branches: CustomerBranchScope): Promise<boolean> {
@@ -227,10 +230,6 @@ export class CustomerService {
         SELECT 1 FROM sales.customer_branch cb
          WHERE cb.customer_id = ${id}::uuid
            AND cb.branch_id = ANY(${branches}::uuid[])
-        UNION ALL
-        SELECT 1 FROM sales.invoice i
-         WHERE i.customer_id = ${id}::uuid
-           AND i.branch_id = ANY(${branches}::uuid[])
       ) AS allowed
     `.execute(this.#db);
     return r.rows[0]?.allowed ?? false;
@@ -327,8 +326,8 @@ export class CustomerService {
     }));
   }
 
-  async byId(id: string): Promise<Customer | null> {
-    const r = await sql<Row>`${SELECT} WHERE c.id = ${id}::uuid`.execute(this.#db);
+  async byId(id: string, branches: CustomerBranchScope = "all"): Promise<Customer | null> {
+    const r = await sql<Row>`${selectCustomer(branches)} WHERE c.id = ${id}::uuid`.execute(this.#db);
     const row = r.rows[0];
     return row === undefined ? null : toJson(row);
   }
@@ -374,10 +373,6 @@ export class CustomerService {
               SELECT 1 FROM sales.customer_branch cb
                WHERE cb.customer_id = ${existing.id}::uuid
                  AND cb.branch_id = ANY(${input.branches}::uuid[])
-              UNION ALL
-              SELECT 1 FROM sales.invoice i
-               WHERE i.customer_id = ${existing.id}::uuid
-                 AND i.branch_id = ANY(${input.branches}::uuid[])
             ) AS allowed
           `.execute(trx);
           if (!(access.rows[0]?.allowed ?? false)) {
