@@ -72,6 +72,9 @@ export function Purchasing() {
   const [receipt, setReceipt] = useState<Receipt | null>(null);
 
   const [supplierId, setSupplierId] = useState("");
+  const [supplierOpen, setSupplierOpen] = useState(false);
+  const [supplierCode, setSupplierCode] = useState("");
+  const [supplierName, setSupplierName] = useState("");
   const [invoiceNo, setInvoiceNo] = useState("");
 
   // فرم قلم
@@ -137,6 +140,17 @@ export function Purchasing() {
   }
 
   const refreshList = async () => setList(await purchasing.receipts());
+
+  const addSupplier = () => guarded(async () => {
+    const body = { code: supplierCode.trim(), name: supplierName.trim() };
+    const created = await keys.run(actionFor("supplier:create", body), (key) =>
+      purchasing.createSupplier(body, { idempotencyKey: key }));
+    setSuppliers(await purchasing.suppliers());
+    setSupplierId(created.id);
+    setSupplierOpen(false);
+    setSupplierCode("");
+    setSupplierName("");
+  });
 
   const startDraft = () =>
     guarded(async () => {
@@ -293,6 +307,14 @@ export function Purchasing() {
             </select>
           </label>
 
+          <div className="stack" style={{ gap: "var(--s-2)" }}>
+            <button type="button" className="btn" disabled={busy} onClick={() => setSupplierOpen(!supplierOpen)}>تأمین‌کننده جدید</button>
+            {supplierOpen ? <>
+              <label className="auth-field"><span>کد تأمین‌کننده</span><input value={supplierCode} onChange={(e) => setSupplierCode(e.target.value)} maxLength={40} /></label>
+              <label className="auth-field"><span>نام تأمین‌کننده</span><input value={supplierName} onChange={(e) => setSupplierName(e.target.value)} maxLength={120} /></label>
+              <button type="button" className="btn" disabled={busy || !supplierCode.trim() || !supplierName.trim()} onClick={() => void addSupplier()}>ذخیره تأمین‌کننده</button>
+            </> : null}
+          </div>
           <label className="auth-field">
             <span>تأمین‌کننده</span>
             <select value={supplierId} onChange={(e) => setSupplierId(e.target.value)}>

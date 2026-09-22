@@ -314,7 +314,7 @@ PERFORM pg_temp.assert_raises('تغییر حساب روی مؤلفه قفل‌ش
 -- در همین رویداد، موجودی کالا، مالیات و بدهی همچنان قفل‌اند —
 -- ادعای بعدی همان را می‌سنجد.
 PERFORM pg_temp.assert_eq('مؤلفه‌های دارای اجازه تغییر حساب',
-  (SELECT count(*) FROM ledger.posting_rule WHERE allow_account_override), 13);
+  (SELECT count(*) FROM ledger.posting_rule WHERE allow_account_override), 14);
 
 -- و همه‌شان باید حسابِ نقد، بانک، وجوه در راه یا سرفصل هزینه باشند.
 -- هیچ حساب درآمد، مالیات یا موجودی کالا در این فهرست نمی‌آید.

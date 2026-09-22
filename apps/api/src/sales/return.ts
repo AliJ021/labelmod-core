@@ -77,6 +77,9 @@ export interface ReturnableLine {
   remainingQty: string;
   unitPrice: bigint;
   netAmount: bigint;
+  returnedNetAmount: bigint;
+  taxAmount: bigint;
+  returnedTaxAmount: bigint;
 }
 
 export class ReturnService {
@@ -168,12 +171,19 @@ export class ReturnService {
       returned_qty: string;
       remaining_qty: string;
       unit_price: string;
-      net_amount: string;
-    }>`
+        net_amount: string;
+        returned_net: string;
+        tax_amount: string;
+        returned_tax: string;
+      }>`
       SELECT id, variation_id, qty::text, returned_qty::text,
              (qty - returned_qty)::text AS remaining_qty,
-             unit_price::text, net_amount::text
-        FROM sales.invoice_line
+               unit_price::text, net_amount::text, tax_amount::text,
+               coalesce((SELECT sum(rl.net_amount) FROM sales.sale_return_line rl
+                 JOIN sales.sale_return r ON r.id=rl.return_id WHERE rl.invoice_line_id=il.id AND r.status='posted'),0)::text returned_net,
+               coalesce((SELECT sum(rl.tax_amount) FROM sales.sale_return_line rl
+                 JOIN sales.sale_return r ON r.id=rl.return_id WHERE rl.invoice_line_id=il.id AND r.status='posted'),0)::text returned_tax
+          FROM sales.invoice_line il
        WHERE invoice_id = ${invoiceId}::uuid
        ORDER BY id
     `.execute(this.#db);
@@ -185,7 +195,10 @@ export class ReturnService {
       returnedQty: l.returned_qty,
       remainingQty: l.remaining_qty,
       unitPrice: parseMoney(l.unit_price),
-      netAmount: parseMoney(l.net_amount),
+        netAmount: parseMoney(l.net_amount),
+        returnedNetAmount: parseMoney(l.returned_net),
+        taxAmount: parseMoney(l.tax_amount),
+        returnedTaxAmount: parseMoney(l.returned_tax),
     }));
   }
 
@@ -468,5 +481,8 @@ export function returnableToJson(lines: ReturnableLine[]) {
     remainingQty: l.remainingQty,
     unitPrice: serializeMoney(l.unitPrice),
     netAmount: serializeMoney(l.netAmount),
+    returnedNetAmount: serializeMoney(l.returnedNetAmount),
+    taxAmount: serializeMoney(l.taxAmount),
+    returnedTaxAmount: serializeMoney(l.returnedTaxAmount),
   }));
 }

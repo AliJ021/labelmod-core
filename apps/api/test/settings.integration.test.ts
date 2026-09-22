@@ -756,6 +756,18 @@ describe("تنظیمات از مسیر API", { skip }, () => {
     assert.match(r.json().error.message, /متوازن/);
   });
 
+  test("مدیر شعبه نمی‌تواند برای شعبه نامجاز سند افتتاحیه بسازد", async () => {
+    const s = await loginAs(admin);
+    const other = await handle.db.insertInto("platform.branch")
+      .values({ code: `OPENING-${suffix}`, name: "Foreign opening branch", is_active: true }).returning("id").executeTakeFirstOrThrow();
+    const response = await app.inject({ method: "POST", url: "/opening-balance", ...s,
+      payload: { branchId: other.id, fiscalYear: 1405,
+        legs: [{ leg: "cash", amount: "100" }, { leg: "equity", amount: "100" }] } });
+    assert.equal(response.statusCode, 403, response.body);
+    assert.equal((await sql<{ n: number }>`SELECT count(*)::int n FROM ledger.journal_entry
+      WHERE branch_id=${other.id}::uuid`.execute(handle.db)).rows[0]!.n, 0);
+  });
+
   test("سند افتتاحیه متوازن ثبت می‌شود", async () => {
     const s = await loginAs(admin);
     const r = await app.inject({

@@ -102,6 +102,7 @@ INSERT INTO ledger.posting_rule
 -- ارزش کالای برگشتی به ترتیب تسویه می‌شود: بازپرداخت نقدی، سپس کاهش
 -- بدهی باقی‌مانده همان فاکتور، و تنها باقی‌مانده به اعتبار مشتری.
 ('sale_return','sales_return',   'debit', '4103', NULL,      'برگشت از فروش',                1),
+('sale_return','shipping_return','debit', '4201', NULL,      'برگشت کرایه ارسال',             8),
 ('sale_return','tax',            'debit', '2201', NULL,      'معکوس مالیات ارزش افزوده',     2),
 ('sale_return','refund_cash',    'credit','1101', NULL,      'بازپرداخت نقدی',               3),
 ('sale_return','receivable',     'credit','1201', 'customer','تسویه بدهی مشتری بابت مرجوعی', 4),
@@ -234,6 +235,7 @@ UPDATE ledger.posting_rule SET allow_account_override = true
    ('capital_injection','to_account'),
    ('settlement','bank'),                ('settlement','clearing'),
    ('purchase_receipt','from_account'), ('purchase_receipt','expensed_charge'),
+   ('sale_return','refund_cash'),
    ('cheque_clear','bank'),                ('cheque_pay','bank'));
 
 COMMIT;

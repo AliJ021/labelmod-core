@@ -48,6 +48,11 @@ describe("چقدر قابل برگشت است", () => {
 });
 
 describe("مبلغ پیشنهادی بازپرداخت", () => {
+  test("مرجوعی دوم باقی‌مانده ریالی و مالیات واقعی را پیشنهاد می‌کند", () => {
+    const l = line({ soldQty: "2", remainingQty: "1", netAmount: "399999", returnedNetAmount: "200000",
+      taxAmount: "39999", returnedTaxAmount: "20000" });
+    assert.equal(suggestedRefund([l], pick([["l1", 1]])), 219998n);
+  });
   test("برگشت کامل، کل مبلغ سطر", () => {
     const l = line({ soldQty: "2", netAmount: "2000000" });
     assert.equal(suggestedRefund([l], pick([["l1", 2]])), 2_000_000n);

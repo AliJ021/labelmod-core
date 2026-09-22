@@ -134,6 +134,9 @@ export interface ReturnableLine {
   remainingQty: string;
   unitPrice: string;
   netAmount: string;
+  returnedNetAmount?: string;
+  taxAmount?: string;
+  returnedTaxAmount?: string;
 }
 
 export interface Returnable {
@@ -252,6 +255,9 @@ export const pos = {
   paymentMethods: () => api.get<{ methods: PaymentMethod[] }>("/payment-methods"),
 
   /** `null` یعنی این کاربر در این شعبه شیفت باز ندارد. */
+  openShifts: (branchId: string) =>
+    api.get<Array<{ id: string; userName: string; openedAt: string }>>(`/shifts/open?branchId=${encodeURIComponent(branchId)}`),
+
   currentShift: (branchId: string) =>
     api.get<Shift | null>(`/shifts/current?branchId=${encodeURIComponent(branchId)}`),
 
@@ -445,6 +451,7 @@ export const pos = {
       reasonNote?: string;
       refundAmount: string;
       refundMethod?: string;
+      shiftId?: string;
       lines: Array<{ invoiceLineId: string; qty: string; restock?: boolean }>;
     },
     opts?: RequestOptions,

@@ -27,7 +27,8 @@ define('LMC_VERSION', 'test');
 define('LMC_PUSH_SECRET', 'کلید-تست-۱۲۳');
 
 function lmc_log(string $message): void {}
-function lmc_setting(string $key, $default = '') { return $default; }
+$GLOBALS['lmc_test_settings'] = ['sync_stock' => 'yes', 'sync_price' => 'yes'];
+function lmc_setting(string $key, $default = '') { return $GLOBALS['lmc_test_settings'][$key] ?? $default; }
 
 // ── حداقلِ وردپرس ───────────────────────────────────────────────────
 
@@ -447,6 +448,15 @@ ok('قفل موجودی و قفل قیمت یکی نیستند',
      === LMC_Push_Guard::lock_name(77, LMC_Push_Receiver::PRICE_VERSION_META), false);
 // و نام قفل از محدودیت ۶۴ بایتی MySQL بیرون نمی‌زند.
 ok('نام قفل ≤ ۶۴ بایت', strlen(LMC_Push_Guard::lock_name(999999999, '_lmc_stock_version')) <= 64, true);
+
+$GLOBALS['lmc_test_settings']['sync_price'] = 'no';
+$before_version = get_post_meta(77, LMC_Push_Receiver::PRICE_VERSION_META, true);
+$disabled = LMC_Push_Receiver::handle_price(req(['variationId' => 'v-77', 'priceRial' => '240000', 'version' => 999]));
+ok('گزینه خاموش مانع Push قیمت است', $disabled['applied'], false);
+ok('Push خاموش نسخه را جلو نمی‌برد', get_post_meta(77, LMC_Push_Receiver::PRICE_VERSION_META, true), $before_version);
+$GLOBALS['lmc_test_settings']['sync_stock'] = 'no';
+$disabled = LMC_Push_Receiver::handle_stock(req(['variationId' => 'v-77', 'onHand' => 999, 'version' => 999]));
+ok('گزینه خاموش مانع Push موجودی است', $disabled['applied'], false);
 
 echo "\n";
 if ($failed > 0) {

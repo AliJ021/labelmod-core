@@ -278,7 +278,9 @@ class LMC_Stock_Sync
         }
         // تومان: تقسیم صحیح. باقی‌مانده ریالی روی ویترین معنا ندارد و
         // قیمت‌های واقعی پوشاک همیشه مضرب ۱۰ ریال‌اند.
-        return (string) intdiv((int) $rial, 10);
+        if (ltrim($rial, '0') === '') { return '0'; }
+        $toman = ltrim(substr($rial, 0, -1), '0');
+        return $toman === '' ? null : $toman;
     }
 
     /** «همین حالا همگام کن» از صفحه تنظیمات. */

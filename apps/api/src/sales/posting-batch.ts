@@ -145,7 +145,7 @@ export class PostingBatchService {
         batch_id: string;
         branch_id: string;
         channel: string;
-        business_date: Date;
+        business_date: string;
         sale_entry: string | null;
         cogs_entry: string | null;
         skipped: string | null;
@@ -190,7 +190,8 @@ export class PostingBatchService {
  * آن را نیمه‌شب **محلی** می‌سازد، این یعنی در تهران یک روز عقب
  * می‌افتد. تاریخ کاری باید همان چیزی بماند که در دیتابیس است.
  */
-function formatDate(d: Date): string {
+function formatDate(d: Date | string): string {
+  if (typeof d === "string") return d;
   const y = d.getFullYear();
   const m = String(d.getMonth() + 1).padStart(2, "0");
   const day = String(d.getDate()).padStart(2, "0");

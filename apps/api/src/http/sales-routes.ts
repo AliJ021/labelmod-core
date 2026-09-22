@@ -11,7 +11,7 @@
 import type { FastifyInstance } from "fastify";
 import { z } from "zod";
 import { AuthError } from "../auth/service.ts";
-import { requireForSession } from "../auth/permission.ts";
+import { can, requireForSession } from "../auth/permission.ts";
 import type { Db } from "../db/client.ts";
 import { parseMoney, serializeMoney } from "../lib/money.ts";
 import { runOnce } from "../lib/idempotency.ts";
@@ -149,6 +149,19 @@ export function registerSalesRoutes(app: FastifyInstance, deps: SalesRouteDeps):
   ): Promise<void> => markdownGate(db, invoices, s, input);
 
   // ── شیفت صندوق ──────────────────────────────────────────────────
+
+  app.get("/shifts/open", async (req) => {
+    const s = session(req);
+    const { branchId } = z.object({ branchId: uuid }).parse(req.query);
+    await assertBranch(db, s.userId, branchId);
+    const sameDay = await can(db, { userId: s.userId, operation: "return.same_day", viaPin: s.pinUnlocked });
+    if (sameDay.verdict !== "allow") await requireForSession(db, s, "return.late");
+    const open = await shifts.openInBranch(branchId);
+    const users = open.length === 0 ? [] : await db.selectFrom("identity.app_user")
+      .select(["id", "full_name"]).where("id", "in", open.map((x) => x.userId)).execute();
+    return open.map((x) => ({ id: x.id, openedAt: x.openedAt.toISOString(),
+      userName: users.find((u) => u.id === x.userId)?.full_name ?? "—" }));
+  });
 
   app.get("/shifts/current", async (req) => {
     const s = session(req);
@@ -752,6 +765,11 @@ export function registerSalesRoutes(app: FastifyInstance, deps: SalesRouteDeps):
     //
     // هر دو لایه سر جایشان می‌مانند: Inbox پاسخ درست را برمی‌گرداند و
     // قید یکتایی آخرین سد است.
+    const method = await db.selectFrom("treasury.payment_method").select("kind")
+      .where("code", "=", body.methodCode).executeTakeFirst();
+    if (method?.kind === "credit") {
+      await requireForSession(db, s, "sale.credit", { amount: parseMoney(body.amount) });
+    }
     const key = idempotencyKey(req);
     const out = await runOnce<string>(db, {
       key,

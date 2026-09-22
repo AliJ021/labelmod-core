@@ -77,7 +77,9 @@ run -c "SELECT inventory.apply_movement('$VAR_ID'::uuid,
 MOVES=$(run -c "SELECT count(*) FROM inventory.stock_movement;")
 [ "$MOVES" -ge 1 ] || { echo "  ✗ آماده‌سازی نشد — حمله روی جدول خالی بی‌معناست"; exit 1; }
 
-APP_CONN="postgresql://$ROLE:roletest@localhost:5432/$DBNAME"
+TEST_HOST=$(run -c "SELECT coalesce(host(inet_server_addr()),'127.0.0.1');")
+TEST_PORT=$(run -c "SHOW port;")
+APP_CONN="host=$TEST_HOST port=$TEST_PORT dbname=$DBNAME user=$ROLE password=roletest"
 
 echo "═══ حمله با نقش برنامه، روی سطر موجود، تا COMMIT ═══"
 # ⚠️ «شکست خورد» کافی نیست — **دلیلِ** شکست سنجیده می‌شود.
@@ -144,7 +146,7 @@ PROBE="lmc_probe_$RID"
 run -c "CREATE ROLE \"$PROBE\" LOGIN PASSWORD 'probetest';" >/dev/null
 run -c "GRANT CONNECT ON DATABASE \"$DBNAME\" TO \"$PROBE\";" >/dev/null
 run -c "GRANT USAGE ON SCHEMA platform TO \"$PROBE\";" >/dev/null
-PROBE_CONN="postgresql://$PROBE:probetest@localhost:5432/$DBNAME"
+PROBE_CONN="host=$TEST_HOST port=$TEST_PORT dbname=$DBNAME user=$PROBE password=probetest"
 
 probe_denied () {
   local label="$1" sql="$2" out rc

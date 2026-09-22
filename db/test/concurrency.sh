@@ -62,6 +62,10 @@ BEGIN
   INSERT INTO sales.invoice_line (invoice_id,line_no,variation_id,qty,unit_price,net_amount)
     VALUES (v_inv2,1,v_var,1,2000000,2000000);
 
+  -- Both contenders are paid; only stock availability should decide the race.
+  INSERT INTO treasury.payment (invoice_id,shift_id,method_code,amount,status)
+  SELECT id,shift_id,'cash',2000000,'succeeded' FROM sales.invoice WHERE id IN(v_inv1,v_inv2);
+
   -- فاکتور سوم عمداً پیش‌نویس می‌ماند: سناریوی دوم تغییر هم‌زمان
   -- تعداد را می‌سنجد، نه نهایی‌سازی هم‌زمان را.
   INSERT INTO sales.invoice (branch_id,warehouse_id,shift_id,occurred_at,created_by,channel)

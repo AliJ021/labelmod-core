@@ -1029,4 +1029,23 @@ describe("پرسنل و مشتری", { skip }, () => {
     });
     assert.equal(r.statusCode, 403, r.body);
   });
+
+  test("F3: مانده مشتری بدهی و اعتبار را خالص می‌کند", async () => {
+    const s = await loginAs(admin);
+    const customer = (await sql<{ id: string }>`INSERT INTO sales.customer(full_name)
+      VALUES('Balance regression') RETURNING id`.execute(handle.db)).rows[0]!.id;
+    await sql`INSERT INTO sales.customer_branch(customer_id,branch_id) VALUES(${customer}::uuid,${BRANCH}::uuid)`.execute(handle.db);
+    await sql`SELECT ledger.post_entry('sale_shift',${BRANCH}::uuid,platform.business_date(),'Receivable regression',
+      jsonb_build_array(jsonb_build_object('leg','receivable','amount',180000,'party_type','customer','party_id',${customer}::text),
+        jsonb_build_object('leg','sales','amount',180000)),'test',${customer}::uuid,${adminId}::uuid)`.execute(handle.db);
+    await sql`SELECT ledger.post_entry('loyalty_grant',${BRANCH}::uuid,platform.business_date(),'Credit regression',
+      jsonb_build_array(jsonb_build_object('leg','expense','amount',180000),
+        jsonb_build_object('leg','liability','amount',180000,'party_type','customer','party_id',${customer}::text)),
+      'test',${customer}::uuid,${adminId}::uuid)`.execute(handle.db);
+    const response = await app.inject({ method: "GET", url: "/customers?q=Balance%20regression", ...s });
+    assert.equal(response.statusCode, 200, response.body);
+    const row = response.json().customers.find((x: { id: string }) => x.id === customer);
+    assert.ok(row);
+    assert.equal(row.balance, "0", "۱۸۰۰۰۰ بدهی و ۱۸۰۰۰۰ اعتبار باید صفر باشد، نه ۳۶۰۰۰۰");
+  });
 });

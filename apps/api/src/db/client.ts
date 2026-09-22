@@ -19,6 +19,8 @@ const OID_INT8 = 20;
 // یک بار برای کل فرایند، پیش از ساخت Pool.
 pg.types.setTypeParser(OID_NUMERIC, (v) => v);
 pg.types.setTypeParser(OID_INT8, (v) => v);
+// تاریخ تقویمی منطقه زمانی ندارد؛ تبدیل DATE به Date روز چک را جابه‌جا می‌کند.
+pg.types.setTypeParser(1082, (v) => v);
 
 export type Db = Kysely<Database>;
 

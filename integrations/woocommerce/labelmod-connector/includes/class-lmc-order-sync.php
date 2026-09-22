@@ -37,6 +37,8 @@ class LMC_Order_Sync
     const META_ATTEMPTS = '_lmc_attempts';
     const META_ERROR    = '_lmc_last_error';
     const META_PAID     = '_lmc_payment_complete';
+    const META_PAYLOAD  = '_lmc_order_payload';
+    const META_LINES    = '_lmc_order_line_map';
 
     /** سقف تلاش. بعد از این، سفارش دست انسان است نه صف. */
     const MAX_ATTEMPTS = 6;
@@ -92,7 +94,7 @@ class LMC_Order_Sync
             return;
         }
 
-        $payload = self::build_payload($order);
+        $payload = self::snapshot($order);
         if (is_wp_error($payload)) {
             self::fail($order, $payload, false);
             return;
@@ -135,6 +137,31 @@ class LMC_Order_Sync
         lmc_log(sprintf('سفارش %d ثبت شد → %s', $order_id, (string) ($res['number'] ?? '')));
     }
 
+    /** Freeze the exact order and item identities before the first HTTP attempt. */
+    public static function snapshot(WC_Order $order)
+    {
+        $saved = $order->get_meta(self::META_PAYLOAD);
+        if (is_array($saved) && is_array($order->get_meta(self::META_LINES))) {
+            return $saved;
+        }
+        if ($order->get_meta(self::META_INVOICE) !== '') {
+            return new WP_Error('lmc_legacy_line_map', 'نگاشت اقلام فاکتور قدیمی موجود نیست؛ تطبیق دستی لازم است.');
+        }
+        $payload = self::build_payload($order);
+        if (is_wp_error($payload)) { return $payload; }
+        $map = [];
+        $n = 0;
+        foreach ($order->get_items() as $id => $item) {
+            if ($item instanceof WC_Order_Item_Product && (int) $item->get_quantity() > 0) {
+                $map[(int) $id] = ++$n;
+            }
+        }
+        $order->update_meta_data(self::META_PAYLOAD, $payload);
+        $order->update_meta_data(self::META_LINES, $map);
+        $order->save();
+        return $payload;
+    }
+
     /**
      * شرط ارسال در لحظه اجرای هر کار و Retry دوباره بررسی می‌شود.
      * به این ترتیب سفارش لغوشده پس از صف‌شدن نیز ارسال نمی‌شود.
@@ -142,7 +169,7 @@ class LMC_Order_Sync
     private static function is_eligible(WC_Order $order): bool
     {
         return $order->get_meta(self::META_PAID) === 'yes'
-            && $order->has_status(['processing', 'completed']);
+            && $order->has_status(['processing', 'completed', 'refunded']);
     }
 
     /**

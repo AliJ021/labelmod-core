@@ -107,6 +107,9 @@ VALUES (BR, WH, v_shift, now(), v_user) RETURNING id INTO v_inv2;
 INSERT INTO sales.invoice_line (invoice_id, line_no, variation_id, qty, unit_price, net_amount)
 VALUES (v_inv2, 1, v_var, 1, 1000000, 1000000);
 PERFORM sales.refresh_invoice_totals(v_inv2);
+-- Credit requires an identified customer with sufficient authorized limit.
+WITH c AS (INSERT INTO sales.customer (full_name,credit_limit) VALUES ('daily credit fixture',1000000) RETURNING id)
+UPDATE sales.invoice SET customer_id=(SELECT id FROM c) WHERE id=v_inv2;
 PERFORM sales.finalize_invoice(v_inv2, v_user);
 
 SELECT * INTO s FROM sales.daily_summary(BR, v_day);

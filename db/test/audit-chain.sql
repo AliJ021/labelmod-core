@@ -100,7 +100,7 @@ RAISE NOTICE E'\n── ۱. کنترل مثبت: دفتر دست‌نخورده�
   --    باید یک **ویرایش عمدی** در همین خط باشد. اگر این ادعا خودش را با
   --    فرمول هم‌راستا می‌کرد، مهاجرتی که میدان تازه‌ای اضافه کند و
   --    پوشش ندهد، بی‌صدا سبز می‌ماند.
-  SELECT count(*) INTO n FROM platform.audit_log WHERE hash_version <> 3;
+  SELECT count(*) INTO n FROM platform.audit_log WHERE hash_version <> 4;
   PERFORM pg_temp.assert_eq('رکورد تازه با فرمول قدیمی', n, 0);
 
 RAISE NOTICE E'\n── ۲. دست‌کاری محتوا، میدان به میدان ───────────────────────';

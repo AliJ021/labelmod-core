@@ -305,6 +305,11 @@ describe("فروش و صندوق روی دیتابیس واقعی", { skip }, ()
       ...s,
     });
     assert.equal(noPermission.statusCode, 403, `انتظار ۴۰۳: ${noPermission.body}`);
+    const creditMarker = await app.inject({ method: "POST", url: `/invoices/${invoiceId}/payments`, ...s,
+      payload: { methodCode: "credit", amount: "200000" } });
+    assert.equal(creditMarker.statusCode, 403, creditMarker.body);
+    assert.equal((await sql<{ n: number }>`SELECT count(*)::int n FROM treasury.payment
+      WHERE invoice_id=${invoiceId}::uuid AND method_code='credit'`.execute(handle.db)).rows[0]!.n, 0);
   });
 
   test("چرخه کامل فروش نقدی — و Idempotency روی نهایی‌سازی", async () => {
