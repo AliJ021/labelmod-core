@@ -6,7 +6,7 @@ import { createDb, type DbHandle } from "../src/db/client.ts";
 import { createDisposableDb, type DisposableDb } from "./helpers/disposable-db.ts";
 import { AuthService, type LoginOutcome } from "../src/auth/service.ts";
 import { hashSecret } from "../src/auth/password.ts";
-import { newTotpSecret } from "../src/auth/totp.ts";
+import { newTotpSecret, totp } from "../src/auth/totp.ts";
 import { buildApp } from "../src/http/app.ts";
 import { loadConfig } from "../src/lib/config.ts";
 
@@ -109,7 +109,19 @@ describe("تغییر رمز شخصی و رگرسیون نشست", { skip: DATABA
     try {
       const secret = newTotpSecret();
       await handle.db.updateTable("identity.app_user").set({ totp_secret: secret }).where("id", "=", f.user.id).execute();
-      assert.equal((await f.request({ currentPassword: OLD, password: NEXT })).statusCode, 200);
+      assert.equal((await f.request({ currentPassword: OLD, password: NEXT })).statusCode, 401, "نشست رمزی قدیمی مدرک MFA ندارد");
+      const first = await f.app.inject({ method: "POST", url: "/auth/login",
+        payload: { username: f.username, password: OLD, deviceFingerprint: "password-mfa-fixture" } });
+      assert.equal(first.json().needsSecondFactor, true);
+      const proof = await f.app.inject({ method: "POST", url: "/auth/2fa/totp",
+        cookies: Object.fromEntries(first.cookies.map(c => [c.name, c.value])),
+        payload: { code: totp(secret) } });
+      assert.equal(proof.statusCode, 200, proof.body);
+      const cookies = Object.fromEntries(proof.cookies.map(c => [c.name, c.value]));
+      const changed = await f.app.inject({ method: "POST", url: "/auth/change-password", cookies,
+        headers: { "x-csrf-token": cookies.labelmod_csrf! },
+        payload: { currentPassword: OLD, password: NEXT } });
+      assert.equal(changed.statusCode, 200, changed.body);
       const user = await handle.db.selectFrom("identity.app_user").select("totp_secret").where("id", "=", f.user.id).executeTakeFirstOrThrow();
       assert.equal(user.totp_secret, secret);
       const login = await auth.login({ username: f.username, password: NEXT });

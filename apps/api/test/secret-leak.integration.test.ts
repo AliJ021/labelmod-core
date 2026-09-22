@@ -1,3 +1,4 @@
+import { loginWithMfa } from "./helpers/login-with-mfa.ts";
 /**
  * هیچ رازی از هیچ پاسخی بیرون نمی‌رود — روی **کل** سطح API.
  *
@@ -106,7 +107,7 @@ describe("هیچ رازی بیرون نمی‌رود", { skip }, () => {
     });
     await app.ready();
 
-    const r = await app.inject({
+    const r = await loginWithMfa(app, {
       method: "POST",
       url: "/auth/login",
       remoteAddress: "10.13.0.9",

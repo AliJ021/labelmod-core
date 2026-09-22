@@ -1,3 +1,4 @@
+import { loginWithMfa } from "./helpers/login-with-mfa.ts";
 /**
  * تست یکپارچه صفحه تنظیمات — روی پستگرس واقعی.
  *
@@ -66,7 +67,7 @@ describe("تنظیمات از مسیر API", { skip }, () => {
   async function loginAs(username: string) {
     const cached = sessions.get(username);
     if (cached) return cached;
-    const r = await app.inject({
+    const r = await loginWithMfa(app, {
       method: "POST",
       url: "/auth/login",
       payload: {

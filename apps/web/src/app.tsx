@@ -1,6 +1,6 @@
 /** پوسته: ناوبری شیشه‌ای، محتوای مالی مات و دسترس‌پذیر. */
 import { useCallback, useEffect, useState } from "react";
-import { Glass, GlassFilters } from "./components/Glass.tsx";
+import { Glass, GlassFilters, Solid } from "./components/Glass.tsx";
 import { TabList, TabPanels, useTabsId } from "./components/Tabs.tsx";
 import { HeaderTools } from "./components/HeaderTools.tsx";
 import { PasswordDialog } from "./components/PasswordDialog.tsx";
@@ -14,6 +14,7 @@ import { Treasury } from "./screens/Treasury.tsx";
 import { Warehouse } from "./screens/Warehouse.tsx";
 import { Returns } from "./screens/Returns.tsx";
 import { Settings } from "./screens/Settings.tsx";
+import { TwoFactor } from "./screens/TwoFactor.tsx";
 import {
   authView,
   forgetLock,
@@ -184,6 +185,26 @@ export function App() {
             <Login onDone={() => void refresh()} />
           </>
         )}
+      </>
+    );
+  }
+
+  // نشست راه‌اندازی هیچ بخش دیگری را باز نمی‌کند. این نمای مستقل
+  // تضمین می‌کند کاربر بدون عبور از مسیرهای مسدودشده بتواند عامل دوم
+  // را ثبت کند.
+  if (me?.enrollmentRequired) {
+    return (
+      <>
+        <GlassFilters />
+        <div className="mesh" aria-hidden="true"><i /><i /><i /></div>
+        <main className="auth-wrap">
+          <Solid className="pad auth-card">
+            <h1 className="auth-title">راه‌اندازی احراز هویت دومرحله‌ای</h1>
+            <p className="muted">برای دسترسی به حساب، ابتدا یک عامل دوم ثبت کنید.</p>
+            <TwoFactor onEnrolled={() => void refresh()} />
+            <button type="button" className="btn" onClick={() => void signOut()}>خروج</button>
+          </Solid>
+        </main>
       </>
     );
   }

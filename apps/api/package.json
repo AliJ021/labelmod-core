@@ -11,15 +11,15 @@
   "dependencies": {
     "@fastify/cookie": "11.1.2",
     "@fastify/rate-limit": "11.2.0",
-    "@simplewebauthn/server": "14.0.1",
+    "@simplewebauthn/server": "14.0.2",
     "argon2": "0.45.1",
-    "fastify": "5.12.3",
+    "fastify": "5.12.5",
     "kysely": "0.29.5",
     "pg": "8.23.0",
     "zod": "4.5.4"
   },
   "devDependencies": {
-    "@types/node": "26.5.0",
+    "@types/node": "26.6.1",
     "@types/pg": "8.23.1",
     "typescript": "7.0.2"
   }

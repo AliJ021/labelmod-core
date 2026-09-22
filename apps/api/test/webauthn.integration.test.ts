@@ -281,6 +281,7 @@ describe("کلید امنیتی (WebAuthn)", { skip }, () => {
     await assert.rejects(
       () =>
         svc.finishRegistration({
+          sessionId: "00000000-0000-7000-8000-000000000000",
           userId: ownerId,
           response: { id: "ساختگی", type: "public-key" },
         }),

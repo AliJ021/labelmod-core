@@ -99,5 +99,7 @@ export async function resolveApiKey(
     // کلید API با PIN باز نشده — عملیات حساس از این مسیر بسته
     // نیستند، ولی مجوزشان همچنان از `permission_rule` می‌آید.
     pinUnlocked: false,
+    // سیاست ورود تعاملی کارکنان به کلیدهای ماشین اعمال نمی‌شود.
+    enrollmentOnly: false,
   };
 }

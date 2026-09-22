@@ -336,3 +336,34 @@ test("staff password reset needs review; current user gets personal flow", async
   await expect(page.getByRole("status")).toContainText("همهٔ نشست‌های او بسته شدند");
   expect(api.calls.filter(x => x.startsWith("POST"))).toHaveLength(1);
 });
+
+test("نشست محدود فقط صفحه ثبت عامل دوم را می‌بیند", async ({ page, api }) => {
+  api.defaults["GET /auth/me"] = { ...(api.defaults["GET /auth/me"] as object), enrollmentRequired: true };
+  api.defaults["GET /auth/2fa"] = { enabled: false, pending: false, recoveryCodesLeft: 0, webauthnKeys: 0, shouldHave: true };
+  api.defaults["GET /auth/2fa/webauthn"] = { credentials: [] };
+  await page.goto("/");
+  await expect(page.getByRole("heading", { name: "راه‌اندازی احراز هویت دومرحله‌ای" })).toBeVisible();
+  await expect(page.getByRole("tablist", { name: "بخش‌ها" })).toHaveCount(0);
+  expect(api.calls.some(x => x.includes("/reports/") || x.includes("/customers") || x.includes("/branches"))).toBe(false);
+});
+
+test("کدهای بازیابی تا تأیید کاربر روی صفحه ثبت عامل دوم می‌مانند", async ({ page, api }) => {
+  const full = api.defaults["GET /auth/me"] as object;
+  api.defaults["GET /auth/me"] = { ...full, enrollmentRequired: true };
+  api.defaults["GET /auth/2fa"] = { enabled: false, pending: false, recoveryCodesLeft: 0, webauthnKeys: 0, shouldHave: true };
+  api.defaults["GET /auth/2fa/webauthn"] = { credentials: [] };
+  api.defaults["POST /auth/2fa/totp/begin"] = { secret: "SYNTHETICSETUPSECRET" };
+  api.handlers.set("POST /auth/2fa/totp/confirm", async route => {
+    api.defaults["GET /auth/me"] = { ...full, enrollmentRequired: false };
+    api.defaults["GET /auth/2fa"] = { enabled: true, pending: false, recoveryCodesLeft: 1, webauthnKeys: 0, shouldHave: true };
+    await route.fulfill({ json: { enabled: true, recoveryCodes: ["synthetic-recovery-code"] } });
+  });
+  await page.goto("/");
+  await page.getByRole("button", { name: "راه‌اندازی", exact: true }).click();
+  await page.getByLabel("کد شش‌رقمی که برنامه نشان می‌دهد").fill("123456");
+  await page.getByRole("button", { name: "تأیید و فعال‌سازی" }).click();
+  await expect(page.getByText("synthetic-recovery-code", { exact: true })).toBeVisible();
+  await expect(page.getByRole("tablist", { name: "بخش‌ها" })).toHaveCount(0);
+  await page.getByRole("button", { name: "نوشتمشان، ببند" }).click();
+  await expect(page.getByRole("tablist", { name: "بخش‌ها" })).toBeVisible();
+});

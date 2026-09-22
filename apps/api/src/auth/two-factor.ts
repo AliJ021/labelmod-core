@@ -25,6 +25,7 @@ import { sql } from "kysely";
 import { setActor } from "../lib/idempotency.ts";
 import type { Db } from "../db/client.ts";
 import { newTotpSecret, otpauthUri, verifyTotp } from "./totp.ts";
+import { lockEnrollment, proveEnrollment } from "./enrollment.ts";
 import { AuthError } from "./service.ts";
 
 /** بدون کاراکتر مبهم — کد بازیابی روی کاغذ نوشته می‌شود. */
@@ -134,25 +135,27 @@ export class TwoFactorService {
    * کدها **فقط همین یک بار** برمی‌گردند. اگر کاربر گمشان کند، تنها
    * راه ساخت فهرست تازه است — و همان درست است.
    */
-  async confirmTotp(userId: string, code: string): Promise<string[]> {
-    const enrollment = await this.#db
-      .selectFrom("identity.totp_enrollment")
-      .select("secret")
-      .where("user_id", "=", userId)
-      .executeTakeFirst();
-    if (!enrollment) {
-      throw new AuthError("no_enrollment", "ثبت‌نامی در جریان نیست. از نو شروع کنید.");
-    }
-    if (!verifyTotp(enrollment.secret, code)) {
-      throw new AuthError(
-        "bad_totp_setup",
-        "کد وارد‌شده درست نیست. ساعت گوشی را هم بررسی کنید.",
-      );
-    }
-
-    const codes = generateRecoveryCodes();
-    await this.#db.transaction().execute(async (trx) => {
+  async confirmTotp(userId: string, code: string, sessionId: string): Promise<string[]> {
+    return await this.#db.transaction().execute(async (trx) => {
       await setActor(trx, userId);
+      await lockEnrollment(trx, userId, sessionId);
+      const enrollment = await trx
+        .selectFrom("identity.totp_enrollment")
+        .select("secret")
+        .where("user_id", "=", userId)
+        .executeTakeFirst();
+      if (!enrollment) {
+        throw new AuthError("no_enrollment", "ثبت‌نامی در جریان نیست. از نو شروع کنید.");
+      }
+      if (!verifyTotp(enrollment.secret, code)) {
+        throw new AuthError(
+          "bad_totp_setup",
+          "کد وارد‌شده درست نیست. ساعت گوشی را هم بررسی کنید.",
+        );
+      }
+
+      const codes = generateRecoveryCodes();
+
       await trx
         .updateTable("identity.app_user")
         .set({ totp_secret: enrollment.secret })
@@ -169,9 +172,9 @@ export class TwoFactorService {
         SELECT platform.audit('auth.totp_enable', 'app_user', ${userId}::text,
           NULL, ${userId}::uuid)
       `.execute(trx);
+      await proveEnrollment(trx, userId, sessionId, "totp");
+      return codes;
     });
-
-    return codes;
   }
 
   /**

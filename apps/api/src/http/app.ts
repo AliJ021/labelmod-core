@@ -118,6 +118,17 @@ const PUBLIC_PATHS = new Set([
   ...PUBLIC_ROUTE_PATHS,
 ]);
 
+/** تنها قابلیت‌هایی که نشست راه‌اندازی اجازه دارد. */
+const MFA_ENROLLMENT_PATHS = new Set([
+  "GET /auth/me",
+  "GET /auth/2fa",
+  "POST /auth/2fa/totp/begin",
+  "POST /auth/2fa/totp/confirm",
+  "GET /auth/2fa/webauthn",
+  "POST /auth/2fa/webauthn/register/begin",
+  "POST /auth/2fa/webauthn/register/finish",
+]);
+
 export interface AppDeps {
   db: Db;
   auth: AuthService;
@@ -353,6 +364,15 @@ export async function buildApp(deps: AppDeps): Promise<FastifyInstance> {
     if (!req.session) {
       return reply.code(401).send({
         error: { code: "no_session", message: "وارد نشده‌اید", correlationId: req.id },
+      });
+    }
+    if (req.session.enrollmentOnly && !MFA_ENROLLMENT_PATHS.has(`${req.method} ${path}`)) {
+      return reply.code(403).send({
+        error: {
+          code: "second_factor_enrollment_required",
+          message: "برای ادامه، احراز هویت دومرحله‌ای را راه‌اندازی کنید.",
+          correlationId: req.id,
+        },
       });
     }
   });

@@ -1,3 +1,4 @@
+import { loginWithMfa } from "./helpers/login-with-mfa.ts";
 /**
  * تست یکپارچه مدیریت پرسنل و مشتری — روی پستگرس واقعی.
  *
@@ -77,7 +78,7 @@ describe("پرسنل و مشتری", { skip }, () => {
   async function loginAs(username: string, password = PASSWORD) {
     const cached = sessions.get(username);
     if (cached) return cached;
-    const r = await app.inject({
+    const r = await loginWithMfa(app, {
       method: "POST",
       url: "/auth/login",
       remoteAddress: ipFor(username),
@@ -190,7 +191,7 @@ describe("پرسنل و مشتری", { skip }, () => {
     assert.ok(out.password.length >= 16, "رمز باید بلند باشد");
 
     // رمز واقعاً کار می‌کند — یعنی هش درست نوشته شده.
-    const login = await app.inject({
+    const login = await loginWithMfa(app, {
       method: "POST",
       url: "/auth/login",
       remoteAddress: ipFor(username),
@@ -262,7 +263,7 @@ describe("پرسنل و مشتری", { skip }, () => {
     });
     const { id, password } = JSON.parse(created.body) as { id: string; password: string };
 
-    const login = await app.inject({
+    const login = await loginWithMfa(app, {
       method: "POST",
       url: "/auth/login",
       remoteAddress: ipFor(username),
@@ -320,7 +321,7 @@ describe("پرسنل و مشتری", { skip }, () => {
       },
     });
     const { id, password } = JSON.parse(created.body) as { id: string; password: string };
-    const login = await app.inject({
+    const login = await loginWithMfa(app, {
       method: "POST",
       url: "/auth/login",
       remoteAddress: ipFor(username),
@@ -383,7 +384,7 @@ describe("پرسنل و مشتری", { skip }, () => {
     assert.equal(reset.statusCode, 200, reset.body);
     assert.equal((JSON.parse(reset.body) as { password: string }).password, chosen);
 
-    const login = await app.inject({
+    const login = await loginWithMfa(app, {
       method: "POST",
       url: "/auth/login",
       remoteAddress: ipFor(username),
@@ -711,7 +712,7 @@ describe("پرسنل و مشتری", { skip }, () => {
       },
     });
     const { password } = JSON.parse(created.body) as { password: string };
-    const login = await app.inject({
+    const login = await loginWithMfa(app, {
       method: "POST",
       url: "/auth/login",
       remoteAddress: ipFor(`wh_${suffix}`),

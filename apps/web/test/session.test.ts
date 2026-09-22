@@ -43,6 +43,7 @@ const ME: Me = {
   roles: ["cashier"],
   expiresAt: new Date().toISOString(),
   elevated: true,
+  enrollmentRequired: false,
   device: null,
 };
 

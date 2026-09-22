@@ -51,6 +51,8 @@ export interface Me {
    */
   elevated: boolean;
   device: DeviceState | null;
+  /** این نشست تا ثبت عامل دوم به مسیرهای راه‌اندازی محدود است. */
+  enrollmentRequired: boolean;
 }
 
 export interface LoginResult {
@@ -63,6 +65,7 @@ export interface LoginResult {
     /** تا دستگاه راز ثبت‌نام نگرفته باشد، PIN کار نمی‌کند. */
     pinAvailable: boolean;
   } | null;
+  enrollmentRequired: boolean;
 }
 
 /** کدام صفحه دیده شود. */
@@ -155,7 +158,7 @@ export interface TwoFactorStatus {
   pending: boolean;
   recoveryCodesLeft: number;
   webauthnKeys: number;
-  /** نقشش در فهرست الزام است ولی هنوز راه نینداخته — هشدار، نه قفل. */
+  /** نقشش در فهرست الزام است ولی هنوز راه نینداخته است. */
   shouldHave: boolean;
 }
 

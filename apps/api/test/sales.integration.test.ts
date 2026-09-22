@@ -1,3 +1,4 @@
+import { loginWithMfa } from "./helpers/login-with-mfa.ts";
 /**
  * تست یکپارچه فروش و صندوق — روی پستگرس واقعی، دیتابیس یک‌بارمصرف.
  *
@@ -49,7 +50,7 @@ describe("فروش و صندوق روی دیتابیس واقعی", { skip }, ()
   async function loginAs(username: string) {
     const cached = sessions.get(username);
     if (cached) return cached;
-    const r = await app.inject({
+    const r = await loginWithMfa(app, {
       method: "POST",
       url: "/auth/login",
       payload: { username, password: PASSWORD, deviceFingerprint: `fp-${suffix}-${username}` },
@@ -570,6 +571,11 @@ describe("فروش و صندوق روی دیتابیس واقعی", { skip }, ()
     // مدیر (نقش بدون شعبه) به همه شعب دسترسی دارد
     await sql`INSERT INTO identity.user_role (user_id, role_code, branch_id)
               VALUES (${supervisorId}::uuid, 'admin', NULL)`.execute(handle.db);
+    // نقش تازه الزام MFA دارد؛ نشست قدیمی نباید خودکار ارتقا یابد.
+    const limited = await app.inject({ method: "GET", url: "/auth/can?operation=sale.create", ...(await loginAs(supervisor)) });
+    assert.equal(limited.statusCode, 403, limited.body);
+    assert.equal(limited.json().error.code, "second_factor_enrollment_required");
+    sessions.delete(supervisor);
     const asAdmin = await app.inject({
       method: "POST",
       url: "/invoices",

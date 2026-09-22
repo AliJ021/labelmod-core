@@ -1,3 +1,4 @@
+import { loginWithMfa } from "./helpers/login-with-mfa.ts";
 /**
  * تست یکپارچه برگشت از فروش و دوره ثبت — روی پستگرس واقعی.
  *
@@ -50,7 +51,7 @@ describe("برگشت از فروش و دوره ثبت", { skip }, () => {
   async function loginAs(username: string) {
     const cached = sessions.get(username);
     if (cached) return cached;
-    const r = await app.inject({
+    const r = await loginWithMfa(app, {
       method: "POST",
       url: "/auth/login",
       payload: {
