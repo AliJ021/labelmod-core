@@ -38,6 +38,12 @@ updates:
     # به‌روزرسانی امنیتی جدا از به‌روزرسانی معمول می‌آید، پس PR وصله
     # امنیتی پشت PRهای نسخه معمولی صف نمی‌کشد.
     groups:
+      react-runtime:
+        patterns:
+          - "react"
+          - "react-dom"
+          - "@types/react"
+          - "@types/react-dom"
       types:
         patterns:
           - "@types/*"
