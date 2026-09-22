@@ -300,6 +300,8 @@ jobs:
       #    نمی‌گیرد.
       - name: گیرندهٔ ارسال لحظه‌ای — امضا، Replay، ترتیب، صفر و null
         run: php integrations/woocommerce/test/push-receiver-test.php
+      - name: Refund delivery and replay
+        run: php integrations/woocommerce/test/refund-test.php
 
   # --------------------------------------------------------------------
   # استقرار — ایمیج‌ها واقعاً ساخته می‌شوند و Caddyfile واقعاً سنجیده

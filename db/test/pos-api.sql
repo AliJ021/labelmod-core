@@ -217,6 +217,9 @@ PERFORM sales.refresh_invoice_totals(v_inv);
 RAISE NOTICE E'\n═══ ۴. نهایی‌سازی کامل با نگهبان فعال ═══';
 -- ═══════════════════════════════════════════════════════════════════
 
+-- This stock/return scenario is authorized credit, with no cash refund.
+WITH c AS (INSERT INTO sales.customer(full_name,credit_limit) VALUES ('POS regression credit',1000000000) RETURNING id)
+UPDATE sales.invoice SET customer_id=(SELECT id FROM c) WHERE id=v_inv;
 PERFORM sales.finalize_invoice(v_inv, v_user);
 
 PERFORM pg_temp.assert_eq('فاکتور نهایی شد',

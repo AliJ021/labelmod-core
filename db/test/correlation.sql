@@ -58,7 +58,7 @@ SELECT id INTO v_id FROM platform.audit_log WHERE action = 'test.with_corr';
 PERFORM pg_temp.assert_eq('شناسهٔ پیگیری ثبت شد',
   (SELECT correlation_id FROM platform.audit_log WHERE id = v_id), 'req-4242');
 PERFORM pg_temp.assert_eq('نسخهٔ فرمول هش',
-  (SELECT hash_version::text FROM platform.audit_log WHERE id = v_id), '3');
+  (SELECT hash_version::text FROM platform.audit_log WHERE id = v_id), '4');
 -- و ip و device هم همان‌جا ماندند — مهاجرت ۰۵۶ چیزی را نشکست.
 PERFORM pg_temp.assert_eq('IP هم همراهش',
   (SELECT host(ip) FROM platform.audit_log WHERE id = v_id), '10.0.0.7');

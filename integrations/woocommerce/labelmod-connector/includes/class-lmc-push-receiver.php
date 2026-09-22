@@ -253,6 +253,9 @@ class LMC_Push_Receiver
 
     public static function handle_stock($request)
     {
+        if (lmc_setting('sync_stock') !== 'yes') {
+            return ['ok' => true, 'applied' => false, 'note' => 'همگام‌سازی موجودی خاموش است'];
+        }
         $r = self::resolve($request);
         if (isset($r['error'])) { return $r['error']; }
         if (isset($r['skip']))  { return ['ok' => true, 'applied' => false, 'note' => $r['skip']]; }
@@ -275,6 +278,9 @@ class LMC_Push_Receiver
 
     public static function handle_price($request)
     {
+        if (lmc_setting('sync_price') !== 'yes') {
+            return ['ok' => true, 'applied' => false, 'note' => 'همگام‌سازی قیمت خاموش است'];
+        }
         $r = self::resolve($request);
         if (isset($r['error'])) { return $r['error']; }
         if (isset($r['skip']))  { return ['ok' => true, 'applied' => false, 'note' => $r['skip']]; }

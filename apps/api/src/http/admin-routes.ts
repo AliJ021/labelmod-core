@@ -34,7 +34,7 @@ import { requireForSession } from "../auth/permission.ts";
 import { withActor } from "../db/actor.ts";
 import type { Db } from "../db/client.ts";
 import { serializeMoney } from "../lib/money.ts";
-import { branchesOf } from "../sales/scope.ts";
+import { assertBranch, branchesOf } from "../sales/scope.ts";
 
 const accountBody = z.object({
   name: z.string().trim().min(1, "نام حساب لازم است").max(120),
@@ -467,6 +467,7 @@ export function registerAdminRoutes(app: FastifyInstance, deps: AdminRouteDeps):
   app.post("/opening-balance", async (req) => {
     const s = session(req);
     const body = openingBody.parse(req.body);
+    await assertBranch(db, s.userId, body.branchId);
     await requireForSession(db, s, "settings.security");
 
     const entry = await withActor(db, { userId: s.userId, ip: req.ip }, async (trx) => {

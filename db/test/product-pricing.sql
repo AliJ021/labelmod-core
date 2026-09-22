@@ -208,6 +208,11 @@ VALUES (BR, WH, v_shift, '2026-06-02 10:00+03:30', v_user) RETURNING id INTO v_i
 INSERT INTO sales.invoice_line (invoice_id, line_no, variation_id, qty,
                                 unit_price, net_amount)
 VALUES (v_inv, 1, v_var, 2, 3200000, 6400000) RETURNING id INTO v_line;
+-- This snapshot/stock scenario is a paid sale, not anonymous credit.
+INSERT INTO treasury.payment (invoice_id,shift_id,method_code,amount,status)
+SELECT i.id,i.shift_id,'cash',sum(l.net_amount+l.tax_amount),'succeeded'
+  FROM sales.invoice i JOIN sales.invoice_line l ON l.invoice_id=i.id
+ WHERE i.id=v_inv GROUP BY i.id;
 PERFORM sales.finalize_invoice(v_inv, v_user);
 
 PERFORM pg_temp.assert_eq('فاکتور با قیمت لحظه فروش نهایی شد',

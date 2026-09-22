@@ -61,6 +61,7 @@ define('LMC_INSTORE_EVENT', 'lmc_sync_instore');
 require_once LMC_PATH . 'includes/class-lmc-client.php';
 require_once LMC_PATH . 'includes/class-lmc-settings.php';
 require_once LMC_PATH . 'includes/class-lmc-order-sync.php';
+require_once LMC_PATH . 'includes/class-lmc-refund-sync.php';
 require_once LMC_PATH . 'includes/class-lmc-stock-sync.php';
 require_once LMC_PATH . 'includes/class-lmc-instore.php';
 require_once LMC_PATH . 'includes/class-lmc-push-receiver.php';
@@ -109,6 +110,7 @@ add_action('plugins_loaded', function () {
 
     LMC_Settings::init();
     LMC_Order_Sync::init();
+    LMC_Refund_Sync::init();
     LMC_Stock_Sync::init();
     LMC_Instore::init();
     // ⚠️ **پیش از** ثبت مسیر: نگهبان Nonce به یک جدول نیاز دارد و

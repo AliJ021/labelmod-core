@@ -109,6 +109,9 @@ BEGIN
 
     v_prof := '{}';
     FOR v_m IN 1..array_length(METHODS, 1) LOOP
+      -- هر روش روی داده مستقل اجرا می‌شود؛ باقی‌مانده روش قبلی، تغییر روش واقعی نیست.
+      -- سود اندازه‌گیری‌شده در متغیر می‌ماند و همه ادعاهای مقایسه بدون تغییر اجرا می‌شوند.
+      BEGIN
       v_method := METHODS[v_m];
       PERFORM platform.set_setting('costing.method', to_jsonb(v_method), 'آزمون خصوصیت');
 
@@ -155,6 +158,9 @@ BEGIN
       PERFORM sales.close_shift(v_shift, v_total, v_user, NULL);
 
       v_prof := v_prof || (pg_temp.profit() - v_p0);
+      RAISE EXCEPTION USING ERRCODE='ZX001', MESSAGE='rollback isolated costing fixture';
+      EXCEPTION WHEN SQLSTATE 'ZX001' THEN NULL;
+      END;
     END LOOP;
 
     -- بند ۱: «همه یکی‌اند» یعنی شمار مقدارهای متمایز ۱ است. با آرایه،

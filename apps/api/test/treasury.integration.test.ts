@@ -409,6 +409,15 @@ describe("خزانه و چک", { skip }, () => {
 
   // ── چک ───────────────────────────────────────────────────────────────
 
+  test("تاریخ تقویمی نامعتبر چک ۴۰۰ می‌گیرد و برگه‌ای نمی‌سازد", async () => {
+    const a = await loginAs(admin);
+    const response = await app.inject({ method: "POST", url: "/cheques", ...a,
+      payload: { direction: "received", branchId: BRANCH, chequeNo: "INVALID-DATE", bankName: "Test",
+        amount: "100", issuedOn: "2026-02-30", dueOn: "2026-03-01", partyType: "customer", partyId: customerId } });
+    assert.equal(response.statusCode, 400, response.body);
+    assert.equal((await sql<{ n: number }>`SELECT count(*)::int n FROM treasury.cheque WHERE cheque_no='INVALID-DATE'`.execute(handle.db)).rows[0]!.n, 0);
+  });
+
   test("چرخه کامل چک دریافتی: ثبت → دریافت → واگذاری → وصول", async () => {
     const a = await loginAs(admin);
 
@@ -435,6 +444,8 @@ describe("خزانه و چک", { skip }, () => {
     // برگه تازه هیچ اثر مالی ندارد
     const draft = await app.inject({ method: "GET", url: `/cheques/${chequeId}`, ...a });
     assert.equal(draft.json().cheque.status, "draft");
+    assert.equal(draft.json().cheque.issuedOn, "2026-06-01", "DATE must not shift with server timezone");
+    assert.equal(draft.json().cheque.dueOn, "2026-08-01");
     assert.equal((draft.json().events as unknown[]).length, 0, "هنوز رویدادی نیست");
 
     for (const [action, extra] of [

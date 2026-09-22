@@ -29,6 +29,9 @@ export interface Returnable {
   soldQty: string;
   remainingQty: string;
   netAmount: string;
+  returnedNetAmount?: string;
+  taxAmount?: string;
+  returnedTaxAmount?: string;
 }
 
 /** آنچه صندوق‌دار انتخاب کرده: چند تا از هر سطر. */
@@ -76,9 +79,20 @@ export function suggestedRefund(lines: Returnable[], selection: Selection): bigi
   for (const line of lines) {
     const qty = selection.get(line.invoiceLineId) ?? 0;
     if (qty <= 0) continue;
-    const sold = BigInt(Math.round(Number(line.soldQty)));
+    const scaled = (value: string) => {
+      const [whole, fraction = ""] = value.split(".");
+      return BigInt(whole ?? "0") * 1000n + BigInt(fraction.padEnd(3, "0").slice(0, 3));
+    };
+    const sold = scaled(line.soldQty);
     if (sold === 0n) continue;
-    total += divRound(BigInt(line.netAmount) * BigInt(qty), sold);
+    const before = sold - scaled(line.remainingQty);
+    const after = before + BigInt(qty) * 1000n;
+    const net = BigInt(line.netAmount);
+    const tax = BigInt(line.taxAmount ?? "0");
+    total += divRound(net * after, sold) - (line.returnedNetAmount === undefined
+      ? divRound(net * before, sold) : BigInt(line.returnedNetAmount));
+    total += divRound(tax * after, sold) - (line.returnedTaxAmount === undefined
+      ? divRound(tax * before, sold) : BigInt(line.returnedTaxAmount));
   }
   return total;
 }

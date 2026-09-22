@@ -70,7 +70,11 @@ const requiredText = (max: number) => text(max).min(1, "نمی‌تواند خا
 /** تاریخ میلادی ISO — کلاینت تقویم فارسی را خودش تبدیل می‌کند. */
 const isoDate = z
   .string()
-  .regex(/^\d{4}-\d{2}-\d{2}$/, "تاریخ باید به شکل YYYY-MM-DD باشد");
+  .regex(/^\d{4}-\d{2}-\d{2}$/, "تاریخ باید به شکل YYYY-MM-DD باشد")
+  .refine((v) => {
+    const date = new Date(`${v}T00:00:00Z`);
+    return Number.isFinite(date.getTime()) && date.toISOString().slice(0, 10) === v;
+  }, "تاریخ تقویمی معتبر نیست");
 
 /**
  * محدودیت نرخ روی مسیرهایی که پول جابه‌جا می‌کنند.

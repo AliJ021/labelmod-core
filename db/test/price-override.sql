@@ -94,6 +94,11 @@ PERFORM pg_temp.assert_eq('مبلغ خالص سطر از قیمت دستی سا�
 PERFORM pg_temp.assert_eq('کاهش کل — فقط قیمت دستی',
   sales.line_markdown((SELECT l FROM sales.invoice_line l WHERE l.id = v_line)), 100000);
 
+-- This snapshot/stock scenario is a paid sale, not anonymous credit.
+INSERT INTO treasury.payment (invoice_id,shift_id,method_code,amount,status)
+SELECT i.id,i.shift_id,'cash',sum(l.net_amount+l.tax_amount),'succeeded'
+  FROM sales.invoice i JOIN sales.invoice_line l ON l.invoice_id=i.id
+ WHERE i.id=v_inv GROUP BY i.id;
 PERFORM sales.finalize_invoice(v_inv, v_user);
 PERFORM pg_temp.assert_eq('جمع فاکتور از قیمت دستی ساخته می‌شود',
   (SELECT net_amount FROM sales.invoice WHERE id = v_inv), 1900000);
@@ -285,6 +290,11 @@ PERFORM pg_temp.assert_eq('ردّ حسابرسی مقدار پیش و پس دا�
       AND before ? 'unitPrice' AND after ? 'unitPrice'), 7);
 
 -- فاکتور نهایی‌شده سبد ندارد.
+-- This snapshot/stock scenario is a paid sale, not anonymous credit.
+INSERT INTO treasury.payment (invoice_id,shift_id,method_code,amount,status)
+SELECT i.id,i.shift_id,'cash',sum(l.net_amount+l.tax_amount),'succeeded'
+  FROM sales.invoice i JOIN sales.invoice_line l ON l.invoice_id=i.id
+ WHERE i.id=v_inv GROUP BY i.id;
 PERFORM sales.finalize_invoice(v_inv, v_user);
 PERFORM pg_temp.assert_raises('فاکتور نهایی‌شده قیمت عوض نمی‌کند',
   format($$SELECT sales.set_line_price(%L, %L, 900000, 'دلیل')$$, v_inv, v_line));

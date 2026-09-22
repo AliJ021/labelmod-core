@@ -498,4 +498,61 @@ describe("سفارش سایت (ووکامرس)", { skip }, () => {
       handle.db,
     );
   });
+  test("F23: Woo partial refunds preserve stock, shipping, ledger and replay identity", async () => {
+    const externalId = `refund-${suffix}`;
+    const created = await order({ branchId: BRANCH, warehouseId: STORE_WH, externalId,
+      customerMobile: "09129998877", customerName: "Refund regression",
+      lines: [{ sku, qty: "2", unitPrice: "2000000" }], shippingAmount: "100000",
+      paymentMethod: "gateway", paidAmount: "4100000", paymentRef: `refund-ref-${suffix}` });
+    assert.equal(created.statusCode, 201, created.body);
+    const invoiceId = created.json<OrderResponse>().invoiceId;
+    const call = (payload: Record<string, unknown>) => app.inject({ method: "POST", url: "/web/refunds", ...auth(), payload });
+    const payload = { orderId: externalId, refundId: `r1-${suffix}`, amount: "2050000",
+      shippingAmount: "50000", lines: [{ lineNo: 1, qty: "1", restock: true }] };
+    const bad = await call({ ...payload, refundId: `bad-${suffix}`, amount: "100" });
+    assert.equal(bad.statusCode, 422, bad.body);
+    assert.equal(bad.json().error.code, "refund_amount_mismatch");
+    const absent = await handle.db.selectFrom("sales.sale_return").select("id").where("invoice_id", "=", invoiceId).execute();
+    assert.equal(absent.length, 0, "a mismatch rolls back stock, payment and journal together");
+    const calls = await Promise.all([call(payload), call(payload)]);
+    assert.deepEqual(calls.map((r) => r.statusCode).sort(), [200, 201]);
+    assert.equal(calls[0]!.json().returnId, calls[1]!.json().returnId);
+    const changed = await call({ ...payload, amount: "2050010" });
+    assert.equal(changed.statusCode, 409, changed.body);
+    const second = await call({ ...payload, refundId: `r2-${suffix}`, lines: [{ lineNo: 1, qty: "1", restock: false }] });
+    assert.equal(second.statusCode, 201, second.body);
+    const rows = await sql<{ count: string; paid: string; shipping: string; stock: string; cash: string }>`
+      SELECT count(*)::text AS count,sum(r.refund_amount)::text AS paid,sum(r.shipping_amount)::text AS shipping,
+       (SELECT coalesce(sum(m.qty),0)::text FROM inventory.stock_movement m
+         WHERE m.ref_type='sale_return' AND m.ref_id IN (SELECT id FROM sales.sale_return WHERE invoice_id=${invoiceId}::uuid)) AS stock,
+       (SELECT coalesce(sum(l.credit),0)::text FROM ledger.journal_line l JOIN ledger.journal_entry e ON e.id=l.entry_id
+         WHERE e.ref_id IN (SELECT id FROM sales.sale_return WHERE invoice_id=${invoiceId}::uuid) AND l.account_code='1101') AS cash
+      FROM sales.sale_return r WHERE r.invoice_id=${invoiceId}::uuid
+    `.execute(handle.db);
+    assert.equal(rows.rows[0]!.count, "2");
+    assert.equal(BigInt(rows.rows[0]!.paid), 4100000n);
+    assert.equal(BigInt(rows.rows[0]!.shipping), 100000n);
+    assert.equal(Number(rows.rows[0]!.stock), 1, "the non-restocked unit never comes back into stock");
+    assert.equal(BigInt(rows.rows[0]!.cash), 0n, "gateway returns never debit the cash drawer");
+    const stockState = await handle.db.selectFrom("sales.invoice").select("status").where("id", "=", invoiceId).executeTakeFirstOrThrow();
+    assert.equal(stockState.status, "returned");
+    const replay = await call(payload);
+    assert.equal(replay.statusCode, 200, replay.body);
+
+    const other = newApiKey();
+    const otherUser = await sql<{ id: string }>`INSERT INTO identity.app_user(username,full_name,is_active)
+      VALUES(${`other-site-${suffix}`},'Other site',false) RETURNING id`.execute(handle.db);
+    const otherId = otherUser.rows[0]!.id;
+    await sql`INSERT INTO identity.user_role(user_id,role_code,branch_id) VALUES(${otherId}::uuid,'web',${BRANCH}::uuid)`.execute(handle.db);
+    await sql`INSERT INTO identity.api_client(name,user_id,key_hash,created_by)
+      VALUES('Other site',${otherId}::uuid,${hashApiKey(other)},${SYSTEM_USER}::uuid)`.execute(handle.db);
+    const stolen = await app.inject({ method: "POST", url: "/web/refunds", headers: { authorization: `Bearer ${other}` }, payload });
+    assert.equal(stolen.statusCode, 404, "same branch is insufficient to return another site's order");
+    const unauthenticated = await app.inject({ method: "POST", url: "/web/refunds", payload });
+    assert.equal(unauthenticated.statusCode, 401);
+    await sql`UPDATE identity.permission_rule SET allowed=false WHERE role_code='web' AND operation='web.refund'`.execute(handle.db);
+    try { assert.equal((await call(payload)).statusCode, 403, "revocation also denies replay"); }
+    finally { await sql`UPDATE identity.permission_rule SET allowed=true WHERE role_code='web' AND operation='web.refund'`.execute(handle.db); }
+  });
+
 });

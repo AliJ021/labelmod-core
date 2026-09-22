@@ -165,11 +165,10 @@ const selectCustomer = (branches: CustomerBranchScope) => sql`
              AND (${branches === "all"} OR i.branch_id = ANY(${branches === "all" ? [] : branches}::uuid[]))
                       AND i.status IN ('finalized','paid','partially_returned','returned')), 0)::text
            AS total_purchased,
-         coalesce((SELECT sum(CASE WHEN a.nature = 'debit' THEN l.debit - l.credit ELSE l.credit - l.debit END)
+         coalesce((SELECT sum(l.debit - l.credit)
                     FROM ledger.journal_line l
                     JOIN ledger.journal_entry e ON e.id = l.entry_id
-                    JOIN ledger.account a ON a.code = l.account_code
-                   WHERE l.party_type = 'customer' AND l.party_id = c.id
+                                 WHERE l.party_type = 'customer' AND l.party_id = c.id
                      AND (${branches === "all"} OR e.branch_id = ANY(${branches === "all" ? [] : branches}::uuid[]))), 0)::text
            AS balance
     FROM sales.customer c

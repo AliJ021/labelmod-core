@@ -70,6 +70,8 @@ export function Returns() {
   const [note, setNote] = useState("");
   const [refund, setRefund] = useState("");
   const [method, setMethod] = useState("");
+  const [drawers, setDrawers] = useState<Array<{ id: string; userName: string; openedAt: string }>>([]);
+  const [drawerId, setDrawerId] = useState("");
 
   const [draft, setDraft] = useState<SaleReturn | null>(null);
   /** مقصد کالای سالم. `""` یعنی همان انبار فاکتور. */
@@ -90,7 +92,7 @@ export function Returns() {
           pos.returnReasons(),
         ]);
         setBranches(b.branches);
-        setMethods(m.methods);
+        setMethods(m.methods.filter((x) => ["cash", "card_reader", "gateway", "transfer"].includes(x.kind)));
         setReasons(r.reasons);
         // انبارهای آوتلت همه شعبه‌ها. فهرست شعبه `warehouses` را با
         // `kind` می‌دهد، پس فیلتر اینجا یک تصمیم نمایشی است نه یک
@@ -123,7 +125,9 @@ export function Returns() {
       setDone(null);
       setDraft(null);
       const inv = await pos.invoiceByNumber(number.trim(), branchId);
-      const returnable = await pos.returnable(inv.id);
+      const [returnable, open] = await Promise.all([pos.returnable(inv.id), pos.openShifts(inv.branchId)]);
+      setDrawers(open);
+      setDrawerId(open.length === 1 ? open[0]?.id ?? "" : "");
       setInvoice(inv);
       setView(returnable);
       setSelection(new Map());
@@ -159,6 +163,7 @@ export function Returns() {
         lines: selectionToLines(selection),
         ...(note.trim() === "" ? {} : { reasonNote: note.trim() }),
         ...(method === "" ? {} : { refundMethod: method }),
+        ...((chosen?.kind === "cash" || method === "") && drawerId !== "" ? { shiftId: drawerId } : {}),
       };
 
       // پیش‌نویس فقط یک بار ساخته می‌شود. اگر ثبت روی شبکه شکسته
@@ -378,6 +383,15 @@ export function Returns() {
                 </button>
               ))}
             </div>
+            {(chosen?.kind === "cash" || method === "") && drawers.length > 1 ? (
+              <label className="auth-field">
+                <span>صندوق بازپرداخت</span>
+                <select value={drawerId} onChange={(e) => setDrawerId(e.target.value)} disabled={busy || draft !== null}>
+                  <option value="">صندوق را انتخاب کنید</option>
+                  {drawers.map((d) => <option key={d.id} value={d.id}>{d.userName} — {new Date(d.openedAt).toLocaleString("fa-IR")}</option>)}
+                </select>
+              </label>
+            ) : null}
             {chosen?.kind === "cash" ? (
               <p className="muted small" style={{ margin: 0 }}>
                 بازپرداخت نقدی شیفت باز می‌خواهد — وگرنه پول از کشو می‌رود ولی در شمارش
@@ -415,7 +429,7 @@ export function Returns() {
             <button
               type="button"
               className="btn btn--primary"
-              disabled={busy || !ready || typedRefund === null}
+              disabled={busy || !ready || typedRefund === null || (typedRefund > 0n && (chosen?.kind === "cash" || method === "") && drawers.length > 1 && drawerId === "")}
               onClick={() => void submit()}
             >
               {busy ? "…" : draft ? "ثبت دوباره" : "ثبت مرجوعی"}

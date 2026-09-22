@@ -255,7 +255,7 @@ export class TreasuryService {
     if (input.expenseAccountCode !== undefined) {
       const acc = await this.#db
         .selectFrom("ledger.account")
-        .select(["code", "is_postable", "is_active"])
+        .select(["code", "is_postable", "is_active", "type"])
         .where("code", "=", input.expenseAccountCode)
         .executeTakeFirst();
       if (!acc) {
@@ -267,6 +267,14 @@ export class TreasuryService {
       }
       // حساب گروه (غیرقابل ثبت) سند نمی‌گیرد — دیتابیس هم ردش می‌کند،
       // ولی اینجا پیامش می‌گوید **چرا**.
+      const freight = await sql<{ allowed: boolean }>`SELECT EXISTS(
+        SELECT 1 FROM ledger.posting_rule WHERE event_type='purchase_receipt'
+          AND leg='other_payable' AND account_code=${acc.code} AND is_active) AS allowed`.execute(this.#db);
+      const freightPayable = acc.type === "liability" && freight.rows[0]?.allowed;
+      // Existing freight liabilities are settled here; they are not a new expense.
+      if (acc.type !== "expense" && !freightPayable) {
+        throw new TreasuryError("expense_account_type", "سرفصل انتخاب‌شده حساب هزینه نیست", 422);
+      }
       if (!acc.is_postable) {
         throw new TreasuryError(
           "expense_account_not_postable",

@@ -34,6 +34,7 @@ import { registerScopeRoutes } from "./scope-routes.ts";
 import { registerAdminRoutes } from "./admin-routes.ts";
 import { registerHealthRoutes } from "./health-routes.ts";
 import { registerWebRoutes } from "./web-routes.ts";
+import { registerWebRefundRoutes } from "./web-refund-routes.ts";
 import { registerPublicRoutes, PUBLIC_ROUTE_PATHS } from "./public-routes.ts";
 import { InvoiceService } from "../sales/invoice.ts";
 import { ShiftService } from "../sales/shift.ts";
@@ -437,6 +438,7 @@ export async function buildApp(deps: AppDeps): Promise<FastifyInstance> {
     db: deps.db,
     settings: new SettingService(deps.db),
   });
+  registerWebRefundRoutes(app, deps.db);
   registerWebRoutes(app, {
     db: deps.db,
     webOrders: new WebOrderService(invoices),

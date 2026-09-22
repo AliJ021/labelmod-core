@@ -72,6 +72,7 @@ INSERT INTO catalog.price (variation_id, price_list, amount)
   VALUES (v_var, 'default', 1000000);
 INSERT INTO sales.customer (mobile_normalized, full_name, credit_limit)
   VALUES ('09121119999','مشتری زنگ', 0) RETURNING id INTO v_cust;
+UPDATE sales.customer SET credit_limit=1000000000 WHERE id=v_cust;
 
 INSERT INTO purchasing.receipt (number, branch_id, supplier_id, warehouse_id, occurred_at)
 VALUES (platform.next_document_no(BR,'purchase',1405::smallint), BR, v_sup, WH, '2026-06-01')

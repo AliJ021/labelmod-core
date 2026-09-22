@@ -504,7 +504,7 @@ export class InvoiceService {
           qty: input.qty,
           unit_price: serializeMoney(price),
           discount_amount: serializeMoney(discount),
-          tax_amount: "0",
+          tax_amount: sql<string>`sales.line_tax(${variationId}::uuid, ${serializeMoney(gross - discount)}::numeric)`,
           net_amount: serializeMoney(gross - discount),
           unit_cost: "0",
           cogs_amount: "0",
@@ -594,6 +594,7 @@ export class InvoiceService {
        WHERE invoice_id = ${input.invoiceId}::uuid
          AND variation_id = ${variationId}::uuid
          AND discount_amount = 0
+         AND tax_amount = 0
          AND list_price IS NULL
          AND discount_reason IS NULL
          AND price_override_reason IS NULL
@@ -625,7 +626,7 @@ export class InvoiceService {
         qty: input.qty,
         unit_price: serializeMoney(price),
         discount_amount: "0",
-        tax_amount: "0",
+        tax_amount: sql<string>`sales.line_tax(${variationId}::uuid, round(${input.qty}::numeric * ${serializeMoney(price)}::numeric))`,
         // مبلغ سطر با round() صریح در SQL — همان قاعده‌ای که
         // `grossOf` برایش وجود دارد. تقسیم و ضرب در TypeScript با
         // جمع دیتابیس یکی درنمی‌آید.
@@ -1115,11 +1116,12 @@ export class InvoiceService {
   /** جمع پرداخت‌های واقعاً موفق. «نامشخص» پول نیست. */
   async paidSoFar(invoiceId: string): Promise<bigint> {
     const row = await this.#db
-      .selectFrom("treasury.payment")
-      .select((eb) => eb.fn.coalesce(eb.fn.sum<string>("amount"), sql<string>`0`).as("total"))
-      .where("invoice_id", "=", invoiceId)
-      .where("direction", "=", "in")
-      .where("status", "in", ["succeeded", "settled", "reconciled"])
+      .selectFrom("treasury.payment as p")
+      .innerJoin("treasury.payment_method as m", "m.code", "p.method_code")
+      .select(sql<string>`coalesce(sum(CASE WHEN p.direction = 'in' THEN p.amount ELSE -p.amount END), 0)`.as("total"))
+      .where("p.invoice_id", "=", invoiceId)
+      .where("m.kind", "!=", "credit")
+      .where("p.status", "in", ["succeeded", "settled", "reconciled"])
       .executeTakeFirst();
     return parseMoney(row?.total ?? "0");
   }

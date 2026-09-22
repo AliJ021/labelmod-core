@@ -353,6 +353,7 @@ INSERT INTO identity.permission_rule
 --
 -- و آنچه عمداً **نیست**: مرجوعی، بازپرداخت، ابطال فاکتور، تخفیف پله
 -- بالاتر. کلیدی که لو برود نباید بتواند پول برگرداند.
+('web','web.refund',               true,  NULL,   NULL,  NULL),
 ('web','sale.create',              true,  NULL,   NULL,  NULL),
 ('web','sale.price_override',      true,  NULL,   NULL,  NULL),
 ('web','sale.discount',            true,  NULL,   NULL,  NULL)
