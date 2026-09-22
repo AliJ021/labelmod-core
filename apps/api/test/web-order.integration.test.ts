@@ -503,7 +503,7 @@ describe("سفارش سایت (ووکامرس)", { skip }, () => {
     await sql`SELECT platform.set_setting('tax.default_rate','10'::jsonb,'Tax regression',${SYSTEM_USER}::uuid)`.execute(handle.db);
     try {
       const response = await order({ branchId: BRANCH, warehouseId: STORE_WH, externalId: `tax-${suffix}`,
-        lines: [{ sku, qty: "1", unitPrice: "2000000" }], paymentMethod: "gateway", paidAmount: "2200000" });
+        lines: [{ sku, qty: "1", unitPrice: "2000000" }], paymentMethod: "gateway", paymentRef: `tax-${suffix}`, paidAmount: "2200000" });
       assert.equal(response.statusCode, 201, response.body);
       assert.equal(response.json().payableAmount, "2200000");
       const row = await handle.db.selectFrom("sales.invoice_line").select("tax_amount")
