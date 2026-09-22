@@ -9,6 +9,7 @@ BEGIN
   PERFORM 1 FROM inventory.stock_balance WHERE variation_id=p_variation
     AND warehouse_id=p_warehouse FOR UPDATE;
 END $$;
+REVOKE ALL ON FUNCTION inventory.lock_stock(uuid,uuid) FROM PUBLIC;
 ALTER TABLE sales.sale_return ADD COLUMN shipping_amount platform.money NOT NULL DEFAULT 0 CHECK(shipping_amount>=0);
 INSERT INTO ledger.posting_rule(event_type,leg,side,account_code,description,sort_order)
 SELECT 'sale_return','shipping_return','debit',account_code,'برگشت کرایه ارسال',8

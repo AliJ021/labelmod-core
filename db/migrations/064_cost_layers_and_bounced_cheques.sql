@@ -502,4 +502,5 @@ BEGIN
 END $$;
 CREATE TRIGGER fifo_transition_guard BEFORE UPDATE OF value ON platform.setting
   FOR EACH ROW EXECUTE FUNCTION inventory.guard_fifo_transition();
+REVOKE ALL ON FUNCTION inventory.guard_fifo_transition() FROM PUBLIC;
 COMMIT;
