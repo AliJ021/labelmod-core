@@ -1,3 +1,4 @@
+import { loginWithMfa } from "./helpers/login-with-mfa.ts";
 /**
  * تست یکپارچه احراز هویت دومرحله‌ای — روی پستگرس واقعی.
  *
@@ -132,14 +133,31 @@ describe("احراز هویت دومرحله‌ای", { skip }, () => {
     disposable?.drop();
   });
 
-  test("بدون ۲FA، ورود مثل قبل نشست می‌سازد", async () => {
+  test("نقش اجباری بدون ۲FA فقط نشست راه‌اندازی می‌گیرد", async () => {
     const r = await step1(plain);
     assert.equal(r.statusCode, 200, r.body);
     assert.equal(JSON.parse(r.body).needsSecondFactor, undefined);
+    assert.equal(JSON.parse(r.body).enrollmentRequired, true);
     assert.ok(
       r.cookies.some((c) => c.name === "labelmod_session"),
-      "کوکی نشست باید ست شود",
+      "کوکی نشست محدود باید ست شود",
     );
+
+    const token = r.cookies.find((c) => c.name === "labelmod_session")!.value;
+    const blocked = await app.inject({
+      method: "GET",
+      url: "/auth/can?operation=settings.security",
+      cookies: { labelmod_session: token },
+    });
+    assert.equal(blocked.statusCode, 403, blocked.body);
+    assert.equal(blocked.json().error.code, "second_factor_enrollment_required");
+
+    const enrollment = await app.inject({
+      method: "GET",
+      url: "/auth/2fa",
+      cookies: { labelmod_session: token },
+    });
+    assert.equal(enrollment.statusCode, 200, enrollment.body);
   });
 
   test("راز تأییدنشده کسی را قفل نمی‌کند", async () => {
@@ -178,6 +196,7 @@ describe("احراز هویت دومرحله‌ای", { skip }, () => {
   });
 
   test("تأیید با کد درست: فعال می‌شود و ده کد بازیابی می‌دهد", async () => {
+    const stolen = await sessionOf(user);
     const s = await sessionOf(user);
     const begin = await app.inject({
       method: "POST",
@@ -198,6 +217,14 @@ describe("احراز هویت دومرحله‌ای", { skip }, () => {
     assert.equal(out.enabled, true);
     assert.equal(out.recoveryCodes.length, 10);
     assert.equal(new Set(out.recoveryCodes).size, 10, "کدها تکراری نیستند");
+    const allowed = await app.inject({ method: "GET", url: "/auth/can?operation=settings.security", ...s });
+    assert.equal(allowed.statusCode, 200, allowed.body);
+    for (const url of ["/auth/me", "/auth/2fa", "/auth/can?operation=settings.security"]) {
+      const denied = await app.inject({ method: "GET", url, ...stolen });
+      assert.equal(denied.statusCode, 401, denied.body);
+    }
+    const hijack = await app.inject({ method: "POST", url: "/auth/2fa/totp/confirm", ...stolen, payload: { code: totp(secret) } });
+    assert.equal(hijack.statusCode, 401, hijack.body);
 
     // متن خام هیچ‌جا ذخیره نشده — فقط هشش.
     const stored = await sql<{ n: string; raw: string }>`
@@ -419,7 +446,10 @@ describe("احراز هویت دومرحله‌ای", { skip }, () => {
   test("مدیر می‌تواند عامل دوم کاربر دیگر را بردارد", async () => {
     // گوشی گم شده و کد بازیابی هم نیست. بدون این مسیر، تنها راه psql
     // روی سرور بود.
-    const s = await sessionOf(plain);
+    const enrolled = await loginWithMfa(app, { method: "POST", url: "/auth/login", remoteAddress: nextIp(),
+      payload: { username: plain, password: PASSWORD, deviceFingerprint: `admin-reset-${suffix}` } });
+    const cookies = Object.fromEntries(enrolled.cookies.map(c => [c.name, c.value]));
+    const s = { cookies, headers: { "x-csrf-token": cookies.labelmod_csrf! } };
     const r = await app.inject({
       method: "DELETE",
       url: `/users/${userId}/2fa`,
@@ -431,8 +461,9 @@ describe("احراز هویت دومرحله‌ای", { skip }, () => {
     assert.equal(
       JSON.parse(after.body).needsSecondFactor,
       undefined,
-      "پس از برداشتن، ورود عادی است",
+      "پس از برداشتن، کاربر باید دوباره عامل دوم ثبت کند",
     );
+    assert.equal(after.json().enrollmentRequired, true);
     const st = await sql<{ n: string }>`
       SELECT count(*)::text AS n FROM identity.recovery_code WHERE user_id = ${userId}::uuid
     `.execute(handle.db);

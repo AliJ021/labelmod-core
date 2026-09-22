@@ -29,7 +29,7 @@ function message(err: unknown): string {
   return "ارتباط با سرور برقرار نشد.";
 }
 
-export function TwoFactor() {
+export function TwoFactor({ onEnrolled }: { onEnrolled?: () => void } = {}) {
   const [status, setStatus] = useState<TwoFactorStatus | null>(null);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -120,6 +120,7 @@ export function TwoFactor() {
       await session.finishWebauthnRegistration(response, keyName);
       setKeyName("");
       await reload();
+      onEnrolled?.();
     });
 
   const removeKey = (id: string) =>
@@ -261,7 +262,7 @@ export function TwoFactor() {
               <li key={c} dir="ltr">{c}</li>
             ))}
           </ul>
-          <button type="button" className="btn btn--quiet" onClick={() => setCodes(null)}>
+          <button type="button" className="btn btn--quiet" onClick={() => { setCodes(null); onEnrolled?.(); }}>
             نوشتمشان، ببند
           </button>
         </Solid>

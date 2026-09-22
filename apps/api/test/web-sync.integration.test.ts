@@ -1,3 +1,4 @@
+import { loginWithMfa } from "./helpers/login-with-mfa.ts";
 /**
  * دو خوراک همگام‌سازی سایت — و نگهبان حلقه بازگشتی.
  *
@@ -235,7 +236,7 @@ describe("خوراک‌های همگام‌سازی سایت", { skip }, () => {
     });
     await app.ready();
 
-    const login = await app.inject({
+    const login = await loginWithMfa(app, {
       method: "POST",
       url: "/auth/login",
       remoteAddress: "10.11.0.5",

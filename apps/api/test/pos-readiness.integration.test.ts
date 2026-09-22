@@ -1,3 +1,4 @@
+import { loginWithMfa } from "./helpers/login-with-mfa.ts";
 /**
  * تست یکپارچه «آمادگی API صندوق» — روی پستگرس واقعی.
  *
@@ -52,7 +53,7 @@ describe("آمادگی API صندوق", { skip }, () => {
   async function loginAs(username: string) {
     const cached = sessions.get(username);
     if (cached) return cached;
-    const r = await app.inject({
+    const r = await loginWithMfa(app, {
       method: "POST",
       url: "/auth/login",
       payload: { username, password: PASSWORD, deviceFingerprint: `fp-${suffix}-${username}` },

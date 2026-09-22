@@ -1,3 +1,4 @@
+import { loginWithMfa } from "./helpers/login-with-mfa.ts";
 /**
  * تست یکپارچه چرخه حیات کالا و قیمت — روی پستگرس واقعی.
  *
@@ -57,7 +58,7 @@ describe("چرخه حیات کالا و قیمت", { skip }, () => {
   async function loginAs(username: string) {
     const cached = sessions.get(username);
     if (cached) return cached;
-    const r = await app.inject({
+    const r = await loginWithMfa(app, {
       method: "POST",
       url: "/auth/login",
       payload: {
@@ -403,7 +404,7 @@ describe("چرخه حیات کالا و قیمت", { skip }, () => {
       .where("id", "=", ids["admin"] as string)
       .execute();
 
-    const fresh = await app.inject({
+    const fresh = await loginWithMfa(app, {
       method: "POST",
       url: "/auth/login",
       payload: {

@@ -1,3 +1,4 @@
+import { loginWithMfa } from "./helpers/login-with-mfa.ts";
 /**
  * لاگ حسابرسی باید **کاربر، زمان و دستگاه** را نشان دهد — معیار ۱۳.
  *
@@ -99,7 +100,7 @@ describe("لاگ حسابرسی: کاربر، زمان، دستگاه", { skip }
     });
     await app.ready();
 
-    const r = await app.inject({
+    const r = await loginWithMfa(app, {
       method: "POST",
       url: "/auth/login",
       payload: { username: admin, password: PASSWORD, deviceFingerprint: `fp-${suffix}` },

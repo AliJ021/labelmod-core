@@ -158,6 +158,7 @@ export function registerAuthRoutes(app: FastifyInstance, deps: AuthRouteDeps): v
               pinAvailable: session.device.approved && session.device.enrolled,
             }
           : null,
+        enrollmentRequired: session.enrollmentOnly,
       };
     },
   });
@@ -314,7 +315,7 @@ export function registerAuthRoutes(app: FastifyInstance, deps: AuthRouteDeps): v
       const s = req.session;
       if (!s) throw new AuthError("no_session", "وارد نشده‌اید");
       const body = z.object({ code: z.string().trim().min(4).max(10) }).parse(req.body);
-      const codes = await twoFactor.confirmTotp(s.userId, body.code);
+      const codes = await twoFactor.confirmTotp(s.userId, body.code, s.sessionId);
       return {
         enabled: true,
         recoveryCodes: codes,
@@ -381,6 +382,7 @@ export function registerAuthRoutes(app: FastifyInstance, deps: AuthRouteDeps): v
       })
       .parse(req.body);
     return await webauthn.finishRegistration({
+      sessionId: s.sessionId,
       userId: s.userId,
       response: body.response,
       ...(body.name === undefined ? {} : { name: body.name }),
@@ -539,6 +541,7 @@ export function registerAuthRoutes(app: FastifyInstance, deps: AuthRouteDeps): v
       // صندوق باید بداند نشست ارتقایافته است یا نه، تا دکمه‌ای را
       // نشان ندهد که سرور بعداً ردش می‌کند.
       elevated: !session.pinUnlocked,
+      enrollmentRequired: session.enrollmentOnly,
       device: session.device
         ? { approved: session.device.approved, enrolled: session.device.enrolled }
         : null,

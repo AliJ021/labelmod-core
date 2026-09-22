@@ -1,3 +1,4 @@
+import { loginWithMfa } from "./login-with-mfa.ts";
 import assert from "node:assert/strict";
 import { createDb } from "../../src/db/client.ts";
 import { buildApp } from "../../src/http/app.ts";
@@ -18,7 +19,7 @@ try {
   assert.equal(invoice.statusCode, 200);
   const health = await app.inject({ method: "GET", url: `/health?token=${query}` });
   assert.equal(health.statusCode, 200);
-  const login = await app.inject({
+  const login = await loginWithMfa(app, {
     method: "POST", url: "/auth/login",
     payload: { username: "request_log_admin", password: process.env["AUDIT_LOGIN_VALUE"], deviceFingerprint: "request-log-test" },
   });

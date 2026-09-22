@@ -97,6 +97,8 @@ export interface ResolvedSession {
   device: DeviceState | null;
   /** نشست با PIN باز شده و عملیات حساس رویش بسته است. */
   pinUnlocked: boolean;
+  /** نشست فقط برای راه‌اندازی عامل دوم معتبر است. */
+  enrollmentOnly: boolean;
 }
 
 export interface Session extends ResolvedSession {
@@ -195,7 +197,8 @@ export class AuthService {
     // ⚠️ راز ثبت‌نام دستگاه هم اینجا صادر **نمی‌شود**. بند ۱
     //    SECURITY.md می‌گوید راز فقط پس از یک ورود **کامل** صادر
     //    شود؛ ورودی که هنوز عامل دومش نیامده کامل نیست.
-    if (await this.needsSecondFactor(user.id)) {
+    const needsSecondFactor = await this.needsSecondFactor(user.id);
+    if (needsSecondFactor) {
       const pending = await this.startPendingLogin(user.id, deviceId, input.ip ?? null);
       return {
         kind: "second_factor",
@@ -209,11 +212,16 @@ export class AuthService {
 
     // ثبت‌نام دستگاه: راز فقط پس از یک ورود **کامل** روی دستگاه
     // تأییدشده صادر می‌شود، و فقط یک بار.
-    const enrolled = device ? await this.enrollIfDue(device, user.id) : null;
+    const enrollmentOnly = await this.shouldHaveSecondFactor(user.id);
+    // نشست راه‌اندازی نباید دستگاه را ثبت کند؛ ورود تا تأیید عامل دوم
+    // کامل نشده است.
+    const enrolled = device && !enrollmentOnly ? await this.enrollIfDue(device, user.id) : device;
 
     return {
       kind: "session",
-      session: await this.openSession(user.id, user.full_name, "password", enrolled, input),
+      session: await this.openSession(
+        user.id, user.full_name, "password", enrolled, input, enrollmentOnly,
+      ),
     };
   }
 
@@ -223,6 +231,14 @@ export class AuthService {
       SELECT identity.needs_second_factor(${userId}::uuid) AS needs
     `.execute(this.#db);
     return r.rows[0]?.needs === true;
+  }
+
+  /** آیا سیاست نقش، راه‌اندازی عامل دوم را برای این کاربر اجباری کرده؟ */
+  async shouldHaveSecondFactor(userId: string): Promise<boolean> {
+    const r = await sql<{ required: boolean }>`
+      SELECT identity.should_have_second_factor(${userId}::uuid) AS required
+    `.execute(this.#db);
+    return r.rows[0]?.required === true;
   }
 
   async secondFactorMethods(userId: string): Promise<Array<"totp" | "webauthn" | "recovery">> {
@@ -488,6 +504,7 @@ export class AuthService {
   async resolve(token: string): Promise<ResolvedSession | null> {
     const result = await sql<{
       session_id: string;
+      auth_method: string;
       user_id: string;
       device_id: string | null;
       expires_at: Date;
@@ -503,6 +520,9 @@ export class AuthService {
       .where("id", "=", row.user_id)
       .executeTakeFirst();
     if (!user?.is_active) return null;
+    // داشتن عامل دوم در حساب، اثبات احراز آن در این نشست نیست.
+    const needsSecondFactor = await this.needsSecondFactor(row.user_id);
+    if (row.auth_method === "password" && needsSecondFactor) return null;
 
     return {
       sessionId: row.session_id,
@@ -512,6 +532,9 @@ export class AuthService {
       expiresAt: row.expires_at,
       device: row.device_id ? await this.deviceState(row.device_id) : null,
       pinUnlocked: row.pin_unlocked,
+      enrollmentOnly:
+        (await this.shouldHaveSecondFactor(row.user_id)) &&
+        !needsSecondFactor,
     };
   }
 
@@ -613,6 +636,7 @@ export class AuthService {
     method: "password" | "totp" | "webauthn" | "otp",
     device: DeviceState | null,
     input: LoginInput,
+    enrollmentOnly = false,
   ): Promise<Session> {
     const deviceId = device?.id ?? null;
     const token = newToken();
@@ -648,6 +672,7 @@ export class AuthService {
       device,
       // نشست تازه با رمز ساخته شده، پس ارتقایافته است
       pinUnlocked: false,
+      enrollmentOnly,
     };
   }
 
