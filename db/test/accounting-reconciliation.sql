@@ -152,6 +152,14 @@ BEGIN
    platform.audit_content_matches(legacy_hash,3::smallint,NULL,'2026-06-01 12:34:56+00'::timestamptz,u,
      'legacy','test','old','{"amount":8}'::jsonb,NULL,'reason','correlation')::int,0);
  PERFORM pg_temp.eq('F22 verifier restores caller timezone',(current_setting('TimeZone')='UTC')::int,1);
+ PERFORM set_config('TimeZone','Pacific/Chatham',true);
+ legacy_hash:=platform.audit_hash(3::smallint,NULL,'2026-06-01 12:34:56+00'::timestamptz,u,
+   'legacy','test','other-zone','{"amount":7}'::jsonb,NULL,'reason','correlation');
+ PERFORM set_config('TimeZone','UTC',true);
+ PERFORM pg_temp.eq('F22 uncommon historical offset still verifies',
+   platform.audit_content_matches(legacy_hash,3::smallint,NULL,'2026-06-01 12:34:56+00'::timestamptz,u,
+     'legacy','test','other-zone','{"amount":7}'::jsonb,NULL,'reason','correlation')::int,1);
+ PERFORM pg_temp.eq('F22 fallback also restores caller timezone',(current_setting('TimeZone')='UTC')::int,1);
 
  FOREACH method IN ARRAY ARRAY['pay','cancel'] LOOP
    INSERT INTO treasury.cheque(direction,branch_id,cheque_no,bank_name,amount,issued_on,due_on,

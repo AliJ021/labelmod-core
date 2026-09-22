@@ -53,6 +53,10 @@ BEGIN
  IF p_version NOT IN (1,2,3,4) OR p_hash IS NULL THEN RETURN false; END IF;
  IF p_hash=platform.audit_hash(p_version,p_prev,p_at,p_actor,p_action,p_entity,p_id,p_after,p_before,p_reason,p_correlation) THEN RETURN true; END IF;
  IF p_version=4 THEN RETURN false; END IF;
+ -- Most legacy writers used the application zone. Check it before enumerating
+ -- historical offsets, so a large existing audit trail remains cheap to verify.
+ PERFORM set_config('TimeZone','Asia/Tehran',true);
+ IF p_hash=platform.audit_hash(p_version,p_prev,p_at,p_actor,p_action,p_entity,p_id,p_after,p_before,p_reason,p_correlation) THEN RETURN true; END IF;
  -- Legacy formats serialized timestamptz using the writer's session zone.
  -- Try each distinct historical offset, not the reader's current zone. The
  -- instant and every originally hashed field still have to match exactly.
