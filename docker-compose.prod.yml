@@ -84,6 +84,7 @@ services:
       #    `audit_log` و صفحه تنظیمات دیده می‌شود. انتخاب سرویس‌دهنده
       #    و شماره فرستنده اما تصمیم‌اند و در جدول‌اند.
       SMS_API_KEY: ${SMS_API_KEY:-}
+      WEB_PUSH_SECRET: ${WEB_PUSH_SECRET:-}
       WORKER_INTERVAL_MS: ${WORKER_INTERVAL_MS:-5000}
       WORKER_BATCH: ${WORKER_BATCH:-20}
       WORKER_LEASE_SECONDS: ${WORKER_LEASE_SECONDS:-120}

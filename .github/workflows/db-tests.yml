@@ -363,6 +363,19 @@ jobs:
           DB_PASSWORD=ci SITE_ADDRESS=shop.example.com ACME_EMAIL=ci@example.com \
             docker compose -f docker-compose.prod.yml config --quiet
 
+      - name: کلید امضای Push به Worker منتقل می‌شود
+        run: |
+          DB_PASSWORD=ci SITE_ADDRESS=shop.example.com ACME_EMAIL=ci@example.com \
+            WEB_PUSH_SECRET=ci-push-secret \
+            docker compose -f docker-compose.prod.yml config --format json > compose-test.json
+          python3 - <<'PY'
+          import json
+          with open('compose-test.json') as f:
+              services = json.load(f)['services']
+          assert services['worker']['environment']['WEB_PUSH_SECRET'] == 'ci-push-secret'
+          assert 'WEB_PUSH_SECRET' not in services['api']['environment']
+          PY
+
   browser-regression:
     runs-on: ubuntu-latest
     timeout-minutes: 20
