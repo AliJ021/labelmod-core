@@ -19,7 +19,7 @@
     "zod": "4.5.4"
   },
   "devDependencies": {
-    "@types/node": "26.6.1",
+    "@types/node": "26.6.2",
     "@types/pg": "8.23.1",
     "typescript": "7.0.2"
   }
