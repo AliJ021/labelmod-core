@@ -498,6 +498,22 @@ describe("سفارش سایت (ووکامرس)", { skip }, () => {
       handle.db,
     );
   });
+  test("F16: سفارش وب مالیات فعال را در سطر و مبلغ قابل پرداخت حفظ می‌کند", async () => {
+    await sql`SELECT platform.set_setting('tax.enabled','true'::jsonb,'Tax regression',${SYSTEM_USER}::uuid)`.execute(handle.db);
+    await sql`SELECT platform.set_setting('tax.default_rate','10'::jsonb,'Tax regression',${SYSTEM_USER}::uuid)`.execute(handle.db);
+    try {
+      const response = await order({ branchId: BRANCH, warehouseId: STORE_WH, externalId: `tax-${suffix}`,
+        lines: [{ sku, qty: "1", unitPrice: "2000000" }], paymentMethod: "gateway", paidAmount: "2200000" });
+      assert.equal(response.statusCode, 201, response.body);
+      assert.equal(response.json().payableAmount, "2200000");
+      const row = await handle.db.selectFrom("sales.invoice_line").select("tax_amount")
+        .where("invoice_id", "=", response.json().invoiceId).executeTakeFirstOrThrow();
+      assert.equal(row.tax_amount, "200000");
+    } finally {
+      await sql`SELECT platform.set_setting('tax.enabled','false'::jsonb,'Restore test setting',${SYSTEM_USER}::uuid)`.execute(handle.db);
+    }
+  });
+
   test("F23: Woo partial refunds preserve stock, shipping, ledger and replay identity", async () => {
     const externalId = `refund-${suffix}`;
     const created = await order({ branchId: BRANCH, warehouseId: STORE_WH, externalId,

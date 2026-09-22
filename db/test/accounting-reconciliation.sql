@@ -170,16 +170,16 @@ BEGIN
        WHERE e.ref_id=ret AND l.account_code='2401'),0);
  END LOOP;
 
- -- The original F19 reproduction: the first lot was completely sold before FIFO.
+ -- بازتولید F19: یک قلم از دو قلم قدیمی پیش از تغییر روش فروخته شده است.
  PERFORM platform.set_setting('costing.method','"moving_weighted_average"','F19',u);
- PERFORM inventory.apply_movement(v2,wh,1,'opening',NULL,NULL,u,100000);
+ PERFORM inventory.apply_movement(v2,wh,2,'opening',NULL,NULL,u,100000);
  PERFORM inventory.apply_movement(v2,wh,-1,'sale','test_doc',v2,u);
  PERFORM inventory.apply_movement(v2,wh,2,'opening',NULL,NULL,u,200000);
  PERFORM pg_temp.eq('F19 only unsold physical layers remain',
-   (SELECT sum(qty_left) FROM inventory.cost_layer WHERE variation_id=v2 AND warehouse_id=wh),2);
+   (SELECT sum(qty_left) FROM inventory.cost_layer WHERE variation_id=v2 AND warehouse_id=wh),3);
  PERFORM platform.set_setting('costing.method','"fifo"','F19',u);
- SELECT -value_delta INTO b FROM inventory.apply_movement(v2,wh,-1,'sale','test_doc',v2,u);
- PERFORM pg_temp.eq('F19 FIFO cannot reuse an already sold lot',b,200000);
+ SELECT -value_delta INTO b FROM inventory.apply_movement(v2,wh,-2,'sale','test_doc',v2,u);
+ PERFORM pg_temp.eq('F19 FIFO cannot reuse an already sold lot',b,300000);
  PERFORM pg_temp.eq('F19 remaining stock retains correct value',
    (SELECT total_value FROM inventory.stock_balance WHERE variation_id=v2 AND warehouse_id=wh),200000);
  PERFORM platform.set_setting('costing.method','"moving_weighted_average"','F19 mixed costs',u);

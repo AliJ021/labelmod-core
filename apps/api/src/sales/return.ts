@@ -468,9 +468,6 @@ export function returnToJson(r: SaleReturn) {
       restock: l.restock,
       condition: l.condition,
       netAmount: serializeMoney(l.netAmount),
-      returnedNetAmount: serializeMoney(l.returnedNetAmount),
-      taxAmount: serializeMoney(l.taxAmount),
-      returnedTaxAmount: serializeMoney(l.returnedTaxAmount),
     })),
   };
 }
@@ -484,5 +481,8 @@ export function returnableToJson(lines: ReturnableLine[]) {
     remainingQty: l.remainingQty,
     unitPrice: serializeMoney(l.unitPrice),
     netAmount: serializeMoney(l.netAmount),
+    returnedNetAmount: serializeMoney(l.returnedNetAmount),
+    taxAmount: serializeMoney(l.taxAmount),
+    returnedTaxAmount: serializeMoney(l.returnedTaxAmount),
   }));
 }
