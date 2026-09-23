@@ -479,6 +479,15 @@ export const pos = {
   cancelReturn: (returnId: string) =>
     api.post<SaleReturn>(`/returns/${returnId}/cancel`, {}),
 
+  draftPayments: (id: string) => api.get<{ payments: DraftPayment[] }>(`/invoices/${id}/draft-payments`),
+  refundDraft: (id: string, body: { reason: string; confirmed: true; paymentIds: string[]; refundReference?: string }, key: string) =>
+    api.post<{ invoice: Invoice; replayed: boolean }>(`/invoices/${id}/refund-draft`, body, { idempotencyKey: key }),
+
   cancel: (invoiceId: string, reason?: string) =>
     api.post<Invoice>(`/invoices/${invoiceId}/cancel`, reason === undefined ? {} : { reason }),
 };
+
+export interface DraftPayment {
+  id: string; amount: string; status: string; direction: string; kind: string; name: string;
+  settlement_id: string | null; settled_at: string | null; fee_amount: string;
+}

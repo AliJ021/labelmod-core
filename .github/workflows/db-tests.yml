@@ -302,6 +302,8 @@ jobs:
         run: php integrations/woocommerce/test/push-receiver-test.php
       - name: Refund delivery and replay
         run: php integrations/woocommerce/test/refund-test.php
+      - name: رگرسیون دریافت خرید حضوری، شکست ذخیره و رقابت قفل
+        run: php integrations/woocommerce/test/instore-test.php
 
   # --------------------------------------------------------------------
   # استقرار — ایمیج‌ها واقعاً ساخته می‌شوند و Caddyfile واقعاً سنجیده

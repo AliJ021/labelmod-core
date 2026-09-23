@@ -36,7 +36,7 @@ import { parseRial, rialFromTomanInput, toman } from "../lib/money.ts";
 import { isNetworkFailure } from "../lib/offline-queue.ts";
 import { forgetCart, readCart, rememberCart } from "../lib/open-cart.ts";
 import { pendingLabel, saleQueue, summarize, type PendingSummary } from "../lib/sale-queue.ts";
-import { pos, type Branch, type Invoice, type InvoiceLine, type PaymentMethod, type Shift } from "../lib/pos.ts";
+import { pos, type Branch, type Invoice, type InvoiceLine, type PaymentMethod, type DraftPayment, type Shift } from "../lib/pos.ts";
 import { normalizeDigits } from "../lib/settings-value.ts";
 import { ScanBuffer } from "../lib/scanner.ts";
 
@@ -247,6 +247,7 @@ export function Pos() {
   const [error, setError] = useState<string | null>(null);
   const [note, setNote] = useState<string | null>(null);
   const [closing, setClosing] = useState(false);
+  const [draftRefund, setDraftRefund] = useState<{ invoiceId: string; payments: DraftPayment[] } | null>(null);
   const [discounting, setDiscounting] = useState<string | null>(null);
   const [pricing, setPricing] = useState<string | null>(null);
   const [camera, setCamera] = useState(false);
@@ -786,12 +787,30 @@ export function Pos() {
   const abandon = () =>
     guarded(async () => {
       if (!invoice) return;
-      await pos.cancel(invoice.id, "رها شد");
+      try {
+        await pos.cancel(invoice.id, "رها شد");
+      } catch (err) {
+        if (!(err instanceof ApiError) || err.code !== "invoice_has_payment") throw err;
+        const { payments } = await pos.draftPayments(invoice.id);
+        setDraftRefund({ invoiceId: invoice.id, payments });
+        return;
+      }
       forgetCart();
       setInvoice(null);
       setReceived(0n);
       scans.current.reset();
     });
+
+  const confirmDraftRefund = (reason: string, refundReference: string) => guarded(async () => {
+    if (!draftRefund) return;
+    const body = { reason, confirmed: true as const, paymentIds: draftRefund.payments.map((p) => p.id),
+      ...(refundReference.trim() ? { refundReference: refundReference.trim() } : {}) };
+    await keys.current.run(`refund-draft:${draftRefund.invoiceId}:${JSON.stringify(body)}`, (key) =>
+      pos.refundDraft(draftRefund.invoiceId, body, key));
+    setDraftRefund(null);
+    forgetCart(); setInvoice(null); setReceived(0n); scans.current.reset();
+    setNote("برگشت پرداخت پیش‌نویس ثبت و سبد لغو شد.");
+  });
 
   // ── نماها ─────────────────────────────────────────────────────────
 
@@ -898,6 +917,8 @@ export function Pos() {
         <CameraScan onCode={(code) => void addByBarcode(code)} onClose={() => setCamera(false)} />
       ) : null}
 
+      {draftRefund ? <DraftRefundPanel payments={draftRefund.payments} busy={busy}
+        onCancel={() => setDraftRefund(null)} onConfirm={(reason, ref) => void confirmDraftRefund(reason, ref)} /> : null}
       {closing ? (
         <CloseShiftPanel
           busy={busy}
@@ -1713,4 +1734,29 @@ function PayPanel({
       </button>
     </Solid>
   );
+}
+
+
+function DraftRefundPanel({ payments, busy, onCancel, onConfirm }: {
+  payments: DraftPayment[]; busy: boolean; onCancel: () => void;
+  onConfirm: (reason: string, ref: string) => void;
+}) {
+  const [reason, setReason] = useState("");
+  const [ref, setRef] = useState("");
+  const [confirmed, setConfirmed] = useState(false);
+  const external = payments.some((p) => ["card_reader", "gateway", "transfer"].includes(p.kind));
+  const blocked = payments.some((p) => p.status !== "succeeded" || p.direction !== "in" ||
+    p.settlement_id !== null || p.settled_at !== null || parseRial(p.fee_amount) !== 0n);
+  return <section role="region" aria-label="برگشت پرداخت پیش‌نویس"><Solid className="pad">
+    <h3>برگشت پرداخت و لغو پیش‌نویس</h3>
+    <p>این عملیات پرداخت بانکی انجام نمی‌دهد. وجه نقد را به مشتری برگردانید؛ برای پرداخت بانکی، ابتدا برگشت را در بانک انجام دهید. رزرو اعتبار مشتری آزاد می‌شود.</p>
+    <ul>{payments.map((p) => <li key={p.id}>{p.name}: {toman(parseRial(p.amount))} تومان</li>)}</ul>
+    {blocked ? <p role="alert">پرداخت نامشخص یا تسویه‌شده نیازمند بررسی حسابدار است و از این مسیر برگشت نمی‌خورد.</p> : null}
+    <label className="auth-field">دلیل برگشت<input value={reason} maxLength={200} onChange={(e) => setReason(e.target.value)} /></label>
+    {external ? <label className="auth-field">شماره پیگیری برگشت بانکی<input value={ref} maxLength={120} onChange={(e) => setRef(e.target.value)} /></label> : null}
+    <label><input type="checkbox" checked={confirmed} onChange={(e) => setConfirmed(e.target.checked)} />برگشت وجه لازم را انجام داده‌ام و لغو این پیش‌نویس را تأیید می‌کنم.</label>
+    <button type="button" className="btn btn--primary" disabled={busy || blocked || !confirmed || reason.trim().length < 3 || (external && !ref.trim())}
+      onClick={() => onConfirm(reason.trim(), ref)}>ثبت برگشت و لغو پیش‌نویس</button>
+    <button type="button" className="btn btn--quiet" disabled={busy} onClick={onCancel}>انصراف</button>
+  </Solid></section>;
 }
