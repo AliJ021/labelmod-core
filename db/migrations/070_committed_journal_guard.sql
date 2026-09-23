@@ -1,9 +1,11 @@
 -- سازندهٔ سند، هدر و سطرها را در یک تراکنش درج می‌کند. پس از پایان
 -- همان تراکنش، افزودن سطر به سند تأییدشده هم باید مانند تغییر/حذف ممنوع باشد.
 -- xid8 به‌جای xmin: ارتقای confirmed به final نباید مجوز درج سطر تازه بدهد.
+-- زمان شروع هم سنجیده می‌شود: شناسهٔ تراکنش در کلاستر بازیابی‌شده ممکن است تکرار شود.
 BEGIN;
 
-ALTER TABLE ledger.journal_entry ADD COLUMN creation_xact xid8;
+ALTER TABLE ledger.journal_entry ADD COLUMN creation_xact xid8,
+  ADD COLUMN creation_xact_started_at timestamptz;
 COMMENT ON COLUMN ledger.journal_entry.creation_xact IS
   'تراکنش ساخت هدر برای تکمیل اتمی سطرها؛ داخلی و تغییرناپذیر، اسناد پیشین NULL دارند.';
 
@@ -12,6 +14,7 @@ LANGUAGE plpgsql AS $$
 BEGIN
   IF TG_OP = 'INSERT' THEN
     NEW.creation_xact := pg_current_xact_id();
+    NEW.creation_xact_started_at := transaction_timestamp();
     RETURN NEW;
   END IF;
   IF TG_OP = 'DELETE' THEN
@@ -20,7 +23,8 @@ BEGIN
     END IF;
     RETURN OLD;
   END IF;
-  IF NEW.creation_xact IS DISTINCT FROM OLD.creation_xact THEN
+  IF NEW.creation_xact IS DISTINCT FROM OLD.creation_xact
+     OR NEW.creation_xact_started_at IS DISTINCT FROM OLD.creation_xact_started_at THEN
     RAISE EXCEPTION 'شناسه تراکنش ساخت سند تغییر نمی‌کند.';
   END IF;
   IF OLD.status IN ('confirmed','final') AND NEW IS DISTINCT FROM OLD THEN
@@ -43,11 +47,12 @@ BEGIN
   IF TG_OP <> 'DELETE' THEN v_new := NEW.entry_id; END IF;
   -- هر دو والد هنگام جابه‌جایی سطر کنترل می‌شوند؛ ترتیب قفل ثابت است.
   FOR v_entry IN
-    SELECT id, status, creation_xact FROM ledger.journal_entry
+    SELECT id, status, creation_xact, creation_xact_started_at FROM ledger.journal_entry
      WHERE id IN (v_old, v_new) ORDER BY id FOR UPDATE
   LOOP
     IF v_entry.status IN ('confirmed','final') AND
-       (TG_OP <> 'INSERT' OR v_entry.creation_xact IS DISTINCT FROM pg_current_xact_id()) THEN
+       (TG_OP <> 'INSERT' OR v_entry.creation_xact IS DISTINCT FROM pg_current_xact_id()
+        OR v_entry.creation_xact_started_at IS DISTINCT FROM transaction_timestamp()) THEN
       RAISE EXCEPTION 'سطر سند تأییدشده تغییر نمی‌کند یا حذف نمی‌شود و سطر تازه نمی‌پذیرد. اصلاح فقط با سند معکوس.';
     END IF;
   END LOOP;

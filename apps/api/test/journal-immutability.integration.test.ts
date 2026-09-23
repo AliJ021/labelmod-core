@@ -84,6 +84,7 @@ test("پیش‌نویس واقعی همچنان ویرایش و حذف می‌ش
 test("شناسه تراکنش داخلی قابل جعل یا تمدید نیست", async () => {
   const id = await posted();
   await rejected("UPDATE ledger.journal_entry SET creation_xact=pg_current_xact_id() WHERE id=$1", [id]);
+  await rejected("UPDATE ledger.journal_entry SET creation_xact_started_at=transaction_timestamp() WHERE id=$1", [id]);
   await db.query("BEGIN");
   try {
     const row = (await db.query(`INSERT INTO ledger.journal_entry(fiscal_year,branch_id,entry_date,kind,description,creation_xact)
@@ -93,4 +94,25 @@ test("شناسه تراکنش داخلی قابل جعل یا تمدید نیس�
     await assert.rejects(db.query("UPDATE ledger.journal_entry SET creation_xact=NULL WHERE id=$1", [row.id]),
       (e: { code?: string }) => e.code === "P0001");
   } finally { await db.query("ROLLBACK"); }
+});
+
+test("تکرار شناسه تراکنش پس از بازیابی، مجوز تکمیل سند تاریخی نیست", async () => {
+  const fixture = new Client({ connectionString: disposable.ownerUrl });
+  await fixture.connect();
+  try {
+    await fixture.query("BEGIN");
+    // فقط در دیتابیس موقت: شبیه‌سازی ردیف بازیابی‌شده با xid برابر نشست جدید.
+    // زمان ساخت قدیمی است؛ هیچ تریگری در سرور اصلی تغییر داده نمی‌شود.
+    await fixture.query("ALTER TABLE ledger.journal_entry DISABLE TRIGGER protect_final_entry_t");
+    const id = (await fixture.query(`INSERT INTO ledger.journal_entry
+      (fiscal_year,branch_id,entry_date,kind,description,status,creation_xact,creation_xact_started_at)
+      VALUES(1405,$1,'2026-04-01','manual','شاهد بازیابی در پایگاه موقت','confirmed',
+        pg_current_xact_id(),transaction_timestamp()-interval '1 day') RETURNING id`, [BR])).rows[0].id;
+    await fixture.query("ALTER TABLE ledger.journal_entry ENABLE TRIGGER protect_final_entry_t");
+    const role = decodeURIComponent(new URL(disposable.url).username);
+    await fixture.query(`SET LOCAL ROLE "${role.replaceAll('"', '""')}"`);
+    await assert.rejects(fixture.query(`INSERT INTO ledger.journal_line(entry_id,line_no,account_code,debit,credit)
+      VALUES($1,1,'1101',500,0),($1,2,'3102',0,500)`, [id]),
+      (e: { code?: string }) => e.code === "P0001");
+  } finally { await fixture.query("ROLLBACK"); await fixture.end(); }
 });
