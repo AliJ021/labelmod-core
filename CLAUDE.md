@@ -321,15 +321,17 @@ UI دیده می‌شود. اگر وسوسه شدی فهرست کلیدها را
 
 ## دستورها
 
+فرمان‌های توسعه فقط به دیتابیس جداگانه اشاره می‌کنند. `seed`، `reset` و `baseline` دستور ارتقای دفتر موجود نیستند؛ baseline فقط پس از تطبیق نصب قدیمی با دفتر مهاجرت قابل بررسی است.
+
 ```bash
 docker compose up -d db                      # فقط پستگرس
 export DATABASE_URL='postgres://labelmod:<رمز>@localhost:5432/labelmod'
 
 ops/db.sh migrate     # فقط مهاجرت‌های اجرانشده (دفتر: public.schema_migration)
 ops/db.sh baseline 031 # یک بار روی دیتابیسی که پیش از دفتر بالا آمده
-ops/db.sh seed        # کدینگ حساب، قواعد ثبت، تنظیمات، داده مرجع
+ops/db.sh seed        # فقط نصب تازه یا دیتابیس آزمایشی
 ops/db.sh test        # تست‌های مالی — روی دیتابیس یک‌بارمصرف
-ops/db.sh reset       # بازسازی کامل
+ops/db.sh reset       # مخرب؛ فقط دیتابیس یک‌بارمصرف توسعه
 ops/db.sh backup      # دامپ رمزنشده — باید خارج از سرور کپی شود
 ops/restore-drill.sh  # بکاپ را واقعاً برمی‌گرداند و ادعاها را می‌راند
 APP_PASSWORD='…' ops/db-roles.sh  # نقش برنامه بدون حق نوشتن مستقیم (بند ۳ SECURITY.md)
@@ -340,13 +342,13 @@ ops/close-due-days.sh # بستن شبانه دوره فروش سایت — بر�
 # استقرار تولیدی — راهنمای کامل در docs/DEPLOYMENT.md
 ops/deploy.sh up      # Build و اجرای docker-compose.prod.yml
 ops/deploy.sh migrate # مهاجرت داخل ظرف، بدون پورت باز پستگرس
-ops/deploy.sh seed
+ops/deploy.sh seed    # فقط نصب تازهٔ خالی، نه سرور دارای داده
 ops/deploy.sh user --username ali --name '…' --role admin --branch MAIN
 ops/deploy.sh api-client --name 'سایت' --role web --branch MAIN  # کلید ووکامرس
 ops/deploy.sh status  # درآمد ثبت‌نشده + پیام‌های نرفته + چک سررسیدشده
 
 corepack enable       # یک بار — نسخه pnpm از packageManager خوانده می‌شود
-pnpm install
+pnpm install --frozen-lockfile
 pnpm check            # lint + typecheck + test
 pnpm lint             # ESLint — از ریشه، روی کل مخزن
 pnpm lint:fix
@@ -363,8 +365,7 @@ pnpm --filter @labelmod/api dev
 
 ## گلوگاه‌ها
 
-- **پیش از هر تغییر در `db/migrations/0[01][0-9]_*.sql`، `ops/db.sh test` را
-  اجرا کن و بعد از تغییر دوباره.** ۱۲۸۵ ادعای SQL به‌علاوه ۸۸۹ تست Node و ۱۴۳ ادعای PHP افزونه باید پاس شوند.
+- **مهاجرت اجراشده را ویرایش نکن؛ مهاجرت تازه اضافه کن.** پیش و پس از تغییر منطق مالی، `ops/db.sh test` را روی محیط جدا اجرا کن. آزمون‌های API با نقش مالک و محدود و رگرسیون‌های مرتبط وب/افزونه نیز باید بگذرند؛ تعداد جاری از CI همان commit خوانده می‌شود.
 - `db/test/purchase-receipt.sql` شماره‌گذاری و تخصیص هزینه رسید خرید را،
   `db/test/purchase-return.sql` برگشت از خرید را،
   `db/test/purchase-order.sql` سفارش خرید را، و
