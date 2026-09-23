@@ -33,7 +33,7 @@ async function main(): Promise<void> {
   const log = (line: string) => process.stdout.write(`${line}\n`);
 
   log(`Worker لیبل مد بالا آمد — ${workerName}`);
-  if (!config.SMS_API_KEY) {
+  if (!config.SMS_API_KEY && !config.SMS_CREDENTIAL_KEY) {
     log(
       "⚠️  SMS_API_KEY تنظیم نشده. با سرویس‌دهنده «log» مشکلی نیست؛" +
         " برای ارسال واقعی لازم است.",
@@ -44,6 +44,7 @@ async function main(): Promise<void> {
     db: handle.db,
     workerName,
     smsApiKey: config.SMS_API_KEY ?? "",
+    smsCredentialKey: config.SMS_CREDENTIAL_KEY,
     webhookToken: config.NOTIFY_WEBHOOK_TOKEN,
     webPushSecret: config.WEB_PUSH_SECRET,
     batchSize: config.WORKER_BATCH,

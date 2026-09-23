@@ -37,6 +37,7 @@ const schema = z.object({
   //    ببیند. انتخاب سرویس‌دهنده و شماره فرستنده اما تصمیم‌اند و در
   //    جدول‌اند.
   SMS_API_KEY: z.string().optional(),
+  SMS_CREDENTIAL_KEY: z.preprocess((v) => v === "" ? undefined : v, z.string().regex(/^[a-f0-9]{64}$/i).optional()),
   /**
    * توکن Webhook پیام‌رسان.
    *

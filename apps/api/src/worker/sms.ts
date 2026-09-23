@@ -84,6 +84,8 @@ export function makeSender(config: SmsConfig): SmsSender {
       return kavenegarSender(config);
     case "smsir":
       return smsIrSender(config);
+    case "melipayamak":
+      return meliPayamakSender(config);
     default:
       // نه یک پیش‌فرض بی‌صدا: سرویس‌دهنده‌ای که نمی‌شناسیم یعنی تنظیم
       // غلط است، و پیامکی که به «log» برود در حالی که مالک فکر می‌کند
@@ -166,6 +168,61 @@ function smsIrSender(config: SmsConfig): SmsSender {
         signal: AbortSignal.timeout(20_000),
       });
       await check(res, "sms.ir");
+    },
+  };
+}
+
+/** ملی‌پیامک — قرارداد کلیددار https://console.melipayamak.com/send/simple */
+function meliPayamakSender(config: SmsConfig): SmsSender {
+  if (!config.apiKey.trim()) {
+    throw new SmsError("کلید سرویس پیامک (SMS_API_KEY) تنظیم نشده است", true);
+  }
+  if (!/^\d+$/.test(config.sender)) {
+    throw new SmsError("شماره فرستنده ملی‌پیامک تنظیم نشده یا نامعتبر است", true);
+  }
+  return {
+    async send(to, text) {
+      const mobile = toLocalMobile(to);
+      if (!mobile || !/^09\d{9}$/.test(mobile)) {
+        throw new SmsError("شماره گیرنده پیامک نامعتبر است", true);
+      }
+      let res: Response;
+      try {
+        res = await fetch(
+          `https://console.melipayamak.com/api/send/simple/${encodeURIComponent(config.apiKey)}`,
+          {
+            method: "POST",
+            redirect: "error",
+            headers: { "content-type": "application/json", accept: "application/json" },
+            body: JSON.stringify({ from: config.sender, to: mobile, text }),
+            signal: AbortSignal.timeout(20_000),
+          },
+        );
+      } catch {
+        // URL حاوی کلید است؛ خطای خام fetch نباید وارد outbox/log شود.
+        throw new SmsError("ارتباط با ملی‌پیامک کامل نشد؛ وضعیت ارسال نامشخص است");
+      }
+      if (!res.ok) {
+        throw new SmsError(
+          `ملی‌پیامک پاسخ HTTP ${res.status} داد`,
+          res.status >= 400 && res.status < 500 && res.status !== 429,
+        );
+      }
+      let payload: unknown;
+      try { payload = await res.json(); }
+      catch { throw new SmsError("پاسخ ملی‌پیامک JSON معتبر نیست؛ وضعیت ارسال نامشخص است", true); }
+      if (!payload || typeof payload !== "object" || Array.isArray(payload)) {
+        throw new SmsError("پاسخ ملی‌پیامک فاقد تأیید معتبر ارسال است", true);
+      }
+      const result = payload as { recId?: unknown; status?: unknown };
+      const validId = typeof result.recId === "number"
+        ? Number.isSafeInteger(result.recId) && result.recId > 0
+        : typeof result.recId === "string" && /^[1-9]\d*$/.test(result.recId);
+      const noError = result.status === undefined || result.status === null || result.status === "";
+      if (!validId || !noError) {
+        // متن پاسخ ممکن است شامل شماره/متن/کلید باشد؛ فقط خطای ثابت ثبت می‌شود.
+        throw new SmsError("ملی‌پیامک ارسال را تأیید نکرد؛ اعتبار، فرستنده و گزارش پنل را بررسی کنید", true);
+      }
     },
   };
 }

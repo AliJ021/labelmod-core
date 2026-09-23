@@ -29,6 +29,7 @@ import { TransferService } from "../inventory/transfer.ts";
 import { ReportService } from "../reports/service.ts";
 import { DeviceService } from "../auth/devices.ts";
 import { registerPurchasingRoutes } from "./purchasing-routes.ts";
+import { registerMeliPayamakRoutes } from "./melipayamak-routes.ts";
 import { registerSettingsRoutes } from "./settings-routes.ts";
 import { registerScopeRoutes } from "./scope-routes.ts";
 import { registerAdminRoutes } from "./admin-routes.ts";
@@ -434,6 +435,7 @@ export async function buildApp(deps: AppDeps): Promise<FastifyInstance> {
     returns: new PurchaseReturnService(deps.db),
     orders: new PurchaseOrderService(deps.db),
   });
+  registerMeliPayamakRoutes(app, deps.db, config.SMS_CREDENTIAL_KEY);
   registerSettingsRoutes(app, {
     db: deps.db,
     settings: new SettingService(deps.db),

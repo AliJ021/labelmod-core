@@ -46,6 +46,7 @@ services:
       COOKIE_NAME: ${COOKIE_NAME:-labelmod_session}
       DEVICE_COOKIE_NAME: ${DEVICE_COOKIE_NAME:-labelmod_device}
       CSRF_COOKIE_NAME: ${CSRF_COOKIE_NAME:-labelmod_csrf}
+      SMS_CREDENTIAL_KEY: ${SMS_CREDENTIAL_KEY:-}
     depends_on:
       db:
         condition: service_healthy
@@ -84,6 +85,7 @@ services:
       #    `audit_log` و صفحه تنظیمات دیده می‌شود. انتخاب سرویس‌دهنده
       #    و شماره فرستنده اما تصمیم‌اند و در جدول‌اند.
       SMS_API_KEY: ${SMS_API_KEY:-}
+      SMS_CREDENTIAL_KEY: ${SMS_CREDENTIAL_KEY:-}
       WEB_PUSH_SECRET: ${WEB_PUSH_SECRET:-}
       WORKER_INTERVAL_MS: ${WORKER_INTERVAL_MS:-5000}
       WORKER_BATCH: ${WORKER_BATCH:-20}
