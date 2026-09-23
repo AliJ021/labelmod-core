@@ -21,6 +21,7 @@
 import { sql } from "kysely";
 import type { Db } from "../db/client.ts";
 import { HANDLERS, type OutboxMessage } from "./handlers.ts";
+import { readMeliKey } from "../platform/melipayamak-credential.ts";
 import { makeSender, SmsError } from "./sms.ts";
 import { readNotifySettings } from "./settings.ts";
 import { makeWebhookSender } from "./webhook.ts";
@@ -32,6 +33,7 @@ export interface LoopOptions {
   workerName: string;
   /** کلید سرویس پیامک. راز است و از محیط می‌آید، نه از تنظیمات. */
   smsApiKey: string;
+  smsCredentialKey?: string | undefined;
   /**
    * توکن Webhook. مثل کلید پیامک راز است و از محیط می‌آید
    * (`NOTIFY_WEBHOOK_TOKEN`)، نه از `platform.setting` — مقدار هر تنظیم
@@ -134,26 +136,14 @@ export async function tick(opts: LoopOptions): Promise<TickResult> {
   out.claimed = claimed.rows.length;
   if (claimed.rows.length === 0) return out;
 
-  // ⚠️ ساخت فرستنده **بعد از** برداشتن پیام‌ها و داخل try: تنظیم
-  //    غلط سرویس‌دهنده نباید کل دور را بشکند و پیام‌ها را در
-  //    `sending` رها کند تا اجاره‌شان تمام شود.
-  let sender;
-  try {
-    sender = makeSender({
-      provider: settings.provider,
-      sender: settings.sender,
-      apiKey: opts.smsApiKey,
-    });
-  } catch (err) {
-    const message = err instanceof Error ? err.message : String(err);
-    for (const row of claimed.rows) {
-      const status = await failMessage(opts, row.id, message, settings.maxAttempts, true);
-      if (status === "dead") out.dead++;
-      else out.failed++;
-    }
-    opts.log(`✗ سرویس‌دهنده پیامک: ${message}`);
-    return out;
-  }
+  // خطای تنظیم پیامک فقط هنگام ارسال همان پیام اثر دارد؛ Push سایت مستقل است.
+  const sender = {
+    async send(to: string, text: string) {
+      const apiKey = settings.provider === "melipayamak"
+        ? await readMeliKey(opts.db, opts.smsCredentialKey) : opts.smsApiKey;
+      await makeSender({ provider: settings.provider, sender: settings.sender, apiKey }).send(to, text);
+    },
+  };
 
   /*
    * ⚠️ فرستندهٔ Webhook هم مثل فرستندهٔ پیامک **بعد از** برداشتن پیام‌ها

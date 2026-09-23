@@ -214,7 +214,8 @@ SELECT * FROM (VALUES
  'choice', 'سرویس‌دهنده پیامک', 'notify',
  '[{"value":"log","label":"فقط لاگ (آزمایشی — پیامکی نمی‌رود)"},
    {"value":"kavenegar","label":"کاوه‌نگار"},
-   {"value":"smsir","label":"sms.ir"}]'::jsonb, NULL, NULL, NULL,
+   {"value":"smsir","label":"sms.ir"},
+   {"value":"melipayamak","label":"ملی‌پیامک (API کلیددار)"}]'::jsonb, NULL, NULL, NULL,
  'با «log» هیچ پیامکی واقعاً نمی‌رود و متنش در لاگ دیده می‌شود. برای آزمایش پیش از خرید اعتبار.',
  20, 'settings.manage', true),
 

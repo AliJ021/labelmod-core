@@ -25,6 +25,7 @@ import { Opening } from "./Opening.tsx";
 import { Devices } from "./Devices.tsx";
 import { Appearance } from "./Appearance.tsx";
 import { Staff } from "./Staff.tsx";
+import { MeliPayamakSettings } from "./MeliPayamakSettings.tsx";
 import { TwoFactor } from "./TwoFactor.tsx";
 import { api, ApiError } from "../lib/api.ts";
 import { admin, type SettlementTerm } from "../lib/admin.ts";
@@ -146,6 +147,7 @@ function SettingKeys({ onOpenTerminals }: { onOpenTerminals: () => void }) {
 
           {openGroup === g.key ? (
             <div className="stack" style={{ gap: "var(--s-3)", marginTop: "var(--s-4)" }}>
+              {g.key === "notify" ? <MeliPayamakSettings /> : null}
               {g.settings.map((s) => (
                 <Row key={s.key} setting={s} onSaved={replace} />
               ))}
