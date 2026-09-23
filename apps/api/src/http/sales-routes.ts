@@ -749,6 +749,45 @@ export function registerSalesRoutes(app: FastifyInstance, deps: SalesRouteDeps):
     return invoiceToJson(inv);
   });
 
+  app.get("/invoices/:id/draft-payments", async (req) => {
+    const s = session(req);
+    const { id } = z.object({ id: uuid }).parse(req.params);
+    await assertInvoiceInScope(db, s.userId, id, invoices);
+    await requireForSession(db, s, "invoice.cancel");
+    const inv = await invoices.byId(id);
+    if (inv?.status !== "draft") throw new InvoiceError("invoice_not_draft", "فاکتور پیش‌نویس نیست.");
+    return { payments: (await invoices.draftPayments(id)).filter((p) => !["failed", "reversed"].includes(p.status)) };
+  });
+
+  app.post("/invoices/:id/refund-draft", async (req) => {
+    const s = session(req);
+    const { id } = z.object({ id: uuid }).parse(req.params);
+    const body = z.object({
+      reason: z.string().trim().min(3).max(200),
+      confirmed: z.literal(true),
+      paymentIds: z.array(uuid).min(1).max(100),
+      refundReference: z.string().trim().min(1).max(120).optional(),
+    }).parse(req.body);
+    await assertInvoiceInScope(db, s.userId, id, invoices);
+    await requireForSession(db, s, "invoice.cancel");
+    const key = idempotencyKey(req);
+    if (!key) throw new InvoiceError("idempotency_required", "شناسه یکتای درخواست لازم است.", 400);
+    const out = await runOnce<string>(db, {
+      key, source: "api.invoice.refund_draft", payload: { actorId: s.userId, invoiceId: id, ...body },
+      run: async (trx) => {
+        const value = await invoices.refundDraftIn(trx, { invoiceId: id, actorId: s.userId,
+          reason: body.reason, paymentIds: body.paymentIds,
+          authorize: async (amount) => { await requireForSession(trx, s, "invoice.cancel", { amount }); },
+          ...(body.refundReference === undefined ? {} : { refundReference: body.refundReference }) });
+        return { value, ref: value };
+      },
+      replay: async (ref) => ref,
+    });
+    const inv = await invoices.byId(out.value);
+    if (!inv) throw new InvoiceError("invoice_not_found", "فاکتور یافت نشد", 404);
+    return { invoice: invoiceToJson(inv), replayed: out.replayed };
+  });
+
   app.post("/invoices/:id/payments", async (req, reply) => {
     const s = session(req);
     const { id } = z.object({ id: uuid }).parse(req.params);

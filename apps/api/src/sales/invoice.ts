@@ -1020,6 +1020,8 @@ export class InvoiceService {
     // را در یک تراکنش می‌سازد: پیش‌نویسی که هنوز Commit نشده، از Pool
     // دیده نمی‌شود و پرداخت با «فاکتور یافت نشد» رد می‌شد — خطایی که
     // هیچ ربطی به واقعیت نداشت.
+    // همان قفل نهایی‌سازی و ابطال؛ پرداخت پس از لغو پذیرفته نمی‌شود.
+    await trx.selectFrom("sales.invoice").select("id").where("id", "=", input.invoiceId).forUpdate().execute();
     const inv = await this.requireDraft(input.invoiceId, trx);
     if (input.amount <= 0n) {
       throw new InvoiceError("bad_amount", "مبلغ پرداخت باید مثبت باشد", 400);
@@ -1079,38 +1081,81 @@ export class InvoiceService {
    *    است (`invoice.cancel`) که سند معکوس می‌خواهد و کالا را به انبار
    *    برمی‌گرداند. اینجا هیچ اثر مالی‌ای وجود ندارد که معکوس شود.
    */
+  /** پرداخت‌ها برای تأیید صریح برگشت پیش‌نویس، نه اجرای عملیات بانکی. */
+  async draftPayments(invoiceId: string, ex: Executor = this.#db) {
+    return ex.selectFrom("treasury.payment as p")
+      .innerJoin("treasury.payment_method as m", "m.code", "p.method_code")
+      .select(["p.id", "p.amount", "p.status", "p.direction", "p.settlement_id", "p.settled_at",
+        "p.fee_amount", "m.kind", "m.name"])
+      .where("p.invoice_id", "=", invoiceId).orderBy("p.id").execute();
+  }
+
   async cancelDraft(invoiceId: string, actorId: string, reason?: string): Promise<Invoice> {
-    const inv = await this.byId(invoiceId);
-    if (!inv) throw new InvoiceError("invoice_not_found", "فاکتور یافت نشد", 404);
-    if (inv.status === "cancelled") return inv;
-    if (inv.status !== "draft") {
-      throw new InvoiceError(
-        "invoice_not_draft",
-        `فاکتور در وضعیت «${inv.status}» است. ابطال فاکتور نهایی‌شده مسیر جداگانه‌ای دارد.`,
-      );
-    }
-
-    const paid = await this.paidSoFar(invoiceId);
-    if (paid > 0n) {
-      throw new InvoiceError(
-        "invoice_has_payment",
-        "روی این فاکتور پول دریافت شده است. ابتدا پرداخت باید برگردانده شود.",
-      );
-    }
-
     await this.#db.transaction().execute(async (trx) => {
+      await trx.selectFrom("sales.invoice").select("id").where("id", "=", invoiceId).forUpdate().execute();
+      const inv = await this.byId(invoiceId, trx);
+      if (!inv) throw new InvoiceError("invoice_not_found", "فاکتور یافت نشد", 404);
+      if (inv.status === "cancelled") return;
+      await this.requireDraft(invoiceId, trx);
+      const payments = await this.draftPayments(invoiceId, trx);
+      if (payments.some((p) => !["failed", "reversed"].includes(p.status))) {
+        throw new InvoiceError("invoice_has_payment", "این پیش‌نویس پرداخت دارد؛ ابتدا از مسیر تأیید برگشت پرداخت استفاده کنید.");
+      }
       await setActor(trx, actorId);
-      await trx
-        .updateTable("sales.invoice")
-        .set({ status: "cancelled", note: reason ?? null })
-        .where("id", "=", invoiceId)
-        .where("status", "=", "draft")
-        .execute();
+      await trx.updateTable("sales.invoice").set({ status: "cancelled", note: reason ?? null })
+        .where("id", "=", invoiceId).execute();
       await sql`SELECT platform.audit('invoice.cancel_draft', 'invoice', ${invoiceId}::text,
         jsonb_build_object('reason', ${reason ?? null}::text), ${actorId}::uuid)`.execute(trx);
     });
-
     return (await this.byId(invoiceId)) as Invoice;
+  }
+
+  /** پیش‌نویس هنوز سند فروش ندارد؛ برگشت، وضعیت پرداخت و رزرو اعتبار را با رد حسابرسی می‌بندد. */
+  async refundDraftIn(trx: Transaction<Database>, input: {
+    invoiceId: string; actorId: string; reason: string; paymentIds: string[]; refundReference?: string;
+    authorize: (amount: bigint) => Promise<void>;
+  }): Promise<string> {
+    const { invoiceId, actorId } = input;
+    await trx.selectFrom("sales.invoice").select("id").where("id", "=", invoiceId).forUpdate().execute();
+    const inv = await this.requireDraft(invoiceId, trx);
+    const row = await trx.selectFrom("sales.invoice").select("posting_batch_id")
+      .where("id", "=", invoiceId).executeTakeFirstOrThrow();
+    if (row.posting_batch_id !== null) {
+      throw new InvoiceError("draft_already_posted", "این پیش‌نویس به دوره ثبت متصل است؛ بررسی حسابدار لازم است.");
+    }
+    if (inv.shiftId !== null) {
+      const shift = await trx.selectFrom("sales.cash_shift").select("status")
+        .where("id", "=", inv.shiftId).forUpdate().executeTakeFirst();
+      if (shift?.status !== "open") throw new InvoiceError("shift_not_open", "شیفت دریافت وجه باز نیست.");
+    }
+    // ترتیب قفل با نهایی‌سازی و ثبت پرداخت مشترک است: اول فاکتور، سپس پرداخت‌ها.
+    await trx.selectFrom("treasury.payment").select("id").where("invoice_id", "=", invoiceId)
+      .orderBy("id").forUpdate().execute();
+    const payments = (await this.draftPayments(invoiceId, trx)).filter((p) => !["failed", "reversed"].includes(p.status));
+    if (!payments.length || JSON.stringify(payments.map((p) => p.id).sort()) !== JSON.stringify([...input.paymentIds].sort())) {
+      throw new InvoiceError("payments_changed", "فهرست پرداخت‌ها تغییر کرده؛ دوباره بررسی و تأیید کنید.");
+    }
+    if (payments.some((p) => p.status !== "succeeded" || p.direction !== "in" || p.settlement_id !== null ||
+      p.settled_at !== null || parseMoney(p.fee_amount) !== 0n)) {
+      throw new InvoiceError("payment_review_required", "پرداخت نامشخص یا تسویه‌شده از این مسیر برگشت نمی‌خورد؛ بررسی حسابدار لازم است.");
+    }
+    await input.authorize(payments.reduce((sum, p) => sum + parseMoney(p.amount), 0n));
+    const external = payments.some((p) => ["card_reader", "gateway", "transfer"].includes(p.kind));
+    if (external && !input.refundReference?.trim()) {
+      throw new InvoiceError("refund_reference_required", "ابتدا وجه را از مسیر بانکی برگردانید و شماره پیگیری برگشت را ثبت کنید.");
+    }
+    await setActor(trx, actorId);
+    for (const p of payments) {
+      await trx.updateTable("treasury.payment").set({ status: "reversed" }).where("id", "=", p.id).execute();
+      await sql`SELECT platform.audit('payment.reverse_draft', 'payment', ${p.id}::text,
+        ${JSON.stringify({ invoiceId, amount: p.amount, previousStatus: p.status, kind: p.kind,
+          reason: input.reason, refundReference: input.refundReference ?? null })}::jsonb, ${actorId}::uuid)`.execute(trx);
+    }
+    await trx.updateTable("sales.invoice").set({ status: "cancelled", note: input.reason })
+      .where("id", "=", invoiceId).execute();
+    await sql`SELECT platform.audit('invoice.refund_draft', 'invoice', ${invoiceId}::text,
+      ${JSON.stringify({ reason: input.reason, paymentIds: input.paymentIds })}::jsonb, ${actorId}::uuid)`.execute(trx);
+    return invoiceId;
   }
 
   /** جمع پرداخت‌های واقعاً موفق. «نامشخص» پول نیست. */

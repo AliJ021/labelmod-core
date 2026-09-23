@@ -56,6 +56,7 @@ class LMC_Instore
     const META_INVOICE   = '_lmc_invoice_id';
     const META_MOBILE    = '_lmc_mobile';
     const BATCH          = 100;
+    const CHECKPOINT     = 'lmc_instore_checkpoint';
     /** نقطه پایان حساب کاربری — `/my-account/instore/`. */
     const ENDPOINT       = 'instore';
 
@@ -136,6 +137,22 @@ class LMC_Instore
      */
     public static function run(): array
     {
+        global $wpdb;
+        // قفل اتصال، نه transient با مهلتی که وسط اجرای کند منقضی شود.
+        $lock = 'lmc_instore_run_' . md5($wpdb->prefix);
+        if ((string) $wpdb->get_var($wpdb->prepare('SELECT GET_LOCK(%s, 0)', $lock)) !== '1') {
+            return ['created' => 0, 'skipped' => 0, 'users' => 0,
+                'error' => __('دریافت خرید حضوری دیگری در حال اجراست یا قفل در دسترس نیست.', 'labelmod-connector')];
+        }
+        try {
+            return self::run_locked();
+        } finally {
+            $wpdb->get_var($wpdb->prepare('SELECT RELEASE_LOCK(%s)', $lock));
+        }
+    }
+
+    private static function run_locked(): array
+    {
         $out = ['created' => 0, 'skipped' => 0, 'users' => 0, 'error' => ''];
 
         if (lmc_setting('sync_instore') !== 'yes') {
@@ -148,8 +165,11 @@ class LMC_Instore
         }
 
         $query = ['branchId' => $branch, 'limit' => self::BATCH];
-        $since = get_option(self::CURSOR_OPTION, '');
-        $sinceId = get_option(self::CURSOR_ID, '');
+        // زمان و شناسه در یک گزینه ذخیره می‌شوند تا شکست میان دو نوشتن، خریدی را رد نکند.
+        $checkpoint = get_option(self::CHECKPOINT, null);
+        $same_branch = is_array($checkpoint) && ($checkpoint['branch'] ?? '') === $branch;
+        $since = is_array($checkpoint) ? ($same_branch ? ($checkpoint['since'] ?? '') : '') : get_option(self::CURSOR_OPTION, '');
+        $sinceId = is_array($checkpoint) ? ($same_branch ? ($checkpoint['id'] ?? '') : '') : get_option(self::CURSOR_ID, '');
         if (is_string($since) && $since !== '') {
             $query['since'] = $since;
             if (is_string($sinceId) && $sinceId !== '') {
@@ -167,6 +187,14 @@ class LMC_Instore
         $items = isset($res['items']) && is_array($res['items']) ? $res['items'] : [];
         foreach ($items as $item) {
             $result = self::import_one($item);
+            if ($result === 'retry') {
+                $out['error'] = __('ذخیره خرید حضوری کامل نشد؛ دریافت بعدی از همین مکان تکرار می‌شود.', 'labelmod-connector');
+                lmc_log($out['error']);
+                if (!wp_next_scheduled(LMC_INSTORE_EVENT)) {
+                    wp_schedule_single_event(time() + 60, LMC_INSTORE_EVENT);
+                }
+                return $out;
+            }
             if ($result === 'created') {
                 $out['created']++;
             } else {
@@ -176,8 +204,11 @@ class LMC_Instore
 
         // مکان‌نما فقط وقتی جلو می‌رود که سطری آمده باشد.
         if (!empty($res['cursor'])) {
-            update_option(self::CURSOR_OPTION, (string) $res['cursor'], false);
-            update_option(self::CURSOR_ID, (string) ($res['cursorId'] ?? ''), false);
+            $next = ['since' => (string) $res['cursor'], 'id' => (string) ($res['cursorId'] ?? ''), 'branch' => $branch];
+            update_option(self::CHECKPOINT, $next, false);
+            if (get_option(self::CHECKPOINT) !== $next) {
+                $out['error'] = __('ذخیره مکان دریافت خرید حضوری ناموفق بود.', 'labelmod-connector');
+            }
         }
 
         lmc_log(sprintf('خرید حضوری: %d تازه، %d رد شد', $out['created'], $out['skipped']));
@@ -193,7 +224,7 @@ class LMC_Instore
      * یک خرید.
      *
      * @param array $item
-     * @return string 'created' | 'skipped'
+     * @return string 'created' | 'skipped' | 'retry'
      */
     public static function import_one($item): string
     {
@@ -213,49 +244,80 @@ class LMC_Instore
             return 'skipped';
         }
 
-        // تحویل «حداقل یک بار» است: همین خرید ممکن است دوباره بیاید.
-        if (self::already_imported($invoice_id)) {
+        $mobile = self::normalize_mobile($mobile);
+        if ($mobile === '') {
+            lmc_log('خرید حضوری با شماره موبایل نامعتبر رد شد: ' . $invoice_id);
             return 'skipped';
         }
 
+        global $wpdb;
+        // همه واردکننده‌ها، حتی فراخوانی مستقیم، همین قفل را می‌گیرند.
+        // قفل مشترک ساخت مشتری با شماره یکسان را نیز سری می‌کند.
+        $lock = 'lmc_instore_import_' . md5($wpdb->prefix);
+        if ((string) $wpdb->get_var($wpdb->prepare('SELECT GET_LOCK(%s, 0)', $lock)) !== '1') {
+            return 'retry';
+        }
+        try {
+            return self::import_locked($item, $invoice_id, $mobile);
+        } finally {
+            $wpdb->get_var($wpdb->prepare('SELECT RELEASE_LOCK(%s)', $lock));
+        }
+    }
+
+    private static function import_locked(array $item, string $invoice_id, string $mobile): string
+    {
+        global $wpdb;
+        // نام پایدار در همان INSERT پست است؛ قطع اجرا پیش از نوشتن متا، پست بی‌هویت نمی‌سازد.
+        $slug = 'lmc-' . hash('sha256', $invoice_id);
+        $row = $wpdb->get_row($wpdb->prepare(
+            "SELECT p.ID, p.post_status FROM {$wpdb->posts} p
+             WHERE p.post_type=%s AND (p.post_name=%s OR EXISTS (
+               SELECT 1 FROM {$wpdb->postmeta} m WHERE m.post_id=p.ID AND m.meta_key=%s AND m.meta_value=%s
+             )) ORDER BY p.ID LIMIT 1",
+            self::POST_TYPE, $slug, self::META_INVOICE, $invoice_id
+        ));
+        if ($wpdb->last_error !== '') {
+            return 'retry';
+        }
+        if ($row && in_array($row->post_status, ['publish', 'trash'], true)) {
+            return 'skipped';
+        }
         $user_id = self::find_or_create_user($mobile, (string) ($item['customer']['name'] ?? ''));
         if ($user_id === 0) {
-            // ⚠️ صدادار، نه بی‌صدا. مکان‌نما از این سطر رد می‌شود و
-            //    دیگر برنمی‌گردد؛ اگر لاگ نمی‌شد، خریدی که به هیچ
-            //    حسابی نچسبید بی‌آنکه کسی بداند گم می‌شد.
-            lmc_log(sprintf(
-                'خرید حضوری %s رد شد: «%s» شماره موبایل معتبر نیست.',
-                $invoice_id,
-                $mobile
-            ));
-            return 'skipped';
+            return 'retry';
         }
-
-        $post_id = wp_insert_post([
-            'post_type'   => self::POST_TYPE,
-            'post_status' => 'publish',
+        $post_id = $row ? (int) $row->ID : wp_insert_post([
+            'post_type' => self::POST_TYPE,
+            'post_status' => 'draft',
+            'post_name' => $slug,
             'post_author' => $user_id,
-            'post_title'  => sprintf(
-                /* translators: %s: شماره فاکتور */
-                __('سفارش حضوری %s', 'labelmod-connector'),
-                (string) ($item['number'] ?? '—')
-            ),
+            'post_title' => sprintf(__('سفارش حضوری %s', 'labelmod-connector'), (string) ($item['number'] ?? '—')),
         ], true);
-
         if (is_wp_error($post_id) || !$post_id) {
-            return 'skipped';
+            return 'retry';
         }
-
-        update_post_meta($post_id, self::META_INVOICE, $invoice_id);
-        update_post_meta($post_id, self::META_MOBILE, $mobile);
-        update_post_meta($post_id, '_lmc_number', (string) ($item['number'] ?? ''));
-        update_post_meta($post_id, '_lmc_channel', (string) ($item['channel'] ?? 'pos'));
-        update_post_meta($post_id, '_lmc_occurred_at', (string) ($item['occurredAt'] ?? ''));
-        update_post_meta($post_id, '_lmc_net_amount', (string) ($item['netAmount'] ?? '0'));
-        update_post_meta($post_id, '_lmc_payable_amount', (string) ($item['payableAmount'] ?? '0'));
-        // اقلام به‌شکل آرایه ذخیره می‌شوند؛ ووکامرس اصلاً درگیرشان نیست.
-        update_post_meta($post_id, '_lmc_lines', self::clean_lines($item['lines'] ?? []));
-
+        $meta = [
+            self::META_INVOICE => $invoice_id,
+            self::META_MOBILE => $mobile,
+            '_lmc_number' => (string) ($item['number'] ?? ''),
+            '_lmc_channel' => (string) ($item['channel'] ?? 'pos'),
+            '_lmc_occurred_at' => (string) ($item['occurredAt'] ?? ''),
+            '_lmc_net_amount' => (string) ($item['netAmount'] ?? '0'),
+            '_lmc_payable_amount' => (string) ($item['payableAmount'] ?? '0'),
+            '_lmc_lines' => self::clean_lines($item['lines'] ?? []),
+        ];
+        foreach ($meta as $key => $value) {
+            // API متا اسلش ورودی را برمی‌دارد؛ داده خوراک باید بدون تغییر بماند.
+            update_post_meta($post_id, $key, wp_slash($value));
+            wp_cache_delete($post_id, 'post_meta');
+            if (get_post_meta($post_id, $key, true) !== $value) {
+                return 'retry';
+            }
+        }
+        $published = wp_update_post(['ID' => $post_id, 'post_author' => $user_id, 'post_status' => 'publish'], true);
+        if (is_wp_error($published) || !$published) {
+            return 'retry';
+        }
         return 'created';
     }
 
@@ -461,7 +523,7 @@ class LMC_Instore
             echo ' <span class="lmc-tag">'
                . esc_html__('سفارش حضوری', 'labelmod-connector') . '</span>';
             echo '</td><td>';
-            echo esc_html(get_the_date('', $p));
+            echo esc_html(self::purchase_date((int) $p->ID));
             echo '</td><td>';
             echo wp_kses_post(wc_price(self::to_site_amount($net)));
             echo '</td><td><ul style="margin:0;padding-inline-start:1em">';
@@ -473,6 +535,25 @@ class LMC_Instore
         }
 
         echo '</tbody></table>';
+    }
+
+    /** تاریخ خرید از سرور؛ تاریخ واردسازی هرگز جای تاریخ نامعلوم جا زده نمی‌شود. */
+    public static function purchase_date(int $post_id): string
+    {
+        $raw = (string) get_post_meta($post_id, '_lmc_occurred_at', true);
+        if (!preg_match('/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?(?:Z|[+-]\d{2}:\d{2})$/', $raw)) {
+            return '—';
+        }
+        try {
+            $at = new DateTimeImmutable($raw);
+            $errors = DateTimeImmutable::getLastErrors();
+            if (is_array($errors) && ($errors['warning_count'] || $errors['error_count'])) {
+                return '—';
+            }
+            return (string) wp_date((string) get_option('date_format', 'Y/m/d'), $at->getTimestamp(), wp_timezone());
+        } catch (Exception $e) {
+            return '—';
+        }
     }
 
     /** ریال ذخیره‌شده → واحد پول سایت، برای نمایش. */

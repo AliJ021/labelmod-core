@@ -112,6 +112,7 @@ class LMC_Settings
         if ($new['branch_id'] !== $old['branch_id']) {
             delete_option(LMC_Instore::CURSOR_OPTION);
             delete_option(LMC_Instore::CURSOR_ID);
+            delete_option(LMC_Instore::CHECKPOINT);
         }
 
         wp_safe_redirect(add_query_arg('lmc_msg', 'saved', admin_url('admin.php?page=' . self::PAGE)));
