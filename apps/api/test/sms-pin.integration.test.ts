@@ -205,4 +205,11 @@ describe("PIN شخصی و عامل دوم پیامکی روی دیتابیس و�
     const after=await sql<{encrypted_code:unknown}>`SELECT encrypted_code FROM identity.sms_challenge WHERE id=${r.rows[0]!.id}::uuid`.execute(handle.db);
     assert.equal(after.rows[0]!.encrypted_code,null);
   });
+  test("مسیرهای ورود SMS بدون بلیت مرحلهٔ اول نه کد می‌فرستند نه نشست می‌سازند",async()=>{
+    for(const [url,payload] of [["/auth/2fa/sms/request",{}],["/auth/2fa/sms",{code:"123456"}]] as const){
+      const r=await app.inject({method:"POST",url,payload,remoteAddress:ip()});
+      assert.equal(r.statusCode,401,r.body);
+      assert.ok(!r.cookies.some(c=>c.name==="labelmod_session"));
+    }
+  });
 });
