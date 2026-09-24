@@ -302,6 +302,9 @@ test("استثناهای CSRF و مسیرهای عمومی، همان‌اند �
   // Double-Submit هم وجود ندارد. دفاع آنجا خودِ بلیت HttpOnly است.
   assert.deepEqual(listOf("CSRF_EXEMPT_PATHS"), [
     "/auth/2fa/recovery",
+    // مرحله دوم SMS فقط با بلیت HttpOnly حاصل از رمز درست؛ ثبت شماره استثنا نیست.
+    "/auth/2fa/sms",
+    "/auth/2fa/sms/request",
     "/auth/2fa/totp",
     "/auth/2fa/webauthn/begin",
     "/auth/2fa/webauthn/verify",
@@ -313,6 +316,8 @@ test("استثناهای CSRF و مسیرهای عمومی، همان‌اند �
   //    روزی کسی نامش را ساده کند، همین‌جا قرمز می‌شود.
   assert.deepEqual(listOf("PUBLIC_PATHS"), [
     "/auth/2fa/recovery",
+    "/auth/2fa/sms",
+    "/auth/2fa/sms/request",
     "/auth/2fa/totp",
     "/auth/2fa/webauthn/begin",
     "/auth/2fa/webauthn/verify",

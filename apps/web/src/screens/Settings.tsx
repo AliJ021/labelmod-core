@@ -27,6 +27,7 @@ import { Appearance } from "./Appearance.tsx";
 import { Staff } from "./Staff.tsx";
 import { MeliPayamakSettings } from "./MeliPayamakSettings.tsx";
 import { TwoFactor } from "./TwoFactor.tsx";
+import { PersonalPin } from "./PersonalPin.tsx";
 import { api, ApiError } from "../lib/api.ts";
 import { admin, type SettlementTerm } from "../lib/admin.ts";
 import { isZeroFee } from "../lib/settlement.ts";
@@ -530,6 +531,7 @@ const TABS = [
   { key: "terminals", label: "پایانه‌ها", group: "مالی و فروش" },
   { key: "opening", label: "افتتاحیه و تفصیلی", group: "مالی و فروش" },
   { key: "staff", label: "پرسنل", group: "کاربران و امنیت" },
+  { key: "pin", label: "PIN من — ساخت و تغییر", group: "کاربران و امنیت" },
   { key: "permissions", label: "مجوزها", group: "کاربران و امنیت" },
   { key: "devices", label: "دستگاه‌ها", group: "کاربران و امنیت" },
   { key: "twofactor", label: "ورود دومرحله‌ای", group: "کاربران و امنیت" },
@@ -561,6 +563,8 @@ export function Settings({ currentUserId, onOwnPassword }: { currentUserId: stri
         <Permissions />
       ) : tab === "staff" ? (
         <Staff currentUserId={currentUserId} onOwnPassword={onOwnPassword} />
+      ) : tab === "pin" ? (
+        <PersonalPin />
       ) : tab === "twofactor" ? (
         <TwoFactor />
       ) : tab === "devices" ? (

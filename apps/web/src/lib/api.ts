@@ -66,6 +66,7 @@ async function request<T>(
   path: string,
   body?: unknown,
   opts: RequestOptions = {},
+  responseType: "json" | "html" = "json",
 ): Promise<T> {
   const headers: Record<string, string> = {};
   if (body !== undefined) headers["content-type"] = "application/json";
@@ -98,6 +99,10 @@ async function request<T>(
       e?.correlationId ?? null,
     );
   }
+  if (responseType === "html") {
+    if (!res.headers.get("content-type")?.includes("text/html")) throw new ApiError(502, "invalid_response", "پاسخ چاپ معتبر نیست", null);
+    return text as T;
+  }
   return parsed as T;
 }
 
@@ -110,6 +115,7 @@ function safeParse(text: string): unknown {
 }
 
 export const api = {
+  postHtml: (path: string, body: unknown) => request<string>("POST", path, body, {}, "html"),
   get: <T>(path: string, opts?: RequestOptions) => request<T>("GET", path, undefined, opts),
   post: <T>(path: string, body?: unknown, opts?: RequestOptions) =>
     request<T>("POST", path, body ?? {}, opts),

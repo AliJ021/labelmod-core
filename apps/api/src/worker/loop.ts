@@ -162,7 +162,7 @@ export async function tick(opts: LoopOptions): Promise<TickResult> {
     secret: opts.webPushSecret,
   }, opts.webPushDeps);
 
-  const ctx = { db: opts.db, settings, sms: sender, webhook, webPush };
+  const ctx = { db: opts.db, settings, sms: sender, smsCredentialKey: opts.smsCredentialKey, webhook, webPush };
 
   for (const row of claimed.rows) {
     const msg: OutboxMessage = {

@@ -49,6 +49,7 @@ function generateRecoveryCodes(count = 10): string[] {
 }
 
 export interface TotpStatus {
+  smsEnabled: boolean;
   enabled: boolean;
   /** ثبت‌نامی در جریان هست که هنوز تأیید نشده؟ */
   pending: boolean;
@@ -68,12 +69,14 @@ export class TwoFactorService {
   async status(userId: string): Promise<TotpStatus> {
     const r = await sql<{
       enabled: boolean;
+      sms_enabled: boolean;
       pending: boolean;
       codes_left: string;
       keys: string;
       should_have: boolean;
     }>`
       SELECT (u.totp_secret IS NOT NULL) AS enabled,
+             EXISTS (SELECT 1 FROM identity.sms_factor f WHERE f.user_id=u.id) AS sms_enabled,
              EXISTS (SELECT 1 FROM identity.totp_enrollment e WHERE e.user_id = u.id)
                AS pending,
              (SELECT count(*) FROM identity.recovery_code c
@@ -89,6 +92,7 @@ export class TwoFactorService {
     if (!row) throw new AuthError("user_not_found", "کاربر یافت نشد");
     return {
       enabled: row.enabled,
+      smsEnabled: row.sms_enabled,
       pending: row.pending,
       recoveryCodesLeft: Number(row.codes_left),
       webauthnKeys: Number(row.keys),

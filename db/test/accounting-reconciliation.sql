@@ -179,10 +179,12 @@ BEGIN
  END LOOP;
 
  -- بازتولید F19: یک قلم از دو قلم قدیمی پیش از تغییر روش فروخته شده است.
+ -- زمان ورودها صریح است: now() در این تراکنش ثابت است و UUIDهای یک
+ -- میلی‌ثانیه ترتیب درج را تضمین نمی‌کنند؛ سناریو دو ورود با سن متفاوت دارد.
  PERFORM platform.set_setting('costing.method','"moving_weighted_average"','F19',u);
- PERFORM inventory.apply_movement(v2,wh,2,'opening',NULL,NULL,u,100000);
+ PERFORM inventory.apply_movement(v2,wh,2,'opening',NULL,NULL,u,100000,p_occurred_at=>now()-interval '2 days');
  PERFORM inventory.apply_movement(v2,wh,-1,'sale','test_doc',v2,u);
- PERFORM inventory.apply_movement(v2,wh,2,'opening',NULL,NULL,u,200000);
+ PERFORM inventory.apply_movement(v2,wh,2,'opening',NULL,NULL,u,200000,p_occurred_at=>now()-interval '1 day');
  PERFORM pg_temp.eq('F19 only unsold physical layers remain',
    (SELECT sum(qty_left) FROM inventory.cost_layer WHERE variation_id=v2 AND warehouse_id=wh),3);
  PERFORM platform.set_setting('costing.method','"fifo"','F19',u);

@@ -30,6 +30,8 @@ export class MockApi {
     "GET /settings": { groups: [] }, "GET /settlement-terms": { terms: [] }, "GET /customers": { customers: [] },
     "GET /products/ref-data": { brands: [], categories: [] }, "GET /seasons": { seasons: [] },
     ["GET /products/" + product.id]: { product, variations: [variation] },
+    ["GET /products/" + product.id + "/stock-matrix"]: { totalOnHand:"12", cells:{ navy:{ XL:{variationId:"v1",onHand:"12",reserved:"2"} } } },
+    "GET /auth/2fa/sms/status": { enabled:false, maskedMobile:null },
     "GET /variations/v1/price-history": { history: [] },
     "GET /reports/sales": { rows: [] }, "GET /reports/cash-reconciliation": { rows: [] },
     "GET /treasury/accounts": { accounts: [] }, "GET /treasury/transactions": { transactions: [] },
@@ -37,6 +39,7 @@ export class MockApi {
     "GET /receipts": [], "GET /stock-counts": [], "GET /cheques/due": { due: [] },
     "GET /users": { users: [staff, { ...staff, id: me.id, username: "synthetic_admin", fullName: me.fullName }] }, "GET /roles": { roles: [{ code: "cashier", name: "صندوق‌دار" }] },
     "POST /auth/change-password": { ok: true }, "POST /auth/lock": { locked: true }, "POST /auth/logout": { ok: true },
+    "GET /auth/pin": { hasPin:false, length:4 },
   };
   async install(page: Page) {
     page.on("pageerror", e => this.errors.push(e.message));

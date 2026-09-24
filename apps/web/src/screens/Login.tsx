@@ -44,10 +44,12 @@ export function Login({ onDone }: { onDone: () => void }) {
    */
   const [second, setSecond] = useState<{
     fullName: string;
-    methods: Array<"totp" | "webauthn" | "recovery">;
+    methods: Array<"totp" | "webauthn" | "recovery" | "sms">;
   } | null>(null);
   const [code, setCode] = useState("");
   const [useRecovery, setUseRecovery] = useState(false);
+  const [useSms, setUseSms] = useState(false);
+  const [smsNote, setSmsNote] = useState("");
 
   useEffect(() => first.current?.focus(), []);
 
@@ -68,6 +70,8 @@ export function Login({ onDone }: { onDone: () => void }) {
 
       if ("needsSecondFactor" in out) {
         setSecond({ fullName: out.fullName, methods: out.methods });
+        setUseSms(out.methods.includes("sms") && !out.methods.includes("totp") && !out.methods.includes("webauthn"));
+        setUseRecovery(false); setSmsNote("");
         return;
       }
       onDone();
@@ -114,7 +118,7 @@ export function Login({ onDone }: { onDone: () => void }) {
     setBusy(true);
     setError(null);
     try {
-      await session.secondFactor(useRecovery ? "recovery" : "totp", {
+      await session.secondFactor(useRecovery ? "recovery" : useSms ? "sms" : "totp", {
         code: normalizeDigits(code),
         deviceFingerprint: deviceFingerprint(),
       });
@@ -130,8 +134,8 @@ export function Login({ onDone }: { onDone: () => void }) {
   if (second !== null) {
     // «چه چیزی نشان داده شود» از **روش‌های همین کاربر** می‌آید، نه از
     // یک فرض ثابت که همه TOTP دارند.
-    const codeMethod = useRecovery || second.methods.includes("totp");
-    const showKey = !useRecovery && second.methods.includes("webauthn") && webauthnAvailable();
+    const codeMethod = useRecovery || useSms || second.methods.includes("totp");
+    const showKey = !useRecovery && !useSms && second.methods.includes("webauthn") && webauthnAvailable();
     return (
       <div className="auth-wrap">
         <Glass as="section" radius="lg" className="pad auth-card" live>
@@ -139,7 +143,7 @@ export function Login({ onDone }: { onDone: () => void }) {
           <p className="muted" style={{ marginTop: 0 }}>
             {second.fullName} — {useRecovery
               ? "یکی از کدهای بازیابی را وارد کنید."
-              : codeMethod
+              : useSms ? "کد شش‌رقمی پیامک را وارد کنید." : codeMethod
                 ? "کد شش‌رقمی برنامه Authenticator را وارد کنید."
                 : "با کلید امنیتی خود ادامه دهید."}
           </p>
@@ -165,6 +169,13 @@ export function Login({ onDone }: { onDone: () => void }) {
             کاربری که فقط کلید دارد نباید فرم کدی ببیند که هرگز
             نمی‌تواند پرش کند — یک بن‌بست بی‌صدا.
           */}
+          {second.methods.includes("sms") ? <button type="button" className="btn" disabled={busy} onClick={async () => {
+            setBusy(true); setError(null); setUseRecovery(false); setUseSms(true); setCode("");
+            try { const r = await session.requestSms(); setSmsNote(`کد برای ${r.maskedMobile} در صف ارسال است؛ اعتبار دو دقیقه.`); }
+            catch (e) { setError(message(e)); } finally { setBusy(false); }
+          }}>ارسال کد ورود با پیامک</button> : null}
+          {smsNote ? <p role="status">{smsNote}</p> : null}
+          {useSms && (second.methods.includes("totp") || second.methods.includes("webauthn")) ? <button type="button" className="link" onClick={() => { setUseSms(false); setCode(""); }}>استفاده از Authenticator یا کلید امنیتی</button> : null}
           {codeMethod ? (
           <form onSubmit={submitCode} className="stack" style={{ gap: "var(--s-3)" }}>
             <Solid className="auth-field">

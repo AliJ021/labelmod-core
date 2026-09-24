@@ -758,6 +758,15 @@ export function registerSalesRoutes(app: FastifyInstance, deps: SalesRouteDeps):
     if (inv?.status !== "draft") throw new InvoiceError("invoice_not_draft", "فاکتور پیش‌نویس نیست.");
     return { payments: (await invoices.draftPayments(id)).filter((p) => !["failed", "reversed"].includes(p.status)) };
   });
+  app.get("/invoices/:id/payments", async (req) => {
+    const s=session(req), {id}=z.object({id:uuid}).parse(req.params);
+    await requireForSession(db,s,"sale.create");
+    await assertInvoiceInScope(db,s.userId,id,invoices);
+    const own=await db.selectFrom("sales.invoice").select("created_by").where("id","=",id).executeTakeFirst();
+    if(own?.created_by!==s.userId) throw new InvoiceError("payment_forbidden","فقط پرداخت‌های فاکتور خودتان را می‌بینید.",403);
+    return {payments:(await invoices.draftPayments(id)).filter(p=>p.status==="succeeded" && p.direction==="in")
+      .map(p=>({id:p.id,name:p.name,amount:p.amount}))};
+  });
 
   app.post("/invoices/:id/refund-draft", async (req) => {
     const s = session(req);

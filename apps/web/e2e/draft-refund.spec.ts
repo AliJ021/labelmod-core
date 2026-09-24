@@ -11,6 +11,7 @@ for (const kind of ["cash", "transfer", "unknown"] as const) {
     api.defaults["GET /payment-methods"] = { methods: [{ code: "cash", name: "نقد", kind: "cash", requiresRef: false }] };
     api.defaults["GET /shifts/current"] = { id: "s1", branchId: "b1", status: "open", openingCash: "0", openedAt: "2026-09-23T00:00:00Z" };
     api.defaults["GET /invoices/draft1"] = invoice;
+    api.defaults["GET /invoices/draft1/payments"] = {payments:[{id:"p1",amount:"200000",name:"پرداخت آزمون"}]};
     api.defaults["GET /gift-options"] = { wraps: [], colors: [], flowers: [] };
     api.handlers.set("POST /invoices/draft1/cancel", async route => {
       await route.fulfill({ status: 409, json: { error: { code: "invoice_has_payment", message: "پرداخت باید برگشت بخورد" } } });

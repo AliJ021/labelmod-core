@@ -133,7 +133,7 @@ export interface Decision {
 export interface SecondFactorNeeded {
   needsSecondFactor: true;
   fullName: string;
-  methods: Array<"totp" | "webauthn" | "recovery">;
+  methods: Array<"totp" | "webauthn" | "recovery" | "sms">;
   expiresAt: string;
 }
 
@@ -154,6 +154,7 @@ export interface WebauthnKey {
 }
 
 export interface TwoFactorStatus {
+  smsEnabled?: boolean;
   enabled: boolean;
   pending: boolean;
   recoveryCodesLeft: number;
@@ -199,7 +200,7 @@ export const session = {
    * برمی‌گرداند. اسکریپت صفحه هرگز نمی‌بیندش.
    */
   secondFactor(
-    method: "totp" | "recovery",
+    method: "totp" | "recovery" | "sms",
     input: { code: string; deviceFingerprint: string },
   ): Promise<LoginResult> {
     return api.post<LoginResult>(`/auth/2fa/${method}`, input);
@@ -207,6 +208,9 @@ export const session = {
 
   twoFactor(): Promise<TwoFactorStatus> {
     return api.get<TwoFactorStatus>("/auth/2fa");
+  },
+  requestSms(): Promise<{ queued: boolean; maskedMobile: string; expiresIn: number }> {
+    return api.post("/auth/2fa/sms/request", {});
   },
 
   beginTotp(): Promise<{ secret: string; uri: string }> {

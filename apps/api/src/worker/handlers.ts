@@ -20,6 +20,7 @@
  * پیام‌هایی که هیچ‌کس قرار نبود بگیرد، و همان‌جا خطای واقعی گم می‌شد.
  */
 import { sql } from "kysely";
+import { deliverSmsChallenge } from "../auth/sms-factor.ts";
 import { z } from "zod";
 import type { Db } from "../db/client.ts";
 import { parseMoney } from "../lib/money.ts";
@@ -33,6 +34,7 @@ export interface HandlerContext {
   db: Db;
   settings: NotifySettings;
   sms: SmsSender;
+  smsCredentialKey?: string | undefined;
   /**
    * ⚠️ تا امروز اینجا نبود و **هیچ Handlerی Webhook نمی‌فرستاد** — در
    *    حالی که `notify.webhook_enabled` در صفحهٔ تنظیمات وعدهٔ «ارسال
@@ -369,6 +371,12 @@ export const HANDLERS: Record<
   string,
   (ctx: HandlerContext, msg: OutboxMessage) => Promise<HandlerResult>
 > = {
+  "auth.sms_otp": async (ctx, msg) => {
+    const { challengeId } = z.object({ challengeId: z.string().uuid() }).parse(msg.payload);
+    if (!ctx.settings.smsEnabled || ctx.settings.provider === "log") throw new SmsError("ارسال واقعی کد ورود غیرفعال است");
+    await deliverSmsChallenge(ctx.db,challengeId,ctx.sms,ctx.smsCredentialKey);
+    return { done: true, note: "درخواست کد ورود پردازش شد" };
+  },
   "invoice.finalized": handleInvoiceFinalized,
   "cheque.due": handleChequeDue,
   "health.alert": handleHealthAlert,
