@@ -458,6 +458,74 @@ $GLOBALS['lmc_test_settings']['sync_stock'] = 'no';
 $disabled = LMC_Push_Receiver::handle_stock(req(['variationId' => 'v-77', 'onHand' => 999, 'version' => 999]));
 ok('گزینه خاموش مانع Push موجودی است', $disabled['applied'], false);
 
+
+// دریافت هدفمند تاریخچه: مرز HTTP ساختگی است؛ گیرنده و امضا کد واقعی‌اند.
+class WP_REST_Response {
+    public function __construct(public array $data, public int $status = 200) {}
+}
+class LMC_Client {
+    public static $response;
+    public static array $calls = [];
+    public static function get($path, $query) { self::$calls[] = [$path, $query]; return self::$response; }
+}
+class LMC_Instore {
+    public static array $calls = [];
+    public static string $result = 'created';
+    public static function import_one($item) { self::$calls[] = $item; return self::$result; }
+}
+function is_wp_error($v) { return $v instanceof WP_Error; }
+$notice = ['invoiceId' => '00000000-0000-7000-8000-000000000321', 'branchId' => '00000000-0000-7000-8000-000000000001'];
+$GLOBALS['lmc_test_settings']['sync_instore'] = 'yes';
+$GLOBALS['lmc_test_settings']['branch_id'] = $notice['branchId'];
+$purchase = ['invoiceId' => $notice['invoiceId'], 'channel' => 'pos', 'customer' => ['mobile' => '09121119988'], 'lines' => []];
+$valid_response = ['branchId' => $notice['branchId'], 'items' => [$purchase]];
+LMC_Client::$response = $valid_response;
+$signed = req($notice);
+ok('اعلان تاریخچه امضای معتبر دارد', LMC_Push_Receiver::verify_request($signed), true);
+$out = LMC_Push_Receiver::handle_instore($signed);
+ok('تاریخچه به importer مشترک تحویل شد', LMC_Instore::$calls, [$purchase]);
+ok('فقط فاکتور و شعبه همان اعلان خوانده می‌شود', LMC_Client::$calls, [['/web/instore-purchases', ['branchId' => $notice['branchId'], 'invoiceId' => $notice['invoiceId'], 'limit' => 1]]]);
+ok('پاسخ موفق، اطلاعات مشتری ندارد', $out->data, ['ok' => true, 'result' => 'created']);
+$replay = LMC_Push_Receiver::verify_request($signed);
+ok('بازپخش امضای تاریخچه رد می‌شود', $replay instanceof WP_Error ? $replay->status() : 0, 409);
+$malicious = req($notice + ['customer' => ['mobile' => '09120000000']]);
+$out = LMC_Push_Receiver::handle_instore($malicious);
+ok('تزریق اطلاعات مشتری در اعلان رد می‌شود', $out instanceof WP_Error ? $out->status() : 0, 400);
+ok('اعلان نامعتبر import نمی‌کند', count(LMC_Instore::$calls), 1);
+$GLOBALS['lmc_test_settings']['sync_instore'] = 'no';
+$out = LMC_Push_Receiver::handle_instore(req($notice));
+ok('خاموشی تاریخچه رعایت می‌شود', $out->data['skipped'], 'disabled');
+ok('خاموشی درخواست Core نمی‌سازد', count(LMC_Client::$calls), 1);
+$GLOBALS['lmc_test_settings']['sync_instore'] = 'yes';
+$GLOBALS['lmc_test_settings']['branch_id'] = '';
+$out = LMC_Push_Receiver::handle_instore(req($notice));
+ok('شعبه تنظیم نشده قابل retry است', $out instanceof WP_Error ? $out->status() : 0, 503);
+$GLOBALS['lmc_test_settings']['branch_id'] = '00000000-0000-7000-8000-000000000002';
+$out = LMC_Push_Receiver::handle_instore(req($notice));
+ok('اعلان شعبه دیگر پذیرفته و مصرف نمی‌شود', $out->data['skipped'], 'other_branch');
+ok('شعبه دیگر داده درخواست نمی‌کند', count(LMC_Client::$calls), 1);
+$GLOBALS['lmc_test_settings']['branch_id'] = $notice['branchId'];
+LMC_Client::$response = new WP_Error('unavailable', 'private upstream error');
+$out = LMC_Push_Receiver::handle_instore(req($notice));
+ok('قطعی Core قابل retry است', $out instanceof WP_Error ? $out->status() : 0, 503);
+ok('جزئیات خصوصی خطای Core افشا نمی‌شود', strpos($out->message, 'private') === false, true);
+foreach ([null, ['items' => []], ['branchId' => $notice['branchId'], 'items' => [$purchase, $purchase]], ['branchId' => 'other', 'items' => []], ['branchId' => $notice['branchId'], 'items' => [array_merge($purchase, ['invoiceId' => 'other'])]], ['branchId' => $notice['branchId'], 'items' => [array_merge($purchase, ['channel' => 'web'])]]] as $response) {
+    LMC_Client::$response = $response;
+    $out = LMC_Push_Receiver::handle_instore(req($notice));
+    ok('پاسخ ناقص/ناسازگار Core رد می‌شود', $out instanceof WP_Error ? $out->status() : 0, 502);
+}
+ok('پاسخ‌های معیوب import نکردند', count(LMC_Instore::$calls), 1);
+LMC_Client::$response = ['branchId' => $notice['branchId'], 'items' => []];
+$out = LMC_Push_Receiver::handle_instore(req($notice));
+ok('فاکتور خارج از دامنه بدون import رد می‌شود', $out->data['skipped'], 'not_eligible');
+LMC_Client::$response = $valid_response;
+LMC_Instore::$result = 'retry';
+$out = LMC_Push_Receiver::handle_instore(req($notice));
+ok('قفل یا خطای ذخیره، موفق گزارش نمی‌شود', $out instanceof WP_Error ? $out->status() : 0, 503);
+LMC_Instore::$result = 'skipped';
+$out = LMC_Push_Receiver::handle_instore(req($notice));
+ok('فاکتور قبلاً ذخیره‌شده دوباره وارد نمی‌شود', $out->data, ['ok' => true, 'result' => 'skipped']);
+
 echo "\n";
 if ($failed > 0) {
     echo "✗ {$failed} ادعا شکست خورد ({$passed} پاس)\n";

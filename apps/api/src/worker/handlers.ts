@@ -20,6 +20,7 @@
  * پیام‌هایی که هیچ‌کس قرار نبود بگیرد، و همان‌جا خطای واقعی گم می‌شد.
  */
 import { sql } from "kysely";
+import { z } from "zod";
 import type { Db } from "../db/client.ts";
 import { parseMoney } from "../lib/money.ts";
 import { toToman } from "../sales/invoice-page.ts";
@@ -354,6 +355,16 @@ export async function handleWebPush(
   return { done: true, note: `سایت به‌روز شد (${variationId.slice(0, 8)}…)` };
 }
 
+/** اعلان فقط شناسه دارد؛ سایت داده را با کلید و دامنهٔ شعبهٔ خودش می‌خواند. */
+export async function handleInstorePush(ctx: HandlerContext, msg: OutboxMessage): Promise<HandlerResult> {
+  if (!ctx.settings.webPushEnabled) return { done: true, note: "ارسال لحظه‌ای به سایت خاموش است" };
+  if (!ctx.settings.webSiteUrl) throw new SmsError("نشانی سایت (web.site_url) تنظیم نشده است");
+  const parsed = z.object({ invoiceId: z.uuid(), branchId: z.uuid() }).strict().safeParse(msg.payload);
+  if (!parsed.success) throw new SmsError("اعلان خرید حضوری نامعتبر است", true);
+  await ctx.webPush.send({ topic: "web.instore_push", payload: parsed.data });
+  return { done: true, note: "اعلان خرید حضوری تحویل سایت شد" };
+}
+
 export const HANDLERS: Record<
   string,
   (ctx: HandlerContext, msg: OutboxMessage) => Promise<HandlerResult>
@@ -363,4 +374,5 @@ export const HANDLERS: Record<
   "health.alert": handleHealthAlert,
   "web.stock_push": handleWebPush,
   "web.price_push": handleWebPush,
+  "web.instore_push": handleInstorePush,
 };

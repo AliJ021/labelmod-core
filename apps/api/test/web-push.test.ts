@@ -308,9 +308,11 @@ test("مسیر مقصد از روی موضوع انتخاب می‌شود", asyn
   });
   await send.send({ topic: "web.stock_push", payload: { variationId: "v" } });
   await send.send({ topic: "web.price_push", payload: { variationId: "v" } });
+  await send.send({ topic: "web.instore_push", payload: { invoiceId: "i", branchId: "b" } });
   assert.deepEqual(urls, [
     "https://shop.example.com/wp-json/lmc/v1/stock",
     "https://shop.example.com/wp-json/lmc/v1/price",
+    "https://shop.example.com/wp-json/lmc/v1/instore",
   ]);
 });
 
@@ -356,4 +358,12 @@ test("«رد شد» از «نرسید» جدا است", async () => {
     () => make(503).send({ topic: "web.stock_push", payload: { variationId: "v" } }),
     (e: unknown) => { assert.ok(e instanceof SmsError); assert.equal(e.permanent, false); return true; },
   );
+});
+
+test("محدودیت نرخ و timeout مقصد قابل تلاش مجدد هستند", async () => {
+  for (const status of [408, 429]) {
+    const sender = makeWebPushSender(base, { resolveTarget: safeTarget, post: okPost(status) });
+    await assert.rejects(() => sender.send({ topic: "web.instore_push", payload: {} }),
+      (e: unknown) => { assert.ok(e instanceof SmsError); assert.equal(e.permanent, false); return true; });
+  }
 });

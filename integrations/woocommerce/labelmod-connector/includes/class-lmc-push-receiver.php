@@ -50,7 +50,7 @@ class LMC_Push_Receiver
 
     public static function register_routes(): void
     {
-        foreach (['stock', 'price'] as $what) {
+        foreach (['stock', 'price', 'instore'] as $what) {
             register_rest_route(self::NS, '/' . $what, [
                 'methods'             => 'POST',
                 'callback'            => [__CLASS__, 'handle_' . $what],
@@ -61,6 +61,55 @@ class LMC_Push_Receiver
                 'permission_callback' => [__CLASS__, 'verify_request'],
             ]);
         }
+    }
+
+    /** دریافت هدفمند؛ هیچ مکان‌نمای دوره‌ای جلو نمی‌رود و اطلاعات مشتری از اعلان پذیرفته نمی‌شود. */
+    public static function handle_instore($request)
+    {
+        $data = $request->get_json_params();
+        $uuid = '/^[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$/i';
+        if (!is_array($data) || count($data) !== 2
+            || !isset($data['invoiceId'], $data['branchId'])
+            || !is_string($data['invoiceId']) || !is_string($data['branchId'])
+            || !preg_match($uuid, $data['invoiceId']) || !preg_match($uuid, $data['branchId'])) {
+            return new WP_Error('lmc_bad_payload', 'اعلان خرید حضوری نامعتبر است.', ['status' => 400]);
+        }
+        if (lmc_setting('sync_instore') !== 'yes') {
+            return new WP_REST_Response(['ok' => true, 'skipped' => 'disabled'], 200);
+        }
+        $branch = (string) lmc_setting('branch_id');
+        if ($branch === '') {
+            return new WP_Error('lmc_no_branch', 'شعبهٔ سایت تنظیم نشده است.', ['status' => 503]);
+        }
+        if (strtolower($branch) !== strtolower($data['branchId'])) {
+            return new WP_REST_Response(['ok' => true, 'skipped' => 'other_branch'], 200);
+        }
+        $res = LMC_Client::get('/web/instore-purchases', [
+            'branchId' => $branch, 'invoiceId' => $data['invoiceId'], 'limit' => 1,
+        ]);
+        if (is_wp_error($res)) {
+            // خطای موقت اتصال/مجوز نباید اعلان را موفق اعلام کند یا اطلاعات پاسخ را افشا کند.
+            return new WP_Error('lmc_instore_fetch', 'دریافت خرید حضوری کامل نشد؛ دوباره تلاش می‌شود.', ['status' => 503]);
+        }
+        if (!is_array($res) || ($res['branchId'] ?? '') !== $branch
+            || !isset($res['items']) || !is_array($res['items']) || count($res['items']) > 1) {
+            return new WP_Error('lmc_instore_response', 'پاسخ خرید حضوری معتبر نیست.', ['status' => 502]);
+        }
+        if (count($res['items']) === 0) {
+            return new WP_REST_Response(['ok' => true, 'skipped' => 'not_eligible'], 200);
+        }
+        $item = $res['items'][0];
+        if (!is_array($item) || ($item['invoiceId'] ?? '') !== $data['invoiceId']
+            || ($item['channel'] ?? '') === 'web'
+            || !is_array($item['customer'] ?? null) || !is_string($item['customer']['mobile'] ?? null)
+            || !is_array($item['lines'] ?? null)) {
+            return new WP_Error('lmc_instore_response', 'پاسخ خرید حضوری با اعلان سازگار نیست.', ['status' => 502]);
+        }
+        $result = LMC_Instore::import_one($item);
+        if ($result === 'retry') {
+            return new WP_Error('lmc_instore_retry', 'ذخیرهٔ خرید حضوری کامل نشد؛ دوباره تلاش می‌شود.', ['status' => 503]);
+        }
+        return new WP_REST_Response(['ok' => true, 'result' => $result], 200);
     }
 
     /** کلید امضا — فقط از ثابت، هرگز از گزینه‌ها. */
