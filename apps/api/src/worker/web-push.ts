@@ -308,7 +308,7 @@ export function signatureMatches(expected: string, given: string): boolean {
 }
 
 export interface WebPushMessage {
-  topic: "web.stock_push" | "web.price_push";
+  topic: "web.stock_push" | "web.price_push" | "web.instore_push";
   payload: Record<string, unknown>;
 }
 
@@ -319,6 +319,7 @@ export interface WebPushSender {
 const PATHS: Record<WebPushMessage["topic"], string> = {
   "web.stock_push": "/wp-json/lmc/v1/stock",
   "web.price_push": "/wp-json/lmc/v1/price",
+  "web.instore_push": "/wp-json/lmc/v1/instore",
 };
 
 export function makeWebPushSender(
@@ -393,7 +394,8 @@ export function makeWebPushSender(
       if (res.status < 200 || res.status >= 300) {
         // «رد شد» از «نرسید» جدا است — همان قاعدهٔ پیامک و Webhook.
         // ۴xx یعنی امضا یا بدنه ایراد دارد و تلاش صدم هم درستش نمی‌کند.
-        const permanent = res.status >= 400 && res.status < 500;
+        const permanent = res.status >= 400 && res.status < 500
+          && res.status !== 408 && res.status !== 429;
         throw new SmsError(`سایت پاسخ ${res.status} داد`, permanent);
       }
     },

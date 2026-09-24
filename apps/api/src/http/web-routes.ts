@@ -324,6 +324,7 @@ export function registerWebRoutes(app: FastifyInstance, deps: WebRouteDeps): voi
     const query = z
       .object({
         branchId: uuid,
+        invoiceId: uuid.optional(),
         /**
          * مکان‌نمای صفحه قبل — از پاسخ پیشین، نه از ساعت سایت.
          *
@@ -371,6 +372,9 @@ export function registerWebRoutes(app: FastifyInstance, deps: WebRouteDeps): voi
       .orderBy("i.finalized_at", "asc")
       .orderBy("i.id", "asc")
       .limit(query.limit);
+
+    // اعلان Push فقط همان فاکتور را می‌خواهد؛ مجوز و دامنهٔ شعبه بالا حفظ می‌شوند.
+    if (query.invoiceId) q = q.where("i.id", "=", query.invoiceId);
 
     // مکان‌نمای مرکب: دو فاکتور می‌توانند در یک لحظه نهایی شوند و
     // مکان‌نمای تک‌ستونی یا یکی‌شان را جا می‌اندازد یا هر بار
