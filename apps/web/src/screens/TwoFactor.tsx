@@ -23,6 +23,7 @@ import { ApiError } from "../lib/api.ts";
 import { normalizeDigits } from "../lib/settings-value.ts";
 import { session, type TwoFactorStatus, type WebauthnKey } from "../lib/session.ts";
 import { createCredential, webauthnAvailable } from "../lib/webauthn.ts";
+import { SmsTwoFactor } from "./SmsTwoFactor.tsx";
 
 function message(err: unknown): string {
   if (err instanceof ApiError) return err.message;
@@ -143,6 +144,7 @@ export function TwoFactor({ onEnrolled }: { onEnrolled?: () => void } = {}) {
 
   return (
     <div className="stack" style={{ gap: "var(--s-3)" }}>
+      <SmsTwoFactor onEnrolled={() => { void reload().catch((e: unknown) => setError(message(e))); onEnrolled?.(); }} />
       {error ? (
         <p className="solid pos-alert" role="alert">
           <span className="dot dot--crit" aria-hidden="true">●</span> {error}
@@ -157,7 +159,7 @@ export function TwoFactor({ onEnrolled }: { onEnrolled?: () => void } = {}) {
         روشن کند، خودش هم بیرون می‌ماند. اجبار وقتی معنا دارد که
         راه‌اندازی ممکن باشد.
       */}
-      {status.shouldHave && !status.enabled ? (
+      {status.shouldHave && !status.enabled && !status.smsEnabled && status.webauthnKeys === 0 ? (
         <p className="solid pos-alert" role="alert">
           <span className="dot dot--warn" aria-hidden="true">▲</span> نقش شما احراز هویت
           دومرحله‌ای لازم دارد و هنوز راه نیفتاده است.
@@ -165,7 +167,7 @@ export function TwoFactor({ onEnrolled }: { onEnrolled?: () => void } = {}) {
       ) : null}
 
       <Solid className="pad stack" style={{ gap: "var(--s-2)" }}>
-        <h2 style={{ margin: 0, fontSize: "1rem" }}>احراز هویت دومرحله‌ای</h2>
+        <h2 style={{ margin: 0, fontSize: "1rem" }}>برنامه Authenticator (TOTP)</h2>
         <p className="muted small" style={{ margin: 0 }}>
           {status.enabled
             ? `فعال است · ${status.recoveryCodesLeft} کد بازیابی مانده`

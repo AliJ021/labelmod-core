@@ -5,6 +5,8 @@
  */
 import type { FastifyInstance, FastifyReply, FastifyRequest } from "fastify";
 import { z } from "zod";
+import { sql } from "kysely";
+import { SmsFactorService } from "../auth/sms-factor.ts";
 import { AuthError, type AuthService } from "../auth/service.ts";
 import { can, requireForSession } from "../auth/permission.ts";
 import type { DeviceService } from "../auth/devices.ts";
@@ -64,6 +66,51 @@ export interface AuthRouteDeps {
 
 export function registerAuthRoutes(app: FastifyInstance, deps: AuthRouteDeps): void {
   const { auth, db, config, devices, twoFactor, webauthn } = deps;
+  const smsFactor = new SmsFactorService(db, config);
+  const human = (req: FastifyRequest) => {
+    const s = req.session;
+    if (!s || ("apiClientId" in s)) throw new AuthError("no_session", "با حساب خود وارد شوید.");
+    if (s.pinUnlocked) throw new AuthError("pin_not_allowed", "ابتدا با رمز کامل احراز هویت کنید.");
+    return s;
+  };
+  const personalBody = z.object({ currentPassword: z.string().min(1).max(256) });
+  async function provePassword(req: FastifyRequest, password: string) {
+    await auth.reauthenticate(req.cookies[config.COOKIE_NAME] ?? "", password);
+  }
+  app.get("/auth/pin", async (req) => {
+    const s = req.session; if (!s || ("apiClientId" in s)) throw new AuthError("no_session", "وارد نشده‌اید");
+    const r = await sql<{ hasPin: boolean; length: number }>`SELECT (pin_hash IS NOT NULL) AS "hasPin",
+      platform.setting_num('auth.pin_length',4)::int AS length FROM identity.app_user WHERE id=${s.userId}::uuid`.execute(db);
+    return r.rows[0];
+  });
+  app.post("/auth/pin", { config: { rateLimit: { max: 5, timeWindow: "1 minute" } }, handler: async (req) => {
+    human(req);
+    const body = personalBody.extend({ pin: z.string().regex(/^\d{4,8}$/).nullable() }).strict().parse(req.body);
+    await auth.changeOwnPin(req.cookies[config.COOKIE_NAME] ?? "",body.currentPassword,body.pin);
+    return { ok: true, hasPin: body.pin !== null };
+  }});
+  app.get("/auth/2fa/sms/status", async (req) => smsFactor.status(human(req).userId));
+  app.post("/auth/2fa/sms/enroll", { config: { rateLimit: { max: 3, timeWindow: "15 minutes" } }, handler: async (req) => {
+    const s = human(req);
+    const body = personalBody.extend({ mobile: z.string().trim().min(10).max(20).regex(/^[+۰-۹٠-٩\d ()-]+$/) }).strict().parse(req.body);
+    await provePassword(req,body.currentPassword);
+    return smsFactor.request({ userId:s.userId, purpose:"enroll", binding:s.sessionId, sessionId:s.sessionId, mobile:body.mobile, ip:req.ip, currentPassword:body.currentPassword });
+  }});
+  app.post("/auth/2fa/sms/confirm", { config: { rateLimit: { max: 5, timeWindow: "1 minute" } }, handler: async (req) => {
+    const s = human(req), body = z.object({ code:z.string().regex(/^\d{6}$/) }).strict().parse(req.body);
+    if (!await smsFactor.confirmEnrollment(s.userId,s.sessionId,body.code)) throw new AuthError("bad_totp_setup","کد نامعتبر یا منقضی است.");
+    return { enabled:true };
+  }});
+  app.post("/auth/2fa/sms/disable", { config: { rateLimit: { max: 5, timeWindow: "1 minute" } }, handler: async (req) => {
+    const s = human(req), body = personalBody.strict().parse(req.body); await provePassword(req,body.currentPassword);
+    await smsFactor.disable(s.userId,s.sessionId,body.currentPassword); return { ok:true };
+  }});
+  app.post("/auth/2fa/sms/request", { config: { rateLimit: { max: 3, timeWindow: "15 minutes" } }, handler: async (req) => {
+    z.object({}).strict().parse(req.body ?? {});
+    const token = req.cookies[PENDING_COOKIE], pending = token ? await auth.pendingUser(token) : null;
+    if (!pending || !token) throw new AuthError("pending_expired","ابتدا نام کاربری و رمز را وارد کنید.");
+    return smsFactor.request({ userId:pending.userId, purpose:"login", binding:token, ip:req.ip });
+  }});
 
   app.post("/auth/login", {
     config: { rateLimit: { max: 5, timeWindow: "1 minute" } },
@@ -254,6 +301,11 @@ export function registerAuthRoutes(app: FastifyInstance, deps: AuthRouteDeps): v
         (userId, code) => twoFactor.verifyTotpFor(userId, code),
         "totp",
       ),
+  });
+  app.post("/auth/2fa/sms", {
+    config: { rateLimit: { max: 5, timeWindow: "1 minute" } },
+    handler: async (req,reply) => secondFactorHandler(req,reply,
+      (userId,code) => smsFactor.verifyLogin(userId,req.cookies[PENDING_COOKIE] ?? "",code), "otp"),
   });
 
   /**

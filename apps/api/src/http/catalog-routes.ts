@@ -74,6 +74,9 @@ const labelBody = z.object({
   layout: z.enum(["a4", "roll"]).default("a4"),
   rollWidthMm: z.number().min(20).max(120).optional(),
   rollHeightMm: z.number().min(10).max(120).optional(),
+}).refine((body) => body.items.reduce((sum, item) => sum + item.count, 0) <= 500, {
+  message: "حداکثر ۵۰۰ لیبل در هر درخواست مجاز است",
+  path: ["items"],
 });
 
 export interface CatalogRouteDeps {

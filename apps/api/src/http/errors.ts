@@ -59,7 +59,7 @@ export function registerErrorHandler(app: FastifyInstance): void {
       // `bad_code` و `pending_expired` عمداً ۴۰۱ می‌مانند: آن‌ها در
       // مرحله دوم **ورود** رخ می‌دهند، جایی که هنوز نشستی نیست.
       const status =
-        err.code === "locked"
+        err.code === "sms_unavailable" ? 503 : err.code === "locked"
           ? 429
           : err.code === "pin_not_allowed"
             ? 403

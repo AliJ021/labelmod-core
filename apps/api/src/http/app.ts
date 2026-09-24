@@ -30,6 +30,7 @@ import { ReportService } from "../reports/service.ts";
 import { DeviceService } from "../auth/devices.ts";
 import { registerPurchasingRoutes } from "./purchasing-routes.ts";
 import { registerMeliPayamakRoutes } from "./melipayamak-routes.ts";
+import { registerPosCatalogRoutes } from "./pos-catalog-routes.ts";
 import { registerSettingsRoutes } from "./settings-routes.ts";
 import { registerScopeRoutes } from "./scope-routes.ts";
 import { registerAdminRoutes } from "./admin-routes.ts";
@@ -85,6 +86,8 @@ const SAFE_METHODS = new Set(["GET", "HEAD", "OPTIONS"]);
  * این در آزمایش زنده پیدا شد، نه در تست.
  */
 const CSRF_EXEMPT_PATHS = new Set([
+  "/auth/2fa/sms",
+  "/auth/2fa/sms/request",
   "/auth/login",
   // مرحله دوم ورود: هنوز نشستی نیست، پس توکن Double-Submit هم نیست.
   // دفاع اینجا خودِ بلیت است — کوکی HttpOnly و یک‌بارمصرف که فقط
@@ -97,6 +100,8 @@ const CSRF_EXEMPT_PATHS = new Set([
 
 /** مسیرهایی که پیش از ورود هم باید کار کنند. */
 const PUBLIC_PATHS = new Set([
+  "/auth/2fa/sms",
+  "/auth/2fa/sms/request",
   "/health",
   "/auth/login",
   "/auth/logout",
@@ -122,6 +127,9 @@ const PUBLIC_PATHS = new Set([
 
 /** تنها قابلیت‌هایی که نشست راه‌اندازی اجازه دارد. */
 const MFA_ENROLLMENT_PATHS = new Set([
+  "GET /auth/2fa/sms/status",
+  "POST /auth/2fa/sms/enroll",
+  "POST /auth/2fa/sms/confirm",
   "GET /auth/me",
   "GET /auth/2fa",
   "POST /auth/2fa/totp/begin",
@@ -201,6 +209,7 @@ export async function buildApp(deps: AppDeps): Promise<FastifyInstance> {
           "req.body.password",
           "req.body.currentPassword",
           "req.body.pin",
+          "req.body.code",
           "res.headers['set-cookie']",
         ],
         censor: "[حذف‌شده]",
@@ -391,6 +400,7 @@ export async function buildApp(deps: AppDeps): Promise<FastifyInstance> {
     webauthn: new WebauthnService(deps.db),
   });
   registerSalesRoutes(app, { db: deps.db, invoices, shifts });
+  registerPosCatalogRoutes(app, deps.db);
   registerReturnRoutes(app, {
     db: deps.db,
     returns: new ReturnService(deps.db),

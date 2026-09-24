@@ -1207,6 +1207,9 @@ Microservice · Redis · **حالت آفلاین کامل** · **کد ارتبا
 
 ## اسناد
 
+- `docs/POS-AND-DEVICE-ACCEPTANCE.md` — جست‌وجوی گروهی صندوق، پرداخت چندبخشی، موجودی، PIN و آزمون فیزیکی چاپ و اسکن.
+- `docs/ADR-008-optional-sms-mfa.md` — عامل دوم پیامکی اختیاری؛ کلید یکسان API/Worker، بدون کد خام در لاگ یا outbox. مهاجرت ۰۷۶.
+
 - @docs/ADR-001-stack.md — چرا این Stack، و چرا منطق مالی در دیتابیس
 - @docs/ADR-002-design-language.md — Liquid Glass ناحیه‌بندی‌شده + پالت قفل‌شده
 - `docs/ADR-003-posting-batch.md` — چرا دوره ثبت از شیفت صندوق جداست

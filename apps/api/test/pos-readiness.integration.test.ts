@@ -193,6 +193,59 @@ describe("آمادگی API صندوق", { skip }, () => {
 
   // ── دامنه: شعبه و انبار ─────────────────────────────────────────
 
+  test("جست‌وجوی نام در صندوق محصول مادر را یک بار برمی‌گرداند و موجودی شعبه را رعایت می‌کند", async () => {
+    const s = await loginAs(cashier);
+    const v = await handle.db.selectFrom("catalog.variation").select("product_id").where("id","=",variationId).executeTakeFirstOrThrow();
+    const extra = await sql<{id:string}>`INSERT INTO catalog.variation(product_id,color,size,sku)
+      VALUES(${v.product_id}::uuid,'آبی','L',${"NAME-"+suffix}) RETURNING id`.execute(handle.db);
+    const search = await app.inject({method:"GET",url:`/pos/products?q=${encodeURIComponent("تی‌شرت آمادگی")}&warehouseId=${STORE_WH}`,...s});
+    assert.equal(search.statusCode,200,search.body);
+    assert.deepEqual(search.json().products.map((p:{id:string;variationCount:number})=>[p.id,p.variationCount]),[[v.product_id,2]]);
+    const list = await app.inject({method:"GET",url:`/pos/products/${v.product_id}/variations?warehouseId=${STORE_WH}`,...s});
+    assert.equal(list.statusCode,200,list.body);
+    const rows = list.json().variations;
+    assert.equal(rows.find((r:{id:string})=>r.id===variationId).available,"100.000");
+    assert.equal(rows.find((r:{id:string})=>r.id===variationId).price,"1000001");
+    assert.equal(rows.find((r:{id:string})=>r.id===extra.rows[0]!.id).price,null);
+    assert.ok(rows.every((r:Record<string,unknown>)=>!("cost" in r) && !("cost_price" in r)));
+    for (const url of [`/pos/products?q=aa&warehouseId=${STORE_WH}`,`/pos/products/${v.product_id}/variations?warehouseId=${STORE_WH}`]) {
+      assert.equal((await app.inject({method:"GET",url,...await loginAs(outsider)})).statusCode,403);
+      assert.equal((await app.inject({method:"GET",url})).statusCode,401);
+    }
+    const wildcard=await app.inject({method:"GET",url:`/pos/products?q=%25%25&warehouseId=${STORE_WH}`,...s});
+    assert.deepEqual(wildcard.json().products,[]);
+  });
+
+  test("انتخاب با شناسه تنوع همان سبد بارکد را می‌سازد؛ پرداخت نقد و کارت و نقد جمع می‌شود", async () => {
+    const s=await loginAs(cashier);
+    const created=await app.inject({method:"POST",url:"/invoices",...s,payload:{branchId:BRANCH,warehouseId:STORE_WH,channel:"pos"}});
+    assert.equal(created.statusCode,201,created.body); const id=created.json().id;
+    const line=await app.inject({method:"POST",url:`/invoices/${id}/scan`,...s,
+      headers:{...s.headers,"idempotency-key":"name-scan-"+id},payload:{variationId,qty:"1"}});
+    assert.equal(line.statusCode,200,line.body);assert.equal(line.json().invoice.payableAmount,"1000001");
+    let total=0n;
+    for(const [index,methodCode,amount] of [[0,"cash","300000"],[1,"card","400000"],[2,"cash","300001"]] as const){
+      total+=BigInt(amount);
+      const payload={methodCode,amount,...(methodCode==="card"?{refNo:"MIXED-"+suffix}:{})};
+      const headers={...s.headers,"idempotency-key":`mixed-${id}-${index}`};
+      const paid=await app.inject({method:"POST",url:`/invoices/${id}/payments`,...s,headers,payload});
+      assert.equal(paid.statusCode,201,paid.body);assert.equal(paid.json().receivedAmount,total.toString());
+      const retry=await app.inject({method:"POST",url:`/invoices/${id}/payments`,...s,headers,payload});
+      assert.equal(retry.statusCode,200,retry.body);assert.equal(retry.json().receivedAmount,total.toString());
+    }
+    const rows=await app.inject({method:"GET",url:`/invoices/${id}/payments`,...s});
+    assert.equal(rows.statusCode,200,rows.body);
+    assert.equal(rows.json().payments.length,3);
+    assert.equal(rows.json().payments.reduce((n:bigint,p:{amount:string})=>n+BigInt(p.amount),0n),1000001n);
+    assert.ok(rows.json().payments.every((p:object)=>Object.keys(p).sort().join(",")==="amount,id,name"));
+    const stranger=await app.inject({method:"GET",url:`/invoices/${id}/payments`,...await loginAs(supervisor)});
+    assert.equal(stranger.statusCode,403,stranger.body);
+    const final=await app.inject({method:"POST",url:`/invoices/${id}/finalize`,...s,payload:{}});
+    assert.equal(final.statusCode,200,final.body);
+    const inv=await app.inject({method:"GET",url:`/invoices/${id}`,...s});
+    assert.equal(inv.json().paidAmount,"1000001");assert.equal(inv.json().status,"finalized");
+  });
+
   test("GET /branches بدون نشست ۴۰۱ می‌دهد", async () => {
     const r = await app.inject({ method: "GET", url: "/branches" });
     assert.equal(r.statusCode, 401);

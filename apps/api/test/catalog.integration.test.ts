@@ -506,6 +506,14 @@ describe("ساخت خودکار تنوع و ماتریس موجودی", { skip }
     assert.ok(html.includes("شعبه اصلی"), "نام فروشگاه از دیتابیس");
   });
 
+  test("درخواست چاپ بیش از سقف مجموع ۵۰۰ لیبل رد می‌شود", async () => {
+    const sup=await loginAs(supervisor);
+    const r=await app.inject({method:"POST",url:"/labels",...sup,payload:{
+      items:Array.from({length:6},()=>({variationId:"00000000-0000-7000-8000-0000000000ff",count:100})),
+    }});
+    assert.equal(r.statusCode,400,r.body);
+  });
+
   test("نام کالای مخرب، از مسیر واقعی هم اسکریپت اجرا نمی‌کند", async () => {
     const sup = await loginAs(supervisor);
     const evil = await sql<{ id: string }>`

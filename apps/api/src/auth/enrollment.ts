@@ -17,7 +17,7 @@ export async function lockEnrollment(trx: Transaction<Database>, userId: string,
   }
 }
 
-export async function proveEnrollment(trx: Transaction<Database>, userId: string, sessionId: string, method: "totp" | "webauthn"): Promise<void> {
+export async function proveEnrollment(trx: Transaction<Database>, userId: string, sessionId: string, method: "totp" | "webauthn" | "otp"): Promise<void> {
   await trx.updateTable("identity.session").set({ auth_method: method }).where("id", "=", sessionId).execute();
   await sql`UPDATE identity.session SET revoked_at = now()
     WHERE user_id = ${userId}::uuid AND id <> ${sessionId}::uuid

@@ -32,6 +32,7 @@ export type AuthFailure =
   | "totp_not_enabled"
   | "no_enrollment"
   | "bad_code"
+  | "sms_unavailable"
   | "bad_totp_setup"
   | "pending_expired";
 
@@ -120,7 +121,7 @@ export type LoginOutcome =
       fullName: string;
       pendingToken: string;
       expiresAt: Date;
-      methods: Array<"totp" | "webauthn" | "recovery">;
+      methods: Array<"totp" | "webauthn" | "recovery" | "sms">;
     };
 
 export class AuthService {
@@ -241,9 +242,10 @@ export class AuthService {
     return r.rows[0]?.required === true;
   }
 
-  async secondFactorMethods(userId: string): Promise<Array<"totp" | "webauthn" | "recovery">> {
-    const r = await sql<{ totp: boolean; webauthn: boolean; recovery: boolean }>`
+  async secondFactorMethods(userId: string): Promise<Array<"totp" | "webauthn" | "recovery" | "sms">> {
+    const r = await sql<{ totp: boolean; webauthn: boolean; recovery: boolean; sms: boolean }>`
       SELECT (u.totp_secret IS NOT NULL) AS totp,
+             EXISTS (SELECT 1 FROM identity.sms_factor f WHERE f.user_id=u.id) AS sms,
              EXISTS (SELECT 1 FROM identity.webauthn_credential w WHERE w.user_id = u.id)
                AS webauthn,
              EXISTS (SELECT 1 FROM identity.recovery_code c
@@ -251,7 +253,8 @@ export class AuthService {
         FROM identity.app_user u WHERE u.id = ${userId}::uuid
     `.execute(this.#db);
     const row = r.rows[0];
-    const out: Array<"totp" | "webauthn" | "recovery"> = [];
+    const out: Array<"totp" | "webauthn" | "recovery" | "sms"> = [];
+    if (row?.sms) out.push("sms");
     if (row?.totp) out.push("totp");
     if (row?.webauthn) out.push("webauthn");
     if (row?.recovery) out.push("recovery");
@@ -296,19 +299,18 @@ export class AuthService {
     userAgent?: string | undefined;
   }): Promise<Session> {
     const hash = hashPendingToken(input.pendingToken);
-    const row = await this.#db
-      .selectFrom("identity.pending_login as p")
-      .innerJoin("identity.app_user as u", "u.id", "p.user_id")
-      .select(["p.id", "p.user_id", "p.device_id", "u.full_name", "u.is_active"])
-      .where("p.token_hash", "=", hash)
-      .where("p.expires_at", ">", sql<Date>`now()`)
-      .executeTakeFirst();
-
+    // مصرف اتمی بلیت: رقابت دو روش عامل دوم فقط یک نشست می‌سازد.
+    const consumed = await sql<{ id: string; user_id: string; device_id: string | null; full_name: string; is_active: boolean }>`
+      DELETE FROM identity.pending_login p USING identity.app_user u
+      WHERE p.user_id=u.id AND p.token_hash=${hash} AND p.expires_at>now() AND u.is_active
+      RETURNING p.id,p.user_id,p.device_id,u.full_name,u.is_active
+    `.execute(this.#db);
+    const row = consumed.rows[0];
     if (!row || !row.is_active) {
       throw new AuthError("pending_expired", "مهلت این ورود تمام شده. دوباره وارد شوید.");
     }
 
-    await this.#db.deleteFrom("identity.pending_login").where("id", "=", row.id).execute();
+
 
     const device = input.deviceFingerprint
       ? await this.resolveDevice(input.deviceFingerprint)
@@ -625,6 +627,30 @@ export class AuthService {
         .set({ pin_hash: hash })
         .where("id", "=", userId)
         .execute();
+    });
+  }
+
+  /** تغییر PIN شخصی، با کنترل دوباره نشست و رمز در همان تراکنش. */
+  async changeOwnPin(token: string, password: string, pin: string | null): Promise<void> {
+    const session = await this.resolve(token);
+    if (!session || session.pinUnlocked) throw new AuthError("pin_not_allowed", "با رمز کامل وارد شوید.");
+    const len = await this.settingNumber("auth.pin_length", 4);
+    if (pin !== null && !new RegExp(`^\\d{${len}}$`).test(pin)) {
+      throw new AuthError("bad_credentials", `PIN باید دقیقاً ${len} رقم باشد`);
+    }
+    await this.reauthenticate(token, password);
+    const hash = pin === null ? null : await hashSecret(pin);
+    await this.#db.transaction().execute(async (trx) => {
+      const user = await trx.selectFrom("identity.app_user").select(["password_hash","is_active"])
+        .where("id","=",session.userId).forUpdate().executeTakeFirst();
+      const live = await trx.selectFrom("identity.session").select("id").where("id","=",session.sessionId)
+        .where("revoked_at","is",null).where("locked_at","is",null).where("pin_unlocked","=",false)
+        .where("expires_at",">",sql<Date>`clock_timestamp()`).forUpdate().executeTakeFirst();
+      if (!live || !user?.is_active) throw new AuthError("no_session","نشست پایان یافته است.");
+      if (!await verifySecret(user.password_hash,password)) throw new AuthError("bad_credentials",VAGUE);
+      await setActor(trx,session.userId);
+      await trx.updateTable("identity.app_user").set({pin_hash:hash}).where("id","=",session.userId).execute();
+      await sql`SELECT platform.audit(${pin === null ? "auth.pin_remove" : "auth.pin_set"},'app_user',${session.userId}::text,NULL,${session.userId}::uuid)`.execute(trx);
     });
   }
 

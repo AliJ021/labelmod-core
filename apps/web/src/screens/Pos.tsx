@@ -28,6 +28,8 @@
  */
 import { memo, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { CameraScan } from "../components/CameraScan.tsx";
+import { PosProductPicker } from "../components/PosProductPicker.tsx";
+import { PaymentBreakdown } from "../components/PaymentBreakdown.tsx";
 import { Glass, Solid } from "../components/Glass.tsx";
 import { ApiError } from "../lib/api.ts";
 import { ActionKeys, ScanCounter } from "../lib/action-key.ts";
@@ -362,7 +364,7 @@ export function Pos() {
   }, [openDraft, shift, branchId, warehouseId]);
 
   const addByBarcode = useCallback(
-    async (barcode: string) => {
+    async (barcode: string, variationId?: string) => {
       setError(null);
       setBusy(true);
       // بیرون از `try` تا مسیر خطا هم بتواند سبد را تازه کند.
@@ -396,7 +398,7 @@ export function Pos() {
         // هر کشیدن اسکنر یک عمل تازه است: بدون شمارنده، اسکن دوم
         // Replay اسکن اول می‌شد و تعداد روی یک می‌ماند.
         const out = await keys.current.run(scans.current.next(inv.id), (key) =>
-          pos.scan(inv.id, { barcode, qty: "1" }, { idempotencyKey: key }),
+          pos.scan(inv.id, { ...(variationId ? { variationId } : { barcode }), qty: "1" }, { idempotencyKey: key }),
         );
         setInvoice(out.invoice);
       } catch (err) {
@@ -529,13 +531,15 @@ export function Pos() {
   }, [flushQueue]);
 
   async function guarded(fn: () => Promise<void>) {
-    if (busy) return;
+    if (busy) return false;
     setBusy(true);
     setError(null);
     try {
       await fn();
+      return true;
     } catch (err) {
       setError(message(err));
+      return false;
     } finally {
       setBusy(false);
     }
@@ -863,6 +867,8 @@ export function Pos() {
         </button>
       </Glass>
 
+      <PosProductPicker key={warehouseId} warehouseId={warehouseId} busy={busy} onPick={(id) => addByBarcode("", id)} />
+
       {/* عنصر ساده با کلاس `solid`، نه کامپوننت `Solid`: آن `role`
           نمی‌گیرد و اینجا اعلام زنده لازم است تا صندوق‌دار خطا را
           بشنود، نه فقط ببیند. سطح شیشه‌ای هم داخلش نیست که Context
@@ -960,7 +966,7 @@ export function Pos() {
                 />
               ))}
               {lines.length === 0 && (
-                <li className="empty">سبد خالی است — بارکد را اسکن کنید</li>
+                <li className="empty">سبد خالی است — نام محصول را جست‌وجو یا بارکد را اسکن کنید</li>
               )}
             </ul>
           </fieldset>
@@ -1014,6 +1020,7 @@ export function Pos() {
         </Solid>
 
         <PayPanel
+          invoiceId={invoice?.id ?? null}
           methods={methods}
           payable={payable}
           received={received}
@@ -1025,7 +1032,7 @@ export function Pos() {
           })}
           busy={busy}
           hasCart={invoice !== null && lines.length > 0}
-          onPay={(code, amount, ref) => void takePayment(code, amount, ref)}
+          onPay={takePayment}
           onFinalize={() => void finalize()}
           onAbandon={() => void abandon()}
         />
@@ -1622,6 +1629,7 @@ function DiscountPanel({
 }
 
 function PayPanel({
+  invoiceId,
   methods,
   payable,
   received,
@@ -1632,13 +1640,14 @@ function PayPanel({
   onFinalize,
   onAbandon,
 }: {
+  invoiceId: string | null;
   methods: PaymentMethod[];
   payable: bigint;
   received: bigint;
   canFinalize: boolean;
   busy: boolean;
   hasCart: boolean;
-  onPay: (methodCode: string, amount: bigint, refNo?: string) => void;
+  onPay: (methodCode: string, amount: bigint, refNo?: string) => Promise<boolean>;
   onFinalize: () => void;
   onAbandon: () => void;
 }) {
@@ -1655,6 +1664,9 @@ function PayPanel({
 
   return (
     <Solid as="aside" className="pay">
+      <h2 style={{ fontSize: "1rem", margin: 0 }}>پرداخت نقدی، کارت‌خوان یا ترکیبی</h2>
+      <p className="muted small">برای پرداخت ترکیبی، مبلغ بخش اول را با یک روش دریافت کنید؛ سپس روش بعدی را برای مانده انتخاب کنید.</p>
+      {invoiceId && received > 0n ? <PaymentBreakdown invoiceId={invoiceId} received={received} /> : null}
       <div className="total">
         <span className="muted">قابل پرداخت</span>
         <strong className="num total-value">{toman(payable)}</strong>
@@ -1713,11 +1725,9 @@ function PayPanel({
             type="button"
             className="btn btn--primary"
             disabled={busy || typed === null || typed <= 0n || (chosen.requiresRef && refNo === "")}
-            onClick={() => {
+            onClick={async () => {
               if (typed !== null && typed > 0n) {
-                onPay(chosen.code, typed, refNo);
-                setAmount("");
-                setRefNo("");
+                if (await onPay(chosen.code, typed, refNo)) { setAmount(""); setRefNo(""); }
               }
             }}
           >
