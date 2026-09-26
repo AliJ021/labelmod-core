@@ -8,7 +8,10 @@ for (const decision of ["approved", "rejected"] as const) {
       requestedAt: "2026-09-24T10:00:00Z", requestedBy: "اتصال سایت", payload: { orderId: "100", refundId: "101",
         amount: "100000", shippingAmount: "0", lines: [{ lineNo: 1, qty: "1", restock: true }] } }] };
     let submitted: unknown;
+    let releaseDecision!: () => void;
+    const decisionGate = new Promise<void>((resolve) => { releaseDecision = resolve; });
     api.handlers.set("POST /web-refund-requests/r1/decision", async (route) => {
+      await decisionGate;
       submitted = route.request().postDataJSON();
       await route.fulfill({ json: { requestId: "r1", status: decision === "approved" ? "posted" : "rejected" } });
     });
@@ -24,8 +27,9 @@ for (const decision of ["approved", "rejected"] as const) {
     await expect(approve).toBeDisabled();
     if (decision === "approved") await panel.getByRole("checkbox").check();
     await (decision === "approved" ? approve : reject).click();
-    expect(submitted).toEqual({ decision, reason: "رسید و کالای برگشتی بررسی شد" });
+    releaseDecision();
     await expect(panel.getByRole("status")).toContainText(decision === "approved" ? "سند مرجوعی ثبت شد" : "سند و موجودی تغییر نکردند");
+    expect(submitted).toEqual({ decision, reason: "رسید و کالای برگشتی بررسی شد" });
     expect(api.calls.filter((call) => call === "POST /web-refund-requests/r1/decision")).toHaveLength(1);
   });
 }
