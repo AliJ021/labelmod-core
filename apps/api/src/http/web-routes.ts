@@ -23,7 +23,7 @@ import { requireForSession } from "../auth/permission.ts";
 import type { Db } from "../db/client.ts";
 import { parseMoney, serializeMoney } from "../lib/money.ts";
 import { runOnce } from "../lib/idempotency.ts";
-import { assertBranch, assertWarehouseInBranch } from "../sales/scope.ts";
+import { assertBranch, assertWarehouseInBranch, ScopeError } from "../sales/scope.ts";
 import { InvoiceError, type InvoiceService } from "../sales/invoice.ts";
 import { assertMarkdownAllowed } from "../sales/markdown-gate.ts";
 import type { WebOrderService } from "../sales/web-order.ts";
@@ -314,6 +314,9 @@ export function registerWebRoutes(app: FastifyInstance, deps: WebRouteDeps): voi
    */
   app.get("/web/instore-purchases", async (req) => {
     const s = session(req);
+    if (!("apiClientId" in s)) {
+      throw new ScopeError("خوراک خرید مشتریان فقط از طریق کلید اتصال سایت در دسترس است");
+    }
     const query = z
       .object({
         branchId: uuid,

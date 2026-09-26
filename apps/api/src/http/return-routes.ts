@@ -23,6 +23,7 @@ import type { Db } from "../db/client.ts";
 import { parseMoney } from "../lib/money.ts";
 import { runOnce } from "../lib/idempotency.ts";
 import { assertBranch, assertWarehouseInBranch } from "../sales/scope.ts";
+import { requireInvoiceRead } from "../sales/invoice-access.ts";
 import {
   ReturnError,
   returnToJson,
@@ -115,6 +116,7 @@ export function registerReturnRoutes(app: FastifyInstance, deps: ReturnRouteDeps
   /** آنچه از فاکتور هنوز قابل برگشت است — پیش‌نمایش صندوق. */
   app.get("/invoices/:id/returnable", async (req) => {
     const s = session(req);
+    await requireInvoiceRead(db, s);
     const { id } = z.object({ id: uuid }).parse(req.params);
 
     const inv = await db
