@@ -362,12 +362,11 @@ jobs:
 
       - name: docker-compose تولیدی معتبر است
         run: |
-          DB_PASSWORD=ci SITE_ADDRESS=shop.example.com ACME_EMAIL=ci@example.com \
-            docker compose -f docker-compose.prod.yml config --quiet
+          python3 ops/test-runtime-compose.py
 
       - name: کلید امضای Push به Worker منتقل می‌شود
         run: |
-          DB_PASSWORD=ci SITE_ADDRESS=shop.example.com ACME_EMAIL=ci@example.com \
+          DB_PASSWORD=ci APP_DB_PASSWORD=ci_app_only SITE_ADDRESS=shop.example.com ACME_EMAIL=ci@example.com \
             WEB_PUSH_SECRET=ci-push-secret \
             docker compose -f docker-compose.prod.yml config --format json > compose-test.json
           python3 - <<'PY'
