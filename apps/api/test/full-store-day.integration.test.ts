@@ -832,7 +832,7 @@ describe("یک روز کامل فروشگاه", { skip, timeout: 300_000 }, () =
       receiptId: day.receipt,
       reasonCode: "quality",
       lines: [{ receiptLineId: rl.receiptLineId, qty: "2" }],
-    });
+    }, `day-purchase-return-${suffix}`);
     assert.equal(pr.statusCode, 201, pr.body);
     day.purchaseReturn = (pr.json() as { id: string }).id;
 

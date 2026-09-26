@@ -873,6 +873,8 @@ export function registerPurchasingRoutes(
   app.post("/purchase-returns", async (req, reply) => {
     const s = session(req);
     const body = createReturnBody.parse(req.body);
+    const key = idempotencyKey(req);
+    if (!key?.trim()) throw new PurchasingError("idempotency_required", "شناسه یکتای درخواست لازم است.", 400);
 
     const scope = await branchesOf(db, s.userId);
     const source = await returns.returnable(body.receiptId, scope);
@@ -883,7 +885,7 @@ export function registerPurchasingRoutes(
     await requireForSession(db, s, "stock.receive");
 
     const out = await runOnce<string>(db, {
-      key: idempotencyKey(req),
+      key,
       source: "api.purchase-return.create",
       payload: { actorId: s.userId, ...body },
       run: async (trx) => {

@@ -729,6 +729,7 @@ describe("رسید خرید", { skip }, () => {
       method: "POST",
       url: "/purchase-returns",
       ...s,
+      headers: { ...s.headers, "idempotency-key": `purchase-return-value-${suffix}` },
       payload: {
         receiptId: draft.id,
         reasonCode: "quality",
@@ -823,6 +824,7 @@ describe("رسید خرید", { skip }, () => {
       method: "POST",
       url: "/purchase-returns",
       ...s,
+      headers: { ...s.headers, "idempotency-key": `purchase-return-excess-${suffix}` },
       payload: {
         receiptId: draft.id,
         reasonCode: "quality",
@@ -877,6 +879,7 @@ describe("رسید خرید", { skip }, () => {
       method: "POST",
       url: "/purchase-returns",
       ...s,
+      headers: { ...s.headers, "idempotency-key": `purchase-return-foreign-line-${suffix}` },
       payload: {
         receiptId: a.id,
         reasonCode: "quality",
@@ -939,5 +942,91 @@ describe("رسید خرید", { skip }, () => {
     });
     assert.equal(added.statusCode, 403, added.body);
     assert.equal(added.json().error.code, "pay_account_forbidden");
+  });
+
+  async function retryReceipt() {
+    const s = await loginAs(keeper);
+    const draft = await newDraft(keeper);
+    const line = await app.inject({ method: "POST", url: `/receipts/${draft.id}/lines`, ...s,
+      payload: { variationId: variationB, qty: "6", unitPrice: "1000000" } });
+    assert.equal(line.statusCode, 201, line.body);
+    const posted = await app.inject({ method: "POST", url: `/receipts/${draft.id}/post`, ...s });
+    assert.equal(posted.statusCode, 200, posted.body);
+    const receipt = posted.json() as ReceiptBody;
+    const payload = { receiptId: receipt.id, reasonCode: "quality",
+      lines: [{ receiptLineId: receipt.lines[0]!.id, qty: "2" }] };
+    const effects = async () => (await sql<{
+      documents: number; movements: number; entries: number; inboxes: number; returned: string;
+    }>`SELECT
+      (SELECT count(*)::int FROM purchasing.purchase_return WHERE receipt_id=${receipt.id}::uuid) documents,
+      (SELECT count(*)::int FROM inventory.stock_movement WHERE kind='purchase_return'
+        AND ref_id IN (SELECT id FROM purchasing.purchase_return WHERE receipt_id=${receipt.id}::uuid)) movements,
+      (SELECT count(*)::int FROM ledger.journal_entry WHERE ref_type='purchase_return'
+        AND ref_id IN (SELECT id FROM purchasing.purchase_return WHERE receipt_id=${receipt.id}::uuid)) entries,
+      (SELECT count(*)::int FROM platform.inbox_message WHERE source='api.purchase-return.create'
+        AND payload->>'receiptId'=${receipt.id}) inboxes,
+      (SELECT returned_qty::text FROM purchasing.receipt_line WHERE id=${receipt.lines[0]!.id}::uuid) returned`
+      .execute(handle.db)).rows[0]!;
+    const send = (key?: string, body = payload, actor = s) => app.inject({ method: "POST", url: "/purchase-returns",
+      ...actor, headers: { ...actor.headers, ...(key === undefined ? {} : { "idempotency-key": key }) }, payload: body });
+    return { payload, effects, send };
+  }
+
+  test("مرجوعی خرید بدون کلید تکرار، پیش از هر اثر مالی رد می‌شود", async () => {
+    const { effects, send } = await retryReceipt();
+    const before = await effects();
+    const stock = await onHand(variationB);
+    for (const key of [undefined, "", "   "]) {
+      const response = await send(key);
+      assert.equal(response.statusCode, 400, response.body);
+      assert.equal(response.json().error.code, "idempotency_required");
+      assert.deepEqual(await effects(), before);
+      assert.equal(await onHand(variationB), stock);
+    }
+  });
+
+  test("تکرار هم‌زمان و پس از برگشت کامل فقط همان سند را بازمی‌گرداند", async () => {
+    const { payload, effects, send } = await retryReceipt();
+    const stock = await onHand(variationB);
+    const key = `return-retry-${suffix}`;
+    const pair = await Promise.all([send(key), send(key)]);
+    assert.deepEqual(pair.map(r => r.statusCode).sort(), [200, 201]);
+    assert.equal(pair[0].json().id, pair[1].json().id);
+    const replay = await send(key);
+    assert.equal(replay.statusCode, 200, replay.body);
+    assert.equal(replay.json().replayed, true);
+    assert.equal(replay.json().id, pair[0].json().id);
+    assert.deepEqual(await effects(), { documents: 1, movements: 1, entries: 1, inboxes: 1, returned: "2.000" });
+    assert.equal(await onHand(variationB), stock - 2);
+    const changed = await send(key, { ...payload, lines: [{ ...payload.lines[0]!, qty: "1" }] });
+    assert.equal(changed.statusCode, 409, changed.body);
+    assert.equal(changed.json().error.code, "idempotency_key_reused");
+    const otherActor = await send(key, payload, await loginAs(manager));
+    assert.equal(otherActor.statusCode, 409, otherActor.body);
+    assert.equal(otherActor.json().error.code, "idempotency_key_reused");
+    const remainder = await send(`${key}-next`, { ...payload, lines: [{ ...payload.lines[0]!, qty: "4" }] });
+    assert.equal(remainder.statusCode, 201, remainder.body);
+    assert.notEqual(remainder.json().id, replay.json().id);
+    const afterFullReturn = await send(key);
+    assert.equal(afterFullReturn.statusCode, 200, afterFullReturn.body);
+    assert.equal(afterFullReturn.json().id, replay.json().id);
+    assert.deepEqual(await effects(), { documents: 2, movements: 2, entries: 2, inboxes: 2, returned: "6.000" });
+    assert.equal(await onHand(variationB), stock - 6);
+  });
+
+  test("خطای مرجوعی خرید Inbox و سند نمی‌گذارد و همان کلید قابل تلاش دوباره است", async () => {
+    const { payload, effects, send } = await retryReceipt();
+    const before = await effects();
+    const stock = await onHand(variationB);
+    const key = `return-rollback-${suffix}`;
+    const failed = await send(key, { ...payload, lines: [{ ...payload.lines[0]!, qty: "7" }] });
+    assert.equal(failed.statusCode, 409, failed.body);
+    assert.equal(failed.json().error.code, "rule_violation");
+    assert.deepEqual(await effects(), before);
+    assert.equal(await onHand(variationB), stock);
+    const retry = await send(key);
+    assert.equal(retry.statusCode, 201, retry.body);
+    assert.deepEqual(await effects(), { documents: 1, movements: 1, entries: 1, inboxes: 1, returned: "2.000" });
+    assert.equal(await onHand(variationB), stock - 2);
   });
 });
