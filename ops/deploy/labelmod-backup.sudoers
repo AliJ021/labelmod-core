@@ -1,0 +1,4 @@
+# نصب با visudo در /etc/sudoers.d/labelmod-backup؛ فایل‌ها و Compose فقط قابل‌نوشتن توسط مدیر استقرار باشند.
+Defaults:labelmod-backup env_reset
+Defaults:labelmod-backup secure_path=/usr/sbin:/usr/bin:/sbin:/bin
+labelmod-backup ALL=(root) NOPASSWD: /usr/local/sbin/labelmod-backup-writers stop, /usr/local/sbin/labelmod-backup-writers resume-original, /usr/local/sbin/labelmod-backup-writers resume-restored

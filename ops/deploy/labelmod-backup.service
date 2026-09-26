@@ -1,0 +1,31 @@
+[Unit]
+Description=Labelmod isolated backup manager
+After=docker.service
+Requires=docker.service
+
+[Service]
+Type=simple
+User=labelmod-backup
+Group=labelmod-backup-socket
+WorkingDirectory=/srv/labelmod/app
+EnvironmentFile=/etc/labelmod-backup.env
+ExecStartPre=/usr/bin/rm -f /run/labelmod-backup/manager.sock
+ExecStart=/usr/bin/node --experimental-strip-types /srv/labelmod/app/apps/api/src/cli/backup-manager.ts
+RuntimeDirectory=labelmod-backup
+RuntimeDirectoryMode=0750
+RuntimeDirectoryPreserve=yes
+StateDirectory=labelmod-backup
+StateDirectoryMode=0700
+UMask=0077
+PrivateTmp=true
+ProtectHome=true
+ProtectSystem=strict
+ReadWritePaths=/run/labelmod-backup /var/lib/labelmod-backup /var/lib/labelmod-backup-control
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
+Restart=on-failure
+RestartSec=10
+TimeoutStopSec=180
+# اجرای sudo فقط برای helper ثابت بالاست؛ API این مجوز و این فایل محیط را ندارد.
+
+[Install]
+WantedBy=multi-user.target
