@@ -116,6 +116,7 @@ export function registerSettingsRoutes(app: FastifyInstance, deps: SettingsRoute
     const s = session(req);
     const key = settingKey.parse((req.params as { key: string }).key);
     const body = patchBody.parse(req.body);
+    if (key === "payment.snappay_account_id") throw new SettingError("dedicated_setting", "حساب اسنپ‌پی را از بخش اختصاصی اسنپ‌پی تنظیم کنید.", 422);
 
     // ترتیب اهمیت دارد: اول وجود کلید، بعد مجوزِ **همان** کلید. اگر
     // مجوز عمومی می‌گرفتیم، کسی که settings.manage دارد می‌توانست نرخ

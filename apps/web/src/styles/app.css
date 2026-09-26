@@ -52,7 +52,7 @@
   margin-inline-start: auto;
 }
 
-.zones button,
+.zones [role="tab"],
 .tool {
   min-height: var(--touch);
   padding: 0 var(--s-4);
@@ -65,13 +65,13 @@
     color var(--t-fast) var(--ease-out);
 }
 
-.zones button:hover,
+.zones [role="tab"]:hover,
 .tool:hover {
   background: color-mix(in srgb, var(--ink) 7%, transparent);
   color: var(--ink);
 }
 
-.zones button.on {
+.zones [role="tab"].on {
   background: var(--accent);
   color: var(--accent-ink);
 }
@@ -779,7 +779,7 @@ select.set-input {
     display: none;
   }
 
-  .zones button,
+  .zones [role="tab"],
   .tool {
     white-space: nowrap;
   }
@@ -818,7 +818,7 @@ select.set-input {
     display: none;
   }
 
-  .zones button,
+  .zones [role="tab"],
   .tool {
     padding: 0 var(--s-3);
     white-space: nowrap;
@@ -890,7 +890,7 @@ select.set-input {
   flex-wrap: wrap;
 }
 
-.subtabs button {
+.subtabs [role="tab"] {
   padding: var(--s-2) var(--s-3);
   border-radius: var(--r-sm);
   border: 1px solid var(--ring);
@@ -899,7 +899,7 @@ select.set-input {
   cursor: pointer;
 }
 
-.subtabs button.on {
+.subtabs [role="tab"].on {
   border-color: var(--accent);
   color: var(--accent);
   font-weight: 600;

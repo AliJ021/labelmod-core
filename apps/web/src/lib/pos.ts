@@ -85,6 +85,7 @@ export interface InvoiceGift {
 
 export interface Invoice {
   id: string;
+  createdBy?: string | null;
   number: string | null;
   branchId: string;
   warehouseId: string;
@@ -452,6 +453,8 @@ export const pos = {
       reasonNote?: string;
       refundAmount: string;
       refundMethod?: string;
+      refundReference?: string;
+      refundPaymentId?: string;
       shiftId?: string;
       lines: Array<{ invoiceLineId: string; qty: string; restock?: boolean }>;
     },

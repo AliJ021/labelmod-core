@@ -72,6 +72,8 @@ const createReturnBody = z.object({
   reasonNote: z.string().max(500).optional(),
   refundAmount: moneyString.default("0"),
   refundMethod: dataCode.optional(),
+  refundReference: z.string().trim().min(1).max(200).optional(),
+  refundPaymentId: uuid.optional(),
   /**
    * کدام کشو؟ — فقط وقتی **چند** کشو در شعبه باز است.
    *
@@ -176,6 +178,8 @@ export function registerReturnRoutes(app: FastifyInstance, deps: ReturnRouteDeps
       refundAmount: refund,
       lines: body.lines,
       actorId: s.userId,
+      ...(body.refundReference === undefined ? {} : { refundReference: body.refundReference }),
+      ...(body.refundPaymentId === undefined ? {} : { refundPaymentId: body.refundPaymentId }),
       ...(body.reasonNote === undefined ? {} : { reasonNote: body.reasonNote }),
       ...(body.refundMethod === undefined ? {} : { refundMethod: body.refundMethod }),
       ...(gate.shiftId === undefined ? {} : { shiftId: gate.shiftId }),

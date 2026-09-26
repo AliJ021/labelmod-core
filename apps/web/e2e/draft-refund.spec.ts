@@ -2,14 +2,14 @@ import { test, expect } from "./fixtures";
 
 for (const kind of ["cash", "transfer", "unknown"] as const) {
   test(`paid draft recovery requires explicit confirmation: ${kind}`, async ({ page, api }) => {
-    const invoice = { id: "draft1", number: null, branchId: "b1", warehouseId: "w1", shiftId: "s1", customerId: null,
+    const invoice = { id: "draft1", number: null, branchId: "b1", warehouseId: "w1", shiftId: "s1", createdBy: "22222222-2222-4222-8222-222222222222", customerId: null,
       status: "draft", channel: "pos", grossAmount: "200000", discountAmount: "0", netAmount: "200000", taxAmount: "0",
       shippingAmount: "0", payableAmount: "200000", paidAmount: "0", receivedAmount: "200000", recipientId: null, gift: null,
       occurredAt: "2026-09-23T00:00:00Z", lines: [{ id: "l1", lineNo: 1, variationId: "v1", productName: "کالای آزمون",
         sku: "TEST", qty: "1", unitPrice: "200000", netAmount: "200000", discountAmount: "0", listPrice: null,
         priceOverrideReason: null, discountReason: null }] };
     api.defaults["GET /payment-methods"] = { methods: [{ code: "cash", name: "نقد", kind: "cash", requiresRef: false }] };
-    api.defaults["GET /shifts/current"] = { id: "s1", branchId: "b1", status: "open", openingCash: "0", openedAt: "2026-09-23T00:00:00Z" };
+    api.defaults["GET /shifts/current"] = { id: "s1", userId: "22222222-2222-4222-8222-222222222222", branchId: "b1", status: "open", openingCash: "0", openedAt: "2026-09-23T00:00:00Z" };
     api.defaults["GET /invoices/draft1"] = invoice;
     api.defaults["GET /invoices/draft1/payments"] = {payments:[{id:"p1",amount:"200000",name:"پرداخت آزمون"}]};
     api.defaults["GET /gift-options"] = { wraps: [], colors: [], flowers: [] };

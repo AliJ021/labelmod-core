@@ -45,6 +45,7 @@ export interface GlassProps {
   as?: "div" | "section" | "header" | "aside" | "nav";
   className?: string;
   style?: CSSProperties;
+  "aria-label"?: string;
 }
 
 const RADIUS: Record<NonNullable<GlassProps["radius"]>, string> = {
@@ -61,6 +62,7 @@ export function Glass({
   as: Tag = "div",
   className = "",
   style,
+  "aria-label": ariaLabel,
 }: GlassProps) {
   const nested = useContext(InsideGlass);
   const ref = useRef<HTMLDivElement | null>(null);
@@ -96,7 +98,7 @@ export function Glass({
   if (nested) {
     // داخل شیشه‌ایم: تینت، بدون لایه بلور دوم.
     return (
-      <Tag className={`glass-tint ${className}`} style={vars}>
+      <Tag aria-label={ariaLabel} className={`glass-tint ${className}`} style={vars}>
         {children}
       </Tag>
     );
@@ -105,6 +107,7 @@ export function Glass({
   return (
     <InsideGlass.Provider value={true}>
       <Tag
+        aria-label={ariaLabel}
         ref={ref as React.Ref<never>}
         className={`glass ${refract ? "glass--refract" : ""} ${className}`}
         style={vars}

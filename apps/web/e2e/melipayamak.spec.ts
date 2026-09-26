@@ -1,3 +1,4 @@
+import { openZone } from "./fixtures";
 import { test, expect } from "./fixtures";
 
 test("MelliPayamak settings rotate, preserve and explicitly clear a write-only key", async ({ page, api }) => {
@@ -11,7 +12,7 @@ test("MelliPayamak settings rotate, preserve and explicitly clear a write-only k
     state = { ...state, accountName: String(body.accountName), revision: state.revision + 1, hasKey: !body.clearKey };
     await route.fulfill({ json: state });
   });
-  await page.goto("/"); await page.getByRole("tablist", { name: "بخش‌ها", exact: true }).getByRole("tab", { name: "تنظیمات", exact: true }).click();
+  await page.goto("/"); await openZone(page, "تنظیمات");
   const key = page.getByLabel("کلید API جدید ملی‌پیامک", { exact: true });
   const account = page.getByLabel("نام حساب / نام کاربری پنل (اختیاری)", { exact: true });
   const save = page.getByRole("button", { name: "ذخیرهٔ اتصال ملی‌پیامک", exact: true });
@@ -34,7 +35,7 @@ test("MelliPayamak settings show concurrent-update failure without claiming succ
   api.handlers.set("PUT /settings/melipayamak-credential", async route => {
     await route.fulfill({ status: 409, json: { error: { code: "credential_conflict", message: "تنظیم اتصال هم‌زمان تغییر کرده؛ صفحه را تازه کنید" } } });
   });
-  await page.goto("/"); await page.getByRole("tablist", { name: "بخش‌ها", exact: true }).getByRole("tab", { name: "تنظیمات", exact: true }).click();
+  await page.goto("/"); await openZone(page, "تنظیمات");
   await page.getByLabel("کلید API جدید ملی‌پیامک", { exact: true }).fill("test-new-key");
   await page.getByRole("button", { name: "ذخیرهٔ اتصال ملی‌پیامک", exact: true }).click();
   await expect(page.getByRole("alert")).toContainText("هم‌زمان تغییر کرده");
@@ -44,7 +45,7 @@ test("MelliPayamak settings show concurrent-update failure without claiming succ
 test("MelliPayamak settings respect permission and missing secure storage", async ({ page, api }) => {
   api.defaults["GET /settings"] = { groups: [{ key: "notify", title: "اعلان‌ها", subtitle: null, settings: [] }] };
   api.defaults["GET /settings/melipayamak-credential"] = { accountName: "", hasKey: false, revision: 0, storageReady: false, canEdit: false };
-  await page.goto("/"); await page.getByRole("tablist", { name: "بخش‌ها", exact: true }).getByRole("tab", { name: "تنظیمات", exact: true }).click();
+  await page.goto("/"); await openZone(page, "تنظیمات");
   await expect(page.getByLabel("کلید API جدید ملی‌پیامک", { exact: true })).toBeDisabled();
   await expect(page.getByRole("button", { name: "ذخیرهٔ اتصال ملی‌پیامک", exact: true })).toBeDisabled();
   expect(api.calls.filter(c => c.startsWith("PUT /settings/melipayamak-credential"))).toHaveLength(0);

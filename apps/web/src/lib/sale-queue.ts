@@ -30,6 +30,19 @@
 import { api } from "./api.ts";
 import { OfflineQueue, type QueuedRequest } from "./offline-queue.ts";
 import { localQueueStore } from "./queue-store.ts";
+import { session } from "./session.ts";
+import { pos } from "./pos.ts";
+
+export function validateSaleRequest(r: QueuedRequest): NonNullable<QueuedRequest["saleContext"]> {
+  const c = r.saleContext;
+  const uuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+  if (!c || ![c.actorId, c.invoiceId, c.branchId, c.shiftId].every(v => typeof v === "string" && uuid.test(v)) ||
+      r.method !== "POST" || r.path !== `/invoices/${c.invoiceId}/finalize` ||
+      !r.body || typeof r.body !== "object" || Array.isArray(r.body) || Object.keys(r.body).length !== 0) {
+    throw new Error("زمینهٔ معتبر فروش در صف نیست؛ ردیف حفظ شد و نیازمند رسیدگی است.");
+  }
+  return c;
+}
 
 /**
  * بازفرست یک درخواست صف‌شده.
@@ -39,15 +52,20 @@ import { localQueueStore } from "./queue-store.ts";
  *    یک `fetch` دستی، هر سه را از دست می‌داد و ۴۰۳ بی‌توضیح می‌گرفت.
  */
 export async function replay(r: QueuedRequest): Promise<void> {
-  if (r.method !== "POST") {
-    /*
-     * امروز فقط POST صف می‌شود. متد ناشناخته **رد** می‌شود نه اینکه
-     * حدس زده شود — ردیفی که با متد اشتباه فرستاده شود، یا اثر
-     * نمی‌گذارد یا اثر دیگری می‌گذارد.
-     */
-    throw new Error(`متد صف‌نشدنی: ${r.method}`);
+  const c = validateSaleRequest(r);
+  const who = await session.me();
+  if (who?.id !== c.actorId) throw new Error("این فروش متعلق به کاربر فعلی نیست؛ ردیف صف حفظ شد.");
+  const invoice = await pos.invoice(c.invoiceId);
+  if (invoice.createdBy !== c.actorId || invoice.branchId !== c.branchId || invoice.shiftId !== c.shiftId)
+    throw new Error("زمینهٔ فاکتور با صف یکسان نیست؛ ردیف صف حفظ شد.");
+  if (invoice.status === "draft") {
+    const shift = await pos.currentShift(c.branchId);
+    if (shift?.id !== c.shiftId || shift.userId !== c.actorId || shift.status !== "open")
+      throw new Error("شیفت این فروش باز نیست؛ ردیف صف حفظ شد.");
   }
-  await api.post(r.path, r.body ?? {}, { idempotencyKey: r.idempotencyKey });
+  const done = await api.post<{id:string;status:string;number:string}>(`/invoices/${c.invoiceId}/finalize`, {}, { idempotencyKey: r.idempotencyKey });
+  if (done.id !== c.invoiceId || !["finalized", "paid", "partially_returned", "returned"].includes(done.status) || !done.number)
+    throw new Error("پاسخ نهایی‌سازی تأیید نشد؛ ردیف صف حفظ شد.");
 }
 
 let instance: OfflineQueue | null = null;

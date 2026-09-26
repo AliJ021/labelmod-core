@@ -138,7 +138,7 @@ export class PostingBatchService {
    * فاکتور نهایی‌شده) رد می‌شود و دلیلش برمی‌گردد — نه اینکه کل
    * اجرا را بشکند.
    */
-  async closeDue(actorId: string): Promise<ClosedBatch[]> {
+  async closeDue(actorId: string, scope: string[] | "all"): Promise<ClosedBatch[]> {
     return this.#db.transaction().execute(async (trx) => {
       await setActor(trx, actorId);
       const res = await sql<{
@@ -149,7 +149,7 @@ export class PostingBatchService {
         sale_entry: string | null;
         cogs_entry: string | null;
         skipped: string | null;
-      }>`SELECT * FROM sales.close_due_channel_days(${actorId}::uuid)`.execute(trx);
+      }>`SELECT * FROM sales.close_due_channel_days(${actorId}::uuid, now(), ${scope === "all" ? null : scope}::uuid[])`.execute(trx);
 
       return res.rows.map((r) => ({
         batchId: r.batch_id,
