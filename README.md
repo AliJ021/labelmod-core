@@ -6,9 +6,9 @@
 > عبور از CI به معنی تضمین نبود خطا یا تأیید همهٔ تجهیزات و سرویس‌های بیرونی نیست. محدودیت‌ها در بخش «آزمون و کارهای باقی‌مانده» آمده‌اند.
 > استقرار: [راهنمای استقرار](docs/DEPLOYMENT.md)؛ پیش از بهره‌برداری، تصمیم‌های حسابداری و مالیاتی پایین این صفحه باید تأیید شوند.
 
-[CI مخزن](https://github.com/AliJ021/labelmod-core/actions) · [بررسی‌های PR #105](https://github.com/AliJ021/labelmod-core/pull/105/checks) · [راهنمای کامل ادامهٔ کار](docs/HANDOFF-2026-09-26-FA.md)
+[CI مخزن](https://github.com/AliJ021/labelmod-core/actions) · [بررسی‌های PR #105](https://github.com/AliJ021/labelmod-core/pull/105/checks) · [راهنمای کامل ادامهٔ کار](docs/HANDOFF-2026-09-26-FA.md) · [پرامپت آمادهٔ Cloud](docs/CONTINUE-CLOUD-FA.md)
 
-در آزمون candidate ثبت‌شده در راهنمای تحویل، ۸۴۷ تست API با نقش مالک و همان ۸۴۷ تست با نقش محدود، بدون skip، و ۲۴۳ تست واحد وب موفق شدند. SQL، lint، typecheck، آزمون‌های افزونه و ساخت image نیز موفق بودند. نتیجهٔ نهایی ماتریس ۱۱۲۸تایی مرورگر در زمان تحویل ثبت نشده بود؛ این اعداد را به CI هر commit تازه تعمیم ندهید و همیشه نتیجهٔ همان SHA را بررسی کنید.
+در آزمون candidate ثبت‌شده در راهنمای تحویل، ۸۴۷ تست API با نقش مالک و همان ۸۴۷ تست با نقش محدود، بدون skip، و ۲۴۳ تست واحد وب موفق شدند. SQL، lint، typecheck، آزمون‌های افزونه و ساخت image نیز موفق بودند. در CI نسخهٔ `9098598`، ماتریس مرورگر ۱۱۲۷ موفق و ۱ ناموفق داشت؛ خطای WebKit هنگام lock/logout هنوز مانع پذیرش است. سه job دیگر موفق بودند. این اعداد را به CI هر commit تازه تعمیم ندهید و همیشه نتیجهٔ همان SHA را بررسی کنید.
 
 ---
 
@@ -569,6 +569,8 @@ apps/web/        React + Vite — ورود و قفل صفحه، صندوق، م�
 | [WEB-WORKSPACE-AUDIT.md](docs/WEB-WORKSPACE-AUDIT.md) | فهرست صفحات/API، قابلیت‌ها و معیارهای پذیرش رابط |
 | [WEB-BACKUP-RESTORE.md](docs/WEB-BACKUP-RESTORE.md) | سرویس مستقل بکاپ، مرز دسترسی و مراحل بازیابی |
 | [HANDOFF-2026-09-26-FA.md](docs/HANDOFF-2026-09-26-FA.md) | کارهای انجام‌شده، شواهد، موارد باز و ترتیب ادامه در Cloud |
+| [SECURITY-FINDINGS-HANDOFF-2026-09-26.md](docs/SECURITY-FINDINGS-HANDOFF-2026-09-26.md) | دفتر کامل ۴۹ ردیف امنیتی و تمایز اصلاح قبلی، candidate و مورد باز |
+| [CONTINUE-CLOUD-FA.md](docs/CONTINUE-CLOUD-FA.md) | پرامپت کامل آمادهٔ کپی و محدودیت‌های ادامهٔ کار |
 
 ## اجرای رگرسیون
 

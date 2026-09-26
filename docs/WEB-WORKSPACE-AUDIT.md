@@ -31,7 +31,7 @@
 - [x] تطبیق archive کد runtime با imageهای نسخهٔ مستقر؛ شناسه‌ها در سند تحویل.
 - [x] پیاده‌سازی گزارش کاربران و ثبت دستی اسنپ‌پی؛ پذیرش عملیاتی مستقل هنوز باز است.
 - [ ] نصب و پذیرش عملیاتی سرویس بکاپ/بازیابی؛ کد و آزمون PG آماده، نصب نشده است.
-- [ ] پوشش مرورگر در شش عرض، دو موتور، دو تم؛ صفحه‌کلید و بزرگ‌نمایی.
+- [ ] پوشش مرورگر در شش عرض، دو موتور، دو تم؛ CI روی 9098598 برابر 1127 موفق/1 ناموفق بود و مانع lock/logout باز است؛ صفحه‌کلید و بزرگ‌نمایی و پذیرش زنده نیز باید تکمیل شوند.
 - [x] SQL، API با دو نقش (847 در هر نقش)، واحد وب، افزونه و ساخت ایمیج candidate؛ نتیجهٔ مرورگر جداست.
 - [x] بازبینی مستقل اصلاحات مرز صندوق و posting و انتشار candidate دقیق؛ این مورد به معنای بسته‌شدن تمام یافته‌های قدیمی نیست.
 
@@ -39,6 +39,7 @@
 
 - `Accounts.tsx`
 - `Appearance.tsx`
+- `Backups.tsx`
 - `Catalog.tsx`
 - `Customers.tsx`
 - `Dashboard.tsx`
@@ -59,6 +60,7 @@
 - `Returns.tsx`
 - `Settings.tsx`
 - `SmsTwoFactor.tsx`
+- `SnappaySettings.tsx`
 - `Staff.tsx`
 - `StockCount.tsx`
 - `Terminals.tsx`
@@ -70,7 +72,7 @@
 
 ## فهرست عملیات HTTP موجود در کد
 
-فهرست ایستا است؛ به معنای آزمون موفق یا وجود رابط برای تمام عملیات نیست.
+فهرست ایستا از ثبت‌های صریح `app.get/post/put/patch/delete/head/options` در فایل‌های HTTP است؛ به معنی دسترسی همهٔ نقش‌ها، ثبت runtime همهٔ افزونه‌ها یا آزمون موفق همهٔ عملیات نیست. پیشوند نصب API در این جدول نیامده است. نسخهٔ نهایی شامل مسیرهای بکاپ، اسنپ‌پی، گزارش کاربران و منابع برگشت نیز هست.
 
 | فایل | روش | مسیر |
 |---|---|---|
@@ -120,6 +122,10 @@
 | `auth-routes.ts` | POST | `/devices/:id/revoke` |
 | `auth-routes.ts` | GET | `/sessions` |
 | `auth-routes.ts` | POST | `/users/:id/revoke-sessions` |
+| `backup-routes.ts` | GET | `/backups` |
+| `backup-routes.ts` | POST | `/backups` |
+| `backup-routes.ts` | GET | `/backups/:id/download` |
+| `backup-routes.ts` | POST | `/backups/restore` |
 | `catalog-routes.ts` | POST | `/products/:id/variations/generate` |
 | `catalog-routes.ts` | POST | `/labels` |
 | `catalog-routes.ts` | GET | `/products/:id/stock-matrix` |
@@ -127,6 +133,7 @@
 | `health-routes.ts` | GET | `/health/dead-letters` |
 | `health-routes.ts` | POST | `/health/dead-letters/:id/requeue` |
 | `invoice-workspace-routes.ts` | GET | `/invoices` |
+| `invoice-workspace-routes.ts` | GET | `/invoices/:id/refund-sources` |
 | `invoice-workspace-routes.ts` | GET | `/invoices/:id/print` |
 | `invoice-workspace-routes.ts` | GET | `/invoices/:id/overview` |
 | `melipayamak-routes.ts` | GET | `/settings/melipayamak-credential` |
@@ -202,6 +209,8 @@
 | `report-routes.ts` | GET | `/reports/compare` |
 | `report-routes.ts` | GET | `/reports/basket` |
 | `report-routes.ts` | GET | `/reports/customer-basket` |
+| `report-routes.ts` | GET | `/reports/snappay` |
+| `report-routes.ts` | GET | `/reports/staff-sales` |
 | `report-routes.ts` | GET | `/reports/sales` |
 | `report-routes.ts` | GET | `/reports/profit-by-product` |
 | `report-routes.ts` | GET | `/reports/inventory-valuation` |
@@ -254,6 +263,8 @@
 | `settings-routes.ts` | PATCH | `/terminal-drivers/:id` |
 | `settings-routes.ts` | GET | `/settlement-terms` |
 | `settings-routes.ts` | PATCH | `/settlement-terms/:id` |
+| `snappay-routes.ts` | GET | `/snappay/config` |
+| `snappay-routes.ts` | PUT | `/snappay/config` |
 | `transfer-routes.ts` | GET | `/transfers` |
 | `transfer-routes.ts` | GET | `/transfers/:id` |
 | `transfer-routes.ts` | POST | `/transfers` |
