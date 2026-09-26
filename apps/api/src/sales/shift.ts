@@ -184,7 +184,8 @@ export class ShiftService {
     // اصلاً اینجا نمی‌رسد، پس شیفتی که خودمان بسته‌ایم پاسخ قبلی را
     // می‌گیرد، در حالی که بستن دوم بدون کلید همچنان `shift_not_open`
     // می‌شود — نه پیام عمومی نگهبان دیتابیس.
-    const shift = await this.byId(input.shiftId);
+    const shift = await trx.selectFrom("sales.cash_shift").select(["id", "status"])
+      .where("id", "=", input.shiftId).forUpdate().executeTakeFirst();
     if (!shift) throw new ShiftError("shift_not_found", "شیفت یافت نشد", 404);
     if (shift.status !== "open") {
       throw new ShiftError("shift_not_open", "این شیفت پیش از این بسته شده است");

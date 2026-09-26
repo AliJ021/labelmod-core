@@ -9,6 +9,8 @@ class LMC_Refund_Sync
     const ERROR = '_lmc_refund_error';
     const ATTEMPTS = '_lmc_refund_attempts';
     const PAYLOAD = '_lmc_refund_payload';
+    const REQUEST = '_lmc_refund_request_id';
+    const STATUS = '_lmc_refund_review_status';
 
     public static function init(): void
     {
@@ -80,7 +82,7 @@ class LMC_Refund_Sync
     public static function send($id): void
     {
         $refund = wc_get_order((int) $id);
-        if (!$refund instanceof WC_Order_Refund || $refund->get_meta(self::DONE) !== '') { return; }
+        if (!$refund instanceof WC_Order_Refund || $refund->get_meta(self::DONE) !== '' || $refund->get_meta(self::STATUS) === 'rejected') { return; }
         $order = wc_get_order($refund->get_parent_id());
         if (!$order) { return; }
         $payload = $refund->get_meta(self::PAYLOAD);
@@ -99,11 +101,25 @@ class LMC_Refund_Sync
                 self::schedule((int) $id, min(3600, 60 * (2 ** $attempt)));
             }
             $order->add_order_note('ارسال مرجوعی به لیبل مد ناموفق: ' . $result->get_error_message());
+        } elseif (!empty($result['requestId']) && in_array($result['status'] ?? '', ['pending', 'rejected'], true)) {
+            $previous = $refund->get_meta(self::STATUS);
+            $refund->update_meta_data(self::REQUEST, (string) $result['requestId']);
+            $refund->update_meta_data(self::STATUS, $result['status']);
+            $refund->delete_meta_data(self::ERROR);
+            if ($result['status'] === 'pending') {
+                // انتظار تصمیم انسانی خطای انتقال نیست و سقف retry را مصرف نمی‌کند.
+                $refund->update_meta_data(self::ATTEMPTS, 0);
+                self::schedule((int) $id, 300);
+                if ($previous !== 'pending') { $order->add_order_note('درخواست مرجوعی به حسابداری رسید و منتظر تأیید دستی است؛ هنوز سندی ثبت نشده است.'); }
+            } else {
+                $order->add_order_note('درخواست مرجوعی در حسابداری رد شد؛ بررسی دستی لازم است.');
+            }
         } elseif (empty($result['returnId']) || ($result['status'] ?? '') !== 'posted') {
             $refund->update_meta_data(self::ERROR, 'پاسخ مرجوعی معتبر نبود؛ ثبت تأیید نشد.');
             if ($attempt < LMC_Order_Sync::MAX_ATTEMPTS) { self::schedule((int) $id, 120); }
         } else {
             $refund->update_meta_data(self::DONE, (string) $result['returnId']);
+            $refund->update_meta_data(self::STATUS, 'approved');
             $refund->delete_meta_data(self::ERROR);
             $order->add_order_note('مرجوعی در لیبل مد ثبت شد: ' . (string) ($result['number'] ?? $result['returnId']));
         }
@@ -114,7 +130,7 @@ class LMC_Refund_Sync
     {
         if (!current_user_can('manage_woocommerce')) { return; }
         foreach ($order->get_refunds() as $refund) {
-            if ($refund->get_meta(self::DONE) !== '' || !is_array($refund->get_meta(self::PAYLOAD))) { continue; }
+            if ($refund->get_meta(self::DONE) !== '' || $refund->get_meta(self::STATUS) === 'rejected' || !is_array($refund->get_meta(self::PAYLOAD))) { continue; }
             $refund->update_meta_data(self::ATTEMPTS, 0);
             $refund->save();
             self::schedule((int) $refund->get_id(), 10);

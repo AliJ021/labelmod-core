@@ -362,14 +362,18 @@ export class AuthService {
     if (!row) throw new AuthError("no_session", "نشستی برای احراز مجدد وجود ندارد");
 
     const ok = await verifySecret(row.password_hash, password);
+    // موفقیت نباید پیش از سنجش قفل ثبت شود؛ آن رکورد پنجره شکست را صفر می‌کند.
+    const locked = ok && row.is_active
+      ? await this.isLocked(row.user_id, row.device_id, "password")
+      : false;
     await this.#db
       .insertInto("identity.auth_attempt")
       .values({
         kind: "password",
         user_id: row.user_id,
         device_id: row.device_id,
-        succeeded: ok,
-        failure_code: ok ? null : "bad_password",
+        succeeded: ok && row.is_active && !locked,
+        failure_code: !ok ? "bad_password" : !row.is_active ? "inactive" : locked ? "locked" : null,
         username: null,
         ip: null,
       })
@@ -378,7 +382,7 @@ export class AuthService {
     if (!ok || !row.is_active) throw new AuthError("bad_credentials", VAGUE);
 
     // قفل *پس از* تطبیق رمز — همان قاعده مسیر ورود
-    if (await this.isLocked(row.user_id, row.device_id, "password")) {
+    if (locked) {
       throw new AuthError("locked", "این حساب موقتاً قفل است.");
     }
 

@@ -33,6 +33,7 @@ import { hashSecret } from "../src/auth/password.ts";
 import { hashApiKey, newApiKey } from "../src/auth/api-key.ts";
 import { buildApp } from "../src/http/app.ts";
 import { loadConfig } from "../src/lib/config.ts";
+import { InvoiceService } from "../src/sales/invoice.ts";
 
 const DATABASE_URL = process.env.DATABASE_URL;
 const skip = DATABASE_URL ? false : "DATABASE_URL تنظیم نشده — تست یکپارچه رد شد";
@@ -514,7 +515,47 @@ describe("سفارش سایت (ووکامرس)", { skip }, () => {
     }
   });
 
+  test("مجوز قیمت سفارش سایت و Snapshot قلم از یک خواندن استفاده می‌کنند", async () => {
+    const variation = await handle.db.selectFrom("catalog.variation").select("id").where("sku", "=", sku).executeTakeFirstOrThrow();
+    const original = InvoiceService.prototype.currentPrice;
+    let reads = 0;
+    const reprice = (amount: number) => handle.db.transaction().execute(async trx => {
+      await sql`SELECT platform.set_actor(${SYSTEM_USER}::uuid)`.execute(trx);
+      await sql`SELECT catalog.set_price(${variation.id}::uuid,${amount}::numeric)`.execute(trx);
+    });
+    InvoiceService.prototype.currentPrice = async function (...args) {
+      const captured = await original.apply(this, args);
+      if (args[0] === variation.id && ++reads === 1) await reprice(4000000);
+      return captured;
+    };
+    try {
+      const response = await order({ branchId: BRANCH, warehouseId: STORE_WH, externalId: `snapshot-${suffix}`,
+        lines: [{ sku, qty: "1", unitPrice: "1800000" }], shippingAmount: "0", paymentMethod: "gateway",
+        paidAmount: "1800000", paymentRef: `snapshot-ref-${suffix}` });
+      assert.equal(response.statusCode, 201, response.body);
+      assert.equal(reads, 1);
+      const line = await handle.db.selectFrom("sales.invoice_line").select(["unit_price", "list_price"])
+        .where("invoice_id", "=", response.json<OrderResponse>().invoiceId).executeTakeFirstOrThrow();
+      assert.deepEqual(line, { unit_price: "1800000", list_price: "2000000" });
+    } finally {
+      InvoiceService.prototype.currentPrice = original;
+      await reprice(2000000);
+    }
+  });
+
   test("F23: Woo partial refunds preserve stock, shipping, ledger and replay identity", async () => {
+    const reviewerName = `reviewer-${suffix}`;
+    const reviewer = await handle.db.insertInto("identity.app_user").values({ username: reviewerName,
+      full_name: "حسابدار آزمون", password_hash: await hashSecret(PASSWORD), pin_hash: null,
+      mobile: null, totp_secret: null, is_active: true }).returning("id").executeTakeFirstOrThrow();
+    await handle.db.insertInto("identity.user_role").values({ user_id: reviewer.id, role_code: "accountant", branch_id: BRANCH }).execute();
+    const logged = await loginWithMfa(app, { method: "POST", url: "/auth/login", payload: { username: reviewerName, password: PASSWORD } });
+    assert.equal(logged.statusCode, 200, logged.body);
+    const cookies = Object.fromEntries(logged.cookies.map((c) => [c.name,c.value]));
+    const human = { cookies, headers: { "x-csrf-token": cookies.labelmod_csrf! } };
+    const decide = (id: string, decision = "approved", reason = "مدارک بازپرداخت و کالای برگشتی بررسی شد") => app.inject({
+      method: "POST", url: `/web-refund-requests/${id}/decision`, ...human, payload: { decision, reason },
+    });
     const externalId = `refund-${suffix}`;
     const created = await order({ branchId: BRANCH, warehouseId: STORE_WH, externalId,
       customerMobile: "09129998877", customerName: "Refund regression",
@@ -525,18 +566,126 @@ describe("سفارش سایت (ووکامرس)", { skip }, () => {
     const call = (payload: Record<string, unknown>) => app.inject({ method: "POST", url: "/web/refunds", ...auth(), payload });
     const payload = { orderId: externalId, refundId: `r1-${suffix}`, amount: "2050000",
       shippingAmount: "50000", lines: [{ lineNo: 1, qty: "1", restock: true }] };
+    for (const change of [{ amount: "1000000000000000000" }, { shippingAmount: "1000000000000000000" },
+      { lines: [{ lineNo: 1, qty: "100000000000", restock: true }] }]) {
+      const oversized = await call({ ...payload, ...change });
+      assert.equal(oversized.statusCode, 400, oversized.body);
+    }
     const bad = await call({ ...payload, refundId: `bad-${suffix}`, amount: "100" });
-    assert.equal(bad.statusCode, 422, bad.body);
-    assert.equal(bad.json().error.code, "refund_amount_mismatch");
+    assert.equal(bad.statusCode, 201, bad.body);
+    assert.equal(bad.json().status, "pending");
+    const invalidDecision = await decide(bad.json().requestId);
+    assert.equal(invalidDecision.statusCode, 422, invalidDecision.body);
+    assert.equal(invalidDecision.json().error.code, "refund_amount_mismatch");
     const absent = await handle.db.selectFrom("sales.sale_return").select("id").where("invoice_id", "=", invoiceId).execute();
     assert.equal(absent.length, 0, "a mismatch rolls back stock, payment and journal together");
     const calls = await Promise.all([call(payload), call(payload)]);
     assert.deepEqual(calls.map((r) => r.statusCode).sort(), [200, 201]);
-    assert.equal(calls[0]!.json().returnId, calls[1]!.json().returnId);
+    assert.equal(calls[0]!.json().requestId, calls[1]!.json().requestId);
+    assert.equal(calls[0]!.json().status, "pending");
+    const pending = await handle.db.selectFrom("sales.sale_return").select("id").where("invoice_id", "=", invoiceId).execute();
+    assert.equal(pending.length, 0, "تا تصمیم انسانی حتی پیش‌نویس برگ مالی ساخته نمی‌شود");
+    const requestId = calls[0]!.json().requestId as string;
+    const machineDecision = await app.inject({ method: "POST", url: `/web-refund-requests/${requestId}/decision`, ...auth(),
+      payload: { decision: "approved", reason: "forged approval" } });
+    assert.equal(machineDecision.statusCode, 403, machineDecision.body);
+    // مجوز عمومی سرپرست جای تصمیم مستقل درخواست سایت را نمی‌گیرد.
+    const returnedLine = await handle.db.selectFrom("sales.invoice_line").select("id")
+      .where("invoice_id", "=", invoiceId).executeTakeFirstOrThrow();
+    await sql`UPDATE identity.user_role SET role_code='supervisor' WHERE user_id=${reviewer.id}::uuid`.execute(handle.db);
+    try {
+      assert.equal((await decide(requestId)).statusCode, 403);
+      for (const manualId of [invoiceId, invoiceId.toUpperCase()]) {
+        const manual = await app.inject({ method: "POST", url: "/returns", ...human,
+          payload: { invoiceId: manualId, reasonCode: "size_small", refundAmount: "0",
+            lines: [{ invoiceLineId: returnedLine.id, qty: "1" }] } });
+        assert.equal(manual.statusCode, 403, manual.body);
+      }
+      // پیش‌نویس باقی‌مانده از نسخهٔ قبلی نیز راه ثبت مستقل ندارد.
+      const legacy = await sql<{id:string}>`INSERT INTO sales.sale_return
+        (branch_id,invoice_id,warehouse_id,reason_code,refund_amount,created_by)
+        VALUES(${BRANCH}::uuid,${invoiceId}::uuid,${STORE_WH}::uuid,'size_small',0,${reviewer.id}::uuid) RETURNING id`.execute(handle.db);
+      const legacyId = legacy.rows[0]!.id;
+      const post = await app.inject({ method: "POST", url: `/returns/${legacyId}/post`, ...human,
+        headers: { ...human.headers, "idempotency-key": `legacy-web-return-${suffix}` }, payload: {} });
+      assert.equal(post.statusCode, 403, post.body);
+      const unchanged = await sql<{status:string; movements:string; entries:string}>`SELECT status,
+        (SELECT count(*)::text FROM inventory.stock_movement WHERE ref_id=${legacyId}::uuid) AS movements,
+        (SELECT count(*)::text FROM ledger.journal_entry WHERE ref_id=${legacyId}::uuid) AS entries
+        FROM sales.sale_return WHERE id=${legacyId}::uuid`.execute(handle.db);
+      assert.deepEqual(unchanged.rows[0], { status: "draft", movements: "0", entries: "0" });
+      // این فقط fixture بی‌اثر در دیتابیس یک‌بارمصرف است.
+      await sql`DELETE FROM sales.sale_return WHERE id=${legacyId}::uuid`.execute(handle.db);
+    } finally {
+      await sql`UPDATE identity.user_role SET role_code='accountant' WHERE user_id=${reviewer.id}::uuid`.execute(handle.db);
+    }
+    const ledgerBefore = await sql<{ n: string }>`SELECT count(*)::text AS n FROM treasury.payment WHERE invoice_id=${invoiceId}::uuid AND direction='out'`.execute(handle.db);
+    assert.equal(ledgerBefore.rows[0]!.n, "0");
+    const listed = await app.inject({ method: "GET", url: `/web-refund-requests?branchId=${BRANCH}`, ...human });
+    assert.equal(listed.statusCode, 200, listed.body);
+    assert.ok(listed.json().items.some((item: { id: string }) => item.id === requestId));
+    const approved = await Promise.all([decide(requestId), decide(requestId)]);
+    for (const result of approved) assert.equal(result.statusCode, 200, result.body);
+    assert.equal(approved[0]!.json().status, "posted");
+    assert.equal(approved[0]!.json().returnId, approved[1]!.json().returnId, "دو تأیید هم‌زمان فقط یک برگ ایجاد می‌کنند");
+    assert.equal((await decide(requestId, "rejected")).statusCode, 409);
+    // شبیه‌سازی پیام معیوب قدیمی؛ رد انسانی نباید به تبدیل مبلغ آن وابسته باشد.
+    await sql`UPDATE identity.approval_request SET context=jsonb_set(context,'{amount}','"1000000000000000000"')
+      WHERE id=${bad.json().requestId}::uuid`.execute(handle.db);
+    const rejected = await decide(bad.json().requestId, "rejected", "مبلغ اعلام‌شده نادرست است");
+    assert.equal(rejected.statusCode, 200, rejected.body);
+    assert.equal(rejected.json().status, "rejected");
+    assert.equal((await decide(bad.json().requestId)).statusCode, 409);
+    const rejectedReplay = await decide(bad.json().requestId, "rejected", "مبلغ اعلام‌شده نادرست است");
+    assert.equal(rejectedReplay.statusCode, 200, rejectedReplay.body);
+    // دادهٔ قدیمی با نمایش نامعتبر هم نه تأیید می‌شود و نه جلوی رد را می‌گیرد.
+    const malformed = await call({ ...payload, refundId: `malformed-${suffix}` });
+    assert.equal(malformed.statusCode, 201, malformed.body);
+    for (const amount of ["0x10", "not-money"]) {
+      await sql`UPDATE identity.approval_request SET context=jsonb_set(context,'{amount}',${JSON.stringify(amount)}::jsonb)
+        WHERE id=${malformed.json().requestId}::uuid`.execute(handle.db);
+      const invalid = await decide(malformed.json().requestId);
+      assert.equal(invalid.statusCode, 400, invalid.body);
+      const state = await sql<{status:string}>`SELECT status FROM identity.approval_request
+        WHERE id=${malformed.json().requestId}::uuid`.execute(handle.db);
+      assert.equal(state.rows[0]!.status, "pending");
+    }
+    assert.equal((await decide(malformed.json().requestId, "rejected", "دادهٔ قدیمی نامعتبر است")).statusCode, 200);
+    assert.equal((await decide(malformed.json().requestId)).statusCode, 409);
+    const afterRejected = await sql<{ returns: string; entries: string; movements: string }>`
+      SELECT (SELECT count(*) FROM sales.sale_return WHERE invoice_id=${invoiceId}::uuid)::text AS returns,
+        (SELECT count(*) FROM ledger.journal_entry WHERE ref_type='sale_return'
+          AND ref_id IN (SELECT id FROM sales.sale_return WHERE invoice_id=${invoiceId}::uuid))::text AS entries,
+        (SELECT count(*) FROM inventory.stock_movement WHERE ref_type='sale_return'
+          AND ref_id IN (SELECT id FROM sales.sale_return WHERE invoice_id=${invoiceId}::uuid))::text AS movements
+    `.execute(handle.db);
+    assert.deepEqual(afterRejected.rows[0], { returns: "1", entries: "1", movements: "1" });
     const changed = await call({ ...payload, amount: "2050010" });
     assert.equal(changed.statusCode, 409, changed.body);
     const second = await call({ ...payload, refundId: `r2-${suffix}`, lines: [{ lineNo: 1, qty: "1", restock: false }] });
     assert.equal(second.statusCode, 201, second.body);
+    // حتی کلید API پشتیبانی‌شده با نقش حسابدار مجاز به تصمیم انسانی نیست.
+    const privilegedKey = newApiKey();
+    await sql`INSERT INTO identity.api_client(name,user_id,key_hash,created_by)
+      VALUES('overprivileged test',${reviewer.id}::uuid,${hashApiKey(privilegedKey)},${SYSTEM_USER}::uuid)`.execute(handle.db);
+    const privileged = { authorization: `Bearer ${privilegedKey}` };
+    const denied = await app.inject({ method: "POST", url: `/web-refund-requests/${second.json().requestId}/decision`, headers: privileged,
+      payload: { decision: "approved", reason: "forged accountant" } });
+    assert.equal(denied.statusCode, 403, denied.body);
+    const lineId = await handle.db.selectFrom("sales.invoice_line").select("id").where("invoice_id", "=", invoiceId).executeTakeFirstOrThrow();
+    const alternate = await app.inject({ method: "POST", url: "/returns", headers: privileged,
+      payload: { invoiceId, reasonCode: "web_refund", refundAmount: "0", lines: [{ invoiceLineId: lineId.id, qty: "1" }] } });
+    assert.equal(alternate.statusCode, 403, alternate.body);
+    await sql`UPDATE identity.permission_rule SET allowed=false WHERE role_code='accountant' AND operation='web.refund.review'`.execute(handle.db);
+    try { assert.equal((await decide(second.json().requestId)).statusCode, 403); }
+    finally { await sql`UPDATE identity.permission_rule SET allowed=true WHERE role_code='accountant' AND operation='web.refund.review'`.execute(handle.db); }
+    await sql`UPDATE identity.session SET pin_unlocked=true WHERE user_id=${reviewer.id}::uuid`.execute(handle.db);
+    try { assert.equal((await decide(second.json().requestId)).statusCode, 403); }
+    finally { await sql`UPDATE identity.session SET pin_unlocked=false WHERE user_id=${reviewer.id}::uuid`.execute(handle.db); }
+    // نشست کامل otp شکل مشترک ورود پیامکی و کد بازیابی در PR93 است.
+    await sql`UPDATE identity.session SET auth_method='otp' WHERE user_id=${reviewer.id}::uuid`.execute(handle.db);
+    const secondApproved = await decide(second.json().requestId);
+    assert.equal(secondApproved.statusCode, 200, secondApproved.body);
     const rows = await sql<{ count: string; paid: string; shipping: string; stock: string; cash: string }>`
       SELECT count(*)::text AS count,sum(r.refund_amount)::text AS paid,sum(r.shipping_amount)::text AS shipping,
        (SELECT coalesce(sum(m.qty),0)::text FROM inventory.stock_movement m

@@ -13,6 +13,7 @@ import { loginWithMfa } from "./helpers/login-with-mfa.ts";
  */
 import { after, before, describe, test } from "node:test";
 import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
 import { sql } from "kysely";
 import type { FastifyInstance } from "fastify";
 import { createDb, type DbHandle } from "../src/db/client.ts";
@@ -509,6 +510,85 @@ describe("تنظیمات از مسیر API", { skip }, () => {
   });
   // ── کدینگ حساب ──────────────────────────────────────────────────
 
+  test("PIN تحلیل مشتری و نوشتن انبارگردانی را می‌بندد؛ ورود کامل باز می‌کند", async () => {
+    const s = await loginAs(admin);
+    const user = await handle.db.selectFrom("identity.app_user").select("id").where("username", "=", admin).executeTakeFirstOrThrow();
+    await handle.db.updateTable("identity.session").set({ pin_unlocked: true }).where("user_id", "=", user.id).execute();
+    try {
+      for (const operation of ["report.customer_insight", "stock.count"]) {
+        const check = await app.inject({ method: "GET", url: `/auth/can?operation=${operation}`, ...s });
+        assert.equal(check.json().verdict, "deny", check.body);
+      }
+      const count = await app.inject({ method: "POST", url: "/stock-counts", ...s,
+        headers: { ...s.headers, "idempotency-key": `pin-count-${suffix}` },
+        payload: { branchId: BRANCH, warehouseId: "00000000-0000-7000-8000-000000000101" } });
+      assert.equal(count.statusCode, 403, count.body);
+      for (const url of ["/reports/basket", "/reports/customer-basket"]) {
+        const report = await app.inject({ method: "GET", url, ...s });
+        assert.equal(report.statusCode, 403, report.body);
+      }
+      const ordinary = await app.inject({ method: "GET", url: "/auth/can?operation=sale.create", ...s });
+      assert.equal(ordinary.json().verdict, "allow", ordinary.body);
+    } finally {
+      await handle.db.updateTable("identity.session").set({ pin_unlocked: false }).where("user_id", "=", user.id).execute();
+    }
+    for (const operation of ["report.customer_insight", "stock.count"]) {
+      const check = await app.inject({ method: "GET", url: `/auth/can?operation=${operation}`, ...s });
+      assert.equal(check.json().verdict, "allow", check.body);
+    }
+    const count = await app.inject({ method: "POST", url: "/stock-counts", ...s,
+      headers: { ...s.headers, "idempotency-key": `pin-count-${suffix}` },
+      payload: { branchId: BRANCH, warehouseId: "00000000-0000-7000-8000-000000000101" } });
+    assert.equal(count.statusCode, 201, count.body);
+  });
+
+  test("ارتقای PIN تنظیم سفارشی را حفظ می‌کند و تکرار مهاجرت مقدار تکراری نمی‌سازد", async () => {
+    const owner = createDb(disposable!.ownerUrl, 1);
+    const original = await sql<{value:unknown}>`SELECT value FROM platform.setting WHERE key='auth.pin_forbidden_operations'`.execute(owner.db);
+    const system = "00000000-0000-7000-8000-0000000000f1";
+    try {
+      await sql`SELECT platform.set_setting('auth.pin_forbidden_operations','["sale.credit"]'::jsonb,'fixture migration',${system}::uuid)`.execute(owner.db);
+      const source = readFileSync(new URL("../../../db/migrations/077_permission_boundaries.sql", import.meta.url), "utf8");
+      const block = source.slice(source.indexOf("DO $pin$"), source.indexOf("END $pin$;") + "END $pin$;".length);
+      for (let i = 0; i < 2; i++) await sql.raw(block).execute(owner.db);
+      const actual = await sql<{value:string[]}>`SELECT value FROM platform.setting WHERE key='auth.pin_forbidden_operations'`.execute(owner.db);
+      assert.deepEqual(actual.rows[0]!.value, ["sale.credit", "stock.count", "report.customer_insight"]);
+      await sql`SELECT platform.set_setting('auth.pin_forbidden_operations','["sale.credit"]'::jsonb,'concurrent fixture',${system}::uuid)`.execute(owner.db);
+      const writer = createDb(disposable!.ownerUrl, 1);
+      const observer = createDb(disposable!.ownerUrl, 1);
+      const pid = (await sql<{pid:number}>`SELECT pg_backend_pid() AS pid`.execute(owner.db)).rows[0]!.pid;
+      let release!: () => void;
+      let locked!: () => void;
+      const releasePromise = new Promise<void>(resolve => { release = resolve; });
+      const lockedPromise = new Promise<void>(resolve => { locked = resolve; });
+      const edit = writer.db.transaction().execute(async trx => {
+        await sql`SELECT platform.set_setting('auth.pin_forbidden_operations','["sale.credit","cost.view"]'::jsonb,'concurrent custom edit',${system}::uuid)`.execute(trx);
+        locked(); await releasePromise;
+      });
+      let migration: Promise<unknown> | undefined;
+      try {
+        await lockedPromise;
+        migration = sql.raw(block).execute(owner.db);
+        let waiting = false;
+        for (let i = 0; i < 100; i++) {
+          waiting = (await sql<{waiting:boolean}>`SELECT wait_event_type='Lock' AS waiting FROM pg_stat_activity WHERE pid=${pid}`.execute(observer.db)).rows[0]?.waiting === true;
+          if (waiting) break;
+          await new Promise(resolve => setTimeout(resolve, 20));
+        }
+        assert.equal(waiting, true, "مهاجرت باید منتظر ویرایش باز بماند");
+        release(); await edit; await migration;
+        const concurrent = await sql<{value:string[]}>`SELECT value FROM platform.setting WHERE key='auth.pin_forbidden_operations'`.execute(owner.db);
+        assert.deepEqual(concurrent.rows[0]!.value, ["sale.credit", "cost.view", "stock.count", "report.customer_insight"]);
+      } finally {
+        release(); await edit; await migration;
+        await writer.close(); await observer.close();
+      }
+    } finally {
+      await sql`SELECT platform.set_setting('auth.pin_forbidden_operations',${JSON.stringify(original.rows[0]!.value)}::jsonb,'restore fixture',${system}::uuid)`.execute(owner.db);
+      await owner.close();
+    }
+  });
+
   test("درخت حساب چهارسطحی از API می‌آید", async () => {
     const s = await loginAs(admin);
     const r = await app.inject({ method: "GET", url: "/accounts", ...s });
@@ -676,6 +756,36 @@ describe("تنظیمات از مسیر API", { skip }, () => {
       },
     });
     assert.equal(r.statusCode, 403, r.body);
+  });
+
+  test("آخرین مجوز مستقل امنیت به تأیید خودش وابسته نمی‌شود", async () => {
+    const s = await loginAs(admin);
+    const result = await app.inject({ method: "PUT", url: "/permission-rules/admin/settings.security", ...s,
+      payload: { allowed: true, maxAmount: null, maxPercent: null, needsApprovalFrom: "admin", reason: "regression independent access" } });
+    assert.equal(result.statusCode, 409, result.body);
+    const row = await sql<{needs_approval_from:string|null}>`SELECT needs_approval_from FROM identity.permission_rule
+      WHERE role_code='admin' AND operation='settings.security'`.execute(handle.db);
+    assert.equal(row.rows[0]!.needs_approval_from, null);
+  });
+
+  test("دو تغییر هم‌زمان دست‌کم یک مجوز مستقل امنیت را نگه می‌دارند", async () => {
+    const user = await handle.db.selectFrom("identity.app_user").select("id").where("username", "=", admin).executeTakeFirstOrThrow();
+    await sql`INSERT INTO identity.permission_rule(role_code,operation,allowed)
+      VALUES('supervisor','settings.security',true)
+      ON CONFLICT(role_code,operation) DO UPDATE SET allowed=true,needs_approval_from=NULL`.execute(handle.db);
+    try {
+      const results = await Promise.allSettled(["admin", "supervisor"].map(role => sql`
+        SELECT identity.set_permission_rule(${role},'settings.security',true,NULL,NULL,'admin',
+          'concurrent independent access',${user.id}::uuid)`.execute(handle.db)));
+      assert.deepEqual(results.map(r => r.status).sort(), ["fulfilled", "rejected"]);
+      const left = await sql<{n:string}>`SELECT count(*)::text AS n FROM identity.permission_rule
+        WHERE operation='settings.security' AND allowed AND needs_approval_from IS NULL`.execute(handle.db);
+      assert.equal(left.rows[0]!.n, "1");
+    } finally {
+      await sql`UPDATE identity.permission_rule SET allowed=true,needs_approval_from=NULL
+        WHERE operation='settings.security' AND role_code='admin'`.execute(handle.db);
+      await sql`DELETE FROM identity.permission_rule WHERE operation='settings.security' AND role_code='supervisor'`.execute(handle.db);
+    }
   });
   // ── تفصیلی و افتتاحیه ───────────────────────────────────────────
 

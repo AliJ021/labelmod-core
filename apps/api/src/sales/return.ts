@@ -263,11 +263,12 @@ export class ReturnService {
   async returnWindow(
     invoiceId: string,
   ): Promise<{ hoursSince: number; daysSince: number; late: boolean }> {
-    const res = await sql<{ hours: number; window_hours: number }>`
+    const res = await sql<{ hours: number; late: boolean }>`
       SELECT
         floor(extract(epoch FROM (now() - coalesce(i.finalized_at, i.occurred_at))) / 3600)::int
           AS hours,
-        platform.setting_int('return.window_hours', 48) AS window_hours
+        now() > coalesce(i.finalized_at, i.occurred_at)
+          + make_interval(hours => platform.setting_int('return.window_hours', 48)) AS late
         FROM sales.invoice i WHERE i.id = ${invoiceId}::uuid
     `.execute(this.#db);
 
@@ -277,7 +278,7 @@ export class ReturnService {
       hoursSince: r.hours,
       // برای نمایش نگه داشته شده؛ تصمیم «دیرهنگام» فقط به ساعت است.
       daysSince: Math.floor(r.hours / 24),
-      late: r.hours > r.window_hours,
+      late: r.late,
     };
   }
 

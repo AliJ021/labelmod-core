@@ -108,6 +108,9 @@ describe("PIN شخصی و عامل دوم پیامکی روی دیتابیس و�
     assert.equal(results.filter(r=>r.statusCode===200).length,1,results.map(r=>r.body).join("\n"));
     assert.ok(results.find(r=>r.statusCode===200)!.cookies.some(c=>c.name==="labelmod_session"));
     const replay=await app.inject({method:"POST",url:"/auth/2fa/sms",cookies,payload:{code:c.code},remoteAddress:ip()}); assert.notEqual(replay.statusCode,200);
+    const signedIn = Object.fromEntries(results.find(r=>r.statusCode===200)!.cookies.map(c=>[c.name,c.value]));
+    const review = await app.inject({method:"GET",url:`/web-refund-requests?branchId=${BRANCH}`,cookies:signedIn});
+    assert.equal(review.statusCode,200,review.body);
   });
   test("کد به حساب، نشست و هدف بسته است", async () => {
     const p=await person(), other=await person(), c=await queued(p);

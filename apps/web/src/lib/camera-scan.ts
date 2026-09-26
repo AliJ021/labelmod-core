@@ -135,7 +135,7 @@ export async function resolveDetector(
   // برای **روزی** است که اضافه شود: بدون آن کلیدواژه، دوربین بی‌صدا
   // از کار می‌افتد — دقیقاً در قطعی برق، که تنها دلیل وجودش است.
   const { default: wasmUrl } = await import("zxing-wasm/reader/zxing_reader.wasm?url");
-  mod.setZXingModuleOverrides({ locateFile: () => wasmUrl });
+  await mod.prepareZXingModule({ overrides: { locateFile: () => wasmUrl }, fireImmediately: true });
 
   return new mod.BarcodeDetector({ formats: [...BARCODE_FORMATS] }) as DetectorLike;
 }

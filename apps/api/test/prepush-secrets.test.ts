@@ -12,7 +12,7 @@ const hook = readFileSync(path.join(repo, "ops/hooks/pre-push"), "utf8");
 const line = 'const secret = "synthetic-fixture-value";';
 const digest = createHash("sha256").update(`sample.ts\t${line}`).digest("hex");
 
-function scan(eol: string, file = "sample.ts", text = line, allow = digest, allowEol = eol): number | null {
+function scan(eol: string, file = "sample.ts", text = line, allow = digest, allowEol = eol, hasher?: string): number | null {
   // این مخزن کوچک فقط اسکن Hook را می‌سنجد؛ package.json و دیتابیس محصول ندارد.
   const dir = mkdtempSync(path.join(tmpdir(), "labelmod-secret-fixture-"));
   try {
@@ -26,7 +26,9 @@ function scan(eol: string, file = "sample.ts", text = line, allow = digest, allo
       ["update-index", "--chmod=+x", "ops/hooks/pre-push"]]) {
       execFileSync("git", args, { cwd: dir, env, stdio: "pipe" });
     }
-    const result = spawnSync("bash", ["ops/hooks/pre-push"], { cwd: dir, env, encoding: "utf8" });
+    const args = hasher === undefined ? ["ops/hooks/pre-push"]
+      : ["-c", `sha256sum() { ${hasher}; }; export -f sha256sum; bash ops/hooks/pre-push`];
+    const result = spawnSync("bash", args, { cwd: dir, env, encoding: "utf8" });
     if (result.error) throw result.error;
     return result.status;
   } finally {
@@ -44,6 +46,17 @@ test("CR داخل متن بخشی از هش است و آزاد نمی‌شود",
 test("انتقال همان متن به مسیر دیگر مجاز نمی‌شود", () => assert.equal(scan("\n", "other.ts"), 1));
 test("مقدار تازه در همان مسیر مجاز نمی‌شود", () => assert.equal(scan("\n", "sample.ts", line.replace("fixture", "changed")), 1));
 test("نبود استثنا شکست می‌دهد", () => assert.equal(scan("\n", "sample.ts", line, ""), 1));
+test("هش غایب یا خراب با سطر خالی فهرست استثنا آزاد نمی‌شود", () => {
+  for (const hasher of ["return 127", "return 1", "printf 'invalid\\n'", "printf ''", "printf 'abc\\n'"]) {
+    assert.equal(scan("\n", "sample.ts", line, "\nabc\n", "\n", hasher), 1, hasher);
+  }
+});
+test("نام npmrc با فاصله، ampersand یا خط تیره مسیر برنامه نیست", () => {
+  for (const file of ["a b.npmrc", "literal&name.npmrc", "-credentials.npmrc"]) {
+    assert.equal(scan("\n", file, "_authToken=synthetic", ""), 1, file);
+    assert.equal(scan("\n", file, "registry=https://registry.npmjs.org", ""), 0, file);
+  }
+});
 test("خط تازه کنار خط مجاز همچنان شناسایی می‌شود", () => assert.equal(scan("\r\n", "sample.ts", line + '\r\nconst token = "another-synthetic-value";'), 1));
 
 test("نمونهٔ ساختگی آزمون نشت راز با استثنای دقیق خودش مجاز است", () => {

@@ -21,6 +21,7 @@ import { AuthService } from "../src/auth/service.ts";
 import { hashSecret } from "../src/auth/password.ts";
 import { buildApp } from "../src/http/app.ts";
 import { loadConfig } from "../src/lib/config.ts";
+import { InvoiceService } from "../src/sales/invoice.ts";
 
 const DATABASE_URL = process.env.DATABASE_URL;
 const skip = DATABASE_URL ? false : "DATABASE_URL تنظیم نشده — تست یکپارچه رد شد";
@@ -230,6 +231,50 @@ describe("قیمت دستی روی سطر فاکتور", { skip }, () => {
     const line = (JSON.parse(r.body) as InvoiceJson).lines[0] as Line;
     assert.equal(line.unitPrice, "1000000", "قیمت از دیتابیس آمده");
     assert.equal(line.listPrice, null, "سطر دست‌نخورده listPrice ندارد");
+  });
+
+  test("قلم تازه پس از افزایش و کاهش قیمت از قیمت همان لحظه استفاده می‌کند", async () => {
+    const { invoiceId } = await draftWithLine(supervisor);
+    const reprice = (amount: number) => handle.db.transaction().execute(async trx => {
+      await sql`SELECT platform.set_actor(${supervisorId}::uuid)`.execute(trx);
+      await sql`SELECT catalog.set_price(${variationId}::uuid,${amount}::numeric)`.execute(trx);
+    });
+    try {
+      for (const amount of [2000000, 500000]) {
+        await reprice(amount);
+        const response = await addLine(supervisor, invoiceId, { variationId, qty: "1" });
+        assert.equal(response.statusCode, 201, response.body);
+        const lines = response.json<InvoiceJson>().lines;
+        assert.equal(lines[0]!.unitPrice, "1000000");
+        assert.equal(lines.at(-1)!.unitPrice, String(amount));
+      }
+    } finally { await reprice(1000000); }
+  });
+
+  test("مجوز و ثبت قلم از یک Snapshot قیمت استفاده می‌کنند حتی با تغییر هم‌زمان فهرست", async () => {
+    const invoiceId = await newDraft(supervisor);
+    const original = InvoiceService.prototype.currentPrice;
+    let reads = 0;
+    const reprice = (amount: number) => handle.db.transaction().execute(async trx => {
+      await sql`SELECT platform.set_actor(${supervisorId}::uuid)`.execute(trx);
+      await sql`SELECT catalog.set_price(${variationId}::uuid,${amount}::numeric)`.execute(trx);
+    });
+    InvoiceService.prototype.currentPrice = async function (...args) {
+      const captured = await original.apply(this, args);
+      if (args[0] === variationId && ++reads === 1) await reprice(2000000);
+      return captured;
+    };
+    try {
+      const response = await addLine(supervisor, invoiceId, { variationId, qty: "1", unitPrice: "900000", priceOverrideReason: "آزمون Snapshot" });
+      assert.equal(response.statusCode, 201, response.body);
+      assert.equal(reads, 1, "مجوز نباید قیمت دیگری را جدا از درج بخواند");
+      const line = response.json<InvoiceJson>().lines[0]!;
+      assert.equal(line.unitPrice, "900000");
+      assert.equal(line.listPrice, "1000000");
+    } finally {
+      InvoiceService.prototype.currentPrice = original;
+      await reprice(1000000);
+    }
   });
 
   test("صندوق‌دار اصلاً حق تایپ‌کردن قیمت ندارد", async () => {

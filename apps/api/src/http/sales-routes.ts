@@ -19,11 +19,7 @@ import { CONTROL_CHARS_MESSAGE, hasControlChars } from "../lib/text.ts";
 import { InvoiceError, invoiceToJson, type InvoiceService } from "../sales/invoice.ts";
 import { ShiftError, shiftToJson, type ShiftService } from "../sales/shift.ts";
 import { assertBranch, assertWarehouseInBranch } from "../sales/scope.ts";
-import {
-  assertMarkdownAllowed as markdownGate,
-  type MarkdownActor,
-  type MarkdownInput,
-} from "../sales/markdown-gate.ts";
+import { assertMarkdownAllowed as markdownGate } from "../sales/markdown-gate.ts";
 
 /** پول در JSON رشته است — رقم صحیح، بدون اعشار و بدون جداکننده. */
 const moneyString = z
@@ -143,11 +139,6 @@ export function registerSalesRoutes(app: FastifyInstance, deps: SalesRouteDeps):
    * بگذرد. دو نسخه از یک قاعده مالی یعنی یکی‌شان عقب می‌ماند، و همان
    * است که دور زده می‌شود.
    */
-  const assertMarkdownAllowed = (
-    s: MarkdownActor,
-    input: MarkdownInput,
-  ): Promise<void> => markdownGate(db, invoices, s, input);
-
   // ── شیفت صندوق ──────────────────────────────────────────────────
 
   app.get("/shifts/open", async (req) => {
@@ -386,13 +377,6 @@ export function registerSalesRoutes(app: FastifyInstance, deps: SalesRouteDeps):
     const discount = body.discountAmount ? parseMoney(body.discountAmount) : 0n;
     const manualPrice = body.unitPrice === undefined ? undefined : parseMoney(body.unitPrice);
 
-    await assertMarkdownAllowed(s, {
-      variationId: await invoices.resolveVariation(body),
-      qty: body.qty,
-      discount,
-      ...(manualPrice === undefined ? {} : { settingPrice: manualPrice }),
-    });
-
     const inv = await invoices.addLine({
       invoiceId: id,
       qty: body.qty,
@@ -405,7 +389,10 @@ export function registerSalesRoutes(app: FastifyInstance, deps: SalesRouteDeps):
       ...(body.priceOverrideReason === undefined
         ? {}
         : { priceOverrideReason: body.priceOverrideReason }),
-    });
+    }, (trx, line) => markdownGate(trx, invoices, s, {
+      variationId: line.variationId, qty: line.qty, discount: line.discountAmount,
+      settingPrice: line.unitPrice, listPrice: line.listPrice,
+    }));
     return reply.code(201).send(invoiceToJson(inv));
   });
 

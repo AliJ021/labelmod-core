@@ -62,6 +62,43 @@ test("محدودهٔ داخلی رد می‌شود — و محدودهٔ عمو�
   assert.equal(isPrivateAddress("not-an-ip"), true);
 });
 
+test("نمایش‌های معادل IPv6 و IPv4 از کنترل مقصد عبور نمی‌کنند", async () => {
+  const internal = ["::ffff:7f00:1", "0:0:0:0:0:ffff:a9fe:a9fe",
+    "0:0:0:0:0:0:0:1", "0000:0:0:0:0:0:0:0", "febf::1", "ff02::1", "fe80::1%lo"];
+  for (const ip of internal) {
+    assert.equal(isPrivateAddress(ip), true, ip);
+    await assert.rejects(() => resolveSafeTarget("https://example.test", async () => ["8.8.8.8", ip]));
+    await assert.rejects(() => resolveSafeTarget(`https://[${ip}]/`));
+  }
+  for (const host of ["2130706433", "0x7f000001", "0177.0.0.1", "127.1", "[::ffff:127.0.0.1]"]) {
+    await assert.rejects(() => resolveSafeTarget(`https://${host}/`));
+  }
+  for (const ip of ["::ffff:808:808", "0:0:0:0:0:ffff:8.8.4.4", "2001:4860:4860::8888"]) {
+    assert.equal(isPrivateAddress(ip), false, ip);
+    assert.deepEqual((await resolveSafeTarget("https://example.test", async () => [ip])).ips, [ip]);
+  }
+});
+
+test("تنظیم مقصد با userinfo یا query یا fragment رد می‌شود و نصب زیرپوشه حفظ می‌شود", async () => {
+  for (const baseUrl of ["https://u:p@shop.example.com", "https://shop.example.com/?x=1", "https://shop.example.com/#fragment"]) {
+    let posts = 0;
+    const sender = makeWebPushSender({ ...base, baseUrl }, {
+      resolveTarget: (raw) => resolveSafeTarget(raw, async () => ["8.8.8.8"]),
+      post: async () => { posts++; return { status: 200 }; },
+    });
+    await assert.rejects(() => sender.send({ topic: "web.stock_push", payload: {} }), SmsError);
+    assert.equal(posts, 0);
+  }
+  for (const suffix of ["/wordpress", "/wordpress/", "/wordpress///"]) {
+    let destination = "";
+    await makeWebPushSender({ ...base, baseUrl: `https://shop.example.com:8443${suffix}` }, {
+      resolveTarget: safeTarget,
+      post: async ({ url }) => { destination = url.href; return { status: 200 }; },
+    }).send({ topic: "web.price_push", payload: {} });
+    assert.equal(destination, "https://shop.example.com:8443/wordpress/wp-json/lmc/v1/price");
+  }
+});
+
 test("نشانی غیر https رد می‌شود، و خطایش **دائمی** است", async () => {
   await assert.rejects(
     () => resolveSafeTarget("http://shop.example.com/x"),

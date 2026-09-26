@@ -313,6 +313,47 @@ describe("رسید خرید", { skip }, () => {
     // نرخ پاک شود و بهای تمام‌شده هیچ‌کدام نباشد.
     assert.equal(after.lines.length, 2);
     assert.equal(after.goodsAmount, "4400000");
+    const posted = await app.inject({ method: "POST", url: `/receipts/${draft.id}/post`, ...s });
+    assert.equal(posted.statusCode, 409, posted.body);
+    assert.match(posted.json().error.message, /نرخ.*متفاوت/);
+    const unchanged = await sql<{status:string; number:string|null; movements:string; entries:string}>`
+      SELECT status,number,
+        (SELECT count(*)::text FROM inventory.stock_movement WHERE ref_id=${draft.id}::uuid) AS movements,
+        (SELECT count(*)::text FROM ledger.journal_entry WHERE ref_id=${draft.id}::uuid) AS entries
+      FROM purchasing.receipt WHERE id=${draft.id}::uuid`.execute(handle.db);
+    assert.deepEqual(unchanged.rows[0], { status: "draft", number: null, movements: "0", entries: "0" });
+  });
+
+  test("هزینه تخصیص‌یافته نباید برای یک SKU چند بهای متفاوت و وابسته به ترتیب بسازد", async () => {
+    const s = await loginAs(keeper);
+    const draft = await newDraft(keeper);
+    // درج مستقیم دو سطر، تا ادغامِ رابط نتواند نگهبان SQL را از آزمون پنهان کند.
+    await sql`INSERT INTO purchasing.receipt_line(receipt_id,variation_id,qty,unit_price,line_amount)
+      VALUES(${draft.id}::uuid,${variationA}::uuid,1,1000000,1000000),
+            (${draft.id}::uuid,${variationA}::uuid,1,1000000,1000000)`.execute(handle.db);
+    const charge = await app.inject({ method: "POST", url: `/receipts/${draft.id}/charges`, ...s,
+      payload: { chargeType: "حمل", amount: "1", allocation: "by_qty", paidFrom: "payable", payeeType: "supplier" } });
+    assert.equal(charge.statusCode, 201, charge.body);
+    const before = await onHand(variationA);
+    const posted = await app.inject({ method: "POST", url: `/receipts/${draft.id}/post`, ...s });
+    assert.equal(posted.statusCode, 409, posted.body);
+    assert.match(posted.json().error.message, /نرخ.*متفاوت/);
+    assert.equal(await onHand(variationA), before);
+    const entries = await sql<{n:string}>`SELECT count(*)::text AS n FROM ledger.journal_entry WHERE ref_id=${draft.id}::uuid`.execute(handle.db);
+    assert.equal(entries.rows[0]!.n, "0");
+  });
+
+  test("چند سطر یک SKU با نرخ و بهای یکسان همچنان قابل ثبت است", async () => {
+    const s = await loginAs(keeper);
+    const draft = await newDraft(keeper);
+    await sql`INSERT INTO purchasing.receipt_line(receipt_id,variation_id,qty,unit_price,line_amount)
+      VALUES(${draft.id}::uuid,${variationA}::uuid,1,1000000,1000000),
+            (${draft.id}::uuid,${variationA}::uuid,2,1000000,2000000)`.execute(handle.db);
+    const before = await onHand(variationA);
+    const posted = await app.inject({ method: "POST", url: `/receipts/${draft.id}/post`, ...s });
+    assert.equal(posted.statusCode, 200, posted.body);
+    assert.equal(await onHand(variationA), before + 3);
+    assert.equal(posted.json().status, "posted");
   });
 
   test("تعداد اعشاری درست حساب می‌شود — محاسبه در SQL است، نه bigint", async () => {

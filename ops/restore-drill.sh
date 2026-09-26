@@ -106,15 +106,17 @@ echo "  بازیابی…"
 #    افزونه‌هایی که در این دیتابیس نیستند هشدار بدهد. آنچه اهمیت دارد
 #    ادعاهای زیر است، نه بی‌صدا بودن pg_restore.
 RESTORE_LOG="$(mktemp)"
+RESTORE_FAILED=0
 if ! pg_restore --no-owner --no-privileges -d "$DRILL_URL" "$DUMP" >"$RESTORE_LOG" 2>&1; then
-  echo "  ⚠️ pg_restore هشدار داد (چند سطر آخر):"
-  tail -5 "$RESTORE_LOG" | sed 's/^/     /'
+  RESTORE_FAILED=1
+  echo "  ✗ pg_restore شکست خورد؛ تمرین بازیابی ناموفق است (ابتدای خروجی):"
+  head -20 "$RESTORE_LOG" | sed 's/^/     /'
 fi
 rm -f "$RESTORE_LOG"
 
 # ── ادعاها روی داده بازیابی‌شده ──────────────────────────────────────
 PASSED=0
-FAILED=0
+FAILED=$RESTORE_FAILED
 
 check () {                       # check "توضیح" "SQL که یک عدد می‌دهد" "مقدار انتظار"
   local label="$1" sql="$2" want="$3" got
@@ -218,9 +220,12 @@ fi
 # ── ثبت در دیتابیس **عملیاتی** ───────────────────────────────────────
 # ⚠️ تنها نوشتنِ این اسکریپت روی دیتابیس واقعی، همین یک سطر است.
 NOTE="$(basename "$DUMP")"
-psql -q -d "$DATABASE_URL" -c \
-  "SELECT platform.record_restore_drill(
-     \$\$$NOTE\$\$, $OK, $PASSED, $BYTES, NULL, NULL)" >/dev/null
+if [ "$RESTORE_FAILED" -ne 0 ]; then NOTE="$NOTE — pg_restore failed"; fi
+psql -q -v ON_ERROR_STOP=1 -d "$DATABASE_URL" \
+  -v "drill_note=$NOTE" -v "drill_ok=$OK" -v "drill_passed=$PASSED" -v "drill_bytes=$BYTES" <<'SQL' >/dev/null
+SELECT platform.record_restore_drill(:'drill_note', :'drill_ok'::boolean,
+  :'drill_passed'::integer, :'drill_bytes'::bigint, NULL, NULL);
+SQL
 
 echo
 echo "── وضعیت مهلت ─────────────────────────────────────────────"

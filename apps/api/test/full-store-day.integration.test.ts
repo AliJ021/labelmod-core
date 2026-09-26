@@ -268,7 +268,7 @@ describe("یک روز کامل فروشگاه", { skip, timeout: 300_000 }, () =
   });
 
   // ── ۰۸:۳۰ ─────────────────────────────────────────────────────────
-  test("۰۸:۳۰ رسید خرید: دو نرخ برای یک کالا + هزینه حمل با تخصیص", async () => {
+  test("۰۸:۳۰ رسید چندنرخی رد می‌شود؛ رسیدهای مستقل با هزینه حمل قطعی می‌شوند", async () => {
     const draft = await call("POST", "/receipts", admin, {
       branchId: BRANCH,
       warehouseId: STORE_WH,
@@ -276,7 +276,6 @@ describe("یک روز کامل فروشگاه", { skip, timeout: 300_000 }, () =
     });
     assert.equal(draft.statusCode, 201, draft.body);
     const id = (draft.json() as { id: string }).id;
-    day.receipt = id;
 
     // همان کالا، دو نرخ → **دو سطر**، نه یک سطر تجمیعی
     await call("POST", `/receipts/${id}/lines`, admin, {
@@ -310,9 +309,48 @@ describe("یک روز کامل فروشگاه", { skip, timeout: 300_000 }, () =
     });
     assert.equal(ch.statusCode, 201, ch.body);
 
-    const posted = await call("POST", `/receipts/${id}/post`, admin, {}, `rcpt-${suffix}`);
-    assert.equal(posted.statusCode, 200, posted.body);
-    assert.match((posted.json() as { number: string }).number, /^P-\d{4}-\d{6}$/);
+    const blocked = await call("POST", `/receipts/${id}/post`, admin, {}, `rcpt-blocked-${suffix}`);
+    assert.equal(blocked.statusCode, 409, blocked.body);
+    const untouched = await sql<{ status: string; number: string | null; lines: string; moves: string; entries: string }>`
+      SELECT r.status, r.number,
+        (SELECT count(*)::text FROM purchasing.receipt_line WHERE receipt_id=r.id) AS lines,
+        (SELECT count(*)::text FROM inventory.stock_movement) AS moves,
+        (SELECT count(*)::text FROM ledger.journal_entry) AS entries
+      FROM purchasing.receipt r WHERE r.id=${id}::uuid`.execute(handle.db);
+    assert.equal(untouched.rows[0]!.status, "draft");
+    assert.equal(untouched.rows[0]!.number, null);
+    assert.equal(untouched.rows[0]!.lines, "3", "رد قطعی‌سازی اقلام پیش‌نویس را حفظ می‌کند");
+    assert.equal(untouched.rows[0]!.moves, "0", "رسید مبهم نباید موجودی بسازد");
+    assert.equal(untouched.rows[0]!.entries, "0", "رسید مبهم نباید سند مالی بسازد");
+
+    // همان تعداد، قیمت‌ها و حمل، در دو رسید مستقل با نرخ روشن برای هر SKU.
+    // پیش‌نویس ردشده حفظ می‌شود؛ هیچ سطر یا قاعده ارزش‌گذاری بازنویسی نمی‌شود.
+    for (const [index, batch] of [
+      { lines: [{ variationId: variationA, qty: "10", unitPrice: "2000000" }], freight: "2000000" },
+      { lines: [
+        { variationId: variationA, qty: "10", unitPrice: "2400000" },
+        { variationId: variationB, qty: "10", unitPrice: "2200000" },
+      ], freight: "4600000" },
+    ].entries()) {
+      const next = await call("POST", "/receipts", admin, {
+        branchId: BRANCH, warehouseId: STORE_WH, supplierId,
+      });
+      assert.equal(next.statusCode, 201, next.body);
+      const receiptId = (next.json() as { id: string }).id;
+      for (const line of batch.lines) {
+        const added = await call("POST", `/receipts/${receiptId}/lines`, admin, line);
+        assert.equal(added.statusCode, 201, added.body);
+      }
+      const freight = await call("POST", `/receipts/${receiptId}/charges`, admin, {
+        chargeType: "حمل", amount: batch.freight, allocation: "by_value",
+        paidFrom: "payable", payeeType: "other", payeeName: "باربری روز کامل",
+      });
+      assert.equal(freight.statusCode, 201, freight.body);
+      const posted = await call("POST", `/receipts/${receiptId}/post`, admin, {}, `rcpt-${suffix}-${index}`);
+      assert.equal(posted.statusCode, 200, posted.body);
+      assert.match((posted.json() as { number: string }).number, /^P-\d{4}-\d{6}$/);
+      day.receipt = receiptId;
+    }
 
     // تعداد در انبار: ۳۰ قلم
     const q = await sql<{ n: string }>`

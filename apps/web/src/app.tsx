@@ -54,6 +54,8 @@ export function App() {
   const [theme, setThemeState] = useState<Theme>("system");
   const [passwordOpen, setPasswordOpen] = useState(false);
   const [loginNotice, setLoginNotice] = useState<string | null>(null);
+  const [sessionError, setSessionError] = useState<string | null>(null);
+  const [sessionBusy, setSessionBusy] = useState(false);
 
   const [me, setMe] = useState<Me | null>(null);
   const [loaded, setLoaded] = useState(false);
@@ -96,27 +98,31 @@ export function App() {
   }, [refresh]);
 
   async function lockScreen() {
-    if (!me) return;
+    if (!me || sessionBusy) return;
     const name = me.fullName;
+    setSessionBusy(true); setSessionError(null);
     try {
-      await session.lock();
-    } finally {
-      // حتی اگر تماس شکست خورد، نشان‌دادن صفحه قفل امن‌ترین کار است.
+      const result = await session.lock();
+      if (result?.locked !== true) throw new Error("lock not confirmed");
       rememberLock(name);
       setLockedUser(name);
       setMe(null);
-    }
+    } catch { setSessionError("قفل‌شدن نشست در سرور تأیید نشد. دوباره قفل را بزنید و تا تأیید، دستگاه را ترک نکنید."); }
+    finally { setSessionBusy(false); }
   }
 
   async function signOut() {
+    if (sessionBusy) return;
+    setSessionBusy(true); setSessionError(null);
     try {
-      await session.logout();
-    } finally {
+      const result = await session.logout();
+      if (result?.ok !== true) throw new Error("logout not confirmed");
       forgetLock();
       setLockedUser(null);
       setMe(null);
       setZone("dashboard");
-    }
+    } catch { setSessionError("خروج در سرور تأیید نشد. دوباره خروج را بزنید و تا تأیید، دستگاه را ترک نکنید."); }
+    finally { setSessionBusy(false); }
   }
 
   /** از صفحه قفل به فرم ورود — شیفت عوض شده. */
@@ -202,6 +208,7 @@ export function App() {
             <h1 className="auth-title">راه‌اندازی احراز هویت دومرحله‌ای</h1>
             <p className="muted">برای دسترسی به حساب، ابتدا یک عامل دوم ثبت کنید.</p>
             <TwoFactor onEnrolled={() => void refresh()} />
+            {sessionError && <p className="auth-error" role="alert">{sessionError}</p>}
             <button type="button" className="btn" onClick={() => void signOut()}>خروج</button>
           </Solid>
         </main>
@@ -232,6 +239,7 @@ export function App() {
       </div>
 
       <div className="app">
+        {sessionError && <p className="solid pos-alert" role="alert">{sessionError}</p>}
         <Glass as="nav" radius="md" className="topbar" refract={false} live>
           <strong className="brand">لیبل مد</strong>
 

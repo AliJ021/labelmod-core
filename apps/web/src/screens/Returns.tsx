@@ -28,6 +28,7 @@
  */
 import { useEffect, useState } from "react";
 import { Glass, Solid } from "../components/Glass.tsx";
+import { WebRefundRequests } from "./WebRefundRequests.tsx";
 import { ApiError } from "../lib/api.ts";
 import { ActionKeys, actionFor } from "../lib/action-key.ts";
 import { parseRial, rialFromTomanInput, toman } from "../lib/money.ts";
@@ -274,6 +275,8 @@ export function Returns() {
           <span className="dot dot--good" aria-hidden="true">●</span> {done}
         </p>
       ) : null}
+
+      <WebRefundRequests key={branchId} branchId={branchId} />
 
       {view && invoice ? (
         <>

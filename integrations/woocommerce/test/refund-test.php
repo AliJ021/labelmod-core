@@ -93,4 +93,38 @@ check(count($GLOBALS['scheduled']),0,'permanent accounting mismatch not retried 
 check($refund2->get_meta(LMC_Refund_Sync::DONE),'','mismatch is not successful');
 $legacy=new WC_Order(200); $legacy->meta[LMC_Order_Sync::META_INVOICE]='old-invoice';
 check(is_wp_error(LMC_Refund_Sync::build_payload($legacy,$refund2)),true,'legacy mapping is never guessed');
+
+$pending=new WC_Order_Refund(103); $pending->items=[new WC_Order_Item_Product(-1,501)];
+$GLOBALS['orders'][103]=$pending; $order->refunds[]=$pending;
+LMC_Refund_Sync::created(103,['restock_items'=>true]);
+$frozen=$pending->get_meta(LMC_Refund_Sync::PAYLOAD);
+LMC_Client::$result=['requestId'=>'request-1','status'=>'pending'];
+for ($i=0;$i<LMC_Order_Sync::MAX_ATTEMPTS+2;$i++) {
+    $GLOBALS['scheduled']=[];
+    LMC_Refund_Sync::send(103);
+    check($pending->get_meta(LMC_Refund_Sync::DONE),'','pending does not claim a posted return');
+    check(isset($GLOBALS['scheduled'][103]),true,'pending keeps polling beyond delivery retry limit');
+}
+check($pending->get_meta(LMC_Refund_Sync::REQUEST),'request-1','pending request identity saved');
+check($pending->get_meta(LMC_Refund_Sync::PAYLOAD),$frozen,'pending poll preserves original payload');
+$GLOBALS['scheduled']=[];
+LMC_Client::$result=['requestId'=>'request-1','status'=>'rejected','reason'=>'invalid evidence'];
+LMC_Refund_Sync::send(103);
+check($pending->get_meta(LMC_Refund_Sync::STATUS),'rejected','rejection saved');
+check($pending->get_meta(LMC_Refund_Sync::DONE),'','rejection never claims posted');
+check(isset($GLOBALS['scheduled'][103]),false,'rejection is terminal');
+$calls=count(LMC_Client::$calls);
+LMC_Refund_Sync::send(103); LMC_Refund_Sync::retry_order($order);
+check(count(LMC_Client::$calls),$calls,'rejected request is never silently resubmitted');
+check(isset($GLOBALS['scheduled'][103]),false,'manual bulk retry does not reopen rejection');
+
+$accepted=new WC_Order_Refund(104); $accepted->items=[new WC_Order_Item_Product(-1,501)];
+$GLOBALS['orders'][104]=$accepted;
+LMC_Refund_Sync::created(104,['restock_items'=>false]);
+LMC_Client::$result=['requestId'=>'request-2','status'=>'pending'];
+LMC_Refund_Sync::send(104);
+LMC_Client::$result=['requestId'=>'request-2','returnId'=>'ret-approved','status'=>'posted','number'=>'R-approved'];
+LMC_Refund_Sync::send(104);
+check($accepted->get_meta(LMC_Refund_Sync::DONE),'ret-approved','only approval records the financial return');
+check($accepted->get_meta(LMC_Refund_Sync::STATUS),'approved','final decision saved');
 echo "PASS $n refund integration assertions\n";

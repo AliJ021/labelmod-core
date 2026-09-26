@@ -15,7 +15,8 @@
  */
 import type { FastifyInstance } from "fastify";
 import { z } from "zod";
-import { AuthError } from "../auth/service.ts";
+import { AuthError, type ResolvedSession } from "../auth/service.ts";
+import { requireManualReturnChannel } from "../auth/human-session.ts";
 import { requireForSession } from "../auth/permission.ts";
 import { resolveCashDrawer } from "../treasury/cash-drawer.ts";
 import type { Db } from "../db/client.ts";
@@ -103,9 +104,7 @@ export function registerReturnRoutes(app: FastifyInstance, deps: ReturnRouteDeps
   const { db, returns } = deps;
 
   const session = (req: { session: unknown }) => {
-    const s = req.session as
-      | { userId: string; pinUnlocked: boolean; fullName: string }
-      | null;
+    const s = req.session as ResolvedSession | null;
     if (!s) throw new AuthError("no_session", "وارد نشده‌اید");
     return s;
   };
@@ -148,6 +147,7 @@ export function registerReturnRoutes(app: FastifyInstance, deps: ReturnRouteDeps
     const s = session(req);
     const body = createReturnBody.parse(req.body);
     const refund = parseMoney(body.refundAmount);
+    await requireManualReturnChannel(db, body.invoiceId);
 
     const inv = await db
       .selectFrom("sales.invoice")
@@ -268,6 +268,7 @@ export function registerReturnRoutes(app: FastifyInstance, deps: ReturnRouteDeps
       source: "api.return.post",
       payload: { returnId: id },
       run: async (trx) => {
+        if (r.status !== "posted") await requireManualReturnChannel(trx, r.invoiceId);
         const number = await returns.postIn(trx, id, s.userId);
         return { value: { number }, ref: id };
       },

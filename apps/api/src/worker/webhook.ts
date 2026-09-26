@@ -85,14 +85,16 @@ export function makeWebhookSender(config: WebhookConfig): WebhookSender {
       if (!config.enabled || config.url.trim() === "") return;
 
       assertHttps(config.url);
+      if (config.token === undefined || config.token.trim() === "") {
+        throw new SmsError("کلید NOTIFY_WEBHOOK_TOKEN تنظیم نشده است؛ ارسال انجام نشد");
+      }
 
       const res = await fetch(config.url, {
         method: "POST",
+        redirect: "error",
         headers: {
           "content-type": "application/json",
-          ...(config.token === undefined
-            ? {}
-            : { authorization: `Bearer ${config.token}` }),
+          authorization: `Bearer ${config.token}`,
         },
         body: JSON.stringify(payload),
         // بدون مهلت، یک سرویس کند کل Worker را می‌خواباند.

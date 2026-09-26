@@ -144,6 +144,11 @@ export type LineMarkdownAuthorizer = (
   line: LockedLineMarkdownState,
 ) => Promise<void>;
 
+export type LineAdditionAuthorizer = (
+  trx: Transaction<Database>,
+  line: { variationId: string; qty: string; listPrice: bigint; unitPrice: bigint | undefined; discountAmount: bigint },
+) => Promise<void>;
+
 export class InvoiceService {
   readonly #db: Db;
 
@@ -391,12 +396,8 @@ export class InvoiceService {
     ex: Executor = this.#db,
     listPrice?: bigint | undefined,
   ): Promise<DiscountCheck> {
-    // `at` یعنی «قیمت فهرست در لحظه همین فاکتور»، نه قیمت امروز.
-    //
-    // بدون آن، حراجی که وسط یک پیش‌نویس باز شروع شود، سقف را با عددی
-    // می‌سنجید که با `list_price` نشسته روی سطر یکی نیست: دروازه از
-    // یک قیمت حساب می‌کرد و نگهبان دیتابیس از قیمتی دیگر. پیش‌فرض
-    // «حالا» است، برای مسیرهایی که هنوز فاکتوری ندارند (سفارش سایت).
+    // فراخوانِ نوشتن، قیمت Snapshot را صریح می‌دهد تا مجوز و درج از
+    // یک عدد استفاده کنند. `at` فقط برای خواندن تاریخیِ صریح باقی است.
     const list = listPrice ??
       (at === undefined
         ? await this.currentPrice(variationId, new Date(), ex)
@@ -446,8 +447,8 @@ export class InvoiceService {
     return parseMoney(r.rows[0]?.gross ?? "0");
   }
 
-  async addLine(input: AddLineInput): Promise<Invoice> {
-    await this.#db.transaction().execute((trx) => this.addLineIn(trx, input));
+  async addLine(input: AddLineInput, authorize?: LineAdditionAuthorizer): Promise<Invoice> {
+    await this.#db.transaction().execute((trx) => this.addLineIn(trx, input, authorize));
     return (await this.byId(input.invoiceId)) as Invoice;
   }
 
@@ -464,10 +465,10 @@ export class InvoiceService {
    * تراکنش می‌نویسد و بیرونش می‌خواند، چیزی را می‌بیند که هنوز
    * Commit نشده.
    */
-  async addLineIn(trx: Transaction<Database>, input: AddLineInput): Promise<void> {
-    const inv = await this.requireDraft(input.invoiceId, trx);
+  async addLineIn(trx: Transaction<Database>, input: AddLineInput, authorize?: LineAdditionAuthorizer): Promise<void> {
+    await this.requireDraft(input.invoiceId, trx);
     const variationId = await this.resolveVariation(input, trx);
-    const listPrice = await this.currentPrice(variationId, inv.occurredAt, trx);
+    const listPrice = await this.currentPrice(variationId, new Date(), trx);
     const discount = input.discountAmount ?? 0n;
 
     const qty = Number(input.qty);
@@ -491,6 +492,9 @@ export class InvoiceService {
     if (discount > gross) {
       throw new InvoiceError("discount_exceeds_line", "تخفیف از مبلغ خودِ قلم بیشتر است", 422);
     }
+
+    await authorize?.(trx, { variationId, qty: input.qty, listPrice,
+      unitPrice: input.unitPrice, discountAmount: discount });
 
     {
       await setActor(trx, input.actorId);
@@ -551,8 +555,8 @@ export class InvoiceService {
    * حل‌شده با سطر موجود یکی نباشد، ادغام یعنی بازقیمت‌گذاری بی‌صدای
    * چیزی که مشتری قبلاً دیده.
    *
-   * قیمت از همان مسیر `addLine` می‌آید — `currentPrice` با
-   * `invoice.occurred_at` — نه یک منطق موازی. دو مرجع قیمت یعنی روزی
+   * قیمت از همان مسیر `addLine` می‌آید — `currentPrice` در زمان افزودن
+   * قلم — نه یک منطق موازی. دو مرجع قیمت یعنی روزی
    * یکی از دیگری عقب می‌ماند.
    */
   async scanIn(
@@ -565,10 +569,6 @@ export class InvoiceService {
       actorId: string;
     },
   ): Promise<void> {
-    const inv = await this.requireDraft(input.invoiceId);
-    const variationId = await this.resolveVariation(input);
-    const price = await this.currentPrice(variationId, inv.occurredAt);
-
     await setActor(trx, input.actorId);
 
     // قفل فاکتور **پیش از** یافتن سطر سازگار: بدون این، دو اسکن
@@ -585,6 +585,11 @@ export class InvoiceService {
         `فاکتور در وضعیت «${status}» است و دیگر تغییر نمی‌کند`,
       );
     }
+
+    // خواندن‌ها روی همان اتصال و پس از قفل فاکتور انجام می‌شوند.
+    await this.requireDraft(input.invoiceId, trx);
+    const variationId = await this.resolveVariation(input, trx);
+    const price = await this.currentPrice(variationId, new Date(), trx);
 
     // اگر چند سطر سازگار باشد، کم‌ترین `line_no` انتخاب می‌شود —
     // ترتیب قطعی، بدون ادغام یا حذف سطرهای دیگر. سطر تکراری قبلی کار

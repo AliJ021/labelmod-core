@@ -33,7 +33,7 @@ import { sql } from "kysely";
 import type { Transaction } from "kysely";
 import type { Database } from "../db/types.ts";
 import { parseMoney, serializeMoney } from "../lib/money.ts";
-import { InvoiceError, type Executor, type InvoiceService } from "./invoice.ts";
+import { InvoiceError, type Executor, type InvoiceService, type LineAdditionAuthorizer } from "./invoice.ts";
 
 export interface WebOrderLineInput {
   sku: string;
@@ -169,7 +169,7 @@ export class WebOrderService {
    * `shippingAmount` روی سرآیند فاکتور می‌نشیند، نه به‌عنوان یک قلم:
    * کرایه ارسال کالا نیست و نباید در گزارش «چه فروختیم» بیاید.
    */
-  async ingest(trx: Transaction<Database>, input: WebOrderInput): Promise<string> {
+  async ingest(trx: Transaction<Database>, input: WebOrderInput, authorize?: LineAdditionAuthorizer): Promise<string> {
     if (input.lines.length === 0) {
       throw new InvoiceError("empty_order", "سفارش بدون قلم ثبت نمی‌شود", 422);
     }
@@ -200,7 +200,7 @@ export class WebOrderService {
         // داشتند» باید بشود سایت را از صندوق جدا کرد.
         priceOverrideReason: "قیمت سایت",
         actorId: input.actorId,
-      });
+      }, authorize);
     }
 
     if (input.shippingAmount > 0n) {

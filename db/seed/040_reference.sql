@@ -176,6 +176,7 @@ INSERT INTO identity.permission_rule
 ('warehouse','customer.manage',    false, NULL,   NULL,  NULL),
 
 ('accountant','journal.manual',    true,  NULL,   NULL,  NULL),
+('accountant','web.refund.review', true,  NULL,   NULL,  NULL),
 ('accountant','period.close',      true,  NULL,   NULL,  'admin'),
 ('accountant','cost.view',         true,  NULL,   NULL,  NULL),
 ('accountant','report.view',       true,  NULL,   NULL,  NULL),
@@ -194,6 +195,7 @@ INSERT INTO identity.permission_rule
 ('accountant','ledger.mapping',    false, NULL,   NULL,  NULL),
 
 ('admin','sale.create',            true,  NULL,   NULL,  NULL),
+('admin','web.refund.review',       true,  NULL,   NULL,  NULL),
 ('admin','sale.discount',          true,  NULL,   NULL,  NULL),
 ('admin','sale.credit',            true,  NULL,   NULL,  NULL),
 ('admin','return.late',            true,  NULL,   NULL,  NULL),

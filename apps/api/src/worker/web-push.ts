@@ -51,14 +51,24 @@ export function isPrivateAddress(ip: string): boolean {
     return false;
   }
   if (v === 6) {
-    const s = ip.toLowerCase();
-    if (s === "::" || s === "::1") return true;
-    if (s.startsWith("fe80:")) return true;              // link-local
-    // fc00::/7 — یعنی fc.. و fd..
-    if (s.startsWith("fc") || s.startsWith("fd")) return true;
-    // ::ffff:a.b.c.d — IPv4 در پوشش IPv6؛ بی این، یک حلقهٔ کامل باز بود.
-    const m = /^::ffff:(\d+\.\d+\.\d+\.\d+)$/.exec(s);
-    if (m?.[1] !== undefined) return isPrivateAddress(m[1]);
+    // نمایش‌های هم‌ارز، از جمله دنبالهٔ IPv4، پیش از مقایسه یکسان می‌شوند.
+    if (ip.includes("%")) return true;
+    let canonical: string;
+    try { canonical = new URL(`https://[${ip}]/`).hostname.slice(1, -1); }
+    catch { return true; }
+    const [left = "", right] = canonical.split("::");
+    const head = left === "" ? [] : left.split(":");
+    const tail = right === undefined || right === "" ? [] : right.split(":");
+    const words = (right === undefined ? head : [...head, ...Array<string>(8 - head.length - tail.length).fill("0"), ...tail])
+      .map((word) => Number.parseInt(word, 16));
+    if (words.length !== 8 || words.some((word) => !Number.isInteger(word))) return true;
+    const first = words[0]!;
+    if (words.slice(0, 7).every((word) => word === 0) && words[7]! <= 1) return true;
+    if ((first & 0xfe00) === 0xfc00 || (first & 0xffc0) === 0xfe80 || (first & 0xff00) === 0xff00) return true;
+    if (words.slice(0, 5).every((word) => word === 0) && (words[5] === 0xffff || words[5] === 0)) {
+      const high = words[6]!, low = words[7]!;
+      return isPrivateAddress(`${high >>> 8}.${high & 255}.${low >>> 8}.${low & 255}`);
+    }
     return false;
   }
   // چیزی که IP نیست، IP امن هم نیست.
@@ -84,6 +94,17 @@ export function isPrivateAddress(ip: string): boolean {
  */
 export type LookupAll = (host: string) => Promise<string[]>;
 
+function parsePushUrl(rawUrl: string): URL {
+  let url: URL;
+  try { url = new URL(rawUrl); }
+  catch { throw new SmsError("نشانی سایت معتبر نیست", true); }
+  if (url.protocol !== "https:") throw new SmsError("نشانی سایت باید https باشد", true);
+  if (url.username || url.password || rawUrl.includes("?") || rawUrl.includes("#")) {
+    throw new SmsError("نشانی سایت نباید اطلاعات ورود، query یا fragment داشته باشد", true);
+  }
+  return url;
+}
+
 /** همهٔ نشانی‌های یک نام — پیش‌فرضِ تولیدی. */
 const dnsLookupAll: LookupAll = async (host) =>
   (await lookup(host, { all: true })).map((a) => a.address);
@@ -99,15 +120,7 @@ export async function resolveSafeTarget(
    */
   lookupAll: LookupAll = dnsLookupAll,
 ): Promise<{ url: URL; ip: string; ips: string[] }> {
-  let url: URL;
-  try {
-    url = new URL(rawUrl);
-  } catch {
-    throw new SmsError("نشانی سایت معتبر نیست", true);
-  }
-  if (url.protocol !== "https:") {
-    throw new SmsError("نشانی سایت باید https باشد", true);
-  }
+  const url = parsePushUrl(rawUrl);
 
   const host = url.hostname.replace(/^\[|\]$/g, "");
   let ips: string[];
@@ -351,14 +364,15 @@ export function makeWebPushSender(
         );
       }
 
-      const base = config.baseUrl.replace(/\/+$/, "") + PATHS[msg.topic];
+      const base = parsePushUrl(config.baseUrl);
+      base.pathname = base.pathname.replace(/\/+$/, "") + PATHS[msg.topic];
       /*
        * ⚠️ **هر بار دوباره Resolve می‌شود، و این عمدی است.** نتیجه
        *    Cache نمی‌شود: هر تلاش مجدد صف، یک سنجش تازه می‌گیرد. اگر
        *    نتیجه نگه داشته می‌شد، نشانی‌ای که امروز عمومی است و فردا
        *    داخلی می‌شود تا ابد از نگهبان رد بود.
        */
-      const { url, ips } = await resolve(base);
+      const { url, ips } = await resolve(base.href);
 
       const body = JSON.stringify(msg.payload);
       const timestamp = String(Math.floor(now() / 1000));

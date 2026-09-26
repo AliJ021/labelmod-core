@@ -158,10 +158,13 @@ describe("Worker — صف پیام، پیامک و هشدار چک", { skip }, (
   // ── مصرف ────────────────────────────────────────────────────────
 
   test("یک دور، پیام را می‌فرستد و می‌بندد", async () => {
-    const r = await tick(opts());
+    const logs: string[] = [];
+    const r = await tick({ ...opts(), log: (message) => { logs.push(message); } });
     assert.ok(r.claimed >= 1, `پیامی برداشته نشد: ${JSON.stringify(r)}`);
     assert.equal(r.failed, 0);
     assert.equal(r.dead, 0);
+    assert.doesNotMatch(logs.join("\n"), /09121112233|989121112233|\/i\//,
+      "لاگ Worker نباید شماره مشتری یا لینک حامل توکن را افشا کند");
 
     const left = await sql<{ n: string }>`
       SELECT count(*)::text AS n FROM platform.outbox_message WHERE status <> 'sent'`

@@ -309,9 +309,9 @@ export class VariationService {
     const colors = uniqueInOrder(rows.rows.map((r) => r.color));
     const sizes = sortSizes(uniqueInOrder(rows.rows.map((r) => r.size)));
 
-    const cells: Record<string, Record<string, MatrixCell>> = {};
+    const cells: Record<string, Record<string, MatrixCell>> = Object.create(null);
     for (const r of rows.rows) {
-      const row = (cells[label(r.color)] ??= {});
+      const row = (cells[label(r.color)] ??= Object.create(null));
       row[label(r.size)] = {
         variationId: r.id,
         sku: r.sku,
