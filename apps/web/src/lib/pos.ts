@@ -169,6 +169,7 @@ export interface SaleReturn {
   refundMethod: string | null;
   receivableApplied: string;
   creditApplied: string;
+  cogsAmount: string | null;
   occurredAt: string;
 }
 

@@ -443,7 +443,7 @@ export class ReturnService {
 }
 
 /** شکل JSON — پول همیشه رشته. */
-export function returnToJson(r: SaleReturn) {
+export function returnToJson(r: SaleReturn, showCost: boolean) {
   return {
     id: r.id,
     number: r.number,
@@ -460,7 +460,7 @@ export function returnToJson(r: SaleReturn) {
     refundMethod: r.refundMethod,
     receivableApplied: serializeMoney(r.receivableApplied),
     creditApplied: serializeMoney(r.creditApplied),
-    cogsAmount: serializeMoney(r.cogsAmount),
+    cogsAmount: showCost ? serializeMoney(r.cogsAmount) : null,
     occurredAt: r.occurredAt.toISOString(),
     lines: r.lines.map((l) => ({
       id: l.id,

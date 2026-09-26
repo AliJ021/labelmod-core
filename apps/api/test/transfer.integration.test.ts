@@ -46,6 +46,7 @@ describe("انتقال بین انبارها", { skip }, () => {
   const PASSWORD = "رمز-انتقال-و-به‌قدر-کافی-بلند";
   const keeper = `tkeep_${suffix}`;
   const cashier = `tcash_${suffix}`;
+  const admin = `tadmin_${suffix}`;
   let keeperId = "";
   let variationId = "";
   let backWh = "";
@@ -119,6 +120,7 @@ describe("انتقال بین انبارها", { skip }, () => {
     for (const [username, name, role] of [
       [keeper, "انباردار انتقال", "warehouse"],
       [cashier, "صندوق‌دار انتقال", "cashier"],
+      [admin, "مدیر انتقال", "admin"],
     ] as const) {
       const u = await handle.db
         .insertInto("identity.app_user")
@@ -188,6 +190,52 @@ describe("انتقال بین انبارها", { skip }, () => {
     disposable?.drop();
   });
 
+  test("بهای انتقال در خواندن، نوشتن و replay تابع cost.view است", async () => {
+    const s = await loginAs(keeper);
+    const allowed = await loginAs(admin);
+    const id = await newDraft();
+    const added = await app.inject({ method: "POST", url: `/transfers/${id}/lines`, ...s,
+      payload: { variationId, qty: "1" } });
+    assert.equal(added.statusCode, 201, added.body);
+    assert.equal(added.json().totalValue, null);
+    assert.equal(added.json().lines[0].unitCost, null);
+    assert.equal(added.json().lines[0].valueDelta, null);
+    const lineId = added.json().lines[0].id as string;
+    const changed = await app.inject({ method: "PATCH", url: `/transfers/${id}/lines/${lineId}`, ...s,
+      payload: { qty: "2" } });
+    assert.equal(changed.statusCode, 200, changed.body);
+    assert.equal(changed.json().totalValue, null);
+    assert.equal(changed.json().lines[0].unitCost, null);
+    assert.equal(changed.json().lines[0].valueDelta, null);
+    const removed = await app.inject({ method: "DELETE", url: `/transfers/${id}/lines/${lineId}`, ...s });
+    assert.equal(removed.statusCode, 200, removed.body);
+    assert.equal(removed.json().totalValue, null);
+    assert.equal(removed.json().lines.length, 0);
+    const readded = await app.inject({ method: "POST", url: `/transfers/${id}/lines`, ...s,
+      payload: { variationId, qty: "1" } });
+    assert.equal(readded.statusCode, 201, readded.body);
+    const valueBefore = await totalValue();
+    for (const replayed of [false, true]) {
+      const posted = await app.inject({ method: "POST", url: `/transfers/${id}/post`, ...s, payload: {} });
+      assert.equal(posted.statusCode, 200, posted.body);
+      assert.equal(posted.json().totalValue, null);
+      assert.equal(posted.json().lines, 1, "قرارداد تعداد سطر در پاسخ ثبت حفظ می‌شود");
+      assert.equal(posted.json().replayed, replayed);
+    }
+    for (const who of [s, allowed]) {
+      const detail = await app.inject({ method: "GET", url: `/transfers/${id}`, ...who });
+      assert.equal(detail.statusCode, 200, detail.body);
+      const expected = who === allowed ? "333333" : null;
+      assert.equal(detail.json().totalValue, expected);
+      assert.equal(detail.json().lines[0].unitCost, expected);
+      assert.equal(detail.json().lines[0].valueDelta, expected);
+      const list = await app.inject({ method: "GET", url: "/transfers", ...who });
+      assert.equal(list.statusCode, 200, list.body);
+      assert.equal(list.json().transfers.find((t: { id: string }) => t.id === id).totalValue, expected);
+    }
+    assert.equal(await totalValue(), valueBefore, "پوشاندن پاسخ ارزش موجودی را تغییر نمی‌دهد");
+  });
+
   test("صندوق‌دار انتقال ثبت نمی‌کند", async () => {
     const s = await loginAs(cashier);
     const r = await app.inject({
@@ -228,6 +276,7 @@ describe("انتقال بین انبارها", { skip }, () => {
   test("چرخه کامل: پیش‌نویس، قلم، ثبت — و ارزش دست‌نخورده", async () => {
     const before = await totalValue();
     const beforeStore = await onHand(STORE_WH);
+    const beforeBack = await onHand(backWh);
 
     const id = await newDraft();
     const s = await loginAs(keeper);
@@ -270,10 +319,13 @@ describe("انتقال بین انبارها", { skip }, () => {
     assert.equal(posted.status, "posted");
     assert.match(posted.number as string, /^TR-1405-/, "شماره در لحظه ثبت");
     assert.equal(posted.replayed, false);
-    assert.ok(posted.lines[0]?.unitCost !== null, "بها پس از ثبت نوشته شد");
+    assert.equal(post.json().totalValue, null, "انباردار مجوز دیدن بها ندارد");
+    const stored = await sql<{ unit_cost: string }>`SELECT unit_cost::text FROM inventory.transfer_line
+      WHERE transfer_id = ${id}::uuid`.execute(handle.db);
+    assert.equal(stored.rows[0]!.unit_cost, "333333", "بها پس از ثبت در دیتابیس نوشته شد");
 
     assert.equal(await onHand(STORE_WH), beforeStore - 10);
-    assert.equal(await onHand(backWh), 10);
+    assert.equal(await onHand(backWh), beforeBack + 10);
     // **ارزش کل دقیقاً همان است** — انتقال سندی نمی‌زند، پس اگر ارزش
     // عوض شود هیچ‌جا طرف حسابی ندارد.
     assert.equal(await totalValue(), before, "جمع ارزش موجودی تغییر نکرد");

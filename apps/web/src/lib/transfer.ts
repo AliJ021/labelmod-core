@@ -41,7 +41,7 @@ export interface TransferHead {
   createdByName: string | null;
   lineCount: number;
   totalQty: string;
-  totalValue: string;
+  totalValue: string | null;
 }
 
 export interface Transfer extends TransferHead {
