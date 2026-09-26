@@ -24,6 +24,7 @@ import { useCallback, useEffect, useState } from "react";
 import { Solid } from "../components/Glass.tsx";
 import { ApiError } from "../lib/api.ts";
 import { admin, type Device, type LiveSession } from "../lib/admin.ts";
+import { pos, type Branch } from "../lib/pos.ts";
 
 const KIND: Record<string, string> = {
   pos: "صندوق",
@@ -64,12 +65,15 @@ export function Devices() {
   const [busy, setBusy] = useState<string | null>(null);
   const [labelFor, setLabelFor] = useState<string | null>(null);
   const [label, setLabel] = useState("");
+  const [branches, setBranches] = useState<Branch[]>([]);
+  const [branchId, setBranchId] = useState("");
 
   const load = useCallback(async () => {
     try {
-      const [d, s] = await Promise.all([admin.devices(), admin.sessions()]);
+      const [d, s, b] = await Promise.all([admin.devices(), admin.sessions(), pos.branches()]);
       setDevices(d.devices);
       setSessions(s.sessions);
+      setBranches(b.branches);
       setError(null);
     } catch (err) {
       setError(message(err));
@@ -126,6 +130,7 @@ export function Devices() {
           دستگاهی که یک بار وارد شده ولی هنوز تأیید نشده. تا تأیید نشود،
           صندوق‌دار روی آن نمی‌تواند قفل صفحه را با PIN باز کند — هر بار باید
           رمز کامل بزند.
+          تأیید اولیه و انتخاب شعبه با مدیر همهٔ شعب است؛ سپس مدیر شعبه دستگاه‌های همان شعبه را مدیریت می‌کند.
         </p>
 
         {devices === null ? (
@@ -156,7 +161,7 @@ export function Devices() {
                       e.preventDefault();
                       const name = label.trim();
                       void run(d.id, async () => {
-                        await admin.approveDevice(d.id, name === "" ? {} : { label: name });
+                        await admin.approveDevice(d.id, { ...(name === "" ? {} : { label: name }), branchId });
                         setLabelFor(null);
                         setLabel("");
                         return `«${name === "" ? d.label : name}» تأیید شد. برای فعال‌شدن PIN، یک ورود کامل روی همان دستگاه لازم است.`;
@@ -171,7 +176,12 @@ export function Devices() {
                       aria-label="نام دستگاه"
                       autoFocus
                     />
-                    <button type="submit" className="btn btn--primary" disabled={busy !== null}>
+                    <select aria-label="شعبه دستگاه" value={branchId} required
+                      onChange={(e) => setBranchId(e.target.value)}>
+                      <option value="">انتخاب شعبه</option>
+                      {branches.map((b) => <option key={b.id} value={b.id}>{b.name}</option>)}
+                    </select>
+                    <button type="submit" className="btn btn--primary" disabled={busy !== null || branchId === ""}>
                       تأیید
                     </button>
                     <button
@@ -192,6 +202,7 @@ export function Devices() {
                     onClick={() => {
                       setLabelFor(d.id);
                       setLabel(d.label);
+                      setBranchId(d.branchId ?? "");
                     }}
                   >
                     تأیید دستگاه

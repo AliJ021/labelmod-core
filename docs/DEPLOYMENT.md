@@ -128,7 +128,7 @@ ops/deploy.sh logs caddy
 پس اولین حساب از خط فرمان ساخته می‌شود:
 
 ```bash
-ops/deploy.sh user --username ali --name 'علی جوادی' --role admin --branch MAIN
+ops/deploy.sh user --username ali --name 'علی جوادی' --role admin
 ```
 
 ```
@@ -138,6 +138,10 @@ ops/deploy.sh user --username ali --name 'علی جوادی' --role admin --bran
 
   رمز عبور   : TXybpkz2hwmnxKBtocK6bHqw
 ```
+
+نخستین مدیر بدون `--branch` دامنهٔ همهٔ شعب دارد؛ تأیید اولیه و تخصیص شعبهٔ
+دستگاه تازه فقط با این دامنه ممکن است. برای مدیران شعبهٔ بعدی، `--branch MAIN`
+یا کد شعبهٔ مربوط را صریح بدهید. این دستور فقط برای ساخت حساب تازهٔ مجاز است.
 
 رمز **ساخته می‌شود، پرسیده نمی‌شود**: ۲۴ کاراکتر از مولد امن، بدون
 کاراکترهای مبهم (`O`/`0`، `l`/`1`). یک بار چاپ می‌شود و از آن به بعد

@@ -21,9 +21,29 @@
  * راز فقط یک بار، در اولین ورود کامل پس از تأیید، صادر می‌شود و در
  * کوکی HttpOnly می‌نشیند — `AuthService.enrollIfDue`.
  */
-import { sql } from "kysely";
+import { sql, type Transaction } from "kysely";
 import type { Db } from "../db/client.ts";
+import type { Database } from "../db/types.ts";
 import { setActor } from "../lib/idempotency.ts";
+import { requireForSession } from "./permission.ts";
+import { branchesOf, ScopeError } from "../sales/scope.ts";
+
+type DeviceActor = { userId: string; pinUnlocked: boolean };
+
+function deviceInScope(actorId: string, branchColumn: string) {
+  return sql<boolean>`EXISTS (SELECT 1 FROM identity.user_role ar WHERE ar.user_id=${actorId}::uuid
+    AND (ar.branch_id IS NULL OR ar.branch_id=${sql.ref(branchColumn)}))`;
+}
+
+/** همان قاعده مدیریت کاربر: همه نقش‌های هدف باید در دامنه عامل باشند. */
+function userInScope(actorId: string, target: ReturnType<typeof sql.ref>) {
+  return sql<boolean>`(EXISTS (SELECT 1 FROM identity.user_role ar
+    WHERE ar.user_id=${actorId}::uuid AND ar.branch_id IS NULL)
+    OR (EXISTS (SELECT 1 FROM identity.user_role tr WHERE tr.user_id=${target})
+      AND NOT EXISTS (SELECT 1 FROM identity.user_role tr WHERE tr.user_id=${target}
+        AND (tr.branch_id IS NULL OR NOT EXISTS (SELECT 1 FROM identity.user_role ar
+          WHERE ar.user_id=${actorId}::uuid AND ar.branch_id=tr.branch_id)))))`;
+}
 
 export class DeviceError extends Error {
   readonly statusCode: number;
@@ -87,10 +107,11 @@ export class DeviceService {
    * می‌کند، بالای فهرست است. دستگاهی که هرگز دیده نشده — یعنی فقط
    * یک بار Fingerprint فرستاده — آخر می‌آید.
    */
-  async list(opts: { pending?: boolean | undefined } = {}): Promise<DeviceRow[]> {
+  async list(actorId: string, opts: { pending?: boolean | undefined } = {}): Promise<DeviceRow[]> {
     let q = this.#db
-      .selectFrom("identity.device_overview")
+      .selectFrom("identity.device_overview as d")
       .selectAll()
+      .where(deviceInScope(actorId, "d.branch_id"))
       .orderBy("last_seen_at", "desc")
       .orderBy("created_at", "desc")
       .limit(500);
@@ -127,12 +148,22 @@ export class DeviceService {
    */
   async approve(
     deviceId: string,
-    actorId: string,
+    actor: DeviceActor,
     label?: string | undefined,
     branchId?: string | undefined,
   ): Promise<void> {
     await this.#db.transaction().execute(async (trx) => {
-      await setActor(trx, actorId);
+      const device = await this.#lockDeviceInScope(trx, deviceId, actor);
+      const destination = (branchId ?? device.branch_id)?.toLowerCase() ?? null;
+      if (destination === null) {
+        throw new DeviceError("device_branch_required", "برای تأیید اولیه، شعبه دستگاه را انتخاب کنید", 400);
+      }
+      const scope = await branchesOf(trx, actor.userId);
+      if (scope !== "all" && !scope.includes(destination)) throw new ScopeError("شعبه مقصد خارج از دامنه شماست");
+      const branch = await trx.selectFrom("platform.branch").select("id")
+        .where("id", "=", destination).forShare().executeTakeFirst();
+      if (!branch) throw new DeviceError("branch_not_found", "شعبه یافت نشد", 404);
+      await setActor(trx, actor.userId);
 
       // برچسب و شعبه پیش از تأیید ست می‌شوند: مدیر باید بتواند
       // «تبلت صندوق ۱» را نام‌گذاری کند، نه اینکه یک Fingerprint
@@ -149,7 +180,7 @@ export class DeviceService {
       }
 
       const r = await sql<{ approve_device: boolean }>`
-        SELECT identity.approve_device(${deviceId}::uuid, ${actorId}::uuid)
+        SELECT identity.approve_device(${deviceId}::uuid, ${actor.userId}::uuid)
       `.execute(trx);
 
       if (r.rows[0]?.approve_device !== true) {
@@ -168,28 +199,22 @@ export class DeviceService {
    */
   async revoke(
     deviceId: string,
-    actorId: string,
+    actor: DeviceActor,
     reason: string,
   ): Promise<{ sessionsRevoked: number }> {
     return this.#db.transaction().execute(async (trx) => {
-      await setActor(trx, actorId);
-
-      const exists = await trx
-        .selectFrom("identity.device")
-        .select("id")
-        .where("id", "=", deviceId)
-        .executeTakeFirst();
-      if (!exists) throw new DeviceError("device_not_found", "دستگاه یافت نشد", 404);
+      await this.#lockDeviceInScope(trx, deviceId, actor);
+      await setActor(trx, actor.userId);
 
       const r = await sql<{ revoke_device: number }>`
-        SELECT identity.revoke_device(${deviceId}::uuid, ${actorId}::uuid, ${reason})
+        SELECT identity.revoke_device(${deviceId}::uuid, ${actor.userId}::uuid, ${reason})
       `.execute(trx);
       return { sessionsRevoked: Number(r.rows[0]?.revoke_device ?? 0) };
     });
   }
 
   /** نشست‌های زنده — برای دیدن «چه کسی الان کجا وارد است». */
-  async sessions(opts: { userId?: string | undefined } = {}): Promise<SessionRow[]> {
+  async sessions(actorId: string, opts: { userId?: string | undefined } = {}): Promise<SessionRow[]> {
     let q = this.#db
       .selectFrom("identity.session as s")
       .innerJoin("identity.app_user as u", "u.id", "s.user_id")
@@ -210,6 +235,8 @@ export class DeviceService {
       ])
       .where("s.revoked_at", "is", null)
       .where("s.expires_at", ">", sql<Date>`now()`)
+      .where(userInScope(actorId, sql.ref("s.user_id")))
+      .where(sql<boolean>`(s.device_id IS NULL OR ${deviceInScope(actorId, "d.branch_id")})`)
       .orderBy("s.last_seen_at", "desc")
       .limit(500);
 
@@ -240,15 +267,40 @@ export class DeviceService {
    */
   async revokeUserAccess(
     userId: string,
-    actorId: string,
+    actor: DeviceActor,
     reason: string,
   ): Promise<number> {
+    const targetId = userId.toLowerCase();
     return this.#db.transaction().execute(async (trx) => {
-      await setActor(trx, actorId);
+      // ترتیب قفل با UserService یکسان است تا تغییر نقش هدف/عامل مسابقه نداشته باشد.
+      const users = await trx.selectFrom("identity.app_user").select(["id", "is_active"])
+        .where("id", "in", [targetId, actor.userId]).orderBy("id").forUpdate().execute();
+      if (!users.some(u => u.id === actor.userId && u.is_active)) throw new ScopeError("کاربر عامل فعال نیست");
+      await requireForSession(trx, actor, "user.manage");
+      if (!users.some(u => u.id === targetId)) throw new DeviceError("user_not_found", "کاربر یافت نشد", 404);
+      const permitted = await trx.selectFrom("identity.app_user as target").select("target.id")
+        .where("target.id", "=", targetId).where(userInScope(actor.userId, sql.ref("target.id"))).executeTakeFirst();
+      if (!permitted) throw new ScopeError("این کاربر خارج از دامنه شعبه شماست");
+      await setActor(trx, actor.userId);
       const r = await sql<{ revoke_user_access: number }>`
-        SELECT identity.revoke_user_access(${userId}::uuid, ${reason})
+        SELECT identity.revoke_user_access(${targetId}::uuid, ${reason})
       `.execute(trx);
       return Number(r.rows[0]?.revoke_user_access ?? 0);
     });
+  }
+
+  async #lockDeviceInScope(trx: Transaction<Database>, deviceId: string, actor: DeviceActor) {
+    const user = await trx.selectFrom("identity.app_user").select("is_active")
+      .where("id", "=", actor.userId).forShare().executeTakeFirst();
+    if (!user?.is_active) throw new ScopeError("کاربر عامل فعال نیست");
+    await requireForSession(trx, actor, "device.manage");
+    const device = await trx.selectFrom("identity.device").select(["id", "branch_id"])
+      .where("id", "=", deviceId).forUpdate().executeTakeFirst();
+    if (!device) throw new DeviceError("device_not_found", "دستگاه یافت نشد", 404);
+    const scope = await branchesOf(trx, actor.userId);
+    if (scope !== "all" && (device.branch_id === null || !scope.includes(device.branch_id))) {
+      throw new ScopeError("دستگاه خارج از دامنه شعبه شماست؛ تأیید اولیه با مدیر همه شعب است");
+    }
+    return device;
   }
 }

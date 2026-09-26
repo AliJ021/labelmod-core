@@ -661,6 +661,7 @@ export function registerAuthRoutes(app: FastifyInstance, deps: AuthRouteDeps): v
       .parse(req.query ?? {});
     return {
       devices: await devices.list(
+        s.userId,
         q.pending === "true" ? { pending: true } : {},
       ),
     };
@@ -687,7 +688,7 @@ export function registerAuthRoutes(app: FastifyInstance, deps: AuthRouteDeps): v
       .parse(req.body ?? {});
     await requireForSession(db, s, "device.manage");
 
-    await devices.approve(id, s.userId, body.label, body.branchId);
+    await devices.approve(id, s, body.label, body.branchId);
     return { ok: true };
   });
 
@@ -702,7 +703,7 @@ export function registerAuthRoutes(app: FastifyInstance, deps: AuthRouteDeps): v
       .parse(req.body ?? {});
     await requireForSession(db, s, "device.manage");
 
-    const out = await devices.revoke(id, s.userId, body.reason ?? "device_revoked");
+    const out = await devices.revoke(id, s, body.reason ?? "device_revoked");
     return out;
   });
 
@@ -712,7 +713,7 @@ export function registerAuthRoutes(app: FastifyInstance, deps: AuthRouteDeps): v
     const s = requireSession(req);
     await requireForSession(db, s, "device.manage");
     const q = z.object({ userId: uuid.optional() }).parse(req.query ?? {});
-    return { sessions: await devices.sessions(q) };
+    return { sessions: await devices.sessions(s.userId, q) };
   });
 
   /**
@@ -735,7 +736,7 @@ export function registerAuthRoutes(app: FastifyInstance, deps: AuthRouteDeps): v
 
     const revoked = await devices.revokeUserAccess(
       id,
-      s.userId,
+      s,
       body.reason ?? "admin_revoked",
     );
     return { revoked };
