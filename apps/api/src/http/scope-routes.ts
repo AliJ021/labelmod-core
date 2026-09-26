@@ -15,7 +15,7 @@ import type { FastifyInstance } from "fastify";
 import { AuthError } from "../auth/service.ts";
 import type { Db } from "../db/client.ts";
 import { assertBranch, branchesOf } from "../sales/scope.ts";
-import { can } from "../auth/permission.ts";
+import { can, ForbiddenError, requireForSession } from "../auth/permission.ts";
 import { serializeMoney } from "../lib/money.ts";
 import { sql } from "kysely";
 import { z } from "zod";
@@ -138,7 +138,8 @@ export function registerScopeRoutes(app: FastifyInstance, deps: ScopeRouteDeps):
    *
    * ولی «فروش امروز چقدر بود» و «چقدر پول در کشوست» را صندوق‌دار
    * **باید** ببیند؛ آخر شب با همان‌ها کشو را می‌شمارد. پس کل مسیر
-   * ۴۰۳ نمی‌شود و فقط همان یک عدد `null` می‌آید.
+   * برای روز کاری جاری باز می‌ماند و فقط همان یک عدد `null` می‌آید.
+   * تاریخ‌های دیگر مجوز `report.view` می‌خواهند.
    *
    * `null` است نه صفر: صفر یک ادعای مالی است («امروز سودی نبود») و
    * «اجازه دیدنش را نداری» ادعای دیگری است.
@@ -160,6 +161,15 @@ export function registerScopeRoutes(app: FastifyInstance, deps: ScopeRouteDeps):
       })
       .parse(req.query);
     await assertBranch(db, s.userId, q.branchId);
+
+    const current = await sql<{ today: string }>`SELECT platform.business_date()::text AS today`.execute(db);
+    const today = current.rows[0]!.today;
+    const date = q.date ?? today;
+    const reports = await can(db, { userId: s.userId, operation: "report.view", viaPin: s.pinUnlocked });
+    if (reports.verdict !== "allow") {
+      if (date !== today) throw new ForbiddenError(reports, "report.view");
+      await requireForSession(db, s, "sale.create");
+    }
 
     const row = await sql<{
       business_date: string;
@@ -183,7 +193,7 @@ export function registerScopeRoutes(app: FastifyInstance, deps: ScopeRouteDeps):
               profit_amount, invoice_count, return_count
          FROM sales.daily_summary(
            ${q.branchId}::uuid,
-           coalesce(${q.date ?? null}::date, platform.business_date()))`.execute(db);
+           ${date}::date)`.execute(db);
 
     // `daily_summary` یک CROSS JOIN از سه CTE تک‌سطری است، پس همیشه
     // **دقیقاً** یک سطر می‌دهد — حتی برای روزی که هیچ فروشی نداشته

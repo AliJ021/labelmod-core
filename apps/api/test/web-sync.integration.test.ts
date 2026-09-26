@@ -514,4 +514,16 @@ describe("خوراک‌های همگام‌سازی سایت", { skip }, () => {
     });
     assert.ok(r.statusCode >= 400 && r.statusCode < 500, r.body);
   });
+
+  test("خوراک مشتریان فقط برای اتصال ماشینی است، نه نشست صندوق‌دار", async () => {
+    const id = await invoice("pos", "09121115555");
+    for (const query of ["", `&invoiceId=${id}`]) {
+      const url = `/web/instore-purchases?branchId=${BRANCH}${query}`;
+      const rejected = await app.inject({ method: "GET", url, ...cashier() });
+      assert.equal(rejected.statusCode, 403, rejected.body);
+      const allowed = await app.inject({ method: "GET", url, ...auth() });
+      assert.equal(allowed.statusCode, 200, allowed.body);
+      assert.ok((allowed.json() as PurchaseFeed).items.some((row) => row.invoiceId === id));
+    }
+  });
 });

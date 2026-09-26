@@ -38,6 +38,10 @@ describe("آمادگی API صندوق", { skip }, () => {
   const cashier = `pos_cashier_${suffix}`;
   const outsider = `pos_outsider_${suffix}`;
   const supervisor = `pos_sup_${suffix}`;
+  const warehouse = `pos_warehouse_${suffix}`;
+  const marketing = `pos_marketing_${suffix}`;
+  const returnReader = `pos_return_reader_${suffix}`;
+  const returnRole = `return_reader_${suffix}`;
   let cashierId = "";
   let outsiderId = "";
   let otherBranchId = "";
@@ -56,6 +60,9 @@ describe("آمادگی API صندوق", { skip }, () => {
     const r = await loginWithMfa(app, {
       method: "POST",
       url: "/auth/login",
+      remoteAddress: username === warehouse ? "127.0.0.11"
+        : username === marketing ? "127.0.0.12"
+          : username === returnReader ? "127.0.0.13" : "127.0.0.1",
       payload: { username, password: PASSWORD, deviceFingerprint: `fp-${suffix}-${username}` },
     });
     assert.equal(r.statusCode, 200, `ورود ${username} ناموفق: ${r.body}`);
@@ -105,10 +112,16 @@ describe("آمادگی API صندوق", { skip }, () => {
       .execute(handle.db);
 
     const hash = await hashSecret(PASSWORD);
+    await sql`INSERT INTO identity.role(code,name) VALUES (${returnRole},'فقط مرجوعی تست')`.execute(handle.db);
+    await sql`INSERT INTO identity.permission_rule(role_code,operation,allowed)
+      VALUES (${returnRole},'return.same_day',true)`.execute(handle.db);
     for (const [username, name, branch, role] of [
       [cashier, "صندوق‌دار آمادگی", BRANCH, "cashier"],
       [outsider, "صندوق‌دار شعبه دوم", otherBranchId, "cashier"],
       [supervisor, "سرپرست آمادگی", BRANCH, "supervisor"],
+      [warehouse, "انباردار آمادگی", BRANCH, "warehouse"],
+      [marketing, "بازاریاب آمادگی", BRANCH, "marketing"],
+      [returnReader, "کاربر فقط مرجوعی", BRANCH, returnRole],
     ] as const) {
       const u = await handle.db
         .insertInto("identity.app_user")
@@ -679,6 +692,24 @@ describe("آمادگی API صندوق", { skip }, () => {
 
   // ── خلاصه روز ───────────────────────────────────────────────────
 
+  test("خلاصه روز به مجوز نیاز دارد و دسترسی صندوق‌دار فقط روز کاری جاری است", async () => {
+    const dates = await sql<{ today: string; yesterday: string; tomorrow: string }>`
+      SELECT platform.business_date()::text AS today,
+        (platform.business_date()-1)::text AS yesterday,
+        (platform.business_date()+1)::text AS tomorrow`.execute(handle.db);
+    const { today, yesterday, tomorrow } = dates.rows[0]!;
+    for (const date of [undefined, today, yesterday, tomorrow]) {
+      const url = `/reports/daily?branchId=${BRANCH}${date ? `&date=${date}` : ""}`;
+      const blocked = await app.inject({ method: "GET", url, ...await loginAs(marketing) });
+      assert.equal(blocked.statusCode, 403, blocked.body);
+      const cash = await app.inject({ method: "GET", url, ...await loginAs(cashier) });
+      assert.equal(cash.statusCode, !date || date === today ? 200 : 403, cash.body);
+      const report = await app.inject({ method: "GET", url, ...await loginAs(supervisor) });
+      assert.equal(report.statusCode, 200, report.body);
+      assert.equal(report.json().businessDate, date ?? today);
+    }
+  });
+
   test("صندوق‌دار فروش و دریافتی را می‌بیند، ولی سود را نه", async () => {
     // `cost.view` طبق `040_reference.sql` فقط حسابدار و مدیر دارند.
     // ولی «چقدر پول در کشوست» را صندوق‌دار آخر شب لازم دارد، پس کل
@@ -770,7 +801,7 @@ describe("آمادگی API صندوق", { skip }, () => {
 
   test("۲۹ فوریه سال کبیسه یک تاریخ معتبر است", async () => {
     // سخت‌گیری نباید به قیمت ردکردن یک روز واقعی تمام شود.
-    const s = await loginAs(cashier);
+    const s = await loginAs(supervisor);
     const r = await app.inject({
       method: "GET",
       url: `/reports/daily?branchId=${BRANCH}&date=2024-02-29`,
@@ -884,6 +915,47 @@ describe("آمادگی API صندوق", { skip }, () => {
   });
 
   // ── یافتن فاکتور از روی شماره رسید ──────────────────────────────
+
+  test("دامنه شعبه به‌تنهایی اجازه خواندن فاکتور یا اقلام مرجوعی نمی‌دهد", async () => {
+    const { invoiceId, s: cash } = await newCart("1");
+    const paid = await app.inject({ method: "POST", url: `/invoices/${invoiceId}/payments`, ...cash,
+      payload: { methodCode: "cash", amount: "1000001" } });
+    assert.equal(paid.statusCode, 201, paid.body);
+    const posted = await app.inject({ method: "POST", url: `/invoices/${invoiceId}/finalize`, ...cash });
+    assert.equal(posted.statusCode, 200, posted.body);
+    const lookup = `/invoices/lookup?number=${encodeURIComponent(posted.json().number as string)}&branchId=${BRANCH}`;
+    const paths = [`/invoices/${invoiceId}`, `/invoices/${invoiceId}/returnable`, lookup];
+    for (const username of [warehouse, marketing]) {
+      const s = await loginAs(username);
+      for (const url of [
+        ...paths,
+        `/invoices/lookup?number=UNKNOWN-${suffix}&branchId=${BRANCH}`,
+        "/invoices/00000000-0000-7000-8000-999999999999",
+        "/invoices/00000000-0000-7000-8000-999999999999/returnable",
+      ]) {
+        const r = await app.inject({ method: "GET", url, ...s });
+        assert.equal(r.statusCode, 403, `${username}: ${url}: ${r.body}`);
+      }
+    }
+    const allowed = await app.inject({ method: "GET", url: `/invoices/${invoiceId}`, ...await loginAs(cashier) });
+    assert.equal(allowed.statusCode, 200, allowed.body);
+    assert.equal(allowed.json().id, invoiceId);
+    for (const url of paths) {
+      const reader = await app.inject({ method: "GET", url, ...await loginAs(returnReader) });
+      assert.equal(reader.statusCode, 200, reader.body);
+    }
+    await sql`UPDATE identity.permission_rule SET needs_approval_from='admin'
+      WHERE role_code=${returnRole} AND operation='return.same_day'`.execute(handle.db);
+    try {
+      for (const url of paths) {
+        const pending = await app.inject({ method: "GET", url, ...await loginAs(returnReader) });
+        assert.equal(pending.statusCode, 403, pending.body);
+      }
+    } finally {
+      await sql`UPDATE identity.permission_rule SET needs_approval_from=NULL
+        WHERE role_code=${returnRole} AND operation='return.same_day'`.execute(handle.db);
+    }
+  });
 
   test("فاکتور نهایی‌شده از روی شماره رسید پیدا می‌شود", async () => {
     // مرجوعی از روی رسیدِ دست مشتری شروع می‌شود و روی آن شماره چاپ

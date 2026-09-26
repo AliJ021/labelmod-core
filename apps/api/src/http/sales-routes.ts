@@ -20,6 +20,7 @@ import { InvoiceError, invoiceToJson, type InvoiceService } from "../sales/invoi
 import { ShiftError, shiftToJson, type ShiftService } from "../sales/shift.ts";
 import { assertBranch, assertWarehouseInBranch } from "../sales/scope.ts";
 import { assertMarkdownAllowed as markdownGate } from "../sales/markdown-gate.ts";
+import { requireInvoiceRead } from "../sales/invoice-access.ts";
 
 /** پول در JSON رشته است — رقم صحیح، بدون اعشار و بدون جداکننده. */
 const moneyString = z
@@ -328,6 +329,7 @@ export function registerSalesRoutes(app: FastifyInstance, deps: SalesRouteDeps):
    */
   app.get("/invoices/lookup", async (req) => {
     const s = session(req);
+    await requireInvoiceRead(db, s);
     const q = z
       .object({ number: z.string().min(1).max(64), branchId: uuid })
       .parse(req.query);
@@ -351,6 +353,7 @@ export function registerSalesRoutes(app: FastifyInstance, deps: SalesRouteDeps):
 
   app.get("/invoices/:id", async (req) => {
     const s = session(req);
+    await requireInvoiceRead(db, s);
     const { id } = z.object({ id: uuid }).parse(req.params);
     const inv = await invoices.byId(id);
     if (!inv) throw new InvoiceError("invoice_not_found", "فاکتور یافت نشد", 404);
