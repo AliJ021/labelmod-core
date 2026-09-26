@@ -22,17 +22,18 @@
 import { hostname } from "node:os";
 import { loadConfig } from "./lib/config.ts";
 import { createDb } from "./db/client.ts";
+import { assertRuntimeDatabaseRole } from "./db/runtime-role.ts";
 import { runLoop } from "./worker/loop.ts";
 
 async function main(): Promise<void> {
   const config = loadConfig();
   // استخر کوچک: Worker یک حلقه ترتیبی است، نه یک سرور همزمان.
   const handle = createDb(config.DATABASE_URL, 3);
+  await assertRuntimeDatabaseRole(handle, config.isProduction);
 
   const workerName = `${hostname()}:${process.pid}`;
   const log = (line: string) => process.stdout.write(`${line}\n`);
 
-  log(`Worker لیبل مد بالا آمد — ${workerName}`);
   if (!config.SMS_API_KEY && !config.SMS_CREDENTIAL_KEY) {
     log(
       "⚠️  SMS_API_KEY تنظیم نشده. با سرویس‌دهنده «log» مشکلی نیست؛" +
@@ -68,6 +69,7 @@ async function main(): Promise<void> {
 
   process.on("SIGTERM", () => void shutdown("SIGTERM"));
   process.on("SIGINT", () => void shutdown("SIGINT"));
+  log(`Worker لیبل مد بالا آمد — ${workerName}`);
 }
 
 if (process.argv[1]?.endsWith("worker.ts")) {

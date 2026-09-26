@@ -333,11 +333,12 @@ node --experimental-strip-types apps/api/src/cli/create-user.ts \
 سپس مهاجرت‌ها و مجوزهای نقش برنامه را طبق راهنمای استقرار اعمال کنید.
 
 ```bash
-cp .env.example .env      # DB_PASSWORD · SITE_ADDRESS · ACME_EMAIL
-ops/deploy.sh up          # Build و اجرا
+cp .env.example .env      # DB_PASSWORD · APP_DB_PASSWORD مستقل · SITE_ADDRESS · ACME_EMAIL
+docker compose -f docker-compose.prod.yml up -d db
 ops/deploy.sh migrate
 ops/deploy.sh seed        # فقط نصب تازه؛ روی دفتر موجود اجرا نشود
-ops/deploy.sh roles        # سپس APP_DB_USER=labelmod_app و دوباره up
+ops/deploy.sh roles       # نقش APP_DB_USER؛ پیش‌فرض labelmod_app
+ops/deploy.sh up          # API و Worker فقط با نقش محدود بالا می‌آیند
 ops/deploy.sh user --username ali --name 'علی جوادی' --role admin
 ops/deploy.sh status
 ```
