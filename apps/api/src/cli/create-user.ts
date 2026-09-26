@@ -24,6 +24,7 @@ import { randomInt } from "node:crypto";
 import { loadConfig } from "../lib/config.ts";
 import { createDb } from "../db/client.ts";
 import { hashSecret } from "../auth/password.ts";
+import { minimumPasswordLength, newPasswordViolation } from "../auth/password-policy.ts";
 import { withActor } from "../db/actor.ts";
 
 /** کاربر «سیستم» که seed می‌سازد — عاملِ همین عملیات. */
@@ -77,10 +78,12 @@ async function main(): Promise<void> {
   const handle = createDb(config.DATABASE_URL, 2);
 
   try {
-    const password = generatePassword();
+    const password = generatePassword(Math.max(24, await minimumPasswordLength(handle.db)));
     const passwordHash = await hashSecret(password);
 
     await withActor(handle.db, { userId: SYSTEM_USER }, async (trx) => {
+      const violation = await newPasswordViolation(trx, password);
+      if (violation) throw new Error(violation);
       // نقش ناموجود باید پیش از درج بشکند، نه با خطای کلید خارجی
       // انگلیسی. پیام فارسی اینجا تنها چیزی است که اپراتور می‌بیند.
       for (const code of args.roles) {

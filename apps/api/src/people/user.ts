@@ -34,6 +34,7 @@ import type { Db } from "../db/client.ts";
 import type { Database } from "../db/types.ts";
 import { requirePermission } from "../auth/permission.ts";
 import { hashSecret } from "../auth/password.ts";
+import { minimumPasswordLength, newPasswordViolation } from "../auth/password-policy.ts";
 import { setActor } from "../lib/idempotency.ts";
 
 export class UserError extends Error {
@@ -234,12 +235,14 @@ export class UserService {
     if (input.roles.length === 0) {
       throw new UserError("no_role", "کاربر بدون نقش ساخته نمی‌شود", 422);
     }
-    const password = generatePassword();
+    const password = generatePassword(Math.max(20, await minimumPasswordLength(this.#db)));
     const hash = await hashSecret(password);
 
     const id = await this.#db.transaction().execute(async (trx) => {
       await this.#assertTargetInScope(trx, input.actorId, input.actorId);
       await this.#assertNewRolesInScope(trx, input.actorId, input.roles);
+      const violation = await newPasswordViolation(trx, password);
+      if (violation) throw new UserError("invalid_input", violation, 400);
       await setActor(trx, input.actorId);
 
       const dup = await trx
@@ -371,11 +374,15 @@ export class UserService {
     const user = await this.byId(id, actorId);
     if (!user) throw new UserError("user_not_found", "کاربر یافت نشد", 404);
 
-    const password = chosenPassword ?? generatePassword();
+    const password = chosenPassword ?? generatePassword(Math.max(20, await minimumPasswordLength(this.#db)));
+    const violation = await newPasswordViolation(this.#db, password);
+    if (violation) throw new UserError("invalid_input", violation, 400);
     const hash = await hashSecret(password);
 
     await this.#db.transaction().execute(async (trx) => {
       await this.#assertTargetInScope(trx, id, actorId);
+      const currentViolation = await newPasswordViolation(trx, password);
+      if (currentViolation) throw new UserError("invalid_input", currentViolation, 400);
       await setActor(trx, actorId);
       await trx
         .updateTable("identity.app_user")
