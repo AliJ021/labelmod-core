@@ -214,6 +214,58 @@ describe("برگشت از فروش و دوره ثبت", { skip }, () => {
     disposable?.drop();
   });
 
+  test("بهای مرجوعی در تمام پاسخ‌ها و replay فقط با cost.view دیده می‌شود", async () => {
+    const s = await loginAs(cashier);
+    const allowed = await loginAs(admin);
+    const { invoiceId, lineId } = await soldInvoice({ who: cashier, qty: "2", paid: "2000000", withCustomer: true });
+    const payload = {
+      invoiceId, reasonCode: "changed_mind", refundAmount: "0",
+      lines: [{ invoiceLineId: lineId, qty: "1" }],
+    };
+    const cancelledDraft = await app.inject({ method: "POST", url: "/returns", ...s, payload });
+    assert.equal(cancelledDraft.statusCode, 201, cancelledDraft.body);
+    assert.equal(cancelledDraft.json().cogsAmount, null);
+    const cancelled = await app.inject({
+      method: "POST", url: `/returns/${cancelledDraft.json().id}/cancel`, ...s, payload: {},
+    });
+    assert.equal(cancelled.statusCode, 200, cancelled.body);
+    assert.equal(cancelled.json().cogsAmount, null);
+
+    const draft = await app.inject({ method: "POST", url: "/returns", ...s, payload });
+    assert.equal(draft.statusCode, 201, draft.body);
+    assert.equal(draft.json().cogsAmount, null);
+    const id = draft.json().id as string;
+    const moved = await app.inject({
+      method: "PUT", url: `/returns/${id}/warehouse`, ...s, payload: { warehouseId: STORE_WH },
+    });
+    assert.equal(moved.statusCode, 200, moved.body);
+    assert.equal(moved.json().cogsAmount, null);
+    const post = { method: "POST" as const, url: `/returns/${id}/post`, ...s,
+      headers: { ...s.headers, "idempotency-key": `return-cost-${id}` }, payload: {} };
+    const posted = await app.inject(post);
+    assert.equal(posted.statusCode, 200, posted.body);
+    assert.equal(posted.json().cogsAmount, null);
+    assert.equal(posted.json().replayed, false);
+    const replayed = await app.inject(post);
+    assert.equal(replayed.statusCode, 200, replayed.body);
+    assert.equal(replayed.json().cogsAmount, null);
+    assert.equal(replayed.json().replayed, true);
+    const hidden = await app.inject({ method: "GET", url: `/returns/${id}`, ...s });
+    assert.equal(hidden.statusCode, 200, hidden.body);
+    assert.equal(hidden.json().cogsAmount, null);
+    const visible = await app.inject({ method: "GET", url: `/returns/${id}`, ...allowed });
+    assert.equal(visible.statusCode, 200, visible.body);
+    assert.equal(visible.json().cogsAmount, "400000");
+    const visibleReplay = await app.inject({ ...post, ...allowed,
+      headers: { ...allowed.headers, "idempotency-key": `return-cost-${id}` } });
+    assert.equal(visibleReplay.statusCode, 200, visibleReplay.body);
+    assert.equal(visibleReplay.json().cogsAmount, "400000");
+    assert.equal(visibleReplay.json().replayed, true);
+    const stored = await sql<{ cost: string }>`SELECT cogs_amount::text AS cost
+      FROM sales.sale_return WHERE id = ${id}::uuid`.execute(handle.db);
+    assert.equal(stored.rows[0]!.cost, "400000", "پوشاندن پاسخ محاسبه مالی را تغییر نمی‌دهد");
+  });
+
   test("مهلت ۴۸ ساعته با شمارش روز بیان‌شدنی نیست", async () => {
     // چرا این تست وجود دارد: با کلید قدیمیِ روزشمار و مقدار ۲،
     // فاکتور ۷۱ ساعته `floor(71/24) = 2` می‌داد و «داخل مهلت» شمرده

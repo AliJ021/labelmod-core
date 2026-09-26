@@ -17,7 +17,7 @@ import type { FastifyInstance } from "fastify";
 import { z } from "zod";
 import { AuthError, type ResolvedSession } from "../auth/service.ts";
 import { requireManualReturnChannel } from "../auth/human-session.ts";
-import { requireForSession } from "../auth/permission.ts";
+import { can, requireForSession } from "../auth/permission.ts";
 import { resolveCashDrawer } from "../treasury/cash-drawer.ts";
 import type { Db } from "../db/client.ts";
 import { parseMoney } from "../lib/money.ts";
@@ -109,6 +109,9 @@ export function registerReturnRoutes(app: FastifyInstance, deps: ReturnRouteDeps
     return s;
   };
 
+  const seesCost = async (s: ResolvedSession): Promise<boolean> =>
+    (await can(db, { userId: s.userId, operation: "cost.view", viaPin: s.pinUnlocked })).verdict === "allow";
+
   /** آنچه از فاکتور هنوز قابل برگشت است — پیش‌نمایش صندوق. */
   app.get("/invoices/:id/returnable", async (req) => {
     const s = session(req);
@@ -175,7 +178,7 @@ export function registerReturnRoutes(app: FastifyInstance, deps: ReturnRouteDeps
       ...(body.refundMethod === undefined ? {} : { refundMethod: body.refundMethod }),
       ...(gate.shiftId === undefined ? {} : { shiftId: gate.shiftId }),
     });
-    return reply.code(201).send(returnToJson(r));
+    return reply.code(201).send(returnToJson(r, await seesCost(s)));
   });
 
   app.get("/returns/:id", async (req) => {
@@ -184,7 +187,7 @@ export function registerReturnRoutes(app: FastifyInstance, deps: ReturnRouteDeps
     const r = await returns.byId(id);
     if (!r) throw new ReturnError("return_not_found", "برگ مرجوعی یافت نشد", 404);
     await assertBranch(db, s.userId, r.branchId);
-    return returnToJson(r);
+    return returnToJson(r, await seesCost(s));
   });
 
   /**
@@ -228,7 +231,7 @@ export function registerReturnRoutes(app: FastifyInstance, deps: ReturnRouteDeps
       actorId: s.userId,
     });
     const after = await returns.byId(id);
-    return returnToJson(after!);
+    return returnToJson(after!, await seesCost(s));
   });
 
   /**
@@ -280,7 +283,7 @@ export function registerReturnRoutes(app: FastifyInstance, deps: ReturnRouteDeps
 
     const posted = await returns.byId(id);
     return {
-      ...returnToJson(posted as NonNullable<typeof posted>),
+      ...returnToJson(posted as NonNullable<typeof posted>, await seesCost(s)),
       replayed: out.replayed,
     };
   });
@@ -293,7 +296,7 @@ export function registerReturnRoutes(app: FastifyInstance, deps: ReturnRouteDeps
     if (!r) throw new ReturnError("return_not_found", "برگ مرجوعی یافت نشد", 404);
     await assertBranch(db, s.userId, r.branchId);
     await requireForSession(db, s, "sale.create");
-    return returnToJson(await returns.cancelDraft(id, s.userId));
+    return returnToJson(await returns.cancelDraft(id, s.userId), await seesCost(s));
   });
 
   // ── دروازه مشترک ساخت و ثبت ─────────────────────────────────────

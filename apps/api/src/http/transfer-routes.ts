@@ -20,11 +20,11 @@
 import type { FastifyInstance } from "fastify";
 import { z } from "zod";
 import { AuthError } from "../auth/service.ts";
-import { requireForSession } from "../auth/permission.ts";
+import { can, requireForSession } from "../auth/permission.ts";
 import type { Db } from "../db/client.ts";
 import { runOnce } from "../lib/idempotency.ts";
 import { assertBranch, assertWarehouseInBranch, branchesOf } from "../sales/scope.ts";
-import { TransferError, type TransferService } from "../inventory/transfer.ts";
+import { TransferError, type Transfer, type TransferService } from "../inventory/transfer.ts";
 import { resolveVariationId } from "../catalog/resolve.ts";
 
 const uuid = z.string().uuid("شناسه نامعتبر");
@@ -65,6 +65,22 @@ const addLineBody = z
 
 const setQtyBody = z.object({ qty: qtyString });
 
+function transferHeadToJson(t: Omit<Transfer, "lines">, showCost: boolean) {
+  return { ...t, totalValue: showCost ? t.totalValue : null };
+}
+
+function transferToJson(t: Transfer | null, showCost: boolean) {
+  if (!t) return null;
+  return {
+    ...transferHeadToJson(t, showCost),
+    lines: t.lines.map((line) => ({
+      ...line,
+      unitCost: showCost ? line.unitCost : null,
+      valueDelta: showCost ? line.valueDelta : null,
+    })),
+  };
+}
+
 export interface TransferRouteDeps {
   db: Db;
   transfers: TransferService;
@@ -81,6 +97,9 @@ export function registerTransferRoutes(app: FastifyInstance, deps: TransferRoute
     return s;
   };
 
+  const seesCost = async (s: { userId: string; pinUnlocked: boolean }): Promise<boolean> =>
+    (await can(db, { userId: s.userId, operation: "cost.view", viaPin: s.pinUnlocked })).verdict === "allow";
+
   /** برگه در دامنه این کاربر است؟ — پیش از هر خواندن یا نوشتنی. */
   async function assertTransferInScope(userId: string, id: string): Promise<void> {
     const t = await transfers.branchOf(id);
@@ -94,7 +113,9 @@ export function registerTransferRoutes(app: FastifyInstance, deps: TransferRoute
     const q = z
       .object({ limit: z.coerce.number().int().min(1).max(200).default(50) })
       .parse(req.query);
-    return { transfers: await transfers.list(await branchesOf(db, s.userId), q.limit) };
+    const rows = await transfers.list(await branchesOf(db, s.userId), q.limit);
+    const showCost = await seesCost(s);
+    return { transfers: rows.map((t) => transferHeadToJson(t, showCost)) };
   });
 
   app.get("/transfers/:id", async (req) => {
@@ -104,7 +125,7 @@ export function registerTransferRoutes(app: FastifyInstance, deps: TransferRoute
     await assertTransferInScope(s.userId, id);
     const t = await transfers.byId(id);
     if (!t) throw new TransferError("transfer_not_found", "برگه انتقال یافت نشد", 404);
-    return t;
+    return transferToJson(t, await seesCost(s));
   });
 
   app.post("/transfers", async (req, reply) => {
@@ -148,7 +169,7 @@ export function registerTransferRoutes(app: FastifyInstance, deps: TransferRoute
       qty: body.qty,
       actorId: s.userId,
     });
-    return reply.code(201).send(await transfers.byId(id));
+    return reply.code(201).send(transferToJson(await transfers.byId(id), await seesCost(s)));
   });
 
   app.patch("/transfers/:id/lines/:lineId", async (req) => {
@@ -164,7 +185,7 @@ export function registerTransferRoutes(app: FastifyInstance, deps: TransferRoute
       qty: body.qty,
       actorId: s.userId,
     });
-    return await transfers.byId(id);
+    return transferToJson(await transfers.byId(id), await seesCost(s));
   });
 
   app.delete("/transfers/:id/lines/:lineId", async (req) => {
@@ -173,7 +194,7 @@ export function registerTransferRoutes(app: FastifyInstance, deps: TransferRoute
     await requireForSession(db, s, "stock.transfer");
     await assertTransferInScope(s.userId, id);
     await transfers.removeLine(id, lineId, s.userId);
-    return await transfers.byId(id);
+    return transferToJson(await transfers.byId(id), await seesCost(s));
   });
 
   /** پیش‌نویس رهاشده — حذفش شماره‌ای نسوزانده، چون هنوز شماره ندارد. */
@@ -217,6 +238,6 @@ export function registerTransferRoutes(app: FastifyInstance, deps: TransferRoute
     });
 
     const t = await transfers.byId(id);
-    return { ...t, lines: out.value.lines, replayed: out.replayed };
+    return { ...transferToJson(t, await seesCost(s)), lines: out.value.lines, replayed: out.replayed };
   });
 }
