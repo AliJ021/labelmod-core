@@ -1326,10 +1326,8 @@ describe("آمادگی API صندوق", { skip }, () => {
     );
   });
 
-  test("تغییر قیمت امروز، فاکتور بازِ همین حالا را تکان نمی‌دهد", async () => {
-    // نتیجه مستقیم تاریخچه تغییرناپذیر (مهاجرت ۰۳۲): قیمت در لحظه
-    // `occurred_at` حل می‌شود، پس یک فاکتور یک قیمت دارد — حتی اگر
-    // وسط کار مدیر حراج بزند.
+  test("قلم تازه قیمت زمان افزودن دارد و قلم قبلی قیمت خودش را حفظ می‌کند", async () => {
+    // تغییر مالی تأییدشده: قیمت تازه فقط برای واحد تازه، بدون بازقیمت‌گذاری قبلی.
     const { s, invoiceId } = await newCart("1");
 
     await reprice("2000000");
@@ -1343,9 +1341,8 @@ describe("آمادگی API صندوق", { skip }, () => {
 
     assert.equal(r.statusCode, 200, r.body);
     const lines = r.json().invoice.lines as Array<{ unitPrice: string; qty: string }>;
-    assert.equal(lines.length, 1, "همان سطر، نه یک سطر دوم");
-    assert.equal(lines[0]!.unitPrice, "1000001", "قیمتِ لحظه بازشدن فاکتور");
-    assert.equal(lines[0]!.qty, "2.000");
+    assert.equal(lines.length, 2, "قیمت متفاوت، سطر مستقل می‌سازد");
+    assert.deepEqual(lines.map(l => [l.unitPrice, l.qty]), [["1000001", "1.000"], ["2000000", "1.000"]]);
   });
 
   test("سطر تخفیف‌دار سازگار نیست و ادغام نمی‌شود", async () => {

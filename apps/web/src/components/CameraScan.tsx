@@ -33,6 +33,8 @@ export function CameraScan({
 }) {
   const video = useRef<HTMLVideoElement>(null);
   const throttle = useRef(new ScanThrottle());
+  const onCodeRef = useRef(onCode);
+  useEffect(() => { onCodeRef.current = onCode; }, [onCode]);
   const [error, setError] = useState<string | null>(null);
   const [starting, setStarting] = useState(true);
 
@@ -44,20 +46,20 @@ export function CameraScan({
 
     void (async () => {
       try {
-        const [media, detector] = await Promise.all([
-          navigator.mediaDevices.getUserMedia(CAMERA_CONSTRAINTS),
-          resolveDetector(),
-        ]);
+        const detector = await resolveDetector();
+        if (!alive) return;
+        const media = await navigator.mediaDevices.getUserMedia(CAMERA_CONSTRAINTS);
+        stream = media;
         if (!alive) {
           for (const t of media.getTracks()) t.stop();
           return;
         }
-        stream = media;
         const el = video.current;
         if (el) {
           el.srcObject = media;
-          await el.play().catch(() => undefined);
+          await el.play();
         }
+        if (!alive) return;
         setStarting(false);
 
         const tick = async () => {
@@ -66,10 +68,11 @@ export function CameraScan({
           if (v && v.readyState >= 2) {
             try {
               for (const found of await detector.detect(v)) {
+                if (!alive) return;
                 const code = found.rawValue.trim();
                 // مهار تکرار: دوربین همان بارکد را ده‌ها بار می‌بیند.
                 if (code !== "" && throttle.current.accept(code, Date.now())) {
-                  onCode(code);
+                  onCodeRef.current(code);
                 }
               }
             } catch {
@@ -80,6 +83,8 @@ export function CameraScan({
         };
         void tick();
       } catch (err) {
+        if (stream) for (const track of stream.getTracks()) track.stop();
+        stream = null;
         if (alive) {
           setError(cameraError(err));
           setStarting(false);
@@ -94,7 +99,7 @@ export function CameraScan({
       // روشن می‌ماند حتی بعد از بستن پنل.
       if (stream) for (const t of stream.getTracks()) t.stop();
     };
-  }, [onCode]);
+  }, []);
 
   return (
     <Solid className="cam stack" style={{ gap: "var(--s-2)" }}>

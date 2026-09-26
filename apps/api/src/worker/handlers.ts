@@ -130,7 +130,7 @@ export async function handleInvoiceFinalized(
   }
 
   const to = toLocalMobile(row.mobile);
-  if (!to) throw new SmsError(`شماره «${row.mobile}» موبایل معتبر نیست`, true);
+  if (!to) throw new SmsError("شماره موبایل مشتری معتبر نیست", true);
 
   // توکن لینک Idempotent است: ارسال دوباره همان لینک را می‌فرستد، نه
   // یک لینک تازه — پس مشتری با هر دو پیامک به یک صفحه می‌رسد.
@@ -171,7 +171,7 @@ export async function handleInvoiceFinalized(
     link,
   });
 
-  return { done: true, note: `فاکتور ${row.number} → ${to}` };
+  return { done: true, note: "اطلاع‌رسانی فاکتور انجام شد" };
 }
 
 /**
@@ -231,7 +231,7 @@ export async function handleChequeDue(
       `مبلغ: ${amount} تومان\n${when}.`,
   );
 
-  return { done: true, note: `چک ${no} → ${to}` };
+  return { done: true, note: "اطلاع‌رسانی چک انجام شد" };
 }
 
 /**
@@ -306,7 +306,7 @@ export async function handleHealthAlert(
     businessDate,
   });
 
-  return { done: true, note: `هشدار ${code} → ${to || "Webhook"}` };
+  return { done: true, note: "اطلاع‌رسانی هشدار انجام شد" };
 }
 
 /** موضوع → Handler. موضوع ناشناخته یک خطای دائمی است، نه یک حلقه. */

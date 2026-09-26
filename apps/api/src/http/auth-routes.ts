@@ -228,14 +228,16 @@ export function registerAuthRoutes(app: FastifyInstance, deps: AuthRouteDeps): v
     if (!pendingToken) {
       throw new AuthError("pending_expired", "مهلت این ورود تمام شده. دوباره وارد شوید.");
     }
-    const body = z.object({ code: z.string().trim().min(4).max(64) }).parse(req.body);
+    const code = method === "webauthn"
+      ? ""
+      : z.object({ code: z.string().trim().min(4).max(64) }).parse(req.body).code;
 
     const pending = await auth.pendingUser(pendingToken);
     if (!pending) {
       throw new AuthError("pending_expired", "مهلت این ورود تمام شده. دوباره وارد شوید.");
     }
 
-    if (!(await verify(pending.userId, body.code))) {
+    if (!(await verify(pending.userId, code))) {
       // بلیت **مصرف نمی‌شود**: کد را می‌شود اشتباه تایپ کرد و
       // فرستادن کاربر به اول مسیر برای یک غلط تایپی، فقط آزار است.
       // دفاع واقعی محدودیت نرخ همین Endpoint است.

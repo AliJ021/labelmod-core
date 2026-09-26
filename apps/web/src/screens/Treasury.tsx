@@ -172,10 +172,7 @@ function CashMoves() {
     if (!ready || busy || rial === null || branch === null) return;
     setBusy(true);
     setError(null);
-    const action = actionFor("treasury.tx", { purpose, raw, from, to });
-    try {
-      await treasury.createTransaction(
-        {
+    const body: Parameters<typeof treasury.createTransaction>[0] = {
           branchId: branch.id,
           purpose,
           amount: rial.toString(),
@@ -190,7 +187,11 @@ function CashMoves() {
             : {}),
           ...(refNo.trim() === "" ? {} : { refNo: refNo.trim() }),
           ...(memo.trim() === "" ? {} : { note: memo.trim() }),
-        },
+    };
+    const action = actionFor("treasury.tx", body);
+    try {
+      await treasury.createTransaction(
+        body,
         { idempotencyKey: keys.keyFor(action) },
       );
       keys.clear(action);

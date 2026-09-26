@@ -118,17 +118,7 @@ export function registerWebRoutes(app: FastifyInstance, deps: WebRouteDeps): voi
     //    دلیلش در seed نوشته شده: پول را سایت **قبلاً** گرفته و
     //    فاکتوری که ثبت نشود، درآمدی است که هیچ‌جا نیست.
     //
-    // پیش از باز کردن تراکنش سنجیده می‌شود، نه وسط آن: مجوز همیشه
-    // **پیش از** نوشتن گرفته می‌شود.
-    for (const line of body.lines) {
-      const variationId = await webOrders.resolveSku(db, line.sku);
-      await assertMarkdownAllowed(db, invoices, s, {
-        variationId,
-        qty: line.qty,
-        discount: 0n,
-        settingPrice: parseMoney(line.unitPrice),
-      });
-    }
+    // مجوز در تراکنش و با همان قیمت ذخیره‌شدهٔ قلم سنجیده می‌شود.
 
     // ⚠️ کلید از **شماره سفارش** ساخته می‌شود، نه از هدر کلاینت.
     //    هویت این عملیات همان سفارش است؛ ووکامرسی که دو بار Webhook
@@ -166,7 +156,10 @@ export function registerWebRoutes(app: FastifyInstance, deps: WebRouteDeps): voi
           ...(body.customerName === undefined ? {} : { customerName: body.customerName }),
           ...(body.paymentRef === undefined ? {} : { paymentRef: body.paymentRef }),
           ...(body.note === undefined ? {} : { note: body.note }),
-        });
+        }, (lineTrx, line) => assertMarkdownAllowed(lineTrx, invoices, s, {
+          variationId: line.variationId, qty: line.qty, discount: line.discountAmount,
+          settingPrice: line.unitPrice, listPrice: line.listPrice,
+        }));
         return { value: id, ref: id };
       },
       replay: async (ref) => ref,
