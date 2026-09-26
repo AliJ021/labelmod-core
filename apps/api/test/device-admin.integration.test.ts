@@ -128,7 +128,7 @@ describe("مدیریت دستگاه و چرخه PIN", { skip }, () => {
         .executeTakeFirstOrThrow();
       await handle.db
         .insertInto("identity.user_role")
-        .values({ user_id: u.id, role_code: role, branch_id: BRANCH })
+        .values({ user_id: u.id, role_code: role, branch_id: role === "admin" ? null : BRANCH })
         .execute();
       ids[role] = u.id;
     }
@@ -184,7 +184,7 @@ describe("مدیریت دستگاه و چرخه PIN", { skip }, () => {
       method: "POST",
       url: `/devices/${found.id}/approve`,
       ...a,
-      payload: { label: "تبلت صندوق ۱" },
+      payload: { label: "تبلت صندوق ۱", branchId: BRANCH },
     });
     assert.equal(approve.statusCode, 200, approve.body);
 
@@ -266,7 +266,7 @@ describe("مدیریت دستگاه و چرخه PIN", { skip }, () => {
       method: "POST",
       url: `/devices/${own.id}/approve`,
       ...a0,
-      payload: {},
+      payload: { branchId: BRANCH },
     });
     const enrolled = await login(admin, fp);
 
@@ -288,7 +288,7 @@ describe("مدیریت دستگاه و چرخه PIN", { skip }, () => {
       method: "POST",
       url: `/devices/${other.id}/approve`,
       ...jar,
-      payload: {},
+      payload: { branchId: BRANCH },
     });
     assert.equal(
       attempt.statusCode,
@@ -308,7 +308,7 @@ describe("مدیریت دستگاه و چرخه PIN", { skip }, () => {
       method: "POST",
       url: `/devices/${other.id}/approve`,
       ...jar,
-      payload: {},
+      payload: { branchId: BRANCH },
     });
     assert.equal(after2.statusCode, 200, `پس از احراز مجدد باید بشود: ${after2.body}`);
     void first;
@@ -484,7 +484,7 @@ describe("مدیریت دستگاه و چرخه PIN", { skip }, () => {
       method: "POST",
       url: `/devices/${target.id}/approve`,
       ...a,
-      payload: { label: "تبلت انبار" },
+      payload: { label: "تبلت انبار", branchId: BRANCH },
     });
 
     const after2 = (

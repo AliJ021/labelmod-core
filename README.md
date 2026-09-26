@@ -317,7 +317,7 @@ ops/install-hooks.sh      # یک بار روی هر کلون؛ مکمل CI و ح
 
 ```bash
 node --experimental-strip-types apps/api/src/cli/create-user.ts \
-     --username ali --name 'علی جوادی' --role admin --branch MAIN
+     --username ali --name 'علی جوادی' --role admin
 ```
 
 رمز تصادفی ساخته می‌شود و **یک بار** چاپ می‌شود.
@@ -338,7 +338,7 @@ ops/deploy.sh up          # Build و اجرا
 ops/deploy.sh migrate
 ops/deploy.sh seed        # فقط نصب تازه؛ روی دفتر موجود اجرا نشود
 ops/deploy.sh roles        # سپس APP_DB_USER=labelmod_app و دوباره up
-ops/deploy.sh user --username ali --name 'علی جوادی' --role admin --branch MAIN
+ops/deploy.sh user --username ali --name 'علی جوادی' --role admin
 ops/deploy.sh status
 ```
 
