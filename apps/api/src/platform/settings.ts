@@ -21,6 +21,20 @@ import { sql } from "kysely";
 import type { Transaction } from "kysely";
 import type { Db } from "../db/client.ts";
 import type { Database } from "../db/types.ts";
+import { requireForSession } from "../auth/permission.ts";
+import { branchesOf, ScopeError } from "../sales/scope.ts";
+
+type SettingsActor = { userId: string; pinUnlocked: boolean };
+
+/** حساب مشترک خواندنی است؛ نقش بدون شعبه دسترسی سراسری می‌دهد. */
+function readableAccountBranch(actorId: string, column: string) {
+  return sql<boolean>`EXISTS (SELECT 1 FROM identity.user_role ar WHERE ar.user_id=${actorId}::uuid
+    AND (ar.branch_id IS NULL OR ${sql.ref(column)} IS NULL OR ar.branch_id=${sql.ref(column)}))`;
+}
+function globalActor(actorId: string) {
+  return sql<boolean>`EXISTS (SELECT 1 FROM identity.user_role ar
+    WHERE ar.user_id=${actorId}::uuid AND ar.branch_id IS NULL)`;
+}
 
 /** یک تنظیم، همان‌طور که صفحه تنظیمات لازمش دارد. */
 export interface SettingView {
@@ -242,7 +256,7 @@ export class SettingService {
    * می‌خواندشان. یک کلید سراسری یعنی کارت‌خوان فروشگاه و درگاه سایت
    * ناچار یک کارمزد داشته باشند — که تقریباً هرگز درست نیست.
    */
-  async settlementTerms(canEdit: boolean): Promise<SettlementTermsView[]> {
+  async settlementTerms(canEdit: boolean, actorId: string): Promise<SettlementTermsView[]> {
     const r = await sql<{
       id: string;
       code: string;
@@ -252,7 +266,14 @@ export class SettingService {
       fee_percent: string;
       is_active: boolean;
       settles_to: string | null;
-    }>`SELECT * FROM treasury.settlement_terms ORDER BY kind, code`.execute(this.#db);
+      branch_id: string | null;
+      global_actor: boolean;
+    }>`SELECT t.id,t.code,t.name,t.kind,t.settlement_days,t.fee_percent,t.is_active,
+       CASE WHEN ${readableAccountBranch(actorId, "b.branch_id")} THEN b.name ELSE NULL END AS settles_to,
+       a.branch_id,${globalActor(actorId)} AS global_actor
+       FROM treasury.settlement_terms t JOIN treasury.account a ON a.id=t.id
+       LEFT JOIN treasury.account b ON b.id=a.settlement_account_id
+       WHERE ${readableAccountBranch(actorId, "a.branch_id")} ORDER BY t.kind,t.code`.execute(this.#db);
 
     return r.rows.map((t) => ({
       id: t.id,
@@ -263,7 +284,7 @@ export class SettingService {
       feePercent: t.fee_percent,
       isActive: t.is_active,
       settlesTo: t.settles_to,
-      canEdit,
+      canEdit: canEdit && (t.branch_id !== null || t.global_actor),
     }));
   }
 
@@ -351,13 +372,15 @@ export class SettingService {
     `.execute(trx);
   }
 
-  async terminalDrivers(canEdit: boolean): Promise<TerminalDriverView[]> {
+  async terminalDrivers(canEdit: boolean, actorId: string): Promise<TerminalDriverView[]> {
     const r = await sql<{
       account_id: string; account_code: string; account_name: string;
       kind: string; driver_code: string | null; driver_label: string | null;
       vendor: string | null; sdk_doc_url: string | null;
       is_implemented: boolean | null; driver_config: Record<string, unknown>;
-    }>`SELECT * FROM treasury.terminal_driver ORDER BY kind, account_code`
+      branch_id: string | null; global_actor: boolean;
+    }>`SELECT t.*,${globalActor(actorId)} AS global_actor FROM treasury.terminal_driver t
+       WHERE ${readableAccountBranch(actorId, "t.branch_id")} ORDER BY kind, account_code`
       .execute(this.#db);
     return r.rows.map((x) => ({
       accountId: x.account_id,
@@ -370,7 +393,7 @@ export class SettingService {
       sdkDocUrl: x.sdk_doc_url,
       isImplemented: x.is_implemented,
       driverConfig: x.driver_config,
-      canEdit,
+      canEdit: canEdit && (x.branch_id !== null || x.global_actor),
     }));
   }
 
@@ -386,12 +409,13 @@ export class SettingService {
     driverCode: string | null,
     config: Record<string, unknown>,
     reason: string | null,
-    actorId: string,
+    actor: SettingsActor,
   ): Promise<void> {
+    await this.#assertAccountSettingsScope(trx, accountId, actor);
     await sql`
       SELECT treasury.set_device_driver(
         ${accountId}::uuid, ${driverCode}::text,
-        ${JSON.stringify(config)}::jsonb, ${reason}::text, ${actorId}::uuid)
+        ${JSON.stringify(config)}::jsonb, ${reason}::text, ${actor.userId}::uuid)
     `.execute(trx);
   }
 
@@ -402,7 +426,9 @@ export class SettingService {
     settlementDays: number,
     feePercent: string,
     reason: string | null,
+    actor: SettingsActor,
   ): Promise<{ id: string; settlementDays: number; feePercent: string }> {
+    await this.#assertAccountSettingsScope(trx, accountId, actor);
     const r = await sql<{ id: string; settlement_days: number; fee_percent: string }>`
       SELECT id, settlement_days, fee_percent
         FROM treasury.set_settlement_terms(
@@ -416,6 +442,21 @@ export class SettingService {
       settlementDays: Number(row.settlement_days),
       feePercent: row.fee_percent,
     };
+  }
+
+  /** قفل عامل با تغییر نقش، و قفل حساب با انتقال شعبه هماهنگ است. */
+  async #assertAccountSettingsScope(trx: Transaction<Database>, accountId: string, actor: SettingsActor): Promise<void> {
+    const user = await trx.selectFrom("identity.app_user").select("is_active")
+      .where("id", "=", actor.userId).forShare().executeTakeFirst();
+    if (!user?.is_active) throw new ScopeError("کاربر عامل فعال نیست");
+    await requireForSession(trx, actor, "settings.security");
+    const account = await trx.selectFrom("treasury.account").select(["id", "branch_id"])
+      .where("id", "=", accountId).forUpdate().executeTakeFirst();
+    if (!account) throw new SettingError("account_not_found", "حساب خزانه یافت نشد", 404);
+    const scope = await branchesOf(trx, actor.userId);
+    if (scope !== "all" && (account.branch_id === null || !scope.includes(account.branch_id))) {
+      throw new ScopeError("تنظیم این پایانه خارج از دامنه شعبه شماست");
+    }
   }
 
   /**

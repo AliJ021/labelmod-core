@@ -247,7 +247,7 @@ export function registerSettingsRoutes(app: FastifyInstance, deps: SettingsRoute
       operation: "settings.security",
       viaPin: s.pinUnlocked,
     });
-    return { terminals: await settings.terminalDrivers(d.verdict === "allow") };
+    return { terminals: await settings.terminalDrivers(d.verdict === "allow", s.userId) };
   });
 
   /**
@@ -277,10 +277,10 @@ export function registerSettingsRoutes(app: FastifyInstance, deps: SettingsRoute
 
     await withActor(db, { userId: s.userId, ip: req.ip }, (trx) =>
       settings.setDriverIn(
-        trx, id, body.driverCode, body.config, body.reason ?? null, s.userId,
+        trx, id, body.driverCode, body.config, body.reason ?? null, s,
       ),
     );
-    const list = await settings.terminalDrivers(true);
+    const list = await settings.terminalDrivers(true, s.userId);
     return list.find((t) => t.accountId === id) ?? null;
   });
 
@@ -292,7 +292,7 @@ export function registerSettingsRoutes(app: FastifyInstance, deps: SettingsRoute
       operation: "settings.security",
       viaPin: s.pinUnlocked,
     });
-    return { terms: await settings.settlementTerms(d.verdict === "allow") };
+    return { terms: await settings.settlementTerms(d.verdict === "allow", s.userId) };
   });
 
   /**
@@ -309,7 +309,7 @@ export function registerSettingsRoutes(app: FastifyInstance, deps: SettingsRoute
     await requireForSession(db, s, "settings.security");
 
     return withActor(db, { userId: s.userId, ip: req.ip }, (trx) =>
-      settings.setTermsIn(trx, id, body.settlementDays, body.feePercent, body.reason ?? null),
+      settings.setTermsIn(trx, id, body.settlementDays, body.feePercent, body.reason ?? null, s),
     );
   });
 }
