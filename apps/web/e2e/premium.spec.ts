@@ -242,6 +242,7 @@ test("password suggestion, cancellation, server error, duplicate submit and succ
   const open = async () => { await account.click(); await page.getByRole("button", { name: "تغییر رمز من" }).click(); };
   await open();
   await page.getByRole("button", { name: "پیشنهاد رمز امن" }).click();
+  await expect(page.getByLabel("رمز تازه", { exact: true })).toHaveValue(/^[0-9a-f]{64}$/);
   expect(api.calls.some(x => x.startsWith("POST"))).toBe(false);
   await page.getByRole("button", { name: "انصراف", exact: true }).click();
   await expect(page.getByRole("dialog")).toHaveCount(0);
@@ -332,7 +333,7 @@ test("staff password reset needs review; current user gets personal flow", async
   });
   await page.getByRole("button", { name: "تأیید نهایی و تغییر رمز" }).click();
   await expect(page.getByRole("dialog")).toHaveCount(0);
-  expect(submitted).toEqual({ password: expect.stringMatching(/.{12,}/) });
+  expect(submitted).toEqual({ password: expect.stringMatching(/^[0-9a-f]{64}$/) });
   await expect(page.getByRole("status")).toContainText("همهٔ نشست‌های او بسته شدند");
   expect(api.calls.filter(x => x.startsWith("POST"))).toHaveLength(1);
 });
