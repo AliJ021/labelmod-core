@@ -1,19 +1,20 @@
+const Invoices = lazy(() => import("./screens/Invoices.tsx").then(m => ({ default: m.Invoices })));
 /** پوسته: ناوبری شیشه‌ای، محتوای مالی مات و دسترس‌پذیر. */
-import { useCallback, useEffect, useState } from "react";
+import { lazy, Suspense, useCallback, useEffect, useState } from "react";
 import { Glass, GlassFilters, Solid } from "./components/Glass.tsx";
 import { TabList, TabPanels, useTabsId } from "./components/Tabs.tsx";
 import { HeaderTools } from "./components/HeaderTools.tsx";
 import { PasswordDialog } from "./components/PasswordDialog.tsx";
-import { Dashboard } from "./screens/Dashboard.tsx";
+const Dashboard = lazy(() => import("./screens/Dashboard.tsx").then(m => ({ default: m.Dashboard })));
 import { Login, LockScreen, ReauthPanel } from "./screens/Login.tsx";
-import { Pos } from "./screens/Pos.tsx";
-import { Catalog } from "./screens/Catalog.tsx";
-import { Customers } from "./screens/Customers.tsx";
-import { Reports } from "./screens/Reports.tsx";
-import { Treasury } from "./screens/Treasury.tsx";
-import { Warehouse } from "./screens/Warehouse.tsx";
-import { Returns } from "./screens/Returns.tsx";
-import { Settings } from "./screens/Settings.tsx";
+const Pos = lazy(() => import("./screens/Pos.tsx").then(m => ({ default: m.Pos })));
+const Catalog = lazy(() => import("./screens/Catalog.tsx").then(m => ({ default: m.Catalog })));
+const Customers = lazy(() => import("./screens/Customers.tsx").then(m => ({ default: m.Customers })));
+const Reports = lazy(() => import("./screens/Reports.tsx").then(m => ({ default: m.Reports })));
+const Treasury = lazy(() => import("./screens/Treasury.tsx").then(m => ({ default: m.Treasury })));
+const Warehouse = lazy(() => import("./screens/Warehouse.tsx").then(m => ({ default: m.Warehouse })));
+const Returns = lazy(() => import("./screens/Returns.tsx").then(m => ({ default: m.Returns })));
+const Settings = lazy(() => import("./screens/Settings.tsx").then(m => ({ default: m.Settings })));
 import { TwoFactor } from "./screens/TwoFactor.tsx";
 import {
   authView,
@@ -29,28 +30,25 @@ import {
   type Theme,
 } from "./lib/theme.ts";
 
-type Zone =
-  | "dashboard"
-  | "pos"
-  | "returns"
-  | "catalog"
-  | "purchasing"
-  | "treasury"
-  | "reports"
-  | "customers"
-  | "settings";
-
-const ZONES = [
-  { key: "dashboard", label: "داشبورد" }, { key: "pos", label: "صندوق" },
-  { key: "returns", label: "مرجوعی" }, { key: "catalog", label: "کالا و قیمت" },
-  { key: "purchasing", label: "انبار و خرید" }, { key: "treasury", label: "خزانه و چک" },
-  { key: "customers", label: "مشتریان" }, { key: "reports", label: "گزارش‌ها" },
-  { key: "settings", label: "تنظیمات" },
-] as const;
+import { ZONES, type Zone, routeUrl } from "./lib/navigation.ts";
+import { useUrlTab } from "./lib/use-url-state.ts";
+import { FeatureSearch } from "./components/FeatureSearch.tsx";
+import { useMediaQuery } from "./lib/use-media-query.ts";
+import { SectionBoundary } from "./components/SectionBoundary.tsx";
 
 export function App() {
   const tabsId = useTabsId();
-  const [zone, setZone] = useState<Zone>("dashboard");
+  const [zone, setZone] = useUrlTab("page", ZONES, "dashboard");
+  const [more, setMore] = useState(false);
+  const [keyboard, setKeyboard] = useState(false);
+  useEffect(() => {
+    const viewport = window.visualViewport;
+    if (!viewport) return;
+    const update = () => setKeyboard(viewport.scale === 1 && viewport.height < window.innerHeight * .75);
+    viewport.addEventListener("resize", update); update();
+    return () => viewport.removeEventListener("resize", update);
+  }, []);
+  const compact = useMediaQuery("(max-width: 899px)");
   const [theme, setThemeState] = useState<Theme>("system");
   const [passwordOpen, setPasswordOpen] = useState(false);
   const [loginNotice, setLoginNotice] = useState<string | null>(null);
@@ -218,6 +216,8 @@ export function App() {
 
   function switchZone(next: Zone) {
     setZone(next);
+    setMore(false);
+    requestAnimationFrame(() => document.getElementById("workspace-content")?.focus({preventScroll:true}));
   }
 
   function cycleTheme() {
@@ -238,22 +238,31 @@ export function App() {
         <i />
       </div>
 
-      <div className="app">
+      <div className={`app workspace${more ? " workspace--more" : ""}${keyboard ? " workspace--keyboard" : ""}`}>
+        <a className="skip-content" href="#workspace-content">رفتن به محتوا</a>
         {sessionError && <p className="solid pos-alert" role="alert">{sessionError}</p>}
-        <Glass as="nav" radius="md" className="topbar" refract={false} live>
+        <Glass as="header" radius="md" className="workspace-header" refract={false}>
           <strong className="brand">لیبل مد</strong>
 
-          <TabList id={tabsId} items={ZONES} value={zone} onChange={switchZone} label="بخش‌ها" className="zones" />
+          <FeatureSearch key={`${me?.id}:${me?.elevated}`} />
 
           {me ? <HeaderTools me={me} theme={theme} onTheme={cycleTheme} onLock={() => void lockScreen()} onLogout={() => void signOut()} onPassword={() => setPasswordOpen(true)} onReauth={() => setUpgrading(true)} /> : null}
         </Glass>
 
-        <main>
+        <Glass as="nav" className="workspace-nav" refract={false} aria-label="ناوبری اصلی">
+          <TabList id={tabsId} items={ZONES} value={zone} onChange={switchZone} label="بخش‌ها" className="zones workspace-zones" vertical={!compact} hrefFor={key => routeUrl(key)} />
+          <button type="button" className="workspace-more" aria-expanded={more} aria-label={more ? "بستن بخش‌های بیشتر" : "بخش‌های بیشتر"} onClick={() => setMore(v => !v)}>بیشتر</button>
+        </Glass>
+        <main id="workspace-content" tabIndex={-1}>
+        <SectionBoundary key={`${me?.id}:${zone}`}>
+        <Suspense fallback={<p className="solid pad" role="status">در حال بارگذاری بخش…</p>}>
         <TabPanels id={tabsId} items={ZONES} value={zone} className="zone-panel">
           {zone === "dashboard" ? (
             <Dashboard />
           ) : zone === "pos" ? (
-            <Pos />
+            <Pos key={me?.id} actorId={me?.id ?? ""} />
+          ) : zone === "invoices" ? (
+            <Invoices />
           ) : zone === "returns" ? (
             <Returns />
           ) : zone === "catalog" ? (
@@ -270,6 +279,8 @@ export function App() {
             <Settings currentUserId={me?.id ?? ""} onOwnPassword={() => setPasswordOpen(true)} />
           )}
         </TabPanels>
+        </Suspense>
+        </SectionBoundary>
         </main>
 
         {passwordOpen && me ? <PasswordDialog name={me.fullName} own onCancel={() => setPasswordOpen(false)} onApply={async (password, currentPassword) => {

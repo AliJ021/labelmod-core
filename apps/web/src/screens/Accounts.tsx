@@ -1,3 +1,4 @@
+import { useUrlFlag } from "../lib/use-url-state.ts";
 /**
  * کدینگ حساب — درخت چهارسطحی، مثل هلو و دشت.
  *
@@ -50,7 +51,7 @@ export function Accounts() {
   const [editing, setEditing] = useState<string | null>(null);
   const [adding, setAdding] = useState<Account | null>(null);
   const [busy, setBusy] = useState(false);
-  const [showInactive, setShowInactive] = useState(false);
+  const [showInactive, setShowInactive] = useUrlFlag("accounts.inactive");
 
   useEffect(() => {
     let alive = true;

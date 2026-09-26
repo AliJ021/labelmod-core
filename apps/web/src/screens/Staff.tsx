@@ -1,3 +1,4 @@
+import { useUrlFlag } from "../lib/use-url-state.ts";
 /**
  * پرسنل — ساخت، نقش، رمز، PIN، فعال و غیرفعال.
  *
@@ -37,7 +38,7 @@ export function Staff({ currentUserId, onOwnPassword }: { currentUserId: string;
   const [users, setUsers] = useState<AppUser[]>([]);
   const [roles, setRoles] = useState<Role[]>([]);
   const [branches, setBranches] = useState<Branch[]>([]);
-  const [includeInactive, setIncludeInactive] = useState(false);
+  const [includeInactive, setIncludeInactive] = useUrlFlag("staff.inactive");
 
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);

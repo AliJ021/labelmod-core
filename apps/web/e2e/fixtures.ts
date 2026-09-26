@@ -70,10 +70,10 @@ export { expect };
 export async function openCatalog(page: Page) {
   await page.goto("/");
   await page.getByRole("tab", { name: "کالا و قیمت", exact: true }).click();
-  await expect(page.getByRole("searchbox")).toBeVisible();
+  await expect(page.locator("main").getByRole("searchbox")).toBeVisible();
 }
 export async function settings(page: Page, value: string, label: string) {
-  await page.getByRole("tablist", { name: "بخش‌ها", exact: true }).getByRole("tab", { name: "تنظیمات", exact: true }).click();
+  await openZone(page, "تنظیمات");
   await expect(page.locator(".settings-nav")).toBeVisible();
   const picker = page.getByRole("combobox", { name: "بخش تنظیمات" });
   if (await picker.isVisible()) await picker.selectOption(value);
@@ -86,4 +86,12 @@ export async function fontsReady(page: Page) {
     await document.fonts.ready;
   });
   await expect.poll(() => page.evaluate(() => [...document.fonts].every(font => font.status === "loaded"))).toBe(true);
+}
+
+export async function openZone(page: Page, name: string) {
+  const nav = page.getByRole("tablist", { name: "بخش‌ها", exact: true });
+  await expect(nav).toBeVisible();
+  const tab = nav.getByRole("tab", { name, exact: true });
+  if (!(await tab.isVisible())) await page.getByRole("button", { name: "بخش‌های بیشتر", exact: true }).click();
+  await tab.click();
 }

@@ -1,3 +1,4 @@
+import { openZone } from "./fixtures";
 import { test, expect, product, rule, customer, staff, openCatalog, settings, fontsReady } from "./fixtures";
 import type { Page, Route, Locator } from "@playwright/test";
 
@@ -51,7 +52,7 @@ test("visual, local fonts, contrast, targets, long names and 200% text", async (
   });
   expect(ratios.border).toBeGreaterThanOrEqual(3);
   expect(ratios.text).toBeGreaterThanOrEqual(4.5);
-  await page.getByRole("searchbox").focus();
+  await page.locator("main").getByRole("searchbox").focus();
   await expect(page.locator(".search-field")).toHaveCSS("outline-style", "solid");
   for (const button of await page.locator(".tools button").all()) {
     const box = await button.boundingBox(); expect(box!.width).toBeGreaterThanOrEqual(44); expect(box!.height).toBeGreaterThanOrEqual(44);
@@ -59,7 +60,7 @@ test("visual, local fonts, contrast, targets, long names and 200% text", async (
   await noOverflow(page);
   await screenshot(page, "catalog");
   await page.evaluate(() => { document.documentElement.style.fontSize = "200%"; });
-  expect((await page.getByRole("searchbox").boundingBox())!.height).toBeGreaterThanOrEqual(68);
+  expect((await page.locator("main").getByRole("searchbox").boundingBox())!.height).toBeGreaterThanOrEqual(68);
   await noOverflow(page);
   await page.evaluate(() => { document.documentElement.style.fontSize = ""; });
   await page.getByRole("button", { name: "باز کردن", exact: true }).click();
@@ -93,7 +94,7 @@ test("search debounce, Enter, stale response after latest response", async ({ pa
     await route.fulfill({ json: { products: [{ ...product, nameInternal: q || product.nameInternal }] } });
   });
   await openCatalog(page);
-  const search = page.getByRole("searchbox");
+  const search = page.locator("main").getByRole("searchbox");
   await expect(page.getByRole("cell", { name: product.nameInternal, exact: true })).toBeVisible();
   await page.clock.install({ time: new Date("2026-01-01T00:00:00Z") });
   await page.clock.pauseAt(new Date("2026-01-01T00:00:10Z"));
@@ -122,7 +123,7 @@ test("clear, filter and unmount cancel pending searches; error retry and empty s
     await route.fulfill({ json: { products: url.searchParams.has("search") ? [] : [product] } });
   });
   await openCatalog(page);
-  const search = page.getByRole("searchbox");
+  const search = page.locator("main").getByRole("searchbox");
   await search.fill("pending"); await search.press("Enter");
   await expect.poll(() => held.length).toBeGreaterThanOrEqual(1);
   await page.getByRole("button", { name: "پاک‌کردن جست‌وجوی کد یا نام کالا", exact: true }).click();
@@ -153,13 +154,13 @@ test("clear, filter and unmount cancel pending searches; error retry and empty s
 test("customers keep manual search; permissions keep local filtering; retry states", async ({ page, api }) => {
   api.handlers.set("GET /customers", async route => { await route.fulfill({ status: 503, json: { error: { code: "test", message: "خطای مشتریان" } } }); });
   await page.goto("/");
-  await page.getByRole("tab", { name: "مشتریان", exact: true }).click();
+  await openZone(page, "مشتریان");
   await expect(page.getByRole("alert")).toContainText("خطای مشتریان");
   api.handlers.delete("GET /customers");
   await page.getByRole("button", { name: "تلاش دوباره" }).click();
   await expect(page.getByText("فهرست مشتریان خالی است.")).toBeVisible();
   const before = api.calls.filter(x => x.startsWith("GET /customers")).length;
-  await page.getByRole("searchbox").fill("نام ناموجود");
+  await page.locator("main").getByRole("searchbox").fill("نام ناموجود");
   await page.waitForTimeout(300);
   expect(api.calls.filter(x => x.startsWith("GET /customers")).length).toBe(before);
   await page.getByRole("button", { name: "جست‌وجو", exact: true }).click();
@@ -171,7 +172,7 @@ test("customers keep manual search; permissions keep local filtering; retry stat
   await page.getByRole("button", { name: "تلاش دوباره" }).click();
   await expect(page.getByText(rule.operation, { exact: true })).toBeVisible();
   const requests = api.calls.length;
-  await page.getByRole("searchbox").fill("missing");
+  await page.locator("main").getByRole("searchbox").fill("missing");
   await expect(page.getByText("برای این جست‌وجو مجوزی پیدا نشد.")).toBeVisible();
   expect(api.calls.length).toBe(requests);
   await page.getByRole("button", { name: "پاک‌کردن جست‌وجو", exact: true }).last().click();
@@ -181,11 +182,12 @@ test("customers keep manual search; permissions keep local filtering; retry stat
 test("RTL keyboard tabs, activation, one tab stop and responsive settings focus", async ({ page }) => {
   await page.goto("/");
   const main = page.getByRole("tablist", { name: "بخش‌ها", exact: true });
-  await tabContract(main);
+  if (page.viewportSize()!.width < 900) await page.getByRole("button", {name:"بخش‌های بیشتر",exact:true}).click();
+  await tabContract(main, page.viewportSize()!.width >= 900);
   await main.getByRole("tab").first().press("End");
   await expect(main.getByRole("tab").last()).toBeFocused();
   await main.getByRole("tab").last().press("Enter");
-  await expect(main.getByRole("tab").last()).toHaveAttribute("aria-selected", "true");
+  await expect(main.getByRole("tab", {name:"تنظیمات",exact:true,includeHidden:true})).toHaveAttribute("aria-selected", "true");
   if (page.viewportSize()!.width >= 768) {
     await tabContract(page.getByRole("tablist", { name: "بخش‌های تنظیمات" }), true);
     await page.getByRole("tab", { name: "نمایش و عملکرد", exact: true }).focus();
@@ -213,16 +215,16 @@ test("live reduced motion, transparency and persisted performance mode", async (
   const perf = page.getByRole("combobox", { name: /حالت عملکرد/ });
   await perf.selectOption("on");
   await expect(page.locator(".mesh")).toHaveCSS("display", "none");
-  await expect(page.locator(".topbar")).toHaveCSS("backdrop-filter", "none");
+  await expect(page.locator(".workspace-header")).toHaveCSS("backdrop-filter", "none");
   await page.reload();
   await expect(page.locator("html")).toHaveAttribute("data-perf", "on");
   await settings(page, "appearance", "نمایش و عملکرد");
   await perf.selectOption("off");
   await page.emulateMedia({ reducedMotion: "reduce" });
   await expect(page.locator(".mesh i").first()).toHaveCSS("animation-name", "none");
-  const angle = await page.locator(".topbar").getAttribute("style");
-  await page.locator(".topbar").dispatchEvent("pointermove", { clientX: 120, clientY: 40 });
-  expect(await page.locator(".topbar").getAttribute("style")).toBe(angle);
+  const angle = await page.locator(".workspace-header").getAttribute("style");
+  await page.locator(".workspace-header").dispatchEvent("pointermove", { clientX: 120, clientY: 40 });
+  expect(await page.locator(".workspace-header").getAttribute("style")).toBe(angle);
   await page.getByRole("tab", { name: "کالا و قیمت", exact: true }).click();
   await expect(page.locator(".zone-panel:not([hidden])")).toHaveCSS("animation-name", "none");
   expect(await page.evaluate(() => document.getAnimations().filter(a => a.effect instanceof KeyframeEffect && a.effect.pseudoElement?.startsWith("::view-transition")).length)).toBe(0);
@@ -231,9 +233,9 @@ test("live reduced motion, transparency and persisted performance mode", async (
   await settings(page, "appearance", "نمایش و عملکرد");
   await perf.selectOption("system");
   await transparency(page, browserName, true);
-  await expect(page.locator(".topbar")).toHaveCSS("backdrop-filter", "none");
+  await expect(page.locator(".workspace-header")).toHaveCSS("backdrop-filter", "none");
   await transparency(page, browserName, false);
-  await expect(page.locator(".topbar")).not.toHaveCSS("backdrop-filter", "none");
+  await expect(page.locator(".workspace-header")).not.toHaveCSS("backdrop-filter", "none");
 });
 
 test("password suggestion, cancellation, server error, duplicate submit and success", async ({ page, api }) => {
@@ -301,7 +303,7 @@ test("populated customers, empty permissions and clear actions", async ({ page, 
   api.defaults["GET /customers"] = { customers: [customer] };
   api.permissionRows = [];
   await page.goto("/");
-  await page.getByRole("tab", { name: "مشتریان", exact: true }).click();
+  await openZone(page, "مشتریان");
   await expect(page.getByRole("cell", { name: customer.fullName!, exact: true })).toBeVisible();
   await noOverflow(page);
   await screenshot(page, "customers");

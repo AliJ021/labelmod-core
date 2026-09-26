@@ -1,30 +1,30 @@
 import { test, expect, product, openCatalog, settings } from "./fixtures";
 import type { MockApi } from "./fixtures";
-const invoice = { id:"draft1",number:null,branchId:"b1",warehouseId:"w1",shiftId:"s1",customerId:null,
+const invoice = { id:"33333333-3333-4333-8333-333333333333",number:null,branchId:"b1",warehouseId:"w1",shiftId:"44444444-4444-4444-8444-444444444444",createdBy:"22222222-2222-4222-8222-222222222222",customerId:null,
   status:"draft",channel:"pos",grossAmount:"200000",discountAmount:"0",netAmount:"200000",taxAmount:"0",
   shippingAmount:"0",payableAmount:"200000",paidAmount:"0",receivedAmount:"0",recipientId:null,gift:null,
-  occurredAt:"2026-09-24T00:00:00Z",lines:[{id:"l1",lineNo:1,variationId:"v1",productName:"شلوار کتان",
+  occurredAt:"2026-09-24T00:00:00Z",lines:[{id:"l1",lineNo:1,variationId:"66666666-6666-4666-8666-666666666666",productName:"شلوار کتان",
     sku:"TEST",qty:"1",unitPrice:"200000",netAmount:"200000",discountAmount:"0",listPrice:null,priceOverrideReason:null,discountReason:null}] };
 function pos(api:MockApi) {
   api.defaults["GET /payment-methods"]={methods:[{code:"cash",name:"نقد",kind:"cash",requiresRef:false},{code:"card",name:"کارت‌خوان",kind:"card_reader",requiresRef:true}]};
-  api.defaults["GET /shifts/current"]={id:"s1",branchId:"b1",status:"open",openingCash:"0",openedAt:"2026-09-24T00:00:00Z"};
+  api.defaults["GET /shifts/current"]={id:"44444444-4444-4444-8444-444444444444",userId:"22222222-2222-4222-8222-222222222222",branchId:"b1",status:"open",openingCash:"0",openedAt:"2026-09-24T00:00:00Z"};
   api.defaults["GET /gift-options"]={wraps:[],colors:[],flowers:[]};
-  api.defaults["GET /invoices/draft1"]=invoice;
+  api.defaults["GET /invoices/33333333-3333-4333-8333-333333333333"]=invoice;
 }
 test("name search groups products then selects color and size, including a variant without barcode",async({page,api})=>{
   pos(api); api.defaults["GET /pos/products"]={products:[{id:"p1",name:"شلوار کتان",code:"P1",variationCount:3}]};
   api.defaults["GET /pos/products/p1/variations"]={variations:[
-    {id:"v1",sku:"NAVY-M",barcode:null,color:"سرمه‌ای",size:"M",price:"200000",available:"4"},
+    {id:"66666666-6666-4666-8666-666666666666",sku:"NAVY-M",barcode:null,color:"سرمه‌ای",size:"M",price:"200000",available:"4"},
     {id:"v2",sku:"NAVY-L",barcode:null,color:"سرمه‌ای",size:"L",price:"200000",available:"0"},
     {id:"v3",sku:"RED-M",barcode:null,color:"قرمز",size:"M",price:null,available:"2"},
   ]};
   api.defaults["POST /invoices"]=invoice;
   let scanned:Record<string,unknown>|undefined;
-  api.handlers.set("POST /invoices/draft1/scan",async route=>{
+  api.handlers.set("POST /invoices/33333333-3333-4333-8333-333333333333/scan",async route=>{
     scanned=route.request().postDataJSON();await route.fulfill({json:{invoice,replayed:false}});
   });
   await page.goto("/");await page.getByRole("tab",{name:"صندوق",exact:true}).click();
-  const panel=page.getByRole("region",{name:"افزودن کالا با نام"});
+  const panel=page.getByRole("region",{name:"افزودن کالا"});
   await panel.getByRole("searchbox").fill("شلوار");
   await expect(panel.getByRole("button",{name:/شلوار کتان/})).toHaveCount(1);
   await expect(panel.getByRole("group",{name:"انتخاب سایز"})).toHaveCount(0);
@@ -32,7 +32,7 @@ test("name search groups products then selects color and size, including a varia
   await panel.getByRole("button",{name:"سرمه‌ای",exact:true}).click();
   await expect(panel.getByRole("button",{name:/سایز L/})).toBeDisabled();
   await panel.getByRole("button",{name:/سایز M/}).click();
-  await expect.poll(()=>scanned).toMatchObject({variationId:"v1",qty:"1"});
+  await expect.poll(()=>scanned).toMatchObject({variationId:"66666666-6666-4666-8666-666666666666",qty:"1"});
   expect(scanned).not.toHaveProperty("barcode");expect(scanned).not.toHaveProperty("unitPrice");
   expect(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth+1)).toBe(true);
   await panel.getByRole("button",{name:"قرمز",exact:true}).click();
@@ -41,15 +41,15 @@ test("name search groups products then selects color and size, including a varia
 test("split payment preserves failed input, then displays server totals and methods",async({page,api})=>{
   pos(api);let attempts=0;
   const payments:Array<{id:string;name:string;amount:string}>=[];
-  api.handlers.set("GET /invoices/draft1/payments",async route=>{await route.fulfill({json:{payments}});});
-  api.handlers.set("POST /invoices/draft1/payments",async route=>{
+  api.handlers.set("GET /invoices/33333333-3333-4333-8333-333333333333/payments",async route=>{await route.fulfill({json:{payments}});});
+  api.handlers.set("POST /invoices/33333333-3333-4333-8333-333333333333/payments",async route=>{
     attempts++;const data=route.request().postDataJSON();
     if(attempts===1){await route.fulfill({status:503,json:{error:{code:"unavailable",message:"خطای موقت آزمون"}}});return;}
     payments.push({id:"p"+attempts,name:data.methodCode==="cash"?"نقد":"کارت‌خوان",amount:data.amount});
     const receivedAmount=payments.reduce((sum,p)=>sum+BigInt(p.amount),0n).toString();
     await route.fulfill({json:{invoice:{...invoice,receivedAmount},receivedAmount,paymentId:"p"+attempts,replayed:false}});
   });
-  await page.addInitScript(()=>localStorage.setItem("labelmod_open_cart",JSON.stringify({invoiceId:"draft1",shiftId:"s1"})));
+  await page.addInitScript(()=>localStorage.setItem("labelmod_open_cart",JSON.stringify({invoiceId:"33333333-3333-4333-8333-333333333333",shiftId:"44444444-4444-4444-8444-444444444444"})));
   await page.goto("/");await page.getByRole("tab",{name:"صندوق",exact:true}).click();
   await page.getByRole("button",{name:"کارت‌خوان",exact:true}).click();
   const amount=page.getByLabel("مبلغ (تومان) — خالی یعنی همه مانده");
@@ -133,4 +133,92 @@ test("login offers SMS after password and sends the code to the SMS verification
   await page.getByLabel("کد شش‌رقمی",{exact:true}).fill("۱۲۳۴۵۶");
   await page.getByRole("button",{name:"ورود",exact:true}).click();
   await expect(page.getByRole("tab",{name:"صندوق",exact:true})).toBeVisible();
+});
+
+
+test("lost scan response survives reload and retries the same operation exactly once", async ({page, api}) => {
+  pos(api);
+  api.defaults["POST /invoices"] = invoice;
+  api.defaults["GET /pos/products"] = {products: [], exactVariationId: "66666666-6666-4666-8666-666666666666"};
+  const attempts: Array<{key: string | undefined; body: unknown}> = [];
+  const committed = new Set<string>();
+  api.handlers.set("POST /invoices/33333333-3333-4333-8333-333333333333/scan", async route => {
+    const key = route.request().headers()["idempotency-key"];
+    attempts.push({key, body: route.request().postDataJSON()});
+    if (key) committed.add(key);
+    if (attempts.length === 1) { await route.abort("connectionreset"); return; }
+    await route.fulfill({json: {invoice, replayed: true}});
+  });
+  await page.goto("/?page=pos");
+  const entry = page.getByRole("region", {name: "افزودن کالا"}).getByRole("searchbox");
+  await entry.fill("TEST123"); await entry.press("Enter");
+  const retry = page.getByRole("button", {name: "بررسی و تلاش دوبارهٔ همان اسکن"});
+  await expect(retry).toBeEnabled();
+  await expect(entry).toBeDisabled();
+  await page.reload();
+  await expect(retry).toBeEnabled(); await retry.click();
+  await expect(retry).toHaveCount(0);
+  expect(attempts).toHaveLength(2); expect(attempts[0]?.key).toBeTruthy();
+  expect(attempts[1]).toEqual(attempts[0]); expect(committed.size).toBe(1);
+  await expect(page.locator(".cart .qty .num")).toHaveText("1");
+});
+
+test("late exact-code lookup cannot add an old result after the query changes", async ({page, api}) => {
+  pos(api);
+  let release: (() => void) | undefined;
+  const held = new Promise<void>(resolve => {release=resolve;});
+  api.handlers.set("GET /pos/products", async (route, url) => {
+    if (url.searchParams.get("q") === "OLD123") { await held; await route.fulfill({json: {products: [], exactVariationId: "old-variant"}}); }
+    else await route.fulfill({json: {products: [{id:"p2",name:"محصول تازه",code:"NEW",variationCount:1}],exactVariationId:null}});
+  });
+  await page.goto("/?page=pos");
+  const entry=page.getByRole("region",{name:"افزودن کالا"}).getByRole("searchbox");
+  await entry.fill("OLD123"); await entry.press("Enter");
+  await expect.poll(()=>api.calls.some(call=>call.includes("q=OLD123"))).toBe(true);
+  await entry.fill("محصول تازه");
+  await expect(page.getByRole("button",{name:/محصول تازه/})).toBeVisible();
+  release?.();
+  await expect(entry).toHaveValue("محصول تازه");
+  expect(api.calls.filter(call=>call.startsWith("POST /invoices"))).toHaveLength(0);
+});
+
+test("two tabs preserve an uncertain scan and retry its original key without a second increment", async ({page, context, api}) => {
+  pos(api);
+  api.defaults["POST /invoices"] = invoice;
+  api.defaults["GET /pos/products"] = {products:[],exactVariationId:"66666666-6666-4666-8666-666666666666"};
+  const attempts: string[] = [];
+  const committed = new Set<string>();
+  let release!: () => void;
+  const held = new Promise<void>(resolve => {release=resolve;});
+  api.handlers.set(`POST /invoices/${invoice.id}/scan`,async route => {
+    const key=route.request().headers()["idempotency-key"]!;
+    attempts.push(key); committed.add(key);
+    if(attempts.length===1) {await held;await route.abort("connectionreset");}
+    else await route.fulfill({json:{invoice,replayed:true}});
+  });
+  const entry=(p: typeof page)=>p.getByRole("region",{name:"افزودن کالا"}).getByRole("searchbox");
+  await page.goto("/?page=pos"); await expect(entry(page)).toBeEnabled();
+  const second=await context.newPage(); await api.install(second);
+  await second.goto("/?page=pos"); await expect(entry(second)).toBeEnabled();
+  // Model a cashier switching tabs before typing; background pages may defer rendering.
+  await page.bringToFront();
+  await entry(page).fill("TEST123");await entry(page).press("Enter");
+  await expect.poll(()=>attempts.length).toBe(1);
+  await expect(entry(second)).toBeDisabled();
+  // رویداد اسکنر حتی با ورودی غیرفعال به listener سراسری می‌رسد.
+  await second.bringToFront();
+  await second.evaluate(()=>{for(const key of [..."5901234123457","Enter"]) document.dispatchEvent(new KeyboardEvent("keydown",{key,bubbles:true}));});
+  expect(attempts).toHaveLength(1);
+  const storageKey="labelmod_pending_scan_v1:"+invoice.createdBy;
+  const saved=await second.evaluate(key=>localStorage.getItem(key),storageKey);
+  expect(JSON.parse(saved!).key).toBe(attempts[0]);
+  release(); await page.bringToFront();
+  await expect(page.getByRole("alert").filter({hasText:/ارتباط|شبکه|fetch|پاسخ/i})).toBeVisible();
+  await second.bringToFront(); await second.reload({waitUntil:"domcontentloaded"});
+  await second.getByRole("button",{name:"بررسی و تلاش دوبارهٔ همان اسکن"}).click();
+  await expect.poll(()=>attempts.length).toBe(2);
+  expect(attempts[1]).toBe(attempts[0]);expect(committed.size).toBe(1);
+  await expect.poll(()=>second.evaluate(key=>localStorage.getItem(key),storageKey)).toBeNull();
+  await expect(second.locator(".cart .qty .num")).toHaveText("1");
+  await second.close();
 });

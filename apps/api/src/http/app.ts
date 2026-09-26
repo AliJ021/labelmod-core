@@ -1,3 +1,6 @@
+import { registerSnappayRoutes } from "./snappay-routes.ts";
+import { registerBackupRoutes } from "./backup-routes.ts";
+import { registerInvoiceWorkspaceRoutes } from "./invoice-workspace-routes.ts";
 /**
  * ساخت اپلیکیشن Fastify.
  *
@@ -401,6 +404,9 @@ export async function buildApp(deps: AppDeps): Promise<FastifyInstance> {
   });
   registerSalesRoutes(app, { db: deps.db, invoices, shifts });
   registerPosCatalogRoutes(app, deps.db);
+  registerInvoiceWorkspaceRoutes(app, deps.db);
+  registerSnappayRoutes(app, deps.db);
+  registerBackupRoutes(app, deps.db, config);
   registerReturnRoutes(app, {
     db: deps.db,
     returns: new ReturnService(deps.db),

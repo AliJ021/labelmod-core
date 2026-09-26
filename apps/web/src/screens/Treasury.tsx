@@ -1,3 +1,5 @@
+import { routeUrl } from "../lib/navigation.ts";
+import { useUrlTab } from "../lib/use-url-state.ts";
 import { TabList, TabPanels, useTabsId } from "../components/Tabs.tsx";
 /**
  * خزانه و چک.
@@ -52,7 +54,6 @@ const TABS = [
   { key: "due", label: "سررسیدها" },
 ] as const;
 
-type Tab = (typeof TABS)[number]["key"];
 
 function message(err: unknown): string {
   if (err instanceof ApiError) return err.message;
@@ -91,11 +92,11 @@ function Urgency({ level }: { level: string }) {
 
 export function Treasury() {
   const tabsId = useTabsId();
-  const [tab, setTab] = useState<Tab>("cash");
+  const [tab, setTab] = useUrlTab("treasury.tab", TABS, "cash");
 
   return (
     <div className="stack" style={{ gap: "var(--s-4)" }}>
-      <TabList id={tabsId} items={TABS} value={tab} onChange={setTab} label="بخش‌های خزانه" />
+      <TabList hrefFor={key => routeUrl("treasury", key)} id={tabsId} items={TABS} value={tab} onChange={setTab} label="بخش‌های خزانه" />
       <TabPanels id={tabsId} items={TABS} value={tab} className="stack section-stack">
 
       {tab === "cash" ? <CashMoves /> : tab === "cheques" ? <Cheques /> : <DueList />}

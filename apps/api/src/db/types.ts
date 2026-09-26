@@ -376,6 +376,8 @@ export interface SaleReturnTable {
   created_by: string | null;
   approved_by: string | null;
   refund_method: string | null;
+  refund_reference: Generated<string | null>;
+  refund_payment_id: Generated<string | null>;
   receivable_applied: string;
   credit_applied: string;
 }

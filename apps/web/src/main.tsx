@@ -15,3 +15,5 @@ createRoot(root).render(
     <App />
   </StrictMode>,
 );
+
+import "./styles/workspace.css";

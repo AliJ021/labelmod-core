@@ -1,3 +1,4 @@
+import { navigate } from "../lib/use-url-state.ts";
 /** داشبورد: اعداد مالی و هشدارها روی سطح مات خوانده می‌شوند. */
 import { useEffect, useState } from "react";
 import { Solid } from "../components/Glass.tsx";
@@ -134,6 +135,11 @@ export function Dashboard() {
 
   return (
     <div className="stack" style={{ gap: "var(--s-5)" }}>
+      <nav className="row dashboard-actions" aria-label="کارهای پرتکرار">
+        {[{href:"/?page=pos",name:"فروش جدید"},{href:"/?page=invoices&invoices.status=draft",name:"رسیدگی به پیش‌نویس‌ها"},
+          {href:"/?page=catalog&catalog.labels=1",name:"چاپ لیبل بارکد"},{href:"/?page=invoices",name:"فاکتورها و چاپ رسید"}].map(a =>
+          <a className="btn" key={a.href} href={a.href} onClick={e => { if(e.metaKey||e.ctrlKey||e.shiftKey) return; e.preventDefault();navigate(a.href); }}>{a.name}</a>)}
+      </nav>
       <Solid as="section" className="pad">
         <header className="row between">
           <div>
@@ -144,7 +150,7 @@ export function Dashboard() {
           </div>
           <span className="pill">
             <Dot tone="good" />
-            صندوق باز
+            گزارش امروز
           </span>
         </header>
 

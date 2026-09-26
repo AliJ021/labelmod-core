@@ -1,3 +1,7 @@
+import { SnappayReport } from "../components/SnappayReport.tsx";
+import { routeUrl } from "../lib/navigation.ts";
+import { StaffSales } from "../components/StaffSales.tsx";
+import { useUrlTab, useUrlState } from "../lib/use-url-state.ts";
 import { TabList, TabPanels, useTabsId } from "../components/Tabs.tsx";
 /**
  * گزارش‌ها — ناحیه متوسط.
@@ -58,6 +62,8 @@ import { previousPeriod } from "../lib/jalali-period.ts";
 const TABS = [
   { key: "manager", label: "پنل مدیریتی" },
   { key: "sales", label: "فروش" },
+  { key: "staff", label: "فروش کاربران" },
+  { key: "snappay", label: "اسنپ‌پی" },
   { key: "profit", label: "سود کالا" },
   { key: "stock", label: "موجودی" },
   { key: "ledger", label: "دفتر حساب" },
@@ -66,7 +72,6 @@ const TABS = [
   { key: "cash", label: "مغایرت نقد" },
 ] as const;
 
-type Tab = (typeof TABS)[number]["key"];
 
 function message(err: unknown): string {
   if (err instanceof ApiError) return err.message;
@@ -92,10 +97,12 @@ function when(iso: string): string {
 
 export function Reports() {
   const tabsId = useTabsId();
-  const [tab, setTab] = useState<Tab>("sales");
+  const [tab, setTab] = useUrlTab("reports.tab", TABS, "sales");
   const [branches, setBranches] = useState<Branch[]>([]);
   const [allBranches, setAllBranches] = useState(false);
-  const [branchId, setBranchId] = useState("");
+  const [branchId, setBranchId] = useUrlState("reports.branch");
+  const [from, setFrom] = useUrlState("reports.from");
+  const [to, setTo] = useUrlState("reports.to");
   const [period, setPeriod] = useState<{ from: string; to: string } | null>(null);
   const [error, setError] = useState<string | null>(null);
 
@@ -131,35 +138,36 @@ export function Reports() {
   if (!period) return <Solid className="pad">در حال بارگذاری…</Solid>;
 
   const p: Period = {
-    ...period,
+    from: from || period.from,
+    to: to || period.to,
     ...(branchId === "" ? {} : { branchId }),
   };
 
   return (
     <div className="stack" style={{ gap: "var(--s-4)" }}>
-      <TabList id={tabsId} items={TABS} value={tab} onChange={setTab} label="گزارش‌ها" />
+      <TabList hrefFor={key => routeUrl("reports", key)} id={tabsId} items={TABS} value={tab} onChange={setTab} label="گزارش‌ها" />
       <TabPanels id={tabsId} items={TABS} value={tab} className="stack section-stack">
 
       {/* فیلترها روی سطح شیشه‌ای — لایه کنترلی، نه محتوا. */}
       <Glass radius="md" className="pad">
         <div className="filters">
           <label className="auth-field">
-            <span>از تاریخ</span>
+            <span>از تاریخ (میلادی)</span>
             <input
               type="text"
               inputMode="numeric"
-              value={period.from}
-              onChange={(e) => setPeriod({ ...period, from: normalizeDigits(e.target.value) })}
-              placeholder="۱۴۰۵-۰۶-۰۱"
+              value={p.from}
+              onChange={(e) => setFrom(normalizeDigits(e.target.value))}
+              placeholder="2026-09-01"
             />
           </label>
           <label className="auth-field">
-            <span>تا تاریخ</span>
+            <span>تا تاریخ (میلادی)</span>
             <input
               type="text"
               inputMode="numeric"
-              value={period.to}
-              onChange={(e) => setPeriod({ ...period, to: normalizeDigits(e.target.value) })}
+              value={p.to}
+              onChange={(e) => setTo(normalizeDigits(e.target.value))}
             />
           </label>
           {branches.length > 1 ? (
@@ -182,7 +190,11 @@ export function Reports() {
         </p>
       </Glass>
 
-      {tab === "manager" ? (
+      {tab === "snappay" ? (
+        <SnappayReport period={p} />
+      ) : tab === "staff" ? (
+        <StaffSales period={p} />
+      ) : tab === "manager" ? (
         <ManagerPanel period={p} />
       ) : tab === "sales" ? (
         <SalesReport period={p} />
