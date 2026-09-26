@@ -392,7 +392,7 @@ export const purchaseReturns = {
       reasonNote?: string;
       lines: { receiptLineId: string; qty: string }[];
     },
-    opts?: RequestOptions,
+    opts: RequestOptions & { idempotencyKey: string },
   ) => api.post<PurchaseReturn & { replayed: boolean }>("/purchase-returns", input, opts),
 };
 

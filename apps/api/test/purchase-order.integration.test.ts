@@ -351,6 +351,7 @@ describe("سفارش خرید", { skip }, () => {
       method: "POST",
       url: "/purchase-returns",
       ...s,
+      headers: { ...s.headers, "idempotency-key": `order-return-${receipt.id}` },
       payload: {
         receiptId: receipt.id,
         reasonCode: "quality",
