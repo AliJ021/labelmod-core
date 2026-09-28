@@ -398,7 +398,19 @@ jobs:
       - run: pnpm install --frozen-lockfile
       - run: pnpm --filter @labelmod/web exec playwright install --with-deps chromium webkit
       - run: pnpm --filter @labelmod/web build
-      - run: pnpm --filter @labelmod/web test:e2e --shard=${{ matrix.shard }}/4
+      - name: آزمون مرورگر (همراه نمونه‌برداری منابع، تشخیص موقت PR #106)
+        env:
+          RESOURCE_LOG: ${{ runner.temp }}/resources.log
+        run: .github/scripts/e2e-with-resources.sh pnpm --filter @labelmod/web test:e2e --shard=${{ matrix.shard }}/4
+      - name: تشخیص شکست مرورگر در لاگ (موقت، فقط هنگام شکست)
+        if: failure()
+        env:
+          RESOURCE_LOG: ${{ runner.temp }}/resources.log
+        run: |
+          python3 .github/scripts/e2e-failure-report.py apps/web/test-results || true
+          echo "== resource samples (every 5s)"; cat "$RESOURCE_LOG" || true
+          echo "== kernel: OOM / killed / segfault lines"
+          sudo dmesg -T 2>/dev/null | grep -iE 'out of memory|oom-kill|killed process|segfault|webkit' | tail -40 || true
       - name: گزارش و تصاویر مرورگرها
         if: always()
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
