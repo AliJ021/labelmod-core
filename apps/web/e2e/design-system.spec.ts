@@ -81,6 +81,9 @@ test("navigation hides server-denied destinations but keeps the open section and
   // سرور دروازه است: نشانی مستقیم هنوز بخش را باز می‌کند و زبانه‌اش دیده می‌شود.
   await page.goto("/?page=treasury");
   await expect(list.getByRole("tab", { name: "خزانه و چک", includeHidden: true })).toHaveAttribute("aria-selected", "true");
+  // بخش خزانه خودش داده می‌خواند؛ WebKit درخواستی را که ناوبری بعدی وسط راه قطع کند
+  // «خطای مرورگر» گزارش می‌دهد. پیش از ترک صفحه، بارگذاری خزانه تمام می‌شود.
+  await page.waitForLoadState("networkidle");
   // بی report.view، نمودار ساعتی ساخته نمی‌شود — نه صفر، نه خطا.
   api.handlers.set("GET /reports/hourly", async route => { await route.fulfill({ status: 403, json: { error: { code: "forbidden", message: "اجازه ندارید" } } }); });
   await page.goto("/");
