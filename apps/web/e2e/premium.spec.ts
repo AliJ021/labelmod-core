@@ -281,6 +281,30 @@ test("header lock and logout keep their independent behavior", async ({ page, ap
   expect(api.calls).toContain("POST /auth/logout");
 });
 
+test("locking mid-load stops dashboard requests before reload and logout", async ({ page, api }) => {
+  // پاسخ «درآمد ثبت‌نشده» عمداً معلق می‌ماند تا قفل وسط زنجیرهٔ بارگذاری داشبورد بخورد.
+  let release!: () => void;
+  const gate = new Promise<void>(resolve => { release = resolve; });
+  api.handlers.set("GET /posting-batches/unposted", async route => {
+    await gate;
+    // درخواست لغوشده دیگر پاسخی نمی‌پذیرد؛ همین لغو ادعای آزمون است.
+    await route.fulfill({ json: { rows: [] } }).catch(() => {});
+  });
+  await page.goto("/");
+  await expect.poll(() => api.calls.some(call => call.startsWith("GET /posting-batches/unposted"))).toBe(true);
+  await page.getByRole("button", { name: "قفل صفحه", exact: true }).click();
+  await expect(page.getByRole("heading", { name: "صفحه قفل است" })).toBeVisible();
+  const afterLock = api.calls.length;
+  release();
+  // فرصت برای اینکه زنجیرهٔ لغونشده درخواست بعدی‌اش را بفرستد.
+  await page.evaluate(() => new Promise(resolve => setTimeout(resolve, 300)));
+  expect(api.calls.slice(afterLock), "No dashboard request after lock").toEqual([]);
+  await page.reload();
+  await page.getByRole("button", { name: "خروج", exact: true }).click();
+  await expect(page.getByLabel("نام کاربری", { exact: true })).toBeVisible();
+  expect(api.calls).toContain("POST /auth/logout");
+});
+
 const sessions = new WeakMap<Page, import("@playwright/test").CDPSession>();
 async function transparency(page: Page, engine: string, reduce: boolean) {
   if (engine === "chromium") {

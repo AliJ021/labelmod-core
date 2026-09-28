@@ -42,23 +42,37 @@ export function Dashboard() {
   const [closeError, setCloseError] = useState<string | null>(null);
   const [closed, setClosed] = useState<string | null>(null);
 
+  /**
+   * ⚠️ زنجیرهٔ بارگذاری با Unmount لغو می‌شود. قفل و خروج داشبورد را
+   *    Unmount می‌کنند؛ بی این لغو، زنجیره درخواست بعدی (`auth/can`) را
+   *    **پس از قفل** می‌فرستاد و Reload بعدی آن را وسط راه قطع می‌کرد —
+   *    همان خطای WebKit در آزمون قفل/خروج.
+   */
   useEffect(() => {
+    const controller = new AbortController();
+    const { signal } = controller;
     void (async () => {
       try {
-        const { branches } = await pos.branches();
+        const { branches } = await pos.branches({ signal });
+        if (signal.aborted) return;
         const first = branches[0];
         if (!first) {
           setError("به هیچ شعبه‌ای دسترسی ندارید.");
           return;
         }
         setBranch(first);
-        setReport(await pos.dailyReport(first.id));
+        const report = await pos.dailyReport(first.id, undefined, { signal });
+        if (signal.aborted) return;
+        setReport(report);
 
         // درآمد ثبت‌نشده پشت `cost.view` است. نداشتنش خطا نیست —
         // فقط یعنی این کارت برای این کاربر نیست.
         try {
-          setUnposted((await pos.unpostedRevenue()).rows);
+          const { rows } = await pos.unpostedRevenue({ signal });
+          if (signal.aborted) return;
+          setUnposted(rows);
         } catch {
+          if (signal.aborted) return;
           setUnposted(null);
         }
 
@@ -66,14 +80,19 @@ export function Dashboard() {
         // دیده شود — فقط بدون دکمه. یکی‌کردن این دو `try` یعنی یک
         // خطای بی‌ربط، زنگ خطر «درآمد ثبت‌نشده» را خاموش کند.
         try {
-          setMayClose((await session.can("period.close")).verdict === "allow");
+          const decision = await session.can("period.close", { signal });
+          if (signal.aborted) return;
+          setMayClose(decision.verdict === "allow");
         } catch {
+          if (signal.aborted) return;
           setMayClose(false);
         }
       } catch (err) {
+        if (signal.aborted) return;
         setError(err instanceof ApiError ? err.message : "ارتباط با سرور برقرار نشد.");
       }
     })();
+    return () => controller.abort();
   }, []);
 
   if (error) {

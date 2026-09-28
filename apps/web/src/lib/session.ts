@@ -26,7 +26,7 @@
  * `no_session` را می‌دهد و ما به فرم ورود برمی‌گردیم. هیچ دسترسی‌ای
  * از روی این مقدار داده نمی‌شود.
  */
-import { api, ApiError } from "./api.ts";
+import { api, ApiError, type RequestOptions } from "./api.ts";
 import { browserStore, type DeviceStore } from "./device.ts";
 
 const LOCK_KEY = "labelmod_locked_user";
@@ -181,8 +181,8 @@ export const session = {
    *    می‌گیرد؛ این فقط برای اینکه کاربر به بن‌بست نخورد. صفحه‌ای که
    *    فقط به این تکیه کند، با یک درخواست مستقیم دور زده می‌شود.
    */
-  can(operation: string): Promise<Decision> {
-    return api.get<Decision>(`/auth/can?operation=${encodeURIComponent(operation)}`);
+  can(operation: string, opts?: RequestOptions): Promise<Decision> {
+    return api.get<Decision>(`/auth/can?operation=${encodeURIComponent(operation)}`, opts);
   },
 
   login(input: {
