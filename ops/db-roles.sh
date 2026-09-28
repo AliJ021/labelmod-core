@@ -36,12 +36,30 @@ if [ -z "$APP_PASSWORD" ]; then
 fi
 
 # نام نقش، شناسه است و در SQL درج می‌شود — پس شکلش سنجیده می‌شود.
-case "$APP_ROLE" in
-  [a-z_][a-z0-9_]*) : ;;
-  *) echo "✗ نام نقش نامعتبر: $APP_ROLE" >&2; exit 1 ;;
-esac
+if [[ ! "$APP_ROLE" =~ ^[a-z_][a-z0-9_]{0,62}$ ]]; then
+  echo "✗ نام نقش نامعتبر" >&2; exit 1
+fi
 
 DBNAME=$(psql -tAc 'SELECT current_database()' -d "$DATABASE_URL")
+
+# نام سفارشی برنامه نباید نقش مالک/ابزار را تغییر دهد، حتی با پیکربندی اشتباه.
+OWNER_ROLE=$(psql -tA -v ON_ERROR_STOP=1 -v app_role="$APP_ROLE" -d "$DATABASE_URL" <<'SQL'
+SELECT EXISTS (
+  SELECT 1 FROM pg_roles r WHERE r.rolname=:'app_role'
+    AND (r.rolname IN (current_user,session_user) OR r.oid=(SELECT datdba FROM pg_database WHERE datname=current_database())
+      OR EXISTS (SELECT 1 FROM pg_namespace n WHERE n.nspowner=r.oid
+        AND left(n.nspname,3)<>'pg_' AND n.nspname<>'information_schema')
+      OR EXISTS (SELECT 1 FROM pg_class c JOIN pg_namespace n ON n.oid=c.relnamespace
+        WHERE c.relowner=r.oid AND left(n.nspname,3)<>'pg_' AND n.nspname<>'information_schema')
+      OR EXISTS (SELECT 1 FROM pg_proc p JOIN pg_namespace n ON n.oid=p.pronamespace
+        WHERE p.proowner=r.oid AND left(n.nspname,3)<>'pg_' AND n.nspname<>'information_schema'))
+);
+SQL
+)
+if [ "$OWNER_ROLE" = t ]; then
+  echo "✗ نقش برنامه باید مستقل از مالک دیتابیس و اشیای برنامه باشد؛ نقش مالک تغییر نکرد." >&2
+  exit 1
+fi
 
 echo "── ساخت یا به‌روزرسانی نقش $APP_ROLE ─────────────────────────"
 # ⚠️ رمز با `:'pw'` می‌رود، نه با درج رشته در SQL: psql خودش نقل‌قولش

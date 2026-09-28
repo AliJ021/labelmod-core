@@ -5,9 +5,9 @@
 # لایه نازکی روی docker compose، فقط برای اینکه ترتیب درست فراموش
 # نشود: اول دیتابیس سالم، بعد مهاجرت، بعد seed، بعد سرویس‌ها.
 #
-#   ops/deploy.sh up          # اولین بار یا بعد از هر تغییر کد
+#   ops/deploy.sh up          # پس از آماده‌سازی دیتابیس و نقش محدود
 #   ops/deploy.sh migrate     # بعد از افزودن مهاجرت
-#   ops/deploy.sh seed        # بعد از هر مهاجرتی که حساب یا قاعده ثبت می‌خواهد
+#   ops/deploy.sh seed        # فقط نصب تازه روی دیتابیس خالی
 #   ops/deploy.sh user --username ali --name '…' --role admin
 #   ops/deploy.sh status
 # =====================================================================
@@ -27,7 +27,7 @@ case "${1:-}" in
   up)
     "${COMPOSE[@]}" up -d --build
     echo "✓ بالا آمد. وضعیت:  ops/deploy.sh status"
-    echo "⚠️  اگر اولین بار است:  ops/deploy.sh migrate && ops/deploy.sh seed"
+    echo "پیش‌نیاز نصب تازه: db، migrate، seed فقط روی دیتابیس خالی، سپس roles. راهنما: docs/DEPLOYMENT.md"
     ;;
   migrate) in_db_tools "cd /app && ops/db.sh migrate" ;;
   # فقط یک بار، روی سروری که پیش از آمدنِ دفتر مهاجرت بالا آمده.
