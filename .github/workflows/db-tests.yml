@@ -398,11 +398,11 @@ jobs:
       - run: pnpm install --frozen-lockfile
       - run: pnpm --filter @labelmod/web exec playwright install --with-deps chromium webkit
       - run: pnpm --filter @labelmod/web build
-      - name: آزمون مرورگر (همراه نمونه‌برداری منابع، تشخیص موقت PR #106)
+      - name: آزمون مرورگر (همراه نمونه‌برداری منابع)
         env:
           RESOURCE_LOG: ${{ runner.temp }}/resources.log
         run: .github/scripts/e2e-with-resources.sh pnpm --filter @labelmod/web test:e2e --shard=${{ matrix.shard }}/4
-      - name: تشخیص شکست مرورگر در لاگ (موقت، فقط هنگام شکست)
+      - name: شواهد شکست مرورگر در لاگ (فقط هنگام شکست)
         if: failure()
         env:
           RESOURCE_LOG: ${{ runner.temp }}/resources.log
