@@ -93,107 +93,8 @@
   font-size: 0.86rem;
 }
 
-/* ── داشبورد ───────────────────────────────────────────────────── */
-.kpis {
-  display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
-  gap: var(--s-3);
-  margin-top: var(--s-5);
-}
+/* ── داشبورد: به styles/ui.css منتقل شد (الگوی KPI، رسیدگی، نمودار). ── */
 
-.kpi {
-  display: flex;
-  flex-direction: column;
-  gap: var(--s-1);
-  padding: var(--s-4);
-}
-
-.kpi-value {
-  font-size: clamp(1.35rem, 1rem + 1.6vw, 2rem);
-  font-weight: 700;
-  line-height: 1.2;
-}
-
-.two {
-  display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
-  gap: var(--s-5);
-  /* هر کارت به اندازه محتوای خودش. بدون این، کارت کوتاه‌تر کشیده
-     می‌شود و بالای نمودار یک ناحیه سفید خالی می‌ماند. */
-  align-items: start;
-}
-
-.bars {
-  display: flex;
-  align-items: flex-end;
-  gap: var(--s-2);
-  /* ارتفاع **قطعی** لازم است: فرزندها درصدی‌اند و درصد بدون ارتفاع
-     مشخصِ والد به صفر می‌رسد. یک بار با `flex:1` امتحان شد و میله‌ها
-     کاملاً ناپدید شدند. */
-  height: 130px;
-  width: 100%;
-}
-
-.bar {
-  flex: 1;
-  min-height: 4px;
-  border-radius: var(--r-xs) var(--r-xs) 2px 2px;
-  background: linear-gradient(
-    to top,
-    var(--chart-1),
-    color-mix(in srgb, var(--chart-1) 55%, transparent)
-  );
-  /* انیمیشن روی transform، نه height — قاعده design.md */
-  transform-origin: bottom;
-  animation: grow var(--t-slow) var(--ease-out) both;
-}
-
-@keyframes grow {
-  from {
-    transform: scaleY(0);
-  }
-}
-
-@media (prefers-reduced-motion: reduce) {
-  .bar {
-    animation: none;
-  }
-}
-
-.tasks {
-  list-style: none;
-  margin: var(--s-4) 0 0;
-  padding: 0;
-  display: flex;
-  flex-direction: column;
-  gap: var(--s-2);
-}
-
-.tasks li {
-  display: flex;
-  align-items: center;
-  gap: var(--s-2);
-  padding: var(--s-2) 0;
-  border-bottom: 1px solid var(--rule);
-}
-
-.tasks li:last-child {
-  border-bottom: 0;
-}
-
-.tasks span {
-  flex: 1;
-}
-
-/* نشانهٔ وضعیت هم یک span است؛ بی این قاعده نیمی از عرض سطر را می‌گرفت. */
-.tasks .dot {
-  flex: 0 0 auto;
-}
-
-/*
-  یادداشت کنار یک کار — جای **دکمه** را می‌گیرد، نه جای عنوان.
-  بدون این، `.tasks span { flex: 1 }` عرض را با برچسب نصف می‌کرد.
-*/
 /*
   ورودی تعداد داخل سلول جدول.
 
@@ -206,19 +107,6 @@
   min-height: var(--touch);
   text-align: center;
   font-variant-numeric: tabular-nums;
-}
-
-/*
-  یادداشت می‌تواند جمع شود و بشکند. با `flex: 0 0 auto` یادداشت دوره
-  در عرض ۳۲۰ از سطر بیرون می‌زد و کل صفحه اسکرول افقی می‌خورد
-  (scrollWidth ۳۴۹ در برابر ۳۲۰). سقف عرض نمی‌گذارد یادداشت برچسب
-  اصلی را به یک کلمه در هر سطر برساند.
-*/
-.tasks .task-note {
-  flex: 0 1 auto;
-  min-inline-size: 0;
-  max-inline-size: 45%;
-  overflow-wrap: anywhere;
 }
 
 .link {
@@ -635,12 +523,17 @@ select.set-input {
 .auth-wrap {
   min-height: 100dvh;
   display: grid;
+  /* ستون `minmax(0, 1fr)`: بی آن، کارت ورود در ۳۲۰px به اندازهٔ محتوایش
+     پهن می‌شد و صفحه ۱۸ پیکسل افقی اسکرول می‌خورد (از main پیش از نظام
+     طراحی؛ e2e/design-system.spec.ts حالا می‌سنجدش). */
+  grid-template-columns: minmax(0, 1fr);
   place-items: center;
   padding: var(--s-4);
 }
 
 .auth-card {
   width: min(26rem, 100%);
+  min-inline-size: 0;
 }
 
 .auth-title {

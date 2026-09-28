@@ -36,7 +36,7 @@ export class MockApi {
     ["GET /products/" + product.id + "/stock-matrix"]: { totalOnHand:"12", cells:{ navy:{ XL:{variationId:"v1",onHand:"12",reserved:"2"} } } },
     "GET /auth/2fa/sms/status": { enabled:false, maskedMobile:null },
     "GET /variations/v1/price-history": { history: [] },
-    "GET /reports/sales": { rows: [] }, "GET /reports/cash-reconciliation": { rows: [] },
+    "GET /reports/sales": { rows: [] }, "GET /reports/hourly": { rows: [] }, "GET /reports/cash-reconciliation": { rows: [] },
     "GET /treasury/accounts": { accounts: [] }, "GET /treasury/transactions": { transactions: [] },
     "GET /purchasing/expense-accounts": [], "GET /purchasing/pay-accounts": [], "GET /suppliers": [],
     "GET /receipts": [], "GET /stock-counts": [], "GET /cheques/due": { due: [] },

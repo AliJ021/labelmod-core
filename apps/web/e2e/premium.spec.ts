@@ -246,13 +246,20 @@ test("live reduced motion, transparency and persisted performance mode", async (
   await expect(page.locator(".zone-panel:not([hidden])")).toHaveCSS("animation-name", "none");
   expect(await page.evaluate(() => document.getAnimations().filter(a => a.effect instanceof KeyframeEffect && a.effect.pseudoElement?.startsWith("::view-transition")).length)).toBe(0);
   await page.emulateMedia({ reducedMotion: "no-preference" });
-  await expect(page.locator(".mesh i").first()).not.toHaveCSS("animation-name", "none");
+  // صفحه‌های داده زمینهٔ ساکن دارند حتی بی کاهش حرکت؛ حرکت تزئینی فقط روی ورود و قفل است (پایین همین آزمون).
+  await expect(page.locator(".mesh i").first()).toHaveCSS("animation-name", "none");
   await settings(page, "appearance", "نمایش و عملکرد");
   await perf.selectOption("system");
   await transparency(page, browserName, true);
   await expect(page.locator(".workspace-header")).toHaveCSS("backdrop-filter", "none");
   await transparency(page, browserName, false);
   await expect(page.locator(".workspace-header")).not.toHaveCSS("backdrop-filter", "none");
+  // جلوهٔ امضای سطح ورود/قفل: با حرکت مجاز حرکت می‌کند و با کاهش حرکت، زنده، می‌ایستد.
+  await page.getByRole("button", { name: "قفل صفحه", exact: true }).click();
+  await expect(page.getByRole("heading", { name: "صفحه قفل است" })).toBeVisible();
+  await expect(page.locator(".mesh--auth i").first()).not.toHaveCSS("animation-name", "none");
+  await page.emulateMedia({ reducedMotion: "reduce" });
+  await expect(page.locator(".mesh--auth i").first()).toHaveCSS("animation-name", "none");
 });
 
 test("password suggestion, cancellation, server error, duplicate submit and success", async ({ page, api }) => {

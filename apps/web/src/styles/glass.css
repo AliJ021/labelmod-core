@@ -156,18 +156,35 @@
   inset-inline-end: 22vw;
 }
 
+/* ── جلوهٔ امضا: نور فلزی آرام (docs/DESIGN_SYSTEM.md) ─────────────
+   صفحه‌های داده زمینهٔ **ساکن** دارند: هیچ حرکت بی‌پایانی پشت عدد مالی
+   نیست. فقط ورود و قفل — جایی که کاری در جریان نیست — حرکت می‌گیرند. */
+.mesh--workspace > i { opacity: 0.5; will-change: auto; }
+.mesh--auth::before {
+  content: "";
+  position: absolute;
+  inset: -20% -10%;
+  background: linear-gradient(115deg, transparent 38%, color-mix(in srgb, var(--accent) 16%, transparent) 50%, transparent 62%);
+  will-change: transform;
+}
 @media (prefers-reduced-motion: no-preference) {
-  .mesh > i {
-    animation: drift 34s var(--ease-in-out) infinite alternate;
+  .mesh--auth > i {
+    animation: drift var(--dur-ambient) var(--ease-in-out) infinite alternate;
   }
-  .mesh > i:nth-child(2) {
+  .mesh--auth > i:nth-child(2) {
     animation-duration: 44s;
     animation-delay: -8s;
   }
-  .mesh > i:nth-child(3) {
+  .mesh--auth > i:nth-child(3) {
     animation-duration: 52s;
     animation-delay: -18s;
   }
+  .mesh--auth::before { animation: sheen 28s var(--ease-in-out) infinite alternate; }
+}
+
+@keyframes sheen {
+  from { transform: translate3d(-6%, 0, 0); }
+  to { transform: translate3d(6%, 0, 0); }
 }
 
 @keyframes drift {
@@ -197,7 +214,7 @@
 :root[data-perf="on"]::view-transition-old(*),
 :root[data-perf="on"]::view-transition-new(*) { animation: none !important; }
 @media (prefers-reduced-motion: reduce) {
-  .mesh > i { animation: none; will-change: auto; }
+  .mesh > i, .mesh::before { animation: none; will-change: auto; }
   .glass::after { transition: none; }
   ::view-transition-group(*), ::view-transition-old(*), ::view-transition-new(*) { animation: none !important; }
 }

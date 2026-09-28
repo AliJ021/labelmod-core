@@ -14,7 +14,7 @@
  * نفرستیم، سرور خودش شعبه کاربر را می‌گذارد. برای کاربری که به چند
  * شعبه دسترسی دارد، سرور ۴۲۲ «شعبه را مشخص کنید» می‌دهد.
  */
-import { api } from "./api.ts";
+import { api, type RequestOptions } from "./api.ts";
 
 export interface SalesRow {
   businessDate: string;
@@ -208,7 +208,7 @@ export interface CustomerBasketRow {
 export const reports = {
   sales: (p: Period) => api.get<{ rows: SalesRow[] }>(`/reports/sales?${qs(p)}`),
 
-  hourly: (p: Period) => api.get<{ rows: HourlyRow[] }>(`/reports/hourly?${qs(p)}`),
+  hourly: (p: Period, opts?: RequestOptions) => api.get<{ rows: HourlyRow[] }>(`/reports/hourly?${qs(p)}`, opts),
 
   /** هر دو بازه صریح‌اند — تقویم جلالی در `lib/jalali-period.ts` حسابشان می‌کند. */
   compare: (p: Period, prev: { from: string; to: string }) =>

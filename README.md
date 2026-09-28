@@ -140,6 +140,9 @@ Fastify + Kysely؛ احراز هویت با توکن مات، مجوزهای د�
 ### رابط کاربری — بخشی
 
 React + Vite، RTL کامل، زبان طراحی Liquid Glass ناحیه‌بندی‌شده (ADR-002).
+نظام طراحی (توکن، primitive، پوسته، داشبورد مرجع، UI Kit در `/dev/ui-kit` فقط در Build
+آزمون) در `docs/DESIGN_SYSTEM.md` است و **منتظر تأیید بصری مالک و بازبینی مستقل**؛ بقیهٔ
+صفحه‌ها تا آن تأیید بازطراحی نمی‌شوند.
 
 | صفحه | وضعیت |
 | --- | --- |
@@ -568,6 +571,7 @@ apps/web/        React + Vite — ورود و قفل صفحه، صندوق، م�
 | DATA-MIGRATION.md | انتقال کالا، مشتری، موجودی و مانده‌های افتتاحیه |
 | [JOURNAL-GUARDS.md](docs/JOURNAL-GUARDS.md) | قفل سال، حفاظت هدر/سطر سند و محدودیت اختتام |
 | [MELIPAYAMAK.md](docs/MELIPAYAMAK.md) | تنظیم کلید، رمزنگاری، بکاپ کلید اصلی و حدود آزمون پیامک |
+| [DESIGN_SYSTEM.md](docs/DESIGN_SYSTEM.md) · [UI_PATTERNS.md](docs/UI_PATTERNS.md) · [FEATURE_DEVELOPMENT_RULES.md](docs/FEATURE_DEVELOPMENT_RULES.md) | توکن، عدد مالی، RTL، آیکون، حرکت؛ الگوهای پوسته و صفحه؛ قرارداد ویژگی تازه (نامزد، منتظر تأیید) |
 | [WEB-WORKSPACE-AUDIT.md](docs/WEB-WORKSPACE-AUDIT.md) | فهرست صفحات/API، قابلیت‌ها و معیارهای پذیرش رابط |
 | [WEB-BACKUP-RESTORE.md](docs/WEB-BACKUP-RESTORE.md) | سرویس مستقل بکاپ، مرز دسترسی و مراحل بازیابی |
 | [HANDOFF-2026-09-26-FA.md](docs/HANDOFF-2026-09-26-FA.md) | کارهای انجام‌شده، شواهد، موارد باز و ترتیب ادامه در Cloud |

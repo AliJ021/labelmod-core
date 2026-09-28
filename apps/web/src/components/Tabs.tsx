@@ -1,6 +1,10 @@
 import { useEffect, useId, useRef, useState, type ReactNode, type CSSProperties } from "react";
 
-export interface TabItem<K extends string> { key: K; label: string; group?: string }
+/**
+ * `icon` و `primary` فقط برای ناوبری اصلی‌اند: آیکون تزئینی است (نام از
+ * متن می‌آید) و `primary` مقصد نوار پایین موبایل را علامت می‌زند.
+ */
+export interface TabItem<K extends string> { key: K; label: string; group?: string; icon?: ReactNode; primary?: boolean }
 
 /** تب‌ها دستی فعال می‌شوند؛ حرکت فوکوس، درخواست شبکه یا تغییر صفحه نمی‌سازد. */
 export function TabList<K extends string>({ id, items, value, onChange, label, className = "subtabs", vertical = false, hrefFor }: {
@@ -32,7 +36,7 @@ export function TabList<K extends string>({ id, items, value, onChange, label, c
     return () => observer.disconnect();
   }, [value, items, id, vertical]);
   return <div ref={root} className={className} role="tablist" aria-label={label} aria-orientation={vertical ? "vertical" : "horizontal"}>
-    {items.map((item, index) => <div className="tab-item" role="presentation" key={item.key}>
+    {items.map((item, index) => <div className="tab-item" role="presentation" key={item.key} data-primary={item.primary ? "" : undefined}>
       {item.group && items[index - 1]?.group !== item.group ? <span className="tab-group" role="presentation">{item.group}</span> : null}
       <a id={`${id}-tab-${item.key}`} href={hrefFor?.(item.key) ?? `#${id}-panel-${item.key}`} role="tab" aria-selected={value === item.key} aria-controls={`${id}-panel-${item.key}`} tabIndex={focusKey === item.key ? 0 : -1} className={value === item.key ? "on" : ""}
         onClick={e => { if ((e.ctrlKey || e.metaKey || e.shiftKey || e.altKey)) return; e.preventDefault(); onChange(item.key); }}
@@ -50,14 +54,14 @@ export function TabList<K extends string>({ id, items, value, onChange, label, c
           else if (e.key === (vertical ? "ArrowUp" : rtl ? "ArrowRight" : "ArrowLeft")) next = (current - 1 + tabs.length) % tabs.length;
           if (next !== undefined) { e.preventDefault(); tabs[next]?.focus(); }
 
-        }}>{item.label}</a>
+        }}>{item.icon}{item.icon ? <span className="tab-label">{item.label}</span> : item.label}</a>
     </div>)}
   </div>;
 }
 
 /** پنل غیرفعال خالی می‌ماند؛ شناسه‌های ARIA معتبرند و صفحه پنهان بارگذاری نمی‌شود. */
 export function TabPanels<K extends string>({ id, items, value, children, className, style, mobileLabel = false }: {
-  id: string; items: readonly TabItem<K>[]; value: K; children: ReactNode;
+  id: string; items: readonly TabItem<K>[]; value: K | null; children: ReactNode;
   className?: string; style?: CSSProperties; mobileLabel?: boolean;
 }) {
   return <>{items.map(item => <div key={item.key} id={`${id}-panel-${item.key}`} role="tabpanel" aria-labelledby={mobileLabel ? undefined : `${id}-tab-${item.key}`} aria-label={mobileLabel ? item.label : undefined} tabIndex={0} hidden={value !== item.key} className={className} style={style}>

@@ -1,0 +1,35 @@
+/* UI Kit — فقط در Build توسعه/پیش‌نمایش؛ همراه chunk تنبل خودش بار می‌شود. */
+.kit .subtabs { flex-wrap: nowrap; overflow-x: auto; }
+.kit-stack { display: flex; flex-direction: column; gap: var(--s-4); }
+.kit-section { min-inline-size: 0; }
+.kit-row { display: flex; flex-wrap: wrap; align-items: center; gap: var(--s-3); }
+.kit-row + .kit-row { margin-block-start: var(--s-4); }
+.kit-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 240px), 1fr)); gap: var(--s-4); align-items: start; }
+.kit-grid--2 { grid-template-columns: repeat(auto-fit, minmax(min(100%, 320px), 1fr)); }
+.kit-grid--3 { grid-template-columns: repeat(auto-fit, minmax(min(100%, 220px), 1fr)); }
+.kit-type { display: flex; flex-direction: column; gap: var(--s-2); }
+.kit-type p { margin: 0; }
+.kit-swatches { display: grid; grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); gap: var(--s-3); }
+.kit-swatch { display: flex; align-items: center; gap: var(--s-2); font-size: var(--text-xs); min-inline-size: 0; }
+.kit-chip { flex: 0 0 auto; inline-size: 36px; block-size: 36px; border-radius: var(--r-xs); box-shadow: inset 0 0 0 1px var(--rule-2); }
+.kit-space { display: flex; flex-direction: column; align-items: flex-start; gap: 4px; font-size: var(--text-2xs); }
+.kit-space span { display: block; block-size: 12px; border-radius: 3px; background: var(--accent); }
+.kit-radius { display: grid; place-items: center; inline-size: 84px; block-size: 64px; background: var(--surface-solid-2); border: 1px solid var(--rule); font-size: var(--text-2xs); }
+.kit-facts { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 260px), 1fr)); gap: var(--s-2) var(--s-5); margin: 0; }
+.kit-facts > div { display: flex; justify-content: space-between; align-items: baseline; gap: var(--s-3); padding-block: 6px; border-block-end: 1px solid var(--rule); min-inline-size: 0; }
+.kit-facts dt { color: var(--ink-2); font-size: var(--text-sm); }
+.kit-facts dd { margin: 0; min-inline-size: 0; overflow-x: auto; }
+.kit-sample { margin: var(--s-4) 0 0; display: flex; flex-wrap: wrap; align-items: baseline; gap: var(--s-2); }
+.kit-list { margin: 0; padding-inline-start: var(--s-5); display: flex; flex-direction: column; gap: var(--s-2); overflow-wrap: anywhere; }
+.kit-icons { list-style: none; margin: 0; padding: 0; display: grid; grid-template-columns: repeat(auto-fill, minmax(96px, 1fr)); gap: var(--s-2); }
+.kit-icons li { display: flex; flex-direction: column; align-items: center; gap: 6px; padding: var(--s-3) var(--s-2); border-radius: var(--r-sm); background: var(--surface-solid-2); font-size: var(--text-2xs); color: var(--ink-2); text-align: center; overflow-wrap: anywhere; }
+.kit-icons li .icon { color: var(--ink); }
+.kit-icons--accent { grid-template-columns: repeat(auto-fill, minmax(140px, 1fr)); }
+.kit-state { padding: var(--s-2); }
+.kit-motion { display: grid; place-items: center; min-block-size: 88px; padding: var(--s-3); border-radius: var(--r-md); background: var(--surface-solid-2); border: 1px solid var(--rule); text-align: center; }
+.kit-signature { position: relative; overflow: hidden; block-size: 180px; border-radius: var(--r-lg); background: var(--bg-deep); isolation: isolate; }
+.kit-signature > i { position: absolute; display: block; border-radius: 50%; filter: blur(40px); opacity: 0.85; }
+.kit-signature > i:nth-child(1) { inline-size: 60%; aspect-ratio: 1; background: var(--mesh-1); inset-block-start: -40%; inset-inline-end: -10%; }
+.kit-signature > i:nth-child(2) { inline-size: 50%; aspect-ratio: 1; background: var(--mesh-2); inset-block-start: 20%; inset-inline-start: -10%; }
+.kit-signature > i:nth-child(3) { inline-size: 40%; aspect-ratio: 1; background: var(--mesh-3); inset-block-end: -50%; inset-inline-end: 30%; }
+:root[data-perf="on"] .kit-signature > i { filter: none; opacity: 0.35; }

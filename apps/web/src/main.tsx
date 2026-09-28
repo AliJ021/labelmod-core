@@ -7,6 +7,7 @@ import "./styles/base.css";
 import "./styles/glass.css";
 import "./styles/app.css";
 import "./styles/controls.css";
+import "./styles/ui.css";
 
 const root = document.getElementById("root");
 if (!root) throw new Error("ریشه برنامه پیدا نشد");

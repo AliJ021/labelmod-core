@@ -130,15 +130,19 @@ export function Solid({
   className = "",
   style,
   as: Tag = "div",
+  "aria-label": ariaLabel,
+  "aria-labelledby": labelledBy,
 }: {
   children: ReactNode;
   className?: string;
   style?: CSSProperties;
-  as?: "div" | "section" | "aside";
+  as?: "div" | "section" | "aside" | "article";
+  "aria-label"?: string;
+  "aria-labelledby"?: string;
 }) {
   return (
     <InsideGlass.Provider value={false}>
-      <Tag className={`solid ${className}`} style={style}>
+      <Tag className={`solid ${className}`} style={style} aria-label={ariaLabel} aria-labelledby={labelledBy}>
         {children}
       </Tag>
     </InsideGlass.Provider>

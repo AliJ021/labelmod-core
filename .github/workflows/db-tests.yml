@@ -262,6 +262,15 @@ jobs:
       - name: ساخت رابط کاربری
         run: pnpm --filter @labelmod/web build
 
+      # UI Kit (/dev/ui-kit) فقط با `VITE_LMC_UI_KIT=1` ساخته می‌شود. این همان
+      # Build تولیدی است (بی پرچم)، پس نباید هیچ اثری از آن داشته باشد.
+      - name: Build تولیدی UI Kit ندارد
+        run: |
+          if grep -rl "UI Kit لیبل مد" apps/web/dist; then
+            echo "✗ UI Kit وارد Build تولیدی شده است"; exit 1
+          fi
+          echo "UI Kit در Build تولیدی نیست ✓"
+
       - name: آسیب‌پذیری وابستگی‌ها
         # شکست روی High و بالاتر — بند ۵ SECURITY.md
         run: pnpm audit --prod --audit-level high
@@ -397,7 +406,10 @@ jobs:
       - run: corepack enable
       - run: pnpm install --frozen-lockfile
       - run: pnpm --filter @labelmod/web exec playwright install --with-deps chromium webkit
+      # همان Build تولیدی به‌علاوهٔ chunk تنبل UI Kit، تا سطح تأیید بصری هم آزموده شود.
       - run: pnpm --filter @labelmod/web build
+        env:
+          VITE_LMC_UI_KIT: "1"
       - name: آزمون مرورگر (همراه نمونه‌برداری منابع)
         env:
           RESOURCE_LOG: ${{ runner.temp }}/resources.log

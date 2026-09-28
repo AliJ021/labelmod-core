@@ -1,43 +1,83 @@
-/* Controls float; operational and financial data keep opaque surfaces. */
+/* ═══ پوسته (docs/UI_PATTERNS.md، «پوسته») ═══════════════════════════
+   یک طبقه‌بندی ناوبری، سه نمایش: نوار کناری (≥۹۰۰)، نوار پایین و
+   برگهٔ «بیشتر» (<۹۰۰). کنترل‌ها شناورند؛ دادهٔ مالی مات می‌ماند. */
 a[role="tab"] { display: inline-flex; align-items: center; text-decoration: none; font: inherit; cursor: pointer; }
-.workspace { display: grid; grid-template-columns: 218px minmax(0, 1fr); grid-template-rows: auto 1fr; gap: 20px; align-items: start; }
-.workspace-header { grid-column: 1 / -1; display: flex; align-items: center; flex-wrap: wrap; gap: 18px; padding: 12px 18px; z-index: 30; }
-.workspace-header .brand { font-size: 1.15rem; }
-.workspace-header .feature-search { flex: 1; max-inline-size: 520px; }
-.workspace-header .header-tools { margin-inline-start: auto; }
+.workspace { display: grid; grid-template-columns: var(--sidebar-w) minmax(0, 1fr); grid-template-rows: auto auto 1fr; gap: 20px; align-items: start; max-inline-size: var(--content-max); margin-inline: auto; }
+.workspace-header, .workspace > .pos-alert, .shell-offline { grid-column: 1 / -1; }
+.workspace-header { display: flex; align-items: center; flex-wrap: wrap; gap: 18px; padding: 10px 14px; z-index: var(--z-header); }
+.workspace-header .brand { display: inline-flex; align-items: center; gap: 10px; font-size: var(--text-lg); font-weight: var(--weight-heavy); padding-inline-end: var(--s-2); }
+.brand-mark { position: relative; inline-size: 28px; block-size: 28px; border-radius: 9px; background: linear-gradient(145deg, color-mix(in srgb, var(--accent) 70%, var(--surface-solid)), var(--accent) 55%, color-mix(in srgb, var(--accent) 70%, var(--ink))); box-shadow: inset 0 1px 0 color-mix(in srgb, var(--surface-solid) 55%, transparent), var(--elev-1); }
+.brand-mark::after { content: ""; position: absolute; inset: 8px; border-radius: 50%; border: 2px solid var(--accent-ink); opacity: 0.85; }
+.workspace-header .feature-search { flex: 1; max-inline-size: 560px; }
+.workspace-header .header-tools, .workspace-header .tools { margin-inline-start: auto; }
 .workspace > main { min-inline-size: 0; }
-.workspace-nav { position: sticky; top: 16px; padding: 12px; z-index: 20; }
-.workspace .workspace-zones { display: flex; flex-direction: column; overflow: visible; gap: 6px; margin: 0; }
-.workspace-zones a { min-block-size: 48px; border-radius: 12px; padding: 10px 14px; color: var(--ink-2); font-weight: 600; }
-.workspace-zones a:hover { color: var(--ink); background: var(--surface-solid-2); }
-.workspace-zones a.on { color: var(--accent-ink); background: var(--accent); }
-.workspace-more { display: none; }
+.workspace > main:focus { outline: none; }
+.workspace-nav { position: sticky; top: 16px; padding: 10px; z-index: var(--z-nav); }
+.workspace .workspace-zones { display: flex; flex-direction: column; overflow: visible; gap: 2px; margin: 0; padding: 0; }
+.workspace-zones .tab-group { display: block; padding: 14px 12px 4px; font-size: var(--text-2xs); font-weight: var(--weight-bold); color: var(--ink-3); }
+.workspace-zones .tab-item:first-child .tab-group { padding-block-start: 4px; }
+.workspace .workspace-zones [role="tab"] { position: relative; gap: 12px; min-block-size: 44px; border-radius: 10px; padding: 8px 12px; color: var(--ink-2); font-weight: var(--weight-semibold); transition: background-color var(--dur-fast) var(--ease-standard), color var(--dur-fast) var(--ease-standard); }
+.workspace .workspace-zones [role="tab"] .icon { color: var(--ink-3); transition: color var(--dur-fast) var(--ease-standard); }
+.workspace .workspace-zones [role="tab"]:hover { color: var(--ink); background: var(--neutral-soft); }
+/* انتخاب‌شده: سطح مات + خط برنجی کنار، نه پرکردن کامل. آرام ولی بی‌ابهام. */
+.workspace .workspace-zones [role="tab"].on { color: var(--ink); background: var(--surface-solid); box-shadow: var(--elev-1), inset 0 0 0 1px var(--rule); }
+.workspace .workspace-zones [role="tab"].on .icon { color: var(--accent); }
+.workspace .workspace-zones [role="tab"].on::before { content: ""; position: absolute; inset-block: 10px; inset-inline-start: 0; inline-size: 3px; border-radius: 3px; background: var(--accent); }
+.workspace-more, .nav-sheet-title, .nav-scrim { display: none; }
 .feature-search { position: relative; min-inline-size: 160px; }
-.feature-search input { inline-size: 100%; min-block-size: 44px; padding: 8px 14px; border: 1px solid var(--rule); border-radius: 12px; background: var(--surface-solid); color: var(--ink); font: inherit; }
-.feature-results { position: absolute; inset-block-start: calc(100% + 8px); inset-inline: 0; max-block-size: 50dvh; overflow: auto; border: 1px solid var(--rule); box-shadow: var(--glass-shadow); padding: 8px; border-radius: 14px; }
+.feature-search-field { display: flex; align-items: center; gap: var(--s-2); padding-inline: 12px 8px; border: 1px solid var(--rule-2); border-radius: 12px; background: var(--surface-solid); color: var(--ink-3); }
+.feature-search-field:focus-within { outline: 2px solid var(--accent); outline-offset: 2px; }
+.feature-search input { flex: 1; inline-size: 100%; min-block-size: 42px; padding: 8px 0; border: 0; background: transparent; box-shadow: none; color: var(--ink); font: inherit; }
+.feature-search input:focus-visible { outline: none; }
+.feature-search-kbd { flex: 0 0 auto; min-inline-size: 22px; padding: 1px 6px; border: 1px solid var(--rule-2); border-radius: 6px; font-family: var(--font-num); font-size: var(--text-2xs); color: var(--ink-3); text-align: center; }
+.feature-results { position: absolute; inset-block-start: calc(100% + 8px); inset-inline: 0; max-block-size: 50dvh; overflow: auto; border: 1px solid var(--rule); box-shadow: var(--elev-2); padding: 8px; border-radius: 14px; }
 .feature-results a { display: flex; align-items: center; min-block-size: 44px; padding: 8px; border-radius: 8px; color: var(--ink); text-decoration: none; }
 .feature-results a:hover { background: var(--surface-solid-2); }
-.skip-content { position: fixed; inset-block-start: -100px; inset-inline-start: 16px; z-index: 100; padding: 12px; background: var(--surface-solid); color: var(--ink); }
+.shell-offline { display: flex; align-items: flex-start; gap: var(--s-2); margin: 0; padding: var(--s-3) var(--s-4); border-radius: var(--r-sm); border-inline-start: 3px solid var(--warn); background: var(--warn-soft); color: var(--ink); font-size: var(--text-sm); }
+.shell-offline .icon { color: var(--warn); margin-block-start: 2px; }
+.skip-content { position: fixed; inset-block-start: -100px; inset-inline-start: 16px; z-index: var(--z-skip); padding: 12px; background: var(--surface-solid); color: var(--ink); }
 .skip-content:focus { inset-block-start: 8px; }
+@media (min-width: 900px) and (max-width: 1199px) { .workspace { --sidebar-w: 208px; } }
 @media (max-width: 899px) {
-  .workspace { display: block; padding-bottom: calc(94px + env(safe-area-inset-bottom)); }
-  .workspace-header { margin-bottom: 16px; gap: 10px; padding: 12px; }
+  .workspace { display: block; padding-bottom: calc(96px + env(safe-area-inset-bottom)); }
+  .workspace-header { margin-bottom: 16px; gap: 10px; padding: 10px; }
   .workspace-header .feature-search { order: 3; flex-basis: 100%; max-inline-size: none; }
-  .workspace-nav { position: fixed; inset-inline: 12px; inset-block-end: max(8px, env(safe-area-inset-bottom)); top: auto; display: flex; padding: 6px; border-radius: 20px; max-block-size: 65dvh; overflow-y: auto; }
-  .workspace .workspace-zones { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); flex: 1; gap: 3px; }
+  .feature-search-kbd { display: none; }
+  .shell-offline { margin-block-end: 16px; }
+  .workspace-nav { position: fixed; inset-inline: 10px; inset-block-end: max(8px, env(safe-area-inset-bottom)); top: auto; display: flex; align-items: stretch; gap: 2px; padding: 6px; border-radius: 22px; }
+  .workspace .workspace-zones { display: grid; grid-auto-flow: column; grid-auto-columns: minmax(0, 1fr); flex: 1; gap: 2px; }
   .workspace-zones .tab-item { display: none; }
-  .workspace-zones .tab-item:has(a[href="/?page=dashboard"]),
-  .workspace-zones .tab-item:has(a[href="/?page=pos"]),
-  .workspace-zones .tab-item:has(a[href="/?page=catalog"]),
-  .workspace-zones .tab-item:has(a[href="/?page=reports"]) { display: contents; }
-  .workspace .workspace-zones a { justify-content: center; white-space: normal; text-align: center; font-size: .75rem; padding: 6px 3px; min-block-size: 48px; }
-  .workspace-more { display: block; flex: 0 0 18%; min-block-size: 48px; padding: 6px; border: 0; border-radius: 12px; background: transparent; color: var(--ink); font-size: .8rem; }
+  .workspace-zones .tab-item[data-primary] { display: contents; }
+  .workspace-zones .tab-group { display: none; }
+  .workspace .workspace-zones [role="tab"], .workspace-more { flex-direction: column; justify-content: center; gap: 3px; min-block-size: 54px; padding: 6px 2px; border-radius: 14px; font-size: var(--text-2xs); line-height: 1.3; text-align: center; white-space: normal; }
+  .workspace .workspace-zones [role="tab"].on { box-shadow: var(--elev-1); }
+  .workspace .workspace-zones [role="tab"].on::before { inset-block: auto 4px; inset-inline: 30%; block-size: 3px; inline-size: auto; border-radius: 3px; }
+  .workspace-more { display: flex; align-items: center; flex: 0 0 20%; border: 0; background: transparent; color: var(--ink-2); font-weight: var(--weight-semibold); }
+  .workspace-more .icon { color: var(--ink-3); }
+  .workspace-more[aria-expanded="true"] { color: var(--ink); }
+  .workspace-more[data-current] { position: relative; color: var(--ink); background: var(--surface-solid); box-shadow: var(--elev-1); }
+  .workspace-more[data-current] .icon { color: var(--accent); }
+  .workspace-more[data-current]::before { content: ""; position: absolute; inset-block-end: 4px; inset-inline: 30%; block-size: 3px; border-radius: 3px; background: var(--accent); }
+  /* برگهٔ «بیشتر»: همان tablist، گروه‌بندی‌شده و مات. */
+  .workspace--more .workspace-nav { flex-direction: column; max-block-size: min(80dvh, 640px); overflow-y: auto; padding: 14px; border-radius: 24px; background: var(--surface-solid); -webkit-backdrop-filter: none; backdrop-filter: none; z-index: var(--z-sheet); box-shadow: var(--elev-3); }
+  .workspace--more .nav-sheet-title { display: block; margin: 0 4px 4px; font-weight: var(--weight-bold); }
+  .workspace--more .workspace-zones { grid-auto-flow: row; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 6px; }
   .workspace--more .workspace-zones .tab-item { display: contents; }
-  .workspace--more .workspace-zones { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .workspace--more .workspace-zones .tab-group { display: block; grid-column: 1 / -1; padding: 10px 4px 0; }
+  .workspace--more .workspace-zones [role="tab"] { flex-direction: row; justify-content: flex-start; gap: 10px; min-block-size: 48px; padding: 8px 12px; font-size: var(--text-sm); text-align: start; background: var(--surface-solid-2); border-radius: 12px; }
+  .workspace--more .workspace-zones [role="tab"].on { background: var(--accent-soft); }
+  .workspace--more .workspace-zones [role="tab"].on::before { inset-block: 10px; inset-inline: 0 auto; inline-size: 3px; block-size: auto; border-radius: 3px; }
+  .workspace--more .workspace-more { flex: 0 0 auto; flex-direction: row; gap: 8px; min-block-size: 48px; margin-block-start: 8px; font-size: var(--text-sm); background: var(--surface-solid-2); border-radius: 12px; }
+  .workspace--more .nav-scrim { display: block; position: fixed; inset: 0; z-index: calc(var(--z-sheet) - 1); background: var(--scrim); }
   /* Keyboard space belongs to the active form, never to fixed navigation. */
   .workspace--keyboard .workspace-nav { visibility: hidden; pointer-events: none; }
 }
-@media print { .workspace-header, .workspace-nav { display: none !important; } .workspace { display: block; padding: 0; } }
+@media (max-width: 899px) and (min-width: 560px) { .workspace--more .workspace-zones { grid-template-columns: repeat(3, minmax(0, 1fr)); } }
+@media (prefers-reduced-motion: no-preference) {
+  :root:not([data-perf="on"]) .workspace--more .workspace-nav { animation: lm-sheet-up var(--dur-slow) var(--ease-out); }
+  :root:not([data-perf="on"]) .workspace--more .nav-scrim { animation: lm-fade-in var(--dur-base) var(--ease-out); }
+}
+@media print { .workspace-header, .workspace-nav, .nav-scrim, .shell-offline, .toast-region { display: none !important; } .workspace { display: block; padding: 0; } }
 
 .invoice-center { gap: 16px; }
 .invoice-filters { display: grid; grid-template-columns: minmax(140px, 2fr) minmax(120px, 1fr); gap: 12px; }
