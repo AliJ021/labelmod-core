@@ -1,4 +1,7 @@
 import { test as base, expect, type Page, type Route } from "@playwright/test";
+import { writeFile } from "node:fs/promises";
+import { freemem } from "node:os";
+import { redactText, safeRequestPath } from "./redact";
 import type { Product, Variation } from "../src/lib/catalog";
 import type { AppUser, Customer } from "../src/lib/people";
 import type { Me } from "../src/lib/session";
@@ -58,7 +61,37 @@ export class MockApi {
     });
   }
 }
-export const test = base.extend<{ api: MockApi }>({
+/**
+ * شواهد شکست (پایدار، فقط هنگام شکست): رویدادهای صفحه، زمینه و مرورگر را فقط ثبت می‌کند و
+ * هیچ ادعایی ندارد. پرونده فقط برای آزمون ناموفق نوشته می‌شود و CI آن را در لاگ چاپ می‌کند.
+ * زمینه: شکست متناوب webkit-dark-375 در PR #106 که علتش ثابت نشد و artifactش از بیرون خوانا نبود.
+ * هدر، کوکی و بدنهٔ درخواست ثبت نمی‌شود — فقط روش، مسیر و متن خطا. Query و Fragment
+ * هیچ نشانی‌ای ثبت نمی‌شود (LM-106-L03): درخواست و ناوبری فقط مسیر، و کل متن پیش از نوشتن
+ * از `redactText` می‌گذرد.
+ */
+export const test = base.extend<{ api: MockApi; diagnostics: void }>({
+  diagnostics: [async ({ page }, use, testInfo) => {
+    const started = Date.now(), log: string[] = [];
+    const mb = (n: number) => Math.round(n / 1048576);
+    const note = (m: string) => { log.push(`${new Date().toISOString()} +${((Date.now() - started) / 1000).toFixed(2)}s ${m}`); };
+    const context = page.context(), browser = context.browser();
+    note(`start project=${testInfo.project.name} worker=${testInfo.workerIndex} parallel=${testInfo.parallelIndex} pid=${process.pid} rssMB=${mb(process.memoryUsage().rss)} freeMB=${mb(freemem())}`);
+    page.on("crash", () => note("PAGE CRASH (web content process died)"));
+    page.on("close", () => note("page close event"));
+    context.on("close", () => note("context close event"));
+    const disconnected = () => note("BROWSER DISCONNECTED");
+    browser?.on("disconnected", disconnected);
+    page.on("pageerror", e => note(`pageerror: ${e.message.slice(0, 300)}`));
+    page.on("console", m => { if (m.type() === "error" || m.type() === "warning") note(`console.${m.type()}: ${m.text().slice(0, 300)}`); });
+    page.on("requestfailed", r => note(`requestfailed ${r.method()} ${safeRequestPath(r.url())} :: ${r.failure()?.errorText ?? "?"}`));
+    page.on("framenavigated", f => { if (f === page.mainFrame()) note(`navigated ${safeRequestPath(f.url())}`); });
+    await use();
+    browser?.off("disconnected", disconnected);
+    if (testInfo.status !== testInfo.expectedStatus) {
+      note(`end status=${testInfo.status} pageClosed=${page.isClosed()} browserConnected=${browser?.isConnected() ?? "n/a"} rssMB=${mb(process.memoryUsage().rss)} freeMB=${mb(freemem())}`);
+      await writeFile(testInfo.outputPath("diagnostics.log"), redactText(log.join("\n")) + "\n");
+    }
+  }, { auto: true }],
   api: [async ({ page }, use) => {
     const api = new MockApi(); await api.install(page); await use(api);
     expect(api.unexpected, "Unexpected API request").toEqual([]);

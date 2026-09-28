@@ -377,9 +377,18 @@ jobs:
           assert 'WEB_PUSH_SECRET' not in services['api']['environment']
           PY
 
-  browser-regression:
+  # کل ماتریس مرورگر (۲ موتور × ۲ تم × ۶ عرض) در یک Job به سقف ۲۰ دقیقه
+  # می‌رسید: روی main (0e564e6) کل Job ۱۹ دقیقه و ۵۸ ثانیه طول کشید و روی
+  # PR #104 پیش از پایان «cancelled» شد. هیچ آزمونی کم نشده؛ همان مجموعه در
+  # چهار Shard موازی تقسیم می‌شود و Job تجمیعیِ همنام، نتیجهٔ همه را الزام می‌کند.
+  browser-regression-shard:
+    name: browser-regression (${{ matrix.shard }}/4)
     runs-on: ubuntu-latest
     timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: [1, 2, 3, 4]
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
       - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020
@@ -389,13 +398,38 @@ jobs:
       - run: pnpm install --frozen-lockfile
       - run: pnpm --filter @labelmod/web exec playwright install --with-deps chromium webkit
       - run: pnpm --filter @labelmod/web build
-      - run: pnpm --filter @labelmod/web test:e2e
+      - name: آزمون مرورگر (همراه نمونه‌برداری منابع)
+        env:
+          RESOURCE_LOG: ${{ runner.temp }}/resources.log
+        run: .github/scripts/e2e-with-resources.sh pnpm --filter @labelmod/web test:e2e --shard=${{ matrix.shard }}/4
+      - name: شواهد شکست مرورگر در لاگ (فقط هنگام شکست)
+        if: failure()
+        env:
+          RESOURCE_LOG: ${{ runner.temp }}/resources.log
+        run: |
+          python3 .github/scripts/e2e-failure-report.py apps/web/test-results || true
+          echo "== resource samples (every 5s)"; cat "$RESOURCE_LOG" || true
+          echo "== kernel: OOM / killed / segfault lines"
+          sudo dmesg -T 2>/dev/null | grep -iE 'out of memory|oom-kill|killed process|segfault|webkit' | tail -40 || true
       - name: گزارش و تصاویر مرورگرها
         if: always()
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
-          name: browser-regression
+          name: browser-regression-${{ matrix.shard }}
           path: |
             apps/web/playwright-report/
             apps/web/test-results/
           retention-days: 14
+
+  # نام بررسی قبلی حفظ می‌شود. Shard لغوشده، ردشده یا ناموفق یعنی قرمز.
+  browser-regression:
+    runs-on: ubuntu-latest
+    needs: browser-regression-shard
+    if: always()
+    steps:
+      - name: همهٔ Shardهای مرورگر موفق شده‌اند
+        env:
+          RESULT: ${{ needs.browser-regression-shard.result }}
+        run: |
+          echo "browser-regression shards: $RESULT"
+          test "$RESULT" = "success"
