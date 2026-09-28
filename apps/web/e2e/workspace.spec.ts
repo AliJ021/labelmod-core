@@ -151,3 +151,50 @@ test("manager report tables scroll inside their card instead of widening the pag
     expect(after.scroll,"inner scroll never widens the page").toBeLessThanOrEqual(after.client);
   }
 });
+
+/**
+ * زمان‌بندی rAF در دست آزمون است، نه در دست مسابقه: فراخوان‌ها نگه داشته و فقط با __rafFlush اجرا می‌شوند.
+ * فقط همین یک مسیر در برنامه rAF دارد (app.tsx، switchZone)؛ تعداد اجراشده هم سنجیده می‌شود تا ادعا تهی نباشد.
+ */
+async function holdAnimationFrames(page:Page){
+  await page.addInitScript(()=>{
+    const native=window.requestAnimationFrame.bind(window);
+    let held:FrameRequestCallback[]|null=null;
+    const w=window as unknown as {__rafHold:()=>void;__rafFlush:()=>number};
+    w.__rafHold=()=>{held=[];};
+    w.__rafFlush=()=>{const queue=held??[];held=null;for(const cb of queue)cb(performance.now());return queue.length;};
+    window.requestAnimationFrame=cb=>{if(held){held.push(cb);return 0;}return native(cb);};
+  });
+}
+async function switchToTreasuryWithHeldFrame(page:Page){
+  await page.goto("/");
+  await expect(page.getByRole("heading",{name:"امروز"})).toBeVisible();
+  const nav=page.getByRole("tablist",{name:"بخش‌ها",exact:true});
+  const tab=nav.getByRole("tab",{name:"خزانه و چک",exact:true});
+  if(!(await tab.isVisible())) await page.getByRole("button",{name:"بخش‌های بیشتر",exact:true}).click();
+  await page.evaluate(()=>(window as unknown as {__rafHold:()=>void}).__rafHold());
+  await tab.click();
+  const sub=page.getByRole("tablist",{name:"بخش‌های خزانه",exact:true});
+  await expect(sub).toBeVisible();
+  return sub;
+}
+const flushFrames=(page:Page)=>page.evaluate(()=>(window as unknown as {__rafFlush:()=>number}).__rafFlush());
+
+test("zone switch moves focus to the workspace when nothing newer took focus", async ({page}) => {
+  await holdAnimationFrames(page);
+  await switchToTreasuryWithHeldFrame(page);
+  expect(await flushFrames(page)).toBeGreaterThanOrEqual(1);
+  await expect(page.locator("main#workspace-content")).toBeFocused();
+});
+
+test("a late zone-switch focus never steals a newer sub-tab focus", async ({page}) => {
+  await holdAnimationFrames(page);
+  const sub=await switchToTreasuryWithHeldFrame(page);
+  const tabs=sub.getByRole("tab");
+  await sub.locator('[aria-selected="true"]').focus();
+  await sub.locator('[aria-selected="true"]').press("End");
+  await expect(tabs.last()).toBeFocused();
+  expect(await flushFrames(page)).toBeGreaterThanOrEqual(1);
+  await expect(tabs.last()).toBeFocused();
+  await expect(page.locator("main#workspace-content")).not.toBeFocused();
+});

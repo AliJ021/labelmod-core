@@ -215,9 +215,17 @@ export function App() {
   }
 
   function switchZone(next: Zone) {
+    // فوکوسِ زمان‌بندی‌شده فقط وقتی به محتوا می‌رود که کسی در این فاصله فوکوس تازه‌ای نگذاشته باشد:
+    // frame دیرهنگام نباید فوکوسی را که کاربر روی زیرزبانه یا کنترل دیگری برده، پس بگیرد.
+    const origin = document.activeElement;
     setZone(next);
     setMore(false);
-    requestAnimationFrame(() => document.getElementById("workspace-content")?.focus({preventScroll:true}));
+    requestAnimationFrame(() => {
+      const now = document.activeElement;
+      if (now === origin || now === null || now === document.body) {
+        document.getElementById("workspace-content")?.focus({preventScroll:true});
+      }
+    });
   }
 
   function cycleTheme() {
