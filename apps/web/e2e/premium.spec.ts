@@ -209,6 +209,23 @@ test("RTL keyboard tabs, activation, one tab stop and responsive settings focus"
   }
 });
 
+test("zone tabs keep their panels while a section chunk is still loading", async ({ page }) => {
+  // بخش گزارش‌ها عمداً معطل می‌ماند؛ در همین فاصله aria-controls هر زبانه باید به پنل موجودی برسد.
+  let release!: () => void;
+  const gate = new Promise<void>(resolve => { release = resolve; });
+  await page.route(/\/assets\/Reports-[^/]+\.js$/, async route => { await gate; await route.continue(); });
+  await page.goto("/");
+  await expect(page.getByRole("heading", { name: "امروز" })).toBeVisible();
+  await openZone(page, "گزارش‌ها");
+  await expect(page.getByRole("status").filter({ hasText: "در حال بارگذاری بخش" })).toBeVisible();
+  const dangling = await page.evaluate(() => [...document.querySelectorAll('[role="tablist"][aria-label="بخش‌ها"] [role="tab"]')]
+    .map(tab => tab.getAttribute("aria-controls") ?? "")
+    .filter(id => id === "" || document.getElementById(id)?.getAttribute("role") !== "tabpanel"));
+  expect(dangling, "aria-controls without a tabpanel during lazy load").toEqual([]);
+  release();
+  await expect(page.getByRole("tablist", { name: "گزارش‌ها", exact: true })).toBeVisible();
+});
+
 test("live reduced motion, transparency and persisted performance mode", async ({ page, browserName }) => {
   await page.goto("/");
   await settings(page, "appearance", "نمایش و عملکرد");
