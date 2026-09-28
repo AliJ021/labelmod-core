@@ -1,4 +1,16 @@
 import { test, expect, settings, fontsReady } from "./fixtures";
+import type { Locator, Page } from "@playwright/test";
+
+const NARROW_WIDTHS=[320,360,375,390,412] as const;
+async function documentWidth(page:Page){
+  return page.evaluate(()=>({scroll:document.documentElement.scrollWidth,client:document.documentElement.clientWidth}));
+}
+/** آیا جعبهٔ افقی عنصر کاملاً داخل جعبهٔ ظرفش است؟ ±۱ پیکسل برای گردکردن زیرپیکسلی. */
+async function horizontallyInside(item:Locator,container:Locator){
+  const [a,b]=[await item.boundingBox(),await container.boundingBox()];
+  if(!a||!b) throw new Error("element is not rendered");
+  return a.x>=b.x-1&&a.x+a.width<=b.x+b.width+1;
+}
 
 test("invoice center restores URL filters and browser navigation and prints only posted documents", async ({page,api}) => {
   const row={id:"i1",number:null,status:"draft",branchId:"b1",branchName:"شعبه آزمون",shiftId:"s1",creatorName:"صندوق‌دار آزمون",finalizerName:null,customerName:null,occurredAt:"2026-09-26T08:00:00Z",payableAmount:"1000000",receivedAmount:"0",paymentMethods:"",canResume:false,needsReview:true};
@@ -47,6 +59,8 @@ test("SnappPay configuration preserves a server rejection and its independent re
 });
 
 test("dashboard unposted-period notes wrap instead of widening the page",async({page,api})=>{
+  // بارگذاری تازهٔ صفحه در پنج عرض باریک؛ فقط زمان کار بیشتر است، ادعایی کم نشده.
+  test.setTimeout(120_000);
   // هر سه نوع یادداشت دوره، به‌علاوهٔ یک دوره با دکمهٔ بستن. در عرض ۳۲۰ یادداشت شیفت صفحه را به ۳۴۹ می‌رساند.
   const row={branchId:"b1",invoiceCount:12,payableAmount:"12340000",cogsAmount:"9000000"};
   api.defaults["GET /posting-batches/unposted"]={rows:[
@@ -67,9 +81,25 @@ test("dashboard unposted-period notes wrap instead of widening the page",async({
   await fontsReady(page);
   const denied=await page.evaluate(()=>({scroll:document.documentElement.scrollWidth,client:document.documentElement.clientWidth}));
   expect(denied.scroll,"Dashboard must not scroll horizontally without period.close").toBeLessThanOrEqual(denied.client);
+  // عرض‌های باریک صریح، مستقل از عرض پروژه؛ هر دو حالت (با و بی period.close) یادداشت‌های متفاوتی دارند.
+  for(const verdict of ["deny","allow"] as const){
+    api.handlers.set("GET /auth/can",async route=>{await route.fulfill({json:{verdict,approver:null,reason:""}});});
+    for(const width of NARROW_WIDTHS){
+      await page.setViewportSize({width,height:900});
+      await page.goto("/");
+      await expect(page.getByText("با بستن شیفت صندوق بسته می‌شود",{exact:true})).toBeVisible();
+      await expect(verdict==="allow"?page.getByRole("button",{name:"بستن دوره",exact:true}):page.getByText("بستن دوره دسترسی حسابدار می‌خواهد",{exact:true})).toBeVisible();
+      await fontsReady(page);
+      const narrow=await documentWidth(page);
+      expect(narrow.client,"viewport width").toBe(width);
+      expect(narrow.scroll,`Dashboard must not scroll horizontally at ${width}px (${verdict})`).toBeLessThanOrEqual(narrow.client);
+    }
+  }
 });
 
 test("manager report tables scroll inside their card instead of widening the page",async({page,api})=>{
+  // بارگذاری تازهٔ صفحه در پنج عرض باریک؛ فقط زمان کار بیشتر است، ادعایی کم نشده.
+  test.setTimeout(120_000);
   // بی داده جدولی ساخته نمی‌شود؛ سرریز فقط با سطر واقعی دیده می‌شد (scrollWidth ۴۳۵ در عرض ۳۷۵).
   const d="2026-09-10";
   api.defaults["GET /reports/compare"]={rows:[{channel:"pos",invoiceCount:3,netAmount:"3000000",profitAmount:"500000",prevInvoiceCount:2,prevNetAmount:"2000000",prevProfitAmount:"300000",deltaAmount:"1000000",deltaPercent:50,direction:"up"}]};
@@ -82,4 +112,42 @@ test("manager report tables scroll inside their card instead of widening the pag
   await fontsReady(page);
   const size=await page.evaluate(()=>({scroll:document.documentElement.scrollWidth,client:document.documentElement.clientWidth}));
   expect(size.scroll,"Manager report must not scroll the page horizontally").toBeLessThanOrEqual(size.client);
+  // در عرض‌های باریک، جدول «تحلیل سبد» (۸ ستون) از کارت پهن‌تر است: سند نباید بلغزد، ولی ظرف خود جدول باید
+  // واقعاً اسکرول شود و آخرین ستون («فروش خالص»، چپ‌ترین در RTL) با اسکرول در دسترس بماند — نه اینکه بریده شود.
+  for(const width of NARROW_WIDTHS){
+    await page.setViewportSize({width,height:900});
+    await page.goto("/?page=reports&reports.tab=manager");
+    await expect(page.getByRole("heading",{name:"تحلیل سبد"})).toBeVisible();
+    await expect(page.getByRole("cell",{name:"مشتری آزمایشی با نام بلند"})).toBeVisible();
+    await fontsReady(page);
+    const narrow=await documentWidth(page);
+    expect(narrow.client,"viewport width").toBe(width);
+    expect(narrow.scroll,`Manager report must not scroll the page horizontally at ${width}px`).toBeLessThanOrEqual(narrow.client);
+
+    const box=page.getByRole("heading",{name:"تحلیل سبد"}).locator("xpath=..").locator(".scroll-x");
+    await expect(box).toHaveCount(1);
+    const row=box.getByRole("row").nth(1);
+    const first=row.getByRole("cell").first(), last=row.getByRole("cell").last();
+    const before=await box.evaluate(el=>{const css=getComputedStyle(el);return{overflowX:css.overflowX,direction:css.direction,scrollWidth:el.scrollWidth,clientWidth:el.clientWidth,scrollLeft:el.scrollLeft};});
+    expect(before.overflowX,"table container must scroll, not clip").toMatch(/^(auto|scroll)$/);
+    expect(before.direction).toBe("rtl");
+    expect(before.scrollWidth,`table wider than its card at ${width}px`).toBeGreaterThan(before.clientWidth);
+    expect(before.scrollLeft).toBe(0);
+    expect(await horizontallyInside(last,box),"far column is out of view before scrolling").toBe(false);
+    expect(await horizontallyInside(first,box),"first column is in view before scrolling").toBe(true);
+
+    // RTL-safe: جهت انتهای محتوا از خودِ مرورگر پرسیده می‌شود (منفی در مدل استاندارد RTL، مثبت در مدل قدیمی).
+    const moved=await box.evaluate(el=>{
+      const max=el.scrollWidth-el.clientWidth;
+      el.scrollLeft=-max;
+      if(el.scrollLeft===0) el.scrollLeft=max;
+      return{max,scrollLeft:el.scrollLeft};
+    });
+    expect(Math.abs(moved.scrollLeft),"container scrolled to its far end").toBeGreaterThanOrEqual(moved.max-1);
+    expect(await horizontallyInside(last,box),`far column reachable after scrolling at ${width}px`).toBe(true);
+    await expect(last).toContainText("200");
+    expect(await horizontallyInside(first,box),"first column scrolled out of view").toBe(false);
+    const after=await documentWidth(page);
+    expect(after.scroll,"inner scroll never widens the page").toBeLessThanOrEqual(after.client);
+  }
 });
