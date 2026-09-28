@@ -14,3 +14,9 @@ Visual artifacts (catalog, product detail, settings, dashboard, customers, permi
 Reduced motion is emulated live in both engines. Chromium tests reduced transparency through CDP. Playwright does not expose that media emulation for WebKit, so its transparency fallback is tested by activating the actual CSS media rules. This is explicitly not a test of a native OS preference in WebKit. WebKit automation is engine coverage, not testing on a physical iPhone.
 
 For local Windows environments where official browser downloads are unavailable, `PLAYWRIGHT_EDGE=1` and `--project='chromium-*'` use installed Microsoft Edge. CI always uses Playwright's pinned browsers.
+
+## Scanner WASM compatibility (zxing-wasm)
+
+The camera fallback combines two pieces from different packages: the Emscripten glue embedded in `barcode-detector`'s own `dist` (it does not import the installed `zxing-wasm`), and `zxing_reader.wasm`, which `src/lib/camera-scan.ts` locates from the direct `apps/web` `zxing-wasm` dependency. They must come from the same zxing-wasm build: 3.1.3 glue with the 3.1.4 WASM fails every scan with `RuntimeError: memory access out of bounds` (PR #103). A pnpm override on `barcode-detector>zxing-wasm` only changes the dependency graph, not the embedded glue. `test/zxing-compat.test.ts` compares the version embedded in `barcode-detector/pure` with the shipped WASM version.
+
+To upgrade: (1) take a `barcode-detector` release; (2) check which `zxing-wasm@x.y.z` its `dist` embeds; (3) set the direct `zxing-wasm` to exactly that version, never on its own; (4) run `pnpm --filter @labelmod/web test`; (5) build the production bundle; (6) run `security-ui.spec.ts` "local WASM decodes EAN13 through the camera fallback"; (7) confirm there is no `memory access out of bounds` in its diagnostics.
