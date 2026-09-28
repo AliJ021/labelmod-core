@@ -68,3 +68,18 @@ test("dashboard unposted-period notes wrap instead of widening the page",async({
   const denied=await page.evaluate(()=>({scroll:document.documentElement.scrollWidth,client:document.documentElement.clientWidth}));
   expect(denied.scroll,"Dashboard must not scroll horizontally without period.close").toBeLessThanOrEqual(denied.client);
 });
+
+test("manager report tables scroll inside their card instead of widening the page",async({page,api})=>{
+  // بی داده جدولی ساخته نمی‌شود؛ سرریز فقط با سطر واقعی دیده می‌شد (scrollWidth ۴۳۵ در عرض ۳۷۵).
+  const d="2026-09-10";
+  api.defaults["GET /reports/compare"]={rows:[{channel:"pos",invoiceCount:3,netAmount:"3000000",profitAmount:"500000",prevInvoiceCount:2,prevNetAmount:"2000000",prevProfitAmount:"300000",deltaAmount:"1000000",deltaPercent:50,direction:"up"}]};
+  api.defaults["GET /reports/hourly"]={rows:[{businessDate:d,hourOfDay:10,channel:"pos",invoiceCount:2,itemQty:"3",netAmount:"2000000"}]};
+  api.defaults["GET /reports/basket"]={rows:[{businessDate:d,channel:"pos",invoiceCount:2,knownCustomers:1,anonymousCount:1,itemQty:"3",lineCount:3,netAmount:"2000000",qtyPerInvoice:"1.5"}]};
+  api.defaults["GET /reports/customer-basket"]={rows:[{customerId:"c1",fullName:"مشتری آزمایشی با نام بلند",mobile:"09120000000",invoiceCount:2,itemQty:"3",netAmount:"2000000",lastPurchase:d}]};
+  await page.goto("/?page=reports&reports.tab=manager");
+  await expect(page.getByRole("heading",{name:"خرید هر مشتری"})).toBeVisible();
+  await expect(page.getByRole("cell",{name:"مشتری آزمایشی با نام بلند"})).toBeVisible();
+  await fontsReady(page);
+  const size=await page.evaluate(()=>({scroll:document.documentElement.scrollWidth,client:document.documentElement.clientWidth}));
+  expect(size.scroll,"Manager report must not scroll the page horizontally").toBeLessThanOrEqual(size.client);
+});

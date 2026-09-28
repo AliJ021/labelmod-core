@@ -421,7 +421,7 @@ function HourlyReport({ period }: { period: Period }) {
     >
       <Glass radius="md" className="pad">
         <h2 style={{ fontSize: "1rem", marginTop: 0 }}>فروش به تفکیک ساعت</h2>
-        <div className="tw">
+        <div className="scroll-x">
           <table>
             <thead>
               <tr>
@@ -486,7 +486,7 @@ function BasketReport({ period }: { period: Period }) {
         <p className="muted small" style={{ marginTop: 0 }}>
           فاکتور بی‌شماره جدا شمرده می‌شود — نه «یک مشتری» فرض.
         </p>
-        <div className="tw">
+        <div className="scroll-x">
           <table>
             <thead>
               <tr>
@@ -537,7 +537,7 @@ function CustomerBasketReport({ period }: { period: Period }) {
     >
       <Glass radius="md" className="pad">
         <h2 style={{ fontSize: "1rem", marginTop: 0 }}>خرید هر مشتری</h2>
-        <div className="tw">
+        <div className="scroll-x">
           <table>
             <thead>
               <tr>
