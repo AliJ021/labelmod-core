@@ -1,3 +1,4 @@
+import { useUrlState } from "../lib/use-url-state.ts";
 /**
  * سقف مجوزها — سقف تخفیف، سقف بازپرداخت، و «چه نقشی چه کاری می‌کند».
  *
@@ -41,7 +42,7 @@ export function Permissions() {
   const [note, setNote] = useState<string | null>(null);
   const [editing, setEditing] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
-  const [filter, setFilter] = useState("");
+  const [filter, setFilter] = useUrlState("permissions.filter", "", true);
   const [revision, setRevision] = useState(0);
 
   useEffect(() => {

@@ -1,3 +1,4 @@
+import { sql } from "kysely";
 /**
  * مسیرهای فروش و صندوق.
  *
@@ -358,6 +359,7 @@ export function registerSalesRoutes(app: FastifyInstance, deps: SalesRouteDeps):
     const inv = await invoices.byId(id);
     if (!inv) throw new InvoiceError("invoice_not_found", "فاکتور یافت نشد", 404);
     await assertBranch(db, s.userId, inv.branchId);
+    if (inv.status === "draft") await assertInvoiceInScope(db, s.userId, id, invoices);
     return {
       ...invoiceToJson(inv),
       receivedAmount: serializeMoney(await invoices.paidSoFar(id)),
@@ -374,7 +376,9 @@ export function registerSalesRoutes(app: FastifyInstance, deps: SalesRouteDeps):
     const s = session(req);
     const { id } = z.object({ id: uuid }).parse(req.params);
     const body = addLineBody.parse(req.body);
-    await assertInvoiceInScope(db, s.userId, id, invoices);
+    // Explicit supervisory price approval remains possible without taking over a cart.
+    if (body.unitPrice !== undefined) await requireForSession(db, s, "sale.price_override");
+    await assertInvoiceInScope(db, s.userId, id, invoices, body.unitPrice === undefined);
     await requireForSession(db, s, "sale.create");
 
     const discount = body.discountAmount ? parseMoney(body.discountAmount) : 0n;
@@ -485,7 +489,8 @@ export function registerSalesRoutes(app: FastifyInstance, deps: SalesRouteDeps):
     const s = session(req);
     const { id, lineId } = z.object({ id: uuid, lineId: uuid }).parse(req.params);
     const body = setLinePriceBody.parse(req.body);
-    await assertInvoiceInScope(db, s.userId, id, invoices);
+    await requireForSession(db, s, "sale.price_override");
+    await assertInvoiceInScope(db, s.userId, id, invoices, false);
     await requireForSession(db, s, "sale.create");
 
     return invoiceToJson(
@@ -733,7 +738,12 @@ export function registerSalesRoutes(app: FastifyInstance, deps: SalesRouteDeps):
     const s = session(req);
     const { id } = z.object({ id: uuid }).parse(req.params);
     const body = z.object({ reason: z.string().max(200).optional() }).parse(req.body ?? {});
-    await assertInvoiceInScope(db, s.userId, id, invoices);
+    try { await assertInvoiceInScope(db, s.userId, id, invoices); }
+    catch (error) {
+      // رسیدگی صریح سرپرست به پیش‌نویس رهاشده، مجوز ادامهٔ فروش نیست.
+      if (!(error instanceof InvoiceError) || !["draft_owner_mismatch", "draft_shift_closed"].includes(error.code)) throw error;
+      await requireForSession(db, s, "invoice.cancel");
+    }
     await requireForSession(db, s, "sale.create");
     const inv = await invoices.cancelDraft(id, s.userId, body.reason);
     return invoiceToJson(inv);
@@ -742,7 +752,7 @@ export function registerSalesRoutes(app: FastifyInstance, deps: SalesRouteDeps):
   app.get("/invoices/:id/draft-payments", async (req) => {
     const s = session(req);
     const { id } = z.object({ id: uuid }).parse(req.params);
-    await assertInvoiceInScope(db, s.userId, id, invoices);
+    await assertInvoiceInScope(db, s.userId, id, invoices, false);
     await requireForSession(db, s, "invoice.cancel");
     const inv = await invoices.byId(id);
     if (inv?.status !== "draft") throw new InvoiceError("invoice_not_draft", "فاکتور پیش‌نویس نیست.");
@@ -767,7 +777,7 @@ export function registerSalesRoutes(app: FastifyInstance, deps: SalesRouteDeps):
       paymentIds: z.array(uuid).min(1).max(100),
       refundReference: z.string().trim().min(1).max(120).optional(),
     }).parse(req.body);
-    await assertInvoiceInScope(db, s.userId, id, invoices);
+    await assertInvoiceInScope(db, s.userId, id, invoices, false);
     await requireForSession(db, s, "invoice.cancel");
     const key = idempotencyKey(req);
     if (!key) throw new InvoiceError("idempotency_required", "شناسه یکتای درخواست لازم است.", 400);
@@ -948,10 +958,22 @@ async function assertInvoiceInScope(
   userId: string,
   invoiceId: string,
   invoices: InvoiceService,
+  requireOwnership = true,
 ): Promise<void> {
   const inv = await invoices.byId(invoiceId);
   if (!inv) throw new InvoiceError("invoice_not_found", "فاکتور یافت نشد", 404);
   await assertBranch(db, userId, inv.branchId);
+  if (requireOwnership && inv.channel === "pos") {
+    const context = await sql<{ created_by: string | null; user_id: string | null; status: string | null; branch_id: string | null }>`
+      SELECT i.created_by, s.user_id, s.status, s.branch_id
+      FROM sales.invoice i LEFT JOIN sales.cash_shift s ON s.id=i.shift_id
+      WHERE i.id=${invoiceId}::uuid`.execute(db);
+    const row = context.rows[0];
+    if (!row || row.created_by !== userId || row.user_id !== userId || row.branch_id !== inv.branchId)
+      throw new InvoiceError("draft_owner_mismatch", "این فاکتور متعلق به صندوق شما نیست.", 403);
+    if (inv.status === "draft" && row.status !== "open")
+      throw new InvoiceError("draft_shift_closed", "شیفت این پیش‌نویس بسته است؛ به شیفت تازه منتقل نمی‌شود.", 409);
+  }
 }
 
 function idempotencyKey(req: { headers: Record<string, unknown> }): string | undefined {

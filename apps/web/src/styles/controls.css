@@ -54,7 +54,7 @@ button:focus-visible, summary:focus-visible { outline: 2px solid var(--accent); 
 .topbar { display: grid; grid-template-columns: auto minmax(0, 1fr) auto; gap: var(--s-4); }
 .brand { white-space: nowrap; }
 .zones { min-inline-size: 0; overflow-x: auto; scrollbar-width: thin; margin-inline-start: 0; }
-.zones button { white-space: nowrap; padding-inline: 12px; flex-shrink: 0; }
+.zones [role="tab"] { white-space: nowrap; padding-inline: 12px; flex-shrink: 0; }
 .tools { position: relative; gap: 2px; width: auto; overflow: visible; align-items: center; }
 .account-area { display: flex; }
 .account-pin { position: absolute; inset-block-start: 7px; inset-inline-end: 7px; inline-size: 7px; block-size: 7px; border-radius: 50%; background: var(--warn); }
@@ -100,7 +100,7 @@ button:focus-visible, summary:focus-visible { outline: 2px solid var(--accent); 
 .settings-nav { align-self: start; min-inline-size: 0; padding: 12px; background: var(--surface-solid); border: 1px solid var(--rule); border-radius: var(--r-md); }
 .settings-picker { gap: 8px; font-weight: 600; }
 .settings-tabs { flex-direction: column; align-items: stretch; gap: 4px; }
-.settings-tabs button { inline-size: 100%; text-align: start; white-space: normal; }
+.settings-tabs [role="tab"] { inline-size: 100%; text-align: start; white-space: normal; }
 .tab-group { padding: 12px 12px 4px; font-size: .85rem; font-weight: 700; color: var(--ink-2); }
 .settings-content { min-inline-size: 0; }
 .btn { min-inline-size: var(--touch); min-block-size: var(--touch); padding-inline: 14px; }
@@ -114,4 +114,4 @@ button:disabled { cursor: not-allowed; opacity: .55; }
 }
 
 .subtabs:not(.settings-tabs) { flex-wrap: nowrap; overflow-x: auto; }
-.subtabs button { min-block-size: 44px; flex-shrink: 0; }
+.subtabs [role="tab"] { min-block-size: 44px; flex-shrink: 0; }

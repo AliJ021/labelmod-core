@@ -9,6 +9,8 @@
 
 /** یک درخواست منتظر. */
 export interface QueuedRequest {
+  /** Older records are retained, but cannot be replayed without provenance. */
+  saleContext?: { actorId: string; invoiceId: string; branchId: string; shiftId: string };
   /** شناسه محلی صف — برای حذف پس از موفقیت. */
   id: string;
   method: string;

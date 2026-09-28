@@ -1,3 +1,4 @@
+import { useUrlState, useUrlFlag } from "../lib/use-url-state.ts";
 /**
  * کالا و قیمت — تعریف مدل، ساخت تنوع‌ها، و تغییر قیمت.
  *
@@ -75,9 +76,12 @@ function shortDate(iso: string): string {
 }
 
 export function Catalog() {
-  const [search, setSearch] = useState("");
-  const [showArchived, setShowArchived] = useState(false);
-  const [selected, setSelected] = useState<string | null>(null);
+  const [search, setSearch] = useUrlState("catalog.search", "", true);
+  const [showArchived, setShowArchived] = useUrlFlag("catalog.archived");
+  const [selectedId, setSelectedId] = useUrlState("catalog.product");
+  const selected = selectedId || null;
+  const setSelected = (id: string | null) => setSelectedId(id ?? "");
+  const [labels, setLabels] = useUrlState("catalog.labels");
   const [error, setError] = useState<string | null>(null);
   const [note, setNote] = useState<string | null>(null);
   const [creating, setCreating] = useState(false);
@@ -93,6 +97,7 @@ export function Catalog() {
     return (
       <ProductDetail
         productId={selected}
+        labelMode={labels === "1"}
         onBack={() => {
           setSelected(null);
           reload();
@@ -105,7 +110,8 @@ export function Catalog() {
     <div className="stack catalog-page">
       <Glass as="section" className="pad">
         <div className="row" style={{ justifyContent: "space-between", alignItems: "center" }}>
-          <h2 style={{ fontSize: "1rem", margin: 0 }}>کالا و قیمت</h2>
+          <h2 style={{ fontSize: "1rem", margin: 0 }}>{labels === "1" ? "چاپ لیبل بارکد" : "کالا و قیمت"}</h2>
+          <button className="btn" type="button" onClick={() => setLabels(labels === "1" ? "" : "1")}>{labels === "1" ? "فهرست کالا و قیمت" : "چاپ لیبل بارکد"}</button>
           <button type="button" className="btn" onClick={() => setCreating((v) => !v)}>
             {creating ? "انصراف" : "کالای تازه"}
           </button>
@@ -195,7 +201,7 @@ export function Catalog() {
                   </td>
                   <td>
                     <button type="button" className="btn" onClick={() => setSelected(p.id)}>
-                      باز کردن
+                      {labels === "1" ? "انتخاب تنوع و چاپ لیبل" : "باز کردن"}
                     </button>
                   </td>
                 </tr>
@@ -357,14 +363,19 @@ function ProductForm({
 // ── جزئیات کالا ──────────────────────────────────────────────────────
 
 function ProductDetail({
+  labelMode,
   productId,
   onBack,
 }: {
   productId: string;
+  labelMode: boolean;
   onBack: () => void;
 }) {
   const [statusBusy, setStatusBusy] = useState(false);
   const [product, setProduct] = useState<Product | null>(null);
+  useEffect(() => {
+    if (labelMode && product) document.getElementById("product-labels")?.scrollIntoView({block:"start",behavior:"instant"});
+  }, [labelMode, product]);
   const [variations, setVariations] = useState<Variation[]>([]);
   const [error, setError] = useState<string | null>(null);
   const [note, setNote] = useState<string | null>(null);
@@ -518,7 +529,7 @@ function ProductDetail({
         )}
       </Solid>
 
-      <ProductStockLabels key={productId} productId={productId} variations={variations} selected={[...picked]} />
+      <div id="product-labels"><ProductStockLabels key={productId} productId={productId} variations={variations} selected={[...picked]} /></div>
       {historyOf !== null ? <PriceHistory variationId={historyOf} /> : null}
 
       <PricePanel

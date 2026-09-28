@@ -1,3 +1,5 @@
+import { useUrlState, navigate } from "../lib/use-url-state.ts";
+import { readPendingScan, writePendingScan, clearPendingScan, type PendingScan } from "../lib/pending-scan.ts";
 /**
  * صندوق فروشگاهی — ناحیه مات.
  *
@@ -93,7 +95,7 @@ export interface RowActions {
 }
 
 function sameLine(a: Readonly<CartLineProps>, b: Readonly<CartLineProps>): boolean {
-  if (a.panel !== b.panel || a.on !== b.on) return false;
+  if (a.panel !== b.panel || a.on !== b.on || a.error !== b.error) return false;
   const x = a.line;
   const y = b.line;
   return (
@@ -110,13 +112,14 @@ function sameLine(a: Readonly<CartLineProps>, b: Readonly<CartLineProps>): boole
 
 interface CartLineProps {
   line: InvoiceLine;
+  error?: string | undefined;
   /** پنل بازِ همین سطر — یا هیچ. */
   panel: "price" | "discount" | null;
   /** دیسپچر **پایدار**؛ اگر هر Render تازه ساخته شود، memo بی‌اثر است. */
   on: RowActions;
 }
 
-const CartLine = memo(function CartLine({ line: l, panel, on }: CartLineProps) {
+const CartLine = memo(function CartLine({ line: l, panel, on, error }: CartLineProps) {
   const locked = adjusted(l);
   return (
     <li>
@@ -206,6 +209,7 @@ const CartLine = memo(function CartLine({ line: l, panel, on }: CartLineProps) {
       >
         ✕
       </button>
+      {error && <p className="line-error" role="alert">{error}</p>}
       {panel === "price" ? (
         <PricePanel
           unitPrice={parseRial(l.unitPrice)}
@@ -236,16 +240,32 @@ function defaultWarehouse(b: Branch) {
   return b.warehouses.find((w) => w.kind === "store") ?? b.warehouses[0];
 }
 
-export function Pos() {
+export function Pos({ actorId }: { actorId: string }) {
   const [branches, setBranches] = useState<Branch[]>([]);
   const [methods, setMethods] = useState<PaymentMethod[]>([]);
-  const [branchId, setBranchId] = useState("");
-  const [warehouseId, setWarehouseId] = useState("");
+  const [branchId, setBranchId] = useUrlState("pos.branch");
+  const [warehouseId, setWarehouseId] = useUrlState("pos.warehouse");
   const [shift, setShift] = useState<Shift | null>(null);
   const [invoice, setInvoice] = useState<Invoice | null>(null);
   const [received, setReceived] = useState(0n);
+  const [lastPrintedInvoice, setLastPrintedInvoice] = useState<string | null>(null);
   const [ready, setReady] = useState(false);
-  const [busy, setBusy] = useState(false);
+  const [working, setBusy] = useState(false);
+  const [pendingScan, setPendingScan] = useState<PendingScan | null>(null);
+  const [scanStorageError, setScanStorageError] = useState<string | null>(null);
+  const scanRunning = useRef(false);
+  const mutationRunning = useRef(false);
+  const pendingScanRef = useRef<PendingScan | null>(null);
+  const busy = working || pendingScan !== null || scanStorageError !== null;
+  useEffect(() => {
+    const sync = () => {
+      try { const p = readPendingScan(actorId); pendingScanRef.current = p; setPendingScan(p); }
+      catch (e) { setScanStorageError(e instanceof Error ? e.message : "ذخیرهٔ اسکن در دسترس نیست."); }
+    };
+    sync(); window.addEventListener("storage", sync);
+    return () => window.removeEventListener("storage", sync);
+  }, [actorId]);
+  const [lineErrors, setLineErrors] = useState<Record<string,string>>({});
   const [error, setError] = useState<string | null>(null);
   const [note, setNote] = useState<string | null>(null);
   const [closing, setClosing] = useState(false);
@@ -285,7 +305,7 @@ export function Pos() {
         // یک شعبه یعنی انتخابی در کار نیست. صندوق‌دار نباید هر روز
         // یک فهرست یک‌گزینه‌ای را تأیید کند.
         const only = b.branches.length === 1 ? b.branches[0] : undefined;
-        if (only) {
+        if (only && !new URLSearchParams(window.location.search).has("pos.branch")) {
           setBranchId(only.id);
           setWarehouseId(defaultWarehouse(only)?.id ?? "");
         }
@@ -295,7 +315,7 @@ export function Pos() {
         setReady(true);
       }
     })();
-  }, []);
+  }, [setBranchId, setWarehouseId]);
 
   // شیفت جاری همین کاربر در همین شعبه.
   useEffect(() => {
@@ -326,15 +346,15 @@ export function Pos() {
     void (async () => {
       try {
         const inv = await pos.invoice(saved.invoiceId);
-        if (inv.status === "draft") {
+        if (inv.status === "draft" && inv.createdBy === actorId && inv.shiftId === shift.id && inv.branchId === shift.branchId && shift.userId === actorId && shift.status === "open") {
           setInvoice(inv);
           setReceived(parseRial(inv.receivedAmount));
           setNote("سبد نیمه‌تمام قبلی برگردانده شد.");
         } else {
           forgetCart();
         }
-      } catch {
-        forgetCart();
+      } catch (e) {
+        setError(message(e));
       }
     })();
     // فقط هنگام تغییر شیفت — نه با هر تغییر سبد.
@@ -363,81 +383,48 @@ export function Pos() {
     return created;
   }, [openDraft, shift, branchId, warehouseId]);
 
-  const addByBarcode = useCallback(
-    async (barcode: string, variationId?: string) => {
-      setError(null);
-      setBusy(true);
-      // بیرون از `try` تا مسیر خطا هم بتواند سبد را تازه کند.
-      let invoiceId: string | null = null;
-      try {
-        /*
-         * ── چرا `await` وقتی سبد باز است زده نمی‌شود ────────────────
-         *
-         * اندازه‌گیری شد، نه سلیقه: با سبد ۲۰۰ قلمی، زمان **از اسکن تا
-         * بیرون‌رفتن درخواست** ۴۰ میلی‌ثانیه بود — و با سبد ۵۰ قلمی
-         * ۱۸. یعنی این تکه با اندازهٔ سبد بزرگ می‌شد، در حالی که بقیهٔ
-         * عمل‌های صندوق (تغییر تعداد، حذف، تخفیف) روی ۳ میلی‌ثانیه
-         * ثابت بودند.
-         *
-         * علتش `await` بود: یک `await` — حتی وقتی `ensureInvoice`
-         * بی‌درنگ برمی‌گردد — یک Microtask می‌سازد، و React همان‌جا
-         * Render معلقِ `busy = true` را Flush می‌کند. آن Render
-         * `fieldset[disabled]` را روشن می‌کند و مرورگر باید وضعیت
-         * **همهٔ** دکمه‌های فرزند را دوباره حساب کند؛ سبد ۲۰۰ قلمی
-         * یعنی حدود هزار دکمه. پس کاربر پیش از آنکه درخواست حتی
-         * فرستاده شود منتظر می‌ماند.
-         *
-         * سه عمل دیگر این مشکل را نداشتند چون درخواستشان **همگام**
-         * فرستاده می‌شود و آن Render زیر زمان شبکه پنهان می‌ماند.
-         *
-         * ⚠️ مسیر «سبد باز نیست» همچنان `await` دارد و باید داشته
-         *    باشد — آنجا واقعاً یک درخواست ساخت فاکتور در کار است.
-         */
-        const inv = openDraft ?? (await ensureInvoice());
-        invoiceId = inv.id;
-        // هر کشیدن اسکنر یک عمل تازه است: بدون شمارنده، اسکن دوم
-        // Replay اسکن اول می‌شد و تعداد روی یک می‌ماند.
-        const out = await keys.current.run(scans.current.next(inv.id), (key) =>
-          pos.scan(inv.id, { ...(variationId ? { variationId } : { barcode }), qty: "1" }, { idempotencyKey: key }),
-        );
-        setInvoice(out.invoice);
-      } catch (err) {
-        setError(message(err));
-
-        // ── چرا اینجا سبد از سرور خوانده می‌شود ──────────────────────
-        //
-        // اسکن **تنها عمل افزایشی** صندوق است؛ بقیه مطلق‌اند
-        // (`setLineQty`، `setLineDiscount`، `removeLine`) و پرداخت
-        // کلیدش را از `received` می‌گیرد که در شکست عوض نمی‌شود.
-        //
-        // پس فقط اینجا این حالت ممکن است: سرور اسکن را اعمال می‌کند
-        // ولی **پاسخ در راه گم می‌شود** — دقیقاً همان چیزی که روی
-        // اینترنت همراهِ ضعیفِ وسط قطعی برق می‌افتد. آن‌وقت صفحه خطا
-        // نشان می‌داد و سبد هنوز قلم را نداشت، صندوق‌دار دوباره
-        // می‌کشید، و چون `ScanCounter` نام عمل تازه می‌دهد کلید
-        // Idempotency هم تازه بود — یعنی سرور دومی را هم اعمال می‌کرد
-        // و **مشتری دو تا حساب می‌شد**.
-        //
-        // کلید نمی‌تواند این را حل کند: کلیدِ ثابت، اسکن دوم عمدی را
-        // Replay می‌کرد. راه‌حل درست این است که صندوق‌دار پیش از
-        // تصمیم، **وضعیت واقعی سرور** را ببیند.
-        //
-        // خطای اصلی نگه داشته می‌شود: اگر شبکه هنوز قطع باشد این
-        // خواندن هم شکست می‌خورد، و پیام دوم چیزی به صندوق‌دار
-        // نمی‌گوید جز اینکه همان قطعی هنوز هست.
-        if (invoiceId !== null) {
-          try {
-            setInvoice(await pos.invoice(invoiceId));
-          } catch {
-            /* سبد همان می‌ماند که بود */
-          }
-        }
-      } finally {
-        setBusy(false);
+  const addByBarcode = useCallback(async (barcode: string, variationId?: string, retry = false) => {
+    if (scanRunning.current || mutationRunning.current || scanStorageError || (pendingScanRef.current && !retry)) {
+      setError("عملیات قبلی هنوز تأیید نشده است؛ پس از بررسی دوباره اسکن کنید."); return;
+    }
+    scanRunning.current = true;
+    setBusy(true); setError(null);
+    try {
+      if (!navigator.locks) throw new Error("برای ثبت ایمن اسکن، مرورگر به‌روز و اتصال امن لازم است.");
+      await navigator.locks.request(`labelmod-pos:${actorId}`, {ifAvailable:true}, async lock => {
+      if (!lock) throw new Error("عملیات صندوق در تب دیگری جریان دارد؛ پس از پایان آن دوباره تلاش کنید.");
+      let intent = readPendingScan(actorId);
+      pendingScanRef.current = intent; setPendingScan(intent);
+      if (intent && !retry) throw new Error("اسکن معلق در تب دیگری ثبت شده است؛ ابتدا همان اسکن را بررسی کنید.");
+      if (!intent && retry) throw new Error("اسکن معلق قبلاً تعیین تکلیف شده است؛ فاکتور را تازه‌سازی کنید.");
+      if (!intent) {
+        const inv = openDraft ?? await ensureInvoice();
+        if (!shift || inv.shiftId !== shift.id) throw new Error("شیفت فاکتور معتبر نیست.");
+        intent = { actorId, invoiceId: inv.id, shiftId: shift.id, key: crypto.randomUUID(),
+          body: { ...(variationId ? { variationId } : { barcode }), qty: "1" } };
+        // Persistence must succeed before sending an increment.
+        writePendingScan(intent);
+        pendingScanRef.current = intent; setPendingScan(intent);
       }
-    },
-    [openDraft, ensureInvoice],
-  );
+      if (intent.actorId !== actorId || intent.shiftId !== shift?.id)
+        throw new Error("اسکن معلق متعلق به این کاربر و شیفت نیست؛ بررسی مدیر لازم است.");
+      try {
+      const out = await pos.scan(intent.invoiceId, intent.body, { idempotencyKey: intent.key });
+      if (out.invoice.id !== intent.invoiceId) throw new Error("پاسخ اسکن تأیید نشد.");
+      setInvoice(out.invoice);
+      clearPendingScan(actorId, intent.key); pendingScanRef.current = null; setPendingScan(null);
+      } catch (err) {
+        // فقط رد قطعی همین عملیات می‌تواند رکورد خودش را پاک کند؛ قفل هنوز برقرار است.
+        if (err instanceof ApiError && [400, 409, 422].includes(err.status) && err.code !== "idempotency_in_flight") {
+          clearPendingScan(actorId, intent.key); pendingScanRef.current = null; setPendingScan(null);
+        }
+        throw err;
+      }
+      });
+    } catch (err) {
+      setError(message(err));
+    } finally { scanRunning.current = false; setBusy(false); }
+  }, [actorId, openDraft, ensureInvoice, shift, scanStorageError]);
 
   // ── بارکدخوان ─────────────────────────────────────────────────────
   //
@@ -448,6 +435,7 @@ export function Pos() {
   useEffect(() => {
     if (!shift) return;
     function onKey(e: KeyboardEvent) {
+      if (e.isComposing || e.ctrlKey || e.altKey || e.metaKey) return;
       const step = buffer.current.push(e.key, e.timeStamp);
       if (step.kind === "consumed") {
         // اسکن در جریان است — نگذار کاراکترها در فیلدی که فوکوس دارد بریزند.
@@ -532,16 +520,24 @@ export function Pos() {
 
   async function guarded(fn: () => Promise<void>) {
     if (busy) return false;
+    if (pendingScanRef.current || scanStorageError || scanRunning.current || mutationRunning.current) return false;
+    mutationRunning.current = true;
     setBusy(true);
     setError(null);
     try {
-      await fn();
+      if (!navigator.locks) throw new Error("برای ثبت ایمن، مرورگر به‌روز و اتصال امن لازم است.");
+      await navigator.locks.request(`labelmod-pos:${actorId}`, {ifAvailable:true}, async lock => {
+        if (!lock) throw new Error("عملیات صندوق در تب دیگری جریان دارد.");
+        const intent = readPendingScan(actorId);
+        if (intent) { pendingScanRef.current = intent; setPendingScan(intent); throw new Error("ابتدا اسکن معلق را بررسی کنید."); }
+        await fn();
+      });
       return true;
     } catch (err) {
       setError(message(err));
       return false;
     } finally {
-      setBusy(false);
+      mutationRunning.current = false; setBusy(false);
     }
   }
 
@@ -576,11 +572,11 @@ export function Pos() {
       if (!invoice) return;
       const next = steppedQty(current, delta);
       // رسیدن به صفر یعنی حذف — یک عمل دیگر با ردّ حسابرسی متفاوت.
-      setInvoice(
-        next === null
-          ? await pos.removeLine(invoice.id, lineId)
-          : await pos.setLineQty(invoice.id, lineId, next),
-      );
+      try {
+        const updated = next === null ? await pos.removeLine(invoice.id, lineId) : await pos.setLineQty(invoice.id, lineId, next);
+        setInvoice(updated); setLineErrors(errors => {const clean={...errors}; delete clean[lineId]; return clean;});
+      } catch (e) { setLineErrors(errors => ({...errors, [lineId]:message(e)})); throw e; }
+
     });
 
   const removeLine = (lineId: string) =>
@@ -738,6 +734,7 @@ export function Pos() {
       try {
         const done = await pos.finalize(invoice.id, { idempotencyKey: key });
         setNote(`فاکتور ${done.number ?? ""} ثبت شد.`);
+        setLastPrintedInvoice(invoice.id);
       } catch (err) {
         // خطای قاعده‌ای (موجودی، دوره بسته، پرداخت ناکافی) صف نمی‌شود:
         // سرور جواب داده و جوابش «نه» است.
@@ -751,6 +748,7 @@ export function Pos() {
          */
         await saleQueue().enqueue({
           id: action,
+          saleContext: { actorId, invoiceId: invoice.id, branchId: invoice.branchId, shiftId: invoice.shiftId ?? "" },
           method: "POST",
           path: `/invoices/${invoice.id}/finalize`,
           body: {},
@@ -852,11 +850,20 @@ export function Pos() {
   const count = lines.reduce((n, l) => n + Number(l.qty), 0);
 
   return (
-    <div className="pos">
+    <div className={`pos${lines.length ? " pos--has-items" : ""}`}>
+      {lines.length > 0 && <aside className="pos-mobile-summary solid" aria-label="خلاصهٔ پرداخت">
+        <span>{count} قلم · مانده <strong className="num">{toman(remainingRial(payable, received))}</strong> تومان</span>
+        <button className="btn btn--primary" type="button" onClick={() => document.querySelector<HTMLElement>(".pay")?.scrollIntoView({block:"start",behavior:"instant"})}>رفتن به پرداخت</button>
+      </aside>}
       {/* تنها سطح شیشه‌ای این صفحه: نوار بالا، که لایه کنترلی است. */}
       <Glass as="header" radius="md" className="pos-bar" refract={false}>
-        <ManualScan onSubmit={(code) => void addByBarcode(code)} disabled={busy} />
         <span className="pill">{count} قلم</span>
+        <a className="tool" href="/?page=invoices&invoices.status=draft" onClick={e => { if (e.metaKey || e.ctrlKey || e.shiftKey) return; e.preventDefault(); navigate(e.currentTarget.href); }}>پیش‌نویس‌ها</a>
+        <button type="button" className="tool" disabled={busy || !invoice} onClick={() => {
+          if (!invoice || busy) return;
+          forgetCart(); setInvoice(null); setReceived(0n); scans.current.reset();
+          setNote("پیش‌نویس در سرور ذخیره است و از بخش فاکتورها قابل ادامه است.");
+        }}>ذخیره و فروش جدید</button>
         {/* دوربین فقط وقتی باز می‌شود که کاربر بخواهد — روی دسکتاپ
             با بارکدخوان سیمی، هیچ‌وقت. */}
         <button type="button" className="tool" onClick={() => setCamera((v) => !v)}>
@@ -866,6 +873,13 @@ export function Pos() {
           بستن شیفت
         </button>
       </Glass>
+
+      {lastPrintedInvoice && <a className="btn" href={`/api/invoices/${lastPrintedInvoice}/print`} target="_blank" rel="noopener">چاپ فاکتور ثبت‌شده</a>}
+      {scanStorageError && <p className="solid pos-alert" role="alert">{scanStorageError}</p>}
+      {pendingScan && <div className="solid pad" role="status">
+        <p>نتیجهٔ اسکن هنوز قطعی نیست. برای جلوگیری از ثبت دوباره، ابتدا همین اسکن را تعیین تکلیف کنید.</p>
+        <button type="button" className="btn" disabled={working} onClick={() => void addByBarcode("", undefined, true)}>بررسی و تلاش دوبارهٔ همان اسکن</button>
+      </div>}
 
       <PosProductPicker key={warehouseId} warehouseId={warehouseId} busy={busy} onPick={(id) => addByBarcode("", id)} />
 
@@ -961,6 +975,7 @@ export function Pos() {
                 <CartLine
                   key={l.id}
                   line={l}
+                  error={lineErrors[l.id]}
                   panel={pricing === l.id ? "price" : discounting === l.id ? "discount" : null}
                   on={rowActions}
                 />
@@ -1371,50 +1386,7 @@ function OpenShiftPanel({
  * اسکنر از راه شنونده سراسری کار می‌کند و این فیلد لازمش ندارد؛ ولی
  * برچسب خط‌خورده و موبایلِ بدون دوربین باید راهی داشته باشند.
  */
-function ManualScan({
-  onSubmit,
-  disabled,
-}: {
-  onSubmit: (code: string) => void;
-  disabled: boolean;
-}) {
-  const [code, setCode] = useState("");
-  return (
-    <form
-      className="scan"
-      onSubmit={(e) => {
-        e.preventDefault();
-        const v = code.trim();
-        if (v !== "") {
-          onSubmit(v);
-          setCode("");
-        }
-      }}
-    >
-      <label>
-        <span className="sr-only">بارکد کالا</span>
-        <input
-          value={code}
-          onChange={(e) => setCode(e.target.value)}
-          placeholder="بارکد را اسکن کنید یا کد کالا را بزنید"
-          inputMode="numeric"
-          autoComplete="off"
-          disabled={disabled}
-        />
-      </label>
-    </form>
-  );
-}
 
-/**
- * بستن شیفت — سند فروش، بهای تمام‌شده و مغایرت اینجا زده می‌شوند.
- *
- * مجوزش `shift.close` است و **جدا از فروش**: صندوق‌داری که می‌تواند
- * بفروشد لزوماً نباید بتواند کشو را ببندد. اگر نداشته باشد، سرور ۴۰۳
- * می‌دهد و همان پیام فارسی بالای صفحه می‌نشیند — دکمه را پنهان
- * نمی‌کنیم چون `identity.can()` تنها مرجع است و کپی‌کردن قاعده‌اش در
- * UI یعنی دو تعریف.
- */
 function CloseShiftPanel({
   busy,
   openCart,
@@ -1715,6 +1687,7 @@ function PayPanel({
               placeholder={toman(remaining)}
             />
           </label>
+          {chosen.code === "snappay" && <p className="muted">ثبت دستی پرداخت تأییدشدهٔ اسنپ‌پی؛ شماره پیگیری واقعی را وارد کنید.</p>}
           {chosen.requiresRef ? (
             <label className="auth-field">
               <span>شماره پیگیری</span>

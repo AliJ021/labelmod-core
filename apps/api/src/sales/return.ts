@@ -54,6 +54,8 @@ export interface SaleReturn {
   taxAmount: bigint;
   refundAmount: bigint;
   refundMethod: string | null;
+  refundReference: string | null;
+  refundPaymentId: string | null;
   receivableApplied: bigint;
   creditApplied: bigint;
   cogsAmount: bigint;
@@ -138,6 +140,8 @@ export class ReturnService {
       taxAmount: parseMoney(r.tax_amount),
       refundAmount: parseMoney(r.refund_amount),
       refundMethod: r.refund_method,
+      refundReference: r.refund_reference,
+      refundPaymentId: r.refund_payment_id,
       receivableApplied: parseMoney(r.receivable_applied),
       creditApplied: parseMoney(r.credit_applied),
       cogsAmount: parseMoney(r.cogs_amount),
@@ -233,7 +237,7 @@ export class ReturnService {
       .where("code", "=", code)
       .executeTakeFirst();
 
-    if (!row || !row.is_active) {
+    if (!row || (!row.is_active && code !== "snappay")) {
       throw new ReturnError("bad_refund_method", `روش بازپرداخت «${code}» فعال نیست`, 422);
     }
     // نسیه و امتیاز، بازپرداخت نیستند — تسویه‌اند. اگر به‌عنوان روش
@@ -288,6 +292,8 @@ export class ReturnService {
     reasonNote?: string | undefined;
     refundAmount: bigint;
     refundMethod?: string | undefined;
+    refundReference?: string | undefined;
+    refundPaymentId?: string | undefined;
     shiftId?: string | undefined;
     lines: ReturnLineInput[];
     actorId: string;
@@ -299,6 +305,9 @@ export class ReturnService {
       throw new ReturnError("bad_refund", "مبلغ بازپرداخت منفی نمی‌شود", 400);
     }
     await this.assertReasonCode(input.reasonCode);
+    if (input.refundMethod === "snappay" && input.refundAmount > 0n && (!input.refundReference?.trim() || !input.refundPaymentId)) {
+      throw new ReturnError("refund_reference_required", "پرداخت اصلی اسنپ‌پی و شماره پیگیری برگشت تأییدشده لازم است.", 422);
+    }
 
     const inv = await this.#db
       .selectFrom("sales.invoice")
@@ -368,6 +377,8 @@ export class ReturnService {
           created_by: input.actorId,
           approved_by: null,
           refund_method: input.refundMethod ?? null,
+          refund_reference: input.refundReference?.trim() ?? null,
+          refund_payment_id: input.refundPaymentId ?? null,
           receivable_applied: "0",
           credit_applied: "0",
           number: null,
@@ -458,6 +469,8 @@ export function returnToJson(r: SaleReturn, showCost: boolean) {
     taxAmount: serializeMoney(r.taxAmount),
     refundAmount: serializeMoney(r.refundAmount),
     refundMethod: r.refundMethod,
+    refundReference: r.refundReference,
+    refundPaymentId: r.refundPaymentId,
     receivableApplied: serializeMoney(r.receivableApplied),
     creditApplied: serializeMoney(r.creditApplied),
     cogsAmount: showCost ? serializeMoney(r.cogsAmount) : null,

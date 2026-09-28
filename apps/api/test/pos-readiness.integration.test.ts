@@ -60,7 +60,7 @@ describe("آمادگی API صندوق", { skip }, () => {
     const r = await loginWithMfa(app, {
       method: "POST",
       url: "/auth/login",
-      remoteAddress: username === warehouse ? "127.0.0.11"
+      remoteAddress: username.startsWith("draft_manager_") ? "127.0.0.14" : username === warehouse ? "127.0.0.11"
         : username === marketing ? "127.0.0.12"
           : username === returnReader ? "127.0.0.13" : "127.0.0.1",
       payload: { username, password: PASSWORD, deviceFingerprint: `fp-${suffix}-${username}` },
@@ -202,6 +202,109 @@ describe("آمادگی API صندوق", { skip }, () => {
     await app?.close();
     await handle?.close();
     disposable?.drop();
+  });
+
+  test("manual SnappPay needs validated configuration and references, and refunds retain the original payment account", async () => {
+    const adminName = `ux_admin_${suffix}`;
+    const admin = await handle.db.insertInto("identity.app_user").values({username:adminName,full_name:"مدیر آزمون رابط",password_hash:await hashSecret(PASSWORD),is_active:true,mobile:null,pin_hash:null,totp_secret:null}).returning("id").executeTakeFirstOrThrow();
+    await handle.db.insertInto("identity.user_role").values({user_id:admin.id,role_code:"admin",branch_id:null}).execute();
+    const a=await loginAs(adminName);
+    const s=await loginAs(cashier);
+    const product=await sql<{id:string}>`INSERT INTO catalog.product(code,name_internal) VALUES (${"SNAPP-"+suffix},'کالای آزمون اسنپ‌پی') RETURNING id`.execute(handle.db);
+    const variant=await sql<{id:string}>`INSERT INTO catalog.variation(product_id,sku) VALUES (${product.rows[0]!.id}::uuid,${"SNAPP-"+suffix}) RETURNING id`.execute(handle.db);
+    const variantId=variant.rows[0]!.id;
+    await sql`INSERT INTO catalog.price(variation_id,price_list,amount) VALUES (${variantId}::uuid,'default',1000001)`.execute(handle.db);
+    await sql`SELECT inventory.apply_movement(${variantId}::uuid,${STORE_WH}::uuid,2,'purchase_receipt','test_receipt',${variantId}::uuid,${cashierId}::uuid,400000)`.execute(handle.db);
+    const created=await app.inject({method:"POST",url:"/invoices",...s,payload:{branchId:BRANCH,warehouseId:STORE_WH,channel:"pos"}});
+    assert.equal(created.statusCode,201,created.body);const invoiceId=created.json().id as string;
+    const added=await app.inject({method:"POST",url:`/invoices/${invoiceId}/scan`,...s,payload:{variationId:variantId,qty:"2"}});
+    assert.equal(added.statusCode,200,added.body);const body=added.json().invoice as {lines:Array<{id:string}>};
+    const config=await app.inject({method:"GET",url:"/snappay/config",...a});
+    assert.equal(config.statusCode,200,config.body); assert.equal(config.json().enabled,false);
+    assert.equal((await app.inject({method:"PUT",url:"/snappay/config",...s,payload:{accountId:""}})).statusCode,403);
+    const accounts=await sql<{id:string}>`SELECT id FROM treasury.account WHERE kind='gateway' AND is_active ORDER BY id`.execute(handle.db);
+    const accountId=accounts.rows[0]!.id;
+    const invalid=await app.inject({method:"PUT",url:"/snappay/config",...a,payload:{accountId:BRANCH}});
+    assert.equal(invalid.statusCode,422,invalid.body);
+    const cfg=await app.inject({method:"PUT",url:"/snappay/config",...a,payload:{accountId}});assert.equal(cfg.statusCode,200,cfg.body);
+    try {
+      const noRef=await app.inject({method:"POST",url:`/invoices/${invoiceId}/payments`,...s,payload:{methodCode:"snappay",amount:"1000001"}});
+      assert.equal(noRef.statusCode,422,noRef.body);
+      const pay=await app.inject({method:"POST",url:`/invoices/${invoiceId}/payments`,...s,payload:{methodCode:"snappay",amount:"1000001",refNo:"SNAPP-CONFIRMED-1"}});
+      assert.equal(pay.statusCode,201,pay.body);const paymentId=pay.json().paymentId as string;
+      const cash=await app.inject({method:"POST",url:`/invoices/${invoiceId}/payments`,...s,payload:{methodCode:"cash",amount:"1000001"}});assert.equal(cash.statusCode,201,cash.body);
+      const final=await app.inject({method:"POST",url:`/invoices/${invoiceId}/finalize`,...s,payload:{}});assert.equal(final.statusCode,200,final.body);
+      const sources=await app.inject({method:"GET",url:`/invoices/${invoiceId}/refund-sources`,...a});
+      assert.equal(sources.statusCode,200,sources.body);assert.deepEqual(sources.json().payments,[{id:paymentId,reference:"SNAPP-CONFIRMED-1",remaining:"1000001"}]);
+      // Disabling new receipts must not erase the ability to reverse historical confirmed receipts.
+      assert.equal((await app.inject({method:"PUT",url:"/snappay/config",...a,payload:{accountId:""}})).statusCode,200);
+      const refund={invoiceId,reasonCode:"quality",refundAmount:"1000001",refundMethod:"snappay",lines:[{invoiceLineId:body.lines[0]!.id,qty:"1"}]};
+      const missing=await app.inject({method:"POST",url:"/returns",...a,payload:refund});assert.equal(missing.statusCode,422,missing.body);
+      const draft=await app.inject({method:"POST",url:"/returns",...a,payload:{...refund,refundReference:"SNAPP-REFUND-1",refundPaymentId:paymentId}});assert.equal(draft.statusCode,201,draft.body);
+      const returned=await app.inject({method:"POST",url:`/returns/${draft.json().id}/post`,...a,payload:{}});assert.equal(returned.statusCode,200,returned.body);
+      const recorded=await sql<{account_id:string;ref_no:string;amount:string}>`SELECT account_id,ref_no,amount::text FROM treasury.payment WHERE return_id=${draft.json().id}::uuid`.execute(handle.db);
+      assert.deepEqual(recorded.rows,[{account_id:accountId,ref_no:"SNAPP-REFUND-1",amount:"1000001"}]);
+      const over=await app.inject({method:"POST",url:"/returns",...a,payload:{...refund,refundReference:"SNAPP-REFUND-2",refundPaymentId:paymentId}});assert.equal(over.statusCode,201,over.body);
+      const rejected=await app.inject({method:"POST",url:`/returns/${over.json().id}/post`,...a,payload:{}});assert.notEqual(rejected.statusCode,200,rejected.body);
+      assert.match(rejected.body,/اسنپ/);
+      const date=await sql<{today:string}>`SELECT platform.business_date(now())::text today`.execute(handle.db);
+      const today=date.rows[0]!.today;
+      const report=await app.inject({method:"GET",url:`/reports/staff-sales?from=${today}&to=${today}&branchId=${BRANCH}`,...a});
+      assert.equal(report.statusCode,200,report.body);
+      const row=report.json().rows.find((r:{userId:string})=>r.userId===cashierId);
+      assert.equal(row.invoiceCount,"1");assert.equal(row.grossAmount,"2000002");assert.equal(row.returnedAmount,"1000001");assert.equal(row.netSalesAmount,"1000001");
+      const snapp=await app.inject({method:"GET",url:`/reports/snappay?from=${today}&to=${today}&branchId=${BRANCH}`,...a});
+      assert.equal(snapp.statusCode,200,snapp.body);assert.equal(snapp.json().received,"1000001");assert.equal(snapp.json().refunded,"1000001");assert.equal(snapp.json().net,"0");assert.equal(snapp.json().total,2);
+      const receipt=await sql<{n:string}>`SELECT count(*)::text n FROM treasury.payment WHERE invoice_id=${invoiceId}::uuid AND method_code='snappay' AND status IN ('settled','reconciled')`.execute(handle.db);
+      assert.equal(receipt.rows[0]!.n,"0","manual recording must not invent settlement");
+      const orphan=await sql<{n:string}>`SELECT count(*)::text n FROM (SELECT entry_id FROM ledger.journal_line GROUP BY entry_id HAVING sum(debit)<>sum(credit)) unbalanced`.execute(handle.db);
+      assert.equal(orphan.rows[0]!.n,"0");
+    } finally { await app.inject({method:"PUT",url:"/snappay/config",...a,payload:{accountId:""}}); }
+  });
+
+  test("stock is checked across draft lines before payment without reserving goods", async () => {
+    const s = await loginAs(cashier);
+    const p = await sql<{id:string}>`INSERT INTO catalog.product(code,name_internal) VALUES (${"ONE-"+suffix},'موجودی یک عدد') RETURNING id`.execute(handle.db);
+    const v = await sql<{id:string}>`INSERT INTO catalog.variation(product_id,sku,barcode) VALUES (${p.rows[0]!.id}::uuid,${"ONE-"+suffix},${"ONE-"+suffix}) RETURNING id`.execute(handle.db);
+    const variation = v.rows[0]!.id;
+    await sql`INSERT INTO catalog.price(variation_id,price_list,amount) VALUES (${variation}::uuid,'default',100000)`.execute(handle.db);
+    await sql`SELECT inventory.apply_movement(${variation}::uuid,${STORE_WH}::uuid,1,'purchase_receipt','test_receipt',${variation}::uuid,${cashierId}::uuid,40000)`.execute(handle.db);
+    const create = async () => {
+      const r=await app.inject({method:"POST",url:"/invoices",...s,payload:{branchId:BRANCH,warehouseId:STORE_WH,channel:"pos"}});
+      assert.equal(r.statusCode,201,r.body);return r.json().id as string;
+    };
+    const first=await create();
+    const scan=await app.inject({method:"POST",url:`/invoices/${first}/scan`,...s,payload:{variationId:variation}});
+    assert.equal(scan.statusCode,200,scan.body);
+    const line=scan.json().invoice.lines[0].id;
+    for (const [method,url,payload] of [
+      ["POST",`/invoices/${first}/scan`,{variationId:variation}],
+      ["POST",`/invoices/${first}/lines`,{variationId:variation,qty:"1"}],
+      ["PATCH",`/invoices/${first}/lines/${line}`,{qty:"2"}],
+    ] as const) {
+      const r=await app.inject({method,url,...s,payload});assert.equal(r.statusCode,409,r.body);assert.equal(r.json().error.code,"insufficient_stock");
+    }
+    const intact=await app.inject({method:"GET",url:`/invoices/${first}`,...s});
+    assert.equal(intact.json().lines[0].qty,"1.000");assert.equal(intact.json().lines.length,1);
+    const other=await create();
+    assert.equal((await app.inject({method:"POST",url:`/invoices/${other}/scan`,...s,payload:{variationId:variation}})).statusCode,200,"draft does not reserve stock");
+    assert.equal((await app.inject({method:"POST",url:`/invoices/${other}/payments`,...s,payload:{methodCode:"cash",amount:"100000"}})).statusCode,201);
+    const final=await app.inject({method:"POST",url:`/invoices/${other}/finalize`,...s,payload:{}});assert.equal(final.statusCode,200,final.body);
+    const payment=await app.inject({method:"POST",url:`/invoices/${first}/payments`,...s,payload:{methodCode:"cash",amount:"100000"}});
+    assert.equal(payment.statusCode,409,payment.body);assert.equal(payment.json().error.code,"insufficient_stock");
+    const counted=await sql<{n:string}>`SELECT count(*)::text n FROM treasury.payment WHERE invoice_id=${first}::uuid`.execute(handle.db);
+    assert.equal(counted.rows[0]!.n,"0");
+    const provenance=await sql<{finalized_by:string}>`SELECT finalized_by FROM sales.invoice WHERE id=${other}::uuid`.execute(handle.db);
+    assert.equal(provenance.rows[0]!.finalized_by,cashierId);
+    const print=await app.inject({method:"GET",url:`/invoices/${other}/print`,...s});assert.equal(print.statusCode,200,print.body);assert.match(print.body,/موجودی یک عدد/);
+    assert.equal((await app.inject({method:"GET",url:`/invoices/${first}/print`,...s})).statusCode,409);
+    const list=await app.inject({method:"GET",url:"/invoices?status=draft",...s});assert.equal(list.statusCode,200,list.body);
+    assert.ok(list.json().rows.some((r:{id:string;canResume:boolean})=>r.id===first&&r.canResume));
+    const stranger=await loginAs(supervisor);
+    for(const [method,url,payload] of [["GET",`/invoices/${first}`,undefined],["POST",`/invoices/${first}/scan`,{variationId:variation}],["POST",`/invoices/${first}/finalize`,{}]] as const){
+      const r=await app.inject({method,url,...stranger,...(payload?{payload}:{})});assert.equal(r.statusCode,403,r.body);
+    }
+    const otherBranch=await app.inject({method:"GET",url:`/invoices?branchId=${BRANCH}`,...await loginAs(outsider)});assert.equal(otherBranch.statusCode,403);
   });
 
   // ── دامنه: شعبه و انبار ─────────────────────────────────────────
@@ -1396,6 +1499,31 @@ describe("آمادگی API صندوق", { skip }, () => {
       ["1000001", "900000"],
       "هر سطر قیمت خودش را نگه داشت",
     );
+  });
+
+  test("سرپرست قیمت سطر دیگران را با مجوز اصلاح می‌کند؛ ادامهٔ فروش همچنان متعلق به مالک است", async () => {
+    const {invoiceId,body}=await newCart("1");
+    const sup=await loginAs(supervisor);
+    const price=await app.inject({method:"PATCH",url:`/invoices/${invoiceId}/lines/${body.lines[0]!.id}/price`,...sup,
+      payload:{unitPrice:"950000",priceOverrideReason:"تأیید تخفیف سرپرست"}});
+    assert.equal(price.statusCode,200,price.body);
+    assert.equal(price.json().lines[0].unitPrice,"950000");
+    for(const [url,payload] of [
+      [`/invoices/${invoiceId}/scan`,{barcode:BARCODE}],
+      [`/invoices/${invoiceId}/payments`,{methodCode:"cash",amount:"1"}],
+    ] as const) {
+      const denied=await app.inject({method:"POST",url,...sup,payload});
+      assert.equal(denied.statusCode,403,denied.body);
+      assert.equal(denied.json().error.code,"draft_owner_mismatch");
+    }
+    const deniedCancel=await app.inject({method:"POST",url:`/invoices/${invoiceId}/cancel`,...sup,payload:{reason:"پیش‌نویس رهاشده"}});
+    assert.equal(deniedCancel.statusCode,403,deniedCancel.body);
+    const managerName=`draft_manager_${suffix}`;
+    const manager=await handle.db.insertInto("identity.app_user").values({username:managerName,full_name:"مدیر آزمون پیش‌نویس",password_hash:await hashSecret(PASSWORD),is_active:true,mobile:null,pin_hash:null,totp_secret:null}).returning("id").executeTakeFirstOrThrow();
+    await handle.db.insertInto("identity.user_role").values({user_id:manager.id,role_code:"admin",branch_id:BRANCH}).execute();
+    const cancel=await app.inject({method:"POST",url:`/invoices/${invoiceId}/cancel`,...await loginAs(managerName),payload:{reason:"پیش‌نویس رهاشده"}});
+    assert.equal(cancel.statusCode,200,cancel.body);
+    assert.equal(cancel.json().status,"cancelled");
   });
 
   test("قلم تازه قیمت زمان افزودن دارد و قلم قبلی قیمت خودش را حفظ می‌کند", async () => {

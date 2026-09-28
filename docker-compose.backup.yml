@@ -1,0 +1,13 @@
+# فقط هنگام نصب سرویس مدیریتی میزبان با docker-compose.prod.yml ترکیب شود.
+services:
+  db:
+    ports:
+      - "127.0.0.1:55432:5432"
+  api:
+    environment:
+      BACKUP_MANAGER_SOCKET: /run/labelmod-backup/manager.sock
+      BACKUP_MANAGER_TOKEN: ${BACKUP_MANAGER_TOKEN:?کلید کانال مستقل بکاپ لازم است}
+    volumes:
+      - /run/labelmod-backup:/run/labelmod-backup:ro
+    group_add:
+      - ${BACKUP_SOCKET_GID:?شناسه گروه سوکت بکاپ لازم است}

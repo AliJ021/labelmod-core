@@ -1,3 +1,7 @@
+import { routeUrl } from "../lib/navigation.ts";
+import { SnappaySettings } from "./SnappaySettings.tsx";
+import { Backups } from "./Backups.tsx";
+import { useUrlTab } from "../lib/use-url-state.ts";
 import { SettingsNavigation, TabPanels, useTabsId } from "../components/Tabs.tsx";
 import { useMediaQuery } from "../lib/use-media-query.ts";
 /**
@@ -149,7 +153,7 @@ function SettingKeys({ onOpenTerminals }: { onOpenTerminals: () => void }) {
           {openGroup === g.key ? (
             <div className="stack" style={{ gap: "var(--s-3)", marginTop: "var(--s-4)" }}>
               {g.key === "notify" ? <MeliPayamakSettings /> : null}
-              {g.settings.map((s) => (
+              {g.settings.filter(s => s.key !== "payment.snappay_account_id").map((s) => (
                 <Row key={s.key} setting={s} onSaved={replace} />
               ))}
             </div>
@@ -526,8 +530,10 @@ const TABS = [
   { key: "keys", label: "تنظیمات", group: "عمومی" },
   { key: "appearance", label: "نمایش و عملکرد", group: "عمومی" },
   { key: "health", label: "سلامت سیستم", group: "عمومی" },
+  { key: "backups", label: "پشتیبان‌گیری و بازیابی", group: "عمومی" },
   { key: "accounts", label: "کدینگ حساب", group: "مالی و فروش" },
   { key: "mapping", label: "نگاشت حساب", group: "مالی و فروش" },
+  { key: "snappay", label: "اسنپ‌پی", group: "مالی و فروش" },
   { key: "terminals", label: "پایانه‌ها", group: "مالی و فروش" },
   { key: "opening", label: "افتتاحیه و تفصیلی", group: "مالی و فروش" },
   { key: "staff", label: "پرسنل", group: "کاربران و امنیت" },
@@ -537,16 +543,15 @@ const TABS = [
   { key: "twofactor", label: "ورود دومرحله‌ای", group: "کاربران و امنیت" },
 ] as const;
 
-type Tab = (typeof TABS)[number]["key"];
 
 export function Settings({ currentUserId, onOwnPassword }: { currentUserId: string; onOwnPassword: () => void }) {
-  const [tab, setTab] = useState<Tab>("keys");
+  const [tab, setTab] = useUrlTab("settings.tab", TABS, "keys");
   const tabsId = useTabsId();
   const mobile = useMediaQuery("(max-width: 767px)");
 
   return (
     <div className="settings-layout">
-      <SettingsNavigation id={tabsId} items={TABS} value={tab} onChange={setTab} mobile={mobile} />
+      <SettingsNavigation hrefFor={key => routeUrl("settings", key)} id={tabsId} items={TABS} value={tab} onChange={setTab} mobile={mobile} />
       <TabPanels id={tabsId} items={TABS} value={tab} className="settings-content" mobileLabel={mobile}>
 
       {tab === "keys" ? (
@@ -557,6 +562,10 @@ export function Settings({ currentUserId, onOwnPassword }: { currentUserId: stri
         <Accounts />
       ) : tab === "mapping" ? (
         <PostingRules />
+      ) : tab === "snappay" ? (
+        <SnappaySettings />
+      ) : tab === "backups" ? (
+        <Backups />
       ) : tab === "terminals" ? (
         <Terminals />
       ) : tab === "permissions" ? (

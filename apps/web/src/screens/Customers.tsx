@@ -1,3 +1,4 @@
+import { useUrlState } from "../lib/use-url-state.ts";
 /**
  * پرونده مشتری.
  *
@@ -50,7 +51,8 @@ const CHANNEL: Record<string, string> = { pos: "صندوق", web: "سایت", ph
 
 export function Customers() {
   const [q, setQ] = useState("");
-  const [submitted, setSubmitted] = useState("");
+  const [submitted, setSubmitted] = useUrlState("customers.search");
+  useEffect(()=>setQ(submitted),[submitted]);
   const [revision, setRevision] = useState(0);
   const [open, setOpen] = useState<{ customer: Customer; invoices: CustomerInvoice[] } | null>(
     null,

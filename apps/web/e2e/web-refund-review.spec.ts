@@ -1,3 +1,4 @@
+import { openZone } from "./fixtures";
 import { test, expect } from "./fixtures";
 
 for (const decision of ["approved", "rejected"] as const) {
@@ -16,7 +17,7 @@ for (const decision of ["approved", "rejected"] as const) {
       await route.fulfill({ json: { requestId: "r1", status: decision === "approved" ? "posted" : "rejected" } });
     });
     await page.goto("/");
-    await page.getByRole("tab", { name: "مرجوعی", exact: true }).click();
+    await openZone(page, "مرجوعی");
     const panel = page.getByRole("region", { name: "بررسی مرجوعی سایت" });
     await panel.getByRole("button", { name: "دریافت درخواست‌های منتظر تأیید" }).click();
     await panel.getByRole("button", { name: "بررسی فاکتور F-1 · مرجوعی سایت 101" }).click();

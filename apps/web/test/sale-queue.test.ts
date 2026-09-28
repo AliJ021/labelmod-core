@@ -14,8 +14,13 @@ import { readFileSync } from "node:fs";
 import { pendingLabel, replay, summarize } from "../src/lib/sale-queue.ts";
 import type { QueuedRequest } from "../src/lib/offline-queue.ts";
 
+const actor = "11111111-1111-4111-8111-111111111111";
+const invoice = "22222222-2222-4222-8222-222222222222";
+const branch = "33333333-3333-4333-8333-333333333333";
+const shift = "44444444-4444-4444-8444-444444444444";
 const row = (over: Partial<QueuedRequest> = {}): QueuedRequest => ({
-  id: "finalize:inv-1", method: "POST", path: "/invoices/inv-1/finalize",
+  id: `finalize:${invoice}`, method: "POST", path: `/invoices/${invoice}/finalize`,
+  saleContext: { actorId: actor, invoiceId: invoice, branchId: branch, shiftId: shift },
   body: {}, idempotencyKey: "key-1", label: "فروش",
   queuedAt: 1_700_000_000_000, attempts: 0, ...over,
 });
@@ -24,16 +29,19 @@ test("بازفرست از همان مشتری API می‌گذرد و کلید ر
   const seen: { url?: string; init?: RequestInit } = {};
   const original = globalThis.fetch;
   globalThis.fetch = (async (url: string, init: RequestInit) => {
+    if (url === "/api/auth/me") return new Response(JSON.stringify({ id: actor }), { status: 200 });
+    if (url === `/api/invoices/${invoice}`) return new Response(JSON.stringify({ id: invoice, createdBy: actor, branchId: branch, shiftId: shift, status: "draft" }), { status: 200 });
+    if (url.startsWith("/api/shifts/current")) return new Response(JSON.stringify({ id: shift, userId: actor, status: "open" }), { status: 200 });
     seen.url = url;
     seen.init = init;
-    return new Response("{}", { status: 200 });
+    return new Response(JSON.stringify({id:invoice,status:"finalized",number:"TEST-1"}), { status: 200 });
   }) as unknown as typeof fetch;
   try {
     await replay(row());
   } finally {
     globalThis.fetch = original;
   }
-  assert.equal(seen.url, "/api/invoices/inv-1/finalize");
+  assert.equal(seen.url, `/api/invoices/${invoice}/finalize`);
   assert.equal(seen.init?.method, "POST");
   // بی این هدر، بازفرست یک فاکتور **دوم** می‌ساخت.
   const headers = seen.init?.headers as Record<string, string>;
@@ -99,4 +107,28 @@ test("صف فقط به finalize وصل است، نه به اسکن و پرداخ
   const src = readFileSync(new URL("../src/screens/Pos.tsx", import.meta.url), "utf8");
   const calls = [...src.matchAll(/saleQueue\(\)\.enqueue\(/g)].length;
   assert.equal(calls, 1, `صف در ${calls} مسیر استفاده شده — دامنه از finalize بیرون رفته.`);
+});
+
+
+test("untrusted queued destinations, payloads and legacy records never reach the network", async () => {
+  const original = globalThis.fetch;
+  let calls = 0;
+  globalThis.fetch = async () => { calls++; throw new Error("unexpected network"); };
+  try {
+    for (const over of [{path:"/users/admin/password"}, {path:`/invoices/${invoice}/finalize?bypass=1`},
+      {body:{actorId:actor}}, {body:[]}, {body:null}]) {
+      await assert.rejects(replay(row(over)));
+    }
+    const legacy = row(); delete legacy.saleContext;
+    await assert.rejects(replay(legacy));
+    assert.equal(calls, 0);
+  } finally { globalThis.fetch = original; }
+});
+
+test("changed user cannot replay even manually; no POST is sent", async () => {
+  const original = globalThis.fetch;
+  const calls: string[] = [];
+  globalThis.fetch = (async (url: string) => { calls.push(url); return new Response(JSON.stringify({id:branch})); }) as typeof fetch;
+  try { await assert.rejects(replay(row())); assert.deepEqual(calls, ["/api/auth/me"]); }
+  finally { globalThis.fetch = original; }
 });

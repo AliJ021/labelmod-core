@@ -1,3 +1,4 @@
+import { sql } from "kysely";
 /**
  * مسیرهای گزارش — هشت پرسش، سه دروازه.
  *
@@ -305,6 +306,54 @@ export function registerReportRoutes(app: FastifyInstance, deps: ReportRouteDeps
       CUSTOMER_BASKET_COLUMNS,
       rows,
     );
+  });
+
+  app.get("/reports/snappay", async req => {
+    const s = session(req);
+    await requireForSession(db, s, "report.view");
+    const q = periodQuery.extend({page:z.coerce.number().int().min(1).max(100000).default(1)}).parse(req.query);
+    const p = await period(s.userId, q);
+    const filter = sql`pay.method_code='snappay' AND pay.status IN ('succeeded','settled','reconciled')
+      AND platform.business_date(pay.occurred_at) BETWEEN ${p.from}::date AND ${p.to}::date
+      AND (${p.branchId ?? null}::uuid IS NULL OR coalesce(i.branch_id,r.branch_id)=${p.branchId ?? null}::uuid)`;
+    const rows=await sql`SELECT pay.id,pay.occurred_at AS "occurredAt",pay.direction,pay.amount::text,pay.ref_no AS reference,
+      a.name AS "accountName",coalesce(i.number,ri.number) AS "invoiceNumber",coalesce(i.status,ri.status) AS "invoiceStatus",
+      r.number AS "returnNumber",pay.status,coalesce(i.branch_id,r.branch_id) AS "branchId"
+      FROM treasury.payment pay LEFT JOIN sales.invoice i ON i.id=pay.invoice_id
+      LEFT JOIN sales.sale_return r ON r.id=pay.return_id LEFT JOIN sales.invoice ri ON ri.id=r.invoice_id
+      LEFT JOIN treasury.account a ON a.id=pay.account_id WHERE ${filter}
+      ORDER BY pay.occurred_at DESC,pay.id DESC LIMIT 50 OFFSET ${(q.page-1)*50}`.execute(db);
+    const totals=await sql<{total:number;received:string;refunded:string;net:string}>`SELECT count(*)::int AS total,
+      coalesce(sum(pay.amount) FILTER(WHERE pay.direction='in'),0)::text AS received,
+      coalesce(sum(pay.amount) FILTER(WHERE pay.direction='out'),0)::text AS refunded,
+      coalesce(sum(CASE WHEN pay.direction='in' THEN pay.amount ELSE -pay.amount END),0)::text AS net
+      FROM treasury.payment pay LEFT JOIN sales.invoice i ON i.id=pay.invoice_id
+      LEFT JOIN sales.sale_return r ON r.id=pay.return_id WHERE ${filter}`.execute(db);
+    return {rows:rows.rows, ...totals.rows[0], page:q.page};
+  });
+
+  app.get("/reports/staff-sales", async req => {
+    const s = session(req);
+    await requireForSession(db, s, "report.view");
+    const q = periodQuery.extend({ basis: z.enum(["finalizer", "creator"]).default("finalizer") }).parse(req.query);
+    const p = await period(s.userId, q);
+    const actor = q.basis === "creator" ? sql`i.created_by` : sql`i.finalized_by`;
+    const rows = await sql`
+      WITH events AS (
+        SELECT ${actor} AS actor,1::bigint AS count,i.gross_amount AS gross,i.discount_amount AS discount,0::numeric AS returned
+        FROM sales.invoice i WHERE i.finalized_at IS NOT NULL AND i.status IN ('finalized','paid','partially_returned','returned')
+          AND platform.business_date(i.occurred_at) BETWEEN ${p.from}::date AND ${p.to}::date
+          AND (${p.branchId ?? null}::uuid IS NULL OR i.branch_id=${p.branchId ?? null}::uuid)
+        UNION ALL
+        SELECT ${actor},0,0,0,r.net_amount FROM sales.sale_return r JOIN sales.invoice i ON i.id=r.invoice_id
+        WHERE r.status='posted' AND platform.business_date(r.occurred_at) BETWEEN ${p.from}::date AND ${p.to}::date
+          AND (${p.branchId ?? null}::uuid IS NULL OR r.branch_id=${p.branchId ?? null}::uuid)
+      ) SELECT e.actor AS "userId",u.full_name AS "userName",sum(e.count)::text AS "invoiceCount",
+        sum(e.gross)::text AS "grossAmount",sum(e.discount)::text AS "discountAmount",sum(e.returned)::text AS "returnedAmount",
+        (sum(e.gross)-sum(e.discount)-sum(e.returned))::text AS "netSalesAmount"
+      FROM events e LEFT JOIN identity.app_user u ON u.id=e.actor GROUP BY e.actor,u.full_name
+      ORDER BY sum(e.gross)-sum(e.discount)-sum(e.returned) DESC,e.actor NULLS LAST`.execute(db);
+    return { rows: rows.rows, basis: q.basis };
   });
 
   app.get("/reports/sales", async (req, reply) => {

@@ -1,9 +1,10 @@
+import { openZone } from "./fixtures";
 import { test, expect, type MockApi } from "./fixtures";
 import type { Page } from "@playwright/test";
 
 function pos(api: MockApi) {
   api.defaults["GET /payment-methods"] = { methods: [] };
-  api.defaults["GET /shifts/current"] = { id: "s1", branchId: "b1", status: "open", openingCash: "0" };
+  api.defaults["GET /shifts/current"] = { id: "55555555-5555-4555-8555-555555555555", userId: "22222222-2222-4222-8222-222222222222", branchId: "b1", status: "open", openingCash: "0" };
   api.defaults["GET /gift-options"] = { wraps: [], colors: [], flowers: [] };
 }
 async function camera(page: Page) {
@@ -43,7 +44,7 @@ test("treasury retries use the normalized full payment body as their identity", 
     await route.fulfill({ status: 503, json: { error: { message: "خطای موقت آزمون" } } });
   });
   await page.goto("/");
-  await page.getByRole("tab", { name: "خزانه و چک", exact: true }).click();
+  await openZone(page, "خزانه و چک");
   await page.getByRole("combobox", { name: "نوع", exact: true }).selectOption("capital");
   await page.getByRole("combobox", { name: "به حساب", exact: true }).selectOption("a1");
   const amount = page.getByRole("textbox", { name: "مبلغ (تومان)", exact: true });
@@ -164,10 +165,10 @@ test("local WASM decodes EAN13 through the camera fallback", async ({ page, api 
       };
     }
   });
-  const invoice = { id: "camera-draft", status: "draft", channel: "pos", branchId: "b1", warehouseId: "w1", shiftId: "s1", lines: [], payableAmount: "0", receivedAmount: "0", grossAmount: "0", discountAmount: "0", netAmount: "0", taxAmount: "0", shippingAmount: "0", gift: null };
+  const invoice = { id: "77777777-7777-4777-8777-777777777777", createdBy: "22222222-2222-4222-8222-222222222222", status: "draft", channel: "pos", branchId: "b1", warehouseId: "w1", shiftId: "55555555-5555-4555-8555-555555555555", lines: [], payableAmount: "0", receivedAmount: "0", grossAmount: "0", discountAmount: "0", netAmount: "0", taxAmount: "0", shippingAmount: "0", gift: null };
   api.defaults["POST /invoices"] = invoice;
   let barcode: string | undefined;
-  api.handlers.set("POST /invoices/camera-draft/scan", async route => { barcode = route.request().postDataJSON().barcode; await route.fulfill({ json: { invoice, replayed: false } }); });
+  api.handlers.set(`POST /invoices/${invoice.id}/scan`, async route => { barcode = route.request().postDataJSON().barcode; await route.fulfill({ json: { invoice, replayed: false } }); });
   await camera(page);
   await expect.poll(() => barcode).toBe("5901234123457");
   await expect(page.getByRole("alert")).toHaveCount(0);

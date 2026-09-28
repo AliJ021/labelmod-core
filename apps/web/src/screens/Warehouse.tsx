@@ -1,3 +1,5 @@
+import { routeUrl } from "../lib/navigation.ts";
+import { useUrlTab } from "../lib/use-url-state.ts";
 import { TabList, TabPanels, useTabsId } from "../components/Tabs.tsx";
 /**
  * ناحیه انبار و خرید — چهار کار، یک ناحیه.
@@ -18,14 +20,12 @@ import { TabList, TabPanels, useTabsId } from "../components/Tabs.tsx";
  * یک ناحیه با چهار زبانه، نه چهار ناحیه: انباردار میانشان جابه‌جا
  * می‌شود، ولی هرگز اشتباهشان نمی‌گیرد.
  */
-import { useState } from "react";
 import { Purchasing } from "./Purchasing.tsx";
 import { StockCount } from "./StockCount.tsx";
 import { PurchaseReturn } from "./PurchaseReturn.tsx";
 import { PurchaseOrder } from "./PurchaseOrder.tsx";
 import { Transfer } from "./Transfer.tsx";
 
-type Tab = "orders" | "receipts" | "returns" | "transfer" | "count";
 
 const TABS = [
   { key: "orders", label: "سفارش خرید" }, { key: "receipts", label: "رسید خرید" },
@@ -35,11 +35,11 @@ const TABS = [
 
 export function Warehouse() {
   const tabsId = useTabsId();
-  const [tab, setTab] = useState<Tab>("receipts");
+  const [tab, setTab] = useUrlTab("purchasing.tab", TABS, "receipts");
 
   return (
     <div className="stack" style={{ gap: "var(--s-3)" }}>
-      <TabList id={tabsId} items={TABS} value={tab} onChange={setTab} label="انبار و خرید" className="zones wh-tabs" />
+      <TabList hrefFor={key => routeUrl("purchasing", key)} id={tabsId} items={TABS} value={tab} onChange={setTab} label="انبار و خرید" className="zones wh-tabs" />
       <TabPanels id={tabsId} items={TABS} value={tab}>
 
       {tab === "orders" ? (

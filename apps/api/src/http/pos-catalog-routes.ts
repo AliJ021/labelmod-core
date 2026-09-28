@@ -20,15 +20,21 @@ export function registerPosCatalogRoutes(app: FastifyInstance, db: Db): void {
   app.get("/pos/products", async (req) => {
     const q = z.object({ q: z.string().trim().min(2).max(80), warehouseId: z.string().uuid() }).parse(req.query);
     await scope(req.session, q.warehouseId);
-    const pattern = `%${q.q.replace(/[\\%_]/g, "\\$&")}%`;
+    const term = q.q.normalize("NFKC").replace(/[يى]/g, "ی").replace(/ك/g, "ک").replace(/[۰-۹٠-٩]/g, c => String(c.charCodeAt(0) - (c >= "۰" ? 1776 : 1632))).replace(/[\u200c\u200d\s]+/g, " ").trim();
+    const pattern = `%${term.replace(/[\\%_]/g, "\\$&")}%`;
     const result = await sql<{ id: string; name: string; code: string; variationCount: number }>`
       SELECT p.id, p.name_internal AS name, p.code, count(v.id)::int AS "variationCount"
       FROM catalog.product p JOIN catalog.variation v ON v.product_id=p.id
       WHERE p.status='active' AND v.status='active'
-        AND (p.name_internal ILIKE ${pattern} OR p.name_web ILIKE ${pattern} OR p.code ILIKE ${pattern})
+        AND (regexp_replace(translate(p.name_internal, 'يك', 'یک'), '[‌‍[:space:]]+', ' ', 'g') ILIKE ${pattern} OR regexp_replace(translate(p.name_web, 'يك', 'یک'), '[‌‍[:space:]]+', ' ', 'g') ILIKE ${pattern} OR p.code ILIKE ${pattern})
       GROUP BY p.id ORDER BY p.name_internal, p.id LIMIT 50
     `.execute(db);
-    return { products: result.rows };
+    const exact = await sql<{ id: string }>`SELECT v.id FROM catalog.variation v
+      JOIN catalog.product p ON p.id=v.product_id
+      WHERE p.status='active' AND v.status='active' AND (v.barcode=${term} OR v.sku=${term})
+      ORDER BY v.id LIMIT 2`.execute(db);
+    // Ambiguous identifiers require explicit variant choice, never an arbitrary first row.
+    return { products: result.rows, exactVariationId: exact.rows.length === 1 ? exact.rows[0]!.id : null };
   });
   app.get("/pos/products/:id/variations", async (req) => {
     const { id } = z.object({ id: z.string().uuid() }).parse(req.params);

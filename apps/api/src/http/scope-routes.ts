@@ -114,8 +114,9 @@ export function registerScopeRoutes(app: FastifyInstance, deps: ScopeRouteDeps):
       .orderBy("code")
       .execute();
 
+    const snappay = await sql<{ enabled: boolean }>`SELECT treasury.snappay_account() IS NOT NULL AS enabled`.execute(db);
     return {
-      methods: rows.map((m) => ({
+      methods: rows.filter(m => m.code !== "snappay" || snappay.rows[0]?.enabled).map((m) => ({
         code: m.code,
         name: m.name,
         kind: m.kind,

@@ -57,6 +57,15 @@ describe("بازیابی پیش‌نویس پرداخت‌شده", { skip: !proc
   after(async () => { await app?.close(); await handle?.close(); disposable?.drop(); });
 
   async function draft(methodCode = "cash", refNo?: string) {
+    // ورود قلم و دریافت وجه اکنون کسری شناخته‌شده را زود رد می‌کنند.
+    // موجودی واقعی آزمون را پیش از فروش فراهم می‌کنیم؛ کسریِ بعد از دریافت
+    // در آزمون مربوط، مانند فروش هم‌زمان صندوق دیگر، جدا ایجاد می‌شود.
+    const balance = await sql<{qty:string}>`SELECT coalesce((SELECT on_hand FROM inventory.stock_balance
+      WHERE variation_id=${variationId}::uuid AND warehouse_id=${WH}::uuid),0)::text qty`.execute(handle.db);
+    if (Number(balance.rows[0]!.qty) < 1) await handle.db.transaction().execute(async trx => {
+      await sql`SELECT platform.set_actor(${actorId}::uuid)`.execute(trx);
+      await sql`SELECT inventory.apply_movement(${variationId}::uuid,${WH}::uuid,1,'opening',NULL,NULL,${actorId}::uuid,100000)`.execute(trx);
+    });
     const d = await app.inject({ method: "POST", url: "/invoices", ...admin,
       payload: { branchId: BRANCH, warehouseId: WH, shiftId, channel: "pos" } });
     assert.equal(d.statusCode, 201, d.body);
@@ -75,6 +84,10 @@ describe("بازیابی پیش‌نویس پرداخت‌شده", { skip: !proc
   }
   test("کمبود موجودی، برگشت صریح و replay بدون اثر دوم؛ سند تغییر نمی‌کند", async () => {
     const d = await draft();
+    await handle.db.transaction().execute(async trx => {
+      await sql`SELECT platform.set_actor(${actorId}::uuid)`.execute(trx);
+      await sql`SELECT inventory.apply_movement(${variationId}::uuid,${WH}::uuid,-1,'sale','test_doc',${randomUUID()}::uuid,${actorId}::uuid,NULL)`.execute(trx);
+    });
     const before = await sql<{ n: string }>`SELECT count(*)::text n FROM ledger.journal_entry`.execute(handle.db);
     const finalized = await app.inject({ method: "POST", url: `/invoices/${d.id}/finalize`, ...admin, payload: {} });
     assert.equal(finalized.statusCode, 409, finalized.body);
@@ -165,7 +178,9 @@ describe("بازیابی پیش‌نویس پرداخت‌شده", { skip: !proc
     assert.equal(opened.statusCode, 201, opened.body); shiftId = opened.json().id;
     await handle.db.transaction().execute(async trx => {
       await sql`SELECT platform.set_actor(${actorId}::uuid)`.execute(trx);
-      await sql`SELECT inventory.apply_movement(${variationId}::uuid,${WH}::uuid,2,'opening',NULL,NULL,${actorId}::uuid,100000)`.execute(trx);
+      const balance = await sql<{qty:string}>`SELECT on_hand::text qty FROM inventory.stock_balance
+        WHERE variation_id=${variationId}::uuid AND warehouse_id=${WH}::uuid`.execute(trx);
+      await sql`SELECT inventory.apply_movement(${variationId}::uuid,${WH}::uuid,${2-Number(balance.rows[0]?.qty??0)},'opening',NULL,NULL,${actorId}::uuid,100000)`.execute(trx);
     });
     const d = await draft();
     const [back, finish] = await Promise.all([refund(d), app.inject({ method: "POST", url: `/invoices/${d.id}/finalize`, ...admin, payload: {} })]);

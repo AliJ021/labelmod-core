@@ -77,6 +77,7 @@ export interface InvoiceGift {
 
 export interface Invoice {
   id: string;
+  createdBy: string | null;
   number: string | null;
   branchId: string;
   warehouseId: string;
@@ -195,6 +196,7 @@ export class InvoiceService {
 
     return {
       id: inv.id,
+      createdBy: inv.created_by,
       number: inv.number,
       branchId: inv.branch_id,
       warehouseId: inv.warehouse_id,
@@ -466,8 +468,10 @@ export class InvoiceService {
    * Commit نشده.
    */
   async addLineIn(trx: Transaction<Database>, input: AddLineInput, authorize?: LineAdditionAuthorizer): Promise<void> {
+    await trx.selectFrom("sales.invoice").select("id").where("id", "=", input.invoiceId).forUpdate().execute();
     await this.requireDraft(input.invoiceId, trx);
     const variationId = await this.resolveVariation(input, trx);
+    await this.assertStock(trx, input.invoiceId, variationId, input.qty);
     const listPrice = await this.currentPrice(variationId, new Date(), trx);
     const discount = input.discountAmount ?? 0n;
 
@@ -589,6 +593,7 @@ export class InvoiceService {
     // خواندن‌ها روی همان اتصال و پس از قفل فاکتور انجام می‌شوند.
     await this.requireDraft(input.invoiceId, trx);
     const variationId = await this.resolveVariation(input, trx);
+    await this.assertStock(trx, input.invoiceId, variationId, input.qty);
     const price = await this.currentPrice(variationId, new Date(), trx);
 
     // اگر چند سطر سازگار باشد، کم‌ترین `line_no` انتخاب می‌شود —
@@ -941,39 +946,21 @@ export class InvoiceService {
    * زیر قفل فاکتور اجرا می‌شود — یعنی مسابقه‌ای که این خواندن‌ها
    * می‌توانند از دست بدهند، آنجا گرفته می‌شود.
    */
-  async setLineQty(input: {
-    invoiceId: string;
-    lineId: string;
-    qty: string;
-    actorId: string;
-  }): Promise<Invoice> {
-    await this.requireDraft(input.invoiceId);
-
-    const line = await this.#db
-      .selectFrom("sales.invoice_line")
-      .select(["id", "discount_amount", "list_price"])
-      .where("id", "=", input.lineId)
-      .where("invoice_id", "=", input.invoiceId)
-      .executeTakeFirst();
-    if (!line) throw new InvoiceError("line_not_found", "این قلم در فاکتور نیست", 404);
-
-    // تخفیف یک مبلغ **مطلق** برای تعدادِ آن لحظه است. با تغییر تعداد،
-    // یا باید مطلق بماند (و درصد کاهش بی‌صدا عوض شود) یا نسبتی شود (و
-    // مبلغ ثبت‌شده بی‌صدا عوض شود). هر دو یک تصمیم مالی‌اند.
-    if (parseMoney(line.discount_amount) > 0n || line.list_price !== null) {
-      throw new InvoiceError(
-        "line_price_adjusted",
-        "تعداد سطری که تخفیف خورده یا قیمتش دستی تغییر کرده از این مسیر عوض نمی‌شود؛ سطر را حذف و دوباره ثبت کنید.",
-      );
-    }
-
-    await this.#db.transaction().execute(async (trx) => {
+  async setLineQty(input: { invoiceId: string; lineId: string; qty: string; actorId: string }): Promise<Invoice> {
+    await this.#db.transaction().execute(async trx => {
       await setActor(trx, input.actorId);
-      await sql`SELECT sales.set_line_qty(
-        ${input.invoiceId}::uuid, ${input.lineId}::uuid, ${input.qty}::platform.qty)`
-        .execute(trx);
+      await trx.selectFrom("sales.invoice").select("id").where("id", "=", input.invoiceId).forUpdate().execute();
+      await this.requireDraft(input.invoiceId, trx);
+      const line = await trx.selectFrom("sales.invoice_line").select(["variation_id", "qty", "discount_amount", "list_price"])
+        .where("id", "=", input.lineId).where("invoice_id", "=", input.invoiceId).executeTakeFirst();
+      if (!line) throw new InvoiceError("line_not_found", "این قلم در فاکتور نیست", 404);
+      if (parseMoney(line.discount_amount) > 0n || line.list_price !== null)
+        throw new InvoiceError("line_price_adjusted", "تعداد سطری که تخفیف خورده یا قیمتش دستی تغییر کرده از این مسیر عوض نمی‌شود؛ سطر را حذف و دوباره ثبت کنید.");
+      // A decrease remains possible after another till has sold stock.
+      const increasing = await sql<{ yes: boolean }>`SELECT ${input.qty}::numeric > ${line.qty}::numeric AS yes`.execute(trx);
+      if (increasing.rows[0]?.yes) await this.assertStock(trx, input.invoiceId, line.variation_id, input.qty, input.lineId);
+      await sql`SELECT sales.set_line_qty(${input.invoiceId}::uuid, ${input.lineId}::uuid, ${input.qty}::platform.qty)`.execute(trx);
     });
-
     return (await this.byId(input.invoiceId)) as Invoice;
   }
 
@@ -1028,6 +1015,7 @@ export class InvoiceService {
     // همان قفل نهایی‌سازی و ابطال؛ پرداخت پس از لغو پذیرفته نمی‌شود.
     await trx.selectFrom("sales.invoice").select("id").where("id", "=", input.invoiceId).forUpdate().execute();
     const inv = await this.requireDraft(input.invoiceId, trx);
+    await this.assertStock(trx, input.invoiceId);
     if (input.amount <= 0n) {
       throw new InvoiceError("bad_amount", "مبلغ پرداخت باید مثبت باشد", 400);
     }
@@ -1036,9 +1024,16 @@ export class InvoiceService {
       .selectFrom("treasury.payment_method")
       .select(["code", "requires_ref"])
       .where("code", "=", input.methodCode)
+      .where("is_active", "=", true)
       .executeTakeFirst();
     if (!method) {
       throw new InvoiceError("method_not_found", "روش پرداخت شناخته نشد", 400);
+    }
+    if (input.methodCode === "snappay") {
+      const account = await sql<{ id: string | null }>`SELECT treasury.snappay_account(${inv.branchId}::uuid) AS id`.execute(trx);
+      if (!account.rows[0]?.id || (input.accountId && input.accountId !== account.rows[0].id))
+        throw new InvoiceError("snappay_not_configured", "حساب معتبر اسنپ‌پی برای این شعبه تنظیم نشده است.", 422);
+      if (!input.refNo?.trim()) throw new InvoiceError("ref_required", "شمارهٔ پیگیری پرداخت تأییدشدهٔ اسنپ‌پی لازم است.", 422);
     }
     if (method.requires_ref && !input.refNo) {
       throw new InvoiceError(
@@ -1205,6 +1200,24 @@ export class InvoiceService {
     return number;
   }
 
+  /** Advisory stock check under the invoice lock: no reservation or inventory mutation. */
+  private async assertStock(ex: Executor, invoiceId: string, variationId?: string, qty = "0", excludeLineId?: string): Promise<void> {
+    const result = await sql<{ sku: string; available: string; requested: string }>`
+      WITH quantities AS (
+        SELECT variation_id, qty FROM sales.invoice_line WHERE invoice_id=${invoiceId}::uuid
+          AND (${excludeLineId ?? null}::uuid IS NULL OR id<>${excludeLineId ?? null}::uuid)
+        UNION ALL SELECT ${variationId ?? null}::uuid, ${qty}::numeric WHERE ${variationId ?? null}::uuid IS NOT NULL
+      ), totals AS (SELECT variation_id, sum(qty) AS requested FROM quantities GROUP BY variation_id)
+      SELECT v.sku, greatest(coalesce(b.on_hand,0)-coalesce(b.reserved,0),0)::text AS available, t.requested::text
+      FROM sales.invoice i JOIN totals t ON true JOIN catalog.variation v ON v.id=t.variation_id
+      LEFT JOIN inventory.stock_balance b ON b.variation_id=t.variation_id AND b.warehouse_id=i.warehouse_id
+      WHERE i.id=${invoiceId}::uuid AND i.channel='pos' AND i.status='draft'
+        AND t.requested>greatest(coalesce(b.on_hand,0)-coalesce(b.reserved,0),0)
+      ORDER BY v.sku LIMIT 1`.execute(ex);
+    const shortage = result.rows[0];
+    if (shortage) throw new InvoiceError("insufficient_stock", `موجودی قابل‌فروش ${shortage.sku}: ${shortage.available}؛ تعداد درخواست‌شده: ${shortage.requested}. تعداد قبلی حفظ شد.`, 409);
+  }
+
   private async requireDraft(invoiceId: string, ex: Executor = this.#db): Promise<Invoice> {
     const inv = await this.byId(invoiceId, ex);
     if (!inv) throw new InvoiceError("invoice_not_found", "فاکتور یافت نشد", 404);
@@ -1245,6 +1258,7 @@ async function refreshTotals(trx: Transaction<Database>, invoiceId: string): Pro
 export function invoiceToJson(inv: Invoice) {
   return {
     id: inv.id,
+    createdBy: inv.createdBy,
     number: inv.number,
     branchId: inv.branchId,
     warehouseId: inv.warehouseId,

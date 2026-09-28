@@ -77,7 +77,8 @@ export function registerPostingRoutes(app: FastifyInstance, deps: PostingRouteDe
   app.post("/posting-batches/close-due", async (req) => {
     const s = session(req);
     await requireForSession(db, s, "period.close");
-    const closed = await batches.closeDue(s.userId);
+    const scope = await branchesOf(db, s.userId);
+    const closed = await batches.closeDue(s.userId, scope);
     return {
       closed: closed.filter((c) => c.skipped === null),
       skipped: closed.filter((c) => c.skipped !== null),

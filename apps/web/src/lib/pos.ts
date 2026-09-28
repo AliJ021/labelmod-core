@@ -85,6 +85,7 @@ export interface InvoiceGift {
 
 export interface Invoice {
   id: string;
+  createdBy?: string | null;
   number: string | null;
   branchId: string;
   warehouseId: string;
@@ -251,7 +252,7 @@ export interface CreatedInvoice extends Invoice {
 
 /** فقط شعبه‌های مجاز همین کاربر، با انبارهای فعالشان. */
 export const pos = {
-  branches: () => api.get<{ branches: Branch[]; allBranches: boolean }>("/branches"),
+  branches: (opts?: RequestOptions) => api.get<{ branches: Branch[]; allBranches: boolean }>("/branches", opts),
 
   paymentMethods: () => api.get<{ methods: PaymentMethod[] }>("/payment-methods"),
 
@@ -406,10 +407,11 @@ export const pos = {
    * **نه صفر**. صفر یک ادعای مالی است؛ «اجازه دیدنش را نداری» ادعای
    * دیگری. یکی‌کردنشان یعنی صندوق‌دار فکر کند فروشگاه ضرر کرده.
    */
-  dailyReport: (branchId: string, date?: string) =>
+  dailyReport: (branchId: string, date?: string, opts?: RequestOptions) =>
     api.get<DailyReport>(
       `/reports/daily?branchId=${encodeURIComponent(branchId)}` +
         (date === undefined ? "" : `&date=${encodeURIComponent(date)}`),
+      opts,
     ),
 
   /**
@@ -418,7 +420,7 @@ export const pos = {
    * پشت `cost.view` است، پس صندوق‌دار ۴۰۳ می‌گیرد — و داشبورد باید
    * آن را یک «خطا» نداند، بلکه فقط کارت را نشان ندهد.
    */
-  unpostedRevenue: () => api.get<{ rows: UnpostedRow[] }>("/posting-batches/unposted"),
+  unpostedRevenue: (opts?: RequestOptions) => api.get<{ rows: UnpostedRow[] }>("/posting-batches/unposted", opts),
 
   /**
    * بستن دوره ثبت یک کانال در یک روز — سند فروش و بهای تمام‌شده.
@@ -452,6 +454,8 @@ export const pos = {
       reasonNote?: string;
       refundAmount: string;
       refundMethod?: string;
+      refundReference?: string;
+      refundPaymentId?: string;
       shiftId?: string;
       lines: Array<{ invoiceLineId: string; qty: string; restock?: boolean }>;
     },
