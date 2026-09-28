@@ -45,3 +45,26 @@ test("SnappPay configuration preserves a server rejection and its independent re
   expect(api.calls.filter(c=>c.startsWith("GET /reports/cash-reconciliation"))).toHaveLength(0);
   expect(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth+1)).toBe(true);
 });
+
+test("dashboard unposted-period notes wrap instead of widening the page",async({page,api})=>{
+  // هر سه نوع یادداشت دوره، به‌علاوهٔ یک دوره با دکمهٔ بستن. در عرض ۳۲۰ یادداشت شیفت صفحه را به ۳۴۹ می‌رساند.
+  const row={branchId:"b1",invoiceCount:12,payableAmount:"12340000",cogsAmount:"9000000"};
+  api.defaults["GET /posting-batches/unposted"]={rows:[
+    {...row,batchId:"p1",batchKind:"shift",channel:"pos",businessDate:"2026-09-16"},
+    {...row,batchId:"p2",batchKind:"channel_day",channel:"web",businessDate:"2026-09-16"},
+    {...row,batchId:"p3",batchKind:"channel_day",channel:"web",businessDate:"2026-09-15"},
+  ]};
+  await page.goto("/");
+  await expect(page.getByText("با بستن شیفت صندوق بسته می‌شود",{exact:true})).toBeVisible();
+  await expect(page.getByText("دوره امروز هنوز باز است",{exact:true})).toBeVisible();
+  await expect(page.getByRole("button",{name:"بستن دوره",exact:true})).toBeVisible();
+  await fontsReady(page);
+  const size=await page.evaluate(()=>({scroll:document.documentElement.scrollWidth,client:document.documentElement.clientWidth}));
+  expect(size.scroll,"Dashboard must not scroll horizontally").toBeLessThanOrEqual(size.client);
+  api.handlers.set("GET /auth/can",async route=>{await route.fulfill({json:{verdict:"deny",approver:null,reason:""}});});
+  await page.reload();
+  await expect(page.getByText("بستن دوره دسترسی حسابدار می‌خواهد",{exact:true})).toBeVisible();
+  await fontsReady(page);
+  const denied=await page.evaluate(()=>({scroll:document.documentElement.scrollWidth,client:document.documentElement.clientWidth}));
+  expect(denied.scroll,"Dashboard must not scroll horizontally without period.close").toBeLessThanOrEqual(denied.client);
+});
