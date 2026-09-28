@@ -394,15 +394,20 @@ function RoleEditor({
       <h3 style={{ margin: 0, fontSize: "1rem" }}>نقش‌های {user.fullName}</h3>
       <div className="stack" style={{ gap: "var(--s-2)" }}>
         {roles.map((r) => (
-          <label key={r.code} className="row" style={{ gap: "var(--s-2)" }}>
-            <input
-              type="checkbox"
-              checked={picked.has(r.code)}
-              onChange={() => toggle(r.code)}
-            />
-            <span>{r.name}</span>
+          // فهرست شعبه بیرون از label است: label فقط اولین کنترل را نام می‌دهد، پس
+          // فهرست بی‌نام می‌ماند و مقدارش به نام چک‌باکس می‌چسبید («صندوق‌دار شعبه یک»).
+          <div key={r.code} className="row" style={{ gap: "var(--s-2)" }}>
+            <label className="row" style={{ gap: "var(--s-2)" }}>
+              <input
+                type="checkbox"
+                checked={picked.has(r.code)}
+                onChange={() => toggle(r.code)}
+              />
+              <span>{r.name}</span>
+            </label>
             {picked.has(r.code) && branches.length > 1 ? (
               <select
+                aria-label={`شعبهٔ نقش ${r.name}`}
                 value={picked.get(r.code) ?? ""}
                 onChange={(e) => {
                   const next = new Map(picked);
@@ -417,7 +422,7 @@ function RoleEditor({
                 ))}
               </select>
             ) : null}
-          </label>
+          </div>
         ))}
       </div>
       <p className="muted small" style={{ margin: 0 }}>

@@ -336,6 +336,17 @@ test("populated customers, empty permissions and clear actions", async ({ page, 
   await screenshot(page, "permissions-empty");
 });
 
+test("staff role editor names the per-role branch picker", async ({ page, api }) => {
+  // با بیش از یک شعبه، کنار هر نقش تیک‌خورده یک فهرست شعبه می‌آید؛ label بیرونی فقط چک‌باکس را نام می‌دهد.
+  api.defaults["GET /branches"] = { branches: [
+    { id: "b1", code: "A", name: "شعبه یک", warehouses: [] }, { id: "b2", code: "B", name: "شعبه دو", warehouses: [] }], allBranches: true };
+  await page.goto("/");
+  await settings(page, "staff", "پرسنل");
+  await page.getByRole("row").filter({ hasText: staff.username }).getByRole("button", { name: "نقش‌ها", exact: true }).click();
+  await expect(page.getByRole("checkbox", { name: "صندوق‌دار", exact: true })).toBeChecked();
+  await expect(page.getByRole("combobox", { name: "شعبهٔ نقش صندوق‌دار", exact: true })).toBeVisible();
+});
+
 test("staff password reset needs review; current user gets personal flow", async ({ page, api }) => {
   await page.goto("/");
   await settings(page, "staff", "پرسنل");
