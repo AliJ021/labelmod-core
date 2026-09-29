@@ -1,61 +1,92 @@
 /* ═══════════════════════════════════════════════════════════════════
-   توکن‌ها — ADR-002
+   توکن‌ها — تنها منبع مقدارهای طراحی (docs/DESIGN_SYSTEM.md، ADR-002)
 
-   **دو سطح، از روز اول.** این مهم‌ترین تصمیم این فایل است:
+   سه لایه، و هر لایه فقط از لایهٔ پیش از خودش می‌خواند:
 
+     ۱. پایه      مقدار خام: رنگ Hex، اندازهٔ px، زمان ms. فقط همین فایل.
+     ۲. معنایی    «سطح»، «جوهر»، «وضعیت»، «مالی»، «حرکت کارکردی».
+     ۳. کامپوننت  در styles/ui.css — فقط از لایهٔ معنایی می‌خواند.
+
+   Hex بیرون از این فایل ممنوع است و test/design-system.test.ts آن را
+   می‌سنجد. عدد جادویی در ماژول‌ها یعنی یک توکن کم است؛ آن را اینجا
+   اضافه کن، نه در صفحه.
+
+   **دو سطح، از روز اول** (ADR-002):
      --surface-solid  محتوا، جدول عدد، فرم، و کل صندوق فروشگاهی
      --surface-glass  فقط لایه کنترلی شناور
 
-   ADR-002 صریح گفته اگر این تفکیک از روز اول در توکن‌ها نباشد، بعداً
-   اضافه‌کردنش یعنی بازنویسی هر کامپوننت. پس از همین‌جا هست.
+   **پالت قفل است.** هر رنگی که palette.test.ts می‌خواند در برابر سطح
+   خودش سنجیده می‌شود. عوض‌کردن یک Hex بدون سبزماندن آن تست، یعنی
+   شکستن یک ادعای سنجیده‌شده.
 
-   **پالت قفل است.** هر مقدار رنگی اینجا در برابر سطح خودش سنجیده شده
-   و `scripts/validate-palette.mjs` در CI دوباره می‌سنجدش. عوض‌کردن یک
-   Hex بدون اجرای آن اسکریپت، یعنی شکستن یک ادعای سنجیده‌شده.
+   ⚠️ بلوک اول `:root {` هم توکن‌های مستقل از تم را دارد و هم تم روشن را؛
+      palette.test.ts تم روشن را از **اولین** `:root {` می‌خواند.
    ═══════════════════════════════════════════════════════════════════ */
 
 :root {
-  /* ── زمینه: دنیای پارچه و رنگرزی — ایندیگو، آلویی، جین ─────────── */
-  --bg-deep: #edebf2;
-  --mesh-1: #b9c0e8;
-  --mesh-2: #d9bccf;
-  --mesh-3: #aecfce;
+  /* ── زمینه: سنگ گرم و روشنایی کنترل‌شده، نه ایندیگوی پررنگ ─────── */
+  --bg-deep: #efeeea;
+  --mesh-1: #c8ceda;
+  --mesh-2: #e3d5bd;
+  --mesh-3: #c5d5d0;
 
   /* ── دو سطح ──────────────────────────────────────────────────── */
   --surface-solid: #ffffff;
-  --surface-solid-2: #f4f3f8;
+  --surface-solid-2: #f5f4f1;
   --surface-glass: rgba(255, 255, 255, 0.55);
   /* تینت داخل شیشه — عمداً بدون backdrop-filter. شیشه روی شیشه ممنوع. */
   --surface-glass-2: rgba(255, 255, 255, 0.38);
+  /* سطح وارونه: یادداشت شناور و Toast. متن رویش --surface-solid است. */
+  --surface-inverse: #1d1c21;
 
   --glass-blur: 22px;
-  --glass-sat: 180%;
+  --glass-sat: 160%;
   --glass-rim: rgba(255, 255, 255, 0.85);
-  --glass-rim-2: rgba(120, 110, 160, 0.2);
-  --glass-shadow: 0 8px 32px -12px rgba(40, 30, 70, 0.28);
+  --glass-rim-2: rgba(23, 22, 27, 0.12);
+  --glass-shadow: 0 8px 32px -12px rgba(20, 18, 24, 0.24);
 
   /* ── جوهر ────────────────────────────────────────────────────── */
-  --ink: #14121c;
-  --ink-2: #4a4560;
-  --ink-3: #787292;
-  --rule: rgba(70, 60, 110, 0.14);
-  --rule-2: rgba(70, 60, 110, 0.26);
-  --control-border: #858095;
+  --ink: #17161b;
+  --ink-2: #4a4852;
+  --ink-3: #65636d;
+  --rule: rgba(23, 22, 27, 0.1);
+  --rule-2: rgba(23, 22, 27, 0.18);
+  --control-border: #85838c;
 
-  /* ── برنج: دنیای دکمه و پلاک پوشاک ───────────────────────────── */
+  /* ── برنج: دنیای دکمه و پلاک پوشاک — فقط برای عمل اصلی و فوکوس ── */
   --accent: #8a6214;
   --accent-ink: #ffffff;
   --chart-1: #b0801f;
+  --chart-2: #5d6b85;
   --good: #2e8b63;
   --warn: #b08a1e;
   --crit: #c0392f;
+  --info: #3f5f8f;
 
-  /* ── شعاع‌های هم‌مرکز: داخلی = بیرونی − فاصله ─────────────────── */
-  --r-lg: 26px;
-  --r-md: 18px;
-  --r-sm: 12px;
-  --r-xs: 8px;
-  --pad: 14px;
+  /* ════ لایهٔ مستقل از تم ════════════════════════════════════════ */
+
+  /* ── خانوادهٔ قلم ─────────────────────────────────────────────── */
+  --font-sans: Vazirmatn, "Segoe UI", system-ui, sans-serif;
+  /* عدد مالی و شناسه: مونو اول تا ستون نرقصد. */
+  --font-num: "IBM Plex Mono", Vazirmatn, ui-monospace, monospace;
+
+  /* ── مقیاس نوشتار (rem؛ پایه ۱۶px و بزرگ‌نمایی مرورگر محترم است) ── */
+  --text-2xs: 0.75rem;
+  --text-xs: 0.8125rem;
+  --text-sm: 0.875rem;
+  --text-md: 1rem;
+  --text-lg: 1.125rem;
+  --text-xl: 1.375rem;
+  --text-2xl: 1.75rem;
+  --text-3xl: 2.25rem;
+  --leading-tight: 1.3;
+  --leading-snug: 1.5;
+  --leading-body: 1.75;
+  --weight-regular: 400;
+  --weight-medium: 500;
+  --weight-semibold: 600;
+  --weight-bold: 700;
+  --weight-heavy: 800;
 
   /* ── فاصله ───────────────────────────────────────────────────── */
   --s-1: 4px;
@@ -65,83 +96,189 @@
   --s-5: 24px;
   --s-6: 32px;
   --s-7: 48px;
+  --s-8: 64px;
 
-  /* ── حرکت ────────────────────────────────────────────────────── */
-  --ease-out: cubic-bezier(0.22, 1, 0.36, 1);
-  --ease-in-out: cubic-bezier(0.65, 0, 0.35, 1);
-  --t-fast: 120ms;
-  --t-base: 220ms;
-  --t-slow: 380ms;
+  /* ── شعاع‌های هم‌مرکز: داخلی = بیرونی − فاصله ─────────────────── */
+  --r-lg: 22px;
+  --r-md: 16px;
+  --r-sm: 12px;
+  --r-xs: 8px;
+  --r-pill: 999px;
+  --pad: 14px;
 
-  /* هدف لمسی. زیر ۴۴ پیکسل روی تبلت صندوق یعنی خطای زدن. */
+  /* ── اندازه و هدف لمسی ────────────────────────────────────────── */
+  /* زیر ۴۴ پیکسل روی تبلت صندوق یعنی خطای زدن. */
   --touch: 44px;
   --touch-lg: 56px;
+  --control-h: var(--touch);
+  --icon-sm: 16px;
+  --icon-md: 20px;
+  --icon-lg: 24px;
+  --sidebar-w: 236px;
+  /* نوار پایین موبایل: ارتفاع کل (۶ + ۵۴ + ۶) و فاصله از لبه. محتوا جای
+     «ارتفاع + فاصله + ناحیهٔ امن + نفس» را رزرو می‌کند (workspace.css). */
+  --bottom-nav-h: 66px;
+  --bottom-nav-gap: 8px;
+  --content-max: 1440px;
+  --measure: 68ch;
+
+  /* ── تراکم: پیش‌فرض «راحت»؛ [data-density="compact"] زیردرخت را فشرده می‌کند ── */
+  --cell-pad-block: 12px;
+  --cell-pad-inline: 12px;
+  --row-gap: var(--s-3);
+
+  /* ── مرز و ارتفاع ──────────────────────────────────────────────
+     ارتفاع کم و آرام. سایه یعنی «روی چیز دیگری شناور است»، نه تزئین. */
+  --border-w: 1px;
+  --elev-1: 0 1px 2px rgba(20, 18, 24, 0.06);
+  --elev-2: 0 6px 20px -10px rgba(20, 18, 24, 0.22);
+  --elev-3: 0 18px 48px -18px rgba(20, 18, 24, 0.34);
+  --scrim: rgba(12, 11, 14, 0.5);
+
+  /* ── فوکوس ───────────────────────────────────────────────────── */
+  --focus-ring: 2px;
+  --focus-offset: 2px;
+
+  /* ── لایه‌ها ──────────────────────────────────────────────────── */
+  --z-nav: 20;
+  --z-header: 30;
+  --z-sheet: 60;
+  --z-toast: 80;
+  --z-skip: 100;
+
+  /* ── حرکت ──────────────────────────────────────────────────────
+     سه رده: کارکردی (پیمایش، باز شدن) > بازخورد (فشار، نتیجه) > تزئینی.
+     فقط transform و opacity. کاهش حرکت همه را به ۱ms می‌برد. */
+  --dur-instant: 80ms;
+  --dur-fast: 150ms;
+  --dur-base: 220ms;
+  --dur-slow: 300ms;
+  --dur-ambient: 36s;
+  --ease-standard: cubic-bezier(0.2, 0, 0, 1);
+  --ease-out: cubic-bezier(0.22, 1, 0.36, 1);
+  --ease-in-out: cubic-bezier(0.65, 0, 0.35, 1);
+  --ease-exit: cubic-bezier(0.4, 0, 1, 1);
+  --move-sm: 4px;
+  --move-md: 12px;
+  --move-lg: 24px;
+  /* نام‌های قدیمی — هنوز در صفحه‌ها مصرف می‌شوند. */
+  --t-fast: var(--dur-fast);
+  --t-base: var(--dur-base);
+  --t-slow: var(--dur-slow);
+
+  /* ── درخشش و سه‌بعدی: محدود، فقط لحظه‌های خاص (DESIGN_SYSTEM.md) ── */
+  --glow-accent: 0 0 0 1px color-mix(in srgb, var(--accent) 30%, transparent),
+    0 10px 30px -12px color-mix(in srgb, var(--accent) 45%, transparent);
+  --accent-size-sm: 56px;
+  --accent-size-md: 96px;
 
   color-scheme: light dark;
 }
 
+/* ── تراکم فشرده — برای کاربر مالیِ پرداده ─────────────────────── */
+[data-density="compact"] {
+  --control-h: 36px;
+  --cell-pad-block: 6px;
+  --cell-pad-inline: 10px;
+  --row-gap: var(--s-2);
+}
+
 /* ── تم تیره ─────────────────────────────────────────────────────
    انتخاب‌شده، نه معکوسِ خودکارِ تم روشن. هر پله جداگانه در برابر سطح
-   خودش سنجیده شده — ADR-002.
+   خودش سنجیده شده — ADR-002. دو بلوک زیر باید یکسان بمانند؛
+   design-system.test.ts هم‌خوانی‌شان را می‌سنجد.
    ─────────────────────────────────────────────────────────────── */
 @media (prefers-color-scheme: dark) {
   :root:not([data-theme="light"]) {
-    --bg-deep: #0d0b14;
-    --mesh-1: #2b2456;
-    --mesh-2: #46243e;
-    --mesh-3: #0f3a3c;
+    --bg-deep: #0e0e10;
+    --mesh-1: #1e2433;
+    --mesh-2: #3a2e1c;
+    --mesh-3: #12302e;
 
-    --surface-solid: #17151f;
-    --surface-solid-2: #201d2b;
-    --surface-glass: rgba(255, 255, 255, 0.09);
-    --surface-glass-2: rgba(255, 255, 255, 0.055);
-    --glass-rim: rgba(255, 255, 255, 0.3);
-    --glass-rim-2: rgba(0, 0, 0, 0.35);
+    --surface-solid: #17171a;
+    --surface-solid-2: #202024;
+    --surface-glass: rgba(255, 255, 255, 0.08);
+    --surface-glass-2: rgba(255, 255, 255, 0.05);
+    --surface-inverse: #f2f1ee;
+    --glass-rim: rgba(255, 255, 255, 0.24);
+    --glass-rim-2: rgba(0, 0, 0, 0.4);
     --glass-shadow: 0 8px 36px -14px rgba(0, 0, 0, 0.75);
 
-    --ink: #f1eef8;
-    --ink-2: #b6b0cc;
-    --ink-3: #847ea0;
-    --rule: rgba(255, 255, 255, 0.1);
-    --rule-2: rgba(255, 255, 255, 0.18);
-    --control-border: #797287;
+    --ink: #f2f1ee;
+    --ink-2: #b7b5ae;
+    --ink-3: #95938d;
+    --rule: rgba(255, 255, 255, 0.09);
+    --rule-2: rgba(255, 255, 255, 0.17);
+    --control-border: #7b7982;
 
     --accent: #c9973f;
     --accent-ink: #1a1408;
     --chart-1: #c9973f;
+    --chart-2: #8d9bb8;
     --good: #43b083;
     --warn: #e8c24a;
     --crit: #d4405f;
+    --info: #7f9fd3;
+
+    --elev-1: 0 1px 2px rgba(0, 0, 0, 0.4);
+    --elev-2: 0 8px 24px -10px rgba(0, 0, 0, 0.7);
+    --elev-3: 0 22px 56px -18px rgba(0, 0, 0, 0.85);
+    --scrim: rgba(0, 0, 0, 0.62);
   }
 }
 
 :root[data-theme="dark"] {
-  --bg-deep: #0d0b14;
-  --mesh-1: #2b2456;
-  --mesh-2: #46243e;
-  --mesh-3: #0f3a3c;
+  --bg-deep: #0e0e10;
+  --mesh-1: #1e2433;
+  --mesh-2: #3a2e1c;
+  --mesh-3: #12302e;
 
-  --surface-solid: #17151f;
-  --surface-solid-2: #201d2b;
-  --surface-glass: rgba(255, 255, 255, 0.09);
-  --surface-glass-2: rgba(255, 255, 255, 0.055);
-  --glass-rim: rgba(255, 255, 255, 0.3);
-  --glass-rim-2: rgba(0, 0, 0, 0.35);
+  --surface-solid: #17171a;
+  --surface-solid-2: #202024;
+  --surface-glass: rgba(255, 255, 255, 0.08);
+  --surface-glass-2: rgba(255, 255, 255, 0.05);
+  --surface-inverse: #f2f1ee;
+  --glass-rim: rgba(255, 255, 255, 0.24);
+  --glass-rim-2: rgba(0, 0, 0, 0.4);
   --glass-shadow: 0 8px 36px -14px rgba(0, 0, 0, 0.75);
 
-  --ink: #f1eef8;
-  --ink-2: #b6b0cc;
-  --ink-3: #847ea0;
-  --rule: rgba(255, 255, 255, 0.1);
-  --rule-2: rgba(255, 255, 255, 0.18);
-  --control-border: #797287;
+  --ink: #f2f1ee;
+  --ink-2: #b7b5ae;
+  --ink-3: #95938d;
+  --rule: rgba(255, 255, 255, 0.09);
+  --rule-2: rgba(255, 255, 255, 0.17);
+  --control-border: #7b7982;
 
   --accent: #c9973f;
   --accent-ink: #1a1408;
   --chart-1: #c9973f;
+  --chart-2: #8d9bb8;
   --good: #43b083;
   --warn: #e8c24a;
   --crit: #d4405f;
+  --info: #7f9fd3;
+
+  --elev-1: 0 1px 2px rgba(0, 0, 0, 0.4);
+  --elev-2: 0 8px 24px -10px rgba(0, 0, 0, 0.7);
+  --elev-3: 0 22px 56px -18px rgba(0, 0, 0, 0.85);
+  --scrim: rgba(0, 0, 0, 0.62);
+}
+
+/* ── لایهٔ معنایی مشتق — از رنگ‌های سنجیده ساخته می‌شود، نه Hex تازه ──
+   پس‌زمینهٔ نرم وضعیت فقط زیر متنِ --ink می‌نشیند؛ رنگ وضعیت خودش
+   روی آیکون و خط کناری است. */
+:root {
+  --good-soft: color-mix(in srgb, var(--good) 12%, var(--surface-solid));
+  --warn-soft: color-mix(in srgb, var(--warn) 14%, var(--surface-solid));
+  --crit-soft: color-mix(in srgb, var(--crit) 11%, var(--surface-solid));
+  --info-soft: color-mix(in srgb, var(--info) 11%, var(--surface-solid));
+  --accent-soft: color-mix(in srgb, var(--accent) 12%, var(--surface-solid));
+  --neutral-soft: color-mix(in srgb, var(--ink) 6%, var(--surface-solid));
+  /* مالی: بدهکار و بستانکار «خوب» و «بد» نیستند؛ رنگ جوهر می‌گیرند و
+     برچسب متنی. فقط مبلغ منفی رنگ هشدار دارد، همیشه با علامت منفی. */
+  --fin-ink: var(--ink);
+  --fin-negative: var(--crit);
+  --fin-zero: var(--ink-3);
 }
 
 /* ── حالت عملکرد ─────────────────────────────────────────────────
@@ -163,7 +300,7 @@
 @media (prefers-reduced-transparency: reduce) {
   :root:not([data-perf="off"]) {
     --glass-blur: 0px;
-      --surface-glass: var(--surface-solid);
+    --surface-glass: var(--surface-solid);
     --surface-glass-2: var(--surface-solid-2);
     --glass-rim: var(--rule-2);
   }
@@ -178,10 +315,15 @@
   }
 }
 
+/* کاهش حرکت رده‌بندی ندارد: هر سه رده خاموش می‌شوند، فاصله‌ها صفر. */
 @media (prefers-reduced-motion: reduce) {
   :root {
-    --t-fast: 1ms;
-    --t-base: 1ms;
-    --t-slow: 1ms;
+    --dur-instant: 1ms;
+    --dur-fast: 1ms;
+    --dur-base: 1ms;
+    --dur-slow: 1ms;
+    --move-sm: 0px;
+    --move-md: 0px;
+    --move-lg: 0px;
   }
 }

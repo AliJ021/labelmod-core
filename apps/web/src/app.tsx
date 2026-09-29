@@ -1,8 +1,8 @@
 const Invoices = lazy(() => import("./screens/Invoices.tsx").then(m => ({ default: m.Invoices })));
 /** پوسته: ناوبری شیشه‌ای، محتوای مالی مات و دسترس‌پذیر. */
 import { lazy, Suspense, useCallback, useEffect, useState } from "react";
-import { Glass, GlassFilters, Solid } from "./components/Glass.tsx";
-import { TabList, TabPanels, useTabsId } from "./components/Tabs.tsx";
+import { GlassFilters, Solid } from "./components/Glass.tsx";
+import { TabPanels, useTabsId } from "./components/Tabs.tsx";
 import { HeaderTools } from "./components/HeaderTools.tsx";
 import { PasswordDialog } from "./components/PasswordDialog.tsx";
 const Dashboard = lazy(() => import("./screens/Dashboard.tsx").then(m => ({ default: m.Dashboard })));
@@ -30,15 +30,29 @@ import {
   type Theme,
 } from "./lib/theme.ts";
 
-import { ZONES, type Zone, routeUrl } from "./lib/navigation.ts";
-import { useUrlTab } from "./lib/use-url-state.ts";
-import { FeatureSearch } from "./components/FeatureSearch.tsx";
+import { ZONES, pendingZones, routeUrl, type Zone, visibleZones } from "./lib/navigation.ts";
+import { navigate, usePathname, useUrlTab } from "./lib/use-url-state.ts";
 import { useMediaQuery } from "./lib/use-media-query.ts";
+import { useNavAccess } from "./lib/use-nav-access.ts";
 import { SectionBoundary } from "./components/SectionBoundary.tsx";
+import { Backdrop } from "./components/shell/Backdrop.tsx";
+import { ShellHeader } from "./components/shell/ShellHeader.tsx";
+import { ShellNav } from "./components/shell/ShellNav.tsx";
+import { ToastProvider } from "./components/ui/Toast.tsx";
+
+/**
+ * UI Kit فقط در توسعه و در Build صریحِ آزمون/پیش‌نمایش (`VITE_LMC_UI_KIT=1`).
+ * در Build تولیدی این شاخه ثابتِ `false` است و import پویا از Bundle حذف
+ * می‌شود؛ CI همین را روی dist می‌سنجد. داخل پوستهٔ واردشده رندر می‌شود،
+ * پس بدون نشست دیده نمی‌شود.
+ */
+const UI_KIT_ENABLED = import.meta.env.DEV || import.meta.env.VITE_LMC_UI_KIT === "1";
+const UiKit = UI_KIT_ENABLED ? lazy(() => import("./screens/dev/UiKit.tsx").then(m => ({ default: m.UiKit }))) : null;
 
 export function App() {
   const tabsId = useTabsId();
   const [zone, setZone] = useUrlTab("page", ZONES, "dashboard");
+  const pathname = usePathname();
   const [more, setMore] = useState(false);
   const [keyboard, setKeyboard] = useState(false);
   useEffect(() => {
@@ -56,6 +70,9 @@ export function App() {
   const [sessionBusy, setSessionBusy] = useState(false);
 
   const [me, setMe] = useState<Me | null>(null);
+  // بی نشست کامل (ورود، قفل، ثبت اجباری عامل دوم) هیچ پرسش مجوزی فرستاده نمی‌شود:
+  // درخواستی پس از قفل همان چیزی است که داشبورد هم از آن پرهیز می‌کند.
+  const access = useNavAccess(me && !me.enrollmentRequired ? `${me.id}:${me.elevated}` : null);
   const [loaded, setLoaded] = useState(false);
   const [lockedUser, setLockedUser] = useState<string | null>(null);
   const [upgrading, setUpgrading] = useState(false);
@@ -136,11 +153,7 @@ export function App() {
     return (
       <>
         <GlassFilters />
-        <div className="mesh" aria-hidden="true">
-          <i />
-          <i />
-          <i />
-        </div>
+        <Backdrop variant="auth" />
         <div className="auth-wrap">
           <p className="muted">در حال بررسی نشست…</p>
         </div>
@@ -152,11 +165,7 @@ export function App() {
     return (
       <>
         <GlassFilters />
-        <div className="mesh" aria-hidden="true">
-          <i />
-          <i />
-          <i />
-        </div>
+        <Backdrop variant="auth" />
         <ReauthPanel
           onDone={() => {
             setUpgrading(false);
@@ -172,11 +181,7 @@ export function App() {
     return (
       <>
         <GlassFilters />
-        <div className="mesh" aria-hidden="true">
-          <i />
-          <i />
-          <i />
-        </div>
+        <Backdrop variant="auth" />
         {view === "locked" && lockedUser !== null ? (
           <LockScreen
             fullName={lockedUser}
@@ -200,7 +205,7 @@ export function App() {
     return (
       <>
         <GlassFilters />
-        <div className="mesh" aria-hidden="true"><i /><i /><i /></div>
+        <Backdrop variant="auth" />
         <main className="auth-wrap">
           <Solid className="pad auth-card">
             <h1 className="auth-title">راه‌اندازی احراز هویت دومرحله‌ای</h1>
@@ -218,7 +223,8 @@ export function App() {
     // فوکوسِ زمان‌بندی‌شده فقط وقتی به محتوا می‌رود که کسی در این فاصله فوکوس تازه‌ای نگذاشته باشد:
     // frame دیرهنگام نباید فوکوسی را که کاربر روی زیرزبانه یا کنترل دیگری برده، پس بگیرد.
     const origin = document.activeElement;
-    setZone(next);
+    // از /dev/ui-kit برگشت به مسیر ریشه؛ بقیهٔ وضعیت نشانی همان useUrlTab است.
+    if (window.location.pathname !== "/") navigate(routeUrl(next)); else setZone(next);
     setMore(false);
     requestAnimationFrame(() => {
       const now = document.activeElement;
@@ -236,36 +242,27 @@ export function App() {
   }
 
 
+  const navItems = visibleZones(access.verdicts, zone);
+  const pendingItems = pendingZones(access, zone);
+  const uiKit = UiKit !== null && pathname === "/dev/ui-kit";
+
   return (
-    <>
+    <ToastProvider>
       <GlassFilters />
-      {/* مِش زمینه: چیزی که شیشه باید بشکندش. روی زمینه تخت، شیشه دیده نمی‌شود. */}
-      <div className="mesh" aria-hidden="true">
-        <i />
-        <i />
-        <i />
-      </div>
+      <Backdrop variant="workspace" />
 
       <div className={`app workspace${more ? " workspace--more" : ""}${keyboard ? " workspace--keyboard" : ""}`}>
         <a className="skip-content" href="#workspace-content">رفتن به محتوا</a>
         {sessionError && <p className="solid pos-alert" role="alert">{sessionError}</p>}
-        <Glass as="header" radius="md" className="workspace-header" refract={false}>
-          <strong className="brand">لیبل مد</strong>
+        <ShellHeader searchKey={`${me?.id}:${me?.elevated}`} tools={me ? <HeaderTools me={me} theme={theme} onTheme={cycleTheme} onLock={() => void lockScreen()} onLogout={() => void signOut()} onPassword={() => setPasswordOpen(true)} onReauth={() => setUpgrading(true)} /> : null} />
 
-          <FeatureSearch key={`${me?.id}:${me?.elevated}`} />
-
-          {me ? <HeaderTools me={me} theme={theme} onTheme={cycleTheme} onLock={() => void lockScreen()} onLogout={() => void signOut()} onPassword={() => setPasswordOpen(true)} onReauth={() => setUpgrading(true)} /> : null}
-        </Glass>
-
-        <Glass as="nav" className="workspace-nav" refract={false} aria-label="ناوبری اصلی">
-          <TabList id={tabsId} items={ZONES} value={zone} onChange={switchZone} label="بخش‌ها" className="zones workspace-zones" vertical={!compact} hrefFor={key => routeUrl(key)} />
-          <button type="button" className="workspace-more" aria-expanded={more} aria-label={more ? "بستن بخش‌های بیشتر" : "بخش‌های بیشتر"} onClick={() => setMore(v => !v)}>بیشتر</button>
-        </Glass>
+        <ShellNav id={tabsId} items={navItems} pending={pendingItems} access={access.state} onRetry={access.retry} zone={zone} onZone={switchZone} compact={compact} more={more} onMore={setMore} />
         <main id="workspace-content" tabIndex={-1}>
+        {uiKit && UiKit ? <SectionBoundary key="ui-kit"><Suspense fallback={<p className="solid pad" role="status">در حال بارگذاری UI Kit…</p>}><UiKit /></Suspense></SectionBoundary> : null}
         <SectionBoundary key={`${me?.id}:${zone}`}>
         {/* Suspense داخل پنل است، نه دور همهٔ پنل‌ها: هنگام بارگذاری یک بخش،
             هر tabpanel باید بماند تا aria-controls هیچ زبانه‌ای به شناسهٔ ناموجود اشاره نکند. */}
-        <TabPanels id={tabsId} items={ZONES} value={zone} className="zone-panel">
+        <TabPanels id={tabsId} items={ZONES} value={uiKit ? null : zone} className="zone-panel">
         <Suspense fallback={<p className="solid pad" role="status">در حال بارگذاری بخش…</p>}>
           {zone === "dashboard" ? (
             <Dashboard />
@@ -286,7 +283,7 @@ export function App() {
           ) : zone === "customers" ? (
             <Customers />
           ) : (
-            <Settings currentUserId={me?.id ?? ""} onOwnPassword={() => setPasswordOpen(true)} />
+            <Settings access={access} currentUserId={me?.id ?? ""} onOwnPassword={() => setPasswordOpen(true)} />
           )}
         </Suspense>
         </TabPanels>
@@ -303,6 +300,6 @@ export function App() {
           setLoginNotice("رمز شما تغییر کرد و همهٔ نشست‌ها بسته شدند. با رمز تازه وارد شوید.");
         }} /> : null}
       </div>
-    </>
+    </ToastProvider>
   );
 }

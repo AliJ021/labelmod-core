@@ -182,11 +182,15 @@ test("customers keep manual search; permissions keep local filtering; retry stat
 test("RTL keyboard tabs, activation, one tab stop and responsive settings focus", async ({ page }) => {
   await page.goto("/");
   const main = page.getByRole("tablist", { name: "بخش‌ها", exact: true });
-  if (page.viewportSize()!.width < 900) await page.getByRole("button", {name:"بخش‌های بیشتر",exact:true}).click();
-  await tabContract(main, page.viewportSize()!.width >= 900);
+  // گوشی: قرارداد زبانه روی نوار پایین؛ برگهٔ «بیشتر» مودال جداست (پیوند، نه زبانه).
+  const phone = page.viewportSize()!.width < 900;
+  await expect(main.getByRole("tab", { name: phone ? "کالا و قیمت" : "تنظیمات", exact: true })).toBeVisible();
+  await tabContract(main, !phone);
   await main.getByRole("tab").first().press("End");
   await expect(main.getByRole("tab").last()).toBeFocused();
   await main.getByRole("tab").last().press("Enter");
+  await expect(main.getByRole("tab", {name: phone ? "کالا و قیمت" : "تنظیمات",exact:true,includeHidden:true})).toHaveAttribute("aria-selected", "true");
+  if (phone) await openZone(page, "تنظیمات");
   await expect(main.getByRole("tab", {name:"تنظیمات",exact:true,includeHidden:true})).toHaveAttribute("aria-selected", "true");
   if (page.viewportSize()!.width >= 768) {
     await tabContract(page.getByRole("tablist", { name: "بخش‌های تنظیمات" }), true);
@@ -246,13 +250,20 @@ test("live reduced motion, transparency and persisted performance mode", async (
   await expect(page.locator(".zone-panel:not([hidden])")).toHaveCSS("animation-name", "none");
   expect(await page.evaluate(() => document.getAnimations().filter(a => a.effect instanceof KeyframeEffect && a.effect.pseudoElement?.startsWith("::view-transition")).length)).toBe(0);
   await page.emulateMedia({ reducedMotion: "no-preference" });
-  await expect(page.locator(".mesh i").first()).not.toHaveCSS("animation-name", "none");
+  // صفحه‌های داده زمینهٔ ساکن دارند حتی بی کاهش حرکت؛ حرکت تزئینی فقط روی ورود و قفل است (پایین همین آزمون).
+  await expect(page.locator(".mesh i").first()).toHaveCSS("animation-name", "none");
   await settings(page, "appearance", "نمایش و عملکرد");
   await perf.selectOption("system");
   await transparency(page, browserName, true);
   await expect(page.locator(".workspace-header")).toHaveCSS("backdrop-filter", "none");
   await transparency(page, browserName, false);
   await expect(page.locator(".workspace-header")).not.toHaveCSS("backdrop-filter", "none");
+  // جلوهٔ امضای سطح ورود/قفل: با حرکت مجاز حرکت می‌کند و با کاهش حرکت، زنده، می‌ایستد.
+  await page.getByRole("button", { name: "قفل صفحه", exact: true }).click();
+  await expect(page.getByRole("heading", { name: "صفحه قفل است" })).toBeVisible();
+  await expect(page.locator(".mesh--auth i").first()).not.toHaveCSS("animation-name", "none");
+  await page.emulateMedia({ reducedMotion: "reduce" });
+  await expect(page.locator(".mesh--auth i").first()).toHaveCSS("animation-name", "none");
 });
 
 test("password suggestion, cancellation, server error, duplicate submit and success", async ({ page, api }) => {

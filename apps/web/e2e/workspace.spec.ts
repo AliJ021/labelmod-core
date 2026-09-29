@@ -170,10 +170,13 @@ async function switchToTreasuryWithHeldFrame(page:Page){
   await page.goto("/");
   await expect(page.getByRole("heading",{name:"امروز"})).toBeVisible();
   const nav=page.getByRole("tablist",{name:"بخش‌ها",exact:true});
-  const tab=nav.getByRole("tab",{name:"خزانه و چک",exact:true});
-  if(!(await tab.isVisible())) await page.getByRole("button",{name:"بخش‌های بیشتر",exact:true}).click();
+  const phone=page.viewportSize()!.width<900;
+  // گوشی: خزانه در برگهٔ مودال «بیشتر» است و مقصدش پیوند است، نه زبانه.
+  if(phone) await page.getByRole("button",{name:"بخش‌های بیشتر",exact:true}).click();
+  const target=phone?page.getByRole("dialog",{name:"همهٔ بخش‌ها"}).getByRole("link",{name:"خزانه و چک",exact:true}):nav.getByRole("tab",{name:"خزانه و چک",exact:true});
+  await expect(target).toBeVisible();
   await page.evaluate(()=>(window as unknown as {__rafHold:()=>void}).__rafHold());
-  await tab.click();
+  await target.click();
   const sub=page.getByRole("tablist",{name:"بخش‌های خزانه",exact:true});
   await expect(sub).toBeVisible();
   return sub;

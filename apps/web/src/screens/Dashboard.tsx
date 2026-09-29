@@ -1,9 +1,22 @@
-import { navigate } from "../lib/use-url-state.ts";
-/** داشبورد: اعداد مالی و هشدارها روی سطح مات خوانده می‌شوند. */
+/**
+ * داشبورد — مرکز کنترل امروز، نه ویترین کارت (docs/UI_PATTERNS.md، «داشبورد»).
+ *
+ * ترتیب خواندن عمدی است:
+ *   ۱. چه چیزی رسیدگی می‌خواهد (دوره‌های ثبت‌نشده) — بالاترین اولویت.
+ *   ۲. سه شاخص امروز: فروش · وجه دریافتی · سود (design.md).
+ *   ۳. فروش ساعت‌به‌ساعت امروز — فقط از `/reports/hourly` واقعی.
+ *   ۴. کارهای پرتکرار.
+ *
+ * هیچ عدد ساختگی روی این صفحه نمی‌نشیند. بخشی که داده یا مجوزش
+ * نیست، می‌گوید چرا — نه صفر، نه نمونه.
+ */
 import { useEffect, useState } from "react";
+import { navigate } from "../lib/use-url-state.ts";
 import { Solid } from "../components/Glass.tsx";
+import { Icon, type IconName } from "../components/Icon.tsx";
 import { ApiError } from "../lib/api.ts";
-import { parseRial, toman } from "../lib/money.ts";
+import { parseRial } from "../lib/money.ts";
+import { channelLabel, formatCount, formatGregorian, formatHour, formatJalali, formatMoney } from "../lib/format.ts";
 import {
   canClosePeriod,
   periodNote,
@@ -12,12 +25,32 @@ import {
   type DailyReport,
   type UnpostedRow,
 } from "../lib/pos.ts";
+import { reports, type HourlyRow } from "../lib/reports.ts";
 import { session } from "../lib/session.ts";
+import { Money } from "../components/ui/Money.tsx";
+import { Kpi } from "../components/ui/Kpi.tsx";
+import { PageHeader, SectionHeader } from "../components/ui/PageHeader.tsx";
+import { StatusBadge, StatusIcon } from "../components/ui/Status.tsx";
+import { Skeleton } from "../components/ui/Skeleton.tsx";
+import { SafeAction } from "../components/ui/SafeAction.tsx";
+import { BarChart, type Bar } from "../components/ui/BarChart.tsx";
+import { Ltr } from "../components/ui/Bidi.tsx";
+import { ResultState } from "../components/ResultState.tsx";
+
+/** `null` = این کاربر `report.view` ندارد؛ آرایه = سنجیدیم. */
+type Hourly = HourlyRow[] | null | "error";
+
+const QUICK: readonly { href: string; name: string; icon: IconName }[] = [
+  { href: "/?page=pos", name: "فروش جدید", icon: "register" },
+  { href: "/?page=invoices&invoices.status=draft", name: "رسیدگی به پیش‌نویس‌ها", icon: "receipt" },
+  { href: "/?page=catalog&catalog.labels=1", name: "چاپ لیبل بارکد", icon: "print" },
+  { href: "/?page=invoices", name: "فاکتورها و چاپ رسید", icon: "receipt" },
+];
 
 export function Dashboard() {
   const [branch, setBranch] = useState<Branch | null>(null);
   const [report, setReport] = useState<DailyReport | null>(null);
-  const [error, setError] = useState<string | null>(null);
+  const [error, setError] = useState<{ message: string; reference: string | null } | null>(null);
   /**
    * `null` یعنی «نمی‌دانیم» — این کاربر `cost.view` ندارد.
    *
@@ -29,24 +62,19 @@ export function Dashboard() {
   /**
    * آیا این کاربر اجازه بستن دوره را دارد؟
    *
-   * `cost.view` (که فهرست را نشان می‌دهد) و `period.close` دو چیزند:
-   * صندوق‌دار هیچ‌کدام را ندارد، ولی حسابدارِ فقط‌خوان می‌تواند اولی را
-   * داشته باشد و دومی را نه. دکمه‌ای که سرور بعداً ۴۰۳ بدهد، بدتر از
-   * نبودنش است.
-   *
    * ⚠️ این یک **راحتی** است، نه دروازه. سرور در لحظه اجرا دوباره
    *    مجوز می‌گیرد.
    */
   const [mayClose, setMayClose] = useState(false);
-  const [closing, setClosing] = useState<string | null>(null);
-  const [closeError, setCloseError] = useState<string | null>(null);
   const [closed, setClosed] = useState<string | null>(null);
+  const [hourly, setHourly] = useState<Hourly>(null);
+  const [hourlyLoading, setHourlyLoading] = useState(true);
 
   /**
    * ⚠️ زنجیرهٔ بارگذاری با Unmount لغو می‌شود. قفل و خروج داشبورد را
-   *    Unmount می‌کنند؛ بی این لغو، زنجیره درخواست بعدی (`auth/can`) را
-   *    **پس از قفل** می‌فرستاد و Reload بعدی آن را وسط راه قطع می‌کرد —
-   *    همان خطای WebKit در آزمون قفل/خروج.
+   *    Unmount می‌کنند؛ بی این لغو، زنجیره درخواست بعدی را **پس از قفل**
+   *    می‌فرستاد و Reload بعدی آن را وسط راه قطع می‌کرد — همان خطای
+   *    WebKit در آزمون قفل/خروج.
    */
   useEffect(() => {
     const controller = new AbortController();
@@ -57,7 +85,7 @@ export function Dashboard() {
         if (signal.aborted) return;
         const first = branches[0];
         if (!first) {
-          setError("به هیچ شعبه‌ای دسترسی ندارید.");
+          setError({ message: "به هیچ شعبه‌ای دسترسی ندارید.", reference: null });
           return;
         }
         setBranch(first);
@@ -66,7 +94,7 @@ export function Dashboard() {
         setReport(report);
 
         // درآمد ثبت‌نشده پشت `cost.view` است. نداشتنش خطا نیست —
-        // فقط یعنی این کارت برای این کاربر نیست.
+        // فقط یعنی این بخش برای این کاربر نیست.
         try {
           const { rows } = await pos.unpostedRevenue({ signal });
           if (signal.aborted) return;
@@ -76,9 +104,8 @@ export function Dashboard() {
           setUnposted(null);
         }
 
-        // جدا از بالا: اگر پرسش مجوز شکست بخورد، کارت باید همچنان
-        // دیده شود — فقط بدون دکمه. یکی‌کردن این دو `try` یعنی یک
-        // خطای بی‌ربط، زنگ خطر «درآمد ثبت‌نشده» را خاموش کند.
+        // جدا از بالا: اگر پرسش مجوز شکست بخورد، فهرست باید همچنان
+        // دیده شود — فقط بدون دکمه.
         try {
           const decision = await session.can("period.close", { signal });
           if (signal.aborted) return;
@@ -87,63 +114,46 @@ export function Dashboard() {
           if (signal.aborted) return;
           setMayClose(false);
         }
+
+        // فروش ساعتی پشت `report.view` است؛ صندوق‌دار ندارد و این
+        // «خطا» نیست. خطای واقعی جدا نشان داده می‌شود.
+        try {
+          const { rows } = await reports.hourly({ from: report.businessDate, to: report.businessDate, branchId: first.id }, { signal });
+          if (signal.aborted) return;
+          setHourly(rows);
+        } catch (err) {
+          if (signal.aborted) return;
+          setHourly(err instanceof ApiError && err.status === 403 ? null : "error");
+        } finally {
+          if (!signal.aborted) setHourlyLoading(false);
+        }
       } catch (err) {
         if (signal.aborted) return;
-        setError(err instanceof ApiError ? err.message : "ارتباط با سرور برقرار نشد.");
+        setError(err instanceof ApiError
+          ? { message: err.message, reference: err.correlationId }
+          : { message: "ارتباط با سرور برقرار نشد.", reference: null });
       }
     })();
     return () => controller.abort();
   }, []);
 
   if (error) {
-    return (
-      <Solid className="pad">
-        <p style={{ margin: 0 }}>
-          <span className="dot dot--crit" aria-hidden="true">●</span> {error}
-        </p>
-      </Solid>
-    );
+    return <Solid className="pad"><ResultState kind="error" title={error.message} reference={error.reference}
+      description="اتصال را بررسی کنید و صفحه را دوباره بارگذاری کنید." /></Solid>;
   }
 
-  if (!report) return <Solid className="pad">در حال بارگذاری…</Solid>;
+  if (!report) {
+    return <div className="dashboard">
+      <Skeleton variant="text" lines={2} label="در حال بارگذاری…" />
+      <div className="kpis"><Skeleton variant="kpi" lines={3} /></div>
+    </div>;
+  }
 
-  /**
-   * بستن دوره یک کانال — همان دکمه‌ای که تا امروز هیچ کاری نمی‌کرد.
-   *
-   * سه چیز که این تابع نگه می‌دارد:
-   *
-   * **کلید Idempotency نمی‌فرستد.** سرور آن را از (شعبه، کانال،
-   * تاریخ) می‌سازد و هدر کلاینت را نادیده می‌گیرد؛ فرستادنش فقط
-   * توهم می‌ساخت.
-   *
-   * **دو بار کلیک، یک بار اثر.** `closing` پیش از تماس ست می‌شود و
-   * دکمه غیرفعال؛ و حتی اگر از دستمان در برود، سرور Replay می‌دهد نه
-   * سند دوم.
-   *
-   * **پیام سرور همان‌طور که هست دیده می‌شود.** «دوره ثبتی برای این
-   * کانال وجود ندارد» و «هیچ فاکتوری نهایی نشده» جمله‌های فارسیِ
-   * دیتابیس‌اند و ترجمه دوباره‌شان فقط دقت را کم می‌کرد.
-   */
-  async function closeDay(row: UnpostedRow) {
-    if (closing !== null) return;
-    setClosing(row.batchId);
-    setCloseError(null);
-    setClosed(null);
-    try {
-      await pos.closeChannelDay({
-        branchId: row.branchId,
-        channel: row.channel,
-        date: row.businessDate,
-      });
-      setClosed(`دوره ${row.channel} در ${row.businessDate} بسته شد.`);
-      // فهرست از سرور دوباره خوانده می‌شود، نه اینکه سطر را از حافظه
-      // برداریم: اگر بستن نیمه‌کاره مانده باشد، سطر باید بماند.
-      setUnposted((await pos.unpostedRevenue()).rows);
-    } catch (err) {
-      setCloseError(err instanceof ApiError ? err.message : "ارتباط با سرور برقرار نشد.");
-    } finally {
-      setClosing(null);
-    }
+  /** فهرست از سرور دوباره خوانده می‌شود، نه از حافظه: اگر بستن نیمه‌کاره مانده باشد، سطر باید بماند. */
+  async function reload(): Promise<UnpostedRow[]> {
+    const { rows } = await pos.unpostedRevenue();
+    setUnposted(rows);
+    return rows;
   }
 
   const sales = parseRial(report.salesAmount);
@@ -151,196 +161,159 @@ export function Dashboard() {
   // نسیه = فروخته ولی پولش نیامده. منفی بی‌معناست (پیش‌پرداخت روز
   // قبل)، پس صفر می‌شود تا کارت «−۵۰٬۰۰۰ نسیه» نشان ندهد.
   const credit = sales > received ? sales - received : 0n;
+  const attention = unposted?.length ?? 0;
 
   return (
-    <div className="stack" style={{ gap: "var(--s-5)" }}>
-      <nav className="row dashboard-actions" aria-label="کارهای پرتکرار">
-        {[{href:"/?page=pos",name:"فروش جدید"},{href:"/?page=invoices&invoices.status=draft",name:"رسیدگی به پیش‌نویس‌ها"},
-          {href:"/?page=catalog&catalog.labels=1",name:"چاپ لیبل بارکد"},{href:"/?page=invoices",name:"فاکتورها و چاپ رسید"}].map(a =>
-          <a className="btn" key={a.href} href={a.href} onClick={e => { if(e.metaKey||e.ctrlKey||e.shiftKey) return; e.preventDefault();navigate(a.href); }}>{a.name}</a>)}
-      </nav>
-      <Solid as="section" className="pad">
-        <header className="row between">
-          <div>
-            <h1 style={{ fontSize: "1.35rem" }}>امروز</h1>
-            <p className="muted" style={{ margin: 0 }}>
-              {branch?.name} · {report.businessDate}
-            </p>
-          </div>
-          <span className="pill">
-            <Dot tone="good" />
-            گزارش امروز
-          </span>
-        </header>
-
-        {/*
-          سه کارت با برچسب صریح و سطح مات مستقل از زمینه.
-        */}
-        <div className="kpis">
-          <Kpi
-            label="فروش"
-            value={toman(sales)}
-            note={
-              report.returnCount > 0
-                ? `${report.invoiceCount} فاکتور · ${report.returnCount} مرجوعی`
-                : `${report.invoiceCount} فاکتور`
-            }
-          />
-          <Kpi
-            label="وجه دریافتی"
-            value={toman(received)}
-            note={credit > 0n ? `${toman(credit)} تومان هنوز نرسیده` : "همه پول رسیده"}
-            tone={credit > 0n ? "warn" : "good"}
-          />
-          {/*
-            سود `null` یعنی این کاربر `cost.view` ندارد — نه اینکه سود
-            صفر بوده. نشان‌دادن «۰» به‌جایش، به صندوق‌دار می‌گفت
-            فروشگاه امروز ضرر کرده.
-          */}
-          <Kpi
-            label="سود"
-            value={report.profitAmount === null ? "—" : toman(parseRial(report.profitAmount))}
-            note={
-              report.profitAmount === null
-                ? "برای دیدن سود، دسترسی بهای تمام‌شده لازم است"
-                : "پس از بهای تمام‌شده"
-            }
-            tone={report.profitAmount === null ? "warn" : "good"}
-          />
-        </div>
-      </Solid>
+    <div className="dashboard">
+      <PageHeader
+        title="امروز"
+        context={<>
+          {branch?.name} · <span className="nowrap">{formatJalali(report.businessDate, true)}</span>
+          {/* میلادی فقط زمینهٔ ثانوی است: کوچک‌تر و کم‌رنگ‌تر، در برگ LTR. */}
+          <span className="page-context-secondary"><Ltr mono={false}>{formatGregorian(report.businessDate)}</Ltr></span>
+        </>}
+      />
 
       {/*
-        دو چیزی که قبلاً اینجا بودند — نمودار «فروش در ساعت» و فهرست
-        کارهای نمونه — **حذف شدند**، نه اینکه برچسب «نمونه» بگیرند.
-
-        داده ساختگی کنار داده واقعی روی داشبوردی که پول نشان می‌دهد،
-        بدتر از نبودنش است: «۲ چک تا ۵ روز دیگر سررسید دارد» یا یک
-        نمودار ساعتی، وقتی از هیچ کوئری‌ای نیامده‌اند، یک ادعای مالی
-        دروغ‌اند.
-
-        `Bars` هم با آن رفت. نگه‌داشتن کامپوننتی که هیچ‌چیز صدایش
-        نمی‌زند، «بعداً لازم می‌شود» است — همان جمله‌ای که کد مرده با
-        آن جمع می‌شود. تاریخچه git نگهش داشته و بازگرداندنش یک
-        `git show` است.
+        نیاز به رسیدگی اول می‌آید: کاری که انجام نشود، عدد فردا را غلط می‌کند.
+        «پاک» هم یک پاسخ است و دیده می‌شود.
       */}
-      <Solid as="section" className="pad">
-        <h2 style={{ fontSize: "1rem" }}>نیاز به رسیدگی</h2>
-        {closeError ? (
-          <p className="auth-error" role="alert">
-            <span className="dot dot--crit" aria-hidden="true">●</span> {closeError}
-          </p>
-        ) : null}
-        {closed ? (
-          <p className="muted small" role="status">
-            <Dot tone="good" />
-            {closed}
-          </p>
-        ) : null}
+      <Solid as="section" className="pad attention" aria-labelledby="dash-attention">
+        <SectionHeader id="dash-attention" title="نیاز به رسیدگی"
+          actions={unposted && attention > 0 ? <StatusBadge state="attention" label={`${formatCount(attention)} مورد`} /> : null} />
+        {closed ? <p className="attention-done" role="status"><StatusIcon state="completed" />{closed}</p> : null}
         <ul className="tasks">
           {unposted === null ? (
-            <Task
-              tone="warn"
-              label="برای دیدن درآمد ثبت‌نشده، دسترسی بهای تمام‌شده لازم است"
-            />
+            <Task state="warning" label="برای دیدن درآمد ثبت‌نشده، دسترسی بهای تمام‌شده لازم است" />
           ) : unposted.length === 0 ? (
-            <Task tone="good" label="همه درآمدها به دفتر رفته‌اند" />
+            <Task state="completed" label="همه درآمدها به دفتر رفته‌اند" />
           ) : (
-            unposted.map((r) => (
-              <Task
-                key={r.batchId}
-                tone="crit"
-                label={`${r.invoiceCount} فاکتور ${r.channel} در ${r.businessDate} هنوز به دفتر نرفته`}
-                note={periodNote(r, report.businessDate, mayClose)}
-                {...(canClosePeriod(r, report.businessDate, mayClose)
-                  ? {
-                      action: closing === r.batchId ? "در حال بستن…" : "بستن دوره",
-                      onAction: () => void closeDay(r),
-                      busy: closing !== null,
-                    }
-                  : {})}
-              />
-            ))
+            unposted.map((r) => {
+              const channel = channelLabel(r.channel);
+              const date = formatJalali(r.businessDate);
+              const note = periodNote(r, report.businessDate, mayClose);
+              return <Task key={r.batchId} state="attention"
+                label={`${formatCount(r.invoiceCount)} فاکتور ${channel} در ${date} هنوز به دفتر نرفته`}
+                detail={<Money rial={r.payableAmount} size="sm" />}
+                action={canClosePeriod(r, report.businessDate, mayClose) ? <SafeAction
+                  trigger="بستن دوره"
+                  title={`بستن دورهٔ ${channel} — ${date}`}
+                  summary={<dl className="safe-facts">
+                    <div><dt>فاکتورها</dt><dd>{formatCount(r.invoiceCount)}</dd></div>
+                    <div><dt>مبلغ قابل ثبت</dt><dd><Money rial={r.payableAmount} /></dd></div>
+                  </dl>}
+                  consequence="درآمد و بهای تمام‌شدهٔ این دوره در دفتر ثبت می‌شود و پس از آن فاکتور تازه‌ای به این دوره نمی‌نشیند. اصلاح بعدی فقط با سند معکوس ممکن است."
+                  confirmLabel="بستن دوره و ثبت در دفتر"
+                  pendingLabel="در حال بستن…"
+                  run={async () => {
+                    // کلید Idempotency فرستاده نمی‌شود: سرور آن را از
+                    // (شعبه، کانال، تاریخ) می‌سازد و تکرار Replay می‌گیرد.
+                    await pos.closeChannelDay({ branchId: r.branchId, channel: r.channel, date: r.businessDate });
+                  }}
+                  verify={async () => !(await reload()).some(x => x.batchId === r.batchId)}
+                  onDone={outcome => {
+                    setClosed(outcome === "verified"
+                      ? `بررسی شد: دورهٔ ${channel} در ${date} بسته شده است.`
+                      : `دورهٔ ${channel} در ${date} بسته شد.`);
+                    void reload().catch(() => {});
+                  }}
+                /> : null}
+                note={note}
+              />;
+            })
           )}
         </ul>
       </Solid>
+
+      {/*
+        یک سطح مات برای «امروز»: سه شاخص در یک نوار با خط جداکننده و روند
+        ساعتی زیرش — یک فضای کار، نه چند ویجت (بازبینی بصری ۱).
+      */}
+      <Solid as="section" className="today" aria-label="امروز در یک نگاه">
+      <section className="kpis kpis--band" aria-label="شاخص‌های امروز">
+        <Kpi label="فروش" icon="receipt" emphasis
+          value={<Money rial={sales} size="xl" />}
+          note={report.returnCount > 0
+            ? `${formatCount(report.invoiceCount)} فاکتور · ${formatCount(report.returnCount)} مرجوعی`
+            : `${formatCount(report.invoiceCount)} فاکتور`} />
+        <Kpi label="وجه دریافتی" icon="card"
+          value={<Money rial={received} size="xl" />}
+          state={credit > 0n ? "warning" : "completed"}
+          note={credit > 0n ? <><Money rial={credit} size="sm" /> هنوز نرسیده</> : "همه پول رسیده"} />
+        {/*
+          سود `null` یعنی این کاربر `cost.view` ندارد — نه اینکه سود
+          صفر بوده. نشان‌دادن «۰» به‌جایش، به صندوق‌دار می‌گفت
+          فروشگاه امروز ضرر کرده.
+        */}
+        <Kpi label="سود" icon="chart"
+          value={report.profitAmount === null ? <span className="kpi-unknown" aria-label="نامعلوم">—</span> : <Money rial={report.profitAmount} size="xl" />}
+          state={report.profitAmount === null ? "warning" : "completed"}
+          note={report.profitAmount === null ? "برای دیدن سود، دسترسی بهای تمام‌شده لازم است" : "پس از بهای تمام‌شده"} />
+      </section>
+
+      <HourlyPanel hourly={hourly} loading={hourlyLoading} />
+      </Solid>
+
+      <nav className="quick-actions" aria-label="کارهای پرتکرار">
+        {QUICK.map(a =>
+          <a className="quick-action" key={a.href} href={a.href} onClick={e => { if (e.metaKey || e.ctrlKey || e.shiftKey) return; e.preventDefault(); navigate(a.href); }}>
+            <Icon name={a.icon} />
+            <span>{a.name}</span>
+          </a>)}
+      </nav>
     </div>
   );
 }
 
-function Kpi({
-  label,
-  value,
-  note,
-  tone,
-}: {
-  label: string;
-  value: string;
-  note: string;
-  tone?: "good" | "warn";
-}) {
-  return (
-    <Solid className="kpi">
-      <span className="muted">{label}</span>
-      <strong className="num kpi-value">{value}</strong>
-      <span className="muted small">
-        {tone ? <Dot tone={tone} /> : null}
-        {note}
-      </span>
-    </Solid>
-  );
+/**
+ * فروش ساعت‌به‌ساعت امروز. کانال‌ها جمع می‌شوند — جمع در `bigint`، نه
+ * در شناور. بازهٔ نمایش ۸ تا ۲۲ است و هر ساعتِ دارای فروش بیرون از آن
+ * هم افزوده می‌شود؛ ساعتی که داده ندارد صفر است، نه حذف.
+ */
+function HourlyPanel({ hourly, loading }: { hourly: Hourly; loading: boolean }) {
+  if (!loading && hourly === null) return null;
+  let body;
+  if (loading) body = <Skeleton variant="chart" lines={1} label="در حال بارگذاری فروش ساعتی…" />;
+  else if (hourly === "error" || hourly === null) body = <ResultState kind="error" title="فروش ساعتی خوانده نشد." description="بقیهٔ داشبورد معتبر است؛ این بخش را بعداً دوباره ببینید." />;
+  else {
+    const totals = new Map<number, bigint>();
+    for (const r of hourly) totals.set(r.hourOfDay, (totals.get(r.hourOfDay) ?? 0n) + parseRial(r.netAmount));
+    const hours = [...totals.keys()];
+    const from = Math.min(8, ...hours), to = Math.max(22, ...hours);
+    const bars: Bar[] = [];
+    for (let h = from; h <= to; h++) {
+      const value = totals.get(h) ?? 0n;
+      bars.push({ key: String(h), label: formatHour(h), value, display: `${formatMoney(value)} تومان` });
+    }
+    const peak = bars.reduce<Bar | null>((m, b) => (b.value > 0n && (!m || b.value > m.value) ? b : m), null);
+    body = peak === null
+      ? <ResultState title="هنوز فروشی برای امروز ثبت نشده است." description="با اولین فاکتور نهایی، نمودار ساعتی اینجا ساخته می‌شود." />
+      : <BarChart title="فروش خالص هر ساعت (تومان)" labelHeader="ساعت" valueHeader="فروش خالص"
+          summary={`بیشترین فروش: ساعت ${peak.label} با ${peak.display}`} bars={bars} />;
+  }
+  return <section className="today-trend" aria-labelledby="dash-hourly">
+    <SectionHeader id="dash-hourly" title="روند فروش ساعتی" description="از گزارش فروش ساعتی؛ همهٔ کانال‌ها با هم. ساعت‌های زودتر سمت راست." />
+    {body}
+  </section>;
 }
 
-function Task({
-  tone,
-  label,
-  note,
-  action,
-  onAction,
-  busy,
-}: {
-  tone: "good" | "warn" | "crit";
+function Task({ state, label, note, action, detail }: {
+  state: "completed" | "warning" | "attention";
   label: string;
   note?: string | undefined;
-  action?: string | undefined;
-  onAction?: (() => void) | undefined;
-  busy?: boolean | undefined;
+  action?: React.ReactNode;
+  detail?: React.ReactNode;
 }) {
   return (
-    <li>
-      <Dot tone={tone} />
-      <span>{label}</span>
+    <li className={`task task--${state}`}>
+      <StatusIcon state={state} />
+      <span className="task-label">{label}</span>
+      {detail ? <span className="task-detail">{detail}</span> : null}
       {/*
-        دکمه فقط وقتی ساخته می‌شود که کاری برای انجام باشد. نسخه
-        قبلی همیشه یک `<button>` می‌گذاشت — بی `onClick` و گاهی با
-        متن خالی — یعنی صفحه‌خوان یک دکمه بی‌نام اعلام می‌کرد و کلیک
-        روی «بستن دوره» بی‌صدا هیچ کاری نمی‌کرد.
+        دکمه فقط وقتی ساخته می‌شود که کاری برای انجام باشد؛ وگرنه
+        یادداشت می‌گوید چرا نه. «هیچ» بدتر از یک جمله است.
       */}
-      {action === undefined || onAction === undefined ? (
-        note === undefined ? null : <span className="muted small task-note">{note}</span>
-      ) : (
-        <button type="button" className="link" onClick={onAction} disabled={busy === true}>
-          {action}
-        </button>
-      )}
+      {action ? <span className="task-action">{action}</span> : note === undefined ? null : <span className="muted small task-note">{note}</span>}
     </li>
-  );
-}
-
-/**
- * نشانه وضعیت.
- *
- * `.claude/rules/design.md`: رنگ هرگز به‌تنهایی حامل معنا نیست. پس
- * شکل هم فرق می‌کند و متن هم همیشه کنارش هست — برای کوررنگی و برای
- * صفحه‌خوان.
- */
-function Dot({ tone }: { tone: "good" | "warn" | "crit" }) {
-  const shape = { good: "●", warn: "▲", crit: "■" }[tone];
-  const name = { good: "خوب", warn: "هشدار", crit: "بحرانی" }[tone];
-  return (
-    <span className={`dot dot--${tone}`} aria-hidden="false">
-      <span aria-hidden="true">{shape}</span>
-      <span className="sr-only">{name}: </span>
-    </span>
   );
 }

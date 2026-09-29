@@ -37,3 +37,8 @@ export function useUrlFlag(key: string): [boolean, (value: boolean) => void] {
   const set=useCallback((next:boolean)=>setValue(next?"1":""),[setValue]);
   return [value==="1",set];
 }
+
+/** مسیر جاری؛ فقط برای مسیرهای خارج از `?page=` مثل /dev/ui-kit. */
+export function usePathname(): string {
+  return useSyncExternalStore(subscribe, () => window.location.pathname, () => "/");
+}

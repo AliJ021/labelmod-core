@@ -97,6 +97,9 @@ describe("جهت رابط", () => {
       // کد زنگ و موضوع پیام (`topic`) — دو شناسهٔ لاتین، روی `<span>` و
       // `<strong>`، نه روی سطر.
       "screens/Health.tsx",
+      // برگ LTR مشترک نظام طراحی — `<bdi dir="ltr">` برای SKU، موبایل،
+      // نشانی و شناسه؛ مصرف‌کننده‌ها دیگر `dir` نمی‌نویسند.
+      "components/ui/Bidi.tsx",
     ]);
     const unexpected = [...new Set(found)].filter((f) => !allowed.has(f));
     assert.deepEqual(unexpected, [],

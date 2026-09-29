@@ -7,6 +7,7 @@ import type { AppUser, Customer } from "../src/lib/people";
 import type { Me } from "../src/lib/session";
 import type { Branch, DailyReport } from "../src/lib/pos";
 import type { PermissionRule } from "../src/lib/admin";
+import { ZONES } from "../src/lib/navigation";
 
 export const product: Product = { id: "11111111-1111-4111-8111-111111111111", code: "TR-1405", nameInternal: "شلوار پارچه‌ای رگولار با نام طولانی برای بررسی چیدمان", nameWeb: null, brandId: null, brandName: null, categoryId: null, categoryName: null, season: null, collection: null, fabric: null, fit: null, originCountry: null, taxRateCode: "standard", notes: null, status: "active", variationCount: 1, pricedCount: 1 };
 const variation: Variation = { id: "v1", color: "سرمه‌ای", size: "XL", sku: "TR-1405-NAVY-XL", barcode: "1234567890123", status: "active", price: "1234000", priceKind: "regular", priceSince: "2026-09-16T00:00:00Z", locked: false };
@@ -36,7 +37,7 @@ export class MockApi {
     ["GET /products/" + product.id + "/stock-matrix"]: { totalOnHand:"12", cells:{ navy:{ XL:{variationId:"v1",onHand:"12",reserved:"2"} } } },
     "GET /auth/2fa/sms/status": { enabled:false, maskedMobile:null },
     "GET /variations/v1/price-history": { history: [] },
-    "GET /reports/sales": { rows: [] }, "GET /reports/cash-reconciliation": { rows: [] },
+    "GET /reports/sales": { rows: [] }, "GET /reports/hourly": { rows: [] }, "GET /reports/cash-reconciliation": { rows: [] },
     "GET /treasury/accounts": { accounts: [] }, "GET /treasury/transactions": { transactions: [] },
     "GET /purchasing/expense-accounts": [], "GET /purchasing/pay-accounts": [], "GET /suppliers": [],
     "GET /receipts": [], "GET /stock-counts": [], "GET /cheques/due": { due: [] },
@@ -124,7 +125,12 @@ export async function fontsReady(page: Page) {
 export async function openZone(page: Page, name: string) {
   const nav = page.getByRole("tablist", { name: "بخش‌ها", exact: true });
   await expect(nav).toBeVisible();
-  const tab = nav.getByRole("tab", { name, exact: true });
-  if (!(await tab.isVisible())) await page.getByRole("button", { name: "بخش‌های بیشتر", exact: true }).click();
-  await tab.click();
+  // گوشی: فقط مقصدهای نوار پایین زبانه‌اند؛ بقیه از برگهٔ مودال «بیشتر» (پیوند، نه زبانه).
+  if (page.viewportSize()!.width >= 900 || MOBILE_PRIMARY.includes(name)) {
+    await nav.getByRole("tab", { name, exact: true }).click();
+    return;
+  }
+  await page.getByRole("button", { name: "بخش‌های بیشتر", exact: true }).click();
+  await page.getByRole("dialog", { name: "همهٔ بخش‌ها" }).getByRole("link", { name, exact: true }).click();
 }
+const MOBILE_PRIMARY: readonly string[] = ZONES.filter(z => z.mobilePrimary).map(z => z.label);
