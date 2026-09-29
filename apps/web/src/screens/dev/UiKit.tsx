@@ -18,6 +18,7 @@ import { BarChart } from "../../components/ui/BarChart.tsx";
 import { Ltr } from "../../components/ui/Bidi.tsx";
 import { Button, Field, Segmented, Switch } from "../../components/ui/Controls.tsx";
 import { DataTable, type Column } from "../../components/ui/DataTable.tsx";
+import { FilterBar } from "../../components/ui/FilterBar.tsx";
 import { Dialog } from "../../components/ui/Dialog.tsx";
 import { Kpi } from "../../components/ui/Kpi.tsx";
 import { Money, Percent, Qty } from "../../components/ui/Money.tsx";
@@ -125,6 +126,7 @@ function Numbers() {
         <div><dt>بستانکار</dt><dd><Money rial="4500000" side="credit" /></dd></div>
         <div><dt>تخفیف</dt><dd><Money rial="-150000" /> <Percent value={12.5} /></dd></div>
         <div><dt>درصد رشد</dt><dd><Percent value={8.2} trend="up" /> · <Percent value={-3} trend="down" /> · <Percent value={0} trend="flat" /></dd></div>
+        <div><dt>نامعلوم / بی‌مجوز</dt><dd><Money rial={null} /> · <Percent value={null} /></dd></div>
         <div><dt>تعداد</dt><dd><Qty value="1.500" unit="متر" /> · <Qty value="12" unit="عدد" /></dd></div>
         <div><dt>نامعلوم/بی‌مجوز</dt><dd><span className="kpi-unknown">—</span></dd></div>
       </dl>
@@ -229,7 +231,15 @@ function Data({ density }: { density: "comfortable" | "compact" }) {
       <DataTable caption="فاکتورهای نمونه" columns={columns} rows={rows} rowKey={r => r.id} density={density} stack
         sort={sort} onSort={key => setSort(s => ({ key, dir: s.key === key && s.dir === "desc" ? "asc" : "desc" }))}
         selected={selected} onSelect={(key, next) => setSelected(s => { const n = new Set(s); if (next) n.add(key); else n.delete(key); return n; })}
-        rowActions={() => <button type="button" className="btn btn--quiet">جزئیات</button>} />
+        rowActions={() => <button type="button" className="btn btn--quiet">جزئیات</button>}
+        foot={{ label: "جمع نمونه", cells: { amount: <Money rial={ROWS.reduce((a, r) => a + BigInt(r.amount), 0n)} negative="parens" /> } }} />
+    </Section>
+    <Section id="filters" title="نوار فیلتر" description="فیلدها در یک ردیف فشرده، خلاصهٔ متنی فیلتر فعال و بازنشانی فقط وقتی چیزی عوض شده. مقدارها در نشانی می‌مانند.">
+      <FilterBar label="فیلتر نمونه" summary={<>بازه: <strong>{formatJalali("2026-09-01")} تا {formatJalali("2026-09-16")}</strong> · همه شعبه‌ها</>} onReset={() => {}}>
+        <Field label="از تاریخ" hint={formatJalali("2026-09-01")}><input defaultValue="2026-09-01" className="num" /></Field>
+        <Field label="تا تاریخ" error="«تا تاریخ» نباید پیش از «از تاریخ» باشد."><input defaultValue="2026-08-01" className="num" /></Field>
+        <Field label="شعبه"><select defaultValue=""><option value="">همه شعبه‌ها</option></select></Field>
+      </FilterBar>
     </Section>
     <Section id="table-states" title="جدول: بارگذاری و خالی">
       <div className="kit-grid kit-grid--2">
@@ -301,6 +311,7 @@ function States() {
         <div className="kit-state"><ResultState title="برای این جست‌وجو کالایی پیدا نشد." actionLabel="پاک‌کردن جست‌وجو" onAction={() => {}} /></div>
         <div className="kit-state"><ResultState kind="error" title="فهرست خوانده نشد." description="اتصال را بررسی کنید." reference="req-7f3a91" actionLabel="تلاش دوباره" onAction={() => {}} /></div>
         <div className="kit-state"><ResultState accent="shield" title="این بخش دسترسی «مدیریت خزانه» می‌خواهد." description="از مدیر بخواهید دسترسی را در «مجوزها» بدهد." /></div>
+        <div className="kit-state"><ResultState kind="denied" title="این گزارش دسترسی «بینش مشتری» می‌خواهد." description="حالت بی‌مجوز: قفل + متن، بدون تلاش دوباره." /></div>
         <div className="kit-state"><div className="result-state"><StatusBadge state="offline" /><p className="muted">اتصال این دستگاه قطع است. نتیجهٔ کارهای نیمه‌تمام را پس از اتصال بررسی کنید.</p></div></div>
         <div className="kit-state"><ResultState accent="success" title="بکاپ دیشب با موفقیت ساخته شد (نمونه)." /></div>
       </div>
