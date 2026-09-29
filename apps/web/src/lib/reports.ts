@@ -15,6 +15,21 @@
  * شعبه دسترسی دارد، سرور ۴۲۲ «شعبه را مشخص کنید» می‌دهد.
  */
 import { api, type RequestOptions } from "./api.ts";
+import { parseRial } from "./money.ts";
+
+/**
+ * جمع ستونِ جدولِ جلوی چشم با `bigint`. اگر حتی یک سطر `null` باشد (بی
+ * `cost.view`)، جمع هم نامعلوم است — نه جمعِ سطرهای معلوم، که کمتر از
+ * واقعیت است و صفر-مانند خوانده می‌شود.
+ */
+export function sumRialOrNull(values: readonly (string | null)[]): bigint | null {
+  let total = 0n;
+  for (const v of values) {
+    if (v === null) return null;
+    total += parseRial(v);
+  }
+  return total;
+}
 
 export interface SalesRow {
   businessDate: string;
@@ -206,47 +221,47 @@ export interface CustomerBasketRow {
 }
 
 export const reports = {
-  sales: (p: Period) => api.get<{ rows: SalesRow[] }>(`/reports/sales?${qs(p)}`),
+  sales: (p: Period, opts?: RequestOptions) => api.get<{ rows: SalesRow[] }>(`/reports/sales?${qs(p)}`, opts),
 
   hourly: (p: Period, opts?: RequestOptions) => api.get<{ rows: HourlyRow[] }>(`/reports/hourly?${qs(p)}`, opts),
 
   /** هر دو بازه صریح‌اند — تقویم جلالی در `lib/jalali-period.ts` حسابشان می‌کند. */
-  compare: (p: Period, prev: { from: string; to: string }) =>
+  compare: (p: Period, prev: { from: string; to: string }, opts?: RequestOptions) =>
     api.get<{ rows: CompareRow[] }>(
-      `/reports/compare?${qs(p, { prevFrom: prev.from, prevTo: prev.to })}`,
+      `/reports/compare?${qs(p, { prevFrom: prev.from, prevTo: prev.to })}`, opts,
     ),
 
-  basket: (p: Period) => api.get<{ rows: BasketRow[] }>(`/reports/basket?${qs(p)}`),
+  basket: (p: Period, opts?: RequestOptions) => api.get<{ rows: BasketRow[] }>(`/reports/basket?${qs(p)}`, opts),
 
-  customerBasket: (p: Period, limit = 50) =>
-    api.get<{ rows: CustomerBasketRow[] }>(`/reports/customer-basket?${qs(p, { limit })}`),
+  customerBasket: (p: Period, opts?: RequestOptions, limit = 50) =>
+    api.get<{ rows: CustomerBasketRow[] }>(`/reports/customer-basket?${qs(p, { limit })}`, opts),
 
-  profitByProduct: (p: Period, limit = 50) =>
-    api.get<{ rows: ProfitRow[] }>(`/reports/profit-by-product?${qs(p, { limit })}`),
+  profitByProduct: (p: Period, opts?: RequestOptions, limit = 50) =>
+    api.get<{ rows: ProfitRow[] }>(`/reports/profit-by-product?${qs(p, { limit })}`, opts),
 
-  valuation: (warehouseId?: string) =>
+  valuation: (warehouseId?: string, opts?: RequestOptions) =>
     api.get<{ rows: ValuationRow[] }>(
-      `/reports/inventory-valuation${warehouseId ? `?warehouseId=${encodeURIComponent(warehouseId)}` : ""}`,
+      `/reports/inventory-valuation${warehouseId ? `?warehouseId=${encodeURIComponent(warehouseId)}` : ""}`, opts,
     ),
 
-  movements: (p: Period, variationId: string, warehouseId?: string) =>
+  movements: (p: Period, variationId: string, warehouseId?: string, opts?: RequestOptions) =>
     api.get<{ rows: MovementRow[] }>(
-      `/reports/stock-movements?${qs(p, { variationId, warehouseId })}`,
+      `/reports/stock-movements?${qs(p, { variationId, warehouseId })}`, opts,
     ),
 
-  accountLedger: (p: Period, code: string) =>
-    api.get<{ rows: LedgerRow[] }>(`/reports/account-ledger?${qs(p, { code })}`),
+  accountLedger: (p: Period, code: string, opts?: RequestOptions) =>
+    api.get<{ rows: LedgerRow[] }>(`/reports/account-ledger?${qs(p, { code })}`, opts),
 
-  trialBalance: (p: Period) =>
-    api.get<{ rows: TrialRow[] }>(`/reports/trial-balance?${qs(p)}`),
+  trialBalance: (p: Period, opts?: RequestOptions) =>
+    api.get<{ rows: TrialRow[] }>(`/reports/trial-balance?${qs(p)}`, opts),
 
-  partyBalances: (partyType?: string) =>
+  partyBalances: (partyType?: string, opts?: RequestOptions) =>
     api.get<{ rows: PartyRow[] }>(
-      `/reports/party-balances${partyType ? `?partyType=${encodeURIComponent(partyType)}` : ""}`,
+      `/reports/party-balances${partyType ? `?partyType=${encodeURIComponent(partyType)}` : ""}`, opts,
     ),
 
-  cashReconciliation: (p: Period) =>
-    api.get<{ rows: ShiftRow[] }>(`/reports/cash-reconciliation?${qs(p)}`),
+  cashReconciliation: (p: Period, opts?: RequestOptions) =>
+    api.get<{ rows: ShiftRow[] }>(`/reports/cash-reconciliation?${qs(p)}`, opts),
 };
 
 /**
