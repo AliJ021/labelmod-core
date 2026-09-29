@@ -265,7 +265,7 @@ export function App() {
         <TabPanels id={tabsId} items={ZONES} value={uiKit ? null : zone} className="zone-panel">
         <Suspense fallback={<p className="solid pad" role="status">در حال بارگذاری بخش…</p>}>
           {zone === "dashboard" ? (
-            <Dashboard />
+            <Dashboard access={access} />
           ) : zone === "pos" ? (
             <Pos key={me?.id} actorId={me?.id ?? ""} />
           ) : zone === "invoices" ? (

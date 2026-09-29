@@ -138,3 +138,37 @@ export const FEATURES: readonly Feature[] = [
   { label: "تنظیم اسنپ‌پی", words: "اسنپ پی پرداخت تسویه", href: routeUrl("settings", "snappay"), anyOf: settingsAnyOf("snappay") },
   { label: "پشتیبان‌گیری و بازیابی", words: "بکاپ backup دانلود ریستور restore", href: routeUrl("settings", "backups"), anyOf: settingsAnyOf("backups") },
 ];
+
+/**
+ * کارهای پرتکرار داشبورد — از همین رجیستری، نه فهرست جدا (دستهٔ ۱ گسترش).
+ *
+ * `anyOf` هر کار از **مقصدش** می‌آید (`zoneOps` یا همان سطر `FEATURES`)، پس
+ * هیچ عملیات تازه‌ای پرسیده نمی‌شود و معماری مجوز دومی ساخته نمی‌شود. همان
+ * قاعدهٔ محافظه‌کار ناوبری: فقط allow صریح دیده می‌شود؛ پیش از پاسخ فقط
+ * جای‌نگهدار بی‌برچسب؛ پس از خطا پنهان با پیام آرام. سرور همچنان دروازه است.
+ */
+export interface QuickAction { key: string; href: string; name: string; icon: IconName; anyOf: readonly string[] }
+export const QUICK_ACTIONS: readonly QuickAction[] = [
+  { key: "new-sale", href: routeUrl("pos"), name: "فروش جدید", icon: "register", anyOf: zoneOps("pos") },
+  { key: "drafts", href: "/?page=invoices&invoices.status=draft", name: "رسیدگی به پیش‌نویس‌ها", icon: "receipt", anyOf: zoneOps("invoices") },
+  { key: "labels", href: "/?page=catalog&catalog.labels=1", name: "چاپ لیبل بارکد", icon: "print", anyOf: FEATURES.find(f => f.href === "/?page=catalog&catalog.labels=1")?.anyOf ?? zoneOps("catalog") },
+  { key: "invoices", href: routeUrl("invoices"), name: "فاکتورها و چاپ رسید", icon: "receipt", anyOf: zoneOps("invoices") },
+];
+
+export interface QuickActionView {
+  /** فقط کارهای صریحاً مجاز. */
+  visible: QuickAction[];
+  /** تعداد جای‌نگهدار بی‌برچسب — فقط در `loading`. */
+  pending: number;
+  /** پاسخ بعضی رسید نه؛ آن کارها پنهان‌اند و پیام «بررسی دوباره» لازم است. */
+  degraded: boolean;
+}
+export function quickActionView(access: Pick<NavAccess, "state" | "verdicts">): QuickActionView {
+  const verdict = (a: QuickAction) => accessOf(a.anyOf, access.verdicts);
+  const unknown = QUICK_ACTIONS.filter(a => verdict(a) === "unknown").length;
+  return {
+    visible: QUICK_ACTIONS.filter(a => verdict(a) === "allow"),
+    pending: access.state === "loading" ? unknown : 0,
+    degraded: access.state === "degraded" && unknown > 0,
+  };
+}
