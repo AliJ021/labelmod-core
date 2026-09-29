@@ -224,6 +224,8 @@ function Row({ setting, onSaved, onDirty }: { setting: Setting; onSaved: (s: Set
   const [reason, setReason] = useState("");
   const [status, setStatus] = useState<Status>({ kind: "idle" });
   const [touched, setTouched] = useState(false);
+  // دلیلِ خالی فقط پس از تلاش ذخیره خطاست، نه به‌محض ترک فیلد مقدار.
+  const [attempted, setAttempted] = useState(false);
   const id = `f-${setting.key}`;
   const hintId = useId(), errorId = useId(), reasonId = useId();
 
@@ -240,7 +242,7 @@ function Row({ setting, onSaved, onDirty }: { setting: Setting; onSaved: (s: Set
 
   async function save() {
     const out = fromInput(setting, draft);
-    setTouched(true);
+    setTouched(true); setAttempted(true);
     if (!out.ok) { setStatus({ kind: "error", message: out.error }); return; }
     if (needsReason && reason.trim() === "") { setStatus({ kind: "error", message: "برای این تنظیم، نوشتن دلیل اجباری است" }); return; }
     setStatus({ kind: "saving" });
@@ -251,7 +253,7 @@ function Row({ setting, onSaved, onDirty }: { setting: Setting; onSaved: (s: Set
       onSaved(next);
       setDraft(initial(next));
       setReason("");
-      setTouched(false);
+      setTouched(false); setAttempted(false);
       setStatus({ kind: "saved" });
     } catch (e: unknown) {
       // پیام نگهبان دیتابیس عمداً فارسی و برای کاربر نوشته شده؛ همان را نشان می‌دهیم.
@@ -259,7 +261,7 @@ function Row({ setting, onSaved, onDirty }: { setting: Setting; onSaved: (s: Set
     }
   }
   function revert() {
-    setDraft(initial(setting)); setReason(""); setTouched(false); setStatus({ kind: "idle" });
+    setDraft(initial(setting)); setReason(""); setTouched(false); setAttempted(false); setStatus({ kind: "idle" });
   }
   const change = (v: Draft) => { setDraft(v); setStatus({ kind: "idle" }); };
   const describedBy = [setting.help ? hintId : null, fieldError ? errorId : null].filter(Boolean).join(" ") || undefined;
@@ -282,7 +284,7 @@ function Row({ setting, onSaved, onDirty }: { setting: Setting; onSaved: (s: Set
 
       {setting.canEdit && dirty && needsReason ? <div className="field set-reason">
         <label className="field-label" htmlFor={reasonId}>دلیل تغییر — اجباری، در سابقه ثبت می‌شود</label>
-        <input id={reasonId} type="text" value={reason} maxLength={500} aria-invalid={reasonMissing && touched ? true : undefined}
+        <input id={reasonId} type="text" value={reason} maxLength={500} aria-invalid={reasonMissing && attempted ? true : undefined}
           onChange={e => setReason(e.target.value)} placeholder="مثلاً: ابلاغیه جدید سازمان امور مالیاتی" />
       </div> : null}
 

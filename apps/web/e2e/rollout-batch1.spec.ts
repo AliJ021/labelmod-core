@@ -28,7 +28,8 @@ test.describe("گزارش‌ها", () => {
     // پیش‌فرض از تاریخ کاری سرور (۲۰۲۶-۰۹-۱۶ در داده‌ی ساختگی)، نه ساعت مرورگر.
     await expect(filters).toContainText("۱۰ شهریور ۱۴۰۵ تا ۲۵ شهریور ۱۴۰۵");
     await expect(filters.getByRole("button", { name: "بازنشانی فیلترها" })).toHaveCount(0);
-    expect(reportCalls(api, "/reports/sales")[0]).toContain("from=2026-09-01&to=2026-09-16");
+    // پرس‌وجو پس از mount در یک setTimeout(0) فرستاده می‌شود (use-latest-query)؛ پس poll، نه خواندن هم‌زمان.
+    await expect.poll(() => reportCalls(api, "/reports/sales")[0]).toContain("from=2026-09-01&to=2026-09-16");
 
     const from = page.getByLabel("از تاریخ (میلادی)", { exact: true });
     await from.fill("2026-09-1");
@@ -137,6 +138,7 @@ test.describe("گزارش‌ها", () => {
     await expect(page).toHaveURL(/reports\.partyType=supplier/);
     await expect.poll(() => api.calls.some(c => c === "GET /reports/party-balances?partyType=supplier")).toBe(true);
     await page.goto("/?page=reports&reports.tab=ledger");
+    await expect(page.getByText("کد حساب را وارد کنید تا گردش آن در این بازه نمایش داده شود.")).toBeVisible();
     expect(reportCalls(api, "/reports/account-ledger"), "no code, no query").toHaveLength(0);
     await page.getByLabel("کد حساب", { exact: true }).fill("۱۳۰۱");
     await page.getByRole("button", { name: "نمایش", exact: true }).click();

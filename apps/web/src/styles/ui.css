@@ -421,6 +421,10 @@
 .set-current strong { color: var(--ink); font-weight: var(--weight-semibold); }
 .set-actions { display: inline-flex; flex-wrap: wrap; align-items: center; gap: var(--s-2); margin-inline-start: auto; }
 .settings-page .set-msg { color: var(--good); }
+/* ردیف کلید: برچسب ستون آغاز دیده می‌شود؛ برچسب خودِ کلید فقط نام دسترس‌پذیر
+   می‌ماند و کنار کلید فقط وضعیت متنی («فعال/غیرفعال») دیده می‌شود. */
+.settings-page .set-row .switch-text > span:first-child { position: absolute; inline-size: 1px; block-size: 1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }
+.settings-page .set-row .switch-state { font-size: var(--text-sm); color: var(--ink); }
 @media (min-width: 1100px) {
   .settings-page .set-row { grid-template-columns: var(--form-label-w) minmax(0, 1fr); }
 }
