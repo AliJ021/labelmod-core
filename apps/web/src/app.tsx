@@ -30,7 +30,7 @@ import {
   type Theme,
 } from "./lib/theme.ts";
 
-import { ZONES, routeUrl, type Zone, visibleZones } from "./lib/navigation.ts";
+import { ZONES, pendingZones, routeUrl, type Zone, visibleZones } from "./lib/navigation.ts";
 import { navigate, usePathname, useUrlTab } from "./lib/use-url-state.ts";
 import { useMediaQuery } from "./lib/use-media-query.ts";
 import { useNavAccess } from "./lib/use-nav-access.ts";
@@ -242,7 +242,8 @@ export function App() {
   }
 
 
-  const navItems = visibleZones(access, zone);
+  const navItems = visibleZones(access.verdicts, zone);
+  const pendingItems = pendingZones(access, zone);
   const uiKit = UiKit !== null && pathname === "/dev/ui-kit";
 
   return (
@@ -255,7 +256,7 @@ export function App() {
         {sessionError && <p className="solid pos-alert" role="alert">{sessionError}</p>}
         <ShellHeader searchKey={`${me?.id}:${me?.elevated}`} tools={me ? <HeaderTools me={me} theme={theme} onTheme={cycleTheme} onLock={() => void lockScreen()} onLogout={() => void signOut()} onPassword={() => setPasswordOpen(true)} onReauth={() => setUpgrading(true)} /> : null} />
 
-        <ShellNav id={tabsId} items={navItems} zone={zone} onZone={switchZone} compact={compact} more={more} onMore={setMore} />
+        <ShellNav id={tabsId} items={navItems} pending={pendingItems} access={access.state} onRetry={access.retry} zone={zone} onZone={switchZone} compact={compact} more={more} onMore={setMore} />
         <main id="workspace-content" tabIndex={-1}>
         {uiKit && UiKit ? <SectionBoundary key="ui-kit"><Suspense fallback={<p className="solid pad" role="status">در حال بارگذاری UI Kit…</p>}><UiKit /></Suspense></SectionBoundary> : null}
         <SectionBoundary key={`${me?.id}:${zone}`}>
@@ -282,7 +283,7 @@ export function App() {
           ) : zone === "customers" ? (
             <Customers />
           ) : (
-            <Settings currentUserId={me?.id ?? ""} onOwnPassword={() => setPasswordOpen(true)} />
+            <Settings access={access} currentUserId={me?.id ?? ""} onOwnPassword={() => setPasswordOpen(true)} />
           )}
         </Suspense>
         </TabPanels>

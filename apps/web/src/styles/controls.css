@@ -101,6 +101,7 @@ button:focus-visible, summary:focus-visible { outline: 2px solid var(--accent); 
 .settings-picker { gap: 8px; font-weight: 600; }
 .settings-tabs { flex-direction: column; align-items: stretch; gap: 4px; }
 .settings-tabs [role="tab"] { inline-size: 100%; text-align: start; white-space: normal; }
+.settings-tabs .tab-pending { display: block; min-block-size: 44px; border-radius: var(--r-sm); }
 .tab-group { padding: 12px 12px 4px; font-size: .85rem; font-weight: 700; color: var(--ink-2); }
 .settings-content { min-inline-size: 0; }
 .btn { min-inline-size: var(--touch); min-block-size: var(--touch); padding-inline: 14px; }
@@ -116,8 +117,13 @@ button:disabled { cursor: not-allowed; opacity: .55; }
 .subtabs:not(.settings-tabs) { flex-wrap: nowrap; overflow-x: auto; overscroll-behavior-x: contain; scrollbar-width: none; scroll-padding-inline: 16px; }
 .subtabs:not(.settings-tabs)::-webkit-scrollbar { display: none; }
 /* نشانهٔ «زبانهٔ بیشتر این طرف است»: فقط لبه‌ای که واقعاً ادامه دارد محو
-   می‌شود (Tabs.tsx). ریشه RTL است، پس «آغاز» سمت راست است. */
-.subtabs[data-more-start]:not([data-more-end]) { -webkit-mask-image: linear-gradient(to left, transparent, black 32px); mask-image: linear-gradient(to left, transparent, black 32px); }
-.subtabs[data-more-end]:not([data-more-start]) { -webkit-mask-image: linear-gradient(to right, transparent, black 32px); mask-image: linear-gradient(to right, transparent, black 32px); }
+   می‌شود (Tabs.tsx، از هندسه). نشانه‌ها منطقی‌اند: «آغاز» در RTL راست و در
+   LTR چپ است، پس جهت گرادیان از جهت **محاسبه‌شده** می‌آید (`data-ltr` از Tabs.tsx)
+   نه از فرض RTL. ⚠️ `:dir(ltr)` نه: Build آن را به فهرست `:lang()` برمی‌گرداند و
+   `lang="fa"` ریشه، جهت واقعی عنصر را نادیده می‌گرفت. */
+.subtabs { --toward-end: to left; --toward-start: to right; }
+.subtabs[data-ltr] { --toward-end: to right; --toward-start: to left; }
+.subtabs[data-more-start]:not([data-more-end]) { -webkit-mask-image: linear-gradient(var(--toward-end), transparent, black 32px); mask-image: linear-gradient(var(--toward-end), transparent, black 32px); }
+.subtabs[data-more-end]:not([data-more-start]) { -webkit-mask-image: linear-gradient(var(--toward-start), transparent, black 32px); mask-image: linear-gradient(var(--toward-start), transparent, black 32px); }
 .subtabs[data-more-start][data-more-end] { -webkit-mask-image: linear-gradient(to right, transparent, black 32px, black calc(100% - 32px), transparent); mask-image: linear-gradient(to right, transparent, black 32px, black calc(100% - 32px), transparent); }
 .subtabs [role="tab"] { min-block-size: 44px; flex-shrink: 0; }

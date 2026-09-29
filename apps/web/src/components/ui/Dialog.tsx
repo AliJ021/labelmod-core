@@ -1,13 +1,14 @@
-import { useEffect, useId, useRef, type ReactNode } from "react";
+import { useId, type ReactNode } from "react";
 import { Icon } from "../Icon.tsx";
+import { useModalDialog } from "./use-modal.ts";
 
 /**
  * Dialog و Sheet روی `<dialog>` بومی (docs/UI_PATTERNS.md، «لایه‌ها»).
  *
  * بومی یعنی به‌رایگان: بی‌اثرکردن پشت صحنه، Esc، لایهٔ بالایی و
- * نقش دسترس‌پذیر. کامپوننت فقط دو کار اضافه می‌کند: فوکوس را پس از بستن
- * به جای قبلی برمی‌گرداند، و وقتی `dismissible` خاموش است (عمل مالی در
- * حال اجرا) Esc را می‌بندد.
+ * نقش دسترس‌پذیر. بازگشت فوکوس و چرخش Tab از `use-modal.ts` می‌آید — همان
+ * زیرساختی که برگهٔ «بیشتر» دارد. وقتی `dismissible` خاموش است (عمل مالی
+ * در حال اجرا) Esc و پس‌زمینه نمی‌بندند.
  *
  * `variant="sheet"` روی موبایل از پایین و روی دسکتاپ از کنار (inline-end)
  * می‌آید. انیمیشن فقط transform و opacity است.
@@ -24,30 +25,11 @@ export function Dialog({ open, onClose, title, description, children, footer, va
   size?: "sm" | "md" | "lg";
   tone?: "final" | "destructive";
 }) {
-  const ref = useRef<HTMLDialogElement>(null);
-  const opener = useRef<Element | null>(null);
+  const { ref, props } = useModalDialog(open, { onDismiss: onClose, dismissible });
   const titleId = useId();
   const descId = useId();
-  useEffect(() => {
-    const el = ref.current;
-    if (!el) return;
-    if (open && !el.open) {
-      opener.current = document.activeElement;
-      el.showModal();
-    } else if (!open && el.open) {
-      el.close();
-      const back = opener.current;
-      if (back instanceof HTMLElement && back.isConnected) back.focus();
-    }
-  }, [open]);
-  useEffect(() => () => {
-    const back = opener.current;
-    if (ref.current?.open && back instanceof HTMLElement && back.isConnected) back.focus();
-  }, []);
   return <dialog ref={ref} className={`ui-dialog ui-dialog--${variant} ui-dialog--${size}${tone ? ` ui-dialog--${tone}` : ""}`}
-    aria-labelledby={titleId} aria-describedby={description ? descId : undefined}
-    onCancel={e => { e.preventDefault(); if (dismissible) onClose(); }}
-    onClick={e => { if (dismissible && e.target === e.currentTarget) onClose(); }}>
+    aria-labelledby={titleId} aria-describedby={description ? descId : undefined} {...props}>
     <div className="ui-dialog-body">
       <div className="ui-dialog-head">
         <h2 id={titleId} className="ui-dialog-title">{title}</h2>

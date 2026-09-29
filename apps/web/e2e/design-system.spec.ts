@@ -26,7 +26,8 @@ test("app shell renders one taxonomy: grouped sidebar or bottom bar plus grouped
   await expect(page.getByRole("heading", { name: "امروز", exact: true })).toBeVisible();
   const nav = page.getByRole("navigation", { name: "ناوبری اصلی" });
   const list = nav.getByRole("tablist", { name: "بخش‌ها", exact: true });
-  expect(await list.getByRole("tab", { includeHidden: true }).allInnerTexts()).toHaveLength(ZONE_LABELS.length);
+  // مقصد مجوزدار فقط پس از پاسخ «allow» ساخته می‌شود؛ مدیر آزمایشی همه را دارد.
+  await expect(list.getByRole("tab", { includeHidden: true })).toHaveCount(ZONE_LABELS.length);
   for (const label of ZONE_LABELS) await expect(list.getByRole("tab", { name: label, exact: true, includeHidden: true })).toHaveCount(1);
   if (!compact(page)) {
     for (const label of ZONE_LABELS) await expect(list.getByRole("tab", { name: label, exact: true })).toBeVisible();
@@ -43,31 +44,40 @@ test("app shell renders one taxonomy: grouped sidebar or bottom bar plus grouped
     }
     await reference(page, "shell-bottom-bar");
     await more.click();
-    await expect(page.getByRole("button", { name: "بستن بخش‌های بیشتر" })).toHaveAttribute("aria-expanded", "true");
-    for (const label of ZONE_LABELS) await expect(list.getByRole("tab", { name: label, exact: true })).toBeVisible();
-    for (const group of GROUPS) await expect(nav.getByText(group, { exact: true })).toBeVisible();
-    const sheet = (await nav.boundingBox())!, viewport = page.viewportSize()!;
-    expect(sheet.y).toBeGreaterThanOrEqual(0);
-    expect(sheet.y + sheet.height).toBeLessThanOrEqual(viewport.height + 1);
+    // برگهٔ «بیشتر» مودال است (F-110-04): dialog با نام، مقصدها پیوند با aria-current.
+    const sheet = page.getByRole("dialog", { name: "همهٔ بخش‌ها" });
+    await expect(sheet).toBeVisible();
+    await expect(more).toHaveAttribute("aria-expanded", "true");
+    for (const label of ZONE_LABELS) await expect(sheet.getByRole("link", { name: label, exact: true })).toBeVisible();
+    for (const group of GROUPS) await expect(sheet.getByRole("heading", { name: group, exact: true })).toBeVisible();
+    await expect(sheet.getByRole("link", { name: "داشبورد", exact: true })).toHaveAttribute("aria-current", "page");
+    // هندسه پس از پایان واقعی انیمیشن ورود (transform)، نه پس از زمان دلخواه.
+    await sheet.evaluate(el => Promise.all(el.getAnimations({ subtree: true }).map(a => a.finished)).then(() => undefined));
+    const box = (await sheet.boundingBox())!, viewport = page.viewportSize()!;
+    expect(box.y).toBeGreaterThanOrEqual(0);
+    expect(box.y + box.height).toBeLessThanOrEqual(viewport.height + 1);
     // ردیف فشرده، نه کارت: روی گوشی یک ستون؛ روی تبلت حداکثر دو ستون.
     // اشاره‌گر از روی ردیف‌ها کنار می‌رود تا حالت hover با «پرشدن کارت» اشتباه نشود.
     await page.mouse.move(1, 1);
-    const measure = () => list.getByRole("tab").evaluateAll(tabs => tabs.map(t => {
+    const measure = () => sheet.getByRole("link").evaluateAll(links => links.map(t => {
       const r = t.getBoundingClientRect(), css = getComputedStyle(t);
-      return { x: Math.round(r.x), w: Math.round(r.width), h: r.height, bg: css.backgroundColor, selected: t.getAttribute("aria-selected") === "true" };
+      return { x: Math.round(r.x), w: Math.round(r.width), h: r.height, bg: css.backgroundColor, selected: t.getAttribute("aria-current") === "page" };
     }));
     // گذار رنگ hover کوتاه است؛ منتظر پایانش می‌مانیم، نه یک زمان دلخواه.
     await expect.poll(async () => (await measure()).filter(r => !r.selected).every(r => r.bg === "rgba(0, 0, 0, 0)"),
       { message: "unselected rows carry no card fill" }).toBe(true);
     const rows = await measure();
+    expect(rows).toHaveLength(ZONE_LABELS.length);
     const columns = new Set(rows.map(r => r.x)).size;
     expect(columns, "More sheet columns").toBeLessThanOrEqual(viewport.width < 560 ? 1 : 2);
     for (const row of rows) {
       expect(row.h, "compact destination row").toBeLessThanOrEqual(52);
+      expect(row.h, "destination row stays a touch target").toBeGreaterThanOrEqual(44);
     }
     await noOverflow(page, "open navigation sheet");
     await reference(page, "shell-more-sheet");
     await page.keyboard.press("Escape");
+    await expect(sheet).toBeHidden();
     await expect(page.getByRole("button", { name: "بخش‌های بیشتر", exact: true })).toBeFocused();
     await expect(list.getByRole("tab", { name: "تنظیمات", exact: true })).toBeHidden();
   }
@@ -132,28 +142,64 @@ test("phone header is one compact row; search is a trigger that expands in place
   await noOverflow(page, "phone header");
 });
 
-test("UI kit category tabs scroll in place with edge cues and keep the active tab visible", async ({ page }) => {
+test("UI kit category tabs scroll in place with logical RTL edge cues and keep the active tab visible", async ({ page }) => {
+  // ردیف فقط در عرض باریک سرریز می‌کند؛ پروژهٔ پهن همین را در نمایشگر گوشی می‌سنجد، نه Skip.
+  if (page.viewportSize()!.width >= 560) await page.setViewportSize({ width: 375, height: 812 });
   await page.goto("/dev/ui-kit");
   const tabs = page.getByRole("tablist", { name: "بخش‌های UI Kit" });
   await expect(tabs).toBeVisible();
   const state = () => tabs.evaluate(el => ({ overflow: el.scrollWidth > el.clientWidth + 1, start: el.hasAttribute("data-more-start"), end: el.hasAttribute("data-more-end"), wrap: getComputedStyle(el).flexWrap }));
-  const inside = async (name: string) => {
-    const [a, b] = [await tabs.getByRole("tab", { name, exact: true }).boundingBox(), await tabs.boundingBox()];
-    return a!.x >= b!.x - 1 && a!.x + a!.width <= b!.x + b!.width + 1;
-  };
-  const first = await state();
-  expect(first.wrap, "one row, never a wrapped tab cloud").toBe("nowrap");
-  if (first.overflow) {
-    expect(first.start, "nothing hidden before the first tab").toBe(false);
-    expect(first.end, "hidden tabs past the edge are cued").toBe(true);
-    expect(await inside("پایه")).toBe(true);
-    // آخرین زبانه در ردیفِ سرریز همیشه پنهان است؛ انتخابش باید آن را به دید بیاورد.
-    expect(await inside("حرکت و جلوه"), "last tab starts hidden past the edge").toBe(false);
-    await tabs.getByRole("tab", { name: "حرکت و جلوه", exact: true }).click();
-    await expect.poll(() => inside("حرکت و جلوه"), { message: "active tab scrolled into view" }).toBe(true);
-    await expect.poll(async () => (await state()).start).toBe(true);
-  }
+  const placement = (name: string) => tabs.evaluate((el, label) => {
+    const tab = [...el.querySelectorAll("[role=tab]")].find(t => t.textContent === label)!.getBoundingClientRect();
+    const view = el.getBoundingClientRect();
+    return { inside: tab.left >= view.left - 1 && tab.right <= view.right + 1, offset: Math.round((tab.left + tab.right) / 2 - (view.left + view.right) / 2) };
+  }, name);
+  const labels = await tabs.getByRole("tab").allInnerTexts();
+  const first = labels[0]!, middle = labels[Math.floor(labels.length / 2)]!, last = labels.at(-1)!;
+  const initial = await state();
+  expect(initial.wrap, "one row, never a wrapped tab cloud").toBe("nowrap");
+  expect(initial.overflow, "375px is narrow enough to overflow").toBe(true);
+  // آغاز منطقی (سمت راست در RTL): چیزی پیش از نخستین زبانه پنهان نیست.
+  expect(initial.start, "nothing hidden before the first tab").toBe(false);
+  expect(initial.end, "hidden tabs past the logical end are cued").toBe(true);
+  expect((await placement(first)).inside).toBe(true);
+  expect((await placement(last)).inside, "last tab starts hidden past the edge").toBe(false);
+  // میانه: زبانه وسط می‌نشیند و هر دو لبه نشانه دارند.
+  await tabs.getByRole("tab", { name: middle, exact: true }).click();
+  await expect.poll(async () => Math.abs((await placement(middle)).offset), { message: "middle tab centred" }).toBeLessThanOrEqual(2);
+  await expect.poll(state).toMatchObject({ start: true, end: true });
+  // پایان منطقی: آخرین زبانه کامل دیده می‌شود؛ فقط نشانهٔ آغاز می‌ماند.
+  await tabs.getByRole("tab", { name: last, exact: true }).click();
+  await expect.poll(async () => (await placement(last)).inside, { message: "active tab scrolled into view" }).toBe(true);
+  await expect.poll(state).toMatchObject({ start: true, end: false });
+  // برگشت به آغاز، از راه کیبورد RTL: Home و فعال‌سازی.
+  await tabs.getByRole("tab", { name: last, exact: true }).press("Home");
+  await expect(tabs.getByRole("tab", { name: first, exact: true })).toBeFocused();
+  await expect.poll(async () => (await placement(first)).inside).toBe(true);
+  await page.keyboard.press("Enter");
+  await expect.poll(state).toMatchObject({ start: false, end: true });
+  // محوشدگی سمت درست: در RTL آغاز راست است، پس نشانهٔ پایان محو چپ است.
+  expect(await tabs.evaluate(el => getComputedStyle(el).maskImage || getComputedStyle(el).webkitMaskImage)).toContain("to right");
   await noOverflow(page, "UI kit tabs");
+});
+
+test("the same tab strip in LTR cues its logical edges on the other side", async ({ page }) => {
+  // تنها ردیف LTR آزمایشی؛ ثابت می‌کند نشانه‌ها منطقی‌اند نه فرضِ RTL.
+  if (page.viewportSize()!.width >= 560) await page.setViewportSize({ width: 375, height: 812 });
+  await page.goto("/dev/ui-kit");
+  const tabs = page.getByRole("tablist", { name: "بخش‌های UI Kit" });
+  await expect(tabs).toBeVisible();
+  await tabs.evaluate(el => { el.setAttribute("dir", "ltr"); el.scrollLeft = 0; el.dispatchEvent(new Event("scroll")); });
+  const state = () => tabs.evaluate(el => ({ start: el.hasAttribute("data-more-start"), end: el.hasAttribute("data-more-end"), mask: getComputedStyle(el).maskImage || getComputedStyle(el).webkitMaskImage }));
+  await expect.poll(state).toMatchObject({ start: false, end: true });
+  // LTR: پایان سمت راست است، پس محوشدگی از راست (گرادیان به سمت چپ).
+  expect((await state()).mask).toContain("to left");
+  await tabs.evaluate(el => { el.scrollLeft = el.scrollWidth; el.dispatchEvent(new Event("scroll")); });
+  await expect.poll(state).toMatchObject({ start: true, end: false });
+  expect((await state()).mask).toContain("to right");
+  await tabs.evaluate(el => { el.scrollLeft = (el.scrollWidth - el.clientWidth) / 2; el.dispatchEvent(new Event("scroll")); });
+  await expect.poll(state).toMatchObject({ start: true, end: true });
+  await noOverflow(page, "LTR tab strip");
 });
 
 test("navigation hides server-denied destinations but keeps the open section and personal settings", async ({ page, api }) => {
@@ -164,6 +210,9 @@ test("navigation hides server-denied destinations but keeps the open section and
   });
   await page.goto("/");
   const list = page.getByRole("tablist", { name: "بخش‌ها", exact: true });
+  // پاسخ‌ها رسیده‌اند (مقصد مجاز ساخته شد)؛ نبودِ ردشده‌ها دیگر به‌خاطر «در حال بررسی» نیست.
+  await expect(list.getByRole("tab", { name: "صندوق", includeHidden: true })).toHaveCount(1);
+  await expect(list.locator(".tab-pending")).toHaveCount(0);
   await expect(list.getByRole("tab", { name: "خزانه و چک", includeHidden: true })).toHaveCount(0);
   await expect(list.getByRole("tab", { name: "مشتریان", includeHidden: true })).toHaveCount(0);
   await expect(list.getByRole("tab", { name: "گزارش‌ها", includeHidden: true })).toHaveCount(0);

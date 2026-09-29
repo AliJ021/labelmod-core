@@ -182,11 +182,15 @@ test("customers keep manual search; permissions keep local filtering; retry stat
 test("RTL keyboard tabs, activation, one tab stop and responsive settings focus", async ({ page }) => {
   await page.goto("/");
   const main = page.getByRole("tablist", { name: "بخش‌ها", exact: true });
-  if (page.viewportSize()!.width < 900) await page.getByRole("button", {name:"بخش‌های بیشتر",exact:true}).click();
-  await tabContract(main, page.viewportSize()!.width >= 900);
+  // گوشی: قرارداد زبانه روی نوار پایین؛ برگهٔ «بیشتر» مودال جداست (پیوند، نه زبانه).
+  const phone = page.viewportSize()!.width < 900;
+  await expect(main.getByRole("tab", { name: phone ? "کالا و قیمت" : "تنظیمات", exact: true })).toBeVisible();
+  await tabContract(main, !phone);
   await main.getByRole("tab").first().press("End");
   await expect(main.getByRole("tab").last()).toBeFocused();
   await main.getByRole("tab").last().press("Enter");
+  await expect(main.getByRole("tab", {name: phone ? "کالا و قیمت" : "تنظیمات",exact:true,includeHidden:true})).toHaveAttribute("aria-selected", "true");
+  if (phone) await openZone(page, "تنظیمات");
   await expect(main.getByRole("tab", {name:"تنظیمات",exact:true,includeHidden:true})).toHaveAttribute("aria-selected", "true");
   if (page.viewportSize()!.width >= 768) {
     await tabContract(page.getByRole("tablist", { name: "بخش‌های تنظیمات" }), true);

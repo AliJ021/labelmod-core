@@ -10,7 +10,8 @@ import assert from "node:assert/strict";
 import { readFileSync, readdirSync, statSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import path from "node:path";
-import { FEATURES, NAV_GROUPS, NAV_ITEMS, NAV_OPERATIONS, ZONES, visibleZones, type Verdict } from "../src/lib/navigation.ts";
+import { FEATURES, NAV_GROUPS, NAV_ITEMS, NAV_OPERATIONS, ZONES, accessOf, pendingZones, visibleZones, type Verdict } from "../src/lib/navigation.ts";
+import { SETTINGS_OPERATIONS, SETTINGS_SECTIONS, settingsView } from "../src/lib/settings-registry.ts";
 import { channelLabel, formatCount, formatGregorian, formatJalali, formatMoney, formatPercent, formatQty, moneyParts } from "../src/lib/format.ts";
 import { classifyFailure, mayConfirm } from "../src/lib/safe-action.ts";
 import { ApiError } from "../src/lib/api.ts";
@@ -148,19 +149,142 @@ describe("رجیستری ناوبری", () => {
     assert.ok(ZONES.some(z => z.key === "reports"));
   });
 
-  test("نمایش مجوزدار: رد پنهان می‌کند، نامعلوم پنهان نمی‌کند، بخش باز همیشه دیده می‌شود", () => {
+  test("نمایش مجوزدار محافظه‌کار است: فقط allow؛ نامعلوم و رد پنهان‌اند؛ بخش باز دیده می‌شود (F-110-01)", () => {
     const all = (v: Verdict) => new Map(NAV_OPERATIONS.map(op => [op, v] as const));
-    assert.equal(visibleZones(new Map(), "dashboard").length, ZONES.length, "پیش از پاسخ سرور همه دیده می‌شوند");
-    const denied = visibleZones(all("deny"), "dashboard").map(z => z.key);
-    assert.deepEqual(denied.sort(), ["dashboard", "settings"], "داشبورد امروز و تنظیمات شخصی برای همه");
-    assert.ok(visibleZones(all("deny"), "treasury").some(z => z.key === "treasury"));
-    const partial = new Map<string, Verdict>([["return.same_day", "allow"], ["return.late", "deny"], ["sale.create", "deny"]]);
-    assert.ok(visibleZones(partial, "dashboard").some(z => z.key === "returns"), "کافی است یکی از عملیات مجاز باشد");
-    assert.ok(visibleZones(partial, "dashboard").some(z => z.key === "invoices"));
+    const keys = (items: { key: string }[]) => items.map(z => z.key).sort();
+    // پیش از پاسخ سرور (loading) و پس از خطای شبکه (degraded) نقشه خالی یا ناقص است.
+    assert.deepEqual(keys(visibleZones(new Map(), "dashboard")), ["dashboard", "settings"], "نامعلوم هرگز مجاز نیست");
+    assert.deepEqual(keys(visibleZones(all("unknown"), "dashboard")), ["dashboard", "settings"]);
+    assert.deepEqual(keys(visibleZones(all("deny"), "dashboard")), ["dashboard", "settings"], "داشبورد امروز و تنظیمات شخصی برای همه");
+    assert.equal(visibleZones(all("allow"), "dashboard").length, ZONES.length);
+    // بخشی که کاربر خودش باز کرده ناپدید نمی‌شود؛ بقیهٔ طبقه‌بندی هم باز نمی‌شود.
+    assert.deepEqual(keys(visibleZones(new Map(), "treasury")), ["dashboard", "settings", "treasury"]);
+    assert.deepEqual(keys(visibleZones(all("deny"), "treasury")), ["dashboard", "settings", "treasury"]);
+    // مخلوط: یکی از عملیات مجاز کافی است؛ رد یکی، دیگری را نمی‌بندد؛ نامعلوم کمکی نمی‌کند.
+    const mixed = new Map<string, Verdict>([["return.same_day", "allow"], ["return.late", "deny"], ["sale.create", "deny"], ["catalog.manage", "deny"]]);
+    assert.ok(visibleZones(mixed, "dashboard").some(z => z.key === "returns"), "کافی است یکی از عملیات مجاز باشد");
+    assert.ok(visibleZones(mixed, "dashboard").some(z => z.key === "invoices"));
+    assert.ok(!visibleZones(mixed, "dashboard").some(z => z.key === "pos"));
+    assert.ok(!visibleZones(mixed, "dashboard").some(z => z.key === "catalog"));
+    assert.ok(!visibleZones(mixed, "dashboard").some(z => z.key === "treasury"), "بی‌پاسخ پنهان می‌ماند");
+    assert.equal(accessOf([], new Map()), "allow");
+    assert.equal(accessOf(["a", "b"], new Map([["a", "deny"]])), "unknown", "رد ناقص هنوز رد نیست");
+    assert.equal(accessOf(["a", "b"], new Map([["a", "deny"], ["b", "deny"]])), "deny");
+  });
+
+  test("جای‌نگهدار فقط در loading و فقط برای مقصد بی‌پاسخ؛ پس از پاسخ یا خطا هیچ", () => {
+    const protectedZones = ZONES.filter(z => z.anyOf.length > 0).map(z => z.key).sort();
+    assert.deepEqual(pendingZones({ state: "loading", verdicts: new Map() }, "dashboard").map(z => z.key).sort(), protectedZones);
+    assert.deepEqual(pendingZones({ state: "loading", verdicts: new Map() }, "treasury").map(z => z.key).includes("treasury"), false, "بخش باز جای‌نگهدار نمی‌شود");
+    assert.deepEqual(pendingZones({ state: "degraded", verdicts: new Map() }, "dashboard"), [], "خطا جای‌نگهدار دائمی نمی‌سازد");
+    assert.deepEqual(pendingZones({ state: "ready", verdicts: new Map(NAV_OPERATIONS.map(op => [op, "deny"] as const)) }, "dashboard"), []);
+    const partial = new Map<string, Verdict>([["sale.create", "allow"]]);
+    assert.ok(!pendingZones({ state: "loading", verdicts: partial }, "dashboard").some(z => z.key === "pos"), "مجازشده دیگر جای‌نگهدار نیست");
   });
 
   test("جست‌وجوی بخش‌ها از همان رجیستری ساخته می‌شود", () => {
     for (const z of ZONES) assert.ok(FEATURES.some(f => f.label === z.label && f.anyOf === z.anyOf), z.key);
+    // پیوند مستقیم تنظیمات همان عملیات رجیستری تنظیمات را دارد، نه حدس جدا.
+    for (const f of FEATURES) {
+      const tab = new URL(f.href, "http://x").searchParams.get("settings.tab");
+      if (tab === null) continue;
+      const section = SETTINGS_SECTIONS.find(s => s.key === tab);
+      assert.ok(section, `بخش ناموجود: ${tab}`);
+      assert.deepEqual(f.anyOf, section.anyOf, `${f.label} ↔ ${tab}`);
+    }
+  });
+});
+
+describe("رجیستری تنظیمات — شخصی جدا از مدیریتی (F-110-02)", () => {
+  const api = (file: string) => readFileSync(fileURLToPath(new URL(`../../api/src/http/${file}`, import.meta.url)), "utf8");
+  /**
+   * هر بخش مدیریتی به همان عملیاتی نگاشت شده که **مسیر خواندن صفحه‌اش در API**
+   * می‌سنجد. ادعا از خودِ منبع API خوانده می‌شود؛ اگر سرور مجوز مسیر را عوض
+   * کند و رجیستری نه، این آزمون قرمز می‌شود.
+   */
+  const SERVER: Record<string, readonly [file: string, route: string]> = {
+    keys: ["settings-routes.ts", "/settings"],
+    health: ["health-routes.ts", "/health/alerts"],
+    backups: ["backup-routes.ts", "/backups"],
+    accounts: ["admin-routes.ts", "/accounts"],
+    mapping: ["admin-routes.ts", "/posting-rules"],
+    snappay: ["snappay-routes.ts", "/snappay/config"],
+    terminals: ["settings-routes.ts", "/terminal-drivers"],
+    opening: ["admin-routes.ts", "/tafsili"],
+    staff: ["people-routes.ts", "/users"],
+    permissions: ["admin-routes.ts", "/permission-rules"],
+    devices: ["auth-routes.ts", "/devices"],
+  };
+  test("هر بخش مدیریتی عملیات مسیر خواندنش در API را دارد", () => {
+    const admin = SETTINGS_SECTIONS.filter(s => s.scope === "admin");
+    assert.deepEqual(admin.map(s => s.key).sort(), Object.keys(SERVER).sort(), "هر بخش مدیریتی یک مسیر مرجع دارد");
+    for (const section of admin) {
+      const [file, route] = SERVER[section.key]!;
+      const source = api(file);
+      const at = source.indexOf(`app.get("${route}"`);
+      assert.ok(at >= 0, `${route} در ${file}`);
+      const handler = source.slice(at, at + 400);
+      // snappay از guard محلی می‌گذرد که برای خواندن settings.view می‌خواهد.
+      const guard = section.key === "snappay" ? source.slice(source.indexOf("function guard"), source.indexOf(`app.get("${route}"`)) : handler;
+      assert.equal(section.anyOf.length, 1, section.key);
+      assert.ok(guard.includes(`"${section.anyOf[0]}"`) || (section.key === "snappay" && guard.includes(`"settings.view"`)), `${section.key}: ${section.anyOf[0]} در ${route}`);
+    }
+  });
+  test("بخش شخصی هیچ مجوز مدیریتی نمی‌خواهد و فقط نشست خود کاربر را می‌خواند", () => {
+    const personal = SETTINGS_SECTIONS.filter(s => s.scope === "personal").map(s => s.key);
+    assert.deepEqual(personal, ["appearance", "pin", "twofactor"]);
+    for (const s of SETTINGS_SECTIONS) if (s.scope === "personal") assert.deepEqual(s.anyOf, []);
+    const auth = api("auth-routes.ts");
+    const pin = auth.slice(auth.indexOf('app.get("/auth/pin"'), auth.indexOf('app.get("/auth/pin"') + 300);
+    assert.ok(!/requireForSession|requirePermission/.test(pin), "PIN من مجوز مدیریتی نمی‌خواهد");
+    for (const op of SETTINGS_OPERATIONS) assert.ok(NAV_OPERATIONS.includes(op), `${op} همراه پرسش‌های ناوبری پرسیده می‌شود`);
+  });
+  const all = (v: Verdict) => new Map(NAV_OPERATIONS.map(op => [op, v] as const));
+  const keys = (list: { key: string }[]) => list.map(s => s.key);
+  test("کاربر عادی (صندوق‌دار): فقط بخش‌های شخصی؛ پیوند مستقیم مدیریتی mount نمی‌شود", () => {
+    const cashier = { state: "ready" as const, verdicts: all("deny") };
+    const view = settingsView(null, cashier);
+    assert.deepEqual(keys(view.visible), ["appearance", "pin", "twofactor"]);
+    assert.equal(view.selected, "appearance", "پیش‌فرض نخستین بخش شخصی");
+    for (const s of SETTINGS_SECTIONS.filter(s => s.scope === "admin")) {
+      const deep = settingsView(s.key, cashier);
+      assert.equal(deep.selected, null, `${s.key} نباید mount شود`);
+      assert.equal(deep.blocked, "denied");
+      assert.ok(!deep.visible.some(v => v.key === s.key), `${s.key} برچسبش در ناوبری نیست`);
+    }
+    assert.equal(settingsView("pin", cashier).selected, "pin");
+    assert.equal(settingsView("nonsense", cashier).selected, "appearance", "کلید ناشناخته = پیش‌فرض، نه خطا");
+  });
+  test("مدیر کامل: همه، با پیش‌فرض «تنظیمات»", () => {
+    const view = settingsView(null, { state: "ready", verdicts: all("allow") });
+    assert.equal(view.visible.length, SETTINGS_SECTIONS.length);
+    assert.equal(view.selected, "keys");
+    assert.equal(settingsView("devices", { state: "ready", verdicts: all("allow") }).selected, "devices");
+  });
+  test("مجوز مدیریتی جزئی: فقط بخش‌های همان مجوز", () => {
+    const verdicts = new Map([...all("deny"), ["settings.view", "allow"]] as [string, Verdict][]);
+    const view = settingsView(null, { state: "ready", verdicts });
+    assert.deepEqual(keys(view.visible), ["appearance", "pin", "twofactor", "keys", "health", "accounts", "mapping", "snappay", "terminals", "opening"]);
+    assert.equal(view.selected, "keys");
+    for (const denied of ["backups", "staff", "permissions", "devices"] as const) assert.equal(settingsView(denied, { state: "ready", verdicts }).blocked, "denied", denied);
+  });
+  test("در حال بررسی: شخصی دیده می‌شود، مدیریتی جای‌نگهدار است و هیچ بخش مدیریتی mount نمی‌شود", () => {
+    const loading = { state: "loading" as const, verdicts: new Map<string, Verdict>() };
+    const view = settingsView(null, loading);
+    assert.deepEqual(keys(view.visible), ["appearance", "pin", "twofactor"]);
+    assert.deepEqual(keys(view.pending), SETTINGS_SECTIONS.filter(s => s.scope === "admin").map(s => s.key));
+    assert.equal(view.selected, null, "پیش‌فرض تا پاسخ صبر می‌کند");
+    assert.equal(view.blocked, "loading");
+    assert.deepEqual([settingsView("staff", loading).selected, settingsView("staff", loading).blocked], [null, "loading"]);
+    assert.equal(settingsView("pin", loading).selected, "pin", "بخش شخصی منتظر نمی‌ماند");
+  });
+  test("خطای بررسی: نامعلوم به مجاز تبدیل نمی‌شود؛ پیوند مستقیم «بررسی دوباره» می‌گیرد", () => {
+    const degraded = { state: "degraded" as const, verdicts: new Map<string, Verdict>([["user.manage", "allow"]]) };
+    const view = settingsView(null, degraded);
+    assert.deepEqual(keys(view.visible), ["appearance", "pin", "twofactor", "staff"]);
+    assert.deepEqual(view.pending, [], "خطا جای‌نگهدار دائمی نمی‌سازد");
+    assert.equal(view.selected, "staff", "بخش مجازِ رسیده باز می‌شود");
+    assert.deepEqual([settingsView("devices", degraded).selected, settingsView("devices", degraded).blocked], [null, "degraded"]);
   });
 });
 
