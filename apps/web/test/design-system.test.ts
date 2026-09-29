@@ -142,9 +142,10 @@ describe("رجیستری ناوبری", () => {
     assert.equal(new Set(seen).size, seen.length);
   });
 
-  test("نوار پایین موبایل ۴ تا ۵ مقصد اصلی دارد", () => {
-    const primary = ZONES.filter(z => z.mobilePrimary).length;
-    assert.ok(primary >= 4 && primary <= 5, `${primary}`);
+  test("نوار پایین موبایل همان چهار مقصد تأییدشده به‌علاوهٔ «بیشتر» است", () => {
+    // تصمیم مالک، بازبینی بصری ۱: گزارش‌ها به برگهٔ «بیشتر» رفت و مسیرش حذف نشد.
+    assert.deepEqual(ZONES.filter(z => z.mobilePrimary).map(z => z.key), ["dashboard", "pos", "invoices", "catalog"]);
+    assert.ok(ZONES.some(z => z.key === "reports"));
   });
 
   test("نمایش مجوزدار: رد پنهان می‌کند، نامعلوم پنهان نمی‌کند، بخش باز همیشه دیده می‌شود", () => {

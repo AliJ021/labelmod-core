@@ -130,6 +130,16 @@
 .kpi-unknown { font-size: var(--text-2xl); color: var(--ink-3); }
 /* تأکید برنجیِ یک‌پیکسلی — نه گرادیان، نه درخشش. */
 .kpi--emphasis::before { content: ""; position: absolute; inset-block-start: 0; inset-inline: var(--s-5); block-size: 2px; border-radius: 0 0 2px 2px; background: var(--accent); }
+/* نوار شاخص: ستون‌ها درون یک سطح مشترک، جدا با خط — نه سه کارت. */
+.kpis--band { gap: 0; grid-template-columns: repeat(auto-fit, minmax(min(100%, 200px), 1fr)); }
+.kpi--band { padding: var(--s-4) var(--s-5); }
+.kpis--band > .kpi--band + .kpi--band { border-inline-start: var(--border-w) solid var(--rule); }
+.kpi--band.kpi--emphasis::before { inset-inline: var(--s-5); }
+.kpi--band.kpi--emphasis .kpi-label { color: var(--ink); }
+@media (max-width: 640px) {
+  .kpis--band > .kpi--band + .kpi--band { border-inline-start: 0; border-block-start: var(--border-w) solid var(--rule); }
+  .kpis--band .kpi--band:not(.kpi--emphasis) .money--xl { font-size: var(--text-xl); }
+}
 
 /* ── فهرست رسیدگی ─────────────────────────────────────────────────── */
 .tasks { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; }
@@ -148,18 +158,23 @@
 
 /* ── داشبورد ─────────────────────────────────────────────────────── */
 .dashboard { display: flex; flex-direction: column; gap: var(--s-5); min-inline-size: 0; }
-.page-meta-secondary { color: var(--ink-3); font-size: var(--text-xs); }
-.quick-actions { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 190px), 1fr)); gap: var(--s-3); }
+.page-meta-secondary, .page-context-secondary { color: var(--ink-3); font-size: var(--text-xs); }
+.page-context-secondary { margin-inline-start: var(--s-2); white-space: nowrap; }
+.nowrap { white-space: nowrap; }
+/* «امروز»: یک سطح مات؛ نوار شاخص بالا، روند زیرش، جدا با یک خط. */
+.today { padding: 0; overflow: hidden; }
+.today-trend { padding: var(--s-4) var(--s-5) var(--s-5); border-block-start: var(--border-w) solid var(--rule); }
+/* کارهای پرتکرار: ردیف پیوند سبک روی زمینه، نه چهار کارت. */
+.quick-actions { display: flex; flex-wrap: wrap; gap: var(--s-1) var(--s-2); padding-block-start: var(--s-1); border-block-start: var(--border-w) solid var(--rule); }
 .quick-action {
-  display: flex; align-items: center; gap: var(--s-3);
-  min-block-size: var(--touch-lg); padding: var(--s-3) var(--s-4);
-  border: var(--border-w) solid var(--rule); border-radius: var(--r-md);
-  background: var(--surface-solid); color: var(--ink); text-decoration: none;
-  font-weight: var(--weight-semibold); box-shadow: var(--elev-1);
-  transition: border-color var(--dur-fast) var(--ease-standard), transform var(--dur-fast) var(--ease-standard);
+  display: inline-flex; align-items: center; gap: var(--s-2);
+  min-block-size: var(--touch); padding: var(--s-2) var(--s-3);
+  border-radius: var(--r-sm); color: var(--ink); text-decoration: none;
+  font-weight: var(--weight-medium);
+  transition: background-color var(--dur-fast) var(--ease-standard);
 }
 .quick-action .icon { color: var(--accent); }
-.quick-action:hover { border-color: var(--control-border); transform: translateY(calc(-1 * var(--move-sm) / 2)); }
+.quick-action:hover { background: var(--neutral-soft); }
 
 /* ── نمودار ستونی (BarChart.tsx) — روی سطح مات ─────────────────────── */
 .bar-chart { margin: 0; display: flex; flex-direction: column; gap: var(--s-3); }
@@ -174,7 +189,7 @@
   transform-origin: bottom; transform: scaleY(var(--bar, 0));
 }
 .bar-chart-bar.is-zero { transform: none; block-size: 2px; background: var(--rule-2); }
-.bar-chart-label { font-size: var(--text-2xs); color: var(--ink-3); line-height: 1; }
+.bar-chart-label { font-size: var(--text-xs); color: var(--ink-2); line-height: 1; }
 .bar-chart-col:hover .bar-chart-bar:not(.is-zero) { filter: brightness(1.08); }
 .bar-chart-col:hover::after {
   content: attr(data-tip); position: absolute; inset-block-end: calc(100% + 4px); inset-inline-start: 50%;

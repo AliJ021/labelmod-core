@@ -30,13 +30,13 @@ export type NavGroup = (typeof NAV_GROUPS)[number]["key"];
 export const ZONES = [
   { key: "dashboard", label: "داشبورد", icon: "dashboard", navGroup: "daily", mobilePrimary: true, anyOf: [] },
   { key: "pos", label: "صندوق", icon: "register", navGroup: "daily", mobilePrimary: true, anyOf: ["sale.create"] },
-  { key: "invoices", label: "فاکتورها", icon: "receipt", navGroup: "daily", mobilePrimary: false, anyOf: ["sale.create", "return.same_day", "return.late"] },
+  { key: "invoices", label: "فاکتورها", icon: "receipt", navGroup: "daily", mobilePrimary: true, anyOf: ["sale.create", "return.same_day", "return.late"] },
   { key: "returns", label: "مرجوعی", icon: "return", navGroup: "daily", mobilePrimary: false, anyOf: ["return.same_day", "return.late"] },
   { key: "catalog", label: "کالا و قیمت", icon: "tag", navGroup: "stock", mobilePrimary: true, anyOf: ["catalog.manage"] },
   { key: "purchasing", label: "انبار و خرید", icon: "box", navGroup: "stock", mobilePrimary: false, anyOf: ["stock.receive"] },
   { key: "treasury", label: "خزانه و چک", icon: "vault", navGroup: "money", mobilePrimary: false, anyOf: ["treasury.manage"] },
   { key: "customers", label: "مشتریان", icon: "people", navGroup: "people", mobilePrimary: false, anyOf: ["customer.manage"] },
-  { key: "reports", label: "گزارش‌ها", icon: "chart", navGroup: "money", mobilePrimary: true, anyOf: ["report.view"] },
+  { key: "reports", label: "گزارش‌ها", icon: "chart", navGroup: "money", mobilePrimary: false, anyOf: ["report.view"] },
   { key: "settings", label: "تنظیمات", icon: "settings", navGroup: "system", mobilePrimary: false, anyOf: [] },
 ] as const satisfies readonly {
   key: string; label: string; icon: IconName; navGroup: NavGroup; mobilePrimary: boolean; anyOf: readonly string[];

@@ -113,5 +113,11 @@ button:disabled { cursor: not-allowed; opacity: .55; }
   .settings-layout { grid-template-columns: 216px minmax(0, 1fr); gap: 24px; }
 }
 
-.subtabs:not(.settings-tabs) { flex-wrap: nowrap; overflow-x: auto; }
+.subtabs:not(.settings-tabs) { flex-wrap: nowrap; overflow-x: auto; overscroll-behavior-x: contain; scrollbar-width: none; scroll-padding-inline: 16px; }
+.subtabs:not(.settings-tabs)::-webkit-scrollbar { display: none; }
+/* نشانهٔ «زبانهٔ بیشتر این طرف است»: فقط لبه‌ای که واقعاً ادامه دارد محو
+   می‌شود (Tabs.tsx). ریشه RTL است، پس «آغاز» سمت راست است. */
+.subtabs[data-more-start]:not([data-more-end]) { -webkit-mask-image: linear-gradient(to left, transparent, black 32px); mask-image: linear-gradient(to left, transparent, black 32px); }
+.subtabs[data-more-end]:not([data-more-start]) { -webkit-mask-image: linear-gradient(to right, transparent, black 32px); mask-image: linear-gradient(to right, transparent, black 32px); }
+.subtabs[data-more-start][data-more-end] { -webkit-mask-image: linear-gradient(to right, transparent, black 32px, black calc(100% - 32px), transparent); mask-image: linear-gradient(to right, transparent, black 32px, black calc(100% - 32px), transparent); }
 .subtabs [role="tab"] { min-block-size: 44px; flex-shrink: 0; }

@@ -1,4 +1,4 @@
-import { useEffect, useRef } from "react";
+import { useEffect, useLayoutEffect, useRef } from "react";
 import { Glass } from "../Glass.tsx";
 import { Icon } from "../Icon.tsx";
 import { TabList } from "../Tabs.tsx";
@@ -25,6 +25,22 @@ export function ShellNav({ id, items, zone, onZone, compact, more, onMore }: {
   onMore: (open: boolean) => void;
 }) {
   const toggle = useRef<HTMLButtonElement>(null);
+  /**
+   * جای نوار پایین را محتوا از **ارتفاع واقعی** نوار رزرو می‌کند، نه از یک
+   * عدد ثابت: روی ۳۲۰ پیکسل برچسب «کالا و قیمت» دو خط می‌شود و نوار از
+   * ۶۶ به ۷۹ پیکسل می‌رسد. برگهٔ باز اندازه‌گیری نمی‌شود؛ نوار بسته مرجع است.
+   */
+  useLayoutEffect(() => {
+    // نوار همان Glass دربرگیرندهٔ دکمهٔ «بیشتر» است؛ Glass ref بیرونی نمی‌پذیرد.
+    const el = toggle.current?.closest<HTMLElement>(".workspace-nav"), root = document.documentElement;
+    if (!compact || more || !el) return;
+    const apply = () => root.style.setProperty("--bottom-nav-h", `${Math.ceil(el.getBoundingClientRect().height)}px`);
+    apply();
+    const observer = new ResizeObserver(apply);
+    observer.observe(el);
+    return () => observer.disconnect();
+  }, [compact, more]);
+  useEffect(() => () => { document.documentElement.style.removeProperty("--bottom-nav-h"); }, []);
   useEffect(() => {
     if (!more || !compact) return;
     const onKey = (e: KeyboardEvent) => {

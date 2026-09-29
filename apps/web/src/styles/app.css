@@ -549,6 +549,17 @@ select.set-input {
   padding: var(--s-3);
 }
 
+/* داخل کارت ورود، فیلد جعبهٔ جدا نمی‌گیرد: کارت → فیلد روشن و مستقیم.
+   خودِ ورودی مات و پرتضاد می‌ماند (بازبینی بصری ۱). */
+.auth-card .auth-field.solid {
+  padding: 0;
+  margin-block: var(--s-3);
+  background: transparent;
+  box-shadow: none;
+  border-radius: 0;
+}
+.auth-card .auth-field label { color: var(--ink); }
+
 .auth-field label {
   font-weight: 700;
   font-size: 0.9rem;

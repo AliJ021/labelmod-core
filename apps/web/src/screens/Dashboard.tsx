@@ -167,10 +167,10 @@ export function Dashboard() {
     <div className="dashboard">
       <PageHeader
         title="امروز"
-        context={<>{branch?.name} · {formatJalali(report.businessDate, true)}</>}
-        meta={<>
-          <span className="page-meta-secondary"><Ltr mono={false}>{formatGregorian(report.businessDate)}</Ltr></span>
-          <StatusBadge state="active" label="گزارش امروز" quiet />
+        context={<>
+          {branch?.name} · <span className="nowrap">{formatJalali(report.businessDate, true)}</span>
+          {/* میلادی فقط زمینهٔ ثانوی است: کوچک‌تر و کم‌رنگ‌تر، در برگ LTR. */}
+          <span className="page-context-secondary"><Ltr mono={false}>{formatGregorian(report.businessDate)}</Ltr></span>
         </>}
       />
 
@@ -225,8 +225,12 @@ export function Dashboard() {
         </ul>
       </Solid>
 
-      {/* سه شاخص با برچسب صریح و سطح مات مستقل از زمینه (design.md). */}
-      <section className="kpis" aria-label="شاخص‌های امروز">
+      {/*
+        یک سطح مات برای «امروز»: سه شاخص در یک نوار با خط جداکننده و روند
+        ساعتی زیرش — یک فضای کار، نه چند ویجت (بازبینی بصری ۱).
+      */}
+      <Solid as="section" className="today" aria-label="امروز در یک نگاه">
+      <section className="kpis kpis--band" aria-label="شاخص‌های امروز">
         <Kpi label="فروش" icon="receipt" emphasis
           value={<Money rial={sales} size="xl" />}
           note={report.returnCount > 0
@@ -248,6 +252,7 @@ export function Dashboard() {
       </section>
 
       <HourlyPanel hourly={hourly} loading={hourlyLoading} />
+      </Solid>
 
       <nav className="quick-actions" aria-label="کارهای پرتکرار">
         {QUICK.map(a =>
@@ -286,10 +291,10 @@ function HourlyPanel({ hourly, loading }: { hourly: Hourly; loading: boolean }) 
       : <BarChart title="فروش خالص هر ساعت (تومان)" labelHeader="ساعت" valueHeader="فروش خالص"
           summary={`بیشترین فروش: ساعت ${peak.label} با ${peak.display}`} bars={bars} />;
   }
-  return <Solid as="section" className="pad" aria-labelledby="dash-hourly">
-    <SectionHeader id="dash-hourly" title="روند فروش ساعتی" description="از گزارش فروش ساعتی؛ همهٔ کانال‌ها با هم." />
+  return <section className="today-trend" aria-labelledby="dash-hourly">
+    <SectionHeader id="dash-hourly" title="روند فروش ساعتی" description="از گزارش فروش ساعتی؛ همهٔ کانال‌ها با هم. ساعت‌های زودتر سمت راست." />
     {body}
-  </Solid>;
+  </section>;
 }
 
 function Task({ state, label, note, action, detail }: {

@@ -39,7 +39,8 @@ export function FeatureSearch() {
   }, [active]);
   const needle = normalizeSearch(query).toLocaleLowerCase();
   const results = needle ? FEATURES.filter(f => (f.anyOf.length === 0 || f.anyOf.some(p => allowed.has(p))) && normalizeSearch(`${f.label} ${f.words}`).toLocaleLowerCase().includes(needle)) : [];
-  return <div className="feature-search">
+  // «باز» تا وقتی متنی هست: روی گوشی، فیلد فشرده با جست‌وجوی نیمه‌کاره جمع نمی‌شود.
+  return <div className="feature-search" data-open={query !== "" ? "" : undefined}>
     <div className="feature-search-field">
       <Icon name="search" size="sm" />
       <input ref={input} type="search" value={query} aria-label="پیداکردن بخش یا ابزار" aria-keyshortcuts="Control+K Meta+K /"

@@ -14,7 +14,7 @@ a[role="tab"] { display: inline-flex; align-items: center; text-decoration: none
 .workspace > main:focus { outline: none; }
 .workspace-nav { position: sticky; top: 16px; padding: 10px; z-index: var(--z-nav); }
 .workspace .workspace-zones { display: flex; flex-direction: column; overflow: visible; gap: 2px; margin: 0; padding: 0; }
-.workspace-zones .tab-group { display: block; padding: 14px 12px 4px; font-size: var(--text-2xs); font-weight: var(--weight-bold); color: var(--ink-3); }
+.workspace-zones .tab-group { display: block; padding: 14px 12px 4px; font-size: var(--text-xs); font-weight: var(--weight-semibold); color: var(--ink-2); }
 .workspace-zones .tab-item:first-child .tab-group { padding-block-start: 4px; }
 .workspace .workspace-zones [role="tab"] { position: relative; gap: 12px; min-block-size: 44px; border-radius: 10px; padding: 8px 12px; color: var(--ink-2); font-weight: var(--weight-semibold); transition: background-color var(--dur-fast) var(--ease-standard), color var(--dur-fast) var(--ease-standard); }
 .workspace .workspace-zones [role="tab"] .icon { color: var(--ink-3); transition: color var(--dur-fast) var(--ease-standard); }
@@ -39,40 +39,73 @@ a[role="tab"] { display: inline-flex; align-items: center; text-decoration: none
 .skip-content:focus { inset-block-start: 8px; }
 @media (min-width: 900px) and (max-width: 1199px) { .workspace { --sidebar-w: 208px; } }
 @media (max-width: 899px) {
-  .workspace { display: block; padding-bottom: calc(96px + env(safe-area-inset-bottom)); }
-  .workspace-header { margin-bottom: 16px; gap: 10px; padding: 10px; }
-  .workspace-header .feature-search { order: 3; flex-basis: 100%; max-inline-size: none; }
+  /* مالک جای نوار پایین خودِ محتواست: ارتفاع نوار + فاصله + ناحیهٔ امن + نفس.
+     هیچ عدد، مثال یا کنشی زیر نوار تمام نمی‌شود (e2e/design-system.spec.ts). */
+  .workspace { --bottom-nav-space: calc(var(--bottom-nav-h) + max(var(--bottom-nav-gap), env(safe-area-inset-bottom)) + var(--s-5)); display: block; padding-bottom: var(--bottom-nav-space); }
+  html:has(.workspace) { scroll-padding-block-end: calc(var(--bottom-nav-h) + var(--s-6)); }
+  /* سربرگ فشرده: یک ردیف — نشان، جست‌وجو، ابزارها. */
+  .workspace-header { flex-wrap: nowrap; margin-bottom: 16px; gap: 8px; padding: 8px 10px; }
+  .workspace-header .brand { flex: 0 1 auto; min-inline-size: 0; padding-inline-end: 0; }
+  .workspace-header .feature-search { flex: 1 1 auto; max-inline-size: none; min-inline-size: 0; }
+  .workspace-header .tools { margin-inline-start: 0; flex: 0 0 auto; inline-size: auto; overflow: visible; }
   .feature-search-kbd { display: none; }
   .shell-offline { margin-block-end: 16px; }
-  .workspace-nav { position: fixed; inset-inline: 10px; inset-block-end: max(8px, env(safe-area-inset-bottom)); top: auto; display: flex; align-items: stretch; gap: 2px; padding: 6px; border-radius: 22px; }
+  .workspace-nav {
+    position: fixed; inset-inline: 10px; inset-block-end: max(var(--bottom-nav-gap), env(safe-area-inset-bottom)); top: auto;
+    display: flex; align-items: stretch; gap: 2px; padding: 6px; border-radius: 22px;
+    /* نوار شناور می‌ماند ولی متن پشتش با آن رقابت نمی‌کند. */
+    background: color-mix(in srgb, var(--surface-solid) 90%, transparent);
+    box-shadow: var(--elev-2), inset 0 0 0 1px var(--rule);
+  }
   .workspace .workspace-zones { display: grid; grid-auto-flow: column; grid-auto-columns: minmax(0, 1fr); flex: 1; gap: 2px; }
   .workspace-zones .tab-item { display: none; }
   .workspace-zones .tab-item[data-primary] { display: contents; }
   .workspace-zones .tab-group { display: none; }
   .workspace .workspace-zones [role="tab"], .workspace-more { flex-direction: column; justify-content: center; gap: 3px; min-block-size: 54px; padding: 6px 2px; border-radius: 14px; font-size: var(--text-2xs); line-height: 1.3; text-align: center; white-space: normal; }
-  .workspace .workspace-zones [role="tab"].on { box-shadow: var(--elev-1); }
+  .workspace .workspace-zones [role="tab"].on { box-shadow: var(--elev-1), inset 0 0 0 1px var(--rule); }
   .workspace .workspace-zones [role="tab"].on::before { inset-block: auto 4px; inset-inline: 30%; block-size: 3px; inline-size: auto; border-radius: 3px; }
   .workspace-more { display: flex; align-items: center; flex: 0 0 20%; border: 0; background: transparent; color: var(--ink-2); font-weight: var(--weight-semibold); }
   .workspace-more .icon { color: var(--ink-3); }
   .workspace-more[aria-expanded="true"] { color: var(--ink); }
-  .workspace-more[data-current] { position: relative; color: var(--ink); background: var(--surface-solid); box-shadow: var(--elev-1); }
+  .workspace-more[data-current] { position: relative; color: var(--ink); background: var(--surface-solid); box-shadow: var(--elev-1), inset 0 0 0 1px var(--rule); }
   .workspace-more[data-current] .icon { color: var(--accent); }
   .workspace-more[data-current]::before { content: ""; position: absolute; inset-block-end: 4px; inset-inline: 30%; block-size: 3px; border-radius: 3px; background: var(--accent); }
-  /* برگهٔ «بیشتر»: همان tablist، گروه‌بندی‌شده و مات. */
-  .workspace--more .workspace-nav { flex-direction: column; max-block-size: min(80dvh, 640px); overflow-y: auto; padding: 14px; border-radius: 24px; background: var(--surface-solid); -webkit-backdrop-filter: none; backdrop-filter: none; z-index: var(--z-sheet); box-shadow: var(--elev-3); }
-  .workspace--more .nav-sheet-title { display: block; margin: 0 4px 4px; font-weight: var(--weight-bold); }
-  .workspace--more .workspace-zones { grid-auto-flow: row; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 6px; }
+  /* برگهٔ «بیشتر»: همان tablist، مات، سرعنوان گروه + ردیف‌های فشرده.
+     ردیف کارت نیست: بی زمینه و قاب؛ فقط ردیف فعال زمینهٔ نرم و لبهٔ برنجی دارد. */
+  .workspace--more .workspace-nav { flex-direction: column; max-block-size: min(82dvh, 680px); overflow-y: auto; padding: 8px 10px 10px; border-radius: 24px; background: var(--surface-solid); -webkit-backdrop-filter: none; backdrop-filter: none; z-index: var(--z-sheet); box-shadow: var(--elev-3); }
+  .workspace--more .nav-sheet-title { display: block; margin: 6px 12px 2px; font-size: var(--text-sm); font-weight: var(--weight-bold); color: var(--ink-2); }
+  .workspace--more .workspace-zones { grid-auto-flow: row; grid-template-columns: minmax(0, 1fr); gap: 0; }
   .workspace--more .workspace-zones .tab-item { display: contents; }
-  .workspace--more .workspace-zones .tab-group { display: block; grid-column: 1 / -1; padding: 10px 4px 0; }
-  .workspace--more .workspace-zones [role="tab"] { flex-direction: row; justify-content: flex-start; gap: 10px; min-block-size: 48px; padding: 8px 12px; font-size: var(--text-sm); text-align: start; background: var(--surface-solid-2); border-radius: 12px; }
-  .workspace--more .workspace-zones [role="tab"].on { background: var(--accent-soft); }
+  .workspace--more .workspace-zones .tab-group { display: block; grid-column: 1 / -1; margin-block-start: 6px; padding: 10px 12px 4px; border-block-start: var(--border-w) solid var(--rule); font-size: var(--text-xs); font-weight: var(--weight-semibold); color: var(--ink-2); }
+  .workspace--more .workspace-zones .tab-item:first-child .tab-group { border-block-start: 0; margin-block-start: 0; }
+  .workspace--more .workspace-zones [role="tab"] { flex-direction: row; justify-content: flex-start; gap: 12px; min-block-size: 44px; padding: 6px 12px; font-size: var(--text-md); font-weight: var(--weight-medium); text-align: start; background: transparent; border-radius: 10px; box-shadow: none; }
+  .workspace--more .workspace-zones [role="tab"]:hover { background: var(--neutral-soft); }
+  .workspace--more .workspace-zones [role="tab"].on { background: var(--accent-soft); box-shadow: none; font-weight: var(--weight-semibold); }
   .workspace--more .workspace-zones [role="tab"].on::before { inset-block: 10px; inset-inline: 0 auto; inline-size: 3px; block-size: auto; border-radius: 3px; }
-  .workspace--more .workspace-more { flex: 0 0 auto; flex-direction: row; gap: 8px; min-block-size: 48px; margin-block-start: 8px; font-size: var(--text-sm); background: var(--surface-solid-2); border-radius: 12px; }
+  .workspace--more .workspace-more { flex: 0 0 auto; flex-direction: row; justify-content: center; gap: 8px; min-block-size: 44px; margin-block-start: 8px; font-size: var(--text-sm); background: var(--surface-solid-2); border-radius: 12px; }
+  .workspace--more .workspace-more[data-current]::before { content: none; }
   .workspace--more .nav-scrim { display: block; position: fixed; inset: 0; z-index: calc(var(--z-sheet) - 1); background: var(--scrim); }
   /* Keyboard space belongs to the active form, never to fixed navigation. */
   .workspace--keyboard .workspace-nav { visibility: hidden; pointer-events: none; }
 }
-@media (max-width: 899px) and (min-width: 560px) { .workspace--more .workspace-zones { grid-template-columns: repeat(3, minmax(0, 1fr)); } }
+/* تبلت: همان ردیف‌های فشرده در دو ستون — فضا واقعاً بیشتر است. */
+@media (max-width: 899px) and (min-width: 560px) { .workspace--more .workspace-zones { grid-template-columns: repeat(2, minmax(0, 1fr)); column-gap: 8px; } }
+/* گوشی: جست‌وجو دکمهٔ فشرده است و با فوکوس کل ردیف را می‌گیرد. خودِ ورودی
+   ماشه است، پس نام دسترس‌پذیر، «/» و Ctrl+K همان می‌مانند. */
+@media (max-width: 559px) {
+  .workspace-header { position: relative; }
+  .workspace-header .feature-search { flex: 0 0 var(--touch); inline-size: var(--touch); min-inline-size: var(--touch); margin-inline-start: auto; }
+  .workspace-header .feature-search-field { position: relative; justify-content: center; inline-size: var(--touch); block-size: var(--touch); padding: 0; border: 0; background: transparent; color: var(--ink-2); }
+  .workspace-header .feature-search-field .icon { inline-size: 21px; block-size: 21px; }
+  .workspace-header .feature-search input { position: absolute; inset: 0; min-block-size: 0; padding: 0; color: transparent; caret-color: transparent; cursor: pointer; }
+  .workspace-header .feature-search input::placeholder { color: transparent; }
+  .workspace-header .feature-search:is(:focus-within, [data-open]) { position: absolute; z-index: 3; inset-block-start: 8px; inset-inline: 10px; inline-size: auto; }
+  .workspace-header .feature-search:is(:focus-within, [data-open]) .feature-search-field { inline-size: 100%; block-size: auto; justify-content: flex-start; padding-inline: 12px 8px; border: var(--border-w) solid var(--rule-2); background: var(--surface-solid); box-shadow: var(--elev-2); }
+  .workspace-header .feature-search:is(:focus-within, [data-open]) input { position: static; min-block-size: 42px; color: var(--ink); caret-color: auto; cursor: text; }
+  .workspace-header .feature-search:is(:focus-within, [data-open]) input::placeholder { color: var(--ink-2); }
+}
+/* نام نشان روی باریک‌ترین گوشی‌ها پنهان است؛ نشان و نام دسترس‌پذیر می‌مانند. */
+@media (max-width: 369px) { .workspace-header .brand-name { position: absolute; inline-size: 1px; block-size: 1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap; } }
 @media (prefers-reduced-motion: no-preference) {
   :root:not([data-perf="on"]) .workspace--more .workspace-nav { animation: lm-sheet-up var(--dur-slow) var(--ease-out); }
   :root:not([data-perf="on"]) .workspace--more .nav-scrim { animation: lm-fade-in var(--dur-base) var(--ease-out); }

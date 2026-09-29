@@ -1,7 +1,10 @@
 /* UI Kit — فقط در Build توسعه/پیش‌نمایش؛ همراه chunk تنبل خودش بار می‌شود. */
 .kit .subtabs { flex-wrap: nowrap; overflow-x: auto; }
-.kit-stack { display: flex; flex-direction: column; gap: var(--s-4); }
-.kit-section { min-inline-size: 0; }
+.kit-sheet { padding: 0 var(--s-5); }
+.kit-stack { display: flex; flex-direction: column; }
+.kit-section { min-inline-size: 0; padding-block: var(--s-5); }
+.kit-stack > .kit-section + .kit-section { border-block-start: var(--border-w) solid var(--rule); }
+.kit-bordered { border: var(--border-w) solid var(--rule); border-radius: var(--r-md); }
 .kit-row { display: flex; flex-wrap: wrap; align-items: center; gap: var(--s-3); }
 .kit-row + .kit-row { margin-block-start: var(--s-4); }
 .kit-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 240px), 1fr)); gap: var(--s-4); align-items: start; }
@@ -25,7 +28,7 @@
 .kit-icons li { display: flex; flex-direction: column; align-items: center; gap: 6px; padding: var(--s-3) var(--s-2); border-radius: var(--r-sm); background: var(--surface-solid-2); font-size: var(--text-2xs); color: var(--ink-2); text-align: center; overflow-wrap: anywhere; }
 .kit-icons li .icon { color: var(--ink); }
 .kit-icons--accent { grid-template-columns: repeat(auto-fill, minmax(140px, 1fr)); }
-.kit-state { padding: var(--s-2); }
+.kit-state { padding: var(--s-2); border: var(--border-w) solid var(--rule); border-radius: var(--r-md); }
 .kit-motion { display: grid; place-items: center; min-block-size: 88px; padding: var(--s-3); border-radius: var(--r-md); background: var(--surface-solid-2); border: 1px solid var(--rule); text-align: center; }
 .kit-signature { position: relative; overflow: hidden; block-size: 180px; border-radius: var(--r-lg); background: var(--bg-deep); isolation: isolate; }
 .kit-signature > i { position: absolute; display: block; border-radius: 50%; filter: blur(40px); opacity: 0.85; }
@@ -33,3 +36,4 @@
 .kit-signature > i:nth-child(2) { inline-size: 50%; aspect-ratio: 1; background: var(--mesh-2); inset-block-start: 20%; inset-inline-start: -10%; }
 .kit-signature > i:nth-child(3) { inline-size: 40%; aspect-ratio: 1; background: var(--mesh-3); inset-block-end: -50%; inset-inline-end: 30%; }
 :root[data-perf="on"] .kit-signature > i { filter: none; opacity: 0.35; }
+@media (max-width: 560px) { .kit-sheet { padding: 0 var(--s-4); } }

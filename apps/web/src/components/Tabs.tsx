@@ -35,6 +35,35 @@ export function TabList<K extends string>({ id, items, value, onChange, label, c
     if (root.current) observer.observe(root.current);
     return () => observer.disconnect();
   }, [value, items, id, vertical]);
+  /**
+   * ردیف افقیِ پرتر از عرض: درون خودش می‌لغزد، هرگز صفحه را. لبه‌ای که
+   * پشتش زبانهٔ دیگری هست محو می‌شود (`data-more-start/end`) و زبانهٔ
+   * انتخاب‌شده در دید می‌ماند. موقعیت با قدر مطلق `scrollLeft` سنجیده
+   * می‌شود تا در مدل استاندارد RTL (منفی) و قدیمی (مثبت) یکی باشد.
+   */
+  useEffect(() => {
+    const el = root.current;
+    if (!el || vertical) return;
+    const edges = () => {
+      const max = el.scrollWidth - el.clientWidth;
+      const pos = Math.abs(el.scrollLeft);
+      el.toggleAttribute("data-more-start", max > 1 && pos > 1);
+      el.toggleAttribute("data-more-end", max > 1 && pos < max - 1);
+    };
+    const selected = el.querySelector<HTMLElement>('[role=tab][aria-selected="true"]');
+    if (selected && el.scrollWidth > el.clientWidth + 1 && selected.getClientRects().length > 0) {
+      // نزدیک لبه یا بیرون از دید → وسط، تا زبانهٔ همسایه در هر دو طرف پیدا باشد.
+      const box = el.getBoundingClientRect(), tab = selected.getBoundingClientRect();
+      if (tab.left < box.left + 48 || tab.right > box.right - 48) {
+        el.scrollLeft += tab.left + tab.width / 2 - (box.left + box.width / 2);
+      }
+    }
+    edges();
+    el.addEventListener("scroll", edges, { passive: true });
+    const observer = new ResizeObserver(edges);
+    observer.observe(el);
+    return () => { el.removeEventListener("scroll", edges); observer.disconnect(); };
+  }, [value, vertical]);
   return <div ref={root} className={className} role="tablist" aria-label={label} aria-orientation={vertical ? "vertical" : "horizontal"}>
     {items.map((item, index) => <div className="tab-item" role="presentation" key={item.key} data-primary={item.primary ? "" : undefined}>
       {item.group && items[index - 1]?.group !== item.group ? <span className="tab-group" role="presentation">{item.group}</span> : null}

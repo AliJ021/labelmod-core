@@ -33,9 +33,8 @@ test("app shell renders one taxonomy: grouped sidebar or bottom bar plus grouped
     for (const group of GROUPS) await expect(nav.getByText(group, { exact: true })).toBeVisible();
     await expect(page.getByRole("button", { name: "بخش‌های بیشتر" })).toBeHidden();
   } else {
-    const visible = await list.getByRole("tab").count();
-    expect(visible, "mobile bottom bar keeps 4–5 true primary destinations").toBeGreaterThanOrEqual(4);
-    expect(visible).toBeLessThanOrEqual(5);
+    // تصمیم مالک (بازبینی بصری ۱): چهار مقصد + «بیشتر»؛ گزارش‌ها در برگه است.
+    expect(await list.getByRole("tab").allInnerTexts()).toEqual(["داشبورد", "صندوق", "فاکتورها", "کالا و قیمت"]);
     for (const group of GROUPS) await expect(nav.getByText(group, { exact: true })).toBeHidden();
     const more = page.getByRole("button", { name: "بخش‌های بیشتر", exact: true });
     for (const target of [...await list.getByRole("tab").all(), more]) {
@@ -50,6 +49,22 @@ test("app shell renders one taxonomy: grouped sidebar or bottom bar plus grouped
     const sheet = (await nav.boundingBox())!, viewport = page.viewportSize()!;
     expect(sheet.y).toBeGreaterThanOrEqual(0);
     expect(sheet.y + sheet.height).toBeLessThanOrEqual(viewport.height + 1);
+    // ردیف فشرده، نه کارت: روی گوشی یک ستون؛ روی تبلت حداکثر دو ستون.
+    // اشاره‌گر از روی ردیف‌ها کنار می‌رود تا حالت hover با «پرشدن کارت» اشتباه نشود.
+    await page.mouse.move(1, 1);
+    const measure = () => list.getByRole("tab").evaluateAll(tabs => tabs.map(t => {
+      const r = t.getBoundingClientRect(), css = getComputedStyle(t);
+      return { x: Math.round(r.x), w: Math.round(r.width), h: r.height, bg: css.backgroundColor, selected: t.getAttribute("aria-selected") === "true" };
+    }));
+    // گذار رنگ hover کوتاه است؛ منتظر پایانش می‌مانیم، نه یک زمان دلخواه.
+    await expect.poll(async () => (await measure()).filter(r => !r.selected).every(r => r.bg === "rgba(0, 0, 0, 0)"),
+      { message: "unselected rows carry no card fill" }).toBe(true);
+    const rows = await measure();
+    const columns = new Set(rows.map(r => r.x)).size;
+    expect(columns, "More sheet columns").toBeLessThanOrEqual(viewport.width < 560 ? 1 : 2);
+    for (const row of rows) {
+      expect(row.h, "compact destination row").toBeLessThanOrEqual(52);
+    }
     await noOverflow(page, "open navigation sheet");
     await reference(page, "shell-more-sheet");
     await page.keyboard.press("Escape");
@@ -62,6 +77,83 @@ test("app shell renders one taxonomy: grouped sidebar or bottom bar plus grouped
   }
   await noOverflow(page, "shell");
   await reference(page, "shell");
+});
+
+test("page content always ends above the phone bottom bar, which stays legible", async ({ page, api }) => {
+  // نوار پایین فقط زیر ۹۰۰ پیکسل است؛ پروژهٔ دسکتاپ همین را در نمایشگر گوشی می‌سنجد، نه Skip.
+  if (!compact(page)) await page.setViewportSize({ width: 390, height: 844 });
+  api.defaults["GET /reports/hourly"] = { rows: [{ businessDate: "2026-09-16", hourOfDay: 18, channel: "pos", invoiceCount: 1, itemQty: "1", netAmount: "5000000" }] };
+  // فاصلهٔ پایان محتوا تا لبهٔ نوار، پس از رفتن به ته صفحه. قلم و چیدمان ممکن است
+  // پس از نمایش پنل هنوز جا بیفتند، پس اندازه‌گیری تا پایدارشدن تکرار می‌شود.
+  const clearance = async (what: string) => {
+    await expect.poll(() => page.evaluate(() => {
+      window.scrollTo(0, document.documentElement.scrollHeight);
+      return document.querySelector(".workspace-nav")!.getBoundingClientRect().top
+        - document.querySelector("main#workspace-content")!.getBoundingClientRect().bottom;
+    }), { message: `${what}: last content ends at least 8px above the bottom bar` }).toBeGreaterThanOrEqual(8);
+  };
+  await page.goto("/");
+  await expect(page.getByRole("figure", { name: "فروش خالص هر ساعت (تومان)" })).toBeVisible();
+  await clearance("dashboard");
+  const alpha = await page.locator(".workspace-nav").evaluate(el => {
+    const m = getComputedStyle(el).backgroundColor.match(/rgba?\(([^)]+)\)|color\(srgb ([^)]+)\)/);
+    const parts = (m?.[1] ?? m?.[2] ?? "").split(/[ ,/]+/).filter(Boolean).map(Number);
+    return parts.length >= 4 ? parts[3]! : 1;
+  });
+  expect(alpha, "bottom bar surface is clear enough that content does not compete through it").toBeGreaterThanOrEqual(0.85);
+  await page.goto("/dev/ui-kit");
+  const tabs = page.getByRole("tablist", { name: "بخش‌های UI Kit" });
+  for (const name of ["عدد و متن", "جدول و نمودار", "حالت‌ها"]) {
+    await tabs.getByRole("tab", { name, exact: true }).click();
+    await expect(page.getByRole("tabpanel", { name })).toBeVisible();
+    await clearance(`UI kit ${name}`);
+  }
+});
+
+test("phone header is one compact row; search is a trigger that expands in place", async ({ page }) => {
+  // سربرگ فشرده فقط زیر ۵۶۰ پیکسل است؛ پروژهٔ پهن‌تر همین را در نمایشگر گوشی می‌سنجد.
+  if (page.viewportSize()!.width >= 560) await page.setViewportSize({ width: 375, height: 812 });
+  await page.goto("/");
+  await expect(page.getByRole("heading", { name: "امروز", exact: true })).toBeVisible();
+  const header = page.locator(".workspace-header");
+  expect((await header.boundingBox())!.height, "shell chrome stays one touch-row tall").toBeLessThanOrEqual(64);
+  const search = page.getByRole("searchbox", { name: "پیداکردن بخش یا ابزار" });
+  const idle = (await search.boundingBox())!;
+  expect(idle.width).toBeGreaterThanOrEqual(44); expect(idle.height).toBeGreaterThanOrEqual(44);
+  expect(idle.width, "search is a compact trigger at rest").toBeLessThanOrEqual(48);
+  await search.click();
+  await expect.poll(async () => (await search.boundingBox())!.width, { message: "search expands across the header" }).toBeGreaterThan(page.viewportSize()!.width * 0.6);
+  await search.fill("بارکد");
+  await page.locator("main#workspace-content").focus();
+  expect((await search.boundingBox())!.width, "a query in progress keeps the field open").toBeGreaterThan(page.viewportSize()!.width * 0.6);
+  await search.fill("");
+  await page.locator("main#workspace-content").focus();
+  await expect.poll(async () => (await search.boundingBox())!.width).toBeLessThanOrEqual(48);
+  await noOverflow(page, "phone header");
+});
+
+test("UI kit category tabs scroll in place with edge cues and keep the active tab visible", async ({ page }) => {
+  await page.goto("/dev/ui-kit");
+  const tabs = page.getByRole("tablist", { name: "بخش‌های UI Kit" });
+  await expect(tabs).toBeVisible();
+  const state = () => tabs.evaluate(el => ({ overflow: el.scrollWidth > el.clientWidth + 1, start: el.hasAttribute("data-more-start"), end: el.hasAttribute("data-more-end"), wrap: getComputedStyle(el).flexWrap }));
+  const inside = async (name: string) => {
+    const [a, b] = [await tabs.getByRole("tab", { name, exact: true }).boundingBox(), await tabs.boundingBox()];
+    return a!.x >= b!.x - 1 && a!.x + a!.width <= b!.x + b!.width + 1;
+  };
+  const first = await state();
+  expect(first.wrap, "one row, never a wrapped tab cloud").toBe("nowrap");
+  if (first.overflow) {
+    expect(first.start, "nothing hidden before the first tab").toBe(false);
+    expect(first.end, "hidden tabs past the edge are cued").toBe(true);
+    expect(await inside("پایه")).toBe(true);
+    // آخرین زبانه در ردیفِ سرریز همیشه پنهان است؛ انتخابش باید آن را به دید بیاورد.
+    expect(await inside("حرکت و جلوه"), "last tab starts hidden past the edge").toBe(false);
+    await tabs.getByRole("tab", { name: "حرکت و جلوه", exact: true }).click();
+    await expect.poll(() => inside("حرکت و جلوه"), { message: "active tab scrolled into view" }).toBe(true);
+    await expect.poll(async () => (await state()).start).toBe(true);
+  }
+  await noOverflow(page, "UI kit tabs");
 });
 
 test("navigation hides server-denied destinations but keeps the open section and personal settings", async ({ page, api }) => {

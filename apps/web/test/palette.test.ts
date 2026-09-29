@@ -168,3 +168,19 @@ for (const theme of ["light", "dark"] as const) {
     }
   });
 }
+
+/*
+  بازبینی بصری ۱: «تجمل آرام به تضاد ضعیف تکیه نمی‌کند». فرادادهٔ ثانوی
+  (تاریخ میلادی، سرعنوان گروه ناوبری، برچسب محور) با --ink-3 و --ink-2
+  مستقیم روی **زمینهٔ صفحه** هم می‌نشیند، نه فقط روی سطح مات.
+*/
+for (const theme of ["light", "dark"] as const) {
+  test("متن ثانوی روی زمینهٔ صفحه و هر دو سطح مات ≥ ۴٫۵:۱ — " + theme, () => {
+    for (const name of ["ink-2", "ink-3"]) {
+      for (const surface of ["bg-deep", "surface-solid", "surface-solid-2"]) {
+        const ratio = contrast(hex(name, theme), hex(surface, theme));
+        assert.ok(ratio >= 4.5, `${name} روی ${surface}: ${ratio.toFixed(2)}`);
+      }
+    }
+  });
+}

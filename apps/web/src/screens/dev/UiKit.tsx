@@ -43,11 +43,12 @@ const ROWS: Row[] = [
   { id: "4", ref: "INV-1405-00020", name: "شال پشمی (نمونه)", state: "failed", amount: "987654321000", qty: "12", date: "2026-09-19" },
 ];
 
+/** بخش‌ها کارت جدا نیستند: هر دسته یک سطح مات است و بخش‌ها با خط جدا می‌شوند. */
 function Section({ id, title, description, children }: { id: string; title: string; description?: string; children: ReactNode }) {
-  return <Solid as="section" className="pad kit-section" aria-labelledby={`kit-${id}`}>
+  return <section className="kit-section" aria-labelledby={`kit-${id}`}>
     <SectionHeader id={`kit-${id}`} title={title} {...(description ? { description } : {})} />
     {children}
-  </Solid>;
+  </section>;
 }
 
 export function UiKit() {
@@ -66,9 +67,11 @@ export function UiKit() {
       </>} />
     <TabList id={tabs} items={SECTIONS.map(([key, label]) => ({ key, label }))} value={section} onChange={setSection} label="بخش‌های UI Kit" />
     <TabPanels id={tabs} items={SECTIONS.map(([key, label]) => ({ key, label }))} value={section} className="kit-panel">
+      <Solid className="kit-sheet">
       {section === "foundation" ? <Foundation /> : section === "numbers" ? <Numbers /> : section === "controls" ? <Controls /> :
         section === "status" ? <Statuses /> : section === "data" ? <Data density={density} /> : section === "layers" ? <Layers /> :
         section === "states" ? <States /> : section === "icons" ? <Icons /> : <Motion />}
+      </Solid>
     </TabPanels>
   </div>;
 }
@@ -193,7 +196,7 @@ function Statuses() {
       </div>
     </Section>
     <Section id="kpi" title="کارت شاخص">
-      <div className="kpis">
+      <div className="kpis kpis--band kit-bordered">
         <Kpi label="فروش" icon="receipt" emphasis value={<Money rial="12340000" size="xl" />} note="۱۲ فاکتور · ۱ مرجوعی" />
         <Kpi label="وجه دریافتی" icon="card" value={<Money rial="11000000" size="xl" />} state="warning" note={<><Money rial="1340000" size="sm" /> هنوز نرسیده</>} />
         <Kpi label="سود" icon="chart" value={<span className="kpi-unknown">—</span>} state="warning" note="برای دیدن سود، دسترسی بهای تمام‌شده لازم است" />
@@ -294,12 +297,12 @@ function States() {
     </Section>
     <Section id="results" title="خالی، خطا، مجوز، آفلاین و موفقیت" description="تصویر سه‌بعدی فقط برای لحظه‌های معنادار؛ جست‌وجوی بی‌نتیجه تصویر نمی‌گیرد.">
       <div className="kit-grid kit-grid--3">
-        <Solid className="kit-state"><ResultState accent="ledger" title="هنوز گزارشی ساخته نشده است." description="با اولین فاکتور نهایی، گزارش اینجا پر می‌شود." /></Solid>
-        <Solid className="kit-state"><ResultState title="برای این جست‌وجو کالایی پیدا نشد." actionLabel="پاک‌کردن جست‌وجو" onAction={() => {}} /></Solid>
-        <Solid className="kit-state"><ResultState kind="error" title="فهرست خوانده نشد." description="اتصال را بررسی کنید." reference="req-7f3a91" actionLabel="تلاش دوباره" onAction={() => {}} /></Solid>
-        <Solid className="kit-state"><ResultState accent="shield" title="این بخش دسترسی «مدیریت خزانه» می‌خواهد." description="از مدیر بخواهید دسترسی را در «مجوزها» بدهد." /></Solid>
-        <Solid className="kit-state"><div className="result-state"><StatusBadge state="offline" /><p className="muted">اتصال این دستگاه قطع است. نتیجهٔ کارهای نیمه‌تمام را پس از اتصال بررسی کنید.</p></div></Solid>
-        <Solid className="kit-state"><ResultState accent="success" title="بکاپ دیشب با موفقیت ساخته شد (نمونه)." /></Solid>
+        <div className="kit-state"><ResultState accent="ledger" title="هنوز گزارشی ساخته نشده است." description="با اولین فاکتور نهایی، گزارش اینجا پر می‌شود." /></div>
+        <div className="kit-state"><ResultState title="برای این جست‌وجو کالایی پیدا نشد." actionLabel="پاک‌کردن جست‌وجو" onAction={() => {}} /></div>
+        <div className="kit-state"><ResultState kind="error" title="فهرست خوانده نشد." description="اتصال را بررسی کنید." reference="req-7f3a91" actionLabel="تلاش دوباره" onAction={() => {}} /></div>
+        <div className="kit-state"><ResultState accent="shield" title="این بخش دسترسی «مدیریت خزانه» می‌خواهد." description="از مدیر بخواهید دسترسی را در «مجوزها» بدهد." /></div>
+        <div className="kit-state"><div className="result-state"><StatusBadge state="offline" /><p className="muted">اتصال این دستگاه قطع است. نتیجهٔ کارهای نیمه‌تمام را پس از اتصال بررسی کنید.</p></div></div>
+        <div className="kit-state"><ResultState accent="success" title="بکاپ دیشب با موفقیت ساخته شد (نمونه)." /></div>
       </div>
     </Section>
   </div>;
