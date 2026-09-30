@@ -32,6 +32,103 @@ test("invoice center restores URL filters and browser navigation and prints only
   await fontsReady(page);await page.screenshot({path:test.info().outputPath("invoice-center.png"),fullPage:true});
 });
 
+test("invoice date filters are Jalali-first: ISO stays in the URL and request, incomplete/missing/reversed dates are never sent", async ({page,api}) => {
+  const row={id:"i1",number:"MAIN-1",status:"finalized",branchId:"b1",branchName:"شعبه آزمون",shiftId:"s1",creatorName:"صندوق‌دار آزمون",finalizerName:"صندوق‌دار آزمون",customerName:null,occurredAt:"2026-09-26T08:00:00Z",payableAmount:"1000000",receivedAmount:"1000000",paymentMethods:"نقد",canResume:false,needsReview:false};
+  api.defaults["GET /invoices"]={rows:[row],total:1,pageSize:50};
+  const invoiceCalls=()=>api.calls.filter(c=>c.startsWith("GET /invoices?"));
+  await page.goto("/?page=invoices&invoices.status=finalized&invoices.page=2&invoices.from=2026-09-23&invoices.to=2026-09-30");
+  await expect(page.getByRole("heading",{name:"فاکتورها",exact:true})).toBeVisible();
+  const filters=page.locator(".invoice-filters");
+  const from=page.getByLabel("از تاریخ",{exact:true}), to=page.getByLabel("تا تاریخ",{exact:true});
+  // جلالی اصلی: بی «(میلادی)»، بی تقویم بومی، مقدار از ISO نشانی ساخته شده.
+  await expect(page.getByLabel(/میلادی/)).toHaveCount(0);
+  await expect(page.locator('main input[type="date"]')).toHaveCount(0);
+  await expect(from).toHaveValue("۱۴۰۵/۰۷/۰۱");
+  await expect(to).toHaveValue("۱۴۰۵/۰۷/۰۸");
+  await expect(from).toHaveAttribute("type","text");
+  // میلادی فقط ثانوی کنار جلالی.
+  await expect(filters).toContainText("۱ مهر ۱۴۰۵");
+  await expect(filters).toContainText(/23 Sept? 2026/);
+  // درخواست همان ISO و بقیهٔ فیلترها دست‌نخورده.
+  await expect.poll(()=>invoiceCalls().at(-1)).toBe("GET /invoices?status=finalized&search=&page=2&from=2026-09-23&to=2026-09-30");
+  await expect(page.getByRole("combobox",{name:"وضعیت",exact:true})).toHaveValue("finalized");
+
+  const before=invoiceCalls().length;
+  // نیمه‌تایپ: خطای کنار فیلد، پیام به‌جای فهرست، نشانی و درخواست بی‌تغییر.
+  await to.fill("1405/07");
+  await expect(filters.getByText("تاریخ را به شکل ۱۴۰۵/۰۶/۱۰ کامل کنید.")).toBeVisible();
+  await expect(to).toHaveAttribute("aria-invalid","true");
+  await expect(page.getByText("بازهٔ تاریخ کامل نیست.")).toBeVisible();
+  await expect(page.getByRole("button",{name:"جزئیات",exact:true})).toHaveCount(0);
+  await expect(page).toHaveURL(/invoices\.to=2026-09-30/);
+  // ناموجود: ۳۰ اسفند ۱۴۰۴ — گرد نمی‌شود، فرستاده نمی‌شود.
+  await from.fill("1404/12/30");
+  await expect(filters.getByText("این تاریخ در تقویم جلالی وجود ندارد.")).toBeVisible();
+  await expect(page).toHaveURL(/invoices\.from=2026-09-23/);
+  expect(invoiceCalls().length,"no request while a date is incomplete or does not exist").toBe(before);
+
+  // رقم فارسی ← ISO در نشانی و درخواست؛ صفحه‌بندی مثل قبل به ۱ برمی‌گردد.
+  await from.fill("۱۴۰۵/۰۷/۰۱");
+  await to.fill("۱۴۰۵/۰۶/۳۱");
+  // معکوس: نشانی آخرین تاریخ کامل را دارد ولی هیچ درخواستی نمی‌رود.
+  await expect(filters.getByText("«تا تاریخ» نباید پیش از «از تاریخ» باشد.")).toBeVisible();
+  await expect(page).toHaveURL(/invoices\.to=2026-09-22/);
+  expect(invoiceCalls().some(c=>c.includes("to=2026-09-22")),"reversed range never reaches the server").toBe(false);
+  await to.fill("۱۴۰۵/۰۷/۱۰");
+  await expect(page).toHaveURL(/invoices\.to=2026-10-02/);
+  await expect(page).not.toHaveURL(/invoices\.page=/);
+  await expect.poll(()=>invoiceCalls().at(-1)).toBe("GET /invoices?status=finalized&search=&page=1&from=2026-09-23&to=2026-10-02");
+  await expect(page.getByRole("button",{name:"جزئیات",exact:true})).toBeVisible();
+
+  // بارگذاری دوباره: متن جلالی از همان ISO نشانی.
+  await page.reload();
+  await expect(page.getByLabel("از تاریخ",{exact:true})).toHaveValue("۱۴۰۵/۰۷/۰۱");
+  await expect(page.getByLabel("تا تاریخ",{exact:true})).toHaveValue("۱۴۰۵/۰۷/۱۰");
+  // بازگشت مرورگر: وضعیت پیشین (بازهٔ معکوس) با همان خطا برمی‌گردد و فرستاده نمی‌شود.
+  await page.evaluate(()=>{history.back();});
+  await expect(page).toHaveURL(/invoices\.to=2026-09-22/);
+  await expect(page.getByLabel("تا تاریخ",{exact:true})).toHaveValue("۱۴۰۵/۰۶/۳۱");
+  await expect(filters.getByText("«تا تاریخ» نباید پیش از «از تاریخ» باشد.")).toBeVisible();
+  expect(invoiceCalls().some(c=>c.includes("to=2026-09-22"))).toBe(false);
+  await page.evaluate(()=>{history.forward();});
+  await expect(page).toHaveURL(/invoices\.to=2026-10-02/);
+  await expect(page.getByLabel("تا تاریخ",{exact:true})).toHaveValue("۱۴۰۵/۰۷/۱۰");
+  await expect(page.getByRole("button",{name:"جزئیات",exact:true})).toBeVisible();
+
+  // پاک‌کردن تاریخ‌ها: هر دو بی‌مرز، بقیهٔ فیلترها سر جایشان.
+  await page.getByRole("button",{name:"پاک‌کردن تاریخ‌ها",exact:true}).click();
+  await expect(page.getByLabel("از تاریخ",{exact:true})).toHaveValue("");
+  await expect(page.getByLabel("تا تاریخ",{exact:true})).toHaveValue("");
+  await expect(page).not.toHaveURL(/invoices\.(from|to)=/);
+  await expect(page).toHaveURL(/invoices\.status=finalized/);
+  await expect.poll(()=>invoiceCalls().at(-1)).toBe("GET /invoices?status=finalized&search=&page=1");
+  // پنل باز می‌ماند و تمرکز گم نمی‌شود.
+  await expect(page.getByLabel("از تاریخ",{exact:true})).toBeFocused();
+  // یک سرِ تنها کافی است.
+  await page.getByLabel("از تاریخ",{exact:true}).fill("1405/07/05");
+  await expect.poll(()=>invoiceCalls().at(-1)).toBe("GET /invoices?status=finalized&search=&page=1&from=2026-09-27");
+  expect(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth+1),"no page-level horizontal overflow").toBe(true);
+});
+
+test("invoice Jalali date fields fit every narrow width with an error showing and no native picker",async({page,api})=>{
+  api.defaults["GET /invoices"]={rows:[],total:0,pageSize:50};
+  // عرض‌های باریک صریح (۳۹۰ و ۴۱۲ در ماتریس پروژه نیستند)، با خطای کنار فیلد که بلندترین حالت است.
+  for(const width of NARROW_WIDTHS){
+    await page.setViewportSize({width,height:900});
+    await page.goto("/?page=invoices&invoices.from=2026-09-23&invoices.to=2026-09-22");
+    const panel=page.locator(".invoice-filters");
+    const from=page.getByLabel("از تاریخ",{exact:true}), to=page.getByLabel("تا تاریخ",{exact:true});
+    await expect(to).toHaveValue("۱۴۰۵/۰۶/۳۱");
+    await expect(panel.getByText("«تا تاریخ» نباید پیش از «از تاریخ» باشد.")).toBeVisible();
+    await expect(page.locator('main input[type="date"]')).toHaveCount(0);
+    await fontsReady(page);
+    for(const field of [from,to]) expect(await horizontallyInside(field,panel),`date field inside the filter panel at ${width}px`).toBe(true);
+    const size=await documentWidth(page);
+    expect(size.client,"viewport width").toBe(width);
+    expect(size.scroll,`Invoices must not scroll horizontally at ${width}px`).toBeLessThanOrEqual(size.client);
+  }
+});
+
 test("feature search only offers permitted destinations; personal PIN stays reachable",async({page,api})=>{
   api.handlers.set("GET /auth/can",async route=>{await route.fulfill({json:{verdict:"deny",approver:null,reason:"آزمون محدودیت"}});});
   await page.goto("/");const field=page.getByRole("searchbox",{name:"پیداکردن بخش یا ابزار"});

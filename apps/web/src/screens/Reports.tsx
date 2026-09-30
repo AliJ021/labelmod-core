@@ -42,13 +42,14 @@ import { BarChart, type Bar } from "../components/ui/BarChart.tsx";
 import { StatusBadge } from "../components/ui/Status.tsx";
 import { Skeleton } from "../components/ui/Skeleton.tsx";
 import { Ltr } from "../components/ui/Bidi.tsx";
+import { JalaliDateHint, useJalaliDraft } from "../components/ui/JalaliDate.tsx";
 import { routeUrl } from "../lib/navigation.ts";
 import { useUrlState, useUrlTab } from "../lib/use-url-state.ts";
 import { useLatestQuery } from "../lib/use-latest-query.ts";
 import { ApiError } from "../lib/api.ts";
 import { parseRial } from "../lib/money.ts";
 import { normalizeDigits } from "../lib/settings-value.ts";
-import { channelLabel, formatCount, formatGregorian, formatHour, formatJalali, formatJalaliMoment, formatMoney } from "../lib/format.ts";
+import { channelLabel, formatCount, formatHour, formatJalali, formatJalaliMoment, formatMoney } from "../lib/format.ts";
 import { jalaliInputOf, parseJalaliDate, periodLabel, readJalaliPeriod } from "../lib/report-filters.ts";
 import { pos, type Branch, type Warehouse } from "../lib/pos.ts";
 import {
@@ -183,11 +184,11 @@ export function Reports() {
   const filters: PeriodFilters = {
     fields: <>
       {/* `inputMode="decimal"`: صفحه‌کلید عددی گوشی «/» ندارد؛ «.» یا هشت رقم پشت‌هم هم پذیرفته است. */}
-      <Field label="از تاریخ" hint={<DateHint iso={read.from} example="مثلاً ۱۴۰۵/۰۶/۰۱" />} error={issue?.field === "from" ? issue.message : null}>
+      <Field label="از تاریخ" hint={<JalaliDateHint iso={read.from} example="مثلاً ۱۴۰۵/۰۶/۰۱" />} error={issue?.field === "from" ? issue.message : null}>
         <input type="text" inputMode="decimal" autoComplete="off" className="num" value={fromText} placeholder="۱۴۰۵/۰۶/۰۱"
           onChange={e => typeDate(e.target.value, setFromText, setFrom)} />
       </Field>
-      <Field label="تا تاریخ" hint={<DateHint iso={read.to} example="مثلاً ۱۴۰۵/۰۶/۳۱" />} error={issue?.field === "to" ? issue.message : null}>
+      <Field label="تا تاریخ" hint={<JalaliDateHint iso={read.to} example="مثلاً ۱۴۰۵/۰۶/۳۱" />} error={issue?.field === "to" ? issue.message : null}>
         <input type="text" inputMode="decimal" autoComplete="off" className="num" value={toText} placeholder="۱۴۰۵/۰۶/۳۱"
           onChange={e => typeDate(e.target.value, setToText, setTo)} />
       </Field>
@@ -249,29 +250,6 @@ export function Reports() {
 }
 
 // ── زیرساخت مشترک بخش گزارش ──────────────────────────────────────────
-
-/**
- * متن فیلد تاریخ جلالی برای یک ISO در نشانی. تایپ نیمه‌کاره محلی می‌ماند و به
- * نشانی نمی‌رود؛ تغییر نشانی از بیرون (بازنشانی، بازگشت مرورگر، بارگذاری) متن را از
- * همان ISO از نو می‌سازد — مگر متن فعلی همان تاریخ باشد (همان‌که کاربر نوشت).
- */
-function useJalaliDraft(iso: string): [string, (text: string) => void] {
-  const [draft, setDraft] = useState(() => ({ iso, text: jalaliInputOf(iso) }));
-  const set = useCallback((text: string) => setDraft(d => ({ ...d, text })), []);
-  if (draft.iso !== iso) {
-    const current = parseJalaliDate(draft.text);
-    const next = { iso, text: current.kind === "ok" && current.iso === iso ? draft.text : jalaliInputOf(iso) };
-    setDraft(next);
-    return [next.text, set];
-  }
-  return [draft.text, set];
-}
-
-/** راهنمای فیلد: جلالی کامل (اصلی) و میلادی فقط ثانوی و کم‌رنگ در برگ LTR. */
-function DateHint({ iso, example }: { iso: string | null; example: string }) {
-  if (iso === null) return <>{example}</>;
-  return <>{formatJalali(iso, true)} <span className="field-hint-secondary"><Ltr mono={false}>{formatGregorian(iso)}</Ltr></span></>;
-}
 
 /**
  * پرس‌وجوی یک بخش گزارش: لغو با ترک صفحه، فقط آخرین پاسخ، تلاش دوباره.

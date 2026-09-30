@@ -135,6 +135,7 @@ a[role="tab"] { display: inline-flex; align-items: center; text-decoration: none
 .invoice-extra-filters { grid-column: 1 / -1; }
 .invoice-extra-filters summary { cursor: pointer; min-block-size: 44px; padding-block: 10px; }
 .invoice-filter-fields { display: grid; grid-template-columns: repeat(3,minmax(0,1fr)); gap: 12px; }
+.invoice-clear-dates { margin-block-start: 12px; }
 .invoice-table { min-inline-size: 850px; }
 .invoice-table small { display: block; color: var(--ink-2); }
 .invoice-table .btn { margin: 3px; }

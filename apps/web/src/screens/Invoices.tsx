@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { api, ApiError } from "../lib/api.ts";
 import { useUrlState, navigate } from "../lib/use-url-state.ts";
 import { useLatestQuery } from "../lib/use-latest-query.ts";
@@ -6,6 +6,9 @@ import { pos, type Branch, type DraftPayment, type Invoice } from "../lib/pos.ts
 import { rememberCart } from "../lib/open-cart.ts";
 import { toman } from "../lib/money.ts";
 import { ResultState } from "../components/ResultState.tsx";
+import { Field } from "../components/ui/Controls.tsx";
+import { JalaliDateHint, useJalaliDraft } from "../components/ui/JalaliDate.tsx";
+import { parseJalaliDate, readOptionalJalaliPeriod } from "../lib/report-filters.ts";
 
 interface Row {
   id: string; number: string | null; status: string; branchId: string; branchName: string; shiftId: string | null;
@@ -28,6 +31,37 @@ export function Invoices() {
   const [branches, setBranches] = useState<Branch[]>([]);
   const [error, setError] = useState("");
   const [revision, setRevision] = useState(0);
+  // تاریخ: کاربر جلالی می‌نویسد و می‌بیند؛ نشانی و درخواست همان ISO میلادی می‌مانند (همان
+  // قرارداد گزارش‌ها). فیلد خالی یعنی بی‌مرز. نیمه‌تایپ، ناموجود یا بازهٔ معکوس فقط خطای
+  // کنار فیلد است و هیچ درخواستی نمی‌سازد.
+  const [fromText, setFromText] = useJalaliDraft(from);
+  const [toText, setToText] = useJalaliDraft(to);
+  const range = readOptionalJalaliPeriod(fromText, toText);
+  const issue = range.issue;
+  function typeDate(text: string, setText: (t: string) => void, current: string, setIso: (iso: string) => void) {
+    setText(text);
+    // فقط تاریخ کامل و موجود (یا فیلد خالی) به نشانی می‌رود؛ نیمه‌تایپ محلی می‌ماند.
+    let next = "";
+    if (text.trim() !== "") {
+      const r = parseJalaliDate(text);
+      if (r.kind !== "ok") return;
+      next = r.iso;
+    }
+    if (next === current) return;
+    setIso(next); setPage("1");
+  }
+  const fromInput = useRef<HTMLInputElement>(null);
+  // پنل فیلتر پس از پاک‌کردن تاریخ‌ها باز می‌ماند و تمرکز به «از تاریخ» می‌رود؛ دکمه‌ای
+  // که زیر اشاره‌گر ناپدید شود تمرکز را به body می‌برد.
+  const [extraOpen, setExtraOpen] = useState(() => !!(branch || from || to));
+  function clearDates() {
+    setFromText(""); setToText("");
+    fromInput.current?.focus();
+    if (from) setFrom("");
+    if (to) setTo("");
+    if (from || to) setPage("1");
+  }
+  const datesActive = !!(from || to || fromText.trim() || toText.trim());
   useEffect(() => { void pos.branches().then(r => setBranches(r.branches)).catch(e => setError(errorMessage(e))); }, []);
   const key = JSON.stringify([status, search, branch, page, from, to]);
   const load = useCallback((signal: AbortSignal) => {
@@ -37,7 +71,7 @@ export function Invoices() {
     if (to) q.set("to", to);
     return api.get<{ rows: Row[]; total: number; pageSize: number }>(`/invoices?${q}`, { signal });
   }, [status, search, branch, page, from, to]);
-  const query = useLatestQuery({ key, version: revision, load, delay: search ? 250 : 0, enabled: !selected });
+  const query = useLatestQuery({ key, version: revision, load, delay: search ? 250 : 0, enabled: !selected && issue === null });
   async function resume(row: Row) {
     setError("");
     try {
@@ -56,17 +90,26 @@ export function Invoices() {
       <label className="auth-field">شماره یا نام مشتری<input type="search" value={search} maxLength={80} onChange={e => { setSearch(e.target.value); setPage("1"); }} /></label>
       <label className="auth-field">وضعیت<select value={status} onChange={e => { setStatus(e.target.value); setPage("1"); }}><option value="all">همه</option>
         {["draft", "finalized", "cancelled", "returned"].map(s => <option key={s} value={s}>{statusNames[s]}</option>)}</select></label>
-      <details className="invoice-extra-filters" open={!!(branch || from || to) || undefined}>
+      <details className="invoice-extra-filters" open={extraOpen || !!(branch || datesActive || issue)} onToggle={e => setExtraOpen(e.currentTarget.open)}>
       <summary>فیلتر شعبه و تاریخ{branch || from || to ? " · فعال" : ""}</summary>
       <div className="invoice-filter-fields">
-      <label className="auth-field">شعبه<select value={branch} onChange={e => { setBranch(e.target.value); setPage("1"); }}><option value="">شعبه‌های مجاز</option>{branches.map(b => <option key={b.id} value={b.id}>{b.name}</option>)}</select></label>
-      <label className="auth-field">از تاریخ (میلادی)<input type="date" value={from} max={to || undefined} onChange={e => {setFrom(e.target.value);setPage("1");}} /></label>
-      <label className="auth-field">تا تاریخ (میلادی)<input type="date" value={to} min={from || undefined} onChange={e => {setTo(e.target.value);setPage("1");}} /></label>
-      </div></details>
+      <Field label="شعبه"><select value={branch} onChange={e => { setBranch(e.target.value); setPage("1"); }}><option value="">شعبه‌های مجاز</option>{branches.map(b => <option key={b.id} value={b.id}>{b.name}</option>)}</select></Field>
+      {/* `inputMode="decimal"`: صفحه‌کلید عددی گوشی «/» ندارد؛ «.» یا هشت رقم پشت‌هم هم پذیرفته است. تقویم بومی میلادی عمداً نیست. */}
+      <Field label="از تاریخ" hint={<JalaliDateHint iso={range.from} example="مثلاً ۱۴۰۵/۰۷/۰۱" />} error={issue?.field === "from" ? issue.message : null}>
+        <input ref={fromInput} type="text" inputMode="decimal" autoComplete="off" className="num" value={fromText} placeholder="۱۴۰۵/۰۷/۰۱"
+          onChange={e => typeDate(e.target.value, setFromText, from, setFrom)} />
+      </Field>
+      <Field label="تا تاریخ" hint={<JalaliDateHint iso={range.to} example="مثلاً ۱۴۰۵/۰۷/۳۰" />} error={issue?.field === "to" ? issue.message : null}>
+        <input type="text" inputMode="decimal" autoComplete="off" className="num" value={toText} placeholder="۱۴۰۵/۰۷/۳۰"
+          onChange={e => typeDate(e.target.value, setToText, to, setTo)} />
+      </Field>
+      </div>
+      {datesActive ? <button type="button" className="btn invoice-clear-dates" onClick={clearDates}>پاک‌کردن تاریخ‌ها</button> : null}
+      </details>
     </div>
     {error && <p role="alert">{error}</p>}
     <div className="solid pad" aria-busy={query.loading}>
-      {query.loading ? <ResultState kind="loading" title="در حال دریافت فاکتورها…" /> : query.error ? <ResultState kind="error" title={errorMessage(query.error)} actionLabel="تلاش دوباره" onAction={() => setRevision(v => v + 1)} /> : !query.data?.rows.length ? <ResultState title="فاکتوری با این فیلترها پیدا نشد." /> : <>
+      {issue ? <ResultState title="بازهٔ تاریخ کامل نیست." description={issue.message} /> : query.loading ? <ResultState kind="loading" title="در حال دریافت فاکتورها…" /> : query.error ? <ResultState kind="error" title={errorMessage(query.error)} actionLabel="تلاش دوباره" onAction={() => setRevision(v => v + 1)} /> : !query.data?.rows.length ? <ResultState title="فاکتوری با این فیلترها پیدا نشد." /> : <>
         <div className="scroll-x"><table className="grid invoice-table"><caption className="sr-only">فهرست فاکتورها؛ مبلغ‌ها به تومان</caption>
           <thead><tr><th>شماره / وضعیت</th><th>زمان / شعبه</th><th>مشتری</th><th>ثبت‌کننده</th><th>نهایی‌کننده</th><th>مبلغ / دریافتی</th><th>پرداخت‌ها</th><th>عملیات</th></tr></thead>
           <tbody>{query.data.rows.map(row => <tr key={row.id}>
