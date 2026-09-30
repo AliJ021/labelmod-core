@@ -257,6 +257,9 @@ test.describe("کارهای پرتکرار داشبورد", () => {
   test("allowed: every action; low privilege: only what the role can open", async ({ page, api }) => {
     await page.goto("/");
     await expect(quick(page).getByRole("link")).toHaveText(ACTIONS);
+    // بارگذاری دوباره فقط پس از پایان آخرین پرسش داشبورد (فروش ساعتی)؛ WebKit
+    // درخواستِ در راهی را که بارگذاری دوباره لغو می‌کند «خطای صفحه» گزارش می‌کند.
+    await expect(page.getByText("هنوز فروشی برای امروز ثبت نشده است.", { exact: true })).toBeVisible();
     const allowed = new Set(["sale.create", "return.same_day"]);
     api.handlers.set("GET /auth/can", async (route, url) => { await route.fulfill({ json: { verdict: allowed.has(url.searchParams.get("operation") ?? "") ? "allow" : "deny", approver: null, reason: "" } }); });
     await page.reload();
