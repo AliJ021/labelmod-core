@@ -1158,9 +1158,14 @@ export class InvoiceService {
     return invoiceId;
   }
 
-  /** جمع پرداخت‌های واقعاً موفق. «نامشخص» پول نیست. */
-  async paidSoFar(invoiceId: string): Promise<bigint> {
-    const row = await this.#db
+  /**
+   * جمع پرداخت‌های واقعاً موفق. «نامشخص» پول نیست.
+   *
+   * `ex` برای تصمیمی است که باید با وضعیت قفل‌شدهٔ همان تراکنش یکی باشد
+   * (پیش‌چک نسیهٔ نهایی‌سازی)؛ بقیه همان اتصال پیش‌فرض را می‌گیرند.
+   */
+  async paidSoFar(invoiceId: string, ex: Executor = this.#db): Promise<bigint> {
+    const row = await ex
       .selectFrom("treasury.payment as p")
       .innerJoin("treasury.payment_method as m", "m.code", "p.method_code")
       .select(sql<string>`coalesce(sum(CASE WHEN p.direction = 'in' THEN p.amount ELSE -p.amount END), 0)`.as("total"))
