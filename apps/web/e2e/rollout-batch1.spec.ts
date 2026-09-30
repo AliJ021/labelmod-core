@@ -304,3 +304,266 @@ test.describe("کارهای پرتکرار داشبورد", () => {
     await expect(note).toHaveCount(0);
   });
 });
+
+/**
+ * بازبینی مستقل دستهٔ ۱ (Astra، B1-01…B1-05). پرسش «دور ریخته شود؟» یک
+ * `confirm` بومی است؛ هر پرسش شمرده می‌شود تا «پرسشی نیامد» هم ادعا باشد، نه
+ * حدس. هیچ `sleep`: هر انتظار روی وضعیت واقعی صفحه یا درخواست واقعی است.
+ */
+test.describe("بازبینی دستهٔ ۱ — پیش‌نویس، اسنپ‌پی، موجودی", () => {
+  const LEAVE = "تغییرات ذخیره‌نشدهٔ تنظیمات دور ریخته شود؟ برای ماندن و ذخیره، «لغو» را بزنید.";
+  const zoneTab = (page: Page, name: string) => page.getByRole("tablist", { name: "بخش‌ها", exact: true }).getByRole("tab", { name, exact: true });
+  /** ناحیه از نوار اصلی، یا در عرض کم از برگهٔ «بیشتر» — همان مسیری که کاربر می‌رود. */
+  async function openZone(page: Page, name: string) {
+    const tab = zoneTab(page, name);
+    if (await tab.isVisible()) { await tab.click(); return; }
+    await page.getByRole("button", { name: "بخش‌های بیشتر" }).click();
+    await page.getByRole("dialog").getByRole("link", { name, exact: true }).click();
+  }
+  /** پاسخ به پرسش ترک صفحه: «لغو» یا «تأیید»، و فهرست همهٔ پرسش‌ها. */
+  function prompts(page: Page) {
+    const seen: string[] = [];
+    let answer: "dismiss" | "accept" = "dismiss";
+    page.on("dialog", d => { seen.push(`${d.type()}: ${d.message()}`); void (answer === "accept" ? d.accept() : d.dismiss()); });
+    return { seen, answer: (next: "dismiss" | "accept") => { answer = next; } };
+  }
+  /** آیا `beforeunload` هنوز جلوی ترک را می‌گیرد؟ همان رویدادی که مرورگر پیش از بارگذاری دوباره می‌فرستد. */
+  const unloadBlocked = (page: Page) => page.evaluate(() => {
+    const e = new Event("beforeunload", { cancelable: true });
+    window.dispatchEvent(e);
+    return e.defaultPrevented;
+  });
+  const setting = (over: Record<string, unknown>) => ({
+    key: "return.window_hours", value: 48, kind: "int", label: "مهلت مرجوعی", description: "", help: "به ساعت، نه روز.", unit: "ساعت",
+    min: 1, max: 720, options: null, requiresApproval: false, isEditable: true, canEdit: true, permission: "settings.edit", updatedAt: "2026-09-01T00:00:00Z", updatedBy: null, ...over,
+  });
+  test.beforeEach(({ api }) => {
+    api.defaults["GET /settings"] = { groups: [
+      { key: "sales", title: "فروش و مرجوعی", subtitle: null, settings: [
+        setting({}),
+        setting({ key: "discount.require_reason_above_percent", label: "سقف تخفیف بی‌دلیل", kind: "percent", value: 10, min: 0, max: 100, unit: "٪", requiresApproval: true, help: null }),
+        setting({ key: "sales.auto_close_channel_day", label: "بستن خودکار دوره کانال", kind: "bool", value: true, unit: null, help: "دوره‌ی دیروز را شبانه می‌بندد، هرگز امروز را." }),
+      ] },
+    ] };
+    api.defaults["GET /settlement-terms"] = { terms: [{ id: "t1", name: "کارت‌خوان فروشگاه", code: "POS1", feePercent: "0.5", settlementDays: 1, canEdit: true }] };
+    api.defaults["GET /snappay/config"] = { accountId: "a1", enabled: true, accounts: [{ id: "a1", name: "واسط اسنپ‌پی", bankName: "بانک آزمون" }] };
+  });
+
+  test("B1-01 unsaved draft: every in-app exit asks first; cancel keeps value, reason and state; confirm leaves and leaves no guard behind", async ({ page, api }) => {
+    const dialog = prompts(page);
+    // ورود به تنظیمات از داخل برنامه، تا «بازگشت» مرورگر یک جابه‌جایی همان سند باشد.
+    await page.goto("/");
+    await expect(page.getByText("نیاز به رسیدگی", { exact: true })).toBeVisible();
+    await openZone(page, "تنظیمات");
+    const hours = page.getByLabel("مهلت مرجوعی", { exact: true });
+    await expect(hours).toHaveValue("48");
+    // بارگذاری اولیه پیش‌نویس نیست: ترک صفحه هیچ پرسشی ندارد.
+    await expect.poll(() => unloadBlocked(page), "hydration is not a draft").toBe(false);
+
+    await hours.fill("72");
+    const pctRow = page.locator('[data-setting="discount.require_reason_above_percent"]');
+    await page.getByLabel("سقف تخفیف بی‌دلیل", { exact: true }).fill("15");
+    const reason = pctRow.getByLabel("دلیل تغییر — اجباری، در سابقه ثبت می‌شود");
+    await reason.fill("مصوبهٔ مالک");
+    const pending = page.locator(".page-header").getByText("۲ تغییر ذخیره‌نشده");
+    await expect(pending).toBeVisible();
+    await expect.poll(() => unloadBlocked(page), "reload/close stays protected").toBe(true);
+
+    const kept = async (what: string) => {
+      await expect(page, what).toHaveURL(/page=settings/);
+      await expect(hours, what).toHaveValue("72");
+      await expect(reason, what).toHaveValue("مصوبهٔ مالک");
+      await expect(pending, what).toBeVisible();
+    };
+    // ۱) بخش دیگر تنظیمات (از داخل صفحه، مستقل از چیدمان ناوبری).
+    await page.getByRole("button", { name: /کارمزد و دوره تسویه/ }).click();
+    await page.getByRole("button", { name: "تغییر در زبانه پایانه‌ها" }).click();
+    await expect.poll(() => dialog.seen.length).toBe(1);
+    await kept("settings section change cancelled");
+    // ۲) ناحیهٔ دیگر برنامه.
+    await zoneTab(page, "داشبورد").click();
+    await expect.poll(() => dialog.seen.length).toBe(2);
+    await kept("zone change cancelled");
+    // ۳) بازگشت مرورگر (همان سند؛ popstate).
+    await page.evaluate(() => { history.back(); });
+    await expect.poll(() => dialog.seen.length).toBe(3);
+    await kept("history back cancelled");
+    expect(dialog.seen).toEqual([`confirm: ${LEAVE}`, `confirm: ${LEAVE}`, `confirm: ${LEAVE}`]);
+    expect(api.calls.some(c => c.startsWith("PATCH")), "nothing was saved behind the user's back").toBe(false);
+
+    // تأیید: جابه‌جایی انجام می‌شود و پیش‌نویس عمداً دور ریخته می‌شود.
+    dialog.answer("accept");
+    await zoneTab(page, "داشبورد").click();
+    await expect.poll(() => dialog.seen.length).toBe(4);
+    await expect(page).not.toHaveURL(/page=settings/);
+    await expect(page.getByText("نیاز به رسیدگی", { exact: true })).toBeVisible();
+    // هیچ نگهبان یا شنونده‌ای پس از Unmount نمی‌ماند.
+    await expect.poll(() => unloadBlocked(page), "no stale beforeunload listener").toBe(false);
+    await openZone(page, "تنظیمات");
+    await expect(page.getByLabel("مهلت مرجوعی", { exact: true })).toHaveValue("48");
+    await zoneTab(page, "داشبورد").click();
+    await expect(page.getByText("نیاز به رسیدگی", { exact: true })).toBeVisible();
+    expect(dialog.seen, "no prompt after the draft was discarded").toHaveLength(4);
+  });
+
+  test("B1-01 save clears the guard; a failed save keeps it; revert clears that row", async ({ page, api }) => {
+    const dialog = prompts(page);
+    let fail = true;
+    api.handlers.set("PATCH /settings/return.window_hours", async r => {
+      if (fail) await r.fulfill({ status: 409, json: { error: { code: "rule_violation", message: "مقدار با قاعدهٔ دیتابیس سازگار نیست." } } });
+      else await r.fulfill({ json: { value: 72, updatedAt: "2026-09-30T00:00:00Z" } });
+    });
+    await page.goto("/?page=settings&settings.tab=keys");
+    const hours = page.getByLabel("مهلت مرجوعی", { exact: true });
+    const row = page.locator('[data-setting="return.window_hours"]');
+    await hours.fill("72");
+    await row.getByRole("button", { name: /^ذخیره/ }).click();
+    await expect(row.getByRole("alert")).toHaveText("مقدار با قاعدهٔ دیتابیس سازگار نیست.");
+    await expect.poll(() => unloadBlocked(page), "failed save keeps the draft protected").toBe(true);
+    await zoneTab(page, "داشبورد").click();
+    await expect.poll(() => dialog.seen.length).toBe(1);
+    await expect(hours).toHaveValue("72");
+
+    fail = false;
+    await row.getByRole("button", { name: /^ذخیره/ }).click();
+    await expect(row.getByRole("status")).toContainText("ذخیره شد");
+    await expect.poll(() => unloadBlocked(page), "saved: nothing left to protect").toBe(false);
+
+    // بازگردانی: همان ردیف دیگر پیش‌نویس نیست.
+    const sw = page.getByRole("switch", { name: "بستن خودکار دوره کانال" });
+    await sw.focus();
+    await page.keyboard.press("Space");
+    await expect(sw).not.toBeChecked();
+    await expect.poll(() => unloadBlocked(page)).toBe(true);
+    await page.locator('[data-setting="sales.auto_close_channel_day"]').getByRole("button", { name: "بازگردانی" }).click();
+    await expect(sw).toBeChecked();
+    await expect.poll(() => unloadBlocked(page), "revert clears the row's draft").toBe(false);
+
+    await zoneTab(page, "داشبورد").click();
+    await expect(page.getByText("نیاز به رسیدگی", { exact: true })).toBeVisible();
+    expect(dialog.seen, "only the failed-save exit asked").toHaveLength(1);
+  });
+
+  test("B1-05 boolean help is a description of the switch, not part of its name", async ({ page }) => {
+    await page.goto("/?page=settings&settings.tab=keys");
+    const sw = page.getByRole("switch", { name: "بستن خودکار دوره کانال", exact: true });
+    await expect(sw).toBeVisible();
+    await expect(sw).toHaveAccessibleName("بستن خودکار دوره کانال");
+    await expect(sw).toHaveAccessibleDescription("دوره‌ی دیروز را شبانه می‌بندد، هرگز امروز را.");
+    await sw.focus();
+    await page.keyboard.press("Space");
+    await expect(sw).not.toBeChecked();
+    await expect(page.locator('[data-setting="sales.auto_close_channel_day"]')).toContainText("غیرفعال");
+  });
+
+  test("B1-02 settings.view only: SnapPay is readable, has no editable control and never sends PUT", async ({ page, api }) => {
+    api.handlers.set("GET /auth/can", async (route, url) => {
+      await route.fulfill({ json: { verdict: url.searchParams.get("operation") === "settings.security" ? "deny" : "allow", approver: null, reason: "" } });
+    });
+    await page.goto("/?page=settings&settings.tab=snappay");
+    const section = page.getByRole("region", { name: "تنظیم اسنپ‌پی" });
+    await expect(section).toContainText("واسط اسنپ‌پی ← بانک آزمون");
+    await expect(section.getByRole("status")).toHaveText(/فقط مشاهده — تغییر این تنظیم به مجوز «تنظیمات امنیتی» نیاز دارد./);
+    await expect(section.getByRole("combobox")).toHaveCount(0);
+    await expect(section.getByRole("button", { name: "ذخیرهٔ تنظیم اسنپ‌پی" })).toHaveCount(0);
+    expect(api.calls.filter(c => c.startsWith("PUT /snappay"))).toEqual([]);
+  });
+
+  test("B1-02 explicit settings.security allow keeps the edit and save flow", async ({ page, api }) => {
+    api.handlers.set("PUT /snappay/config", async r => { await r.fulfill({ json: { ok: true } }); });
+    await page.goto("/?page=settings&settings.tab=snappay");
+    const account = page.getByRole("combobox", { name: "حساب واسط و بانک تسویه" });
+    await expect(account).toHaveValue("a1");
+    await account.selectOption("");
+    await page.getByRole("button", { name: "ذخیرهٔ تنظیم اسنپ‌پی" }).click();
+    await expect(page.getByRole("status").filter({ hasText: "تنظیم اسنپ‌پی ذخیره شد." })).toBeVisible();
+    expect(api.calls.filter(c => c.startsWith("PUT /snappay"))).toEqual(["PUT /snappay/config"]);
+  });
+
+  test("B1-02 unknown write permission never renders a writable control: loading, degraded, re-check, deny", async ({ page, api }) => {
+    await page.addInitScript(() => {
+      const w = window as unknown as { __snappayWritable: boolean };
+      w.__snappayWritable = false;
+      new MutationObserver(() => { if (document.querySelector('[aria-label="تنظیم اسنپ‌پی"] select, [aria-label="تنظیم اسنپ‌پی"] .btn--primary')) w.__snappayWritable = true; })
+        .observe(document, { subtree: true, childList: true });
+    });
+    let release!: () => void;
+    let gate = new Promise<void>(r => { release = r; });
+    let security: "fail" | "deny" = "fail";
+    api.handlers.set("GET /auth/can", async (route, url) => {
+      if (url.searchParams.get("operation") === "settings.security") {
+        await gate;
+        if (security === "fail") await route.fulfill({ status: 503, json: { error: { code: "unavailable", message: "سرور در دسترس نیست" } } });
+        else await route.fulfill({ json: { verdict: "deny", approver: null, reason: "" } });
+        return;
+      }
+      await route.fulfill({ json: { verdict: "allow", approver: null, reason: "" } });
+    });
+    await page.goto("/?page=settings&settings.tab=snappay");
+    // loading: بخش هنوز mount نشده؛ فقط «در حال بررسی دسترسی».
+    await expect(page.getByText("در حال بررسی دسترسی…", { exact: true })).toBeVisible();
+    const section = page.getByRole("region", { name: "تنظیم اسنپ‌پی" });
+    await expect(section).toHaveCount(0);
+    release();
+    // degraded: خواندن مجاز، نوشتن بررسی‌نشده → فقط‌خواندنی.
+    await expect(section.getByRole("status")).toHaveText(/مجوز تغییر بررسی نشد/);
+    await expect(section).toContainText("واسط اسنپ‌پی ← بانک آزمون");
+    await expect(section.getByRole("combobox")).toHaveCount(0);
+    // بررسی دوباره: در حال پرسش، هنوز فقط‌خواندنی؛ پاسخ «رد» همان می‌ماند.
+    gate = new Promise<void>(r => { release = r; });
+    security = "deny";
+    const retry = page.getByRole("button", { name: "بررسی دوباره", exact: true });
+    if (!(await retry.first().isVisible())) await page.getByRole("button", { name: "بخش‌های بیشتر" }).click();
+    await retry.first().click();
+    await expect(section.getByRole("status")).toHaveText(/در حال بررسی مجوز تغییر…/);
+    release();
+    await expect(section.getByRole("status")).toHaveText(/فقط مشاهده/);
+    await expect(section.getByRole("combobox")).toHaveCount(0);
+    expect(await page.evaluate(() => (window as unknown as { __snappayWritable: boolean }).__snappayWritable), "never writable before an explicit allow").toBe(false);
+    expect(api.calls.filter(c => c.startsWith("PUT /snappay"))).toEqual([]);
+  });
+
+  test("B1-04 leaving SnapPay aborts its read; the late answer never surfaces as an error", async ({ page, api }) => {
+    let release!: () => void;
+    const gate = new Promise<void>(r => { release = r; });
+    api.handlers.set("GET /snappay/config", async r => {
+      await gate;
+      // درخواستِ لغوشده پاسخ را نمی‌پذیرد؛ Playwright آن را بی‌صدا دور می‌اندازد یا خطا می‌دهد.
+      await r.fulfill({ json: { accountId: "", enabled: false, accounts: [] } }).catch(() => undefined);
+    });
+    const aborted = page.waitForEvent("requestfailed", req => req.url().includes("/api/snappay/config"));
+    await page.goto("/?page=settings&settings.tab=snappay");
+    await expect.poll(() => api.calls.includes("GET /snappay/config")).toBe(true);
+    await zoneTab(page, "داشبورد").click();
+    await expect(page.getByText("نیاز به رسیدگی", { exact: true })).toBeVisible();
+    const failed = await aborted;
+    expect(failed.failure()?.errorText, "cancelled by the page, not by the network").toMatch(/ERR_ABORTED|cancel/i);
+    release();
+    await expect(page.getByText("نیاز به رسیدگی", { exact: true })).toBeVisible();
+    await expect(page.getByRole("alert"), "an aborted read is not a user error").toHaveCount(0);
+  });
+
+  test("B1-03 half-typed range keeps stock valuation visible; only the kardex waits and no invalid date is sent", async ({ page, api }) => {
+    Object.assign(api.defaults, REPORT_DATA);
+    api.defaults["GET /reports/inventory-valuation"] = { rows: [
+      { warehouseId: "w1", warehouseName: "انبار آزمایشی", variationId: "v1", sku: "LM-1", productName: "پیراهن", color: "آبی", size: "M", onHand: "3", totalValue: "3000000", unitCost: "1000000" },
+    ] };
+    api.defaults["GET /reports/stock-movements"] = { rows: [] };
+    await page.goto("/?page=reports&reports.tab=stock");
+    const table = page.getByRole("table", { name: "موجودی و ارزش دفتری" });
+    await expect(table).toContainText("پیراهن");
+    await page.getByRole("button", { name: /^کاردکس/ }).click();
+    await expect.poll(() => reportCalls(api, "/reports/stock-movements").length).toBe(1);
+
+    await page.getByLabel("از تاریخ (میلادی)", { exact: true }).fill("2026-09");
+    await expect(table, "valuation is point-in-time and stays").toContainText("پیراهن");
+    await expect(page.getByText(/کاردکس — پیراهن · آبی M: بازهٔ تاریخ کامل نیست\./)).toBeVisible();
+    await expect(page.getByText("بازهٔ تاریخ کامل نیست.", { exact: true })).toHaveCount(0);
+    expect(reportCalls(api, "/reports/stock-movements").some(c => c.includes("from=2026-09&")), "half-typed date never reaches the server").toBe(false);
+    expect(reportCalls(api, "/reports/stock-movements")).toHaveLength(1);
+
+    await page.getByLabel("از تاریخ (میلادی)", { exact: true }).fill("2026-09-05");
+    await expect.poll(() => reportCalls(api, "/reports/stock-movements").some(c => c.includes("from=2026-09-05&"))).toBe(true);
+    await expect(page.getByText("در این بازه حرکتی برای این کالا ثبت نشده است.")).toBeVisible();
+  });
+});

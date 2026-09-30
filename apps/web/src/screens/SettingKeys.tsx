@@ -35,6 +35,7 @@ import { Skeleton } from "../components/ui/Skeleton.tsx";
 import { Ltr } from "../components/ui/Bidi.tsx";
 import { MeliPayamakSettings } from "./MeliPayamakSettings.tsx";
 import { api, ApiError } from "../lib/api.ts";
+import { useNavigationGuard } from "../lib/use-url-state.ts";
 import { admin, type SettlementTerm } from "../lib/admin.ts";
 import { isZeroFee } from "../lib/settlement.ts";
 import { formatCount } from "../lib/format.ts";
@@ -67,6 +68,9 @@ type Draft = string | boolean | string[];
  */
 const TERMINALS_GROUP = "terminals:settlement";
 
+/** پرسش پیش از دور ریختن پیش‌نویس؛ «لغو» همه‌چیز را همان‌جا نگه می‌دارد. */
+const LEAVE_MESSAGE = "تغییرات ذخیره‌نشدهٔ تنظیمات دور ریخته شود؟ برای ماندن و ذخیره، «لغو» را بزنید.";
+
 export function SettingKeys({ onOpenTerminals }: { onOpenTerminals: () => void }) {
   const [groups, setGroups] = useState<Group[] | null>(null);
   const [loadError, setLoadError] = useState<{ message: string; reference: string | null } | null>(null);
@@ -86,13 +90,10 @@ export function SettingKeys({ onOpenTerminals }: { onOpenTerminals: () => void }
     return () => controller.abort();
   }, [attempt]);
 
-  // پیش‌نویس ذخیره‌نشده: مرورگر پیش از ترک صفحه هشدار می‌دهد (UI_PATTERNS §۳ «فرم»).
-  useEffect(() => {
-    if (dirty.size === 0) return;
-    const warn = (e: BeforeUnloadEvent) => { e.preventDefault(); };
-    window.addEventListener("beforeunload", warn);
-    return () => window.removeEventListener("beforeunload", warn);
-  }, [dirty.size]);
+  // پیش‌نویس ذخیره‌نشده (UI_PATTERNS §۳ «فرم»، یافتهٔ B1-01): زبانه و ناحیهٔ دیگر،
+  // بازگشت مرورگر، بارگذاری دوباره و بستن — همه **پیش از** Unmount تأیید می‌خواهند.
+  // نگهبان همان سازوکار ناوبری برنامه است (`use-url-state.ts`)، نه نسخهٔ دوم.
+  useNavigationGuard(dirty.size > 0, LEAVE_MESSAGE);
 
   const markDirty = useCallback((key: string, isDirty: boolean) => {
     setDirty(prev => {
@@ -312,8 +313,9 @@ function Control({ setting, id, value, disabled, describedBy, invalid, onChange,
   onChange: (v: Draft) => void; onBlur: () => void;
 }) {
   if (setting.kind === "bool") {
+    // راهنما با `aria-describedby` وصل است، نه در نام؛ نام فقط برچسب تنظیم می‌ماند (B1-05).
     return <Switch id={id} label={setting.label} checked={value === true} disabled={disabled} stateLabels={["فعال", "غیرفعال"]}
-      onChange={next => onChange(next)} />;
+      describedBy={describedBy} onChange={next => onChange(next)} />;
   }
   if (setting.kind === "choice") {
     return <select id={id} className="set-input" value={typeof value === "string" ? value : ""} disabled={disabled}

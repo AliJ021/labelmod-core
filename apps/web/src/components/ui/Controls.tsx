@@ -35,14 +35,18 @@ export function Field({ label, hint, error, children, optional = false, classNam
  * کلید روشن/خاموش: `role="switch"` روی checkbox بومی — کیبورد و فرم رایگان.
  * توضیح بیرون از برچسب و با `aria-describedby` است تا نام کلید کوتاه بماند.
  * `stateLabels` وضعیت را **متنی** هم می‌گوید (رنگ به‌تنهایی حامل معنا نیست).
+ *
+ * `describedBy` شناسهٔ توضیحی است که مصرف‌کننده **بیرون** از کلید می‌کشد (مثل
+ * راهنما و خطای ردیف تنظیمات)؛ با `description` خودِ کلید جمع می‌شود، نه جایگزین.
  */
-export function Switch({ label, checked, onChange, disabled = false, description, stateLabels, id }: {
+export function Switch({ label, checked, onChange, disabled = false, description, stateLabels, id, describedBy }: {
   label: string; checked: boolean; onChange: (next: boolean) => void; disabled?: boolean; description?: ReactNode;
-  stateLabels?: readonly [on: string, off: string]; id?: string;
+  stateLabels?: readonly [on: string, off: string]; id?: string; describedBy?: string | undefined;
 }) {
   const hintId = useId();
+  const described = [description ? hintId : null, describedBy ?? null].filter(Boolean).join(" ") || undefined;
   const control = <label className="switch">
-    <input id={id} type="checkbox" role="switch" checked={checked} disabled={disabled} aria-describedby={description ? hintId : undefined} onChange={e => onChange(e.target.checked)} />
+    <input id={id} type="checkbox" role="switch" checked={checked} disabled={disabled} aria-describedby={described} onChange={e => onChange(e.target.checked)} />
     <span className="switch-track" aria-hidden="true"><span className="switch-thumb" /></span>
     <span className="switch-text"><span>{label}</span>{stateLabels ? <span className="switch-state" aria-hidden="true">{checked ? stateLabels[0] : stateLabels[1]}</span> : null}</span>
   </label>;

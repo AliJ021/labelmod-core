@@ -1,5 +1,5 @@
 import { routeUrl, type NavAccess } from "../lib/navigation.ts";
-import { SETTINGS_SECTIONS, settingsView, type SettingsKey } from "../lib/settings-registry.ts";
+import { SETTINGS_SECTIONS, settingsView, settingsWriteAccess, type SettingsKey } from "../lib/settings-registry.ts";
 import { Icon } from "../components/Icon.tsx";
 import { SnappaySettings } from "./SnappaySettings.tsx";
 import { Backups } from "./Backups.tsx";
@@ -76,7 +76,7 @@ export function Settings({ access, currentUserId, onOwnPassword }: { access: Nav
       ) : tab === "mapping" ? (
         <PostingRules />
       ) : tab === "snappay" ? (
-        <SnappaySettings />
+        <SnappaySettings write={settingsWriteAccess("snappay", access.verdicts)} writeState={access.state} />
       ) : tab === "backups" ? (
         <Backups />
       ) : tab === "terminals" ? (

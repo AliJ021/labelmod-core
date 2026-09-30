@@ -437,5 +437,9 @@
 .settings-form { display: grid; gap: var(--s-4); max-inline-size: 36rem; }
 .settings-form input, .settings-form select { min-block-size: var(--control-h); }
 .settings-actions { display: flex; flex-wrap: wrap; gap: var(--s-2) var(--s-3); align-items: center; }
+/* نمای فقط‌خواندنیِ فرم (B1-02): مقدار فعلی متن است، نه کنترل غیرفعال. */
+.settings-readonly { display: grid; gap: var(--s-1); margin: 0; }
+.settings-readonly dt { color: var(--ink-2); font-size: var(--text-sm); }
+.settings-readonly dd { margin: 0; font-weight: 600; }
 .settings-facts { display: flex; flex-wrap: wrap; gap: var(--s-2) var(--s-4); margin: 0; font-size: var(--text-sm); color: var(--ink-2); }
 .settings-note { margin: 0; font-size: var(--text-sm); color: var(--ink-2); max-inline-size: var(--measure); }

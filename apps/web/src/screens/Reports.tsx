@@ -193,7 +193,9 @@ export function Reports() {
   };
 
   // بازهٔ نیمه‌تایپ به سرور نمی‌رود؛ گزارش‌های بی‌بازه (مانده اشخاص) منتظرش نمی‌مانند.
-  const blocked = issue !== null && tab !== "parties";
+  // موجودی هم لحظه‌ای است و فقط کاردکسِ زیرش بازه دارد، پس جدول ارزش می‌ماند و
+  // تنها کاردکس منتظر بازهٔ کامل می‌ماند (B1-03).
+  const blocked = issue !== null && tab !== "parties" && tab !== "stock";
 
   return (
     <div className="report-page">
@@ -214,7 +216,7 @@ export function Reports() {
         ) : tab === "profit" ? (
           <><ReportFilters filters={filters} /><ProfitReport period={p} /></>
         ) : tab === "stock" ? (
-          <StockReport period={p} branches={branches} allBranches={allBranches} filters={filters} />
+          <StockReport period={p} periodIssue={issue?.message ?? null} branches={branches} allBranches={allBranches} filters={filters} />
         ) : tab === "ledger" ? (
           <LedgerReport period={p} filters={filters} />
         ) : tab === "trial" ? (
@@ -508,7 +510,9 @@ function ProfitReport({ period }: { period: Period }) {
 
 // ── موجودی و کاردکس ──────────────────────────────────────────────────
 
-function StockReport({ period, branches, allBranches, filters }: { period: Period; branches: Branch[]; allBranches: boolean; filters: PeriodFilters }) {
+function StockReport({ period, periodIssue, branches, allBranches, filters }: {
+  period: Period; periodIssue: string | null; branches: Branch[]; allBranches: boolean; filters: PeriodFilters;
+}) {
   const warehouses: Warehouse[] = branches.flatMap(b => b.warehouses);
   const fallback = allBranches ? "" : (warehouses[0]?.id ?? "");
   const [warehouseRaw, setWarehouse] = useUrlState("reports.warehouse");
@@ -555,9 +559,12 @@ function StockReport({ period, branches, allBranches, filters }: { period: Perio
           foot={{ label: "جمع ارزش", cells: { value: <Cell rial={totalValue.toString()} /> } }} />;
       }}
     </ReportSection>
-    {picked ? <Kardex period={period} variationId={picked.variationId}
-      title={`${picked.productName} · ${picked.color} ${picked.size}`}
-      {...(warehouseId === "" ? {} : { warehouseId })} /> : null}
+    {picked === null ? null : periodIssue !== null
+      // کاردکس انتخاب‌شده می‌ماند و پس از اصلاح بازه خوانده می‌شود؛ تاریخ نیمه‌تایپ به سرور نمی‌رود.
+      ? <Solid className="pad"><ResultState title={`کاردکس — ${picked.productName} · ${picked.color} ${picked.size}: بازهٔ تاریخ کامل نیست.`} description={periodIssue} /></Solid>
+      : <Kardex period={period} variationId={picked.variationId}
+        title={`${picked.productName} · ${picked.color} ${picked.size}`}
+        {...(warehouseId === "" ? {} : { warehouseId })} />}
   </>;
 }
 
