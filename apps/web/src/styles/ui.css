@@ -135,11 +135,21 @@
 .kpis--band { gap: 0; grid-template-columns: repeat(auto-fit, minmax(min(100%, 200px), 1fr)); }
 .kpi--band { padding: var(--s-4) var(--s-5); }
 .kpis--band > .kpi--band + .kpi--band { border-inline-start: var(--border-w) solid var(--rule); }
+/* شاخص انتخاب‌شدنی (KpiTabs): همان نوار؛ دکمهٔ بومی بی ظاهر دکمه. نشانگر طلایی با انتخاب جابه‌جا
+   می‌شود (شکل + وزن برچسب، نه فقط رنگ) و حرکتش فقط opacity/transform است. */
+.kpi--tab { appearance: none; margin: 0; border: 0; border-radius: 0; background: transparent; color: inherit; font: inherit; text-align: start; inline-size: 100%; cursor: pointer; }
+.kpi--tab .kpi-head, .kpi--tab .kpi-value, .kpi--tab .kpi-note { inline-size: 100%; }
+.kpi--tab:not([aria-disabled="true"]):hover { background: var(--neutral-soft); }
+.kpi--tab[aria-disabled="true"] { cursor: default; }
+.kpi--tab:focus-visible { outline: 2px solid var(--accent); outline-offset: -3px; }
+.kpi--tab::before { content: ""; position: absolute; inset-block-start: 0; inset-inline: var(--s-5); block-size: 3px; border-radius: 0 0 2px 2px; background: var(--accent); opacity: 0; transform: scaleX(0.4); }
+.kpi--tab[aria-selected="true"]::before { opacity: 1; transform: none; }
+.kpi--tab[aria-selected="true"] .kpi-label { color: var(--ink); font-weight: var(--weight-bold); }
 .kpi--band.kpi--emphasis::before { inset-inline: var(--s-5); }
 .kpi--band.kpi--emphasis .kpi-label { color: var(--ink); }
 @media (max-width: 640px) {
   .kpis--band > .kpi--band + .kpi--band { border-inline-start: 0; border-block-start: var(--border-w) solid var(--rule); }
-  .kpis--band .kpi--band:not(.kpi--emphasis) .money--xl { font-size: var(--text-xl); }
+  .kpis--band .kpi--band:not(.kpi--emphasis):not(.kpi--primary) .money--xl { font-size: var(--text-xl); }
 }
 
 /* ── فهرست رسیدگی ─────────────────────────────────────────────────── */
@@ -195,6 +205,17 @@
 .bar-chart-bar.is-zero { transform: none; block-size: 2px; background: var(--rule-2); }
 .bar-chart-label { font-size: var(--text-xs); color: var(--ink-2); line-height: 1; }
 .bar-chart-col:hover .bar-chart-bar:not(.is-zero) { filter: brightness(1.08); }
+/* علامت‌دار: خط صفر وسط، مثبت بالا و منفی پایین با یک مقیاس؛ سهم هر سو از بیشینهٔ همان سو. */
+.bar-chart--signed .bar-chart-col { justify-content: stretch; gap: 0; }
+.bar-chart-half { display: flex; justify-content: center; inline-size: 100%; min-block-size: 0; }
+.bar-chart-half--up { flex: var(--up) 1 0; align-items: flex-end; }
+.bar-chart-half--down { flex: var(--down) 1 0; align-items: flex-start; border-block-start: var(--border-w) solid var(--rule-2); }
+.bar-chart--signed .bar-chart-bar { block-size: 100%; }
+.bar-chart--signed .bar-chart-label { padding-block-start: 6px; }
+.bar-chart-bar--negative {
+  border-radius: 1px 1px 5px 5px; transform-origin: top;
+  background: linear-gradient(to bottom, var(--crit), color-mix(in srgb, var(--crit) 72%, var(--surface-solid)));
+}
 .bar-chart-col:hover::after {
   content: attr(data-tip); position: absolute; inset-block-end: calc(100% + 4px); inset-inline-start: 50%;
   transform: translateX(50%); z-index: 2; padding: 4px 8px; border-radius: var(--r-xs);
@@ -344,6 +365,7 @@
   :root:not([data-perf="on"]) .ui-dialog[open]::backdrop { animation: lm-fade-in var(--dur-base) var(--ease-out); }
   :root:not([data-perf="on"]) .toast { animation: lm-rise var(--dur-base) var(--ease-out); }
   :root:not([data-perf="on"]) .bar-chart-bar:not(.is-zero) { animation: lm-bar var(--dur-slow) var(--ease-out) both; }
+  :root:not([data-perf="on"]) .kpi--tab::before { transition: opacity var(--dur-base) var(--ease-standard), transform var(--dur-base) var(--ease-standard); }
   :root:not([data-perf="on"]) .skeleton { animation: lm-pulse 1.6s var(--ease-in-out) infinite; }
 }
 .result-state--denied .result-title { display: inline-flex; align-items: center; gap: var(--s-2); }

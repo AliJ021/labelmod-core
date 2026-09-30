@@ -5,7 +5,7 @@
  * از تأیید جهت بصری معنایی ندارد (docs/DESIGN_SYSTEM.md، «رگرسیون بصری»).
  * همه با اندازهٔ واقعی نمایشگر گرفته می‌شوند، نه fullPage.
  */
-import { test, expect, fontsReady } from "./fixtures";
+import { test, expect, fontsReady, hourlyDay } from "./fixtures";
 import type { Page, Route } from "@playwright/test";
 
 const ZONE_LABELS = ["داشبورد", "صندوق", "فاکتورها", "مرجوعی", "کالا و قیمت", "انبار و خرید", "خزانه و چک", "مشتریان", "گزارش‌ها", "تنظیمات"];
@@ -89,10 +89,9 @@ test("app shell renders one taxonomy: grouped sidebar or bottom bar plus grouped
   await reference(page, "shell");
 });
 
-test("page content always ends above the phone bottom bar, which stays legible", async ({ page, api }) => {
+test("page content always ends above the phone bottom bar, which stays legible", async ({ page }) => {
   // نوار پایین فقط زیر ۹۰۰ پیکسل است؛ پروژهٔ دسکتاپ همین را در نمایشگر گوشی می‌سنجد، نه Skip.
   if (!compact(page)) await page.setViewportSize({ width: 390, height: 844 });
-  api.defaults["GET /reports/hourly"] = { rows: [{ businessDate: "2026-09-16", hourOfDay: 18, channel: "pos", invoiceCount: 1, itemQty: "1", netAmount: "5000000" }] };
   // فاصلهٔ پایان محتوا تا لبهٔ نوار، پس از رفتن به ته صفحه. قلم و چیدمان ممکن است
   // پس از نمایش پنل هنوز جا بیفتند، پس اندازه‌گیری تا پایدارشدن تکرار می‌شود.
   const clearance = async (what: string) => {
@@ -103,7 +102,7 @@ test("page content always ends above the phone bottom bar, which stays legible",
     }), { message: `${what}: last content ends at least 8px above the bottom bar` }).toBeGreaterThanOrEqual(8);
   };
   await page.goto("/");
-  await expect(page.getByRole("figure", { name: "فروش خالص هر ساعت (تومان)" })).toBeVisible();
+  await expect(page.getByRole("figure", { name: "فروش هر ساعت (تومان)" })).toBeVisible();
   await clearance("dashboard");
   const alpha = await page.locator(".workspace-nav").evaluate(el => {
     const m = getComputedStyle(el).backgroundColor.match(/rgba?\(([^)]+)\)|color\(srgb ([^)]+)\)/);
@@ -225,11 +224,14 @@ test("navigation hides server-denied destinations but keeps the open section and
   // بخش خزانه خودش داده می‌خواند؛ WebKit درخواستی را که ناوبری بعدی وسط راه قطع کند
   // «خطای مرورگر» گزارش می‌دهد. پیش از ترک صفحه، بارگذاری خزانه تمام می‌شود.
   await page.waitForLoadState("networkidle");
-  // بی report.view، نمودار ساعتی ساخته نمی‌شود — نه صفر، نه خطا.
-  api.handlers.set("GET /reports/hourly", async route => { await route.fulfill({ status: 403, json: { error: { code: "forbidden", message: "اجازه ندارید" } } }); });
+  // سرور روند ساعتی را نداد (۴۰۳): نمودار ساخته نمی‌شود — نه صفر، نه خطا — و کارت‌ها
+  // زبانه نمی‌شوند، چون پنلی برای نشان‌دادن نیست.
+  api.handlers.set("GET /reports/daily/hourly", async route => { await route.fulfill({ status: 403, json: { error: { code: "forbidden", message: "اجازه ندارید" } } }); });
   await page.goto("/");
   await expect(page.getByRole("heading", { name: "نیاز به رسیدگی" })).toBeVisible();
+  await expect(page.getByRole("region", { name: "فروش", exact: true })).toBeVisible();
   await expect(page.getByRole("heading", { name: "روند فروش ساعتی" })).toHaveCount(0);
+  await expect(page.getByRole("tablist", { name: "شاخص‌های امروز" })).toHaveCount(0);
 });
 
 test("slash and Ctrl+K focus global search, never while typing", async ({ page }) => {
@@ -255,22 +257,22 @@ test("dashboard reference: Jalali date, human channel labels, three labelled KPI
     { ...unpostedRow, batchId: "p1", batchKind: "shift", channel: "pos", businessDate: "2026-09-16" },
     { ...unpostedRow, batchId: "p2", batchKind: "channel_day", channel: "web", businessDate: "2026-09-15" },
   ] };
-  api.defaults["GET /reports/hourly"] = { rows: [
-    { businessDate: "2026-09-16", hourOfDay: 11, channel: "pos", invoiceCount: 2, itemQty: "3", netAmount: "2000000" },
-    { businessDate: "2026-09-16", hourOfDay: 18, channel: "pos", invoiceCount: 4, itemQty: "6", netAmount: "5000000" },
-    { businessDate: "2026-09-16", hourOfDay: 18, channel: "web", invoiceCount: 1, itemQty: "1", netAmount: "1500000" },
-  ] };
+  // سرور کانال‌ها را در SQL جمع می‌کند (۵٬۰۰۰٬۰۰۰ صندوق + ۱٬۵۰۰٬۰۰۰ سایت در ساعت ۱۸).
+  api.defaults["GET /reports/daily/hourly"] = hourlyDay({
+    11: { salesAmount: "2000000", receivedAmount: "2000000", profitAmount: "800000", invoiceCount: 2, paymentCount: 2 },
+    18: { salesAmount: "6500000", receivedAmount: "6500000", profitAmount: "2600000", invoiceCount: 5, paymentCount: 5 },
+  });
   await page.goto("/");
   await expect(page.getByRole("heading", { name: "امروز", exact: true, level: 1 })).toBeVisible();
   await expect(page.getByText("۲۵ شهریور ۱۴۰۵", { exact: false }).first()).toBeVisible();
-  for (const label of ["فروش", "وجه دریافتی", "سود"]) await expect(page.getByRole("region", { name: label, exact: true })).toBeVisible();
-  await expect(page.getByRole("region", { name: "فروش", exact: true })).toContainText("1٬234٬000");
+  for (const label of ["فروش", "وجه دریافتی", "سود"]) await expect(page.getByRole("tab", { name: label, exact: true })).toBeVisible();
+  await expect(page.getByRole("tab", { name: "فروش", exact: true })).toContainText("1٬234٬000");
   await expect(page.getByText("۱۲ فاکتور سایت در ۲۴ شهریور ۱۴۰۵ هنوز به دفتر نرفته")).toBeVisible();
   await expect(page.getByText("۱۲ فاکتور صندوق در ۲۵ شهریور ۱۴۰۵ هنوز به دفتر نرفته")).toBeVisible();
   expect(await page.locator("main").innerText(), "raw channel codes never reach the user").not.toMatch(/\b(pos|web)\b/);
-  const chart = page.getByRole("figure", { name: "فروش خالص هر ساعت (تومان)" });
+  const chart = page.getByRole("figure", { name: "فروش هر ساعت (تومان)" });
   await expect(chart).toBeVisible();
-  // کانال‌ها در bigint جمع می‌شوند: ۵٬۰۰۰٬۰۰۰ + ۱٬۵۰۰٬۰۰۰ ریال = ۶۵۰٬۰۰۰ تومان.
+  // ۶٬۵۰۰٬۰۰۰ ریال = ۶۵۰٬۰۰۰ تومان.
   await expect(chart).toContainText("بیشترین فروش: ساعت ۱۸ با 650٬000 تومان");
   await expect(chart.getByRole("row", { includeHidden: true })).toHaveCount(16);
   await expect(page.locator("main .glass")).toHaveCount(0);

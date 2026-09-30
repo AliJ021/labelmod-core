@@ -126,26 +126,16 @@ export function registerScopeRoutes(app: FastifyInstance, deps: ScopeRouteDeps):
   });
 
   /**
-   * خلاصه یک روز کاری: فروش، وجه دریافتی، سود.
+   * دروازهٔ خلاصه روز — **یک تعریف** برای `/reports/daily` و
+   * `/reports/daily/hourly`. هر دو همان سه عدد را نشان می‌دهند (یکی جمع روز،
+   * دیگری همان جمع به تفکیک ساعت)، پس کسی که کارت را می‌بیند باید روندش را
+   * هم ببیند و کسی که نه، هیچ‌کدام را. دو نسخه از این دروازه یعنی روزی یکی
+   * عقب بماند: مثلاً روند ساعتی `report.view` بخواهد و صندوق‌دار کارتی را
+   * ببیند که جزئیاتش ۴۰۳ است.
    *
-   * هر سه در SQL حساب می‌شوند (`sales.daily_summary`) — نه اینجا.
-   * جمع پول در TypeScript با جمع دیتابیس یکی درنمی‌آید.
-   *
-   * ── چرا `profitAmount` می‌تواند `null` باشد ──────────────────────
-   *
-   * سود داده مدیریتی است و `cost.view` را می‌خواهد — که طبق
-   * `040_reference.sql` فقط حسابدار و مدیر دارند، نه صندوق‌دار و نه
-   * سرپرست.
-   *
-   * ولی «فروش امروز چقدر بود» و «چقدر پول در کشوست» را صندوق‌دار
-   * **باید** ببیند؛ آخر شب با همان‌ها کشو را می‌شمارد. پس کل مسیر
-   * برای روز کاری جاری باز می‌ماند و فقط همان یک عدد `null` می‌آید.
-   * تاریخ‌های دیگر مجوز `report.view` می‌خواهند.
-   *
-   * `null` است نه صفر: صفر یک ادعای مالی است («امروز سودی نبود») و
-   * «اجازه دیدنش را نداری» ادعای دیگری است.
+   * سود فقط با `cost.view`؛ تصمیمش با سرور است، نه با پارامتر کلاینت.
    */
-  app.get("/reports/daily", async (req) => {
+  async function dailyScope(req: { session: unknown; query: unknown }) {
     const s = session(req) as { userId: string; pinUnlocked: boolean };
     const q = z
       .object({
@@ -172,6 +162,37 @@ export function registerScopeRoutes(app: FastifyInstance, deps: ScopeRouteDeps):
       await requireForSession(db, s, "sale.create");
     }
 
+    const costs = await can(db, {
+      userId: s.userId,
+      operation: "cost.view",
+      viaPin: s.pinUnlocked,
+    });
+    return { branchId: q.branchId, date, seesCost: costs.verdict === "allow" };
+  }
+
+  /**
+   * خلاصه یک روز کاری: فروش، وجه دریافتی، سود.
+   *
+   * هر سه در SQL حساب می‌شوند (`sales.daily_summary`) — نه اینجا.
+   * جمع پول در TypeScript با جمع دیتابیس یکی درنمی‌آید.
+   *
+   * ── چرا `profitAmount` می‌تواند `null` باشد ──────────────────────
+   *
+   * سود داده مدیریتی است و `cost.view` را می‌خواهد — که طبق
+   * `040_reference.sql` فقط حسابدار و مدیر دارند، نه صندوق‌دار و نه
+   * سرپرست.
+   *
+   * ولی «فروش امروز چقدر بود» و «چقدر پول در کشوست» را صندوق‌دار
+   * **باید** ببیند؛ آخر شب با همان‌ها کشو را می‌شمارد. پس کل مسیر
+   * برای روز کاری جاری باز می‌ماند و فقط همان یک عدد `null` می‌آید.
+   * تاریخ‌های دیگر مجوز `report.view` می‌خواهند.
+   *
+   * `null` است نه صفر: صفر یک ادعای مالی است («امروز سودی نبود») و
+   * «اجازه دیدنش را نداری» ادعای دیگری است.
+   */
+  app.get("/reports/daily", async (req) => {
+    const { branchId, date, seesCost } = await dailyScope(req);
+
     const row = await sql<{
       business_date: string;
       sales_amount: string;
@@ -193,7 +214,7 @@ export function registerScopeRoutes(app: FastifyInstance, deps: ScopeRouteDeps):
     }>`SELECT business_date::text, sales_amount, received_amount,
               profit_amount, invoice_count, return_count
          FROM sales.daily_summary(
-           ${q.branchId}::uuid,
+           ${branchId}::uuid,
            ${date}::date)`.execute(db);
 
     // `daily_summary` یک CROSS JOIN از سه CTE تک‌سطری است، پس همیشه
@@ -203,20 +224,59 @@ export function registerScopeRoutes(app: FastifyInstance, deps: ScopeRouteDeps):
     const r = row.rows[0];
     if (!r) throw new Error("sales.daily_summary سطری برنگرداند");
 
-    const costs = await can(db, {
-      userId: s.userId,
-      operation: "cost.view",
-      viaPin: s.pinUnlocked,
-    });
-
     return {
       businessDate: r.business_date,
       salesAmount: serializeMoney(BigInt(r.sales_amount)),
       receivedAmount: serializeMoney(BigInt(r.received_amount)),
-      profitAmount:
-        costs.verdict === "allow" ? serializeMoney(BigInt(r.profit_amount)) : null,
+      profitAmount: seesCost ? serializeMoney(BigInt(r.profit_amount)) : null,
       invoiceCount: Number(r.invoice_count),
       returnCount: Number(r.return_count),
+    };
+  });
+
+  /**
+   * همان خلاصه روز، به تفکیک ساعت کاری (مهاجرت ۰۸۳،
+   * `sales.daily_summary_hourly`) — روند زیر سه کارت داشبورد.
+   *
+   * - **همان دروازه** (`dailyScope`) و همان معنای سه عدد؛ جمع ۲۴ ساعت دقیقاً
+   *   همان پاسخ `/reports/daily` است. `db/test/daily-summary-hourly.sql` آن
+   *   ثابت را می‌سنجد.
+   * - **همیشه ۲۴ ساعت** (۰ تا ۲۳، مرتب)، ساعت بی‌فعالیت صفر؛ از سرور، نه
+   *   حدس کلاینت.
+   * - سود بی `cost.view` در **همهٔ** ساعت‌ها `null` است و `profitVisible`
+   *   صریح `false` — نه صفر، و نه عددی که از جای دیگری قابل بازسازی باشد:
+   *   هیچ ستونی از بها (نه `cogs`، نه حاشیه) بیرون نمی‌رود.
+   * - پول رشته است (`serializeMoney`)؛ عدد منفی (ساعتِ مرجوعی، فروش زیر بها)
+   *   همان‌طور که هست.
+   */
+  app.get("/reports/daily/hourly", async (req) => {
+    const { branchId, date, seesCost } = await dailyScope(req);
+    const rows = await sql<{
+      business_date: string;
+      hour_of_day: number;
+      sales_amount: string;
+      received_amount: string;
+      profit_amount: string;
+      invoice_count: string;
+      return_count: string;
+      payment_count: string;
+    }>`SELECT business_date::text, hour_of_day, sales_amount, received_amount,
+              profit_amount, invoice_count, return_count, payment_count
+         FROM sales.daily_summary_hourly(${branchId}::uuid, ${date}::date)
+        ORDER BY hour_of_day`.execute(db);
+    if (rows.rows.length !== 24) throw new Error("sales.daily_summary_hourly باید ۲۴ سطر بدهد");
+    return {
+      businessDate: date,
+      profitVisible: seesCost,
+      hours: rows.rows.map((r) => ({
+        hour: Number(r.hour_of_day),
+        salesAmount: serializeMoney(BigInt(r.sales_amount)),
+        receivedAmount: serializeMoney(BigInt(r.received_amount)),
+        profitAmount: seesCost ? serializeMoney(BigInt(r.profit_amount)) : null,
+        invoiceCount: Number(r.invoice_count),
+        returnCount: Number(r.return_count),
+        paymentCount: Number(r.payment_count),
+      })),
     };
   });
 
