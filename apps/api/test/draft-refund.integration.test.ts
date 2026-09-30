@@ -1,6 +1,8 @@
 import { after, before, describe, test } from "node:test";
 import assert from "node:assert/strict";
 import { randomUUID } from "node:crypto";
+import { setTimeout as pause } from "node:timers/promises";
+import { Client } from "pg";
 import { sql } from "kysely";
 import type { FastifyInstance } from "fastify";
 import { createDb, type DbHandle } from "../src/db/client.ts";
@@ -193,6 +195,85 @@ describe("بازیابی پیش‌نویس پرداخت‌شده", { skip: !proc
     assert.equal(Number(state.rows[0]!.qty), sold ? 1 : 2);
     const closed = await app.inject({ method: "POST", url: `/shifts/${shiftId}/close`, ...admin, payload: { countedCash: sold ? "200000" : "0" } });
     assert.equal(closed.statusCode,200,closed.body); assert.equal(closed.json().variance,"0");
+  });
+
+  /**
+   * پیش‌چک نسیهٔ نهایی‌سازی وضعیت را **زیر قفل فاکتور** می‌خواند، نه پیش از آن
+   * (CI main، run 36663641135: برگشتی که میان دو خواندنِ بی‌قفل Commit شد، بازنده
+   * را ۴۲۲ «نسیه بی مشتری» کرد به‌جای ۴۰۹).
+   *
+   * قطعی، بی sleep: اتصال مالک سطر فاکتور را قفل نگه می‌دارد، آزمون تا وقتی
+   * نهایی‌سازی **واقعاً** منتظر همان قفل است صبر می‌کند (`pg_stat_activity`)، و
+   * تغییر وضعیت را پیش از آزادکردن قفل Commit می‌کند. پس هر خواندنی که پیش از
+   * قفل انجام شده باشد، کهنه است و این آزمون می‌بیندش.
+   */
+  test("پیش‌چک نسیهٔ نهایی‌سازی وضعیت را زیر قفل فاکتور می‌خواند، نه پیش از آن", async () => {
+    const opened = await app.inject({ method: "POST", url: "/shifts", ...admin, payload: { branchId: BRANCH, openingCash: "0" } });
+    assert.equal(opened.statusCode, 201, opened.body); shiftId = opened.json().id;
+    const gate = new Client({ connectionString: disposable.ownerUrl });
+    await gate.connect();
+    const finalize = (id: string) => app.inject({ method: "POST", url: `/invoices/${id}/finalize`, ...admin, payload: {} });
+    /** نهایی‌سازی واقعاً پشت قفل مانده؟ همان سنجش آزمون‌های رقابت دیگر. */
+    async function waitingOnLock(): Promise<boolean> {
+      const deadline = Date.now() + 10_000;
+      while (Date.now() < deadline) {
+        await gate.query("SELECT pg_stat_clear_snapshot()");
+        const r = await gate.query<{ waiting: boolean }>(`SELECT EXISTS(SELECT 1 FROM pg_stat_activity
+          WHERE datname=current_database() AND pid<>pg_backend_pid() AND wait_event_type='Lock') waiting`);
+        if (r.rows[0]!.waiting) return true;
+        await pause(20);
+      }
+      return false;
+    }
+    async function underLock(id: string, change: () => Promise<void>) {
+      await gate.query("BEGIN");
+      try {
+        await gate.query("SELECT id FROM sales.invoice WHERE id=$1 FOR UPDATE", [id]);
+        const pending = finalize(id);
+        assert.ok(await waitingOnLock(), "نهایی‌سازی باید پیش از هر خواندن تصمیم منتظر قفل فاکتور بماند");
+        await change();
+        await gate.query("COMMIT");
+        return await pending;
+      } catch (err) { await gate.query("ROLLBACK"); throw err; }
+    }
+    const stock = async () => Number((await sql<{ q: string }>`SELECT on_hand::text q FROM inventory.stock_balance
+      WHERE variation_id=${variationId}::uuid AND warehouse_id=${WH}::uuid`.execute(handle.db)).rows[0]!.q);
+    try {
+      // ۱) پرداخت پشت قفل از دست رفت و فاکتور پیش‌نویس ماند: تصمیم نسیه باید همین
+      //    وضعیت تازه را ببیند — نسیهٔ واقعی بی مشتری، ۴۲۲. با خواندنِ پیش از قفل
+      //    پرداخت کامل دیده می‌شد و خطا از نگهبان دیتابیس (۴۰۹) می‌آمد.
+      const credit = await draft();
+      const outCredit = await underLock(credit.id, async () => {
+        await gate.query("SELECT platform.set_actor($1::uuid)", [actorId]);
+        await gate.query("UPDATE treasury.payment SET status='reversed' WHERE id=$1", [credit.paymentId]);
+      });
+      assert.equal(outCredit.statusCode, 422, outCredit.body);
+      assert.equal(outCredit.json().error.code, "credit_needs_customer");
+      const cancelled = await app.inject({ method: "POST", url: `/invoices/${credit.id}/cancel`, ...admin, payload: {} });
+      assert.equal(cancelled.statusCode, 200, cancelled.body);
+
+      // ۲) همان تصویر پایانی برگشت پیش‌نویس (پرداخت برگشت‌خورده، فاکتور باطل)
+      //    پشت قفل: بازنده تعارض ۴۰۹ می‌گیرد، هرگز «نسیه بی مشتری».
+      const refunded = await draft();
+      const before = await stock();
+      const outRefunded = await underLock(refunded.id, async () => {
+        await gate.query("SELECT platform.set_actor($1::uuid)", [actorId]);
+        await gate.query("UPDATE treasury.payment SET status='reversed' WHERE id=$1", [refunded.paymentId]);
+        await gate.query("UPDATE sales.invoice SET status='cancelled' WHERE id=$1", [refunded.id]);
+      });
+      assert.equal(outRefunded.statusCode, 409, outRefunded.body);
+      assert.notEqual(outRefunded.json().error.code, "credit_needs_customer");
+      const state = await sql<{ inv: string; pay: string; moves: string }>`SELECT i.status inv,
+        (SELECT status FROM treasury.payment WHERE id=${refunded.paymentId}::uuid) pay,
+        (SELECT count(*)::text FROM inventory.stock_movement WHERE ref_id=${refunded.id}::uuid) moves
+        FROM sales.invoice i WHERE i.id=${refunded.id}::uuid`.execute(handle.db);
+      assert.deepEqual(state.rows[0], { inv: "cancelled", pay: "reversed", moves: "0" });
+      assert.equal(await stock(), before, "کالا از انبار خارج نشد");
+    } finally {
+      await gate.end();
+    }
+    const closed = await app.inject({ method: "POST", url: `/shifts/${shiftId}/close`, ...admin, payload: { countedCash: "0" } });
+    assert.equal(closed.statusCode, 200, closed.body); assert.equal(closed.json().variance, "0");
   });
 
 });

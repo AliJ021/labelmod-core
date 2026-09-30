@@ -879,31 +879,41 @@ export function registerSalesRoutes(app: FastifyInstance, deps: SalesRouteDeps):
     await assertInvoiceInScope(db, s.userId, id, invoices);
     await requireForSession(db, s, "sale.create");
 
-    const inv = await invoices.byId(id);
-    if (!inv) throw new InvoiceError("invoice_not_found", "فاکتور یافت نشد", 404);
-
-    // فروش نسیه مجوز جداگانه دارد: اگر پول کامل نرسیده، این یک اعتبار
-    // است نه یک فروش نقدی — و صندوق‌دار پیش‌فرض اجازه‌اش را ندارد.
-    if (inv.status === "draft") {
-      const payable = inv.netAmount + inv.taxAmount + inv.shippingAmount;
-      const paid = await invoices.paidSoFar(id);
-      if (paid < payable) {
-        if (!inv.customerId) {
-          throw new InvoiceError(
-            "credit_needs_customer",
-            "فروش نسیه بدون مشتری ممکن نیست — بدهی باید به شخصی بچسبد.",
-            422,
-          );
-        }
-        await requireForSession(db, s, "sale.credit", { amount: payable - paid });
-      }
-    }
-
     const out = await runOnce<{ number: string }>(db, {
       key: idempotencyKey(req),
       source: "api.invoice.finalize",
       payload: { invoiceId: id },
       run: async (trx) => {
+        // فروش نسیه مجوز جداگانه دارد: اگر پول کامل نرسیده، این یک اعتبار
+        // است نه یک فروش نقدی — و صندوق‌دار پیش‌فرض اجازه‌اش را ندارد.
+        //
+        // ⚠️ این تصمیم **زیر قفل فاکتور و در همین تراکنش** گرفته می‌شود، نه
+        //    پیش از آن. وضعیت، مشتری، مبلغ قابل پرداخت و «چقدر رسیده» همه از
+        //    یک تصویر می‌آیند. پیش‌تر دو خواندنِ جدا و بی‌قفل بودند و برگشتی که
+        //    میانشان Commit می‌شد، پیش‌نویسی را که باطل شده بود «نسیه بی مشتری»
+        //    (۴۲۲) می‌دید به‌جای تعارض (۴۰۹) — CI main، run 36663641135.
+        //    ترتیب قفل همان `refundDraftIn` و `sales.finalize_invoice` است: اول
+        //    فاکتور، بعد پرداخت‌ها. قفل دوباره‌ی همین سطر در `finalize_invoice`
+        //    در همان تراکنش بی‌اثر است.
+        await trx.selectFrom("sales.invoice").select("id").where("id", "=", id).forUpdate().execute();
+        const inv = await invoices.byId(id, trx);
+        if (!inv) throw new InvoiceError("invoice_not_found", "فاکتور یافت نشد", 404);
+        // غیرپیش‌نویس را `finalize_invoice` خودش پاسخ می‌دهد: نهایی‌شده همان
+        // شماره (Idempotent) و باطل‌شده تعارض ۴۰۹. این رفتار عوض نمی‌شود.
+        if (inv.status === "draft") {
+          const payable = inv.netAmount + inv.taxAmount + inv.shippingAmount;
+          const paid = await invoices.paidSoFar(id, trx);
+          if (paid < payable) {
+            if (!inv.customerId) {
+              throw new InvoiceError(
+                "credit_needs_customer",
+                "فروش نسیه بدون مشتری ممکن نیست — بدهی باید به شخصی بچسبد.",
+                422,
+              );
+            }
+            await requireForSession(trx, s, "sale.credit", { amount: payable - paid });
+          }
+        }
         const number = await invoices.finalizeIn(trx, id, s.userId);
         return { value: { number }, ref: id };
       },
