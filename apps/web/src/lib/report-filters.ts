@@ -116,3 +116,19 @@ export function readJalaliPeriod(fromText: string, toText: string): { from: stri
   if (t.kind !== "ok") return { from, to, issue: { field: "to", message: t.message } };
   return { from, to, issue: periodIssue(f.iso, t.iso) };
 }
+
+/**
+ * بازهٔ **اختیاری** (فیلتر فاکتورها): فیلد خالی یعنی «بی‌مرز»، نه «ناقص». هر فیلدِ
+ * پُر همان قاعدهٔ `parseJalaliDate` را دارد — نیمه‌تایپ و ناموجود خطای کنار فیلدند —
+ * و دو سرِ پُر نباید معکوس باشند. `issue === null` یعنی می‌شود فرستاد؛ آن‌وقت
+ * `from`/`to` تهی یعنی آن سر مرزی ندارد.
+ */
+export function readOptionalJalaliPeriod(fromText: string, toText: string): { from: string | null; to: string | null; issue: PeriodIssue } {
+  const f = fromText.trim() === "" ? null : parseJalaliDate(fromText);
+  const t = toText.trim() === "" ? null : parseJalaliDate(toText);
+  const from = f?.kind === "ok" ? f.iso : null, to = t?.kind === "ok" ? t.iso : null;
+  if (f && f.kind !== "ok") return { from, to, issue: { field: "from", message: f.message } };
+  if (t && t.kind !== "ok") return { from, to, issue: { field: "to", message: t.message } };
+  if (from !== null && to !== null && from > to) return { from, to, issue: { field: "to", message: "«تا تاریخ» نباید پیش از «از تاریخ» باشد." } };
+  return { from, to, issue: null };
+}
