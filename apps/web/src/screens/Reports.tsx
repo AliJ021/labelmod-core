@@ -48,8 +48,8 @@ import { useLatestQuery } from "../lib/use-latest-query.ts";
 import { ApiError } from "../lib/api.ts";
 import { parseRial } from "../lib/money.ts";
 import { normalizeDigits } from "../lib/settings-value.ts";
-import { channelLabel, formatCount, formatHour, formatJalali, formatJalaliMoment, formatMoney } from "../lib/format.ts";
-import { jalaliHint, periodIssue, periodLabel } from "../lib/report-filters.ts";
+import { channelLabel, formatCount, formatGregorian, formatHour, formatJalali, formatJalaliMoment, formatMoney } from "../lib/format.ts";
+import { jalaliInputOf, parseJalaliDate, periodLabel, readJalaliPeriod } from "../lib/report-filters.ts";
 import { pos, type Branch, type Warehouse } from "../lib/pos.ts";
 import {
   MOVEMENT_KIND,
@@ -112,6 +112,11 @@ export function Reports() {
   const [period, setPeriod] = useState<{ from: string; to: string } | null>(null);
   const [error, setError] = useState<LoadError | null>(null);
   const [attempt, setAttempt] = useState(0);
+  // نشانی و درخواست ISO میلادی می‌مانند؛ کاربر جلالی می‌نویسد و می‌بیند.
+  const fromUrl = fromRaw || period?.from || "";
+  const toUrl = toRaw || period?.to || "";
+  const [fromText, setFromText] = useJalaliDraft(fromUrl);
+  const [toText, setToText] = useJalaliDraft(toUrl);
 
   useEffect(() => {
     const controller = new AbortController();
@@ -158,24 +163,33 @@ export function Reports() {
     </div>;
   }
 
-  const from = fromRaw || period.from;
-  const to = toRaw || period.to;
-  const issue = periodIssue(from, to);
+  // بازه از دو فیلد جلالی خوانده می‌شود؛ تاریخ نیمه‌تایپ یا ناموجود فقط خطای کنار فیلد است و
+  // نشانی آخرین تاریخ معتبر را نگه می‌دارد. تا خطا هست، هیچ درخواست بازه‌داری فرستاده نمی‌شود.
+  const read = readJalaliPeriod(fromText, toText);
+  const issue = read.issue;
+  const from = read.from ?? fromUrl;
+  const to = read.to ?? toUrl;
+  const typeDate = (text: string, setText: (t: string) => void, setIso: (iso: string) => void) => {
+    setText(text);
+    const r = parseJalaliDate(text);
+    if (r.kind === "ok") setIso(r.iso);
+  };
   const p: Period = { from, to, ...(branchId === "" ? {} : { branchId }) };
   const branchName = branches.find(b => b.id === branchId)?.name;
-  const changed = fromRaw !== "" || toRaw !== "" || branchId !== "";
+  const changed = fromRaw !== "" || toRaw !== "" || branchId !== "" || fromText !== jalaliInputOf(fromUrl) || toText !== jalaliInputOf(toUrl);
   const range = periodLabel(from, to);
   const periodless = PERIODLESS[tab];
 
   const filters: PeriodFilters = {
     fields: <>
-      <Field label="از تاریخ (میلادی)" hint={jalaliHint(from) ?? "مثلاً ۲۰۲۶-۰۹-۰۱"} error={issue?.field === "from" ? issue.message : null}>
-        <input type="text" inputMode="numeric" className="num" value={from} placeholder="2026-09-01"
-          onChange={e => setFrom(normalizeDigits(e.target.value))} />
+      {/* `inputMode="decimal"`: صفحه‌کلید عددی گوشی «/» ندارد؛ «.» یا هشت رقم پشت‌هم هم پذیرفته است. */}
+      <Field label="از تاریخ" hint={<DateHint iso={read.from} example="مثلاً ۱۴۰۵/۰۶/۰۱" />} error={issue?.field === "from" ? issue.message : null}>
+        <input type="text" inputMode="decimal" autoComplete="off" className="num" value={fromText} placeholder="۱۴۰۵/۰۶/۰۱"
+          onChange={e => typeDate(e.target.value, setFromText, setFrom)} />
       </Field>
-      <Field label="تا تاریخ (میلادی)" hint={jalaliHint(to) ?? "مثلاً ۲۰۲۶-۰۹-۳۰"} error={issue?.field === "to" ? issue.message : null}>
-        <input type="text" inputMode="numeric" className="num" value={to} placeholder="2026-09-30"
-          onChange={e => setTo(normalizeDigits(e.target.value))} />
+      <Field label="تا تاریخ" hint={<DateHint iso={read.to} example="مثلاً ۱۴۰۵/۰۶/۳۱" />} error={issue?.field === "to" ? issue.message : null}>
+        <input type="text" inputMode="decimal" autoComplete="off" className="num" value={toText} placeholder="۱۴۰۵/۰۶/۳۱"
+          onChange={e => typeDate(e.target.value, setToText, setTo)} />
       </Field>
       {branches.length > 1 ? <Field label="شعبه">
         <select value={branchId} onChange={e => setBranchId(e.target.value)}>
@@ -189,7 +203,10 @@ export function Reports() {
       {branches.length > 1 ? <> · {branchName ? <>شعبه: <strong>{branchName}</strong></> : "همه شعبه‌های در دسترس"}</> : null}
       {periodless ? <> · {periodless}</> : null}
     </>,
-    onReset: changed ? () => { setFrom(""); setTo(""); setBranchId(""); } : undefined,
+    onReset: changed ? () => {
+      setFrom(""); setTo(""); setBranchId("");
+      setFromText(jalaliInputOf(period.from)); setToText(jalaliInputOf(period.to));
+    } : undefined,
   };
 
   // بازهٔ نیمه‌تایپ به سرور نمی‌رود؛ گزارش‌های بی‌بازه (مانده اشخاص) منتظرش نمی‌مانند.
@@ -232,6 +249,29 @@ export function Reports() {
 }
 
 // ── زیرساخت مشترک بخش گزارش ──────────────────────────────────────────
+
+/**
+ * متن فیلد تاریخ جلالی برای یک ISO در نشانی. تایپ نیمه‌کاره محلی می‌ماند و به
+ * نشانی نمی‌رود؛ تغییر نشانی از بیرون (بازنشانی، بازگشت مرورگر، بارگذاری) متن را از
+ * همان ISO از نو می‌سازد — مگر متن فعلی همان تاریخ باشد (همان‌که کاربر نوشت).
+ */
+function useJalaliDraft(iso: string): [string, (text: string) => void] {
+  const [draft, setDraft] = useState(() => ({ iso, text: jalaliInputOf(iso) }));
+  const set = useCallback((text: string) => setDraft(d => ({ ...d, text })), []);
+  if (draft.iso !== iso) {
+    const current = parseJalaliDate(draft.text);
+    const next = { iso, text: current.kind === "ok" && current.iso === iso ? draft.text : jalaliInputOf(iso) };
+    setDraft(next);
+    return [next.text, set];
+  }
+  return [draft.text, set];
+}
+
+/** راهنمای فیلد: جلالی کامل (اصلی) و میلادی فقط ثانوی و کم‌رنگ در برگ LTR. */
+function DateHint({ iso, example }: { iso: string | null; example: string }) {
+  if (iso === null) return <>{example}</>;
+  return <>{formatJalali(iso, true)} <span className="field-hint-secondary"><Ltr mono={false}>{formatGregorian(iso)}</Ltr></span></>;
+}
 
 /**
  * پرس‌وجوی یک بخش گزارش: لغو با ترک صفحه، فقط آخرین پاسخ، تلاش دوباره.

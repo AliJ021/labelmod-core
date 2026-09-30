@@ -21,33 +21,67 @@ const reportCalls = (api: MockApi, path: string) => api.calls.filter(c => c.star
 test.describe("گزارش‌ها", () => {
   test.beforeEach(({ api }) => { Object.assign(api.defaults, REPORT_DATA); });
 
-  test("filters live in the URL, show the Jalali range, reset, and a malformed range is never sent", async ({ page, api }) => {
+  test("filters are Jalali-first: typed Jalali becomes ISO in the URL and request; half-typed, missing or reversed dates are never sent", async ({ page, api }) => {
     await page.goto("/?page=reports&reports.tab=sales");
     await expect(page.getByRole("heading", { name: "گزارش‌ها", level: 1 })).toBeVisible();
     const filters = page.getByRole("region", { name: "فیلتر گزارش" });
+    const from = page.getByLabel("از تاریخ", { exact: true });
+    const to = page.getByLabel("تا تاریخ", { exact: true });
+    // جلالی اصلی است: برچسب بی «(میلادی)» و مقدار از ISO پیش‌فرض سرور ساخته می‌شود.
+    await expect(page.getByLabel(/میلادی/)).toHaveCount(0);
+    await expect(from).toHaveValue("۱۴۰۵/۰۶/۱۰");
+    await expect(to).toHaveValue("۱۴۰۵/۰۶/۲۵");
     // پیش‌فرض از تاریخ کاری سرور (۲۰۲۶-۰۹-۱۶ در داده‌ی ساختگی)، نه ساعت مرورگر.
     await expect(filters).toContainText("۱۰ شهریور ۱۴۰۵ تا ۲۵ شهریور ۱۴۰۵");
     await expect(filters.getByRole("button", { name: "بازنشانی فیلترها" })).toHaveCount(0);
-    // پرس‌وجو پس از mount در یک setTimeout(0) فرستاده می‌شود (use-latest-query)؛ پس poll، نه خواندن هم‌زمان.
+    // درخواست همان ISO میلادی است (قرارداد API دست‌نخورده). پرس‌وجو پس از mount در یک setTimeout(0) فرستاده می‌شود؛ پس poll.
     await expect.poll(() => reportCalls(api, "/reports/sales")[0]).toContain("from=2026-09-01&to=2026-09-16");
+    // میلادی فقط ثانوی، کنار جلالی.
+    await expect(filters).toContainText(/1 Sept? 2026/);
 
-    const from = page.getByLabel("از تاریخ (میلادی)", { exact: true });
-    await from.fill("2026-09-1");
-    await expect(filters.getByText("تاریخ را به شکل ۲۰۲۶-۰۹-۰۱ کامل کنید.")).toBeVisible();
+    const sent = () => reportCalls(api, "/reports/sales").length;
+    const before = sent();
+    // نیمه‌تایپ: خطای کنار فیلد، هیچ درخواست و هیچ تغییر نشانی.
+    await from.fill("1405/06");
+    await expect(filters.getByText("تاریخ را به شکل ۱۴۰۵/۰۶/۱۰ کامل کنید.")).toBeVisible();
     await expect(from).toHaveAttribute("aria-invalid", "true");
     await expect(page.getByText("بازهٔ تاریخ کامل نیست.")).toBeVisible();
-    expect(reportCalls(api, "/reports/sales").some(c => c.includes("from=2026-09-1&")), "half-typed date never reaches the server").toBe(false);
+    await expect(page).not.toHaveURL(/reports\.from/);
+    // ناموجود: ۳۰ اسفند ۱۴۰۴ (سال غیرکبیسه) — نه گرد می‌شود، نه فرستاده.
+    await from.fill("1404/12/30");
+    await expect(filters.getByText("این تاریخ در تقویم جلالی وجود ندارد.")).toBeVisible();
+    await expect(page).not.toHaveURL(/reports\.from/);
+    expect(sent(), "no request while the date is incomplete or does not exist").toBe(before);
 
-    await from.fill("۲۰۲۶-۰۹-۱۰");
+    // جلالی با رقم فارسی ← ISO در نشانی و درخواست.
+    await from.fill("۱۴۰۵/۰۶/۱۹");
     await expect(page).toHaveURL(/reports\.from=2026-09-10/);
     await expect(filters).toContainText("۱۹ شهریور ۱۴۰۵ تا ۲۵ شهریور ۱۴۰۵");
     await expect.poll(() => reportCalls(api, "/reports/sales").some(c => c.includes("from=2026-09-10&to=2026-09-16"))).toBe(true);
 
+    // معکوس: «تا» پیش از «از» خطاست و فرستاده نمی‌شود.
+    const beforeReversed = sent();
+    await to.fill("1405/06/01");
+    await expect(filters.getByText("«تا تاریخ» نباید پیش از «از تاریخ» باشد.")).toBeVisible();
+    await expect(to).toHaveAttribute("aria-invalid", "true");
+    expect(reportCalls(api, "/reports/sales").some(c => c.includes("to=2026-08-23")), "reversed range never reaches the server").toBe(false);
+    expect(sent()).toBe(beforeReversed);
+    await to.fill("1405/06/25");
+    await expect(page).toHaveURL(/reports\.to=2026-09-16/);
+
+    // بارگذاری دوباره و بازگشت مرورگر: متن جلالی از همان ISO نشانی بازسازی می‌شود.
     await page.reload();
-    await expect(page.getByLabel("از تاریخ (میلادی)", { exact: true })).toHaveValue("2026-09-10");
+    await expect(page.getByLabel("از تاریخ", { exact: true })).toHaveValue("۱۴۰۵/۰۶/۱۹");
+    await expect(page.getByLabel("تا تاریخ", { exact: true })).toHaveValue("۱۴۰۵/۰۶/۲۵");
+    await page.evaluate(() => { history.back(); });
+    await expect(page).toHaveURL(/reports\.to=2026-08-23/);
+    await expect(page.getByLabel("تا تاریخ", { exact: true })).toHaveValue("۱۴۰۵/۰۶/۰۱");
+    await expect(filters.getByText("«تا تاریخ» نباید پیش از «از تاریخ» باشد.")).toBeVisible();
+
     await page.getByRole("button", { name: "بازنشانی فیلترها" }).click();
-    await expect(page).not.toHaveURL(/reports\.from/);
-    await expect(page.getByLabel("از تاریخ (میلادی)", { exact: true })).toHaveValue("2026-09-01");
+    await expect(page).not.toHaveURL(/reports\.(from|to)=/);
+    await expect(page.getByLabel("از تاریخ", { exact: true })).toHaveValue("۱۴۰۵/۰۶/۱۰");
+    await expect(page.getByLabel("تا تاریخ", { exact: true })).toHaveValue("۱۴۰۵/۰۶/۲۵");
   });
 
   test("sales table: financial alignment, totals, CSV with the same filters, and no page overflow", async ({ page }) => {
@@ -558,14 +592,14 @@ test.describe("بازبینی دستهٔ ۱ — پیش‌نویس، اسنپ‌�
     await page.getByRole("button", { name: /^کاردکس/ }).click();
     await expect.poll(() => reportCalls(api, "/reports/stock-movements").length).toBe(1);
 
-    await page.getByLabel("از تاریخ (میلادی)", { exact: true }).fill("2026-09");
+    await page.getByLabel("از تاریخ", { exact: true }).fill("1405/06");
     await expect(table, "valuation is point-in-time and stays").toContainText("پیراهن");
     await expect(page.getByText(/کاردکس — پیراهن · آبی M: بازهٔ تاریخ کامل نیست\./)).toBeVisible();
     await expect(page.getByText("بازهٔ تاریخ کامل نیست.", { exact: true })).toHaveCount(0);
-    expect(reportCalls(api, "/reports/stock-movements").some(c => c.includes("from=2026-09&")), "half-typed date never reaches the server").toBe(false);
+    expect(reportCalls(api, "/reports/stock-movements").some(c => !/from=\d{4}-\d{2}-\d{2}&/.test(c)), "half-typed date never reaches the server").toBe(false);
     expect(reportCalls(api, "/reports/stock-movements")).toHaveLength(1);
 
-    await page.getByLabel("از تاریخ (میلادی)", { exact: true }).fill("2026-09-05");
+    await page.getByLabel("از تاریخ", { exact: true }).fill("۱۴۰۵/۰۶/۱۴");
     await expect.poll(() => reportCalls(api, "/reports/stock-movements").some(c => c.includes("from=2026-09-05&"))).toBe(true);
     await expect(page.getByText("در این بازه حرکتی برای این کالا ثبت نشده است.")).toBeVisible();
   });
