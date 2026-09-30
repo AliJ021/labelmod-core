@@ -9,8 +9,14 @@ import { ResultState } from "../ResultState.tsx";
  * - سرستون چسبان، ستون عددی هم‌تراز انتها با `tabular-nums`.
  * - مرتب‌سازی با `aria-sort` روی `th` و دکمهٔ واقعی درون آن.
  * - روی موبایل، `stack` هر سطر را کارت می‌کند و برچسب ستون کنار مقدار
- *   می‌نشیند — هیچ ستونی پنهان نمی‌شود.
+ *   می‌نشیند — هیچ ستونی پنهان نمی‌شود. چون `display: block` معنای جدول را
+ *   در بعضی موتورها (به‌ویژه WebKit) از درخت دسترس‌پذیری پاک می‌کند، جدول
+ *   `stack` نقش‌های صریح table/row/cell می‌گیرد.
  * - تراکم از توکن‌ها می‌آید (`data-density`).
+ * - `foot` سطر جمع را در `<tfoot>` می‌گذارد؛ جمع را صفحه نمی‌سازد، فقط نشان
+ *   می‌دهد (عدد از سرور یا جمع `bigint` ستون‌های جلوی چشم).
+ * - `bounded` ارتفاع ظرف را محدود می‌کند تا سرستون چسبان واقعاً بچسبد:
+ *   سرستون فقط درون ظرفی می‌چسبد که خودش اسکرول عمودی دارد.
  */
 export interface Column<T> {
   key: string;
@@ -20,7 +26,7 @@ export interface Column<T> {
   sortable?: boolean;
 }
 
-export function DataTable<T>({ caption, columns, rows, rowKey, sort, onSort, selected, onSelect, density = "comfortable", loading = false, empty, stack = false, rowActions }: {
+export function DataTable<T>({ caption, columns, rows, rowKey, sort, onSort, selected, onSelect, density = "comfortable", loading = false, empty, stack = false, rowActions, foot, bounded = false }: {
   caption: string;
   columns: readonly Column<T>[];
   rows: readonly T[];
@@ -34,18 +40,24 @@ export function DataTable<T>({ caption, columns, rows, rowKey, sort, onSort, sel
   empty?: { title: string; description?: string };
   stack?: boolean;
   rowActions?: (row: T) => ReactNode;
+  /**
+   * سطر جمع: برچسب در ستون‌های آغازین تا نخستین ستونی که مقدار دارد؛ هر
+   * مقدار زیر ستون هم‌کلید خودش. ستون بی‌مقدار خالی می‌ماند (و در `stack` پنهان).
+   */
+  foot?: { label: string; cells: Readonly<Record<string, ReactNode>> };
+  bounded?: boolean;
 }) {
   const selectable = selected !== undefined && onSelect !== undefined;
   const span = columns.length + (selectable ? 1 : 0) + (rowActions ? 1 : 0);
-  return <div className="table-scroll" role="region" aria-label={caption} tabIndex={0} data-density={density}>
-    <table className={`ui-table${stack ? " ui-table--stack" : ""}`} aria-busy={loading || undefined}>
+  return <div className={`table-scroll${bounded ? " table-scroll--bounded" : ""}`} role="region" aria-label={caption} tabIndex={0} data-density={density}>
+    <table className={`ui-table${stack ? " ui-table--stack" : ""}`} aria-busy={loading || undefined} role={stack ? "table" : undefined}>
       <caption className="sr-only">{caption}</caption>
-      <thead>
-        <tr>
+      <thead role={stack ? "rowgroup" : undefined}>
+        <tr role={stack ? "row" : undefined}>
           {selectable ? <th scope="col" className="ui-table-select"><span className="sr-only">انتخاب</span></th> : null}
           {columns.map(c => {
             const dir = sort?.key === c.key ? sort.dir : undefined;
-            return <th key={c.key} scope="col" className={c.numeric ? "is-numeric" : undefined}
+            return <th key={c.key} scope="col" role={stack ? "columnheader" : undefined} className={c.numeric ? "is-numeric" : undefined}
               aria-sort={c.sortable ? (dir === "asc" ? "ascending" : dir === "desc" ? "descending" : "none") : undefined}>
               {c.sortable && onSort
                 ? <button type="button" className="ui-table-sort" onClick={() => onSort(c.key)}>
@@ -54,10 +66,10 @@ export function DataTable<T>({ caption, columns, rows, rowKey, sort, onSort, sel
                 : c.header}
             </th>;
           })}
-          {rowActions ? <th scope="col"><span className="sr-only">کنش‌ها</span></th> : null}
+          {rowActions ? <th scope="col" role={stack ? "columnheader" : undefined}><span className="sr-only">کنش‌ها</span></th> : null}
         </tr>
       </thead>
-      <tbody>
+      <tbody role={stack ? "rowgroup" : undefined}>
         {loading ? Array.from({ length: 3 }, (_, i) => <tr key={`s${i}`} className="ui-table-skeleton" aria-hidden="true">
           {Array.from({ length: span }, (_, j) => <td key={j}><span className="skeleton skeleton--text" /></td>)}
         </tr>) : rows.length === 0 ? <tr><td colSpan={span} className="ui-table-empty">
@@ -65,13 +77,28 @@ export function DataTable<T>({ caption, columns, rows, rowKey, sort, onSort, sel
         </td></tr> : rows.map(row => {
           const key = rowKey(row);
           const isSelected = selected?.has(key) ?? false;
-          return <tr key={key} aria-selected={selectable ? isSelected : undefined}>
+          return <tr key={key} role={stack ? "row" : undefined} aria-selected={selectable ? isSelected : undefined}>
             {selectable ? <td className="ui-table-select"><input type="checkbox" checked={isSelected} aria-label="انتخاب سطر" onChange={e => onSelect(key, e.target.checked)} /></td> : null}
-            {columns.map(c => <td key={c.key} data-label={c.header} className={c.numeric ? "is-numeric" : undefined}>{c.cell(row)}</td>)}
-            {rowActions ? <td className="ui-table-actions" data-label="کنش‌ها">{rowActions(row)}</td> : null}
+            {columns.map(c => <td key={c.key} role={stack ? "cell" : undefined} data-label={c.header} className={c.numeric ? "is-numeric" : undefined}>{c.cell(row)}</td>)}
+            {rowActions ? <td className="ui-table-actions" role={stack ? "cell" : undefined} data-label="کنش‌ها">{rowActions(row)}</td> : null}
           </tr>;
         })}
       </tbody>
+      {foot && !loading && rows.length > 0 ? <tfoot role={stack ? "rowgroup" : undefined}>
+        <FootRow foot={foot} columns={columns} stack={stack} lead={selectable ? 1 : 0} trail={rowActions ? 1 : 0} />
+      </tfoot> : null}
     </table>
   </div>;
+}
+
+function FootRow<T>({ foot, columns, stack, lead, trail }: {
+  foot: { label: string; cells: Readonly<Record<string, ReactNode>> }; columns: readonly Column<T>[]; stack: boolean; lead: number; trail: number;
+}) {
+  const first = Math.max(1, columns.findIndex(c => foot.cells[c.key] !== undefined));
+  const role = (r: string) => (stack ? r : undefined);
+  return <tr role={role("row")}>
+    <th scope="row" role={role("rowheader")} colSpan={first + lead}>{foot.label}</th>
+    {columns.slice(first).map(c => <td key={c.key} role={role("cell")} data-label={c.header} className={c.numeric ? "is-numeric" : undefined}>{foot.cells[c.key] ?? null}</td>)}
+    {trail ? <td role={role("cell")} /> : null}
+  </tr>;
 }

@@ -19,6 +19,7 @@
  *   accounts     GET /accounts                       settings.view
  *   mapping      GET /posting-rules                  settings.view
  *   snappay      GET /snappay/config (+ همهٔ شعب)     settings.view
+ *                PUT همان مسیر                        settings.security (`writeAnyOf`)
  *   terminals    GET /settlement-terms، /terminal-drivers، /device-drivers  settings.view
  *   opening      GET /tafsili (ثبت: settings.security)  settings.view
  *   staff        GET /users، /roles                  user.manage
@@ -39,7 +40,7 @@ export const SETTINGS_SECTIONS = [
   { key: "backups", label: "پشتیبان‌گیری و بازیابی", group: "عمومی", scope: "admin", anyOf: ["backup.view"] },
   { key: "accounts", label: "کدینگ حساب", group: "مالی و فروش", scope: "admin", anyOf: ["settings.view"] },
   { key: "mapping", label: "نگاشت حساب", group: "مالی و فروش", scope: "admin", anyOf: ["settings.view"] },
-  { key: "snappay", label: "اسنپ‌پی", group: "مالی و فروش", scope: "admin", anyOf: ["settings.view"] },
+  { key: "snappay", label: "اسنپ‌پی", group: "مالی و فروش", scope: "admin", anyOf: ["settings.view"], writeAnyOf: ["settings.security"] },
   { key: "terminals", label: "پایانه‌ها", group: "مالی و فروش", scope: "admin", anyOf: ["settings.view"] },
   { key: "opening", label: "افتتاحیه و تفصیلی", group: "مالی و فروش", scope: "admin", anyOf: ["settings.view"] },
   { key: "staff", label: "پرسنل", group: "کاربران و امنیت", scope: "admin", anyOf: ["user.manage"] },
@@ -47,22 +48,46 @@ export const SETTINGS_SECTIONS = [
   { key: "devices", label: "دستگاه‌ها", group: "کاربران و امنیت", scope: "admin", anyOf: ["device.manage"] },
 ] as const satisfies readonly {
   key: string; label: string; group: string; scope: SettingsScope; anyOf: readonly string[];
+  /**
+   * بخشی که صفحه‌اش خودش (نه ردیف‌به‌ردیف از پاسخ سرور، مثل `canEdit`) فرم
+   * تغییر دارد و مسیر **نوشتنش** مجوز سخت‌تری از خواندن می‌خواهد (B1-02).
+   */
+  writeAnyOf?: readonly string[];
 }[];
 export type SettingsKey = (typeof SETTINGS_SECTIONS)[number]["key"];
 export type SettingsSection = (typeof SETTINGS_SECTIONS)[number];
 
 /** عملیاتی که نمایش تنظیمات به آن وابسته است؛ همراه پرسش‌های ناوبری فرستاده می‌شود. */
-export const SETTINGS_OPERATIONS: readonly string[] = [...new Set(SETTINGS_SECTIONS.flatMap(s => s.anyOf))];
+export const SETTINGS_OPERATIONS: readonly string[] = [...new Set(SETTINGS_SECTIONS.flatMap(s => [...s.anyOf, ...writeOps(s)]))];
 
 export function settingsAnyOf(key: SettingsKey): readonly string[] {
   return SETTINGS_SECTIONS.find(s => s.key === key)?.anyOf ?? [];
 }
 
+function writeOps(section: SettingsSection): readonly string[] {
+  return "writeAnyOf" in section ? section.writeAnyOf : [];
+}
+
 type Verdict = "allow" | "deny" | "unknown";
-function sectionAccess(section: SettingsSection, verdicts: ReadonlyMap<string, Verdict>): Verdict {
-  const ops: readonly string[] = section.anyOf;
+function opsAccess(ops: readonly string[], verdicts: ReadonlyMap<string, Verdict>): Verdict {
   if (ops.length === 0 || ops.some(op => verdicts.get(op) === "allow")) return "allow";
   return ops.every(op => verdicts.get(op) === "deny") ? "deny" : "unknown";
+}
+function sectionAccess(section: SettingsSection, verdicts: ReadonlyMap<string, Verdict>): Verdict {
+  return opsAccess(section.anyOf, verdicts);
+}
+
+/**
+ * آیا فرم **تغییر** این بخش نشان داده شود؟ فقط `allow` صریح؛ «در حال بررسی»
+ * و «بررسی نشد» (`unknown`) مثل «رد» فقط‌خواندنی‌اند و هرگز لحظه‌ای کنترل
+ * قابل‌نوشتن نمی‌سازند. بخشی که `writeAnyOf` ندارد، همان مجوز خواندن را دارد.
+ * سرور همچنان دروازهٔ واقعی است (B1-02).
+ */
+export function settingsWriteAccess(key: SettingsKey, verdicts: ReadonlyMap<string, Verdict>): Verdict {
+  const section = SETTINGS_SECTIONS.find(s => s.key === key);
+  if (!section) return "deny";
+  const ops = writeOps(section);
+  return opsAccess(ops.length > 0 ? ops : section.anyOf, verdicts);
 }
 
 /**

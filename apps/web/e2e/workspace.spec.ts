@@ -124,7 +124,8 @@ test("manager report tables scroll inside their card instead of widening the pag
     expect(narrow.client,"viewport width").toBe(width);
     expect(narrow.scroll,`Manager report must not scroll the page horizontally at ${width}px`).toBeLessThanOrEqual(narrow.client);
 
-    const box=page.getByRole("heading",{name:"تحلیل سبد"}).locator("xpath=..").locator(".scroll-x");
+    // ظرف اسکرول خودِ جدول (DataTable): ناحیهٔ فوکوس‌پذیر هم‌نام جدول، درون سطح همان بخش.
+    const box=page.getByRole("region",{name:"تحلیل سبد",exact:true}).and(page.locator(".table-scroll"));
     await expect(box).toHaveCount(1);
     const row=box.getByRole("row").nth(1);
     const first=row.getByRole("cell").first(), last=row.getByRole("cell").last();

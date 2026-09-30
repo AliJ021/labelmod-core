@@ -114,6 +114,16 @@ export function formatGregorian(value: string): string {
   return GREGORIAN.format(isoDate(value));
 }
 
+// «لحظه» (timestamptz) است نه «تاریخ»: در منطقهٔ زمانی مرورگر نشان داده می‌شود، همان
+// رفتاری که گزارش‌ها پیش از این با `toLocaleString("fa-IR")` داشتند.
+const JALALI_MOMENT = new Intl.DateTimeFormat("fa-IR-u-ca-persian", { dateStyle: "short", timeStyle: "short" });
+
+/** «۱۴۰۵/۶/۲۵، ۱۸:۳۰» برای ستون زمان؛ ورودی نامعتبر همان متن خام کوتاه‌شده. */
+export function formatJalaliMoment(iso: string): string {
+  const d = new Date(iso);
+  return Number.isNaN(d.getTime()) ? iso.slice(0, 16).replace("T", " ") : JALALI_MOMENT.format(d);
+}
+
 /** ساعت کاری ۰ تا ۲۳ با رقم فارسی: «۱۸». */
 export function formatHour(hour: number): string {
   return FA_DIGITS.format(hour);

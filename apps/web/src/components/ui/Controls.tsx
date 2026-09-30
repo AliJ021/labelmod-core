@@ -6,33 +6,52 @@ import { cloneElement, isValidElement, useId, type ReactElement, type ReactNode 
  * جای‌نگهدار جای برچسب نیست. راهنما و خطا با `aria-describedby` به
  * ورودی وصل می‌شوند و خطا `aria-invalid` می‌گذارد؛ متن خطا انسانی و
  * فارسی است و می‌گوید چه باید کرد.
+ *
+ * برچسب با `htmlFor` به کنترل وصل است، نه با دربرگرفتن: برچسبِ دربرگیرنده
+ * متن راهنما و خطا را هم وارد **نام** کنترل می‌کرد («رمز فعلی — حداقل ۱۲…»)
+ * و نام دسترس‌پذیر با هر خطا عوض می‌شد. راهنما فقط توضیح است
+ * (`aria-describedby`)، نه بخشی از نام. `id` کنترل اگر داده شده باشد حفظ می‌شود.
  */
-export function Field({ label, hint, error, children, optional = false }: {
-  label: string; hint?: ReactNode; error?: string | null; children: ReactElement<Record<string, unknown>>; optional?: boolean;
+export function Field({ label, hint, error, children, optional = false, className }: {
+  label: string; hint?: ReactNode; error?: string | null; children: ReactElement<Record<string, unknown>>; optional?: boolean; className?: string;
 }) {
+  const ownId = useId();
   const hintId = useId();
   const errorId = useId();
   const describedBy = [hint ? hintId : null, error ? errorId : null].filter(Boolean).join(" ") || undefined;
+  const controlId = isValidElement(children) && typeof children.props.id === "string" ? children.props.id : ownId;
   const control = isValidElement(children)
-    ? cloneElement(children, { "aria-describedby": describedBy, "aria-invalid": error ? true : undefined })
+    ? cloneElement(children, { id: controlId, "aria-describedby": describedBy, "aria-invalid": error ? true : undefined })
     : children;
-  return <label className="field">
-    <span className="field-label">{label}{optional ? <span className="field-optional"> (اختیاری)</span> : null}</span>
+  return <div className={`field${className ? ` ${className}` : ""}`}>
+    <label className="field-label" htmlFor={controlId}>{label}{optional ? <span className="field-optional"> (اختیاری)</span> : null}</label>
     {control}
     {hint ? <span id={hintId} className="field-hint">{hint}</span> : null}
     {error ? <span id={errorId} className="field-error">{error}</span> : null}
-  </label>;
+  </div>;
 }
 
-/** کلید روشن/خاموش: `role="switch"` روی checkbox بومی — کیبورد و فرم رایگان. */
-export function Switch({ label, checked, onChange, disabled = false, description }: {
-  label: string; checked: boolean; onChange: (next: boolean) => void; disabled?: boolean; description?: string;
+/**
+ * کلید روشن/خاموش: `role="switch"` روی checkbox بومی — کیبورد و فرم رایگان.
+ * توضیح بیرون از برچسب و با `aria-describedby` است تا نام کلید کوتاه بماند.
+ * `stateLabels` وضعیت را **متنی** هم می‌گوید (رنگ به‌تنهایی حامل معنا نیست).
+ *
+ * `describedBy` شناسهٔ توضیحی است که مصرف‌کننده **بیرون** از کلید می‌کشد (مثل
+ * راهنما و خطای ردیف تنظیمات)؛ با `description` خودِ کلید جمع می‌شود، نه جایگزین.
+ */
+export function Switch({ label, checked, onChange, disabled = false, description, stateLabels, id, describedBy }: {
+  label: string; checked: boolean; onChange: (next: boolean) => void; disabled?: boolean; description?: ReactNode;
+  stateLabels?: readonly [on: string, off: string]; id?: string; describedBy?: string | undefined;
 }) {
-  return <label className="switch">
-    <input type="checkbox" role="switch" checked={checked} disabled={disabled} onChange={e => onChange(e.target.checked)} />
+  const hintId = useId();
+  const described = [description ? hintId : null, describedBy ?? null].filter(Boolean).join(" ") || undefined;
+  const control = <label className="switch">
+    <input id={id} type="checkbox" role="switch" checked={checked} disabled={disabled} aria-describedby={described} onChange={e => onChange(e.target.checked)} />
     <span className="switch-track" aria-hidden="true"><span className="switch-thumb" /></span>
-    <span className="switch-text"><span>{label}</span>{description ? <span className="field-hint">{description}</span> : null}</span>
+    <span className="switch-text"><span>{label}</span>{stateLabels ? <span className="switch-state" aria-hidden="true">{checked ? stateLabels[0] : stateLabels[1]}</span> : null}</span>
   </label>;
+  if (!description) return control;
+  return <div className="switch-field">{control}<span id={hintId} className="field-hint">{description}</span></div>;
 }
 
 /** انتخاب یکی از چند گزینهٔ کوتاه: radio بومی، پس پیکان‌ها و Tab درست کار می‌کنند. */

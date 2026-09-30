@@ -13,7 +13,8 @@
 import { useEffect, useState } from "react";
 import { navigate } from "../lib/use-url-state.ts";
 import { Solid } from "../components/Glass.tsx";
-import { Icon, type IconName } from "../components/Icon.tsx";
+import { Icon } from "../components/Icon.tsx";
+import { quickActionView, type NavAccess } from "../lib/navigation.ts";
 import { ApiError } from "../lib/api.ts";
 import { parseRial } from "../lib/money.ts";
 import { channelLabel, formatCount, formatGregorian, formatHour, formatJalali, formatMoney } from "../lib/format.ts";
@@ -40,14 +41,7 @@ import { ResultState } from "../components/ResultState.tsx";
 /** `null` = این کاربر `report.view` ندارد؛ آرایه = سنجیدیم. */
 type Hourly = HourlyRow[] | null | "error";
 
-const QUICK: readonly { href: string; name: string; icon: IconName }[] = [
-  { href: "/?page=pos", name: "فروش جدید", icon: "register" },
-  { href: "/?page=invoices&invoices.status=draft", name: "رسیدگی به پیش‌نویس‌ها", icon: "receipt" },
-  { href: "/?page=catalog&catalog.labels=1", name: "چاپ لیبل بارکد", icon: "print" },
-  { href: "/?page=invoices", name: "فاکتورها و چاپ رسید", icon: "receipt" },
-];
-
-export function Dashboard() {
+export function Dashboard({ access }: { access: NavAccess }) {
   const [branch, setBranch] = useState<Branch | null>(null);
   const [report, setReport] = useState<DailyReport | null>(null);
   const [error, setError] = useState<{ message: string; reference: string | null } | null>(null);
@@ -254,15 +248,31 @@ export function Dashboard() {
       <HourlyPanel hourly={hourly} loading={hourlyLoading} />
       </Solid>
 
-      <nav className="quick-actions" aria-label="کارهای پرتکرار">
-        {QUICK.map(a =>
-          <a className="quick-action" key={a.href} href={a.href} onClick={e => { if (e.metaKey || e.ctrlKey || e.shiftKey) return; e.preventDefault(); navigate(a.href); }}>
-            <Icon name={a.icon} />
-            <span>{a.name}</span>
-          </a>)}
-      </nav>
+      <QuickActions access={access} />
     </div>
   );
+}
+
+/**
+ * کارهای پرتکرار — فقط آنچه این نقش واقعاً می‌تواند (`QUICK_ACTIONS` در
+ * رجیستری ناوبری). در حال بررسی: جای‌نگهدار بی‌برچسب، تا نوار نپرد و برچسب
+ * ممنوع حتی در DOM نیاید. نرسیدن پاسخ: پنهان + پیام آرام با «بررسی دوباره».
+ */
+function QuickActions({ access }: { access: NavAccess }) {
+  const view = quickActionView(access);
+  if (view.visible.length === 0 && view.pending === 0 && !view.degraded) return null;
+  return <nav className="quick-actions" aria-label="کارهای پرتکرار" aria-busy={view.pending > 0 || undefined}>
+    {view.visible.map(a =>
+      <a className="quick-action" key={a.key} href={a.href} onClick={e => { if (e.metaKey || e.ctrlKey || e.shiftKey) return; e.preventDefault(); navigate(a.href); }}>
+        <Icon name={a.icon} />
+        <span>{a.name}</span>
+      </a>)}
+    {Array.from({ length: view.pending }, (_, i) => <span key={`p${i}`} className="quick-action quick-action--pending" aria-hidden="true" />)}
+    {view.degraded ? <p className="quick-actions-note" role="status">
+      <StatusIcon state="unknown" />دسترسی بعضی کارها بررسی نشد.
+      <button type="button" className="link" onClick={access.retry}>بررسی دوباره</button>
+    </p> : null}
+  </nav>;
 }
 
 /**

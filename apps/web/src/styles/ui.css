@@ -94,6 +94,7 @@
 .money-unit { font-size: 0.72em; font-weight: var(--weight-medium); color: var(--ink-2); }
 .money-side { font-size: 0.72em; padding: 0 6px; border-radius: var(--r-xs); background: var(--neutral-soft); color: var(--ink-2); }
 .money--negative .money-digits { color: var(--fin-negative); }
+.money--unknown .money-digits, .percent--unknown { color: var(--ink-3); font-weight: var(--weight-regular); }
 .money--zero .money-digits, .money--muted .money-digits { color: var(--fin-zero); font-weight: var(--weight-medium); }
 .money--sm { font-size: var(--text-sm); }
 .money--md { font-size: var(--text-md); }
@@ -175,6 +176,9 @@
 }
 .quick-action .icon { color: var(--accent); }
 .quick-action:hover { background: var(--neutral-soft); }
+/* جای‌نگهدار «در حال بررسی دسترسی»: هم‌اندازهٔ یک کار، بی‌برچسب و بی‌حرکت. */
+.quick-action--pending { inline-size: 9rem; background: var(--neutral-soft); }
+.quick-actions-note { display: inline-flex; flex-wrap: wrap; align-items: center; gap: var(--s-2); margin: 0; padding: var(--s-2) var(--s-3); font-size: var(--text-sm); color: var(--ink-2); }
 
 /* ── نمودار ستونی (BarChart.tsx) — روی سطح مات ─────────────────────── */
 .bar-chart { margin: 0; display: flex; flex-direction: column; gap: var(--s-3); }
@@ -215,6 +219,12 @@
 .ui-table-sort-mark { font-size: 0.8em; color: var(--ink-3); }
 [aria-sort="ascending"] .ui-table-sort-mark, [aria-sort="descending"] .ui-table-sort-mark { color: var(--accent); }
 .ui-table-empty { padding: 0; }
+.table-scroll--bounded { max-block-size: var(--table-max-h); }
+.ui-table tfoot th, .ui-table tfoot td { background: var(--surface-solid-2); font-weight: var(--weight-semibold); border-block-start: var(--border-w) solid var(--rule-2); border-block-end: 0; white-space: nowrap; }
+.ui-table tfoot th { text-align: start; }
+.ui-table tfoot .is-numeric { text-align: end; }
+.ui-table .cell-sub { display: block; font-size: var(--text-xs); color: var(--ink-2); }
+.ui-table .cell-nowrap { white-space: nowrap; }
 .ui-table-skeleton td { padding-block: var(--s-3); }
 @media (max-width: 640px) {
   .ui-table--stack, .ui-table--stack tbody, .ui-table--stack tr, .ui-table--stack td { display: block; }
@@ -223,6 +233,12 @@
   .ui-table--stack td { display: flex; justify-content: space-between; gap: var(--s-3); border: 0; padding: 6px 0; text-align: start; }
   .ui-table--stack td::before { content: attr(data-label); color: var(--ink-2); font-size: var(--text-xs); font-weight: var(--weight-semibold); }
   .ui-table--stack .ui-table-select::before { content: none; }
+  .ui-table--stack tfoot, .ui-table--stack tfoot tr, .ui-table--stack tfoot th, .ui-table--stack tfoot td { display: block; }
+  .ui-table--stack tfoot tr { padding: var(--s-2) var(--s-3); background: var(--surface-solid-2); }
+  .ui-table--stack tfoot th, .ui-table--stack tfoot td { background: none; border: 0; padding: 4px 0; }
+  .ui-table--stack tfoot td { display: flex; justify-content: space-between; gap: var(--s-3); }
+  .ui-table--stack tfoot td::before { content: attr(data-label); color: var(--ink-2); font-size: var(--text-xs); }
+  .ui-table--stack tfoot td:empty { display: none; }
 }
 
 /* ── فرم ─────────────────────────────────────────────────────────── */
@@ -230,6 +246,8 @@
 .field-label { font-size: var(--text-sm); font-weight: var(--weight-semibold); color: var(--ink-2); }
 .field-optional { font-weight: var(--weight-regular); color: var(--ink-3); }
 .field-hint { font-size: var(--text-xs); color: var(--ink-2); }
+/* تاریخ میلادی کنار جلالی: فقط ثانوی، کم‌رنگ‌تر، هم‌رنگ .page-context-secondary. */
+.field-hint-secondary { color: var(--ink-3); white-space: nowrap; margin-inline-start: var(--s-1); }
 .field-error { font-size: var(--text-xs); font-weight: var(--weight-semibold); color: var(--crit); }
 .field-error::before { content: "■ "; font-size: 0.8em; }
 
@@ -242,6 +260,9 @@
 .switch input:focus-visible + .switch-track { outline: var(--focus-ring) solid var(--accent); outline-offset: var(--focus-offset); }
 .switch input:disabled + .switch-track { opacity: 0.55; }
 .switch-text { display: flex; flex-direction: column; }
+.switch-state { font-size: var(--text-xs); color: var(--ink-2); }
+.switch-field { display: flex; flex-direction: column; gap: 2px; }
+.switch-field > .field-hint { padding-inline-start: calc(44px + var(--s-3)); }
 
 .segmented { display: inline-flex; flex-wrap: wrap; gap: 2px; margin: 0; padding: 3px; border: var(--border-w) solid var(--control-border); border-radius: var(--r-sm); background: var(--surface-solid-2); min-inline-size: 0; }
 .segmented-option { position: relative; display: inline-flex; }
@@ -325,3 +346,102 @@
   :root:not([data-perf="on"]) .bar-chart-bar:not(.is-zero) { animation: lm-bar var(--dur-slow) var(--ease-out) both; }
   :root:not([data-perf="on"]) .skeleton { animation: lm-pulse 1.6s var(--ease-in-out) infinite; }
 }
+.result-state--denied .result-title { display: inline-flex; align-items: center; gap: var(--s-2); }
+.result-state--compact { min-block-size: 0; padding: var(--s-5) var(--s-4); }
+
+/* ── نوار فیلتر (UI_PATTERNS §۳ «فهرست» و «گزارش») ─────────────────────
+   یک نوار فشرده روی سطح مات: فیلدها در یک ردیف که در عرض باریک می‌شکند،
+   و زیرش خلاصهٔ فیلتر فعال + بازنشانی. کارت جدا برای هر فیلتر نه. */
+.filter-bar { display: grid; gap: var(--s-3); padding: var(--s-4); background: var(--surface-solid); border: var(--border-w) solid var(--rule); border-radius: var(--r-md); }
+.filter-bar-fields { display: flex; flex-wrap: wrap; align-items: flex-start; gap: var(--s-3) var(--s-4); }
+.filter-bar-fields > .field { flex: 1 1 12rem; max-inline-size: 18rem; }
+.filter-bar-fields input, .filter-bar-fields select { min-block-size: var(--control-h); inline-size: 100%; }
+.filter-bar-fields > .btn { align-self: flex-end; }
+.filter-inline { display: flex; flex-wrap: wrap; align-items: flex-start; gap: var(--s-3); flex: 1 1 18rem; min-inline-size: 0; }
+.filter-inline > .field { flex: 1 1 10rem; }
+.filter-inline > .btn { margin-block-start: calc(var(--text-sm) * 1.5 + 6px); }
+.filter-bar-foot { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: var(--s-2) var(--s-3); padding-block-start: var(--s-3); border-block-start: var(--border-w) solid var(--rule); }
+.filter-bar-summary { margin: 0; font-size: var(--text-xs); color: var(--ink-2); min-inline-size: 0; }
+@media (max-width: 560px) {
+  .filter-bar { padding: var(--s-3); }
+  .filter-bar-fields { gap: var(--s-3); }
+  .filter-bar-fields > .field { max-inline-size: none; flex: 1 1 9rem; }
+}
+
+/* ── بخش گزارش: یک سطح مات، سرعنوان + ابزار + جدول؛ کارت در کارت نه ── */
+.report-page { display: grid; gap: var(--s-4); min-inline-size: 0; }
+.report-panel { display: grid; gap: var(--s-4); min-inline-size: 0; }
+.report-section { display: grid; gap: var(--s-3); padding: var(--s-4); min-inline-size: 0; }
+.report-section + .report-section { margin-block-start: 0; }
+.report-section .section-header { margin: 0; }
+.report-note { margin: 0; font-size: var(--text-xs); color: var(--ink-2); }
+.report-kpis { border-block-end: var(--border-w) solid var(--rule); padding-block-end: var(--s-3); }
+.trial-balance-state { display: inline-flex; align-items: center; gap: var(--s-2); }
+.report-totals { display: flex; flex-wrap: wrap; gap: var(--s-2) var(--s-5); margin: 0; }
+.report-totals > span { display: inline-flex; align-items: baseline; gap: var(--s-2); font-size: var(--text-sm); color: var(--ink-2); }
+.report-totals-net .money-digits { font-weight: var(--weight-bold); }
+.pager { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: var(--s-2) var(--s-3); }
+.pager-state { font-size: var(--text-sm); color: var(--ink-2); }
+
+/* ── صفحهٔ تنظیمات (UI_PATTERNS §۳ «تنظیمات/فرم») ───────────────────────
+   یک سطح مات، گروه‌های خط‌دار، ردیف‌های بی‌کارت. در عرض پهن دو ستون:
+   برچسب و کلید در ستون آغاز، کنترل و وضعیت در ستون دوم. */
+.settings-page { display: grid; gap: var(--s-4); min-inline-size: 0; }
+.settings-section { display: grid; gap: var(--s-4); padding: var(--s-5); min-inline-size: 0; }
+.settings-section > .section-header { margin: 0; }
+.settings-groups { padding: 0; overflow: hidden; }
+.set-group + .set-group { border-block-start: var(--border-w) solid var(--rule); }
+.set-group-title { margin: 0; font: inherit; }
+.settings-page .set-group-head { display: flex; align-items: center; gap: var(--s-3); inline-size: 100%; min-block-size: var(--touch-lg); padding: var(--s-3) var(--s-5); border: 0; background: none; color: inherit; font: inherit; text-align: start; cursor: pointer; }
+.settings-page .set-group-head:hover { background: var(--neutral-soft); }
+.settings-page .set-group-head:focus-visible { outline: var(--focus-ring) solid var(--accent); outline-offset: calc(var(--focus-ring) * -1); }
+.set-group-chevron { display: inline-flex; color: var(--ink-3); }
+.set-group-chevron.is-open { transform: rotate(-90deg); }
+.set-group-text { display: grid; gap: 2px; min-inline-size: 0; flex: 1 1 auto; }
+.set-group-name { font-size: var(--text-md); font-weight: var(--weight-bold); }
+.set-group-sub { font-size: var(--text-xs); color: var(--ink-2); }
+.settings-page .set-count { margin-inline-start: 0; }
+.set-group-body { padding: 0 var(--s-5) var(--s-3); }
+.set-embedded { padding-block: var(--s-4); border-block-end: var(--border-w) solid var(--rule); }
+.settings-page .set-row { display: grid; gap: var(--s-2) var(--s-5); padding: var(--s-4) 0; }
+.settings-page .set-row + .set-row { border-block-start: var(--border-w) solid var(--rule); }
+.settings-page .set-row.is-dirty { border-inline-start: calc(var(--border-w) * 3) solid var(--accent); padding-inline-start: var(--s-3); }
+.set-row-meta { display: flex; flex-wrap: wrap; align-items: baseline; gap: var(--s-1) var(--s-3); min-inline-size: 0; }
+.set-row-meta .set-label { flex: 1 1 100%; font-size: var(--text-md); font-weight: var(--weight-semibold); }
+.set-row-control { display: grid; gap: var(--s-2); min-inline-size: 0; }
+.settings-page .set-lock { display: inline-flex; align-items: center; gap: var(--s-1); margin: 0; color: var(--ink-2); font-size: var(--text-xs); }
+.set-flag { font-size: var(--text-xs); color: var(--ink-2); }
+.settings-page .set-help { font-size: var(--text-sm); color: var(--ink-2); line-height: var(--leading-body); }
+.set-help--warn { display: flex; gap: var(--s-2); align-items: flex-start; }
+.settings-page .set-input { min-block-size: var(--control-h); border: var(--border-w) solid var(--control-border); background: var(--surface-solid); }
+.settings-page .set-input[aria-invalid="true"], .settings-page .field input[aria-invalid="true"] { border-color: var(--crit); }
+.settings-page .set-checks { border: 0; margin: 0; padding: 0; min-inline-size: 0; }
+.settings-page .set-check input { inline-size: 20px; block-size: 20px; }
+.settings-page .set-reason input { min-block-size: var(--control-h); }
+.settings-page .set-foot { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: var(--s-2) var(--s-3); padding: 0; border: 0; }
+.set-current { font-size: var(--text-xs); color: var(--ink-2); min-inline-size: 0; }
+.set-current strong { color: var(--ink); font-weight: var(--weight-semibold); }
+.set-actions { display: inline-flex; flex-wrap: wrap; align-items: center; gap: var(--s-2); margin-inline-start: auto; }
+.settings-page .set-msg { color: var(--good); }
+/* ردیف کلید: برچسب ستون آغاز دیده می‌شود؛ برچسب خودِ کلید فقط نام دسترس‌پذیر
+   می‌ماند و کنار کلید فقط وضعیت متنی («فعال/غیرفعال») دیده می‌شود. */
+.settings-page .set-row .switch-text > span:first-child { position: absolute; inline-size: 1px; block-size: 1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }
+.settings-page .set-row .switch-state { font-size: var(--text-sm); color: var(--ink); }
+@media (min-width: 1100px) {
+  .settings-page .set-row { grid-template-columns: var(--form-label-w) minmax(0, 1fr); }
+}
+@media (max-width: 560px) {
+  .settings-section { padding: var(--s-4); }
+  .settings-page .set-group-head { padding-inline: var(--s-4); }
+  .set-group-body { padding-inline: var(--s-4); }
+}
+/* فرم کوتاه تنظیمات: فیلدها در یک ستون با عرض خوانا. */
+.settings-form { display: grid; gap: var(--s-4); max-inline-size: 36rem; }
+.settings-form input, .settings-form select { min-block-size: var(--control-h); }
+.settings-actions { display: flex; flex-wrap: wrap; gap: var(--s-2) var(--s-3); align-items: center; }
+/* نمای فقط‌خواندنیِ فرم (B1-02): مقدار فعلی متن است، نه کنترل غیرفعال. */
+.settings-readonly { display: grid; gap: var(--s-1); margin: 0; }
+.settings-readonly dt { color: var(--ink-2); font-size: var(--text-sm); }
+.settings-readonly dd { margin: 0; font-weight: 600; }
+.settings-facts { display: flex; flex-wrap: wrap; gap: var(--s-2) var(--s-4); margin: 0; font-size: var(--text-sm); color: var(--ink-2); }
+.settings-note { margin: 0; font-size: var(--text-sm); color: var(--ink-2); max-inline-size: var(--measure); }

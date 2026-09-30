@@ -135,9 +135,20 @@ export function App() {
       forgetLock();
       setLockedUser(null);
       setMe(null);
-      setZone("dashboard");
+      toDashboardAfterSessionEnd();
     } catch { setSessionError("خروج در سرور تأیید نشد. دوباره خروج را بزنید و تا تأیید، دستگاه را ترک نکنید."); }
     finally { setSessionBusy(false); }
+  }
+
+  /**
+   * پس از بسته‌شدن نشست (خروج، تغییر رمز) پوسته همین حالا Unmount می‌شود و
+   * پیش‌نویسی برای نگه‌داشتن نمانده؛ پس نگهبان ترک صفحه دور زده می‌شود
+   * (`force`). همان کار `setZone("dashboard")`: فقط `page` حذف می‌شود.
+   */
+  function toDashboardAfterSessionEnd() {
+    const url = new URL(window.location.href);
+    url.searchParams.delete("page");
+    navigate(url.href, false, true);
   }
 
   /** از صفحه قفل به فرم ورود — شیفت عوض شده. */
@@ -265,7 +276,7 @@ export function App() {
         <TabPanels id={tabsId} items={ZONES} value={uiKit ? null : zone} className="zone-panel">
         <Suspense fallback={<p className="solid pad" role="status">در حال بارگذاری بخش…</p>}>
           {zone === "dashboard" ? (
-            <Dashboard />
+            <Dashboard access={access} />
           ) : zone === "pos" ? (
             <Pos key={me?.id} actorId={me?.id ?? ""} />
           ) : zone === "invoices" ? (
@@ -296,7 +307,7 @@ export function App() {
           forgetLock();
           setLockedUser(null);
           setMe(null);
-          setZone("dashboard");
+          toDashboardAfterSessionEnd();
           setLoginNotice("رمز شما تغییر کرد و همهٔ نشست‌ها بسته شدند. با رمز تازه وارد شوید.");
         }} /> : null}
       </div>
