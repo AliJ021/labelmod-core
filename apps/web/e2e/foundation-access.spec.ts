@@ -45,8 +45,19 @@ async function recordNavigation(page: Page) {
 }
 
 const compact = (page: Page) => page.viewportSize()!.width < 900;
-/** ورود برگه با transform متحرک است؛ هندسه پس از پایان واقعی انیمیشن، نه پس از یک زمان دلخواه. */
-const settled = (target: Locator) => target.evaluate(el => Promise.all(el.getAnimations({ subtree: true }).map(a => a.finished)).then(() => undefined));
+/**
+ * ورود برگه با transform متحرک است؛ هندسه پس از پایان واقعی انیمیشن، نه پس از یک زمان دلخواه.
+ * `getAnimations` گذارهای CSS زیردرخت را هم می‌دهد و گذارِ لغوشده (مثلاً hover زیر اشاره‌گرِ
+ * ثابت هنگام بالاآمدن برگه) با `AbortError` رد می‌شود — آن «پایان» نیست؛ پس دوباره تا هیچ
+ * پویانمایی در راهی نماند صبر می‌کنیم (CI run 36654199697، WebKit). سقف دور فقط برای گیر نکردن است.
+ */
+const settled = (target: Locator) => target.evaluate(async el => {
+  for (let round = 0; round < 20; round++) {
+    const results = await Promise.allSettled(el.getAnimations({ subtree: true }).map(a => a.finished));
+    if (results.every(r => r.status === "fulfilled")) return;
+  }
+  throw new Error("پویانمایی برگه آرام نگرفت");
+});
 const mainList = (page: Page) => page.getByRole("tablist", { name: "بخش‌ها", exact: true });
 const tabLabels = (page: Page) => mainList(page).getByRole("tab", { includeHidden: true }).allInnerTexts();
 const settingsLabels = (page: Page) => page.locator(".settings-nav").evaluate(el =>
