@@ -31,7 +31,7 @@ import type { Transaction } from "kysely";
 import type { Db } from "../db/client.ts";
 import type { Database } from "../db/types.ts";
 import { parseMoney, serializeMoney } from "../lib/money.ts";
-import { setActor } from "../lib/idempotency.ts";
+import { canonicalJson, setActor } from "../lib/idempotency.ts";
 
 export class InvoiceError extends Error {
   readonly statusCode: number;
@@ -1201,6 +1201,108 @@ export class InvoiceService {
     return parseMoney(row?.total ?? "0");
   }
 
+  /**
+   * وضعیت **یک** قصد پرداخت صندوق، با شناسهٔ خودش (F-115-01).
+   *
+   * شناسه همان `Idempotency-Key` مسیر پرداخت است: `runOnce` آن را در
+   * `platform.inbox_message (source, event_id)` و `addPaymentIn` در
+   * `treasury.payment.client_event_id` می‌نشاند — هر دو در **یک** تراکنش. پس
+   * «این قصد ثبت شد» یعنی ردیفی با **همین** شناسه روی **همین** فاکتور؛ هرگز
+   * «جمع دریافتی به اندازهٔ مبلغ بالا رفت» — پرداخت دیگری با همان مبلغ آن را
+   * جعل می‌کرد.
+   *
+   * ⚠️ «پیدا نشد» به‌خودی‌خود **نهایی نیست**: تراکنشی که هنوز Commit نشده دیده
+   *    نمی‌شود و درخواستی که هنوز به سرور نرسیده هم. فقط دو حالت اثبات نهایی
+   *    دارند:
+   *    - فاکتور دیگر پیش‌نویس نیست. `addPaymentIn` زیر قفل `FOR UPDATE` فاکتور
+   *      پیش‌نویس‌بودن را می‌سنجد و نهایی‌سازی و ابطال همان قفل را می‌گیرند، پس هر
+   *      پرداختی که روزی ثبت شود **پیش از** تغییر وضعیت Commit شده است. به همین
+   *      دلیل وضعیت فاکتور **اول** خوانده می‌شود و پرداخت بعد — برعکسش، پرداختی
+   *      که میان دو خواندن Commit شود را «ثبت‌نشدهٔ نهایی» می‌دید.
+   *    - شناسه مهر شده است (`abandonPaymentIntent`): درخواست دیرِ همان شناسه با
+   *      Payload دیگری روبه‌رو می‌شود و `runOnce` ردش می‌کند.
+   */
+  async paymentIntent(invoiceId: string, key: string, ex: Executor = this.#db): Promise<PaymentIntentStatus> {
+    const inv = await ex.selectFrom("sales.invoice").select("status").where("id", "=", invoiceId).executeTakeFirst();
+    if (!inv) throw new InvoiceError("invoice_not_found", "فاکتور یافت نشد", 404);
+    const payment = await ex.selectFrom("treasury.payment")
+      .select(["id", "method_code", "amount", "ref_no", "status"])
+      .where("invoice_id", "=", invoiceId).where("client_event_id", "=", key).where("direction", "=", "in")
+      .executeTakeFirst();
+    if (payment) {
+      return { state: "recorded", terminal: true, payment: { id: payment.id, methodCode: payment.method_code,
+        amount: parseMoney(payment.amount), refNo: payment.ref_no, status: payment.status } };
+    }
+    const inbox = await ex.selectFrom("platform.inbox_message").select("payload")
+      .where("source", "=", PAYMENT_INBOX_SOURCE).where("event_id", "=", key).executeTakeFirst();
+    if (inbox) {
+      const p = inbox.payload as { abandoned?: unknown; invoiceId?: unknown } | null;
+      // شناسه‌ای که مال درخواست دیگری است، این پرداخت را هرگز ثبت نمی‌کند:
+      // `runOnce` ارسال دوباره‌اش را با `idempotency_key_reused` رد می‌کند.
+      return p?.abandoned === true && p.invoiceId === invoiceId
+        ? { state: "abandoned", terminal: true }
+        : { state: "key_conflict", terminal: true };
+    }
+    if (inv.status !== "draft") return { state: "invoice_closed", terminal: true, invoiceStatus: inv.status };
+    return { state: "not_found", terminal: false };
+  }
+
+  /**
+   * مهرکردن شناسهٔ یک قصد پرداخت که صندوق‌دار می‌گوید انجام نشده (F-115-01).
+   *
+   * اثر مالی ندارد: فقط یک ردیف Inbox با همان `(source, event_id)` و Payload
+   * «رهاشده» می‌نشیند. درخواستِ دیرِ همان قصد آن‌وقت در `runOnce` با Payload
+   * دیگری روبه‌رو می‌شود و **پیش از هر اثری** رد می‌شود — این همان اثبات نهایی
+   * است که «پیدا نشد» نمی‌تواند بدهد.
+   *
+   * ⚠️ `ON CONFLICT DO NOTHING` روی کلید اصلی منتظر تراکنش هم‌زمانی می‌ماند که
+   *    همان شناسه را درج کرده: اگر آن پرداخت Commit شود، مهر نمی‌نشیند و پاسخ
+   *    «ثبت شد» است؛ اگر برگردد، مهر می‌نشیند. پس مهر هرگز روی پرداختی که در
+   *    راه بود «رهاشده» نمی‌گوید.
+   */
+  async abandonPaymentIntent(invoiceId: string, key: string, actorId: string): Promise<PaymentIntentStatus> {
+    await this.#db.transaction().execute(async (trx) => {
+      const inv = await trx.selectFrom("sales.invoice").select("status").where("id", "=", invoiceId).executeTakeFirst();
+      if (!inv) throw new InvoiceError("invoice_not_found", "فاکتور یافت نشد", 404);
+      // فاکتور غیرپیش‌نویس خودش اثبات نهایی است؛ مهری لازم نیست.
+      if (inv.status !== "draft") return;
+      const sealed = await trx.insertInto("platform.inbox_message")
+        .values({ source: PAYMENT_INBOX_SOURCE, event_id: key,
+          payload: canonicalJson({ abandoned: true, actorId, invoiceId }), result_ref: null })
+        .onConflict((oc) => oc.columns(["source", "event_id"]).doNothing())
+        .returning("event_id").executeTakeFirst();
+      if (!sealed) return;
+      await setActor(trx, actorId);
+      await sql`SELECT platform.audit('payment.intent_abandon', 'invoice', ${invoiceId}::text,
+        jsonb_build_object('key', ${key}::text), ${actorId}::uuid)`.execute(trx);
+    });
+    return this.paymentIntent(invoiceId, key);
+  }
+
+  /**
+   * تسویهٔ قطعی فاکتور نهایی‌شده — منبع صفحهٔ «ثبت شد» (F-115-02).
+   *
+   * همه از ستون‌هایی که `finalize_invoice` زیر قفل نوشته، نه از تصویر کلاینت پیش
+   * از نهایی‌سازی: پرداختی که میان آن تصویر و نهایی‌سازی Commit شود، اینجا دیده
+   * می‌شود. `paid_amount` خالص است (ورودی منهای باقی پول) و فقط نهایی‌سازی
+   * می‌نویسدش؛ ورودی پس از نهایی‌سازی پذیرفته نمی‌شود، پس «باقی پول» همان
+   * ورودی منهای خالص است — بی وابستگی به ردیف‌های برگشتی بعدی.
+   * پیش‌نویس و باطل‌شده `null` می‌گیرند: تسویه‌ای ندارند.
+   */
+  async settlement(invoiceId: string, ex: Executor = this.#db): Promise<Settlement | null> {
+    const r = await sql<{ status: string; payable: string; paid: string; received: string }>`
+      SELECT i.status, i.payable_amount AS payable, i.paid_amount AS paid,
+        (SELECT coalesce(sum(p.amount), 0) FROM treasury.payment p
+           JOIN treasury.payment_method m ON m.code = p.method_code
+          WHERE p.invoice_id = i.id AND p.direction = 'in' AND m.kind <> 'credit'
+            AND p.status IN ('succeeded', 'settled', 'reconciled')) AS received
+        FROM sales.invoice i WHERE i.id = ${invoiceId}::uuid`.execute(ex);
+    const row = r.rows[0];
+    if (!row || !["finalized", "paid", "partially_returned", "returned"].includes(row.status)) return null;
+    const payable = parseMoney(row.payable), paid = parseMoney(row.paid), received = parseMoney(row.received);
+    return { payable, paid, received, change: received > paid ? received - paid : 0n, due: payable > paid ? payable - paid : 0n };
+  }
+
   /** مبلغ قابل پرداختِ پیش‌بینی‌شده، پیش از نهایی‌سازی. */
   async payableEstimate(invoiceId: string): Promise<bigint> {
     const inv = await this.byId(invoiceId);
@@ -1285,6 +1387,33 @@ async function refreshTotals(trx: Transaction<Database>, invoiceId: string): Pro
 }
 
 /** شکل JSON — پول همیشه رشته. */
+/** منبع Inbox مسیر پرداخت صندوق — همان `source` که `runOnce` می‌نویسد. */
+export const PAYMENT_INBOX_SOURCE = "api.invoice.payment";
+
+export type PaymentIntentStatus =
+  | { state: "recorded"; terminal: true;
+      payment: { id: string; methodCode: string; amount: bigint; refNo: string | null; status: string } }
+  | { state: "abandoned" | "key_conflict"; terminal: true }
+  | { state: "invoice_closed"; terminal: true; invoiceStatus: string }
+  | { state: "not_found"; terminal: false };
+
+export interface Settlement { payable: bigint; paid: bigint; received: bigint; change: bigint; due: bigint }
+
+export function settlementToJson(s: Settlement | null) {
+  return s === null ? null : {
+    payableAmount: serializeMoney(s.payable),
+    paidAmount: serializeMoney(s.paid),
+    receivedAmount: serializeMoney(s.received),
+    changeAmount: serializeMoney(s.change),
+    dueAmount: serializeMoney(s.due),
+  };
+}
+
+export function paymentIntentToJson(s: PaymentIntentStatus) {
+  if (s.state !== "recorded") return s;
+  return { ...s, payment: { ...s.payment, amount: serializeMoney(s.payment.amount) } };
+}
+
 export function invoiceToJson(inv: Invoice) {
   return {
     id: inv.id,

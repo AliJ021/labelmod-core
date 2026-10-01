@@ -21,7 +21,8 @@
  *   - لینک پرداخت — هیچ ارائه‌دهنده‌ای در بک‌اند ندارد.
  */
 import { ApiError } from "./api.ts";
-import type { PaymentMethod } from "./pos.ts";
+import type { InvoiceSettlement, PaymentIntentStatus, PaymentMethod } from "./pos.ts";
+import type { PendingPayment } from "./pending-payment.ts";
 
 export type PaymentGroup = "primary" | "secondary" | "more";
 
@@ -108,26 +109,36 @@ export function checkAmount(option: Pick<PaymentOption, "allowsChange">, typed: 
   return { ok: true, amount };
 }
 
-// ── پرداخت با نتیجهٔ نامعلوم (UI_PATTERNS §۵ بند ۷) ────────────────────
+// ── پرداخت با نتیجهٔ نامعلوم (UI_PATTERNS §۵ بند ۷، F-115-01) ───────────
 
-/** یک «قصد پرداخت» — همان چیزی که با همان کلید دوباره فرستاده می‌شود. */
+/**
+ * یک «قصد پرداخت» — هویتش `key` است: همان `Idempotency-Key` ارسال و همان
+ * `client_event_id` ردیف پرداخت در سرور. تا وضعیتش نهایی نشود، همین کلید و همین
+ * بدنه است؛ کلید تازه فقط برای قصد تازه.
+ */
 export interface PaymentIntent {
-  /** نام عمل در `ActionKeys`؛ کلید تا روشن‌شدن نتیجه همان می‌ماند. */
-  action: string;
+  key: string;
+  invoiceId: string;
   methodCode: string;
   methodName: string;
   amount: bigint;
   refNo: string;
-  /** «چقدر گرفته بودیم» از آخرین پاسخ سرور، پیش از این ارسال. */
-  receivedBefore: bigint;
 }
+
+/**
+ * چرا قصد هنوز باز است:
+ *   ambiguous       پاسخ قطعی نرسید (شبکه، ۵xx، Idempotency).
+ *   not_found_yet   سرور ردیفی با این شناسه **هنوز** ندارد — ممکن است در راه باشد.
+ *   retry_rejected  ارسال دوبارهٔ همان قصد رد شد؛ نسخهٔ اول هنوز نهایی نیست.
+ *   mismatch        ردیف این شناسه با بدنهٔ قصد نمی‌خواند — سرپرست باید ببیند.
+ */
+export type UnresolvedReason = "ambiguous" | "not_found_yet" | "retry_rejected" | "mismatch";
 
 export type PaymentPhase =
   | { kind: "idle" }
   | { kind: "submitting"; intent: PaymentIntent }
-  | { kind: "unknown"; intent: PaymentIntent }
-  | { kind: "checking"; intent: PaymentIntent }
-  | { kind: "not_recorded"; intent: PaymentIntent };
+  | { kind: "unknown"; intent: PaymentIntent; reason: UnresolvedReason; detail?: string }
+  | { kind: "checking"; intent: PaymentIntent };
 
 /** آیا انتخاب روش و مبلغ قفل است؟ هر حالتی جز `idle`. */
 export function paymentLocked(p: PaymentPhase): boolean {
@@ -151,17 +162,60 @@ export function paymentFailureKind(err: unknown): "rejected" | "unknown" {
   return "unknown";
 }
 
+export type IntentVerdict = "recorded" | "not_recorded_final" | "unresolved" | "mismatch";
+
 /**
- * بررسی وضعیت از روی «دریافتی» سرور.
+ * حکم «بررسی وضعیت» — فقط از پاسخ سرور دربارهٔ **همین شناسه**.
  *
- *   recorded       دقیقاً همین مبلغ اضافه شده — پرداخت نشسته است.
- *   not_recorded   هیچ تغییری — می‌شود **همان** درخواست را با همان کلید فرستاد.
- *   unknown        تغییری دیگر (پرداخت هم‌زمان؟) — قفل می‌ماند تا آدم بررسی کند.
+ * جمع دریافتی فاکتور هیچ نقشی ندارد: پرداخت دیگری با همان مبلغ (تب دیگر، دستگاه
+ * دیگر، یا همین صندوق) آن را دقیقاً به اندازهٔ این قصد بالا می‌برد و «ثبت شد»
+ * جعلی می‌ساخت. و «پیدا نشد» فقط «هنوز پیدا نشد» است — تراکنشِ در راه دیده
+ * نمی‌شود — پس قصد باز می‌ماند تا سرور حالت **نهایی** بدهد:
+ *   recorded              ردیف همین شناسه، با همین روش و مبلغ و پیگیری.
+ *   not_recorded_final    شناسه مهر شده، مال درخواست دیگری است، یا فاکتور دیگر
+ *                         پیش‌نویس نیست — این قصد هرگز ثبت نمی‌شود.
+ *   unresolved            هنوز پیدا نشد؛ فقط همان قصد با همان کلید.
+ *   mismatch              ردیف هست ولی بدنه‌اش این قصد نیست.
  */
-export function resolveByReceived(intent: Pick<PaymentIntent, "amount" | "receivedBefore">, receivedNow: bigint): "recorded" | "not_recorded" | "unknown" {
-  if (receivedNow - intent.receivedBefore === intent.amount) return "recorded";
-  if (receivedNow === intent.receivedBefore) return "not_recorded";
-  return "unknown";
+export function resolveIntentStatus(intent: Pick<PaymentIntent, "methodCode" | "amount" | "refNo">, status: PaymentIntentStatus): IntentVerdict {
+  switch (status.state) {
+    case "recorded": {
+      const p = status.payment;
+      return p.methodCode === intent.methodCode && BigInt(p.amount) === intent.amount && (p.refNo ?? "") === intent.refNo
+        && p.status === "succeeded" ? "recorded" : "mismatch";
+    }
+    case "abandoned": case "key_conflict": case "invoice_closed": return "not_recorded_final";
+    case "not_found": return "unresolved";
+  }
+}
+
+/** شکل پایدار قصد (`pending-payment.ts`) — مبلغ رشتهٔ ریالی، هرگز `number`. */
+export function intentToPending(intent: PaymentIntent, ctx: { actorId: string; shiftId: string }, state: PendingPayment["state"]): PendingPayment {
+  return { actorId: ctx.actorId, invoiceId: intent.invoiceId, shiftId: ctx.shiftId, key: intent.key,
+    methodCode: intent.methodCode, methodName: intent.methodName, amount: intent.amount.toString(), refNo: intent.refNo, state };
+}
+
+export function intentFromPending(p: PendingPayment): PaymentIntent {
+  return { key: p.key, invoiceId: p.invoiceId, methodCode: p.methodCode, methodName: p.methodName, amount: BigInt(p.amount), refNo: p.refNo };
+}
+
+/** بدنهٔ ارسال — یک تعریف، تا تکرار همان قصد دقیقاً همان بدنه را ببرد. */
+export function paymentBody(intent: PaymentIntent): { methodCode: string; amount: string; refNo?: string } {
+  return { methodCode: intent.methodCode, amount: intent.amount.toString(), ...(intent.refNo === "" ? {} : { refNo: intent.refNo }) };
+}
+
+// ── «ثبت شد» از تسویهٔ قطعی سرور (F-115-02) ────────────────────────────
+
+export interface FinalAmounts { payable: bigint; paid: bigint; received: bigint; change: bigint; credit: bigint }
+
+/**
+ * مبلغ‌های صفحهٔ «ثبت شد» — فقط از `settlement` سرور، نه از تصویر کلاینت پیش از
+ * نهایی‌سازی. نبودنش (`null` یا نیامدن) خطاست، نه صفر: صفحه حدس نمی‌زند.
+ */
+export function finalAmounts(settlement: InvoiceSettlement | null | undefined): FinalAmounts | null {
+  if (!settlement) return null;
+  return { payable: BigInt(settlement.payableAmount), paid: BigInt(settlement.paidAmount),
+    received: BigInt(settlement.receivedAmount), change: BigInt(settlement.changeAmount), credit: BigInt(settlement.dueAmount) };
 }
 
 // ── جمع‌ها ──────────────────────────────────────────────────────────

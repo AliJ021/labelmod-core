@@ -38,10 +38,16 @@ test("name search groups products then selects color and size, including a varia
   await panel.getByRole("button",{name:"قرمز",exact:true}).click();
   await expect(panel.getByRole("button",{name:/بدون قیمت/})).toBeDisabled();
 });
-test("split payment: an ambiguous 503 locks the method until status check, retries the same key once, then shows server totals",async({page,api})=>{
+test("split payment: an ambiguous 503 locks the method until a status check by its key, retries the same key once, then shows server totals",async({page,api})=>{
   pos(api);let attempts=0;
   const payments:Array<{id:string;name:string;amount:string}>=[];
   const keys:string[]=[];
+  // وضعیت قصد با شناسهٔ خودش؛ ۵۰۳ چیزی ثبت نکرده، پس «هنوز پیدا نشد» — نه «ثبت نشد».
+  const checked:string[]=[];
+  await page.route("**/api/invoices/33333333-3333-4333-8333-333333333333/payment-intents/**",async route=>{
+    checked.push(decodeURIComponent(new URL(route.request().url()).pathname.split("/").at(-1)??""));
+    await route.fulfill({json:{state:"not_found",terminal:false}});
+  });
   api.handlers.set("GET /invoices/33333333-3333-4333-8333-333333333333/payments",async route=>{await route.fulfill({json:{payments}});});
   api.handlers.set("POST /invoices/33333333-3333-4333-8333-333333333333/payments",async route=>{
     attempts++;const data=route.request().postDataJSON();keys.push(route.request().headers()["idempotency-key"]??"");
@@ -66,9 +72,11 @@ test("split payment: an ambiguous 503 locks the method until status check, retri
   await expect(page.getByRole("button",{name:"دریافت وجه",exact:true})).toHaveCount(0);
   expect(attempts).toBe(1);
   await page.getByRole("button",{name:"بررسی وضعیت",exact:true}).click();
-  await expect(page.getByText("سرور تأیید کرد این پرداخت ثبت نشده است")).toBeVisible();
+  await expect(page.getByText("سرور هنوز پرداختی با شناسهٔ همین درخواست ندارد")).toBeVisible();
+  expect(checked).toEqual([keys[0]]);
   expect(attempts).toBe(1);
-  await page.getByRole("button",{name:"ثبت دوبارهٔ همین پرداخت",exact:true}).click();
+  await expect(card).toBeDisabled();
+  await page.getByRole("button",{name:"ارسال دوبارهٔ همین پرداخت",exact:true}).click();
   await expect.poll(()=>attempts).toBe(2);
   expect(keys[1]).toBe(keys[0]);
   const summary=page.getByRole("complementary",{name:"پرداخت",exact:true});

@@ -11,7 +11,10 @@ import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import { ApiError } from "../src/lib/api.ts";
 import { allOptions, cartCounts, checkAmount, checkoutErrorMessage, checkoutTotals, maxAmount, NEEDS_CUSTOMER_REASON,
-  paymentFailureKind, paymentLayout, paymentLocked, resolveByReceived, type PaymentPhase } from "../src/lib/pos-payments.ts";
+  finalAmounts, intentFromPending, intentToPending, paymentBody, paymentFailureKind, paymentLayout, paymentLocked,
+  resolveIntentStatus, type PaymentIntent, type PaymentPhase } from "../src/lib/pos-payments.ts";
+import { clearPendingPayment, readPendingPayment, writePendingPayment } from "../src/lib/pending-payment.ts";
+import type { KeyValueStorage } from "../src/lib/queue-store.ts";
 import { formatMoney } from "../src/lib/format.ts";
 import type { PaymentMethod } from "../src/lib/pos.ts";
 
@@ -96,29 +99,136 @@ describe("پرداخت با نتیجهٔ نامعلوم", () => {
       assert.equal(paymentFailureKind(err), "unknown", String(err));
   });
 
-  test("بررسی وضعیت فقط با تغییر دقیقاً برابر مبلغ «ثبت شد» است؛ تغییر دیگر حدس زده نمی‌شود", () => {
-    const intent = { amount: 50_000n, receivedBefore: 100_000n };
-    assert.equal(resolveByReceived(intent, 150_000n), "recorded");
-    assert.equal(resolveByReceived(intent, 100_000n), "not_recorded");
-    assert.equal(resolveByReceived(intent, 130_000n), "unknown");
-    assert.equal(resolveByReceived(intent, 200_000n), "unknown", "دو برابر یعنی پرداخت دیگری هم هست");
+  const A: PaymentIntent = { key: "11111111-1111-4111-8111-111111111111", invoiceId: "22222222-2222-4222-8222-222222222222",
+    methodCode: "card", methodName: "کارت‌خوان", amount: 100_000n, refNo: "REF-A" };
+  const recorded = (over: Partial<{ methodCode: string; amount: string; refNo: string | null; status: string }> = {}) => ({
+    state: "recorded" as const, terminal: true as const,
+    payment: { id: "p", methodCode: "card", amount: "100000", refNo: "REF-A", status: "succeeded", ...over } });
+
+  test("وضعیت فقط از هویت همین قصد؛ «پیدا نشد» هرگز «ثبت نشد» نیست", () => {
+    assert.equal(resolveIntentStatus(A, recorded()), "recorded");
+    assert.equal(resolveIntentStatus(A, { state: "not_found", terminal: false }), "unresolved");
+    assert.equal(resolveIntentStatus(A, { state: "abandoned", terminal: true }), "not_recorded_final");
+    assert.equal(resolveIntentStatus(A, { state: "key_conflict", terminal: true }), "not_recorded_final");
+    assert.equal(resolveIntentStatus(A, { state: "invoice_closed", terminal: true, invoiceStatus: "finalized" }), "not_recorded_final");
+    // ردیفِ همین شناسه ولی بدنهٔ دیگر حدس زده نمی‌شود.
+    for (const over of [{ amount: "100001" }, { methodCode: "transfer" }, { refNo: "REF-B" }, { refNo: null }, { status: "reversed" }])
+      assert.equal(resolveIntentStatus(A, recorded(over)), "mismatch", JSON.stringify(over));
+  });
+
+  test("جمع دریافتی هیچ نقشی در حکم ندارد — منطق تجمیعی بازنشسته است", () => {
+    const lib = readFileSync(new URL("../src/lib/pos-payments.ts", import.meta.url), "utf8");
+    const pos = readFileSync(new URL("../src/screens/Pos.tsx", import.meta.url), "utf8");
+    for (const src of [lib, pos]) {
+      assert.ok(!/resolveByReceived|receivedBefore/.test(src), "مقایسهٔ «دریافتی قبل/بعد» برگشته است");
+    }
+    // تابع حکم اصلاً ورودیِ «دریافتی» ندارد.
+    assert.equal(resolveIntentStatus.length, 2);
+    const check = pos.slice(pos.indexOf("const checkPayment = () =>"), pos.indexOf("const retryPayment"));
+    assert.match(check, /pos\.paymentIntent\(intent\.invoiceId, intent\.key\)/, "بررسی وضعیت همان شناسه را می‌پرسد");
+    assert.ok(!/receivedAmount|pos\.invoice\(/.test(check), "بررسی وضعیت از جمع فاکتور حکم نمی‌دهد");
   });
 
   test("هر حالتی جز آرام، روش و مبلغ را قفل می‌کند", () => {
-    const intent = { action: "pay:i:0", methodCode: "card", methodName: "کارت‌خوان", amount: 1n, refNo: "", receivedBefore: 0n };
-    const phases: PaymentPhase[] = [{ kind: "submitting", intent }, { kind: "unknown", intent }, { kind: "checking", intent }, { kind: "not_recorded", intent }];
+    const phases: PaymentPhase[] = [{ kind: "submitting", intent: A }, { kind: "unknown", intent: A, reason: "ambiguous" },
+      { kind: "unknown", intent: A, reason: "not_found_yet" }, { kind: "checking", intent: A }];
     for (const p of phases) assert.equal(paymentLocked(p), true, p.kind);
     assert.equal(paymentLocked({ kind: "idle" }), false);
   });
 
-  test("ارسال دوباره با همان قصد همان نام عمل (و پس همان کلید) را می‌برد", () => {
+  test("ارسال دوباره همان قصد را با همان کلید و همان بدنه می‌برد؛ کلید تازه فقط برای قصد تازه", () => {
     const src = readFileSync(new URL("../src/screens/Pos.tsx", import.meta.url), "utf8");
-    const retry = src.slice(src.indexOf("const retryPayment = () =>"), src.indexOf("const discardPayment"));
-    assert.match(retry, /submitPayment\(payPhase\.intent\)/, "ثبت دوباره باید همان قصد را بفرستد");
-    const submit = src.slice(src.indexOf("const submitPayment = (intent: PaymentIntent) =>"), src.indexOf("const takePayment"));
-    assert.match(submit, /keys\.current\.run\(intent\.action,/, "کلید از نام عمل قصد می‌آید");
+    const retry = src.slice(src.indexOf("const retryPayment = () =>"), src.indexOf("const abandonPayment"));
+    assert.match(retry, /submitPayment\(payPhase\.intent, true\)/, "ثبت دوباره باید همان قصد را بفرستد");
+    const submit = src.slice(src.indexOf("const submitPayment = (intent: PaymentIntent, retry: boolean) =>"), src.indexOf("function holdIntent"));
+    assert.match(submit, /pos\.pay\(intent\.invoiceId, paymentBody\(intent\), \{ idempotencyKey: intent\.key \}\)/);
+    assert.ok(submit.indexOf("writePendingPayment") < submit.indexOf("pos.pay("), "ذخیرهٔ پایدار پیش از ارسال");
     const unknown = submit.slice(submit.indexOf('=== "unknown"'));
-    assert.ok(unknown.indexOf("return;") < unknown.indexOf("keys.current.clear"), "در نامعلوم کلید آزاد نمی‌شود");
+    assert.ok(unknown.indexOf("return;") < unknown.indexOf("clearPendingPayment"), "در نامعلوم قصد پاک نمی‌شود");
+    const rejectedRetry = submit.slice(submit.indexOf("if (retry) { holdIntent"));
+    assert.ok(rejectedRetry.indexOf("return;") < rejectedRetry.indexOf("clearPendingPayment"), "ردِ ارسال دوباره قصد را نمی‌بندد");
+    assert.equal((src.match(/crypto\.randomUUID\(\), invoiceId: invoice\.id, methodCode/g) ?? []).length, 1, "کلید تازه فقط در takePayment");
+    assert.deepEqual(paymentBody(A), { methodCode: "card", amount: "100000", refNo: "REF-A" });
+    assert.deepEqual(paymentBody({ ...A, refNo: "" }), { methodCode: "card", amount: "100000" });
+  });
+});
+
+/** ذخیرهٔ ساختگی با همان قرارداد `localStorage`. */
+function memStore(): KeyValueStorage & { data: Map<string, string> } {
+  const data = new Map<string, string>();
+  return { data, getItem: (k) => data.get(k) ?? null, setItem: (k, v) => { data.set(k, v); }, removeItem: (k) => { data.delete(k); } };
+}
+
+describe("پرداخت معلق پایدار", () => {
+  const actor = "33333333-3333-4333-8333-333333333333";
+  const shiftId = "44444444-4444-4444-8444-444444444444";
+  const A: PaymentIntent = { key: "11111111-1111-4111-8111-111111111111", invoiceId: "22222222-2222-4222-8222-222222222222",
+    methodCode: "card", methodName: "کارت‌خوان", amount: 100_000n, refNo: "REF-A" };
+
+  test("قصد پس از Reload با همان کلید، مبلغ و بدنه برمی‌گردد — کلید تازه ساخته نمی‌شود", () => {
+    const st = memStore();
+    writePendingPayment(intentToPending(A, { actorId: actor, shiftId }, "sending"), st);
+    writePendingPayment(intentToPending(A, { actorId: actor, shiftId }, "unresolved"), st);
+    const back = readPendingPayment(actor, st);
+    assert.ok(back);
+    assert.equal(back.state, "unresolved");
+    assert.equal(back.amount, "100000", "پول رشتهٔ ریالی است، نه number");
+    assert.deepEqual(intentFromPending(back), A);
+    assert.deepEqual(paymentBody(intentFromPending(back)), paymentBody(A), "بدنهٔ ارسال دوباره همان است");
+    assert.equal(readPendingPayment("55555555-5555-4555-8555-555555555555", st), null, "به کاربر دیگر نمی‌رسد");
+  });
+
+  test("قصد دیگر یا بدنهٔ دیگر بازنویسی نمی‌شود؛ پاک‌کردن فقط با همان کلید", () => {
+    const st = memStore();
+    const pend = intentToPending(A, { actorId: actor, shiftId }, "sending");
+    writePendingPayment(pend, st);
+    assert.throws(() => writePendingPayment({ ...pend, key: "66666666-6666-4666-8666-666666666666" }, st), /تعیین تکلیف نشده/);
+    assert.throws(() => writePendingPayment({ ...pend, amount: "100001" }, st), /عوض نمی‌شود/);
+    assert.throws(() => clearPendingPayment(actor, "66666666-6666-4666-8666-666666666666", st), /پاک نشد/);
+    assert.ok(readPendingPayment(actor, st));
+    clearPendingPayment(actor, A.key, st);
+    assert.equal(readPendingPayment(actor, st), null, "پاک‌سازی پس از حالت نهایی");
+  });
+
+  test("دادهٔ خراب پاک نمی‌شود و «پرداخت معلقی نیست» هم گفته نمی‌شود", () => {
+    for (const raw of ["{", JSON.stringify({ ...intentToPending(A, { actorId: actor, shiftId }, "sending"), amount: "1.5" }),
+      JSON.stringify({ ...intentToPending(A, { actorId: actor, shiftId }, "sending"), amount: 100000 }),
+      JSON.stringify({ ...intentToPending(A, { actorId: actor, shiftId }, "sending"), key: "x" }),
+      JSON.stringify({ ...intentToPending(A, { actorId: actor, shiftId }, "sending"), extra: 1 })]) {
+      const st = memStore();
+      st.setItem(`labelmod_pending_payment_v1:${actor}`, raw);
+      assert.throws(() => readPendingPayment(actor, st), /حفظ شد/, raw);
+      assert.equal(st.getItem(`labelmod_pending_payment_v1:${actor}`), raw);
+    }
+  });
+
+  test("قصد بازیابی‌شده قفل است و فقط با حالت نهایی سرور پاک می‌شود", () => {
+    const src = readFileSync(new URL("../src/screens/Pos.tsx", import.meta.url), "utf8");
+    const recovery = src.slice(src.indexOf("let held: PendingPayment | null"), src.indexOf("const openDraft ="));
+    assert.match(recovery, /setPayPhase\(\{ kind: "unknown", intent: intentFromPending\(held\)/);
+    assert.ok(!/randomUUID/.test(recovery), "بازیابی کلید تازه نمی‌سازد");
+    const settle = src.slice(src.indexOf("async function settleIntent"), src.indexOf("const takePayment"));
+    assert.ok(settle.indexOf('verdict === "unresolved"') < settle.indexOf("clearPendingPayment"), "«هنوز پیدا نشد» پاک نمی‌کند");
+  });
+});
+
+describe("«ثبت شد» از تسویهٔ قطعی", () => {
+  test("مبلغ‌ها از settlement سرور؛ نبودنش null است نه صفر", () => {
+    assert.deepEqual(finalAmounts({ payableAmount: "1000001", paidAmount: "300000", receivedAmount: "300000", changeAmount: "0", dueAmount: "700001" }),
+      { payable: 1_000_001n, paid: 300_000n, received: 300_000n, change: 0n, credit: 700_001n });
+    assert.equal(finalAmounts({ payableAmount: "1000001", paidAmount: "1000001", receivedAmount: "1050001", changeAmount: "50000", dueAmount: "0" })?.change, 50_000n);
+    assert.equal(finalAmounts(null), null);
+    assert.equal(finalAmounts(undefined), null);
+  });
+
+  test("نهایی‌سازی و بررسی آن تصویر پیش از نهایی‌سازی را منبع مبلغ نمی‌کنند", () => {
+    const src = readFileSync(new URL("../src/screens/Pos.tsx", import.meta.url), "utf8");
+    const fin = src.slice(src.indexOf("const finalize = () =>"), src.indexOf("function completeSale"));
+    assert.match(fin, /completeSale\(invoice\.id, done\.number, finalAmounts\(done\.settlement\), null\)/);
+    assert.match(fin, /completeSale\(invoice\.id, fresh\.number, finalAmounts\(fresh\.settlement\), null\)/);
+    assert.ok(!/snapshot/.test(fin), "تصویر کلاینت برگشته است");
+    const sc = readFileSync(new URL("../src/components/pos/SaleComplete.tsx", import.meta.url), "utf8");
+    assert.ok(!/sale\.(received|payable|change|credit)\b/.test(sc), "SaleComplete فقط از amounts یا estimate می‌خواند");
   });
 });
 

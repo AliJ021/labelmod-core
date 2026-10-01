@@ -44,14 +44,16 @@ import { CheckoutSummary } from "../components/pos/CheckoutSummary.tsx";
 import { CustomerSummary } from "../components/pos/CustomerSummary.tsx";
 import { CreditCheckout } from "../components/pos/CreditCheckout.tsx";
 import { SaleComplete, type CompletedSale } from "../components/pos/SaleComplete.tsx";
-import { cartCounts, checkoutErrorMessage, checkoutTotals, paymentFailureKind, paymentLayout, resolveByReceived,
-  type PaymentIntent, type PaymentOption, type PaymentPhase } from "../lib/pos-payments.ts";
+import { cartCounts, checkoutErrorMessage, checkoutTotals, finalAmounts, intentFromPending, intentToPending, paymentBody,
+  paymentFailureKind, paymentLayout, resolveIntentStatus, type PaymentIntent, type PaymentOption, type PaymentPhase,
+  type UnresolvedReason } from "../lib/pos-payments.ts";
+import { clearPendingPayment, readPendingPayment, writePendingPayment, type PendingPayment } from "../lib/pending-payment.ts";
 import { formatCount } from "../lib/format.ts";
 import { session } from "../lib/session.ts";
 import { isNetworkFailure } from "../lib/offline-queue.ts";
 import { forgetCart, readCart, rememberCart } from "../lib/open-cart.ts";
 import { pendingLabel, saleQueue, summarize, type PendingSummary } from "../lib/sale-queue.ts";
-import { pos, type Branch, type Invoice, type InvoiceCustomer, type InvoiceLine, type PaymentMethod, type DraftPayment, type Shift } from "../lib/pos.ts";
+import { pos, type Branch, type Invoice, type InvoiceCustomer, type PaymentIntentStatus, type InvoiceLine, type PaymentMethod, type DraftPayment, type Shift } from "../lib/pos.ts";
 import { normalizeDigits } from "../lib/settings-value.ts";
 import { ScanBuffer } from "../lib/scanner.ts";
 
@@ -282,7 +284,9 @@ export function Pos({ actorId }: { actorId: string }) {
   const scanRunning = useRef(false);
   const mutationRunning = useRef(false);
   const pendingScanRef = useRef<PendingScan | null>(null);
-  const busy = working || pendingScan !== null || scanStorageError !== null;
+  /** ذخیرهٔ پرداخت معلق خوانده نشد — مثل اسکن معلق، تا روشن‌شدن هیچ عمل مالی‌ای نه. */
+  const [paymentStoreError, setPaymentStoreError] = useState<string | null>(null);
+  const busy = working || pendingScan !== null || scanStorageError !== null || paymentStoreError !== null;
   useEffect(() => {
     const sync = () => {
       try { const p = readPendingScan(actorId); pendingScanRef.current = p; setPendingScan(p); }
@@ -395,17 +399,30 @@ export function Pos({ actorId }: { actorId: string }) {
    */
   useEffect(() => {
     if (!shift || invoice) return;
+    /*
+     * پرداخت نامعلومِ پیش از Reload (F-115-01) — سبدش اولویت دارد، چون قصد به همان
+     * فاکتور گره خورده است. کلید تازه ساخته نمی‌شود: همان قصد قفل برمی‌گردد.
+     */
+    let held: PendingPayment | null = null;
+    try { held = readPendingPayment(actorId); } catch (e) { setPaymentStoreError(e instanceof Error ? e.message : "ذخیرهٔ پرداخت معلق در دسترس نیست."); return; }
     const saved = readCart(shift.id);
-    if (!saved) return;
+    const target = held?.invoiceId ?? saved?.invoiceId;
+    if (!target) return;
     void (async () => {
       try {
-        const inv = await pos.invoice(saved.invoiceId);
+        const inv = await pos.invoice(target);
         if (inv.status === "draft" && inv.createdBy === actorId && inv.shiftId === shift.id && inv.branchId === shift.branchId && shift.userId === actorId && shift.status === "open") {
           setInvoice(inv);
           setReceived(parseRial(inv.receivedAmount));
-          setNote("سبد نیمه‌تمام قبلی برگردانده شد.");
+          if (held) {
+            rememberCart({ invoiceId: inv.id, shiftId: shift.id });
+            setPayPhase({ kind: "unknown", intent: intentFromPending(held), reason: "ambiguous" });
+            setNote("پرداختی که نتیجه‌اش روشن نبود با همان شناسه برگردانده شد؛ پیش از هر کاری وضعیتش را بررسی کنید.");
+          } else setNote("سبد نیمه‌تمام قبلی برگردانده شد.");
         } else {
           forgetCart();
+          // فاکتوری که دیگر پیش‌نویس نیست، اثبات نهایی سرور را دارد؛ همان را می‌پرسیم.
+          if (held) await settleIntent(intentFromPending(held), await pos.paymentIntent(held.invoiceId, held.key), "ambiguous");
         }
       } catch (e) {
         setError(message(e));
@@ -585,7 +602,7 @@ export function Pos({ actorId }: { actorId: string }) {
    */
   async function exclusive<T>(fn: () => Promise<T>): Promise<T> {
     const refuse = (text: string) => new ApiError(409, "pos_busy", text, null);
-    if (pendingScanRef.current || scanStorageError || scanRunning.current || mutationRunning.current)
+    if (pendingScanRef.current || scanStorageError || paymentStoreError || scanRunning.current || mutationRunning.current)
       throw refuse("عملیات قبلی هنوز تأیید نشده است؛ پس از بررسی دوباره تلاش کنید.");
     mutationRunning.current = true;
     setBusy(true);
@@ -748,108 +765,133 @@ export function Pos({ actorId }: { actorId: string }) {
     });
 
   /**
-   * ثبت یک پرداخت — با چرخهٔ «نتیجهٔ نامعلوم» (UI_PATTERNS §۵ بند ۷).
+   * ثبت یک پرداخت — با چرخهٔ «نتیجهٔ نامعلوم» (UI_PATTERNS §۵ بند ۷، F-115-01).
    *
-   * ── چرا کلید از `received` ساخته می‌شود و نه از یک شمارنده ──
+   * ── هویت قصد، کلید خودش است ──
    *
-   * نام عمل باید روی **Retry همان پرداخت** ثابت بماند و برای **پرداخت بعدی**
-   * عوض شود. `received` هر دو را می‌دهد: تا وقتی پرداختی ثبت نشده تغییر
-   * نمی‌کند، و به‌محض ثبت بالا می‌رود. شمارنده — مثل `ScanCounter` — اینجا
-   * **بدتر** بود: هر Retry کلید تازه می‌گرفت و پرداختی که فقط پاسخش در شبکه گم
-   * شده بود، دوباره از مشتری گرفته می‌شد.
+   * هر قصد یک `key` تصادفی می‌گیرد که همان `Idempotency-Key` و در سرور همان
+   * `client_event_id` است، و **پیش از** ارسال در `pending-payment` می‌نشیند — پس
+   * Reload آن را گم نمی‌کند. تا سرور حالت نهایی ندهد، فقط همین قصد با همین کلید و
+   * همین بدنه: نه روش تازه، نه مبلغ تازه، نه کلید تازه.
    *
-   * ⚠️ به یک ثابت دور وابسته است: `addPaymentIn` وضعیت `succeeded` می‌نویسد و
-   *    `paidSoFar` همان را می‌شمارد. اگر روزی درگاهی پرداخت را `pending` ثبت کند،
-   *    `received` بالا نمی‌رود و پرداخت **عمدیِ** بعدی Replay اولی می‌شود.
+   * ⚠️ جمع دریافتی هرگز هویت این پرداخت را ثابت نمی‌کند: پرداخت دیگری با همان
+   *    مبلغ (تب یا دستگاه دیگر) آن را دقیقاً به اندازهٔ همین قصد بالا می‌برد. بررسی
+   *    وضعیت فقط `GET /invoices/:id/payment-intents/:key` است.
+   * ⚠️ `navigator.locks` فقط هماهنگی میان تب‌هاست، نه اثبات مالی.
    *
-   * ── نتیجهٔ نامعلوم (Batch 2.1) ──
-   *
-   * قطع شبکه، ۵xx یا خطای Idempotency یعنی «شاید نشسته باشد». آن‌وقت قصد
-   * پرداخت با **همان کلید** نگه داشته می‌شود و روش و مبلغ قفل‌اند تا
-   * `checkPayment` از سرور بخواند. ارسال کور، عوض‌کردن روش، یا کلید تازهٔ
-   * خودکار برای همان قصد ممکن نیست. ردِ قطعی (۴xx دامنه) اثری نگذاشته، پس کلید
-   * آزاد و ورودی برای اصلاح حفظ می‌شود.
+   * ردِ قطعیِ **نخستین** ارسال اثری نگذاشته (همان درخواست تنها نسخه بود)، پس قصد
+   * پاک و ورودی برای اصلاح حفظ می‌شود. ردِ **ارسال دوباره** چنین اثباتی ندارد —
+   * نسخهٔ اول ممکن است هنوز در راه باشد — پس قصد باز می‌ماند تا بررسی یا مهر.
    */
-  const submitPayment = (intent: PaymentIntent) =>
+  const submitPayment = (intent: PaymentIntent, retry: boolean) =>
     guarded(async () => {
-      if (!invoice) return;
+      if (!invoice || invoice.id !== intent.invoiceId || !invoice.shiftId) return;
+      if (!retry) {
+        const other = readPendingPayment(actorId);
+        if (other) {
+          if (other.invoiceId === invoice.id) setPayPhase({ kind: "unknown", intent: intentFromPending(other), reason: "ambiguous" });
+          throw new Error("پرداخت دیگری هنوز تعیین تکلیف نشده است؛ ابتدا وضعیت همان را بررسی کنید.");
+        }
+        // نوشتن پایدار شرط ارسال است؛ اگر نشد، چیزی فرستاده نمی‌شود.
+        writePendingPayment(intentToPending(intent, { actorId, shiftId: invoice.shiftId }, "sending"));
+      }
       setPayPhase({ kind: "submitting", intent });
       try {
-        const out = await keys.current.run(intent.action, (key) =>
-          pos.pay(
-            invoice.id,
-            {
-              methodCode: intent.methodCode,
-              amount: intent.amount.toString(),
-              ...(intent.refNo === "" ? {} : { refNo: intent.refNo }),
-            },
-            { idempotencyKey: key },
-          ),
-        );
+        const out = await pos.pay(intent.invoiceId, paymentBody(intent), { idempotencyKey: intent.key });
+        clearPendingPayment(actorId, intent.key);
         setInvoice(out.invoice);
-        // «چقدر گرفته‌ایم» از جمع سرور می‌آید، نه از مبلغی که فرستادیم.
+        // «چقدر گرفته‌ایم» از جمع سرور می‌آید — فقط برای نمایش، نه برای هویت پرداخت.
         setReceived(parseRial(out.receivedAmount));
         setPayPhase({ kind: "idle" });
+        if (retry) setNote(`پرداخت ${intent.methodName} با همان شناسه ثبت شد.`);
       } catch (err) {
-        if (paymentFailureKind(err) === "unknown") {
-          setPayPhase({ kind: "unknown", intent });
-          return;
-        }
-        keys.current.clear(intent.action);
+        if (paymentFailureKind(err) === "unknown") { holdIntent(intent, "ambiguous", invoice.shiftId); return; }
+        if (retry) { holdIntent(intent, "retry_rejected", invoice.shiftId, checkoutErrorMessage(err)); return; }
+        clearPendingPayment(actorId, intent.key);
         setPayPhase({ kind: "idle" });
         setError(checkoutErrorMessage(err));
       }
     });
 
+  /** قصد باز می‌ماند — هم روی صفحه و هم در ذخیرهٔ پایدار. */
+  function holdIntent(intent: PaymentIntent, reason: UnresolvedReason, shiftId: string, detail?: string) {
+    try { writePendingPayment(intentToPending(intent, { actorId, shiftId }, "unresolved")); }
+    catch (e) { setError(e instanceof Error ? e.message : "پرداخت معلق ذخیره نشد."); }
+    setPayPhase({ kind: "unknown", intent, reason, ...(detail === undefined ? {} : { detail }) });
+  }
+
+  /**
+   * حکم سرور دربارهٔ **همین** شناسه. فقط حالت نهایی قصد را می‌بندد و ذخیرهٔ پایدار را
+   * پاک می‌کند؛ «هنوز پیدا نشد» قصد را قفل نگه می‌دارد.
+   */
+  async function settleIntent(intent: PaymentIntent, status: PaymentIntentStatus, reason: UnresolvedReason) {
+    const verdict = resolveIntentStatus(intent, status);
+    if (verdict === "unresolved" || verdict === "mismatch") {
+      // ردِ ارسال دوباره، پس از بررسی هم «هنوز پیدا نشد» است؛ دلیلش دیده می‌ماند.
+      setPayPhase({ kind: "unknown", intent, reason: verdict === "mismatch" ? "mismatch" : reason === "retry_rejected" ? reason : "not_found_yet" });
+      return;
+    }
+    clearPendingPayment(actorId, intent.key);
+    setPayPhase({ kind: "idle" });
+    setNote(verdict === "recorded"
+      ? `پرداخت ${intent.methodName} پیش‌تر ثبت شده بود؛ دوباره گرفته نشد.`
+      : `سرور تأیید کرد پرداخت ${intent.methodName} هرگز ثبت نمی‌شود؛ می‌توانید پرداخت تازه بگیرید.`);
+    try {
+      const fresh = await pos.invoice(intent.invoiceId);
+      if (fresh.status === "draft") { setInvoice(fresh); setReceived(parseRial(fresh.receivedAmount)); }
+    } catch {
+      setError("فاکتور تازه خوانده نشد؛ صفحه را تازه کنید تا دریافتی درست دیده شود.");
+    }
+  }
+
   const takePayment = (option: PaymentOption, amountRial: bigint, refNo: string) => {
     if (!invoice || payPhase.kind !== "idle") return;
-    void submitPayment({ action: `pay:${invoice.id}:${received}`, methodCode: option.code, methodName: option.name,
-      amount: amountRial, refNo, receivedBefore: received });
+    void submitPayment({ key: crypto.randomUUID(), invoiceId: invoice.id, methodCode: option.code, methodName: option.name,
+      amount: amountRial, refNo }, false);
   };
 
-  /** «بررسی وضعیت» — فقط خواندن؛ هیچ پرداختی دوباره فرستاده نمی‌شود. */
+  /** «بررسی وضعیت» — فقط خواندنِ همان شناسه؛ هیچ پرداختی دوباره فرستاده نمی‌شود. */
   const checkPayment = () =>
     guarded(async () => {
-      if (!invoice || (payPhase.kind !== "unknown" && payPhase.kind !== "not_recorded")) return;
-      const intent = payPhase.intent;
+      if (payPhase.kind !== "unknown") return;
+      const { intent, reason } = payPhase;
       setPayPhase({ kind: "checking", intent });
-      let fresh: Invoice & { receivedAmount: string };
+      let status: PaymentIntentStatus;
       try {
-        fresh = await pos.invoice(invoice.id);
+        status = await pos.paymentIntent(intent.invoiceId, intent.key);
       } catch {
-        setPayPhase({ kind: "unknown", intent });
+        setPayPhase({ kind: "unknown", intent, reason });
         setError("وضعیت هنوز از سرور خوانده نشد؛ اتصال را بررسی کنید و دوباره «بررسی وضعیت» را بزنید.");
         return;
       }
-      const now = parseRial(fresh.receivedAmount);
-      const verdict = resolveByReceived(intent, now);
-      if (verdict === "recorded") {
-        keys.current.clear(intent.action);
-        setInvoice(fresh);
-        setReceived(now);
-        setPayPhase({ kind: "idle" });
-        setNote(`پرداخت ${intent.methodName} پیش‌تر ثبت شده بود؛ دوباره گرفته نشد.`);
-      } else if (verdict === "not_recorded") {
-        setPayPhase({ kind: "not_recorded", intent });
-      } else {
-        // دریافتی تغییر کرده ولی نه به اندازهٔ همین پرداخت — حدس نمی‌زنیم.
-        setPayPhase({ kind: "unknown", intent });
-        setError("دریافتی این فاکتور تغییر کرده ولی نه به اندازهٔ این پرداخت. فهرست پرداخت‌های ثبت‌شده را با مشتری تطبیق دهید و از سرپرست کمک بگیرید.");
-      }
+      await settleIntent(intent, status, reason);
     });
 
-  /** فقط پس از اینکه سرور گفت «ثبت نشده»: همان قصد، همان کلید، همان بدنه. */
+  /** ارسال دوبارهٔ **همان** قصد: همان کلید، همان بدنه — Replay اگر نشسته بود. */
   const retryPayment = () => {
-    if (payPhase.kind !== "not_recorded") return;
-    void submitPayment(payPhase.intent);
+    if (payPhase.kind !== "unknown" || payPhase.reason === "mismatch") return;
+    void submitPayment(payPhase.intent, true);
   };
 
-  /** صرف‌نظر آگاهانه از قصدی که سرور گفته ثبت نشده — کلیدش آزاد می‌شود. */
-  const discardPayment = () => {
-    if (payPhase.kind !== "not_recorded") return;
-    keys.current.clear(payPhase.intent.action);
-    setPayPhase({ kind: "idle" });
-  };
+  /**
+   * «این پرداخت انجام نشده» — شناسه در سرور مهر می‌شود تا نسخهٔ دیرِ همین قصد هرگز
+   * ثبت نشود. اگر پیش‌تر نشسته بود، سرور «ثبت شد» می‌گوید و همان پذیرفته می‌شود.
+   */
+  const abandonPayment = () =>
+    guarded(async () => {
+      if (payPhase.kind !== "unknown" || payPhase.reason === "mismatch") return;
+      const { intent, reason } = payPhase;
+      setPayPhase({ kind: "checking", intent });
+      let status: PaymentIntentStatus;
+      try {
+        status = await pos.abandonPaymentIntent(intent.invoiceId, intent.key);
+      } catch (err) {
+        setPayPhase({ kind: "unknown", intent, reason });
+        setError(`لغو این پرداخت ثبت نشد: ${message(err)}`);
+        return;
+      }
+      await settleIntent(intent, status, reason);
+    });
 
   /**
    * نهایی‌کردن فاکتور — و تنها عملی که هنگام قطعی شبکه **صف** می‌شود.
@@ -882,10 +924,10 @@ export function Pos({ actorId }: { actorId: string }) {
       const action = `finalize:${invoice.id}`;
       const key = keys.current.keyFor(action);
       const amount = parseRial(invoice.payableAmount);
-      const snapshot = { invoiceId: invoice.id, payable: amount, received };
       try {
         const done = await pos.finalize(invoice.id, { idempotencyKey: key });
-        completeSale(snapshot, done.number, parseRial(done.payableAmount), false);
+        // F-115-02: مبلغ‌ها از تسویهٔ قطعی همین پاسخ، نه از تصویر پیش از نهایی‌سازی.
+        completeSale(invoice.id, done.number, finalAmounts(done.settlement), null);
       } catch (err) {
         // خطای قاعده‌ای (موجودی، دوره بسته، نسیه بی مشتری) صف نمی‌شود:
         // سرور جواب داده و جوابش «نه» است.
@@ -909,7 +951,8 @@ export function Pos({ actorId }: { actorId: string }) {
           label: `فروش ${toman(amount)} تومان`,
         });
         await refreshPending();
-        completeSale(snapshot, null, amount, true);
+        // در صف هنوز تسویه‌ای نیست؛ آخرین عدد سرور فقط «برآورد» نمایش داده می‌شود.
+        completeSale(invoice.id, null, null, { payable: amount, received });
       }
       keys.current.clear(action);
       forgetCart();
@@ -920,17 +963,14 @@ export function Pos({ actorId }: { actorId: string }) {
     if (!invoice) return false;
     const fresh = await pos.invoice(invoice.id);
     if (!["finalized", "paid", "partially_returned", "returned"].includes(fresh.status)) return false;
-    completeSale({ invoiceId: invoice.id, payable: parseRial(invoice.payableAmount), received },
-      fresh.number, parseRial(fresh.payableAmount), false);
+    completeSale(invoice.id, fresh.number, finalAmounts(fresh.settlement), null);
     keys.current.clear(`finalize:${invoice.id}`);
     forgetCart();
     return true;
   };
 
-  function completeSale(snap: { invoiceId: string; payable: bigint; received: bigint }, number: string | null, payable: bigint, queued: boolean) {
-    const left = payable - snap.received;
-    setCompleted({ invoiceId: snap.invoiceId, number, queued, payable, received: snap.received,
-      change: left < 0n ? -left : 0n, credit: left > 0n ? left : 0n });
+  function completeSale(invoiceId: string, number: string | null, amounts: CompletedSale["amounts"], estimate: CompletedSale["estimate"]) {
+    setCompleted({ invoiceId, number, queued: estimate !== null, amounts, estimate });
     setPayPhase({ kind: "idle" });
   }
 
@@ -1037,7 +1077,7 @@ export function Pos({ actorId }: { actorId: string }) {
   // یک ناحیهٔ زنده برای کل صندوق: قابل پرداخت، مانده و وضعیت اصلی.
   const liveText = completed
     ? (completed.queued ? "فروش در صف ارسال است." : `فاکتور ${completed.number ?? ""} ثبت شد.`) +
-      (completed.change > 0n ? ` باقی پول ${toman(completed.change)} تومان.` : "")
+      (completed.amounts && completed.amounts.change > 0n ? ` باقی پول ${toman(completed.amounts.change)} تومان.` : "")
     : hasCart
       ? `قابل پرداخت ${toman(totals.payable)} تومان؛ ${totals.change > 0n ? `باقی پول ${toman(totals.change)}` : `مانده ${toman(totals.remaining)}`} تومان.${note ? ` ${note}` : ""}`
       : note ?? "";
@@ -1076,6 +1116,7 @@ export function Pos({ actorId }: { actorId: string }) {
       </Glass>
 
       {scanStorageError && <p className="solid pos-alert" role="alert">{scanStorageError}</p>}
+      {paymentStoreError && <p className="solid pos-alert" role="alert">{paymentStoreError}</p>}
       {pendingScan && <div className="solid pad" role="status">
         <p>نتیجهٔ اسکن هنوز قطعی نیست. برای جلوگیری از ثبت دوباره، ابتدا همین اسکن را تعیین تکلیف کنید.</p>
         <button type="button" className="btn" disabled={working} onClick={() => void addByBarcode("", undefined, true)}>بررسی و تلاش دوبارهٔ همان اسکن</button>
@@ -1208,7 +1249,7 @@ export function Pos({ actorId }: { actorId: string }) {
           {invoice && received > 0n ? <PaymentBreakdown invoiceId={invoice.id} received={received} /> : null}
           <PaymentSelector layout={layout} remaining={totals.remaining} received={received} phase={payPhase}
             disabled={!hasCart || busy} onPay={takePayment} onCheck={() => void checkPayment()}
-            onRetry={retryPayment} onDiscard={discardPayment} />
+            onRetry={retryPayment} onAbandon={() => void abandonPayment()} />
           <div className="pay-finish">
             <SafeAction trigger="نهایی‌کردن فاکتور" triggerVariant="primary" title="نهایی‌کردن فاکتور"
               disabled={!settled || busy || !payIdle}

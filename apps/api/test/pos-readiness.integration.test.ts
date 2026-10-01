@@ -461,6 +461,13 @@ describe("آمادگی API صندوق", { skip }, () => {
     assert.equal(fin.json().paidAmount, "1000001");
     const change = await sql<{ amount: string }>`SELECT amount::text FROM treasury.payment WHERE invoice_id=${id}::uuid AND direction='out'`.execute(handle.db);
     assert.deepEqual(change.rows, [{ amount: "50000" }]);
+    // F-115-02: تسویهٔ قطعی از ستون‌های نهایی‌سازی، در پاسخ، در Replay و در خواندن دوباره یکی است.
+    const settled = { payableAmount: "1000001", paidAmount: "1000001", receivedAmount: "1050001", changeAmount: "50000", dueAmount: "0" };
+    assert.deepEqual(fin.json().settlement, settled);
+    const again = await app.inject({ method: "POST", url: `/invoices/${id}/finalize`, ...s, headers: { ...s.headers, "idempotency-key": `fin-${id}` }, payload: {} });
+    assert.equal(again.json().replayed, true);
+    assert.deepEqual(again.json().settlement, settled);
+    assert.deepEqual((await app.inject({ method: "GET", url: `/invoices/${id}`, ...s })).json().settlement, settled);
   });
 
   test("نسیه روش پرداخت نیست: ردیف نسیه ساخته نمی‌شود، حتی با مجوز", async () => {
@@ -515,8 +522,180 @@ describe("آمادگی API صندوق", { skip }, () => {
     assert.equal(ok.statusCode, 200, ok.body);
     assert.equal(ok.json().status, "finalized");
     assert.equal(ok.json().paidAmount, "300000", "مانده نسیه است، نه پول دریافتی");
+    assert.deepEqual(ok.json().settlement, { payableAmount: "1000001", paidAmount: "300000", receivedAmount: "300000",
+      changeAmount: "0", dueAmount: "700001" }, "بدهی مشتری = قابل پرداخت − پرداخت قطعی");
     assert.equal(await countPayments(id, "credit"), 0, "هیچ ردیف پرداخت نسیه‌ای ساخته نشد");
     assert.equal(await countPayments(id), 1);
+  });
+
+  // ── F-115-01: وضعیت قصد پرداخت با شناسهٔ خودش، نه با جمع دریافتی ─────────────
+
+  const intentUrl = (invoiceId: string, key: string, abandon = false) =>
+    `/invoices/${invoiceId}/payment-intents/${key}${abandon ? "/abandon" : ""}`;
+  const adminId = async () => (await sql<{ id: string }>`SELECT id FROM identity.app_user WHERE username=${`pc_admin_${suffix}`}`.execute(handle.db)).rows[0]!.id;
+  const payWith = (sess: Awaited<ReturnType<typeof loginAs>>, invoiceId: string, key: string, methodCode: string, amount: string, refNo?: string) =>
+    app.inject({ method: "POST", url: `/invoices/${invoiceId}/payments`, ...sess, headers: { ...sess.headers, "idempotency-key": key },
+      payload: { methodCode, amount, ...(refNo === undefined ? {} : { refNo }) } });
+
+  test("قصد پرداخت با شناسه‌اش شناخته می‌شود: پرداخت دیگری با همان مبلغ و روش آن را «ثبت‌شده» نشان نمی‌دهد", async () => {
+    const a = await checkoutAdmin();
+    const id = await cartAs(a);
+    const keyA = crypto.randomUUID(), keyB = crypto.randomUUID(), keyC = crypto.randomUUID();
+
+    const before = await app.inject({ method: "GET", url: intentUrl(id, keyA), ...a });
+    assert.equal(before.statusCode, 200, before.body);
+    assert.deepEqual(before.json(), { state: "not_found", terminal: false }, "پیدا نشد ≠ ثبت نشد؛ نهایی نیست");
+
+    // B و C: همان مبلغ، شناسهٔ دیگر — B حتی همان روش. جمع دریافتی دقیقاً به اندازهٔ A بالا می‌رود.
+    const b = await payWith(a, id, keyB, "card", "100000", "REF-B");
+    assert.equal(b.statusCode, 201, b.body);
+    const c = await payWith(a, id, keyC, "transfer", "100000", "REF-C");
+    assert.equal(c.statusCode, 201, c.body);
+    const collided = await app.inject({ method: "GET", url: intentUrl(id, keyA), ...a });
+    assert.deepEqual(collided.json(), { state: "not_found", terminal: false }, "B و C هویت A نیستند");
+
+    // A ثبت می‌شود و پاسخش «گم» می‌شود: بررسی وضعیت دقیقاً A را پیدا می‌کند.
+    const lost = await payWith(a, id, keyA, "card", "100000", "REF-A");
+    assert.equal(lost.statusCode, 201, lost.body);
+    const found = await app.inject({ method: "GET", url: intentUrl(id, keyA), ...a });
+    assert.equal(found.statusCode, 200, found.body);
+    assert.deepEqual(found.json(), { state: "recorded", terminal: true,
+      payment: { id: lost.json().paymentId, methodCode: "card", amount: "100000", refNo: "REF-A", status: "succeeded" } });
+    assert.notEqual(found.json().payment.id, b.json().paymentId);
+    assert.equal((await app.inject({ method: "GET", url: intentUrl(id, keyB), ...a })).json().payment.id, b.json().paymentId);
+
+    // ارسال دوبارهٔ همان قصد با همان شناسه Replay است؛ یک ردیف می‌ماند.
+    const replay = await payWith(a, id, keyA, "card", "100000", "REF-A");
+    assert.equal(replay.statusCode, 200, replay.body);
+    assert.equal(replay.json().replayed, true);
+    assert.equal(replay.json().paymentId, lost.json().paymentId);
+    const rowsA = await sql<{ n: number }>`SELECT count(*)::int n FROM treasury.payment WHERE client_event_id=${keyA}`.execute(handle.db);
+    assert.equal(rowsA.rows[0]!.n, 1);
+
+    // مرز دسترسی: بی نشست، شعبهٔ دیگر، سبد کس دیگر، شناسهٔ بدشکل، و فاکتور دیگر.
+    assert.equal((await app.inject({ method: "GET", url: intentUrl(id, keyA) })).statusCode, 401);
+    assert.equal((await app.inject({ method: "GET", url: intentUrl(id, keyA), ...await loginAs(outsider) })).statusCode, 403);
+    const notOwner = await app.inject({ method: "GET", url: intentUrl(id, keyA), ...await loginAs(cashier) });
+    assert.equal(notOwner.statusCode, 403, notOwner.body);
+    assert.equal(notOwner.json().error.code, "draft_owner_mismatch");
+    assert.equal((await app.inject({ method: "GET", url: intentUrl(id, "not-a-key"), ...a })).statusCode, 400);
+    assert.equal((await app.inject({ method: "GET", url: `/invoices/not-a-uuid/payment-intents/${keyA}`, ...a })).statusCode, 400);
+    const other = await cartAs(a);
+    // پرداخت فاکتور دیگر از این مسیر پیدا نمی‌شود؛ فقط گفته می‌شود این شناسه مال درخواست
+    // دیگری است — و درست است: ارسالش روی این فاکتور `idempotency_key_reused` می‌گیرد.
+    assert.deepEqual((await app.inject({ method: "GET", url: intentUrl(other, keyA), ...a })).json(),
+      { state: "key_conflict", terminal: true });
+    assert.equal((await payWith(a, other, keyA, "card", "100000", "REF-A")).statusCode, 409);
+    assert.equal((await app.inject({ method: "POST", url: `/invoices/${other}/cancel`, ...a, payload: {} })).statusCode, 200);
+  });
+
+  test("پرداختِ در راه دیده نمی‌شود و «ثبت نشد» نیست؛ مهر منتظرش می‌ماند و دروغ نمی‌گوید", async () => {
+    const a = await checkoutAdmin();
+    const actor = await adminId();
+    const id = await cartAs(a);
+    const shiftId = (await sql<{ shift_id: string }>`SELECT shift_id FROM sales.invoice WHERE id=${id}::uuid`.execute(handle.db)).rows[0]!.shift_id;
+
+    /** همان دو درجی که `runOnce` + `addPaymentIn` در یک تراکنش می‌زنند، با Commit یا Rollback به اختیار آزمون. */
+    async function inFlight(key: string, commit: boolean) {
+      let release!: () => void;
+      const gate = new Promise<void>((r) => { release = r; });
+      let inserted!: () => void;
+      const ready = new Promise<void>((r) => { inserted = r; });
+      const done = handle.db.transaction().execute(async (trx) => {
+        await sql`SELECT platform.set_actor(${actor}::uuid)`.execute(trx);
+        await trx.insertInto("platform.inbox_message").values({ source: "api.invoice.payment", event_id: key,
+          payload: JSON.stringify({ actorId: actor, amount: "200000", invoiceId: id, methodCode: "card", refNo: "REF-F", accountId: null }),
+          result_ref: null }).execute();
+        const p = await trx.insertInto("treasury.payment").values({ invoice_id: id, return_id: null, shift_id: shiftId,
+          method_code: "card", direction: "in", amount: "200000", ref_no: "REF-F", status: "succeeded", settled_at: null,
+          fee_amount: "0", note: null, client_event_id: key, account_id: null, settlement_id: null }).returning("id").executeTakeFirstOrThrow();
+        await trx.updateTable("platform.inbox_message").set({ result_ref: p.id })
+          .where("source", "=", "api.invoice.payment").where("event_id", "=", key).execute();
+        inserted();
+        await gate;
+        if (!commit) throw new Error("rollback");
+      }).catch((e: unknown) => { if (commit || !(e instanceof Error) || e.message !== "rollback") throw e; });
+      await ready;
+      return { release, done };
+    }
+    /** شرطی، نه خوابِ دلخواه: تا وقتی مهر واقعاً پشت قفل همان کلید منتظر است. */
+    async function untilBlocked() {
+      for (let i = 0; i < 500; i++) {
+        const w = await sql<{ n: number }>`SELECT count(*)::int n FROM pg_stat_activity
+          WHERE datname=current_database() AND wait_event_type='Lock' AND query ILIKE '%inbox_message%'`.execute(handle.db);
+        if (w.rows[0]!.n > 0) return;
+        await new Promise((r) => setTimeout(r, 10));
+      }
+      throw new Error("مهر پشت قفل نرسید");
+    }
+
+    // ۱) در راه و سرانجام Commit: «پیدا نشد» نهایی نیست و مهر «ثبت شد» می‌گوید، نه «رها شد».
+    const keyF = crypto.randomUUID();
+    const f = await inFlight(keyF, true);
+    assert.deepEqual((await app.inject({ method: "GET", url: intentUrl(id, keyF), ...a })).json(), { state: "not_found", terminal: false });
+    const sealF = app.inject({ method: "POST", url: intentUrl(id, keyF, true), ...a, payload: {} });
+    await untilBlocked();
+    f.release(); await f.done;
+    const sealedF = await sealF;
+    assert.equal(sealedF.statusCode, 200, sealedF.body);
+    assert.equal(sealedF.json().state, "recorded");
+    assert.equal(sealedF.json().payment.amount, "200000");
+
+    // ۲) در راه و سرانجام Rollback: مهر می‌نشیند و درخواست دیرِ همان قصد هرگز ثبت نمی‌شود.
+    const keyG = crypto.randomUUID();
+    const g = await inFlight(keyG, false);
+    const sealG = app.inject({ method: "POST", url: intentUrl(id, keyG, true), ...a, payload: {} });
+    await untilBlocked();
+    g.release(); await g.done;
+    assert.deepEqual((await sealG).json(), { state: "abandoned", terminal: true });
+    const late = await payWith(a, id, keyG, "card", "200000", "REF-F");
+    assert.equal(late.statusCode, 409, late.body);
+    assert.equal(late.json().error.code, "idempotency_key_reused");
+    const rowsG = await sql<{ n: number }>`SELECT count(*)::int n FROM treasury.payment WHERE client_event_id=${keyG}`.execute(handle.db);
+    assert.equal(rowsG.rows[0]!.n, 0);
+    // مهر Idempotent است و ردّ حسابرسی دارد؛ مهر روی پرداخت ثبت‌شده آن را «رها» نمی‌کند.
+    assert.deepEqual((await app.inject({ method: "POST", url: intentUrl(id, keyG, true), ...a, payload: {} })).json(), { state: "abandoned", terminal: true });
+    assert.equal((await app.inject({ method: "POST", url: intentUrl(id, keyF, true), ...a, payload: {} })).json().state, "recorded");
+    const audit = await sql<{ n: number }>`SELECT count(*)::int n FROM platform.audit_log WHERE action='payment.intent_abandon' AND entity_id=${id}`.execute(handle.db);
+    assert.equal(audit.rows[0]!.n, 1);
+    assert.equal((await app.inject({ method: "POST", url: intentUrl(id, keyG, true), ...await loginAs(cashier), payload: {} })).statusCode, 403);
+
+    // ۳) هرگز نرسید: همان شناسه دوباره فرستاده می‌شود و یک ردیف می‌سازد.
+    const keyH = crypto.randomUUID();
+    assert.deepEqual((await app.inject({ method: "GET", url: intentUrl(id, keyH), ...a })).json(), { state: "not_found", terminal: false });
+    const retried = await payWith(a, id, keyH, "cash", "100000");
+    assert.equal(retried.statusCode, 201, retried.body);
+    assert.equal((await payWith(a, id, keyH, "cash", "100000")).statusCode, 200);
+    const rowsH = await sql<{ n: number }>`SELECT count(*)::int n FROM treasury.payment WHERE client_event_id=${keyH}`.execute(handle.db);
+    assert.equal(rowsH.rows[0]!.n, 1);
+
+    // ۴) فاکتور که دیگر پیش‌نویس نیست، «ثبت نشد» را اثبات می‌کند.
+    const keyI = crypto.randomUUID();
+    const cash = await payWith(a, id, crypto.randomUUID(), "cash", "1000000");
+    assert.equal(cash.statusCode, 201, cash.body);
+    const fin = await app.inject({ method: "POST", url: `/invoices/${id}/finalize`, ...a, headers: { ...a.headers, "idempotency-key": crypto.randomUUID() }, payload: {} });
+    assert.equal(fin.statusCode, 200, fin.body);
+    assert.deepEqual((await app.inject({ method: "GET", url: intentUrl(id, keyI), ...a })).json(),
+      { state: "invoice_closed", terminal: true, invoiceStatus: "finalized" });
+  });
+
+  test("«ثبت شد» از تسویهٔ قطعی سرور: پرداختی که پس از تصویر کلاینت و پیش از نهایی‌سازی نشست دیده می‌شود", async () => {
+    const a = await checkoutAdmin();
+    const id = await cartAs(a); // ۱٬۰۰۰٬۰۰۱
+    const first = await payWith(a, id, crypto.randomUUID(), "cash", "600000");
+    const snapshot = first.json().receivedAmount as string; // تصویر S کلاینت
+    assert.equal(snapshot, "600000");
+    // تب یا دستگاه دیگر: دو پرداخت دیگر روی همان فاکتور.
+    assert.equal((await payWith(a, id, crypto.randomUUID(), "card", "400001", "REF-T")).statusCode, 201);
+    assert.equal((await payWith(a, id, crypto.randomUUID(), "cash", "20000")).statusCode, 201);
+    const fin = await app.inject({ method: "POST", url: `/invoices/${id}/finalize`, ...a, headers: { ...a.headers, "idempotency-key": crypto.randomUUID() }, payload: {} });
+    assert.equal(fin.statusCode, 200, fin.body);
+    assert.deepEqual(fin.json().settlement, { payableAmount: "1000001", paidAmount: "1000001", receivedAmount: "1020001",
+      changeAmount: "20000", dueAmount: "0" }, "نه بدهی ۴۰۰٬۰۰۱ که تصویر S می‌گفت");
+    // پیش‌نویس تسویه ندارد؛ `null` با صفر یکی نیست.
+    const draft = await cartAs(a);
+    assert.equal((await app.inject({ method: "GET", url: `/invoices/${draft}`, ...a })).json().settlement, null);
+    assert.equal((await app.inject({ method: "POST", url: `/invoices/${draft}/cancel`, ...a, payload: {} })).statusCode, 200);
   });
 
   test("GET /branches بدون نشست ۴۰۱ می‌دهد", async () => {

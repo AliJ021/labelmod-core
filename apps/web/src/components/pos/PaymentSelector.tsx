@@ -17,9 +17,18 @@ import { allOptions, checkAmount, maxAmount, paymentLocked, type PaymentLayout, 
  *    خودش ثبت نکرده باشد.
  *
  * ⚠️ تا وقتی نتیجهٔ یک پرداخت روشن نیست (`phase` غیر از `idle`)، روش و مبلغ
- *    **قفل**‌اند: فقط «بررسی وضعیت»، و اگر سرور گفت ثبت نشده، «ثبت دوبارهٔ همین
- *    پرداخت» با همان کلید — یا صرف‌نظر آگاهانه.
+ *    **قفل**‌اند (F-115-01). نخست فقط «بررسی وضعیت» — خواندن **همان شناسه**، نه جمع
+ *    دریافتی. «هنوز پیدا نشد» یعنی «ثبت نشد» نیست، پس آنجا دو راه هست: «ارسال
+ *    دوبارهٔ همین پرداخت» با همان شناسه (اگر نشسته بود Replay می‌شود)، یا «این
+ *    پرداخت انجام نشده» که شناسه را در سرور مهر می‌کند. ارسال کور ندارد.
  */
+const UNRESOLVED_TEXT: Record<"ambiguous" | "not_found_yet" | "retry_rejected" | "mismatch", string> = {
+  ambiguous: "پاسخ قطعی از سرور نرسید؛ ممکن است این پرداخت ثبت شده باشد یا نه. دوباره پرداخت نگیرید و روش را عوض نکنید — اول وضعیت را بررسی کنید.",
+  not_found_yet: "سرور هنوز پرداختی با شناسهٔ همین درخواست ندارد — این یعنی «ثبت نشد» نیست؛ ممکن است درخواست هنوز در راه باشد. اگر مشتری پرداخت کرده، همین پرداخت را با همان شناسه دوباره بفرستید (دو بار ثبت نمی‌شود). اگر پرداخت انجام نشده، «این پرداخت انجام نشده» را بزنید.",
+  retry_rejected: "ارسال دوبارهٔ همین پرداخت رد شد، ولی نسخهٔ اول هنوز قطعی نیست. وضعیت را بررسی کنید؛ اگر پرداخت انجام نشده، «این پرداخت انجام نشده» را بزنید.",
+  mismatch: "پرداختی با شناسهٔ همین درخواست ثبت شده ولی روش یا مبلغش با این پرداخت نمی‌خواند. پرداخت تازه نگیرید و از سرپرست کمک بگیرید.",
+};
+
 const HINT: Record<string, string> = {
   card_reader: "پس از تأیید روی دستگاه کارت‌خوان، شمارهٔ پیگیری رسید دستگاه را وارد کنید. این صندوق به دستگاه وصل نیست.",
   snappay: "ثبت دستی پرداختی که در اسنپ‌پی تأیید شده است؛ شمارهٔ پیگیری واقعی را وارد کنید.",
@@ -27,7 +36,7 @@ const HINT: Record<string, string> = {
   transfer: "پس از دیدن واریز، شمارهٔ پیگیری انتقال را وارد کنید.",
 };
 
-export function PaymentSelector({ layout, remaining, received, phase, disabled, onPay, onCheck, onRetry, onDiscard }: {
+export function PaymentSelector({ layout, remaining, received, phase, disabled, onPay, onCheck, onRetry, onAbandon }: {
   layout: PaymentLayout;
   remaining: bigint;
   /** آخرین «دریافتی» سرور — با تغییرش مبلغ و پیگیری پاک می‌شوند. */
@@ -38,7 +47,7 @@ export function PaymentSelector({ layout, remaining, received, phase, disabled, 
   onPay: (option: PaymentOption, amount: bigint, refNo: string) => void;
   onCheck: () => void;
   onRetry: () => void;
-  onDiscard: () => void;
+  onAbandon: () => void;
 }) {
   const [selected, setSelected] = useState("");
   const [amount, setAmount] = useState("");
@@ -87,7 +96,8 @@ export function PaymentSelector({ layout, remaining, received, phase, disabled, 
     e.preventDefault();
     setAttempted(true);
     if (!chosen || locked || disabled || !check?.ok || refMissing) return;
-    onPay(chosen, check.amount, refNo.trim());
+    // شمارهٔ پیگیری فقط برای روشی که می‌خواهدش؛ کادر پنهانِ روش قبلی بخشی از بدنهٔ این قصد نیست.
+    onPay(chosen, check.amount, chosen.requiresRef ? refNo.trim() : "");
   }
 
   function onMoreKey(e: KeyboardEvent) {
@@ -122,19 +132,19 @@ export function PaymentSelector({ layout, remaining, received, phase, disabled, 
 
     {phase.kind !== "idle" ? <div className={`pay-intent pay-intent--${phase.kind}`} role={phase.kind === "unknown" ? "alert" : undefined}>
       <p className="pay-intent-head">
-        <StatusBadge state={phase.kind === "submitting" || phase.kind === "checking" ? "pending" : phase.kind === "not_recorded" ? "warning" : "unknown"}
-          label={phase.kind === "submitting" ? "در حال ثبت" : phase.kind === "checking" ? "در حال بررسی" : phase.kind === "not_recorded" ? "ثبت نشده" : "نتیجه نامعلوم"} />
+        <StatusBadge state={phase.kind === "unknown" ? (phase.reason === "mismatch" ? "warning" : "unknown") : "pending"}
+          label={phase.kind === "submitting" ? "در حال ثبت" : phase.kind === "checking" ? "در حال بررسی"
+            : phase.reason === "mismatch" ? "نیازمند بررسی" : "نتیجه نامعلوم"} />
         <span>{phase.intent.methodName}</span> <Money rial={phase.intent.amount} />
       </p>
       {phase.kind === "unknown" ? <>
-        <p>پاسخ قطعی از سرور نرسید؛ ممکن است این پرداخت ثبت شده باشد یا نه. دوباره پرداخت نگیرید و روش را عوض نکنید — اول وضعیت را بررسی کنید.</p>
-        <Button variant="primary" onClick={onCheck}>بررسی وضعیت</Button>
-      </> : null}
-      {phase.kind === "not_recorded" ? <>
-        <p>سرور تأیید کرد این پرداخت ثبت نشده است. اگر مشتری همین پرداخت را انجام داده، همین را دوباره ثبت کنید؛ با همان شناسهٔ درخواست فرستاده می‌شود و دو بار ثبت نمی‌شود.</p>
+        <p>{UNRESOLVED_TEXT[phase.reason]}</p>
         <div className="row pay-intent-actions">
-          <Button variant="primary" onClick={onRetry}>ثبت دوبارهٔ همین پرداخت</Button>
-          <Button variant="quiet" onClick={onDiscard}>صرف‌نظر از این پرداخت</Button>
+          <Button variant="primary" onClick={onCheck}>بررسی وضعیت</Button>
+          {phase.reason === "not_found_yet" || phase.reason === "retry_rejected" ? <>
+            <Button variant="secondary" onClick={onRetry}>ارسال دوبارهٔ همین پرداخت</Button>
+            <Button variant="quiet" onClick={onAbandon}>این پرداخت انجام نشده</Button>
+          </> : null}
         </div>
       </> : null}
     </div> : null}

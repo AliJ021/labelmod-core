@@ -115,7 +115,32 @@ export interface Invoice {
   paidAmount: string;
   occurredAt: string;
   lines: InvoiceLine[];
+  /**
+   * تسویهٔ قطعی پس از نهایی‌سازی (F-115-02) — از ستون‌هایی که `finalize_invoice`
+   * زیر قفل نوشته. پیش‌نویس `null` است؛ `null` با صفر یکی نیست.
+   */
+  settlement?: InvoiceSettlement | null;
 }
+
+/** همه ریال و رشته؛ `changeAmount` باقی پول نقد و `dueAmount` بدهی نسیهٔ همین فاکتور. */
+export interface InvoiceSettlement {
+  payableAmount: string;
+  paidAmount: string;
+  receivedAmount: string;
+  changeAmount: string;
+  dueAmount: string;
+}
+
+/**
+ * وضعیت **یک** قصد پرداخت با شناسهٔ خودش (F-115-01). `terminal: false` یعنی
+ * «هنوز پیدا نشد» — نه «ثبت نشد».
+ */
+export type PaymentIntentStatus =
+  | { state: "recorded"; terminal: true;
+      payment: { id: string; methodCode: string; amount: string; refNo: string | null; status: string } }
+  | { state: "abandoned" | "key_conflict"; terminal: true }
+  | { state: "invoice_closed"; terminal: true; invoiceStatus: string }
+  | { state: "not_found"; terminal: false };
 
 export interface PaymentResult {
   paymentId: string;
@@ -436,7 +461,15 @@ export const pos = {
   ) => api.post<PaymentResult>(`/invoices/${invoiceId}/payments`, input, opts),
 
   finalize: (invoiceId: string, opts?: RequestOptions) =>
-    api.post<Invoice>(`/invoices/${invoiceId}/finalize`, {}, opts),
+    api.post<Invoice & { replayed: boolean }>(`/invoices/${invoiceId}/finalize`, {}, opts),
+
+  /** «بررسی وضعیت» یک پرداخت — فقط خواندن، با همان شناسهٔ ارسال (`Idempotency-Key`). */
+  paymentIntent: (invoiceId: string, key: string) =>
+    api.get<PaymentIntentStatus>(`/invoices/${invoiceId}/payment-intents/${encodeURIComponent(key)}`),
+
+  /** «این پرداخت انجام نشده» — شناسه را در سرور مهر می‌کند؛ اگر پیش‌تر ثبت شده، «ثبت شد» برمی‌گردد. */
+  abandonPaymentIntent: (invoiceId: string, key: string) =>
+    api.post<PaymentIntentStatus>(`/invoices/${invoiceId}/payment-intents/${encodeURIComponent(key)}/abandon`, {}),
 
   /**
    * خلاصه یک روز کاری.

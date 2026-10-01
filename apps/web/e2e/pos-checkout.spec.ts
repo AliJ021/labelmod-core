@@ -30,10 +30,32 @@ const METHODS = [
 ];
 
 interface Pay { methodCode: string; amount: string; refNo?: string }
-/** سبد بازیابی‌شده + پرداخت و نهایی‌سازی ماک، با شمارش آنچه واقعاً فرستاده شد. */
+/**
+ * سبد بازیابی‌شده + پرداخت و نهایی‌سازی ماک، با شمارش آنچه واقعاً فرستاده شد.
+ *
+ * پرداخت‌ها مثل سرور به **شناسه** (`Idempotency-Key`) ثبت می‌شوند: همان کلید با
+ * همان بدنه Replay است، نه ردیف دوم. `intents` همان قرارداد
+ * `GET|POST /invoices/:id/payment-intents/:key[/abandon]` است و نهایی‌سازی
+ * `settlement` را از وضعیت **همان لحظه** می‌سازد، نه از آنچه صفحه دیده بود.
+ */
 function pos(api: MockApi, over: Partial<typeof draft> = {}, methods = METHODS) {
-  const state = { invoice: { ...draft, ...over }, payments: [] as Array<{ id: string; name: string; amount: string }>, posted: [] as Pay[], keys: [] as string[], finalized: 0, finalizeKeys: [] as string[] };
+  const state = { invoice: { ...draft, ...over }, payments: [] as Array<{ id: string; name: string; amount: string }>, posted: [] as Pay[], keys: [] as string[], finalized: 0, finalizeKeys: [] as string[],
+    byKey: new Map<string, { id: string; body: Pay }>(), sealed: new Set<string>(), intentChecks: [] as string[] };
   const received = () => state.payments.reduce((n, p) => n + BigInt(p.amount), BigInt(over.receivedAmount ?? "0")).toString();
+  /** ثبت با شناسه — همان کاری که `runOnce` + `client_event_id` می‌کنند. */
+  const record = (key: string, body: Pay) => {
+    const name = METHODS.find((m) => m.code === body.methodCode)?.name ?? body.methodCode;
+    const id = "p" + (state.payments.length + 1);
+    state.payments.push({ id, name, amount: body.amount });
+    state.byKey.set(key, { id, body });
+    return id;
+  };
+  const settlement = () => {
+    const payable = BigInt(state.invoice.payableAmount), got = BigInt(received());
+    const paid = got < payable ? got : payable;
+    return { payableAmount: payable.toString(), paidAmount: paid.toString(), receivedAmount: got.toString(),
+      changeAmount: (got - paid).toString(), dueAmount: (payable - paid).toString() };
+  };
   api.defaults["GET /payment-methods"] = { methods };
   api.defaults["GET /shifts/current"] = { id: SHIFT, userId: ME, branchId: "b1", status: "open", openingCash: "0", openedAt: "2026-10-01T07:00:00Z" };
   api.defaults["GET /gift-options"] = { options: [] };
@@ -41,20 +63,35 @@ function pos(api: MockApi, over: Partial<typeof draft> = {}, methods = METHODS) 
   api.handlers.set(`GET /invoices/${INV}/customer`, async (route) => { await route.fulfill({ json: { customer: state.invoice.customerId ? customer : null } }); });
   api.handlers.set(`GET /invoices/${INV}/payments`, async (route) => { await route.fulfill({ json: { payments: state.payments } }); });
   api.handlers.set(`POST /invoices/${INV}/payments`, async (route) => {
-    const body = route.request().postDataJSON() as Pay;
-    state.posted.push(body); state.keys.push(route.request().headers()["idempotency-key"] ?? "");
-    const name = METHODS.find((m) => m.code === body.methodCode)?.name ?? body.methodCode;
-    state.payments.push({ id: "p" + state.posted.length, name, amount: body.amount });
-    await route.fulfill({ status: 201, json: { paymentId: "p" + state.posted.length, replayed: false, receivedAmount: received(), invoice: state.invoice } });
+    const body = route.request().postDataJSON() as Pay, key = route.request().headers()["idempotency-key"] ?? "";
+    state.posted.push(body); state.keys.push(key);
+    const seen = state.byKey.get(key);
+    if (seen) { await route.fulfill({ status: 200, json: { paymentId: seen.id, replayed: true, receivedAmount: received(), invoice: state.invoice } }); return; }
+    const id = record(key, body);
+    await route.fulfill({ status: 201, json: { paymentId: id, replayed: false, receivedAmount: received(), invoice: state.invoice } });
   });
   api.handlers.set(`POST /invoices/${INV}/finalize`, async (route) => {
     state.finalized++; state.finalizeKeys.push(route.request().headers()["idempotency-key"] ?? "");
-    await route.fulfill({ json: { ...state.invoice, status: "finalized", number: "MAIN-77", paidAmount: received(), replayed: false } });
+    await route.fulfill({ json: { ...state.invoice, status: "finalized", number: "MAIN-77", paidAmount: settlement().paidAmount, replayed: false, settlement: settlement() } });
   });
-  return state;
+  return Object.assign(state, { record, settlement });
 }
 
-async function open(page: Page) {
+/** قرارداد وضعیت قصد پرداخت — مسیرش شناسه دارد، پس با `page.route` (اولویت بر ماک عمومی). */
+async function intents(page: Page, s: ReturnType<typeof pos>) {
+  await page.route(`**/api/invoices/${INV}/payment-intents/**`, async (route) => {
+    const parts = new URL(route.request().url()).pathname.split("/"), abandon = parts.at(-1) === "abandon";
+    const key = decodeURIComponent(abandon ? parts.at(-2)! : parts.at(-1)!);
+    s.intentChecks.push(`${route.request().method()} ${key}`);
+    const hit = s.byKey.get(key);
+    if (hit) { await route.fulfill({ json: { state: "recorded", terminal: true, payment: { id: hit.id, methodCode: hit.body.methodCode, amount: hit.body.amount, refNo: hit.body.refNo ?? null, status: "succeeded" } } }); return; }
+    if (abandon) s.sealed.add(key);
+    await route.fulfill({ json: s.sealed.has(key) ? { state: "abandoned", terminal: true } : { state: "not_found", terminal: false } });
+  });
+}
+
+async function open(page: Page, s?: ReturnType<typeof pos>) {
+  if (s) await intents(page, s);
   await page.addInitScript(([inv, sh]) => localStorage.setItem("labelmod_open_cart", JSON.stringify({ invoiceId: inv, shiftId: sh })), [INV, SHIFT]);
   await page.goto("/?page=pos&pos.branch=b1&pos.warehouse=w1");
   await expect(page.locator(".lines li").first()).toContainText("شلوار کتان");
@@ -82,6 +119,8 @@ test("cash sale: confirm dialog, one finalize under double click, persistent suc
   await expect(done).toBeVisible();
   expect(s.finalized, "دابل‌کلیک فقط یک نهایی‌سازی می‌فرستد").toBe(1);
   await expect(done.locator(".sale-complete-change")).toContainText("5٬000");
+  // تسویهٔ قطعی سرور: دریافتی ۲۵٬۰۰۰ و باقی پول ۵٬۰۰۰ تا «فروش بعدی» دیده می‌مانند.
+  await expect(done.locator(".checkout-lines")).toContainText("25٬000");
   await expect(done.getByRole("region", { name: "ریز پرداخت‌ها" })).toContainText("نقدی");
   const print = done.getByRole("link", { name: "چاپ رسید" });
   await expect(print).toHaveAttribute("href", `/api/invoices/${INV}/print`);
@@ -123,25 +162,147 @@ test("card reader is primary; non-cash overpayment is blocked before any request
   await expect(card).toBeEnabled();
 });
 
-test("ambiguous payment: status check finds it recorded, unlocks without a second request", async ({ page, api }) => {
+const unresolvedText = "سرور هنوز پرداختی با شناسهٔ همین درخواست ندارد";
+const pending = (page: Page) => page.evaluate((me) => localStorage.getItem(`labelmod_pending_payment_v1:${me}`), ME);
+
+test("response lost: the exact intent is found recorded by its own key; no second request; controls unlock", async ({ page, api }) => {
   const s = pos(api);
-  let calls = 0;
   api.handlers.set(`POST /invoices/${INV}/payments`, async (route: Route) => {
-    calls++;
-    s.payments.push({ id: "p1", name: "نقدی", amount: "200000" });
-    await route.abort("connectionreset");
+    const key = route.request().headers()["idempotency-key"] ?? "";
+    s.keys.push(key); s.posted.push(route.request().postDataJSON() as Pay);
+    s.record(key, route.request().postDataJSON() as Pay); // سرور ثبت کرد…
+    await route.abort("connectionreset");                  // …و پاسخ گم شد.
   });
-  await open(page);
+  await open(page, s);
   await method(page, "نقدی").click();
   await page.getByRole("button", { name: "دریافت وجه", exact: true }).click();
   await expect(page.getByRole("button", { name: "بررسی وضعیت", exact: true })).toBeVisible();
   await expect(method(page, "کارت‌خوان")).toBeDisabled();
   await expect(page.getByRole("button", { name: "نهایی‌کردن فاکتور", exact: true })).toBeDisabled();
+  // پیش از بررسی، ارسال دوباره‌ای پیشنهاد نمی‌شود.
+  await expect(page.getByRole("button", { name: "ارسال دوبارهٔ همین پرداخت", exact: true })).toHaveCount(0);
+  expect(JSON.parse((await pending(page))!).key, "قصد پیش از ارسال پایدار شد").toBe(s.keys[0]);
   await page.getByRole("button", { name: "بررسی وضعیت", exact: true }).click();
   await expect(page.locator(".pos-alert").filter({ hasText: "پیش‌تر ثبت شده بود" })).toBeVisible();
-  expect(calls).toBe(1);
+  expect(s.intentChecks, "همان شناسهٔ ارسال پرسیده شد").toEqual([`GET ${s.keys[0]}`]);
+  expect(s.posted).toHaveLength(1);
+  expect(s.payments).toHaveLength(1);
+  expect(await pending(page), "حالت نهایی، قصد پایدار را پاک می‌کند").toBeNull();
   await expect(method(page, "کارت‌خوان")).toBeEnabled();
   await expect(page.getByRole("button", { name: "نهایی‌کردن فاکتور", exact: true })).toBeEnabled();
+});
+
+test("same-amount collision: another payment of the same amount and method does not resolve this intent; retry keeps the key", async ({ page, api }) => {
+  const s = pos(api);
+  let lose = true;
+  api.handlers.set(`POST /invoices/${INV}/payments`, async (route: Route) => {
+    const key = route.request().headers()["idempotency-key"] ?? "", body = route.request().postDataJSON() as Pay;
+    s.keys.push(key); s.posted.push(body);
+    if (lose) { lose = false; await route.abort("connectionreset"); return; } // هرگز به سرور نرسید
+    const id = s.byKey.get(key)?.id ?? s.record(key, body);
+    await route.fulfill({ status: 201, json: { paymentId: id, replayed: false, receivedAmount: (BigInt(s.payments.reduce((n, p) => n + BigInt(p.amount), 0n))).toString(), invoice: s.invoice } });
+  });
+  await open(page, s);
+  await method(page, "کارت‌خوان").click();
+  await page.getByLabel("مبلغ (تومان)", { exact: true }).fill("10000");
+  await page.getByLabel("شماره پیگیری", { exact: true }).fill("REF-A");
+  await page.getByRole("button", { name: "دریافت وجه", exact: true }).click();
+  await expect(page.getByRole("button", { name: "بررسی وضعیت", exact: true })).toBeVisible();
+  // تب یا دستگاه دیگر: پرداخت B با همان مبلغ و همان روش، شناسهٔ دیگر. جمع دریافتی دقیقاً به اندازهٔ A بالا رفت.
+  s.record("bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb", { methodCode: "card", amount: "100000", refNo: "REF-B" });
+  await page.getByRole("button", { name: "بررسی وضعیت", exact: true }).click();
+  await expect(page.getByText(unresolvedText)).toBeVisible();
+  await expect(page.getByText("پیش‌تر ثبت شده بود")).toHaveCount(0);
+  await expect(page.getByText("سرور تأیید کرد")).toHaveCount(0);
+  await expect(method(page, "نقدی"), "قصد A باز است؛ روش و مبلغ قفل").toBeDisabled();
+  expect(s.intentChecks).toEqual([`GET ${s.keys[0]}`]);
+  await page.getByRole("button", { name: "ارسال دوبارهٔ همین پرداخت", exact: true }).click();
+  await expect(page.locator(".pos-alert").filter({ hasText: "با همان شناسه ثبت شد" })).toBeVisible();
+  expect(s.keys[1], "همان شناسه").toBe(s.keys[0]);
+  expect(s.posted[1], "همان بدنه").toEqual(s.posted[0]);
+  expect(s.payments.map((p) => p.amount), "A یک بار و B یک بار").toEqual(["100000", "100000"]);
+  await expect(method(page, "نقدی")).toBeEnabled();
+});
+
+test("reload during unknown: the intent is restored locked with its key; status checks that key; a same-key retry replays instead of duplicating", async ({ page, api }) => {
+  const s = pos(api);
+  api.handlers.set(`POST /invoices/${INV}/payments`, async (route: Route) => {
+    const key = route.request().headers()["idempotency-key"] ?? "", body = route.request().postDataJSON() as Pay;
+    s.keys.push(key); s.posted.push(body);
+    const seen = s.byKey.get(key);
+    if (seen) { await route.fulfill({ status: 200, json: { paymentId: seen.id, replayed: true, receivedAmount: "200000", invoice: s.invoice } }); return; }
+    await route.abort("connectionreset"); // در راه — هنوز Commit نشده
+  });
+  await open(page, s);
+  await method(page, "نقدی").click();
+  await page.getByRole("button", { name: "دریافت وجه", exact: true }).click();
+  await expect(page.getByRole("button", { name: "بررسی وضعیت", exact: true })).toBeVisible();
+  const before = JSON.parse((await pending(page))!) as { key: string; amount: string; methodCode: string };
+  expect(before).toMatchObject({ key: s.keys[0], amount: "200000", methodCode: "cash", state: "unresolved" });
+
+  await page.reload();
+  await expect(page.locator(".lines li").first()).toContainText("شلوار کتان");
+  await expect(page.getByRole("button", { name: "بررسی وضعیت", exact: true })).toBeVisible();
+  await expect(page.locator(".pay-intent")).toContainText("20٬000");
+  for (const name of ["نقدی", "کارت‌خوان"]) await expect(method(page, name)).toBeDisabled();
+  await expect(page.getByRole("button", { name: "نهایی‌کردن فاکتور", exact: true })).toBeDisabled();
+  expect(s.posted, "Reload خودش چیزی نمی‌فرستد").toHaveLength(1);
+  expect(JSON.parse((await pending(page))!).key, "کلید تازه ساخته نشد").toBe(before.key);
+
+  await page.getByRole("button", { name: "بررسی وضعیت", exact: true }).click();
+  await expect(page.getByText(unresolvedText)).toBeVisible();
+  expect(s.intentChecks).toEqual([`GET ${before.key}`]);
+  // نسخهٔ در راه حالا Commit می‌شود؛ ارسال دوبارهٔ همان قصد Replay می‌گیرد، نه ردیف دوم.
+  s.record(before.key, s.posted[0]!);
+  await page.getByRole("button", { name: "ارسال دوبارهٔ همین پرداخت", exact: true }).click();
+  await expect(page.locator(".pos-alert").filter({ hasText: "با همان شناسه ثبت شد" })).toBeVisible();
+  expect(s.keys).toEqual([before.key, before.key]);
+  expect(s.payments).toHaveLength(1);
+  expect(await pending(page)).toBeNull();
+  await expect(page.getByRole("button", { name: "نهایی‌کردن فاکتور", exact: true })).toBeEnabled();
+});
+
+test("unresolved intent the cashier says never happened is sealed on the server by its key before a new intent is allowed", async ({ page, api }) => {
+  const s = pos(api);
+  let first = true;
+  api.handlers.set(`POST /invoices/${INV}/payments`, async (route: Route) => {
+    const key = route.request().headers()["idempotency-key"] ?? "", body = route.request().postDataJSON() as Pay;
+    s.keys.push(key); s.posted.push(body);
+    if (first) { first = false; await route.fulfill({ status: 503, json: { error: { code: "unavailable", message: "x" } } }); return; }
+    const id = s.record(key, body);
+    await route.fulfill({ status: 201, json: { paymentId: id, replayed: false, receivedAmount: "200000", invoice: s.invoice } });
+  });
+  await open(page, s);
+  await method(page, "کارت‌خوان").click();
+  await page.getByLabel("شماره پیگیری", { exact: true }).fill("REF-X");
+  await page.getByRole("button", { name: "دریافت وجه", exact: true }).click();
+  await page.getByRole("button", { name: "بررسی وضعیت", exact: true }).click();
+  await expect(page.getByText(unresolvedText)).toBeVisible();
+  await page.getByRole("button", { name: "این پرداخت انجام نشده", exact: true }).click();
+  await expect(page.locator(".pos-alert").filter({ hasText: "هرگز ثبت نمی‌شود" })).toBeVisible();
+  expect(s.intentChecks).toEqual([`GET ${s.keys[0]}`, `POST ${s.keys[0]}`]);
+  expect(await pending(page)).toBeNull();
+  await method(page, "نقدی").click();
+  await page.getByRole("button", { name: "دریافت وجه", exact: true }).click();
+  await expect.poll(() => s.payments.length).toBe(1);
+  expect(s.keys[1], "قصد تازه، کلید تازه").not.toBe(s.keys[0]);
+  expect(s.posted[1]).toEqual({ methodCode: "cash", amount: "200000" });
+});
+
+test("SaleComplete shows the server settlement: a payment from another tab before finalize changes received and change", async ({ page, api }) => {
+  const s = pos(api);
+  await open(page, s);
+  await method(page, "نقدی").click();
+  await page.getByRole("button", { name: "دریافت وجه", exact: true }).click();
+  await expect(page.getByRole("button", { name: "نهایی‌کردن فاکتور", exact: true })).toBeEnabled();
+  // تصویر S صفحه: دریافتی ۲۰٬۰۰۰، باقی پول صفر. تب دیگر ۳٬۰۰۰ تومان نقد دیگر می‌گیرد.
+  s.record("cccccccc-cccc-4ccc-8ccc-cccccccccccc", { methodCode: "cash", amount: "30000" });
+  await page.getByRole("button", { name: "نهایی‌کردن فاکتور", exact: true }).click();
+  await page.getByRole("dialog", { name: "نهایی‌کردن فاکتور" }).getByRole("button", { name: "تأیید و نهایی‌کردن", exact: true }).click();
+  const done = page.getByRole("region", { name: /فاکتور MAIN-77 ثبت شد/ });
+  await expect(done.locator(".sale-complete-change")).toContainText("3٬000");
+  await expect(done.locator(".checkout-lines")).toContainText("23٬000");
+  await expect(done.locator(".checkout-lines")).toContainText("20٬000");
 });
 
 test("credit is a checkout outcome: attached customer shown, no credit or DigiPay in the selector, no payment row, server rule mapped", async ({ page, api }) => {
@@ -150,9 +311,9 @@ test("credit is a checkout outcome: attached customer shown, no credit or DigiPa
   api.handlers.set(`POST /invoices/${INV}/finalize`, async (route: Route) => {
     s.finalized++; s.finalizeKeys.push(route.request().headers()["idempotency-key"] ?? "");
     if (first) { first = false; await route.fulfill({ status: 422, json: { error: { code: "credit_needs_customer", message: "raw" } } }); return; }
-    await route.fulfill({ json: { ...s.invoice, status: "finalized", number: "MAIN-78", paidAmount: "50000", replayed: false } });
+    await route.fulfill({ json: { ...s.invoice, status: "finalized", number: "MAIN-78", paidAmount: s.settlement().paidAmount, replayed: false, settlement: s.settlement() } });
   });
-  await open(page);
+  await open(page, s);
   const who = page.getByRole("region", { name: "مشتری" });
   await expect(who).toContainText("مریم آزمون");
   await expect(who).toContainText("09121234567");
@@ -168,10 +329,14 @@ test("credit is a checkout outcome: attached customer shown, no credit or DigiPa
   await expect(dialog).toContainText("15٬000");
   await dialog.getByRole("button", { name: "تأیید و ثبت نسیه", exact: true }).click();
   await expect(dialog).toContainText("برای فروش نسیه ابتدا مشتری را انتخاب کنید.");
+  // پیش از تلاش دوم، تب دیگر ۱۰٬۰۰۰ تومان کارت ثبت می‌کند: بدهی قطعی ۵٬۰۰۰ است، نه ۱۵٬۰۰۰ تصویر صفحه.
+  s.record("dddddddd-dddd-4ddd-8ddd-dddddddddddd", { methodCode: "card", amount: "100000", refNo: "T" });
   await dialog.getByRole("button", { name: "تأیید و ثبت نسیه", exact: true }).click();
   const done = page.getByRole("region", { name: /فاکتور MAIN-78 ثبت شد/ });
-  await expect(done).toContainText("نسیه به حساب مشتری");
-  await expect(done).toContainText("15٬000");
+  const credit = done.locator(".checkout-lines div").filter({ hasText: "نسیه به حساب مشتری" });
+  await expect(credit).toContainText("5٬000");
+  await expect(credit).not.toContainText("15٬000");
+  await expect(done.locator(".checkout-lines div").filter({ hasText: "دریافت‌شده" })).toContainText("15٬000");
   expect(s.posted, "نسیه هیچ ردیف پرداختی نمی‌سازد").toEqual([]);
   expect(s.finalized).toBe(2);
   expect(s.finalizeKeys[1], "ردِ قطعی کلید را عوض نمی‌کند").toBe(s.finalizeKeys[0]);
