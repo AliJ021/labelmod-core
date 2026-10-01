@@ -146,10 +146,89 @@ a[role="tab"] { display: inline-flex; align-items: center; text-decoration: none
 
 .dashboard-actions { flex-wrap: wrap; }
 
-.pos-bar { flex-wrap: wrap; }
+/* ── صندوق (Batch 2.1) ─────────────────────────────────────────────
+   دو ستون از ۹۰۰ — همان مرزی که نوار کناری جای نوار پایین را می‌گیرد. تا امروز
+   دو ستون از ۱۱۰۰ بود و ۹۰۰ تا ۱۰۹۹ نه دو ستون داشت و نه خلاصهٔ چسبان (اندازه‌گیری
+   ۱۰۲۴: پرداخت در y≈۸۷۲، زیر خط دید). ستون پرداخت باریک و **چسبان** است تا
+   نهایی‌سازی هنگام کار با سبد دیده بماند. */
+.pos-bar { flex-wrap: nowrap; gap: var(--s-2); }
+.pos-tools { display: flex; align-items: center; gap: var(--s-1); flex: 1 1 auto; min-inline-size: 0; overflow-x: auto; scrollbar-width: none; }
+.pos-tools::-webkit-scrollbar { display: none; }
+.pos-tools .tool { white-space: nowrap; flex: 0 0 auto; }
+.pos-bar .pill { white-space: nowrap; flex: 0 0 auto; }
 .pos, .pos-body, .cart, .product-entry { min-inline-size: 0; }
 .pos-body { grid-template-columns: minmax(0, 1fr); }
-@media (min-width: 1100px) { .pos-body { grid-template-columns: minmax(0, 1fr) 310px; } }
+@media (min-width: 900px) {
+  .pos-body { grid-template-columns: minmax(0, 1fr) minmax(280px, 340px); }
+  /* ستون سبد در ۹۰۰ تا ~۱۱۰۰ باریک است: نام کالا کف عرض دارد تا سطر بشکند، نه اینکه
+     نام واژه‌به‌واژه زیر هم بیفتد. */
+  .lines li .line-name { flex: 1 1 12rem; }
+  .pay { position: sticky; inset-block-start: var(--s-4); max-block-size: calc(100dvh - var(--s-6)); overflow-y: auto; overscroll-behavior: contain; }
+}
+.pay { gap: var(--s-3); }
+.pay-title { margin: 0; font-size: var(--text-md); font-weight: var(--weight-semibold); }
+.pay-subtitle { margin: 0 0 var(--s-1); font-size: var(--text-sm); font-weight: var(--weight-semibold); color: var(--ink-2); }
+
+.checkout-summary { display: grid; gap: var(--s-2); }
+.checkout-lines { display: grid; gap: var(--s-1); margin: 0; }
+.checkout-lines > div { display: flex; align-items: baseline; justify-content: space-between; gap: var(--s-3); }
+.checkout-lines dt { color: var(--ink-2); font-size: var(--text-sm); }
+.checkout-lines dd { margin: 0; text-align: end; }
+.checkout-payable { display: flex; flex-direction: column; gap: var(--s-1); padding-block: var(--s-2); border-block: var(--border-w) solid var(--rule-2); }
+.checkout-payable-label { color: var(--ink-2); font-size: var(--text-sm); }
+.checkout-change { padding: var(--s-2); border-radius: var(--r-sm); background: var(--accent-soft); }
+.checkout-change dt { color: var(--ink); font-weight: var(--weight-semibold); }
+
+.payment-breakdown, .sale-complete-payments ul { list-style: none; margin: 0; padding: 0; display: grid; gap: var(--s-1); }
+.payment-breakdown li, .sale-complete-payments li { display: flex; justify-content: space-between; gap: var(--s-3); font-size: var(--text-sm); }
+
+.pay-select { display: grid; gap: var(--s-2); }
+.pay-options { display: grid; gap: var(--s-2); }
+.pay-options-row { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: var(--s-2); }
+.pay-options-row[hidden] { display: none; }
+.pay-option-wrap { display: grid; gap: var(--s-1); min-inline-size: 0; }
+.pay-option { display: inline-flex; align-items: center; justify-content: center; gap: var(--s-1); min-block-size: var(--touch); padding: var(--s-2) var(--s-3);
+  border: var(--border-w) solid var(--control-border); border-radius: var(--r-sm); background: var(--surface-solid); color: var(--ink); font: inherit; font-weight: var(--weight-medium); cursor: pointer; text-align: center; }
+.pay-option--primary { min-block-size: var(--touch-lg); font-size: var(--text-lg); font-weight: var(--weight-semibold); }
+/* انتخاب فقط با رنگ گفته نمی‌شود: قاب ضخیم، نشانهٔ ✓ و وزن قلم هم عوض می‌شوند. */
+.pay-option[aria-pressed="true"] { border-color: var(--accent); box-shadow: inset 0 0 0 1px var(--accent); background: var(--accent-soft); font-weight: var(--weight-bold); }
+.pay-option[disabled] { opacity: .55; cursor: not-allowed; }
+.pay-option:focus-visible, .pay-more-toggle:focus-visible, .line-tool:focus-visible { outline: 2px solid var(--focus-ring); outline-offset: var(--focus-offset); }
+.pay-option-why { font-size: var(--text-xs); }
+.pay-more { display: grid; gap: var(--s-2); }
+.pay-more-toggle { justify-self: start; min-block-size: var(--touch); }
+.pay-form { display: grid; gap: var(--s-2); }
+.pay-form-note { margin: 0; }
+.pay-intent { display: grid; gap: var(--s-2); padding: var(--s-3); border: var(--border-w) solid var(--rule-2); border-radius: var(--r-sm); background: var(--surface-solid-2); }
+.pay-intent--unknown { border-color: var(--warn); }
+.pay-intent p { margin: 0; }
+.pay-intent-head { display: flex; flex-wrap: wrap; align-items: center; gap: var(--s-2); font-weight: var(--weight-semibold); }
+.pay-intent-actions { flex-wrap: wrap; gap: var(--s-2); }
+.pay-finish { display: grid; gap: var(--s-2); }
+.pay-finish > .btn, .pay-finish .credit-checkout .btn { inline-size: 100%; }
+.credit-checkout { display: grid; gap: var(--s-1); }
+.credit-checkout p { margin: 0; }
+
+.line-tool { min-inline-size: var(--touch); min-block-size: var(--touch); padding-inline: var(--s-2); border: 0; border-radius: var(--r-xs); background: transparent; color: var(--ink-2); font: inherit; font-size: var(--text-sm); cursor: pointer; }
+.line-tool:hover:not([disabled]), .line-tool[aria-expanded="true"] { color: var(--ink); background: var(--surface-solid-2); }
+.line-tool[disabled] { opacity: .4; cursor: default; }
+.line-panel { flex-basis: 100%; }
+
+.pos-customer { display: grid; gap: var(--s-2); margin-block-start: var(--s-3); }
+.pos-customer-card { display: flex; flex-wrap: wrap; align-items: center; gap: var(--s-2) var(--s-3); padding: var(--s-2) var(--s-3); border: var(--border-w) solid var(--rule); border-radius: var(--r-sm); }
+.pos-customer-who { display: grid; flex: 1 1 auto; min-inline-size: 0; }
+.pos-customer-form { display: flex; flex-wrap: wrap; align-items: end; gap: var(--s-2); }
+.pos-customer-form .field { flex: 1 1 200px; min-inline-size: 0; }
+.pos-customer-form input { inline-size: 100%; min-block-size: var(--touch); }
+
+.sale-complete { display: grid; gap: var(--s-4); max-inline-size: 640px; }
+.sale-complete-head { display: grid; gap: var(--s-2); justify-items: start; }
+.sale-complete-head h2 { margin: 0; font-size: var(--text-xl); }
+.sale-complete-head h2:focus { outline: none; }
+.sale-complete-change { display: flex; flex-wrap: wrap; align-items: baseline; justify-content: space-between; gap: var(--s-3); padding: var(--s-3) var(--s-4); border-radius: var(--r-sm); background: var(--accent-soft); font-weight: var(--weight-semibold); }
+.sale-complete-payments h3 { margin: 0 0 var(--s-2); font-size: var(--text-sm); color: var(--ink-2); }
+.sale-complete-actions { flex-wrap: wrap; gap: var(--s-2); }
+.sale-complete-actions .btn { min-block-size: var(--touch); }
 
 .pos-mobile-summary { display: none; }
 @media (max-width: 899px) {
@@ -159,6 +238,10 @@ a[role="tab"] { display: inline-flex; align-items: center; text-decoration: none
   .pos-mobile-summary .btn { white-space:nowrap; min-block-size:44px; }
   .workspace--keyboard .pos-mobile-summary, .workspace--more .pos-mobile-summary { visibility:hidden; pointer-events:none; }
   .pay { scroll-margin-block-start: 12px; }
+}
+@media (max-width: 599px) {
+  .product-entry .auth-field { flex-basis: 100%; }
+  .product-entry form .btn { flex: 1 1 auto; }
 }
 @media print { .pos-mobile-summary { display:none; } }
 

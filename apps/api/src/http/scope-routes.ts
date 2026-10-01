@@ -105,8 +105,21 @@ export function registerScopeRoutes(app: FastifyInstance, deps: ScopeRouteDeps):
    * چون ستون واقعی همین جدول است و فرم پرداخت بدون آن نمی‌داند شماره
    * پیگیری بخواهد یا نه.
    */
+  /*
+   * ⚠️ اسنپ‌پی **به‌ازای شعبه** دیده می‌شود (Batch 2.1). ثبت پرداخت حساب را
+   *    با `snappay_account(شعبهٔ فاکتور)` می‌سنجد؛ این مسیر تا امروز همان را
+   *    **سراسری** می‌سنجید، پس در شعبهٔ بی‌حساب دکمه دیده می‌شد و پرداخت ۴۲۲
+   *    می‌گرفت. حالا خواندن و نوشتن یک معنا دارند:
+   *
+   *    - با `branchId`: دامنهٔ شعبه سنجیده می‌شود (۴۰۳ بیرون از دامنه) و اسنپ‌پی
+   *      فقط وقتی می‌آید که همان شعبه حساب معتبر دارد.
+   *    - بی `branchId`: اسنپ‌پی **نمی‌آید** — بی شعبه، «قابل استفاده» قابل
+   *      سنجش نیست. مرجوعی منبع اسنپ‌پی را از پرداخت اصلی فاکتور می‌گیرد.
+   */
   app.get("/payment-methods", async (req) => {
-    session(req);
+    const s = session(req);
+    const { branchId } = z.object({ branchId: z.string().uuid("شناسه نامعتبر").optional() }).parse(req.query);
+    if (branchId !== undefined) await assertBranch(db, s.userId, branchId);
     const rows = await db
       .selectFrom("treasury.payment_method")
       .select(["code", "name", "kind", "requires_ref"])
@@ -114,9 +127,10 @@ export function registerScopeRoutes(app: FastifyInstance, deps: ScopeRouteDeps):
       .orderBy("code")
       .execute();
 
-    const snappay = await sql<{ enabled: boolean }>`SELECT treasury.snappay_account() IS NOT NULL AS enabled`.execute(db);
+    const snappay = branchId === undefined ? false
+      : (await sql<{ enabled: boolean }>`SELECT treasury.snappay_account(${branchId}::uuid) IS NOT NULL AS enabled`.execute(db)).rows[0]?.enabled === true;
     return {
-      methods: rows.filter(m => m.code !== "snappay" || snappay.rows[0]?.enabled).map((m) => ({
+      methods: rows.filter(m => m.code !== "snappay" || snappay).map((m) => ({
         code: m.code,
         name: m.name,
         kind: m.kind,

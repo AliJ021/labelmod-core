@@ -46,6 +46,15 @@ export interface PaymentMethod {
   requiresRef: boolean;
 }
 
+export interface InvoiceCustomer {
+  id: string;
+  fullName: string | null;
+  /** شمارهٔ نرمال‌شده در دیتابیس (`sales.normalize_mobile`). */
+  mobile: string | null;
+  /** `blocked` یعنی نسیه رد می‌شود؛ سرور دروازه است. */
+  status: string;
+}
+
 export interface Shift {
   id: string;
   branchId: string;
@@ -106,7 +115,32 @@ export interface Invoice {
   paidAmount: string;
   occurredAt: string;
   lines: InvoiceLine[];
+  /**
+   * تسویهٔ قطعی پس از نهایی‌سازی (F-115-02) — از ستون‌هایی که `finalize_invoice`
+   * زیر قفل نوشته. پیش‌نویس `null` است؛ `null` با صفر یکی نیست.
+   */
+  settlement?: InvoiceSettlement | null;
 }
+
+/** همه ریال و رشته؛ `changeAmount` باقی پول نقد و `dueAmount` بدهی نسیهٔ همین فاکتور. */
+export interface InvoiceSettlement {
+  payableAmount: string;
+  paidAmount: string;
+  receivedAmount: string;
+  changeAmount: string;
+  dueAmount: string;
+}
+
+/**
+ * وضعیت **یک** قصد پرداخت با شناسهٔ خودش (F-115-01). `terminal: false` یعنی
+ * «هنوز پیدا نشد» — نه «ثبت نشد».
+ */
+export type PaymentIntentStatus =
+  | { state: "recorded"; terminal: true;
+      payment: { id: string; methodCode: string; amount: string; refNo: string | null; status: string } }
+  | { state: "abandoned" | "key_conflict"; terminal: true }
+  | { state: "invoice_closed"; terminal: true; invoiceStatus: string }
+  | { state: "not_found"; terminal: false };
 
 export interface PaymentResult {
   paymentId: string;
@@ -270,7 +304,20 @@ export interface CreatedInvoice extends Invoice {
 export const pos = {
   branches: (opts?: RequestOptions) => api.get<{ branches: Branch[]; allBranches: boolean }>("/branches", opts),
 
-  paymentMethods: () => api.get<{ methods: PaymentMethod[] }>("/payment-methods"),
+  /**
+   * روش‌های فعال. با `branchId`، اسنپ‌پی فقط وقتی می‌آید که **همان شعبه** حساب
+   * معتبر دارد (همان سنجش ثبت پرداخت)؛ بی آن اسنپ‌پی هرگز نمی‌آید.
+   */
+  paymentMethods: (branchId?: string) => api.get<{ methods: PaymentMethod[] }>(
+    branchId === undefined ? "/payment-methods" : `/payment-methods?branchId=${encodeURIComponent(branchId)}`),
+
+  /** مشتری وصل‌شده به سبد — فقط نام، شماره و وضعیت؛ `null` یعنی فروش ناشناس. */
+  invoiceCustomer: (invoiceId: string, opts?: RequestOptions) =>
+    api.get<{ customer: InvoiceCustomer | null }>(`/invoices/${invoiceId}/customer`, opts),
+
+  /** پرداخت‌های موفق ورودی همین فاکتور (باقی پول خروجی جدا ثبت می‌شود). */
+  invoicePayments: (invoiceId: string, opts?: RequestOptions) =>
+    api.get<{ payments: Array<{ id: string; name: string; amount: string }> }>(`/invoices/${invoiceId}/payments`, opts),
 
   /** `null` یعنی این کاربر در این شعبه شیفت باز ندارد. */
   openShifts: (branchId: string) =>
@@ -414,7 +461,15 @@ export const pos = {
   ) => api.post<PaymentResult>(`/invoices/${invoiceId}/payments`, input, opts),
 
   finalize: (invoiceId: string, opts?: RequestOptions) =>
-    api.post<Invoice>(`/invoices/${invoiceId}/finalize`, {}, opts),
+    api.post<Invoice & { replayed: boolean }>(`/invoices/${invoiceId}/finalize`, {}, opts),
+
+  /** «بررسی وضعیت» یک پرداخت — فقط خواندن، با همان شناسهٔ ارسال (`Idempotency-Key`). */
+  paymentIntent: (invoiceId: string, key: string) =>
+    api.get<PaymentIntentStatus>(`/invoices/${invoiceId}/payment-intents/${encodeURIComponent(key)}`),
+
+  /** «این پرداخت انجام نشده» — شناسه را در سرور مهر می‌کند؛ اگر پیش‌تر ثبت شده، «ثبت شد» برمی‌گردد. */
+  abandonPaymentIntent: (invoiceId: string, key: string) =>
+    api.post<PaymentIntentStatus>(`/invoices/${invoiceId}/payment-intents/${encodeURIComponent(key)}/abandon`, {}),
 
   /**
    * خلاصه یک روز کاری.

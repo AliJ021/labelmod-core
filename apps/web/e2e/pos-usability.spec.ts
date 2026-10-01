@@ -38,12 +38,19 @@ test("name search groups products then selects color and size, including a varia
   await panel.getByRole("button",{name:"قرمز",exact:true}).click();
   await expect(panel.getByRole("button",{name:/بدون قیمت/})).toBeDisabled();
 });
-test("split payment preserves failed input, then displays server totals and methods",async({page,api})=>{
+test("split payment: an ambiguous 503 locks the method until a status check by its key, retries the same key once, then shows server totals",async({page,api})=>{
   pos(api);let attempts=0;
   const payments:Array<{id:string;name:string;amount:string}>=[];
+  const keys:string[]=[];
+  // وضعیت قصد با شناسهٔ خودش؛ ۵۰۳ چیزی ثبت نکرده، پس «هنوز پیدا نشد» — نه «ثبت نشد».
+  const checked:string[]=[];
+  await page.route("**/api/invoices/33333333-3333-4333-8333-333333333333/payment-intents/**",async route=>{
+    checked.push(decodeURIComponent(new URL(route.request().url()).pathname.split("/").at(-1)??""));
+    await route.fulfill({json:{state:"not_found",terminal:false}});
+  });
   api.handlers.set("GET /invoices/33333333-3333-4333-8333-333333333333/payments",async route=>{await route.fulfill({json:{payments}});});
   api.handlers.set("POST /invoices/33333333-3333-4333-8333-333333333333/payments",async route=>{
-    attempts++;const data=route.request().postDataJSON();
+    attempts++;const data=route.request().postDataJSON();keys.push(route.request().headers()["idempotency-key"]??"");
     if(attempts===1){await route.fulfill({status:503,json:{error:{code:"unavailable",message:"خطای موقت آزمون"}}});return;}
     payments.push({id:"p"+attempts,name:data.methodCode==="cash"?"نقد":"کارت‌خوان",amount:data.amount});
     const receivedAmount=payments.reduce((sum,p)=>sum+BigInt(p.amount),0n).toString();
@@ -51,17 +58,34 @@ test("split payment preserves failed input, then displays server totals and meth
   });
   await page.addInitScript(()=>localStorage.setItem("labelmod_open_cart",JSON.stringify({invoiceId:"33333333-3333-4333-8333-333333333333",shiftId:"44444444-4444-4444-8444-444444444444"})));
   await page.goto("/");await page.getByRole("tab",{name:"صندوق",exact:true}).click();
-  await page.getByRole("button",{name:"کارت‌خوان",exact:true}).click();
-  const amount=page.getByLabel("مبلغ (تومان) — خالی یعنی همه مانده");
+  const card=page.getByRole("button",{name:"کارت‌خوان",exact:true});
+  await card.click();
+  await expect(card).toHaveAttribute("aria-pressed","true");
+  const amount=page.getByLabel("مبلغ (تومان)",{exact:true});
+  await expect(amount).toBeFocused();
   await amount.fill("12000");await page.getByLabel("شماره پیگیری",{exact:true}).fill("TEST-123");
   await page.getByRole("button",{name:"دریافت وجه",exact:true}).click();
-  await expect(page.getByRole("alert")).toContainText("خطای موقت آزمون");
-  await expect(amount).toHaveValue("12000");await expect(page.getByLabel("شماره پیگیری",{exact:true})).toHaveValue("TEST-123");
-  await page.getByRole("button",{name:"دریافت وجه",exact:true}).click();
-  await expect(amount).toHaveValue("");await expect(page.getByText(/مانده:/)).toContainText("8٬000");
+  // ۵۰۳ «نامعلوم» است: روش و مبلغ قفل‌اند و هیچ ارسال کوری نیست.
+  await expect(page.getByRole("alert").filter({hasText:"پاسخ قطعی"})).toBeVisible();
+  await expect(card).toBeDisabled();
+  await expect(page.getByRole("button",{name:"نقد",exact:true})).toBeDisabled();
+  await expect(page.getByRole("button",{name:"دریافت وجه",exact:true})).toHaveCount(0);
+  expect(attempts).toBe(1);
+  await page.getByRole("button",{name:"بررسی وضعیت",exact:true}).click();
+  await expect(page.getByText("سرور هنوز پرداختی با شناسهٔ همین درخواست ندارد")).toBeVisible();
+  expect(checked).toEqual([keys[0]]);
+  expect(attempts).toBe(1);
+  await expect(card).toBeDisabled();
+  await page.getByRole("button",{name:"ارسال دوبارهٔ همین پرداخت",exact:true}).click();
+  await expect.poll(()=>attempts).toBe(2);
+  expect(keys[1]).toBe(keys[0]);
+  const summary=page.getByRole("complementary",{name:"پرداخت",exact:true});
+  await expect(summary.getByText("مانده",{exact:true})).toBeVisible();
+  await expect(summary.locator(".checkout-lines--state")).toContainText("8٬000");
   await page.getByRole("button",{name:"نقد",exact:true}).click();
   await page.getByRole("button",{name:"دریافت وجه",exact:true}).click();
   await expect.poll(()=>payments).toEqual([{id:"p2",name:"کارت‌خوان",amount:"120000"},{id:"p3",name:"نقد",amount:"80000"}]);
+  expect(keys[2]).not.toBe(keys[0]);
   await expect(page.getByRole("button",{name:"نهایی‌کردن فاکتور",exact:true})).toBeEnabled();
 });
 test("catalog shows stock and previews correctly sized labels; changing selection invalidates preview",async({page,api})=>{

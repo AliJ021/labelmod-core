@@ -17,7 +17,8 @@ import type { Db } from "../db/client.ts";
 import { parseMoney, serializeMoney } from "../lib/money.ts";
 import { runOnce } from "../lib/idempotency.ts";
 import { CONTROL_CHARS_MESSAGE, hasControlChars } from "../lib/text.ts";
-import { InvoiceError, invoiceToJson, type InvoiceService } from "../sales/invoice.ts";
+import { InvoiceError, invoiceToJson, PAYMENT_INBOX_SOURCE, paymentIntentToJson, settlementToJson,
+  type InvoiceService } from "../sales/invoice.ts";
 import { ShiftError, shiftToJson, type ShiftService } from "../sales/shift.ts";
 import { assertBranch, assertWarehouseInBranch } from "../sales/scope.ts";
 import { assertMarkdownAllowed as markdownGate } from "../sales/markdown-gate.ts";
@@ -363,6 +364,8 @@ export function registerSalesRoutes(app: FastifyInstance, deps: SalesRouteDeps):
     return {
       ...invoiceToJson(inv),
       receivedAmount: serializeMoney(await invoices.paidSoFar(id)),
+      // تسویهٔ قطعی پس از نهایی‌سازی (F-115-02)؛ پیش‌نویس `null`.
+      settlement: settlementToJson(await invoices.settlement(id)),
     };
   });
 
@@ -601,6 +604,29 @@ export function registerSalesRoutes(app: FastifyInstance, deps: SalesRouteDeps):
   });
 
   /**
+   * مشتری وصل‌شده به سبد — برای نمایش «این فاکتور به نام کیست» (Batch 2.1).
+   *
+   * فاکتور فقط `customerId` دارد و پروندهٔ مشتری `customer.manage` می‌خواهد که
+   * صندوق‌دار ندارد. این مسیر فقط همان سه میدانی را می‌دهد که صندوق‌دار برای
+   * تأیید نسیه یا امتیاز لازم دارد — همان شماره‌ای که خودش وارد کرده — و همان
+   * دروازه‌های سبد را دارد: `sale.create`، دامنهٔ شعبه و مالکیت پیش‌نویس.
+   * سقف اعتبار، مانده و یادداشت داخلی عمداً بیرون نمی‌روند.
+   */
+  app.get("/invoices/:id/customer", async (req) => {
+    const s = session(req);
+    const { id } = z.object({ id: uuid }).parse(req.params);
+    await requireForSession(db, s, "sale.create");
+    await assertInvoiceInScope(db, s.userId, id, invoices);
+    const row = await db
+      .selectFrom("sales.invoice as i")
+      .leftJoin("sales.customer as c", "c.id", "i.customer_id")
+      .select(["c.id as id", "c.full_name as fullName", "c.mobile_normalized as mobile", "c.status as status"])
+      .where("i.id", "=", id)
+      .executeTakeFirst();
+    return { customer: row?.id ? { id: row.id, fullName: row.fullName, mobile: row.mobile, status: row.status } : null };
+  });
+
+  /**
    * گزینه‌های بسته‌بندی هدیه.
    *
    * از `sales.gift_option` می‌آید نه از فهرستی در کد: فروشگاه امسال
@@ -817,11 +843,21 @@ export function registerSalesRoutes(app: FastifyInstance, deps: SalesRouteDeps):
       .where("code", "=", body.methodCode).executeTakeFirst();
     if (method?.kind === "credit") {
       await requireForSession(db, s, "sale.credit", { amount: parseMoney(body.amount) });
+      // نسیه پول نیست و ردیف پرداخت هم نمی‌سازد (Batch 2.1). ردیف «نشانهٔ نسیه»
+      // در `paidSoFar` و `post_batch` شمرده نمی‌شد، پس هیچ اثری نداشت جز اینکه
+      // رها کردن سبد را به `invoice.cancel` می‌بست. نسیهٔ واقعی نتیجهٔ
+      // نهایی‌سازی با مانده است (مشتری + `sale.credit` + سقف اعتبار در SQL).
+      // مجوز **پیش از** این رد سنجیده می‌شود تا صندوق‌دار همان ۴۰۳ قبلی را بگیرد.
+      throw new InvoiceError(
+        "credit_not_a_payment",
+        "نسیه روش پرداخت نیست؛ برای فروش نسیه، مشتری را وصل کنید و «ثبت نسیه» را بزنید.",
+        422,
+      );
     }
     const key = idempotencyKey(req);
     const out = await runOnce<string>(db, {
       key,
-      source: "api.invoice.payment",
+      source: PAYMENT_INBOX_SOURCE,
       payload: {
         actorId: s.userId,
         invoiceId: id,
@@ -839,6 +875,7 @@ export function registerSalesRoutes(app: FastifyInstance, deps: SalesRouteDeps):
           ...(body.refNo === undefined ? {} : { refNo: body.refNo }),
           ...(body.accountId === undefined ? {} : { accountId: body.accountId }),
           ...(key === undefined ? {} : { clientEventId: key }),
+          rejectNonCashOverpay: true,
         });
         return { value: paymentId, ref: paymentId };
       },
@@ -865,6 +902,36 @@ export function registerSalesRoutes(app: FastifyInstance, deps: SalesRouteDeps):
       receivedAmount: serializeMoney(received),
       invoice: invoiceToJson(inv),
     });
+  });
+
+  /**
+   * وضعیت **یک** قصد پرداخت با شناسهٔ خودش (F-115-01) — فقط خواندن.
+   *
+   * `:key` همان `Idempotency-Key` ارسال پرداخت است. جمع دریافتی هرگز هویت یک
+   * پرداخت را ثابت نمی‌کند: پرداخت دیگری با همان مبلغ آن را جعل می‌کرد. دروازه‌ها
+   * همان ثبت پرداخت است — `sale.create`، دامنهٔ شعبه و مالکیت سبد صندوق — و
+   * پاسخ فقط وضعیت و ردیف **همان** شناسه روی **همین** فاکتور است.
+   */
+  const intentParams = z.object({ id: uuid, key: uuid });
+  app.get("/invoices/:id/payment-intents/:key", async (req) => {
+    const s = session(req);
+    const { id, key } = intentParams.parse(req.params);
+    await assertInvoiceInScope(db, s.userId, id, invoices);
+    await requireForSession(db, s, "sale.create");
+    return paymentIntentToJson(await invoices.paymentIntent(id, key));
+  });
+
+  /**
+   * «این پرداخت انجام نشده» — مهر شناسه تا درخواست دیرِ همان قصد هرگز ثبت نشود.
+   * بی اثر مالی و ذاتاً Idempotent (هویتش خودِ شناسه است). اگر همان شناسه پیش‌تر
+   * ثبت شده باشد، پاسخ «ثبت شد» است، نه «رها شد».
+   */
+  app.post("/invoices/:id/payment-intents/:key/abandon", async (req) => {
+    const s = session(req);
+    const { id, key } = intentParams.parse(req.params);
+    await assertInvoiceInScope(db, s.userId, id, invoices);
+    await requireForSession(db, s, "sale.create");
+    return paymentIntentToJson(await invoices.abandonPaymentIntent(id, key, s.userId));
   });
 
   /**
@@ -927,6 +994,10 @@ export function registerSalesRoutes(app: FastifyInstance, deps: SalesRouteDeps):
     return {
       ...invoiceToJson(finalized as NonNullable<typeof finalized>),
       replayed: out.replayed,
+      // صفحهٔ «ثبت شد» از همین ساخته می‌شود، نه از تصویر کلاینت پیش از
+      // نهایی‌سازی (F-115-02): پرداختی که میان آن تصویر و قفل نهایی‌سازی Commit
+      // شده، اینجا دیده می‌شود. در Replay هم همان ستون‌ها خوانده می‌شوند.
+      settlement: settlementToJson(await invoices.settlement(id)),
     };
   });
 
