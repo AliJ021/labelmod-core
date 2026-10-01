@@ -184,6 +184,22 @@ export interface DailyReport {
   returnCount: number;
 }
 
+/**
+ * همان خلاصه روز به تفکیک ساعت کاری (مهاجرت ۰۸۳). سرور همیشه ۲۴ ساعت
+ * (۰ تا ۲۳، مرتب) می‌دهد و جمعشان دقیقاً همان `DailyReport` است. سود بی
+ * `cost.view` در همهٔ ساعت‌ها `null` و `profitVisible` برابر `false` است.
+ */
+export interface DailyHour {
+  hour: number;
+  salesAmount: string;
+  receivedAmount: string;
+  profitAmount: string | null;
+  invoiceCount: number;
+  returnCount: number;
+  paymentCount: number;
+}
+export interface DailyHourly { businessDate: string; profitVisible: boolean; hours: DailyHour[] }
+
 /** درآمدی که هنوز به دفتر نرفته — زنگ خطر داشبورد. */
 export interface UnpostedRow {
   batchId: string;
@@ -407,6 +423,14 @@ export const pos = {
    * **نه صفر**. صفر یک ادعای مالی است؛ «اجازه دیدنش را نداری» ادعای
    * دیگری. یکی‌کردنشان یعنی صندوق‌دار فکر کند فروشگاه ضرر کرده.
    */
+  /** همان دروازهٔ `dailyReport`؛ یک درخواست برای هر سه روند ساعتی. */
+  dailyHourly: (branchId: string, date?: string, opts?: RequestOptions) =>
+    api.get<DailyHourly>(
+      `/reports/daily/hourly?branchId=${encodeURIComponent(branchId)}` +
+        (date === undefined ? "" : `&date=${encodeURIComponent(date)}`),
+      opts,
+    ),
+
   dailyReport: (branchId: string, date?: string, opts?: RequestOptions) =>
     api.get<DailyReport>(
       `/reports/daily?branchId=${encodeURIComponent(branchId)}` +

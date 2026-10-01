@@ -3,43 +3,50 @@
  *
  * ترتیب خواندن عمدی است:
  *   ۱. چه چیزی رسیدگی می‌خواهد (دوره‌های ثبت‌نشده) — بالاترین اولویت.
- *   ۲. سه شاخص امروز: فروش · وجه دریافتی · سود (design.md).
- *   ۳. فروش ساعت‌به‌ساعت امروز — فقط از `/reports/hourly` واقعی.
+ *   ۲. سه شاخص امروز: فروش · وجه دریافتی · سود (design.md) — زبانه‌هایی که
+ *      یک پنل مشترک را عوض می‌کنند.
+ *   ۳. روند ساعتیِ شاخص انتخاب‌شده — از `/reports/daily/hourly` (مهاجرت ۰۸۳)،
+ *      که جمع ساعت‌هایش دقیقاً همان سه کارت است.
  *   ۴. کارهای پرتکرار.
  *
  * هیچ عدد ساختگی روی این صفحه نمی‌نشیند. بخشی که داده یا مجوزش
  * نیست، می‌گوید چرا — نه صفر، نه نمونه.
  */
-import { useEffect, useState } from "react";
+import { useEffect, useId, useState } from "react";
 import { navigate } from "../lib/use-url-state.ts";
 import { Solid } from "../components/Glass.tsx";
 import { Icon } from "../components/Icon.tsx";
 import { quickActionView, type NavAccess } from "../lib/navigation.ts";
 import { ApiError } from "../lib/api.ts";
 import { parseRial } from "../lib/money.ts";
-import { channelLabel, formatCount, formatGregorian, formatHour, formatJalali, formatMoney } from "../lib/format.ts";
+import { channelLabel, formatCount, formatGregorian, formatJalali } from "../lib/format.ts";
 import {
   canClosePeriod,
   periodNote,
   pos,
   type Branch,
+  type DailyHourly,
   type DailyReport,
   type UnpostedRow,
 } from "../lib/pos.ts";
-import { reports, type HourlyRow } from "../lib/reports.ts";
+import { hourlyView, METRIC_COPY, type Metric } from "../lib/dashboard-hourly.ts";
 import { session } from "../lib/session.ts";
 import { Money } from "../components/ui/Money.tsx";
-import { Kpi } from "../components/ui/Kpi.tsx";
+import { Kpi, KpiTabs, type KpiTab } from "../components/ui/Kpi.tsx";
 import { PageHeader, SectionHeader } from "../components/ui/PageHeader.tsx";
 import { StatusBadge, StatusIcon } from "../components/ui/Status.tsx";
 import { Skeleton } from "../components/ui/Skeleton.tsx";
 import { SafeAction } from "../components/ui/SafeAction.tsx";
-import { BarChart, type Bar } from "../components/ui/BarChart.tsx";
+import { BarChart } from "../components/ui/BarChart.tsx";
 import { Ltr } from "../components/ui/Bidi.tsx";
 import { ResultState } from "../components/ResultState.tsx";
 
-/** `null` = این کاربر `report.view` ندارد؛ آرایه = سنجیدیم. */
-type Hourly = HourlyRow[] | null | "error";
+/**
+ * روند ساعتی خلاصه روز. `denied`: سرور این جزئیات را نداد (همان دروازهٔ
+ * خلاصه روز است، پس در عمل با خودِ کارت‌ها می‌آید) — آن‌وقت کارت‌ها زبانه
+ * نمی‌شوند، چون پنلی برای نشان‌دادن نیست.
+ */
+type Hourly = { state: "loading" } | { state: "ready"; data: DailyHourly } | { state: "error" } | { state: "denied" };
 
 export function Dashboard({ access }: { access: NavAccess }) {
   const [branch, setBranch] = useState<Branch | null>(null);
@@ -61,8 +68,14 @@ export function Dashboard({ access }: { access: NavAccess }) {
    */
   const [mayClose, setMayClose] = useState(false);
   const [closed, setClosed] = useState<string | null>(null);
-  const [hourly, setHourly] = useState<Hourly>(null);
-  const [hourlyLoading, setHourlyLoading] = useState(true);
+  const [hourly, setHourly] = useState<Hourly>({ state: "loading" });
+  /**
+   * زبانهٔ انتخاب‌شده **محلی** است، نه در نشانی: داشبورد هیچ وضعیت نشانی‌ای
+   * ندارد و انتخاب شاخص یک نمای گذرای همان صفحه است، نه مقصدی برای پیوند.
+   * هر سه روند با یک درخواست آمده‌اند؛ تغییر زبانه هیچ درخواستی نمی‌سازد.
+   */
+  const [metric, setMetric] = useState<Metric>("sales");
+  const tabsId = useId();
 
   /**
    * ⚠️ زنجیرهٔ بارگذاری با Unmount لغو می‌شود. قفل و خروج داشبورد را
@@ -109,17 +122,16 @@ export function Dashboard({ access }: { access: NavAccess }) {
           setMayClose(false);
         }
 
-        // فروش ساعتی پشت `report.view` است؛ صندوق‌دار ندارد و این
-        // «خطا» نیست. خطای واقعی جدا نشان داده می‌شود.
+        // روند ساعتی همان روز کاریِ کارت‌ها (تاریخ از پاسخ سرور، نه ساعت
+        // مرورگر) و همان دروازه. یک درخواست برای هر سه شاخص؛ ۴۰۳ حالت
+        // «بی‌جزئیات» است نه خطا، و خطای واقعی فقط همین بخش را می‌گیرد.
         try {
-          const { rows } = await reports.hourly({ from: report.businessDate, to: report.businessDate, branchId: first.id }, { signal });
+          const data = await pos.dailyHourly(first.id, report.businessDate, { signal });
           if (signal.aborted) return;
-          setHourly(rows);
+          setHourly({ state: "ready", data });
         } catch (err) {
           if (signal.aborted) return;
-          setHourly(err instanceof ApiError && err.status === 403 ? null : "error");
-        } finally {
-          if (!signal.aborted) setHourlyLoading(false);
+          setHourly(err instanceof ApiError && err.status === 403 ? { state: "denied" } : { state: "error" });
         }
       } catch (err) {
         if (signal.aborted) return;
@@ -156,6 +168,27 @@ export function Dashboard({ access }: { access: NavAccess }) {
   // قبل)، پس صفر می‌شود تا کارت «−۵۰٬۰۰۰ نسیه» نشان ندهد.
   const credit = sales > received ? sales - received : 0n;
   const attention = unposted?.length ?? 0;
+  // سود بی `cost.view` نامعلوم است: کارتش می‌ماند (با دلیل)، ولی زبانه‌اش انتخاب نمی‌شود
+  // و پنل هرگز روند سود را نمی‌سازد — نه صفر، نه ستون.
+  const profitKnown = report.profitAmount !== null && (hourly.state !== "ready" || hourly.data.profitVisible);
+  const selected: Metric = metric === "profit" && !profitKnown ? "sales" : metric;
+  const kpis: KpiTab<Metric>[] = [
+    { key: "sales", label: "فروش", icon: "receipt", primary: true,
+      value: <Money rial={sales} size="xl" />,
+      note: report.returnCount > 0
+        ? `${formatCount(report.invoiceCount)} فاکتور · ${formatCount(report.returnCount)} مرجوعی`
+        : `${formatCount(report.invoiceCount)} فاکتور` },
+    { key: "received", label: "وجه دریافتی", icon: "card",
+      value: <Money rial={received} size="xl" />,
+      state: credit > 0n ? "warning" : "completed",
+      note: credit > 0n ? <><Money rial={credit} size="sm" /> هنوز نرسیده</> : "همه پول رسیده" },
+    // سود `null` یعنی این کاربر `cost.view` ندارد — نه اینکه سود صفر بوده.
+    // نشان‌دادن «۰» به‌جایش، به صندوق‌دار می‌گفت فروشگاه امروز ضرر کرده.
+    { key: "profit", label: "سود", icon: "chart", unavailable: !profitKnown,
+      value: report.profitAmount === null ? <span className="kpi-unknown" aria-label="نامعلوم">—</span> : <Money rial={report.profitAmount} size="xl" />,
+      state: report.profitAmount === null ? "warning" : "completed",
+      note: report.profitAmount === null ? "برای دیدن سود، دسترسی بهای تمام‌شده لازم است" : "پس از بهای تمام‌شده" },
+  ];
 
   return (
     <div className="dashboard">
@@ -224,28 +257,14 @@ export function Dashboard({ access }: { access: NavAccess }) {
         ساعتی زیرش — یک فضای کار، نه چند ویجت (بازبینی بصری ۱).
       */}
       <Solid as="section" className="today" aria-label="امروز در یک نگاه">
-      <section className="kpis kpis--band" aria-label="شاخص‌های امروز">
-        <Kpi label="فروش" icon="receipt" emphasis
-          value={<Money rial={sales} size="xl" />}
-          note={report.returnCount > 0
-            ? `${formatCount(report.invoiceCount)} فاکتور · ${formatCount(report.returnCount)} مرجوعی`
-            : `${formatCount(report.invoiceCount)} فاکتور`} />
-        <Kpi label="وجه دریافتی" icon="card"
-          value={<Money rial={received} size="xl" />}
-          state={credit > 0n ? "warning" : "completed"}
-          note={credit > 0n ? <><Money rial={credit} size="sm" /> هنوز نرسیده</> : "همه پول رسیده"} />
-        {/*
-          سود `null` یعنی این کاربر `cost.view` ندارد — نه اینکه سود
-          صفر بوده. نشان‌دادن «۰» به‌جایش، به صندوق‌دار می‌گفت
-          فروشگاه امروز ضرر کرده.
-        */}
-        <Kpi label="سود" icon="chart"
-          value={report.profitAmount === null ? <span className="kpi-unknown" aria-label="نامعلوم">—</span> : <Money rial={report.profitAmount} size="xl" />}
-          state={report.profitAmount === null ? "warning" : "completed"}
-          note={report.profitAmount === null ? "برای دیدن سود، دسترسی بهای تمام‌شده لازم است" : "پس از بهای تمام‌شده"} />
-      </section>
-
-      <HourlyPanel hourly={hourly} loading={hourlyLoading} />
+      {hourly.state === "denied"
+        ? <section className="kpis kpis--band" aria-label="شاخص‌های امروز">
+            {kpis.map(k => <Kpi key={k.key} label={k.label} icon={k.icon} emphasis={k.primary ?? false} value={k.value} state={k.state} note={k.note} />)}
+          </section>
+        : <>
+            <KpiTabs items={kpis} value={selected} onChange={setMetric} label="شاخص‌های امروز" panelId={`${tabsId}-panel`} idPrefix={`${tabsId}-tab`} />
+            <HourlyPanel id={`${tabsId}-panel`} metric={selected} hourly={hourly} />
+          </>}
       </Solid>
 
       <QuickActions access={access} />
@@ -276,33 +295,28 @@ function QuickActions({ access }: { access: NavAccess }) {
 }
 
 /**
- * فروش ساعت‌به‌ساعت امروز. کانال‌ها جمع می‌شوند — جمع در `bigint`، نه
- * در شناور. بازهٔ نمایش ۸ تا ۲۲ است و هر ساعتِ دارای فروش بیرون از آن
- * هم افزوده می‌شود؛ ساعتی که داده ندارد صفر است، نه حذف.
+ * روند ساعتیِ شاخص انتخاب‌شده — پنل مشترکِ سه زبانه. هر شاخص عنوان، توضیح،
+ * حالت خالی و نمودار خودش را دارد؛ متن «فروش» زیر «سود» نمی‌ماند. داده برای
+ * هر سه یک بار آمده و اینجا فقط انتخاب می‌شود. ساعت‌های زودتر سمت راست.
  */
-function HourlyPanel({ hourly, loading }: { hourly: Hourly; loading: boolean }) {
-  if (!loading && hourly === null) return null;
+function HourlyPanel({ id, metric, hourly }: { id: string; metric: Metric; hourly: Exclude<Hourly, { state: "denied" }> }) {
+  const copy = METRIC_COPY[metric];
   let body;
-  if (loading) body = <Skeleton variant="chart" lines={1} label="در حال بارگذاری فروش ساعتی…" />;
-  else if (hourly === "error" || hourly === null) body = <ResultState kind="error" title="فروش ساعتی خوانده نشد." description="بقیهٔ داشبورد معتبر است؛ این بخش را بعداً دوباره ببینید." />;
+  if (hourly.state === "loading") body = <Skeleton variant="chart" lines={1} label={`در حال بارگذاری ${copy.title}…`} />;
+  else if (hourly.state === "error") body = <ResultState kind="error" title="روند ساعتی خوانده نشد." description="کارت‌های بالا معتبرند؛ این بخش را بعداً دوباره ببینید." />;
   else {
-    const totals = new Map<number, bigint>();
-    for (const r of hourly) totals.set(r.hourOfDay, (totals.get(r.hourOfDay) ?? 0n) + parseRial(r.netAmount));
-    const hours = [...totals.keys()];
-    const from = Math.min(8, ...hours), to = Math.max(22, ...hours);
-    const bars: Bar[] = [];
-    for (let h = from; h <= to; h++) {
-      const value = totals.get(h) ?? 0n;
-      bars.push({ key: String(h), label: formatHour(h), value, display: `${formatMoney(value)} تومان` });
-    }
-    const peak = bars.reduce<Bar | null>((m, b) => (b.value > 0n && (!m || b.value > m.value) ? b : m), null);
-    body = peak === null
-      ? <ResultState title="هنوز فروشی برای امروز ثبت نشده است." description="با اولین فاکتور نهایی، نمودار ساعتی اینجا ساخته می‌شود." />
-      : <BarChart title="فروش خالص هر ساعت (تومان)" labelHeader="ساعت" valueHeader="فروش خالص"
-          summary={`بیشترین فروش: ساعت ${peak.label} با ${peak.display}`} bars={bars} />;
+    const view = hourlyView(hourly.data.hours, metric);
+    body = view.kind === "unknown"
+      ? <ResultState kind="denied" title="روند سود برای این نقش در دسترس نیست." description="دیدن سود به دسترسی بهای تمام‌شده نیاز دارد." />
+      : view.kind === "empty"
+        ? <ResultState title={copy.empty[0]} description={copy.empty[1]} />
+        : <BarChart title={copy.chart} labelHeader="ساعت" valueHeader={copy.value} summary={view.summary} bars={view.bars} />;
   }
-  return <section className="today-trend" aria-labelledby="dash-hourly">
-    <SectionHeader id="dash-hourly" title="روند فروش ساعتی" description="از گزارش فروش ساعتی؛ همهٔ کانال‌ها با هم. ساعت‌های زودتر سمت راست." />
+  // نام پنل عنوان خودش است («روند وجه دریافتی ساعتی»)، نه زبانه: ارجاع به زبانه متن کامل
+  // آن (برچسب + مبلغ + یادداشت) را نام پنل می‌کرد. پیوند زبانه ↔ پنل با `aria-controls` است.
+  const headingId = `${id}-h`;
+  return <section className="today-trend" id={id} role="tabpanel" aria-labelledby={headingId} tabIndex={0} aria-busy={hourly.state === "loading" || undefined}>
+    <SectionHeader id={headingId} title={copy.title} description={copy.description} />
     {body}
   </section>;
 }

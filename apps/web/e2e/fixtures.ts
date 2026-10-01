@@ -5,7 +5,7 @@ import { redactText, safeRequestPath } from "./redact";
 import type { Product, Variation } from "../src/lib/catalog";
 import type { AppUser, Customer } from "../src/lib/people";
 import type { Me } from "../src/lib/session";
-import type { Branch, DailyReport } from "../src/lib/pos";
+import type { Branch, DailyHour, DailyHourly, DailyReport } from "../src/lib/pos";
 import type { PermissionRule } from "../src/lib/admin";
 import { ZONES } from "../src/lib/navigation";
 
@@ -14,6 +14,23 @@ const variation: Variation = { id: "v1", color: "سرمه‌ای", size: "XL", s
 const me: Me = { id: "22222222-2222-4222-8222-222222222222", fullName: "مدیر آزمایشی", roles: ["admin"], expiresAt: "2027-01-01T00:00:00Z", elevated: true, enrollmentRequired: false, device: null };
 const branches: Branch[] = [{ id: "b1", code: "TEST", name: "شعبه آزمایشی", warehouses: [{ id: "w1", code: "STORE", name: "انبار آزمایشی", kind: "store" }] }];
 const daily: DailyReport = { businessDate: "2026-09-16", salesAmount: "12340000", receivedAmount: "11000000", profitAmount: "2340000", invoiceCount: 12, returnCount: 1 };
+/** ۲۴ ساعت خلاصه روز (مثل پاسخ سرور)؛ ساعت‌های نام‌برده جایگزین صفر می‌شوند. */
+export function hourlyDay(over: Record<number, Partial<DailyHour>> = {}, profitVisible = true, businessDate = daily.businessDate): DailyHourly {
+  return { businessDate, profitVisible, hours: Array.from({ length: 24 }, (_, hour) => ({
+    hour, salesAmount: "0", receivedAmount: "0", profitAmount: profitVisible ? "0" : null,
+    invoiceCount: 0, returnCount: 0, paymentCount: 0, ...over[hour],
+    ...(profitVisible ? {} : { profitAmount: null }),
+  })) };
+}
+/**
+ * روند پیش‌فرض، **آشتی‌شده با `daily`**: جمع ساعت‌ها دقیقاً همان سه کارت است (همان ثابتی که
+ * سرور تضمین می‌کند)، با یک ساعت مرجوعیِ منفی.
+ */
+export const DEFAULT_HOURLY = hourlyDay({
+  11: { salesAmount: "4340000", receivedAmount: "4000000", profitAmount: "840000", invoiceCount: 5, paymentCount: 5 },
+  18: { salesAmount: "9000000", receivedAmount: "7500000", profitAmount: "2000000", invoiceCount: 7, paymentCount: 6 },
+  20: { salesAmount: "-1000000", receivedAmount: "-500000", profitAmount: "-500000", returnCount: 1, paymentCount: 1 },
+});
 export const staff: AppUser = { id: "33333333-3333-4333-8333-333333333333", username: "synthetic_staff", fullName: "پرسنل آزمایشی", mobile: null, isActive: true, createdAt: "2026-01-01T00:00:00Z", hasPin: false, hasTotp: false, roles: [{ roleCode: "cashier", roleName: "صندوق‌دار", branchId: null, branchName: null }], activeSessions: 1 };
 export const customer: Customer = { id: "c1", mobile: "09000000000", fullName: "مشتری آزمایشی با نام بلند برای بررسی چیدمان جدول", email: null, status: "active", creditLimit: "0", dueDays: 0, consentSms: false, consentMarketing: false, address: null, postalCode: null, city: null, province: null, tags: [], internalNote: null, createdAt: "2026-01-01T00:00:00Z", invoiceCount: 2, totalPurchased: "9876000", balance: "1234000" };
 export const rule: PermissionRule = { roleCode: "admin", roleName: "مدیر", operation: "price.change", allowed: true, maxAmount: null, maxPercent: null, needsApprovalFrom: null, hasRule: true };
@@ -29,7 +46,7 @@ export class MockApi {
   productRows = [product];
   permissionRows = [rule];
   defaults: Record<string, unknown> = {
-    "GET /auth/me": me, "GET /branches": { branches }, "GET /reports/daily": daily,
+    "GET /auth/me": me, "GET /branches": { branches }, "GET /reports/daily": daily, "GET /reports/daily/hourly": DEFAULT_HOURLY,
     "GET /posting-batches/unposted": { rows: [] }, "GET /auth/can": { verdict: "allow", approver: null, reason: "" },
     "GET /settings": { groups: [] }, "GET /settlement-terms": { terms: [] }, "GET /customers": { customers: [] },
     "GET /products/ref-data": { brands: [], categories: [] }, "GET /seasons": { seasons: [] },

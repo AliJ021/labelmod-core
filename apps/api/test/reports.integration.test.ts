@@ -52,6 +52,7 @@ describe("گزارش‌ها", { skip }, () => {
   const admin = `radm_${suffix}`;
   const supervisor = `rsup_${suffix}`;
   const cashier = `rcash_${suffix}`;
+  const marketing = `rmkt_${suffix}`;
   let adminId = "";
   let variationId = "";
   let today = "";
@@ -95,6 +96,7 @@ describe("گزارش‌ها", { skip }, () => {
       [admin, "مدیر گزارش", "admin"],
       [supervisor, "سرپرست گزارش", "supervisor"],
       [cashier, "صندوق‌دار گزارش", "cashier"],
+      [marketing, "بازاریاب گزارش", "marketing"],
     ] as const) {
       const u = await handle.db
         .insertInto("identity.app_user")
@@ -515,5 +517,94 @@ describe("گزارش‌ها", { skip }, () => {
       assert.match(r.headers["content-type"] as string, /text\/csv/, u);
       assert.equal(r.body.codePointAt(0), 0xfeff, `${u} بدون BOM`);
     }
+  });
+
+  // ── خلاصه روز ساعتی (مهاجرت ۰۸۳) ─────────────────────────────────
+
+  type HourRow = {
+    hour: number; salesAmount: string; receivedAmount: string; profitAmount: string | null;
+    invoiceCount: number; returnCount: number; paymentCount: number;
+  };
+  type Hourly = { businessDate: string; profitVisible: boolean; hours: HourRow[] };
+  const hourlyOf = async (username: string, query = "") => {
+    const r = await get(username, `/reports/daily/hourly?branchId=${BRANCH}${query}`);
+    assert.equal(r.statusCode, 200, r.body);
+    return JSON.parse(r.body) as Hourly;
+  };
+  const dailyOf = async (username: string, query = "") => {
+    const r = await get(username, `/reports/daily?branchId=${BRANCH}${query}`);
+    assert.equal(r.statusCode, 200, r.body);
+    return JSON.parse(r.body) as { businessDate: string; salesAmount: string; receivedAmount: string; profitAmount: string | null; invoiceCount: number; returnCount: number };
+  };
+  const sum = (hours: HourRow[], key: "salesAmount" | "receivedAmount" | "profitAmount") =>
+    hours.reduce((t, h) => t + BigInt(h[key] as string), 0n);
+
+  test("ساعتی: ۲۴ ساعت مرتب و جمعش دقیقاً همان خلاصه روز است (مدیر، با سود)", async () => {
+    const [daily, hourly] = [await dailyOf(admin), await hourlyOf(admin)];
+    assert.equal(hourly.businessDate, daily.businessDate, "همان روز کاری سرور");
+    assert.deepEqual(hourly.hours.map((h) => h.hour), Array.from({ length: 24 }, (_, i) => i));
+    assert.equal(hourly.profitVisible, true);
+    for (const h of hourly.hours) {
+      for (const k of ["salesAmount", "receivedAmount", "profitAmount"] as const) {
+        assert.equal(typeof h[k], "string", `${k} رشته است، نه عدد`);
+        assert.match(h[k] as string, /^-?\d+$/, "ریال صحیح");
+      }
+    }
+    // برابری عدد صحیح، بی هیچ تلورانس.
+    assert.equal(sum(hourly.hours, "salesAmount"), BigInt(daily.salesAmount));
+    assert.equal(sum(hourly.hours, "receivedAmount"), BigInt(daily.receivedAmount));
+    assert.equal(sum(hourly.hours, "profitAmount"), BigInt(daily.profitAmount as string));
+    assert.equal(hourly.hours.reduce((t, h) => t + h.invoiceCount, 0), daily.invoiceCount);
+    assert.equal(hourly.hours.reduce((t, h) => t + h.returnCount, 0), daily.returnCount);
+    assert.ok(BigInt(daily.salesAmount) > 0n, "فروش واقعی این فایل دیده می‌شود — آشتی روی صفر نیست");
+  });
+
+  test("ساعتی بی cost.view: سود همه ساعت‌ها null و هیچ ستون بها بیرون نمی‌رود", async () => {
+    for (const user of [supervisor, cashier]) {
+      const [daily, hourly] = [await dailyOf(user), await hourlyOf(user)];
+      assert.equal(daily.profitAmount, null);
+      assert.equal(hourly.profitVisible, false);
+      assert.ok(hourly.hours.every((h) => h.profitAmount === null), "null، نه \"0\"");
+      assert.equal(sum(hourly.hours, "salesAmount"), BigInt(daily.salesAmount), "فروش مستقل از بها می‌ماند");
+      assert.equal(sum(hourly.hours, "receivedAmount"), BigInt(daily.receivedAmount));
+      for (const h of hourly.hours) {
+        assert.deepEqual(Object.keys(h).sort(),
+          ["hour", "invoiceCount", "paymentCount", "profitAmount", "receivedAmount", "returnCount", "salesAmount"],
+          "فقط همین کلیدها؛ نه cogs، نه حاشیه");
+      }
+    }
+  });
+
+  test("ساعتی همان دروازهٔ خلاصه روز را دارد — وضعیت هر درخواست یکی است", async () => {
+    const dates = await sql<{ today: string; yesterday: string }>`
+      SELECT platform.business_date()::text AS today, (platform.business_date()-1)::text AS yesterday`.execute(handle.db);
+    const { today: t, yesterday } = dates.rows[0]!;
+    const variants = ["", `&date=${t}`, `&date=${yesterday}`, "&date=2026-02-30", "&date=دیروز"];
+    for (const user of [admin, supervisor, cashier, marketing]) {
+      for (const v of variants) {
+        const d = await get(user, `/reports/daily?branchId=${BRANCH}${v}`);
+        const h = await get(user, `/reports/daily/hourly?branchId=${BRANCH}${v}`);
+        assert.equal(h.statusCode, d.statusCode, `${user} ${v}: ساعتی ${h.statusCode} ≠ روزانه ${d.statusCode}`);
+      }
+      const otherBranch = "00000000-0000-7000-8000-00000000dead";
+      const d = await get(user, `/reports/daily?branchId=${otherBranch}`);
+      const h = await get(user, `/reports/daily/hourly?branchId=${otherBranch}`);
+      assert.equal(h.statusCode, d.statusCode, `${user}: شعبهٔ بیرون از دامنه`);
+      assert.equal(h.statusCode, 403);
+    }
+    // صندوق‌دار فقط امروز؛ بازاریاب هیچ‌کدام — همان قرارداد `/reports/daily`.
+    assert.equal((await get(cashier, `/reports/daily/hourly?branchId=${BRANCH}&date=${yesterday}`)).statusCode, 403);
+    assert.equal((await get(marketing, `/reports/daily/hourly?branchId=${BRANCH}`)).statusCode, 403);
+    const anon = await app.inject({ method: "GET", url: `/reports/daily/hourly?branchId=${BRANCH}` });
+    assert.equal(anon.statusCode, 401);
+  });
+
+  test("ساعتیِ روز خالی: ۲۴ صفر برای مدیر، سود null برای سرپرست — صفر و نامعلوم یکی نیستند", async () => {
+    const empty = "&date=2024-02-29";
+    const a = await hourlyOf(admin, empty);
+    assert.equal(a.hours.length, 24);
+    assert.ok(a.hours.every((h) => h.salesAmount === "0" && h.receivedAmount === "0" && h.profitAmount === "0"));
+    const s = await hourlyOf(supervisor, empty);
+    assert.ok(s.hours.every((h) => h.salesAmount === "0" && h.profitAmount === null));
   });
 });
