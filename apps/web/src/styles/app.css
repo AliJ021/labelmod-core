@@ -145,48 +145,20 @@
 .dot--warn { color: var(--warn); }
 .dot--crit { color: var(--crit); }
 
-/* ── صندوق ─────────────────────────────────────────────────────── */
-.pos-bar {
-  display: flex;
-  align-items: center;
-  gap: var(--s-3);
-  padding: var(--s-3);
-  margin-bottom: var(--s-4);
-}
-
-.scan {
-  flex: 1;
-}
-
-.scan input {
-  width: 100%;
-  min-height: var(--touch-lg);
-  padding: 0 var(--s-4);
-  border: 1px solid var(--rule-2);
-  border-radius: var(--r-sm);
-  /* ورودی اسکن مات است، حتی داخل نوار شیشه‌ای: متنی که تایپ می‌شود
-     باید پرتضاد باشد. */
-  background: var(--surface-solid);
-  color: var(--ink);
-  font: inherit;
-  font-size: 1.05rem;
-}
-
+/* ── صندوق: شبکهٔ دو ستونه و سطر سبد (بقیهٔ چیدمان در workspace.css) ── */
 .pos-body {
   display: grid;
-  grid-template-columns: 1fr;
+  grid-template-columns: minmax(0, 1fr);
   gap: var(--s-4);
+  align-items: start;
 }
 
+/* دو ستون از ۹۰۰ — همان مرزی که نوار کناری جای نوار پایین را می‌گیرد.
+   ستون پرداخت ۳۲۰ تا ۴۱۲ پیکسل؛ بقیه برای سبد. */
 @media (min-width: 900px) {
   .pos-body {
-    grid-template-columns: 1fr 320px;
+    grid-template-columns: minmax(0, 1fr) clamp(320px, 35%, 412px);
   }
-}
-
-.cart,
-.pay {
-  padding: var(--s-4);
 }
 
 /*
@@ -275,13 +247,6 @@
   color: var(--ink-3);
   text-align: center;
   padding: var(--s-6) 0;
-}
-
-.pay {
-  display: flex;
-  flex-direction: column;
-  gap: var(--s-2);
-  align-self: start;
 }
 
 .total {
@@ -1230,29 +1195,6 @@ select.set-input {
     overflow-x: auto;
     white-space: nowrap;
   }
-}
-
-/*
-  ردیف شماره مشتری در صندوق.
-
-  ورودی فضای باقی‌مانده را می‌گیرد و دکمه به اندازه خودش می‌ماند.
-  ارتفاع ۴۴ پیکسل، چون هدف لمسی زیر آن روی تبلت پای صندوق قابل زدن
-  نیست — همان بودجه‌ای که `design.md` گذاشته.
-*/
-.pos-customer {
-  margin-block-start: var(--s-2);
-  align-items: center;
-}
-
-.pos-customer input {
-  flex: 1 1 auto;
-  min-height: 44px;
-  min-width: 0;
-}
-
-.pos-customer .btn {
-  min-height: 44px;
-  white-space: nowrap;
 }
 
 /*

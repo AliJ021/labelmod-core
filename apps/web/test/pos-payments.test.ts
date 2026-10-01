@@ -10,7 +10,8 @@ import { describe, test } from "node:test";
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import { ApiError } from "../src/lib/api.ts";
-import { allOptions, cartCounts, checkAmount, checkoutErrorMessage, checkoutTotals, maxAmount, NEEDS_CUSTOMER_REASON,
+import { allOptions, cartCounts, checkAmount, checkoutErrorMessage, checkoutTotals, DIGIPAY_NOT_IMPLEMENTED, LINK_NOT_IMPLEMENTED,
+  maxAmount, NEEDS_CUSTOMER_REASON, SNAPPAY_NOT_CONFIGURED, usableChannel,
   finalAmounts, intentFromPending, intentToPending, paymentBody, paymentFailureKind, paymentLayout, paymentLocked,
   resolveIntentStatus, type PaymentIntent, type PaymentPhase } from "../src/lib/pos-payments.ts";
 import { clearPendingPayment, readPendingPayment, writePendingPayment } from "../src/lib/pending-payment.ts";
@@ -23,38 +24,74 @@ const SEED = [m("cash", "cash"), m("card", "card_reader", true), m("transfer", "
   m("credit", "credit"), m("points", "points"), m("giftcard", "gift_card", true)];
 const codes = (xs: { code: string }[]) => xs.map((x) => x.code);
 
-describe("گروه‌بندی روش‌ها", () => {
-  test("کارت‌خوان اصلی؛ نقدی ردیف دوم؛ بقیه زیر «بیشتر» با ترتیب ثابت", () => {
+describe("گروه‌بندی روش‌ها — نیاز مالک محصول (POS-05 تا POS-09)", () => {
+  test("ردیف ۱ کارت‌خوان؛ ردیف ۲ همیشه اسنپ‌پی و دیجی‌پی به همین ترتیب؛ بقیه زیر «بیشتر» با ترتیب ثابت", () => {
     const l = paymentLayout(SEED, { hasCustomer: true });
     assert.deepEqual(codes(l.primary), ["card"]);
-    assert.deepEqual(codes(l.secondary), ["cash"]);
-    assert.deepEqual(codes(l.more), ["transfer", "gateway", "points", "giftcard"]);
+    assert.deepEqual(l.providers.map((p) => [p.key, p.label]), [["snappay", "اسنپ‌پی"], ["digipay", "دیجی‌پی"]]);
+    assert.deepEqual(codes(l.more), ["cash", "transfer", "gateway", "points", "giftcard"]);
+  });
+
+  test("نقدی هرگز در ردیف اصلی نیست — فقط زیر «روش‌های بیشتر»", () => {
+    const l = paymentLayout([...SEED, m("snappay", "gateway", true)], { hasCustomer: true });
+    assert.ok(!codes(l.primary).includes("cash"));
+    assert.ok(!l.providers.some((p) => p.option?.code === "cash"));
+    assert.ok(codes(l.more).includes("cash"));
   });
 
   test("ترتیب از kind می‌آید، نه از ترتیب پاسخ سرور", () => {
-    const l = paymentLayout([...SEED].reverse(), { hasCustomer: true });
-    assert.deepEqual(codes(allOptions(l)), ["card", "cash", "transfer", "gateway", "points", "giftcard"]);
+    const l = paymentLayout([...SEED, m("snappay", "gateway", true)].reverse(), { hasCustomer: true });
+    assert.deepEqual(codes(allOptions(l)), ["card", "snappay", "cash", "transfer", "gateway", "points", "giftcard"]);
   });
 
-  test("نسیه هرگز روش پرداخت نیست؛ دیجی‌پی و kind ناشناخته هرگز نمایش داده نمی‌شوند", () => {
-    const l = paymentLayout([...SEED, m("digipay", "gateway", true), m("DigiPay", "gateway"), m("crypto", "crypto")], { hasCustomer: true });
-    const all = codes(allOptions(l));
+  test("نسیه و kind ناشناخته هرگز روش پرداخت نیستند", () => {
+    const all = codes(allOptions(paymentLayout([...SEED, m("crypto", "crypto")], { hasCustomer: true })));
     assert.ok(!all.includes("credit"));
-    assert.ok(!all.some((c) => c.toLowerCase() === "digipay"));
     assert.ok(!all.includes("crypto"));
   });
 
-  test("اسنپ‌پی فقط وقتی سرور فرستاده، و آن‌وقت کنار نقدی", () => {
+  test("دیجی‌پی همیشه دیده می‌شود و هرگز قابل ثبت نیست — حتی اگر سرور ردیفی با این کد بفرستد", () => {
+    for (const methods of [SEED, [...SEED, m("digipay", "gateway", true), m("DigiPay", "gateway")]]) {
+      const l = paymentLayout(methods, { hasCustomer: true });
+      const digi = l.providers.find((p) => p.key === "digipay")!;
+      assert.equal(digi.option, null, "هیچ مسیر ثبتی از خانهٔ دیجی‌پی نیست");
+      assert.equal(digi.unavailableReason, DIGIPAY_NOT_IMPLEMENTED);
+      assert.ok(digi.channels.every((c) => c.unavailableReason !== null));
+      assert.ok(!codes(allOptions(l)).some((c) => c.toLowerCase() === "digipay"));
+      assert.equal(usableChannel(digi, "in_person"), false);
+      assert.equal(usableChannel(digi, "link"), false);
+    }
+  });
+
+  test("اسنپ‌پی: بی ردیف سرور برای این شعبه دیده می‌شود ولی ناموجود است؛ با ردیف، قابل انتخاب کنار دیجی‌پی", () => {
+    const off = paymentLayout(SEED, { hasCustomer: false }).providers.find((p) => p.key === "snappay")!;
+    assert.equal(off.option, null);
+    assert.equal(off.unavailableReason, SNAPPAY_NOT_CONFIGURED);
     assert.ok(!codes(allOptions(paymentLayout(SEED, { hasCustomer: false }))).includes("snappay"));
     const l = paymentLayout([...SEED, m("snappay", "gateway", true)], { hasCustomer: false });
-    assert.deepEqual(codes(l.secondary), ["cash", "snappay"]);
+    const on = l.providers.find((p) => p.key === "snappay")!;
+    assert.equal(on.option?.code, "snappay");
+    assert.equal(on.option?.group, "provider");
+    assert.equal(on.unavailableReason, null);
     assert.ok(!codes(l.more).includes("snappay"), "اسنپ‌پی درگاه دستی معمولی نیست");
+  });
+
+  test("کانال: «حضوری» و «لینک پرداخت» هر دو دیده می‌شوند؛ لینک هرگز قابل استفاده نیست چون سرور پشتوانه ندارد", () => {
+    const snap = paymentLayout([...SEED, m("snappay", "gateway", true)], { hasCustomer: true }).providers[0]!;
+    assert.deepEqual(snap.channels.map((c) => [c.key, c.label]), [["in_person", "حضوری"], ["link", "لینک پرداخت"]]);
+    assert.equal(usableChannel(snap, "in_person"), true);
+    assert.equal(usableChannel(snap, "link"), false);
+    assert.equal(snap.channels.find((c) => c.key === "link")!.unavailableReason, LINK_NOT_IMPLEMENTED);
+    const snapOff = paymentLayout(SEED, { hasCustomer: true }).providers[0]!;
+    assert.equal(usableChannel(snapOff, "in_person"), false, "بی ردیف سرور، حضوری هم نیست");
   });
 
   test("روش فعال فقط از پاسخ سرور: روشی که نیامده، نیست", () => {
     const l = paymentLayout([m("cash", "cash")], { hasCustomer: false });
-    assert.deepEqual(l, { primary: [], secondary: l.secondary, more: [] });
-    assert.deepEqual(codes(l.secondary), ["cash"]);
+    assert.deepEqual(l.primary, []);
+    assert.deepEqual(codes(l.more), ["cash"]);
+    assert.ok(l.providers.every((p) => p.option === null));
+    assert.deepEqual(codes(allOptions(l)), ["cash"]);
   });
 
   test("امتیاز و کارت هدیه بی مشتری قابل انتخاب نیستند و دلیلشان دیده می‌شود", () => {

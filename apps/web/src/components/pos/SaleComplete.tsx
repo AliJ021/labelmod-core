@@ -49,6 +49,7 @@ export function SaleComplete({ sale, onNext }: { sale: CompletedSale; onNext: ()
 
   return <section className="solid pad sale-complete" aria-labelledby="sale-complete-title">
     <div className="sale-complete-head">
+      <span className={`sale-complete-mark${sale.queued ? " sale-complete-mark--pending" : ""}`} aria-hidden="true"><Icon name={sale.queued ? "clock" : "check"} /></span>
       <StatusBadge state={sale.queued ? "pending" : "completed"} label={sale.queued ? "در صف ارسال" : "ثبت شد"} />
       <h2 id="sale-complete-title" ref={heading} tabIndex={-1}>
         {sale.queued ? "فروش در صف ارسال است" : <>فاکتور <Ltr>{sale.number ?? ""}</Ltr> ثبت شد</>}
@@ -60,10 +61,10 @@ export function SaleComplete({ sale, onNext }: { sale: CompletedSale; onNext: ()
       {sale.amounts.change > 0n ? <div className="sale-complete-change" role="status">
         <span>باقی پول به مشتری</span><Money rial={sale.amounts.change} size="xl" />
       </div> : null}
-      <dl className="checkout-lines">
+      <dl className="checkout-lines sale-complete-lines">
         <div><dt>قابل پرداخت</dt><dd><Money rial={sale.amounts.payable} /></dd></div>
         <div><dt>دریافت‌شده</dt><dd><Money rial={sale.amounts.received} /></dd></div>
-        {sale.amounts.credit > 0n ? <div><dt>نسیه به حساب مشتری</dt><dd><Money rial={sale.amounts.credit} /></dd></div> : null}
+        {sale.amounts.credit > 0n ? <div className="sale-complete-due"><dt>نسیه به حساب مشتری</dt><dd><Money rial={sale.amounts.credit} /></dd></div> : null}
         {sale.amounts.change === 0n ? <div><dt>باقی پول</dt><dd><Money rial={0n} /></dd></div> : null}
       </dl>
     </> : sale.estimate ? <>

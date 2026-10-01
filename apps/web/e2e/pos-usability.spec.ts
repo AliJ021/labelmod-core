@@ -68,7 +68,8 @@ test("split payment: an ambiguous 503 locks the method until a status check by i
   // ۵۰۳ «نامعلوم» است: روش و مبلغ قفل‌اند و هیچ ارسال کوری نیست.
   await expect(page.getByRole("alert").filter({hasText:"پاسخ قطعی"})).toBeVisible();
   await expect(card).toBeDisabled();
-  await expect(page.getByRole("button",{name:"نقد",exact:true})).toBeDisabled();
+  // نقد زیر «روش‌های بیشتر» است (POS-08)؛ قفل یعنی ورودی آن هم بسته است.
+  await expect(page.getByRole("button",{name:/^روش‌های بیشتر/})).toBeDisabled();
   await expect(page.getByRole("button",{name:"دریافت وجه",exact:true})).toHaveCount(0);
   expect(attempts).toBe(1);
   await page.getByRole("button",{name:"بررسی وضعیت",exact:true}).click();
@@ -82,6 +83,7 @@ test("split payment: an ambiguous 503 locks the method until a status check by i
   const summary=page.getByRole("complementary",{name:"پرداخت",exact:true});
   await expect(summary.getByText("مانده",{exact:true})).toBeVisible();
   await expect(summary.locator(".checkout-lines--state")).toContainText("8٬000");
+  await page.getByRole("button",{name:/^روش‌های بیشتر/}).click();
   await page.getByRole("button",{name:"نقد",exact:true}).click();
   await page.getByRole("button",{name:"دریافت وجه",exact:true}).click();
   await expect.poll(()=>payments).toEqual([{id:"p2",name:"کارت‌خوان",amount:"120000"},{id:"p3",name:"نقد",amount:"80000"}]);

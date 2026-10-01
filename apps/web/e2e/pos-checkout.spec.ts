@@ -97,14 +97,21 @@ async function open(page: Page, s?: ReturnType<typeof pos>) {
   await expect(page.locator(".lines li").first()).toContainText("شلوار کتان");
 }
 const payPanel = (page: Page) => page.getByRole("complementary", { name: "پرداخت", exact: true });
-const method = (page: Page, name: string) => page.getByRole("region", { name: "روش پرداخت" }).getByRole("button", { name, exact: true });
+const selector = (page: Page) => page.getByRole("region", { name: "روش پرداخت" });
+const method = (page: Page, name: string) => selector(page).getByRole("button", { name, exact: true });
+const moreToggle = (page: Page) => selector(page).getByRole("button", { name: /^روش‌های بیشتر/ });
+/** روش‌های غیراصلی (از جمله نقدی) زیر «روش‌های بیشتر»اند (POS-08): اگر بسته است، اول بازش کن. */
+async function pick(page: Page, name: string) {
+  if (!(await method(page, name).isVisible())) await moreToggle(page).click();
+  await method(page, name).click();
+}
 
 test("cash sale: confirm dialog, one finalize under double click, persistent success with change, print and next sale", async ({ page, api }) => {
   const s = pos(api);
   await open(page);
   await expect(page.locator(".pos-bar .pill")).toHaveText("۲ ردیف · ۳ عدد");
   await expect(payPanel(page).locator(".checkout-payable")).toContainText("20٬000");
-  await method(page, "نقدی").click();
+  await pick(page, "نقدی");
   await page.getByLabel("مبلغ (تومان)", { exact: true }).fill("25000");
   await page.getByRole("button", { name: "دریافت وجه", exact: true }).click();
   await expect.poll(() => s.posted).toEqual([{ methodCode: "cash", amount: "250000" }]);
@@ -138,10 +145,12 @@ test("card reader is primary; non-cash overpayment is blocked before any request
   const s = pos(api);
   await open(page);
   const card = method(page, "کارت‌خوان");
-  const cardBox = (await card.boundingBox())!, cashBox = (await method(page, "نقدی").boundingBox())!;
-  expect(cardBox.width, "کارت‌خوان تمام‌عرض و برجسته").toBeGreaterThan(cashBox.width * 1.5);
+  const cardBox = (await card.boundingBox())!, digiBox = (await method(page, "دیجی‌پی").boundingBox())!;
+  expect(cardBox.width, "کارت‌خوان تمام‌عرض و برجسته").toBeGreaterThan(digiBox.width * 1.5);
+  await expect(method(page, "نقدی"), "نقدی در ردیف اصلی نیست").toBeHidden();
   await card.click();
   await expect(card).toHaveAttribute("aria-pressed", "true");
+  await moreToggle(page).click();
   await expect(method(page, "نقدی")).toHaveAttribute("aria-pressed", "false");
   const amount = page.getByLabel("مبلغ (تومان)", { exact: true });
   await expect(amount).toBeFocused();
@@ -174,7 +183,7 @@ test("response lost: the exact intent is found recorded by its own key; no secon
     await route.abort("connectionreset");                  // …و پاسخ گم شد.
   });
   await open(page, s);
-  await method(page, "نقدی").click();
+  await pick(page, "نقدی");
   await page.getByRole("button", { name: "دریافت وجه", exact: true }).click();
   await expect(page.getByRole("button", { name: "بررسی وضعیت", exact: true })).toBeVisible();
   await expect(method(page, "کارت‌خوان")).toBeDisabled();
@@ -214,14 +223,16 @@ test("same-amount collision: another payment of the same amount and method does 
   await expect(page.getByText(unresolvedText)).toBeVisible();
   await expect(page.getByText("پیش‌تر ثبت شده بود")).toHaveCount(0);
   await expect(page.getByText("سرور تأیید کرد")).toHaveCount(0);
-  await expect(method(page, "نقدی"), "قصد A باز است؛ روش و مبلغ قفل").toBeDisabled();
+  await expect(method(page, "کارت‌خوان"), "قصد A باز است؛ روش و مبلغ قفل").toBeDisabled();
+  await expect(moreToggle(page), "روش‌های بیشتر هم قفل").toBeDisabled();
   expect(s.intentChecks).toEqual([`GET ${s.keys[0]}`]);
   await page.getByRole("button", { name: "ارسال دوبارهٔ همین پرداخت", exact: true }).click();
   await expect(page.locator(".pos-alert").filter({ hasText: "با همان شناسه ثبت شد" })).toBeVisible();
   expect(s.keys[1], "همان شناسه").toBe(s.keys[0]);
   expect(s.posted[1], "همان بدنه").toEqual(s.posted[0]);
   expect(s.payments.map((p) => p.amount), "A یک بار و B یک بار").toEqual(["100000", "100000"]);
-  await expect(method(page, "نقدی")).toBeEnabled();
+  await expect(method(page, "کارت‌خوان")).toBeEnabled();
+  await expect(moreToggle(page)).toBeEnabled();
 });
 
 test("reload during unknown: the intent is restored locked with its key; status checks that key; a same-key retry replays instead of duplicating", async ({ page, api }) => {
@@ -234,7 +245,7 @@ test("reload during unknown: the intent is restored locked with its key; status 
     await route.abort("connectionreset"); // در راه — هنوز Commit نشده
   });
   await open(page, s);
-  await method(page, "نقدی").click();
+  await pick(page, "نقدی");
   await page.getByRole("button", { name: "دریافت وجه", exact: true }).click();
   await expect(page.getByRole("button", { name: "بررسی وضعیت", exact: true })).toBeVisible();
   const before = JSON.parse((await pending(page))!) as { key: string; amount: string; methodCode: string };
@@ -244,7 +255,9 @@ test("reload during unknown: the intent is restored locked with its key; status 
   await expect(page.locator(".lines li").first()).toContainText("شلوار کتان");
   await expect(page.getByRole("button", { name: "بررسی وضعیت", exact: true })).toBeVisible();
   await expect(page.locator(".pay-intent")).toContainText("20٬000");
-  for (const name of ["نقدی", "کارت‌خوان"]) await expect(method(page, name)).toBeDisabled();
+  await expect(method(page, "کارت‌خوان")).toBeDisabled();
+  await expect(moreToggle(page), "روش قفل‌شدهٔ قصد پس از Reload هم روی «بیشتر» دیده می‌شود").toBeDisabled();
+  await expect(moreToggle(page)).toContainText("نقدی");
   await expect(page.getByRole("button", { name: "نهایی‌کردن فاکتور", exact: true })).toBeDisabled();
   expect(s.posted, "Reload خودش چیزی نمی‌فرستد").toHaveLength(1);
   expect(JSON.parse((await pending(page))!).key, "کلید تازه ساخته نشد").toBe(before.key);
@@ -282,7 +295,7 @@ test("unresolved intent the cashier says never happened is sealed on the server 
   await expect(page.locator(".pos-alert").filter({ hasText: "هرگز ثبت نمی‌شود" })).toBeVisible();
   expect(s.intentChecks).toEqual([`GET ${s.keys[0]}`, `POST ${s.keys[0]}`]);
   expect(await pending(page)).toBeNull();
-  await method(page, "نقدی").click();
+  await pick(page, "نقدی");
   await page.getByRole("button", { name: "دریافت وجه", exact: true }).click();
   await expect.poll(() => s.payments.length).toBe(1);
   expect(s.keys[1], "قصد تازه، کلید تازه").not.toBe(s.keys[0]);
@@ -292,7 +305,7 @@ test("unresolved intent the cashier says never happened is sealed on the server 
 test("SaleComplete shows the server settlement: a payment from another tab before finalize changes received and change", async ({ page, api }) => {
   const s = pos(api);
   await open(page, s);
-  await method(page, "نقدی").click();
+  await pick(page, "نقدی");
   await page.getByRole("button", { name: "دریافت وجه", exact: true }).click();
   await expect(page.getByRole("button", { name: "نهایی‌کردن فاکتور", exact: true })).toBeEnabled();
   // تصویر S صفحه: دریافتی ۲۰٬۰۰۰، باقی پول صفر. تب دیگر ۳٬۰۰۰ تومان نقد دیگر می‌گیرد.
@@ -305,7 +318,7 @@ test("SaleComplete shows the server settlement: a payment from another tab befor
   await expect(done.locator(".checkout-lines")).toContainText("20٬000");
 });
 
-test("credit is a checkout outcome: attached customer shown, no credit or DigiPay in the selector, no payment row, server rule mapped", async ({ page, api }) => {
+test("credit is a checkout outcome: attached customer shown, no credit in the selector, DigiPay shown but never selectable, no payment row, server rule mapped", async ({ page, api }) => {
   const s = pos(api, { customerId: "c1", receivedAmount: "50000" });
   let first = true;
   api.handlers.set(`POST /invoices/${INV}/finalize`, async (route: Route) => {
@@ -317,11 +330,17 @@ test("credit is a checkout outcome: attached customer shown, no credit or DigiPa
   const who = page.getByRole("region", { name: "مشتری" });
   await expect(who).toContainText("مریم آزمون");
   await expect(who).toContainText("09121234567");
-  const selector = page.getByRole("region", { name: "روش پرداخت" });
-  await selector.getByRole("button", { name: "روش‌های بیشتر" }).click();
-  await expect(selector.getByRole("button", { name: "نسیه" })).toHaveCount(0);
-  await expect(selector.getByText("دیجی‌پی")).toHaveCount(0);
-  await expect(selector.getByRole("button", { name: "درگاه پرداخت", exact: true })).toBeVisible();
+  const sel = selector(page);
+  await moreToggle(page).click();
+  await expect(sel.getByRole("button", { name: "نسیه" })).toHaveCount(0);
+  await expect(sel.getByRole("button", { name: "درگاه پرداخت", exact: true })).toBeVisible();
+  // سرور ردیفی با کد digipay فرستاده (METHODS)؛ خانهٔ دیجی‌پی دیده می‌شود ولی هیچ مسیر ثبتی ندارد.
+  const digi = method(page, "دیجی‌پی");
+  await expect(digi).toBeVisible();
+  await expect(digi).toHaveAttribute("aria-disabled", "true");
+  await digi.click({ force: true });
+  await expect(digi).not.toHaveAttribute("aria-pressed", "true");
+  await expect(page.getByLabel("مبلغ (تومان)", { exact: true })).toHaveCount(0);
 
   await page.getByRole("button", { name: "ثبت نسیه", exact: true }).click();
   const dialog = page.getByRole("dialog", { name: "ثبت فروش نسیه" });
@@ -350,21 +369,22 @@ test("credit without a customer guides to attaching one; points and gift card st
   });
   await open(page);
   await expect(page.getByRole("button", { name: "ثبت نسیه", exact: true })).toHaveCount(0);
-  const selector = page.getByRole("region", { name: "روش پرداخت" });
-  await selector.getByRole("button", { name: "روش‌های بیشتر" }).click();
-  for (const name of ["امتیاز باشگاه", "کارت هدیه"]) await expect(selector.getByRole("button", { name, exact: true })).toBeDisabled();
-  await expect(selector.getByText("ابتدا مشتری را به فاکتور وصل کنید.").first()).toBeVisible();
+  const sel = selector(page);
+  await moreToggle(page).click();
+  for (const name of ["امتیاز باشگاه", "کارت هدیه"]) await expect(sel.getByRole("button", { name, exact: true })).toBeDisabled();
+  await expect(sel.getByText("ابتدا مشتری را به فاکتور وصل کنید.").first()).toBeVisible();
   await page.getByRole("button", { name: "وصل کردن مشتری برای نسیه", exact: true }).click();
   const mobile = page.getByLabel("موبایل مشتری", { exact: false });
   await expect(mobile).toBeFocused();
   await mobile.fill("۰۹۱۲۱۲۳۴۵۶۷");
   await page.getByRole("button", { name: "افزودن مشتری", exact: true }).click();
   await expect(page.getByRole("region", { name: "مشتری" })).toContainText("مریم آزمون");
-  for (const name of ["امتیاز باشگاه", "کارت هدیه"]) await expect(selector.getByRole("button", { name, exact: true })).toBeEnabled();
+  if (!(await method(page, "کارت هدیه").isVisible())) await moreToggle(page).click();
+  for (const name of ["امتیاز باشگاه", "کارت هدیه"]) await expect(sel.getByRole("button", { name, exact: true })).toBeEnabled();
   await expect(page.getByRole("button", { name: "ثبت نسیه", exact: true })).toBeVisible();
 });
 
-test("credit is hidden without sale.credit; SnapPay appears only when the server lists it for this branch", async ({ page, api }) => {
+test("credit is hidden without sale.credit; SnapPay is selectable only when the server lists it for this branch", async ({ page, api }) => {
   pos(api, { customerId: "c1" });
   api.handlers.set("GET /auth/can", async (route: Route, url: URL) => {
     await route.fulfill({ json: { verdict: url.searchParams.get("operation") === "sale.credit" ? "deny" : "allow", approver: null, reason: "" } });
@@ -374,13 +394,20 @@ test("credit is hidden without sale.credit; SnapPay appears only when the server
   await expect(page.getByRole("button", { name: "ثبت نسیه", exact: true })).toHaveCount(0);
   await expect(page.getByRole("button", { name: "وصل کردن مشتری برای نسیه", exact: true })).toHaveCount(0);
   expect(api.calls).toContain("GET /payment-methods?branchId=b1");
-  await expect(page.getByRole("button", { name: /اسنپ‌پی/ })).toHaveCount(0);
+  // جای اسنپ‌پی همیشه هست (POS-06)، ولی بی ردیف سرور برای این شعبه ناموجود است و دلیلش را می‌گوید.
+  const off = method(page, "اسنپ‌پی");
+  await expect(off).toBeVisible();
+  await expect(off).toBeDisabled();
+  await expect(selector(page)).toContainText("برای این شعبه تنظیم نشده");
+  await off.click({ force: true });
+  await expect(page.getByLabel("مبلغ (تومان)", { exact: true })).toHaveCount(0);
 
   api.defaults["GET /payment-methods"] = { methods: [...METHODS, { code: "snappay", name: "اسنپ‌پی — ثبت دستی تأییدشده", kind: "gateway", requiresRef: true }] };
   await page.reload();
-  const snapp = method(page, "اسنپ‌پی — ثبت دستی تأییدشده");
-  await expect(snapp).toBeVisible();
+  const snapp = method(page, "اسنپ‌پی");
+  await expect(snapp).toBeEnabled();
   await snapp.click();
+  await expect(snapp).toHaveAttribute("aria-pressed", "true");
   await expect(page.getByText("ثبت دستی پرداختی که در اسنپ‌پی تأیید شده است")).toBeVisible();
 });
 
@@ -398,7 +425,7 @@ test("keyboard: Enter picks a method and focuses the amount; Escape closes the p
   await expect(page.getByLabel(/قیمت واحد/)).toHaveCount(0);
   await expect(page.getByRole("button", { name: "تغییر قیمت شلوار کتان" })).toHaveAttribute("aria-expanded", "false");
 
-  await method(page, "نقدی").click();
+  await pick(page, "نقدی");
   await page.getByRole("button", { name: "دریافت وجه", exact: true }).click();
   const finalize = page.getByRole("button", { name: "نهایی‌کردن فاکتور", exact: true });
   await expect(finalize).toBeEnabled();
