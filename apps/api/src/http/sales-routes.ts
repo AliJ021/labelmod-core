@@ -601,6 +601,29 @@ export function registerSalesRoutes(app: FastifyInstance, deps: SalesRouteDeps):
   });
 
   /**
+   * مشتری وصل‌شده به سبد — برای نمایش «این فاکتور به نام کیست» (Batch 2.1).
+   *
+   * فاکتور فقط `customerId` دارد و پروندهٔ مشتری `customer.manage` می‌خواهد که
+   * صندوق‌دار ندارد. این مسیر فقط همان سه میدانی را می‌دهد که صندوق‌دار برای
+   * تأیید نسیه یا امتیاز لازم دارد — همان شماره‌ای که خودش وارد کرده — و همان
+   * دروازه‌های سبد را دارد: `sale.create`، دامنهٔ شعبه و مالکیت پیش‌نویس.
+   * سقف اعتبار، مانده و یادداشت داخلی عمداً بیرون نمی‌روند.
+   */
+  app.get("/invoices/:id/customer", async (req) => {
+    const s = session(req);
+    const { id } = z.object({ id: uuid }).parse(req.params);
+    await requireForSession(db, s, "sale.create");
+    await assertInvoiceInScope(db, s.userId, id, invoices);
+    const row = await db
+      .selectFrom("sales.invoice as i")
+      .leftJoin("sales.customer as c", "c.id", "i.customer_id")
+      .select(["c.id as id", "c.full_name as fullName", "c.mobile_normalized as mobile", "c.status as status"])
+      .where("i.id", "=", id)
+      .executeTakeFirst();
+    return { customer: row?.id ? { id: row.id, fullName: row.fullName, mobile: row.mobile, status: row.status } : null };
+  });
+
+  /**
    * گزینه‌های بسته‌بندی هدیه.
    *
    * از `sales.gift_option` می‌آید نه از فهرستی در کد: فروشگاه امسال
@@ -817,6 +840,16 @@ export function registerSalesRoutes(app: FastifyInstance, deps: SalesRouteDeps):
       .where("code", "=", body.methodCode).executeTakeFirst();
     if (method?.kind === "credit") {
       await requireForSession(db, s, "sale.credit", { amount: parseMoney(body.amount) });
+      // نسیه پول نیست و ردیف پرداخت هم نمی‌سازد (Batch 2.1). ردیف «نشانهٔ نسیه»
+      // در `paidSoFar` و `post_batch` شمرده نمی‌شد، پس هیچ اثری نداشت جز اینکه
+      // رها کردن سبد را به `invoice.cancel` می‌بست. نسیهٔ واقعی نتیجهٔ
+      // نهایی‌سازی با مانده است (مشتری + `sale.credit` + سقف اعتبار در SQL).
+      // مجوز **پیش از** این رد سنجیده می‌شود تا صندوق‌دار همان ۴۰۳ قبلی را بگیرد.
+      throw new InvoiceError(
+        "credit_not_a_payment",
+        "نسیه روش پرداخت نیست؛ برای فروش نسیه، مشتری را وصل کنید و «ثبت نسیه» را بزنید.",
+        422,
+      );
     }
     const key = idempotencyKey(req);
     const out = await runOnce<string>(db, {
@@ -839,6 +872,7 @@ export function registerSalesRoutes(app: FastifyInstance, deps: SalesRouteDeps):
           ...(body.refNo === undefined ? {} : { refNo: body.refNo }),
           ...(body.accountId === undefined ? {} : { accountId: body.accountId }),
           ...(key === undefined ? {} : { clientEventId: key }),
+          rejectNonCashOverpay: true,
         });
         return { value: paymentId, ref: paymentId };
       },

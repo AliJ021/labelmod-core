@@ -46,6 +46,15 @@ export interface PaymentMethod {
   requiresRef: boolean;
 }
 
+export interface InvoiceCustomer {
+  id: string;
+  fullName: string | null;
+  /** شمارهٔ نرمال‌شده در دیتابیس (`sales.normalize_mobile`). */
+  mobile: string | null;
+  /** `blocked` یعنی نسیه رد می‌شود؛ سرور دروازه است. */
+  status: string;
+}
+
 export interface Shift {
   id: string;
   branchId: string;
@@ -270,7 +279,20 @@ export interface CreatedInvoice extends Invoice {
 export const pos = {
   branches: (opts?: RequestOptions) => api.get<{ branches: Branch[]; allBranches: boolean }>("/branches", opts),
 
-  paymentMethods: () => api.get<{ methods: PaymentMethod[] }>("/payment-methods"),
+  /**
+   * روش‌های فعال. با `branchId`، اسنپ‌پی فقط وقتی می‌آید که **همان شعبه** حساب
+   * معتبر دارد (همان سنجش ثبت پرداخت)؛ بی آن اسنپ‌پی هرگز نمی‌آید.
+   */
+  paymentMethods: (branchId?: string) => api.get<{ methods: PaymentMethod[] }>(
+    branchId === undefined ? "/payment-methods" : `/payment-methods?branchId=${encodeURIComponent(branchId)}`),
+
+  /** مشتری وصل‌شده به سبد — فقط نام، شماره و وضعیت؛ `null` یعنی فروش ناشناس. */
+  invoiceCustomer: (invoiceId: string, opts?: RequestOptions) =>
+    api.get<{ customer: InvoiceCustomer | null }>(`/invoices/${invoiceId}/customer`, opts),
+
+  /** پرداخت‌های موفق ورودی همین فاکتور (باقی پول خروجی جدا ثبت می‌شود). */
+  invoicePayments: (invoiceId: string, opts?: RequestOptions) =>
+    api.get<{ payments: Array<{ id: string; name: string; amount: string }> }>(`/invoices/${invoiceId}/payments`, opts),
 
   /** `null` یعنی این کاربر در این شعبه شیفت باز ندارد. */
   openShifts: (branchId: string) =>

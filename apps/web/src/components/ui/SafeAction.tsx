@@ -30,7 +30,8 @@ export function SafeAction({ trigger, title, summary, consequence, confirmLabel,
   verify: () => Promise<boolean>;
   onDone: (outcome: "done" | "verified") => void;
   disabled?: boolean;
-  triggerVariant?: "link" | "button";
+  /** `primary` فقط برای مرز مالی اصلی یک صفحه (نهایی‌سازی صندوق). */
+  triggerVariant?: "link" | "button" | "primary";
 }) {
   const [phase, setPhase] = useState<SafeActionPhase>("idle");
   const [failure, setFailure] = useState<ActionFailure | null>(null);
@@ -69,7 +70,7 @@ export function SafeAction({ trigger, title, summary, consequence, confirmLabel,
   // نامعلوم پس از بستن پنجره هم نامعلوم می‌ماند: دکمهٔ ردیف دیگر «اجرا» نیست.
   const triggerLabel = phase === "unknown" ? "نتیجه نامعلوم؛ بررسی وضعیت" : trigger;
   return <>
-    <button type="button" className={triggerVariant === "link" ? "link" : "btn"} disabled={disabled || locked}
+    <button type="button" className={triggerVariant === "link" ? "link" : triggerVariant === "primary" ? "btn btn--primary" : "btn"} disabled={disabled || locked}
       onClick={() => { if (phase === "idle" || phase === "done") setPhase("confirm"); setOpen(true); }}>
       {triggerLabel}
     </button>

@@ -826,6 +826,11 @@ apps/api/src/import/  مهاجرت داده از سیستم فعلی — CSV ب�
 - **کاربر عامل در همان تراکنش.** `platform.set_actor()` با
   `is_local = true` ست می‌شود، پس در Pool اشتراکی به درخواست بعدی نشت
   نمی‌کند — و به همین دلیل فقط داخل تراکنش معنا دارد.
+- **نسیه روش پرداخت نیست و غیرنقدی از مانده بیشتر نمی‌شود (Batch 2.1).** `POST /payments`
+  روش `credit` را ۴۲۲ `credit_not_a_payment` و غیرنقدیِ بیش از مانده را زیر قفل فاکتور ۴۲۲
+  `non_cash_overpayment` می‌دهد (پرچم `rejectNonCashOverpay` فقط در مسیر HTTP؛ سفارش سایت دست‌نخورده).
+  نسیهٔ واقعی همان `finalize` با مانده است. اسنپ‌پی در `/payment-methods` فقط با `branchId` و به‌ازای
+  همان شعبه دیده می‌شود. جزئیات صندوق: `docs/UI_PATTERNS.md` بند ۱۲.
 - **بازپرداخت نقدی بدون شیفت باز ثبت نمی‌شود.** `sales.post_return`
   یک `treasury.payment` با `shift_id` برگ مرجوعی می‌سازد و
   `sales.close_shift` خروجی نقد را از همان‌جا می‌خواند. اگر آن

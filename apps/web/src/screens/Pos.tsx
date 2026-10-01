@@ -35,12 +35,23 @@ import { PaymentBreakdown } from "../components/PaymentBreakdown.tsx";
 import { Glass, Solid } from "../components/Glass.tsx";
 import { ApiError } from "../lib/api.ts";
 import { ActionKeys, ScanCounter } from "../lib/action-key.ts";
-import { canFinalize, changeRial, lineGross, remainingRial, steppedQty } from "../lib/cart.ts";
+import { canFinalize, lineGross, steppedQty } from "../lib/cart.ts";
 import { parseRial, rialFromTomanInput, toman } from "../lib/money.ts";
+import { Money } from "../components/ui/Money.tsx";
+import { SafeAction } from "../components/ui/SafeAction.tsx";
+import { PaymentSelector } from "../components/pos/PaymentSelector.tsx";
+import { CheckoutSummary } from "../components/pos/CheckoutSummary.tsx";
+import { CustomerSummary } from "../components/pos/CustomerSummary.tsx";
+import { CreditCheckout } from "../components/pos/CreditCheckout.tsx";
+import { SaleComplete, type CompletedSale } from "../components/pos/SaleComplete.tsx";
+import { cartCounts, checkoutErrorMessage, checkoutTotals, paymentFailureKind, paymentLayout, resolveByReceived,
+  type PaymentIntent, type PaymentOption, type PaymentPhase } from "../lib/pos-payments.ts";
+import { formatCount } from "../lib/format.ts";
+import { session } from "../lib/session.ts";
 import { isNetworkFailure } from "../lib/offline-queue.ts";
 import { forgetCart, readCart, rememberCart } from "../lib/open-cart.ts";
 import { pendingLabel, saleQueue, summarize, type PendingSummary } from "../lib/sale-queue.ts";
-import { pos, type Branch, type Invoice, type InvoiceLine, type PaymentMethod, type DraftPayment, type Shift } from "../lib/pos.ts";
+import { pos, type Branch, type Invoice, type InvoiceCustomer, type InvoiceLine, type PaymentMethod, type DraftPayment, type Shift } from "../lib/pos.ts";
 import { normalizeDigits } from "../lib/settings-value.ts";
 import { ScanBuffer } from "../lib/scanner.ts";
 
@@ -138,9 +149,9 @@ const CartLine = memo(function CartLine({ line: l, panel, on, error }: CartLineP
           {l.listPrice === null ? null : (
             <>
               {" · "}
-              <span className="num">{toman(parseRial(l.unitPrice))}</span>
+              <Money rial={l.unitPrice} size="sm" unit={false} />
               {" به‌جای "}
-              <span className="num">{toman(parseRial(l.listPrice))}</span>
+              <Money rial={l.listPrice} size="sm" />
             </>
           )}
         </span>
@@ -169,9 +180,9 @@ const CartLine = memo(function CartLine({ line: l, panel, on, error }: CartLineP
         >
           −
         </button>
-        <span className="num" aria-live="polite">
-          {Number(l.qty)}
-        </span>
+        {/* بی aria-live: اعلام زندهٔ هر سطر صفحه‌خوان را پرحرف می‌کرد. یک ناحیهٔ
+            زنده برای کل صندوق هست (قابل پرداخت، مانده، وضعیت). */}
+        <span className="num">{Number(l.qty)}</span>
         <button
           type="button"
           onClick={() => on.changeQty(l.id, l.qty, 1)}
@@ -182,24 +193,28 @@ const CartLine = memo(function CartLine({ line: l, panel, on, error }: CartLineP
           +
         </button>
       </div>
-      <span className="num line-total">{toman(parseRial(l.netAmount))}</span>
+      <span className="line-total"><Money rial={l.netAmount} /></span>
+      {/*
+        برچسب متنی، نه نویسهٔ ریال (U+FDFC) و درصد: آن نویسه کنار مبلغِ **تومانی** سطر روی
+        صفحه «ریال» خوانده می‌شد — یعنی مبلغ سطر ده برابر کمتر دیده می‌شد.
+      */}
       <button
         type="button"
-        className="line-drop"
+        className="line-tool"
         onClick={() => on.openPrice(l.id)}
         aria-label={`تغییر قیمت ${l.productName}`}
-        title="قیمت دستی"
+        aria-expanded={panel === "price"}
       >
-        ﷼
+        قیمت
       </button>
       <button
         type="button"
-        className="line-drop"
+        className="line-tool"
         onClick={() => on.openDiscount(l.id)}
         aria-label={`تخفیف ${l.productName}`}
-        title="تخفیف"
+        aria-expanded={panel === "discount"}
       >
-        ٪
+        تخفیف
       </button>
       <button
         type="button"
@@ -248,7 +263,18 @@ export function Pos({ actorId }: { actorId: string }) {
   const [shift, setShift] = useState<Shift | null>(null);
   const [invoice, setInvoice] = useState<Invoice | null>(null);
   const [received, setReceived] = useState(0n);
-  const [lastPrintedInvoice, setLastPrintedInvoice] = useState<string | null>(null);
+  /** فروش تمام‌شده — تا «فروش بعدی» روی صفحه می‌ماند (Batch 2.1). */
+  const [completed, setCompleted] = useState<CompletedSale | null>(null);
+  const completedRef = useRef<CompletedSale | null>(null);
+  completedRef.current = completed;
+  /** قصد پرداختی که نتیجه‌اش روشن نیست — تا روشن شدن، روش و مبلغ قفل‌اند. */
+  const [payPhase, setPayPhase] = useState<PaymentPhase>({ kind: "idle" });
+  const [customer, setCustomer] = useState<InvoiceCustomer | null>(null);
+  const [customerLoading, setCustomerLoading] = useState(false);
+  const [customerError, setCustomerError] = useState<string | null>(null);
+  const customerInput = useRef<HTMLInputElement>(null);
+  /** فقط نمایش؛ دروازهٔ `sale.credit` سرور است. «نامعلوم» مجاز نیست. */
+  const [canCredit, setCanCredit] = useState(false);
   const [ready, setReady] = useState(false);
   const [working, setBusy] = useState(false);
   const [pendingScan, setPendingScan] = useState<PendingScan | null>(null);
@@ -299,9 +325,9 @@ export function Pos({ actorId }: { actorId: string }) {
   useEffect(() => {
     void (async () => {
       try {
-        const [b, m] = await Promise.all([pos.branches(), pos.paymentMethods()]);
+        const [b, credit] = await Promise.all([pos.branches(), session.can("sale.credit").catch(() => null)]);
         setBranches(b.branches);
-        setMethods(m.methods);
+        setCanCredit(credit?.verdict === "allow");
         // یک شعبه یعنی انتخابی در کار نیست. صندوق‌دار نباید هر روز
         // یک فهرست یک‌گزینه‌ای را تأیید کند.
         const only = b.branches.length === 1 ? b.branches[0] : undefined;
@@ -316,6 +342,34 @@ export function Pos({ actorId }: { actorId: string }) {
       }
     })();
   }, [setBranchId, setWarehouseId]);
+
+  /*
+   * روش‌های پرداخت **همین شعبه** — اسنپ‌پی فقط وقتی سرور برای این شعبه حساب
+   * معتبر دیده باشد می‌آید (همان سنجش ثبت پرداخت).
+   */
+  useEffect(() => {
+    if (branchId === "") return;
+    let alive = true;
+    setMethods([]);
+    void pos.paymentMethods(branchId).then((m) => { if (alive) setMethods(m.methods); })
+      .catch((err: unknown) => { if (alive) setError(message(err)); });
+    return () => { alive = false; };
+  }, [branchId]);
+
+  // مشتری وصل‌شده — با هر تغییر `customerId` از سرور خوانده می‌شود.
+  const invoiceIdForCustomer = invoice?.id ?? null;
+  const customerId = invoice?.customerId ?? null;
+  useEffect(() => {
+    setCustomerError(null);
+    if (!invoiceIdForCustomer || !customerId) { setCustomer(null); setCustomerLoading(false); return; }
+    const c = new AbortController();
+    setCustomerLoading(true);
+    pos.invoiceCustomer(invoiceIdForCustomer, { signal: c.signal })
+      .then((r) => { if (!c.signal.aborted) setCustomer(r.customer); })
+      .catch((err: unknown) => { if (!c.signal.aborted) { setCustomer(null); setCustomerError(`مشتری خوانده نشد: ${message(err)}`); } })
+      .finally(() => { if (!c.signal.aborted) setCustomerLoading(false); });
+    return () => c.abort();
+  }, [invoiceIdForCustomer, customerId]);
 
   // شیفت جاری همین کاربر در همین شعبه.
   useEffect(() => {
@@ -384,6 +438,9 @@ export function Pos({ actorId }: { actorId: string }) {
   }, [openDraft, shift, branchId, warehouseId]);
 
   const addByBarcode = useCallback(async (barcode: string, variationId?: string, retry = false) => {
+    // روی صفحهٔ «ثبت شد»، اسکن فروش بعدی را بی‌صدا شروع نمی‌کند: باقی پول هنوز
+    // روی صفحه است و فقط «فروش بعدی» آن را برمی‌دارد.
+    if (completedRef.current && !retry) { setError("برای فروش تازه، اول «فروش بعدی» را بزنید."); return; }
     if (scanRunning.current || mutationRunning.current || scanStorageError || (pendingScanRef.current && !retry)) {
       setError("عملیات قبلی هنوز تأیید نشده است؛ پس از بررسی دوباره اسکن کنید."); return;
     }
@@ -518,26 +575,42 @@ export function Pos({ actorId }: { actorId: string }) {
     return () => window.removeEventListener("online", onOnline);
   }, [flushQueue]);
 
-  async function guarded(fn: () => Promise<void>) {
-    if (busy) return false;
-    if (pendingScanRef.current || scanStorageError || scanRunning.current || mutationRunning.current) return false;
+  /**
+   * اجرای انحصاری یک عمل صندوق — قفل همین تب (`mutationRunning`) و قفل میان
+   * تب‌ها (`navigator.locks`)، و ردّ هر کاری تا اسکن معلق تعیین تکلیف نشده.
+   *
+   * خطا **بالا می‌رود**؛ `guarded` آن را به نوار خطا می‌برد و `SafeAction` به
+   * پنجرهٔ خودش. ردّ پیش‌شرط (عمل دیگر در جریان) یک `ApiError` ۴۰۹ است تا عمل
+   * ایمن آن را «انجام نشد» بداند، نه «نامعلوم» — هیچ درخواستی نرفته است.
+   */
+  async function exclusive<T>(fn: () => Promise<T>): Promise<T> {
+    const refuse = (text: string) => new ApiError(409, "pos_busy", text, null);
+    if (pendingScanRef.current || scanStorageError || scanRunning.current || mutationRunning.current)
+      throw refuse("عملیات قبلی هنوز تأیید نشده است؛ پس از بررسی دوباره تلاش کنید.");
     mutationRunning.current = true;
     setBusy(true);
     setError(null);
     try {
-      if (!navigator.locks) throw new Error("برای ثبت ایمن، مرورگر به‌روز و اتصال امن لازم است.");
-      await navigator.locks.request(`labelmod-pos:${actorId}`, {ifAvailable:true}, async lock => {
-        if (!lock) throw new Error("عملیات صندوق در تب دیگری جریان دارد.");
+      if (!navigator.locks) throw refuse("برای ثبت ایمن، مرورگر به‌روز و اتصال امن لازم است.");
+      return await navigator.locks.request(`labelmod-pos:${actorId}`, {ifAvailable:true}, async lock => {
+        if (!lock) throw refuse("عملیات صندوق در تب دیگری جریان دارد.");
         const intent = readPendingScan(actorId);
-        if (intent) { pendingScanRef.current = intent; setPendingScan(intent); throw new Error("ابتدا اسکن معلق را بررسی کنید."); }
-        await fn();
+        if (intent) { pendingScanRef.current = intent; setPendingScan(intent); throw refuse("ابتدا اسکن معلق را بررسی کنید."); }
+        return await fn();
       });
+    } finally {
+      mutationRunning.current = false; setBusy(false);
+    }
+  }
+
+  async function guarded(fn: () => Promise<void>) {
+    if (busy) return false;
+    try {
+      await exclusive(fn);
       return true;
     } catch (err) {
       setError(message(err));
       return false;
-    } finally {
-      mutationRunning.current = false; setBusy(false);
     }
   }
 
@@ -670,43 +743,113 @@ export function Pos({ actorId }: { actorId: string }) {
       const m = normalizeDigits(mobile).trim();
       if (m === "") return;
       setInvoice(await pos.attachCustomer(invoice.id, { mobile: m }));
+      setMobile("");
       setNote("مشتری به این فاکتور وصل شد.");
     });
 
-  const takePayment = (methodCode: string, amountRial: bigint, refNo?: string) =>
+  /**
+   * ثبت یک پرداخت — با چرخهٔ «نتیجهٔ نامعلوم» (UI_PATTERNS §۵ بند ۷).
+   *
+   * ── چرا کلید از `received` ساخته می‌شود و نه از یک شمارنده ──
+   *
+   * نام عمل باید روی **Retry همان پرداخت** ثابت بماند و برای **پرداخت بعدی**
+   * عوض شود. `received` هر دو را می‌دهد: تا وقتی پرداختی ثبت نشده تغییر
+   * نمی‌کند، و به‌محض ثبت بالا می‌رود. شمارنده — مثل `ScanCounter` — اینجا
+   * **بدتر** بود: هر Retry کلید تازه می‌گرفت و پرداختی که فقط پاسخش در شبکه گم
+   * شده بود، دوباره از مشتری گرفته می‌شد.
+   *
+   * ⚠️ به یک ثابت دور وابسته است: `addPaymentIn` وضعیت `succeeded` می‌نویسد و
+   *    `paidSoFar` همان را می‌شمارد. اگر روزی درگاهی پرداخت را `pending` ثبت کند،
+   *    `received` بالا نمی‌رود و پرداخت **عمدیِ** بعدی Replay اولی می‌شود.
+   *
+   * ── نتیجهٔ نامعلوم (Batch 2.1) ──
+   *
+   * قطع شبکه، ۵xx یا خطای Idempotency یعنی «شاید نشسته باشد». آن‌وقت قصد
+   * پرداخت با **همان کلید** نگه داشته می‌شود و روش و مبلغ قفل‌اند تا
+   * `checkPayment` از سرور بخواند. ارسال کور، عوض‌کردن روش، یا کلید تازهٔ
+   * خودکار برای همان قصد ممکن نیست. ردِ قطعی (۴xx دامنه) اثری نگذاشته، پس کلید
+   * آزاد و ورودی برای اصلاح حفظ می‌شود.
+   */
+  const submitPayment = (intent: PaymentIntent) =>
     guarded(async () => {
       if (!invoice) return;
-      // ── چرا کلید از `received` ساخته می‌شود و نه از یک شمارنده ──
-      //
-      // نام عمل باید روی **Retry همان پرداخت** ثابت بماند و برای
-      // **پرداخت بعدی** عوض شود. `received` هر دو را می‌دهد: تا وقتی
-      // پرداختی ثبت نشده تغییر نمی‌کند (پس Retry همان کلید را
-      // می‌برد)، و به‌محض ثبت بالا می‌رود.
-      //
-      // شمارنده — مثل `ScanCounter` — اینجا **بدتر** بود: هر Retry
-      // یک عدد جلو می‌رفت و کلید تازه می‌گرفت، یعنی پرداختی که فقط
-      // پاسخش در شبکه گم شده بود، دوباره از مشتری گرفته می‌شد.
-      //
-      // ⚠️ این به یک ثابت دور وابسته است: `addPaymentIn` وضعیت
-      // `succeeded` می‌نویسد و `paidSoFar` همان را می‌شمارد. اگر روزی
-      // درگاهی اضافه شود که پرداخت را `pending` ثبت کند، `received`
-      // بالا نمی‌رود و پرداخت **عمدیِ** بعدی Replay اولی می‌شود. آن
-      // روز این کلید باید شناسه خودِ پرداخت را هم بگیرد.
-      const out = await keys.current.run(`pay:${invoice.id}:${received}`, (key) =>
-        pos.pay(
-          invoice.id,
-          {
-            methodCode,
-            amount: amountRial.toString(),
-            ...(refNo === undefined || refNo === "" ? {} : { refNo }),
-          },
-          { idempotencyKey: key },
-        ),
-      );
-      setInvoice(out.invoice);
-      // «چقدر گرفته‌ایم» از جمع سرور می‌آید، نه از مبلغی که فرستادیم.
-      setReceived(parseRial(out.receivedAmount));
+      setPayPhase({ kind: "submitting", intent });
+      try {
+        const out = await keys.current.run(intent.action, (key) =>
+          pos.pay(
+            invoice.id,
+            {
+              methodCode: intent.methodCode,
+              amount: intent.amount.toString(),
+              ...(intent.refNo === "" ? {} : { refNo: intent.refNo }),
+            },
+            { idempotencyKey: key },
+          ),
+        );
+        setInvoice(out.invoice);
+        // «چقدر گرفته‌ایم» از جمع سرور می‌آید، نه از مبلغی که فرستادیم.
+        setReceived(parseRial(out.receivedAmount));
+        setPayPhase({ kind: "idle" });
+      } catch (err) {
+        if (paymentFailureKind(err) === "unknown") {
+          setPayPhase({ kind: "unknown", intent });
+          return;
+        }
+        keys.current.clear(intent.action);
+        setPayPhase({ kind: "idle" });
+        setError(checkoutErrorMessage(err));
+      }
     });
+
+  const takePayment = (option: PaymentOption, amountRial: bigint, refNo: string) => {
+    if (!invoice || payPhase.kind !== "idle") return;
+    void submitPayment({ action: `pay:${invoice.id}:${received}`, methodCode: option.code, methodName: option.name,
+      amount: amountRial, refNo, receivedBefore: received });
+  };
+
+  /** «بررسی وضعیت» — فقط خواندن؛ هیچ پرداختی دوباره فرستاده نمی‌شود. */
+  const checkPayment = () =>
+    guarded(async () => {
+      if (!invoice || (payPhase.kind !== "unknown" && payPhase.kind !== "not_recorded")) return;
+      const intent = payPhase.intent;
+      setPayPhase({ kind: "checking", intent });
+      let fresh: Invoice & { receivedAmount: string };
+      try {
+        fresh = await pos.invoice(invoice.id);
+      } catch {
+        setPayPhase({ kind: "unknown", intent });
+        setError("وضعیت هنوز از سرور خوانده نشد؛ اتصال را بررسی کنید و دوباره «بررسی وضعیت» را بزنید.");
+        return;
+      }
+      const now = parseRial(fresh.receivedAmount);
+      const verdict = resolveByReceived(intent, now);
+      if (verdict === "recorded") {
+        keys.current.clear(intent.action);
+        setInvoice(fresh);
+        setReceived(now);
+        setPayPhase({ kind: "idle" });
+        setNote(`پرداخت ${intent.methodName} پیش‌تر ثبت شده بود؛ دوباره گرفته نشد.`);
+      } else if (verdict === "not_recorded") {
+        setPayPhase({ kind: "not_recorded", intent });
+      } else {
+        // دریافتی تغییر کرده ولی نه به اندازهٔ همین پرداخت — حدس نمی‌زنیم.
+        setPayPhase({ kind: "unknown", intent });
+        setError("دریافتی این فاکتور تغییر کرده ولی نه به اندازهٔ این پرداخت. فهرست پرداخت‌های ثبت‌شده را با مشتری تطبیق دهید و از سرپرست کمک بگیرید.");
+      }
+    });
+
+  /** فقط پس از اینکه سرور گفت «ثبت نشده»: همان قصد، همان کلید، همان بدنه. */
+  const retryPayment = () => {
+    if (payPhase.kind !== "not_recorded") return;
+    void submitPayment(payPhase.intent);
+  };
+
+  /** صرف‌نظر آگاهانه از قصدی که سرور گفته ثبت نشده — کلیدش آزاد می‌شود. */
+  const discardPayment = () => {
+    if (payPhase.kind !== "not_recorded") return;
+    keys.current.clear(payPhase.intent.action);
+    setPayPhase({ kind: "idle" });
+  };
 
   /**
    * نهایی‌کردن فاکتور — و تنها عملی که هنگام قطعی شبکه **صف** می‌شود.
@@ -724,20 +867,30 @@ export function Pos({ actorId }: { actorId: string }) {
    *    فاکتور دوم. `keyFor` در شکست کلید را نگه می‌دارد؛ به همین دلیل
    *    اینجا از `keys.current.run` استفاده نمی‌شود — آن در موفقیت کلید
    *    را پاک می‌کند و ما باید در **هر دو** مسیر خودمان تصمیم بگیریم.
+   *
+   * ── عمل ایمن (Batch 2.1) ──
+   *
+   * از `SafeAction` صدا زده می‌شود (هم «نهایی‌کردن» و هم «ثبت نسیه» — نسیه
+   * همین نهایی‌سازی با مانده است و سرور تصمیمش را زیر قفل می‌گیرد). ردّ قطعی با
+   * پیام قابل اقدام بالا می‌رود؛ ۵xx «نامعلوم» است و `verifyFinalize` وضعیت را
+   * می‌خواند — با همان کلید. موفقیت سبد را پاک نمی‌کند: «ثبت شد» تا «فروش بعدی»
+   * می‌ماند.
    */
   const finalize = () =>
-    guarded(async () => {
+    exclusive(async () => {
       if (!invoice) return;
       const action = `finalize:${invoice.id}`;
       const key = keys.current.keyFor(action);
       const amount = parseRial(invoice.payableAmount);
+      const snapshot = { invoiceId: invoice.id, payable: amount, received };
       try {
         const done = await pos.finalize(invoice.id, { idempotencyKey: key });
-        setNote(`فاکتور ${done.number ?? ""} ثبت شد.`);
-        setLastPrintedInvoice(invoice.id);
+        completeSale(snapshot, done.number, parseRial(done.payableAmount), false);
       } catch (err) {
-        // خطای قاعده‌ای (موجودی، دوره بسته، پرداخت ناکافی) صف نمی‌شود:
+        // خطای قاعده‌ای (موجودی، دوره بسته، نسیه بی مشتری) صف نمی‌شود:
         // سرور جواب داده و جوابش «نه» است.
+        if (err instanceof ApiError && err.status < 500 && !isNetworkFailure(err))
+          throw new ApiError(err.status, err.code, checkoutErrorMessage(err), err.correlationId);
         if (!isNetworkFailure(err)) throw err;
         /*
          * ⚠️ ترتیب مهم است: اول صف، بعد پاک‌کردن سبد. اگر `enqueue`
@@ -756,14 +909,42 @@ export function Pos({ actorId }: { actorId: string }) {
           label: `فروش ${toman(amount)} تومان`,
         });
         await refreshPending();
-        setNote("شبکه قطع است — فروش در صف نشست و با وصل‌شدن خودکار ارسال می‌شود.");
+        completeSale(snapshot, null, amount, true);
       }
       keys.current.clear(action);
       forgetCart();
-      setInvoice(null);
-      setReceived(0n);
-      scans.current.reset();
     });
+
+  /** «آیا نهایی شده؟» — فقط خواندن؛ اگر شده، همان وضعیت موفق نشان داده می‌شود. */
+  const verifyFinalize = async () => {
+    if (!invoice) return false;
+    const fresh = await pos.invoice(invoice.id);
+    if (!["finalized", "paid", "partially_returned", "returned"].includes(fresh.status)) return false;
+    completeSale({ invoiceId: invoice.id, payable: parseRial(invoice.payableAmount), received },
+      fresh.number, parseRial(fresh.payableAmount), false);
+    keys.current.clear(`finalize:${invoice.id}`);
+    forgetCart();
+    return true;
+  };
+
+  function completeSale(snap: { invoiceId: string; payable: bigint; received: bigint }, number: string | null, payable: bigint, queued: boolean) {
+    const left = payable - snap.received;
+    setCompleted({ invoiceId: snap.invoiceId, number, queued, payable, received: snap.received,
+      change: left < 0n ? -left : 0n, credit: left > 0n ? left : 0n });
+    setPayPhase({ kind: "idle" });
+  }
+
+  /** «فروش بعدی» — تنها جایی که صفحهٔ «ثبت شد» برداشته و سبد تازه می‌شود. */
+  const nextSale = () => {
+    forgetCart();
+    setCompleted(null);
+    setInvoice(null);
+    setReceived(0n);
+    setMobile("");
+    setNote(null);
+    setError(null);
+    scans.current.reset();
+  };
 
   const closeShift = (countedCash: string, shiftNote: string) =>
     guarded(async () => {
@@ -845,43 +1026,62 @@ export function Pos({ actorId }: { actorId: string }) {
     return <OpenShiftPanel busy={busy} error={error} onOpen={openShift} branch={branch} />;
   }
 
-  const payable = invoice ? parseRial(invoice.payableAmount) : 0n;
   const lines = invoice?.lines ?? [];
-  const count = lines.reduce((n, l) => n + Number(l.qty), 0);
+  const counts = cartCounts(lines);
+  const countLabel = `${formatCount(counts.lines)} ردیف · ${formatCount(counts.units)} عدد`;
+  const totals = checkoutTotals(invoice, received);
+  const layout = paymentLayout(methods, { hasCustomer: (invoice?.customerId ?? null) !== null });
+  const hasCart = invoice !== null && lines.length > 0;
+  const payIdle = payPhase.kind === "idle";
+  const settled = canFinalize({ status: invoice?.status ?? "none", lineCount: lines.length, payable: totals.payable, received });
+  // یک ناحیهٔ زنده برای کل صندوق: قابل پرداخت، مانده و وضعیت اصلی.
+  const liveText = completed
+    ? (completed.queued ? "فروش در صف ارسال است." : `فاکتور ${completed.number ?? ""} ثبت شد.`) +
+      (completed.change > 0n ? ` باقی پول ${toman(completed.change)} تومان.` : "")
+    : hasCart
+      ? `قابل پرداخت ${toman(totals.payable)} تومان؛ ${totals.change > 0n ? `باقی پول ${toman(totals.change)}` : `مانده ${toman(totals.remaining)}`} تومان.${note ? ` ${note}` : ""}`
+      : note ?? "";
+  const focusCustomer = () => {
+    customerInput.current?.scrollIntoView({ block: "center", behavior: "instant" });
+    customerInput.current?.focus();
+  };
 
   return (
-    <div className={`pos${lines.length ? " pos--has-items" : ""}`}>
-      {lines.length > 0 && <aside className="pos-mobile-summary solid" aria-label="خلاصهٔ پرداخت">
-        <span>{count} قلم · مانده <strong className="num">{toman(remainingRial(payable, received))}</strong> تومان</span>
+    <div className={`pos${hasCart && !completed ? " pos--has-items" : ""}`}>
+      <p className="sr-only" aria-live="polite" aria-atomic="true">{liveText}</p>
+      {hasCart && !completed && <aside className="pos-mobile-summary solid" aria-label="خلاصهٔ پرداخت">
+        <span>{countLabel} · {totals.change > 0n ? "باقی پول" : "مانده"} <Money rial={totals.change > 0n ? totals.change : totals.remaining} size="sm" /></span>
         <button className="btn btn--primary" type="button" onClick={() => document.querySelector<HTMLElement>(".pay")?.scrollIntoView({block:"start",behavior:"instant"})}>رفتن به پرداخت</button>
       </aside>}
       {/* تنها سطح شیشه‌ای این صفحه: نوار بالا، که لایه کنترلی است. */}
       <Glass as="header" radius="md" className="pos-bar" refract={false}>
-        <span className="pill">{count} قلم</span>
-        <a className="tool" href="/?page=invoices&invoices.status=draft" onClick={e => { if (e.metaKey || e.ctrlKey || e.shiftKey) return; e.preventDefault(); navigate(e.currentTarget.href); }}>پیش‌نویس‌ها</a>
-        <button type="button" className="tool" disabled={busy || !invoice} onClick={() => {
-          if (!invoice || busy) return;
-          forgetCart(); setInvoice(null); setReceived(0n); scans.current.reset();
-          setNote("پیش‌نویس در سرور ذخیره است و از بخش فاکتورها قابل ادامه است.");
-        }}>ذخیره و فروش جدید</button>
-        {/* دوربین فقط وقتی باز می‌شود که کاربر بخواهد — روی دسکتاپ
-            با بارکدخوان سیمی، هیچ‌وقت. */}
-        <button type="button" className="tool" onClick={() => setCamera((v) => !v)}>
-          {camera ? "بستن دوربین" : "دوربین"}
-        </button>
-        <button type="button" className="tool" onClick={() => setClosing((v) => !v)}>
-          بستن شیفت
-        </button>
+        {/* «ردیف» و «عدد» دو چیزند: چهار سطر با تعداد دو، «۴ ردیف · ۸ عدد» است، نه «۸ قلم». */}
+        <span className="pill">{countLabel}</span>
+        <div className="pos-tools">
+          <a className="tool" href="/?page=invoices&invoices.status=draft" onClick={e => { if (e.metaKey || e.ctrlKey || e.shiftKey) return; e.preventDefault(); navigate(e.currentTarget.href); }}>پیش‌نویس‌ها</a>
+          <button type="button" className="tool" disabled={busy || !invoice || completed !== null || !payIdle} onClick={() => {
+            if (!invoice || busy) return;
+            forgetCart(); setInvoice(null); setReceived(0n); scans.current.reset();
+            setNote("پیش‌نویس در سرور ذخیره است و از بخش فاکتورها قابل ادامه است.");
+          }}>ذخیره و فروش جدید</button>
+          {/* دوربین فقط وقتی باز می‌شود که کاربر بخواهد — روی دسکتاپ
+              با بارکدخوان سیمی، هیچ‌وقت. */}
+          <button type="button" className="tool" disabled={completed !== null} onClick={() => setCamera((v) => !v)}>
+            {camera ? "بستن دوربین" : "دوربین"}
+          </button>
+          <button type="button" className="tool" onClick={() => setClosing((v) => !v)}>
+            بستن شیفت
+          </button>
+        </div>
       </Glass>
 
-      {lastPrintedInvoice && <a className="btn" href={`/api/invoices/${lastPrintedInvoice}/print`} target="_blank" rel="noopener">چاپ فاکتور ثبت‌شده</a>}
       {scanStorageError && <p className="solid pos-alert" role="alert">{scanStorageError}</p>}
       {pendingScan && <div className="solid pad" role="status">
         <p>نتیجهٔ اسکن هنوز قطعی نیست. برای جلوگیری از ثبت دوباره، ابتدا همین اسکن را تعیین تکلیف کنید.</p>
         <button type="button" className="btn" disabled={working} onClick={() => void addByBarcode("", undefined, true)}>بررسی و تلاش دوبارهٔ همان اسکن</button>
       </div>}
 
-      <PosProductPicker key={warehouseId} warehouseId={warehouseId} busy={busy} onPick={(id) => addByBarcode("", id)} />
+      {completed ? null : <PosProductPicker key={warehouseId} warehouseId={warehouseId} busy={busy} onPick={(id) => addByBarcode("", id)} />}
 
       {/* عنصر ساده با کلاس `solid`، نه کامپوننت `Solid`: آن `role`
           نمی‌گیرد و اینجا اعلام زنده لازم است تا صندوق‌دار خطا را
@@ -892,8 +1092,9 @@ export function Pos({ actorId }: { actorId: string }) {
           <span className="dot dot--crit" aria-hidden="true">●</span> {error}
         </p>
       ) : null}
+      {/* بی role: یادداشت همراه جمع‌ها در **یک** ناحیهٔ زندهٔ صندوق اعلام می‌شود. */}
       {note ? (
-        <p className="solid pos-alert" role="status">
+        <p className="solid pos-alert">
           <span className="dot dot--good" aria-hidden="true">●</span> {note}
         </p>
       ) : null}
@@ -933,7 +1134,7 @@ export function Pos({ actorId }: { actorId: string }) {
         </p>
       ) : null}
 
-      {camera ? (
+      {camera && !completed ? (
         <CameraScan onCode={(code) => void addByBarcode(code)} onClose={() => setCamera(false)} />
       ) : null}
 
@@ -948,7 +1149,7 @@ export function Pos({ actorId }: { actorId: string }) {
         />
       ) : null}
 
-      <div className="pos-body">
+      {completed ? <SaleComplete sale={completed} onNext={nextSale} /> : <div className="pos-body">
         <Solid as="section" className="cart">
           <h2 className="sr-only">سبد خرید</h2>
           {/*
@@ -987,71 +1188,48 @@ export function Pos({ actorId }: { actorId: string }) {
           </fieldset>
 
           {/*
-            شماره مشتری — **اختیاری**، و عمداً پایین سبد.
-
-            بالای صفحه یعنی صندوق‌دار حس کند باید اول شماره بگیرد و
-            صف بایستد. اینجا یعنی وقتی سبد بسته می‌شود پرسیده شود، یا
-            اصلاً نشود: فروش ناشناس کارِ عادی است.
-
-            فایده‌اش دو چیز است و هر دو برای مشتری: سابقه خرید، و
-            دیده‌شدن همین خرید در حساب کاربری سایت.
+            مشتری — **اختیاری**، و عمداً پایین سبد: فروش ناشناس کار عادی است.
+            وقتی وصل است، آشکارا دیده می‌شود (Batch 2.1) — پیش از نسیه یا امتیاز
+            باید معلوم باشد فاکتور به نام کیست.
           */}
-          {invoice ? (
-            <div className="pos-customer row" style={{ gap: "var(--s-2)" }}>
-              <label className="sr-only" htmlFor="pos-mobile">
-                شماره موبایل مشتری (اختیاری)
-              </label>
-              {/*
-                `type="text"` نه `type="tel"` و نه `type="number"` —
-                صفحه‌کلید فارسی «۰۹۱۲» می‌فرستد و ورودی عددی مرورگر
-                آن را دور می‌اندازد.
-              */}
-              <input
-                id="pos-mobile"
-                type="text"
-                inputMode="numeric"
-                autoComplete="off"
-                placeholder={
-                  invoice.customerId === null
-                    ? "موبایل مشتری (اختیاری)"
-                    : "مشتری وصل است — برای تغییر شماره تازه بزنید"
-                }
-                value={mobile}
-                onChange={(e) => setMobile(e.target.value)}
-                disabled={busy}
-              />
-              <button
-                type="button"
-                className="btn btn--quiet"
-                onClick={() => void attachCustomer()}
-                disabled={busy || normalizeDigits(mobile).trim() === ""}
-              >
-                {invoice.customerId === null ? "افزودن مشتری" : "تغییر مشتری"}
-              </button>
-            </div>
-          ) : null}
+          {invoice ? <CustomerSummary customer={customer} loading={customerLoading} error={customerError}
+            mobile={mobile} onMobile={setMobile} onAttach={() => void attachCustomer()} busy={busy} inputRef={customerInput} /> : null}
 
           {invoice ? <GiftPanel invoice={invoice} onChange={setInvoice} /> : null}
         </Solid>
 
-        <PayPanel
-          invoiceId={invoice?.id ?? null}
-          methods={methods}
-          payable={payable}
-          received={received}
-          canFinalize={canFinalize({
-            status: invoice?.status ?? "none",
-            lineCount: lines.length,
-            payable,
-            received,
-          })}
-          busy={busy}
-          hasCart={invoice !== null && lines.length > 0}
-          onPay={takePayment}
-          onFinalize={() => void finalize()}
-          onAbandon={() => void abandon()}
-        />
-      </div>
+        {/*
+          پنل پرداخت — چسبان در دسکتاپ تا نهایی‌سازی همیشه دیده شود. ترتیب: جمع‌ها،
+          پرداخت‌های ثبت‌شده، روش (کارت‌خوان اصلی)، نهایی‌سازی، نسیه، رها کردن.
+        */}
+        <Solid as="aside" className="pay" aria-label="پرداخت">
+          <h2 className="pay-title">پرداخت</h2>
+          <CheckoutSummary totals={totals} />
+          {invoice && received > 0n ? <PaymentBreakdown invoiceId={invoice.id} received={received} /> : null}
+          <PaymentSelector layout={layout} remaining={totals.remaining} received={received} phase={payPhase}
+            disabled={!hasCart || busy} onPay={takePayment} onCheck={() => void checkPayment()}
+            onRetry={retryPayment} onDiscard={discardPayment} />
+          <div className="pay-finish">
+            <SafeAction trigger="نهایی‌کردن فاکتور" triggerVariant="primary" title="نهایی‌کردن فاکتور"
+              disabled={!settled || busy || !payIdle}
+              summary={<dl className="checkout-lines">
+                <div><dt>قابل پرداخت</dt><dd><Money rial={totals.payable} /></dd></div>
+                <div><dt>دریافت‌شده</dt><dd><Money rial={received} /></dd></div>
+                <div><dt>باقی پول</dt><dd><Money rial={totals.change} size={totals.change > 0n ? "lg" : "md"} /></dd></div>
+              </dl>}
+              consequence="شمارهٔ فاکتور صادر و کالا از انبار خارج می‌شود. پس از آن اصلاح فقط با مرجوعی ممکن است."
+              confirmLabel="تأیید و نهایی‌کردن" pendingLabel="در حال نهایی‌سازی…"
+              run={finalize} verify={verifyFinalize} onDone={() => undefined} />
+            {hasCart && !settled ? <p className="field-hint">نهایی‌کردن پس از دریافت کامل مانده باز می‌شود.</p> : null}
+            {hasCart ? <CreditCheckout allowed={canCredit} customer={customer} remaining={totals.remaining} received={received}
+              payable={totals.payable} disabled={busy || !payIdle || (invoice?.customerId != null && customer === null)}
+              onAttachCustomer={focusCustomer} run={finalize} verify={verifyFinalize} onDone={() => undefined} /> : null}
+            <button type="button" className="btn btn--quiet" disabled={!hasCart || busy || !payIdle} onClick={() => void abandon()}>
+              رها کردن سبد
+            </button>
+          </div>
+        </Solid>
+      </div>}
     </div>
   );
 }
@@ -1491,11 +1669,12 @@ function PricePanel({
   const bad = rial === null || rial <= 0n;
 
   return (
+    <div className="line-panel" onKeyDown={(e) => { if (e.key === "Escape") { e.stopPropagation(); onCancel(); } }}>
     <Solid className="line-discount stack" style={{ gap: "var(--s-2)" }}>
       <label className="auth-field">
         <span>
           قیمت واحد (تومان)
-          {listPrice === null ? null : ` — قیمت فهرست ${toman(listPrice)}`}
+          {listPrice === null ? null : <> — قیمت فهرست <Money rial={listPrice} size="sm" /></>}
         </span>
         <input
           type="text"
@@ -1542,6 +1721,7 @@ function PricePanel({
         انصراف
       </button>
     </Solid>
+    </div>
   );
 }
 
@@ -1564,9 +1744,10 @@ function DiscountPanel({
   const tooBig = rial !== null && rial > gross;
 
   return (
+    <div className="line-panel" onKeyDown={(e) => { if (e.key === "Escape") { e.stopPropagation(); onCancel(); } }}>
     <Solid className="line-discount stack" style={{ gap: "var(--s-2)" }}>
       <label className="auth-field">
-        <span>تخفیف (تومان) — حداکثر {toman(gross)}</span>
+        <span>تخفیف (تومان) — حداکثر <Money rial={gross} size="sm" /></span>
         <input
           type="text"
           inputMode="numeric"
@@ -1597,128 +1778,9 @@ function DiscountPanel({
         انصراف
       </button>
     </Solid>
+    </div>
   );
 }
-
-function PayPanel({
-  invoiceId,
-  methods,
-  payable,
-  received,
-  canFinalize: allowed,
-  busy,
-  hasCart,
-  onPay,
-  onFinalize,
-  onAbandon,
-}: {
-  invoiceId: string | null;
-  methods: PaymentMethod[];
-  payable: bigint;
-  received: bigint;
-  canFinalize: boolean;
-  busy: boolean;
-  hasCart: boolean;
-  onPay: (methodCode: string, amount: bigint, refNo?: string) => Promise<boolean>;
-  onFinalize: () => void;
-  onAbandon: () => void;
-}) {
-  const [method, setMethod] = useState("");
-  const [amount, setAmount] = useState("");
-  const [refNo, setRefNo] = useState("");
-
-  const remaining = remainingRial(payable, received);
-  const change = changeRial(payable, received);
-  const chosen = methods.find((m) => m.code === method) ?? null;
-
-  // پیش‌فرض مبلغ: همان مانده. رایج‌ترین حالت، پرداخت کامل است.
-  const typed = amount.trim() === "" ? remaining : rialFromTomanInput(amount);
-
-  return (
-    <Solid as="aside" className="pay">
-      <h2 style={{ fontSize: "1rem", margin: 0 }}>پرداخت نقدی، کارت‌خوان یا ترکیبی</h2>
-      <p className="muted small">برای پرداخت ترکیبی، مبلغ بخش اول را با یک روش دریافت کنید؛ سپس روش بعدی را برای مانده انتخاب کنید.</p>
-      {invoiceId && received > 0n ? <PaymentBreakdown invoiceId={invoiceId} received={received} /> : null}
-      <div className="total">
-        <span className="muted">قابل پرداخت</span>
-        <strong className="num total-value">{toman(payable)}</strong>
-        <span className="muted small">تومان</span>
-      </div>
-
-      {received > 0n ? (
-        <p className="muted small" style={{ margin: 0 }}>
-          دریافت‌شده: <span className="num">{toman(received)}</span>
-          {remaining > 0n ? (
-            <>
-              {" · "}مانده: <span className="num">{toman(remaining)}</span>
-            </>
-          ) : null}
-          {change > 0n ? (
-            <>
-              {" · "}باقی پول: <strong className="num">{toman(change)}</strong>
-            </>
-          ) : null}
-        </p>
-      ) : null}
-
-      <div className="stack" style={{ gap: "var(--s-2)" }}>
-        {methods.map((m) => (
-          <button
-            key={m.code}
-            type="button"
-            className={m.code === method ? "btn btn--primary" : "btn"}
-            onClick={() => setMethod(m.code)}
-            disabled={!hasCart || busy}
-          >
-            {m.name}
-          </button>
-        ))}
-      </div>
-
-      {chosen ? (
-        <>
-          <label className="auth-field">
-            <span>مبلغ (تومان) — خالی یعنی همه مانده</span>
-            <input
-              type="text"
-              inputMode="numeric"
-              value={amount}
-              onChange={(e) => setAmount(e.target.value)}
-              placeholder={toman(remaining)}
-            />
-          </label>
-          {chosen.code === "snappay" && <p className="muted">ثبت دستی پرداخت تأییدشدهٔ اسنپ‌پی؛ شماره پیگیری واقعی را وارد کنید.</p>}
-          {chosen.requiresRef ? (
-            <label className="auth-field">
-              <span>شماره پیگیری</span>
-              <input value={refNo} onChange={(e) => setRefNo(e.target.value)} />
-            </label>
-          ) : null}
-          <button
-            type="button"
-            className="btn btn--primary"
-            disabled={busy || typed === null || typed <= 0n || (chosen.requiresRef && refNo === "")}
-            onClick={async () => {
-              if (typed !== null && typed > 0n) {
-                if (await onPay(chosen.code, typed, refNo)) { setAmount(""); setRefNo(""); }
-              }
-            }}
-          >
-            دریافت وجه
-          </button>
-        </>
-      ) : null}
-
-      <button type="button" className="btn btn--primary" disabled={!allowed || busy} onClick={onFinalize}>
-        نهایی‌کردن فاکتور
-      </button>
-      <button type="button" className="btn btn--quiet" disabled={!hasCart || busy} onClick={onAbandon}>
-        رها کردن سبد
-      </button>
-    </Solid>
-  );
-}
-
 
 function DraftRefundPanel({ payments, busy, onCancel, onConfirm }: {
   payments: DraftPayment[]; busy: boolean; onCancel: () => void;
@@ -1733,7 +1795,7 @@ function DraftRefundPanel({ payments, busy, onCancel, onConfirm }: {
   return <section role="region" aria-label="برگشت پرداخت پیش‌نویس"><Solid className="pad">
     <h3>برگشت پرداخت و لغو پیش‌نویس</h3>
     <p>این عملیات پرداخت بانکی انجام نمی‌دهد. وجه نقد را به مشتری برگردانید؛ برای پرداخت بانکی، ابتدا برگشت را در بانک انجام دهید. رزرو اعتبار مشتری آزاد می‌شود.</p>
-    <ul>{payments.map((p) => <li key={p.id}>{p.name}: {toman(parseRial(p.amount))} تومان</li>)}</ul>
+    <ul>{payments.map((p) => <li key={p.id}>{p.name}: <Money rial={p.amount} /></li>)}</ul>
     {blocked ? <p role="alert">پرداخت نامشخص یا تسویه‌شده نیازمند بررسی حسابدار است و از این مسیر برگشت نمی‌خورد.</p> : null}
     <label className="auth-field">دلیل برگشت<input value={reason} maxLength={200} onChange={(e) => setReason(e.target.value)} /></label>
     {external ? <label className="auth-field">شماره پیگیری برگشت بانکی<input value={ref} maxLength={120} onChange={(e) => setRef(e.target.value)} /></label> : null}

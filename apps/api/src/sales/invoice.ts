@@ -1003,6 +1003,13 @@ export class InvoiceService {
       accountId?: string | undefined;
       actorId: string;
       clientEventId?: string | undefined;
+      /**
+       * سقف «مانده» برای روش غیرنقدی (Batch 2.1) — فقط مسیر HTTP صندوق روشنش
+       * می‌کند. سفارش سایت دست‌نخورده می‌ماند: آنجا اضافه‌پرداخت غیرنقدی را
+       * همان نگهبان `finalize_invoice` در همان تراکنش رد می‌کند و تغییر کد
+       * خطایش رفتار افزونه را عوض می‌کرد.
+       */
+      rejectNonCashOverpay?: boolean | undefined;
     },
   ): Promise<string> {
     // ⚠️ خواندن‌ها روی **همان تراکنش**، نه روی Pool.
@@ -1022,7 +1029,7 @@ export class InvoiceService {
 
     const method = await trx
       .selectFrom("treasury.payment_method")
-      .select(["code", "requires_ref"])
+      .select(["code", "requires_ref", "kind"])
       .where("code", "=", input.methodCode)
       .where("is_active", "=", true)
       .executeTakeFirst();
@@ -1043,6 +1050,24 @@ export class InvoiceService {
       );
     }
 
+    // اضافه‌پرداخت غیرنقدی پیش از ثبت، نه در نهایی‌سازی: «باقی پول» فقط از
+    // کشوی نقد داده می‌شود (`finalize_invoice`)، پس پول کارتی بیش از مانده
+    // سبد را قفل می‌کرد و تنها راه خروجش برگشت پیش‌نویس با `invoice.cancel` بود.
+    // زیر همان قفل فاکتور و با `paidSoFar(..., trx)` — همان تصویری که
+    // نهایی‌سازی می‌بیند. نسیه اینجا نمی‌رسد؛ مسیر HTTP پیش‌تر ردش کرده است.
+    if (input.rejectNonCashOverpay && method.kind !== "cash") {
+      const payable = inv.netAmount + inv.taxAmount + inv.shippingAmount;
+      const remaining = payable - (await this.paidSoFar(input.invoiceId, trx));
+      if (input.amount > (remaining > 0n ? remaining : 0n)) {
+        throw new InvoiceError(
+          "non_cash_overpayment",
+          remaining > 0n
+            ? "مبلغ پرداخت غیرنقدی از مانده فاکتور بیشتر است؛ حداکثر مبلغ مجاز همان مانده است."
+            : "مانده‌ای برای پرداخت غیرنقدی نیست.",
+          422,
+        );
+      }
+    }
     {
       await setActor(trx, input.actorId);
       const row = await trx
