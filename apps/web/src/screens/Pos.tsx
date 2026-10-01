@@ -509,20 +509,29 @@ export function Pos({ actorId }: { actorId: string }) {
   // بالای ستون‌اند). سقف ارتفاع از فاصلهٔ واقعی ستون تا بالای سند حساب می‌شود و
   // پایان ستون (`.pay-finish`) درون آن می‌چسبد. ResizeObserver پس از چیدمان صدا
   // زده می‌شود، پس هیچ چیدمان همگامی به بودجهٔ افزودن قلم (۱۰۰ms) اضافه نمی‌شود.
+  //
+  // ⚠️ نوشتن در همان Callback ممنوع است: سقف تازه اندازهٔ همان ظرفی را عوض می‌کند که
+  //    دیده می‌شود، و WebKit آن را «ResizeObserver loop completed with undelivered
+  //    notifications» به‌عنوان خطای صفحه پرتاب می‌کند. نوشتن به فریم بعد می‌رود و فقط
+  //    وقتی عدد واقعاً عوض شده باشد — پس دور بعد چیزی نمی‌نویسد و حلقه بسته می‌شود.
   useEffect(() => {
     const root = rootRef.current;
     if (!root || typeof ResizeObserver === "undefined") return;
+    let frame = 0;
     const fit = () => {
-      const pay = root.querySelector<HTMLElement>(".pay");
-      if (!pay) return;
-      const top = pay.getBoundingClientRect().top + window.scrollY;
-      const max = Math.max(360, Math.round(window.innerHeight - top - 16));
-      pay.style.setProperty("--pay-max", `${max}px`);
+      cancelAnimationFrame(frame);
+      frame = requestAnimationFrame(() => {
+        const pay = root.querySelector<HTMLElement>(".pay");
+        if (!pay) return;
+        const top = pay.getBoundingClientRect().top + window.scrollY;
+        const max = `${Math.max(360, Math.round(window.innerHeight - top - 16))}px`;
+        if (pay.style.getPropertyValue("--pay-max") !== max) pay.style.setProperty("--pay-max", max);
+      });
     };
     const observer = new ResizeObserver(fit);
     observer.observe(root);
     window.addEventListener("resize", fit);
-    return () => { observer.disconnect(); window.removeEventListener("resize", fit); };
+    return () => { cancelAnimationFrame(frame); observer.disconnect(); window.removeEventListener("resize", fit); };
   }, [shift, ready, branchId, warehouseId]);
 
   // ── بارکدخوان ─────────────────────────────────────────────────────
