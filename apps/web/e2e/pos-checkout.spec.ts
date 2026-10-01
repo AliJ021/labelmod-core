@@ -150,8 +150,6 @@ test("card reader is primary; non-cash overpayment is blocked before any request
   await expect(method(page, "نقدی"), "نقدی در ردیف اصلی نیست").toBeHidden();
   await card.click();
   await expect(card).toHaveAttribute("aria-pressed", "true");
-  await moreToggle(page).click();
-  await expect(method(page, "نقدی")).toHaveAttribute("aria-pressed", "false");
   const amount = page.getByLabel("مبلغ (تومان)", { exact: true });
   await expect(amount).toBeFocused();
   await amount.fill("20001");
@@ -169,6 +167,8 @@ test("card reader is primary; non-cash overpayment is blocked before any request
   await expect(page.getByRole("alert").filter({ hasText: "حداکثر مبلغ برای این روش" })).toBeVisible();
   await expect(amount).toHaveValue("20000");
   await expect(card).toBeEnabled();
+  await moreToggle(page).click();
+  await expect(method(page, "نقدی"), "فقط یک روش انتخاب‌شده").toHaveAttribute("aria-pressed", "false");
 });
 
 const unresolvedText = "سرور هنوز پرداختی با شناسهٔ همین درخواست ندارد";
@@ -334,6 +334,7 @@ test("credit is a checkout outcome: attached customer shown, no credit in the se
   await moreToggle(page).click();
   await expect(sel.getByRole("button", { name: "نسیه" })).toHaveCount(0);
   await expect(sel.getByRole("button", { name: "درگاه پرداخت", exact: true })).toBeVisible();
+  await page.keyboard.press("Escape"); // روی تلفن برگهٔ مودال است؛ پشتش inert است
   // سرور ردیفی با کد digipay فرستاده (METHODS)؛ خانهٔ دیجی‌پی دیده می‌شود ولی هیچ مسیر ثبتی ندارد.
   const digi = method(page, "دیجی‌پی");
   await expect(digi).toBeVisible();
@@ -373,6 +374,7 @@ test("credit without a customer guides to attaching one; points and gift card st
   await moreToggle(page).click();
   for (const name of ["امتیاز باشگاه", "کارت هدیه"]) await expect(sel.getByRole("button", { name, exact: true })).toBeDisabled();
   await expect(sel.getByText("ابتدا مشتری را به فاکتور وصل کنید.").first()).toBeVisible();
+  await page.keyboard.press("Escape");
   await page.getByRole("button", { name: "وصل کردن مشتری برای نسیه", exact: true }).click();
   const mobile = page.getByLabel("موبایل مشتری", { exact: false });
   await expect(mobile).toBeFocused();
