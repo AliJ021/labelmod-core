@@ -160,6 +160,9 @@ a[role="tab"] { display: inline-flex; align-items: center; text-decoration: none
 .pos-body { grid-template-columns: minmax(0, 1fr); }
 @media (min-width: 900px) {
   .pos-body { grid-template-columns: minmax(0, 1fr) minmax(280px, 340px); }
+  /* ستون سبد در ۹۰۰ تا ~۱۱۰۰ باریک است: نام کالا کف عرض دارد تا سطر بشکند، نه اینکه
+     نام واژه‌به‌واژه زیر هم بیفتد. */
+  .lines li .line-name { flex: 1 1 12rem; }
   .pay { position: sticky; inset-block-start: var(--s-4); max-block-size: calc(100dvh - var(--s-6)); overflow-y: auto; overscroll-behavior: contain; }
 }
 .pay { gap: var(--s-3); }
