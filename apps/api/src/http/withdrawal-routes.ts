@@ -6,6 +6,7 @@
  * ۱۴۰۵/۰۷/۱۰). اصلاح مدیر یک نسخهٔ تازه است، نه سند معکوس.
  *
  *   برداشت‌های من     GET  /withdrawals/mine · GET /withdrawals/mine/:id · POST /withdrawals
+ *                     GET  /withdrawals/mine/by-key/:key (بررسی نتیجهٔ نامعلوم)
  *                     هر کاربر انسانی واردشده؛ مالک همیشه از نشست، نه از بدنه.
  *   دفتر مدیر کل       GET  /withdrawals · GET /withdrawals/:id   — withdrawal.view_all
  *                     POST /withdrawals/:id/corrections            — withdrawal.correct
@@ -143,6 +144,19 @@ export function registerWithdrawalRoutes(app: FastifyInstance, db: Db): void {
     const own = await sql`SELECT 1 FROM identity.staff_withdrawal WHERE id = ${id}::uuid AND owner_id = ${s.userId}::uuid`.execute(db);
     if (!own.rows.length) throw new WithdrawalError("withdrawal_not_found", "ثبت برداشت یافت نشد", 404);
     return detail(db, id);
+  });
+
+  /**
+   * «آیا ثبتِ نامعلوم نشست؟» — فقط خواندن، با همان شناسهٔ عملیات (الگوی قصد
+   * پرداخت F-115-01). «پیدا نشد» نهایی نیست؛ صفحه پس از آن با **همان** کلید
+   * دوباره تأیید می‌کند و سرور Replay یا اجرای یکتا می‌دهد، نه ثبت دوم.
+   */
+  app.get("/withdrawals/mine/by-key/:key", async req => {
+    const s = staffSession(req);
+    const { key } = z.object({ key: z.string().min(1).max(200) }).parse(req.params);
+    const row = (await sql<{ ref: string | null }>`SELECT result_ref AS ref FROM platform.inbox_message
+      WHERE source = 'api.withdrawal.create' AND event_id = ${key} AND payload->>'ownerId' = ${s.userId}`.execute(db)).rows[0];
+    return row?.ref ? { status: "recorded" as const, withdrawal: await detail(db, row.ref) } : { status: "not_found" as const };
   });
 
   app.post("/withdrawals", { config: { rateLimit: { max: 30, timeWindow: "1 minute" } } }, async (req, reply) => {

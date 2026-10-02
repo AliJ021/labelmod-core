@@ -129,6 +129,8 @@ export const FEATURES: readonly Feature[] = [
   { label: "فروش هر کاربر", words: "صندوق دار فروشنده ثبت کننده نهایی کننده", href: routeUrl("reports", "staff"), anyOf: ["report.view"] },
   { label: "ساخت و تغییر PIN", words: "پین رمز قفل PIN", href: routeUrl("settings", "pin"), anyOf: settingsAnyOf("pin") },
   { label: "ورود دومرحله‌ای و پیامک", words: "امنیت پیامک OTP", href: routeUrl("settings", "twofactor"), anyOf: settingsAnyOf("twofactor") },
+  { label: "برداشت‌های من", words: "برداشت مساعده دریافت شخصی ثبت برداشت", href: routeUrl("settings", "withdrawals"), anyOf: settingsAnyOf("withdrawals") },
+  { label: "دفتر برداشت پرسنل", words: "برداشت پرسنل کارکنان مساعده اصلاح مدیر", href: routeUrl("settings", "withdrawal-log"), anyOf: settingsAnyOf("withdrawal-log") },
   { label: "چاپ لیبل بارکد کالا", words: "بارکد لیبل چاپ برچسب", href: "/?page=catalog&catalog.labels=1", anyOf: ["catalog.manage"] },
   { label: "موجودی و گردش کالا", words: "انبار موجودی گردش", href: routeUrl("reports", "stock"), anyOf: ["report.view"] },
   { label: "کدینگ حساب", words: "دفتر حساب کدینگ", href: routeUrl("settings", "accounts"), anyOf: settingsAnyOf("accounts") },

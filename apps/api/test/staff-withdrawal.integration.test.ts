@@ -124,6 +124,10 @@ describe("دفتر برداشت پرسنل", { skip: DATABASE_URL ? false : "DAT
     assert.equal(again.json().withdrawal.id, first.json().withdrawal.id);
     const changed = await call(cashier, "POST", "/withdrawals", { amount: "260000", reason: "ناهار" }, key);
     assert.equal(changed.statusCode, 409); assert.equal(changed.json().error.code, "idempotency_key_reused");
+    const found = await call(cashier, "GET", `/withdrawals/mine/by-key/${key}`);
+    assert.equal(found.json().status, "recorded"); assert.equal(found.json().withdrawal.id, first.json().withdrawal.id);
+    assert.equal((await call(otherCashier, "GET", `/withdrawals/mine/by-key/${key}`)).json().status, "not_found", "کلید دیگری لو نمی‌رود");
+    assert.equal((await call(cashier, "GET", `/withdrawals/mine/by-key/${randomUUID()}`)).json().status, "not_found");
     const stolen = await call(otherCashier, "POST", "/withdrawals", { amount: "250000", reason: "ناهار" }, key);
     assert.equal(stolen.statusCode, 409, "کلید کاربر دیگر Replay نمی‌شود");
     assert.equal((await sql<{ n: number }>`SELECT count(*)::int n FROM identity.staff_withdrawal

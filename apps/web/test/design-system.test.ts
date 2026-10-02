@@ -212,6 +212,7 @@ describe("رجیستری تنظیمات — شخصی جدا از مدیریتی 
     terminals: ["settings-routes.ts", "/terminal-drivers"],
     opening: ["admin-routes.ts", "/tafsili"],
     staff: ["people-routes.ts", "/users"],
+    "withdrawal-log": ["withdrawal-routes.ts", "/withdrawals"],
     permissions: ["admin-routes.ts", "/permission-rules"],
     devices: ["auth-routes.ts", "/devices"],
   };
@@ -232,11 +233,20 @@ describe("رجیستری تنظیمات — شخصی جدا از مدیریتی 
   });
   test("بخش شخصی هیچ مجوز مدیریتی نمی‌خواهد و فقط نشست خود کاربر را می‌خواند", () => {
     const personal = SETTINGS_SECTIONS.filter(s => s.scope === "personal").map(s => s.key);
-    assert.deepEqual(personal, ["appearance", "pin", "twofactor"]);
+    assert.deepEqual(personal, ["appearance", "pin", "twofactor", "withdrawals"]);
     for (const s of SETTINGS_SECTIONS) if (s.scope === "personal") assert.deepEqual(s.anyOf, []);
     const auth = api("auth-routes.ts");
     const pin = auth.slice(auth.indexOf('app.get("/auth/pin"'), auth.indexOf('app.get("/auth/pin"') + 300);
     assert.ok(!/requireForSession|requirePermission/.test(pin), "PIN من مجوز مدیریتی نمی‌خواهد");
+    // برداشت‌های من: فقط نشست خودِ کاربر؛ مالک از نشست، نه از پرس‌وجو یا بدنه.
+    const wd = api("withdrawal-routes.ts");
+    for (const route of ['app.get("/withdrawals/mine"', 'app.get("/withdrawals/mine/:id"', 'app.post("/withdrawals",']) {
+      const at = wd.indexOf(route);
+      assert.ok(at >= 0, route);
+      const handler = wd.slice(at, wd.indexOf("\n  });", at));
+      assert.ok(!/requireForSession|requirePermission|managerSession/.test(handler), `${route} مجوز مدیریتی نمی‌خواهد`);
+      assert.ok(/s\.userId/.test(handler), `${route} مالک را از نشست می‌گیرد`);
+    }
     for (const op of SETTINGS_OPERATIONS) assert.ok(NAV_OPERATIONS.includes(op), `${op} همراه پرسش‌های ناوبری پرسیده می‌شود`);
   });
   const all = (v: Verdict) => new Map(NAV_OPERATIONS.map(op => [op, v] as const));
@@ -244,7 +254,7 @@ describe("رجیستری تنظیمات — شخصی جدا از مدیریتی 
   test("کاربر عادی (صندوق‌دار): فقط بخش‌های شخصی؛ پیوند مستقیم مدیریتی mount نمی‌شود", () => {
     const cashier = { state: "ready" as const, verdicts: all("deny") };
     const view = settingsView(null, cashier);
-    assert.deepEqual(keys(view.visible), ["appearance", "pin", "twofactor"]);
+    assert.deepEqual(keys(view.visible), ["appearance", "pin", "twofactor", "withdrawals"]);
     assert.equal(view.selected, "appearance", "پیش‌فرض نخستین بخش شخصی");
     for (const s of SETTINGS_SECTIONS.filter(s => s.scope === "admin")) {
       const deep = settingsView(s.key, cashier);
@@ -264,14 +274,14 @@ describe("رجیستری تنظیمات — شخصی جدا از مدیریتی 
   test("مجوز مدیریتی جزئی: فقط بخش‌های همان مجوز", () => {
     const verdicts = new Map([...all("deny"), ["settings.view", "allow"]] as [string, Verdict][]);
     const view = settingsView(null, { state: "ready", verdicts });
-    assert.deepEqual(keys(view.visible), ["appearance", "pin", "twofactor", "keys", "health", "accounts", "mapping", "snappay", "terminals", "opening"]);
+    assert.deepEqual(keys(view.visible), ["appearance", "pin", "twofactor", "withdrawals", "keys", "health", "accounts", "mapping", "snappay", "terminals", "opening"]);
     assert.equal(view.selected, "keys");
-    for (const denied of ["backups", "staff", "permissions", "devices"] as const) assert.equal(settingsView(denied, { state: "ready", verdicts }).blocked, "denied", denied);
+    for (const denied of ["backups", "staff", "withdrawal-log", "permissions", "devices"] as const) assert.equal(settingsView(denied, { state: "ready", verdicts }).blocked, "denied", denied);
   });
   test("در حال بررسی: شخصی دیده می‌شود، مدیریتی جای‌نگهدار است و هیچ بخش مدیریتی mount نمی‌شود", () => {
     const loading = { state: "loading" as const, verdicts: new Map<string, Verdict>() };
     const view = settingsView(null, loading);
-    assert.deepEqual(keys(view.visible), ["appearance", "pin", "twofactor"]);
+    assert.deepEqual(keys(view.visible), ["appearance", "pin", "twofactor", "withdrawals"]);
     assert.deepEqual(keys(view.pending), SETTINGS_SECTIONS.filter(s => s.scope === "admin").map(s => s.key));
     assert.equal(view.selected, null, "پیش‌فرض تا پاسخ صبر می‌کند");
     assert.equal(view.blocked, "loading");
@@ -281,10 +291,11 @@ describe("رجیستری تنظیمات — شخصی جدا از مدیریتی 
   test("خطای بررسی: نامعلوم به مجاز تبدیل نمی‌شود؛ پیوند مستقیم «بررسی دوباره» می‌گیرد", () => {
     const degraded = { state: "degraded" as const, verdicts: new Map<string, Verdict>([["user.manage", "allow"]]) };
     const view = settingsView(null, degraded);
-    assert.deepEqual(keys(view.visible), ["appearance", "pin", "twofactor", "staff"]);
+    assert.deepEqual(keys(view.visible), ["appearance", "pin", "twofactor", "withdrawals", "staff"]);
     assert.deepEqual(view.pending, [], "خطا جای‌نگهدار دائمی نمی‌سازد");
     assert.equal(view.selected, "staff", "بخش مجازِ رسیده باز می‌شود");
     assert.deepEqual([settingsView("devices", degraded).selected, settingsView("devices", degraded).blocked], [null, "degraded"]);
+    assert.deepEqual([settingsView("withdrawal-log", degraded).selected, settingsView("withdrawal-log", degraded).blocked], [null, "degraded"], "دفتر مدیر با پاسخ نرسیده باز نمی‌شود");
   });
 });
 
