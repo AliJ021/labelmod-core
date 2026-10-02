@@ -55,7 +55,24 @@ export interface ProductRow {
   notes: string | null;
   status: string;
   variationCount: number;
+  /**
+   * چند تنوع (با هر وضعیتی) همین حالا قیمت معتبر در فهرست `default`
+   * دارند. برای سازگاری و اعتبارسنجی مانده؛ صفحهٔ فهرست دیگر ستونش را
+   * نشان نمی‌دهد.
+   */
   pricedCount: number;
+  /** تنوع‌های فروختنی — `status = 'active'`، همان دروازهٔ `resolveVariation`. */
+  sellableCount: number;
+  /** چندتا از تنوع‌های فروختنی همین حالا قیمت معتبر دارند. */
+  sellablePricedCount: number;
+  /**
+   * کمینه و بیشینهٔ قیمت جاری تنوع‌های فروختنیِ **قیمت‌دار** — رشتهٔ
+   * ریالی. `null` یعنی هیچ تنوع فروختنی‌ای قیمت ندارد؛ هرگز صفر نیست.
+   * تنوع بی‌قیمت در این بازه نمی‌آید و از `sellablePricedCount` دیده
+   * می‌شود.
+   */
+  priceMin: string | null;
+  priceMax: string | null;
 }
 
 export interface VariationRow {
@@ -90,11 +107,23 @@ export class ProductService {
   }
 
   /**
-   * فهرست کالاها با شمارش تنوع و «چندتاشان قیمت دارند».
+   * فهرست کالاها با شمارش تنوع و قیمت جاری فروش.
    *
-   * `pricedCount` تزئین نیست: تنوع بدون قیمت اصلاً فروخته نمی‌شود
-   * (`invoice.currentPrice` خطا می‌دهد)، پس این ستون همان چیزی است که
-   * می‌گوید کدام مدل هنوز آماده فروش نیست.
+   * ── قیمت جاری یعنی همان قیمتی که صندوق می‌خواند ───────────────────
+   *
+   * `invoice.currentPrice` قیمت قلم را از فهرست `default` و ردیفی
+   * می‌خواند که `valid_from <= اکنون` و `valid_to` تهی یا آینده دارد،
+   * تازه‌ترین اول؛ و `resolveVariation` فقط تنوع `active` را می‌فروشد.
+   * بازهٔ قیمت اینجا **همان دو قاعده** را دارد، پس عددی که فهرست نشان
+   * می‌دهد همان عددی است که روی فاکتور می‌نشیند. قیمت در این اسکیما
+   * شعبه ندارد؛ فهرست `web.price_list` سایت جداست و اینجا خوانده
+   * نمی‌شود.
+   *
+   * تنوع بی‌قیمت اصلاً فروخته نمی‌شود (`currentPrice` خطا می‌دهد)،
+   * پس صفر حساب نمی‌شود: از بازه بیرون می‌ماند و در
+   * `sellablePricedCount` دیده می‌شود.
+   *
+   * ⚠️ یک کوئری با `LATERAL`، نه درخواست به‌ازای هر کالا یا هر تنوع.
    */
   async list(opts: {
     search?: string | undefined;
@@ -109,7 +138,41 @@ export class ProductService {
       .selectFrom("catalog.product as p")
       .leftJoin("catalog.brand as b", "b.id", "p.brand_id")
       .leftJoin("catalog.category as c", "c.id", "p.category_id")
-      .select((eb) => [
+      // قیمت جاری هر تنوع با همان محمول `invoice.currentPrice`، و بعد
+      // تجمیع به‌ازای کالا. `count(cp.amount)` فقط تنوع قیمت‌دار را
+      // می‌شمارد و `min`/`max` تهی را نادیده می‌گیرند — پس قیمت نبوده
+      // هرگز صفر نمی‌شود.
+      .leftJoinLateral(
+        sql<{
+          variation_count: string;
+          priced_count: string;
+          sellable_count: string;
+          sellable_priced_count: string;
+          price_min: string | null;
+          price_max: string | null;
+        }>`(
+          SELECT count(*)                                           AS variation_count,
+                 count(cp.amount)                                   AS priced_count,
+                 count(*)         FILTER (WHERE v.status = 'active') AS sellable_count,
+                 count(cp.amount) FILTER (WHERE v.status = 'active') AS sellable_priced_count,
+                 min(cp.amount)   FILTER (WHERE v.status = 'active') AS price_min,
+                 max(cp.amount)   FILTER (WHERE v.status = 'active') AS price_max
+            FROM catalog.variation v
+            LEFT JOIN LATERAL (
+              SELECT pr.amount
+                FROM catalog.price pr
+               WHERE pr.variation_id = v.id
+                 AND pr.price_list = 'default'
+                 AND pr.valid_from <= now()
+                 AND (pr.valid_to IS NULL OR pr.valid_to > now())
+               ORDER BY pr.valid_from DESC
+               LIMIT 1
+            ) cp ON true
+           WHERE v.product_id = p.id
+        )`.as("agg"),
+        (j) => j.onTrue(),
+      )
+      .select([
         "p.id",
         "p.code",
         "p.name_internal",
@@ -126,19 +189,12 @@ export class ProductService {
         "p.tax_rate_code",
         "p.notes",
         "p.status",
-        eb
-          .selectFrom("catalog.variation as v")
-          .select((e) => e.fn.countAll<string>().as("n"))
-          .whereRef("v.product_id", "=", "p.id")
-          .as("variation_count"),
-        eb
-          .selectFrom("catalog.variation as v")
-          .innerJoin("catalog.price as pr", (j) =>
-            j.onRef("pr.variation_id", "=", "v.id").on("pr.valid_to", "is", null),
-          )
-          .select((e) => e.fn.countAll<string>().as("n"))
-          .whereRef("v.product_id", "=", "p.id")
-          .as("priced_count"),
+        "agg.variation_count",
+        "agg.priced_count",
+        "agg.sellable_count",
+        "agg.sellable_priced_count",
+        "agg.price_min",
+        "agg.price_max",
       ])
       .orderBy("p.code")
       .limit(limit);
@@ -175,6 +231,10 @@ export class ProductService {
       status: r.status,
       variationCount: Number(r.variation_count ?? 0),
       pricedCount: Number(r.priced_count ?? 0),
+      sellableCount: Number(r.sellable_count ?? 0),
+      sellablePricedCount: Number(r.sellable_priced_count ?? 0),
+      priceMin: r.price_min === null ? null : serializeMoney(parseMoney(r.price_min)),
+      priceMax: r.price_max === null ? null : serializeMoney(parseMoney(r.price_max)),
     }));
   }
 

@@ -37,8 +37,12 @@ import { ApiError } from "../lib/api.ts";
 import { ActionKeys, actionFor } from "../lib/action-key.ts";
 import { rialFromTomanInput, toman } from "../lib/money.ts";
 import { pos } from "../lib/pos.ts";
+import { Money } from "../components/ui/Money.tsx";
+import { StatusBadge } from "../components/ui/Status.tsx";
+import { formatCount } from "../lib/format.ts";
 import {
   catalog,
+  priceSummary,
   splitList,
   type PriceHistoryEntry,
   type PriceKind,
@@ -168,7 +172,7 @@ export function Catalog() {
                 <th>نام</th>
                 <th>برند</th>
                 <th>تنوع</th>
-                <th>قیمت‌دار</th>
+                <th>قیمت فروش</th>
                 <th />
               </tr>
             </thead>
@@ -185,19 +189,7 @@ export function Catalog() {
                   <td>{p.brandName ?? "—"}</td>
                   <td className="num">{p.variationCount}</td>
                   <td>
-                    {/*
-                      تنوع بدون قیمت فروختنی نیست — `addLine` خطا می‌دهد.
-                      پس این ستون هشدار است، نه آمار.
-                    */}
-                    {p.pricedCount < p.variationCount ? (
-                      <span>
-                        <span className="dot dot--warn" aria-hidden="true">●</span>{" "}
-                        <span className="num">{p.pricedCount}</span> از{" "}
-                        <span className="num">{p.variationCount}</span>
-                      </span>
-                    ) : (
-                      <span className="num">{p.pricedCount}</span>
-                    )}
+                    <ProductPrice product={p} />
                   </td>
                   <td>
                     <button type="button" className="btn" onClick={() => setSelected(p.id)}>
@@ -212,6 +204,40 @@ export function Catalog() {
       </Solid>
       </div>
     </div>
+  );
+}
+
+// ── قیمت فروش در فهرست ───────────────────────────────────────────────
+
+/**
+ * قیمت جاری کالا — همان قیمتی که صندوق برای تنوع فعال می‌خواند.
+ *
+ * برابر ← یک مبلغ؛ متفاوت ← بازه؛ بی‌قیمت ← «بدون قیمت» با هشدار، هرگز
+ * صفر. تنوع فروختنیِ بی‌قیمت زیر مبلغ جدا گفته می‌شود: بی‌آن، مبلغ
+ * کامل به نظر می‌رسید و سایزی که صندوق رد می‌کند پنهان می‌ماند.
+ */
+function ProductPrice({ product }: { product: Product }) {
+  const summary = priceSummary(product);
+  if (summary.kind === "none") {
+    return <span className="muted">تنوع فعال ندارد</span>;
+  }
+  if (summary.kind === "unpriced") {
+    return <StatusBadge state="warning" label="بدون قیمت" />;
+  }
+  return (
+    <span className="catalog-price">
+      {summary.kind === "single" ? (
+        <Money rial={summary.rial} />
+      ) : (
+        <span className="catalog-price-range">
+          <Money rial={summary.min} unit={false} /> <span className="muted">تا</span>{" "}
+          <Money rial={summary.max} />
+        </span>
+      )}
+      {summary.missing > 0 ? (
+        <StatusBadge state="warning" quiet label={`${formatCount(summary.missing)} تنوع بی‌قیمت`} />
+      ) : null}
+    </span>
   );
 }
 

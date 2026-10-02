@@ -56,6 +56,13 @@ export const INVOICE_PAGE_CSP =
 export interface InvoicePageLine {
   productName: string;
   color: string | null;
+  /**
+   * سایز تنوع — **روی عنوان قلم چاپ نمی‌شود** (درخواست مالک، ۱۴۰۵/۰۷/۱۰:
+   * عنوان کوتاه‌تر برای مشتری). داده دست‌نخورده است: سایز روی تنوع، SKU،
+   * Snapshot فاکتور و برچسب انبار و صندوق می‌ماند؛ فقط این صفحهٔ نمایشی
+   * آن را نمی‌نویسد. میدان عمداً در قرارداد مانده تا بازطراحی فاکتور —
+   * که تصمیمش با مالک است — بی تغییر مسیرها برش گرداند.
+   */
   size: string | null;
   qty: string;
   /** ریال. */
@@ -101,10 +108,13 @@ export function faDate(at: Date, timeZone: string): string {
 export function invoicePage(data: InvoicePageData, timeZone: string): string {
   const rows = data.lines
     .map((l) => {
-      const variant = [l.color, l.size].filter((v) => v !== null && v !== "");
-      const name = variant.length
-        ? `${esc(l.productName)} <small>${variant.map((v) => esc(v as string)).join(" · ")}</small>`
-        : esc(l.productName);
+      // فقط رنگِ ساخت‌یافته کنار نام می‌نشیند؛ سایز عمداً نه (بالا،
+      // `InvoicePageLine.size`). نام کالا دست نمی‌خورد: هیچ کلمه‌ای با
+      // Regex از آن کنده نمی‌شود، حتی اگر شبیه سایز باشد.
+      const name =
+        l.color !== null && l.color !== ""
+          ? `${esc(l.productName)} <small>${esc(l.color)}</small>`
+          : esc(l.productName);
       // تعداد «۲.۰۰۰» زشت است و «۲» درست: صفرهای اعشاری بی‌معنا حذف
       // می‌شوند ولی «۱٫۵ متر» دست‌نخورده می‌ماند.
       const qty = String(Number(l.qty));
