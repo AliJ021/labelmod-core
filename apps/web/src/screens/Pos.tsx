@@ -1107,12 +1107,21 @@ export function Pos({ actorId }: { actorId: string }) {
   const layout = paymentLayout(methods, { hasCustomer: (invoice?.customerId ?? null) !== null });
   const hasCart = invoice !== null && lines.length > 0;
   const payIdle = payPhase.kind === "idle";
+  /*
+   * «سبد خالیِ تازه» با «پیش‌نویسِ بی‌سطری که پرداخت دارد یا قصدش نامعلوم است» یکی نیست
+   * (یافتهٔ Astra، P2). حذف آخرین سطر در میانهٔ یک پرداخت نامعلوم ممکن است و سرور هم
+   * می‌پذیردش؛ اگر صفحه آن را «خالی» بخواند، زیر ۹۰۰ کل ستون پرداخت — و راه «بررسی
+   * وضعیت» همان قصد — پنهان می‌شد و مبلغ‌های شناخته‌شده «—» نشان داده می‌شدند. چنین
+   * پیش‌نویسی فعال است: ستون پرداخت و خلاصهٔ موبایل می‌مانند. پرداخت **تازه** همچنان فقط
+   * با سطر (`hasCart`) باز است و هیچ قصدی خودکار بسته، تکرار یا کلیدش عوض نمی‌شود.
+   */
+  const draftActive = invoice !== null && (hasCart || received > 0n || !payIdle);
   const settled = canFinalize({ status: invoice?.status ?? "none", lineCount: lines.length, payable: totals.payable, received });
   // یک ناحیهٔ زنده برای کل صندوق: قابل پرداخت، مانده و وضعیت اصلی.
   const liveText = completed
     ? (completed.queued ? "فروش در صف ارسال است." : `فاکتور ${completed.number ?? ""} ثبت شد.`) +
       (completed.amounts && completed.amounts.change > 0n ? ` باقی پول ${toman(completed.amounts.change)} تومان.` : "")
-    : hasCart
+    : draftActive
       ? `قابل پرداخت ${toman(totals.payable)} تومان؛ ${totals.change > 0n ? `باقی پول ${toman(totals.change)}` : `مانده ${toman(totals.remaining)}`} تومان.${note ? ` ${note}` : ""}`
       : note ?? "";
   const customerAttached = (invoice?.customerId ?? null) !== null;
@@ -1124,9 +1133,9 @@ export function Pos({ actorId }: { actorId: string }) {
   };
 
   return (
-    <div ref={rootRef} className={`pos${hasCart && !completed ? " pos--has-items" : ""}${!hasCart && !completed ? " pos--empty" : ""}`}>
+    <div ref={rootRef} className={`pos${draftActive && !completed ? " pos--has-items" : ""}${!draftActive && !completed ? " pos--empty" : ""}`}>
       <p className="sr-only" aria-live="polite" aria-atomic="true">{liveText}</p>
-      {hasCart && !completed && <aside className="pos-mobile-summary solid" aria-label="خلاصهٔ پرداخت">
+      {draftActive && !completed && <aside className="pos-mobile-summary solid" aria-label="خلاصهٔ پرداخت">
         <span className="pos-mobile-figures"><span className="muted">{countLabel}</span>
           <span>{totals.change > 0n ? "باقی پول" : "مانده"} <Money rial={totals.change > 0n ? totals.change : totals.remaining} size="sm" /></span></span>
         {settled && payIdle
@@ -1304,7 +1313,7 @@ export function Pos({ actorId }: { actorId: string }) {
         <Solid as="aside" className="pay" aria-label="پرداخت">
           <h2 className="sr-only">پرداخت</h2>
           {invoice && customerAttached ? customerBlock : null}
-          <CheckoutSummary totals={hasCart ? totals : null} />
+          <CheckoutSummary totals={draftActive ? totals : null} />
           {invoice && received > 0n ? <PaymentBreakdown invoiceId={invoice.id} received={received} /> : null}
           <PaymentSelector layout={layout} remaining={totals.remaining} received={received} phase={payPhase}
             disabled={!hasCart || busy} onPay={takePayment} onCheck={() => void checkPayment()}

@@ -138,6 +138,9 @@ test("cash sale: confirm dialog, one finalize under double click, persistent suc
   await expect(done).toHaveCount(0);
   await expect(page.getByText("سبد خالی است")).toBeVisible();
   await expect(page.locator(".pos-bar .pill")).toHaveText("۰ ردیف · ۰ عدد");
+  // فروش بعدی سبد خالیِ **تازه** است، نه پیش‌نویس فعال: نه قصد معلقی، نه خلاصهٔ موبایل.
+  await expect(page.getByRole("button", { name: "بررسی وضعیت", exact: true })).toHaveCount(0);
+  await expect(page.locator(".pos-mobile-summary")).toBeHidden();
   expect(await page.evaluate(() => localStorage.getItem("labelmod_open_cart"))).toBe("");
 });
 

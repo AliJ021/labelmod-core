@@ -175,3 +175,81 @@ test("populated cart and the settled state keep the page within the viewport wid
   await noOverflow(page, "SnapPay channel open");
   await expect(method(page, "اسنپ‌پی")).toHaveAttribute("aria-pressed", "true");
 });
+
+// ── پیش‌نویسِ بی‌سطر با سابقهٔ پرداخت (یافتهٔ Astra، P2) ─────────────────────
+//
+// «سبد خالیِ تازه» با «پیش‌نویسی که آخرین سطرش حذف شده ولی پرداختی دارد یا قصدش
+// نامعلوم است» یکی نیست. اولی چیزی برای نشان دادن ندارد؛ دومی باید راه بررسی همان
+// قصد و مبلغ‌های شناخته‌شده‌اش را در همهٔ عرض‌ها و پس از Reload نگه دارد.
+const one = { ...draft, lines: [draft.lines[0]!], grossAmount: "100000", netAmount: "100000", payableAmount: "100000" };
+const empty = { ...draft, lines: [], grossAmount: "0", netAmount: "0", payableAmount: "0" };
+
+test("unknown payment intent survives removing the last line: recovery stays reachable on every width and after reload", async ({ page, api }) => {
+  mock(api);
+  let current: typeof draft = one;
+  const posted: string[] = [];
+  const checks: string[] = [];
+  api.handlers.set(`GET /invoices/${INV}`, async (route) => { await route.fulfill({ json: current }); });
+  api.handlers.set(`POST /invoices/${INV}/payments`, async (route: Route) => {
+    posted.push(route.request().headers()["idempotency-key"] ?? "");
+    await route.abort("connectionreset"); // پاسخ گم شد؛ سرور ثبت نکرده
+  });
+  api.handlers.set(`DELETE /invoices/${INV}/lines/l1`, async (route) => { current = empty; await route.fulfill({ json: empty }); });
+  await page.route(`**/api/invoices/${INV}/payment-intents/**`, async (route) => {
+    checks.push(`${route.request().method()} ${decodeURIComponent(new URL(route.request().url()).pathname.split("/").at(-1)!)}`);
+    await route.fulfill({ json: { state: "not_found", terminal: false } });
+  });
+  await open(page);
+  if (!(await method(page, "نقدی").isVisible())) await moreToggle(page).click();
+  await method(page, "نقدی").click();
+  await page.getByRole("button", { name: "دریافت وجه", exact: true }).click();
+  const check = page.getByRole("button", { name: "بررسی وضعیت", exact: true });
+  await expect(check).toBeVisible();
+  // حذف آخرین سطر در حالی که نتیجهٔ پرداخت روشن نیست — سرور اجازه می‌دهد.
+  await page.getByRole("button", { name: "حذف شلوار کتان" }).click();
+  await expect(page.locator(".lines li")).toHaveCount(0);
+  await expect(check, "راه بررسی همان قصد پس از حذف آخرین سطر دیده می‌ماند").toBeVisible();
+  await expect(page.locator(".pay-intent")).toContainText("10٬000");
+  await noOverflow(page, "zero-line draft with unknown intent");
+  expect(posted, "هیچ ارسال خودکاری نیست").toHaveLength(1);
+
+  await page.reload();
+  await expect(page.getByText("سبد خالی است")).toBeVisible();
+  await expect(check, "پس از Reload هم همان قصد با همان شناسه قابل بررسی است").toBeVisible();
+  expect(posted, "Reload چیزی نمی‌فرستد").toHaveLength(1);
+  await check.click();
+  await expect(page.getByText("سرور هنوز پرداختی با شناسهٔ همین درخواست ندارد")).toBeVisible();
+  expect(checks, "همان شناسهٔ ارسال پرسیده شد").toEqual([`GET ${posted[0]}`]);
+  await expect(page.getByRole("button", { name: "این پرداخت انجام نشده", exact: true })).toBeVisible();
+  await expect(page.getByRole("button", { name: "ارسال دوبارهٔ همین پرداخت", exact: true })).toBeVisible();
+  expect(posted, "بررسی وضعیت ارسال دوباره نیست").toHaveLength(1);
+});
+
+test("a zero-line draft that already received money shows the known amounts, not dashes", async ({ page, api }) => {
+  mock(api);
+  api.handlers.set(`GET /invoices/${INV}`, async (route) => { await route.fulfill({ json: { ...empty, receivedAmount: "50000" } }); });
+  await page.addInitScript(([inv, sh]) => localStorage.setItem("labelmod_open_cart", JSON.stringify({ invoiceId: inv, shiftId: sh })), [INV, SHIFT]);
+  await page.goto("/?page=pos&pos.branch=b1&pos.warehouse=w1");
+  await expect(page.getByText("سبد خالی است")).toBeVisible();
+  const pay = page.getByRole("complementary", { name: "پرداخت", exact: true });
+  await expect(pay, "پرداخت ثبت‌شده روی پیش‌نویس، ستون پرداخت را در همهٔ عرض‌ها نگه می‌دارد").toBeVisible();
+  await expect(pay.locator(".checkout-payable .money--unknown"), "قابل پرداختِ شناخته‌شده «—» نیست").toHaveCount(0);
+  await expect(pay.locator(".checkout-payable")).toContainText("0");
+  await expect(pay.locator(".checkout-lines--state")).toContainText("5٬000");
+  await expect(pay.getByRole("region", { name: "پرداخت‌های ثبت‌شده" })).toBeVisible();
+  await expect(page.getByRole("button", { name: "نهایی‌کردن فاکتور", exact: true }), "بی سطر نهایی نمی‌شود").toBeDisabled();
+  await noOverflow(page, "zero-line draft with money");
+});
+
+test("a fresh empty cart stays quiet: no draft, no payment history, payable unknown, payment column hidden below 900", async ({ page, api }) => {
+  mock(api);
+  await open(page, false);
+  const pay = page.getByRole("complementary", { name: "پرداخت", exact: true });
+  if (page.viewportSize()!.width < 900) {
+    await expect(pay).toBeHidden();
+    await expect(page.locator(".pos-mobile-summary")).toBeHidden();
+  } else {
+    await expect(pay.locator(".checkout-payable .money--unknown")).toHaveCount(1);
+  }
+  await expect(page.getByRole("button", { name: "بررسی وضعیت", exact: true })).toHaveCount(0);
+});
