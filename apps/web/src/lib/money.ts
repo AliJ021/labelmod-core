@@ -31,6 +31,13 @@ export function toman(rial: bigint): string {
   return negative ? `−${text}` : text;
 }
 
+/** تومان دقیق تا یک‌دهم؛ ریال باقی‌مانده حذف نمی‌شود و عدد شناور نمی‌سازیم. */
+export function tomanExact(rial: bigint): string {
+  const abs = rial < 0n ? -rial : rial;
+  const fraction = abs % 10n;
+  return `${toman(rial)}${fraction === 0n ? "" : `٫${fraction}`}`;
+}
+
 /**
  * آنچه صندوق‌دار تایپ می‌کند (تومان) → ریالِ رشته‌ای برای API.
  *

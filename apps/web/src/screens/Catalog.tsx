@@ -227,11 +227,11 @@ function ProductPrice({ product }: { product: Product }) {
   return (
     <span className="catalog-price">
       {summary.kind === "single" ? (
-        <Money rial={summary.rial} />
+        <Money rial={summary.rial} exact />
       ) : (
         <span className="catalog-price-range">
-          <Money rial={summary.min} unit={false} /> <span className="muted">تا</span>{" "}
-          <Money rial={summary.max} />
+          <Money rial={summary.min} unit={false} exact /> <span className="muted">تا</span>{" "}
+          <Money rial={summary.max} exact />
         </span>
       )}
       {summary.missing > 0 ? (

@@ -8,13 +8,15 @@ import { formatPercent, formatQty, moneyParts } from "../../lib/format.ts";
  * پرانتز حسابداری) و رنگ فقط تقویت است. `side` برچسب متنی
  * بدهکار/بستانکار می‌گذارد، چون این دو «خوب» و «بد» نیستند.
  */
-export function Money({ rial, compact = false, negative = "minus", side, unit = true, size = "md", muted = false, unknownLabel = "نامعلوم یا بدون دسترسی" }: {
+export function Money({ rial, compact = false, exact = false, negative = "minus", side, unit = true, size = "md", muted = false, unknownLabel = "نامعلوم یا بدون دسترسی" }: {
   /**
    * `null` یعنی «نمی‌دانیم یا اجازهٔ دیدنش نیست» (مثلاً بها بدون `cost.view`) و
    * «—» می‌شود — هرگز صفر. صفر یک ادعای مالی است.
    */
   rial: bigint | string | null;
   compact?: boolean;
+  /** ریال باقی‌مانده را به‌صورت اعشار تومان نگه می‌دارد؛ بر compact مقدم است. */
+  exact?: boolean;
   negative?: "minus" | "parens";
   side?: "debit" | "credit";
   unit?: boolean;
@@ -28,7 +30,7 @@ export function Money({ rial, compact = false, negative = "minus", side, unit = 
       <span aria-hidden="true" className="money-digits">—</span><span className="sr-only">{unknownLabel}</span>
     </span>;
   }
-  const p = moneyParts(rial, compact);
+  const p = moneyParts(rial, compact, exact);
   const digits = p.sign === "negative" ? (negative === "parens" ? `(${p.digits})` : `−${p.digits}`) : p.digits;
   return <span className={`money money--${p.sign} money--${size}${muted ? " money--muted" : ""}`} title={compact ? p.spoken : undefined}>
     <bdi className="num money-digits">{digits}</bdi>
