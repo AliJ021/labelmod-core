@@ -190,6 +190,34 @@ describe("سفارش سایت (ووکامرس)", { skip }, () => {
 
   // ── احراز هویت ──────────────────────────────────────────────────
 
+  test("تست اتصال همان کلید و دامنه را می‌سنجد و در تکرار اثر مالی ندارد", async () => {
+    const url = `/web/connection?branchId=${BRANCH}&warehouseId=${STORE_WH}&sku=${encodeURIComponent(sku)}`;
+    assert.equal((await app.inject({ method: "GET", url })).statusCode, 401);
+    assert.equal((await app.inject({ method: "GET", url, headers: { authorization: `Bearer ${deadKey}` } })).statusCode, 401);
+    const before = await sql`SELECT (SELECT count(*) FROM sales.invoice) invoices,
+      (SELECT count(*) FROM inventory.stock_movement) movements,
+      (SELECT count(*) FROM platform.inbox_message) inbox`.execute(handle.db);
+    for (let i = 0; i < 2; i++) {
+      const r = await app.inject({ method: "GET", url, ...auth() });
+      assert.equal(r.statusCode, 200, r.body);
+      assert.equal(r.json().auth, "api_key");
+      assert.equal(r.json().mapping.skuFound, true);
+      assert.equal(r.json().mapping.active, true);
+      assert.equal(r.headers["cache-control"], "no-store");
+    }
+    const after = await sql`SELECT (SELECT count(*) FROM sales.invoice) invoices,
+      (SELECT count(*) FROM inventory.stock_movement) movements,
+      (SELECT count(*) FROM platform.inbox_message) inbox`.execute(handle.db);
+    assert.deepEqual(after.rows, before.rows);
+    const mismatch = await app.inject({ method: "GET", url: `${url}&variationId=00000000-0000-7000-8000-000000000999`, ...auth() });
+    assert.equal(mismatch.statusCode, 200);
+    assert.equal(mismatch.json().mapping.matchesVariation, false);
+    const forbidden = await app.inject({ method: "GET", url: `/web/connection?branchId=00000000-0000-7000-8000-000000000999&warehouseId=${STORE_WH}`, ...auth() });
+    assert.equal(forbidden.statusCode, 403, forbidden.body);
+    const settings = await app.inject({ method: "GET", url: "/settings/woocommerce", ...auth() });
+    assert.equal(settings.statusCode, 403, settings.body);
+  });
+
   test("بدون کلید، ۴۰۱", async () => {
     const r = await app.inject({
       method: "POST",

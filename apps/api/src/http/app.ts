@@ -39,6 +39,7 @@ import { registerScopeRoutes } from "./scope-routes.ts";
 import { registerAdminRoutes } from "./admin-routes.ts";
 import { registerHealthRoutes } from "./health-routes.ts";
 import { registerWebRoutes } from "./web-routes.ts";
+import { registerWooDiagnosticsRoutes } from "./woocommerce-diagnostics-routes.ts";
 import { registerWebRefundRoutes } from "./web-refund-routes.ts";
 import { registerPublicRoutes, PUBLIC_ROUTE_PATHS } from "./public-routes.ts";
 import { InvoiceService } from "../sales/invoice.ts";
@@ -457,6 +458,7 @@ export async function buildApp(deps: AppDeps): Promise<FastifyInstance> {
     settings: new SettingService(deps.db),
   });
   registerWebRefundRoutes(app, deps.db);
+  registerWooDiagnosticsRoutes(app, deps.db, config.WEB_PUSH_SECRET);
   registerWebRoutes(app, {
     db: deps.db,
     webOrders: new WebOrderService(invoices),

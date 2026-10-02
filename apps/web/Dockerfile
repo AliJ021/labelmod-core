@@ -18,6 +18,7 @@ COPY apps/web/package.json apps/web/package.json
 RUN pnpm install --frozen-lockfile --filter @labelmod/web
 
 COPY apps/web apps/web
+COPY integrations/woocommerce integrations/woocommerce
 # `build` خودش اول tsc --noEmit می‌زند: بیلد تولید با خطای تایپ سبز
 # نمی‌شود.
 RUN pnpm --filter @labelmod/web build

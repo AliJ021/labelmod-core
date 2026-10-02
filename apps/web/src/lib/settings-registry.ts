@@ -37,6 +37,7 @@ export const SETTINGS_SECTIONS = [
   { key: "twofactor", label: "ورود دومرحله‌ای", group: "حساب من", scope: "personal", anyOf: [] },
   { key: "keys", label: "تنظیمات", group: "عمومی", scope: "admin", anyOf: ["settings.view"] },
   { key: "health", label: "سلامت سیستم", group: "عمومی", scope: "admin", anyOf: ["settings.view"] },
+  { key: "woocommerce", label: "اتصال ووکامرس", group: "عمومی", scope: "admin", anyOf: ["settings.view"] },
   { key: "backups", label: "پشتیبان‌گیری و بازیابی", group: "عمومی", scope: "admin", anyOf: ["backup.view"] },
   { key: "accounts", label: "کدینگ حساب", group: "مالی و فروش", scope: "admin", anyOf: ["settings.view"] },
   { key: "mapping", label: "نگاشت حساب", group: "مالی و فروش", scope: "admin", anyOf: ["settings.view"] },

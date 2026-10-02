@@ -2,6 +2,7 @@ import { routeUrl, type NavAccess } from "../lib/navigation.ts";
 import { SETTINGS_SECTIONS, settingsView, settingsWriteAccess, type SettingsKey } from "../lib/settings-registry.ts";
 import { Icon } from "../components/Icon.tsx";
 import { SnappaySettings } from "./SnappaySettings.tsx";
+import { WooCommerceSettings } from "./WooCommerceSettings.tsx";
 import { Backups } from "./Backups.tsx";
 import { useUrlState } from "../lib/use-url-state.ts";
 import { SettingsNavigation, TabPanels, useTabsId, type TabItem } from "../components/Tabs.tsx";
@@ -77,6 +78,8 @@ export function Settings({ access, currentUserId, onOwnPassword }: { access: Nav
         <PostingRules />
       ) : tab === "snappay" ? (
         <SnappaySettings write={settingsWriteAccess("snappay", access.verdicts)} writeState={access.state} />
+      ) : tab === "woocommerce" ? (
+        <WooCommerceSettings />
       ) : tab === "backups" ? (
         <Backups />
       ) : tab === "terminals" ? (
