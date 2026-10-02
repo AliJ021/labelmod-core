@@ -22,6 +22,17 @@ import {
 } from "../src/sales/invoice-page.ts";
 
 describe("صفحه عمومی فاکتور", () => {
+  test("انتقال تعویض جدا از وجه و مانده معتبر نمایش داده می‌شود و متن‌ها escape می‌شوند", () => {
+    const data = { number: "<img src=x>", shopName: "<script>shop</script>", customerName: "<svg onload=x>",
+      occurredAt: new Date("2026-09-06T10:00:00Z"), lines: [], netAmount: 1200000n, taxAmount: 0n,
+      shippingAmount: 0n, payableAmount: 1200000n, paidAmount: 200000n, exchangeAmount: 1000000n, dueAmount: 0n };
+    const html = invoicePage(data, "Asia/Tehran");
+    assert.match(html, /تسویه از تعویض/);
+    assert.doesNotMatch(html, /class="due"/);
+    assert.doesNotMatch(html, /<img src=x>|<svg onload=x>|<script>shop/);
+    assert.match(html, /&lt;img src=x&gt;/);
+    assert.match(invoicePage({ ...data, dueAmount: 600000n }, "Asia/Tehran"), /class="due"/);
+  });
   test("hash در CSP با متن واقعی اسکریپت می‌خواند", () => {
     const want =
       "sha256-" + createHash("sha256").update(PRINT_SCRIPT, "utf8").digest("base64");

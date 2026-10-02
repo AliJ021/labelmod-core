@@ -15,6 +15,7 @@
  */
 import type { FastifyInstance } from "fastify";
 import { z } from "zod";
+import { sql } from "kysely";
 import { AuthError, type ResolvedSession } from "../auth/service.ts";
 import { requireManualReturnChannel } from "../auth/human-session.ts";
 import { can, requireForSession } from "../auth/permission.ts";
@@ -31,6 +32,7 @@ import {
   type ReturnService,
 } from "../sales/return.ts";
 import type { ShiftService } from "../sales/shift.ts";
+import { registerExchangeRoutes } from "./exchange-routes.ts";
 
 const moneyString = z
   .string()
@@ -105,6 +107,7 @@ export interface ReturnRouteDeps {
 
 export function registerReturnRoutes(app: FastifyInstance, deps: ReturnRouteDeps): void {
   const { db, returns } = deps;
+  registerExchangeRoutes(app, deps);
 
   const session = (req: { session: unknown }) => {
     const s = req.session as ResolvedSession | null;
@@ -150,6 +153,55 @@ export function registerReturnRoutes(app: FastifyInstance, deps: ReturnRouteDeps
    * می‌شوند، چون همین‌جاست که تصمیم گرفته می‌شود. در `/post` دوباره
    * سنجیده می‌شوند، چون بین این دو ممکن است دسترسی پس گرفته شده باشد.
    */
+  app.post("/returns/commit", { config: MONEY_OUT_LIMIT }, async req => {
+    const s = session(req);
+    const body = createReturnBody.extend({ warehouseId: uuid.optional(), confirmed: z.literal(true) }).parse(req.body);
+    const key = uuid.parse(req.headers["idempotency-key"]);
+    const inv = await db.selectFrom("sales.invoice").select("branch_id").where("id", "=", body.invoiceId).executeTakeFirst();
+    if (!inv) throw new ReturnError("invoice_not_found", "فاکتور یافت نشد", 404);
+    await assertBranch(db, s.userId, inv.branch_id);
+    if (body.warehouseId) await assertWarehouseInBranch(db, body.warehouseId, inv.branch_id);
+    const out = await runOnce(db, { key, source: `api.return.commit.${s.userId}`, payload: body,
+      run: async trx => {
+        await requireManualReturnChannel(trx, body.invoiceId);
+        const gate = await returnGate(deps, s, { invoiceId: body.invoiceId, branchId: inv.branch_id,
+          refund: parseMoney(body.refundAmount), refundMethod: body.refundMethod, shiftId: body.shiftId });
+        const id = await returns.createDraftIn(trx, { ...body, refundAmount: parseMoney(body.refundAmount),
+          shiftId: gate.shiftId, actorId: s.userId });
+        if (body.warehouseId) await sql`SELECT sales.set_return_warehouse(${id}::uuid,${body.warehouseId}::uuid,${s.userId}::uuid)`.execute(trx);
+        await returns.postIn(trx, id, s.userId);
+        return { value: id, ref: id };
+      }, replay: async ref => ref,
+    });
+    return { ...returnToJson((await returns.byId(out.value))!, await seesCost(s)), replayed: out.replayed };
+  });
+  app.get("/returns/status/:key", async req => {
+    const s = session(req);
+    await requireInvoiceRead(db, s);
+    const { key } = z.object({ key: uuid }).parse(req.params);
+    const inbox = await db.selectFrom("platform.inbox_message").select(["result_ref", "payload"])
+      .where("source", "=", `api.return.commit.${s.userId}`).where("event_id", "=", key).executeTakeFirst();
+    if (inbox && (inbox.payload as { abandoned?: boolean })?.abandoned) return { status: "abandoned" };
+    if (!inbox?.result_ref) return { status: "not_found" };
+    const r = await returns.byId(inbox.result_ref);
+    if (!r) return { status: "not_found" };
+    await assertBranch(db, s.userId, r.branchId);
+    return { ...returnToJson(r, await seesCost(s)), status: "posted" };
+  });
+  app.post("/returns/status/:key/abandon", async req => {
+    const s = session(req);
+    await requireInvoiceRead(db, s);
+    const { key } = z.object({ key: uuid }).parse(req.params);
+    z.object({ noExternalPayment: z.literal(true) }).parse(req.body);
+    await db.transaction().execute(async trx => {
+      await trx.insertInto("platform.inbox_message").values({ source: `api.return.commit.${s.userId}`, event_id: key,
+        payload: JSON.stringify({ abandoned: true }), result_ref: null })
+        .onConflict(oc => oc.columns(["source", "event_id"]).doNothing()).execute();
+      await sql`SELECT platform.audit('return.abandon','return_intent',${key},'{}'::jsonb,${s.userId}::uuid)`.execute(trx);
+    });
+    return { checked: true };
+  });
+
   app.post("/returns", { config: MONEY_OUT_LIMIT }, async (req, reply) => {
     const s = session(req);
     const body = createReturnBody.parse(req.body);

@@ -75,6 +75,8 @@ export interface InvoicePageData {
   shippingAmount: bigint;
   payableAmount: bigint;
   paidAmount: bigint;
+  exchangeAmount?: bigint;
+  dueAmount?: bigint;
 }
 
 /**
@@ -132,7 +134,9 @@ export function invoicePage(data: InvoicePageData, timeZone: string): string {
 
   // بدهی باقیمانده فقط وقتی واقعاً هست. «۰ تومان مانده» یک سطر اضافه
   // است که هیچ‌کس لازمش ندارد.
-  const due = data.payableAmount - data.paidAmount;
+  const due = data.dueAmount ?? (data.payableAmount - data.paidAmount - (data.exchangeAmount ?? 0n));
+  const exchangeRow = (data.exchangeAmount ?? 0n) > 0n
+    ? `<tr><th>تسویه از تعویض</th><td class="num">${esc(toToman(data.exchangeAmount!))}</td></tr>` : "";
   const dueRow =
     due > 0n
       ? `<tr class="due"><th>مانده</th><td class="num">${esc(toToman(due))}</td></tr>`
@@ -228,6 +232,7 @@ ${rows}
     <tr><th>جمع کالاها</th><td class="num">${esc(toToman(data.netAmount))}</td></tr>
     ${extra}
     <tr class="grand"><th>قابل پرداخت</th><td class="num">${esc(toToman(data.payableAmount))} تومان</td></tr>
+    ${exchangeRow}
     ${dueRow}
   </table>
 

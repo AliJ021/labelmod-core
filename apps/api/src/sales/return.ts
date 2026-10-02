@@ -212,8 +212,8 @@ export class ReturnService {
    * فهرست باز یعنی «سایر» — و «سایر» یعنی هیچ‌وقت نمی‌فهمیم کالا چرا
    * برگشت خورده. تصمیم داده است نه کد: تغییر فهرست یک `UPDATE` است.
    */
-  async assertReasonCode(code: string): Promise<void> {
-    const row = await this.#db
+  async assertReasonCode(code: string, ex: Db | Transaction<Database> = this.#db): Promise<void> {
+    const row = await ex
       .selectFrom("platform.setting")
       .select("value")
       .where("key", "=", "return.reason_codes")
@@ -298,18 +298,34 @@ export class ReturnService {
     lines: ReturnLineInput[];
     actorId: string;
   }): Promise<SaleReturn> {
+    const id = await this.#db.transaction().execute(trx => this.createDraftIn(trx, input));
+    return (await this.byId(id)) as SaleReturn;
+  }
+
+  async createDraftIn(trx: Transaction<Database>, input: {
+    invoiceId: string;
+    reasonCode: string;
+    reasonNote?: string | undefined;
+    refundAmount: bigint;
+    refundMethod?: string | undefined;
+    refundReference?: string | undefined;
+    refundPaymentId?: string | undefined;
+    shiftId?: string | undefined;
+    lines: ReturnLineInput[];
+    actorId: string;
+  }): Promise<string> {
     if (input.lines.length === 0) {
       throw new ReturnError("no_lines", "برگ مرجوعی بدون قلم ساخته نمی‌شود", 400);
     }
     if (input.refundAmount < 0n) {
       throw new ReturnError("bad_refund", "مبلغ بازپرداخت منفی نمی‌شود", 400);
     }
-    await this.assertReasonCode(input.reasonCode);
+    await this.assertReasonCode(input.reasonCode, trx);
     if (input.refundMethod === "snappay" && input.refundAmount > 0n && (!input.refundReference?.trim() || !input.refundPaymentId)) {
       throw new ReturnError("refund_reference_required", "پرداخت اصلی اسنپ‌پی و شماره پیگیری برگشت تأییدشده لازم است.", 422);
     }
 
-    const inv = await this.#db
+    const inv = await trx
       .selectFrom("sales.invoice")
       .select(["id", "branch_id", "warehouse_id", "status"])
       .where("id", "=", input.invoiceId)
@@ -326,7 +342,7 @@ export class ReturnService {
     // دستکاری‌شده می‌توانست سطر فاکتور دیگری را مرجوع کند — و
     // `post_return` هم جلویش را نمی‌گرفت، چون خودش سطرها را از
     // `sale_return_line` می‌خواند نه از فاکتور.
-    const validLines = await this.#db
+    const validLines = await trx
       .selectFrom("sales.invoice_line")
       .select("id")
       .where("invoice_id", "=", input.invoiceId)
@@ -357,7 +373,7 @@ export class ReturnService {
       }
     }
 
-    const id = await this.#db.transaction().execute(async (trx) => {
+    {
       await setActor(trx, input.actorId);
       const r = await trx
         .insertInto("sales.sale_return")
@@ -406,9 +422,7 @@ export class ReturnService {
           .execute();
       }
       return r.id;
-    });
-
-    return (await this.byId(id)) as SaleReturn;
+    }
   }
 
   /**

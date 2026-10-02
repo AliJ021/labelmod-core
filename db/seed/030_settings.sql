@@ -426,7 +426,7 @@ SELECT * FROM (VALUES
  72, 'settings.security', true),
 
 ('auth.pin_forbidden_operations',
- '["refund.cash","invoice.cancel","price.change","stock.adjust","period.close","period.reopen","user.manage","device.manage","treasury.manage","cheque.manage","journal.manual","return.late","settings.manage","settings.security","ledger.mapping","sale.price_override","customer.manage","stock.count","report.customer_insight"]'::jsonb,
+ '["refund.cash","invoice.cancel","price.change","stock.adjust","period.close","period.reopen","user.manage","device.manage","treasury.manage","cheque.manage","journal.manual","return.late","exchange.policy","settings.manage","settings.security","ledger.mapping","sale.price_override","customer.manage","stock.count","report.customer_insight"]'::jsonb,
  'عملیاتی که با PIN هرگز مجاز نیستند و احراز هویت کامل می‌خواهند — بند ۱ SECURITY.md.', true,
  'multichoice', 'کارهایی که با PIN انجام نمی‌شوند', 'security',
  '[{"value":"refund.cash","label":"بازپرداخت نقدی"},
@@ -455,6 +455,7 @@ SELECT * FROM (VALUES
    {"value":"shift.close","label":"بستن شیفت صندوق"},
    {"value":"settings.manage","label":"تغییر تنظیمات"},
    {"value":"settings.security","label":"تغییر تنظیمات امنیتی و مالی"},
+   {"value":"exchange.policy","label":"سیاست بدهی در تعویض"},
    {"value":"ledger.mapping","label":"تغییر نگاشت حساب (درآمد و بهای تمام‌شده)"}]'::jsonb,
  NULL, NULL, NULL,
  'صندوق‌داری که با PIN صفحه را باز کرده، این کارها را نمی‌تواند بکند و باید رمز کامل بزند. هرچه بیشتر انتخاب کنید سخت‌گیرانه‌تر است. حذف «بازپرداخت نقدی» یا «ابطال فاکتور» از این فهرست به‌شدت توصیه نمی‌شود.',
