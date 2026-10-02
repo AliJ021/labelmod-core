@@ -22,6 +22,17 @@ import {
 } from "../src/sales/invoice-page.ts";
 
 describe("صفحه عمومی فاکتور", () => {
+  test("انتقال تعویض جدا از وجه و مانده معتبر نمایش داده می‌شود و متن‌ها escape می‌شوند", () => {
+    const data = { number: "<img src=x>", shopName: "<script>shop</script>", customerName: "<svg onload=x>",
+      occurredAt: new Date("2026-09-06T10:00:00Z"), lines: [], netAmount: 1200000n, taxAmount: 0n,
+      shippingAmount: 0n, payableAmount: 1200000n, paidAmount: 200000n, exchangeAmount: 1000000n, dueAmount: 0n };
+    const html = invoicePage(data, "Asia/Tehran");
+    assert.match(html, /تسویه از تعویض/);
+    assert.doesNotMatch(html, /class="due"/);
+    assert.doesNotMatch(html, /<img src=x>|<svg onload=x>|<script>shop/);
+    assert.match(html, /&lt;img src=x&gt;/);
+    assert.match(invoicePage({ ...data, dueAmount: 600000n }, "Asia/Tehran"), /class="due"/);
+  });
   test("hash در CSP با متن واقعی اسکریپت می‌خواند", () => {
     const want =
       "sha256-" + createHash("sha256").update(PRINT_SCRIPT, "utf8").digest("base64");
@@ -106,5 +117,60 @@ describe("صفحه عمومی فاکتور", () => {
     );
     assert.match(html, /@media print/, "بدون استایل چاپ، دکمه روی کاغذ چاپ می‌شود");
     assert.match(html, /\.print-bar\s*\{\s*display:\s*none/);
+  });
+
+  // ── عنوان قلم بدون سایز (درخواست مالک ۱۴۰۵/۰۷/۱۰) ──────────────────
+
+  function page(lines: Array<{ productName: string; color: string | null; size: string | null }>) {
+    return invoicePage(
+      {
+        number: "۱", shopName: "لیبل مد",
+        occurredAt: new Date("2026-09-06T10:00:00Z"),
+        customerName: null,
+        lines: lines.map((l) => ({
+          ...l, qty: "1", unitPrice: 1000000n, discountAmount: 0n, netAmount: 1000000n,
+        })),
+        netAmount: 1000000n, taxAmount: 0n,
+        shippingAmount: 0n, payableAmount: 1000000n, paidAmount: 1000000n,
+      },
+      "Asia/Tehran",
+    );
+  }
+  const nameCells = (html: string) =>
+    [...html.matchAll(/<td class="name">([\s\S]*?)<\/td>/g)].map((m) => m[1]);
+
+  test("عنوان قلم رنگ را دارد و سایز ساخت‌یافته را نه", () => {
+    const cells = nameCells(page([{ productName: "پیراهن", color: "آبی", size: "XXL-SIZE" }]));
+    assert.deepEqual(cells, ["پیراهن <small>آبی</small>"]);
+    assert.ok(!cells[0]!.includes("XXL-SIZE"));
+    assert.ok(!cells[0]!.includes(" · "), "جداکنندهٔ رنگ و سایز هم نمی‌ماند");
+  });
+
+  test("بی‌رنگ: فقط نام، بی <small> خالی — و سایز باز هم نه", () => {
+    assert.deepEqual(nameCells(page([{ productName: "شال", color: null, size: "ONE-SIZE" }])), ["شال"]);
+    assert.deepEqual(nameCells(page([{ productName: "شال", color: "", size: "M" }])), ["شال"]);
+  });
+
+  test("نام کالا دست‌نخورده است، حتی اگر کلمه‌ای شبیه سایز داشته باشد", () => {
+    // فقط میدان ساخت‌یافتهٔ سایز حذف می‌شود؛ هیچ Regexی روی نام اجرا نمی‌شود.
+    const cells = nameCells(page([{ productName: "شلوار XL مدل 42", color: "مشکی", size: "XL" }]));
+    assert.deepEqual(cells, ["شلوار XL مدل 42 <small>مشکی</small>"]);
+  });
+
+  test("نام و رنگ همچنان Escape می‌شوند و سایزِ مخرب جایی درج نمی‌شود", () => {
+    const html = page([{ productName: "<img src=x onerror=a()>", color: "<b>قرمز</b>", size: "<script>bad()</script>" }]);
+    const cells = nameCells(html);
+    assert.equal(cells[0], "&lt;img src=x onerror=a()&gt; <small>&lt;b&gt;قرمز&lt;/b&gt;</small>");
+    assert.ok(!html.includes("bad()"), "سایز در هیچ جای صفحه نمی‌آید");
+    assert.equal((html.match(/<script>/g) ?? []).length, 1, "فقط اسکریپت چاپ hashدار");
+  });
+
+  test("هر قلم سطر خودش را دارد: دو سایز یک کالا دو سطر می‌مانند", () => {
+    // حذف سایز از عنوان، سطرها را ادغام نمی‌کند؛ هر سطر همان سطر فاکتور است.
+    const cells = nameCells(page([
+      { productName: "پیراهن", color: "آبی", size: "M" },
+      { productName: "پیراهن", color: "آبی", size: "L" },
+    ]));
+    assert.equal(cells.length, 2);
   });
 });

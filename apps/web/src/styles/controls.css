@@ -51,6 +51,9 @@ button:focus-visible, summary:focus-visible { outline: 2px solid var(--accent); 
 .filter-check { display: inline-flex; align-items: center; gap: var(--s-2); min-block-size: var(--touch); color: var(--ink-2); cursor: pointer; font-size: 0.9rem; }
 .catalog-page { gap: var(--s-4); }
 .catalog-page h2, .preference-card h2 { font-size: 1.12rem; }
+/* قیمت فروش در فهرست کالا: مبلغ یا بازه، و زیرش کسری بی‌قیمت — دو خط، نه یک ستون شمارش. */
+.catalog-price { display: inline-flex; flex-direction: column; align-items: flex-start; gap: 2px; }
+.catalog-price-range { display: inline-flex; flex-wrap: wrap; align-items: baseline; column-gap: 0.35em; }
 .topbar { display: grid; grid-template-columns: auto minmax(0, 1fr) auto; gap: var(--s-4); }
 .brand { white-space: nowrap; }
 .zones { min-inline-size: 0; overflow-x: auto; scrollbar-width: thin; margin-inline-start: 0; }

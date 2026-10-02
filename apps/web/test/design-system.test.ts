@@ -205,6 +205,7 @@ describe("رجیستری تنظیمات — شخصی جدا از مدیریتی 
   const SERVER: Record<string, readonly [file: string, route: string]> = {
     keys: ["settings-routes.ts", "/settings"],
     health: ["health-routes.ts", "/health/alerts"],
+    woocommerce: ["woocommerce-diagnostics-routes.ts", "/settings/woocommerce"],
     backups: ["backup-routes.ts", "/backups"],
     accounts: ["admin-routes.ts", "/accounts"],
     mapping: ["admin-routes.ts", "/posting-rules"],
@@ -264,7 +265,7 @@ describe("رجیستری تنظیمات — شخصی جدا از مدیریتی 
   test("مجوز مدیریتی جزئی: فقط بخش‌های همان مجوز", () => {
     const verdicts = new Map([...all("deny"), ["settings.view", "allow"]] as [string, Verdict][]);
     const view = settingsView(null, { state: "ready", verdicts });
-    assert.deepEqual(keys(view.visible), ["appearance", "pin", "twofactor", "keys", "health", "accounts", "mapping", "snappay", "terminals", "opening"]);
+    assert.deepEqual(keys(view.visible), ["appearance", "pin", "twofactor", "keys", "health", "woocommerce", "accounts", "mapping", "snappay", "terminals", "opening"]);
     assert.equal(view.selected, "keys");
     for (const denied of ["backups", "staff", "permissions", "devices"] as const) assert.equal(settingsView(denied, { state: "ready", verdicts }).blocked, "denied", denied);
   });

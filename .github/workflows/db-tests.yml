@@ -302,6 +302,8 @@ jobs:
 
       - name: منطق افزونه — واحد پول، قیمت واحد، نگاشت درگاه
         run: php integrations/woocommerce/test/payload-test.php
+      - name: تشخیص فقط‌خواندنی و کنترل ارتباط افزونه
+        run: php integrations/woocommerce/test/diagnostics-test.php
 
       # ⚠️ گیرندهٔ Push تنها مسیری است که از بیرون **به داخل** سایت
       #    می‌نویسد: امضا، پنجرهٔ زمانی، Nonce و نگهبان ترتیب. هر چهار

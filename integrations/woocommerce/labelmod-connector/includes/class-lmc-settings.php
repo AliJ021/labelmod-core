@@ -54,9 +54,9 @@ class LMC_Settings
         $old = lmc_settings();
         $new = $old;
 
-        // آدرس: فقط http/https، و بدون اسلش پایانی تا با `/api` جوش
+        // آدرس: فقط HTTPS، و بدون اسلش پایانی تا با `/api` جوش
         // نخورد به «//api».
-        $base = isset($_POST['base_url']) ? esc_url_raw(wp_unslash($_POST['base_url']), ['http', 'https']) : '';
+        $base = isset($_POST['base_url']) ? esc_url_raw(wp_unslash($_POST['base_url']), ['https']) : '';
         $new['base_url'] = untrailingslashit($base);
 
         // کلید خالی یعنی «دست نخورد» — نه «پاکش کن». پاک‌کردن راه
@@ -131,6 +131,7 @@ class LMC_Settings
 
         self::notices();
         self::connection_box($s);
+        LMC_Diagnostics::render();
 
         echo '<form method="post" action="' . esc_url(admin_url('admin-post.php')) . '">';
         wp_nonce_field('lmc_save_settings');
@@ -213,7 +214,7 @@ class LMC_Settings
             '<label><input type="checkbox" name="link_by_sku" value="1" '
                 . checked($s['link_by_sku'], 'yes', false) . '> '
                 . esc_html__('کالاهایی که هنوز کلید اتصال ندارند، یک بار با SKU پیدا شوند', 'labelmod-connector') . '</label>',
-            __('پلی برای سایتی که تازه وصل می‌شود: کلید اتصال همان لحظه نوشته می‌شود. پس از یک دور کامل می‌توانید خاموشش کنید تا SKU سایت آزادانه عوض شود.', 'labelmod-connector')
+            __('پلی برای اتصال اولیهٔ موجودی: کلید اتصال همان لحظه نوشته می‌شود. سفارش سایت همچنان به SKU یکسان با Core نیاز دارد؛ تغییر SKU بدون تطبیق، ارسال سفارش را متوقف می‌کند.', 'labelmod-connector')
         );
 
         self::row(

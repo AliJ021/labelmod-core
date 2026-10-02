@@ -192,6 +192,11 @@ React + Vite، RTL کامل، زبان طراحی Liquid Glass ناحیه‌بن
 
 ### افزونه ووکامرس — ساخته شده
 
+نسخهٔ ۱٫۲٫۰ تست اتصال فقط‌خواندنی در وردپرس و بخش «اتصال ووکامرس» تنظیمات Core دارد؛
+همان بخش ZIP قطعی، نسخه و SHA-256 بسته را نشان می‌دهد. راه‌اندازی و حدود تشخیص در
+[`integrations/woocommerce/README.md`](integrations/woocommerce/README.md) است.
+علت مشخص گزارش سفارش TEST و پذیرش زندهٔ موجودی/duplicate هنوز بدون بررسی دو سمت تأیید نشده‌اند.
+
 `integrations/woocommerce/` — سفارش پرداخت‌شده را به سیستم می‌فرستد،
 موجودی و قیمت سایت را از انبار می‌گیرد، و خرید حضوری را در حساب کاربری
 مشتری نشان می‌دهد. راهنمای نصب فارسی همان‌جاست.
@@ -551,7 +556,7 @@ Microservice · Redis · Kubernetes · حالت آفلاین کامل · Windows
 ```
 db/migrations/   اسکیما و توابع — شماره‌دار، SQL خام، قابل حسابرسی
 db/seed/         کدینگ حساب، قواعد ثبت، تنظیمات، داده مرجع
-db/test/         ۴۷ فایل تست مالی — در CI و pre-push اجرا می‌شوند
+db/test/         ۴۹ فایل تست مالی — در CI و pre-push اجرا می‌شوند
 db/reconcile/    تطبیق پایانی «یک روز کامل» — از تست E2E صدا زده می‌شود
 docs/            ADR-001 تا ADR-007 · SECURITY.md · DEPLOYMENT.md
                  JOURNAL-GUARDS.md · MELIPAYAMAK.md

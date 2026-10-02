@@ -54,6 +54,8 @@ interface Row {
   shipping_amount: string;
   payable_amount: string;
   paid_amount: string;
+  exchange_amount: string;
+  due_amount: string;
   shop_name: string | null;
   timezone: string;
 }
@@ -71,6 +73,14 @@ export function registerPublicRoutes(app: FastifyInstance, deps: { db: Db }): vo
              c.full_name AS customer_name,
              i.net_amount::text, i.tax_amount::text, i.shipping_amount::text,
              i.payable_amount::text, i.paid_amount::text,
+             sales.exchange_in(i.id)::text AS exchange_amount,
+             greatest(i.payable_amount
+               -coalesce((SELECT sum(r.net_amount+r.tax_amount+r.shipping_amount-r.refund_amount)
+                 FROM sales.sale_return r WHERE r.invoice_id=i.id AND r.status='posted'),0)
+               -coalesce((SELECT sum(CASE WHEN p.direction='in' THEN p.amount ELSE -p.amount END)
+                 FROM treasury.payment p JOIN treasury.payment_method m ON m.code=p.method_code
+                 WHERE p.invoice_id=i.id AND m.kind<>'credit' AND p.status IN ('succeeded','settled','reconciled')),0)
+               +sales.exchange_out(i.id)-sales.exchange_in(i.id),0)::text AS due_amount,
              (SELECT b.name FROM platform.branch b WHERE b.id = i.branch_id) AS shop_name,
              platform.setting_text('platform.timezone', 'Asia/Tehran') AS timezone
         FROM sales.invoice i
@@ -126,6 +136,8 @@ export function registerPublicRoutes(app: FastifyInstance, deps: { db: Db }): vo
         shippingAmount: parseMoney(row.shipping_amount),
         payableAmount: parseMoney(row.payable_amount),
         paidAmount: parseMoney(row.paid_amount),
+        exchangeAmount: parseMoney(row.exchange_amount),
+        dueAmount: parseMoney(row.due_amount),
       },
       row.timezone,
     );

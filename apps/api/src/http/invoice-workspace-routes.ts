@@ -65,7 +65,7 @@ export function registerInvoiceWorkspaceRoutes(app: FastifyInstance, db: Db): vo
       FROM treasury.payment p LEFT JOIN LATERAL (
         SELECT sum(out.amount) AS amount FROM treasury.payment out JOIN sales.sale_return r ON r.id=out.return_id
         WHERE r.refund_payment_id=p.id AND out.direction='out' AND out.status IN ('succeeded','settled','reconciled')
-      ) refunded ON true WHERE p.invoice_id=${id}::uuid AND p.method_code='snappay' AND p.direction='in'
+      ) refunded ON true WHERE p.invoice_id IN (SELECT invoice_id FROM sales.exchange_ancestors(${id}::uuid)) AND p.method_code='snappay' AND p.direction='in'
         AND p.status IN ('succeeded','settled','reconciled') AND p.amount>coalesce(refunded.amount,0)
       ORDER BY p.occurred_at,p.id`.execute(db);
     return { payments: rows.rows };

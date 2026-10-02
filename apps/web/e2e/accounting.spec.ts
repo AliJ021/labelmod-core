@@ -11,25 +11,32 @@ test("cash refund explicitly selects one of several open drawers", async ({ page
   api.defaults["GET /shifts/open"] = [{ id: "s1", userName: "صندوق اول", openedAt: "2026-09-22T08:00:00Z" },
     { id: "s2", userName: "صندوق دوم", openedAt: "2026-09-22T09:00:00Z" }];
   let submitted: Record<string, unknown> | undefined;
-  api.handlers.set("POST /returns", async route => {
+  let idempotencyKey: string | undefined;
+  api.handlers.set("POST /returns/commit", async route => {
     submitted = route.request().postDataJSON() as Record<string, unknown>;
-    await route.fulfill({ json: { id: "r1", number: "R-1", status: "draft" } });
+    idempotencyKey = route.request().headers()["idempotency-key"];
+    await route.fulfill({ json: { id: "r1", number: "R-1", status: "posted" } });
   });
-  api.defaults["POST /returns/r1/post"] = { id: "r1", number: "R-1", status: "posted" };
   await page.goto("/");
   await openZone(page, "مرجوعی");
   await page.getByLabel("شماره فاکتور", { exact: true }).fill("F-1");
   await page.getByRole("button", { name: "پیدا کن", exact: true }).click();
   await page.getByRole("button", { name: "اضافه کردن کالای آزمون", exact: true }).click();
   await page.getByRole("combobox", { name: "علت مرجوعی", exact: true }).selectOption("defective");
-  const submit = page.getByRole("button", { name: "ثبت مرجوعی", exact: true });
+  const submit = page.getByRole("button", { name: "۱. بررسی مرجوعی", exact: true });
   await expect(submit).toBeDisabled();
+  expect(submitted).toBeUndefined();
   await page.getByRole("combobox", { name: "صندوق بازپرداخت", exact: true }).selectOption("s2");
   await submit.click();
+  expect(submitted).toBeUndefined();
+  await page.getByRole("button", { name: "اقلام و مبلغ را تأیید می‌کنم؛ ثبت مرجوعی", exact: true }).click();
   await expect(page.getByRole("status")).toContainText("R-1");
   expect(submitted?.shiftId).toBe("s2");
   expect(submitted?.refundAmount).toBe("200000");
-  expect(api.calls.filter(x => x.startsWith("POST /returns?" ) || x === "POST /returns")).toHaveLength(1);
+  expect(submitted?.confirmed).toBe(true);
+  expect(idempotencyKey).toMatch(/^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i);
+  expect(api.calls.filter(x => x === "POST /returns/commit")).toHaveLength(1);
+  expect(api.calls.filter(x => x === "POST /returns" || x === "POST /returns/r1/post")).toHaveLength(0);
 });
 
 test("purchase screen creates and selects a supplier without leaving the receipt", async ({ page, api }) => {

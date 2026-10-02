@@ -14,7 +14,7 @@ import { NAV_OPERATIONS } from "../src/lib/navigation";
 type Decision = "allow" | "deny" | "fail";
 const PROTECTED = ["صندوق", "فاکتورها", "مرجوعی", "کالا و قیمت", "انبار و خرید", "خزانه و چک", "مشتریان", "گزارش‌ها"];
 const PERSONAL = ["نمایش و عملکرد", "PIN من — ساخت و تغییر", "ورود دومرحله‌ای"];
-const ADMIN = ["تنظیمات", "سلامت سیستم", "پشتیبان‌گیری و بازیابی", "کدینگ حساب", "نگاشت حساب", "اسنپ‌پی", "پایانه‌ها", "افتتاحیه و تفصیلی", "پرسنل", "مجوزها", "دستگاه‌ها"];
+const ADMIN = ["تنظیمات", "سلامت سیستم", "اتصال ووکامرس", "پشتیبان‌گیری و بازیابی", "کدینگ حساب", "نگاشت حساب", "اسنپ‌پی", "پایانه‌ها", "افتتاحیه و تفصیلی", "پرسنل", "مجوزها", "دستگاه‌ها"];
 
 /** پاسخ‌های مجوز تا `release()` نگه داشته می‌شوند؛ تصمیم هر عملیات قابل عوض‌کردن است. */
 function authorize(api: MockApi, decide: (operation: string) => Decision, held = false) {
@@ -154,7 +154,7 @@ test.describe("F-110-02 — personal settings apart from administrative settings
     await expect(page.getByRole("heading", { name: "نمایش و عملکرد", exact: true })).toBeVisible();
     expect(await settingsLabels(page)).toEqual(PERSONAL);
     expect(api.calls.some(c => c.startsWith("GET /settings")), "administrative settings were not requested").toBe(false);
-    for (const [tab, call] of [["staff", "GET /users"], ["devices", "GET /devices"], ["permissions", "GET /permission-rules"], ["keys", "GET /settings"]] as const) {
+    for (const [tab, call] of [["staff", "GET /users"], ["devices", "GET /devices"], ["permissions", "GET /permission-rules"], ["keys", "GET /settings"], ["woocommerce", "GET /settings/woocommerce"]] as const) {
       await page.goto(`/?page=settings&settings.tab=${tab}`);
       await expect(page.getByRole("heading", { name: "دسترسی ندارید" })).toBeVisible();
       expect(await settingsLabels(page), `${tab} label stays hidden`).toEqual(PERSONAL);
@@ -180,7 +180,7 @@ test.describe("F-110-02 — personal settings apart from administrative settings
     authorize(api, op => op === "settings.view" ? "allow" : "deny");
     await page.goto("/?page=settings");
     await expect(page.getByRole("heading", { name: "تنظیمات", level: 1 })).toBeVisible();
-    await expect.poll(() => settingsLabels(page)).toEqual([...PERSONAL, "تنظیمات", "سلامت سیستم", "کدینگ حساب", "نگاشت حساب", "اسنپ‌پی", "پایانه‌ها", "افتتاحیه و تفصیلی"]);
+    await expect.poll(() => settingsLabels(page)).toEqual([...PERSONAL, "تنظیمات", "سلامت سیستم", "اتصال ووکامرس", "کدینگ حساب", "نگاشت حساب", "اسنپ‌پی", "پایانه‌ها", "افتتاحیه و تفصیلی"]);
     await page.goto("/?page=settings&settings.tab=devices");
     await expect(page.getByRole("heading", { name: "دسترسی ندارید" })).toBeVisible();
     expect(api.calls.some(c => c.startsWith("GET /devices") || c.startsWith("GET /sessions"))).toBe(false);
