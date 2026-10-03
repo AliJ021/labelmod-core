@@ -20,6 +20,7 @@
  * ⚠️ ثبتِ دیگری و ثبتِ بیرون از دامنه هر دو ۴۰۴ می‌گیرند، نه ۴۰۳: وجود
  *    یک ثبت هم نباید از راه کد وضعیت لو برود.
  */
+import { randomUUID } from "node:crypto";
 import type { FastifyInstance, FastifyRequest } from "fastify";
 import { sql, type Transaction } from "kysely";
 import { z } from "zod";
@@ -64,11 +65,15 @@ const pageQuery = z.object({
   pageSize: z.coerce.number().int().min(1).max(100).default(20),
 });
 
+const managerQuery = pageQuery.extend({ ownerId: uuid.optional(), status: z.enum(["all", "open", "settled"]).default("all") });
+const settlementBody = z.object({ items: z.array(z.object({ id: uuid, expectedVersion: z.number().int().min(1) }).strict()).min(1).max(500)
+  .refine(items => new Set(items.map(i => i.id)).size === items.length, "ثبت تکراری در انتخاب وجود دارد"), note: text }).strict();
+
 interface Row {
   id: string; ownerId: string; ownerName: string; createdAt: Date; version: number; amount: string;
-  reason: string; correctedAt: Date | null; correctedByName: string | null;
+  reason: string; correctedAt: Date | null; correctedByName: string | null; settledAt: Date | null; settledByName: string | null;
 }
-interface RevisionRow { version: number; amount: string; reason: string; note: string | null; actorId: string; actorName: string; at: Date }
+interface RevisionRow { version: number; amount: string; reason: string; note: string | null; actorId: string; actorName: string; at: Date; settledAt: Date | null; settledByName: string | null; settlementNote: string | null }
 
 type Executor = Db | Transaction<Database>;
 
@@ -93,33 +98,37 @@ function item(r: Row) {
     id: r.id, owner: { id: r.ownerId, name: r.ownerName }, createdAt: r.createdAt.toISOString(),
     version: r.version, amount: String(r.amount), reason: r.reason,
     correctedAt: r.correctedAt ? r.correctedAt.toISOString() : null, correctedBy: r.correctedByName,
+    settledAt: r.settledAt?.toISOString() ?? null, settledBy: r.settledByName,
   };
 }
 
 const SELECT_CURRENT = sql`SELECT c.id, c.owner_id AS "ownerId", o.full_name AS "ownerName", c.created_at AS "createdAt",
-    c.version, c.amount::text AS amount, c.reason, c.corrected_at AS "correctedAt", g.full_name AS "correctedByName"
+    c.version, c.amount::text AS amount, c.reason, c.corrected_at AS "correctedAt", g.full_name AS "correctedByName", c.settled_at AS "settledAt", st.full_name AS "settledByName"
   FROM identity.staff_withdrawal_current c
   JOIN identity.app_user o ON o.id = c.owner_id
-  LEFT JOIN identity.app_user g ON g.id = c.corrected_by`;
+  LEFT JOIN identity.app_user g ON g.id = c.corrected_by
+  LEFT JOIN identity.app_user st ON st.id = c.settled_by`;
 
 async function detail(db: Executor, id: string) {
   const head = (await sql<Row>`${SELECT_CURRENT} WHERE c.id = ${id}::uuid`.execute(db)).rows[0];
   if (!head) throw new WithdrawalError("withdrawal_not_found", "ثبت برداشت یافت نشد", 404);
   const history = await sql<RevisionRow>`SELECT r.version, r.amount::text AS amount, r.reason, r.note,
-      r.actor_id AS "actorId", u.full_name AS "actorName", r.at
+      r.actor_id AS "actorId", u.full_name AS "actorName", r.at, st.at AS "settledAt", su.full_name AS "settledByName", st.note AS "settlementNote"
     FROM identity.staff_withdrawal_revision r JOIN identity.app_user u ON u.id = r.actor_id
+    LEFT JOIN identity.staff_withdrawal_settlement st ON st.withdrawal_id=r.withdrawal_id AND st.version=r.version
+    LEFT JOIN identity.app_user su ON su.id=st.actor_id
     WHERE r.withdrawal_id = ${id}::uuid ORDER BY r.version`.execute(db);
   return {
     ...item(head),
     history: history.rows.map(h => ({ version: h.version, amount: String(h.amount), reason: h.reason, note: h.note,
-      actor: { id: h.actorId, name: h.actorName }, at: h.at.toISOString() })),
+      actor: { id: h.actorId, name: h.actorName }, at: h.at.toISOString(), settledAt: h.settledAt?.toISOString() ?? null, settledBy: h.settledByName, settlementNote: h.settlementNote })),
   };
 }
 
 async function page(db: Db, where: ReturnType<typeof sql>, q: { page: number; pageSize: number }) {
   const rows = await sql<Row>`${SELECT_CURRENT} WHERE ${where}
     ORDER BY c.created_at DESC, c.id DESC LIMIT ${q.pageSize} OFFSET ${(q.page - 1) * q.pageSize}`.execute(db);
-  const total = (await sql<{ n: number }>`SELECT count(*)::int AS n FROM identity.staff_withdrawal c WHERE ${where}`.execute(db)).rows[0]?.n ?? 0;
+  const total = (await sql<{ n: number }>`SELECT count(*)::int AS n FROM identity.staff_withdrawal_current c WHERE ${where}`.execute(db)).rows[0]?.n ?? 0;
   return { items: rows.rows.map(item), total, page: q.page, pageSize: q.pageSize };
 }
 
@@ -129,6 +138,23 @@ async function managerSession(db: Executor, req: FastifyRequest, operation: "wit
   await requireHumanSession(db, s);
   await requireForSession(db, s, operation);
   return s;
+}
+
+function managerWhere(userId: string, q: { ownerId?: string | undefined; status: string }) {
+  return sql`identity.withdrawal_in_scope(${userId}::uuid,c.branch_id)
+    AND (${q.ownerId ?? null}::uuid IS NULL OR c.owner_id=${q.ownerId ?? null}::uuid)
+    AND (${q.status}='all' OR (${q.status}='open' AND c.settled_at IS NULL) OR (${q.status}='settled' AND c.settled_at IS NOT NULL))`;
+}
+
+async function settlementResult(db: Executor, batchId: string, actorId: string) {
+  const rows = (await sql<{ id: string; version: number; amount: string; inScope: boolean }>`SELECT s.withdrawal_id AS id,s.version,r.amount::text AS amount,
+    identity.withdrawal_in_scope(${actorId}::uuid,w.branch_id) AS "inScope"
+    FROM identity.staff_withdrawal_settlement s JOIN identity.staff_withdrawal w ON w.id=s.withdrawal_id
+    JOIN identity.staff_withdrawal_revision r ON r.withdrawal_id=s.withdrawal_id AND r.version=s.version
+    WHERE s.batch_id=${batchId}::uuid ORDER BY s.withdrawal_id`.execute(db)).rows;
+  if (!rows.length || rows.some(r => !r.inScope)) throw new WithdrawalError("withdrawal_not_found", "تسویه در دامنهٔ شما یافت نشد", 404);
+  return { batchId, count: rows.length, totalAmount: rows.reduce((sum,r) => sum+BigInt(r.amount),0n).toString(),
+    items: rows.map(r => ({ id:r.id, version:r.version })) };
 }
 
 export function registerWithdrawalRoutes(app: FastifyInstance, db: Db): void {
@@ -181,7 +207,61 @@ export function registerWithdrawalRoutes(app: FastifyInstance, db: Db): void {
   // ── دفتر مدیر کل ────────────────────────────────────────────────
   app.get("/withdrawals", async req => {
     const s = await managerSession(db, req, "withdrawal.view_all");
-    return page(db, sql`identity.withdrawal_in_scope(${s.userId}::uuid, c.branch_id)`, pageQuery.parse(req.query));
+    const q = managerQuery.parse(req.query);
+    return page(db, managerWhere(s.userId, q), q);
+  });
+
+  app.get("/withdrawals/owners", async req => {
+    const s = await managerSession(db, req, "withdrawal.view_all");
+    const owners = await sql`SELECT DISTINCT o.id,o.full_name AS name FROM identity.staff_withdrawal w
+      JOIN identity.app_user o ON o.id=w.owner_id WHERE identity.withdrawal_in_scope(${s.userId}::uuid,w.branch_id)
+      ORDER BY name,o.id`.execute(db);
+    return { owners: owners.rows };
+  });
+
+  // انتخاب همه، تصویر صریح نسخه‌هاست؛ ثبت تازه بعد از این خواندن وارد عملیات نمی‌شود.
+  app.get("/withdrawals/selection", async req => {
+    const s = await managerSession(db, req, "withdrawal.correct");
+    const q = managerQuery.parse(req.query);
+    const rows = await sql<Row>`${SELECT_CURRENT} WHERE ${managerWhere(s.userId, { ...q, status: "open" })}
+      ORDER BY c.created_at DESC,c.id DESC LIMIT 501`.execute(db);
+    if (rows.rows.length > 500) throw new WithdrawalError("withdrawal_selection_limit", "بیش از ۵۰۰ ثبت باز وجود دارد؛ کاربر را انتخاب کنید یا هر صفحه را جدا تسویه کنید.", 422);
+    return { items: rows.rows.map(item) };
+  });
+
+  app.get("/withdrawals/settlements/by-key/:key", async req => {
+    const s = await managerSession(db, req, "withdrawal.correct");
+    const { key } = z.object({ key: z.string().min(1).max(200) }).parse(req.params);
+    const row = (await sql<{ ref: string | null }>`SELECT result_ref AS ref FROM platform.inbox_message
+      WHERE source='api.withdrawal.settle' AND event_id=${key} AND payload->>'actorId'=${s.userId}`.execute(db)).rows[0];
+    return row?.ref ? { status: "recorded", ...await settlementResult(db, row.ref, s.userId) } : { status: "not_found" };
+  });
+
+  app.post("/withdrawals/settlements", { config: { rateLimit: { max: 30, timeWindow: "1 minute" } } }, async req => {
+    const s = await managerSession(db, req, "withdrawal.correct");
+    const key = idempotencyKey(req);
+    const parsed = settlementBody.parse(req.body);
+    const body = { ...parsed, items: [...parsed.items].sort((a,b) => a.id.localeCompare(b.id)) };
+    const out = await runOnce(db, { key, source: "api.withdrawal.settle", payload: { actorId: s.userId, ...body },
+      run: async trx => {
+        await managerSession(trx, req, "withdrawal.correct");
+        await setActor(trx, s.userId);
+        // ترتیب ثابت قفل‌ها برای دو انتخاب هم‌پوشان؛ همه یا هیچ.
+        for (const selected of body.items) {
+          const head = (await sql<{ inScope: boolean }>`SELECT identity.withdrawal_in_scope(${s.userId}::uuid,branch_id) AS "inScope"
+            FROM identity.staff_withdrawal WHERE id=${selected.id}::uuid FOR UPDATE`.execute(trx)).rows[0];
+          if (!head?.inScope) throw new WithdrawalError("withdrawal_not_found", "ثبت برداشت یافت نشد", 404);
+          const cur = (await sql<{ version: number; settled: boolean }>`SELECT version,settled_at IS NOT NULL AS settled
+            FROM identity.staff_withdrawal_current WHERE id=${selected.id}::uuid`.execute(trx)).rows[0]!;
+          if (cur.version !== selected.expectedVersion || cur.settled) throw new WithdrawalError("withdrawal_stale", "بخشی از انتخاب تغییر کرده یا تسویه شده است؛ فهرست را تازه و دوباره انتخاب کنید.", 409);
+        }
+        const batchId = randomUUID();
+        for (const selected of body.items) await sql`INSERT INTO identity.staff_withdrawal_settlement(withdrawal_id,version,batch_id,actor_id,note)
+          VALUES (${selected.id}::uuid,${selected.expectedVersion},${batchId}::uuid,${s.userId}::uuid,${body.note})`.execute(trx);
+        return { value: await settlementResult(trx,batchId,s.userId), ref: batchId };
+      }, replay: ref => settlementResult(db,ref,s.userId),
+    });
+    return { ...out.value, replayed: out.replayed };
   });
 
   app.get("/withdrawals/:id", async req => {

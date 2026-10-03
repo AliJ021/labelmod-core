@@ -333,6 +333,41 @@ test("locking mid-load stops dashboard requests before reload and logout", async
   expect(api.calls).toContain("POST /auth/logout");
 });
 
+test("the dashboard chain is cancelled in the same commit that shows the lock screen", async ({ page }) => {
+  // شکست CI روی WebKit پربار: پاسخ «درآمد ثبت‌نشده» پس از نمایش صفحهٔ قفل ولی پیش از
+  // پاک‌سازی useEffect رسید و زنجیره «auth/can» را فرستاد. اینجا همان ترتیب قطعی می‌شود:
+  // پاسخ در microtask همان commit که عنوان قفل را می‌گذارد تحویل می‌شود (MutationObserver)،
+  // یعنی پیش از هر Task بعدی. لغو باید در خودِ commit رخ داده باشد.
+  await page.addInitScript(() => {
+    const realFetch = window.fetch.bind(window);
+    const after: string[] = [];
+    let locked = false;
+    (window as unknown as { __afterLock: string[] }).__afterLock = after;
+    window.fetch = (input, init) => {
+      const url = String(input instanceof Request ? input.url : input);
+      if (locked) after.push(url.replace(location.origin, ""));
+      if (!url.includes("/api/posting-batches/unposted")) return realFetch(input, init);
+      (window as unknown as { __unpostedAsked: boolean }).__unpostedAsked = true;
+      return new Promise<Response>(resolve => {
+        const lockedNow = () => [...document.querySelectorAll("h1")].some(h => h.textContent === "صفحه قفل است");
+        const observer = new MutationObserver(() => {
+          if (!lockedNow()) return;
+          observer.disconnect();
+          locked = true;
+          resolve(new Response(JSON.stringify({ rows: [] }), { headers: { "content-type": "application/json" } }));
+        });
+        observer.observe(document, { childList: true, subtree: true });
+      });
+    };
+  });
+  await page.goto("/");
+  await expect.poll(() => page.evaluate(() => (window as unknown as { __unpostedAsked?: boolean }).__unpostedAsked === true)).toBe(true);
+  await page.getByRole("button", { name: "قفل صفحه", exact: true }).click();
+  await expect(page.getByRole("heading", { name: "صفحه قفل است" })).toBeVisible();
+  await page.evaluate(() => new Promise(resolve => setTimeout(resolve, 300)));
+  expect(await page.evaluate(() => (window as unknown as { __afterLock: string[] }).__afterLock), "No dashboard request after lock").toEqual([]);
+});
+
 const sessions = new WeakMap<Page, import("@playwright/test").CDPSession>();
 async function transparency(page: Page, engine: string, reduce: boolean) {
   if (engine === "chromium") {

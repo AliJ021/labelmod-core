@@ -21,6 +21,7 @@ export function registerWooDiagnosticsRoutes(app: FastifyInstance, db: Db, secre
     reply.header("cache-control", "no-store");
     return { protocol: 1, authenticated: true, auth: "apiClientId" in req.session ? "api_key" : "session",
       branchId: q.branchId, warehouseId: q.warehouseId, orderIdentity: "sku", stockIdentity: "variationId",
+      features: { explicitLineDiscount: true },
       mapping: q.sku ? { skuFound: !!variation, active: variation?.status === "active",
         matchesVariation: q.variationId ? variation?.id === q.variationId : null } : null,
     };
@@ -30,9 +31,13 @@ export function registerWooDiagnosticsRoutes(app: FastifyInstance, db: Db, secre
     const rows = await db.selectFrom("platform.setting").select(["key", "value"])
       .where("key", "in", ["web.site_url", "web.push_enabled", "web.stock_warehouse", "web.price_list"]).execute();
     const values = Object.fromEntries(rows.map(r => [r.key, r.value]));
+    // web.stock_warehouse stores a code, as used by the stock-push worker.
+    const warehouseCode = typeof values["web.stock_warehouse"] === "string" ? values["web.stock_warehouse"] : "";
+    const warehouse = warehouseCode ? await db.selectFrom("inventory.warehouse").select("id")
+      .where("code", "=", warehouseCode).executeTakeFirst() : undefined;
     return { siteUrl: typeof values["web.site_url"] === "string" ? values["web.site_url"] : "",
       pushEnabled: values["web.push_enabled"] === true,
-      warehouseId: typeof values["web.stock_warehouse"] === "string" ? values["web.stock_warehouse"] : "",
+      warehouseCode, warehouseId: warehouse?.id ?? "",
       priceList: typeof values["web.price_list"] === "string" ? values["web.price_list"] : "",
       signingConfigured: !!secret,
     };

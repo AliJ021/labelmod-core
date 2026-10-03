@@ -31,6 +31,7 @@ import { useCallback, useEffect, useState } from "react";
 import { Glass, Solid } from "../components/Glass.tsx";
 import { SearchField } from "../components/SearchField.tsx";
 import { ProductStockLabels } from "../components/ProductStockLabels.tsx";
+import { LabelPrintQueue } from "../components/LabelPrint.tsx";
 import { ResultState } from "../components/ResultState.tsx";
 import { useLatestQuery } from "../lib/use-latest-query.ts";
 import { ApiError } from "../lib/api.ts";
@@ -133,6 +134,7 @@ export function Catalog() {
           </label>
         </div>
       </Glass>
+      {labels === "1" ? <LabelPrintQueue /> : null}
 
       {creating ? (
         <ProductForm
@@ -555,7 +557,7 @@ function ProductDetail({
         )}
       </Solid>
 
-      <div id="product-labels"><ProductStockLabels key={productId} productId={productId} variations={variations} selected={[...picked]} /></div>
+      <div id="product-labels"><ProductStockLabels key={productId} productId={productId} productName={product?.nameInternal ?? ""} variations={variations} selected={[...picked]} />{labelMode ? <LabelPrintQueue /> : null}</div>
       {historyOf !== null ? <PriceHistory variationId={historyOf} /> : null}
 
       <PricePanel

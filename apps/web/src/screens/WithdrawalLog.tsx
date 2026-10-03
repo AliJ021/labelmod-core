@@ -16,7 +16,7 @@ import { useLatestQuery } from "../lib/use-latest-query.ts";
 import { useNavigationGuard, useUrlState } from "../lib/use-url-state.ts";
 import {
   checkAmount, checkText, correctionLanded, correctionPayload, PAGE_SIZE, REASON_MAX, tomanDraft,
-  type CorrectionPayload, type WithdrawalDetail, type WithdrawalItem, type WithdrawalPage,
+  type CorrectionPayload, type SettlementPayload, type WithdrawalDetail, type WithdrawalItem, type WithdrawalPage,
 } from "../lib/withdrawals.ts";
 
 /**
@@ -34,14 +34,64 @@ import {
 export function WithdrawalLog({ currentUserId, write, writeState }: { currentUserId: string; write: Verdict; writeState: "loading" | "ready" | "degraded" }) {
   const [pageText, setPage] = useUrlState("settings.wdlPage", "1");
   const [selected, setSelected] = useUrlState("settings.wdl");
+  const [ownerId, setOwnerId] = useUrlState("settings.wdlOwner", "");
+  const [filter, setFilter] = useUrlState("settings.wdlStatus", "all");
   const page = Math.max(1, Math.floor(Number(pageText)) || 1);
   const [reload, setReload] = useState(0);
+  const query = `ownerId=${encodeURIComponent(ownerId)}&status=${filter}`;
+  const filterQuery = `${ownerId ? `ownerId=${encodeURIComponent(ownerId)}&` : ""}status=${filter}`;
   const loadList = useCallback((signal: AbortSignal) =>
-    api.get<WithdrawalPage>(`/withdrawals?page=${page}&pageSize=${PAGE_SIZE}`, { signal }), [page]);
-  const list = useLatestQuery({ key: String(page), version: reload, load: loadList });
+    api.get<WithdrawalPage>(`/withdrawals?page=${page}&pageSize=${PAGE_SIZE}&${filterQuery}`, { signal }), [page, filterQuery]);
+  const list = useLatestQuery({ key: `${page}:${query}`, version: reload, load: loadList });
+  const loadOwners = useCallback((signal: AbortSignal) => api.get<{ owners: Array<{ id: string; name: string }> }>("/withdrawals/owners", { signal }), []);
+  const owners = useLatestQuery({ key: "owners", load: loadOwners });
+  const recovery = useWithdrawalOperation(currentUserId, "settle");
+  const sent = recovery.pending?.body as SettlementPayload | undefined;
+  const [chosen, setChosen] = useState<WithdrawalItem[]>([]);
+  const [note, setNote] = useState("");
+  const [selecting, setSelecting] = useState(false);
+  const [bulkError, setBulkError] = useState("");
+  const [bulkDone, setBulkDone] = useState("");
+  const locked = !!sent || selecting || !!recovery.error;
+  const payload: SettlementPayload | null = sent ?? (chosen.length && note.trim() && !checkText(note, "یادداشت تسویه")
+    ? { items: chosen.map(r => ({ id: r.id, expectedVersion: r.version, amount: r.amount, ownerName: r.owner.name })), note: note.trim() } : null);
+  const total = (sent?.items ?? chosen).reduce((sum,r) => sum+BigInt(r.amount),0n).toString();
+  const clearChoice = () => { setChosen([]); setBulkError(""); setBulkDone(""); };
+  async function selectAll() {
+    setSelecting(true); setBulkError("");
+    try { const found = await api.get<{ items: WithdrawalItem[] }>(`/withdrawals/selection?${filterQuery}`); setChosen(found.items); }
+    catch (err) { setBulkError(err instanceof ApiError ? err.message : "انتخاب همه ممکن نشد؛ دوباره تلاش کنید."); }
+    finally { setSelecting(false); }
+  }
+  async function settle() {
+    if (!payload) throw new Error("انتخاب یا یادداشت تسویه کامل نیست.");
+    const op = recovery.prepare(payload);
+    const body = op.body as SettlementPayload;
+    try {
+      await api.post("/withdrawals/settlements", { items: body.items.map(({id,expectedVersion}) => ({id,expectedVersion})), note: body.note }, { idempotencyKey: op.key });
+      recovery.clear(op.key);
+    } catch (err) {
+      if (err instanceof ApiError && [400,409,422].includes(err.status) && !["idempotency_in_flight","idempotency_key_reused"].includes(err.code)) {
+        recovery.clear(op.key); clearChoice(); setReload(v => v+1);
+      }
+      throw err;
+    }
+  }
+  async function verifySettlement() {
+    if (!recovery.pending) return false;
+    const result = await api.get<{ status: string }>(`/withdrawals/settlements/by-key/${encodeURIComponent(recovery.pending.key)}`);
+    return result.status === "recorded";
+  }
+  function settlementFinished() {
+    recovery.clear(); setChosen([]); setNote(""); setReload(v => v+1);
+    setBulkDone("انتخاب‌ها تسویه شدند؛ زمان و نام مدیر در تاریخچه ثبت شد. هیچ پولی جابه‌جا نشد.");
+  }
   const listId = useId();
 
   const columns: Column<WithdrawalItem>[] = [
+    ...(write === "allow" ? [{ key: "select", header: "انتخاب", cell: (r: WithdrawalItem) => <input type="checkbox"
+      aria-label={`انتخاب برداشت ${r.owner.name}، ${r.reason}`} checked={sent ? sent.items.some(i => i.id === r.id) : chosen.some(i => i.id === r.id)}
+      disabled={locked || !!r.settledAt || (chosen.length >= 500 && !chosen.some(i => i.id === r.id))} onChange={e => { setBulkDone(""); setChosen(current => e.target.checked ? [...current,r] : current.filter(i => i.id !== r.id)); }} /> }] : []),
     { key: "owner", header: "کاربر", cell: r => r.owner.name },
     { key: "at", header: "زمان ثبت", cell: r => <span className="cell-nowrap">{formatJalaliMoment(r.createdAt)}</span> },
     { key: "amount", header: "مبلغ", numeric: true, cell: r => <Money rial={r.amount} exact size="sm" /> },
@@ -54,7 +104,35 @@ export function WithdrawalLog({ currentUserId, write, writeState }: { currentUse
     <PageHeader title="دفتر برداشت پرسنل"
       context="برداشت‌هایی که هر کاربر برای خودش ثبت کرده، در دامنهٔ شعبهٔ شما. این دفتر فقط ثبت است و هیچ اثری بر صندوق، حساب‌ها یا حقوق ندارد؛ اصلاح یک نسخهٔ تازه با دلیل است و نسخهٔ قبلی می‌ماند." />
     <Solid as="section" className="settings-section" aria-labelledby={listId}>
-      <SectionHeader id={listId} title="همهٔ برداشت‌ها" description="تازه‌ترین بالا. مبالغ به تومان‌اند." />
+      <SectionHeader id={listId} title="همهٔ برداشت‌ها" description="تازه‌ترین بالا. مبالغ به تومان‌اند. تسویه فقط وضعیت دفتر را تغییر می‌دهد." />
+      <div className="settings-form">
+        <Field label="کاربر برداشت"><select value={ownerId} disabled={locked} onChange={e => { setOwnerId(e.target.value); setPage("1"); clearChoice(); }}>
+          <option value="">همهٔ کاربران در دامنهٔ من</option>{owners.data?.owners.map(o => <option key={o.id} value={o.id}>{o.name}</option>)}
+        </select></Field>
+        <Field label="وضعیت تسویه"><select value={filter} disabled={locked} onChange={e => { setFilter(e.target.value); setPage("1"); clearChoice(); }}>
+          <option value="all">همه</option><option value="open">تسویه‌نشده</option><option value="settled">تسویه‌شده</option>
+        </select></Field>
+        {write === "allow" ? <>
+          <div className="settings-actions">
+            <Button disabled={locked || !list.data?.items.some(r => !r.settledAt)} onClick={() => { setChosen(list.data!.items.filter(r => !r.settledAt)); setBulkDone(""); }}>انتخاب تسویه‌نشده‌های این صفحه</Button>
+            <Button disabled={locked || filter === "settled" || list.loading || !list.data?.items.length} onClick={() => void selectAll()}>انتخاب همهٔ تسویه‌نشده‌های این فیلتر</Button>
+            <Button disabled={locked || !chosen.length} onClick={clearChoice}>لغو انتخاب</Button>
+          </div>
+          <p role="status">{formatCount(sent?.items.length ?? chosen.length)} برداشت انتخاب شده · جمع <Money rial={total} exact size="sm" />. انتخاب همه، شامل صفحه‌های دیگر همین کاربر و فیلتر است؛ حداکثر ۵۰۰ ثبت.</p>
+          <Field label="یادداشت تسویه" error={checkText(sent?.note ?? note,"یادداشت تسویه")} hint="همراه نام مدیر و زمان سرور برای هر نسخه حفظ می‌شود.">
+            <textarea rows={2} maxLength={REASON_MAX} value={sent?.note ?? note} disabled={locked} onChange={e => setNote(e.target.value)} />
+          </Field>
+          {sent ? <p role="status">نتیجهٔ تسویهٔ قبلی هنوز روشن نیست؛ انتخاب قفل است. ابتدا نتیجه را بررسی کنید.</p> : null}
+          {bulkError || recovery.error ? <p role="alert">{bulkError || recovery.error}</p> : null}
+          <SafeAction trigger="تسویهٔ انتخاب‌ها" title="تأیید تسویهٔ برداشت‌های انتخاب‌شده" triggerVariant="primary"
+            disabled={!payload || !!recovery.error || selecting} initialUnknown={!!sent}
+            summary={payload ? <><p>{formatCount(payload.items.length)} برداشت · جمع <Money rial={total} exact /></p>
+              <p>کاربران: {[...new Set(payload.items.map(i => i.ownerName))].join("، ")}</p><p>یادداشت: {payload.note}</p></> : null}
+            consequence="فقط همین نسخه‌های انتخاب‌شده تسویه می‌شوند؛ مبلغ و سابقه پاک نمی‌شود و هیچ اثر مالی ندارد. اصلاح بعدی یک نسخهٔ تسویه‌نشده می‌سازد."
+            confirmLabel="تأیید و ثبت تسویه" pendingLabel="در حال ثبت تسویه…" run={settle} verify={verifySettlement} onDone={settlementFinished} />
+          {bulkDone ? <p role="status">{bulkDone}</p> : null}
+        </> : null}
+      </div>
       {list.loading ? <Skeleton variant="row" lines={5} label="در حال دریافت دفتر برداشت…" />
         : denied ? <ResultState kind="denied" title={(list.error as ApiError).message}
             description="دیدن دفتر همهٔ کاربران مجوز «withdrawal.view_all» و ورود کامل (نه PIN) می‌خواهد." />
@@ -182,7 +260,7 @@ function WithdrawalInspector({ currentUserId, id, write, writeState, onClose, on
                   <div><dt>دلیل</dt><dd>{payload.reason}</dd></div>
                   <div><dt>دلیل اصلاح</dt><dd>{payload.note}</dd></div>
                 </dl> : null}
-                consequence="نسخهٔ تازه با نام شما و زمان سرور ثبت می‌شود؛ نسخهٔ قبلی و ردّ حسابرسی‌اش پاک نمی‌شود. هیچ سند یا جابه‌جایی پولی ساخته نمی‌شود."
+                consequence="نسخهٔ تازه با نام شما و زمان سرور ثبت می‌شود؛ نسخهٔ قبلی و ردّ حسابرسی‌اش پاک نمی‌شود. اگر قبلاً تسویه شده، نسخهٔ اصلاح‌شده دوباره تسویه‌نشده خواهد بود و تسویهٔ قبلی در تاریخچه می‌ماند. هیچ سند یا جابه‌جایی پولی ساخته نمی‌شود."
                 confirmLabel="ثبت اصلاح" pendingLabel="در حال ثبت اصلاح…"
                 run={run} verify={verify} onDone={finished} />
               {dirty && !sent ? <Button variant="quiet" onClick={() => { setDraft(null); setDone(null); }}>بازگردانی به مقدار فعلی</Button> : null}

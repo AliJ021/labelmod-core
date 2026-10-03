@@ -1,3 +1,4 @@
+import { registerDigipayRoutes } from "./digipay-routes.ts";
 import { registerSnappayRoutes } from "./snappay-routes.ts";
 import { registerPaymentProviderRoutes } from "./payment-provider-routes.ts";
 import { PaymentProviderRuntime } from "../payments/providers/runtime.ts";
@@ -411,6 +412,7 @@ export async function buildApp(deps: AppDeps): Promise<FastifyInstance> {
   registerPosCatalogRoutes(app, deps.db);
   registerInvoiceWorkspaceRoutes(app, deps.db);
   registerSnappayRoutes(app, deps.db);
+  registerDigipayRoutes(app, deps.db);
   registerPaymentProviderRoutes(app, deps.db, deps.paymentProviders ?? new PaymentProviderRuntime(process.env));
   registerBackupRoutes(app, deps.db, config);
   registerReturnRoutes(app, {

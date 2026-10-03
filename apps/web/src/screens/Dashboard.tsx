@@ -12,7 +12,7 @@
  * هیچ عدد ساختگی روی این صفحه نمی‌نشیند. بخشی که داده یا مجوزش
  * نیست، می‌گوید چرا — نه صفر، نه نمونه.
  */
-import { useEffect, useId, useState } from "react";
+import { useId, useLayoutEffect, useState } from "react";
 import { navigate } from "../lib/use-url-state.ts";
 import { Solid } from "../components/Glass.tsx";
 import { Icon } from "../components/Icon.tsx";
@@ -82,8 +82,12 @@ export function Dashboard({ access }: { access: NavAccess }) {
    *    Unmount می‌کنند؛ بی این لغو، زنجیره درخواست بعدی را **پس از قفل**
    *    می‌فرستاد و Reload بعدی آن را وسط راه قطع می‌کرد — همان خطای
    *    WebKit در آزمون قفل/خروج.
+   * ⚠️ **Layout، نه useEffect.** پاک‌سازی useEffect پس از commit و در یک Task
+   *    جدا اجرا می‌شود؛ صفحهٔ قفل دیده می‌شد، پاسخی که در این فاصله می‌رسید
+   *    زنجیره را لغونشده می‌یافت و «auth/can» را پس از قفل می‌فرستاد (CI روی
+   *    WebKit پربار). پاک‌سازی Layout در خودِ commit حذف اجرا می‌شود.
    */
-  useEffect(() => {
+  useLayoutEffect(() => {
     const controller = new AbortController();
     const { signal } = controller;
     void (async () => {

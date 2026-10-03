@@ -19,10 +19,17 @@ export interface WithdrawalItem {
   reason: string;
   correctedAt: string | null;
   correctedBy: string | null;
+  settledAt?: string | null;
+  settledBy?: string | null;
 }
 export interface WithdrawalRevision {
   version: number; amount: string; reason: string; note: string | null;
   actor: { id: string; name: string }; at: string;
+  settledAt?: string | null; settledBy?: string | null; settlementNote?: string | null;
+}
+export interface SettlementPayload {
+  items: Array<{ id: string; expectedVersion: number; amount: string; ownerName: string }>;
+  note: string;
 }
 export interface WithdrawalDetail extends WithdrawalItem {
   history: WithdrawalRevision[];

@@ -20,7 +20,7 @@ export function ExchangePanel({ invoice, lines, reasonCode, reasonNote, returnWa
   const [refundMethod, setRefundMethod] = useState("cash");
   const [refundReference, setRefundReference] = useState("");
   const [refundPaymentId, setRefundPaymentId] = useState("");
-  const [sources, setSources] = useState<Array<{ id: string; reference: string }>>([]);
+  const [sources, setSources] = useState<Array<{ id: string; methodCode?: string; reference: string }>>([]);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
   const [collectionMethods, setCollectionMethods] = useState<PaymentMethod[]>([]);
@@ -44,7 +44,7 @@ export function ExchangePanel({ invoice, lines, reasonCode, reasonNote, returnWa
     try {
       const [value, refundSources] = await Promise.all([
         api.post<Quote>("/exchanges/quote", body),
-        api.get<{ payments: Array<{ id: string; reference: string }> }>(`/invoices/${invoice.id}/refund-sources`),
+        api.get<{ payments: Array<{ id: string; methodCode?: string; reference: string }> }>(`/invoices/${invoice.id}/refund-sources`),
       ]);
       setQuote({ value, body: JSON.stringify(body) }); setSources(refundSources.payments);
     } catch (e) { setError(e instanceof ApiError ? e.message : "پیش‌نمایش خوانده نشد"); }
@@ -86,13 +86,13 @@ export function ExchangePanel({ invoice, lines, reasonCode, reasonNote, returnWa
         <label className="auth-field">پیگیری دریافت تأییدشده<input value={collectReference} disabled={locked} onChange={e => setCollectReference(e.target.value)} /></label>
       </> : null}
       {BigInt(currentQuote.refundAmount)>0n ? <>
-        <label className="auth-field">روش بازپرداخت اختلاف<select value={refundMethod} disabled={locked} onChange={e => setRefundMethod(e.target.value)}>
-          {methods.filter(m => m.code !== "snappay").map(m => <option key={m.code} value={m.code}>{m.name}</option>)}
-          {sources.length ? <option value="snappay">اسنپ‌پی — برگشت تأییدشده</option> : null}
+        <label className="auth-field">روش بازپرداخت اختلاف<select value={refundMethod} disabled={locked} onChange={e => { setRefundMethod(e.target.value); setRefundPaymentId(""); setRefundReference(""); }}>
+          {methods.filter(m => m.code !== "snappay" && m.code !== "digipay").map(m => <option key={m.code} value={m.code}>{m.name}</option>)}
+          {[...new Set(sources.map(s => s.methodCode ?? "snappay"))].map(code => <option key={code} value={code}>{code === "digipay" ? "دیجی‌پی" : "اسنپ‌پی"} — برگشت تأییدشده</option>)}
         </select></label>
-        {refundMethod === "snappay" ? <>
+        {(refundMethod === "snappay" || refundMethod === "digipay") ? <>
           <label className="auth-field">پرداخت اصلی<select value={refundPaymentId} disabled={locked} onChange={e => setRefundPaymentId(e.target.value)}>
-            <option value="">انتخاب کنید</option>{sources.map(s => <option key={s.id} value={s.id}>{s.reference}</option>)}
+            <option value="">انتخاب کنید</option>{sources.filter(s => (s.methodCode ?? "snappay") === refundMethod).map(s => <option key={s.id} value={s.id}>{s.reference}</option>)}
           </select></label>
           <label className="auth-field">پیگیری برگشت تأییدشده<input value={refundReference} disabled={locked} onChange={e => setRefundReference(e.target.value)} /></label>
         </> : null}
@@ -103,7 +103,7 @@ export function ExchangePanel({ invoice, lines, reasonCode, reasonNote, returnWa
         confirmLabel="اقلام و تسویه را تأیید می‌کنم؛ ثبت تعویض" pendingLabel="در حال ثبت تعویض…"
         run={() => run({ ...body, token: currentQuote.token, confirmed: true, collectMethod, refundMethod,
           ...(collectReference.trim() ? { collectReference: collectReference.trim() } : {}),
-          ...(refundMethod === "snappay" ? { refundReference: refundReference.trim(), refundPaymentId } : {}) })}
+          ...((refundMethod === "snappay" || refundMethod === "digipay") ? { refundReference: refundReference.trim(), refundPaymentId } : {}) })}
         verify={verify} onDone={() => undefined} />
     </> : null}
   </section>;

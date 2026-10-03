@@ -98,13 +98,13 @@ test("More is collapsed by default and opens as an inline disclosure (desktop) o
 });
 
 test("DigiPay and the payment-link channel are visible but unavailable: explicit reason, never selectable, never a request", async ({ page, api }) => {
-  const s = mock(api, [...METHODS, SNAPPAY, { code: "digipay", name: "دیجی‌پی", kind: "gateway", requiresRef: true }]);
+  const s = mock(api, [...METHODS, SNAPPAY]);
   await open(page);
   const digi = method(page, "دیجی‌پی");
   await expect(digi).toHaveAttribute("aria-disabled", "true");
   await expect(digi).toContainText("ناموجود");
   const reasonId = (await digi.getAttribute("aria-describedby"))!.split(" ")[1]!;
-  await expect(page.locator(`[id="${reasonId}"]`), "دلیل کامل به دکمه وصل است").toHaveText(/هنوز به سیستم وصل نشده/);
+  await expect(page.locator(`[id="${reasonId}"]`), "دلیل کامل به دکمه وصل است").toHaveText(/برای این شعبه تنظیم نشده/);
   await digi.click({ force: true });
   await expect(digi).not.toHaveAttribute("aria-pressed", "true");
   await expect(page.getByRole("group", { name: /کانال پرداخت دیجی‌پی/ })).toHaveCount(0);

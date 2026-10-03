@@ -1,0 +1,155 @@
+<!doctype html>
+<html lang="fa" dir="rtl">
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>فاکتور F-1405-000123 — فروشگاه لیبل مد</title>
+<style>
+  :root { color-scheme: light; --ink: #000; --paper: #fff; }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; padding: 16px 12px;
+    font-family: Vazirmatn, Tahoma, "Segoe UI", sans-serif;
+    background: #E9E9E9; color: var(--ink);
+    font-size: 13px; line-height: 1.55;
+    -webkit-print-color-adjust: exact; print-color-adjust: exact;
+  }
+  /* روی صفحه: کاغذ رسید با پهنای واقعی‌اش (۷۲mm قابل چاپ ≈ ۳۸۰px در
+     نمایش راحت)، نه یک کارت پهن که در چاپ شکل دیگری دارد. */
+  .sheet {
+    width: 100%; max-width: 380px; margin: 0 auto; padding: 18px 16px 14px;
+    background: var(--paper); color: var(--ink);
+    box-shadow: 0 1px 0 rgba(0,0,0,.08), 0 6px 22px rgba(0,0,0,.10);
+  }
+  .head { text-align: center; padding: 2px 0 6px; }
+  /* نشان فروشگاه: هیچ فایل لوگوی اصیلی در مخزن نیست، پس نام فروشگاه (از
+     شعبه) با حروف درشت و فشرده نوشته می‌شود — لوگوی ساختگی نمی‌سازیم. */
+  .brand { font-size: 22px; font-weight: 900; letter-spacing: -.2px; line-height: 1.25; overflow-wrap: anywhere; }
+  .doc { display: flex; align-items: center; gap: 8px; margin-top: 5px; font-size: 11px; font-weight: 700; letter-spacing: 1.5px; }
+  .doc::before, .doc::after { content: ""; flex: 1; border-top: 1px solid var(--ink); }
+  .rule { border: 0; border-top: 1.5px dashed var(--ink); margin: 8px 0; }
+  .rule--double { border-top: 3px double var(--ink); }
+  .meta { font-size: 11.5px; line-height: 1.6; }
+  .meta-row { display: flex; justify-content: space-between; gap: 8px; }
+  .meta-row > span { min-width: 0; overflow-wrap: anywhere; }
+  .meta-row > span:last-child { text-align: left; white-space: nowrap; }
+  .docno { font-weight: 700; font-variant-numeric: tabular-nums; }
+  table { width: 100%; border-collapse: collapse; table-layout: fixed; }
+  th, td { text-align: right; padding: 0; vertical-align: top; }
+  .items thead th { font-size: 11px; font-weight: 700; padding-bottom: 4px; border-bottom: 1.5px solid var(--ink); }
+  .items col.amount { width: 38%; }
+  .item td { padding-top: 1px; }
+  .item:first-of-type tr:first-child td { padding-top: 6px; }
+  .item + .item tr:first-child td { padding-top: 7px; border-top: 1px dotted var(--ink); }
+  .name { font-weight: 700; overflow-wrap: anywhere; word-break: normal; }
+  .name small { font-weight: 400; font-size: 11.5px; }
+  .calc td { font-size: 12px; }
+  .calc .qty, .calc .unit { font-variant-numeric: tabular-nums; white-space: nowrap; }
+  .num { text-align: left; font-variant-numeric: tabular-nums; white-space: nowrap; }
+  .calc .num { font-weight: 700; font-size: 13px; }
+  .disc td { font-size: 11.5px; }
+  .totals { margin-top: 2px; }
+  .totals th { font-weight: 600; padding: 2px 0; }
+  .totals td { padding: 2px 0; }
+  .totals .grand th, .totals .grand td {
+    font-size: 16px; font-weight: 800; padding: 7px 0 6px;
+    border-top: 1.5px solid var(--ink); border-bottom: 1.5px solid var(--ink);
+  }
+  .totals .grand small { font-size: 11px; font-weight: 600; }
+  .totals .due th, .totals .due td { font-weight: 800; padding-top: 5px; }
+  .totals .due th::before { content: "◄ "; }
+  .foot { margin-top: 10px; padding-top: 8px; border-top: 1.5px dashed var(--ink); text-align: center; font-size: 11px; line-height: 1.7; }
+  .foot strong { display: block; font-size: 13px; font-weight: 800; }
+  .foot .policy { font-weight: 700; }
+
+  /* ── آماده چاپ ────────────────────────────────────────────────────
+     دکمه روی صفحه است و روی کاغذ نمی‌آید. */
+  .print-bar { margin: 14px auto 0; max-width: 380px; text-align: center; }
+  .print-btn {
+    font: inherit; font-weight: 700; padding: 9px 22px; cursor: pointer;
+    /* هدف لمسی دست‌کم ۴۴px — مشتری این صفحه را روی گوشی باز می‌کند. */
+    min-height: 44px; border-radius: 10px;
+    border: 1.5px solid #000; background: #FFFFFF; color: #000;
+  }
+  .print-btn:focus-visible { outline: 2px solid #000; outline-offset: 3px; }
+
+  @page { margin: 0; }
+  @media print {
+    .print-bar { display: none !important; }
+    html, body { background: #FFFFFF; padding: 0; margin: 0; }
+    /* ۸۰mm کاغذ، ۷۲mm چاپ‌پذیر؛ ۴mm حاشیهٔ هر طرف را خودِ برگه نگه می‌دارد. */
+    .sheet {
+      width: 72mm; max-width: 72mm; margin: 0 auto; padding: 3mm 0 5mm;
+      box-shadow: none; font-size: 9.5pt;
+    }
+    .brand { font-size: 16pt; }
+    .calc td, .meta, .disc td, .foot { font-size: 8.5pt; }
+    .calc .num { font-size: 9.5pt; }
+    .totals .grand th, .totals .grand td { font-size: 12pt; }
+    /* یک قلم نباید وسطش بشکند (برای چاپگر صفحه‌ای و PDF). */
+    .item, tr { break-inside: avoid; }
+    thead { display: table-header-group; }
+  }
+</style>
+<div class="sheet">
+  <header class="head">
+    <div class="brand">فروشگاه لیبل مد</div>
+    <div class="doc"><span>رسید فروش</span></div>
+  </header>
+  <div class="meta">
+    <div class="meta-row"><span>فاکتور <bdi dir="ltr" class="docno">F-1405-000123</bdi></span><span>۱۰ مهر ۱۴۰۵، ۱۹:۱۰</span></div>
+    <div class="meta-row"><span>مشتری: سارا محمدی</span><span>۳ قلم</span></div>
+  </div>
+  <hr class="rule">
+
+  <table class="items">
+    <colgroup><col><col class="amount"></colgroup>
+    <thead>
+      <tr><th>کالا · تعداد × قیمت واحد</th><th class="num">مبلغ</th></tr>
+    </thead>
+    <tbody class="item">
+      <tr><td class="name" colspan="2">مانتو کتان بلند با آستین پفی و جیب‌های دوخت دستی مدل تابستانهٔ ۱۴۰۵ <small>سرمه‌ای</small></td></tr>
+      <tr class="calc"><td><span class="qty">۱</span> × <span class="unit">۴٬۸۹۰٬۰۰۰</span></td><td class="num">۴٬۴۰۱٬۰۰۰</td></tr>
+      <tr class="disc"><td>تخفیف قلم</td><td class="num">− ۴۸۹٬۰۰۰</td></tr>
+    </tbody>
+    <tbody class="item">
+      <tr><td class="name" colspan="2">شلوار پارچه‌ای رگولار <small>مشکی</small></td></tr>
+      <tr class="calc"><td><span class="qty">۲</span> × <span class="unit">۱٬۲۳۴٬۵۶۷٫۵</span></td><td class="num">۲٬۴۶۹٬۱۳۵</td></tr>
+    </tbody>
+    <tbody class="item">
+      <tr><td class="name" colspan="2">شال نخی</td></tr>
+      <tr class="calc"><td><span class="qty">۱</span> × <span class="unit">۳۵۰٬۰۰۰</span></td><td class="num">۳۵۰٬۰۰۰</td></tr>
+    </tbody>
+  </table>
+
+  <hr class="rule rule--double">
+  <table class="totals">
+    <tr><th>جمع کالاها</th><td class="num">۷٬۲۲۰٬۱۳۵</td></tr>
+    
+    <tr class="grand"><th>قابل پرداخت</th><td class="num">۷٬۲۲۰٬۱۳۵ <small>تومان</small></td></tr>
+    
+    <tr class="due"><th>مانده</th><td class="num">۲۲۰٬۱۳۵</td></tr>
+  </table>
+
+  <footer class="foot">
+    <strong>سپاس از خرید شما</strong>
+    <div class="policy">مهلت مرجوعی: ۲ روز (۴۸ ساعت) پس از خرید</div>
+    
+    <div class="unit">همه مبالغ به تومان است.</div>
+  </footer>
+</div>
+
+<!--
+  دکمه چاپ — راه رسیدن به PDF.
+
+  CLAUDE.md می‌گوید «PDF ساخته نمی‌شود؛ لینک می‌رود» چون شکل‌دهی حروف
+  فارسی در کتابخانه‌های PDF جاوااسکریپت یا نیست یا شکسته است. این
+  دکمه آن تصمیم را کامل می‌کند نه نقض: موتور شکل‌دهی فارسیِ خودِ
+  مرورگر کار را می‌کند و «چاپ در فایل» یک PDF درست می‌دهد.
+
+  اسکریپت با hash در CSP اجازه گرفته، نه با unsafe-inline.
+-->
+<div class="print-bar">
+  <button type="button" class="print-btn" id="print-btn">چاپ یا ذخیره PDF</button>
+</div>
+<script>document.getElementById('print-btn').addEventListener('click',function(){window.print()});</script>
+</html>

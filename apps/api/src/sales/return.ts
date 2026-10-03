@@ -237,7 +237,7 @@ export class ReturnService {
       .where("code", "=", code)
       .executeTakeFirst();
 
-    if (!row || (!row.is_active && code !== "snappay")) {
+    if (!row || (!row.is_active && code !== "snappay" && code !== "digipay")) {
       throw new ReturnError("bad_refund_method", `روش بازپرداخت «${code}» فعال نیست`, 422);
     }
     // نسیه و امتیاز، بازپرداخت نیستند — تسویه‌اند. اگر به‌عنوان روش
@@ -321,8 +321,8 @@ export class ReturnService {
       throw new ReturnError("bad_refund", "مبلغ بازپرداخت منفی نمی‌شود", 400);
     }
     await this.assertReasonCode(input.reasonCode, trx);
-    if (input.refundMethod === "snappay" && input.refundAmount > 0n && (!input.refundReference?.trim() || !input.refundPaymentId)) {
-      throw new ReturnError("refund_reference_required", "پرداخت اصلی اسنپ‌پی و شماره پیگیری برگشت تأییدشده لازم است.", 422);
+    if ((input.refundMethod === "snappay" || input.refundMethod === "digipay") && input.refundAmount > 0n && (!input.refundReference?.trim() || !input.refundPaymentId)) {
+      throw new ReturnError("refund_reference_required", "پرداخت اصلی ارائه‌دهنده و شماره پیگیری برگشت تأییدشده لازم است.", 422);
     }
 
     const inv = await trx

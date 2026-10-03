@@ -222,6 +222,7 @@ export class VariationService {
     barcode: string | null;
     sku: string;
     productName: string;
+    brand: string | null;
     color: string | null;
     size: string | null;
     priceRial: bigint | null;
@@ -233,12 +234,13 @@ export class VariationService {
       barcode: string | null;
       sku: string;
       product_name: string;
+      brand: string | null;
       color: string | null;
       size: string | null;
       amount: string | null;
     }>`
       SELECT v.id, v.barcode, v.sku, p.name_internal AS product_name,
-             v.color, v.size,
+             b.name AS brand, v.color, v.size,
              (SELECT pr.amount FROM catalog.price pr
                WHERE pr.variation_id = v.id
                  AND pr.price_list = 'default'
@@ -247,6 +249,7 @@ export class VariationService {
                ORDER BY pr.valid_from DESC LIMIT 1)::text AS amount
         FROM catalog.variation v
         JOIN catalog.product p ON p.id = v.product_id
+        LEFT JOIN catalog.brand b ON b.id = p.brand_id
        WHERE v.id = ANY(${ids}::uuid[])
     `.execute(this.#db);
 
@@ -255,6 +258,7 @@ export class VariationService {
       barcode: r.barcode,
       sku: r.sku,
       productName: r.product_name,
+      brand: r.brand,
       color: r.color,
       size: r.size,
       priceRial: r.amount === null ? null : parseMoney(r.amount),

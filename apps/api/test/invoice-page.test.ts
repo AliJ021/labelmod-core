@@ -19,6 +19,8 @@ import {
   INVOICE_PAGE_CSP,
   PRINT_SCRIPT,
   invoicePage,
+  receiptFooterFromSettings,
+  toTomanExact,
 } from "../src/sales/invoice-page.ts";
 
 describe("صفحه عمومی فاکتور", () => {
@@ -137,7 +139,7 @@ describe("صفحه عمومی فاکتور", () => {
     );
   }
   const nameCells = (html: string) =>
-    [...html.matchAll(/<td class="name">([\s\S]*?)<\/td>/g)].map((m) => m[1]);
+    [...html.matchAll(/<td class="name"[^>]*>([\s\S]*?)<\/td>/g)].map((m) => m[1]);
 
   test("عنوان قلم رنگ را دارد و سایز ساخت‌یافته را نه", () => {
     const cells = nameCells(page([{ productName: "پیراهن", color: "آبی", size: "XXL-SIZE" }]));
@@ -172,5 +174,62 @@ describe("صفحه عمومی فاکتور", () => {
       { productName: "پیراهن", color: "آبی", size: "L" },
     ]));
     assert.equal(cells.length, 2);
+  });
+});
+
+describe("رسید حرارتی ۸۰ میلی‌متری", () => {
+  const data = {
+    number: "F-1405-000123", shopName: "لیبل مد", customerName: "مشتری آزمون",
+    occurredAt: new Date("2026-09-06T10:00:00Z"),
+    lines: [
+      { productName: "مانتو کتان بلند با آستین پفی و جیب‌های دوخت دستی مدل تابستانهٔ ۱۴۰۵", color: "سرمه‌ای", size: "L",
+        qty: "2.000", unitPrice: 12_345_675n, discountAmount: 345_675n, netAmount: 24_345_675n },
+    ],
+    netAmount: 24_345_675n, taxAmount: 0n, shippingAmount: 0n,
+    payableAmount: 24_345_675n, paidAmount: 20_000_000n,
+  };
+  const html = invoicePage(data, "Asia/Tehran");
+
+  test("تومان دقیق: ریال کسری حذف نمی‌شود، حتی در منفی", () => {
+    assert.equal(toTomanExact(12_345_675n), "۱٬۲۳۴٬۵۶۷٫۵");
+    assert.equal(toTomanExact(10n), "۱");
+    assert.equal(toTomanExact(-15n), "−۱٫۵");
+    assert.ok(html.includes("۲٬۴۳۴٬۵۶۷٫۵"), "جمع دقیق روی رسید");
+    assert.ok(html.includes("۴۳۴٬۵۶۷٫۵"), "مانده دقیق (۴٬۳۴۵٬۶۷۵ ریال)");
+  });
+
+  test("قلاب‌های چاپ مستقیم دست‌نخورده‌اند", () => {
+    assert.match(html, /<div class="sheet">/);
+    assert.match(html, /<table class="totals">/);
+    assert.match(html, /id="print-btn"/);
+    assert.ok(html.includes(`<script>${PRINT_SCRIPT}</script>`));
+  });
+
+  test("چاپ ۷۲mm تک‌رنگ است و ارتفاع کاغذ را تحمیل نمی‌کند", () => {
+    assert.match(html, /\.sheet \{\s*width: 72mm; max-width: 72mm;/);
+    assert.match(html, /@page \{ margin: 0; \}/);
+    assert.doesNotMatch(html, /@page \{[^}]*size/, "طول رول را درایور تعیین می‌کند");
+    const printCss = html.slice(html.indexOf("@media print"));
+    assert.doesNotMatch(printCss.slice(0, printCss.indexOf("</style>")), /#(?!000|FFF|fff)[0-9a-fA-F]{3,6}\b/, "رنگ غیرسیاه‌وسفید در چاپ");
+  });
+
+  test("نام بلند می‌شکند و مبلغ یکپارچه می‌ماند", () => {
+    assert.match(html, /\.name \{[^}]*overflow-wrap: anywhere/);
+    assert.match(html, /\.num \{[^}]*white-space: nowrap/);
+    assert.match(html, /<span class="qty">۲<\/span> × <span class="unit">۱٬۲۳۴٬۵۶۷٫۵<\/span>/);
+    assert.match(html, /class="disc"[\s\S]*− ۳۴٬۵۶۷٫۵/);
+  });
+
+  test("پابرگ از تنظیمات زنده: مهلت مرجوعی و سایت؛ متن ثابت سیاست چاپ نمی‌شود", () => {
+    const f48 = receiptFooterFromSettings({ return_hours: "48", site_url: "https://labelmod.ir/" });
+    assert.deepEqual(f48, { returnWindowHours: 48, website: "labelmod.ir" });
+    const page48 = invoicePage({ ...data, ...f48 }, "Asia/Tehran");
+    assert.match(page48, /مهلت مرجوعی: ۲ روز \(۴۸ ساعت\) پس از خرید/);
+    assert.match(page48, /<bdi dir="ltr">labelmod\.ir<\/bdi>/);
+    assert.match(invoicePage({ ...data, returnWindowHours: 36 }, "Asia/Tehran"), /مهلت مرجوعی: ۳۶ ساعت پس از خرید/);
+    // بی تنظیم معتبر، هیچ سطر سیاستی نیست — حدس زده نمی‌شود.
+    assert.deepEqual(receiptFooterFromSettings({ return_hours: null, site_url: "javascript:alert(1)" }), { returnWindowHours: null, website: null });
+    assert.doesNotMatch(html, /مهلت مرجوعی/);
+    assert.match(html, /<div class="meta-row"><span>فاکتور <bdi dir="ltr" class="docno">F-1405-000123<\/bdi><\/span>/);
   });
 });

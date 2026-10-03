@@ -14,7 +14,7 @@ import { NAV_OPERATIONS } from "../src/lib/navigation";
 type Decision = "allow" | "deny" | "fail";
 const PROTECTED = ["صندوق", "فاکتورها", "مرجوعی", "کالا و قیمت", "انبار و خرید", "خزانه و چک", "مشتریان", "گزارش‌ها"];
 const PERSONAL = ["نمایش و عملکرد", "PIN من — ساخت و تغییر", "ورود دومرحله‌ای", "برداشت‌های من"];
-const ADMIN = ["تنظیمات", "سلامت سیستم", "اتصال ووکامرس", "پشتیبان‌گیری و بازیابی", "کدینگ حساب", "نگاشت حساب", "اسنپ‌پی", "پایانه‌ها", "افتتاحیه و تفصیلی", "پرسنل", "دفتر برداشت پرسنل", "مجوزها", "دستگاه‌ها"];
+const ADMIN = ["تنظیمات", "سلامت سیستم", "اتصال ووکامرس", "پشتیبان‌گیری و بازیابی", "کدینگ حساب", "نگاشت حساب", "اسنپ‌پی", "دیجی‌پی", "پایانه‌ها", "افتتاحیه و تفصیلی", "پرسنل", "دفتر برداشت پرسنل", "مجوزها", "دستگاه‌ها"];
 
 /** پاسخ‌های مجوز تا `release()` نگه داشته می‌شوند؛ تصمیم هر عملیات قابل عوض‌کردن است. */
 function authorize(api: MockApi, decide: (operation: string) => Decision, held = false) {
@@ -62,6 +62,28 @@ const mainList = (page: Page) => page.getByRole("tablist", { name: "بخش‌ه�
 const tabLabels = (page: Page) => mainList(page).getByRole("tab", { includeHidden: true }).allInnerTexts();
 const settingsLabels = (page: Page) => page.locator(".settings-nav").evaluate(el =>
   [...el.querySelectorAll('[role="tab"], option:not([disabled])')].map(n => n.textContent!.trim()));
+
+test("DigiPay manual configuration is read-only without write permission and saves a valid account explicitly", async ({ page, api }) => {
+  api.defaults["GET /digipay/config"] = { accountId: "", enabled: false,
+    accounts: [{ id: "a1", name: "واسط دیجی‌پی", bankName: "بانک آزمون" }] };
+  const auth = authorize(api, op => op === "settings.security" ? "deny" : "allow");
+  await page.goto("/?page=settings&settings.tab=digipay");
+  const section = page.getByRole("region", { name: "تنظیم دیجی‌پی", exact: true });
+  await expect(section).toContainText("فقط مشاهده");
+  await expect(section.getByRole("combobox")).toHaveCount(0);
+  expect(api.calls.filter(c => c.startsWith("PUT /digipay"))).toHaveLength(0);
+  auth.decide = () => "allow";
+  let writes = 0;
+  api.handlers.set("PUT /digipay/config", async route => {
+    writes++; expect(route.request().postDataJSON()).toEqual({ accountId: "a1" });
+    await route.fulfill({ json: { ok: true } });
+  });
+  await page.reload();
+  await section.getByRole("combobox").selectOption("a1");
+  await section.getByRole("button", { name: "ذخیرهٔ تنظیم دیجی‌پی", exact: true }).click();
+  await expect(section.getByRole("status")).toContainText("تنظیم دیجی‌پی ذخیره شد.");
+  expect(writes).toBe(1);
+});
 
 test.describe("F-110-01 — conservative permission loading", () => {
   test("while loading only unconditional destinations exist; the protected taxonomy never flashes", async ({ page, api }) => {
@@ -154,7 +176,7 @@ test.describe("F-110-02 — personal settings apart from administrative settings
     await expect(page.getByRole("heading", { name: "نمایش و عملکرد", exact: true })).toBeVisible();
     expect(await settingsLabels(page)).toEqual(PERSONAL);
     expect(api.calls.some(c => c.startsWith("GET /settings")), "administrative settings were not requested").toBe(false);
-    for (const [tab, call] of [["staff", "GET /users"], ["withdrawal-log", "GET /withdrawals?"], ["devices", "GET /devices"], ["permissions", "GET /permission-rules"], ["keys", "GET /settings"], ["woocommerce", "GET /settings/woocommerce"]] as const) {
+    for (const [tab, call] of [["staff", "GET /users"], ["withdrawal-log", "GET /withdrawals?"], ["devices", "GET /devices"], ["permissions", "GET /permission-rules"], ["keys", "GET /settings"], ["woocommerce", "GET /settings/woocommerce"], ["digipay", "GET /digipay/config"]] as const) {
       await page.goto(`/?page=settings&settings.tab=${tab}`);
       await expect(page.getByRole("heading", { name: "دسترسی ندارید" })).toBeVisible();
       expect(await settingsLabels(page), `${tab} label stays hidden`).toEqual(PERSONAL);
@@ -180,7 +202,7 @@ test.describe("F-110-02 — personal settings apart from administrative settings
     authorize(api, op => op === "settings.view" ? "allow" : "deny");
     await page.goto("/?page=settings");
     await expect(page.getByRole("heading", { name: "تنظیمات", level: 1 })).toBeVisible();
-    await expect.poll(() => settingsLabels(page)).toEqual([...PERSONAL, "تنظیمات", "سلامت سیستم", "اتصال ووکامرس", "کدینگ حساب", "نگاشت حساب", "اسنپ‌پی", "پایانه‌ها", "افتتاحیه و تفصیلی"]);
+    await expect.poll(() => settingsLabels(page)).toEqual([...PERSONAL, "تنظیمات", "سلامت سیستم", "اتصال ووکامرس", "کدینگ حساب", "نگاشت حساب", "اسنپ‌پی", "دیجی‌پی", "پایانه‌ها", "افتتاحیه و تفصیلی"]);
     await page.goto("/?page=settings&settings.tab=devices");
     await expect(page.getByRole("heading", { name: "دسترسی ندارید" })).toBeVisible();
     expect(api.calls.some(c => c.startsWith("GET /devices") || c.startsWith("GET /sessions"))).toBe(false);
@@ -264,6 +286,38 @@ test.describe("F-110-04 — the More sheet is a real modal", () => {
     await expect(page.locator("main#workspace-content")).toBeFocused();
     await expect(more).toHaveAttribute("data-current", "");
     await page.waitForLoadState("networkidle");
+  });
+
+  test("a late close event from the previous close never dismisses the reopened sheet", async ({ page }) => {
+    // روی اجراکنندهٔ پربار CI، رویداد بومی «close» بستنِ قبلی پس از Enter (بازشدن دوباره) می‌رسید و
+    // برگهٔ تازه را می‌بست. این‌جا همان زمان‌بندی قطعی شبیه‌سازی می‌شود: رویداد close با تأخیر تحویل می‌شود.
+    await page.addInitScript(() => {
+      window.addEventListener("close", event => {
+        if (!(event.target instanceof HTMLDialogElement) || Reflect.get(event, "__late")) return;
+        event.stopImmediatePropagation();
+        const target = event.target;
+        setTimeout(() => {
+          const late = new Event("close"); Reflect.set(late, "__late", true);
+          target.dispatchEvent(late); Reflect.set(window, "__lateCloseDelivered", true);
+        }, 400);
+      }, true);
+    });
+    await page.goto("/");
+    await expect(mainList(page).getByRole("tab", { name: "کالا و قیمت", exact: true })).toBeVisible();
+    const more = page.getByRole("button", { name: "بخش‌های بیشتر", exact: true });
+    const sheet = page.getByRole("dialog", { name: "همهٔ بخش‌ها" });
+    await more.click();
+    await expect(sheet).toBeVisible();
+    await page.keyboard.press("Escape");
+    await expect(sheet).toBeHidden();
+    await more.focus();
+    await more.press("Enter");
+    await expect(sheet).toBeVisible();
+    await expect.poll(() => page.evaluate(() => Reflect.get(window, "__lateCloseDelivered") === true), "رویداد دیررس تحویل شد").toBe(true);
+    await expect(sheet, "رویداد close دیررس برگهٔ تازه را نمی‌بندد").toBeVisible();
+    await expect(more).toHaveAttribute("aria-expanded", "true");
+    await page.keyboard.press("Escape");
+    await expect(sheet).toBeHidden();
   });
 
   test("a short phone scrolls inside the sheet and keeps it within the safe area", async ({ page }) => {

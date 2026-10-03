@@ -51,6 +51,7 @@ import { cartCounts, checkoutErrorMessage, checkoutTotals, finalAmounts, intentF
 import { clearPendingPayment, readPendingPayment, writePendingPayment, type PendingPayment } from "../lib/pending-payment.ts";
 import { formatCount } from "../lib/format.ts";
 import { session } from "../lib/session.ts";
+import { people } from "../lib/people.ts";
 import { isNetworkFailure } from "../lib/offline-queue.ts";
 import { forgetCart, readCart, rememberCart } from "../lib/open-cart.ts";
 import { pendingLabel, saleQueue, summarize, type PendingSummary } from "../lib/sale-queue.ts";
@@ -196,7 +197,8 @@ const CartLine = memo(function CartLine({ line: l, panel, on, error }: CartLineP
           +
         </button>
       </div>
-      <span className="line-total"><Money rial={l.netAmount} /></span>
+      <button type="button" className="line-total line-total-edit" aria-label={`ویرایش قیمت ${l.productName}`}
+        aria-expanded={panel === "price"} onClick={() => on.openPrice(l.id)}><Money rial={l.netAmount} /></button>
       {/*
         برچسب متنی، نه نویسهٔ ریال (U+FDFC) و درصد: آن نویسه کنار مبلغِ **تومانی** سطر روی
         صفحه «ریال» خوانده می‌شد — یعنی مبلغ سطر ده برابر کمتر دیده می‌شد.
@@ -278,6 +280,8 @@ export function Pos({ actorId }: { actorId: string }) {
   const customerInput = useRef<HTMLInputElement>(null);
   /** فقط نمایش؛ دروازهٔ `sale.credit` سرور است. «نامعلوم» مجاز نیست. */
   const [canCredit, setCanCredit] = useState(false);
+  const [canManageCustomer, setCanManageCustomer] = useState(false);
+  const [nameForMobile, setNameForMobile] = useState<string | null>(null);
   const [ready, setReady] = useState(false);
   const [working, setBusy] = useState(false);
   const [pendingScan, setPendingScan] = useState<PendingScan | null>(null);
@@ -334,6 +338,7 @@ export function Pos({ actorId }: { actorId: string }) {
         const [b, credit] = await Promise.all([pos.branches(), session.can("sale.credit").catch(() => null)]);
         setBranches(b.branches);
         setCanCredit(credit?.verdict === "allow");
+        void session.can("customer.manage").then((r) => setCanManageCustomer(r.verdict === "allow")).catch(() => setCanManageCustomer(false));
         // یک شعبه یعنی انتخابی در کار نیست. صندوق‌دار نباید هر روز
         // یک فهرست یک‌گزینه‌ای را تأیید کند.
         const only = b.branches.length === 1 ? b.branches[0] : undefined;
@@ -788,15 +793,28 @@ export function Pos({ actorId }: { actorId: string }) {
    * `normalizeDigits` فقط رقم فارسی و عربی را لاتین می‌کند چون
    * صفحه‌کلید فارسی «۰۹۱۲…» می‌فرستد.
    */
-  const attachCustomer = () =>
+  const attachCustomer = (fullName?: string) =>
     guarded(async () => {
-      if (!invoice) return;
-      const m = normalizeDigits(mobile).trim();
+      const m = fullName === undefined ? normalizeDigits(mobile).trim() : nameForMobile;
       if (m === "") return;
-      setInvoice(await pos.attachCustomer(invoice.id, { mobile: m }));
+      if (!m) return;
+      const inv = await ensureInvoice();
+      try {
+        setInvoice(await pos.attachCustomer(inv.id, { mobile: m, requireNameForNew: true, ...(fullName === undefined ? {} : { fullName }) }));
+      } catch (err) {
+        if (err instanceof ApiError && err.code === "customer_name_required") { setNameForMobile(m); return; }
+        throw err;
+      }
+      setNameForMobile(null);
       setMobile("");
       setNote("مشتری به این فاکتور وصل شد.");
     });
+
+  const saveCustomerName = (fullName: string) => guarded(async () => {
+    if (!customer || !canManageCustomer || customer.fullName?.trim()) return;
+    await people.updateCustomer(customer.id, { fullName });
+    if (invoice) setCustomer((await pos.invoiceCustomer(invoice.id)).customer);
+  });
 
   /**
    * ثبت یک پرداخت — با چرخهٔ «نتیجهٔ نامعلوم» (UI_PATTERNS §۵ بند ۷، F-115-01).
@@ -1015,6 +1033,7 @@ export function Pos({ actorId }: { actorId: string }) {
     setInvoice(null);
     setReceived(0n);
     setMobile("");
+    setNameForMobile(null);
     setNote(null);
     setError(null);
     scans.current.reset();
@@ -1124,9 +1143,11 @@ export function Pos({ actorId }: { actorId: string }) {
     : draftActive
       ? `قابل پرداخت ${toman(totals.payable)} تومان؛ ${totals.change > 0n ? `باقی پول ${toman(totals.change)}` : `مانده ${toman(totals.remaining)}`} تومان.${note ? ` ${note}` : ""}`
       : note ?? "";
-  const customerAttached = (invoice?.customerId ?? null) !== null;
   const customerBlock = <CustomerSummary customer={customer} loading={customerLoading} error={customerError}
-    mobile={mobile} onMobile={setMobile} onAttach={() => void attachCustomer()} busy={busy} inputRef={customerInput} />;
+    mobile={mobile} onMobile={(v) => { setMobile(v); setNameForMobile(null); }} onAttach={() => void attachCustomer()}
+    nameForMobile={nameForMobile} onConfirmName={(name) => void attachCustomer(name)} onCancelName={() => setNameForMobile(null)}
+    canManage={canManageCustomer} onSaveName={(name) => void saveCustomerName(name)}
+    busy={busy} inputRef={customerInput} />;
   const focusCustomer = () => {
     customerInput.current?.scrollIntoView({ block: "center", behavior: "instant" });
     customerInput.current?.focus();
@@ -1253,6 +1274,7 @@ export function Pos({ actorId }: { actorId: string }) {
           خالی یک حالت خالیِ فشرده است، نه یک قاب بزرگِ تهی.
         */}
         <Solid as="section" className="cart" aria-label="سبد خرید">
+          {customerBlock}
           <PosProductPicker key={warehouseId} warehouseId={warehouseId} busy={busy} onPick={(id) => addByBarcode("", id)} />
           <div className="cart-head">
             <h2 className="cart-title">سبد خرید</h2>
@@ -1298,21 +1320,16 @@ export function Pos({ actorId }: { actorId: string }) {
             </div>
           </div> : null}
 
-          {/* مشتری **اختیاری** است و تا وصل نشده، زمینهٔ کار است نه بخشی از پرداخت؛
-              وصل که شد، خلاصه‌اش کنار پرداخت می‌نشیند (POS-10). */}
-          {invoice && !customerAttached ? customerBlock : null}
           {invoice ? <GiftPanel invoice={invoice} onChange={setInvoice} /> : null}
         </Solid>
 
         {/*
           ستون پرداخت — چسبان در دسکتاپ تا نهایی‌سازی همیشه دیده شود. ترتیب جریان
-          (POS-02): مشتری ← مبلغ‌ها ← روش پرداخت (کارت‌خوان، اسنپ‌پی|دیجی‌پی، بیشتر)
-          ← ثبت نسیه ← نهایی‌کردن. مشتری **اختیاری** است؛ وقتی وصل است، آشکارا دیده
-          می‌شود — پیش از نسیه یا امتیاز باید معلوم باشد فاکتور به نام کیست.
+          مبلغ‌ها ← روش پرداخت (کارت‌خوان، اسنپ‌پی|دیجی‌پی، بیشتر) ← ثبت نسیه ← نهایی‌کردن.
+          مشتری در ابتدای سبد، پیش از ورود کالا می‌ماند؛ سیاست الزام مشتری تغییر نکرده است.
         */}
         <Solid as="aside" className="pay" aria-label="پرداخت">
           <h2 className="sr-only">پرداخت</h2>
-          {invoice && customerAttached ? customerBlock : null}
           <CheckoutSummary totals={draftActive ? totals : null} />
           {invoice && received > 0n ? <PaymentBreakdown invoiceId={invoice.id} received={received} /> : null}
           <PaymentSelector layout={layout} remaining={totals.remaining} received={received} phase={payPhase}

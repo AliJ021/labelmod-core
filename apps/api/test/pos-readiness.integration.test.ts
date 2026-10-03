@@ -53,16 +53,21 @@ describe("آمادگی API صندوق", { skip }, () => {
     string,
     { cookies: Record<string, string>; headers: Record<string, string> }
   >();
+  const clientAddresses = new Map<string, string>();
 
   async function loginAs(username: string) {
     const cached = sessions.get(username);
     if (cached) return cached;
+    // Each synthetic actor is a separate client; login/MFA limits remain enabled.
+    // Keep its address stable if login is retried, instead of bypassing per-client limits.
+    if (!clientAddresses.has(username)) {
+      const index = clientAddresses.size;
+      clientAddresses.set(username, `127.10.${Math.floor(index / 254)}.${index % 254 + 1}`);
+    }
     const r = await loginWithMfa(app, {
       method: "POST",
       url: "/auth/login",
-      remoteAddress: username.startsWith("draft_manager_") ? "127.0.0.14" : username.startsWith("pc_admin_") ? "127.0.0.15" : username === warehouse ? "127.0.0.11"
-        : username === marketing ? "127.0.0.12"
-          : username === returnReader ? "127.0.0.13" : "127.0.0.1",
+      remoteAddress: clientAddresses.get(username)!,
       payload: { username, password: PASSWORD, deviceFingerprint: `fp-${suffix}-${username}` },
     });
     assert.equal(r.statusCode, 200, `ورود ${username} ناموفق: ${r.body}`);
@@ -235,7 +240,7 @@ describe("آمادگی API صندوق", { skip }, () => {
       const cash=await app.inject({method:"POST",url:`/invoices/${invoiceId}/payments`,...s,payload:{methodCode:"cash",amount:"1000001"}});assert.equal(cash.statusCode,201,cash.body);
       const final=await app.inject({method:"POST",url:`/invoices/${invoiceId}/finalize`,...s,payload:{}});assert.equal(final.statusCode,200,final.body);
       const sources=await app.inject({method:"GET",url:`/invoices/${invoiceId}/refund-sources`,...a});
-      assert.equal(sources.statusCode,200,sources.body);assert.deepEqual(sources.json().payments,[{id:paymentId,reference:"SNAPP-CONFIRMED-1",remaining:"1000001"}]);
+      assert.equal(sources.statusCode,200,sources.body);assert.deepEqual(sources.json().payments,[{id:paymentId,methodCode:"snappay",reference:"SNAPP-CONFIRMED-1",remaining:"1000001"}]);
       // Disabling new receipts must not erase the ability to reverse historical confirmed receipts.
       assert.equal((await app.inject({method:"PUT",url:"/snappay/config",...a,payload:{accountId:""}})).statusCode,200);
       const refund={invoiceId,reasonCode:"quality",refundAmount:"1000001",refundMethod:"snappay",lines:[{invoiceLineId:body.lines[0]!.id,qty:"1"}]};
@@ -260,6 +265,65 @@ describe("آمادگی API صندوق", { skip }, () => {
       const orphan=await sql<{n:string}>`SELECT count(*)::text n FROM (SELECT entry_id FROM ledger.journal_line GROUP BY entry_id HAVING sum(debit)<>sum(credit)) unbalanced`.execute(handle.db);
       assert.equal(orphan.rows[0]!.n,"0");
     } finally { await app.inject({method:"PUT",url:"/snappay/config",...a,payload:{accountId:""}}); }
+  });
+
+  test("manual DigiPay needs validated configuration and references, and refunds retain the original payment account", async () => {
+    const adminName = `digi_admin_${suffix}`;
+    const admin = await handle.db.insertInto("identity.app_user").values({username:adminName,full_name:"مدیر آزمون رابط",password_hash:await hashSecret(PASSWORD),is_active:true,mobile:null,pin_hash:null,totp_secret:null}).returning("id").executeTakeFirstOrThrow();
+    await handle.db.insertInto("identity.user_role").values({user_id:admin.id,role_code:"admin",branch_id:null}).execute();
+    const a=await loginAs(adminName);
+    const s=await loginAs(cashier);
+    const product=await sql<{id:string}>`INSERT INTO catalog.product(code,name_internal) VALUES (${"DIGI-"+suffix},'کالای آزمون دیجی‌پی') RETURNING id`.execute(handle.db);
+    const variant=await sql<{id:string}>`INSERT INTO catalog.variation(product_id,sku) VALUES (${product.rows[0]!.id}::uuid,${"DIGI-"+suffix}) RETURNING id`.execute(handle.db);
+    const variantId=variant.rows[0]!.id;
+    await sql`INSERT INTO catalog.price(variation_id,price_list,amount) VALUES (${variantId}::uuid,'default',1000001)`.execute(handle.db);
+    await sql`SELECT inventory.apply_movement(${variantId}::uuid,${STORE_WH}::uuid,2,'purchase_receipt','test_receipt',${variantId}::uuid,${cashierId}::uuid,400000)`.execute(handle.db);
+    const created=await app.inject({method:"POST",url:"/invoices",...s,payload:{branchId:BRANCH,warehouseId:STORE_WH,channel:"pos"}});
+    assert.equal(created.statusCode,201,created.body);const invoiceId=created.json().id as string;
+    const added=await app.inject({method:"POST",url:`/invoices/${invoiceId}/scan`,...s,payload:{variationId:variantId,qty:"2"}});
+    assert.equal(added.statusCode,200,added.body);const body=added.json().invoice as {lines:Array<{id:string}>};
+    const config=await app.inject({method:"GET",url:"/digipay/config",...a});
+    assert.equal(config.statusCode,200,config.body); assert.equal(config.json().enabled,false);
+    assert.equal((await app.inject({method:"PUT",url:"/digipay/config",...s,payload:{accountId:""}})).statusCode,403);
+    const accounts=await sql<{id:string}>`SELECT id FROM treasury.account WHERE kind='gateway' AND is_active ORDER BY id`.execute(handle.db);
+    const accountId=accounts.rows[0]!.id;
+    const invalid=await app.inject({method:"PUT",url:"/digipay/config",...a,payload:{accountId:BRANCH}});
+    assert.equal(invalid.statusCode,422,invalid.body);
+    const cfg=await app.inject({method:"PUT",url:"/digipay/config",...a,payload:{accountId}});assert.equal(cfg.statusCode,200,cfg.body);
+    try {
+      const noRef=await app.inject({method:"POST",url:`/invoices/${invoiceId}/payments`,...s,payload:{methodCode:"digipay",amount:"1000001"}});
+      assert.equal(noRef.statusCode,422,noRef.body);
+      const pay=await app.inject({method:"POST",url:`/invoices/${invoiceId}/payments`,...s,payload:{methodCode:"digipay",amount:"1000001",refNo:"DIGI-CONFIRMED-1"}});
+      assert.equal(pay.statusCode,201,pay.body);const paymentId=pay.json().paymentId as string;
+      const recordedIn = await sql<{account_id:string; kind:string}>`SELECT p.account_id,m.kind FROM treasury.payment p JOIN treasury.payment_method m ON m.code=p.method_code WHERE p.id=${paymentId}::uuid`.execute(handle.db);
+      assert.deepEqual(recordedIn.rows,[{account_id:accountId,kind:"gateway"}]);
+      const cash=await app.inject({method:"POST",url:`/invoices/${invoiceId}/payments`,...s,payload:{methodCode:"cash",amount:"1000001"}});assert.equal(cash.statusCode,201,cash.body);
+      const final=await app.inject({method:"POST",url:`/invoices/${invoiceId}/finalize`,...s,payload:{}});assert.equal(final.statusCode,200,final.body);
+      const sources=await app.inject({method:"GET",url:`/invoices/${invoiceId}/refund-sources`,...a});
+      assert.equal(sources.statusCode,200,sources.body);assert.deepEqual(sources.json().payments,[{id:paymentId,methodCode:"digipay",reference:"DIGI-CONFIRMED-1",remaining:"1000001"}]);
+      // Disabling new receipts must not erase the ability to reverse historical confirmed receipts.
+      assert.equal((await app.inject({method:"PUT",url:"/digipay/config",...a,payload:{accountId:""}})).statusCode,200);
+      const refund={invoiceId,reasonCode:"quality",refundAmount:"1000001",refundMethod:"digipay",lines:[{invoiceLineId:body.lines[0]!.id,qty:"1"}]};
+      const missing=await app.inject({method:"POST",url:"/returns",...a,payload:refund});assert.equal(missing.statusCode,422,missing.body);
+      const draft=await app.inject({method:"POST",url:"/returns",...a,payload:{...refund,refundReference:"DIGI-REFUND-1",refundPaymentId:paymentId}});assert.equal(draft.statusCode,201,draft.body);
+      const returned=await app.inject({method:"POST",url:`/returns/${draft.json().id}/post`,...a,payload:{}});assert.equal(returned.statusCode,200,returned.body);
+      const recorded=await sql<{account_id:string;ref_no:string;amount:string}>`SELECT account_id,ref_no,amount::text FROM treasury.payment WHERE return_id=${draft.json().id}::uuid`.execute(handle.db);
+      assert.deepEqual(recorded.rows,[{account_id:accountId,ref_no:"DIGI-REFUND-1",amount:"1000001"}]);
+      const clearing = await sql<{code:string}>`SELECT account_code code FROM ledger.posting_rule WHERE event_type='sale_shift' AND leg='gateway_clearing' AND side='debit' AND is_active`.execute(handle.db);
+      const reversal = await sql<{credit:string}>`SELECT coalesce(sum(l.credit),0)::text credit FROM ledger.journal_line l JOIN ledger.journal_entry e ON e.id=l.entry_id WHERE e.ref_id=${draft.json().id}::uuid AND e.ref_type='sale_return' AND l.account_code=${clearing.rows[0]!.code}`.execute(handle.db);
+      assert.equal(reversal.rows[0]!.credit,"1000001","Digi refund reverses provider receivable");
+      const cashReversal = await sql<{n:number}>`SELECT count(*)::int n FROM ledger.journal_line l JOIN ledger.journal_entry e ON e.id=l.entry_id
+        WHERE e.ref_id=${draft.json().id}::uuid AND e.ref_type='sale_return' AND l.account_code IN
+          (SELECT account_code FROM ledger.posting_rule WHERE event_type='sale_shift' AND leg='cash' AND is_active)`.execute(handle.db);
+      assert.equal(cashReversal.rows[0]!.n,0,"Digi refund must not move cash");
+      const over=await app.inject({method:"POST",url:"/returns",...a,payload:{...refund,refundReference:"DIGI-REFUND-2",refundPaymentId:paymentId}});assert.equal(over.statusCode,201,over.body);
+      const rejected=await app.inject({method:"POST",url:`/returns/${over.json().id}/post`,...a,payload:{}});assert.notEqual(rejected.statusCode,200,rejected.body);
+      assert.match(rejected.body,/دیجی/);
+      const receipt=await sql<{n:string}>`SELECT count(*)::text n FROM treasury.payment WHERE invoice_id=${invoiceId}::uuid AND method_code='digipay' AND status IN ('settled','reconciled')`.execute(handle.db);
+      assert.equal(receipt.rows[0]!.n,"0","manual recording must not invent settlement");
+      const orphan=await sql<{n:string}>`SELECT count(*)::text n FROM (SELECT entry_id FROM ledger.journal_line GROUP BY entry_id HAVING sum(debit)<>sum(credit)) unbalanced`.execute(handle.db);
+      assert.equal(orphan.rows[0]!.n,"0");
+    } finally { await app.inject({method:"PUT",url:"/digipay/config",...a,payload:{accountId:""}}); }
   });
 
   test("stock is checked across draft lines before payment without reserving goods", async () => {
@@ -421,6 +485,40 @@ describe("آمادگی API صندوق", { skip }, () => {
       assert.equal((await app.inject({ method: "POST", url: `/invoices/${oc.json().id}/cancel`, ...o, payload: {} })).statusCode, 200);
     } finally {
       await app.inject({ method: "PUT", url: "/snappay/config", ...a, payload: { accountId: "" } });
+    }
+  });
+
+  test("DigiPay فقط در شعبه‌ای دیده می‌شود که حساب معتبر دارد؛ بی شعبه دیده نمی‌شود و شعبهٔ بیرون از دامنه ۴۰۳ است", async () => {
+    const a = await checkoutAdmin();
+    const c = await loginAs(cashier);
+    const o = await loginAs(outsider);
+    const codes = async (sess: typeof c, query: string) => {
+      const r = await app.inject({ method: "GET", url: `/payment-methods${query}`, ...sess });
+      assert.equal(r.statusCode, 200, r.body);
+      return (r.json().methods as Array<{ code: string }>).map((m) => m.code);
+    };
+    assert.ok(!(await codes(c, `?branchId=${BRANCH}`)).includes("digipay"), "پیکربندی‌نشده دیده نمی‌شود");
+    const accountId = (await sql<{ id: string }>`SELECT id FROM treasury.account WHERE kind='gateway' AND is_active ORDER BY id`.execute(handle.db)).rows[0]!.id;
+    assert.equal((await app.inject({ method: "PUT", url: "/digipay/config", ...a, payload: { accountId } })).statusCode, 200);
+    try {
+      assert.ok((await codes(c, `?branchId=${BRANCH}`)).includes("digipay"), "شعبهٔ دارای حساب");
+      // حساب Seed مال شعبهٔ MAIN است؛ شعبهٔ دوم حساب ندارد — همان چیزی که ثبت پرداخت هم می‌گوید.
+      assert.ok(!(await codes(o, `?branchId=${otherBranchId}`)).includes("digipay"), "شعبهٔ بی‌حساب");
+      assert.ok(!(await codes(c, "")).includes("digipay"), "بی شعبه قابل سنجش نیست");
+      const out = await app.inject({ method: "GET", url: `/payment-methods?branchId=${otherBranchId}`, ...c });
+      assert.equal(out.statusCode, 403, out.body);
+      const bad = await app.inject({ method: "GET", url: "/payment-methods?branchId=not-a-uuid", ...c });
+      assert.equal(bad.statusCode, 400, bad.body);
+      // خواندن و نوشتن یک معنا دارند: همان حساب برای فاکتور شعبهٔ دوم ۴۲۲ می‌دهد.
+      await app.inject({ method: "POST", url: "/shifts", ...o, payload: { branchId: otherBranchId, openingCash: "0" } });
+      const oc = await app.inject({ method: "POST", url: "/invoices", ...o, payload: { branchId: otherBranchId, warehouseId: otherWarehouseId, channel: "pos" } });
+      assert.equal(oc.statusCode, 201, oc.body);
+      const pay = await app.inject({ method: "POST", url: `/invoices/${oc.json().id}/payments`, ...o, payload: { methodCode: "digipay", amount: "1000", refNo: "X" } });
+      assert.equal(pay.statusCode, 422, pay.body);
+      assert.equal(pay.json().error.code, "digipay_not_configured");
+      assert.equal((await app.inject({ method: "POST", url: `/invoices/${oc.json().id}/cancel`, ...o, payload: {} })).statusCode, 200);
+    } finally {
+      await app.inject({ method: "PUT", url: "/digipay/config", ...a, payload: { accountId: "" } });
     }
   });
 

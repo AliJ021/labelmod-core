@@ -129,8 +129,10 @@ export function registerScopeRoutes(app: FastifyInstance, deps: ScopeRouteDeps):
 
     const snappay = branchId === undefined ? false
       : (await sql<{ enabled: boolean }>`SELECT treasury.snappay_account(${branchId}::uuid) IS NOT NULL AS enabled`.execute(db)).rows[0]?.enabled === true;
+    const digipay = branchId === undefined ? false
+      : (await sql<{ enabled: boolean }>`SELECT treasury.digipay_account(${branchId}::uuid) IS NOT NULL AS enabled`.execute(db)).rows[0]?.enabled === true;
     return {
-      methods: rows.filter(m => m.code !== "snappay" || snappay).map((m) => ({
+      methods: rows.filter(m => (m.code !== "snappay" || snappay) && (m.code !== "digipay" || digipay)).map((m) => ({
         code: m.code,
         name: m.name,
         kind: m.kind,

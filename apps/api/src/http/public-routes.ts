@@ -31,6 +31,7 @@ import type { Db } from "../db/client.ts";
 import { parseMoney } from "../lib/money.ts";
 import {
   invoicePage,
+  receiptFooterFromSettings,
   INVOICE_PAGE_CSP,
   type InvoicePageLine,
 } from "../sales/invoice-page.ts";
@@ -58,6 +59,8 @@ interface Row {
   due_amount: string;
   shop_name: string | null;
   timezone: string;
+  return_hours: string | null;
+  site_url: string | null;
 }
 
 export function registerPublicRoutes(app: FastifyInstance, deps: { db: Db }): void {
@@ -82,7 +85,9 @@ export function registerPublicRoutes(app: FastifyInstance, deps: { db: Db }): vo
                  WHERE p.invoice_id=i.id AND m.kind<>'credit' AND p.status IN ('succeeded','settled','reconciled')),0)
                +sales.exchange_out(i.id)-sales.exchange_in(i.id),0)::text AS due_amount,
              (SELECT b.name FROM platform.branch b WHERE b.id = i.branch_id) AS shop_name,
-             platform.setting_text('platform.timezone', 'Asia/Tehran') AS timezone
+             platform.setting_text('platform.timezone', 'Asia/Tehran') AS timezone,
+             (SELECT value::text FROM platform.setting WHERE key = 'return.window_hours') AS return_hours,
+             platform.setting_text('web.site_url', '') AS site_url
         FROM sales.invoice i
         LEFT JOIN sales.customer c ON c.id = i.customer_id
        WHERE i.public_token = ${token}
@@ -138,6 +143,7 @@ export function registerPublicRoutes(app: FastifyInstance, deps: { db: Db }): vo
         paidAmount: parseMoney(row.paid_amount),
         exchangeAmount: parseMoney(row.exchange_amount),
         dueAmount: parseMoney(row.due_amount),
+        ...receiptFooterFromSettings(row),
       },
       row.timezone,
     );

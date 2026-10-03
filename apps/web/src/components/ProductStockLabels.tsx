@@ -1,25 +1,33 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useState } from "react";
 import { api, ApiError } from "../lib/api.ts";
 import type { Variation } from "../lib/catalog.ts";
 import { normalizeDigits } from "../lib/settings-value.ts";
+import { clampCount, labelRequestBody, labelRequestProblem, queueTotal } from "../lib/label-print.ts";
+import { labelQueue } from "../lib/label-queue.ts";
+import { LabelPreviewFrame, LabelSizeFields, useLabelPreview, useLabelSize } from "./LabelPrint.tsx";
 
 interface Cell { variationId: string; onHand: string; reserved: string }
 interface Matrix { totalOnHand: string; cells: Record<string, Record<string, Cell>> }
-export function ProductStockLabels({ productId, variations, selected }: {
-  productId: string; variations: Variation[]; selected: string[];
+
+/**
+ * موجودی محصول و تعداد لیبل هر تنوع.
+ *
+ * تیک جدول تنوع‌ها تعداد را ۱ می‌کند (و برداشتنش صفر)؛ تعداد هر تنوع را
+ * می‌شود جدا نوشت یا «به‌اندازهٔ موجودی» پر کرد. چاپ همین کالا مستقیم
+ * است؛ برای چند کالا با هم، تنوع‌ها به فهرست چاپ گروهی افزوده می‌شوند.
+ * مقدار بارکد و قیمت را سرور از دیتابیس می‌خواند، نه از این صفحه.
+ */
+export function ProductStockLabels({ productId, productName, variations, selected }: {
+  productId: string; productName: string; variations: Variation[]; selected: string[];
 }) {
   const [stock, setStock] = useState<Matrix | null>(null);
   const [error, setError] = useState("");
   const [revision, setRevision] = useState(0);
-  const [layout, setLayout] = useState("roll");
-  const [count, setCount] = useState("1");
-  const [width, setWidth] = useState("50");
-  const [height, setHeight] = useState("30");
-  const [html, setHtml] = useState("");
-  const [busy, setBusy] = useState(false);
-  const [previewKey, setPreviewKey] = useState("");
-  const selectionKey = JSON.stringify([productId, selected, layout, count, width, height]);
-  const frame = useRef<HTMLIFrameElement>(null);
+  const [counts, setCounts] = useState<Record<string, number>>({});
+  const [added, setAdded] = useState("");
+  const sizeState = useLabelSize();
+  const pv = useLabelPreview();
+
   useEffect(() => {
     const c = new AbortController(); setStock(null);
     void api.get<Matrix>(`/products/${productId}/stock-matrix`, { signal: c.signal })
@@ -27,36 +35,64 @@ export function ProductStockLabels({ productId, variations, selected }: {
       .catch((e: unknown) => { if (!c.signal.aborted) setError(e instanceof ApiError ? e.message : "خواندن موجودی ممکن نشد."); });
     return () => c.abort();
   }, [productId, revision]);
-  const cells = new Map(Object.values(stock?.cells ?? {}).flatMap(Object.values).map((c) => [c.variationId, c]));
-  const normalizedNumber = (s: string) => Number(normalizeDigits(s));
-  const n = normalizedNumber(count), w = normalizedNumber(width), h = normalizedNumber(height);
-  const valid = selected.length > 0 && Number.isInteger(n) && n >= 1 && n <= 100 && n * selected.length <= 500 &&
-    (layout === "a4" || (w >= 20 && w <= 120 && h >= 10 && h <= 120));
-  async function preview() {
-    if (busy || !valid) return; setBusy(true); setError(""); setHtml("");
-    try { setHtml(await api.postHtml("/labels", { items: selected.map((variationId) => ({ variationId, count: n })), layout,
-      ...(layout === "roll" ? { rollWidthMm: w, rollHeightMm: h } : {}) })); setPreviewKey(selectionKey); }
-    catch (e) { setError(e instanceof ApiError ? e.message : "آماده‌سازی چاپ ممکن نشد."); }
-    finally { setBusy(false); }
+
+  // تیک جدول تنوع‌ها: تازه‌انتخاب‌شده دست‌کم ۱، برداشته‌شده صفر — هنگام
+  // رندر (الگوی «تنظیم state از تغییر prop»)، نه با Effect پس از نقاشی.
+  const [lastSelected, setLastSelected] = useState<string[]>([]);
+  if (lastSelected.join(",") !== selected.join(",")) {
+    const next = { ...counts };
+    for (const id of selected) if (!lastSelected.includes(id)) next[id] = Math.max(next[id] ?? 0, 1);
+    for (const id of lastSelected) if (!selected.includes(id)) next[id] = 0;
+    setCounts(next);
+    setLastSelected(selected);
   }
+
+  const cells = new Map(Object.values(stock?.cells ?? {}).flatMap(Object.values).map((c) => [c.variationId, c]));
+  const chosen = variations.filter((v) => (counts[v.id] ?? 0) > 0).map((v) => ({ variationId: v.id, count: counts[v.id] ?? 0 }));
+  const total = queueTotal(chosen);
+  const problem = labelRequestProblem(chosen, sizeState.size);
+  const body = labelRequestBody(chosen, sizeState.size);
+  const currentKey = JSON.stringify([productId, body]);
+
+  function setCount(id: string, raw: string) {
+    setCounts((prev) => ({ ...prev, [id]: clampCount(Number(normalizeDigits(raw))) }));
+    setAdded("");
+  }
+  function fill(fn: (v: Variation) => number) {
+    setCounts(Object.fromEntries(variations.map((v) => [v.id, clampCount(fn(v))])));
+    setAdded("");
+  }
+  function addToQueue() {
+    labelQueue.add(variations.filter((v) => (counts[v.id] ?? 0) > 0).map((v) => ({
+      variationId: v.id, productId, productName, sku: v.sku, color: v.color, size: v.size, count: counts[v.id] ?? 0,
+    })));
+    setAdded(`${total.toLocaleString("fa-IR")} لیبل از «${productName}» به فهرست چاپ گروهی افزوده شد.`);
+  }
+
   return <section className="solid pad stack" aria-label="موجودی و چاپ بارکد">
     <h3>موجودی محصول</h3>
     <p>جمع موجودی در انبارهای شعبه‌های مجاز: <strong>{stock?.totalOnHand ?? "در حال دریافت…"}</strong></p>
     <button className="btn" type="button" onClick={() => { setError(""); setRevision((v) => v + 1); }}>تازه‌سازی موجودی</button>
-    <div className="grid-wrap"><table className="grid"><thead><tr><th>رنگ / سایز</th><th>موجودی</th><th>رزرو</th></tr></thead>
-      <tbody>{variations.map((v) => <tr key={v.id}><td>{v.color ?? "بدون رنگ"} / {v.size ?? "آزاد"}</td>
-        <td>{stock ? cells.get(v.id)?.onHand ?? "—" : "…"}</td><td>{stock ? cells.get(v.id)?.reserved ?? "—" : "…"}</td></tr>)}</tbody></table></div>
     <h3>چاپ لیبل بارکد</h3>
-    <p>تنوع‌های موردنظر را در جدول تنوع‌ها انتخاب کنید. {selected.length} تنوع انتخاب شده است.</p>
-    <label className="auth-field">نوع برچسب<select value={layout} onChange={(e) => { setLayout(e.target.value); setHtml(""); }}>
-      <option value="roll">رول لیبل‌زن</option><option value="a4">برگه A4</option></select></label>
-    <label className="auth-field">تعداد از هر تنوع<input inputMode="numeric" value={count} onChange={(e) => { setCount(e.target.value); setHtml(""); }} /></label>
-    {layout === "roll" ? <div className="row"><label className="auth-field">عرض لیبل (میلی‌متر)<input inputMode="decimal" value={width} onChange={(e) => { setWidth(e.target.value); setHtml(""); }} /></label>
-      <label className="auth-field">ارتفاع لیبل (میلی‌متر)<input inputMode="decimal" value={height} onChange={(e) => { setHeight(e.target.value); setHtml(""); }} /></label></div> : null}
-    <p className="muted small">حداکثر ۵۰۰ لیبل در هر نوبت. در تنظیمات چاپ، مقیاس ۱۰۰٪ و اندازه کاغذ برابر لیبل انتخاب شود؛ سربرگ و پابرگ خاموش باشند.</p>
-    <button className="btn btn--primary" type="button" disabled={!valid || busy} onClick={() => void preview()}>پیش‌نمایش لیبل‌های انتخاب‌شده</button>
-    {error ? <p role="alert">{error}</p> : null}
-    {html && previewKey === selectionKey ? <><iframe ref={frame} title="پیش‌نمایش چاپ بارکد" srcDoc={html} sandbox="allow-same-origin allow-modals" style={{ width: "100%", minHeight: 300, background: "white" }} />
-      <button className="btn" type="button" onClick={() => { frame.current?.contentWindow?.focus(); frame.current?.contentWindow?.print(); }}>چاپ لیبل بارکد</button></> : null}
+    <p className="muted small" style={{ margin: 0 }}>تعداد لیبل هر تنوع را بنویسید یا تنوع را در جدول تنوع‌ها تیک بزنید. {chosen.length.toLocaleString("fa-IR")} تنوع و {total.toLocaleString("fa-IR")} لیبل انتخاب شده است.</p>
+    <div className="row" style={{ gap: "var(--s-2)", flexWrap: "wrap" }}>
+      <button className="btn" type="button" onClick={() => fill(() => 1)}>یکی از هر تنوع</button>
+      <button className="btn" type="button" disabled={!stock} onClick={() => fill((v) => Number(cells.get(v.id)?.onHand ?? 0))}>به‌اندازهٔ موجودی</button>
+      <button className="btn" type="button" onClick={() => fill(() => 0)}>صفر کردن همه</button>
+    </div>
+    <div className="grid-wrap"><table className="grid"><thead><tr><th>رنگ / سایز</th><th>موجودی</th><th>رزرو</th><th>تعداد لیبل</th></tr></thead>
+      <tbody>{variations.map((v) => <tr key={v.id}><td>{v.color ?? "بدون رنگ"} / {v.size ?? "آزاد"}</td>
+        <td>{stock ? cells.get(v.id)?.onHand ?? "—" : "…"}</td><td>{stock ? cells.get(v.id)?.reserved ?? "—" : "…"}</td>
+        <td><input aria-label={`تعداد لیبل ${v.sku}`} inputMode="numeric" style={{ width: "5.5em" }} value={String(counts[v.id] ?? 0)} onChange={(e) => setCount(v.id, e.target.value)} /></td></tr>)}</tbody></table></div>
+    <LabelSizeFields state={sizeState} onChange={pv.reset} idPrefix={`product-${productId}`} />
+    <p className="muted small">حداکثر ۱۰۰ لیبل از هر تنوع و ۵۰۰ لیبل در هر نوبت. در تنظیمات چاپ، مقیاس ۱۰۰٪ و اندازه کاغذ برابر لیبل انتخاب شود؛ سربرگ و پابرگ خاموش باشند.</p>
+    <div className="row" style={{ gap: "var(--s-2)", flexWrap: "wrap" }}>
+      <button className="btn btn--primary" type="button" disabled={problem !== null || pv.busy} onClick={() => void pv.preview(body, currentKey)}>پیش‌نمایش لیبل‌های انتخاب‌شده</button>
+      <button className="btn" type="button" disabled={chosen.length === 0} onClick={addToQueue}>افزودن به فهرست چاپ گروهی</button>
+    </div>
+    {problem && chosen.length > 0 ? <p className="small" role="status">{problem}</p> : null}
+    {added ? <p className="small" role="status">{added}</p> : null}
+    {error || pv.error ? <p role="alert">{error || pv.error}</p> : null}
+    {pv.html && pv.key === currentKey ? <LabelPreviewFrame html={pv.html} /> : null}
   </section>;
 }

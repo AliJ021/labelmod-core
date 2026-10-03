@@ -6,6 +6,7 @@ import { StatusBadge } from "../ui/Status.tsx";
 import { Icon } from "../Icon.tsx";
 import { pos } from "../../lib/pos.ts";
 import type { FinalAmounts } from "../../lib/pos-payments.ts";
+import { printReceipt } from "../../lib/receipt-print.ts";
 
 /** فروش تمام‌شده — آنچه پس از نهایی‌سازی تا «فروش بعدی» روی صفحه می‌ماند. */
 export interface CompletedSale {
@@ -30,12 +31,26 @@ export interface CompletedSale {
  *    پرداختی که از تب یا دستگاه دیگر میان آن دو نشسته، باقی پول یا نسیه را عوض
  *    می‌کند و نهایی‌سازی آن را زیر قفل دیده است.
  *
- * چاپ دستی است و فقط یک پیوند به صفحهٔ چاپ رسید؛ شکستش هیچ اثر مالی ندارد.
+ * چاپ فقط با دکمهٔ صریح و در قاب هم‌مبدأ انجام می‌شود؛ شکستش هیچ اثر مالی ندارد.
  * فروش در صف آفلاین شماره و رسید ندارد و همین را صریح می‌گوید.
  */
 export function SaleComplete({ sale, onNext }: { sale: CompletedSale; onNext: () => void }) {
   const [payments, setPayments] = useState<Array<{ id: string; name: string; amount: string }> | null>(null);
   const [failed, setFailed] = useState(false);
+  const [printing, setPrinting] = useState(false);
+  const [printError, setPrintError] = useState<string | null>(null);
+  const printJob = useRef<AbortController | null>(null);
+  useEffect(() => () => printJob.current?.abort(), [sale.invoiceId]);
+  async function print() {
+    if (printJob.current) return;
+    const job = new AbortController();
+    printJob.current = job;
+    setPrinting(true);
+    setPrintError(null);
+    try { await printReceipt(sale.invoiceId, job.signal); }
+    catch (error) { if (!job.signal.aborted) setPrintError(error instanceof Error ? error.message : "چاپ رسید آغاز نشد."); }
+    finally { if (printJob.current === job) printJob.current = null; if (!job.signal.aborted) setPrinting(false); }
+  }
   const heading = useRef<HTMLHeadingElement>(null);
   useEffect(() => { heading.current?.focus(); }, []);
   useEffect(() => {
@@ -84,9 +99,10 @@ export function SaleComplete({ sale, onNext }: { sale: CompletedSale; onNext: ()
     </section> : null}
 
     <div className="row sale-complete-actions">
-      {!sale.queued && sale.number ? <a className="btn" href={`/api/invoices/${sale.invoiceId}/print`} target="_blank" rel="noopener">
-        <Icon name="print" size="sm" /> چاپ رسید</a> : null}
+      {!sale.queued && sale.number ? <Button onClick={() => void print()} disabled={printing}>
+        <Icon name="print" size="sm" /> {printing ? "در حال آماده‌سازی چاپ…" : "چاپ رسید"}</Button> : null}
       <Button variant="primary" onClick={onNext}>فروش بعدی</Button>
     </div>
+    {printError ? <p role="alert" className="field-hint">{printError} فروش ثبت شده است.</p> : null}
   </section>;
 }

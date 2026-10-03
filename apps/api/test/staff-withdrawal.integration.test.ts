@@ -36,6 +36,7 @@ describe("دفتر برداشت پرسنل", { skip: DATABASE_URL ? false : "DAT
   let cashier: Actor, cashierB: Actor, otherCashier: Actor, supervisor: Actor, accountant: Actor, gm: Actor, gmA: Actor;
   let serial = 0;
   let footprintBefore: string;
+  let requestAddress = "127.0.0.1";
 
   async function actor(role: string, branch: string | null): Promise<Actor> {
     const username = `wd_${randomUUID().slice(0, 8)}`;
@@ -53,7 +54,7 @@ describe("دفتر برداشت پرسنل", { skip: DATABASE_URL ? false : "DAT
 
   function call(who: Actor, method: Method, url: string, payload?: unknown, key?: string | null) {
     const headers = { ...who.headers, ...(key ? { "idempotency-key": key } : {}) };
-    return app.inject({ method, url, cookies: who.cookies, headers, ...(payload === undefined ? {} : { payload: payload as object }) });
+    return app.inject({ method, url, remoteAddress: requestAddress, cookies: who.cookies, headers, ...(payload === undefined ? {} : { payload: payload as object }) });
   }
   async function create(who: Actor, amount: string, reason: string) {
     const res = await call(who, "POST", "/withdrawals", { amount, reason }, randomUUID());
@@ -298,5 +299,86 @@ describe("دفتر برداشت پرسنل", { skip: DATABASE_URL ? false : "DAT
   test("بدون نشست: ۴۰۱؛ و هیچ اثر مالی", async () => {
     assert.equal((await app.inject({ method: "GET", url: "/withdrawals/mine" })).statusCode, 401);
     assert.equal(await footprint(), footprintBefore, "دفتر، انبار، خزانه، شیفت و صف دست‌نخورده");
+  });
+
+  test("تسویهٔ گروهی دقیق، بازپخش یکتا، تاریخچهٔ ماندگار و بازشدن نسخهٔ اصلاح‌شده", async () => {
+    requestAddress = "127.0.5.1";
+    const first = await create(cashier, "101", "تسویه گروهی یک");
+    const second = await create(cashier, "999999999999999999", "تسویه گروهی دو");
+    const body = { items: [first,second].map(w => ({ id:w.id,expectedVersion:w.version })), note: "تسویهٔ دفتر؛ بدون اثر مالی" };
+    const key = randomUUID();
+    const result = await call(gm,"POST","/withdrawals/settlements",body,key);
+    assert.equal(result.statusCode,200,result.body);
+    assert.equal(result.json().count,2); assert.equal(result.json().totalAmount,"1000000000000000100");
+    const replay = await call(gm,"POST","/withdrawals/settlements",body,key);
+    assert.equal(replay.statusCode,200,replay.body); assert.equal(replay.json().replayed,true);
+    assert.equal(replay.json().batchId,result.json().batchId);
+    assert.equal((await call(gm,"POST","/withdrawals/settlements",{...body,note:"changed"},key)).statusCode,409);
+    assert.equal((await call(gm,"GET",`/withdrawals/settlements/by-key/${key}`)).json().status,"recorded");
+    assert.equal((await call(gmA,"GET",`/withdrawals/settlements/by-key/${key}`)).json().status,"not_found");
+    const own = await call(cashier,"GET",`/withdrawals/mine/${first.id}`);
+    assert.ok(own.json().settledAt); assert.ok(own.json().settledBy);
+    assert.equal(own.json().history[0].settlementNote,body.note);
+    const list = await call(gm,"GET",`/withdrawals?ownerId=${cashier.id}&status=settled`);
+    assert.ok(list.json().items.some((w:{id:string})=>w.id===first.id));
+    assert.ok(list.json().items.every((w:{owner:{id:string};settledAt:string})=>w.owner.id===cashier.id && w.settledAt));
+    const selection = await call(gm,"GET",`/withdrawals/selection?ownerId=${cashier.id}`);
+    assert.ok(selection.json().items.every((w:{id:string;owner:{id:string}})=>w.owner.id===cashier.id && w.id!==first.id && w.id!==second.id));
+    const corrected = await call(gm,"POST",`/withdrawals/${first.id}/corrections`,
+      {expectedVersion:1,amount:"102",reason:"تسویه گروهی یک",note:"اصلاح پس از تسویه"},randomUUID());
+    assert.equal(corrected.statusCode,200,corrected.body);
+    assert.equal(corrected.json().withdrawal.settledAt,null);
+    assert.ok(corrected.json().withdrawal.history[0].settledAt);
+    const events = await sql<{n:number}>`SELECT count(*)::int n FROM platform.audit_log WHERE action='withdrawal.settle'
+      AND entity_id IN (${first.id},${second.id})`.execute(owner.db);
+    assert.equal(events.rows[0]!.n,2);
+    assert.equal(await footprint(),footprintBefore);
+  });
+
+  test("تسویهٔ گروهی: نسخهٔ قدیمی یا خارج دامنه هیچ انتخابی را تسویه نمی‌کند", async () => {
+    requestAddress = "127.0.5.2";
+    const one = await create(cashier,"101","گروهی اتمیک");
+    const foreign = await create(cashierB,"202","گروهی شعبه دوم");
+    const send = (who:Actor,items:Array<{id:string;expectedVersion:number}>) => call(who,"POST","/withdrawals/settlements",{items,note:"اتمیک"},randomUUID());
+    const valid = {id:one.id,expectedVersion:1};
+    const mixed = await send(gmA,[valid,{id:foreign.id,expectedVersion:1}]);
+    assert.equal(mixed.statusCode,404,mixed.body);
+    assert.equal((await call(gm,"GET",`/withdrawals/${one.id}`)).json().settledAt,null);
+    const stale = await send(gm,[valid,{id:foreign.id,expectedVersion:2}]);
+    assert.equal(stale.statusCode,409,stale.body);
+    assert.equal((await call(gm,"GET",`/withdrawals/${one.id}`)).json().settledAt,null);
+    assert.equal((await send(gm,[valid,valid])).statusCode,400);
+    for (const who of [cashier,supervisor,accountant]) {
+      assert.equal((await send(who,[valid])).statusCode,403);
+      assert.equal((await call(who,"GET","/withdrawals/selection")).statusCode,403);
+    }
+    await owner.db.updateTable("identity.session").set({pin_unlocked:true}).where("user_id","=",gm.id).execute();
+    try { assert.equal((await send(gm,[valid])).statusCode,403); }
+    finally { await owner.db.updateTable("identity.session").set({pin_unlocked:false}).where("user_id","=",gm.id).execute(); }
+    const concurrent = await Promise.all([send(gm,[valid]),send(gm,[valid])]);
+    assert.deepEqual(concurrent.map(r=>r.statusCode).sort(),[200,409]);
+    const direct = await sql<{n:number}>`SELECT count(*)::int n FROM identity.staff_withdrawal_settlement WHERE withdrawal_id=${one.id}::uuid`.execute(owner.db);
+    assert.equal(direct.rows[0]!.n,1);
+    assert.equal(await footprint(),footprintBefore);
+  });
+
+  test("تسویهٔ گروهی: بازپخش و بررسی پس از تغییر دامنه بسته‌اند؛ نگهبان SQL تغییر را رد می‌کند", async () => {
+    requestAddress = "127.0.5.3";
+    const manager = await actor("admin",A);
+    const w = await create(cashier,"103","تسویه دامنه");
+    const body={items:[{id:w.id,expectedVersion:1}],note:"تسویه"}; const key=randomUUID();
+    assert.equal((await call(manager,"POST","/withdrawals/settlements",body,key)).statusCode,200);
+    await owner.db.updateTable("identity.user_role").set({branch_id:branchB}).where("user_id","=",manager.id).execute();
+    assert.equal((await call(manager,"POST","/withdrawals/settlements",body,key)).statusCode,404);
+    assert.equal((await call(manager,"GET",`/withdrawals/settlements/by-key/${key}`)).statusCode,404);
+    await assert.rejects(sql`UPDATE identity.staff_withdrawal_settlement SET note='تغییر' WHERE withdrawal_id=${w.id}::uuid`.execute(owner.db),/فقط قابل درج/);
+    await assert.rejects(sql`DELETE FROM identity.staff_withdrawal_settlement WHERE withdrawal_id=${w.id}::uuid`.execute(owner.db),/فقط قابل درج/);
+    const unrecorded=await create(cashier,"104","رد مستقیم");
+    await assert.rejects(owner.db.transaction().execute(async trx=>{
+      await sql`SELECT platform.set_actor(${cashier.id}::uuid)`.execute(trx);
+      await sql`INSERT INTO identity.staff_withdrawal_settlement(withdrawal_id,version,batch_id,actor_id,note)
+        VALUES(${unrecorded.id}::uuid,1,${randomUUID()}::uuid,${cashier.id}::uuid,'غیرمجاز')`.execute(trx);
+    }),/مجوز/);
+    assert.equal(await footprint(),footprintBefore);
   });
 });

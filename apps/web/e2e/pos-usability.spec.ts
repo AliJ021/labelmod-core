@@ -107,6 +107,28 @@ test("catalog shows stock and previews correctly sized labels; changing selectio
   await expect(panel.getByRole("button",{name:"چاپ لیبل بارکد",exact:true})).toHaveCount(0);
   expect(api.calls).toContain("GET /products/"+product.id+"/stock-matrix");
 });
+test("bulk label list keeps per-variant counts across reload and sends the chosen preset size",async({page,api})=>{
+  let body:Record<string,unknown>|undefined;
+  api.handlers.set("POST /labels",async route=>{body=route.request().postDataJSON();await route.fulfill({contentType:"text/html",body:'<!doctype html><html lang="fa"><body><p>BULK LABEL</p></body></html>'});});
+  await openCatalog(page);
+  await page.locator("main").getByRole("button",{name:"چاپ لیبل بارکد",exact:true}).click();
+  await expect(page.getByRole("region",{name:"فهرست چاپ گروهی"})).toContainText("خالی است");
+  await page.getByRole("button",{name:"انتخاب تنوع و چاپ لیبل",exact:true}).click();
+  const panel=page.getByRole("region",{name:"موجودی و چاپ بارکد"});
+  await panel.getByRole("textbox",{name:"تعداد لیبل TR-1405-NAVY-XL"}).fill("۳");
+  await panel.getByRole("button",{name:"افزودن به فهرست چاپ گروهی"}).click();
+  const queue=page.getByRole("region",{name:"فهرست چاپ گروهی"});
+  await expect(queue).toContainText("۳");
+  await page.reload();
+  await expect(queue.getByRole("textbox",{name:"تعداد لیبل TR-1405-NAVY-XL"})).toHaveValue("3");
+  await queue.getByRole("combobox",{name:"اندازهٔ لیبل"}).selectOption("40x25");
+  await queue.getByRole("button",{name:/پیش‌نمایش .* لیبل/}).click();
+  await expect(page.frameLocator('iframe[title="پیش‌نمایش چاپ بارکد"]').getByText("BULK LABEL")).toBeVisible();
+  expect(body).toEqual({items:[{variationId:"v1",count:3}],layout:"roll",rollWidthMm:40,rollHeightMm:25});
+  expect(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth+1)).toBe(true);
+  await queue.getByRole("button",{name:"پاک‌کردن فهرست"}).click();
+  await expect(queue).toContainText("خالی است");
+});
 test("personal PIN is discoverable and accepts Persian digits with confirmation",async({page,api})=>{
   let submitted:Record<string,unknown>|undefined;
   api.handlers.set("POST /auth/pin",async route=>{submitted=route.request().postDataJSON();await route.fulfill({json:{ok:true,hasPin:true}});});

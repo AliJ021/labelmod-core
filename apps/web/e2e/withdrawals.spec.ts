@@ -18,6 +18,8 @@ const GM = { id: ME, name: "مدیر آزمایشی" };
 const W1 = "55555555-5555-4555-8555-555555555551";
 const W2 = "55555555-5555-4555-8555-555555555552";
 
+test.beforeEach(async ({ api }) => { api.defaults["GET /withdrawals/owners"] = { owners: [CASHIER, GM] }; });
+
 const item = (id: string, owner: { id: string; name: string }, amount: string, reason: string, version = 1): WithdrawalItem => ({
   id, owner, createdAt: "2026-10-01T06:30:00Z", version, amount, reason,
   correctedAt: version > 1 ? "2026-10-02T08:00:00Z" : null, correctedBy: version > 1 ? GM.name : null,
@@ -41,6 +43,63 @@ async function openMine(page: Page) {
   await page.goto("/?page=settings&settings.tab=withdrawals");
   await expect(page.getByRole("heading", { name: "برداشت‌های من", level: 1 })).toBeVisible();
 }
+
+test("bulk settlement selects all filtered versions across pages, reviews exact total and keeps a lost-response key", async ({ page, api }) => {
+  const one=item(W1,CASHIER,"101","ثبت اول"),two=item(W2,CASHIER,"102","ثبت دوم");
+  api.defaults["GET /withdrawals/owners"]={owners:[CASHIER,GM]};
+  api.handlers.set("GET /withdrawals",route=>json(route,{items:[one],total:21,page:1,pageSize:20}));
+  let selectedOwner="",posts=0,key="",recorded=false;
+  api.handlers.set("GET /withdrawals/selection",async(route,url)=>{
+    selectedOwner=url.searchParams.get("ownerId") ?? "";
+    await json(route,{items:[one,two]});
+  });
+  api.handlers.set("POST /withdrawals/settlements",async route=>{
+    posts++; key=route.request().headers()["idempotency-key"]!;
+    expect(route.request().postDataJSON()).toEqual({items:[{id:W1,expectedVersion:1},{id:W2,expectedVersion:1}],note:"تسویهٔ دوره"});
+    recorded=true;
+    api.handlers.set(`GET /withdrawals/settlements/by-key/${key}`,r=>json(r,{status:"recorded",count:2}));
+    await json(route,{error:{code:"response_lost",message:"پاسخ قطع شد"}},502);
+  });
+  await page.goto("/?page=settings&settings.tab=withdrawal-log");
+  await page.getByLabel("کاربر برداشت",{exact:true}).selectOption(CASHIER.id);
+  await page.getByLabel("وضعیت تسویه",{exact:true}).selectOption("open");
+  await page.getByRole("button",{name:"انتخاب همهٔ تسویه‌نشده‌های این فیلتر",exact:true}).click();
+  expect(selectedOwner).toBe(CASHIER.id);
+  await page.getByLabel("یادداشت تسویه",{exact:true}).fill("تسویهٔ دوره");
+  await page.getByRole("button",{name:"تسویهٔ انتخاب‌ها",exact:true}).click();
+  const dialog=page.getByRole("dialog",{name:"تأیید تسویهٔ برداشت‌های انتخاب‌شده"});
+  await expect(dialog).toContainText("20٫3");
+  await expect(dialog).toContainText(CASHIER.name);
+  expect(posts).toBe(0);
+  await dialog.getByRole("button",{name:"تأیید و ثبت تسویه",exact:true}).click();
+  await expect.poll(()=>posts).toBe(1); expect(recorded).toBe(true);
+  await page.reload();
+  await expect(page.getByLabel("یادداشت تسویه",{exact:true})).toBeDisabled();
+  await page.getByRole("button",{name:"نتیجه نامعلوم؛ بررسی وضعیت",exact:true}).click();
+  await page.getByRole("button",{name:"بررسی وضعیت",exact:true}).click();
+  await expect(page.getByRole("status").filter({hasText:"انتخاب‌ها تسویه شدند"})).toBeVisible();
+  expect(posts).toBe(1);
+});
+
+test("bulk settlement conflict clears selection, while settled rows remain visible and cannot be selected", async ({page,api})=>{
+  let row=item(W1,CASHIER,"101","ثبت قدیمی");
+  const settled={...item(W2,GM,"200","تسویه قبلی"),settledAt:"2026-10-03T03:00:00Z",settledBy:GM.name};
+  api.defaults["GET /withdrawals/owners"]={owners:[CASHIER,GM]};
+  api.handlers.set("GET /withdrawals",route=>json(route,{items:[row,settled],total:2,page:1,pageSize:20}));
+  api.handlers.set("POST /withdrawals/settlements",async route=>{
+    row={...row,version:2,amount:"102"};
+    await json(route,{error:{code:"withdrawal_stale",message:"انتخاب قدیمی است؛ دوباره انتخاب کنید"}},409);
+  });
+  await page.goto("/?page=settings&settings.tab=withdrawal-log");
+  await expect(page.getByRole("checkbox",{name:`انتخاب برداشت ${GM.name}، تسویه قبلی`})).toBeDisabled();
+  await page.getByRole("button",{name:"انتخاب تسویه‌نشده‌های این صفحه",exact:true}).click();
+  await page.getByLabel("یادداشت تسویه",{exact:true}).fill("تسویه");
+  await page.getByRole("button",{name:"تسویهٔ انتخاب‌ها",exact:true}).click();
+  await page.getByRole("button",{name:"تأیید و ثبت تسویه",exact:true}).click();
+  await expect(page.getByRole("alert")).toContainText("انتخاب قدیمی است");
+  await expect(page.getByRole("checkbox",{name:`انتخاب برداشت ${CASHIER.name}، ثبت قدیمی`})).not.toBeChecked();
+  expect(api.calls.filter(c=>c==="POST /withdrawals/settlements")).toHaveLength(1);
+});
 
 test.describe("برداشت‌های من", () => {
   test("ثبت با عمل ایمن: مبلغ تومانی به ریال، شناسهٔ عملیات، بی شناسهٔ مالک؛ فهرست تازه می‌شود", async ({ page, api }) => {

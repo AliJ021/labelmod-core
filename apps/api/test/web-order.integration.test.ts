@@ -67,10 +67,10 @@ describe("سفارش سایت (ووکامرس)", { skip }, () => {
 
   const auth = () => ({ headers: { authorization: `Bearer ${key}` } });
 
-  async function order(payload: Record<string, unknown>) {
+  async function order(payload: Record<string, unknown>, url = "/web/orders") {
     return await app.inject({
       method: "POST",
-      url: "/web/orders",
+      url,
       ...auth(),
       payload,
     });
@@ -177,7 +177,7 @@ describe("سفارش سایت (ووکامرس)", { skip }, () => {
     app = await buildApp({
       db: handle.db,
       auth: new AuthService(handle.db),
-      config: loadConfig({ ...process.env, NODE_ENV: "test", LOG_LEVEL: "fatal" }),
+      config: loadConfig({ ...process.env, NODE_ENV: "test", LOG_LEVEL: "fatal", WEB_PUSH_SECRET: undefined }),
     });
     await app.ready();
   });
@@ -189,6 +189,55 @@ describe("سفارش سایت (ووکامرس)", { skip }, () => {
   });
 
   // ── احراز هویت ──────────────────────────────────────────────────
+
+  test("Woo diagnostics resolves warehouse codes and enforces the resolved branch", async () => {
+    const username = `woo-admin-${suffix}`;
+    const user = await handle.db.insertInto("identity.app_user").values({ username,
+      full_name: "مدیر آزمون اتصال", password_hash: await hashSecret(PASSWORD), pin_hash: null,
+      mobile: null, totp_secret: null, is_active: true }).returning("id").executeTakeFirstOrThrow();
+    await handle.db.insertInto("identity.user_role").values({ user_id: user.id, role_code: "admin", branch_id: BRANCH }).execute();
+    const logged = await loginWithMfa(app, { method: "POST", url: "/auth/login", payload: { username, password: PASSWORD } });
+    assert.equal(logged.statusCode, 200, logged.body);
+    const cookies = Object.fromEntries(logged.cookies.map(c => [c.name, c.value]));
+    const human = { cookies, headers: { "x-csrf-token": cookies.labelmod_csrf! } };
+    const check = () => app.inject({ method: "POST", url: "/settings/woocommerce/test", ...human, payload: {} });
+    const prior = await handle.db.selectFrom("platform.setting").select("value")
+      .where("key", "=", "web.stock_warehouse").executeTakeFirstOrThrow();
+    const setWarehouse = (value: unknown) => sql`SELECT platform.set_setting('web.stock_warehouse',
+      ${JSON.stringify(value)}::jsonb, 'Woo diagnostic warehouse regression', ${SYSTEM_USER}::uuid)`.execute(handle.db);
+    try {
+      await setWarehouse("STORE");
+      const config = await app.inject({ method: "GET", url: "/settings/woocommerce", ...human });
+      assert.equal(config.statusCode, 200, config.body);
+      assert.equal(config.json().warehouseCode, "STORE");
+      assert.equal(config.json().warehouseId, STORE_WH);
+      // Reaching signing validation proves local resolution passed; no external request is made.
+      const resolved = await check();
+      assert.equal(resolved.statusCode, 200, resolved.body);
+      assert.equal(resolved.json().code, "missing_secret");
+      const stored = await handle.db.selectFrom("platform.setting").select("value")
+        .where("key", "=", "web.stock_warehouse").executeTakeFirstOrThrow();
+      assert.equal(stored.value, "STORE", "diagnostics must preserve the worker's code setting");
+
+      await setWarehouse(`MISSING-${suffix}`);
+      const missing = await check();
+      assert.equal(missing.statusCode, 200, missing.body);
+      assert.equal(missing.json().code, "warehouse");
+      assert.equal(missing.json().remote, null);
+
+      const other = await sql<{ id: string }>`INSERT INTO platform.branch(code,name)
+        VALUES(${`WOO-${suffix}`}, 'شعبه دیگر آزمون') RETURNING id`.execute(handle.db);
+      const foreignCode = `FOREIGN-${suffix}`;
+      await sql`INSERT INTO inventory.warehouse(branch_id,code,name,kind)
+        VALUES(${other.rows[0]!.id}::uuid, ${foreignCode}, 'انبار شعبه دیگر', 'store')`.execute(handle.db);
+      await setWarehouse(foreignCode);
+      const forbidden = await check();
+      assert.equal(forbidden.statusCode, 403, forbidden.body);
+      assert.equal(forbidden.json().error.code, "branch_forbidden");
+    } finally {
+      await setWarehouse(prior.value);
+    }
+  });
 
   test("تست اتصال همان کلید و دامنه را می‌سنجد و در تکرار اثر مالی ندارد", async () => {
     const url = `/web/connection?branchId=${BRANCH}&warehouseId=${STORE_WH}&sku=${encodeURIComponent(sku)}`;
@@ -748,4 +797,133 @@ describe("سفارش سایت (ووکامرس)", { skip }, () => {
     finally { await sql`UPDATE identity.permission_rule SET allowed=true WHERE role_code='web' AND operation='web.refund'`.execute(handle.db); }
   });
 
+  test("F100: explicit full discount preserves stock, posting, replay and zero-money human-reviewed return", async () => {
+    // موجودی مستقل از ترتیب آزمون‌های قبلی؛ همان سناریوی ۵ عدد به ۴ عدد.
+    const sku = `FREE-${suffix}`, sku2 = `FREE-MIXED-${suffix}`;
+    const product = await sql<{ id: string }>`INSERT INTO catalog.product(code,name_internal)
+      VALUES(${`PFREE-${suffix}`},'کالای تخفیف کامل آزمون') RETURNING id`.execute(handle.db);
+    for (const code of [sku, sku2]) {
+      const variation = await sql<{ id: string }>`INSERT INTO catalog.variation(product_id,color,size,sku)
+        VALUES(${product.rows[0]!.id}::uuid,${code},'M',${code}) RETURNING id`.execute(handle.db);
+      const id = variation.rows[0]!.id;
+      await sql`INSERT INTO catalog.price(variation_id,price_list,amount) VALUES(${id}::uuid,'default',2000000)`.execute(handle.db);
+      await sql`SELECT inventory.apply_movement(${id}::uuid,${STORE_WH}::uuid,5,'purchase_receipt','test_receipt',
+        '00000000-0000-7000-8000-00000000fa12'::uuid,${SYSTEM_USER}::uuid,800000)`.execute(handle.db);
+    }
+    const capability = await app.inject({ method: "GET", url: `/web/connection?branchId=${BRANCH}&warehouseId=${STORE_WH}`, ...auth() });
+    assert.equal(capability.json().features.explicitLineDiscount, true);
+    assert.equal((await app.inject({ method: "POST", url: "/web/discounted-orders", payload: {} })).statusCode, 401);
+    const base = { branchId: BRANCH, warehouseId: STORE_WH, shippingAmount: "0", paymentMethod: "gateway", paidAmount: "0" };
+    const freeLine = { sku, qty: "1", unitPrice: "2000000", discountAmount: "2000000" };
+    const externalId = `free-${suffix}`;
+    const free = { ...base, externalId, lines: [freeLine] };
+    const created = await order(free, "/web/discounted-orders");
+    assert.equal(created.statusCode, 201, created.body);
+    const invoiceId = created.json<OrderResponse>().invoiceId;
+    const replay = await order(free);
+    assert.equal(replay.statusCode, 200, replay.body);
+    assert.equal(replay.json<OrderResponse>().invoiceId, invoiceId);
+    const state = await sql<{ gross: string; discount: string; net: string; paid: string; cogs: string; payments: string; stock: string; batch: string }>`
+      SELECT gross_amount::text AS gross,discount_amount::text AS discount,net_amount::text AS net,
+        paid_amount::text AS paid,cogs_amount::text AS cogs,posting_batch_id AS batch,
+        (SELECT count(*)::text FROM treasury.payment WHERE invoice_id=i.id) AS payments,
+        (SELECT sum(qty)::text FROM inventory.stock_movement WHERE ref_type='invoice' AND ref_id=i.id) AS stock
+      FROM sales.invoice i WHERE id=${invoiceId}::uuid`.execute(handle.db);
+    const row = state.rows[0]!;
+    assert.equal(BigInt(row.gross), 2000000n); assert.equal(BigInt(row.discount), 2000000n);
+    assert.equal(BigInt(row.net), 0n); assert.equal(BigInt(row.paid), 0n);
+    assert.equal(BigInt(row.cogs), 800000n); assert.equal(row.payments, "0"); assert.equal(Number(row.stock), -1);
+    const balance = await sql<{ on_hand: string }>`SELECT b.on_hand::text FROM inventory.stock_balance b
+      JOIN catalog.variation v ON v.id=b.variation_id WHERE v.sku=${sku} AND b.warehouse_id=${STORE_WH}::uuid`.execute(handle.db);
+    assert.equal(Number(balance.rows[0]!.on_hand), 4, "فروش و تکرار آن موجودی ۵ را فقط یک بار به ۴ می‌رساند");
+    const changedDiscount = await order({ ...free, lines: [{ ...freeLine, discountAmount: "1999999" }] });
+    assert.equal(changedDiscount.statusCode, 409, changedDiscount.body);
+    const invoicesBefore = await handle.db.selectFrom("sales.invoice").select(({ fn }) => fn.countAll<string>().as("n")).executeTakeFirstOrThrow();
+    for (const [tag, line] of [
+      ["zero", { ...freeLine, unitPrice: "0", discountAmount: "0" }],
+      ["negative", { ...freeLine, unitPrice: "-1" }],
+      ["excess", { ...freeLine, discountAmount: "2000001" }],
+    ] as const) {
+      const rejected = await order({ ...free, externalId: `${tag}-${suffix}`, lines: [line] });
+      assert.ok([400, 422].includes(rejected.statusCode), rejected.body);
+      const inbox = await handle.db.selectFrom("platform.inbox_message").select("event_id")
+        .where("source", "=", "api.web.order").where("event_id", "=", `woo-order:${tag}-${suffix}`).execute();
+      assert.equal(inbox.length, 0, "رد درخواست هیچ عملیات نیمه‌کاره نمی‌گذارد");
+    }
+    assert.deepEqual(await handle.db.selectFrom("sales.invoice").select(({ fn }) => fn.countAll<string>().as("n")).executeTakeFirstOrThrow(), invoicesBefore);
+    const discountRules = await sql<{ operation: string; allowed: boolean }>`SELECT operation,allowed FROM identity.permission_rule
+      WHERE role_code='web' AND operation IN ('sale.discount','sale.discount_high')`.execute(handle.db);
+    await sql`UPDATE identity.permission_rule SET allowed=false WHERE role_code='web'
+      AND operation IN ('sale.discount','sale.discount_high')`.execute(handle.db);
+    try {
+      const denied = await order({ ...free, externalId: `no-discount-permission-${suffix}` }, "/web/discounted-orders");
+      assert.equal(denied.statusCode, 403, denied.body);
+    } finally {
+      for (const rule of discountRules.rows) await sql`UPDATE identity.permission_rule SET allowed=${rule.allowed}
+        WHERE role_code='web' AND operation=${rule.operation}`.execute(handle.db);
+    }
+    const mixed = await order({ ...base, externalId: `mixed-free-${suffix}`, paidAmount: "2000000", paymentRef: `mixed-${suffix}`,
+      lines: [freeLine, { sku: sku2, qty: "1", unitPrice: "2000000" }] });
+    assert.equal(mixed.statusCode, 201, mixed.body);
+    assert.equal(mixed.json<OrderResponse>().payableAmount, "2000000");
+    const legacy = { ...base, externalId: `legacy-discount-${suffix}`, paidAmount: "2000000", paymentRef: `legacy-${suffix}`,
+      lines: [{ sku: sku2, qty: "1", unitPrice: "2000000" }] };
+    assert.equal((await order(legacy)).statusCode, 201);
+    assert.equal((await order(legacy)).statusCode, 200, "نبود فیلد تخفیف اثرانگشت قدیمی را نگه می‌دارد");
+    assert.equal((await order({ ...legacy, lines: [{ ...legacy.lines[0], discountAmount: "0" }] })).statusCode, 409,
+      "تخفیف ارسال‌شده عضو اثرانگشت است، حتی صفر");
+
+    // دوره پس از آخرین سفارش بسته می‌شود؛ نگهبان دورهٔ بسته دور زده نمی‌شود.
+    const posted = await sql<{ sale_entry: string; cogs_entry: string }>`SELECT * FROM sales.post_batch(${row.batch}::uuid,${SYSTEM_USER}::uuid)`.execute(handle.db);
+    assert.ok(posted.rows[0]!.sale_entry); assert.ok(posted.rows[0]!.cogs_entry);
+    for (const id of [posted.rows[0]!.sale_entry, posted.rows[0]!.cogs_entry]) {
+      const balanced = await sql<{ diff: string }>`SELECT (sum(debit)-sum(credit))::text AS diff FROM ledger.journal_line WHERE entry_id=${id}::uuid`.execute(handle.db);
+      assert.equal(BigInt(balanced.rows[0]!.diff), 0n);
+    }
+
+    const refund = { orderId: externalId, refundId: `free-return-${suffix}`, amount: "0", shippingAmount: "0",
+      lines: [{ lineNo: 1, qty: "1", restock: true }] };
+    const requested = await app.inject({ method: "POST", url: "/web/refunds", ...auth(), payload: refund });
+    assert.equal(requested.statusCode, 201, requested.body);
+    const requestId = requested.json().requestId as string;
+    assert.equal(requested.json().status, "pending");
+    const autoDecision = await app.inject({ method: "POST", url: `/web-refund-requests/${requestId}/decision`, ...auth(),
+      payload: { decision: "approved", reason: "درخواست سایت" } });
+    assert.equal(autoDecision.statusCode, 403);
+    assert.equal((await handle.db.selectFrom("sales.sale_return").select("id").where("invoice_id", "=", invoiceId).execute()).length, 0);
+    const reviewerName = `free-reviewer-${suffix}`;
+    const reviewer = await handle.db.insertInto("identity.app_user").values({ username: reviewerName, full_name: "بازبین مرجوعی رایگان",
+      password_hash: await hashSecret(PASSWORD), pin_hash: null, mobile: null, totp_secret: null, is_active: true }).returning("id").executeTakeFirstOrThrow();
+    await handle.db.insertInto("identity.user_role").values({ user_id: reviewer.id, role_code: "accountant", branch_id: BRANCH }).execute();
+    const logged = await loginWithMfa(app, { method: "POST", url: "/auth/login", payload: { username: reviewerName, password: PASSWORD } });
+    assert.equal(logged.statusCode, 200, logged.body);
+    const cookies = Object.fromEntries(logged.cookies.map(c => [c.name, c.value]));
+    const decide = (id: string) => app.inject({ method: "POST", url: `/web-refund-requests/${id}/decision`, cookies,
+      headers: { "x-csrf-token": cookies.labelmod_csrf! }, payload: { decision: "approved", reason: "بازگشت کالای رایگان تأیید شد؛ بدون پرداخت وجه" } });
+    const falseCash = await app.inject({ method: "POST", url: "/web/refunds", ...auth(), payload: { ...refund, refundId: `false-cash-${suffix}`, amount: "1" } });
+    assert.equal(falseCash.statusCode, 201, falseCash.body);
+    const refused = await decide(falseCash.json().requestId);
+    assert.ok(refused.statusCode >= 400, refused.body);
+    assert.equal((await handle.db.selectFrom("sales.sale_return").select("id").where("invoice_id", "=", invoiceId).execute()).length, 0);
+    const approved = await decide(requestId);
+    assert.equal(approved.statusCode, 200, approved.body);
+    assert.equal((await decide(requestId)).statusCode, 200, "تکرار تصمیم فقط بازپخش است");
+    const returned = await sql<{ count: string; cash: string; stock: string; amount: string }>`SELECT count(*)::text AS count,
+      coalesce(sum(refund_amount),0)::text AS amount,
+      (SELECT count(*)::text FROM treasury.payment WHERE invoice_id=${invoiceId}::uuid) AS cash,
+      (SELECT coalesce(sum(qty),0)::text FROM inventory.stock_movement WHERE ref_type='sale_return'
+        AND ref_id IN (SELECT id FROM sales.sale_return WHERE invoice_id=${invoiceId}::uuid)) AS stock
+      FROM sales.sale_return WHERE invoice_id=${invoiceId}::uuid`.execute(handle.db);
+    assert.equal(returned.rows[0]!.count, "1"); assert.equal(returned.rows[0]!.cash, "0");
+    assert.equal(BigInt(returned.rows[0]!.amount), 0n); assert.equal(Number(returned.rows[0]!.stock), 1);
+    assert.equal((await app.inject({ method: "POST", url: "/web/refunds", ...auth(), payload: refund })).statusCode, 200);
+    // برگشت بی‌اثر مالی و بدون ورود کالا هنوز نیازمند تصمیم طراحی جداگانه است؛ سند صفر جعل نمی‌شود.
+    const noRestock = await app.inject({ method: "POST", url: "/web/refunds", ...auth(), payload: {
+      ...refund, orderId: `mixed-free-${suffix}`, refundId: `no-restock-free-${suffix}`, lines: [{ lineNo: 1, qty: "1", restock: false }],
+    } });
+    assert.equal(noRestock.statusCode, 201, noRestock.body);
+    const noEffect = await decide(noRestock.json().requestId);
+    assert.ok(noEffect.statusCode >= 400, noEffect.body);
+    assert.equal((await handle.db.selectFrom("sales.sale_return").select("id").where("invoice_id", "=", mixed.json<OrderResponse>().invoiceId).execute()).length, 0);
+  });
 });

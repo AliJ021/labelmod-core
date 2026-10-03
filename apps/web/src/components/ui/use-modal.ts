@@ -75,6 +75,9 @@ export function useModalDialog(open: boolean, options: {
         if (latest.current.dismissible !== false) latest.current.onDismiss();
       },
       onClose() {
+        // رویداد close یک Task جداست؛ اگر پیش از رسیدنش لایه دوباره باز شده باشد (اجراکنندهٔ
+        // پربار: Esc و بلافاصله Enter)، این رویداد مال بستنِ قبلی است و نباید لایهٔ تازه را ببندد.
+        if (ref.current?.open) return;
         // مرورگر لایهٔ «بسته‌نشدنی» (عمل مالی در حال اجرا) را به‌زور بست: برمی‌گردد.
         if (isOpen.current && latest.current.dismissible === false) { ref.current?.showModal(); return; }
         restore();

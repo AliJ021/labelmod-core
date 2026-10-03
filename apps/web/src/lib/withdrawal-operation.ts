@@ -1,6 +1,6 @@
-import type { CorrectionPayload } from "./withdrawals.ts";
+import type { CorrectionPayload, SettlementPayload } from "./withdrawals.ts";
 
-export type WithdrawalBody = { amount: string; reason: string } | CorrectionPayload;
+export type WithdrawalBody = { amount: string; reason: string } | CorrectionPayload | SettlementPayload;
 export interface WithdrawalOperation { version: 1; userId: string; target: string; key: string; body: WithdrawalBody }
 export const withdrawalStorageKey = (userId: string, target: string) => `labelmod.withdrawal-operation.${userId}.${target}`;
 
@@ -9,9 +9,21 @@ export function parseWithdrawalOperation(raw: string | null, userId: string, tar
   if (raw === null) return null;
   const v = JSON.parse(raw) as Partial<WithdrawalOperation> | null;
   const b = v?.body;
+  if (target === "settle") {
+    if (!v || v.version !== 1 || v.userId !== userId || v.target !== target
+      || typeof v.key !== "string" || !/^[a-f0-9-]{36}$/i.test(v.key) || !b || !("items" in b)
+      || !Array.isArray(b.items) || b.items.length < 1 || b.items.length > 500
+      || new Set(b.items.map(i => i.id)).size !== b.items.length
+      || b.items.some(i => typeof i.id !== "string" || !/^[a-f0-9-]{36}$/i.test(i.id)
+        || !Number.isInteger(i.expectedVersion) || i.expectedVersion < 1 || typeof i.amount !== "string"
+        || !/^\d{1,18}$/.test(i.amount) || typeof i.ownerName !== "string" || !i.ownerName.trim())
+      || typeof b.note !== "string" || !b.note.trim() || b.note.length > 500)
+      throw new Error("عملیات تسویهٔ ذخیره‌شده خوانا نیست؛ ثبت تازه تا بررسی بسته است.");
+    return v as WithdrawalOperation;
+  }
   if (!v || v.version !== 1 || v.userId !== userId || v.target !== target
     || typeof v.key !== "string" || !/^[a-f0-9-]{36}$/i.test(v.key)
-    || !b || typeof b.amount !== "string" || !/^\d{1,18}$/.test(b.amount)
+    || !b || !("amount" in b) || typeof b.amount !== "string" || !/^\d{1,18}$/.test(b.amount)
     || typeof b.reason !== "string" || !b.reason.trim() || b.reason.length > 500
     || (target !== "create" && (!("expectedVersion" in b) || !Number.isInteger(b.expectedVersion)
       || b.expectedVersion < 1 || typeof b.note !== "string" || !b.note.trim() || b.note.length > 500)))

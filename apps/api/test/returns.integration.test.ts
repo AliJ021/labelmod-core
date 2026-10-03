@@ -407,7 +407,7 @@ describe("برگشت از فروش و دوره ثبت", { skip }, () => {
           refundMethod: "snappay", refundPaymentId: paymentId, refundReference: `SNAP-DIFF-${suffix}` } });
       assert.equal(post.statusCode, 200, post.body);
       const linked = await app.inject({ method: "GET", url: `/invoices/${post.json().replacementInvoiceId}/refund-sources`, ...s });
-      assert.deepEqual(linked.json().payments, [{ id: paymentId, reference: `SNAP-${suffix}`, remaining: "1000000" }]);
+      assert.deepEqual(linked.json().payments, [{ id: paymentId, methodCode: "snappay", reference: `SNAP-${suffix}`, remaining: "1000000" }]);
       assert.equal((await app.inject({ method: "PUT", url: "/snappay/config", ...a, payload: { accountId: "" } })).statusCode, 200);
       const replacement = await app.inject({ method: "GET", url: `/invoices/${post.json().replacementInvoiceId}`, ...s });
       const result = await app.inject({ method: "POST", url: "/returns/commit", ...s,

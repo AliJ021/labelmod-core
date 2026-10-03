@@ -100,7 +100,16 @@ class LMC_Order_Sync
             return;
         }
 
-        $res = LMC_Client::post('/web/orders', $payload);
+        $supported = self::check_discount_support($payload);
+        if (is_wp_error($supported)) {
+            self::fail($order, $supported, LMC_Client::is_retryable($supported));
+            return;
+        }
+        $path = '/web/orders';
+        foreach ($payload['lines'] as $line) {
+            if (array_key_exists('discountAmount', $line)) { $path = '/web/discounted-orders'; break; }
+        }
+        $res = LMC_Client::post($path, $payload);
 
         if (is_wp_error($res)) {
             self::fail($order, $res, LMC_Client::is_retryable($res));
@@ -142,6 +151,18 @@ class LMC_Order_Sync
     {
         $saved = $order->get_meta(self::META_PAYLOAD);
         if (is_array($saved) && is_array($order->get_meta(self::META_LINES))) {
+            // فقط مرجع جاافتاده تکمیل می‌شود؛ مبلغ، اقلام و هویت snapshot ثابت‌اند.
+            // paymentRef عضو اثرانگشت runOnce در /web/orders نیست؛ پاسخ نامعلوم
+            // همچنان با همان externalId بازپخش می‌شود، نه با فاکتور تازه.
+            if (!array_key_exists('paymentRef', $saved) && $order->get_meta(self::META_INVOICE) === '') {
+                $ref = self::audited_payment_reference($order);
+                if (is_wp_error($ref)) { return $ref; }
+                if ($ref !== '') {
+                    $saved['paymentRef'] = $ref;
+                    $order->update_meta_data(self::META_PAYLOAD, $saved);
+                    $order->save();
+                }
+            }
             return $saved;
         }
         if ($order->get_meta(self::META_INVOICE) !== '') {
@@ -222,8 +243,20 @@ class LMC_Order_Sync
             //    سامانه یک تنظیم است و اگر روزی روشن شود، همان یک
             //    تعریف باید همه‌جا حاکم باشد — نه عددی که ووکامرس
             //    حساب کرده.
-            $line_total = self::to_rial($item->get_total());
+            $raw_total = trim((string) $item->get_total());
+            $line_total = self::to_rial($raw_total);
             $unit       = (int) round($line_total / $qty);
+            $discount = null;
+            // صفر دقیق پس از تخفیف کامل، با مبلغ اصلی مثبت؛ نه قیمت مفقود،
+            // منفی یا عدد مثبتی که با گردکردن صفر شده است.
+            if ($unit === 0 && preg_match('/^0+(?:\.0+)?$/D', $raw_total) && self::is_eligible($order)) {
+                $subtotal = trim((string) $item->get_subtotal());
+                $gross = self::to_rial($subtotal);
+                if (preg_match('/^\d+(?:\.\d+)?$/D', $subtotal) && $gross > 0 && $gross % $qty === 0) {
+                    $unit = intdiv($gross, $qty);
+                    $discount = $gross;
+                }
+            }
             if ($unit <= 0) {
                 return new WP_Error(
                     'lmc_zero_price',
@@ -236,11 +269,26 @@ class LMC_Order_Sync
                 );
             }
 
+            // کوپن روی چند عدد ممکن است مبلغ خالص را تقسیم‌ناپذیر کند.
+            // فقط قیمت اصلی واقعی + تخفیف صریح مجاز است؛ اختلاف گردکردن بدهی نمی‌سازد.
+            if ($discount === null && $unit * $qty !== $line_total) {
+                $subtotal = trim((string) $item->get_subtotal());
+                $gross = self::to_rial($subtotal);
+                if (self::is_eligible($order) && preg_match('/^\d+(?:\.\d+)?$/D', $raw_total)
+                    && preg_match('/^\d+(?:\.\d+)?$/D', $subtotal) && $gross > $line_total && $gross % $qty === 0) {
+                    $unit = intdiv($gross, $qty);
+                    $discount = $gross - $line_total;
+                } else {
+                    return new WP_Error('lmc_line_rounding', 'مبلغ سطر با قیمت واحد صحیح برابر نیست؛ قیمت اصلی و تخفیف را بررسی کنید. اختلاف مبلغ ارسال نشد.', ['kind' => LMC_Client::PERMANENT]);
+                }
+            }
+
             $lines[] = [
                 'sku'       => $sku,
                 'qty'       => (string) $qty,
                 'unitPrice' => (string) $unit,
             ];
+            if ($discount !== null) { $lines[count($lines) - 1]['discountAmount'] = (string) $discount; }
         }
 
         if (!$lines) {
@@ -277,11 +325,49 @@ class LMC_Order_Sync
         }
 
         $ref = (string) $order->get_transaction_id();
+        if ($ref === '') {
+            $ref = self::audited_payment_reference($order);
+            if (is_wp_error($ref)) { return $ref; }
+        }
         if ($ref !== '') {
             $payload['paymentRef'] = $ref;
         }
 
         return $payload;
+    }
+
+    /** Core قدیمی فیلد ناشناخته را حذف می‌کند؛ تا اعلام پشتیبانی ارسال ممنوع است. */
+    public static function check_discount_support(array $payload)
+    {
+        $has_discount = false;
+        foreach ($payload['lines'] as $line) {
+            if (array_key_exists('discountAmount', $line)) { $has_discount = true; break; }
+        }
+        if (!$has_discount) { return true; }
+        $response = LMC_Client::get('/web/connection', [
+            'branchId' => $payload['branchId'], 'warehouseId' => $payload['warehouseId'],
+        ]);
+        if (is_wp_error($response)) { return $response; }
+        if (($response['protocol'] ?? null) !== 1 || ($response['authenticated'] ?? false) !== true
+            || ($response['branchId'] ?? '') !== $payload['branchId'] || ($response['warehouseId'] ?? '') !== $payload['warehouseId']
+            || ($response['features']['explicitLineDiscount'] ?? false) !== true) {
+            return new WP_Error('lmc_discount_api_upgrade', 'Core هنوز پشتیبانی تخفیف صریح سطر را تأیید نکرده است؛ ابتدا API را به‌روز کنید. سفارش ارسال نشد.', ['kind' => LMC_Client::PERMANENT]);
+        }
+        return true;
+    }
+
+    /** تنها مدرک مسیر تأیید دستیِ مجاز؛ وضعیت سفارش جای نشان پرداخت را نمی‌گیرد. */
+    private static function audited_payment_reference(WC_Order $order)
+    {
+        if ($order->get_meta(self::META_PAID) !== 'yes') { return ''; }
+        $evidence = $order->get_meta('_lmc_payment_evidence');
+        if (!is_array($evidence) || !is_string($evidence['reference'] ?? null)
+            || (int) ($evidence['actor'] ?? 0) <= 0 || empty($evidence['at'])) { return ''; }
+        $ref = trim($evidence['reference']);
+        if (mb_strlen($ref, 'UTF-8') > 120) {
+            return new WP_Error('lmc_payment_reference_invalid', 'شماره سند دریافت وجه باید حداکثر ۱۲۰ نویسه باشد؛ سند تأیید دستی را بررسی کنید.', ['kind' => LMC_Client::PERMANENT]);
+        }
+        return $ref;
     }
 
     /**

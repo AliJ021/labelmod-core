@@ -490,6 +490,30 @@ describe("خوراک‌های همگام‌سازی سایت", { skip }, () => {
     assert.equal(JSON.parse(r.body).error.code, "bad_mobile", r.body);
   });
 
+  test("صندوق مشتری تازه را فقط پس از نام می‌سازد و نام مشتری موجود را بازنویسی نمی‌کند", async () => {
+    const inv = await draft();
+    const mobile = "09129876543";
+    const attach = (fullName?: string) => app.inject({ method: "PATCH", url: `/invoices/${inv}/customer`, ...cashier(),
+      payload: { mobile, requireNameForNew: true, ...(fullName === undefined ? {} : { fullName }) } });
+    for (const name of [undefined, "   "]) {
+      const rejected = await attach(name);
+      assert.equal(rejected.statusCode, 409, rejected.body);
+      assert.equal(rejected.json().error.code, "customer_name_required");
+    }
+    const absent = await sql<{ n: string }>`SELECT count(*)::text AS n FROM sales.customer WHERE mobile_normalized = ${mobile}`.execute(handle.db);
+    assert.equal(absent.rows[0]?.n, "0");
+    const created = await attach("مشتری آزمایش نام");
+    assert.equal(created.statusCode, 200, created.body);
+    const id = created.json().customerId;
+    for (const name of [undefined, "نام جایگزین نباید ذخیره شود"]) {
+      const repeated = await attach(name);
+      assert.equal(repeated.statusCode, 200, repeated.body);
+      assert.equal(repeated.json().customerId, id);
+    }
+    const rows = await sql<{ full_name: string }>`SELECT full_name FROM sales.customer WHERE mobile_normalized = ${mobile}`.execute(handle.db);
+    assert.deepEqual(rows.rows, [{ full_name: "مشتری آزمایش نام" }]);
+  });
+
   test("چسباندن مشتری، فاکتور نهایی‌شده را دست نمی‌زند", async () => {
     // Snapshot لحظه فروش تغییرناپذیر است. اگر مشتری پس از نهایی‌شدن
     // عوض می‌شد، خریدی که به سایت رفته بود به حساب کسِ دیگری هم
