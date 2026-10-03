@@ -15,6 +15,8 @@
  *       اگر لایه اول جایی نشت کرد، لایه دوم هنوز ایستاده است.
  */
 import { ean13Svg } from "./barcode-svg.ts";
+import { ean13CheckDigit } from "./barcode.ts";
+import { code128Svg, code128TotalModules, isCode128Encodable } from "./code128.ts";
 
 /** هدر امنیتی صفحه برچسب. بدون جاوااسکریپت، بدون منبع بیرونی. */
 export const LABEL_CSP =
@@ -40,11 +42,22 @@ export interface LabelPageOptions {
   shopName: string;
   /** فقط برای `roll` — اندازه یک برچسب به میلی‌متر. */
   rollMm?: { width: number; height: number } | undefined;
-  /**
-   * تعداد ماژول بارکد هر کالا با حاشیهٔ سکوت — برای رندرکنندهٔ غیر EAN-13.
-   * نبودنش یعنی EAN-13 (۱۱۳). هندسه از پهن‌ترین بارکد برگه ساخته می‌شود.
-   */
-  barcodeModules?: ((barcode: string) => number) | undefined;
+}
+
+/**
+ * کدام نماد؟ — EAN-13 معتبر (۱۳ رقم با رقم کنترل درست، از جمله بارکد داخلی
+ * پیشوند ۲۰) همان EAN-13 می‌ماند؛ هر رشتهٔ چاپی دیگر (کد قدیمی ۱۷ رقمی دشت)
+ * عیناً Code128 می‌شود. رشته هرگز به عدد تبدیل یا بازنویسی نمی‌شود.
+ */
+export function barcodeSymbology(value: string): "ean13" | "code128" | "none" {
+  if (/^\d{13}$/.test(value) && ean13CheckDigit(value.slice(0, 12)) === value[12]) return "ean13";
+  return isCode128Encodable(value) ? "code128" : "none";
+}
+
+/** پهنای کامل بارکد به ماژول، با حاشیهٔ سکوت — ورودی `labelGeometry`. */
+export function barcodeTotalModules(value: string): number {
+  const kind = barcodeSymbology(value);
+  return kind === "ean13" ? EAN13_TOTAL_MODULES : kind === "code128" ? code128TotalModules(value) : 0;
 }
 
 const A4 = { cols: 3, rows: 8, w: 70, h: 37, marginTop: 4.5, marginLeft: 0 };
@@ -67,8 +80,8 @@ export const MIN_ROLL_MODULE_MM = 0.25;
 
 /**
  * آیا بارکدی با این تعداد ماژول (**با** حاشیهٔ سکوت هر دو طرف) در عرض این
- * برچسب با ماژول دست‌کم ۰٫۲۵mm جا می‌شود؟ — نقطهٔ اتصال رندرکنندهٔ بارکد
- * (EAN-13 امروز، Code128 سازگاری در PR جدا): فقط تعداد ماژول را می‌دهد.
+ * برچسب با ماژول دست‌کم ۰٫۲۵mm جا می‌شود؟ (EAN-13 = ۱۱۳، کد ۱۷ رقمی
+ * Code128 = ۱۶۵ — `barcodeTotalModules`.)
  */
 export function barcodeFitsWidth(totalModules: number, widthMm: number): boolean {
   return MIN_ROLL_MODULE_MM * totalModules <= widthMm - 2 * CODE_PAD_X_MM + 1e-9;
@@ -249,8 +262,10 @@ function labelHtml(item: LabelItem, shopName: string, g: LabelGeometry, width: n
 
   // بارکد نداشتن، خطا نیست: کالایی که بارکدش هنوز ساخته نشده باید
   // برچسبش چاپ شود ولی جای بارکد خالی بماند، نه اینکه کل برگه بشکند.
-  const code = item.barcode
-    ? ean13Svg(item.barcode, { moduleMm: g.moduleMm, heightMm: g.barHeightMm })
+  const kind = item.barcode ? barcodeSymbology(item.barcode) : "none";
+  const svgOpts = { moduleMm: g.moduleMm, heightMm: g.barHeightMm };
+  const code = kind === "ean13" ? ean13Svg(item.barcode as string, svgOpts)
+    : kind === "code128" ? code128Svg(item.barcode as string, svgOpts)
     : `<div class="nobarcode">${esc(item.sku)}</div>`;
 
   // شرح: دو سطر جدا (نام، سپس برند · رنگ · سایز) یا یک سطر پیوسته. هر سطر
@@ -271,10 +286,10 @@ export function labelPage(items: LabelItem[], opts: LabelPageOptions): string {
   const roll = opts.rollMm ?? { width: 50, height: 30 };
   const isRoll = opts.layout === "roll";
   const size = isRoll ? roll : { width: A4.w, height: A4.h };
-  const widths = items
-    .filter((i) => i.barcode !== null)
-    .map((i) => opts.barcodeModules?.(i.barcode as string) ?? EAN13_TOTAL_MODULES);
-  const modules = widths.length ? Math.max(...widths) : EAN13_TOTAL_MODULES;
+  // هندسه از پهن‌ترین بارکد برگه ساخته می‌شود؛ بارکد ۱۷ رقمی (۱۶۵ ماژول)
+  // در ۳۰mm جا نمی‌شود و آن برگه با پیام کمترین عرض رد می‌شود.
+  const widths = items.filter((i) => i.barcode !== null).map((i) => barcodeTotalModules(i.barcode as string));
+  const modules = Math.max(EAN13_TOTAL_MODULES, ...widths);
   const g = labelGeometry(opts.layout, size.width, size.height, modules);
   if (!g.fits) throw new LabelSizeError(size.width, size.height, modules);
 

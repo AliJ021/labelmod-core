@@ -6,17 +6,21 @@
 
 برچسب‌ها مطابق مرجع مالک (۵۰×۳۰mm پیش‌فرض: نام فروشگاه، بارکد، رقم‌ها، دو سطر شرح، قیمت درشت) و رسید (نشان متنی از نام شعبه — هیچ فایل لوگوی اصیلی در مخزن نیست؛ مهلت مرجوعی از تنظیم `return.window_hours`) دوباره گرفته شدند. تصویرهای `ui-*` از دور قبل‌اند. بارکد نمونه EAN-13 است؛ سیاست بارکد قدیمی ۱۷ رقمی و Code128 در کار جداگانه است.
 
+`label-50x30-code128-legacy.*`: کد ذخیره‌شدهٔ قدیمی ۱۷ رقمی `20514161201032064` با Code128 (۱۶۵ ماژول، ۴۱٫۲۵mm) — رشته عیناً حفظ شده؛ رمزگشای zxing-wasm در `apps/web/test/code128-decode.test.ts`.
+
 | فایل | SHA-256 |
 |---|---|
-| `label-30x20.pdf` | `35cded8a5b9fe3eb…` |
+| `label-30x20.pdf` | `707a67149e02a8e4…` |
 | `label-30x20.png` | `5c9623387f65c1f9…` |
-| `label-40x25.pdf` | `6090a748cfbc7f42…` |
+| `label-40x25.pdf` | `378f34a9f55edea2…` |
 | `label-40x25.png` | `895d7196d33b454f…` |
-| `label-50x30.pdf` | `49624aa288ea60e4…` |
+| `label-50x30-code128-legacy.pdf` | `733312a0be2521cf…` |
+| `label-50x30-code128-legacy.png` | `f5e5b183c8ab6f65…` |
+| `label-50x30.pdf` | `808885780a5e1ebb…` |
 | `label-50x30.png` | `c907612f5030546c…` |
-| `label-58x40.pdf` | `a41d6d8b4d003616…` |
+| `label-58x40.pdf` | `b3e7e9da4c659910…` |
 | `label-58x40.png` | `0e7319fc5a61b938…` |
-| `label-60x40.pdf` | `00cde17acf5d16c7…` |
+| `label-60x40.pdf` | `cd85295ef6fee0f3…` |
 | `label-60x40.png` | `8377af449ca1d174…` |
 | `label-a4.png` | `ba51635fc4750ffa…` |
 | `receipt-80mm-print.png` | `7ac93f2968bc3ff4…` |

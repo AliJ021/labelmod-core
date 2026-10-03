@@ -319,20 +319,14 @@ describe("اندازهٔ برچسب", () => {
     assert.ok(html.includes("۱٬۲۳۴٬۵۶۷٫۵"), "۱۲٬۳۴۵٬۶۷۵ ریال = ۱٬۲۳۴٬۵۶۷٫۵ تومان");
   });
 
-  test("هندسه تعداد ماژول واقعی بارکد را می‌پذیرد (نقطهٔ اتصال Code128) و زیر ۰٫۲۵mm نمی‌رود", () => {
-    // ۱۷ رقم با Code128 بهینه ≈ ۱۵۴ ماژول با حاشیهٔ سکوت — فقط عدد؛ رمزگذار این‌جا نیست.
-    assert.equal(barcodeFitsWidth(154, 50), true);
-    assert.equal(barcodeFitsWidth(154, 40), true);
-    assert.equal(barcodeFitsWidth(154, 30), false);
-    assert.equal(minRollWidthFor(154), 40);
+  test("هندسه تعداد ماژول واقعی بارکد را می‌گیرد و زیر ۰٫۲۵mm نمی‌رود", () => {
+    assert.equal(barcodeFitsWidth(165, 50), true);
+    assert.equal(barcodeFitsWidth(165, 42), false);
+    assert.equal(minRollWidthFor(165), 43);
     assert.equal(minRollWidthFor(113), 30);
-    const g = labelGeometry("roll", 50, 30, 154);
+    const g = labelGeometry("roll", 50, 30, 165);
     assert.ok(g.fits && g.moduleMm === 0.25, "۵۰×۳۰ مرجع: ماژول ۰٫۲۵mm");
     assert.equal(labelGeometry("roll", 50, 30).moduleMm, 0.375, "EAN-13 همان قبلی");
-    assert.equal(labelGeometry("roll", 30, 20, 154).fits, false);
-    assert.throws(
-      () => labelPage([item], { layout: "roll", shopName: "ف", rollMm: { width: 30, height: 20 }, barcodeModules: () => 154 }),
-      (err: unknown) => err instanceof LabelSizeError && /دست‌کم 40×20/.test(err.message),
-    );
+    assert.equal(labelGeometry("roll", 30, 20, 165).fits, false);
   });
 });
