@@ -12,8 +12,8 @@ import { StatusBadge } from "./ui/Status.tsx";
  * برچسب است، نه فقط رنگ. هیچ‌جا «پرداخت شد» یا «از صندوق رفت» گفته نمی‌شود:
  * این دفتر اثر مالی ندارد.
  */
-export function WithdrawalStatus({ item }: { item: Pick<WithdrawalItem, "version"> }) {
-  return item.version > 1
+export function WithdrawalStatus({ item }: { item: Pick<WithdrawalItem, "version" | "settledAt"> }) {
+  return item.settledAt ? <StatusBadge state="completed" label="تسویه‌شده" /> : item.version > 1
     ? <StatusBadge state="active" label={`اصلاح‌شده · نسخهٔ ${formatCount(item.version)}`} />
     : <StatusBadge state="completed" label="ثبت‌شده" />;
 }
@@ -27,6 +27,9 @@ export function WithdrawalHistory({ history, caption }: { history: readonly With
     { key: "amount", header: "مبلغ", numeric: true, cell: h => <Money rial={h.amount} exact size="sm" /> },
     { key: "reason", header: "دلیل برداشت", cell: h => h.reason },
     { key: "note", header: "دلیل اصلاح", cell: h => h.note ?? <span className="muted">—<span className="sr-only">ندارد (ثبت اولیه)</span></span> },
+    { key: "settlement", header: "تسویهٔ این نسخه", cell: h => h.settledAt
+      ? <span>{h.settledBy} · {formatJalaliMoment(h.settledAt)}<span className="cell-sub">{h.settlementNote}</span></span>
+      : "تسویه نشده" },
   ];
   return <DataTable caption={caption} columns={columns} rows={history} rowKey={h => String(h.version)} density="compact" stack />;
 }

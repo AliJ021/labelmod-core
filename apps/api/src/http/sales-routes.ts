@@ -570,6 +570,7 @@ export function registerSalesRoutes(app: FastifyInstance, deps: SalesRouteDeps):
       .object({
         mobile: z.string().trim().min(1).max(20),
         fullName: z.string().trim().max(120).optional(),
+        requireNameForNew: z.boolean().optional(),
       })
       .parse(req.body);
 
@@ -578,6 +579,7 @@ export function registerSalesRoutes(app: FastifyInstance, deps: SalesRouteDeps):
         invoiceId: id,
         mobile: body.mobile,
         ...(body.fullName === undefined ? {} : { fullName: body.fullName }),
+        ...(body.requireNameForNew === undefined ? {} : { requireNameForNew: body.requireNameForNew }),
         actorId: s.userId,
       }),
     );

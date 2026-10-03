@@ -41,7 +41,7 @@ export function MyWithdrawals({ currentUserId }: { currentUserId: string }) {
   const [done, setDone] = useState<string | null>(null);
   // بدنهٔ فرستاده‌شده‌ای که نتیجه‌اش هنوز روشن نیست؛ تا آن زمان فرم قفل است.
   const recovery = useWithdrawalOperation(currentUserId, "create");
-  const frozen = recovery.pending?.body ?? null;
+  const frozen = (recovery.pending?.body ?? null) as { amount: string; reason: string } | null;
   const payload = createPayload(amount, reason);
   const locked = frozen !== null;
   const shown = frozen ?? payload;

@@ -778,6 +778,7 @@ export class InvoiceService {
     invoiceId: string;
     mobile: string;
     fullName?: string | undefined;
+    requireNameForNew?: boolean | undefined;
     actorId: string;
   }): Promise<Invoice> {
     await this.requireDraft(input.invoiceId);
@@ -793,6 +794,14 @@ export class InvoiceService {
       `.execute(trx);
       if (!norm.rows[0]?.m) {
         throw new InvoiceError("bad_mobile", "شماره موبایل معتبر نیست", 400);
+      }
+
+      // صندوق نام را پیش از ساخت مشتری تازه می‌پرسد؛ شمارهٔ موجود همچنان
+      // همان پرونده است و نامش از این مسیر هرگز بازنویسی نمی‌شود.
+      if (input.requireNameForNew && !input.fullName?.trim()) {
+        const existing = await sql<{ id: string }>`SELECT id FROM sales.customer
+          WHERE mobile_normalized = ${norm.rows[0].m}`.execute(trx);
+        if (!existing.rows[0]) throw new InvoiceError("customer_name_required", "نام مشتری تازه را وارد کنید", 409);
       }
 
       const r = await sql<{ id: string; created: boolean }>`
@@ -1036,11 +1045,14 @@ export class InvoiceService {
     if (!method) {
       throw new InvoiceError("method_not_found", "روش پرداخت شناخته نشد", 400);
     }
-    if (input.methodCode === "snappay") {
-      const account = await sql<{ id: string | null }>`SELECT treasury.snappay_account(${inv.branchId}::uuid) AS id`.execute(trx);
+    if (input.methodCode === "snappay" || input.methodCode === "digipay") {
+      const providerName = input.methodCode === "digipay" ? "دیجی‌پی" : "اسنپ‌پی";
+      const account = input.methodCode === "digipay"
+        ? await sql<{ id: string | null }>`SELECT treasury.digipay_account(${inv.branchId}::uuid) AS id`.execute(trx)
+        : await sql<{ id: string | null }>`SELECT treasury.snappay_account(${inv.branchId}::uuid) AS id`.execute(trx);
       if (!account.rows[0]?.id || (input.accountId && input.accountId !== account.rows[0].id))
-        throw new InvoiceError("snappay_not_configured", "حساب معتبر اسنپ‌پی برای این شعبه تنظیم نشده است.", 422);
-      if (!input.refNo?.trim()) throw new InvoiceError("ref_required", "شمارهٔ پیگیری پرداخت تأییدشدهٔ اسنپ‌پی لازم است.", 422);
+        throw new InvoiceError(`${input.methodCode}_not_configured`, `حساب معتبر ${providerName} برای این شعبه تنظیم نشده است.`, 422);
+      if (!input.refNo?.trim()) throw new InvoiceError("ref_required", `شمارهٔ پیگیری پرداخت تأییدشدهٔ ${providerName} لازم است.`, 422);
     }
     if (method.requires_ref && !input.refNo) {
       throw new InvoiceError(

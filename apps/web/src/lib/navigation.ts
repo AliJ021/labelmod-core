@@ -138,6 +138,7 @@ export const FEATURES: readonly Feature[] = [
   { label: "رسید خرید", words: "خرید تامین کننده رسید", href: routeUrl("purchasing", "receipts"), anyOf: ["stock.receive"] },
   { label: "انبارگردانی", words: "شمارش کسری موجودی", href: routeUrl("purchasing", "count"), anyOf: ["stock.count"] },
   { label: "تنظیم اسنپ‌پی", words: "اسنپ پی پرداخت تسویه", href: routeUrl("settings", "snappay"), anyOf: settingsAnyOf("snappay") },
+  { label: "تنظیم دیجی‌پی", words: "دیجی پی پرداخت تسویه", href: routeUrl("settings", "digipay"), anyOf: settingsAnyOf("digipay") },
   { label: "پشتیبان‌گیری و بازیابی", words: "بکاپ backup دانلود ریستور restore", href: routeUrl("settings", "backups"), anyOf: settingsAnyOf("backups") },
 ];
 

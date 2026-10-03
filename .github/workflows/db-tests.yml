@@ -375,7 +375,7 @@ jobs:
         run: |
           python3 ops/test-runtime-compose.py
 
-      - name: کلید امضای Push به Worker منتقل می‌شود
+      - name: کلید امضای Push به Worker و API تشخیص اتصال منتقل می‌شود
         run: |
           DB_PASSWORD=ci APP_DB_PASSWORD=ci_app_only SITE_ADDRESS=shop.example.com ACME_EMAIL=ci@example.com \
             WEB_PUSH_SECRET=ci-push-secret \
@@ -385,7 +385,7 @@ jobs:
           with open('compose-test.json') as f:
               services = json.load(f)['services']
           assert services['worker']['environment']['WEB_PUSH_SECRET'] == 'ci-push-secret'
-          assert 'WEB_PUSH_SECRET' not in services['api']['environment']
+          assert services['api']['environment']['WEB_PUSH_SECRET'] == 'ci-push-secret'
           PY
 
   # کل ماتریس مرورگر (۲ موتور × ۲ تم × ۶ عرض) در یک Job به سقف ۲۰ دقیقه

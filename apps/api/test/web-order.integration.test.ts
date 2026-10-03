@@ -177,7 +177,7 @@ describe("سفارش سایت (ووکامرس)", { skip }, () => {
     app = await buildApp({
       db: handle.db,
       auth: new AuthService(handle.db),
-      config: loadConfig({ ...process.env, NODE_ENV: "test", LOG_LEVEL: "fatal" }),
+      config: loadConfig({ ...process.env, NODE_ENV: "test", LOG_LEVEL: "fatal", WEB_PUSH_SECRET: undefined }),
     });
     await app.ready();
   });
@@ -189,6 +189,55 @@ describe("سفارش سایت (ووکامرس)", { skip }, () => {
   });
 
   // ── احراز هویت ──────────────────────────────────────────────────
+
+  test("Woo diagnostics resolves warehouse codes and enforces the resolved branch", async () => {
+    const username = `woo-admin-${suffix}`;
+    const user = await handle.db.insertInto("identity.app_user").values({ username,
+      full_name: "مدیر آزمون اتصال", password_hash: await hashSecret(PASSWORD), pin_hash: null,
+      mobile: null, totp_secret: null, is_active: true }).returning("id").executeTakeFirstOrThrow();
+    await handle.db.insertInto("identity.user_role").values({ user_id: user.id, role_code: "admin", branch_id: BRANCH }).execute();
+    const logged = await loginWithMfa(app, { method: "POST", url: "/auth/login", payload: { username, password: PASSWORD } });
+    assert.equal(logged.statusCode, 200, logged.body);
+    const cookies = Object.fromEntries(logged.cookies.map(c => [c.name, c.value]));
+    const human = { cookies, headers: { "x-csrf-token": cookies.labelmod_csrf! } };
+    const check = () => app.inject({ method: "POST", url: "/settings/woocommerce/test", ...human, payload: {} });
+    const prior = await handle.db.selectFrom("platform.setting").select("value")
+      .where("key", "=", "web.stock_warehouse").executeTakeFirstOrThrow();
+    const setWarehouse = (value: unknown) => sql`SELECT platform.set_setting('web.stock_warehouse',
+      ${JSON.stringify(value)}::jsonb, 'Woo diagnostic warehouse regression', ${SYSTEM_USER}::uuid)`.execute(handle.db);
+    try {
+      await setWarehouse("STORE");
+      const config = await app.inject({ method: "GET", url: "/settings/woocommerce", ...human });
+      assert.equal(config.statusCode, 200, config.body);
+      assert.equal(config.json().warehouseCode, "STORE");
+      assert.equal(config.json().warehouseId, STORE_WH);
+      // Reaching signing validation proves local resolution passed; no external request is made.
+      const resolved = await check();
+      assert.equal(resolved.statusCode, 200, resolved.body);
+      assert.equal(resolved.json().code, "missing_secret");
+      const stored = await handle.db.selectFrom("platform.setting").select("value")
+        .where("key", "=", "web.stock_warehouse").executeTakeFirstOrThrow();
+      assert.equal(stored.value, "STORE", "diagnostics must preserve the worker's code setting");
+
+      await setWarehouse(`MISSING-${suffix}`);
+      const missing = await check();
+      assert.equal(missing.statusCode, 200, missing.body);
+      assert.equal(missing.json().code, "warehouse");
+      assert.equal(missing.json().remote, null);
+
+      const other = await sql<{ id: string }>`INSERT INTO platform.branch(code,name)
+        VALUES(${`WOO-${suffix}`}, 'شعبه دیگر آزمون') RETURNING id`.execute(handle.db);
+      const foreignCode = `FOREIGN-${suffix}`;
+      await sql`INSERT INTO inventory.warehouse(branch_id,code,name,kind)
+        VALUES(${other.rows[0]!.id}::uuid, ${foreignCode}, 'انبار شعبه دیگر', 'store')`.execute(handle.db);
+      await setWarehouse(foreignCode);
+      const forbidden = await check();
+      assert.equal(forbidden.statusCode, 403, forbidden.body);
+      assert.equal(forbidden.json().error.code, "branch_forbidden");
+    } finally {
+      await setWarehouse(prior.value);
+    }
+  });
 
   test("تست اتصال همان کلید و دامنه را می‌سنجد و در تکرار اثر مالی ندارد", async () => {
     const url = `/web/connection?branchId=${BRANCH}&warehouseId=${STORE_WH}&sku=${encodeURIComponent(sku)}`;

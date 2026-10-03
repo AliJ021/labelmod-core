@@ -21,7 +21,7 @@ import { allOptions, checkAmount, maxAmount, paymentLocked, usableChannel, type 
  *
  * ⚠️ کارت‌خوان و اسنپ‌پی **ثبت دستی** پرداخت تأییدشده‌اند؛ این صفحه به هیچ
  *    دستگاه یا سرویسی وصل نیست و چیزی را «پرداخت‌شده» نشان نمی‌دهد که صندوق‌دار
- *    خودش ثبت نکرده باشد. دیجی‌پی و «لینک پرداخت» هیچ مسیری به `onPay` ندارند.
+ *    خودش ثبت نکرده باشد. «لینک پرداخت» مسیری به `onPay` ندارد؛ هر دو ارائه‌دهنده فقط ثبت دستی دارند.
  *
  * ⚠️ «ناموجود» با `aria-disabled` است (فوکوس‌پذیر، دلیلش خوانده می‌شود) و «موقتاً
  *    قفل» (سبد خالی، عمل در جریان، قصد نامعلوم) با `disabled` بومی — دو حالت جدا.
@@ -42,6 +42,7 @@ const UNRESOLVED_TEXT: Record<"ambiguous" | "not_found_yet" | "retry_rejected" |
 const HINT: Record<string, string> = {
   card_reader: "پس از تأیید روی دستگاه کارت‌خوان، شمارهٔ پیگیری رسید دستگاه را وارد کنید. این صندوق به دستگاه وصل نیست.",
   snappay: "ثبت دستی پرداختی که در اسنپ‌پی تأیید شده است؛ شمارهٔ پیگیری واقعی را وارد کنید.",
+  digipay: "ثبت دستی پرداختی که در دیجی‌پی تأیید شده است؛ شمارهٔ پیگیری واقعی را وارد کنید. این صندوق به پنل دیجی‌پی وصل نیست.",
   gateway: "ثبت دستی پرداختی که در درگاه تأیید شده است؛ شمارهٔ پیگیری را وارد کنید.",
   transfer: "پس از دیدن واریز، شمارهٔ پیگیری انتقال را وارد کنید.",
 };
@@ -58,7 +59,7 @@ const CAPTION: Record<string, string> = {
 };
 const SHORT_UNAVAILABLE: Record<ProviderSlot["key"], string> = {
   snappay: "برای این شعبه تنظیم نشده",
-  digipay: "هنوز وصل نشده",
+  digipay: "برای این شعبه تنظیم نشده",
 };
 const ICON: Record<string, IconName> = { card_reader: "card", cash: "vault", transfer: "refresh", gateway: "external", points: "sparkle", gift_card: "tag" };
 

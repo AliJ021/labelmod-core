@@ -17,9 +17,7 @@
  *
  *   - اسنپ‌پی فقط وقتی قابل انتخاب است که سرور برای **همین شعبه** فرستاده باشد
  *     (`GET /payment-methods?branchId=`)؛ وگرنه «برای این شعبه تنظیم نشده».
- *   - دیجی‌پی در این مخزن **هیچ پشتوانه‌ای ندارد**: نه ردیف `payment_method`، نه
- *     حساب، نه قاعدهٔ ثبت، نه API. پس حتی اگر روزی ردیفی با کد `digipay` برسد،
- *     بی پیاده‌سازی قابل انتخاب نمی‌شود — هیچ مسیری از این خانه به ثبت پرداخت نیست.
+ *   - دیجی‌پی هم فقط با حساب تسویهٔ معتبر همین شعبه از سرور می‌آید؛ ثبت دستی است، نه اتصال مستقیم به پنل.
  *   - کانال «لینک پرداخت» هیچ ارائه‌دهنده، ساخت لینک یا Callback در سرور ندارد؛
  *     دیده می‌شود و ناموجود است. فقط «حضوری» (همان ثبت دستی تأییدشده) کار می‌کند.
  *   - هر `kind` ناشناخته و `credit` هرگز روش پرداخت نمی‌شوند.
@@ -70,16 +68,13 @@ export interface PaymentLayout {
 
 export const NEEDS_CUSTOMER_REASON = "ابتدا مشتری را به فاکتور وصل کنید.";
 export const SNAPPAY_NOT_CONFIGURED = "اسنپ‌پی برای این شعبه تنظیم نشده است.";
-export const DIGIPAY_NOT_IMPLEMENTED = "دیجی‌پی هنوز به سیستم وصل نشده است؛ پرداخت دیجی‌پی را اینجا نمی‌شود ثبت کرد.";
+export const DIGIPAY_NOT_CONFIGURED = "ثبت دستی دیجی‌پی برای این شعبه تنظیم نشده است؛ حساب تسویه را در تنظیمات معرفی کنید.";
 export const LINK_NOT_IMPLEMENTED = "ساخت لینک پرداخت هنوز در سرور پیاده نشده است؛ پرداخت را حضوری بگیرید.";
-
-/** خانه‌هایی که بی پیاده‌سازی در سرور هرگز به روش قابل انتخاب تبدیل نمی‌شوند. */
-const NOT_IMPLEMENTED = new Set(["digipay"]);
 
 function placement(m: PaymentMethod): { group: PaymentGroup; rank: number } | null {
   const code = m.code.toLowerCase();
-  if (NOT_IMPLEMENTED.has(code)) return null;
   if (code === "snappay") return { group: "provider", rank: 1 };
+  if (code === "digipay") return { group: "provider", rank: 2 };
   switch (m.kind) {
     case "card_reader": return { group: "primary", rank: 1 };
     case "cash": return { group: "more", rank: 1 };
@@ -108,14 +103,15 @@ export function paymentLayout(methods: readonly PaymentMethod[], ctx: { hasCusto
   }).sort((a, b) => a.rank - b.rank || a.option.code.localeCompare(b.option.code));
   const of = (g: PaymentGroup) => placed.filter((p) => p.option.group === g).map((p) => p.option);
   const snappay = of("provider").find((o) => o.code.toLowerCase() === "snappay") ?? null;
+  const digipay = of("provider").find((o) => o.code.toLowerCase() === "digipay") ?? null;
   const link: PaymentChannel = { key: "link", label: "لینک پرداخت", unavailableReason: LINK_NOT_IMPLEMENTED };
   return {
     primary: of("primary"),
     providers: [
       { key: "snappay", label: "اسنپ‌پی", option: snappay, unavailableReason: snappay ? null : SNAPPAY_NOT_CONFIGURED,
         channels: [{ key: "in_person", label: "حضوری", unavailableReason: snappay ? null : SNAPPAY_NOT_CONFIGURED }, link] },
-      { key: "digipay", label: "دیجی‌پی", option: null, unavailableReason: DIGIPAY_NOT_IMPLEMENTED,
-        channels: [{ key: "in_person", label: "حضوری", unavailableReason: DIGIPAY_NOT_IMPLEMENTED }, link] },
+      { key: "digipay", label: "دیجی‌پی", option: digipay, unavailableReason: digipay ? null : DIGIPAY_NOT_CONFIGURED,
+        channels: [{ key: "in_person", label: "حضوری", unavailableReason: digipay ? null : DIGIPAY_NOT_CONFIGURED }, link] },
     ],
     more: of("more"),
   };
@@ -306,6 +302,7 @@ export function checkoutErrorMessage(err: unknown): string {
       case "insufficient_stock": return `موجودی تغییر کرده است — ${err.message}`;
       case "non_cash_overpayment": return "مبلغ از مانده فاکتور بیشتر است. حداکثر مبلغ برای این روش، همان مانده است؛ مبلغ اضافه را فقط نقد می‌شود گرفت.";
       case "snappay_not_configured": return "اسنپ‌پی برای این شعبه تنظیم نیست؛ روش دیگری انتخاب کنید.";
+      case "digipay_not_configured": return "دیجی‌پی برای این شعبه تنظیم نیست؛ روش دیگری انتخاب کنید.";
       case "credit_not_a_payment": return "نسیه روش پرداخت نیست؛ مشتری را وصل کنید و «ثبت نسیه» را بزنید.";
       case "idempotency_key_reused":
       case "idempotency_in_flight": return "نتیجهٔ درخواست قبلی هنوز روشن نیست؛ «بررسی وضعیت» را بزنید.";

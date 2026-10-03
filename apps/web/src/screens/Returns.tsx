@@ -57,7 +57,7 @@ export function Returns() {
   const [method, setMethod] = useState("");
   const [refundReference, setRefundReference] = useState("");
   const [refundPaymentId, setRefundPaymentId] = useState("");
-  const [refundSources, setRefundSources] = useState<Array<{ id: string; reference: string; remaining: string }>>([]);
+  const [refundSources, setRefundSources] = useState<Array<{ id: string; methodCode?: string; reference: string; remaining: string }>>([]);
   const [drawers, setDrawers] = useState<Array<{ id: string; userName: string; openedAt: string }>>([]);
   const [drawerId, setDrawerId] = useState("");
 
@@ -115,11 +115,11 @@ export function Returns() {
       const [returnable, open] = await Promise.all([pos.returnable(inv.id), pos.openShifts(inv.branchId)]);
       setDrawers(open);
       setDrawerId(open.length === 1 ? open[0]?.id ?? "" : "");
-      const sources = await api.get<{ payments: Array<{ id: string; reference: string; remaining: string }> }>(`/invoices/${inv.id}/refund-sources`);
+      const sources = await api.get<{ payments: Array<{ id: string; methodCode?: string; reference: string; remaining: string }> }>(`/invoices/${inv.id}/refund-sources`);
       setRefundSources(sources.payments);
       setRefundPaymentId(sources.payments.length === 1 ? sources.payments[0]!.id : "");
       setRefundReference(""); setMethod("");
-      setMethods(current => [...current.filter(m => m.code !== "snappay"), ...(sources.payments.length ? [{code: "snappay", name: "اسنپ‌پی — برگشت تأییدشده", kind: "gateway", requiresRef: true}] : [])]);
+      setMethods(current => [...current.filter(m => m.code !== "snappay" && m.code !== "digipay"), ...[...new Set(sources.payments.map(p => p.methodCode ?? "snappay"))].map(code => ({code, name: `${code === "digipay" ? "دیجی‌پی" : "اسنپ‌پی"} — برگشت تأییدشده`, kind: "gateway", requiresRef: true}))]);
       setInvoice(inv);
       setView(returnable);
       setSelection(new Map());
@@ -162,7 +162,7 @@ export function Returns() {
       lines: selectedLines, confirmed: true,
       ...(note.trim() ? { reasonNote: note.trim() } : {}),
       ...(method ? { refundMethod: method } : {}),
-      ...(method === "snappay" ? { refundReference: refundReference.trim(), refundPaymentId } : {}),
+      ...((method === "snappay" || method === "digipay") ? { refundReference: refundReference.trim(), refundPaymentId } : {}),
       ...((chosen?.kind === "cash" || method === "") && drawerId ? { shiftId: drawerId } : {}),
       ...(destWh ? { warehouseId: destWh } : {}),
     };
@@ -365,17 +365,17 @@ export function Returns() {
                   key={m.code}
                   type="button"
                   className={m.code === method ? "btn btn--primary" : "btn"}
-                  onClick={() => setMethod(m.code)}
+                  onClick={() => { setMethod(m.code); setRefundPaymentId(""); setRefundReference(""); }}
                   disabled={busy}
                 >
                   {m.name}
                 </button>
               ))}
             </div>
-            {method === "snappay" && <div className="stack solid pad">
-              <p>ابتدا برگشت را در پنل اسنپ‌پی تأیید کنید؛ این فرم پولی جابه‌جا نمی‌کند.</p>
-              <label>پرداخت اصلی اسنپ‌پی<select value={refundPaymentId} disabled={busy || !!draft} onChange={e => setRefundPaymentId(e.target.value)}>
-                <option value="">انتخاب پرداخت</option>{refundSources.map(p => <option key={p.id} value={p.id}>{p.reference} · باقی‌مانده {toman(parseRial(p.remaining))} تومان</option>)}
+            {(method === "snappay" || method === "digipay") && <div className="stack solid pad">
+              <p>ابتدا برگشت را در پنل {method === "digipay" ? "دیجی‌پی" : "اسنپ‌پی"} تأیید کنید؛ این فرم پولی جابه‌جا نمی‌کند.</p>
+              <label>پرداخت اصلی {method === "digipay" ? "دیجی‌پی" : "اسنپ‌پی"}<select value={refundPaymentId} disabled={busy || !!draft} onChange={e => setRefundPaymentId(e.target.value)}>
+                <option value="">انتخاب پرداخت</option>{refundSources.filter(p => (p.methodCode ?? "snappay") === method).map(p => <option key={p.id} value={p.id}>{p.reference} · باقی‌مانده {toman(parseRial(p.remaining))} تومان</option>)}
               </select></label>
               <label>شماره پیگیری برگشت تأییدشده<input value={refundReference} maxLength={200} disabled={busy || !!draft} onChange={e => setRefundReference(e.target.value)} /></label>
             </div>}
@@ -427,7 +427,7 @@ export function Returns() {
               summary={<p>بازپرداخت: <Money rial={typedRefund} /></p>}
               consequence="فقط اقلام و تعداد انتخاب‌شده به انبار برمی‌گردند و تسویه مالی هم‌زمان ثبت می‌شود."
               confirmLabel="اقلام و مبلغ را تأیید می‌کنم؛ ثبت مرجوعی" pendingLabel="در حال ثبت مرجوعی…"
-              disabled={busy || !!operation.pending || !operation.ready || !ready || typedRefund === null || (method === "snappay" && (!refundPaymentId || !refundReference.trim())) || (typedRefund > 0n && (chosen?.kind === "cash" || method === "") && drawers.length > 1 && drawerId === "")}
+              disabled={busy || !!operation.pending || !operation.ready || !ready || typedRefund === null || ((method === "snappay" || method === "digipay") && (!refundPaymentId || !refundReference.trim())) || (typedRefund > 0n && (chosen?.kind === "cash" || method === "") && drawers.length > 1 && drawerId === "")}
               run={submit} verify={operation.verify} onDone={() => undefined} /> : null}
           </Solid>
           {mode === "exchanges" ? <ExchangePanel key={invoice.id} invoice={invoice} lines={selectedLines} reasonCode={reason} reasonNote={note}

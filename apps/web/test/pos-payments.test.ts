@@ -10,7 +10,7 @@ import { describe, test } from "node:test";
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import { ApiError } from "../src/lib/api.ts";
-import { allOptions, cartCounts, checkAmount, checkoutErrorMessage, checkoutTotals, DIGIPAY_NOT_IMPLEMENTED, LINK_NOT_IMPLEMENTED,
+import { allOptions, cartCounts, checkAmount, checkoutErrorMessage, checkoutTotals, DIGIPAY_NOT_CONFIGURED, LINK_NOT_IMPLEMENTED,
   maxAmount, NEEDS_CUSTOMER_REASON, SNAPPAY_NOT_CONFIGURED, usableChannel,
   finalAmounts, intentFromPending, intentToPending, paymentBody, paymentFailureKind, paymentLayout, paymentLocked,
   resolveIntentStatus, type PaymentIntent, type PaymentPhase } from "../src/lib/pos-payments.ts";
@@ -50,17 +50,15 @@ describe("گروه‌بندی روش‌ها — نیاز مالک محصول (PO
     assert.ok(!all.includes("crypto"));
   });
 
-  test("دیجی‌پی همیشه دیده می‌شود و هرگز قابل ثبت نیست — حتی اگر سرور ردیفی با این کد بفرستد", () => {
-    for (const methods of [SEED, [...SEED, m("digipay", "gateway", true), m("DigiPay", "gateway")]]) {
-      const l = paymentLayout(methods, { hasCustomer: true });
-      const digi = l.providers.find((p) => p.key === "digipay")!;
-      assert.equal(digi.option, null, "هیچ مسیر ثبتی از خانهٔ دیجی‌پی نیست");
-      assert.equal(digi.unavailableReason, DIGIPAY_NOT_IMPLEMENTED);
-      assert.ok(digi.channels.every((c) => c.unavailableReason !== null));
-      assert.ok(!codes(allOptions(l)).some((c) => c.toLowerCase() === "digipay"));
-      assert.equal(usableChannel(digi, "in_person"), false);
-      assert.equal(usableChannel(digi, "link"), false);
-    }
+  test("دیجی‌پی فقط با ردیف معتبر شعبه ثبت دستی دارد؛ لینک همواره بسته است", () => {
+    const absent=paymentLayout(SEED,{hasCustomer:true}).providers[1]!;
+    assert.equal(absent.option,null);
+    assert.equal(absent.unavailableReason,DIGIPAY_NOT_CONFIGURED);
+    const configured=paymentLayout([...SEED,m("digipay","gateway",true)],{hasCustomer:true}).providers[1]!;
+    assert.equal(configured.option?.code,"digipay");
+    assert.equal(configured.option?.requiresRef,true);
+    assert.equal(usableChannel(configured,"in_person"),true);
+    assert.equal(usableChannel(configured,"link"),false);
   });
 
   test("اسنپ‌پی: بی ردیف سرور برای این شعبه دیده می‌شود ولی ناموجود است؛ با ردیف، قابل انتخاب کنار دیجی‌پی", () => {
