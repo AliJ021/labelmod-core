@@ -26,6 +26,12 @@ test("invoice center restores URL filters and browser navigation and prints only
   await expect(page).toHaveURL(/invoices.id=i1/);
   await expect(page.getByRole("heading",{name:"فاکتور پیش‌نویس"})).toBeVisible();
   await page.goBack();await expect(page.getByRole("heading",{name:"فاکتورها",exact:true})).toBeVisible();
+  // بازگشت، فهرست را با تأخیر ۲۵۰ms جست‌وجو (useLatestQuery) دوباره می‌خواند و تا آمدن
+  // ردیف «در حال دریافت» نشان می‌دهد. Reloadِ زودتر روی موتور کند (WebKit) همان درخواستِ
+  // تازه‌فرستاده را وسط راه قطع می‌کند و WebKit قطعش را خطای صفحه گزارش می‌کند («due to
+  // access control checks»). پس پیش از Reload، ردیف باید واقعاً برگشته باشد — ادعای
+  // قوی‌تر، و هیچ درخواست معلقی هنگام Reload.
+  await expect(page.getByRole("button",{name:"جزئیات",exact:true})).toBeVisible();
   await page.reload();await expect(page.locator("main").getByRole("searchbox")).toHaveValue("نمونه");
   await expect(page.getByRole("button",{name:"جزئیات",exact:true})).toBeVisible();
   expect(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth+1)).toBe(true);
