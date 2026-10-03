@@ -210,6 +210,7 @@ describe("رجیستری تنظیمات — شخصی جدا از مدیریتی 
     accounts: ["admin-routes.ts", "/accounts"],
     mapping: ["admin-routes.ts", "/posting-rules"],
     snappay: ["snappay-routes.ts", "/snappay/config"],
+    digipay: ["digipay-routes.ts", "/digipay/config"],
     terminals: ["settings-routes.ts", "/terminal-drivers"],
     opening: ["admin-routes.ts", "/tafsili"],
     staff: ["people-routes.ts", "/users"],
@@ -227,9 +228,9 @@ describe("رجیستری تنظیمات — شخصی جدا از مدیریتی 
       assert.ok(at >= 0, `${route} در ${file}`);
       const handler = source.slice(at, at + 400);
       // snappay از guard محلی می‌گذرد که برای خواندن settings.view می‌خواهد.
-      const guard = section.key === "snappay" ? source.slice(source.indexOf("function guard"), source.indexOf(`app.get("${route}"`)) : handler;
+      const guard = (section.key === "snappay" || section.key === "digipay") ? source.slice(source.indexOf("function guard"), source.indexOf(`app.get("${route}"`)) : handler;
       assert.equal(section.anyOf.length, 1, section.key);
-      assert.ok(guard.includes(`"${section.anyOf[0]}"`) || (section.key === "snappay" && guard.includes(`"settings.view"`)), `${section.key}: ${section.anyOf[0]} در ${route}`);
+      assert.ok(guard.includes(`"${section.anyOf[0]}"`) || ((section.key === "snappay" || section.key === "digipay") && guard.includes(`"settings.view"`)), `${section.key}: ${section.anyOf[0]} در ${route}`);
     }
   });
   test("بخش شخصی هیچ مجوز مدیریتی نمی‌خواهد و فقط نشست خود کاربر را می‌خواند", () => {
@@ -275,7 +276,7 @@ describe("رجیستری تنظیمات — شخصی جدا از مدیریتی 
   test("مجوز مدیریتی جزئی: فقط بخش‌های همان مجوز", () => {
     const verdicts = new Map([...all("deny"), ["settings.view", "allow"]] as [string, Verdict][]);
     const view = settingsView(null, { state: "ready", verdicts });
-    assert.deepEqual(keys(view.visible), ["appearance", "pin", "twofactor", "withdrawals", "keys", "health", "woocommerce", "accounts", "mapping", "snappay", "terminals", "opening"]);
+    assert.deepEqual(keys(view.visible), ["appearance", "pin", "twofactor", "withdrawals", "keys", "health", "woocommerce", "accounts", "mapping", "snappay", "digipay", "terminals", "opening"]);
     assert.equal(view.selected, "keys");
     for (const denied of ["backups", "staff", "withdrawal-log", "permissions", "devices"] as const) assert.equal(settingsView(denied, { state: "ready", verdicts }).blocked, "denied", denied);
   });

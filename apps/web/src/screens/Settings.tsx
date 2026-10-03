@@ -1,6 +1,7 @@
 import { routeUrl, type NavAccess } from "../lib/navigation.ts";
 import { SETTINGS_SECTIONS, settingsView, settingsWriteAccess, type SettingsKey } from "../lib/settings-registry.ts";
 import { Icon } from "../components/Icon.tsx";
+import { DigipaySettings } from "./DigipaySettings.tsx";
 import { SnappaySettings } from "./SnappaySettings.tsx";
 import { WooCommerceSettings } from "./WooCommerceSettings.tsx";
 import { Backups } from "./Backups.tsx";
@@ -78,6 +79,8 @@ export function Settings({ access, currentUserId, onOwnPassword }: { access: Nav
         <Accounts />
       ) : tab === "mapping" ? (
         <PostingRules />
+      ) : tab === "digipay" ? (
+        <DigipaySettings write={settingsWriteAccess("digipay", access.verdicts)} writeState={access.state} />
       ) : tab === "snappay" ? (
         <SnappaySettings write={settingsWriteAccess("snappay", access.verdicts)} writeState={access.state} />
       ) : tab === "woocommerce" ? (

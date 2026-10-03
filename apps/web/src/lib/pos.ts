@@ -417,7 +417,7 @@ export const pos = {
    */
   attachCustomer: (
     invoiceId: string,
-    input: { mobile: string; fullName?: string },
+    input: { mobile: string; fullName?: string; requireNameForNew?: boolean },
     opts?: RequestOptions,
   ) => api.patch<Invoice>(`/invoices/${invoiceId}/customer`, input, opts),
 

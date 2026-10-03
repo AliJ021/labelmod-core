@@ -61,11 +61,11 @@ export function registerInvoiceWorkspaceRoutes(app: FastifyInstance, db: Db): vo
     const inv = await invoices.byId(id);
     if (!inv) throw new InvoiceError("invoice_not_found", "فاکتور یافت نشد", 404);
     await assertBranch(db, s.userId, inv.branchId);
-    const rows = await sql`SELECT p.id,p.ref_no AS reference,(p.amount-coalesce(refunded.amount,0))::text AS remaining
+    const rows = await sql`SELECT p.id,p.method_code AS "methodCode",p.ref_no AS reference,(p.amount-coalesce(refunded.amount,0))::text AS remaining
       FROM treasury.payment p LEFT JOIN LATERAL (
         SELECT sum(out.amount) AS amount FROM treasury.payment out JOIN sales.sale_return r ON r.id=out.return_id
         WHERE r.refund_payment_id=p.id AND out.direction='out' AND out.status IN ('succeeded','settled','reconciled')
-      ) refunded ON true WHERE p.invoice_id IN (SELECT invoice_id FROM sales.exchange_ancestors(${id}::uuid)) AND p.method_code='snappay' AND p.direction='in'
+      ) refunded ON true WHERE p.invoice_id IN (SELECT invoice_id FROM sales.exchange_ancestors(${id}::uuid)) AND p.method_code IN ('snappay','digipay') AND p.direction='in'
         AND p.status IN ('succeeded','settled','reconciled') AND p.amount>coalesce(refunded.amount,0)
       ORDER BY p.occurred_at,p.id`.execute(db);
     return { payments: rows.rows };

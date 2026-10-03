@@ -28,6 +28,32 @@ async function choose(page: Page) {
   await page.getByRole("combobox", { name: "علت مرجوعی", exact: true }).selectOption("changed_mind");
 }
 
+test("manual DigiPay refund selects only its original receipt and sends confirmed reference", async ({ page, api }) => {
+  fixture(api);
+  api.defaults["GET /invoices/i1/refund-sources"] = { payments: [
+    { id: "snap1", methodCode: "snappay", reference: "SNAP-ORIGINAL", remaining: "1000000" },
+    { id: "digi1", methodCode: "digipay", reference: "DIGI-ORIGINAL", remaining: "1000000" },
+  ] };
+  let posts = 0;
+  api.handlers.set("POST /returns/commit", async route => {
+    posts++;
+    expect(route.request().postDataJSON()).toMatchObject({ refundMethod: "digipay", refundPaymentId: "digi1", refundReference: "DIGI-REFUND", confirmed: true });
+    await route.fulfill({ json: { status: "posted", number: "R-DIGI-1" } });
+  });
+  await choose(page);
+  await page.getByRole("button", { name: "دیجی‌پی — برگشت تأییدشده", exact: true }).click();
+  const original = page.getByRole("combobox", { name: "پرداخت اصلی دیجی‌پی", exact: true });
+  await expect(original.locator("option")).toHaveCount(2);
+  await expect(original).not.toContainText("SNAP-ORIGINAL");
+  await original.selectOption("digi1");
+  await expect(page.getByRole("button", { name: "۱. بررسی مرجوعی", exact: true })).toBeDisabled();
+  await page.getByLabel("شماره پیگیری برگشت تأییدشده", { exact: true }).fill("DIGI-REFUND");
+  await page.getByRole("button", { name: "۱. بررسی مرجوعی", exact: true }).click();
+  await page.getByRole("button", { name: "اقلام و مبلغ را تأیید می‌کنم؛ ثبت مرجوعی", exact: true }).click();
+  await expect.poll(() => posts).toBe(1);
+  await expect(page.getByRole("status")).toContainText("عملیات R-DIGI-1 ثبت شد.");
+});
+
 test("partial return has two-stage confirmation and persists lost-response identity across reload", async ({ page, api }, testInfo) => {
   fixture(api);
   let key = "", posts = 0;

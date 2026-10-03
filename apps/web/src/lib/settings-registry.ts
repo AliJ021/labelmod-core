@@ -46,6 +46,7 @@ export const SETTINGS_SECTIONS = [
   { key: "accounts", label: "کدینگ حساب", group: "مالی و فروش", scope: "admin", anyOf: ["settings.view"] },
   { key: "mapping", label: "نگاشت حساب", group: "مالی و فروش", scope: "admin", anyOf: ["settings.view"] },
   { key: "snappay", label: "اسنپ‌پی", group: "مالی و فروش", scope: "admin", anyOf: ["settings.view"], writeAnyOf: ["settings.security"] },
+  { key: "digipay", label: "دیجی‌پی", group: "مالی و فروش", scope: "admin", anyOf: ["settings.view"], writeAnyOf: ["settings.security"] },
   { key: "terminals", label: "پایانه‌ها", group: "مالی و فروش", scope: "admin", anyOf: ["settings.view"] },
   { key: "opening", label: "افتتاحیه و تفصیلی", group: "مالی و فروش", scope: "admin", anyOf: ["settings.view"] },
   { key: "staff", label: "پرسنل", group: "کاربران و امنیت", scope: "admin", anyOf: ["user.manage"] },

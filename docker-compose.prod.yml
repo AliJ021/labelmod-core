@@ -47,6 +47,7 @@ services:
       DEVICE_COOKIE_NAME: ${DEVICE_COOKIE_NAME:-labelmod_device}
       CSRF_COOKIE_NAME: ${CSRF_COOKIE_NAME:-labelmod_csrf}
       SMS_CREDENTIAL_KEY: ${SMS_CREDENTIAL_KEY:-}
+      WEB_PUSH_SECRET: ${WEB_PUSH_SECRET:-}
     depends_on:
       db:
         condition: service_healthy

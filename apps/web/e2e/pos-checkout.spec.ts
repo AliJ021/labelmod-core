@@ -106,6 +106,93 @@ async function pick(page: Page, name: string) {
   await method(page, name).click();
 }
 
+test("clicking the line amount opens the existing unit-price editor in Toman", async ({page, api}) => {
+  const s=pos(api); const prices:unknown[]=[];
+  api.handlers.set(`PATCH /invoices/${INV}/lines/l1/price`,async route=>{
+    prices.push(route.request().postDataJSON());
+    s.invoice={...s.invoice,lines:s.invoice.lines.map(l=>l.id==='l1'?{...l,unitPrice:'350000',netAmount:'700000'}:l)};
+    await route.fulfill({json:s.invoice});
+  });
+  await open(page);
+  await page.getByRole("button", {name:"ویرایش قیمت شلوار کتان", exact:true}).click();
+  await expect(page.getByLabel(/قیمت واحد/)).toHaveValue("5000");
+  await expect(page.getByRole("button", {name:"تغییر قیمت شلوار کتان", exact:true})).toHaveAttribute("aria-expanded","true");
+  await page.getByLabel(/قیمت واحد/).fill("35000");
+  await page.getByRole("button",{name:"ثبت قیمت",exact:true}).click();
+  await expect.poll(()=>prices).toEqual([{unitPrice:"350000"}]);
+  await page.getByRole("button", {name:"ویرایش قیمت شلوار کتان", exact:true}).click();
+  await expect(page.getByLabel(/قیمت واحد/)).toHaveValue("35000");
+  await page.keyboard.press("Escape");
+  await expect(page.getByLabel(/قیمت واحد/)).toHaveCount(0);
+});
+
+test("customer entry precedes product entry on a fresh sale and a fresh phone requires a name before linking", async ({page, api}) => {
+  const s=pos(api); s.invoice={...s.invoice,lines:[]};
+  let creates=0; const attached: unknown[]=[];
+  api.handlers.set("POST /invoices",async route=>{creates++;await route.fulfill({json:s.invoice})});
+  api.handlers.set(`PATCH /invoices/${INV}/customer`,async route=>{
+    const body=route.request().postDataJSON(); attached.push(body);
+    if(!body.fullName) {await route.fulfill({status:409,json:{error:{code:"customer_name_required",message:"نام مشتری تازه را وارد کنید"}}});return;}
+    s.invoice={...s.invoice,customerId:"c1"};await route.fulfill({json:s.invoice});
+  });
+  await page.goto("/?page=pos&pos.branch=b1&pos.warehouse=w1");
+  const mobile=page.getByLabel("موبایل مشتری",{exact:false});
+  const picker=page.getByLabel("نام، کد یا بارکد محصول",{exact:false});
+  expect((await mobile.boundingBox())!.y).toBeLessThan((await picker.boundingBox())!.y);
+  await mobile.fill("۰۹۱۲۱۲۳۴۵۶۷");await page.getByRole("button",{name:"افزودن مشتری",exact:true}).click();
+  await expect(page.getByLabel("نام و نام خانوادگی مشتری")).toBeVisible();
+  await expect(page.getByRole("button",{name:"ثبت نام و افزودن مشتری",exact:true})).toBeDisabled();
+  expect(s.invoice.customerId).toBeNull();
+  await page.getByLabel("نام و نام خانوادگی مشتری").fill("مریم آزمون");
+  await page.getByRole("button",{name:"ثبت نام و افزودن مشتری",exact:true}).click();
+  await expect(page.getByRole("region",{name:"مشتری"})).toContainText("مریم آزمون");
+  expect(creates).toBe(1);
+  expect(attached).toEqual([{mobile:"09121234567",requireNameForNew:true},{mobile:"09121234567",requireNameForNew:true,fullName:"مریم آزمون"}]);
+});
+
+test("known customer attaches without asking for a replacement name",async({page,api})=>{
+  const s=pos(api);
+  api.handlers.set(`PATCH /invoices/${INV}/customer`,async route=>{s.invoice={...s.invoice,customerId:"c1"};await route.fulfill({json:s.invoice})});
+  await open(page);await page.getByLabel("موبایل مشتری",{exact:false}).fill("09121234567");
+  await page.getByRole("button",{name:"افزودن مشتری",exact:true}).click();
+  await expect(page.getByRole("region",{name:"مشتری"})).toContainText("مریم آزمون");
+  await expect(page.getByLabel("نام و نام خانوادگی مشتری")).toHaveCount(0);
+});
+
+test("unnamed existing customer offers correction only with customer.manage",async({page,api})=>{
+  pos(api,{customerId:"c1"});
+  api.handlers.set(`GET /invoices/${INV}/customer`,async route=>{await route.fulfill({json:{customer:{...customer,fullName:null}}})});
+  api.handlers.set("GET /auth/can",async(route,url)=>{await route.fulfill({json:{verdict:url.searchParams.get("operation")==="customer.manage"?"deny":"allow",reason:"",approver:null}})});
+  await open(page);
+  await expect(page.getByRole("region",{name:"مشتری"})).toContainText("مجوز مدیریت مشتری");
+  await expect(page.getByRole("button",{name:"تکمیل نام مشتری",exact:true})).toHaveCount(0);
+});
+
+test("manager can complete an existing unnamed customer through the audited customer edit route",async({page,api})=>{
+  pos(api,{customerId:"c1"}); let name: string | null=null; const writes:unknown[]=[];
+  api.handlers.set(`GET /invoices/${INV}/customer`,async route=>{await route.fulfill({json:{customer:{...customer,fullName:name}}})});
+  api.handlers.set("PATCH /customers/c1",async route=>{const body=route.request().postDataJSON();writes.push(body);name=body.fullName;await route.fulfill({json:{...customer,fullName:name}})});
+  await open(page);await page.getByRole("button",{name:"تکمیل نام مشتری",exact:true}).click();
+  await page.getByLabel("نام و نام خانوادگی مشتری").fill("نام تکمیل‌شده");
+  await page.getByRole("button",{name:"ذخیره نام مشتری",exact:true}).click();
+  await expect(page.getByRole("region",{name:"مشتری"})).toContainText("نام تکمیل‌شده");
+  expect(writes).toEqual([{fullName:"نام تکمیل‌شده"}]);
+});
+
+test("configured DigiPay records only explicit manual payment with reference; payment link stays unavailable",async({page,api})=>{
+  const s=pos(api);await open(page);await method(page,"دیجی‌پی").click();
+  await expect(page.getByRole("radio",{name:"لینک پرداخت",exact:true})).toBeDisabled();
+  const receive=page.getByRole("button",{name:"دریافت وجه",exact:true});
+  await receive.click();
+  expect(s.posted).toEqual([]);
+  await expect(page.getByLabel("شماره پیگیری",{exact:true})).toHaveAttribute("aria-invalid","true");
+  await expect(page.getByText("شمارهٔ پیگیری لازم است.",{exact:true})).toBeVisible();
+  await page.getByLabel("شماره پیگیری",{exact:true}).fill("DIGI-MANUAL-1");
+  await receive.click();
+  await expect.poll(()=>s.posted).toEqual([{methodCode:"digipay",amount:"200000",refNo:"DIGI-MANUAL-1"}]);
+  expect(api.calls.some(c=>/payment-link|providers\//.test(c))).toBe(false);
+});
+
 test("cash sale: confirm dialog, one finalize under double click, persistent success with change, print and next sale", async ({ page, api }) => {
   const s = pos(api);
   await open(page);
@@ -129,9 +216,9 @@ test("cash sale: confirm dialog, one finalize under double click, persistent suc
   // تسویهٔ قطعی سرور: دریافتی ۲۵٬۰۰۰ و باقی پول ۵٬۰۰۰ تا «فروش بعدی» دیده می‌مانند.
   await expect(done.locator(".checkout-lines")).toContainText("25٬000");
   await expect(done.getByRole("region", { name: "ریز پرداخت‌ها" })).toContainText("نقدی");
-  const print = done.getByRole("link", { name: "چاپ رسید" });
-  await expect(print).toHaveAttribute("href", `/api/invoices/${INV}/print`);
-  await expect(print).toHaveAttribute("target", "_blank");
+  const print = done.getByRole("button", { name: "چاپ رسید" });
+  await expect(print).toBeEnabled();
+  expect(api.calls.some(call => call.endsWith("/print")), "ثبت فروش چاپ خودکار ندارد").toBe(false);
   // چاپ دستی است: بی کلیک هیچ پنجره‌ای باز نمی‌شود و وضعیت «ثبت شد» می‌ماند.
   expect(page.context().pages()).toHaveLength(1);
   await done.getByRole("button", { name: "فروش بعدی", exact: true }).click();
@@ -142,6 +229,77 @@ test("cash sale: confirm dialog, one finalize under double click, persistent suc
   await expect(page.getByRole("button", { name: "بررسی وضعیت", exact: true })).toHaveCount(0);
   await expect(page.locator(".pos-mobile-summary")).toBeHidden();
   expect(await page.evaluate(() => localStorage.getItem("labelmod_open_cart"))).toBe("");
+});
+
+test("receipt print stays in the cashier tab, waits for readiness and prints once under double click", async ({ page, api }) => {
+  const s = pos(api, { receivedAmount: "200000" });
+  let prints = 0;
+  await page.exposeFunction("recordReceiptPrint", () => { prints++; });
+  await page.addInitScript(() => {
+    if (window.parent !== window) {
+      window.print = () => {
+        if (document.fonts.status !== "loaded") throw new Error("receipt fonts not ready");
+        Reflect.get(window, "recordReceiptPrint")();
+        window.dispatchEvent(new Event("afterprint"));
+      };
+    }
+  });
+  let release!: () => void;
+  const ready = new Promise<void>(resolve => { release = resolve; });
+  api.handlers.set(`GET /invoices/${INV}/print`, async route => {
+    await ready;
+    await route.fulfill({ contentType: "text/html", headers: { "content-security-policy": "default-src 'none'; style-src 'unsafe-inline'" },
+      body: '<!doctype html><html><body><div class="sheet"><table class="totals"><tr><td>رسید</td></tr></table></div><button id="print-btn">چاپ</button></body></html>' });
+  });
+  await open(page, s);
+  await page.getByRole("button", { name: "نهایی‌کردن فاکتور", exact: true }).click();
+  await page.getByRole("dialog").getByRole("button", { name: "تأیید و نهایی‌کردن", exact: true }).click();
+  const button = page.getByRole("button", { name: "چاپ رسید", exact: true });
+  await expect(button).toBeVisible();
+  expect(prints).toBe(0);
+  const mutations = api.calls.filter(call => !call.startsWith("GET "));
+  await button.evaluate(el => { (el as HTMLButtonElement).click(); (el as HTMLButtonElement).click(); });
+  await expect(page.getByRole("button", { name: "در حال آماده‌سازی چاپ…" })).toBeDisabled();
+  expect(prints).toBe(0);
+  release();
+  await expect.poll(() => prints).toBe(1);
+  await expect(button).toBeEnabled();
+  expect(page.context().pages()).toHaveLength(1);
+  expect(api.calls.filter(call => call.endsWith("/print"))).toHaveLength(1);
+  expect(api.calls.filter(call => !call.startsWith("GET "))).toEqual(mutations);
+  expect(s.finalized).toBe(1);
+  await expect(page.locator('iframe[title="رسید آمادهٔ چاپ"]')).toHaveCount(0);
+});
+
+test("receipt errors and timeout allow retry without reopening or mutating the sale", async ({ page, api }) => {
+  const s = pos(api, { receivedAmount: "200000" });
+  let prints = 0;
+  await page.exposeFunction("recordReceiptPrint", () => { prints++; });
+  await page.addInitScript(() => { window.print = () => { Reflect.get(window, "recordReceiptPrint")(); }; });
+  api.handlers.set(`GET /invoices/${INV}/print`, route => route.fulfill({ status: 403, json: { error: { code: "branch_forbidden" } } }));
+  await open(page, s);
+  await page.getByRole("button", { name: "نهایی‌کردن فاکتور", exact: true }).click();
+  await page.getByRole("dialog").getByRole("button", { name: "تأیید و نهایی‌کردن", exact: true }).click();
+  const button = page.getByRole("button", { name: "چاپ رسید", exact: true });
+  const mutations = api.calls.filter(call => !call.startsWith("GET "));
+  await button.click();
+  await expect(page.locator(".sale-complete [role=alert]")).toContainText("فروش ثبت شده است");
+  await expect(button).toBeEnabled();
+  await page.clock.install();
+  // An indefinitely loading frame exercises the deadline independently of network error events.
+  let release!: () => void;
+  const pending = new Promise<void>(resolve => { release = resolve; });
+  api.handlers.set(`GET /invoices/${INV}/print`, async route => { await pending; await route.abort(); });
+  await button.click();
+  await expect(page.getByRole("button", { name: "در حال آماده‌سازی چاپ…" })).toBeDisabled();
+  await page.clock.runFor(16000);
+  await expect(page.locator(".sale-complete [role=alert]")).toContainText("طول کشید");
+  await expect(button).toBeEnabled();
+  release();
+  expect(prints).toBe(0);
+  expect(page.context().pages()).toHaveLength(1);
+  expect(api.calls.filter(call => !call.startsWith("GET "))).toEqual(mutations);
+  expect(s.finalized).toBe(1);
 });
 
 test("card reader is primary; non-cash overpayment is blocked before any request; a server race maps to an actionable message", async ({ page, api }) => {
@@ -321,7 +479,7 @@ test("SaleComplete shows the server settlement: a payment from another tab befor
   await expect(done.locator(".checkout-lines")).toContainText("20٬000");
 });
 
-test("credit is a checkout outcome: attached customer shown, no credit in the selector, DigiPay shown but never selectable, no payment row, server rule mapped", async ({ page, api }) => {
+test("credit is a checkout outcome: attached customer shown, no credit in the selector, configured DigiPay manual only, no payment row, server rule mapped", async ({ page, api }) => {
   const s = pos(api, { customerId: "c1", receivedAmount: "50000" });
   let first = true;
   api.handlers.set(`POST /invoices/${INV}/finalize`, async (route: Route) => {
@@ -338,13 +496,12 @@ test("credit is a checkout outcome: attached customer shown, no credit in the se
   await expect(sel.getByRole("button", { name: "نسیه" })).toHaveCount(0);
   await expect(sel.getByRole("button", { name: "درگاه پرداخت", exact: true })).toBeVisible();
   await page.keyboard.press("Escape"); // روی تلفن برگهٔ مودال است؛ پشتش inert است
-  // سرور ردیفی با کد digipay فرستاده (METHODS)؛ خانهٔ دیجی‌پی دیده می‌شود ولی هیچ مسیر ثبتی ندارد.
+  // انتخاب دیجی‌پی تنظیم‌شده فقط فرم دستی را باز می‌کند؛ پرداخت خودکار ندارد.
   const digi = method(page, "دیجی‌پی");
-  await expect(digi).toBeVisible();
-  await expect(digi).toHaveAttribute("aria-disabled", "true");
-  await digi.click({ force: true });
-  await expect(digi).not.toHaveAttribute("aria-pressed", "true");
-  await expect(page.getByLabel("مبلغ (تومان)", { exact: true })).toHaveCount(0);
+  await digi.click();
+  await expect(digi).toHaveAttribute("aria-pressed", "true");
+  await expect(page.getByText(/ثبت دستی پرداختی که در دیجی‌پی تأیید شده/)).toBeVisible();
+  expect(s.posted).toEqual([]);
 
   await page.getByRole("button", { name: "ثبت نسیه", exact: true }).click();
   const dialog = page.getByRole("dialog", { name: "ثبت فروش نسیه" });

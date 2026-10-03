@@ -14,7 +14,7 @@ import { NAV_OPERATIONS } from "../src/lib/navigation";
 type Decision = "allow" | "deny" | "fail";
 const PROTECTED = ["صندوق", "فاکتورها", "مرجوعی", "کالا و قیمت", "انبار و خرید", "خزانه و چک", "مشتریان", "گزارش‌ها"];
 const PERSONAL = ["نمایش و عملکرد", "PIN من — ساخت و تغییر", "ورود دومرحله‌ای", "برداشت‌های من"];
-const ADMIN = ["تنظیمات", "سلامت سیستم", "اتصال ووکامرس", "پشتیبان‌گیری و بازیابی", "کدینگ حساب", "نگاشت حساب", "اسنپ‌پی", "پایانه‌ها", "افتتاحیه و تفصیلی", "پرسنل", "دفتر برداشت پرسنل", "مجوزها", "دستگاه‌ها"];
+const ADMIN = ["تنظیمات", "سلامت سیستم", "اتصال ووکامرس", "پشتیبان‌گیری و بازیابی", "کدینگ حساب", "نگاشت حساب", "اسنپ‌پی", "دیجی‌پی", "پایانه‌ها", "افتتاحیه و تفصیلی", "پرسنل", "دفتر برداشت پرسنل", "مجوزها", "دستگاه‌ها"];
 
 /** پاسخ‌های مجوز تا `release()` نگه داشته می‌شوند؛ تصمیم هر عملیات قابل عوض‌کردن است. */
 function authorize(api: MockApi, decide: (operation: string) => Decision, held = false) {
@@ -62,6 +62,28 @@ const mainList = (page: Page) => page.getByRole("tablist", { name: "بخش‌ه�
 const tabLabels = (page: Page) => mainList(page).getByRole("tab", { includeHidden: true }).allInnerTexts();
 const settingsLabels = (page: Page) => page.locator(".settings-nav").evaluate(el =>
   [...el.querySelectorAll('[role="tab"], option:not([disabled])')].map(n => n.textContent!.trim()));
+
+test("DigiPay manual configuration is read-only without write permission and saves a valid account explicitly", async ({ page, api }) => {
+  api.defaults["GET /digipay/config"] = { accountId: "", enabled: false,
+    accounts: [{ id: "a1", name: "واسط دیجی‌پی", bankName: "بانک آزمون" }] };
+  const auth = authorize(api, op => op === "settings.security" ? "deny" : "allow");
+  await page.goto("/?page=settings&settings.tab=digipay");
+  const section = page.getByRole("region", { name: "تنظیم دیجی‌پی", exact: true });
+  await expect(section).toContainText("فقط مشاهده");
+  await expect(section.getByRole("combobox")).toHaveCount(0);
+  expect(api.calls.filter(c => c.startsWith("PUT /digipay"))).toHaveLength(0);
+  auth.decide = () => "allow";
+  let writes = 0;
+  api.handlers.set("PUT /digipay/config", async route => {
+    writes++; expect(route.request().postDataJSON()).toEqual({ accountId: "a1" });
+    await route.fulfill({ json: { ok: true } });
+  });
+  await page.reload();
+  await section.getByRole("combobox").selectOption("a1");
+  await section.getByRole("button", { name: "ذخیرهٔ تنظیم دیجی‌پی", exact: true }).click();
+  await expect(section.getByRole("status")).toContainText("تنظیم دیجی‌پی ذخیره شد.");
+  expect(writes).toBe(1);
+});
 
 test.describe("F-110-01 — conservative permission loading", () => {
   test("while loading only unconditional destinations exist; the protected taxonomy never flashes", async ({ page, api }) => {
@@ -154,7 +176,7 @@ test.describe("F-110-02 — personal settings apart from administrative settings
     await expect(page.getByRole("heading", { name: "نمایش و عملکرد", exact: true })).toBeVisible();
     expect(await settingsLabels(page)).toEqual(PERSONAL);
     expect(api.calls.some(c => c.startsWith("GET /settings")), "administrative settings were not requested").toBe(false);
-    for (const [tab, call] of [["staff", "GET /users"], ["withdrawal-log", "GET /withdrawals?"], ["devices", "GET /devices"], ["permissions", "GET /permission-rules"], ["keys", "GET /settings"], ["woocommerce", "GET /settings/woocommerce"]] as const) {
+    for (const [tab, call] of [["staff", "GET /users"], ["withdrawal-log", "GET /withdrawals?"], ["devices", "GET /devices"], ["permissions", "GET /permission-rules"], ["keys", "GET /settings"], ["woocommerce", "GET /settings/woocommerce"], ["digipay", "GET /digipay/config"]] as const) {
       await page.goto(`/?page=settings&settings.tab=${tab}`);
       await expect(page.getByRole("heading", { name: "دسترسی ندارید" })).toBeVisible();
       expect(await settingsLabels(page), `${tab} label stays hidden`).toEqual(PERSONAL);
@@ -180,7 +202,7 @@ test.describe("F-110-02 — personal settings apart from administrative settings
     authorize(api, op => op === "settings.view" ? "allow" : "deny");
     await page.goto("/?page=settings");
     await expect(page.getByRole("heading", { name: "تنظیمات", level: 1 })).toBeVisible();
-    await expect.poll(() => settingsLabels(page)).toEqual([...PERSONAL, "تنظیمات", "سلامت سیستم", "اتصال ووکامرس", "کدینگ حساب", "نگاشت حساب", "اسنپ‌پی", "پایانه‌ها", "افتتاحیه و تفصیلی"]);
+    await expect.poll(() => settingsLabels(page)).toEqual([...PERSONAL, "تنظیمات", "سلامت سیستم", "اتصال ووکامرس", "کدینگ حساب", "نگاشت حساب", "اسنپ‌پی", "دیجی‌پی", "پایانه‌ها", "افتتاحیه و تفصیلی"]);
     await page.goto("/?page=settings&settings.tab=devices");
     await expect(page.getByRole("heading", { name: "دسترسی ندارید" })).toBeVisible();
     expect(api.calls.some(c => c.startsWith("GET /devices") || c.startsWith("GET /sessions"))).toBe(false);
