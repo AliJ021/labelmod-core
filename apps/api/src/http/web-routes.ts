@@ -15,7 +15,7 @@
  *    هدر.** هویت این عملیات همان سفارش است؛ پذیرفتن هدر کلاینت تنها
  *    راهِ دور زدن قفل بود — همان قاعده‌ای که بستن دوره کانال دارد.
  */
-import type { FastifyInstance } from "fastify";
+import type { FastifyInstance, RouteHandlerMethod } from "fastify";
 import { z } from "zod";
 import { sql } from "kysely";
 import { AuthError } from "../auth/service.ts";
@@ -59,6 +59,8 @@ const webOrderBody = z.object({
         sku: z.string().trim().min(1).max(64),
         qty: qtyString,
         unitPrice: moneyString,
+        // اختیاری و بدون پیش‌فرض: اثرانگشت سفارش‌های قدیمی ثابت می‌ماند.
+        discountAmount: moneyString.optional(),
       }),
     )
     .min(1, "سفارش بدون قلم ثبت نمی‌شود")
@@ -97,7 +99,7 @@ export function registerWebRoutes(app: FastifyInstance, deps: WebRouteDeps): voi
    * سند درآمد و COGS اینجا زده نمی‌شود — کار بستن شبانه دوره کانال
    * است (ADR-003). `GET /posting-batches/unposted` زنگ خطر آن است.
    */
-  app.post("/web/orders", async (req, reply) => {
+  const ingestWebOrder: RouteHandlerMethod = async (req, reply) => {
     const s = session(req);
     const body = webOrderBody.parse(req.body);
 
@@ -145,6 +147,7 @@ export function registerWebRoutes(app: FastifyInstance, deps: WebRouteDeps): voi
             sku: l.sku,
             qty: l.qty,
             unitPrice: parseMoney(l.unitPrice),
+            ...(l.discountAmount === undefined ? {} : { discountAmount: parseMoney(l.discountAmount) }),
           })),
           shippingAmount: parseMoney(body.shippingAmount),
           paymentMethod: body.paymentMethod,
@@ -177,7 +180,10 @@ export function registerWebRoutes(app: FastifyInstance, deps: WebRouteDeps): voi
       payableAmount: serializeMoney(invoice.payableAmount),
       replayed: out.replayed,
     });
-  });
+  };
+  app.post("/web/orders", ingestWebOrder);
+  // مسیر مجزا جلوی حذف بی‌صدای فیلد تخفیف روی API قدیمی در استقرار تدریجی را می‌گیرد.
+  app.post("/web/discounted-orders", ingestWebOrder);
 
   /**
    * خوراک موجودی — تا سایت بیش از موجودی نفروشد.

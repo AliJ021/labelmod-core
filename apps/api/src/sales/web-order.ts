@@ -40,6 +40,8 @@ export interface WebOrderLineInput {
   qty: string;
   /** قیمت واحدی که مشتری واقعاً پرداخت کرده — به ریال، رشته. */
   unitPrice: bigint;
+  /** تخفیف صریح کل سطر؛ قیمت اصلی مثبت می‌ماند. */
+  discountAmount?: bigint | undefined;
 }
 
 export interface WebOrderInput {
@@ -196,6 +198,9 @@ export class WebOrderService {
         variationId,
         qty: line.qty,
         unitPrice: line.unitPrice,
+        ...(line.discountAmount === undefined ? {} : {
+          discountAmount: line.discountAmount, discountReason: "تخفیف ثبت‌شدهٔ سایت",
+        }),
         // دلیل ثابت و نه متن آزاد: در گزارش «کدام سطرها قیمت دستی
         // داشتند» باید بشود سایت را از صندوق جدا کرد.
         priceOverrideReason: "قیمت سایت",

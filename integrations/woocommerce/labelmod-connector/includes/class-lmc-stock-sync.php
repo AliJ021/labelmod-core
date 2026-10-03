@@ -56,13 +56,16 @@ class LMC_Stock_Sync
     /**
      * یک دور همگام‌سازی.
      *
-     * @return array{updated:int,skipped:int,error:string}
+     * @return array{updated:int,skipped:int,linked:int,received:int,unchanged:int,invalid:int,price_enabled:bool,link_enabled:bool,error:string}
      */
     public static function run(): array
     {
-        $out = ['updated' => 0, 'skipped' => 0, 'linked' => 0, 'error' => ''];
+        $out = ['updated' => 0, 'skipped' => 0, 'linked' => 0, 'received' => 0, 'unchanged' => 0,
+            'invalid' => 0, 'price_enabled' => lmc_setting('sync_price') === 'yes',
+            'link_enabled' => lmc_setting('link_by_sku') === 'yes', 'error' => ''];
 
         if (lmc_setting('sync_stock') !== 'yes') {
+            $out['error'] = __('دریافت موجودی خاموش است؛ ابتدا آن را در تنظیمات فعال کنید.', 'labelmod-connector');
             return $out;
         }
         $warehouse = (string) lmc_setting('warehouse_id');
@@ -91,10 +94,12 @@ class LMC_Stock_Sync
         $sync_price = lmc_setting('sync_price') === 'yes';
 
         $items = isset($res['items']) && is_array($res['items']) ? $res['items'] : [];
+        $out['received'] = count($items);
         foreach ($items as $item) {
             $variation_id = isset($item['variationId']) ? (string) $item['variationId'] : '';
             $sku          = isset($item['sku']) ? (string) $item['sku'] : '';
             if ($variation_id === '' || !isset($item['available'])) {
+                $out['invalid']++;
                 continue;
             }
             // عدد در JSON **رشته** است — پول و تعداد هر دو. تبدیل صریح،
@@ -106,7 +111,7 @@ class LMC_Stock_Sync
             if (!$product_id && $sku !== '' && lmc_setting('link_by_sku') === 'yes') {
                 // پل یک‌بارمصرف: روی سایتی که هنوز متا ندارد، اتصال با
                 // SKU برقرار و همان لحظه در متا نوشته می‌شود. از دور
-                // بعد، متا کافی است و SKU می‌تواند آزادانه عوض شود.
+                // بعد، برای موجودی متا کافی است؛ ارسال سفارش هنوز SKU معتبر می‌خواهد.
                 $product_id = wc_get_product_id_by_sku($sku);
                 if ($product_id) {
                     update_post_meta($product_id, self::META_KEY, $variation_id);
@@ -136,6 +141,8 @@ class LMC_Stock_Sync
             if ($changed) {
                 $product->save();
                 $out['updated']++;
+            } else {
+                $out['unchanged']++;
             }
         }
 
@@ -283,6 +290,22 @@ class LMC_Stock_Sync
         return $toman === '' ? null : $toman;
     }
 
+    /** خلاصهٔ همین صفحه؛ صفرِ تغییر به‌تنهایی موفقیت اتصال کالا را ثابت نمی‌کند. */
+    public static function manual_summary(array $result): string
+    {
+        $text = sprintf('این صفحه: %d سطر دریافت شد؛ %d کالا به‌روز شد؛ %d کالا از قبل برابر بود؛ %d سطر بدون کالای متناظر؛ %d اتصال تازه؛ %d سطر نامعتبر.',
+            $result['received'], $result['updated'], $result['unchanged'], $result['skipped'], $result['linked'], $result['invalid']);
+        if ($result['received'] === 0) {
+            $text .= ' خوراک این انبار خالی است؛ انبار انتخاب‌شده و وجود ماندهٔ کالا در همان انبار را در Core بررسی کنید.';
+        } elseif ($result['skipped'] > 0) {
+            $text .= ' شناسهٔ اتصال یا SKU دقیق محصول/تنوع سایت را بررسی کنید.';
+        }
+        if (!$result['link_enabled']) { $text .= ' اتصال اولیه با SKU خاموش است.'; }
+        if (!$result['price_enabled']) { $text .= ' همگام‌سازی قیمت خاموش است؛ قیمت سایت تغییر نمی‌کند.'; }
+        if ($result['received'] >= self::BATCH) { $text .= ' صفحه پر است؛ ادامهٔ دریافت به زمان‌بند سپرده شد.'; }
+        return $text;
+    }
+
     /** «همین حالا همگام کن» از صفحه تنظیمات. */
     public static function handle_manual(): void
     {
@@ -298,7 +321,7 @@ class LMC_Stock_Sync
 
         $args = $res['error'] !== ''
             ? ['lmc_msg' => 'sync_failed', 'lmc_detail' => rawurlencode($res['error'])]
-            : ['lmc_msg' => 'synced', 'lmc_count' => $res['updated']];
+            : ['lmc_msg' => 'synced', 'lmc_count' => $res['updated'], 'lmc_detail' => rawurlencode(self::manual_summary($res))];
 
         wp_safe_redirect(add_query_arg($args, admin_url('admin.php?page=labelmod-connector')));
         exit;

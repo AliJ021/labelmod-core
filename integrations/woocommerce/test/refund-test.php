@@ -127,4 +127,11 @@ LMC_Client::$result=['requestId'=>'request-2','returnId'=>'ret-approved','status
 LMC_Refund_Sync::send(104);
 check($accepted->get_meta(LMC_Refund_Sync::DONE),'ret-approved','only approval records the financial return');
 check($accepted->get_meta(LMC_Refund_Sync::STATUS),'approved','final decision saved');
+$zeroRefund = new WC_Order_Refund(105);
+$zeroRefund->amount = 0; $zeroRefund->shipping = 0;
+$zeroRefund->items = [new WC_Order_Item_Product(-1,501)];
+$zeroRefund->meta['_lmc_restock'] = 'yes';
+$zeroPayload = LMC_Refund_Sync::build_payload($order, $zeroRefund);
+check($zeroPayload['amount'], '0', 'free return never invents money');
+check($zeroPayload['lines'], [['lineNo'=>1,'qty'=>'1','restock'=>true]], 'free return preserves item identity and restock');
 echo "PASS $n refund integration assertions\n";

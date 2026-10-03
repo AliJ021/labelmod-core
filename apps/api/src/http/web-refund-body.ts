@@ -6,7 +6,8 @@ const money = z.string().regex(/^\d{1,18}$/);
 export const wooRefundBodySchema = z.object({
   orderId: z.string().trim().min(1).max(64),
   refundId: z.string().trim().min(1).max(64),
-  amount: money.pipe(z.string().refine((x) => BigInt(x) > 0n)),
+  // مرجوعی کالای رایگان پولی پس نمی‌دهد؛ برابری با ارزش واقعی در تراکنشِ بازبینی بررسی می‌شود.
+  amount: money,
   shippingAmount: money.default("0"),
   lines: z.array(z.object({
     lineNo: z.number().int().positive(),

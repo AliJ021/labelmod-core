@@ -127,6 +127,7 @@ class WC_Order_Item_Product
     public string $name;
     public int $qty;
     public string $total;
+    public ?string $subtotal = null;
     private $product;
 
     public function __construct(string $sku, int $qty, string $total, string $name = 'کالا')
@@ -151,6 +152,8 @@ class WC_Order_Item_Product
     {
         return $this->total;
     }
+
+    public function get_subtotal(): string { return $this->subtotal ?? $this->total; }
 
     public function get_name(): string
     {
@@ -431,6 +434,102 @@ assert_eq('مبلغ پرداختی', $payload['paidAmount'], '3600000');
 assert_eq('موبایل بدون نرمال‌سازی محلی', $payload['customerMobile'], '09123456789');
 assert_eq('نام مشتری', $payload['customerName'], 'علی رضایی');
 assert_eq('شماره پیگیری', $payload['paymentRef'], 'REF-9');
+
+// مرجع تأیید دستی باید همراه همان snapshot ثابت به Core برسد.
+$manual = clone $order;
+$manual->txn = '';
+$manual->update_meta_data('_lmc_payment_evidence', ['reference' => 'TEST-BANK-123', 'actor' => 42, 'at' => '2026-10-03T00:00:00Z']);
+assert_eq('مدرک بدون نشان پرداخت مرجع نمی‌سازد', isset(LMC_Order_Sync::build_payload($manual)['paymentRef']), false);
+$manual->update_meta_data(LMC_Order_Sync::META_PAID, 'yes');
+assert_eq('مرجع تأیید دستی وارد بدنه می‌شود', LMC_Order_Sync::build_payload($manual)['paymentRef'], 'TEST-BANK-123');
+$manual->txn = 'GATEWAY-123';
+assert_eq('مرجع درگاه بر سند دستی مقدم است', LMC_Order_Sync::build_payload($manual)['paymentRef'], 'GATEWAY-123');
+$manual->txn = '';
+$frozen = $payload;
+unset($frozen['paymentRef']);
+$line_map = [10 => 1, 20 => 2];
+$manual->update_meta_data(LMC_Order_Sync::META_PAYLOAD, $frozen);
+$manual->update_meta_data(LMC_Order_Sync::META_LINES, $line_map);
+$manual->total = '1';
+$manual->items = [];
+$repaired = LMC_Order_Sync::snapshot($manual);
+assert_eq('مرجع جاافتاده snapshot تکمیل می‌شود', $repaired['paymentRef'], 'TEST-BANK-123');
+$without_ref = $repaired;
+unset($without_ref['paymentRef']);
+assert_eq('تمام snapshot مالی و هویت قبلی ثابت می‌ماند', $without_ref, $frozen);
+assert_eq('نگاشت اقلام ثابت می‌ماند', $manual->get_meta(LMC_Order_Sync::META_LINES), $line_map);
+assert_eq('تلاش تکراری همان payload را می‌دهد', LMC_Order_Sync::snapshot($manual), $repaired);
+$manual->update_meta_data('_lmc_payment_evidence', ['reference' => 'CHANGED', 'actor' => 42, 'at' => '2026-10-03T00:00:00Z']);
+assert_eq('مرجع موجود snapshot جایگزین نمی‌شود', LMC_Order_Sync::snapshot($manual), $repaired);
+$manual->update_meta_data(LMC_Order_Sync::META_PAYLOAD, $frozen);
+$manual->update_meta_data(LMC_Order_Sync::META_INVOICE, 'already-recorded');
+assert_eq('snapshot فاکتور ثبت‌شده تغییر نمی‌کند', LMC_Order_Sync::snapshot($manual), $frozen);
+$manual->delete_meta_data(LMC_Order_Sync::META_INVOICE);
+$manual->update_meta_data('_lmc_payment_evidence', ['reference' => str_repeat('ر', 121), 'actor' => 42, 'at' => '2026-10-03T00:00:00Z']);
+assert_eq('مرجع بلند بدون قطع متن رد می‌شود', LMC_Order_Sync::snapshot($manual)->get_error_code(), 'lmc_payment_reference_invalid');
+assert_eq('مرجع نامعتبر snapshot را تغییر نمی‌دهد', $manual->get_meta(LMC_Order_Sync::META_PAYLOAD), $frozen);
+
+// تخفیف کامل فقط با مبلغ اصلی مثبت و صفر دقیق، بدون تغییر نگهبان پرداخت.
+$free = new WC_Order();
+$free->total = '0';
+$free->shipping = '0';
+$free_item = new WC_Order_Item_Product('FREE-SKU', 1, '0');
+$free_item->subtotal = '450000';
+$free->items = [$free_item];
+assert_eq('تخفیف کامل بدون تأیید پرداخت پذیرفته نیست', LMC_Order_Sync::build_payload($free)->get_error_code(), 'lmc_zero_price');
+$free->update_meta_data(LMC_Order_Sync::META_PAID, 'yes');
+$free_payload = LMC_Order_Sync::build_payload($free);
+assert_eq('قیمت اصلی واقعی محفوظ است', $free_payload['lines'][0]['unitPrice'], '4500000');
+assert_eq('تخفیف کامل صریح است', $free_payload['lines'][0]['discountAmount'], '4500000');
+assert_eq('سفارش رایگان پرداخت ساختگی ندارد', $free_payload['paidAmount'], '0');
+assert_eq('snapshot رایگان تکرارپذیر است', LMC_Order_Sync::snapshot($free), LMC_Order_Sync::snapshot($free));
+$free->items[] = new WC_Order_Item_Product('NORMAL-SKU', 1, '20000');
+$free->total = '20000';
+$mixed = LMC_Order_Sync::build_payload($free);
+assert_eq('سطر عادی در سفارش مختلط بدون فیلد تازه است', $mixed['lines'][1], ['sku' => 'NORMAL-SKU', 'qty' => '1', 'unitPrice' => '200000']);
+assert_eq('پرداخت مختلط فقط مبلغ واقعی است', $mixed['paidAmount'], '200000');
+assert_eq('تغییر بعدی سفارش snapshot رایگان را عوض نمی‌کند', LMC_Order_Sync::snapshot($free), $free_payload);
+foreach (['', '-0.01', '-1', '0.001', 'not-money'] as $bad_total) {
+    $bad_free = clone $free;
+    $bad_free->items = [new WC_Order_Item_Product('BAD-SKU', 1, $bad_total)];
+    $bad_free->items[0]->subtotal = '450000';
+    assert_eq('قیمت ناقص/منفی/گردشده رایگان نیست: ' . $bad_total, LMC_Order_Sync::build_payload($bad_free)->get_error_code(), 'lmc_zero_price');
+}
+foreach (['0', '', '-1'] as $bad_subtotal) {
+    $bad_free->items = [new WC_Order_Item_Product('BAD-SKU', 1, '0')];
+    $bad_free->items[0]->subtotal = $bad_subtotal;
+    assert_eq('مبلغ اصلی نامعتبر پذیرفته نیست: ' . $bad_subtotal, LMC_Order_Sync::build_payload($bad_free)->get_error_code(), 'lmc_zero_price');
+}
+$bad_free->items = [new WC_Order_Item_Product('BAD-SKU', 3, '0')];
+$bad_free->items[0]->subtotal = '1';
+assert_eq('تقسیم نادقیق مبلغ اصلی مجاز نیست', LMC_Order_Sync::build_payload($bad_free)->get_error_code(), 'lmc_zero_price');
+foreach (['rial' => ['10', '12'], 'toman' => ['1', '1.2']] as $currency => [$net, $original]) {
+    set_settings(['currency_unit' => $currency]);
+    $coupon = new WC_Order();
+    $coupon->update_meta_data(LMC_Order_Sync::META_PAID, 'yes');
+    $coupon->total = $net; $coupon->shipping = '0';
+    $coupon->items = [new WC_Order_Item_Product('COUPON-SKU', 3, $net)];
+    $coupon->items[0]->subtotal = $original;
+    $discounted = LMC_Order_Sync::build_payload($coupon);
+    assert_eq('کوپن چندعددی پیش از ارسال ثابت می‌شود: ' . $currency, LMC_Order_Sync::snapshot($coupon), $discounted);
+    assert_eq('تکرار کوپن چندعددی همان بدنه را دارد: ' . $currency, LMC_Order_Sync::snapshot($coupon), $discounted);
+    assert_eq('کوپن چندعددی قیمت اصلی واقعی را نگه می‌دارد: ' . $currency, $discounted['lines'][0]['unitPrice'], '4');
+    assert_eq('کوپن چندعددی تخفیف دقیق دارد: ' . $currency, $discounted['lines'][0]['discountAmount'], '2');
+    assert_eq('کوپن چندعددی با پول دریافت‌شده دقیقاً برابر است: ' . $currency,
+        (string) ((int) $discounted['lines'][0]['unitPrice'] * 3 - (int) $discounted['lines'][0]['discountAmount']), $discounted['paidAmount']);
+    $coupon->total = $currency === 'rial' ? '11' : '1.1';
+    $coupon->items[0]->total = $coupon->total;
+    $rounded_up = LMC_Order_Sync::build_payload($coupon);
+    assert_eq('گردکردن رو به بالا بدهی ساختگی نمی‌سازد: ' . $currency, $rounded_up['lines'][0]['discountAmount'], '1');
+    assert_eq('خالص کوپن رو به بالا دقیق است: ' . $currency,
+        (string) ((int) $rounded_up['lines'][0]['unitPrice'] * 3 - (int) $rounded_up['lines'][0]['discountAmount']), $rounded_up['paidAmount']);
+    assert_eq('تغییر بعدی کوپن تلاش قبلی را عوض نمی‌کند: ' . $currency, LMC_Order_Sync::snapshot($coupon), $discounted);
+    $coupon->items[0]->total = $net;
+    $coupon->items[0]->subtotal = $net;
+    assert_eq('بدون مبلغ اصلی معتبر اختلاف گردکردن رد می‌شود: ' . $currency,
+        LMC_Order_Sync::build_payload($coupon)->get_error_code(), 'lmc_line_rounding');
+}
+set_settings([]);
 
 // ⚠️ هسته این فایل: جمع سطرها به‌علاوه کرایه باید دقیقاً همان مبلغی
 //    باشد که از مشتری گرفته‌ایم. اگر نه، دفتر و درگاه دو عدد متفاوت

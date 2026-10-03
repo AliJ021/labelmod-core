@@ -258,9 +258,11 @@ class LMC_Settings
                 . esc_html__('تنظیمات ذخیره شد.', 'labelmod-connector') . '</p></div>';
         } elseif ($msg === 'synced') {
             $n = isset($_GET['lmc_count']) ? (int) $_GET['lmc_count'] : 0;
+            $detail = isset($_GET['lmc_detail'])
+                ? sanitize_text_field(rawurldecode(wp_unslash($_GET['lmc_detail']))) : '';
             printf(
                 '<div class="notice notice-success"><p>%s</p></div>',
-                esc_html(sprintf(
+                esc_html($detail !== '' ? $detail : sprintf(
                     /* translators: %d: تعداد کالاهای به‌روزشده */
                     __('همگام‌سازی انجام شد — %d کالا به‌روز شد.', 'labelmod-connector'),
                     $n
