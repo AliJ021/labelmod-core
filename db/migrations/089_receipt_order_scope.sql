@@ -50,8 +50,12 @@ BEGIN
 
   IF NEW.order_id IS NULL THEN RETURN NEW; END IF;
 
+  -- FOR SHARE نه خواندن ساده: FK فقط FOR KEY SHARE می‌گیرد که با UPDATE
+  -- غیرکلیدیِ سفارش تعارض ندارد. بی این قفل، تغییر هم‌زمان شعبه یا
+  -- تأمین‌کنندهٔ سفارش (بند ۴) و درج این رسید هر دو از نگهبانشان رد
+  -- می‌شدند. با آن، یکی منتظر دیگری می‌ماند و نسخهٔ Commitشده را می‌بیند.
   SELECT branch_id, supplier_id INTO v_branch, v_supplier
-    FROM purchasing.purchase_order WHERE id = NEW.order_id;
+    FROM purchasing.purchase_order WHERE id = NEW.order_id FOR SHARE;
   IF NOT FOUND THEN
     RAISE EXCEPTION 'سفارش خرید یافت نشد.';
   END IF;
@@ -80,10 +84,13 @@ DECLARE v_receipt_order uuid; v_line_order uuid; v_line_variation uuid;
 BEGIN
   IF NEW.order_line_id IS NULL THEN RETURN NEW; END IF;
 
+  -- هر دو والد FOR SHARE قفل می‌شوند (همان دلیل بند ۱): تعویض هم‌زمان
+  -- سفارشِ رسید یا کالای سطر سفارش باید پشت این درج صف بکشد، یا این درج
+  -- نسخهٔ تازهٔ آن‌ها را ببیند.
   SELECT order_id INTO v_receipt_order
-    FROM purchasing.receipt WHERE id = NEW.receipt_id;
+    FROM purchasing.receipt WHERE id = NEW.receipt_id FOR SHARE;
   SELECT order_id, variation_id INTO v_line_order, v_line_variation
-    FROM purchasing.purchase_order_line WHERE id = NEW.order_line_id;
+    FROM purchasing.purchase_order_line WHERE id = NEW.order_line_id FOR SHARE;
 
   IF v_receipt_order IS NULL THEN
     RAISE EXCEPTION 'این رسید به هیچ سفارشی وصل نیست، پس سطرش هم نمی‌تواند.';
