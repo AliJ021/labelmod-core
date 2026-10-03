@@ -130,6 +130,11 @@ test("FND33/34: install that ran the original 065/070 upgrades to the same schem
     assert.equal(psql(oldUrl, `SELECT checksum FROM public.schema_migration WHERE filename='065_audit_timezone.sql'`), ORIGINAL_065);
     // اجرای دوباره بی‌اثر و بی‌خطاست.
     migrate(stage(current), oldUrl);
+    // استثنا به نسخهٔ جاریِ دقیق هم گره خورده: ویرایش بعدیِ ۰۶۵ روی همین نصب
+    // باید مثل هر نصب دیگری متوقف کند، نه اینکه پشت هش تاریخی پنهان شود.
+    assert.throws(() => migrate(stage({ ...current, "065_audit_timezone.sql": current["065_audit_timezone.sql"] + "\n-- ویرایش تازه\n" }), oldUrl),
+      (error: { stdout?: Buffer }) => /065_audit_timezone\.sql پس از اجرا ویرایش شده است/.test(error.stdout?.toString() ?? ""),
+      "ویرایش نسخهٔ جاری روی نصب تاریخی هم دیده می‌شود");
 
     // ── نصب تازه برای مقایسه ────────────────────────────────────────
     const freshUrl = createDatabase("fresh");

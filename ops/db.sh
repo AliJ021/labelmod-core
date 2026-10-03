@@ -42,14 +42,16 @@ PSQL="psql -v ON_ERROR_STOP=1 -q"
 # است. ولی ۰۶۵ و ۰۷۰ پیش از این قاعده ویرایش شدند و نصبی که نسخهٔ اولیه‌شان
 # را اجرا کرده بود، برای همیشه پشت آن توقف می‌ماند.
 #
-# فقط همین **زوج‌های دقیق** (نام فایل + هش نسخهٔ اولیه) پذیرفته‌اند، و
-# فقط چون مهاجرت ترمیمیِ نام‌برده همان تفاوت را افزایشی اعمال می‌کند.
+# فقط همین **سه‌تایی‌های دقیق** پذیرفته‌اند: نام فایل + هش نسخهٔ اولیه که
+# اجرا شد + هش نسخهٔ جاری که ترمیم برایش نوشته شد — و فقط چون مهاجرت
+# ترمیمیِ نام‌برده همان تفاوت را افزایشی اعمال می‌کند. بدون هش جاری،
+# ویرایشِ بعدیِ ۰۶۵ یا ۰۷۰ روی همین نصب‌ها بی‌صدا رد می‌شد.
 # ⚠️ ویرایش تازه هرگز به این فهرست اضافه نمی‌شود — برایش مهاجرت تازه
 #    بسازید. این فهرست راه دورزدن نگهبان نیست، اثبات یک ترمیم است.
 superseded_by () {
-  case "$1:$2" in
-    065_audit_timezone.sql:cbfa185bb3ca87930c6ab568bdec4a9b58b1f9db0a13c22b6ecd6792fa502096) echo 090_repair_edited_migrations.sql ;;
-    070_committed_journal_guard.sql:ceb8ed7d9c2caf7d2032ea947f28ead10fcadd52b5c2b09bab20560e6c7e41e4) echo 090_repair_edited_migrations.sql ;;
+  case "$1:$2:$3" in
+    065_audit_timezone.sql:cbfa185bb3ca87930c6ab568bdec4a9b58b1f9db0a13c22b6ecd6792fa502096:37f268a42aaf90c74c4c6965ba25b24c764e2f557623b859b7cc5c7db222c7b4) echo 090_repair_edited_migrations.sql ;;
+    070_committed_journal_guard.sql:ceb8ed7d9c2caf7d2032ea947f28ead10fcadd52b5c2b09bab20560e6c7e41e4:23d22f8d680610b8a13688d83e22ebf1c42f33466515c328114290b6ea68ff2d) echo 090_repair_edited_migrations.sql ;;
     *) return 1 ;;
   esac
 }
@@ -85,7 +87,7 @@ migrate () {
 
     if [ -n "$applied" ]; then
       if [ "$applied" != "$sum" ]; then
-        if repair=$(superseded_by "$name" "$applied") && [ -f "db/migrations/$repair" ]; then
+        if repair=$(superseded_by "$name" "$applied" "$sum") && [ -f "db/migrations/$repair" ]; then
           echo "↺ $name: نسخهٔ تاریخیِ شناخته‌شده اجرا شده است؛ تفاوتش را $repair اعمال می‌کند."
           continue
         fi
