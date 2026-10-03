@@ -27,7 +27,8 @@
 --   • بیش‌تحویل — در `order_progress` با `over_qty` دیده می‌شود.
 --
 -- ⚠️ سطرهای موجود بازنویسی نمی‌شوند و این مهاجرت روی دادهٔ قدیمی شکست
---    نمی‌خورد: نگهبان فقط درج و تغییر بعدی را می‌سنجد. پیدا کردن اتصال
+--    نمی‌خورد: نگهبان درج و تغییر بعدی را می‌سنجد، و پیش‌نویس قدیمی را
+--    در لحظهٔ ثبت (بند ۳). پیدا کردن اتصال
 --    نادرستِ قدیمی یک گزارش فقط‌خواندنی است، نه اصلاح خودکار سند.
 -- =====================================================================
 BEGIN;
@@ -105,6 +106,84 @@ CREATE TRIGGER assert_order_line_matches_t
   BEFORE INSERT OR UPDATE OF order_line_id, variation_id, receipt_id ON purchasing.receipt_line
   FOR EACH ROW EXECUTE FUNCTION purchasing.assert_order_line_matches();
 
+-- ---------------------------------------------------------------------
+-- ۳. لحظهٔ ثبت: پیش‌نویسِ پیش از ۰۸۹ هم سنجیده می‌شود
+-- ---------------------------------------------------------------------
+-- نگهبان‌های ۱ و ۲ فقط درج و تغییر بعدی را می‌بینند. پیش‌نویسی که پیش از
+-- این مهاجرت به سفارش شعبهٔ دیگر یا سطرِ کالای دیگر وصل شده بود، بدون
+-- این سنجش ثبت می‌شد و پیشرفت سفارش را خراب می‌کرد. رسیدِ **ثبت‌شده**
+-- دست نمی‌خورد: سنجش فقط در گذار draft → posted است.
+CREATE FUNCTION purchasing.assert_receipt_links_on_post()
+RETURNS trigger LANGUAGE plpgsql AS $$
+DECLARE v_branch uuid; v_supplier uuid;
+BEGIN
+  IF NEW.order_id IS NOT NULL THEN
+    SELECT branch_id, supplier_id INTO v_branch, v_supplier
+      FROM purchasing.purchase_order WHERE id = NEW.order_id;
+    IF NOT FOUND THEN
+      RAISE EXCEPTION 'سفارش خرید یافت نشد.';
+    END IF;
+    IF v_branch <> NEW.branch_id THEN
+      RAISE EXCEPTION 'رسید فقط به سفارش خریدِ همان شعبه وصل می‌شود.';
+    END IF;
+    IF v_supplier <> NEW.supplier_id THEN
+      RAISE EXCEPTION 'تأمین‌کنندهٔ رسید با تأمین‌کنندهٔ سفارش خرید یکی نیست.';
+    END IF;
+  END IF;
+
+  IF EXISTS (SELECT 1
+               FROM purchasing.receipt_line rl
+               JOIN purchasing.purchase_order_line ol ON ol.id = rl.order_line_id
+              WHERE rl.receipt_id = NEW.id
+                AND (ol.order_id IS DISTINCT FROM NEW.order_id
+                     OR ol.variation_id <> rl.variation_id)) THEN
+    RAISE EXCEPTION 'سطری از این رسید به سفارش یا کالای دیگری وصل است؛ پیش از ثبت اتصالش را اصلاح کنید.';
+  END IF;
+  RETURN NEW;
+END $$;
+
+CREATE TRIGGER assert_receipt_links_on_post_t
+  BEFORE UPDATE OF status ON purchasing.receipt
+  FOR EACH ROW
+  WHEN (OLD.status = 'draft' AND NEW.status = 'posted')
+  EXECUTE FUNCTION purchasing.assert_receipt_links_on_post();
+
+-- ---------------------------------------------------------------------
+-- ۴. سمت سفارش: میدان‌های پیوند پس از اتصال ثابت‌اند
+-- ---------------------------------------------------------------------
+-- نگهبان سمت رسید فقط وقتی رسید یا سطرش عوض شود اجرا می‌شود. اگر خودِ
+-- سفارش شعبه یا تأمین‌کننده عوض کند، یا سطر سفارش به سفارش/کالای دیگری
+-- برود، همان پیوند نادرست از طرف دیگر ساخته می‌شد. هیچ مسیر برنامه‌ای
+-- این میدان‌ها را عوض نمی‌کند؛ این فقط دری است که psql باز می‌گذاشت.
+CREATE FUNCTION purchasing.assert_order_link_fields_fixed()
+RETURNS trigger LANGUAGE plpgsql AS $$
+BEGIN
+  IF TG_TABLE_NAME = 'purchase_order' THEN
+    IF EXISTS (SELECT 1 FROM purchasing.receipt WHERE order_id = OLD.id) THEN
+      RAISE EXCEPTION 'شعبه یا تأمین‌کنندهٔ سفارشی که رسید به آن وصل است عوض نمی‌شود.';
+    END IF;
+  ELSIF EXISTS (SELECT 1 FROM purchasing.receipt_line WHERE order_line_id = OLD.id) THEN
+    RAISE EXCEPTION 'سفارش یا کالای سطری که رسید به آن وصل است عوض نمی‌شود.';
+  END IF;
+  RETURN NEW;
+END $$;
+
+CREATE TRIGGER assert_order_link_fields_fixed_t
+  BEFORE UPDATE OF branch_id, supplier_id ON purchasing.purchase_order
+  FOR EACH ROW
+  WHEN (OLD.branch_id IS DISTINCT FROM NEW.branch_id
+        OR OLD.supplier_id IS DISTINCT FROM NEW.supplier_id)
+  EXECUTE FUNCTION purchasing.assert_order_link_fields_fixed();
+
+CREATE TRIGGER assert_order_link_fields_fixed_t
+  BEFORE UPDATE OF order_id, variation_id ON purchasing.purchase_order_line
+  FOR EACH ROW
+  WHEN (OLD.order_id IS DISTINCT FROM NEW.order_id
+        OR OLD.variation_id IS DISTINCT FROM NEW.variation_id)
+  EXECUTE FUNCTION purchasing.assert_order_link_fields_fixed();
+
 REVOKE EXECUTE ON FUNCTION purchasing.assert_receipt_order_scope() FROM PUBLIC;
+REVOKE EXECUTE ON FUNCTION purchasing.assert_receipt_links_on_post() FROM PUBLIC;
+REVOKE EXECUTE ON FUNCTION purchasing.assert_order_link_fields_fixed() FROM PUBLIC;
 
 COMMIT;

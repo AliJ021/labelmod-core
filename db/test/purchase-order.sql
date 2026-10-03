@@ -51,6 +51,24 @@ BEGIN
   RAISE EXCEPTION E'\n  ✗ %\n      انتظار: خطا\n      واقعی : بدون خطا اجرا شد', p_label;
 END $$;
 
+-- مثل بالا، ولی پیام را هم می‌سنجد: خطای بی‌ربطِ زودتر نباید جای نگهبان
+-- را بگیرد و سبز شود.
+CREATE OR REPLACE FUNCTION pg_temp.assert_raises_like(
+  p_label text, p_sql text, p_like text
+) RETURNS void LANGUAGE plpgsql AS $$
+BEGIN
+  BEGIN
+    EXECUTE p_sql;
+  EXCEPTION WHEN others THEN
+    IF SQLERRM NOT LIKE p_like THEN
+      RAISE EXCEPTION E'\n  ✗ %\n      انتظار: خطای %\n      واقعی : %', p_label, p_like, SQLERRM;
+    END IF;
+    RAISE NOTICE '  ✓ % → %', p_label, left(SQLERRM, 78);
+    RETURN;
+  END;
+  RAISE EXCEPTION E'\n  ✗ %\n      انتظار: خطا\n      واقعی : بدون خطا اجرا شد', p_label;
+END $$;
+
 DO $test$
 DECLARE
   BR   uuid := '00000000-0000-7000-8000-000000000001';
@@ -59,7 +77,7 @@ DECLARE
   v_ord uuid; v_ord2 uuid; v_ol uuid; v_ol2 uuid; v_ol_other uuid;
   v_rcpt uuid; v_rl uuid; v_ret uuid;
   v_no text; v_entries_before int; v_moves_before int;
-  v_br2 uuid; v_wh2 uuid; v_sup2 uuid; v_ord3 uuid; v_ol3 uuid; v_ord4 uuid;
+  v_br2 uuid; v_wh2 uuid; v_sup2 uuid; v_ord3 uuid; v_ol3 uuid; v_ord4 uuid; v_ord5 uuid;
 BEGIN
 
 RAISE NOTICE E'\n═══ آماده‌سازی ═══';
@@ -272,6 +290,10 @@ INSERT INTO platform.branch (code, name) VALUES ('PO-B2','شعبهٔ دوم آز
   RETURNING id INTO v_br2;
 INSERT INTO inventory.warehouse (branch_id, code, name, kind)
 VALUES (v_br2,'PO-B2-STORE','قفسهٔ شعبهٔ دوم','store') RETURNING id INTO v_wh2;
+-- شمارنده‌های همان سال برای شعبهٔ دوم؛ وگرنه ثبت پیش از رسیدن به نگهبان
+-- به «شمارنده تعریف نشده» می‌خورد و آزمون چیز دیگری را می‌سنجید.
+INSERT INTO platform.document_counter (branch_id, doc_type, fiscal_year, prefix)
+SELECT v_br2, doc_type, fiscal_year, prefix FROM platform.document_counter WHERE branch_id = BR;
 INSERT INTO purchasing.supplier (code, name) VALUES ('S-PO-2','تأمین‌کنندهٔ دوم')
   RETURNING id INTO v_sup2;
 
@@ -320,6 +342,49 @@ INSERT INTO purchasing.receipt (branch_id, supplier_id, warehouse_id, order_id, 
 VALUES (BR, v_sup, WH, v_ord4, '2026-07-11') RETURNING id INTO v_rcpt;
 PERFORM pg_temp.assert_txt('رسید سفارش پیش‌نویسِ همان شعبه پذیرفته است',
   (SELECT order_id::text FROM purchasing.receipt WHERE id = v_rcpt), v_ord4::text);
+
+-- پیش‌نویسی که پیش از ۰۸۹ ساخته شده بود از نگهبان درج نگذشته است.
+-- نگهبان را موقتاً برمی‌داریم تا همان حالت ساخته شود؛ ثبتش باید رد شود.
+ALTER TABLE purchasing.receipt DISABLE TRIGGER assert_receipt_order_scope_t;
+INSERT INTO purchasing.receipt (branch_id, supplier_id, warehouse_id, order_id, occurred_at)
+VALUES (v_br2, v_sup, v_wh2, v_ord3, '2026-07-11') RETURNING id INTO v_rcpt;
+ALTER TABLE purchasing.receipt ENABLE TRIGGER assert_receipt_order_scope_t;
+INSERT INTO purchasing.receipt_line (receipt_id, variation_id, qty, unit_price, line_amount, order_line_id)
+VALUES (v_rcpt, v_var, 1, 1000000, 1000000, v_ol3);
+PERFORM pg_temp.assert_raises_like('پیش‌نویس قدیمیِ شعبهٔ دیگر ثبت نمی‌شود',
+  format('SELECT purchasing.post_receipt(%L::uuid, %L::uuid)', v_rcpt, v_user), '%همان شعبه%');
+
+ALTER TABLE purchasing.receipt_line DISABLE TRIGGER assert_order_line_matches_t;
+INSERT INTO purchasing.receipt (branch_id, supplier_id, warehouse_id, order_id, occurred_at)
+VALUES (BR, v_sup, WH, v_ord3, '2026-07-11') RETURNING id INTO v_rcpt;
+INSERT INTO purchasing.receipt_line (receipt_id, variation_id, qty, unit_price, line_amount, order_line_id)
+VALUES (v_rcpt, v_var2, 1, 1000000, 1000000, v_ol3);
+ALTER TABLE purchasing.receipt_line ENABLE TRIGGER assert_order_line_matches_t;
+PERFORM pg_temp.assert_raises_like('پیش‌نویس قدیمیِ کالای دیگر روی سطر سفارش ثبت نمی‌شود',
+  format('SELECT purchasing.post_receipt(%L::uuid, %L::uuid)', v_rcpt, v_user), '%کالای دیگری%');
+PERFORM pg_temp.assert_eq('دو پیش‌نویس ردشده پیشرفت سفارش را جلو نبردند',
+  (SELECT received_qty FROM purchasing.order_progress WHERE order_line_id = v_ol3), 3);
+
+-- از سمت سفارش: میدان‌های پیوند پس از اتصال ثابت‌اند.
+PERFORM pg_temp.assert_raises_like('شعبهٔ سفارشِ دارای رسید عوض نمی‌شود',
+  format('UPDATE purchasing.purchase_order SET branch_id = %L::uuid WHERE id = %L::uuid', v_br2, v_ord3),
+  '%رسید به آن وصل%');
+PERFORM pg_temp.assert_raises_like('تأمین‌کنندهٔ سفارشِ دارای رسید عوض نمی‌شود',
+  format('UPDATE purchasing.purchase_order SET supplier_id = %L::uuid WHERE id = %L::uuid', v_sup2, v_ord3),
+  '%رسید به آن وصل%');
+PERFORM pg_temp.assert_raises_like('کالای سطر سفارشِ دارای رسید عوض نمی‌شود',
+  format('UPDATE purchasing.purchase_order_line SET variation_id = %L::uuid WHERE id = %L::uuid', v_var2, v_ol3),
+  '%رسید به آن وصل%');
+PERFORM pg_temp.assert_raises_like('سطر سفارشِ دارای رسید به سفارش دیگر نمی‌رود',
+  format('UPDATE purchasing.purchase_order_line SET order_id = %L::uuid WHERE id = %L::uuid', v_ord4, v_ol3),
+  '%رسید به آن وصل%');
+
+-- مشروع: سفارشی که هنوز رسیدی ندارد، تأمین‌کننده‌اش اصلاح می‌شود.
+INSERT INTO purchasing.purchase_order (branch_id, supplier_id, warehouse_id)
+VALUES (BR, v_sup, WH) RETURNING id INTO v_ord5;
+UPDATE purchasing.purchase_order SET supplier_id = v_sup2 WHERE id = v_ord5;
+PERFORM pg_temp.assert_txt('سفارش بی‌رسید هنوز اصلاح‌پذیر است',
+  (SELECT supplier_id::text FROM purchasing.purchase_order WHERE id = v_ord5), v_sup2::text);
 
 -- ═════════════════════════════════════════════════════════════════
 RAISE NOTICE E'\n═══ ادعاهای پایدار ═══';
