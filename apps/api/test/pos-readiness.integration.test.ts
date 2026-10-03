@@ -53,16 +53,21 @@ describe("آمادگی API صندوق", { skip }, () => {
     string,
     { cookies: Record<string, string>; headers: Record<string, string> }
   >();
+  const clientAddresses = new Map<string, string>();
 
   async function loginAs(username: string) {
     const cached = sessions.get(username);
     if (cached) return cached;
+    // Each synthetic actor is a separate client; login/MFA limits remain enabled.
+    // Keep its address stable if login is retried, instead of bypassing per-client limits.
+    if (!clientAddresses.has(username)) {
+      const index = clientAddresses.size;
+      clientAddresses.set(username, `127.10.${Math.floor(index / 254)}.${index % 254 + 1}`);
+    }
     const r = await loginWithMfa(app, {
       method: "POST",
       url: "/auth/login",
-      remoteAddress: username.startsWith("draft_manager_") ? "127.0.0.14" : username.startsWith("pc_admin_") ? "127.0.0.15" : username === warehouse ? "127.0.0.11"
-        : username === marketing ? "127.0.0.12"
-          : username === returnReader ? "127.0.0.13" : "127.0.0.1",
+      remoteAddress: clientAddresses.get(username)!,
       payload: { username, password: PASSWORD, deviceFingerprint: `fp-${suffix}-${username}` },
     });
     assert.equal(r.statusCode, 200, `ورود ${username} ناموفق: ${r.body}`);
