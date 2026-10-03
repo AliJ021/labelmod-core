@@ -35,8 +35,27 @@ PSQL="psql -v ON_ERROR_STOP=1 -q"
 # ⚠️ دفتر در `public` می‌نشیند، نه `platform`: ساختن اسکیمای `platform`
 #    اینجا باعث می‌شد مهاجرت ۰۰۱ روی `CREATE SCHEMA platform` بشکند.
 #    دفتر مهاجرت زیرساخت است، نه دامنه.
+# ---------------------------------------------------------------------
+# نسخه‌های تاریخیِ مهاجرت‌هایی که پس از اجرا ویرایش شدند (FND33/34)
+# ---------------------------------------------------------------------
+# مهاجرت اجراشده ویرایش نمی‌شود و `migrate` روی ویرایش می‌ایستد — درست
+# است. ولی ۰۶۵ و ۰۷۰ پیش از این قاعده ویرایش شدند و نصبی که نسخهٔ اولیه‌شان
+# را اجرا کرده بود، برای همیشه پشت آن توقف می‌ماند.
+#
+# فقط همین **زوج‌های دقیق** (نام فایل + هش نسخهٔ اولیه) پذیرفته‌اند، و
+# فقط چون مهاجرت ترمیمیِ نام‌برده همان تفاوت را افزایشی اعمال می‌کند.
+# ⚠️ ویرایش تازه هرگز به این فهرست اضافه نمی‌شود — برایش مهاجرت تازه
+#    بسازید. این فهرست راه دورزدن نگهبان نیست، اثبات یک ترمیم است.
+superseded_by () {
+  case "$1:$2" in
+    065_audit_timezone.sql:cbfa185bb3ca87930c6ab568bdec4a9b58b1f9db0a13c22b6ecd6792fa502096) echo 090_repair_edited_migrations.sql ;;
+    070_committed_journal_guard.sql:ceb8ed7d9c2caf7d2032ea947f28ead10fcadd52b5c2b09bab20560e6c7e41e4) echo 090_repair_edited_migrations.sql ;;
+    *) return 1 ;;
+  esac
+}
+
 migrate () {
-  local url="$1" f name sum applied
+  local url="$1" f name sum applied repair
 
   $PSQL -d "$url" -c "
     SET client_min_messages = warning;
@@ -66,6 +85,10 @@ migrate () {
 
     if [ -n "$applied" ]; then
       if [ "$applied" != "$sum" ]; then
+        if repair=$(superseded_by "$name" "$applied") && [ -f "db/migrations/$repair" ]; then
+          echo "↺ $name: نسخهٔ تاریخیِ شناخته‌شده اجرا شده است؛ تفاوتش را $repair اعمال می‌کند."
+          continue
+        fi
         echo "✗ $name پس از اجرا ویرایش شده است."
         echo "  مهاجرت اجراشده ویرایش نمی‌شود — مهاجرت تازه بسازید."
         return 1
