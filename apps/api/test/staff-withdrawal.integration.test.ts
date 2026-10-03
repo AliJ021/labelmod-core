@@ -11,6 +11,7 @@
 import { after, before, describe, test } from "node:test";
 import assert from "node:assert/strict";
 import { randomUUID } from "node:crypto";
+import { readFileSync } from "node:fs";
 import { sql } from "kysely";
 import type { FastifyInstance } from "fastify";
 import { createDb, type DbHandle } from "../src/db/client.ts";
@@ -88,6 +89,14 @@ describe("دفتر برداشت پرسنل", { skip: DATABASE_URL ? false : "DAT
     footprintBefore = await footprint();
   });
   after(async () => { await app?.close(); await handle?.close(); await owner?.close(); disposable?.drop(); });
+
+  test("نگهبان‌های مستقیم SQL حتی با نقش مالک دفتر برداشت", async () => {
+    await owner.db.connection().execute(async connection => {
+      const script = readFileSync(new URL("../../../db/test/staff-withdrawal.sql", import.meta.url), "utf8").replace(/^\\set ON_ERROR_STOP on\r?$/m, "");
+      try { await sql.raw(script).execute(connection); }
+      finally { await sql`ROLLBACK`.execute(connection); }
+    });
+  });
 
   test("کارمند هر نقشی برداشت خودش را ثبت می‌کند؛ مالک از نشست، نه از بدنه", async () => {
     for (const who of [cashier, supervisor, accountant]) {
@@ -221,14 +230,31 @@ describe("دفتر برداشت پرسنل", { skip: DATABASE_URL ? false : "DAT
     assert.equal(blankNote.statusCode, 400);
   });
 
-  test("مدیر کل برداشت خودش را اصلاح نمی‌کند", async () => {
+  test("مدیر کل برداشت خودش را با تاریخچهٔ اصلاح می‌کند", async () => {
     const own = await create(gm, "50000", "برداشت مدیر");
     const detail = await call(gm, "GET", `/withdrawals/${own.id}`);
-    assert.equal(detail.json().canCorrect, false);
+    assert.equal(detail.json().canCorrect, true);
     const res = await call(gm, "POST", `/withdrawals/${own.id}/corrections`,
       { expectedVersion: 1, amount: "0", reason: "برداشت مدیر", note: "x" }, randomUUID());
-    assert.equal(res.statusCode, 403); assert.equal(res.json().error.code, "withdrawal_self_correction");
-    assert.equal(await rows(own.id), 1);
+    assert.equal(res.statusCode, 200, res.body);
+    assert.equal(await rows(own.id), 2);
+    assert.equal(res.json().withdrawal.history[1].actor.id, gm.id);
+    assert.equal(res.json().withdrawal.history[0].amount, "50000");
+    assert.equal(res.json().withdrawal.history[1].amount, "0");
+  });
+
+  test("بازپخش اصلاح پس از تغییر دامنهٔ مدیر جزئیات را لو نمی‌دهد", async () => {
+    const manager = await actor("admin", A);
+    const w = await create(cashier, "101", "دلیل اولیه");
+    const body = { expectedVersion: 1, amount: "101", reason: "دلیل اصلاح‌شده", note: "فقط اصلاح دلیل" };
+    const key = randomUUID();
+    assert.equal((await call(manager, "POST", `/withdrawals/${w.id}/corrections`, body, key)).statusCode, 200);
+    await owner.db.updateTable("identity.user_role").set({ branch_id: branchB }).where("user_id", "=", manager.id).execute();
+    const replay = await call(manager, "POST", `/withdrawals/${w.id}/corrections`, body, key);
+    assert.equal(replay.statusCode, 404, replay.body);
+    assert.equal(replay.json().error.code, "withdrawal_not_found");
+    assert.equal(replay.json().withdrawal, undefined);
+    assert.equal(await rows(w.id), 2);
   });
 
   test("دامنهٔ شعبه: مدیر کل شعبه‌ای فقط ثبت‌های شعبهٔ خودش را می‌بیند و اصلاح می‌کند", async () => {

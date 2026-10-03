@@ -13,7 +13,7 @@
  *                     هر دو نشست انسانی کامل (نه PIN، نه کلید API) و دامنهٔ شعبه.
  *
  * ⚠️ نگهبان‌های اصلی در دیتابیس‌اند (Trigger، مهاجرت ۰۸۴): مالک = عامل،
- *    ترتیب نسخه، مجوز، استقلال از مالک، دامنهٔ شعبه و حسابرسی. اینجا همان
+ *    ترتیب نسخه، مجوز، دامنهٔ شعبه و حسابرسی. اینجا همان
  *    شرط‌ها **پیش از** اثر سنجیده می‌شوند تا کاربر کد خطای دقیق بگیرد
  *    (مثلاً `withdrawal_stale` به‌جای پیام عمومی)، نه به‌جای دیتابیس.
  *
@@ -193,7 +193,7 @@ export function registerWithdrawalRoutes(app: FastifyInstance, db: Db): void {
     const found = await detail(db, id);
     // فقط نمایش؛ دروازهٔ واقعی همان مسیر اصلاح و Trigger نسخه است.
     const verdict = await can(db, { userId: s.userId, operation: "withdrawal.correct", viaPin: s.pinUnlocked });
-    return { ...found, canCorrect: verdict.verdict === "allow" && found.owner.id !== s.userId };
+    return { ...found, canCorrect: verdict.verdict === "allow" };
   });
 
   app.post("/withdrawals/:id/corrections", { config: { rateLimit: { max: 30, timeWindow: "1 minute" } } }, async req => {
@@ -213,9 +213,6 @@ export function registerWithdrawalRoutes(app: FastifyInstance, db: Db): void {
             identity.withdrawal_in_scope(${s.userId}::uuid, branch_id) AS "inScope"
           FROM identity.staff_withdrawal WHERE id = ${id}::uuid FOR UPDATE`.execute(trx)).rows[0];
         if (!head?.inScope) throw new WithdrawalError("withdrawal_not_found", "ثبت برداشت یافت نشد", 404);
-        if (head.ownerId === s.userId) {
-          throw new WithdrawalError("withdrawal_self_correction", "برداشت خودتان را نمی‌توانید اصلاح کنید؛ اصلاح باید از مدیری مستقل از مالک باشد.", 403);
-        }
         const cur = (await sql<{ version: number; amount: string; reason: string }>`SELECT version, amount::text AS amount, reason
           FROM identity.staff_withdrawal_current WHERE id = ${id}::uuid`.execute(trx)).rows[0]!;
         if (cur.version !== body.expectedVersion) {
@@ -230,7 +227,12 @@ export function registerWithdrawalRoutes(app: FastifyInstance, db: Db): void {
           ${body.amount}::numeric, ${body.reason}, ${body.note}) AS v`.execute(trx)).rows[0]!.v;
         return { value: { appliedVersion: version, withdrawal: await detail(trx, id) }, ref: `${id}:${version}` };
       },
-      replay: async ref => ({ appliedVersion: Number(ref.split(":")[1]), withdrawal: await detail(db, id) }),
+      replay: async ref => {
+        const scoped = await sql`SELECT 1 FROM identity.staff_withdrawal
+          WHERE id = ${id}::uuid AND identity.withdrawal_in_scope(${s.userId}::uuid, branch_id)`.execute(db);
+        if (!scoped.rows.length) throw new WithdrawalError("withdrawal_not_found", "ثبت برداشت یافت نشد", 404);
+        return { appliedVersion: Number(ref.split(":")[1]), withdrawal: await detail(db, id) };
+      },
     });
     return { ...out.value, replayed: out.replayed };
   });

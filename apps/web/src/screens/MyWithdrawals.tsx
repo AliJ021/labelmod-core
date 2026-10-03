@@ -8,12 +8,12 @@ import { Money } from "../components/ui/Money.tsx";
 import { PageHeader, SectionHeader } from "../components/ui/PageHeader.tsx";
 import { SafeAction } from "../components/ui/SafeAction.tsx";
 import { Skeleton } from "../components/ui/Skeleton.tsx";
-import { ActionKeys, actionFor } from "../lib/action-key.ts";
+import { useWithdrawalOperation } from "../lib/use-withdrawal-operation.ts";
 import { api, ApiError } from "../lib/api.ts";
 import { formatCount, formatJalaliMoment } from "../lib/format.ts";
 import { useLatestQuery } from "../lib/use-latest-query.ts";
 import { useNavigationGuard, useUrlState } from "../lib/use-url-state.ts";
-import { checkAmount, checkText, createPayload, PAGE_SIZE, REASON_MAX, type WithdrawalDetail, type WithdrawalItem, type WithdrawalPage } from "../lib/withdrawals.ts";
+import { checkAmount, checkText, createPayload, PAGE_SIZE, REASON_MAX, tomanDraft, type WithdrawalDetail, type WithdrawalItem, type WithdrawalPage } from "../lib/withdrawals.ts";
 
 /**
  * برداشت‌های من — بخش شخصی «حساب من» (مهاجرت ۰۸۴).
@@ -28,7 +28,7 @@ import { checkAmount, checkText, createPayload, PAGE_SIZE, REASON_MAX, type With
  *    عملیات از سرور می‌پرسد (`/withdrawals/mine/by-key/:key`) و تا روشن‌شدن،
  *    فرم قفل می‌ماند تا بدنهٔ دیگری با کلید تازه ثبت دوم نسازد.
  */
-export function MyWithdrawals() {
+export function MyWithdrawals({ currentUserId }: { currentUserId: string }) {
   const [pageText, setPage] = useUrlState("settings.wdPage", "1");
   const [selected, setSelected] = useUrlState("settings.wd");
   const page = Math.max(1, Math.floor(Number(pageText)) || 1);
@@ -40,8 +40,8 @@ export function MyWithdrawals() {
   const [amount, setAmount] = useState(""), [reason, setReason] = useState("");
   const [done, setDone] = useState<string | null>(null);
   // بدنهٔ فرستاده‌شده‌ای که نتیجه‌اش هنوز روشن نیست؛ تا آن زمان فرم قفل است.
-  const [frozen, setFrozen] = useState<{ amount: string; reason: string } | null>(null);
-  const keys = useRef(new ActionKeys());
+  const recovery = useWithdrawalOperation(currentUserId, "create");
+  const frozen = recovery.pending?.body ?? null;
   const payload = createPayload(amount, reason);
   const locked = frozen !== null;
   const shown = frozen ?? payload;
@@ -53,16 +53,15 @@ export function MyWithdrawals() {
   async function create() {
     const body = shown;
     if (!body) throw new Error("فرم معتبر نیست");
-    setFrozen(body);
-    const action = actionFor("withdrawal:create", body);
+    const operation = recovery.prepare(body);
     try {
-      await api.post("/withdrawals", body, { idempotencyKey: keys.current.keyFor(action) });
-      keys.current.clear(action);
+      await api.post("/withdrawals", operation.body, { idempotencyKey: operation.key });
+      recovery.clear(operation.key);
     } catch (err) {
       // ردِ قطعی (۴xx): اثری نمانده و فرم دوباره قابل ویرایش است. «در حال پردازش»
       // قطعی نیست، پس قفل و کلید می‌مانند.
-      if (err instanceof ApiError && err.status < 500 && err.code !== "idempotency_in_flight") {
-        setFrozen(null);
+      if (err instanceof ApiError && [400, 409, 422].includes(err.status) && !["idempotency_in_flight", "idempotency_key_reused"].includes(err.code)) {
+        recovery.clear(operation.key);
       }
       throw err;
     }
@@ -70,13 +69,12 @@ export function MyWithdrawals() {
   async function verify() {
     const body = frozen;
     if (!body) return false;
-    const key = keys.current.keyFor(actionFor("withdrawal:create", body));
+    const key = recovery.pending!.key;
     const found = await api.get<{ status: "recorded" | "not_found" }>(`/withdrawals/mine/by-key/${encodeURIComponent(key)}`);
     return found.status === "recorded";
   }
   function finished(outcome: "done" | "verified") {
-    if (shown) keys.current.clear(actionFor("withdrawal:create", shown));
-    setFrozen(null); setAmount(""); setReason("");
+    recovery.clear(); setAmount(""); setReason("");
     setDone(outcome === "verified" ? "بررسی شد: برداشت پیش‌تر ثبت شده بود." : "برداشت ثبت شد.");
     setPage("1"); setReload(v => v + 1);
   }
@@ -97,22 +95,23 @@ export function MyWithdrawals() {
       <div className="settings-form">
         <Field label="مبلغ (تومان)" error={amountCheck.error}
           hint={amountCheck.rial ? <>ثبت می‌شود: <Money rial={amountCheck.rial} size="sm" /></> : "بدون اعشار؛ رقم فارسی یا لاتین."}>
-          <input type="text" inputMode="numeric" autoComplete="off" value={amount} disabled={locked}
+          <input type="text" inputMode="numeric" autoComplete="off" value={frozen ? tomanDraft(frozen.amount) : amount} disabled={locked}
             onChange={e => { setAmount(e.target.value); setDone(null); }} />
         </Field>
         <Field label="دلیل برداشت" error={reasonError} hint={`حداکثر ${formatCount(REASON_MAX)} نویسه.`}>
-          <textarea className="set-input" rows={3} maxLength={REASON_MAX} value={reason} disabled={locked}
+          <textarea className="set-input" rows={3} maxLength={REASON_MAX} value={frozen?.reason ?? reason} disabled={locked}
             onChange={e => { setReason(e.target.value); setDone(null); }} />
         </Field>
-        {locked ? <p className="settings-note" role="status">تا روشن‌شدن نتیجهٔ ثبت قبلی، فرم قفل است.</p> : null}
+        {locked ? <p className="settings-note" role="status">تا روشن‌شدن نتیجهٔ ثبت قبلی، فرم قفل است. شناسهٔ عملیات با بستن صفحه حفظ می‌شود.</p> : null}
+        {recovery.error ? <p role="alert">{recovery.error}</p> : null}
         <div className="settings-actions">
-          <SafeAction trigger="ثبت برداشت" triggerVariant="primary" disabled={!shown}
+          <SafeAction trigger="ثبت برداشت" triggerVariant="primary" disabled={!shown || !!recovery.error} initialUnknown={!!frozen}
             title="ثبت برداشت"
             summary={shown ? <dl className="settings-facts">
               <div><dt>مبلغ</dt><dd><Money rial={shown.amount} /></dd></div>
               <div><dt>دلیل</dt><dd>{shown.reason}</dd></div>
             </dl> : null}
-            consequence="به نام شما و با زمان سرور ثبت می‌شود و خودتان دیگر نمی‌توانید ویرایش یا حذفش کنید؛ اصلاح فقط از مدیر کل. هیچ پولی جابه‌جا نمی‌شود."
+            consequence="به نام شما و با زمان سرور ثبت می‌شود؛ ویرایش مستقیم یا حذف ندارد و اصلاح فقط با مجوز مدیر کل و حفظ تاریخچه است. هیچ پولی جابه‌جا نمی‌شود."
             confirmLabel="ثبت برداشت" pendingLabel="در حال ثبت…"
             run={create} verify={verify} onDone={finished} />
         </div>

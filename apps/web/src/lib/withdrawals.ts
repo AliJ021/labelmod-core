@@ -7,7 +7,7 @@
  * `money.ts`) و پیام خطای کنار فیلد ساخته می‌شود — سرور دوباره می‌سنجد.
  */
 import { formatCount } from "./format.ts";
-import { rialFromTomanInput } from "./money.ts";
+import { exactTomanInput, rialFromExactTomanInput, rialFromTomanInput } from "./money.ts";
 
 export interface WithdrawalItem {
   id: string;
@@ -44,10 +44,10 @@ export type AmountCheck = { rial: string; error: null } | { rial: null; error: s
  *   خالی     خطا نیست (هنوز تایپ نشده) ولی معتبر هم نیست.
  *   صفر      برای ثبت تازه رد؛ برای اصلاح مدیر مجاز (`allowZero`).
  */
-export function checkAmount(raw: string, allowZero: boolean): AmountCheck {
+export function checkAmount(raw: string, allowZero: boolean, exact = false): AmountCheck {
   if (raw.trim() === "") return { rial: null, error: null };
-  const rial = rialFromTomanInput(raw);
-  if (rial === null) return { rial: null, error: "فقط رقم بنویسید؛ مبلغ به تومان و بدون اعشار است." };
+  const rial = exact ? rialFromExactTomanInput(raw) : rialFromTomanInput(raw);
+  if (rial === null) return { rial: null, error: exact ? "مبلغ به تومان با حداکثر یک رقم اعشار است." : "فقط رقم بنویسید؛ مبلغ به تومان و بدون اعشار است." };
   if (rial > RIAL_MAX) return { rial: null, error: "مبلغ بزرگ‌تر از حد مجاز است." };
   if (rial === 0n && !allowZero) return { rial: null, error: "مبلغ برداشت باید بیشتر از صفر باشد." };
   return { rial: rial.toString(), error: null };
@@ -80,7 +80,7 @@ export interface CorrectionPayload { expectedVersion: number; amount: string; re
  */
 export function correctionPayload(current: Pick<WithdrawalItem, "version" | "amount" | "reason">,
   draft: { amount: string; reason: string; note: string }): { payload: CorrectionPayload; blocker: null } | { payload: null; blocker: string | null } {
-  const a = checkAmount(draft.amount, true);
+  const a = checkAmount(draft.amount, true, true);
   if (a.rial === null) return { payload: null, blocker: a.error };
   const reason = draft.reason.trim(), note = draft.note.trim();
   if (reason === "" || checkText(reason, "دلیل")) return { payload: null, blocker: null };
@@ -93,7 +93,7 @@ export function correctionPayload(current: Pick<WithdrawalItem, "version" | "amo
 
 /** رقم ریالی → متن تومانیِ قابل ویرایش در فیلد (بی جداکننده، رقم لاتین). */
 export function tomanDraft(rial: string): string {
-  return (BigInt(rial) / 10n).toString();
+  return exactTomanInput(rial);
 }
 
 /**

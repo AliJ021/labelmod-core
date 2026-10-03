@@ -30,6 +30,16 @@ describe("دفتر برداشت — ورودی", () => {
 
 describe("دفتر برداشت — اصلاح", () => {
   const current = { version: 2, amount: "1500000", reason: "کرایه" };
+  test("اصلاح دلیل، حتی یک ریال را حفظ می‌کند؛ ویرایش مبلغ دقیق است", () => {
+    for (const amount of ["1", "101", "999999999999999999"]) {
+      const out = correctionPayload({ version: 1, amount, reason: "قدیم" },
+        { amount: tomanDraft(amount), reason: "جدید", note: "اصلاح دلیل" });
+      assert.equal(out.payload?.amount, amount);
+    }
+    assert.equal(checkAmount("۱۰٫۱", true, true).rial, "101");
+    assert.equal(checkAmount("0.01", true, true).rial, null);
+    assert.equal(checkAmount("10.1", false).rial, null, "ثبت تازه همچنان تومان صحیح می‌خواهد");
+  });
   test("بدنه با شرط نسخهٔ جاری؛ صفر مجاز؛ دلیل اصلاح اجباری", () => {
     assert.deepEqual(correctionPayload(current, { amount: "0", reason: "کرایه", note: "تکراری" }),
       { payload: { expectedVersion: 2, amount: "0", reason: "کرایه", note: "تکراری" }, blocker: null });

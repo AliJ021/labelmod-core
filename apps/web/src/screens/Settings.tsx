@@ -92,9 +92,9 @@ export function Settings({ access, currentUserId, onOwnPassword }: { access: Nav
       ) : tab === "twofactor" ? (
         <TwoFactor />
       ) : tab === "withdrawals" ? (
-        <MyWithdrawals />
+        <MyWithdrawals key={currentUserId} currentUserId={currentUserId} />
       ) : tab === "withdrawal-log" ? (
-        <WithdrawalLog write={settingsWriteAccess("withdrawal-log", access.verdicts)} writeState={access.state} />
+        <WithdrawalLog key={currentUserId} currentUserId={currentUserId} write={settingsWriteAccess("withdrawal-log", access.verdicts)} writeState={access.state} />
       ) : tab === "devices" ? (
         <Devices />
       ) : tab === "health" ? (

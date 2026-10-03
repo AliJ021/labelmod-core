@@ -5,8 +5,8 @@
  * ادعاها: ثبت از عمل ایمن با شناسهٔ عملیات و بی شناسهٔ مالک؛ نتیجهٔ نامعلوم
  * «ارسال دوباره» ندارد و فقط با همان کلید بررسی می‌شود؛ صفر در ثبت رد و در
  * اصلاح مدیر مجاز؛ تعارض نسخه پیام سرور را نشان می‌دهد و تاریخچه را تازه
- * می‌کند؛ بی‌مجوز هیچ درخواستی به دفتر مدیر نمی‌فرستد؛ برداشت خودِ مدیر فرم
- * اصلاح ندارد. تصویرهای شواهد با API ماک‌اند و در نامشان «mock» دارند.
+ * می‌کند؛ بی‌مجوز هیچ درخواستی به دفتر مدیر نمی‌فرستد؛ مدیر مجاز ثبت خودش را
+ * هم اصلاح می‌کند. تصویرهای شواهد با API ماک‌اند و در نامشان «mock» دارند.
  */
 import { test, expect, settings, fontsReady, type MockApi } from "./fixtures";
 import type { Page, Route } from "@playwright/test";
@@ -74,7 +74,7 @@ test.describe("برداشت‌های من", () => {
     await expect(page.getByLabel("مبلغ (تومان)")).toHaveValue("");
   });
 
-  test("نتیجهٔ نامعلوم: «ارسال دوباره» نیست؛ همان کلید از سرور خوانده می‌شود", async ({ page, api }) => {
+  test("نتیجهٔ نامعلوم پس از reload: همان کلید بازیابی می‌شود و ثبت خودکار نداریم", async ({ page, api }) => {
     const keys: string[] = [];
     api.handlers.set("GET /withdrawals/mine", route => json(route, { items: [], total: 0, page: 1, pageSize: 20 }));
     api.handlers.set("POST /withdrawals", async route => {
@@ -91,6 +91,12 @@ test.describe("برداشت‌های من", () => {
     await expect(dialog.getByText("نتیجه نامعلوم")).toBeVisible();
     await expect(dialog.getByRole("button", { name: "ثبت برداشت" })).toHaveCount(0);
     await expect(page.getByLabel("مبلغ (تومان)")).toBeDisabled();
+    await page.reload();
+    await expect(page.getByLabel("مبلغ (تومان)")).toHaveValue("20000");
+    await expect(page.getByLabel("دلیل برداشت")).toHaveValue("قسط");
+    await expect(page.getByLabel("مبلغ (تومان)")).toBeDisabled();
+    expect(keys).toHaveLength(1);
+    await page.getByRole("button", { name: "نتیجه نامعلوم؛ بررسی وضعیت" }).click();
     let lookedUp = "";
     api.handlers.set("GET /withdrawals/mine/by-key/" + keys[0], async route => {
       lookedUp = keys[0]!;
@@ -100,6 +106,30 @@ test.describe("برداشت‌های من", () => {
     await expect(page.getByRole("status").filter({ hasText: "بررسی شد: برداشت پیش‌تر ثبت شده بود." })).toBeVisible();
     expect(keys, "فقط یک ارسال").toHaveLength(1);
     expect(lookedUp).toBe(keys[0]);
+  });
+
+  test("بازیابی ثبت پیدا نشده: فقط تأیید صریح با همان بدنه و شناسه", async ({ page, api }) => {
+    const posts: { body: unknown; key: string }[] = [];
+    api.handlers.set("GET /withdrawals/mine", route => json(route, { items: [], total: 0, page: 1, pageSize: 20 }));
+    api.handlers.set("POST /withdrawals", async route => {
+      posts.push({ body: route.request().postDataJSON(), key: route.request().headers()["idempotency-key"]! });
+      await json(route, posts.length === 1 ? { error: { code: "internal", message: "نامعلوم" } } : { replayed: false }, posts.length === 1 ? 503 : 201);
+    });
+    await openMine(page);
+    await page.getByLabel("مبلغ (تومان)").fill("123");
+    await page.getByLabel("دلیل برداشت").fill("بدنه ثابت");
+    await page.getByRole("button", { name: "ثبت برداشت" }).click();
+    await page.getByRole("dialog").getByRole("button", { name: "ثبت برداشت" }).click();
+    await expect(page.getByRole("dialog").getByText("نتیجه نامعلوم")).toBeVisible();
+    await page.reload();
+    api.handlers.set(`GET /withdrawals/mine/by-key/${posts[0]!.key}`, route => json(route, { status: "not_found" }));
+    await page.getByRole("button", { name: "نتیجه نامعلوم؛ بررسی وضعیت" }).click();
+    await page.getByRole("dialog").getByRole("button", { name: "بررسی وضعیت" }).click();
+    expect(posts).toHaveLength(1);
+    await page.getByRole("dialog").getByRole("button", { name: "ثبت برداشت" }).click();
+    await expect(page.getByRole("status").filter({ hasText: "برداشت ثبت شد." })).toBeVisible();
+    expect(posts).toHaveLength(2);
+    expect(posts[1]).toEqual(posts[0]);
   });
 
   test("تاریخچهٔ برداشتِ اصلاح‌شده: صفر واقعی، نام و دلیل مدیر", async ({ page, api }) => {
@@ -123,8 +153,38 @@ test.describe("دفتر برداشت پرسنل (مدیر کل)", () => {
   function gmLog(api: MockApi, current: { value: WithdrawalDetail }) {
     api.handlers.set("GET /withdrawals", route => json(route, { items: [current.value, item(W2, GM, "300000", "برداشت مدیر")], total: 2, page: 1, pageSize: 20 }));
     api.handlers.set(`GET /withdrawals/${W1}`, route => json(route, current.value));
-    api.handlers.set(`GET /withdrawals/${W2}`, route => json(route, detail(item(W2, GM, "300000", "برداشت مدیر"), false)));
+    api.handlers.set(`GET /withdrawals/${W2}`, route => json(route, detail(item(W2, GM, "300000", "برداشت مدیر"), true)));
   }
+
+  test("اصلاح دلیل یک ریال را حفظ می‌کند؛ نتیجهٔ نامعلوم پس از reload قابل بررسی است", async ({ page, api }) => {
+    const current = { value: detail(item(W1, CASHIER, "1", "قدیم"), true) };
+    gmLog(api, current);
+    const posts: { amount: string; reason: string; note: string }[] = [];
+    api.handlers.set(`POST /withdrawals/${W1}/corrections`, async route => {
+      const body = route.request().postDataJSON();
+      posts.push(body);
+      current.value = detail(item(W1, CASHIER, body.amount, body.reason, 2), true, [...current.value.history,
+        { version: 2, amount: body.amount, reason: body.reason, note: body.note, actor: GM, at: "2026-10-02T08:00:00Z" }]);
+      await json(route, { error: { code: "internal", message: "نامعلوم" } }, 503);
+    });
+    await page.goto(`/?page=settings&settings.tab=withdrawal-log&settings.wdl=${W1}`);
+    await expect(page.getByLabel("مبلغ درست (تومان)")).toHaveValue("0.1");
+    await page.getByLabel("دلیل برداشت").fill("جدید");
+    await page.getByLabel("دلیل اصلاح").fill("فقط دلیل");
+    await page.getByRole("button", { name: "ثبت اصلاح" }).click();
+    await page.getByRole("dialog").getByRole("button", { name: "ثبت اصلاح" }).click();
+    await expect(page.getByRole("dialog").getByText("نتیجه نامعلوم")).toBeVisible();
+    await page.reload();
+    await expect(page.getByLabel("مبلغ درست (تومان)")).toHaveValue("0.1");
+    await expect(page.getByLabel("دلیل اصلاح")).toHaveValue("فقط دلیل");
+    await expect(page.getByLabel("دلیل برداشت")).toBeDisabled();
+    expect(posts).toHaveLength(1);
+    expect(posts[0]!.amount).toBe("1");
+    await page.getByRole("button", { name: "نتیجه نامعلوم؛ بررسی وضعیت" }).click();
+    await page.getByRole("dialog").getByRole("button", { name: "بررسی وضعیت" }).click();
+    await expect(page.getByRole("status").filter({ hasText: "بررسی شد: اصلاح پیش‌تر ثبت شده بود." })).toBeVisible();
+    expect(posts).toHaveLength(1);
+  });
 
   test("دفتر، تاریخچه و اصلاح تا صفر با دلیل؛ بدنه شرط نسخه دارد", async ({ page, api }) => {
     const current = { value: detail(item(W1, CASHIER, "900000", "کرایه"), true) };
@@ -176,11 +236,13 @@ test.describe("دفتر برداشت پرسنل (مدیر کل)", () => {
     await expect(page.getByLabel("دلیل اصلاح")).toHaveValue("اصلاح من");
   });
 
-  test("برداشت خودِ مدیر فرم اصلاح ندارد", async ({ page, api }) => {
+  test("مدیر مجاز برای برداشت خودش هم فرم اصلاح دارد", async ({ page, api }) => {
     gmLog(api, { value: detail(item(W1, CASHIER, "900000", "کرایه"), true) });
     await page.goto(`/?page=settings&settings.tab=withdrawal-log&settings.wdl=${W2}`);
-    await expect(page.getByText("این برداشت را نمی‌توانید اصلاح کنید.")).toBeVisible();
-    await expect(page.getByRole("button", { name: "ثبت اصلاح" })).toHaveCount(0);
+    await expect(page.getByLabel("مبلغ درست (تومان)")).toHaveValue("30000");
+    await page.getByLabel("دلیل برداشت").fill("دلیل درست مدیر");
+    await page.getByLabel("دلیل اصلاح").fill("اصلاح دلیل");
+    await expect(page.getByRole("button", { name: "ثبت اصلاح" })).toBeEnabled();
   });
 
   test("بی‌مجوز: دفتر مدیر mount نمی‌شود و درخواستی نمی‌رود؛ برداشت‌های من می‌ماند", async ({ page, api }) => {

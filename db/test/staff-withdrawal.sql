@@ -5,7 +5,7 @@
 --   ۱. مالک و زمان از سرور می‌آیند؛ ثبت به نام دیگری حتی با INSERT
 --      مستقیم رد می‌شود.
 --   ۲. هر دو جدول فقط درج‌شدنی‌اند (UPDATE/DELETE/TRUNCATE).
---   ۳. اصلاح فقط با `withdrawal.correct`، از هویتی غیر از مالک، در دامنهٔ
+--   ۳. اصلاح فقط با `withdrawal.correct`، در دامنهٔ
 --      شعبه، با دلیل، و با شرط نسخه؛ صفر مجاز.
 --   ۴. هر نسخه یک سطر حسابرسی با «پیش» و «پس» دارد.
 --   ۵. **هیچ اثری** بر دفتر، انبار، خزانه، صف پیام یا شیفت ندارد —
@@ -165,9 +165,9 @@ BEGIN
   v_ver := identity.correct_withdrawal(v_w, 2, 700000, 'کرایهٔ پیک', 'مبلغ درست از رسید');
   PERFORM pg_temp.assert_eq('اصلاح دوم', v_ver::text, '3');
 
-  -- مدیر برداشت خودش را اصلاح نمی‌کند.
+  -- مدیر مجاز برداشت خودش را با همان سابقهٔ حسابرسی اصلاح می‌کند.
   v_w2 := identity.record_withdrawal(100000, 'برداشت مدیر');
-  PERFORM pg_temp.assert_raises('اصلاح برداشت خود', format('SELECT identity.correct_withdrawal(%L,1,0,''x'',''y'')', v_w2), 'مستقل');
+  PERFORM pg_temp.assert_eq('اصلاح برداشت خود توسط مدیر مجاز', identity.correct_withdrawal(v_w2,1,0,'x','y')::text, '2');
 
   -- دامنهٔ شعبه: مدیر کل شعبهٔ اصلی نه شعبهٔ دوم را می‌بیند نه سراسری را.
   PERFORM platform.set_actor(v_gm_a);
