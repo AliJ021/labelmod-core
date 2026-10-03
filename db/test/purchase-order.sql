@@ -59,6 +59,7 @@ DECLARE
   v_ord uuid; v_ord2 uuid; v_ol uuid; v_ol2 uuid; v_ol_other uuid;
   v_rcpt uuid; v_rl uuid; v_ret uuid;
   v_no text; v_entries_before int; v_moves_before int;
+  v_br2 uuid; v_wh2 uuid; v_sup2 uuid; v_ord3 uuid; v_ol3 uuid; v_ord4 uuid;
 BEGIN
 
 RAISE NOTICE E'\n═══ آماده‌سازی ═══';
@@ -259,6 +260,66 @@ PERFORM pg_temp.assert_raises('دو سطر برای یک کالا در یک سف
 PERFORM pg_temp.assert_raises('تعداد صفر در سفارش',
   format($q$INSERT INTO purchasing.purchase_order_line (order_id, variation_id, qty, unit_price)
             VALUES (%L::uuid, %L::uuid, 0, 100)$q$, v_ord2, v_var));
+
+-- ═════════════════════════════════════════════════════════════════
+RAISE NOTICE E'\n═══ ۸. سربرگ رسید: همان شعبه، همان تأمین‌کننده، همان کالا (FND29، ۰۸۹) ═══';
+-- ═════════════════════════════════════════════════════════════════
+-- بدون این، رسیدِ شعبهٔ دیگر یا تأمین‌کنندهٔ دیگر، سفارشی را «رسیده»
+-- نشان می‌داد که کالایش هرگز به آن شعبه نیامده. ولی انبار دیگرِ همان
+-- شعبه، سفارش پیش‌نویس و نرخ متفاوت کار عادی‌اند و نباید بسته شوند.
+
+INSERT INTO platform.branch (code, name) VALUES ('PO-B2','شعبهٔ دوم آزمون سفارش')
+  RETURNING id INTO v_br2;
+INSERT INTO inventory.warehouse (branch_id, code, name, kind)
+VALUES (v_br2,'PO-B2-STORE','قفسهٔ شعبهٔ دوم','store') RETURNING id INTO v_wh2;
+INSERT INTO purchasing.supplier (code, name) VALUES ('S-PO-2','تأمین‌کنندهٔ دوم')
+  RETURNING id INTO v_sup2;
+
+-- سفارش فرستادهٔ شعبهٔ اصلی با یک قلم
+INSERT INTO purchasing.purchase_order (branch_id, supplier_id, warehouse_id)
+VALUES (BR, v_sup, WH) RETURNING id INTO v_ord3;
+INSERT INTO purchasing.purchase_order_line (order_id, variation_id, qty, unit_price)
+VALUES (v_ord3, v_var, 2, 1000000) RETURNING id INTO v_ol3;
+
+PERFORM pg_temp.assert_raises('رسید شعبهٔ دیگر به سفارش این شعبه وصل نمی‌شود',
+  format($q$INSERT INTO purchasing.receipt (branch_id, supplier_id, warehouse_id, order_id, occurred_at)
+           VALUES (%L::uuid, %L::uuid, %L::uuid, %L::uuid, '2026-07-11')$q$, v_br2, v_sup, v_wh2, v_ord3));
+PERFORM pg_temp.assert_raises('رسید تأمین‌کنندهٔ دیگر به سفارش وصل نمی‌شود',
+  format($q$INSERT INTO purchasing.receipt (branch_id, supplier_id, warehouse_id, order_id, occurred_at)
+           VALUES (%L::uuid, %L::uuid, %L::uuid, %L::uuid, '2026-07-11')$q$, BR, v_sup2, WH, v_ord3));
+
+-- رسید بی‌سفارشِ شعبهٔ دوم بعداً هم به سفارش این شعبه وصل نمی‌شود.
+INSERT INTO purchasing.receipt (branch_id, supplier_id, warehouse_id, occurred_at)
+VALUES (v_br2, v_sup, v_wh2, '2026-07-11') RETURNING id INTO v_rcpt;
+PERFORM pg_temp.assert_raises('وصل‌کردن بعدی رسید شعبهٔ دیگر هم رد می‌شود',
+  format('UPDATE purchasing.receipt SET order_id = %L::uuid WHERE id = %L::uuid', v_ord3, v_rcpt));
+
+-- مشروع: انبار پشتیبانِ همان شعبه، نرخ متفاوت و بیش‌تحویل
+INSERT INTO purchasing.receipt (branch_id, supplier_id, warehouse_id, order_id, occurred_at)
+VALUES (BR, v_sup, '00000000-0000-7000-8000-000000000102', v_ord3, '2026-07-11') RETURNING id INTO v_rcpt;
+PERFORM pg_temp.assert_raises('کالای دیگر به سطر سفارش وصل نمی‌شود',
+  format($q$INSERT INTO purchasing.receipt_line
+             (receipt_id, variation_id, qty, unit_price, line_amount, order_line_id)
+           VALUES (%L::uuid, %L::uuid, 1, 1000000, 1000000, %L::uuid)$q$, v_rcpt, v_var2, v_ol3));
+INSERT INTO purchasing.receipt_line (receipt_id, variation_id, qty, unit_price, line_amount, order_line_id)
+VALUES (v_rcpt, v_var, 3, 1100000, 3300000, v_ol3) RETURNING id INTO v_rl;
+PERFORM pg_temp.assert_raises('عوض‌کردن کالای سطر سفارش‌دار رد می‌شود',
+  format('UPDATE purchasing.receipt_line SET variation_id = %L::uuid WHERE id = %L::uuid', v_var2, v_rl));
+PERFORM pg_temp.assert_raises('عوض‌کردن سفارشِ رسیدی که سطر سفارش‌دار دارد رد می‌شود',
+  format('UPDATE purchasing.receipt SET order_id = %L::uuid WHERE id = %L::uuid', v_ord2, v_rcpt));
+PERFORM purchasing.post_receipt(v_rcpt, v_user);
+PERFORM pg_temp.assert_eq('انبار دیگرِ همان شعبه با نرخ متفاوت و بیش‌تحویل، پیشرفت را جلو می‌برد',
+  (SELECT received_qty FROM purchasing.order_progress WHERE order_line_id = v_ol3), 3);
+PERFORM pg_temp.assert_eq('بیش‌تحویل دیده می‌شود، نه بسته',
+  (SELECT over_qty FROM purchasing.order_progress WHERE order_line_id = v_ol3), 1);
+
+-- مشروع: سفارش پیش‌نویس (پیشنهادی) همان شعبه و تأمین‌کننده
+INSERT INTO purchasing.purchase_order (branch_id, supplier_id, warehouse_id)
+VALUES (BR, v_sup, WH) RETURNING id INTO v_ord4;
+INSERT INTO purchasing.receipt (branch_id, supplier_id, warehouse_id, order_id, occurred_at)
+VALUES (BR, v_sup, WH, v_ord4, '2026-07-11') RETURNING id INTO v_rcpt;
+PERFORM pg_temp.assert_txt('رسید سفارش پیش‌نویسِ همان شعبه پذیرفته است',
+  (SELECT order_id::text FROM purchasing.receipt WHERE id = v_rcpt), v_ord4::text);
 
 -- ═════════════════════════════════════════════════════════════════
 RAISE NOTICE E'\n═══ ادعاهای پایدار ═══';
