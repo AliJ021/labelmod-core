@@ -153,7 +153,10 @@ export function registerCatalogRoutes(
       .orderBy("code")
       .executeTakeFirst();
 
-    const items: LabelItem[] = rows.map((r) => ({
+    // ترتیب چاپ همان ترتیب فهرست چاپ کاربر است، نه ترتیب دیتابیس: در چاپ
+    // گروهی، برچسب‌های هر کالا پشت هم و به ترتیبی می‌آیند که انتخاب شده‌اند.
+    const order = new Map(body.items.map((i, index) => [i.variationId, index]));
+    const items: LabelItem[] = [...rows].sort((a, b) => (order.get(a.id) ?? 0) - (order.get(b.id) ?? 0)).map((r) => ({
       barcode: r.barcode,
       sku: r.sku,
       productName: r.productName,

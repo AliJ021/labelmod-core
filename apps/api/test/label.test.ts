@@ -18,7 +18,7 @@ import {
   BarcodeError,
 } from "../src/catalog/barcode-svg.ts";
 import { makeEan13, ean13CheckDigit } from "../src/catalog/barcode.ts";
-import { esc, labelPage, type LabelItem } from "../src/catalog/label.ts";
+import { esc, labelGeometry, labelPage, ROLL_PRESETS_MM, type LabelItem } from "../src/catalog/label.ts";
 
 describe("رسم EAN-13", () => {
   test("نوار ۹۵ ماژول است و نگهبان‌ها سر جایشان‌اند", () => {
@@ -215,7 +215,10 @@ describe("برچسب قیمت", () => {
       rollMm: { width: 40, height: 25 },
     });
     assert.ok(html.includes("@page { size: 40mm 25mm"), "اندازه صفحه");
-    assert.ok(html.includes("page-break-after: always"));
+    // شکست پیش از برچسب دوم به بعد؛ «پس از هر برچسب» یک لیبل سفید آخر می‌ساخت.
+    assert.ok(html.includes(".label + .label { break-before: page; }"));
+    assert.ok(!html.includes("page-break-after"), "برچسب آخر صفحهٔ خالی نمی‌سازد");
+    assert.equal((html.match(/<div class="label">/g) ?? []).length, 3);
   });
 
   test("چیدمان A4 شبکه‌ای است، نه یک‌در‌صفحه", () => {
@@ -223,6 +226,7 @@ describe("برچسب قیمت", () => {
     assert.ok(html.includes("@page { size: A4"));
     assert.ok(html.includes("grid-template-columns"));
     assert.ok(!html.includes("page-break-after: always"));
+    assert.ok(!html.includes("break-before: page"));
   });
 
   test("سند کامل و راست‌به‌چپ است", () => {
@@ -233,3 +237,47 @@ describe("برچسب قیمت", () => {
     assert.ok(html.trimEnd().endsWith("</html>"));
   });
 });
+
+describe("اندازهٔ برچسب", () => {
+  const item: LabelItem = {
+    barcode: makeEan13(7), sku: "P-7", productName: "مانتو کتان بلند با نام بسیار طولانی برای آزمون شکست سطر",
+    color: "سرمه‌ای", size: "XL", priceRial: 12_345_675n, count: 1,
+  };
+  const svgWidth = (html: string) => Number(/<svg[^>]*width="([\d.]+)mm"/.exec(html)?.[1]);
+
+  test("در هر اندازهٔ آماده، بارکد کامل با حاشیهٔ سکوت داخل عرض برچسب جا می‌شود", () => {
+    for (const p of ROLL_PRESETS_MM) {
+      const html = labelPage([item], { layout: "roll", shopName: "ف", rollMm: p });
+      const w = svgWidth(html);
+      assert.ok(w > 0, `بارکد رسم شد ${p.width}×${p.height}`);
+      assert.ok(w <= p.width - 1, `${p.width}×${p.height}: بارکد ${w}mm از عرض بیرون زد`);
+      const g = labelGeometry("roll", p.width, p.height);
+      assert.equal(g.scanRisk, false, `${p.width}mm نباید هشدار اسکن بگیرد`);
+      assert.ok([0.25, 0.375].includes(g.moduleMm), "ماژول مضرب نقطهٔ ۲۰۳dpi است");
+    }
+  });
+
+  test("رول باریک‌تر از بارکد کامل، کوچک می‌شود و هشدار می‌گیرد — مقدار بارکد عوض نمی‌شود", () => {
+    const html = labelPage([item], { layout: "roll", shopName: "ف", rollMm: { width: 22, height: 15 } });
+    assert.ok(svgWidth(html) <= 21);
+    assert.match(html, /ممکن است اسکن نشود/);
+    const digits = [...html.matchAll(/<text[^>]*>(\d)<\/text>/g)].map((m) => m[1]).join("");
+    assert.equal(digits, item.barcode, "رقم‌های چاپی همان بارکد ثبت‌شده‌اند");
+  });
+
+  test("برچسب کوتاه نام فروشگاه را حذف می‌کند و نام بلند در دو سطر مهار می‌شود", () => {
+    const small = labelPage([item], { layout: "roll", shopName: "فروشگاه", rollMm: { width: 40, height: 25 } });
+    assert.ok(!small.includes('class="shop"'));
+    const tall = labelPage([item], { layout: "roll", shopName: "فروشگاه", rollMm: { width: 58, height: 40 } });
+    assert.ok(tall.includes('class="shop"'));
+    assert.match(tall, /-webkit-line-clamp: 2/);
+    assert.match(small, /-webkit-line-clamp: 1/, "برچسب کوتاه: نام یک‌سطری");
+    assert.match(tall, /overflow-wrap: anywhere/);
+  });
+
+  test("قیمت به تومان دقیق است؛ ریال کسری گم نمی‌شود", () => {
+    const html = labelPage([item], { layout: "a4", shopName: "ف" });
+    assert.ok(html.includes("1٬234٬567٫5"), "۱۲٬۳۴۵٬۶۷۵ ریال = ۱٬۲۳۴٬۵۶۷٫۵ تومان");
+  });
+});
+
