@@ -25,7 +25,7 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 
-const src = readFileSync(new URL("../src/screens/Pos.tsx", import.meta.url), "utf8");
+const src = readFileSync(new URL("../src/screens/Pos.tsx", import.meta.url), "utf8").replace(/\r\n/g, "\n");
 
 /** بدنهٔ کامپوننت سطر — از `memo(` تا `}, sameLine);`. */
 function cartLineBody(): string {

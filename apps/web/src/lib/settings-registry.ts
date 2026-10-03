@@ -9,6 +9,7 @@
  *   appearance  فقط مرورگر؛ هیچ درخواستی به سرور ندارد.
  *   pin         GET/POST /auth/pin — فقط نشست، روی کاربر خودش.
  *   twofactor   /auth/2fa و /auth/2fa/sms/* — فقط نشست، روی کاربر خودش.
+ *   withdrawals /withdrawals/mine — فقط نشست؛ مالک از نشست، نه از درخواست (۰۸۴).
  *
  * مدیریتی: عملیات همان است که مسیر **خواندنِ** آن صفحه در API می‌سنجد
  * (`requireForSession` یا `guard`). تغییر در بعضی بخش‌ها مجوز سخت‌تری دارد
@@ -23,6 +24,8 @@
  *   terminals    GET /settlement-terms، /terminal-drivers، /device-drivers  settings.view
  *   opening      GET /tafsili (ثبت: settings.security)  settings.view
  *   staff        GET /users، /roles                  user.manage
+ *   withdrawal-log GET /withdrawals (+ نشست کامل، دامنهٔ شعبه)  withdrawal.view_all
+ *                POST …/corrections                   withdrawal.correct (`writeAnyOf`)
  *   permissions  GET /permission-rules               settings.security
  *   devices      GET /devices، /sessions             device.manage
  *
@@ -35,6 +38,7 @@ export const SETTINGS_SECTIONS = [
   { key: "appearance", label: "نمایش و عملکرد", group: "حساب من", scope: "personal", anyOf: [] },
   { key: "pin", label: "PIN من — ساخت و تغییر", group: "حساب من", scope: "personal", anyOf: [] },
   { key: "twofactor", label: "ورود دومرحله‌ای", group: "حساب من", scope: "personal", anyOf: [] },
+  { key: "withdrawals", label: "برداشت‌های من", group: "حساب من", scope: "personal", anyOf: [] },
   { key: "keys", label: "تنظیمات", group: "عمومی", scope: "admin", anyOf: ["settings.view"] },
   { key: "health", label: "سلامت سیستم", group: "عمومی", scope: "admin", anyOf: ["settings.view"] },
   { key: "woocommerce", label: "اتصال ووکامرس", group: "عمومی", scope: "admin", anyOf: ["settings.view"] },
@@ -45,6 +49,7 @@ export const SETTINGS_SECTIONS = [
   { key: "terminals", label: "پایانه‌ها", group: "مالی و فروش", scope: "admin", anyOf: ["settings.view"] },
   { key: "opening", label: "افتتاحیه و تفصیلی", group: "مالی و فروش", scope: "admin", anyOf: ["settings.view"] },
   { key: "staff", label: "پرسنل", group: "کاربران و امنیت", scope: "admin", anyOf: ["user.manage"] },
+  { key: "withdrawal-log", label: "دفتر برداشت پرسنل", group: "کاربران و امنیت", scope: "admin", anyOf: ["withdrawal.view_all"], writeAnyOf: ["withdrawal.correct"] },
   { key: "permissions", label: "مجوزها", group: "کاربران و امنیت", scope: "admin", anyOf: ["settings.security"] },
   { key: "devices", label: "دستگاه‌ها", group: "کاربران و امنیت", scope: "admin", anyOf: ["device.manage"] },
 ] as const satisfies readonly {

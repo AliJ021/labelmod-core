@@ -6,26 +6,33 @@ import type { CheckoutTotals } from "../../lib/pos-payments.ts";
  * bigint در `checkoutTotals()`. پول فقط با `Money` (رقم لاتین، برگ LTR، واحد
  * «تومان» بیرون از آن)؛ تبدیل ریال به تومان فقط در `money.ts`.
  *
- * تخفیف و مالیات همیشه دیده می‌شوند (صفرِ کم‌رنگ هم یک ادعای درست است)؛ حمل
- * فقط وقتی هست که صفر نباشد — صندوق حضوری حمل ندارد.
+ * سلسله‌مراتب (POS-12): ریز سه‌گانه کوچک ← **قابل پرداخت** غالب ← دریافت‌شده و
+ * مانده (یا باقی پول) به‌عنوان وضعیت. تخفیف با علامت منفی، صفر کم‌رنگ و متمایز
+ * از «—». حمل فقط وقتی هست که صفر نباشد — صندوق حضوری حمل ندارد.
+ *
+ * `totals === null` یعنی هنوز فاکتوری نیست: «—» نشان داده می‌شود، نه «۰ تومان»؛
+ * صفر یک ادعای مالی است و سبدِ نساخته مبلغی ندارد.
  */
-export function CheckoutSummary({ totals }: { totals: CheckoutTotals }) {
-  return <div className="checkout-summary">
+export function CheckoutSummary({ totals }: { totals: CheckoutTotals | null }) {
+  const none = "هنوز کالایی در سبد نیست";
+  const m = (v: bigint | undefined, size: "sm" | "md" | "lg" | "xl" = "sm") =>
+    <Money rial={totals && v !== undefined ? v : null} size={size} unknownLabel={none} />;
+  return <section className={`checkout-summary${totals ? "" : " checkout-summary--idle"}`} aria-label="خلاصهٔ مبلغ">
     <dl className="checkout-lines">
-      <div><dt>جمع کالا</dt><dd><Money rial={totals.gross} size="sm" /></dd></div>
-      <div><dt>تخفیف</dt><dd><Money rial={totals.discount === 0n ? 0n : -totals.discount} size="sm" /></dd></div>
-      <div><dt>مالیات</dt><dd><Money rial={totals.tax} size="sm" /></dd></div>
-      {totals.shipping !== 0n ? <div><dt>هزینهٔ ارسال</dt><dd><Money rial={totals.shipping} size="sm" /></dd></div> : null}
+      <div><dt>جمع کالا</dt><dd>{m(totals?.gross)}</dd></div>
+      <div><dt>تخفیف</dt><dd>{m(totals ? (totals.discount === 0n ? 0n : -totals.discount) : undefined)}</dd></div>
+      <div><dt>مالیات</dt><dd>{m(totals?.tax)}</dd></div>
+      {totals && totals.shipping !== 0n ? <div><dt>هزینهٔ ارسال</dt><dd>{m(totals.shipping)}</dd></div> : null}
     </dl>
     <div className="checkout-payable">
       <span className="checkout-payable-label">قابل پرداخت</span>
-      <Money rial={totals.payable} size="xl" />
+      {m(totals?.payable, "xl")}
     </div>
     <dl className="checkout-lines checkout-lines--state">
-      <div><dt>دریافت‌شده</dt><dd><Money rial={totals.received} size="sm" /></dd></div>
-      {totals.change > 0n
-        ? <div className="checkout-change"><dt>باقی پول</dt><dd><Money rial={totals.change} size="lg" /></dd></div>
-        : <div><dt>مانده</dt><dd><Money rial={totals.remaining} size={totals.remaining > 0n ? "lg" : "sm"} /></dd></div>}
+      <div><dt>دریافت‌شده</dt><dd>{m(totals?.received, "md")}</dd></div>
+      {totals && totals.change > 0n
+        ? <div className="checkout-change"><dt>باقی پول</dt><dd>{m(totals.change, "lg")}</dd></div>
+        : <div className={totals && totals.remaining > 0n ? "checkout-due" : undefined}><dt>مانده</dt><dd>{m(totals?.remaining, "md")}</dd></div>}
     </dl>
-  </div>;
+  </section>;
 }

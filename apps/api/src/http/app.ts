@@ -39,6 +39,7 @@ import { registerPosCatalogRoutes } from "./pos-catalog-routes.ts";
 import { registerSettingsRoutes } from "./settings-routes.ts";
 import { registerScopeRoutes } from "./scope-routes.ts";
 import { registerAdminRoutes } from "./admin-routes.ts";
+import { registerWithdrawalRoutes } from "./withdrawal-routes.ts";
 import { registerHealthRoutes } from "./health-routes.ts";
 import { registerWebRoutes } from "./web-routes.ts";
 import { registerWooDiagnosticsRoutes } from "./woocommerce-diagnostics-routes.ts";
@@ -471,5 +472,6 @@ export async function buildApp(deps: AppDeps): Promise<FastifyInstance> {
   registerPublicRoutes(app, { db: deps.db });
   registerScopeRoutes(app, { db: deps.db });
   registerAdminRoutes(app, { db: deps.db });
+  registerWithdrawalRoutes(app, deps.db);
   return app;
 }

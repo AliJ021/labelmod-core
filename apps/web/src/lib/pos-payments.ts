@@ -1,30 +1,34 @@
 /**
  * انتخاب‌گر پرداخت صندوق — منطق خالص، بی React (test/pos-payments.test.ts).
  *
- * ── گروه‌بندی از `kind` می‌آید، نه از نام یا یک فهرست فعال‌بودن در کد ──
+ * ── چیدمان، از نیاز مالک محصول (POS-05 تا POS-09) ──
  *
- * `kind` مقدار اسکیماست (CHECK جدول `treasury.payment_method`)، پس ترتیب
- * و گروه را کد تعیین می‌کند (تصمیم Batch 2.1) ولی **اینکه چه روشی فعال
- * است** فقط از پاسخ سرور می‌آید: روشی که سرور نفرستد، اینجا هم نیست.
+ *   ردیف ۱        کارت‌خوان، تمام‌عرض — ثبت دستی پرداختی که روی دستگاه تأیید شده؛
+ *                 هیچ اتصال سخت‌افزار یا PSP وجود ندارد.
+ *   ردیف ۲        اسنپ‌پی | دیجی‌پی — **همیشه** هر دو، هم‌وزن و هم‌ردیف.
+ *   روش‌های بیشتر  نقدی · کارت‌به‌کارت · درگاه (ثبت دستی) · امتیاز · کارت هدیه
+ *   جدا از روش‌ها  «ثبت نسیه» (CreditCheckout) — نسیه روش پرداخت نیست.
  *
- *   اصلی        کارت‌خوان — ثبت دستی پرداختی که روی دستگاه تأیید شده؛
- *               هیچ اتصال سخت‌افزار یا PSP وجود ندارد.
- *   ردیف دوم    نقدی · اسنپ‌پی (فقط اگر سرور برای همین شعبه فرستاده باشد)
- *   روش‌های بیشتر  کارت‌به‌کارت · درگاه (ثبت دستی) · امتیاز · کارت هدیه
+ * ── اینکه چه چیزی **قابل انتخاب** است فقط از پاسخ سرور می‌آید ──
  *
- * و آنچه **هرگز** اینجا نیست:
- *   - نسیه — روش پرداخت نیست؛ نتیجهٔ «ثبت نسیه» است (CreditCheckout).
- *   - دیجی‌پی — پیاده نشده؛ حتی اگر روزی ردیفش بیاید، بی پیاده‌سازی
- *     نمایش داده نمی‌شود.
- *   - هر `kind` ناشناخته — روشی که نمی‌دانیم چه می‌کند «موفق» نمایش
- *     داده نمی‌شود.
- *   - لینک پرداخت — هیچ ارائه‌دهنده‌ای در بک‌اند ندارد.
+ * جای هر خانه را کد تعیین می‌کند؛ قابل‌انتخاب‌بودن را نه. خانه‌ای که پشتوانهٔ
+ * سرور ندارد دیده می‌شود ولی **ناموجود** است و دلیلش را می‌گوید — نه پنهان (نیاز
+ * مالک از دست می‌رفت) و نه فعالِ جعلی (پرداخت ساختگی):
+ *
+ *   - اسنپ‌پی فقط وقتی قابل انتخاب است که سرور برای **همین شعبه** فرستاده باشد
+ *     (`GET /payment-methods?branchId=`)؛ وگرنه «برای این شعبه تنظیم نشده».
+ *   - دیجی‌پی در این مخزن **هیچ پشتوانه‌ای ندارد**: نه ردیف `payment_method`، نه
+ *     حساب، نه قاعدهٔ ثبت، نه API. پس حتی اگر روزی ردیفی با کد `digipay` برسد،
+ *     بی پیاده‌سازی قابل انتخاب نمی‌شود — هیچ مسیری از این خانه به ثبت پرداخت نیست.
+ *   - کانال «لینک پرداخت» هیچ ارائه‌دهنده، ساخت لینک یا Callback در سرور ندارد؛
+ *     دیده می‌شود و ناموجود است. فقط «حضوری» (همان ثبت دستی تأییدشده) کار می‌کند.
+ *   - هر `kind` ناشناخته و `credit` هرگز روش پرداخت نمی‌شوند.
  */
 import { ApiError } from "./api.ts";
 import type { InvoiceSettlement, PaymentIntentStatus, PaymentMethod } from "./pos.ts";
 import type { PendingPayment } from "./pending-payment.ts";
 
-export type PaymentGroup = "primary" | "secondary" | "more";
+export type PaymentGroup = "primary" | "provider" | "more";
 
 export interface PaymentOption {
   code: string;
@@ -38,27 +42,51 @@ export interface PaymentOption {
   unavailableReason: string | null;
 }
 
+export type ChannelKey = "in_person" | "link";
+
+/** کانال پرداخت یک ارائه‌دهنده — «حضوری» یا «لینک پرداخت». */
+export interface PaymentChannel {
+  key: ChannelKey;
+  label: string;
+  /** `null` یعنی پشتوانهٔ سرور دارد؛ متن یعنی چرا نه. */
+  unavailableReason: string | null;
+}
+
+/** خانهٔ ثابت ردیف دوم — همیشه دیده می‌شود، چه قابل انتخاب باشد چه نه. */
+export interface ProviderSlot {
+  key: "snappay" | "digipay";
+  label: string;
+  /** روشی که سرور فرستاده و قابل ثبت است؛ `null` یعنی هیچ مسیر ثبتی از این خانه نیست. */
+  option: PaymentOption | null;
+  unavailableReason: string | null;
+  channels: PaymentChannel[];
+}
+
 export interface PaymentLayout {
   primary: PaymentOption[];
-  secondary: PaymentOption[];
+  providers: ProviderSlot[];
   more: PaymentOption[];
 }
 
 export const NEEDS_CUSTOMER_REASON = "ابتدا مشتری را به فاکتور وصل کنید.";
+export const SNAPPAY_NOT_CONFIGURED = "اسنپ‌پی برای این شعبه تنظیم نشده است.";
+export const DIGIPAY_NOT_IMPLEMENTED = "دیجی‌پی هنوز به سیستم وصل نشده است؛ پرداخت دیجی‌پی را اینجا نمی‌شود ثبت کرد.";
+export const LINK_NOT_IMPLEMENTED = "ساخت لینک پرداخت هنوز در سرور پیاده نشده است؛ پرداخت را حضوری بگیرید.";
 
-/** کدهایی که بی پیاده‌سازی هرگز نمایش داده نمی‌شوند. */
-const NEVER_SHOWN = new Set(["digipay"]);
+/** خانه‌هایی که بی پیاده‌سازی در سرور هرگز به روش قابل انتخاب تبدیل نمی‌شوند. */
+const NOT_IMPLEMENTED = new Set(["digipay"]);
 
 function placement(m: PaymentMethod): { group: PaymentGroup; rank: number } | null {
-  if (NEVER_SHOWN.has(m.code.toLowerCase())) return null;
-  if (m.code === "snappay") return { group: "secondary", rank: 2 };
+  const code = m.code.toLowerCase();
+  if (NOT_IMPLEMENTED.has(code)) return null;
+  if (code === "snappay") return { group: "provider", rank: 1 };
   switch (m.kind) {
     case "card_reader": return { group: "primary", rank: 1 };
-    case "cash": return { group: "secondary", rank: 1 };
-    case "transfer": return { group: "more", rank: 1 };
-    case "gateway": return { group: "more", rank: 2 };
-    case "points": return { group: "more", rank: 3 };
-    case "gift_card": return { group: "more", rank: 4 };
+    case "cash": return { group: "more", rank: 1 };
+    case "transfer": return { group: "more", rank: 2 };
+    case "gateway": return { group: "more", rank: 3 };
+    case "points": return { group: "more", rank: 4 };
+    case "gift_card": return { group: "more", rank: 5 };
     default: return null; // credit و هر نوع ناشناخته
   }
 }
@@ -79,11 +107,28 @@ export function paymentLayout(methods: readonly PaymentMethod[], ctx: { hasCusto
     return [{ option, rank: p.rank }];
   }).sort((a, b) => a.rank - b.rank || a.option.code.localeCompare(b.option.code));
   const of = (g: PaymentGroup) => placed.filter((p) => p.option.group === g).map((p) => p.option);
-  return { primary: of("primary"), secondary: of("secondary"), more: of("more") };
+  const snappay = of("provider").find((o) => o.code.toLowerCase() === "snappay") ?? null;
+  const link: PaymentChannel = { key: "link", label: "لینک پرداخت", unavailableReason: LINK_NOT_IMPLEMENTED };
+  return {
+    primary: of("primary"),
+    providers: [
+      { key: "snappay", label: "اسنپ‌پی", option: snappay, unavailableReason: snappay ? null : SNAPPAY_NOT_CONFIGURED,
+        channels: [{ key: "in_person", label: "حضوری", unavailableReason: snappay ? null : SNAPPAY_NOT_CONFIGURED }, link] },
+      { key: "digipay", label: "دیجی‌پی", option: null, unavailableReason: DIGIPAY_NOT_IMPLEMENTED,
+        channels: [{ key: "in_person", label: "حضوری", unavailableReason: DIGIPAY_NOT_IMPLEMENTED }, link] },
+    ],
+    more: of("more"),
+  };
 }
 
+/** همهٔ روش‌های **قابل ثبت** به ترتیب نمایش — خانهٔ ناموجود هیچ روشی ندارد. */
 export function allOptions(layout: PaymentLayout): PaymentOption[] {
-  return [...layout.primary, ...layout.secondary, ...layout.more];
+  return [...layout.primary, ...layout.providers.flatMap((p) => (p.option ? [p.option] : [])), ...layout.more];
+}
+
+/** کانالی که ثبت با آن ممکن است؛ فقط «حضوری»، و فقط وقتی خانه پشتوانه دارد. */
+export function usableChannel(slot: ProviderSlot, key: ChannelKey): boolean {
+  return slot.option !== null && slot.channels.some((c) => c.key === key && c.unavailableReason === null);
 }
 
 /**

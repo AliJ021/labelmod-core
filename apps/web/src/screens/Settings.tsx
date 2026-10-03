@@ -28,6 +28,8 @@ import { Appearance } from "./Appearance.tsx";
 import { Staff } from "./Staff.tsx";
 import { TwoFactor } from "./TwoFactor.tsx";
 import { PersonalPin } from "./PersonalPin.tsx";
+import { MyWithdrawals } from "./MyWithdrawals.tsx";
+import { WithdrawalLog } from "./WithdrawalLog.tsx";
 
 /**
  * پوسته ناحیه تنظیمات — ده زیرتب.
@@ -92,6 +94,10 @@ export function Settings({ access, currentUserId, onOwnPassword }: { access: Nav
         <PersonalPin />
       ) : tab === "twofactor" ? (
         <TwoFactor />
+      ) : tab === "withdrawals" ? (
+        <MyWithdrawals key={currentUserId} currentUserId={currentUserId} />
+      ) : tab === "withdrawal-log" ? (
+        <WithdrawalLog key={currentUserId} currentUserId={currentUserId} write={settingsWriteAccess("withdrawal-log", access.verdicts)} writeState={access.state} />
       ) : tab === "devices" ? (
         <Devices />
       ) : tab === "health" ? (

@@ -2,6 +2,7 @@ import { useState, type RefObject } from "react";
 import { Ltr } from "../ui/Bidi.tsx";
 import { Button, Field } from "../ui/Controls.tsx";
 import { StatusBadge } from "../ui/Status.tsx";
+import { Icon } from "../Icon.tsx";
 import { normalizeDigits } from "../../lib/settings-value.ts";
 import type { InvoiceCustomer } from "../../lib/pos.ts";
 
@@ -31,12 +32,13 @@ export function CustomerSummary({ customer, loading, error, mobile, onMobile, on
   const empty = normalizeDigits(mobile).trim() === "";
   return <section className="pos-customer" aria-label="مشتری">
     {customer ? <div className="pos-customer-card">
+      <span className="pos-customer-avatar" aria-hidden="true"><Icon name="user" size="sm" /></span>
       <div className="pos-customer-who">
         <strong>{customer.fullName?.trim() ? customer.fullName : "مشتری بی‌نام"}</strong>
-        {customer.mobile ? <span className="muted small"><Ltr>{customer.mobile}</Ltr></span> : null}
+        <span className="muted small">{customer.mobile ? <Ltr>{customer.mobile}</Ltr> : null}
+          {customer.status === "blocked" ? null : <span className="pos-customer-state"><Icon name="check" size="sm" /> وصل به این فاکتور</span>}</span>
       </div>
-      {customer.status === "blocked" ? <StatusBadge state="failed" label="مسدود — نسیه ممکن نیست" />
-        : <StatusBadge state="active" label="وصل به این فاکتور" quiet />}
+      {customer.status === "blocked" ? <StatusBadge state="failed" label="مسدود — نسیه ممکن نیست" /> : null}
       {!changing ? <Button variant="quiet" disabled={busy} onClick={() => { setChanging(true); requestAnimationFrame(() => inputRef.current?.focus()); }}>تغییر مشتری</Button> : null}
     </div> : loading ? <p className="muted small" role="status">در حال خواندن مشتری…</p> : null}
     {error ? <p className="field-error" role="alert">{error}</p> : null}
