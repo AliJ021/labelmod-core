@@ -379,8 +379,18 @@ test.describe("شواهد بصری دفتر برداشت (mock API)", () => {
     await shot("own-register-create");
     await page.getByRole("button", { name: "ثبت برداشت" }).click();
     await shot("own-create-confirm");
-    await page.getByRole("dialog", { name: "ثبت برداشت" }).getByRole("button", { name: "انصراف" }).click();
+    // رویداد `close` مودال یک Task جداست و فوکوس را به دکمهٔ «ثبت برداشت» برمی‌گرداند
+    // (use-modal.ts). اگر fill پیش از آن برسد، «انتخاب همه» در فیلد است ولی Delete به
+    // دکمه می‌خورد: مبلغ می‌ماند، نگهبان پیش‌نویس روشن می‌ماند و کلیک «تاریخچه»
+    // confirm می‌گیرد که Playwright رد می‌کند (CI پربار، chromium-dark-768/light-1024).
+    // شنوندهٔ ما پس از شنوندهٔ React روی همان عنصر ثبت شده، پس پس از برگشت فوکوس اجرا می‌شود.
+    const confirmDialog = page.getByRole("dialog", { name: "ثبت برداشت" });
+    const closed = confirmDialog.evaluate(d => new Promise<void>(done => d.addEventListener("close", () => done(), { once: true })));
+    await confirmDialog.getByRole("button", { name: "انصراف" }).click();
+    await closed;
     await page.getByLabel("مبلغ (تومان)").fill(""); await page.getByLabel("دلیل برداشت").fill("");
+    await expect(page.getByLabel("مبلغ (تومان)")).toHaveValue("");
+    await expect(page.getByLabel("دلیل برداشت")).toHaveValue("");
     await page.getByRole("button", { name: /^تاریخچهٔ برداشت/ }).nth(1).click();
     await page.getByRole("heading", { name: "تاریخچهٔ برداشت" }).scrollIntoViewIfNeeded();
     await shot("own-history");

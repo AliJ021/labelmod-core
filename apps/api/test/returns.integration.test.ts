@@ -632,6 +632,42 @@ describe("برگشت از فروش و دوره ثبت", { skip }, () => {
     assert.equal(left.json().lines[0].remainingQty, "2.000");
   });
 
+  test("دو مرجوعی جدا برای آخرین واحد، هم‌زمان: فقط یکی ثبت می‌شود — سقف «فروخته منهای برگشته»", async () => {
+    // دو صندوق، دو برگ جدا با دو کلید متفاوت برای همان یک واحد باقی‌مانده. replay همان درخواست
+    // جای دیگری پوشش دارد؛ اینجا دو عملیات **متمایز** برای یک سقف رقابت می‌کنند. قفل فاکتور
+    // در `post_return` باید یکی را بنشاند و دیگری را با پیام روشن رد کند — نه دو بازپرداخت.
+    const s = await loginAs(supervisor);
+    const { invoiceId, lineId } = await soldInvoice({ who: supervisor, qty: "1", paid: "1000000" });
+    const before = await stockOf(STORE_WH);
+    const draft = async () => {
+      const r = await app.inject({ method: "POST", url: "/returns", ...s, payload: {
+        invoiceId, reasonCode: "color_mismatch", refundAmount: "1000000", refundMethod: "cash",
+        shiftId: supervisorShift, lines: [{ invoiceLineId: lineId, qty: "1" }] } });
+      assert.equal(r.statusCode, 201, r.body);
+      return r.json().id as string;
+    };
+    const [first, second] = [await draft(), await draft()];
+    const post = (id: string, key: string) => app.inject({ method: "POST", url: `/returns/${id}/post`,
+      cookies: s.cookies, headers: { ...s.headers, "idempotency-key": key } });
+    const results = await Promise.all([post(first, `race-a-${suffix}`), post(second, `race-b-${suffix}`)]);
+    const codes = results.map((r) => r.statusCode).sort();
+    assert.deepEqual(codes, [200, 409], results.map((r) => r.body).join(" | "));
+    const loser = results.find((r) => r.statusCode === 409)!;
+    assert.equal(loser.json().error.code, "rule_violation", "نگهبان دیتابیس، نه خرابی سرور");
+    assert.equal(await stockOf(STORE_WH), before + 1, "واحد فقط یک بار به انبار برمی‌گردد");
+    const outflow = await sql<{ n: string; total: string }>`
+      SELECT count(*)::text AS n, coalesce(sum(p.amount),0)::text AS total
+        FROM treasury.payment p JOIN sales.sale_return r ON r.id = p.return_id
+       WHERE r.invoice_id = ${invoiceId}::uuid AND p.direction = 'out'`.execute(handle.db);
+    assert.equal(outflow.rows[0]!.n, "1", "دقیقاً یک بازپرداخت در خزانه");
+    assert.equal(BigInt(outflow.rows[0]!.total), 1000000n);
+    const posted = await sql<{ n: string }>`SELECT count(*)::text AS n FROM sales.sale_return
+       WHERE invoice_id = ${invoiceId}::uuid AND status = 'posted'`.execute(handle.db);
+    assert.equal(posted.rows[0]!.n, "1");
+    const left = await app.inject({ method: "GET", url: `/invoices/${invoiceId}/returnable`, ...s });
+    assert.equal(left.json().lines[0].remainingQty, "0.000");
+  });
+
   test("بازپرداخت بیش از پول دریافت‌شده رد می‌شود — ۴۰۹ نه ۵۰۰", async () => {
     const s = await loginAs(supervisor);
     // فروش نسیه کامل: هیچ پولی نیامده
