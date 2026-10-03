@@ -24,7 +24,7 @@ export function WithdrawalHistory({ history, caption }: { history: readonly With
     { key: "v", header: "نسخه", cell: h => h.version === 1 ? "ثبت" : `اصلاح ${formatCount(h.version - 1)}` },
     { key: "at", header: "زمان", cell: h => <span className="cell-nowrap">{formatJalaliMoment(h.at)}</span> },
     { key: "actor", header: "ثبت‌کننده", cell: h => h.actor.name },
-    { key: "amount", header: "مبلغ", numeric: true, cell: h => <Money rial={h.amount} size="sm" /> },
+    { key: "amount", header: "مبلغ", numeric: true, cell: h => <Money rial={h.amount} exact size="sm" /> },
     { key: "reason", header: "دلیل برداشت", cell: h => h.reason },
     { key: "note", header: "دلیل اصلاح", cell: h => h.note ?? <span className="muted">—<span className="sr-only">ندارد (ثبت اولیه)</span></span> },
   ];

@@ -156,6 +156,36 @@ test.describe("دفتر برداشت پرسنل (مدیر کل)", () => {
     api.handlers.set(`GET /withdrawals/${W2}`, route => json(route, detail(item(W2, GM, "300000", "برداشت مدیر"), true)));
   }
 
+  test("fractional withdrawal money stays exact in preview, confirmation, lists and both histories", async ({ page, api }) => {
+    const current = { value: detail(item(W1, GM, "1010", "کرایه"), true) };
+    gmLog(api, current);
+    api.handlers.set("GET /withdrawals/mine", route => json(route, { items: [current.value], total: 1, page: 1, pageSize: 20 }));
+    api.handlers.set(`GET /withdrawals/mine/${W1}`, route => json(route, current.value));
+    api.handlers.set(`POST /withdrawals/${W1}/corrections`, async route => {
+      const body = route.request().postDataJSON();
+      expect(body.amount).toBe("1011");
+      current.value = detail(item(W1, GM, body.amount, body.reason, 2), true, [...current.value.history,
+        { version: 2, amount: body.amount, reason: body.reason, note: body.note, actor: GM, at: "2026-10-02T08:00:00Z" }]);
+      await json(route, { appliedVersion: 2, withdrawal: current.value, replayed: false });
+    });
+    await page.goto(`/?page=settings&settings.tab=withdrawal-log&settings.wdl=${W1}`);
+    await page.getByLabel("مبلغ درست (تومان)").fill("101.1");
+    await page.getByLabel("دلیل اصلاح").fill("یک ریال بیشتر");
+    await expect(page.locator(".field-hint").filter({ hasText: "ثبت می‌شود:" }).locator(".money-digits")).toHaveText("101٫1");
+    await page.getByRole("button", { name: "ثبت اصلاح" }).click();
+    const dialog = page.getByRole("dialog");
+    await expect(dialog.locator(".settings-facts > div").filter({ hasText: "مبلغ فعلی" }).locator(".money-digits")).toHaveText("101");
+    await expect(dialog.locator(".settings-facts > div").filter({ hasText: "مبلغ اصلاح‌شده" }).locator(".money-digits")).toHaveText("101٫1");
+    await dialog.getByRole("button", { name: "ثبت اصلاح" }).click();
+    await expect(page.getByRole("status").filter({ hasText: "اصلاح ثبت شد" })).toBeVisible();
+    await expect(page.getByRole("region", { name: "دفتر برداشت پرسنل", exact: true }).getByText("101٫1", { exact: true })).toBeVisible();
+    await expect(page.getByRole("region", { name: `تاریخچهٔ برداشت ${GM.name}`, exact: true }).getByText("101٫1", { exact: true })).toBeVisible();
+    await page.goto(`/?page=settings&settings.tab=withdrawals&settings.wd=${W1}`);
+    await expect(page.getByRole("region", { name: "برداشت‌های من", exact: true }).getByText("101٫1", { exact: true })).toBeVisible();
+    await expect(page.getByRole("region", { name: "تاریخچهٔ نسخه‌های این برداشت", exact: true }).getByText("101٫1", { exact: true })).toBeVisible();
+    await expect(page.getByRole("region", { name: "تاریخچهٔ برداشت", exact: true }).locator(".section-description .money-digits")).toHaveText("101٫1");
+  });
+
   test("اصلاح دلیل یک ریال را حفظ می‌کند؛ نتیجهٔ نامعلوم پس از reload قابل بررسی است", async ({ page, api }) => {
     const current = { value: detail(item(W1, CASHIER, "1", "قدیم"), true) };
     gmLog(api, current);

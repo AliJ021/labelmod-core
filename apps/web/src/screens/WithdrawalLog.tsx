@@ -44,7 +44,7 @@ export function WithdrawalLog({ currentUserId, write, writeState }: { currentUse
   const columns: Column<WithdrawalItem>[] = [
     { key: "owner", header: "کاربر", cell: r => r.owner.name },
     { key: "at", header: "زمان ثبت", cell: r => <span className="cell-nowrap">{formatJalaliMoment(r.createdAt)}</span> },
-    { key: "amount", header: "مبلغ", numeric: true, cell: r => <Money rial={r.amount} size="sm" /> },
+    { key: "amount", header: "مبلغ", numeric: true, cell: r => <Money rial={r.amount} exact size="sm" /> },
     { key: "reason", header: "دلیل", cell: r => r.reason },
     { key: "state", header: "وضعیت", cell: r => <>{<WithdrawalStatus item={r} />}{r.correctedBy ? <span className="cell-sub">آخرین اصلاح: {r.correctedBy}</span> : null}</> },
   ];
@@ -140,7 +140,7 @@ function WithdrawalInspector({ currentUserId, id, write, writeState, onClose, on
         <h2 className="section-title" id={headingId} ref={heading} tabIndex={-1}>
           {detail ? `برداشت ${detail.owner.name}` : "جزئیات برداشت"}
         </h2>
-        {detail ? <p className="section-description">ثبت {formatJalaliMoment(detail.createdAt)} · مقدار فعلی <Money rial={detail.amount} size="sm" /></p> : null}
+        {detail ? <p className="section-description">ثبت {formatJalaliMoment(detail.createdAt)} · مقدار فعلی <Money rial={detail.amount} exact size="sm" /></p> : null}
       </div>
       <div className="section-actions"><Button variant="quiet" onClick={onClose}>بستن</Button></div>
     </div>
@@ -158,7 +158,7 @@ function WithdrawalInspector({ currentUserId, id, write, writeState, onClose, on
               description="مجوز جاری اصلاح این برداشت را بررسی کنید." />
           : <div className="settings-form">
             <Field label="مبلغ درست (تومان)" error={amountCheck?.error ?? null}
-              hint={amountCheck?.rial !== null && amountCheck?.rial !== undefined ? <>ثبت می‌شود: <Money rial={amountCheck.rial} size="sm" /> · صفر مجاز است؛ دقت تا یک ریال.</> : "صفر مجاز است؛ حداکثر یک رقم اعشار تومان."}>
+              hint={amountCheck?.rial !== null && amountCheck?.rial !== undefined ? <>ثبت می‌شود: <Money rial={amountCheck.rial} exact size="sm" /> · صفر مجاز است؛ دقت تا یک ریال.</> : "صفر مجاز است؛ حداکثر یک رقم اعشار تومان."}>
               <input type="text" inputMode="decimal" autoComplete="off" value={form.amount} disabled={!!sent}
                 onChange={e => edit({ amount: e.target.value })} />
             </Field>
@@ -177,8 +177,8 @@ function WithdrawalInspector({ currentUserId, id, write, writeState, onClose, on
               <SafeAction trigger="ثبت اصلاح" triggerVariant="primary" disabled={!canWrite || !payload || !!recovery.error} initialUnknown={!!sent}
                 title={`اصلاح برداشت ${detail.owner.name}`}
                 summary={payload ? <dl className="settings-facts">
-                  <div><dt>مبلغ فعلی</dt><dd><Money rial={detail.amount} /></dd></div>
-                  <div><dt>مبلغ اصلاح‌شده</dt><dd><Money rial={payload.amount} /></dd></div>
+                  <div><dt>مبلغ فعلی</dt><dd><Money rial={detail.amount} exact /></dd></div>
+                  <div><dt>مبلغ اصلاح‌شده</dt><dd><Money rial={payload.amount} exact /></dd></div>
                   <div><dt>دلیل</dt><dd>{payload.reason}</dd></div>
                   <div><dt>دلیل اصلاح</dt><dd>{payload.note}</dd></div>
                 </dl> : null}
