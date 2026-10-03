@@ -81,7 +81,7 @@ export function MyWithdrawals({ currentUserId }: { currentUserId: string }) {
 
   const columns: Column<WithdrawalItem>[] = [
     { key: "at", header: "زمان ثبت", cell: r => <span className="cell-nowrap">{formatJalaliMoment(r.createdAt)}</span> },
-    { key: "amount", header: "مبلغ", numeric: true, cell: r => <Money rial={r.amount} size="sm" /> },
+    { key: "amount", header: "مبلغ", numeric: true, cell: r => <Money rial={r.amount} exact size="sm" /> },
     { key: "reason", header: "دلیل", cell: r => r.reason },
     { key: "state", header: "وضعیت", cell: r => <WithdrawalStatus item={r} /> },
   ];
@@ -94,7 +94,7 @@ export function MyWithdrawals({ currentUserId }: { currentUserId: string }) {
       <SectionHeader id={formId} title="ثبت برداشت تازه" description="زمان و نام شما را سرور ثبت می‌کند." />
       <div className="settings-form">
         <Field label="مبلغ (تومان)" error={amountCheck.error}
-          hint={amountCheck.rial ? <>ثبت می‌شود: <Money rial={amountCheck.rial} size="sm" /></> : "بدون اعشار؛ رقم فارسی یا لاتین."}>
+          hint={amountCheck.rial ? <>ثبت می‌شود: <Money rial={amountCheck.rial} exact size="sm" /></> : "بدون اعشار؛ رقم فارسی یا لاتین."}>
           <input type="text" inputMode="numeric" autoComplete="off" value={frozen ? tomanDraft(frozen.amount) : amount} disabled={locked}
             onChange={e => { setAmount(e.target.value); setDone(null); }} />
         </Field>
@@ -108,7 +108,7 @@ export function MyWithdrawals({ currentUserId }: { currentUserId: string }) {
           <SafeAction trigger="ثبت برداشت" triggerVariant="primary" disabled={!shown || !!recovery.error} initialUnknown={!!frozen}
             title="ثبت برداشت"
             summary={shown ? <dl className="settings-facts">
-              <div><dt>مبلغ</dt><dd><Money rial={shown.amount} /></dd></div>
+              <div><dt>مبلغ</dt><dd><Money rial={shown.amount} exact /></dd></div>
               <div><dt>دلیل</dt><dd>{shown.reason}</dd></div>
             </dl> : null}
             consequence="به نام شما و با زمان سرور ثبت می‌شود؛ ویرایش مستقیم یا حذف ندارد و اصلاح فقط با مجوز مدیر کل و حفظ تاریخچه است. هیچ پولی جابه‌جا نمی‌شود."
@@ -147,7 +147,7 @@ function MyWithdrawalDetail({ id, version, onClose }: { id: string; version: num
     <div className="section-header">
       <div>
         <h2 className="section-title" id={headingId} ref={heading} tabIndex={-1}>تاریخچهٔ برداشت</h2>
-        {q.data ? <p className="section-description">ثبت {formatJalaliMoment(q.data.createdAt)} · مقدار فعلی <Money rial={q.data.amount} size="sm" /></p> : null}
+        {q.data ? <p className="section-description">ثبت {formatJalaliMoment(q.data.createdAt)} · مقدار فعلی <Money rial={q.data.amount} exact size="sm" /></p> : null}
       </div>
       <div className="section-actions"><Button variant="quiet" onClick={onClose}>بستن تاریخچه</Button></div>
     </div>
