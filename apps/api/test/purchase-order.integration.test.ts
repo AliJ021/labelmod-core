@@ -427,4 +427,42 @@ describe("سفارش خرید", { skip }, () => {
     })).json() as OrderBody;
     assert.equal(again.number, null);
   });
+
+  test("FND29: رسید به سفارش شعبه یا تأمین‌کنندهٔ دیگر وصل نمی‌شود؛ انبار دیگر همان شعبه وصل می‌شود", async () => {
+    // انباردارِ شعبهٔ اصلی سفارشِ شعبهٔ دیگر را نمی‌بیند، ولی شناسه‌اش را می‌تواند در بدنه بفرستد.
+    // دامنهٔ API فقط شعبهٔ **رسید** را می‌سنجد؛ مرز سفارش در دیتابیس است (مهاجرت ۰۸۹).
+    const s = await loginAs(keeper);
+    const branch2 = await sql<{ id: string }>`INSERT INTO platform.branch (code, name)
+      VALUES (${`B2-${suffix}`}, 'شعبهٔ دوم آزمون') RETURNING id`.execute(handle.db);
+    const wh2 = await sql<{ id: string }>`INSERT INTO inventory.warehouse (branch_id, code, name, kind)
+      VALUES (${branch2.rows[0]!.id}::uuid, ${`B2W-${suffix}`}, 'قفسهٔ شعبهٔ دوم', 'store') RETURNING id`.execute(handle.db);
+    const foreign = await sql<{ id: string }>`INSERT INTO purchasing.purchase_order (branch_id, supplier_id, warehouse_id)
+      VALUES (${branch2.rows[0]!.id}::uuid, ${supplierId}::uuid, ${wh2.rows[0]!.id}::uuid) RETURNING id`.execute(handle.db);
+    const otherSupplier = await sql<{ id: string }>`INSERT INTO purchasing.supplier (code, name)
+      VALUES (${`S2-${suffix}`}, 'تأمین‌کنندهٔ دیگر') RETURNING id`.execute(handle.db);
+    const local = await app.inject({ method: "POST", url: "/purchase-orders", ...s,
+      payload: { branchId: BRANCH, supplierId, warehouseId: STORE_WH } });
+    assert.equal(local.statusCode, 201, local.body);
+    const localId = (local.json() as OrderBody).id;
+
+    const receiptsBefore = await sql<{ n: string }>`SELECT count(*)::text AS n FROM purchasing.receipt`.execute(handle.db);
+    const create = (key: string, payload: Record<string, unknown>) => app.inject({ method: "POST", url: "/receipts",
+      cookies: s.cookies, headers: { ...s.headers, "idempotency-key": `${key}-${suffix}` }, payload });
+    for (const [tag, payload, reason] of [
+      ["cross-branch", { branchId: BRANCH, warehouseId: STORE_WH, supplierId, orderId: foreign.rows[0]!.id }, /همان شعبه/],
+      ["other-supplier", { branchId: BRANCH, warehouseId: STORE_WH, supplierId: otherSupplier.rows[0]!.id, orderId: localId }, /تأمین‌کنندهٔ رسید/],
+    ] as const) {
+      const r = await create(`fnd29-${tag}`, payload);
+      assert.equal(r.statusCode, 409, `${tag}: ${r.body}`);
+      assert.equal(r.json().error.code, "rule_violation", "نگهبان دیتابیس، نه خرابی سرور");
+      assert.match(r.json().error.message as string, reason);
+    }
+    const receiptsAfter = await sql<{ n: string }>`SELECT count(*)::text AS n FROM purchasing.receipt`.execute(handle.db);
+    assert.equal(receiptsAfter.rows[0]!.n, receiptsBefore.rows[0]!.n, "رد شدن هیچ پیش‌نویسی جا نمی‌گذارد");
+
+    // مشروع: انبار پشتیبانِ همان شعبه برای سفارش همان شعبه و همان تأمین‌کننده
+    const ok = await create("fnd29-stock-wh", { branchId: BRANCH, warehouseId: "00000000-0000-7000-8000-000000000102",
+      supplierId, orderId: localId });
+    assert.equal(ok.statusCode, 201, ok.body);
+  });
 });
