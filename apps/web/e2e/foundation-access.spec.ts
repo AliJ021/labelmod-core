@@ -288,6 +288,38 @@ test.describe("F-110-04 — the More sheet is a real modal", () => {
     await page.waitForLoadState("networkidle");
   });
 
+  test("a late close event from the previous close never dismisses the reopened sheet", async ({ page }) => {
+    // روی اجراکنندهٔ پربار CI، رویداد بومی «close» بستنِ قبلی پس از Enter (بازشدن دوباره) می‌رسید و
+    // برگهٔ تازه را می‌بست. این‌جا همان زمان‌بندی قطعی شبیه‌سازی می‌شود: رویداد close با تأخیر تحویل می‌شود.
+    await page.addInitScript(() => {
+      window.addEventListener("close", event => {
+        if (!(event.target instanceof HTMLDialogElement) || Reflect.get(event, "__late")) return;
+        event.stopImmediatePropagation();
+        const target = event.target;
+        setTimeout(() => {
+          const late = new Event("close"); Reflect.set(late, "__late", true);
+          target.dispatchEvent(late); Reflect.set(window, "__lateCloseDelivered", true);
+        }, 400);
+      }, true);
+    });
+    await page.goto("/");
+    await expect(mainList(page).getByRole("tab", { name: "کالا و قیمت", exact: true })).toBeVisible();
+    const more = page.getByRole("button", { name: "بخش‌های بیشتر", exact: true });
+    const sheet = page.getByRole("dialog", { name: "همهٔ بخش‌ها" });
+    await more.click();
+    await expect(sheet).toBeVisible();
+    await page.keyboard.press("Escape");
+    await expect(sheet).toBeHidden();
+    await more.focus();
+    await more.press("Enter");
+    await expect(sheet).toBeVisible();
+    await expect.poll(() => page.evaluate(() => Reflect.get(window, "__lateCloseDelivered") === true), "رویداد دیررس تحویل شد").toBe(true);
+    await expect(sheet, "رویداد close دیررس برگهٔ تازه را نمی‌بندد").toBeVisible();
+    await expect(more).toHaveAttribute("aria-expanded", "true");
+    await page.keyboard.press("Escape");
+    await expect(sheet).toBeHidden();
+  });
+
   test("a short phone scrolls inside the sheet and keeps it within the safe area", async ({ page }) => {
     await page.setViewportSize({ width: 375, height: 460 });
     await page.goto("/");
