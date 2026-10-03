@@ -167,4 +167,10 @@ BEGIN
 END $$;
 -- جدول‌ها مسیر نوشتن عمومی نیستند؛ نقش اپلیکیشن نیز در db-roles بسته می‌شود.
 REVOKE ALL ON sales.provider_intent,sales.provider_intent_event,sales.provider_callback_event FROM PUBLIC;
+-- همان الگوی ۰۶۰: اجرای توابع DEFINER عمومی نیست؛ ops/db-roles.sh به نقش اپلیکیشن مجوز می‌دهد.
+REVOKE ALL ON FUNCTION sales.create_provider_intent(uuid,text,uuid,text,uuid) FROM PUBLIC;
+REVOKE ALL ON FUNCTION sales.claim_provider_intent(uuid,integer,text,uuid) FROM PUBLIC;
+REVOKE ALL ON FUNCTION sales.finish_provider_intent(uuid,integer,uuid,text,jsonb,uuid) FROM PUBLIC;
+REVOKE ALL ON FUNCTION sales.expire_provider_intent(uuid,integer,uuid) FROM PUBLIC;
+REVOKE ALL ON FUNCTION sales.record_provider_callback(uuid,uuid,text,text,text,uuid) FROM PUBLIC;
 COMMIT;
