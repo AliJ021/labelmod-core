@@ -4,7 +4,7 @@ import { Ltr } from "./ui/Bidi.tsx";
 import { normalizeDigits } from "../lib/settings-value.ts";
 import {
   DEFAULT_PRESET, LABEL_PRESETS, MAX_PER_VARIANT, MAX_TOTAL, groupByProduct, labelRequestBody,
-  labelRequestProblem, queueTotal, scanRiskWidth, type LabelLayout, type LabelSize,
+  labelRequestProblem, queueTotal, type LabelLayout, type LabelSize,
 } from "../lib/label-print.ts";
 import { labelQueue, useLabelQueue } from "../lib/label-queue.ts";
 
@@ -27,7 +27,7 @@ export function useLabelSize() {
 export type LabelSizeState = ReturnType<typeof useLabelSize>;
 
 export function LabelSizeFields({ state, onChange, idPrefix }: { state: LabelSizeState; onChange: () => void; idPrefix: string }) {
-  const { layout, preset, width, height, size } = state;
+  const { layout, preset, width, height } = state;
   return <div className="stack" style={{ gap: "var(--s-2)" }}>
     <div className="row" style={{ flexWrap: "wrap", gap: "var(--s-3)" }}>
       <label className="auth-field">نوع برچسب<select value={layout} onChange={(e) => { state.setLayout(e.target.value as LabelLayout); onChange(); }}>
@@ -42,8 +42,6 @@ export function LabelSizeFields({ state, onChange, idPrefix }: { state: LabelSiz
       <label className="auth-field">عرض لیبل (میلی‌متر)<input inputMode="decimal" value={width} onChange={(e) => { state.setWidth(e.target.value); onChange(); }} /></label>
       <label className="auth-field">ارتفاع لیبل (میلی‌متر)<input inputMode="decimal" value={height} onChange={(e) => { state.setHeight(e.target.value); onChange(); }} /></label>
     </div> : null}
-    {layout === "roll" && Number.isFinite(size.width) && scanRiskWidth(size.width)
-      ? <p className="muted small" role="status"><span className="dot dot--warn" aria-hidden="true">●</span> برای این عرض، بارکد کوچک‌تر از استاندارد چاپ می‌شود و ممکن است اسکن نشود.</p> : null}
   </div>;
 }
 

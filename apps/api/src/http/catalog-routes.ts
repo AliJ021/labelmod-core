@@ -18,7 +18,7 @@ import {
   generateToJson,
   type VariationService,
 } from "../catalog/variation.ts";
-import { labelPage, LABEL_CSP, type LabelItem } from "../catalog/label.ts";
+import { labelPage, LABEL_CSP, ROLL_MIN_HEIGHT_MM, ROLL_MIN_WIDTH_MM, type LabelItem } from "../catalog/label.ts";
 import { CONTROL_CHARS } from "../lib/text.ts";
 
 const uuid = z.string().uuid("شناسه نامعتبر");
@@ -72,8 +72,13 @@ const labelBody = z.object({
     .min(1, "دست‌کم یک کالا لازم است")
     .max(200),
   layout: z.enum(["a4", "roll"]).default("a4"),
-  rollWidthMm: z.number().min(20).max(120).optional(),
-  rollHeightMm: z.number().min(10).max(120).optional(),
+  rollWidthMm: z.number()
+    .min(ROLL_MIN_WIDTH_MM, `عرض لیبل دست‌کم ${ROLL_MIN_WIDTH_MM} میلی‌متر است؛ باریک‌تر از آن بارکد با حاشیهٔ سکوت و قیمت کامل جا نمی‌شوند.`)
+    .max(120).optional(),
+  // کمتر از این، نام و قیمت و بارکد خوانا با هم جا نمی‌شوند (`labelGeometry`).
+  rollHeightMm: z.number()
+    .min(ROLL_MIN_HEIGHT_MM, `ارتفاع لیبل دست‌کم ${ROLL_MIN_HEIGHT_MM} میلی‌متر است؛ کوتاه‌تر از آن نام، قیمت و بارکد خوانا جا نمی‌شوند.`)
+    .max(120).optional(),
 }).refine((body) => body.items.reduce((sum, item) => sum + item.count, 0) <= 500, {
   message: "حداکثر ۵۰۰ لیبل در هر درخواست مجاز است",
   path: ["items"],

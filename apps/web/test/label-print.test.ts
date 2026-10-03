@@ -1,8 +1,9 @@
 import { describe, test } from "node:test";
+import { ROLL_MIN_HEIGHT_MM, ROLL_MIN_WIDTH_MM } from "../../api/src/catalog/label.ts";
 import assert from "node:assert/strict";
 import {
   LABEL_PRESETS, MAX_TOTAL, clampCount, groupByProduct, labelRequestBody, labelRequestProblem,
-  mergeQueue, queueTotal, scanRiskWidth, setQueueCount, type QueueItem,
+  mergeQueue, queueTotal, ROLL_LIMITS, setQueueCount, type QueueItem,
 } from "../src/lib/label-print.ts";
 
 const item = (variationId: string, productId: string, count: number): QueueItem => ({
@@ -39,13 +40,17 @@ describe("فهرست چاپ گروهی لیبل", () => {
     assert.equal(labelRequestProblem([item("v1", "p1", 3)], roll), null);
     const many = Array.from({ length: 6 }, (_, n) => item(`v${n}`, "p", 100));
     assert.match(labelRequestProblem(many, roll) ?? "", new RegExp(String(MAX_TOTAL)));
-    assert.match(labelRequestProblem([item("v1", "p1", 1)], { layout: "roll", width: 15, height: 30 }) ?? "", /عرض/);
+    assert.match(labelRequestProblem([item("v1", "p1", 1)], { layout: "roll", width: 25, height: 30 }) ?? "", /عرض/);
     assert.match(labelRequestProblem([item("v1", "p1", 1)], { layout: "roll", width: 50, height: 200 }) ?? "", /ارتفاع/);
     assert.equal(labelRequestProblem([item("v1", "p1", 1)], { layout: "a4", width: NaN, height: NaN }), null);
   });
 
-  test("اندازه‌های آماده همه بارکد کامل را جا می‌دهند؛ عرض باریک هشدار دارد", () => {
-    for (const p of LABEL_PRESETS) assert.equal(scanRiskWidth(p.width), false, p.id);
-    assert.equal(scanRiskWidth(25), true);
+  test("کمینهٔ اندازه همان کمینهٔ سرور است و ابعاد ناممکن با پیام روشن رد می‌شوند", () => {
+    assert.equal(ROLL_LIMITS.minWidth, ROLL_MIN_WIDTH_MM);
+    assert.equal(ROLL_LIMITS.minHeight, ROLL_MIN_HEIGHT_MM);
+    const one = [item("v1", "p1", 1)];
+    assert.match(labelRequestProblem(one, { layout: "roll", width: 50, height: 10 }) ?? "", /ارتفاع.*قیمت و بارکد/);
+    assert.match(labelRequestProblem(one, { layout: "roll", width: 20, height: 20 }) ?? "", /عرض.*حاشیهٔ سکوت/);
+    for (const p of LABEL_PRESETS) assert.equal(labelRequestProblem(one, { layout: "roll", ...p }), null, p.id);
   });
 });

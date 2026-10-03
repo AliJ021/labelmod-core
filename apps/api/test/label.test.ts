@@ -18,7 +18,7 @@ import {
   BarcodeError,
 } from "../src/catalog/barcode-svg.ts";
 import { makeEan13, ean13CheckDigit } from "../src/catalog/barcode.ts";
-import { esc, labelGeometry, labelPage, ROLL_PRESETS_MM, type LabelItem } from "../src/catalog/label.ts";
+import { esc, labelGeometry, labelPage, LabelSizeError, ROLL_MIN_HEIGHT_MM, ROLL_MIN_WIDTH_MM, ROLL_PRESETS_MM, type LabelItem } from "../src/catalog/label.ts";
 
 describe("رسم EAN-13", () => {
   test("نوار ۹۵ ماژول است و نگهبان‌ها سر جایشان‌اند", () => {
@@ -257,22 +257,56 @@ describe("اندازهٔ برچسب", () => {
     }
   });
 
-  test("رول باریک‌تر از بارکد کامل، کوچک می‌شود و هشدار می‌گیرد — مقدار بارکد عوض نمی‌شود", () => {
-    const html = labelPage([item], { layout: "roll", shopName: "ف", rollMm: { width: 22, height: 15 } });
-    assert.ok(svgWidth(html) <= 21);
-    assert.match(html, /ممکن است اسکن نشود/);
+  test("کمترین عرض: بارکد کامل با حاشیهٔ سکوت در عرض داخلی جا می‌شود و رقم‌ها همان بارکد ثبت‌شده‌اند", () => {
+    const html = labelPage([item], { layout: "roll", shopName: "ف", rollMm: { width: ROLL_MIN_WIDTH_MM, height: 20 } });
+    assert.ok(svgWidth(html) <= ROLL_MIN_WIDTH_MM - 1, "۰٫۵mm حاشیهٔ هر طرف");
+    assert.equal(labelGeometry("roll", ROLL_MIN_WIDTH_MM, 20).moduleMm, 0.25);
     const digits = [...html.matchAll(/<text[^>]*>(\d)<\/text>/g)].map((m) => m[1]).join("");
     assert.equal(digits, item.barcode, "رقم‌های چاپی همان بارکد ثبت‌شده‌اند");
+    for (const w of [20, 25, 29]) {
+      assert.equal(labelGeometry("roll", w, 30).fits, false, `${w}mm نباید پذیرفته شود`);
+      assert.throws(() => labelPage([item], { layout: "roll", shopName: "ف", rollMm: { width: w, height: 30 } }), LabelSizeError);
+    }
   });
 
-  test("برچسب کوتاه نام فروشگاه را حذف می‌کند و نام بلند در دو سطر مهار می‌شود", () => {
+  test("برچسب کوتاه نام فروشگاه را حذف می‌کند و نام بلند با سطر کامل و «…» مهار می‌شود", () => {
     const small = labelPage([item], { layout: "roll", shopName: "فروشگاه", rollMm: { width: 40, height: 25 } });
     assert.ok(!small.includes('class="shop"'));
+    assert.match(small, /-webkit-line-clamp: 1/, "برچسب کوتاه: نام یک‌سطری");
     const tall = labelPage([item], { layout: "roll", shopName: "فروشگاه", rollMm: { width: 58, height: 40 } });
     assert.ok(tall.includes('class="shop"'));
     assert.match(tall, /-webkit-line-clamp: 2/);
-    assert.match(small, /-webkit-line-clamp: 1/, "برچسب کوتاه: نام یک‌سطری");
     assert.match(tall, /overflow-wrap: anywhere/);
+    assert.match(tall, /\.label > div \{ flex: none;/, "هیچ ردیفی فشرده نمی‌شود");
+  });
+
+  test("بودجهٔ ارتفاع: در هر اندازهٔ معتبر همهٔ ردیف‌ها کامل جا می‌شوند و نام فقط سطر کامل دارد", () => {
+    for (let w = ROLL_MIN_WIDTH_MM; w <= 120; w += 1) {
+      for (let h = ROLL_MIN_HEIGHT_MM; h <= 120; h += 1) {
+        const g = labelGeometry("roll", w, h);
+        assert.ok(g.fits, `${w}×${h} باید جا شود`);
+        const rows = [g.showShop ? g.rows.shop : null, g.rows.name, g.rows.variant, g.rows.price, g.rows.code]
+          .filter((v): v is number => v !== null);
+        const used = g.padY[0] + g.padY[1] + 0.4 * (rows.length - 1) + rows.reduce((a, b) => a + b, 0);
+        assert.ok(used <= h + 1e-9, `${w}×${h}: ردیف‌ها ${used.toFixed(2)}mm از ارتفاع بیشترند`);
+        assert.ok(g.barHeightMm >= 5, `${w}×${h}: میلهٔ ${g.barHeightMm}mm`);
+        assert.ok(Math.abs(g.rows.name - g.nameLines * g.fontMm * 1.3) < 0.01, `${w}×${h}: ردیف نام نیم‌سطر دارد`);
+        assert.ok(g.moduleMm * 113 <= w - 1 + 1e-9, `${w}×${h}: حاشیهٔ سکوت بیرون می‌زند`);
+      }
+    }
+  });
+
+  test("ارتفاع کمتر از کمینه برچسب ناخوانا نمی‌سازد؛ خطای ۴۲۲ با پیام روشن", () => {
+    for (let h = 10; h < ROLL_MIN_HEIGHT_MM; h++) {
+      assert.equal(labelGeometry("roll", 50, h).fits, false, `${h}mm نباید پذیرفته شود`);
+    }
+    assert.throws(() => labelPage([item], { layout: "roll", shopName: "ف", rollMm: { width: 50, height: 10 } }),
+      (err: unknown) => err instanceof LabelSizeError && err.statusCode === 422 && /دست‌کم 30×20/.test(err.message));
+  });
+
+  test("A4 هم در همان بودجه جا می‌شود", () => {
+    const g = labelGeometry("a4", 70, 37);
+    assert.ok(g.fits && g.showShop && g.nameLines === 2 && g.moduleMm === 0.3);
   });
 
   test("قیمت به تومان دقیق است؛ ریال کسری گم نمی‌شود", () => {

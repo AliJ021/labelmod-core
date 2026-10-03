@@ -90,6 +90,7 @@ export function ProductStockLabels({ productId, productName, variations, selecte
       <button className="btn btn--primary" type="button" disabled={problem !== null || pv.busy} onClick={() => void pv.preview(body, currentKey)}>پیش‌نمایش لیبل‌های انتخاب‌شده</button>
       <button className="btn" type="button" disabled={chosen.length === 0} onClick={addToQueue}>افزودن به فهرست چاپ گروهی</button>
     </div>
+    {problem && chosen.length > 0 ? <p className="small" role="status">{problem}</p> : null}
     {added ? <p className="small" role="status">{added}</p> : null}
     {error || pv.error ? <p role="alert">{error || pv.error}</p> : null}
     {pv.html && pv.key === currentKey ? <LabelPreviewFrame html={pv.html} /> : null}

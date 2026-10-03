@@ -18,7 +18,11 @@ export const DEFAULT_PRESET = "50x30";
 export const MAX_PER_VARIANT = 100;
 export const MAX_TOTAL = 500;
 export const MAX_ITEMS = 200;
-export const ROLL_LIMITS = { minWidth: 20, maxWidth: 120, minHeight: 10, maxHeight: 120 } as const;
+/**
+ * همان `ROLL_MIN_WIDTH_MM` و `ROLL_MIN_HEIGHT_MM` سرور (`catalog/label.ts`)؛
+ * کوچک‌تر، برچسب خوانا ساخته نمی‌شود و سرور هم ۴۲۲ می‌دهد.
+ */
+export const ROLL_LIMITS = { minWidth: 30, maxWidth: 120, minHeight: 20, maxHeight: 120 } as const;
 
 export interface LabelSize { layout: LabelLayout; width: number; height: number }
 
@@ -83,8 +87,10 @@ export function labelRequestProblem(items: readonly { count: number }[], size: L
   if (total > MAX_TOTAL) return `حداکثر ${MAX_TOTAL} لیبل در هر نوبت؛ اکنون ${total}.`;
   if (size.layout === "roll") {
     const { minWidth, maxWidth, minHeight, maxHeight } = ROLL_LIMITS;
-    if (!(size.width >= minWidth && size.width <= maxWidth)) return `عرض لیبل باید بین ${minWidth} و ${maxWidth} میلی‌متر باشد.`;
-    if (!(size.height >= minHeight && size.height <= maxHeight)) return `ارتفاع لیبل باید بین ${minHeight} و ${maxHeight} میلی‌متر باشد.`;
+    if (!(size.width >= minWidth && size.width <= maxWidth))
+      return `عرض لیبل باید بین ${minWidth} و ${maxWidth} میلی‌متر باشد؛ باریک‌تر از ${minWidth} میلی‌متر بارکد با حاشیهٔ سکوت و قیمت کامل جا نمی‌شوند.`;
+    if (!(size.height >= minHeight && size.height <= maxHeight))
+      return `ارتفاع لیبل باید بین ${minHeight} و ${maxHeight} میلی‌متر باشد؛ کوتاه‌تر از ${minHeight} میلی‌متر نام، قیمت و بارکد خوانا با هم جا نمی‌شوند.`;
   }
   return null;
 }
@@ -96,9 +102,4 @@ export function labelRequestBody(items: readonly { variationId: string; count: n
     layout: size.layout,
     ...(size.layout === "roll" ? { rollWidthMm: size.width, rollHeightMm: size.height } : {}),
   };
-}
-
-/** عرض کمتر از این، EAN-13 کامل را با ماژول ۰٫۲۵mm جا نمی‌دهد (سرور هشدار می‌دهد). */
-export function scanRiskWidth(width: number): boolean {
-  return width - 1 < 0.25 * 113;
 }
