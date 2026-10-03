@@ -19,6 +19,7 @@ import {
   INVOICE_PAGE_CSP,
   PRINT_SCRIPT,
   invoicePage,
+  receiptFooterFromSettings,
   toTomanExact,
 } from "../src/sales/invoice-page.ts";
 
@@ -218,5 +219,17 @@ describe("رسید حرارتی ۸۰ میلی‌متری", () => {
     assert.match(html, /<span class="qty">۲<\/span> × <span class="unit">۱٬۲۳۴٬۵۶۷٫۵<\/span>/);
     assert.match(html, /class="disc"[\s\S]*− ۳۴٬۵۶۷٫۵/);
   });
-});
 
+  test("پابرگ از تنظیمات زنده: مهلت مرجوعی و سایت؛ متن ثابت سیاست چاپ نمی‌شود", () => {
+    const f48 = receiptFooterFromSettings({ return_hours: "48", site_url: "https://labelmod.ir/" });
+    assert.deepEqual(f48, { returnWindowHours: 48, website: "labelmod.ir" });
+    const page48 = invoicePage({ ...data, ...f48 }, "Asia/Tehran");
+    assert.match(page48, /مهلت مرجوعی: ۲ روز \(۴۸ ساعت\) پس از خرید/);
+    assert.match(page48, /<bdi dir="ltr">labelmod\.ir<\/bdi>/);
+    assert.match(invoicePage({ ...data, returnWindowHours: 36 }, "Asia/Tehran"), /مهلت مرجوعی: ۳۶ ساعت پس از خرید/);
+    // بی تنظیم معتبر، هیچ سطر سیاستی نیست — حدس زده نمی‌شود.
+    assert.deepEqual(receiptFooterFromSettings({ return_hours: null, site_url: "javascript:alert(1)" }), { returnWindowHours: null, website: null });
+    assert.doesNotMatch(html, /مهلت مرجوعی/);
+    assert.match(html, /<div class="meta-row"><span>فاکتور <bdi dir="ltr" class="docno">F-1405-000123<\/bdi><\/span>/);
+  });
+});

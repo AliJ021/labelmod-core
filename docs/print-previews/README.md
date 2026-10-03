@@ -4,25 +4,25 @@
 
 مبنا: `d84ba0fb0e19364df0e6c7d39abd4f7d8ee0bafd` (main).
 
-برچسب‌ها پس از بازبینی مستقل PR124 (بودجهٔ ارتفاع ثابت، کمینهٔ ۳۰×۲۰mm) دوباره گرفته شدند؛ رسید و تصویرهای `ui-*` تغییری نکردند.
+برچسب‌ها مطابق مرجع مالک (۵۰×۳۰mm پیش‌فرض: نام فروشگاه، بارکد، رقم‌ها، دو سطر شرح، قیمت درشت) و رسید (نشان متنی از نام شعبه — هیچ فایل لوگوی اصیلی در مخزن نیست؛ مهلت مرجوعی از تنظیم `return.window_hours`) دوباره گرفته شدند. تصویرهای `ui-*` از دور قبل‌اند. بارکد نمونه EAN-13 است؛ سیاست بارکد قدیمی ۱۷ رقمی و Code128 در کار جداگانه است.
 
 | فایل | SHA-256 |
 |---|---|
-| `label-30x20.pdf` | `eaf33f98e81e43d6…` |
-| `label-30x20.png` | `e1508e45866d333f…` |
-| `label-40x25.pdf` | `c268be690a32e790…` |
-| `label-40x25.png` | `e4b305a8c448306c…` |
-| `label-50x30.pdf` | `cea9529d00fbf424…` |
-| `label-50x30.png` | `ea43621ac33fc460…` |
-| `label-58x40.pdf` | `266e970c5e6d76db…` |
-| `label-58x40.png` | `2e2fee146f73f957…` |
-| `label-60x40.pdf` | `0ddf5765220281f6…` |
-| `label-60x40.png` | `44f6b9986a579e0c…` |
-| `label-a4.png` | `495e6ab34c972526…` |
-| `receipt-80mm-print.png` | `16c74c89f7245deb…` |
-| `receipt-80mm.pdf` | `7cd69ed224b95476…` |
-| `receipt-phone-screen.png` | `ea289edd5fed85bd…` |
-| `receipt-sample.html` | `2e1e1154f30b2487…` |
+| `label-30x20.pdf` | `35cded8a5b9fe3eb…` |
+| `label-30x20.png` | `5c9623387f65c1f9…` |
+| `label-40x25.pdf` | `6090a748cfbc7f42…` |
+| `label-40x25.png` | `895d7196d33b454f…` |
+| `label-50x30.pdf` | `49624aa288ea60e4…` |
+| `label-50x30.png` | `c907612f5030546c…` |
+| `label-58x40.pdf` | `a41d6d8b4d003616…` |
+| `label-58x40.png` | `0e7319fc5a61b938…` |
+| `label-60x40.pdf` | `00cde17acf5d16c7…` |
+| `label-60x40.png` | `8377af449ca1d174…` |
+| `label-a4.png` | `ba51635fc4750ffa…` |
+| `receipt-80mm-print.png` | `7ac93f2968bc3ff4…` |
+| `receipt-80mm.pdf` | `29c777428f1c0277…` |
+| `receipt-phone-screen.png` | `099326f27c55a2d1…` |
+| `receipt-sample.html` | `cba35da830aec7d5…` |
 | `ui-bulk-queue-chromium-dark-375.png` | `9a41f62f01902308…` |
 | `ui-bulk-queue-chromium-light-1440.png` | `232cd0397cb3a6a5…` |
 | `ui-product-labels-chromium-dark-375.png` | `b8ce20c6f64d14bc…` |

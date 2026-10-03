@@ -18,7 +18,7 @@ import {
   BarcodeError,
 } from "../src/catalog/barcode-svg.ts";
 import { makeEan13, ean13CheckDigit } from "../src/catalog/barcode.ts";
-import { esc, labelGeometry, labelPage, LabelSizeError, ROLL_MIN_HEIGHT_MM, ROLL_MIN_WIDTH_MM, ROLL_PRESETS_MM, type LabelItem } from "../src/catalog/label.ts";
+import { esc, labelGeometry, labelPage, LabelSizeError, barcodeFitsWidth, minRollWidthFor, ROLL_MIN_HEIGHT_MM, ROLL_MIN_WIDTH_MM, ROLL_PRESETS_MM, type LabelItem } from "../src/catalog/label.ts";
 
 describe("رسم EAN-13", () => {
   test("نوار ۹۵ ماژول است و نگهبان‌ها سر جایشان‌اند", () => {
@@ -185,7 +185,7 @@ describe("برچسب قیمت", () => {
   test("قیمت به تومان نمایش داده می‌شود، نه ریال", () => {
     const html = labelPage([base], { layout: "a4", shopName: "ف" });
     // ۲۴٬۰۰۰٬۰۰۰ ریال = ۲٬۴۰۰٬۰۰۰ تومان
-    assert.ok(html.includes("2٬400٬000"), "تومان با جداکننده هزارگان");
+    assert.ok(html.includes("۲٬۴۰۰٬۰۰۰"), "تومان با رقم فارسی و جداکننده هزارگان");
     assert.ok(html.includes("تومان"));
     assert.ok(!html.includes("24٬000٬000"), "ریال نباید روی برچسب بیاید");
   });
@@ -269,28 +269,33 @@ describe("اندازهٔ برچسب", () => {
     }
   });
 
-  test("برچسب کوتاه نام فروشگاه را حذف می‌کند و نام بلند با سطر کامل و «…» مهار می‌شود", () => {
-    const small = labelPage([item], { layout: "roll", shopName: "فروشگاه", rollMm: { width: 40, height: 25 } });
-    assert.ok(!small.includes('class="shop"'));
-    assert.match(small, /-webkit-line-clamp: 1/, "برچسب کوتاه: نام یک‌سطری");
-    const tall = labelPage([item], { layout: "roll", shopName: "فروشگاه", rollMm: { width: 58, height: 40 } });
-    assert.ok(tall.includes('class="shop"'));
-    assert.match(tall, /-webkit-line-clamp: 2/);
-    assert.match(tall, /overflow-wrap: anywhere/);
-    assert.match(tall, /\.label > div \{ flex: none;/, "هیچ ردیفی فشرده نمی‌شود");
+  test("ترتیب مرجع: فروشگاه، بارکد (رقم‌ها زیر میله)، دو سطر شرح با برند/رنگ/سایز، قیمت درشت پایین", () => {
+    const html = labelPage([{ ...item, brand: "برند <ب>" }], { layout: "roll", shopName: "فروشگاه لیبل مد", rollMm: { width: 58, height: 40 } });
+    const label = html.slice(html.indexOf('<div class="label">'));
+    const order = ["shop", "code", "desc", "price"].map((c) => label.indexOf(`<div class="${c}"`));
+    assert.ok(order.every((i, n) => i > 0 && (n === 0 || i > order[n - 1]!)), `ترتیب ردیف‌ها: ${order.join(",")}`);
+    assert.match(label, /<div class="desc"><span class="l">مانتو کتان[^<]*<\/span><span class="l">برند &lt;ب&gt; · سرمه‌ای · XL<\/span>/);
+    assert.match(html, /\.label > div \{ flex: none;/, "هیچ ردیفی فشرده نمی‌شود");
+    assert.match(html, /\.desc \.l \{ display: block; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; \}/);
+    const g50 = labelGeometry("roll", 50, 30);
+    assert.ok(g50.showShop && g50.nameLines === 2 && g50.barHeightMm >= 6, "۵۰×۳۰ مرجع: فروشگاه + دو سطر شرح + بارکد");
+    assert.equal(g50.moduleMm, 0.375, "۵۰×۳۰: بارکد پهن");
+    const g40 = labelGeometry("roll", 40, 25);
+    assert.ok(g40.showShop, "۴۰×۲۵: فروشگاه می‌ماند");
+    assert.ok(!labelGeometry("roll", 30, 20).showShop, "۳۰×۲۰: نام فروشگاه پیش از بارکد کنار می‌رود");
   });
 
-  test("بودجهٔ ارتفاع: در هر اندازهٔ معتبر همهٔ ردیف‌ها کامل جا می‌شوند و نام فقط سطر کامل دارد", () => {
+  test("بودجهٔ ارتفاع: در هر اندازهٔ معتبر همهٔ ردیف‌ها کامل جا می‌شوند و شرح فقط سطر کامل دارد", () => {
     for (let w = ROLL_MIN_WIDTH_MM; w <= 120; w += 1) {
       for (let h = ROLL_MIN_HEIGHT_MM; h <= 120; h += 1) {
         const g = labelGeometry("roll", w, h);
         assert.ok(g.fits, `${w}×${h} باید جا شود`);
-        const rows = [g.showShop ? g.rows.shop : null, g.rows.name, g.rows.variant, g.rows.price, g.rows.code]
+        const rows = [g.showShop ? g.rows.shop : null, g.rows.code, g.rows.desc, g.rows.price]
           .filter((v): v is number => v !== null);
         const used = g.padY[0] + g.padY[1] + 0.4 * (rows.length - 1) + rows.reduce((a, b) => a + b, 0);
         assert.ok(used <= h + 1e-9, `${w}×${h}: ردیف‌ها ${used.toFixed(2)}mm از ارتفاع بیشترند`);
         assert.ok(g.barHeightMm >= 5, `${w}×${h}: میلهٔ ${g.barHeightMm}mm`);
-        assert.ok(Math.abs(g.rows.name - g.nameLines * g.fontMm * 1.3) < 0.01, `${w}×${h}: ردیف نام نیم‌سطر دارد`);
+        assert.ok(Math.abs(g.rows.desc - g.nameLines * g.fontMm * 1.3) < 0.01, `${w}×${h}: ردیف شرح نیم‌سطر دارد`);
         assert.ok(g.moduleMm * 113 <= w - 1 + 1e-9, `${w}×${h}: حاشیهٔ سکوت بیرون می‌زند`);
       }
     }
@@ -311,7 +316,23 @@ describe("اندازهٔ برچسب", () => {
 
   test("قیمت به تومان دقیق است؛ ریال کسری گم نمی‌شود", () => {
     const html = labelPage([item], { layout: "a4", shopName: "ف" });
-    assert.ok(html.includes("1٬234٬567٫5"), "۱۲٬۳۴۵٬۶۷۵ ریال = ۱٬۲۳۴٬۵۶۷٫۵ تومان");
+    assert.ok(html.includes("۱٬۲۳۴٬۵۶۷٫۵"), "۱۲٬۳۴۵٬۶۷۵ ریال = ۱٬۲۳۴٬۵۶۷٫۵ تومان");
+  });
+
+  test("هندسه تعداد ماژول واقعی بارکد را می‌پذیرد (نقطهٔ اتصال Code128) و زیر ۰٫۲۵mm نمی‌رود", () => {
+    // ۱۷ رقم با Code128 بهینه ≈ ۱۵۴ ماژول با حاشیهٔ سکوت — فقط عدد؛ رمزگذار این‌جا نیست.
+    assert.equal(barcodeFitsWidth(154, 50), true);
+    assert.equal(barcodeFitsWidth(154, 40), true);
+    assert.equal(barcodeFitsWidth(154, 30), false);
+    assert.equal(minRollWidthFor(154), 40);
+    assert.equal(minRollWidthFor(113), 30);
+    const g = labelGeometry("roll", 50, 30, 154);
+    assert.ok(g.fits && g.moduleMm === 0.25, "۵۰×۳۰ مرجع: ماژول ۰٫۲۵mm");
+    assert.equal(labelGeometry("roll", 50, 30).moduleMm, 0.375, "EAN-13 همان قبلی");
+    assert.equal(labelGeometry("roll", 30, 20, 154).fits, false);
+    assert.throws(
+      () => labelPage([item], { layout: "roll", shopName: "ف", rollMm: { width: 30, height: 20 }, barcodeModules: () => 154 }),
+      (err: unknown) => err instanceof LabelSizeError && /دست‌کم 40×20/.test(err.message),
+    );
   });
 });
-

@@ -165,6 +165,7 @@ export function registerCatalogRoutes(
       barcode: r.barcode,
       sku: r.sku,
       productName: r.productName,
+      brand: r.brand,
       color: r.color,
       size: r.size,
       priceRial: r.priceRial,

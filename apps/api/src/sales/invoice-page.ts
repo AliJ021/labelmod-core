@@ -84,6 +84,30 @@ export interface InvoicePageData {
   paidAmount: bigint;
   exchangeAmount?: bigint;
   dueAmount?: bigint;
+  /** مهلت مرجوعی از تنظیم زندهٔ `return.window_hours` — متن ثابت چاپ نمی‌شود. */
+  returnWindowHours?: number | null;
+  /** نشانی سایت فروشگاه از تنظیم `web.site_url`، اگر ثبت شده باشد. */
+  website?: string | null;
+}
+
+/** خواندن امن دو تنظیم پابرگ رسید از ستون‌های خام SQL. */
+export function receiptFooterFromSettings(raw: { return_hours: string | null; site_url: string | null }): {
+  returnWindowHours: number | null; website: string | null;
+} {
+  const hours = raw.return_hours === null ? NaN : Number(raw.return_hours);
+  const site = (raw.site_url ?? "").trim();
+  return {
+    returnWindowHours: Number.isInteger(hours) && hours > 0 ? hours : null,
+    // فقط نشانی http(s) معتبر — متن دلخواه تنظیمات روی رسید نمی‌نشیند.
+    website: /^https?:\/\/[^\s<>"']+$/i.test(site) ? site.replace(/^https?:\/\//i, "").replace(/\/$/, "") : null,
+  };
+}
+
+/** «۴۸ ساعت» یا «۷ روز» — از همان عدد تنظیم، بی‌گرد کردن نادرست. */
+function windowText(hours: number): string {
+  return hours % 24 === 0 && hours >= 48
+    ? `${(hours / 24).toLocaleString("fa-IR")} روز (${hours.toLocaleString("fa-IR")} ساعت)`
+    : `${hours.toLocaleString("fa-IR")} ساعت`;
 }
 
 /**
@@ -210,19 +234,19 @@ export function invoicePage(data: InvoicePageData, timeZone: string): string {
     background: var(--paper); color: var(--ink);
     box-shadow: 0 1px 0 rgba(0,0,0,.08), 0 6px 22px rgba(0,0,0,.10);
   }
-  .head { text-align: center; padding-bottom: 8px; }
-  .brand { font-size: 19px; font-weight: 800; letter-spacing: .5px; line-height: 1.3; overflow-wrap: anywhere; }
-  .doc {
-    display: inline-block; margin-top: 4px; padding: 0 10px;
-    font-size: 11px; font-weight: 700; letter-spacing: 2px;
-    border-top: 1.5px solid var(--ink); border-bottom: 1.5px solid var(--ink);
-  }
+  .head { text-align: center; padding: 2px 0 6px; }
+  /* نشان فروشگاه: هیچ فایل لوگوی اصیلی در مخزن نیست، پس نام فروشگاه (از
+     شعبه) با حروف درشت و فشرده نوشته می‌شود — لوگوی ساختگی نمی‌سازیم. */
+  .brand { font-size: 22px; font-weight: 900; letter-spacing: -.2px; line-height: 1.25; overflow-wrap: anywhere; }
+  .doc { display: flex; align-items: center; gap: 8px; margin-top: 5px; font-size: 11px; font-weight: 700; letter-spacing: 1.5px; }
+  .doc::before, .doc::after { content: ""; flex: 1; border-top: 1px solid var(--ink); }
   .rule { border: 0; border-top: 1.5px dashed var(--ink); margin: 8px 0; }
   .rule--double { border-top: 3px double var(--ink); }
-  .meta { display: grid; grid-template-columns: auto 1fr; gap: 1px 10px; margin: 0; font-size: 12px; }
-  .meta dt { font-weight: 700; }
-  .meta dd { margin: 0; text-align: left; overflow-wrap: anywhere; }
-  .meta bdi { font-variant-numeric: tabular-nums; }
+  .meta { font-size: 11.5px; line-height: 1.6; }
+  .meta-row { display: flex; justify-content: space-between; gap: 8px; }
+  .meta-row > span { min-width: 0; overflow-wrap: anywhere; }
+  .meta-row > span:last-child { text-align: left; white-space: nowrap; }
+  .docno { font-weight: 700; font-variant-numeric: tabular-nums; }
   table { width: 100%; border-collapse: collapse; table-layout: fixed; }
   th, td { text-align: right; padding: 0; vertical-align: top; }
   .items thead th { font-size: 11px; font-weight: 700; padding-bottom: 4px; border-bottom: 1.5px solid var(--ink); }
@@ -247,8 +271,9 @@ export function invoicePage(data: InvoicePageData, timeZone: string): string {
   .totals .grand small { font-size: 11px; font-weight: 600; }
   .totals .due th, .totals .due td { font-weight: 800; padding-top: 5px; }
   .totals .due th::before { content: "◄ "; }
-  .foot { margin-top: 10px; text-align: center; font-size: 11px; line-height: 1.6; }
-  .foot strong { display: block; font-size: 12.5px; }
+  .foot { margin-top: 10px; padding-top: 8px; border-top: 1.5px dashed var(--ink); text-align: center; font-size: 11px; line-height: 1.7; }
+  .foot strong { display: block; font-size: 13px; font-weight: 800; }
+  .foot .policy { font-weight: 700; }
 
   /* ── آماده چاپ ────────────────────────────────────────────────────
      دکمه روی صفحه است و روی کاغذ نمی‌آید. */
@@ -270,8 +295,8 @@ export function invoicePage(data: InvoicePageData, timeZone: string): string {
       width: 72mm; max-width: 72mm; margin: 0 auto; padding: 3mm 0 5mm;
       box-shadow: none; font-size: 9.5pt;
     }
-    .brand { font-size: 14pt; }
-    .calc td, .meta, .disc td { font-size: 8.5pt; }
+    .brand { font-size: 16pt; }
+    .calc td, .meta, .disc td, .foot { font-size: 8.5pt; }
     .calc .num { font-size: 9.5pt; }
     .totals .grand th, .totals .grand td { font-size: 12pt; }
     /* یک قلم نباید وسطش بشکند (برای چاپگر صفحه‌ای و PDF). */
@@ -282,15 +307,12 @@ export function invoicePage(data: InvoicePageData, timeZone: string): string {
 <div class="sheet">
   <header class="head">
     <div class="brand">${esc(data.shopName)}</div>
-    <div class="doc">رسید فروش</div>
+    <div class="doc"><span>رسید فروش</span></div>
   </header>
-  <hr class="rule">
-  <dl class="meta">
-    <dt>شماره</dt><dd><bdi dir="ltr">${esc(data.number)}</bdi></dd>
-    <dt>تاریخ</dt><dd>${esc(faDate(data.occurredAt, timeZone))}</dd>
-    ${data.customerName ? `<dt>مشتری</dt><dd>${esc(data.customerName)}</dd>` : ""}
-    <dt>اقلام</dt><dd>${esc(count)}</dd>
-  </dl>
+  <div class="meta">
+    <div class="meta-row"><span>فاکتور <bdi dir="ltr" class="docno">${esc(data.number)}</bdi></span><span>${esc(faDate(data.occurredAt, timeZone))}</span></div>
+    <div class="meta-row"><span>${data.customerName ? `مشتری: ${esc(data.customerName)}` : "مشتری عمومی"}</span><span>${esc(count)} قلم</span></div>
+  </div>
   <hr class="rule">
 
   <table class="items">
@@ -310,7 +332,12 @@ ${items}
     ${dueRow}
   </table>
 
-  <div class="foot"><strong>سپاس از خرید شما</strong>همه مبالغ به تومان است.</div>
+  <footer class="foot">
+    <strong>سپاس از خرید شما</strong>
+    ${data.returnWindowHours ? `<div class="policy">مهلت مرجوعی: ${esc(windowText(data.returnWindowHours))} پس از خرید</div>` : ""}
+    ${data.website ? `<div class="site"><bdi dir="ltr">${esc(data.website)}</bdi></div>` : ""}
+    <div class="unit">همه مبالغ به تومان است.</div>
+  </footer>
 </div>
 
 <!--
