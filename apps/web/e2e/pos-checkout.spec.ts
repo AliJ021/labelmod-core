@@ -281,6 +281,10 @@ test("receipt errors and timeout allow retry without reopening or mutating the s
   await page.getByRole("button", { name: "نهایی‌کردن فاکتور", exact: true }).click();
   await page.getByRole("dialog").getByRole("button", { name: "تأیید و نهایی‌کردن", exact: true }).click();
   const button = page.getByRole("button", { name: "چاپ رسید", exact: true });
+  // تصویر جهش‌ها پس از ثبت قطعی گرفته می‌شود، نه هم‌زمان با کلیک تأیید: روی
+  // اجراکنندهٔ پربار CI پاسخ نهایی‌سازی دیرتر می‌رسید و تصویر خالی می‌ماند.
+  await expect(button).toBeEnabled();
+  expect(s.finalized).toBe(1);
   const mutations = api.calls.filter(call => !call.startsWith("GET "));
   await button.click();
   await expect(page.locator(".sale-complete [role=alert]")).toContainText("فروش ثبت شده است");
