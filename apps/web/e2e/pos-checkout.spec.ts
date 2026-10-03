@@ -231,7 +231,7 @@ test("cash sale: confirm dialog, one finalize under double click, persistent suc
   expect(await page.evaluate(() => localStorage.getItem("labelmod_open_cart"))).toBe("");
 });
 
-test("receipt print stays in the cashier tab, waits for readiness and prints once under double click", async ({ page, api }) => {
+test("receipt print stays in the cashier tab, waits for fonts and the embedded logo, and prints once under double click", async ({ page, api }) => {
   const s = pos(api, { receivedAmount: "200000" });
   let prints = 0;
   await page.exposeFunction("recordReceiptPrint", () => { prints++; });
@@ -239,6 +239,8 @@ test("receipt print stays in the cashier tab, waits for readiness and prints onc
     if (window.parent !== window) {
       window.print = () => {
         if (document.fonts.status !== "loaded") throw new Error("receipt fonts not ready");
+        // لوگوی جاسازی‌شده باید پیش از چاپ بار و رمزگشایی شده باشد.
+        if (!Array.from(document.images).every(img => img.complete && img.naturalWidth > 0)) throw new Error("receipt logo not ready");
         Reflect.get(window, "recordReceiptPrint")();
         window.dispatchEvent(new Event("afterprint"));
       };
@@ -248,8 +250,8 @@ test("receipt print stays in the cashier tab, waits for readiness and prints onc
   const ready = new Promise<void>(resolve => { release = resolve; });
   api.handlers.set(`GET /invoices/${INV}/print`, async route => {
     await ready;
-    await route.fulfill({ contentType: "text/html", headers: { "content-security-policy": "default-src 'none'; style-src 'unsafe-inline'" },
-      body: '<!doctype html><html><body><div class="sheet"><table class="totals"><tr><td>رسید</td></tr></table></div><button id="print-btn">چاپ</button></body></html>' });
+    await route.fulfill({ contentType: "text/html", headers: { "content-security-policy": "default-src 'none'; style-src 'unsafe-inline'; img-src data:" },
+      body: '<!doctype html><html><body><div class="sheet"><img class="logo" alt="لیبل مد" src="data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNkYPhfDwAChwGA60e6kgAAAABJRU5ErkJggg=="><table class="totals"><tr><td>رسید</td></tr></table></div><button id="print-btn">چاپ</button></body></html>' });
   });
   await open(page, s);
   await page.getByRole("button", { name: "نهایی‌کردن فاکتور", exact: true }).click();

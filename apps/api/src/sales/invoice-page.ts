@@ -26,6 +26,7 @@
  * **مشتری** می‌بیند؛ هر عددی که برای او نیست، نباید اینجا باشد.
  */
 import { esc } from "../catalog/label.ts";
+import { receiptLogo, type ReceiptLogo } from "./receipt-logo.ts";
 
 /**
  * متن **دقیق** اسکریپت دکمه چاپ.
@@ -88,6 +89,11 @@ export interface InvoicePageData {
   returnWindowHours?: number | null;
   /** نشانی سایت فروشگاه از تنظیم `web.site_url`، اگر ثبت شده باشد. */
   website?: string | null;
+  /**
+   * لوگوی اصیل برند (`receipt-logo.ts`). نیامدن یعنی همان فایل بسته‌بندی‌شده؛
+   * `null` یعنی بدون لوگو — آن‌وقت نام شعبه نشان متنی است.
+   */
+  logo?: ReceiptLogo | null;
 }
 
 /** خواندن امن دو تنظیم پابرگ رسید از ستون‌های خام SQL. */
@@ -211,6 +217,12 @@ export function invoicePage(data: InvoicePageData, timeZone: string): string {
       ? `<tr class="due"><th>مانده</th><td class="num">${money(due)}</td></tr>`
       : "";
   const count = data.lines.length.toLocaleString("fa-IR");
+  const logo = data.logo === undefined ? receiptLogo() : data.logo;
+  // سربرگ کم‌ارتفاع: لوگو کامل دیده می‌شود (contain) و از ۱۴mm بلندتر نمی‌شود.
+  const brand = logo
+    ? `<img class="logo logo--${logo.treatment}" src="${logo.dataUri}" width="${logo.width}" height="${logo.height}" alt="${esc(data.shopName)}">
+    <div class="shop">${esc(data.shopName)}</div>`
+    : `<div class="brand">${esc(data.shopName)}</div>`;
 
   return `<!doctype html>
 <html lang="fa" dir="rtl">
@@ -238,6 +250,11 @@ export function invoicePage(data: InvoicePageData, timeZone: string): string {
   /* نشان فروشگاه: هیچ فایل لوگوی اصیلی در مخزن نیست، پس نام فروشگاه (از
      شعبه) با حروف درشت و فشرده نوشته می‌شود — لوگوی ساختگی نمی‌سازیم. */
   .brand { font-size: 22px; font-weight: 900; letter-spacing: -.2px; line-height: 1.25; overflow-wrap: anywhere; }
+  .logo { display: block; margin: 0 auto; width: auto; height: auto; max-width: 70%; max-height: 56px; object-fit: contain; }
+  /* کاغذ حرارتی فقط سیاه دارد؛ نوع درمان از پیکسل‌های خودِ فایل آمده است. */
+  .logo--black { filter: brightness(0); }
+  .logo--gray { filter: grayscale(1) contrast(1.2); }
+  .shop { margin-top: 3px; font-size: 12px; font-weight: 700; overflow-wrap: anywhere; }
   .doc { display: flex; align-items: center; gap: 8px; margin-top: 5px; font-size: 11px; font-weight: 700; letter-spacing: 1.5px; }
   .doc::before, .doc::after { content: ""; flex: 1; border-top: 1px solid var(--ink); }
   .rule { border: 0; border-top: 1.5px dashed var(--ink); margin: 8px 0; }
@@ -296,6 +313,7 @@ export function invoicePage(data: InvoicePageData, timeZone: string): string {
       box-shadow: none; font-size: 9.5pt;
     }
     .brand { font-size: 16pt; }
+    .logo { max-height: 14mm; max-width: 52mm; }
     .calc td, .meta, .disc td, .foot { font-size: 8.5pt; }
     .calc .num { font-size: 9.5pt; }
     .totals .grand th, .totals .grand td { font-size: 12pt; }
@@ -306,7 +324,7 @@ export function invoicePage(data: InvoicePageData, timeZone: string): string {
 </style>
 <div class="sheet">
   <header class="head">
-    <div class="brand">${esc(data.shopName)}</div>
+    ${brand}
     <div class="doc"><span>رسید فروش</span></div>
   </header>
   <div class="meta">

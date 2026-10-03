@@ -32,6 +32,14 @@ export function printReceipt(invoiceId: string, signal: AbortSignal): Promise<vo
         throw new Error("رسید معتبر خوانده نشد؛ اتصال و ورود به حساب را بررسی کنید.");
       }
       await doc.fonts.ready;
+      // The embedded brand logo must be decoded before print, or the header can print empty.
+      // A broken image falls back to its alt text (the shop name) instead of blocking the sale receipt.
+      await Promise.all(Array.from(doc.images, img => img.complete && img.naturalWidth > 0
+        ? img.decode().catch(() => undefined)
+        : new Promise<void>(done => {
+          img.addEventListener("load", () => done(), { once: true });
+          img.addEventListener("error", () => done(), { once: true });
+        })));
       if (settled || signal.aborted) return;
       requested = true;
       clearTimeout(timeout);
