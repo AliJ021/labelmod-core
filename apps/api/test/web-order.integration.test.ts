@@ -797,6 +797,125 @@ describe("سفارش سایت (ووکامرس)", { skip }, () => {
     finally { await sql`UPDATE identity.permission_rule SET allowed=true WHERE role_code='web' AND operation='web.refund'`.execute(handle.db); }
   });
 
+  // پیش از F100: آن آزمون در پایان دورهٔ کانال امروز را می‌بندد و پس از آن سفارش سایتِ امروز
+  // عمداً رد می‌شود («دوره ثبت این فاکتور قبلاً بسته شده است»).
+  test("F101: partial explicit discount on an indivisible multi-unit net is exact under duplicate delivery, retry and unit returns", async () => {
+    // کوپن ووکامرس روی ۳ عدد: خالص ۴٬۴۹۹٬۹۹۹ بر ۳ بخش‌پذیر نیست. افزونه قیمت اصلی واقعی
+    // و تخفیف صریح ۱ ریال را می‌فرستد؛ Core باید دقیقاً همان پول دریافتی را ثبت کند، موجودی را
+    // یک بار کم کند، و سه مرجوعی تک‌عددی جمعاً نه کمتر و نه بیشتر از همان خالص پس بدهند.
+    const sku = `PARTIAL-${suffix}`;
+    const product = await sql<{ id: string }>`INSERT INTO catalog.product(code,name_internal)
+      VALUES(${`PPARTIAL-${suffix}`},'کالای تخفیف جزئی آزمون') RETURNING id`.execute(handle.db);
+    const variation = await sql<{ id: string }>`INSERT INTO catalog.variation(product_id,color,size,sku)
+      VALUES(${product.rows[0]!.id}::uuid,${sku},'M',${sku}) RETURNING id`.execute(handle.db);
+    const variationId = variation.rows[0]!.id;
+    await sql`INSERT INTO catalog.price(variation_id,price_list,amount) VALUES(${variationId}::uuid,'default',1500000)`.execute(handle.db);
+    await sql`SELECT inventory.apply_movement(${variationId}::uuid,${STORE_WH}::uuid,5,'purchase_receipt','test_receipt',
+      '00000000-0000-7000-8000-00000000fa13'::uuid,${SYSTEM_USER}::uuid,900000)`.execute(handle.db);
+    const onHand = async () => Number((await sql<{ on_hand: string }>`SELECT on_hand::text FROM inventory.stock_balance
+      WHERE variation_id=${variationId}::uuid AND warehouse_id=${STORE_WH}::uuid`.execute(handle.db)).rows[0]!.on_hand);
+
+    const GROSS = 4500000n, DISCOUNT = 1n, NET = GROSS - DISCOUNT;
+    const externalId = `partial-${suffix}`;
+    const payload = { branchId: BRANCH, warehouseId: STORE_WH, externalId, shippingAmount: "0",
+      paymentMethod: "gateway", paidAmount: NET.toString(), paymentRef: `partial-ref-${suffix}`,
+      lines: [{ sku, qty: "3", unitPrice: "1500000", discountAmount: DISCOUNT.toString() }] };
+
+    // دو تحویل هم‌زمان همان Webhook: یک فاکتور، یک بازپخش.
+    const both = await Promise.all([order(payload, "/web/discounted-orders"), order(payload, "/web/discounted-orders")]);
+    assert.deepEqual(both.map((r) => r.statusCode).sort(), [200, 201], both.map((r) => r.body).join(" | "));
+    const invoiceId = both[0]!.json<OrderResponse>().invoiceId;
+    assert.equal(both[1]!.json<OrderResponse>().invoiceId, invoiceId);
+    for (const r of both) assert.equal(r.json<OrderResponse>().payableAmount, NET.toString());
+    // پاسخ گم‌شده: افزونه همان snapshot را دوباره می‌فرستد.
+    const retried = await order(payload, "/web/discounted-orders");
+    assert.equal(retried.statusCode, 200, retried.body);
+    assert.equal(retried.json<OrderResponse>().invoiceId, invoiceId);
+
+    const inv = await sql<{ gross: string; discount: string; net: string; payable: string; paid: string; payments: string; moved: string }>`
+      SELECT gross_amount::text AS gross, discount_amount::text AS discount, net_amount::text AS net,
+        payable_amount::text AS payable, paid_amount::text AS paid,
+        (SELECT coalesce(sum(amount),0)::text FROM treasury.payment WHERE invoice_id=i.id AND direction='in') AS payments,
+        (SELECT coalesce(sum(qty),0)::text FROM inventory.stock_movement WHERE ref_type='invoice' AND ref_id=i.id) AS moved
+      FROM sales.invoice i WHERE id=${invoiceId}::uuid`.execute(handle.db);
+    const row = inv.rows[0]!;
+    assert.equal(BigInt(row.gross), GROSS); assert.equal(BigInt(row.discount), DISCOUNT);
+    assert.equal(BigInt(row.net), NET); assert.equal(BigInt(row.payable), NET);
+    assert.equal(BigInt(row.payments), NET, "پول دریافتی دقیقاً همان خالص است، نه گردشده");
+    assert.equal(Number(row.moved), -3, "سه فروش هم‌زمان و تکرار، موجودی را فقط یک بار کم می‌کنند");
+    assert.equal(await onHand(), 2);
+
+    // بازبین انسانی مستقل — مرجوعی سایت بدون تصمیم انسان ثبت نمی‌شود.
+    const reviewerName = `partial-reviewer-${suffix}`;
+    const reviewer = await handle.db.insertInto("identity.app_user").values({ username: reviewerName, full_name: "بازبین تخفیف جزئی",
+      password_hash: await hashSecret(PASSWORD), pin_hash: null, mobile: null, totp_secret: null, is_active: true }).returning("id").executeTakeFirstOrThrow();
+    await handle.db.insertInto("identity.user_role").values({ user_id: reviewer.id, role_code: "accountant", branch_id: BRANCH }).execute();
+    const logged = await loginWithMfa(app, { method: "POST", url: "/auth/login", payload: { username: reviewerName, password: PASSWORD } });
+    assert.equal(logged.statusCode, 200, logged.body);
+    const cookies = Object.fromEntries(logged.cookies.map(c => [c.name, c.value]));
+    const decide = (id: string) => app.inject({ method: "POST", url: `/web-refund-requests/${id}/decision`, cookies,
+      headers: { "x-csrf-token": cookies.labelmod_csrf! }, payload: { decision: "approved", reason: "مرجوعی تک‌عددی سفارش با کوپن" } });
+    const request = (refundId: string, amount: bigint) => app.inject({ method: "POST", url: "/web/refunds", ...auth(),
+      payload: { orderId: externalId, refundId, amount: amount.toString(), shippingAmount: "0", lines: [{ lineNo: 1, qty: "1", restock: true }] } });
+    const returns = () => handle.db.selectFrom("sales.sale_return").select(["id", "refund_amount"]).where("invoice_id", "=", invoiceId).execute();
+
+    // سهم تجمعی واحد kام: round(N·k/3) − round(N·(k−1)/3) با گرد نیمه‌به‌بالا — جمعش دقیقاً N است.
+    const cum = (k: bigint) => (2n * NET * k + 3n) / 6n;
+    const share = (k: bigint) => cum(k) - cum(k - 1n);
+    assert.equal(share(1n) + share(2n) + share(3n), NET);
+
+    // هر دو جهت را نگهبان دیتابیس (`post_return`) رد می‌کند، هرکدام با دلیل خودش: بیش از ارزش
+    // کالا پس داده نمی‌شود، و فروش ناشناس کسری بازپرداخت را به اعتبار مشتری تبدیل نمی‌کند.
+    // هر دو اتمیک: بی برگ، بی حرکت انبار، بی پرداخت.
+    for (const [tag, amount, reason] of [
+      ["over", share(1n) + 1n, /بیش از ارزش کالای مرجوعی/],
+      ["under", share(1n) - 1n, /فروش ناشناس اعتبار مشتری نمی‌پذیرد/],
+    ] as const) {
+      const created = await request(`partial-${tag}-${suffix}`, amount);
+      assert.equal(created.statusCode, 201, created.body);
+      const refused = await decide(created.json().requestId as string);
+      assert.equal(refused.statusCode, 409, `${tag}: ${refused.body}`);
+      assert.equal(refused.json().error.code, "rule_violation");
+      assert.match(refused.json().error.message as string, reason);
+      assert.equal((await returns()).length, 0, `${tag}: هیچ برگی ثبت نشد`);
+      assert.equal(await onHand(), 2, `${tag}: موجودی دست نخورد`);
+    }
+
+    for (const k of [1n, 2n, 3n]) {
+      const created = await request(`partial-unit-${k}-${suffix}`, share(k));
+      assert.equal(created.statusCode, 201, created.body);
+      const approved = await decide(created.json().requestId as string);
+      assert.equal(approved.statusCode, 200, `unit ${k}: ${approved.body}`);
+      assert.equal(approved.json().status, "posted");
+    }
+    const posted = await returns();
+    assert.equal(posted.length, 3);
+    assert.equal(posted.reduce((sum, r) => sum + BigInt(r.refund_amount), 0n), NET,
+      "سه مرجوعی تک‌عددی جمعاً دقیقاً خالص دریافتی را پس می‌دهند");
+    // بازپرداخت درگاه در سند خودِ برگ مرجوعی است، نه ردیف خزانه (مثل F23)؛ هر سند متوازن است
+    // و کشوی نقد هرگز بستانکار نمی‌شود.
+    const ledger = await sql<{ entries: string; unbalanced: string; cash: string }>`
+      SELECT count(DISTINCT e.id)::text AS entries,
+        (SELECT count(*)::text FROM (SELECT l2.entry_id FROM ledger.journal_line l2
+           JOIN ledger.journal_entry e2 ON e2.id=l2.entry_id
+           WHERE e2.ref_id IN (SELECT id FROM sales.sale_return WHERE invoice_id=${invoiceId}::uuid)
+           GROUP BY l2.entry_id HAVING sum(l2.debit)<>sum(l2.credit)) u) AS unbalanced,
+        coalesce(sum(l.credit) FILTER (WHERE l.account_code='1101'),0)::text AS cash
+      FROM ledger.journal_entry e JOIN ledger.journal_line l ON l.entry_id=e.id
+      WHERE e.ref_id IN (SELECT id FROM sales.sale_return WHERE invoice_id=${invoiceId}::uuid)`.execute(handle.db);
+    assert.ok(Number(ledger.rows[0]!.entries) >= 3, "هر برگ مرجوعی سند دارد");
+    assert.equal(ledger.rows[0]!.unbalanced, "0");
+    assert.equal(BigInt(ledger.rows[0]!.cash), 0n, "مرجوعی درگاه کشوی نقد را بستانکار نمی‌کند");
+    assert.equal(await onHand(), 5);
+    const status = await handle.db.selectFrom("sales.invoice").select("status").where("id", "=", invoiceId).executeTakeFirstOrThrow();
+    assert.equal(status.status, "returned");
+    // واحد چهارمی برای برگشت نیست.
+    const extra = await request(`partial-extra-${suffix}`, 1n);
+    assert.equal(extra.statusCode, 201, extra.body);
+    assert.ok((await decide(extra.json().requestId as string)).statusCode >= 400);
+    assert.equal((await returns()).length, 3);
+  });
+
   test("F100: explicit full discount preserves stock, posting, replay and zero-money human-reviewed return", async () => {
     // موجودی مستقل از ترتیب آزمون‌های قبلی؛ همان سناریوی ۵ عدد به ۴ عدد.
     const sku = `FREE-${suffix}`, sku2 = `FREE-MIXED-${suffix}`;
@@ -926,4 +1045,5 @@ describe("سفارش سایت (ووکامرس)", { skip }, () => {
     assert.ok(noEffect.statusCode >= 400, noEffect.body);
     assert.equal((await handle.db.selectFrom("sales.sale_return").select("id").where("invoice_id", "=", mixed.json<OrderResponse>().invoiceId).execute()).length, 0);
   });
+
 });
