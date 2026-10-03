@@ -25,7 +25,15 @@ test("invoice center restores URL filters and browser navigation and prints only
   await page.getByRole("button",{name:"جزئیات",exact:true}).click();
   await expect(page).toHaveURL(/invoices.id=i1/);
   await expect(page.getByRole("heading",{name:"فاکتور پیش‌نویس"})).toBeVisible();
+  // بازگشت، فهرست را با تأخیر ۲۵۰ms جست‌وجو (useLatestQuery) دوباره می‌خواند. Reloadِ زودتر روی
+  // موتور کند (WebKit) همان درخواستِ تازه‌فرستاده را وسط راه قطع می‌کند و WebKit قطعش را خطای
+  // صفحه گزارش می‌کند («due to access control checks»). دیدن دکمهٔ ردیف کافی نیست: `Invoices`
+  // در نمای جزئیات mount می‌ماند و نخستین رندر پس از بازگشت همان ردیفِ **قبلی** را نشان می‌دهد
+  // (ردیف ← در حال دریافت ← ردیف). پس منتظر **پاسخِ** همان درخواست تازه می‌مانیم.
+  const refetched = page.waitForResponse(r => r.request().method() === "GET" && new URL(r.url()).pathname === "/api/invoices");
   await page.goBack();await expect(page.getByRole("heading",{name:"فاکتورها",exact:true})).toBeVisible();
+  await refetched;
+  await expect(page.getByRole("button",{name:"جزئیات",exact:true})).toBeVisible();
   await page.reload();await expect(page.locator("main").getByRole("searchbox")).toHaveValue("نمونه");
   await expect(page.getByRole("button",{name:"جزئیات",exact:true})).toBeVisible();
   expect(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth+1)).toBe(true);
