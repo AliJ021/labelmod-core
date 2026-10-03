@@ -15,7 +15,7 @@
  *
  * ⚠️ این فایل محاسبهٔ پولی نمی‌کند. جمع و ضرب در SQL است.
  */
-import { parseRial, toman, tomanShort } from "./money.ts";
+import { parseRial, toman, tomanExact, tomanShort } from "./money.ts";
 import { CHANNEL_LABEL } from "./reports.ts";
 
 export type Sign = "positive" | "negative" | "zero";
@@ -37,12 +37,12 @@ function asRial(value: bigint | string): bigint {
   return typeof value === "bigint" ? value : parseRial(value);
 }
 
-/** ریال → اجزای نمایش تومان. */
-export function moneyParts(value: bigint | string, compact = false): MoneyParts {
+/** ریال → اجزای نمایش تومان. حالت دقیق بر فشرده‌سازی مقدم است. */
+export function moneyParts(value: bigint | string, compact = false, exact = false): MoneyParts {
   const rial = asRial(value);
   const sign: Sign = rial > 0n ? "positive" : rial < 0n ? "negative" : "zero";
   const abs = rial < 0n ? -rial : rial;
-  const [digits = "0", ...rest] = (compact ? tomanShort(abs) : toman(abs)).split(" ");
+  const [digits = "0", ...rest] = (exact ? tomanExact(abs) : compact ? tomanShort(abs) : toman(abs)).split(" ");
   const scale = rest.join(" ");
   const spoken = `${sign === "negative" ? "منفی " : ""}${digits}${scale ? ` ${scale}` : ""} تومان`;
   return { digits, scale, sign, spoken };

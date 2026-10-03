@@ -238,4 +238,12 @@ UPDATE ledger.posting_rule SET allow_account_override = true
    ('sale_return','refund_cash'),
    ('cheque_clear','bank'),                ('cheque_pay','bank'));
 
+INSERT INTO ledger.posting_rule(event_type,leg,side,account_code,description)
+SELECT 'sale_return','exchange_clearing','credit',account_code,'انتقال ارزش برگشتی به فاکتور جایگزین'
+FROM ledger.posting_rule WHERE event_type='sale_return' AND leg='customer_credit' AND is_active ON CONFLICT (event_type,leg,side) DO NOTHING;
+INSERT INTO ledger.posting_rule(event_type,leg,side,account_code,description)
+SELECT 'sale_shift','exchange_clearing','debit',account_code,'تسویه فاکتور جایگزین با برگ تعویض'
+FROM ledger.posting_rule WHERE event_type='sale_return' AND leg='customer_credit' AND is_active ON CONFLICT (event_type,leg,side) DO NOTHING;
+
+
 COMMIT;

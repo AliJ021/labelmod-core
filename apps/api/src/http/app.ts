@@ -1,4 +1,6 @@
 import { registerSnappayRoutes } from "./snappay-routes.ts";
+import { registerPaymentProviderRoutes } from "./payment-provider-routes.ts";
+import { PaymentProviderRuntime } from "../payments/providers/runtime.ts";
 import { registerBackupRoutes } from "./backup-routes.ts";
 import { registerInvoiceWorkspaceRoutes } from "./invoice-workspace-routes.ts";
 /**
@@ -37,8 +39,10 @@ import { registerPosCatalogRoutes } from "./pos-catalog-routes.ts";
 import { registerSettingsRoutes } from "./settings-routes.ts";
 import { registerScopeRoutes } from "./scope-routes.ts";
 import { registerAdminRoutes } from "./admin-routes.ts";
+import { registerWithdrawalRoutes } from "./withdrawal-routes.ts";
 import { registerHealthRoutes } from "./health-routes.ts";
 import { registerWebRoutes } from "./web-routes.ts";
+import { registerWooDiagnosticsRoutes } from "./woocommerce-diagnostics-routes.ts";
 import { registerWebRefundRoutes } from "./web-refund-routes.ts";
 import { registerPublicRoutes, PUBLIC_ROUTE_PATHS } from "./public-routes.ts";
 import { InvoiceService } from "../sales/invoice.ts";
@@ -146,6 +150,7 @@ export interface AppDeps {
   db: Db;
   auth: AuthService;
   config: Config;
+  paymentProviders?: PaymentProviderRuntime;
 }
 
 export async function buildApp(deps: AppDeps): Promise<FastifyInstance> {
@@ -406,6 +411,7 @@ export async function buildApp(deps: AppDeps): Promise<FastifyInstance> {
   registerPosCatalogRoutes(app, deps.db);
   registerInvoiceWorkspaceRoutes(app, deps.db);
   registerSnappayRoutes(app, deps.db);
+  registerPaymentProviderRoutes(app, deps.db, deps.paymentProviders ?? new PaymentProviderRuntime(process.env));
   registerBackupRoutes(app, deps.db, config);
   registerReturnRoutes(app, {
     db: deps.db,
@@ -457,6 +463,7 @@ export async function buildApp(deps: AppDeps): Promise<FastifyInstance> {
     settings: new SettingService(deps.db),
   });
   registerWebRefundRoutes(app, deps.db);
+  registerWooDiagnosticsRoutes(app, deps.db, config.WEB_PUSH_SECRET);
   registerWebRoutes(app, {
     db: deps.db,
     webOrders: new WebOrderService(invoices),
@@ -465,5 +472,6 @@ export async function buildApp(deps: AppDeps): Promise<FastifyInstance> {
   registerPublicRoutes(app, { db: deps.db });
   registerScopeRoutes(app, { db: deps.db });
   registerAdminRoutes(app, { db: deps.db });
+  registerWithdrawalRoutes(app, deps.db);
   return app;
 }

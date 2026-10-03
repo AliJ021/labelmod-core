@@ -60,6 +60,11 @@ class LMC_Client
         }
 
         $url  = $base . '/api' . $path;
+        $parts = wp_parse_url($base);
+        if (!is_array($parts) || ($parts['scheme'] ?? '') !== 'https'
+            || isset($parts['user']) || isset($parts['pass']) || isset($parts['query']) || isset($parts['fragment'])) {
+            return new WP_Error('lmc_unsafe_url', 'نشانی سامانه باید HTTPS و بدون اطلاعات ورود، query یا fragment باشد.', ['kind' => self::PERMANENT]);
+        }
         $args = [
             'method'  => $method,
             // ⚠️ کوتاه عمدی: این درخواست از دل WP-Cron می‌آید و نباید
@@ -67,6 +72,8 @@ class LMC_Client
             //    «شاید رسید» و همان مسیر Retry را می‌گیرد — سرور
             //    Idempotent است، پس ارسال دوباره فاکتور دوم نمی‌سازد.
             'timeout' => 20,
+            'redirection' => 0,
+            'limit_response_size' => 4 * 1024 * 1024,
             'headers' => [
                 'Authorization' => 'Bearer ' . $key,
                 'Accept'        => 'application/json',
@@ -79,17 +86,13 @@ class LMC_Client
             $args['body'] = wp_json_encode($body, JSON_UNESCAPED_UNICODE);
         }
 
-        $res = wp_remote_request($url, $args);
+        $res = wp_safe_remote_request($url, $args);
 
         if (is_wp_error($res)) {
-            lmc_log(sprintf('%s %s → خطای شبکه: %s', $method, $path, $res->get_error_message()));
+            lmc_log(sprintf('%s → خطای شبکه', $method));
             return new WP_Error(
                 'lmc_network',
-                sprintf(
-                    /* translators: %s: پیام خطای شبکه */
-                    __('ارتباط با سامانه لیبل مد برقرار نشد: %s', 'labelmod-connector'),
-                    $res->get_error_message()
-                ),
+                __('ارتباط با سامانه برقرار نشد؛ شبکه، نشانی عمومی HTTPS و گواهی را بررسی کنید.', 'labelmod-connector'),
                 ['kind' => self::RETRYABLE]
             );
         }
@@ -128,7 +131,7 @@ class LMC_Client
         $inFlight  = $errCode === 'idempotency_in_flight';
         $retryable = $code >= 500 || $code === 429 || $inFlight;
 
-        lmc_log(sprintf('%s %s → %d %s', $method, $path, $code, $errCode));
+        lmc_log(sprintf('%s → HTTP %d', $method, $code));
 
         return new WP_Error('lmc_' . $errCode, $message, [
             'kind'   => $retryable ? self::RETRYABLE : self::PERMANENT,

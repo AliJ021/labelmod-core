@@ -32,7 +32,8 @@ import { memo, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { CameraScan } from "../components/CameraScan.tsx";
 import { PosProductPicker } from "../components/PosProductPicker.tsx";
 import { PaymentBreakdown } from "../components/PaymentBreakdown.tsx";
-import { Glass, Solid } from "../components/Glass.tsx";
+import { Solid } from "../components/Glass.tsx";
+import { Icon } from "../components/Icon.tsx";
 import { ApiError } from "../lib/api.ts";
 import { ActionKeys, ScanCounter } from "../lib/action-key.ts";
 import { canFinalize, lineGross, steppedQty } from "../lib/cart.ts";
@@ -299,6 +300,7 @@ export function Pos({ actorId }: { actorId: string }) {
   const [error, setError] = useState<string | null>(null);
   const [note, setNote] = useState<string | null>(null);
   const [closing, setClosing] = useState(false);
+  const rootRef = useRef<HTMLDivElement>(null);
   const [draftRefund, setDraftRefund] = useState<{ invoiceId: string; payments: DraftPayment[] } | null>(null);
   const [discounting, setDiscounting] = useState<string | null>(null);
   const [pricing, setPricing] = useState<string | null>(null);
@@ -499,6 +501,38 @@ export function Pos({ actorId }: { actorId: string }) {
       setError(message(err));
     } finally { scanRunning.current = false; setBusy(false); }
   }, [actorId, openDraft, ensureInvoice, shift, scanStorageError]);
+
+  // ── ستون پرداخت در قاب پنجره ─────────────────────────────────────
+  //
+  // ستون چسبان باید از همان جایی که شروع می‌شود تا پایین پنجره جا شود، وگرنه
+  // «نهایی‌کردن» پیش از هر اسکرولی زیر خط دید می‌افتاد (نوار عملیات و پیام‌ها
+  // بالای ستون‌اند). سقف ارتفاع از فاصلهٔ واقعی ستون تا بالای سند حساب می‌شود و
+  // پایان ستون (`.pay-finish`) درون آن می‌چسبد. ResizeObserver پس از چیدمان صدا
+  // زده می‌شود، پس هیچ چیدمان همگامی به بودجهٔ افزودن قلم (۱۰۰ms) اضافه نمی‌شود.
+  //
+  // ⚠️ نوشتن در همان Callback ممنوع است: سقف تازه اندازهٔ همان ظرفی را عوض می‌کند که
+  //    دیده می‌شود، و WebKit آن را «ResizeObserver loop completed with undelivered
+  //    notifications» به‌عنوان خطای صفحه پرتاب می‌کند. نوشتن به فریم بعد می‌رود و فقط
+  //    وقتی عدد واقعاً عوض شده باشد — پس دور بعد چیزی نمی‌نویسد و حلقه بسته می‌شود.
+  useEffect(() => {
+    const root = rootRef.current;
+    if (!root || typeof ResizeObserver === "undefined") return;
+    let frame = 0;
+    const fit = () => {
+      cancelAnimationFrame(frame);
+      frame = requestAnimationFrame(() => {
+        const pay = root.querySelector<HTMLElement>(".pay");
+        if (!pay) return;
+        const top = pay.getBoundingClientRect().top + window.scrollY;
+        const max = `${Math.max(360, Math.round(window.innerHeight - top - 16))}px`;
+        if (pay.style.getPropertyValue("--pay-max") !== max) pay.style.setProperty("--pay-max", max);
+      });
+    };
+    const observer = new ResizeObserver(fit);
+    observer.observe(root);
+    window.addEventListener("resize", fit);
+    return () => { cancelAnimationFrame(frame); observer.disconnect(); window.removeEventListener("resize", fit); };
+  }, [shift, ready, branchId, warehouseId]);
 
   // ── بارکدخوان ─────────────────────────────────────────────────────
   //
@@ -1073,30 +1107,52 @@ export function Pos({ actorId }: { actorId: string }) {
   const layout = paymentLayout(methods, { hasCustomer: (invoice?.customerId ?? null) !== null });
   const hasCart = invoice !== null && lines.length > 0;
   const payIdle = payPhase.kind === "idle";
+  /*
+   * «سبد خالیِ تازه» با «پیش‌نویسِ بی‌سطری که پرداخت دارد یا قصدش نامعلوم است» یکی نیست
+   * (یافتهٔ Astra، P2). حذف آخرین سطر در میانهٔ یک پرداخت نامعلوم ممکن است و سرور هم
+   * می‌پذیردش؛ اگر صفحه آن را «خالی» بخواند، زیر ۹۰۰ کل ستون پرداخت — و راه «بررسی
+   * وضعیت» همان قصد — پنهان می‌شد و مبلغ‌های شناخته‌شده «—» نشان داده می‌شدند. چنین
+   * پیش‌نویسی فعال است: ستون پرداخت و خلاصهٔ موبایل می‌مانند. پرداخت **تازه** همچنان فقط
+   * با سطر (`hasCart`) باز است و هیچ قصدی خودکار بسته، تکرار یا کلیدش عوض نمی‌شود.
+   */
+  const draftActive = invoice !== null && (hasCart || received > 0n || !payIdle);
   const settled = canFinalize({ status: invoice?.status ?? "none", lineCount: lines.length, payable: totals.payable, received });
   // یک ناحیهٔ زنده برای کل صندوق: قابل پرداخت، مانده و وضعیت اصلی.
   const liveText = completed
     ? (completed.queued ? "فروش در صف ارسال است." : `فاکتور ${completed.number ?? ""} ثبت شد.`) +
       (completed.amounts && completed.amounts.change > 0n ? ` باقی پول ${toman(completed.amounts.change)} تومان.` : "")
-    : hasCart
+    : draftActive
       ? `قابل پرداخت ${toman(totals.payable)} تومان؛ ${totals.change > 0n ? `باقی پول ${toman(totals.change)}` : `مانده ${toman(totals.remaining)}`} تومان.${note ? ` ${note}` : ""}`
       : note ?? "";
+  const customerAttached = (invoice?.customerId ?? null) !== null;
+  const customerBlock = <CustomerSummary customer={customer} loading={customerLoading} error={customerError}
+    mobile={mobile} onMobile={setMobile} onAttach={() => void attachCustomer()} busy={busy} inputRef={customerInput} />;
   const focusCustomer = () => {
     customerInput.current?.scrollIntoView({ block: "center", behavior: "instant" });
     customerInput.current?.focus();
   };
 
   return (
-    <div className={`pos${hasCart && !completed ? " pos--has-items" : ""}`}>
+    <div ref={rootRef} className={`pos${draftActive && !completed ? " pos--has-items" : ""}${!draftActive && !completed ? " pos--empty" : ""}`}>
       <p className="sr-only" aria-live="polite" aria-atomic="true">{liveText}</p>
-      {hasCart && !completed && <aside className="pos-mobile-summary solid" aria-label="خلاصهٔ پرداخت">
-        <span>{countLabel} · {totals.change > 0n ? "باقی پول" : "مانده"} <Money rial={totals.change > 0n ? totals.change : totals.remaining} size="sm" /></span>
-        <button className="btn btn--primary" type="button" onClick={() => document.querySelector<HTMLElement>(".pay")?.scrollIntoView({block:"start",behavior:"instant"})}>رفتن به پرداخت</button>
+      {draftActive && !completed && <aside className="pos-mobile-summary solid" aria-label="خلاصهٔ پرداخت">
+        <span className="pos-mobile-figures"><span className="muted">{countLabel}</span>
+          <span>{totals.change > 0n ? "باقی پول" : "مانده"} <Money rial={totals.change > 0n ? totals.change : totals.remaining} size="sm" /></span></span>
+        {settled && payIdle
+          ? <button className="btn btn--primary" type="button" onClick={() => document.querySelector<HTMLElement>(".pay-finish")?.scrollIntoView({block:"center",behavior:"instant"})}>رفتن به نهایی‌سازی</button>
+          : <button className="btn btn--primary" type="button" onClick={() => document.querySelector<HTMLElement>(".pay")?.scrollIntoView({block:"start",behavior:"instant"})}>رفتن به پرداخت</button>}
       </aside>}
-      {/* تنها سطح شیشه‌ای این صفحه: نوار بالا، که لایه کنترلی است. */}
-      <Glass as="header" radius="md" className="pos-bar" refract={false}>
-        {/* «ردیف» و «عدد» دو چیزند: چهار سطر با تعداد دو، «۴ ردیف · ۸ عدد» است، نه «۸ قلم». */}
-        <span className="pill">{countLabel}</span>
+      {/*
+        نوار عملیات — تخت و فشرده، نه یک کارت شیشه‌ای دیگر (بازطراحی بصری Batch 2.1).
+        وضعیت شیفت و شعبه آغاز ردیف؛ ابزارها کم‌صدا در انتها. «ردیف» و «عدد» دو
+        چیزند: چهار سطر با تعداد دو، «۴ ردیف · ۸ عدد» است، نه «۸ قلم».
+      */}
+      <header className="pos-bar">
+        <div className="pos-context">
+          <span className="pos-shift"><span className="dot dot--good" aria-hidden="true">●</span> شیفت باز</span>
+          {branch ? <span className="pos-branch">{branch.name}</span> : null}
+          <span className="pill">{countLabel}</span>
+        </div>
         <div className="pos-tools">
           <a className="tool" href="/?page=invoices&invoices.status=draft" onClick={e => { if (e.metaKey || e.ctrlKey || e.shiftKey) return; e.preventDefault(); navigate(e.currentTarget.href); }}>پیش‌نویس‌ها</a>
           <button type="button" className="tool" disabled={busy || !invoice || completed !== null || !payIdle} onClick={() => {
@@ -1104,6 +1160,9 @@ export function Pos({ actorId }: { actorId: string }) {
             forgetCart(); setInvoice(null); setReceived(0n); scans.current.reset();
             setNote("پیش‌نویس در سرور ذخیره است و از بخش فاکتورها قابل ادامه است.");
           }}>ذخیره و فروش جدید</button>
+          <button type="button" className="tool" disabled={!hasCart || busy || !payIdle || completed !== null} onClick={() => void abandon()}>
+            رها کردن سبد
+          </button>
           {/* دوربین فقط وقتی باز می‌شود که کاربر بخواهد — روی دسکتاپ
               با بارکدخوان سیمی، هیچ‌وقت. */}
           <button type="button" className="tool" disabled={completed !== null} onClick={() => setCamera((v) => !v)}>
@@ -1113,7 +1172,7 @@ export function Pos({ actorId }: { actorId: string }) {
             بستن شیفت
           </button>
         </div>
-      </Glass>
+      </header>
 
       {scanStorageError && <p className="solid pos-alert" role="alert">{scanStorageError}</p>}
       {paymentStoreError && <p className="solid pos-alert" role="alert">{paymentStoreError}</p>}
@@ -1121,8 +1180,6 @@ export function Pos({ actorId }: { actorId: string }) {
         <p>نتیجهٔ اسکن هنوز قطعی نیست. برای جلوگیری از ثبت دوباره، ابتدا همین اسکن را تعیین تکلیف کنید.</p>
         <button type="button" className="btn" disabled={working} onClick={() => void addByBarcode("", undefined, true)}>بررسی و تلاش دوبارهٔ همان اسکن</button>
       </div>}
-
-      {completed ? null : <PosProductPicker key={warehouseId} warehouseId={warehouseId} busy={busy} onPick={(id) => addByBarcode("", id)} />}
 
       {/* عنصر ساده با کلاس `solid`، نه کامپوننت `Solid`: آن `role`
           نمی‌گیرد و اینجا اعلام زنده لازم است تا صندوق‌دار خطا را
@@ -1191,8 +1248,16 @@ export function Pos({ actorId }: { actorId: string }) {
       ) : null}
 
       {completed ? <SaleComplete sale={completed} onNext={nextSale} /> : <div className="pos-body">
-        <Solid as="section" className="cart">
-          <h2 className="sr-only">سبد خرید</h2>
+        {/*
+          فضای کار: جست‌وجو/اسکن و سبد روی **یک** سطح مات — نه دو کارت تودرتو. سبد
+          خالی یک حالت خالیِ فشرده است، نه یک قاب بزرگِ تهی.
+        */}
+        <Solid as="section" className="cart" aria-label="سبد خرید">
+          <PosProductPicker key={warehouseId} warehouseId={warehouseId} busy={busy} onPick={(id) => addByBarcode("", id)} />
+          <div className="cart-head">
+            <h2 className="cart-title">سبد خرید</h2>
+            {lines.length ? <span className="cart-count">{countLabel}</span> : null}
+          </div>
           {/*
             ⚠️ `fieldset[disabled]` — یک جا، نه ۲۰۰ جا (FND-016).
 
@@ -1222,35 +1287,41 @@ export function Pos({ actorId }: { actorId: string }) {
                   on={rowActions}
                 />
               ))}
-              {lines.length === 0 && (
-                <li className="empty">سبد خالی است — نام محصول را جست‌وجو یا بارکد را اسکن کنید</li>
-              )}
             </ul>
           </fieldset>
+          {lines.length === 0 ? <div className="cart-empty">
+            <span className="cart-empty-icon" aria-hidden="true"><Icon name="register" /></span>
+            <div>
+              <p className="cart-empty-title">سبد خالی است</p>
+              <p className="cart-empty-text">بارکد را اسکن کنید یا نام، کد یا بارکد کالا را در کادر بالا جست‌وجو کنید.</p>
+              <p className="cart-empty-hint"><Icon name="info" size="sm" /> بارکدخوان بی‌نیاز به کلیک روی کادر کار می‌کند.</p>
+            </div>
+          </div> : null}
 
-          {/*
-            مشتری — **اختیاری**، و عمداً پایین سبد: فروش ناشناس کار عادی است.
-            وقتی وصل است، آشکارا دیده می‌شود (Batch 2.1) — پیش از نسیه یا امتیاز
-            باید معلوم باشد فاکتور به نام کیست.
-          */}
-          {invoice ? <CustomerSummary customer={customer} loading={customerLoading} error={customerError}
-            mobile={mobile} onMobile={setMobile} onAttach={() => void attachCustomer()} busy={busy} inputRef={customerInput} /> : null}
-
+          {/* مشتری **اختیاری** است و تا وصل نشده، زمینهٔ کار است نه بخشی از پرداخت؛
+              وصل که شد، خلاصه‌اش کنار پرداخت می‌نشیند (POS-10). */}
+          {invoice && !customerAttached ? customerBlock : null}
           {invoice ? <GiftPanel invoice={invoice} onChange={setInvoice} /> : null}
         </Solid>
 
         {/*
-          پنل پرداخت — چسبان در دسکتاپ تا نهایی‌سازی همیشه دیده شود. ترتیب: جمع‌ها،
-          پرداخت‌های ثبت‌شده، روش (کارت‌خوان اصلی)، نهایی‌سازی، نسیه، رها کردن.
+          ستون پرداخت — چسبان در دسکتاپ تا نهایی‌سازی همیشه دیده شود. ترتیب جریان
+          (POS-02): مشتری ← مبلغ‌ها ← روش پرداخت (کارت‌خوان، اسنپ‌پی|دیجی‌پی، بیشتر)
+          ← ثبت نسیه ← نهایی‌کردن. مشتری **اختیاری** است؛ وقتی وصل است، آشکارا دیده
+          می‌شود — پیش از نسیه یا امتیاز باید معلوم باشد فاکتور به نام کیست.
         */}
         <Solid as="aside" className="pay" aria-label="پرداخت">
-          <h2 className="pay-title">پرداخت</h2>
-          <CheckoutSummary totals={totals} />
+          <h2 className="sr-only">پرداخت</h2>
+          {invoice && customerAttached ? customerBlock : null}
+          <CheckoutSummary totals={draftActive ? totals : null} />
           {invoice && received > 0n ? <PaymentBreakdown invoiceId={invoice.id} received={received} /> : null}
           <PaymentSelector layout={layout} remaining={totals.remaining} received={received} phase={payPhase}
             disabled={!hasCart || busy} onPay={takePayment} onCheck={() => void checkPayment()}
             onRetry={retryPayment} onAbandon={() => void abandonPayment()} />
           <div className="pay-finish">
+            {hasCart ? <CreditCheckout allowed={canCredit} customer={customer} remaining={totals.remaining} received={received}
+              payable={totals.payable} disabled={busy || !payIdle || (invoice?.customerId != null && customer === null)}
+              onAttachCustomer={focusCustomer} run={finalize} verify={verifyFinalize} onDone={() => undefined} /> : null}
             <SafeAction trigger="نهایی‌کردن فاکتور" triggerVariant="primary" title="نهایی‌کردن فاکتور"
               disabled={!settled || busy || !payIdle}
               summary={<dl className="checkout-lines">
@@ -1261,13 +1332,9 @@ export function Pos({ actorId }: { actorId: string }) {
               consequence="شمارهٔ فاکتور صادر و کالا از انبار خارج می‌شود. پس از آن اصلاح فقط با مرجوعی ممکن است."
               confirmLabel="تأیید و نهایی‌کردن" pendingLabel="در حال نهایی‌سازی…"
               run={finalize} verify={verifyFinalize} onDone={() => undefined} />
-            {hasCart && !settled ? <p className="field-hint">نهایی‌کردن پس از دریافت کامل مانده باز می‌شود.</p> : null}
-            {hasCart ? <CreditCheckout allowed={canCredit} customer={customer} remaining={totals.remaining} received={received}
-              payable={totals.payable} disabled={busy || !payIdle || (invoice?.customerId != null && customer === null)}
-              onAttachCustomer={focusCustomer} run={finalize} verify={verifyFinalize} onDone={() => undefined} /> : null}
-            <button type="button" className="btn btn--quiet" disabled={!hasCart || busy || !payIdle} onClick={() => void abandon()}>
-              رها کردن سبد
-            </button>
+            <p className="field-hint pay-finish-why">{!hasCart ? "برای نهایی‌کردن، ابتدا کالا به سبد اضافه کنید."
+              : !payIdle ? "تا نتیجهٔ پرداخت روشن نشود، نهایی‌کردن بسته است."
+                : !settled ? "نهایی‌کردن پس از دریافت کامل مانده باز می‌شود." : "همهٔ مبلغ دریافت شده است؛ فاکتور را نهایی کنید."}</p>
           </div>
         </Solid>
       </div>}

@@ -29,8 +29,7 @@ export function CreditCheckout({ allowed, customer, remaining, received, payable
 }) {
   if (!allowed || remaining <= 0n) return null;
   if (!customer) {
-    return <div className="credit-checkout">
-      <p className="field-hint">برای فروش نسیه ابتدا مشتری را انتخاب کنید.</p>
+    return <div className="credit-checkout credit-checkout--needs-customer">
       <button type="button" className="btn btn--quiet" disabled={disabled} onClick={onAttachCustomer}>وصل کردن مشتری برای نسیه</button>
     </div>;
   }

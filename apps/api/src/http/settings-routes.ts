@@ -18,7 +18,8 @@
  */
 import type { FastifyInstance } from "fastify";
 import { z } from "zod";
-import { AuthError } from "../auth/service.ts";
+import { AuthError, type ResolvedSession } from "../auth/service.ts";
+import { requireHumanSession } from "../auth/human-session.ts";
 import { can, requireForSession } from "../auth/permission.ts";
 import { withActor } from "../db/actor.ts";
 import type { Db } from "../db/client.ts";
@@ -126,6 +127,7 @@ export function registerSettingsRoutes(app: FastifyInstance, deps: SettingsRoute
       throw new SettingError("setting_not_found", `تنظیم «${key}» وجود ندارد`, 404);
     }
     await requireForSession(db, s, row.permission);
+    if (key === "exchange.debt_policy") await requireHumanSession(db, req.session as ResolvedSession);
 
     const out = await withActor(db, { userId: s.userId, ip: req.ip }, (trx) =>
       settings.setIn(trx, key, body.value, body.reason ?? null),

@@ -11,6 +11,7 @@ import { loginWithMfa } from "./helpers/login-with-mfa.ts";
  */
 import { after, before, describe, test } from "node:test";
 import assert from "node:assert/strict";
+import { randomUUID } from "node:crypto";
 import { sql } from "kysely";
 import type { FastifyInstance } from "fastify";
 import { createDb, type DbHandle } from "../src/db/client.ts";
@@ -80,6 +81,9 @@ describe("برگشت از فروش و دوره ثبت", { skip }, () => {
     paid: string;
     channel?: "pos" | "web";
     withCustomer?: boolean;
+    method?: string;
+    refNo?: string;
+    variation?: string;
   }): Promise<{ invoiceId: string; lineId: string }> {
     const s = await loginAs(opts.who);
     const channel = opts.channel ?? "pos";
@@ -101,7 +105,7 @@ describe("برگشت از فروش و دوره ثبت", { skip }, () => {
       method: "POST",
       url: `/invoices/${invoiceId}/lines`,
       ...s,
-      payload: { variationId, qty: opts.qty },
+      payload: { variationId: opts.variation ?? variationId, qty: opts.qty },
     });
     assert.equal(line.statusCode, 201, line.body);
     const lineId = line.json().lines[0].id as string;
@@ -111,7 +115,7 @@ describe("برگشت از فروش و دوره ثبت", { skip }, () => {
         method: "POST",
         url: `/invoices/${invoiceId}/payments`,
         ...s,
-        payload: { methodCode: "cash", amount: opts.paid },
+        payload: { methodCode: opts.method ?? "cash", amount: opts.paid, refNo: opts.refNo },
       });
       assert.equal(pay.statusCode, 201, pay.body);
     }
@@ -212,6 +216,226 @@ describe("برگشت از فروش و دوره ثبت", { skip }, () => {
     await app?.close();
     await handle?.close();
     disposable?.drop();
+  });
+
+  function exchangeBody(invoiceId: string, lineId: string, returned = "1", replaced = "1") {
+    return { invoiceId, warehouseId: STORE_WH, returnWarehouseId: STORE_WH,
+      lines: [{ invoiceLineId: lineId, qty: returned }], replacements: [{ variationId, qty: replaced }], reasonCode: "changed_mind" };
+  }
+  async function exchangeQuote(body: ReturnType<typeof exchangeBody>, who = supervisor) {
+    return app.inject({ method: "POST", url: "/exchanges/quote", ...await loginAs(who), payload: body });
+  }
+  async function policy(value: string) {
+    const s = await loginAs(admin);
+    const r = await app.inject({ method: "PATCH", url: "/settings/exchange.debt_policy", ...s,
+      payload: { value, reason: "آزمون سیاست تعویض" } });
+    assert.equal(r.statusCode, 200, r.body);
+  }
+  async function publicInvoice(invoiceId: string) {
+    const result = await sql<{ token: string }>`SELECT sales.ensure_public_token(${invoiceId}::uuid) token`.execute(handle.db);
+    const response = await app.inject({ method: "GET", url: `/i/${result.rows[0]!.token}` });
+    assert.equal(response.statusCode, 200, response.body);
+    return response.body;
+  }
+
+  test("تعویض هم‌قیمت اتمیک، replay هم‌زمان، بازیابی پاسخ و سقف مرجوعی جایگزین", async () => {
+    const s = await loginAs(supervisor);
+    const sold = await soldInvoice({ who: supervisor, qty: "2", paid: "2000000" });
+    const body = exchangeBody(sold.invoiceId, sold.lineId);
+    const preview = await exchangeQuote(body);
+    assert.equal(preview.statusCode, 200, preview.body);
+    assert.equal(preview.json().collectAmount, "0");
+    const key = randomUUID();
+    const request = { method: "POST" as const, url: "/exchanges", ...s,
+      headers: { ...s.headers, "idempotency-key": key }, payload: { ...body, token: preview.json().token, confirmed: true } };
+    const [a, b] = await Promise.all([app.inject(request), app.inject(request)]);
+    assert.equal(a.statusCode, 200, a.body); assert.equal(b.statusCode, 200, b.body);
+    assert.equal(a.json().id, b.json().id);
+    const posted = a.json();
+    const status = await app.inject({ method: "GET", url: `/exchanges/status/${key}`, ...s });
+    assert.equal(status.json().id, posted.id);
+    const changed = await app.inject({ ...request, payload: { ...request.payload, reasonNote: "بدنه دیگر" } });
+    assert.equal(changed.statusCode, 409, changed.body);
+    const evidence = await sql<{ payments: string; movements: string; credit: string }>`SELECT
+      (SELECT count(*)::text FROM treasury.payment WHERE invoice_id=${posted.replacementInvoiceId}::uuid) payments,
+      (SELECT count(*)::text FROM inventory.stock_movement WHERE ref_id IN (${posted.returnId}::uuid,${posted.replacementInvoiceId}::uuid)) movements,
+      (SELECT credit_applied::text FROM sales.sale_return WHERE id=${posted.returnId}::uuid) credit`.execute(handle.db);
+    assert.deepEqual(evidence.rows[0], { payments: "0", movements: "2", credit: "0" });
+    const replacement = await app.inject({ method: "GET", url: `/invoices/${posted.replacementInvoiceId}`, ...s });
+    assert.equal(replacement.json().settlement.dueAmount, "0");
+    const receipt = await publicInvoice(posted.replacementInvoiceId);
+    assert.match(receipt, /تسویه از تعویض/);
+    assert.doesNotMatch(receipt, /class="due"/);
+    const refund = await app.inject({ method: "POST", url: "/returns/commit", ...s,
+      headers: { ...s.headers, "idempotency-key": randomUUID() }, payload: {
+        invoiceId: posted.replacementInvoiceId, reasonCode: "changed_mind", refundAmount: "1000000", shiftId: supervisorShift,
+        lines: [{ invoiceLineId: replacement.json().lines[0].id, qty: "1" }], confirmed: true } });
+    assert.equal(refund.statusCode, 200, refund.body);
+    assert.equal(refund.json().creditApplied, "0");
+  });
+
+  test("تعویض بدهکار: تنظیم فقط مدیر، unset مسدود و دو سیاست صریح", async () => {
+    const s = await loginAs(supervisor);
+    const denied = await app.inject({ method: "PATCH", url: "/settings/exchange.debt_policy", ...s,
+      payload: { value: "carry_debt", reason: "تغییر غیرمجاز" } });
+    assert.equal(denied.statusCode, 403, denied.body);
+    const sold = await soldInvoice({ who: supervisor, qty: "1", paid: "400000", withCustomer: true });
+    const body = exchangeBody(sold.invoiceId, sold.lineId, "1", "1.2");
+    const unset = await exchangeQuote(body); assert.equal(unset.statusCode, 409, unset.body);
+    await policy("debt_first");
+    const first = await exchangeQuote(body);
+    assert.equal(first.statusCode, 200, first.body);
+    assert.equal(first.json().debtApplied, "600000"); assert.equal(first.json().collectAmount, "800000");
+    await policy("carry_debt");
+    const carry = await exchangeQuote(body);
+    assert.equal(carry.statusCode, 200, carry.body);
+    assert.equal(carry.json().debtApplied, "0"); assert.equal(carry.json().collectAmount, "200000");
+    assert.equal(carry.json().fundedTransfer, "400000");
+    const post = await app.inject({ method: "POST", url: "/exchanges", ...s, headers: { ...s.headers, "idempotency-key": randomUUID() },
+      payload: { ...body, token: carry.json().token, confirmed: true, collectMethod: "cash" } });
+    assert.equal(post.statusCode, 200, post.body);
+    const amounts = await sql<{ amount: string }>`SELECT sum(amount)::text amount FROM treasury.payment
+      WHERE invoice_id=${post.json().replacementInvoiceId}::uuid AND direction='in'`.execute(handle.db);
+    assert.equal(amounts.rows[0]!.amount, "200000", "فقط وجه واقعی اختلاف، بدون پرداخت ناخالص ساختگی");
+    const replacementReceipt = await publicInvoice(post.json().replacementInvoiceId);
+    assert.match(replacementReceipt, /تسویه از تعویض/);
+    assert.doesNotMatch(replacementReceipt, /class="due"/);
+    const originalReceipt = await publicInvoice(sold.invoiceId);
+    assert.match(originalReceipt, /class="due"/);
+    assert.ok(originalReceipt.includes((60000n).toLocaleString("fa-IR")), "بدهی واقعی شصت هزار تومان حفظ شده است");
+    await policy("unset");
+  });
+
+  test("تعویض ارزان‌ترِ پرداخت‌نشده اعتبار یا پول ساختگی نمی‌سازد", async () => {
+    await policy("carry_debt");
+    const sold = await soldInvoice({ who: supervisor, qty: "1", paid: "0", withCustomer: true });
+    const quote = await exchangeQuote(exchangeBody(sold.invoiceId, sold.lineId, "1", "0.5"));
+    assert.equal(quote.statusCode, 409, quote.body);
+    assert.match(quote.body, /وجه واقعی/);
+    await policy("debt_first");
+    const body = exchangeBody(sold.invoiceId, sold.lineId);
+    const q = await exchangeQuote(body); assert.equal(q.statusCode, 200, q.body);
+    assert.equal(q.json().debtApplied, "1000000"); assert.equal(q.json().collectAmount, "1000000");
+    const s = await loginAs(supervisor);
+    const result = await app.inject({ method: "POST", url: "/exchanges", ...s,
+      headers: { ...s.headers, "idempotency-key": randomUUID() }, payload: { ...body, token: q.json().token, confirmed: true, collectMethod: "cash" } });
+    assert.equal(result.statusCode, 200, result.body);
+    await policy("unset");
+  });
+
+  test("rollback تعویض در کسری موجودی و جلوگیری از ارسال دیررس پس از تعیین تکلیف", async () => {
+    const sold = await soldInvoice({ who: supervisor, qty: "1", paid: "1000000" });
+    const body = exchangeBody(sold.invoiceId, sold.lineId, "1", "10000");
+    const q = await exchangeQuote(body); assert.equal(q.statusCode, 200, q.body);
+    const s = await loginAs(supervisor), key = randomUUID();
+    const request = { method: "POST" as const, url: "/exchanges", ...s, headers: { ...s.headers, "idempotency-key": key },
+      payload: { ...body, token: q.json().token, confirmed: true, collectMethod: "cash" } };
+    const failed = await app.inject(request); assert.equal(failed.statusCode, 409, failed.body);
+    const row = await handle.db.selectFrom("sales.invoice_line").select("returned_qty").where("id", "=", sold.lineId).executeTakeFirstOrThrow();
+    assert.equal(Number(row.returned_qty), 0, "حرکت مرجوعی در همان تراکنش rollback شد");
+    const status = await app.inject({ method: "GET", url: `/exchanges/status/${key}`, ...s });
+    assert.equal(status.json().status, "not_found");
+    await app.inject({ method: "POST", url: `/exchanges/status/${key}/abandon`, ...s, payload: { noExternalPayment: true } });
+    const late = await app.inject(request); assert.equal(late.statusCode, 409, late.body);
+    const after = await app.inject({ method: "GET", url: `/exchanges/status/${key}`, ...s });
+    assert.equal(after.json().status, "abandoned");
+  });
+
+  test("تعویض ارزان‌ترِ تسویه‌شده فقط اختلاف واقعی را پس می‌دهد", async () => {
+    const s = await loginAs(supervisor);
+    const sold = await soldInvoice({ who: supervisor, qty: "1", paid: "1000000" });
+    const body = exchangeBody(sold.invoiceId, sold.lineId, "1", "0.5");
+    const q = await exchangeQuote(body); assert.equal(q.statusCode, 200, q.body);
+    assert.equal(q.json().refundAmount, "500000"); assert.equal(q.json().fundedTransfer, "500000");
+    const post = await app.inject({ method: "POST", url: "/exchanges", ...s,
+      headers: { ...s.headers, "idempotency-key": randomUUID() },
+      payload: { ...body, token: q.json().token, confirmed: true, refundMethod: "cash" } });
+    assert.equal(post.statusCode, 200, post.body);
+    const replacement = await app.inject({ method: "GET", url: `/invoices/${post.json().replacementInvoiceId}`, ...s });
+    const returned = await app.inject({ method: "POST", url: "/returns/commit", ...s,
+      headers: { ...s.headers, "idempotency-key": randomUUID() }, payload: {
+        invoiceId: post.json().replacementInvoiceId, reasonCode: "changed_mind", refundAmount: "500000", shiftId: supervisorShift,
+        lines: [{ invoiceLineId: replacement.json().lines[0].id, qty: "0.5" }], confirmed: true } });
+    assert.equal(returned.statusCode, 200, returned.body);
+    const money = await sql<{ received: string; refunded: string; credit: string }>`SELECT
+      (SELECT coalesce(sum(amount),0)::text FROM treasury.payment WHERE invoice_id IN (${sold.invoiceId}::uuid,${post.json().replacementInvoiceId}::uuid) AND direction='in') received,
+      (SELECT coalesce(sum(refund_amount),0)::text FROM sales.sale_return WHERE invoice_id IN (${sold.invoiceId}::uuid,${post.json().replacementInvoiceId}::uuid) AND status='posted') refunded,
+      (SELECT coalesce(sum(credit_applied),0)::text FROM sales.sale_return WHERE invoice_id IN (${sold.invoiceId}::uuid,${post.json().replacementInvoiceId}::uuid) AND status='posted') credit`.execute(handle.db);
+    assert.deepEqual(money.rows[0], { received: "1000000", refunded: "1000000", credit: "0" });
+  });
+
+  test("تعویض همان تنوع با موجودی صفر فقط از برگشت سالم قابل فروش تأمین می‌شود", async () => {
+    const s = await loginAs(supervisor);
+    const product = await sql<{ id: string }>`INSERT INTO catalog.product(code,name_internal)
+      VALUES (${`ONE-${suffix}`},'تنها موجودی تعویض') RETURNING id`.execute(handle.db);
+    const variant = await sql<{ id: string }>`INSERT INTO catalog.variation(product_id,sku,barcode)
+      VALUES (${product.rows[0]!.id}::uuid,${`ONE-${suffix}`},${`ONE-${suffix}`}) RETURNING id`.execute(handle.db);
+    const only = variant.rows[0]!.id;
+    await sql`INSERT INTO catalog.price(variation_id,price_list,amount) VALUES (${only}::uuid,'default',1000000)`.execute(handle.db);
+    await sql`SELECT inventory.apply_movement(${only}::uuid,${STORE_WH}::uuid,1,'purchase_receipt','test_receipt',${only}::uuid,${ids["admin"]}::uuid,400000)`.execute(handle.db);
+    const sold = await soldInvoice({ who: supervisor, qty: "1", paid: "1000000", variation: only });
+    for (const quality of [{ condition: "defective" }, { restock: false }, { condition: "sellable" }]) {
+      const body = { ...exchangeBody(sold.invoiceId, sold.lineId), lines: [{ invoiceLineId: sold.lineId, qty: "1", ...quality }], replacements: [{ variationId: only, qty: "1" }] };
+      const q = await app.inject({ method: "POST", url: "/exchanges/quote", ...s, payload: body });
+      assert.equal(q.statusCode, 200, q.body);
+      const post = await app.inject({ method: "POST", url: "/exchanges", ...s,
+        headers: { ...s.headers, "idempotency-key": randomUUID() }, payload: { ...body, token: q.json().token, confirmed: true } });
+      assert.equal(post.statusCode, quality.condition === "sellable" ? 200 : 409, post.body);
+      const line = await handle.db.selectFrom("sales.invoice_line").select("returned_qty").where("id", "=", sold.lineId).executeTakeFirstOrThrow();
+      assert.equal(Number(line.returned_qty), quality.condition === "sellable" ? 1 : 0);
+    }
+  });
+
+  test("مرجوعی جایگزین اسنپ به پرداخت اصلی و سقف همان پرداخت متصل می‌ماند", async () => {
+    const globalName = `${admin}_global`;
+    const u = await handle.db.insertInto("identity.app_user").values({ username: globalName, full_name: "مدیر تنظیمات آزمایشی",
+      password_hash: await hashSecret(PASSWORD), is_active: true, mobile: null, pin_hash: null, totp_secret: null }).returning("id").executeTakeFirstOrThrow();
+    await handle.db.insertInto("identity.user_role").values({ user_id: u.id, role_code: "admin", branch_id: null }).execute();
+    const a = await loginAs(globalName), s = await loginAs(supervisor);
+    const accounts = await sql<{ id: string }>`SELECT id FROM treasury.account WHERE kind='gateway' AND is_active ORDER BY id`.execute(handle.db);
+    const config = await app.inject({ method: "PUT", url: "/snappay/config", ...a, payload: { accountId: accounts.rows[0]!.id } });
+    assert.equal(config.statusCode, 200, config.body);
+    try {
+      const sold = await soldInvoice({ who: supervisor, qty: "2", paid: "2000000", method: "snappay", refNo: `SNAP-${suffix}` });
+      const source = await app.inject({ method: "GET", url: `/invoices/${sold.invoiceId}/refund-sources`, ...s });
+      assert.equal(source.statusCode, 200, source.body);
+      const paymentId = source.json().payments[0].id;
+      const body = exchangeBody(sold.invoiceId, sold.lineId, "2", "1");
+      const q = await exchangeQuote(body); assert.equal(q.statusCode, 200, q.body);
+      const post = await app.inject({ method: "POST", url: "/exchanges", ...s,
+        headers: { ...s.headers, "idempotency-key": randomUUID() }, payload: { ...body, token: q.json().token, confirmed: true,
+          refundMethod: "snappay", refundPaymentId: paymentId, refundReference: `SNAP-DIFF-${suffix}` } });
+      assert.equal(post.statusCode, 200, post.body);
+      const linked = await app.inject({ method: "GET", url: `/invoices/${post.json().replacementInvoiceId}/refund-sources`, ...s });
+      assert.deepEqual(linked.json().payments, [{ id: paymentId, reference: `SNAP-${suffix}`, remaining: "1000000" }]);
+      assert.equal((await app.inject({ method: "PUT", url: "/snappay/config", ...a, payload: { accountId: "" } })).statusCode, 200);
+      const replacement = await app.inject({ method: "GET", url: `/invoices/${post.json().replacementInvoiceId}`, ...s });
+      const result = await app.inject({ method: "POST", url: "/returns/commit", ...s,
+        headers: { ...s.headers, "idempotency-key": randomUUID() }, payload: {
+          invoiceId: post.json().replacementInvoiceId, reasonCode: "changed_mind", refundAmount: "1000000",
+          refundMethod: "snappay", refundPaymentId: paymentId, refundReference: `SNAP-LAST-${suffix}`,
+          lines: [{ invoiceLineId: replacement.json().lines[0].id, qty: "1" }], confirmed: true } });
+      assert.equal(result.statusCode, 200, result.body);
+      const exhausted = await app.inject({ method: "GET", url: `/invoices/${post.json().replacementInvoiceId}/refund-sources`, ...s });
+      assert.equal(exhausted.json().payments.length, 0);
+      const provenance = await sql<{ total: string; accounts: string }>`SELECT sum(p.amount)::text total,count(DISTINCT p.account_id)::text accounts
+        FROM treasury.payment p JOIN sales.sale_return r ON r.id=p.return_id WHERE r.refund_payment_id=${paymentId}::uuid`.execute(handle.db);
+      assert.deepEqual(provenance.rows[0], { total: "2000000", accounts: "1" });
+    } finally { await app.inject({ method: "PUT", url: "/snappay/config", ...a, payload: { accountId: "" } }); }
+  });
+
+  test("تلفن دقیق نرمال‌شده، صفحه‌بندی و ممنوعیت عبور از شعبه", async () => {
+    await soldInvoice({ who: supervisor, qty: "1", paid: "1000000", withCustomer: true });
+    await soldInvoice({ who: supervisor, qty: "1", paid: "1000000", withCustomer: true });
+    const customer = await handle.db.selectFrom("sales.customer").select("mobile_normalized").where("id", "=", customerId).executeTakeFirstOrThrow();
+    const s = await loginAs(supervisor);
+    const uri = `/invoices/by-phone?branchId=${BRANCH}&phone=${encodeURIComponent(customer.mobile_normalized)}&limit=1`;
+    const first = await app.inject({ method: "GET", url: uri, ...s });
+    assert.equal(first.statusCode, 200, first.body); assert.equal(first.json().invoices.length, 1);
+    const next = await app.inject({ method: "GET", url: `${uri}&before=${first.json().next}`, ...s });
+    assert.notEqual(next.json().invoices[0].id, first.json().invoices[0].id);
+    const bad = await app.inject({ method: "GET", url: `/invoices/by-phone?branchId=${randomUUID()}&phone=${customer.mobile_normalized}`, ...s });
+    assert.equal(bad.statusCode, 403, bad.body);
   });
 
   test("بهای مرجوعی در تمام پاسخ‌ها و replay فقط با cost.view دیده می‌شود", async () => {

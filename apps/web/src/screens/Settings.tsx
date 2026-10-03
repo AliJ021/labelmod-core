@@ -2,6 +2,7 @@ import { routeUrl, type NavAccess } from "../lib/navigation.ts";
 import { SETTINGS_SECTIONS, settingsView, settingsWriteAccess, type SettingsKey } from "../lib/settings-registry.ts";
 import { Icon } from "../components/Icon.tsx";
 import { SnappaySettings } from "./SnappaySettings.tsx";
+import { WooCommerceSettings } from "./WooCommerceSettings.tsx";
 import { Backups } from "./Backups.tsx";
 import { useUrlState } from "../lib/use-url-state.ts";
 import { SettingsNavigation, TabPanels, useTabsId, type TabItem } from "../components/Tabs.tsx";
@@ -27,6 +28,8 @@ import { Appearance } from "./Appearance.tsx";
 import { Staff } from "./Staff.tsx";
 import { TwoFactor } from "./TwoFactor.tsx";
 import { PersonalPin } from "./PersonalPin.tsx";
+import { MyWithdrawals } from "./MyWithdrawals.tsx";
+import { WithdrawalLog } from "./WithdrawalLog.tsx";
 
 /**
  * پوسته ناحیه تنظیمات — ده زیرتب.
@@ -77,6 +80,8 @@ export function Settings({ access, currentUserId, onOwnPassword }: { access: Nav
         <PostingRules />
       ) : tab === "snappay" ? (
         <SnappaySettings write={settingsWriteAccess("snappay", access.verdicts)} writeState={access.state} />
+      ) : tab === "woocommerce" ? (
+        <WooCommerceSettings />
       ) : tab === "backups" ? (
         <Backups />
       ) : tab === "terminals" ? (
@@ -89,6 +94,10 @@ export function Settings({ access, currentUserId, onOwnPassword }: { access: Nav
         <PersonalPin />
       ) : tab === "twofactor" ? (
         <TwoFactor />
+      ) : tab === "withdrawals" ? (
+        <MyWithdrawals key={currentUserId} currentUserId={currentUserId} />
+      ) : tab === "withdrawal-log" ? (
+        <WithdrawalLog key={currentUserId} currentUserId={currentUserId} write={settingsWriteAccess("withdrawal-log", access.verdicts)} writeState={access.state} />
       ) : tab === "devices" ? (
         <Devices />
       ) : tab === "health" ? (

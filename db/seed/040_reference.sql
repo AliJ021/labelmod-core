@@ -376,4 +376,6 @@ INSERT INTO treasury.payment_method
 ('giftcard', 'کارت هدیه',      'gift_card',   0, 0, true)
 ON CONFLICT (code) DO NOTHING;
 
+INSERT INTO identity.permission_rule(role_code,operation,allowed)
+SELECT code,'exchange.policy',code='admin' FROM identity.role ON CONFLICT(role_code,operation) DO NOTHING;
 COMMIT;

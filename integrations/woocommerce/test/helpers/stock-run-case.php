@@ -45,7 +45,8 @@ class LMC_Stored_Product
 function get_option($key, $default = false) { return $default; }
 function get_posts($args) { return [42]; }
 function wc_get_product($id) { return clone $GLOBALS['stock_saved']; }
-function wp_remote_request($url, $args) {
+function wp_parse_url($url) { return parse_url($url); }
+function wp_safe_remote_request($url, $args) {
     return ['body' => json_encode(['items' => [[
         'variationId' => 'synthetic-stock', 'available' => (string) $GLOBALS['stock_available'], 'price' => null,
     ]]])];
@@ -54,7 +55,7 @@ function wp_remote_retrieve_response_code($response) { return 200; }
 function wp_remote_retrieve_body($response) { return $response['body']; }
 
 set_settings(['sync_stock' => 'yes', 'sync_price' => 'yes',
-    'base_url' => 'http://127.0.0.1:54999', 'api_key' => bin2hex(random_bytes(24))]);
+    'base_url' => 'https://core.example.test', 'api_key' => bin2hex(random_bytes(24))]);
 
 // ⚠️ ستون آخر، سفارش معوق است. با `yes` یا `notify`، ووکامرس در
 //    `validate_props()` وضعیت را بازمی‌سازد و موجودی صفر را

@@ -46,6 +46,48 @@ export interface Product {
    * فروش نیست.
    */
   pricedCount: number;
+  /** تنوع‌های فروختنی (`active`) — همان دروازه‌ای که صندوق می‌سنجد. */
+  sellableCount: number;
+  /** چندتا از تنوع‌های فروختنی همین حالا قیمت معتبر دارند. */
+  sellablePricedCount: number;
+  /**
+   * کمینه و بیشینهٔ قیمت جاری تنوع‌های فروختنیِ قیمت‌دار، ریال به‌صورت
+   * رشته. `null` یعنی قیمتی نیست — هرگز صفر نیست.
+   */
+  priceMin: string | null;
+  priceMax: string | null;
+}
+
+/**
+ * قیمت یک کالا در فهرست — چیزی که ستون «قیمت فروش» نشان می‌دهد.
+ *
+ * چهار حالت، و هیچ‌کدام عدد نبوده را صفر نمی‌کند:
+ *   · `none`     تنوع فروختنی ندارد؛ هیچ قیمتی ادعا نمی‌شود
+ *   · `unpriced` تنوع فروختنی دارد ولی هیچ‌کدام قیمت ندارند
+ *   · `single`   همهٔ قیمت‌دارها یک قیمت دارند
+ *   · `range`    قیمت‌ها واقعاً فرق دارند
+ * و `missing` در دو حالت آخر می‌گوید چند تنوع فروختنی هنوز بی‌قیمت‌اند —
+ * پس «۲۵۰ هزار تومان» هرگز وقتی یکی از سایزها فروختنی نیست، کامل به نظر
+ * نمی‌رسد.
+ */
+export type PriceSummary =
+  | { kind: "none" }
+  | { kind: "unpriced"; missing: number }
+  | { kind: "single"; rial: string; missing: number }
+  | { kind: "range"; min: string; max: string; missing: number };
+
+export function priceSummary(
+  p: Pick<Product, "sellableCount" | "sellablePricedCount" | "priceMin" | "priceMax">,
+): PriceSummary {
+  if (p.sellableCount <= 0) return { kind: "none" };
+  const missing = Math.max(0, p.sellableCount - p.sellablePricedCount);
+  if (p.priceMin === null || p.priceMax === null || p.sellablePricedCount <= 0) {
+    return { kind: "unpriced", missing: p.sellableCount };
+  }
+  // مقایسه با bigint، نه رشته: «۰۱۰۰» و «۱۰۰» یک مبلغ‌اند.
+  return BigInt(p.priceMin) === BigInt(p.priceMax)
+    ? { kind: "single", rial: p.priceMin, missing }
+    : { kind: "range", min: p.priceMin, max: p.priceMax, missing };
 }
 
 export interface Variation {

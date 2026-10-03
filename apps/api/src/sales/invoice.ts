@@ -1290,8 +1290,8 @@ export class InvoiceService {
    * پیش‌نویس و باطل‌شده `null` می‌گیرند: تسویه‌ای ندارند.
    */
   async settlement(invoiceId: string, ex: Executor = this.#db): Promise<Settlement | null> {
-    const r = await sql<{ status: string; payable: string; paid: string; received: string }>`
-      SELECT i.status, i.payable_amount AS payable, i.paid_amount AS paid,
+    const r = await sql<{ status: string; payable: string; paid: string; received: string; transferred: string }>`
+      SELECT i.status, i.payable_amount AS payable, i.paid_amount AS paid, sales.exchange_in(i.id)::text AS transferred,
         (SELECT coalesce(sum(p.amount), 0) FROM treasury.payment p
            JOIN treasury.payment_method m ON m.code = p.method_code
           WHERE p.invoice_id = i.id AND p.direction = 'in' AND m.kind <> 'credit'
@@ -1300,7 +1300,8 @@ export class InvoiceService {
     const row = r.rows[0];
     if (!row || !["finalized", "paid", "partially_returned", "returned"].includes(row.status)) return null;
     const payable = parseMoney(row.payable), paid = parseMoney(row.paid), received = parseMoney(row.received);
-    return { payable, paid, received, change: received > paid ? received - paid : 0n, due: payable > paid ? payable - paid : 0n };
+    const transferred = parseMoney(row.transferred);
+    return { payable, paid, received, change: received > paid ? received - paid : 0n, due: payable > paid + transferred ? payable - paid - transferred : 0n };
   }
 
   /** مبلغ قابل پرداختِ پیش‌بینی‌شده، پیش از نهایی‌سازی. */

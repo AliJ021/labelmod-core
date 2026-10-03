@@ -17,7 +17,7 @@ import { StatusBadge } from "./Status.tsx";
  *      که با `verify` از سرور می‌خواند. اگر سرور بگوید انجام نشده، تأیید
  *      دوباره با وضعیت معلوم مجاز است.
  */
-export function SafeAction({ trigger, title, summary, consequence, confirmLabel, pendingLabel, tone = "final", run, verify, onDone, disabled = false, triggerVariant = "link" }: {
+export function SafeAction({ trigger, title, summary, consequence, confirmLabel, pendingLabel, tone = "final", run, verify, onDone, disabled = false, triggerVariant = "link", initialUnknown = false }: {
   trigger: string;
   title: string;
   summary: ReactNode;
@@ -30,10 +30,12 @@ export function SafeAction({ trigger, title, summary, consequence, confirmLabel,
   verify: () => Promise<boolean>;
   onDone: (outcome: "done" | "verified") => void;
   disabled?: boolean;
+  /** Restore an explicitly saved, unresolved operation without submitting it. */
+  initialUnknown?: boolean;
   /** `primary` فقط برای مرز مالی اصلی یک صفحه (نهایی‌سازی صندوق). */
   triggerVariant?: "link" | "button" | "primary";
 }) {
-  const [phase, setPhase] = useState<SafeActionPhase>("idle");
+  const [phase, setPhase] = useState<SafeActionPhase>(initialUnknown ? "unknown" : "idle");
   const [failure, setFailure] = useState<ActionFailure | null>(null);
   const [note, setNote] = useState<string | null>(null);
   const [open, setOpen] = useState(false);

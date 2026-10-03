@@ -329,6 +329,26 @@ export function registerSalesRoutes(app: FastifyInstance, deps: SalesRouteDeps):
    * سراسری (`platform.next_document_no()` شمارنده را به شعبه
    * می‌بندد). بدون این، صندوق‌دار شعبه A رسید شعبه B را پیدا می‌کرد.
    */
+  app.get("/invoices/by-phone", async (req) => {
+    const s = session(req);
+    await requireInvoiceRead(db, s);
+    const q = z.object({ phone: z.string().trim().min(1).max(32), branchId: uuid,
+      before: uuid.optional(), limit: z.coerce.number().int().min(1).max(50).default(20) }).parse(req.query);
+    await assertBranch(db, s.userId, q.branchId);
+    // همان نرمال‌ساز مشتری؛ هرگز جست‌وجوی بخشی یا جست‌وجوی نام نیست.
+    const result = await sql<{ id: string; number: string; occurredAt: Date; payableAmount: string; status: string }>`
+      SELECT i.id, i.number, i.occurred_at AS "occurredAt", i.payable_amount::text AS "payableAmount", i.status
+      FROM sales.invoice i JOIN sales.customer c ON c.id=i.customer_id
+      WHERE i.branch_id=${q.branchId}::uuid AND c.mobile_normalized=sales.normalize_mobile(${q.phone})
+        AND i.status IN ('finalized','paid','partially_returned','returned')
+        AND (${q.before ?? null}::uuid IS NULL OR i.id<${q.before ?? null}::uuid)
+      ORDER BY i.id DESC LIMIT ${q.limit + 1}
+    `.execute(db);
+    const more = result.rows.length > q.limit;
+    const invoices = result.rows.slice(0, q.limit);
+    return { invoices, next: more ? invoices.at(-1)?.id ?? null : null };
+  });
+
   app.get("/invoices/lookup", async (req) => {
     const s = session(req);
     await requireInvoiceRead(db, s);

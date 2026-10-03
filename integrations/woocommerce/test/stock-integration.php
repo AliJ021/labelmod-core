@@ -15,7 +15,7 @@ $original = get_option(LMC_OPTION);
 $stock = [];
 $requests = 0;
 $intercept = function ($pre, $args, $url) use (&$stock, &$requests) {
-    if (!str_starts_with($url, 'http://127.0.0.1:54999/api/web/stock?')) {
+    if (!str_starts_with($url, 'https://core.example.test/api/web/stock?')) {
         return new WP_Error('test_external_http_blocked', 'HTTP is blocked during this test');
     }
     $requests++;
@@ -26,7 +26,7 @@ add_filter('pre_http_request', $intercept, PHP_INT_MAX, 3);
 $results = [];
 try {
     update_option(LMC_OPTION, array_merge(lmc_settings(), [
-        'base_url' => 'http://127.0.0.1:54999', 'api_key' => bin2hex(random_bytes(24)),
+        'base_url' => 'https://core.example.test', 'api_key' => bin2hex(random_bytes(24)),
         'warehouse_id' => 'synthetic-warehouse', 'sync_stock' => 'yes',
         'sync_price' => 'yes', 'link_by_sku' => 'no', 'currency_unit' => 'rial',
     ]));

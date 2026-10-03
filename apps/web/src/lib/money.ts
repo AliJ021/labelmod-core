@@ -31,6 +31,13 @@ export function toman(rial: bigint): string {
   return negative ? `−${text}` : text;
 }
 
+/** تومان دقیق تا یک‌دهم؛ ریال باقی‌مانده حذف نمی‌شود و عدد شناور نمی‌سازیم. */
+export function tomanExact(rial: bigint): string {
+  const abs = rial < 0n ? -rial : rial;
+  const fraction = abs % 10n;
+  return `${toman(rial)}${fraction === 0n ? "" : `٫${fraction}`}`;
+}
+
 /**
  * آنچه صندوق‌دار تایپ می‌کند (تومان) → ریالِ رشته‌ای برای API.
  *
@@ -57,6 +64,22 @@ export function rialFromTomanInput(raw: string): bigint | null {
   }
   if (digits === "") return null;
   return BigInt(digits) * 10n;
+}
+
+/** Exact editable amount for records that may contain a single Rial. */
+export function exactTomanInput(rial: string): string {
+  const value = parseRial(rial);
+  return `${value / 10n}${value % 10n === 0n ? "" : `.${value % 10n}`}`;
+}
+
+/** Opt-in one-decimal Toman input; the POS integer-only parser remains unchanged. */
+export function rialFromExactTomanInput(raw: string): bigint | null {
+  const parts = raw.trim().split(/[.٫]/);
+  if (parts.length === 1) return rialFromTomanInput(raw);
+  if (parts.length !== 2 || !/^[0-9۰-۹٠-٩]$/.test(parts[1]!)) return null;
+  const whole = rialFromTomanInput(parts[0]!);
+  const fraction = rialFromTomanInput(parts[1]!);
+  return whole === null || fraction === null ? null : whole + fraction / 10n;
 }
 
 /** برای سرستون و خلاصه: «۲٫۴ م» به‌جای «۲٬۴۰۰٬۰۰۰». */

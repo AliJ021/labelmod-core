@@ -1,36 +1,15 @@
 /**
- * مرجوعی — از روی رسیدِ دست مشتری.
- *
- * ناحیه «متوسط» ADR-002: کارت‌ها شیشه‌ای، ولی هر سطر و هر عددی که
- * خوانده می‌شود مات. مرجوعی مثل صندوق زیر فشار صف نیست، ولی مبلغی که
- * از کشو بیرون می‌رود باید بی‌ابهام خوانده شود.
- *
- * ── جریان ─────────────────────────────────────────────────────────
- *
- *   شماره رسید → فاکتور → انتخاب اقلام → علت → مبلغ → ثبت
- *
- * دو تماس جدا لازم است و عمداً یکی نشده‌اند: `POST /returns` یک
- * **پیش‌نویس** می‌سازد و `POST /returns/:id/post` است که واقعاً کالا
- * را برمی‌گرداند و پول را بیرون می‌دهد. اگر دومی روی شبکه بشکند،
- * پیش‌نویس در `draft` می‌ماند و دکمه همان را دوباره ثبت می‌کند — نه
- * اینکه برگ دوم بسازد.
- *
- * ── چه چیزی اینجا تصمیم گرفته نمی‌شود ─────────────────────────────
- *
- * **مجوز.** بازپرداخت نقدی شیفت باز می‌خواهد و مبلغ بالا تأیید مدیر؛
- * هر دو را `returnGate` سمت سرور می‌سنجد و **دوباره** هنگام ثبت.
- * کپی‌کردن آن قواعد اینجا یعنی دو تعریف. پیام فارسی سرور همان چیزی
- * است که نشان داده می‌شود.
- *
- * **مبلغ نهایی.** آنچه این صفحه حساب می‌کند یک **پیشنهاد** است با
- * همان فرمول سرور. سقفش را دیتابیس می‌گذارد: «بازپرداخت از پول
- * واقعاً دریافت‌شده بیشتر نمی‌شود».
+ * مرجوعی/تعویض با جست‌وجوی دقیق، انتخاب جزئی، تأیید دوم و بازیابی پایدار.
+ * اثر مالی از endpoint اتمیک می‌آید؛ نتیجه نامعلوم فقط بررسی می‌شود.
  */
 import { useEffect, useState } from "react";
 import { Glass, Solid } from "../components/Glass.tsx";
 import { WebRefundRequests } from "./WebRefundRequests.tsx";
 import { api, ApiError } from "../lib/api.ts";
-import { ActionKeys, actionFor } from "../lib/action-key.ts";
+import { SafeAction } from "../components/ui/SafeAction.tsx";
+import { Money } from "../components/ui/Money.tsx";
+import { ExchangePanel } from "../components/ExchangePanel.tsx";
+import { ReturnRecovery, useReturnOperation } from "../components/ReturnRecovery.tsx";
 import { parseRial, rialFromTomanInput, toman } from "../lib/money.ts";
 import {
   pos,
@@ -63,9 +42,14 @@ export function Returns() {
   const [reasons, setReasons] = useState<ReturnReason[]>([]);
 
   const [number, setNumber] = useState("");
+  const [lookupKind, setLookupKind] = useState<"number" | "phone">("number");
+  const [mode, setMode] = useState<"returns" | "exchanges">("returns");
+  const [matches, setMatches] = useState<Array<{ id: string; number: string; payableAmount: string }>>([]);
+  const [nextPage, setNextPage] = useState<string | null>(null);
   const [invoice, setInvoice] = useState<Invoice | null>(null);
   const [view, setView] = useState<ReturnableView | null>(null);
   const [selection, setSelection] = useState<Selection>(new Map());
+  const [quality, setQuality] = useState<Record<string, { restock: boolean; condition: "sellable" | "defective" }>>({});
 
   const [reason, setReason] = useState("");
   const [note, setNote] = useState("");
@@ -85,7 +69,10 @@ export function Returns() {
   const [error, setError] = useState<string | null>(null);
   const [done, setDone] = useState<string | null>(null);
 
-  const [keys] = useState(() => new ActionKeys());
+  const operation = useReturnOperation((postedNumber) => {
+    setDone(`عملیات ${postedNumber} ثبت شد.`);
+    setInvoice(null); setView(null); setSelection(new Map()); setRefund("");
+  });
 
   useEffect(() => {
     void (async () => {
@@ -124,11 +111,7 @@ export function Returns() {
     }
   }
 
-  const lookup = () =>
-    guarded(async () => {
-      setDone(null);
-      setDraft(null);
-      const inv = await pos.invoiceByNumber(number.trim(), branchId);
+  async function loadInvoice(inv: Invoice) {
       const [returnable, open] = await Promise.all([pos.returnable(inv.id), pos.openShifts(inv.branchId)]);
       setDrawers(open);
       setDrawerId(open.length === 1 ? open[0]?.id ?? "" : "");
@@ -140,8 +123,22 @@ export function Returns() {
       setInvoice(inv);
       setView(returnable);
       setSelection(new Map());
+      setQuality({});
       setRefund("");
-    });
+  }
+  const lookup = (before?: string) => guarded(async () => {
+    if (operation.pending) throw new Error("ابتدا نتیجه عملیات قبلی را بررسی کنید");
+    setDone(null); setDraft(null); setInvoice(null); setView(null);
+    if (lookupKind === "phone") {
+      const found = await api.get<{ invoices: typeof matches; next: string | null }>(
+        `/invoices/by-phone?phone=${encodeURIComponent(number.trim())}&branchId=${branchId}${before ? `&before=${before}` : ""}`);
+      setMatches(found.invoices); setNextPage(found.next);
+      if (!found.invoices.length) setDone("فاکتوری برای این شماره پیدا نشد.");
+    } else {
+      setMatches([]); setNextPage(null);
+      await loadInvoice(await pos.invoiceByNumber(number.trim(), branchId));
+    }
+  });
 
   function setQty(invoiceLineId: string, qty: number) {
     const row = view?.lines.find((l) => l.invoiceLineId === invoiceLineId);
@@ -156,63 +153,21 @@ export function Returns() {
 
   const suggestion = view ? suggestedRefund(view.lines, selection) : 0n;
   const typedRefund = refund.trim() === "" ? suggestion : rialFromTomanInput(refund);
+  const selectedLines = selectionToLines(selection).map(l => ({ ...l, ...(quality[l.invoiceLineId] ?? { restock: true, condition: "sellable" as const }) }));
 
-  const submit = () =>
-    guarded(async () => {
-      if (!invoice || typedRefund === null) return;
-
-      // بدنه **یک بار** ساخته می‌شود و هم به سرور می‌رود و هم نام عمل
-      // را می‌سازد. اگر این دو از هم جدا شوند، کلید و بدنه می‌توانند
-      // ناهم‌خوان شوند — دقیقاً همان چیزی که `actionFor` جلویش را
-      // می‌گیرد.
-      const body = {
-        invoiceId: invoice.id,
-        reasonCode: reason,
-        refundAmount: typedRefund.toString(),
-        lines: selectionToLines(selection),
-        ...(note.trim() === "" ? {} : { reasonNote: note.trim() }),
-        ...(method === "" ? {} : { refundMethod: method }),
-        ...(method === "snappay" ? { refundReference: refundReference.trim(), refundPaymentId } : {}),
-        ...((chosen?.kind === "cash" || method === "") && drawerId !== "" ? { shiftId: drawerId } : {}),
-      };
-
-      // پیش‌نویس فقط یک بار ساخته می‌شود. اگر ثبت روی شبکه شکسته
-      // باشد، همان پیش‌نویس دوباره ثبت می‌شود — نه برگ دوم.
-      //
-      // نام عمل از **بدنه** ساخته می‌شود، نه فقط از شناسه فاکتور:
-      // Retry با همان فرم همان کلید را می‌برد (پس Replay می‌شود)، ولی
-      // اگر صندوق‌دار پس از یک شکست مبلغ یا اقلام را اصلاح کند کلید
-      // تازه می‌گیرد. با کلید ثابت، آن اصلاح ۴۰۹ می‌گرفت و صفحه تا
-      // Reload گیر می‌کرد.
-      const sheet =
-        draft ??
-        (await keys.run(actionFor(`return:${invoice.id}`, body), (key) =>
-          pos.createReturn(body, { idempotencyKey: key }),
-        ));
-      setDraft(sheet);
-
-      // مقصد پیش از ثبت تعیین می‌شود — پس از ثبت، حرکت انبار نشسته و
-      // تغییرناپذیر است. `""` یعنی «همان‌جا که فروخته شد»، پس هیچ
-      // درخواستی نمی‌رود.
-      if (destWh !== "") {
-        await pos.setReturnWarehouse(sheet.id, destWh);
-      }
-
-      const posted = await keys.run(`return-post:${sheet.id}`, (key) =>
-        pos.postReturn(sheet.id, { idempotencyKey: key }),
-      );
-
-      setDone(`برگ مرجوعی ${posted.number ?? ""} ثبت شد.`);
-      setDraft(null);
-      setDestWh("");
-      setInvoice(null);
-      setView(null);
-      setSelection(new Map());
-      setNumber("");
-      setRefund("");
-      setReason("");
-      setNote("");
-    });
+  async function submit() {
+    if (!invoice || typedRefund === null) throw new Error("اقلام مرجوعی کامل نیست");
+    const body = {
+      invoiceId: invoice.id, reasonCode: reason, refundAmount: typedRefund.toString(),
+      lines: selectedLines, confirmed: true,
+      ...(note.trim() ? { reasonNote: note.trim() } : {}),
+      ...(method ? { refundMethod: method } : {}),
+      ...(method === "snappay" ? { refundReference: refundReference.trim(), refundPaymentId } : {}),
+      ...((chosen?.kind === "cash" || method === "") && drawerId ? { shiftId: drawerId } : {}),
+      ...(destWh ? { warehouseId: destWh } : {}),
+    };
+    await operation.run("returns", body);
+  }
 
   /** نام کالا از خودِ فاکتور می‌آید — `returnable` فقط شناسه می‌دهد. */
   function nameOf(invoiceLineId: string) {
@@ -226,9 +181,14 @@ export function Returns() {
   return (
     <div className="stack" style={{ gap: "var(--s-4)" }}>
       <Glass as="section" className="pad" live>
-        <h2 style={{ marginTop: 0 }}>مرجوعی</h2>
+        <h2 style={{ marginTop: 0 }}>مرجوعی و تعویض</h2>
+        <div className="row" role="group" aria-label="نوع عملیات">
+          <button className="btn" type="button" disabled={!!operation.pending} aria-pressed={mode === "returns"} onClick={() => setMode("returns")}>مرجوعی</button>
+          <button className="btn" type="button" disabled={!!operation.pending} aria-pressed={mode === "exchanges"} onClick={() => setMode("exchanges")}>تعویض</button>
+        </div>
+        <ReturnRecovery operation={operation} />
         <p className="muted" style={{ marginTop: 0 }}>
-          شماره رسیدِ دست مشتری را وارد کنید.
+          شماره دقیق فاکتور یا شماره همراه ثبت‌شده مشتری را وارد کنید.
         </p>
 
         {branches.length > 1 ? (
@@ -238,7 +198,8 @@ export function Returns() {
                 key={b.id}
                 type="button"
                 className={b.id === branchId ? "btn btn--primary" : "btn"}
-                onClick={() => setBranchId(b.id)}
+                onClick={() => { setBranchId(b.id); setInvoice(null); setView(null); setMatches([]); }}
+                disabled={!!operation.pending}
               >
                 {b.name}
               </button>
@@ -255,23 +216,33 @@ export function Returns() {
           }}
         >
           <Solid className="auth-field">
-            <label htmlFor="ret-no">شماره فاکتور</label>
+            <label htmlFor="ret-lookup-kind">جست‌وجو با</label>
+            <select id="ret-lookup-kind" value={lookupKind} disabled={!!operation.pending} onChange={e => { setLookupKind(e.target.value as "number" | "phone"); setNumber(""); setMatches([]); setNextPage(null); }}>
+              <option value="number">شماره فاکتور</option><option value="phone">شماره همراه مشتری</option>
+            </select>
+            <label htmlFor="ret-no">{lookupKind === "number" ? "شماره فاکتور" : "شماره همراه"}</label>
             <input
               id="ret-no"
               value={number}
               onChange={(e) => setNumber(e.target.value)}
-              placeholder="F-1405-000123"
+              placeholder={lookupKind === "number" ? "F-1405-000123" : "۰۹۱۲…"}
+              disabled={!!operation.pending}
               autoComplete="off"
             />
           </Solid>
           <button
             type="submit"
             className="btn btn--primary"
-            disabled={busy || number.trim() === "" || branchId === ""}
+            disabled={busy || !!operation.pending || !operation.ready || number.trim() === "" || branchId === ""}
           >
             {busy ? "…" : "پیدا کن"}
           </button>
         </form>
+        <div className="stack">{matches.map(row => <button className="btn" type="button" key={row.id} disabled={busy || !!operation.pending}
+          onClick={() => void guarded(async () => loadInvoice(await api.get<Invoice>(`/invoices/${row.id}`)))}>
+          {row.number} · <Money rial={row.payableAmount} />
+        </button>)}</div>
+        {nextPage ? <button className="btn" disabled={busy || !!operation.pending} onClick={() => void lookup(nextPage)}>صفحه بعد</button> : null}
       </Glass>
 
       {error ? (
@@ -285,10 +256,10 @@ export function Returns() {
         </p>
       ) : null}
 
-      <WebRefundRequests key={branchId} branchId={branchId} />
+      {mode === "returns" ? <WebRefundRequests key={branchId} branchId={branchId} /> : null}
 
       {view && invoice ? (
-        <>
+        <fieldset className="stack" disabled={!!operation.pending} style={{ border: 0, padding: 0, minWidth: 0 }}>
           {view.late ? (
             <p className="solid pos-alert" role="status">
               <span className="dot dot--warn" aria-hidden="true">●</span> این فروش{" "}
@@ -340,6 +311,12 @@ export function Returns() {
                     <span className="num line-total">
                       {max === 0 ? "کاملاً برگشته" : `حداکثر ${max}`}
                     </span>
+                    {picked > 0 ? <label>وضعیت کالای برگشتی<select aria-label={`وضعیت برگشتی ${info.name}`}
+                      value={quality[l.invoiceLineId]?.restock === false ? "no_restock" : quality[l.invoiceLineId]?.condition ?? "sellable"}
+                      onChange={e => setQuality(current => ({ ...current, [l.invoiceLineId]: { restock: e.target.value !== "no_restock", condition: e.target.value === "defective" ? "defective" : "sellable" } }))}>
+                      <option value="sellable">سالم — بازگشت به انبار انتخاب‌شده</option><option value="defective">معیوب — انبار معیوب</option>
+                      <option value="no_restock">بدون بازگشت موجودی</option>
+                    </select></label> : null}
                   </li>
                 );
               })}
@@ -367,7 +344,7 @@ export function Returns() {
               <input value={note} onChange={(e) => setNote(e.target.value)} />
             </label>
 
-            <label className="auth-field">
+            {mode === "returns" ? <><label className="auth-field">
               <span>
                 مبلغ بازپرداخت (تومان) — خالی یعنی پیشنهاد سرور:{" "}
                 <span className="num">{toman(suggestion)}</span>
@@ -418,6 +395,7 @@ export function Returns() {
               </p>
             ) : null}
 
+            </> : null}
             {/*
               مقصد کالای سالم — قفسه یا آوتلت.
 
@@ -445,16 +423,18 @@ export function Returns() {
               </label>
             ) : null}
 
-            <button
-              type="button"
-              className="btn btn--primary"
-              disabled={busy || !ready || typedRefund === null || (method === "snappay" && (!refundPaymentId || !refundReference.trim())) || (typedRefund > 0n && (chosen?.kind === "cash" || method === "") && drawers.length > 1 && drawerId === "")}
-              onClick={() => void submit()}
-            >
-              {busy ? "…" : draft ? "ثبت دوباره" : "ثبت مرجوعی"}
-            </button>
+            {mode === "returns" ? <SafeAction trigger="۱. بررسی مرجوعی" title="۲. تأیید نهایی مرجوعی" triggerVariant="primary"
+              summary={<p>بازپرداخت: <Money rial={typedRefund} /></p>}
+              consequence="فقط اقلام و تعداد انتخاب‌شده به انبار برمی‌گردند و تسویه مالی هم‌زمان ثبت می‌شود."
+              confirmLabel="اقلام و مبلغ را تأیید می‌کنم؛ ثبت مرجوعی" pendingLabel="در حال ثبت مرجوعی…"
+              disabled={busy || !!operation.pending || !operation.ready || !ready || typedRefund === null || (method === "snappay" && (!refundPaymentId || !refundReference.trim())) || (typedRefund > 0n && (chosen?.kind === "cash" || method === "") && drawers.length > 1 && drawerId === "")}
+              run={submit} verify={operation.verify} onDone={() => undefined} /> : null}
           </Solid>
-        </>
+          {mode === "exchanges" ? <ExchangePanel key={invoice.id} invoice={invoice} lines={selectedLines} reasonCode={reason} reasonNote={note}
+            returnWarehouseId={destWh || invoice.warehouseId} warehouses={branches.find(b => b.id === invoice.branchId)?.warehouses ?? []}
+            methods={methods} locked={busy || !!operation.pending || !operation.ready}
+            run={body => operation.run("exchanges", body)} verify={operation.verify} /> : null}
+        </fieldset>
       ) : null}
     </div>
   );
