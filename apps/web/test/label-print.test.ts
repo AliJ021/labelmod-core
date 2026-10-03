@@ -1,5 +1,4 @@
 import { describe, test } from "node:test";
-import { ROLL_MIN_HEIGHT_MM, ROLL_MIN_WIDTH_MM } from "../../api/src/catalog/label.ts";
 import assert from "node:assert/strict";
 import {
   LABEL_PRESETS, MAX_TOTAL, clampCount, groupByProduct, labelRequestBody, labelRequestProblem,
@@ -45,9 +44,12 @@ describe("فهرست چاپ گروهی لیبل", () => {
     assert.equal(labelRequestProblem([item("v1", "p1", 1)], { layout: "a4", width: NaN, height: NaN }), null);
   });
 
-  test("کمینهٔ اندازه همان کمینهٔ سرور است و ابعاد ناممکن با پیام روشن رد می‌شوند", () => {
-    assert.equal(ROLL_LIMITS.minWidth, ROLL_MIN_WIDTH_MM);
-    assert.equal(ROLL_LIMITS.minHeight, ROLL_MIN_HEIGHT_MM);
+  test("کمینهٔ اندازه همان کمینهٔ سرور است و ابعاد ناممکن با پیام روشن رد می‌شوند", async () => {
+    // مسیر رشته‌ای: ایمیج وب `apps/api` را ندارد و `tsc` بیلد آن نباید این را دنبال کند.
+    const serverModule = "../../api/src/catalog/label.ts";
+    const server = (await import(serverModule)) as { ROLL_MIN_WIDTH_MM: number; ROLL_MIN_HEIGHT_MM: number };
+    assert.equal(ROLL_LIMITS.minWidth, server.ROLL_MIN_WIDTH_MM);
+    assert.equal(ROLL_LIMITS.minHeight, server.ROLL_MIN_HEIGHT_MM);
     const one = [item("v1", "p1", 1)];
     assert.match(labelRequestProblem(one, { layout: "roll", width: 50, height: 10 }) ?? "", /ارتفاع.*قیمت و بارکد/);
     assert.match(labelRequestProblem(one, { layout: "roll", width: 20, height: 20 }) ?? "", /عرض.*حاشیهٔ سکوت/);
