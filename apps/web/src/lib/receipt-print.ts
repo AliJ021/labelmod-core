@@ -34,7 +34,9 @@ export function printReceipt(invoiceId: string, signal: AbortSignal): Promise<vo
       await doc.fonts.ready;
       // The embedded brand logo must be decoded before print, or the header can print empty.
       // A broken image falls back to its alt text (the shop name) instead of blocking the sale receipt.
-      await Promise.all(Array.from(doc.images, img => img.complete && img.naturalWidth > 0
+      // `complete` also covers a failed image: its error event has already fired.
+      // decode() rejects for that case, so the alt-text fallback can print immediately.
+      await Promise.all(Array.from(doc.images, img => img.complete
         ? img.decode().catch(() => undefined)
         : new Promise<void>(done => {
           img.addEventListener("load", () => done(), { once: true });
