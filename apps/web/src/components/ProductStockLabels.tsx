@@ -38,6 +38,12 @@ export function ProductStockLabels({ productId, productName, variations, selecte
     return () => c.abort();
   }, [productId, revision]);
 
+  // قیمت/بارکدی که پس از افزودن به فهرست در همین صفحه تعیین شد، به فهرست گروهی هم برسد؛
+  // وگرنه هشدار «بدون قیمت» برای لیبلی می‌ماند که سرور با قیمت تازه چاپش می‌کند.
+  useEffect(() => {
+    labelQueue.syncMeta(variations.map((v) => ({ variationId: v.id, priced: v.price !== null, hasBarcode: v.barcode !== null && v.barcode !== "" })));
+  }, [variations]);
+
   // تیک جدول تنوع‌ها: تازه‌انتخاب‌شده دست‌کم ۱، برداشته‌شده صفر — هنگام
   // رندر (الگوی «تنظیم state از تغییر prop»)، نه با Effect پس از نقاشی.
   const [lastSelected, setLastSelected] = useState<string[]>([]);

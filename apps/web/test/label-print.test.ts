@@ -2,7 +2,7 @@ import { describe, test } from "node:test";
 import assert from "node:assert/strict";
 import {
   LABEL_PRESETS, MAX_TOTAL, clampCount, groupByProduct, labelContentWarning, labelRequestBody, labelRequestProblem,
-  labelSizeProblem, mergeQueue, queueTotal, ROLL_LIMITS, setQueueCount, type QueueItem,
+  labelSizeIssues, labelSizeProblem, mergeQueue, syncQueueMeta, queueTotal, ROLL_LIMITS, setQueueCount, type QueueItem,
 } from "../src/lib/label-print.ts";
 import { DEFAULT_SIZE_CHOICE, parseSizeChoice } from "../src/lib/label-size.ts";
 
@@ -118,6 +118,37 @@ describe("فهرست چاپ گروهی لیبل", () => {
     q = mergeQueue(q, [item("v3", "p2", 1)]);
     assert.deepEqual(q.map((i) => [i.count, i.priced, i.hasBarcode]), [[3, false, true]]);
     assert.ok(!("priced" in mergeQueue([item("v4", "p3", 1)], [item("v4", "p3", 1)])[0]!), "نامعلوم نامعلوم می‌ماند");
+  });
+
+  test("خطای اندازه به‌ازای هر بُعد: بُعد درست نامعتبر اعلام نمی‌شود", () => {
+    const w = labelSizeIssues({ layout: "roll", width: 25, height: 30 });
+    assert.match(w.width ?? "", /عرض/); assert.equal(w.height, null);
+    const h = labelSizeIssues({ layout: "roll", width: 50, height: 15 });
+    assert.equal(h.width, null); assert.match(h.height ?? "", /ارتفاع/);
+    const both = labelSizeIssues({ layout: "roll", width: 25, height: 15 });
+    assert.ok(both.width && both.height);
+    assert.deepEqual(labelSizeIssues({ layout: "a4", width: NaN, height: NaN }), { width: null, height: null });
+  });
+
+  test("راه‌حل هشدار با مشکل جور است: بی‌بارکدِ قیمت‌دار به «قیمت تعیین کنید» فرستاده نمی‌شود", () => {
+    const barcodeOnly = labelContentWarning([{ count: 1, priced: true, hasBarcode: false }]) ?? "";
+    assert.match(barcodeOnly, /بارکد آن تنوع را بررسی کنید/);
+    assert.doesNotMatch(barcodeOnly, /قیمت را تعیین/);
+    assert.match(labelContentWarning([{ count: 1, priced: false, hasBarcode: true }]) ?? "", /پیش از چاپ قیمت را تعیین کنید/);
+    assert.match(labelContentWarning([{ count: 1, priced: false, hasBarcode: false }]) ?? "", /قیمت را تعیین و بارکد را بررسی کنید/);
+  });
+
+  test("دادهٔ تازهٔ کاتالوگ به تنوع‌های فهرست می‌رسد، بی‌تغییر تعداد و ترتیب و بی‌افزودن تنوع تازه", () => {
+    const q: QueueItem[] = [{ ...item("v1", "p1", 3), priced: false, hasBarcode: true }, item("v2", "p1", 1), item("v9", "p9", 2)];
+    const snapshot = JSON.stringify(q);
+    const next = syncQueueMeta(q, [{ variationId: "v1", priced: true, hasBarcode: true }, { variationId: "v2", priced: false, hasBarcode: true },
+      { variationId: "v5", priced: true, hasBarcode: true }]);
+    assert.equal(JSON.stringify(q), snapshot, "ورودی دست نمی‌خورد");
+    assert.deepEqual(next.map((i) => [i.variationId, i.count, i.priced, i.hasBarcode]),
+      [["v1", 3, true, true], ["v2", 1, false, true], ["v9", 2, undefined, undefined]]);
+    assert.equal(labelContentWarning(next.filter((i) => i.variationId === "v1")), null);
+    // بی‌تغییر: همان آرایه، تا ذخیره و رندرِ بی‌دلیل رخ ندهد.
+    assert.equal(syncQueueMeta(next, [{ variationId: "v1", priced: true, hasBarcode: true }]), next);
   });
 });
 

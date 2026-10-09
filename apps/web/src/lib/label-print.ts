@@ -66,6 +66,25 @@ export function mergeQueue(current: readonly QueueItem[], adds: readonly QueueIt
   return out;
 }
 
+/**
+ * قیمت/بارکدِ تازهٔ کاتالوگ برای تنوع‌هایی که از قبل در فهرست‌اند — تعداد و
+ * ترتیب دست نمی‌خورند و تنوعی به فهرست اضافه نمی‌شود. بی‌تغییر، همان آرایه
+ * برمی‌گردد تا ذخیره و رندرِ بی‌دلیل رخ ندهد.
+ */
+export function syncQueueMeta(
+  current: readonly QueueItem[],
+  facts: readonly { variationId: string; priced: boolean; hasBarcode: boolean }[],
+): readonly QueueItem[] {
+  let changed = false;
+  const next = current.map((i) => {
+    const f = facts.find((x) => x.variationId === i.variationId);
+    if (!f || (f.priced === i.priced && f.hasBarcode === i.hasBarcode)) return i;
+    changed = true;
+    return { ...i, priced: f.priced, hasBarcode: f.hasBarcode };
+  });
+  return changed ? next : current;
+}
+
 export function setQueueCount(current: readonly QueueItem[], variationId: string, count: number): QueueItem[] {
   const n = clampCount(count);
   return n === 0
@@ -96,13 +115,23 @@ const fa = (n: number) => n.toLocaleString("fa-IR");
  * شود، حتی پیش از انتخاب هر تنوعی. `null` یعنی معتبر.
  */
 export function labelSizeProblem(size: LabelSize): string | null {
-  if (size.layout !== "roll") return null;
+  const issues = labelSizeIssues(size);
+  return issues.width ?? issues.height;
+}
+
+/**
+ * خطای هر بُعد جدا — تا فقط میدانِ واقعاً نامعتبر `aria-invalid` بگیرد و
+ * صفحه‌خوان میدان درست را نادرست اعلام نکند.
+ */
+export function labelSizeIssues(size: LabelSize): { width: string | null; height: string | null } {
+  if (size.layout !== "roll") return { width: null, height: null };
   const { minWidth, maxWidth, minHeight, maxHeight } = ROLL_LIMITS;
-  if (!(size.width >= minWidth && size.width <= maxWidth))
-    return `عرض لیبل باید بین ${fa(minWidth)} و ${fa(maxWidth)} میلی‌متر باشد؛ باریک‌تر از ${fa(minWidth)} میلی‌متر بارکد با حاشیهٔ سکوت و قیمت کامل جا نمی‌شوند.`;
-  if (!(size.height >= minHeight && size.height <= maxHeight))
-    return `ارتفاع لیبل باید بین ${fa(minHeight)} و ${fa(maxHeight)} میلی‌متر باشد؛ کوتاه‌تر از ${fa(minHeight)} میلی‌متر نام، قیمت و بارکد خوانا با هم جا نمی‌شوند.`;
-  return null;
+  return {
+    width: size.width >= minWidth && size.width <= maxWidth ? null
+      : `عرض لیبل باید بین ${fa(minWidth)} و ${fa(maxWidth)} میلی‌متر باشد؛ باریک‌تر از ${fa(minWidth)} میلی‌متر بارکد با حاشیهٔ سکوت و قیمت کامل جا نمی‌شوند.`,
+    height: size.height >= minHeight && size.height <= maxHeight ? null
+      : `ارتفاع لیبل باید بین ${fa(minHeight)} و ${fa(maxHeight)} میلی‌متر باشد؛ کوتاه‌تر از ${fa(minHeight)} میلی‌متر نام، قیمت و بارکد خوانا با هم جا نمی‌شوند.`,
+  };
 }
 
 /** چرا این درخواست ارسال نمی‌شود — `null` یعنی معتبر. */
@@ -130,7 +159,11 @@ export function labelContentWarning(items: readonly { count: number; priced?: bo
     parts.push(`${fa(noPrice.length)} تنوع انتخاب‌شده قیمت ندارد و روی لیبلش «بدون قیمت» چاپ می‌شود`);
   if (noBarcode.length > 0)
     parts.push(`${fa(noBarcode.length)} تنوع بارکد ندارد و لیبلش فقط SKU دارد و اسکن نمی‌شود`);
-  return parts.length === 0 ? null : `${parts.join("؛ ")}. پیش از چاپ قیمت را تعیین کنید یا تعداد آن تنوع را صفر کنید.`;
+  if (parts.length === 0) return null;
+  // راه‌حل همان مشکلِ گفته‌شده: «قیمت تعیین کنید» تنوعِ بی‌بارکد را درست نمی‌کند.
+  const fix = noPrice.length > 0 && noBarcode.length > 0 ? "قیمت را تعیین و بارکد را بررسی کنید"
+    : noPrice.length > 0 ? "قیمت را تعیین کنید" : "بارکد آن تنوع را بررسی کنید";
+  return `${parts.join("؛ ")}. پیش از چاپ ${fix} یا تعداد آن تنوع را صفر کنید.`;
 }
 
 /** بدنهٔ `POST /labels` — شکل همان قرارداد موجود. */

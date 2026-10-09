@@ -5,7 +5,7 @@ import { StatusBadge } from "./ui/Status.tsx";
 import { normalizeDigits } from "../lib/settings-value.ts";
 import {
   DEFAULT_PRESET, LABEL_PRESETS, MAX_PER_VARIANT, MAX_TOTAL, groupByProduct, labelContentWarning, labelRequestBody,
-  labelRequestProblem, labelSizeProblem, queueTotal, type LabelLayout, type LabelSize,
+  labelRequestProblem, labelSizeIssues, labelSizeProblem, queueTotal, type LabelLayout, type LabelSize,
 } from "../lib/label-print.ts";
 import { labelQueue, useLabelQueue } from "../lib/label-queue.ts";
 import { labelSize, useLabelSizeChoice } from "../lib/label-size.ts";
@@ -38,9 +38,10 @@ export type LabelSizeState = ReturnType<typeof useLabelSize>;
 export function LabelSizeFields({ state, onChange, idPrefix }: { state: LabelSizeState; onChange: () => void; idPrefix: string }) {
   const { layout, preset, width, height } = state;
   // خطای اندازه کنار خودِ میدان‌ها، نه زیر دکمه‌ها؛ و پیش از انتخاب هر تنوعی هم دیده می‌شود.
-  const problem = labelSizeProblem(state.size);
-  const errorId = `${idPrefix}-size-error`;
-  const invalid = problem !== null ? { "aria-invalid": true as const, "aria-describedby": errorId } : {};
+  // هر بُعد خطای خودش را دارد: فقط میدانِ نامعتبر aria-invalid و توضیح خودش را می‌گیرد.
+  const issues = labelSizeIssues(state.size);
+  const widthId = `${idPrefix}-width-error`, heightId = `${idPrefix}-height-error`;
+  const invalidFor = (msg: string | null, id: string) => msg !== null ? { "aria-invalid": true as const, "aria-describedby": id } : {};
   return <div className="stack" style={{ gap: "var(--s-2)" }}>
     <div className="row" style={{ flexWrap: "wrap", gap: "var(--s-3)" }}>
       <label className="auth-field">نوع برچسب<select value={layout} onChange={(e) => { state.setLayout(e.target.value as LabelLayout); onChange(); }}>
@@ -52,10 +53,11 @@ export function LabelSizeFields({ state, onChange, idPrefix }: { state: LabelSiz
         </select></label> : null}
     </div>
     {layout === "roll" && preset === "custom" ? <div className="row" style={{ flexWrap: "wrap", gap: "var(--s-3)" }}>
-      <label className="auth-field">عرض لیبل (میلی‌متر)<input inputMode="decimal" value={width} {...invalid} onChange={(e) => { state.setWidth(e.target.value); onChange(); }} /></label>
-      <label className="auth-field">ارتفاع لیبل (میلی‌متر)<input inputMode="decimal" value={height} {...invalid} onChange={(e) => { state.setHeight(e.target.value); onChange(); }} /></label>
+      <label className="auth-field">عرض لیبل (میلی‌متر)<input inputMode="decimal" value={width} {...invalidFor(issues.width, widthId)} onChange={(e) => { state.setWidth(e.target.value); onChange(); }} /></label>
+      <label className="auth-field">ارتفاع لیبل (میلی‌متر)<input inputMode="decimal" value={height} {...invalidFor(issues.height, heightId)} onChange={(e) => { state.setHeight(e.target.value); onChange(); }} /></label>
     </div> : null}
-    {problem ? <p id={errorId} className="small" role="status" style={{ margin: 0 }}><StatusBadge state="warning" label="اندازه نامعتبر" /> {problem}</p> : null}
+    {([[issues.width, widthId], [issues.height, heightId]] as const).map(([msg, id]) => msg === null ? null
+      : <p key={id} id={id} className="small" role="status" style={{ margin: 0 }}><StatusBadge state="warning" label="اندازه نامعتبر" /> {msg}</p>)}
   </div>;
 }
 

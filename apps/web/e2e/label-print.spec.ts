@@ -91,6 +91,8 @@ test("an impossible custom size is flagged at the size fields with Persian digit
   const error = page.locator("#" + (await width.getAttribute("aria-describedby")));
   await expect(error).toContainText("عرض لیبل باید بین ۳۰ و ۱۲۰ میلی‌متر باشد");
   expect(await error.innerText()).not.toMatch(/[0-9]/);
+  // فقط بُعد نامعتبر: ارتفاعِ درست، نادرست اعلام نمی‌شود.
+  await expect(panel.getByRole("textbox", { name: "ارتفاع لیبل (میلی‌متر)" })).not.toHaveAttribute("aria-invalid", "true");
   await panel.getByRole("textbox", { name: "تعداد لیبل TR-1405-NAVY-S" }).fill("1");
   await expect(panel.getByRole("button", { name: "پیش‌نمایش لیبل‌های انتخاب‌شده" })).toBeDisabled();
   // همان پیام یک بار، نه یک بار کنار میدان و یک بار زیر دکمه‌ها.
