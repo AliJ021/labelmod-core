@@ -15,7 +15,8 @@
   html { min-height: 100%; background: linear-gradient(180deg, #F6F4F0 0%, var(--desk) 40%, var(--desk-2) 100%); }
   body {
     margin: 0; padding: 28px 14px 32px;
-    font-family: Vazirmatn, Vazir, Tahoma, "Segoe UI", sans-serif;
+    /* بی فونت‌های «FD» که رقم لاتین را فارسی می‌کشند؛ Vazirmatn و Tahoma رقم لاتین را لاتین می‌کشند. */
+    font-family: Vazirmatn, Tahoma, "Segoe UI", sans-serif;
     background: transparent;
     color: var(--ink); font-size: 13px; line-height: 1.6;
     -webkit-print-color-adjust: exact; print-color-adjust: exact;
@@ -93,6 +94,8 @@
   .due-tag { display: inline-block; padding: 1px 10px; border-radius: 999px; background: var(--ink); color: var(--paper); font-size: 12px; }
   .settle { margin-top: 10px; padding: 5px 8px; text-align: center; font-size: 11.5px; font-weight: 800; border: 1.5px dashed var(--line); border-radius: 8px; }
   .settle--open { border-style: solid; border-width: 2px; }
+  /* پیش‌فاکتور: هشدار قاب‌دار زیر سربرگ، روی کاغذ هم. */
+  .proforma-note { margin: 10px 0 0; padding: 6px 8px; text-align: center; font-size: 12px; font-weight: 800; border: 2px solid var(--line); border-radius: 8px; }
 
   .foot { margin-top: 16px; padding-top: 12px; border-top: 1.5px dashed var(--line); text-align: center; font-size: 11.5px; line-height: 1.8; }
   .foot strong { display: block; font-size: 14px; font-weight: 900; }
@@ -142,7 +145,7 @@
     .totals .grand th, .totals .grand td { font-size: 12pt; padding: 1.8mm 1.6mm 1.5mm; }
     .totals .due th, .totals .due td { font-size: 10pt; }
     .due-tag { font-size: 8pt; }
-    .settle, .foot { font-size: 8pt; }
+    .settle, .foot, .proforma-note { font-size: 8pt; }
     .foot strong { font-size: 10pt; }
     .foot .unit { font-size: 7pt; }
     /* یک قلم نباید وسطش بشکند (برای چاپگر صفحه‌ای و PDF). */
@@ -158,9 +161,9 @@
   </header>
   <dl class="meta">
     <div class="cell"><dt>شمارهٔ فاکتور</dt><dd><bdi dir="ltr" class="docno">F-1405-000124</bdi></dd></div>
-    <div class="cell"><dt>تاریخ و ساعت</dt><dd>۱۰ مهر ۱۴۰۵، ۱۹:۱۰</dd></div>
+    <div class="cell"><dt>تاریخ و ساعت</dt><dd>10 مهر 1405، 19:10</dd></div>
     <div class="cell"><dt>مشتری</dt><dd><bdi>مشتری عمومی</bdi></dd></div>
-    <div class="cell"><dt>اقلام</dt><dd>۳۲ قلم</dd></div>
+    <div class="cell"><dt>اقلام</dt><dd>32 قلم</dd></div>
   </dl>
 
   <table class="items">
@@ -169,148 +172,148 @@
       <tr><th class="idx">#</th><th>کالا · تعداد × قیمت واحد</th><th class="num">مبلغ</th></tr>
     </thead>
     <tbody class="item">
-      <tr><td class="idx">۱</td><td class="name" colspan="2">تی‌شرت نخی طرح ۱ <small>طوسی</small></td></tr>
-      <tr class="calc"><td class="idx"></td><td><span class="qty">۱</span> × <span class="unit">۱۸۹٬۰۰۰</span></td><td class="num">۱۷۰٬۱۰۰</td></tr>
-      <tr class="disc"><td class="idx"></td><td>تخفیف قلم</td><td class="num">− ۱۸٬۹۰۰</td></tr>
+      <tr><td class="idx">1</td><td class="name" colspan="2">تی‌شرت نخی طرح 1 <small>طوسی</small></td></tr>
+      <tr class="calc"><td class="idx"></td><td><span class="qty">1</span> × <span class="unit">189,000</span></td><td class="num">170,100</td></tr>
+      <tr class="disc"><td class="idx"></td><td>تخفیف قلم</td><td class="num"><bdi dir="ltr">− 18,900</bdi></td></tr>
     </tbody>
     <tbody class="item">
-      <tr><td class="idx">۲</td><td class="name" colspan="2">تی‌شرت نخی طرح ۲ <small>سفید</small></td></tr>
-      <tr class="calc"><td class="idx"></td><td><span class="qty">۲</span> × <span class="unit">۱۹۰٬۰۰۰</span></td><td class="num">۳۸۰٬۰۰۰</td></tr>
+      <tr><td class="idx">2</td><td class="name" colspan="2">تی‌شرت نخی طرح 2 <small>سفید</small></td></tr>
+      <tr class="calc"><td class="idx"></td><td><span class="qty">2</span> × <span class="unit">190,000</span></td><td class="num">380,000</td></tr>
     </tbody>
     <tbody class="item">
-      <tr><td class="idx">۳</td><td class="name" colspan="2">تی‌شرت نخی طرح ۳ <small>سفید</small></td></tr>
-      <tr class="calc"><td class="idx"></td><td><span class="qty">۳</span> × <span class="unit">۱۹۱٬۰۰۰</span></td><td class="num">۵۷۳٬۰۰۰</td></tr>
+      <tr><td class="idx">3</td><td class="name" colspan="2">تی‌شرت نخی طرح 3 <small>سفید</small></td></tr>
+      <tr class="calc"><td class="idx"></td><td><span class="qty">3</span> × <span class="unit">191,000</span></td><td class="num">573,000</td></tr>
     </tbody>
     <tbody class="item">
-      <tr><td class="idx">۴</td><td class="name" colspan="2">تی‌شرت نخی طرح ۴ <small>طوسی</small></td></tr>
-      <tr class="calc"><td class="idx"></td><td><span class="qty">۱</span> × <span class="unit">۱۹۲٬۰۰۰</span></td><td class="num">۱۹۲٬۰۰۰</td></tr>
+      <tr><td class="idx">4</td><td class="name" colspan="2">تی‌شرت نخی طرح 4 <small>طوسی</small></td></tr>
+      <tr class="calc"><td class="idx"></td><td><span class="qty">1</span> × <span class="unit">192,000</span></td><td class="num">192,000</td></tr>
     </tbody>
     <tbody class="item">
-      <tr><td class="idx">۵</td><td class="name" colspan="2">تی‌شرت نخی طرح ۵ <small>سفید</small></td></tr>
-      <tr class="calc"><td class="idx"></td><td><span class="qty">۲</span> × <span class="unit">۱۹۳٬۰۰۰</span></td><td class="num">۳۸۶٬۰۰۰</td></tr>
+      <tr><td class="idx">5</td><td class="name" colspan="2">تی‌شرت نخی طرح 5 <small>سفید</small></td></tr>
+      <tr class="calc"><td class="idx"></td><td><span class="qty">2</span> × <span class="unit">193,000</span></td><td class="num">386,000</td></tr>
     </tbody>
     <tbody class="item">
-      <tr><td class="idx">۶</td><td class="name" colspan="2">تی‌شرت نخی طرح ۶ <small>سفید</small></td></tr>
-      <tr class="calc"><td class="idx"></td><td><span class="qty">۳</span> × <span class="unit">۱۹۴٬۰۰۰</span></td><td class="num">۵۶۳٬۱۰۰</td></tr>
-      <tr class="disc"><td class="idx"></td><td>تخفیف قلم</td><td class="num">− ۱۸٬۹۰۰</td></tr>
+      <tr><td class="idx">6</td><td class="name" colspan="2">تی‌شرت نخی طرح 6 <small>سفید</small></td></tr>
+      <tr class="calc"><td class="idx"></td><td><span class="qty">3</span> × <span class="unit">194,000</span></td><td class="num">563,100</td></tr>
+      <tr class="disc"><td class="idx"></td><td>تخفیف قلم</td><td class="num"><bdi dir="ltr">− 18,900</bdi></td></tr>
     </tbody>
     <tbody class="item">
-      <tr><td class="idx">۷</td><td class="name" colspan="2">تی‌شرت نخی طرح ۷ <small>طوسی</small></td></tr>
-      <tr class="calc"><td class="idx"></td><td><span class="qty">۱</span> × <span class="unit">۱۹۵٬۰۰۰</span></td><td class="num">۱۹۵٬۰۰۰</td></tr>
+      <tr><td class="idx">7</td><td class="name" colspan="2">تی‌شرت نخی طرح 7 <small>طوسی</small></td></tr>
+      <tr class="calc"><td class="idx"></td><td><span class="qty">1</span> × <span class="unit">195,000</span></td><td class="num">195,000</td></tr>
     </tbody>
     <tbody class="item">
-      <tr><td class="idx">۸</td><td class="name" colspan="2">تی‌شرت نخی طرح ۸ <small>سفید</small></td></tr>
-      <tr class="calc"><td class="idx"></td><td><span class="qty">۲</span> × <span class="unit">۱۹۶٬۰۰۰</span></td><td class="num">۳۹۲٬۰۰۰</td></tr>
+      <tr><td class="idx">8</td><td class="name" colspan="2">تی‌شرت نخی طرح 8 <small>سفید</small></td></tr>
+      <tr class="calc"><td class="idx"></td><td><span class="qty">2</span> × <span class="unit">196,000</span></td><td class="num">392,000</td></tr>
     </tbody>
     <tbody class="item">
-      <tr><td class="idx">۹</td><td class="name" colspan="2">تی‌شرت نخی طرح ۹ <small>سفید</small></td></tr>
-      <tr class="calc"><td class="idx"></td><td><span class="qty">۳</span> × <span class="unit">۱۹۷٬۰۰۰</span></td><td class="num">۵۹۱٬۰۰۰</td></tr>
+      <tr><td class="idx">9</td><td class="name" colspan="2">تی‌شرت نخی طرح 9 <small>سفید</small></td></tr>
+      <tr class="calc"><td class="idx"></td><td><span class="qty">3</span> × <span class="unit">197,000</span></td><td class="num">591,000</td></tr>
     </tbody>
     <tbody class="item">
-      <tr><td class="idx">۱۰</td><td class="name" colspan="2">تی‌شرت نخی طرح ۱۰ <small>طوسی</small></td></tr>
-      <tr class="calc"><td class="idx"></td><td><span class="qty">۱</span> × <span class="unit">۱۹۸٬۰۰۰</span></td><td class="num">۱۹۸٬۰۰۰</td></tr>
+      <tr><td class="idx">10</td><td class="name" colspan="2">تی‌شرت نخی طرح 10 <small>طوسی</small></td></tr>
+      <tr class="calc"><td class="idx"></td><td><span class="qty">1</span> × <span class="unit">198,000</span></td><td class="num">198,000</td></tr>
     </tbody>
     <tbody class="item">
-      <tr><td class="idx">۱۱</td><td class="name" colspan="2">تی‌شرت نخی طرح ۱۱ <small>سفید</small></td></tr>
-      <tr class="calc"><td class="idx"></td><td><span class="qty">۲</span> × <span class="unit">۱۹۹٬۰۰۰</span></td><td class="num">۳۷۹٬۱۰۰</td></tr>
-      <tr class="disc"><td class="idx"></td><td>تخفیف قلم</td><td class="num">− ۱۸٬۹۰۰</td></tr>
+      <tr><td class="idx">11</td><td class="name" colspan="2">تی‌شرت نخی طرح 11 <small>سفید</small></td></tr>
+      <tr class="calc"><td class="idx"></td><td><span class="qty">2</span> × <span class="unit">199,000</span></td><td class="num">379,100</td></tr>
+      <tr class="disc"><td class="idx"></td><td>تخفیف قلم</td><td class="num"><bdi dir="ltr">− 18,900</bdi></td></tr>
     </tbody>
     <tbody class="item">
-      <tr><td class="idx">۱۲</td><td class="name" colspan="2">تی‌شرت نخی طرح ۱۲ <small>سفید</small></td></tr>
-      <tr class="calc"><td class="idx"></td><td><span class="qty">۳</span> × <span class="unit">۲۰۰٬۰۰۰</span></td><td class="num">۶۰۰٬۰۰۰</td></tr>
+      <tr><td class="idx">12</td><td class="name" colspan="2">تی‌شرت نخی طرح 12 <small>سفید</small></td></tr>
+      <tr class="calc"><td class="idx"></td><td><span class="qty">3</span> × <span class="unit">200,000</span></td><td class="num">600,000</td></tr>
     </tbody>
     <tbody class="item">
-      <tr><td class="idx">۱۳</td><td class="name" colspan="2">تی‌شرت نخی طرح ۱۳ <small>طوسی</small></td></tr>
-      <tr class="calc"><td class="idx"></td><td><span class="qty">۱</span> × <span class="unit">۲۰۱٬۰۰۰</span></td><td class="num">۲۰۱٬۰۰۰</td></tr>
+      <tr><td class="idx">13</td><td class="name" colspan="2">تی‌شرت نخی طرح 13 <small>طوسی</small></td></tr>
+      <tr class="calc"><td class="idx"></td><td><span class="qty">1</span> × <span class="unit">201,000</span></td><td class="num">201,000</td></tr>
     </tbody>
     <tbody class="item">
-      <tr><td class="idx">۱۴</td><td class="name" colspan="2">تی‌شرت نخی طرح ۱۴ <small>سفید</small></td></tr>
-      <tr class="calc"><td class="idx"></td><td><span class="qty">۲</span> × <span class="unit">۲۰۲٬۰۰۰</span></td><td class="num">۴۰۴٬۰۰۰</td></tr>
+      <tr><td class="idx">14</td><td class="name" colspan="2">تی‌شرت نخی طرح 14 <small>سفید</small></td></tr>
+      <tr class="calc"><td class="idx"></td><td><span class="qty">2</span> × <span class="unit">202,000</span></td><td class="num">404,000</td></tr>
     </tbody>
     <tbody class="item">
-      <tr><td class="idx">۱۵</td><td class="name" colspan="2">تی‌شرت نخی طرح ۱۵ <small>سفید</small></td></tr>
-      <tr class="calc"><td class="idx"></td><td><span class="qty">۳</span> × <span class="unit">۲۰۳٬۰۰۰</span></td><td class="num">۶۰۹٬۰۰۰</td></tr>
+      <tr><td class="idx">15</td><td class="name" colspan="2">تی‌شرت نخی طرح 15 <small>سفید</small></td></tr>
+      <tr class="calc"><td class="idx"></td><td><span class="qty">3</span> × <span class="unit">203,000</span></td><td class="num">609,000</td></tr>
     </tbody>
     <tbody class="item">
-      <tr><td class="idx">۱۶</td><td class="name" colspan="2">تی‌شرت نخی طرح ۱۶ <small>طوسی</small></td></tr>
-      <tr class="calc"><td class="idx"></td><td><span class="qty">۱</span> × <span class="unit">۲۰۴٬۰۰۰</span></td><td class="num">۱۸۵٬۱۰۰</td></tr>
-      <tr class="disc"><td class="idx"></td><td>تخفیف قلم</td><td class="num">− ۱۸٬۹۰۰</td></tr>
+      <tr><td class="idx">16</td><td class="name" colspan="2">تی‌شرت نخی طرح 16 <small>طوسی</small></td></tr>
+      <tr class="calc"><td class="idx"></td><td><span class="qty">1</span> × <span class="unit">204,000</span></td><td class="num">185,100</td></tr>
+      <tr class="disc"><td class="idx"></td><td>تخفیف قلم</td><td class="num"><bdi dir="ltr">− 18,900</bdi></td></tr>
     </tbody>
     <tbody class="item">
-      <tr><td class="idx">۱۷</td><td class="name" colspan="2">تی‌شرت نخی طرح ۱۷ <small>سفید</small></td></tr>
-      <tr class="calc"><td class="idx"></td><td><span class="qty">۲</span> × <span class="unit">۲۰۵٬۰۰۰</span></td><td class="num">۴۱۰٬۰۰۰</td></tr>
+      <tr><td class="idx">17</td><td class="name" colspan="2">تی‌شرت نخی طرح 17 <small>سفید</small></td></tr>
+      <tr class="calc"><td class="idx"></td><td><span class="qty">2</span> × <span class="unit">205,000</span></td><td class="num">410,000</td></tr>
     </tbody>
     <tbody class="item">
-      <tr><td class="idx">۱۸</td><td class="name" colspan="2">تی‌شرت نخی طرح ۱۸ <small>سفید</small></td></tr>
-      <tr class="calc"><td class="idx"></td><td><span class="qty">۳</span> × <span class="unit">۲۰۶٬۰۰۰</span></td><td class="num">۶۱۸٬۰۰۰</td></tr>
+      <tr><td class="idx">18</td><td class="name" colspan="2">تی‌شرت نخی طرح 18 <small>سفید</small></td></tr>
+      <tr class="calc"><td class="idx"></td><td><span class="qty">3</span> × <span class="unit">206,000</span></td><td class="num">618,000</td></tr>
     </tbody>
     <tbody class="item">
-      <tr><td class="idx">۱۹</td><td class="name" colspan="2">تی‌شرت نخی طرح ۱۹ <small>طوسی</small></td></tr>
-      <tr class="calc"><td class="idx"></td><td><span class="qty">۱</span> × <span class="unit">۲۰۷٬۰۰۰</span></td><td class="num">۲۰۷٬۰۰۰</td></tr>
+      <tr><td class="idx">19</td><td class="name" colspan="2">تی‌شرت نخی طرح 19 <small>طوسی</small></td></tr>
+      <tr class="calc"><td class="idx"></td><td><span class="qty">1</span> × <span class="unit">207,000</span></td><td class="num">207,000</td></tr>
     </tbody>
     <tbody class="item">
-      <tr><td class="idx">۲۰</td><td class="name" colspan="2">تی‌شرت نخی طرح ۲۰ <small>سفید</small></td></tr>
-      <tr class="calc"><td class="idx"></td><td><span class="qty">۲</span> × <span class="unit">۲۰۸٬۰۰۰</span></td><td class="num">۴۱۶٬۰۰۰</td></tr>
+      <tr><td class="idx">20</td><td class="name" colspan="2">تی‌شرت نخی طرح 20 <small>سفید</small></td></tr>
+      <tr class="calc"><td class="idx"></td><td><span class="qty">2</span> × <span class="unit">208,000</span></td><td class="num">416,000</td></tr>
     </tbody>
     <tbody class="item">
-      <tr><td class="idx">۲۱</td><td class="name" colspan="2">تی‌شرت نخی طرح ۲۱ <small>سفید</small></td></tr>
-      <tr class="calc"><td class="idx"></td><td><span class="qty">۳</span> × <span class="unit">۲۰۹٬۰۰۰</span></td><td class="num">۶۰۸٬۱۰۰</td></tr>
-      <tr class="disc"><td class="idx"></td><td>تخفیف قلم</td><td class="num">− ۱۸٬۹۰۰</td></tr>
+      <tr><td class="idx">21</td><td class="name" colspan="2">تی‌شرت نخی طرح 21 <small>سفید</small></td></tr>
+      <tr class="calc"><td class="idx"></td><td><span class="qty">3</span> × <span class="unit">209,000</span></td><td class="num">608,100</td></tr>
+      <tr class="disc"><td class="idx"></td><td>تخفیف قلم</td><td class="num"><bdi dir="ltr">− 18,900</bdi></td></tr>
     </tbody>
     <tbody class="item">
-      <tr><td class="idx">۲۲</td><td class="name" colspan="2">تی‌شرت نخی طرح ۲۲ <small>طوسی</small></td></tr>
-      <tr class="calc"><td class="idx"></td><td><span class="qty">۱</span> × <span class="unit">۲۱۰٬۰۰۰</span></td><td class="num">۲۱۰٬۰۰۰</td></tr>
+      <tr><td class="idx">22</td><td class="name" colspan="2">تی‌شرت نخی طرح 22 <small>طوسی</small></td></tr>
+      <tr class="calc"><td class="idx"></td><td><span class="qty">1</span> × <span class="unit">210,000</span></td><td class="num">210,000</td></tr>
     </tbody>
     <tbody class="item">
-      <tr><td class="idx">۲۳</td><td class="name" colspan="2">تی‌شرت نخی طرح ۲۳ <small>سفید</small></td></tr>
-      <tr class="calc"><td class="idx"></td><td><span class="qty">۲</span> × <span class="unit">۲۱۱٬۰۰۰</span></td><td class="num">۴۲۲٬۰۰۰</td></tr>
+      <tr><td class="idx">23</td><td class="name" colspan="2">تی‌شرت نخی طرح 23 <small>سفید</small></td></tr>
+      <tr class="calc"><td class="idx"></td><td><span class="qty">2</span> × <span class="unit">211,000</span></td><td class="num">422,000</td></tr>
     </tbody>
     <tbody class="item">
-      <tr><td class="idx">۲۴</td><td class="name" colspan="2">تی‌شرت نخی طرح ۲۴ <small>سفید</small></td></tr>
-      <tr class="calc"><td class="idx"></td><td><span class="qty">۳</span> × <span class="unit">۲۱۲٬۰۰۰</span></td><td class="num">۶۳۶٬۰۰۰</td></tr>
+      <tr><td class="idx">24</td><td class="name" colspan="2">تی‌شرت نخی طرح 24 <small>سفید</small></td></tr>
+      <tr class="calc"><td class="idx"></td><td><span class="qty">3</span> × <span class="unit">212,000</span></td><td class="num">636,000</td></tr>
     </tbody>
     <tbody class="item">
-      <tr><td class="idx">۲۵</td><td class="name" colspan="2">تی‌شرت نخی طرح ۲۵ <small>طوسی</small></td></tr>
-      <tr class="calc"><td class="idx"></td><td><span class="qty">۱</span> × <span class="unit">۲۱۳٬۰۰۰</span></td><td class="num">۲۱۳٬۰۰۰</td></tr>
+      <tr><td class="idx">25</td><td class="name" colspan="2">تی‌شرت نخی طرح 25 <small>طوسی</small></td></tr>
+      <tr class="calc"><td class="idx"></td><td><span class="qty">1</span> × <span class="unit">213,000</span></td><td class="num">213,000</td></tr>
     </tbody>
     <tbody class="item">
-      <tr><td class="idx">۲۶</td><td class="name" colspan="2">تی‌شرت نخی طرح ۲۶ <small>سفید</small></td></tr>
-      <tr class="calc"><td class="idx"></td><td><span class="qty">۲</span> × <span class="unit">۲۱۴٬۰۰۰</span></td><td class="num">۴۰۹٬۱۰۰</td></tr>
-      <tr class="disc"><td class="idx"></td><td>تخفیف قلم</td><td class="num">− ۱۸٬۹۰۰</td></tr>
+      <tr><td class="idx">26</td><td class="name" colspan="2">تی‌شرت نخی طرح 26 <small>سفید</small></td></tr>
+      <tr class="calc"><td class="idx"></td><td><span class="qty">2</span> × <span class="unit">214,000</span></td><td class="num">409,100</td></tr>
+      <tr class="disc"><td class="idx"></td><td>تخفیف قلم</td><td class="num"><bdi dir="ltr">− 18,900</bdi></td></tr>
     </tbody>
     <tbody class="item">
-      <tr><td class="idx">۲۷</td><td class="name" colspan="2">تی‌شرت نخی طرح ۲۷ <small>سفید</small></td></tr>
-      <tr class="calc"><td class="idx"></td><td><span class="qty">۳</span> × <span class="unit">۲۱۵٬۰۰۰</span></td><td class="num">۶۴۵٬۰۰۰</td></tr>
+      <tr><td class="idx">27</td><td class="name" colspan="2">تی‌شرت نخی طرح 27 <small>سفید</small></td></tr>
+      <tr class="calc"><td class="idx"></td><td><span class="qty">3</span> × <span class="unit">215,000</span></td><td class="num">645,000</td></tr>
     </tbody>
     <tbody class="item">
-      <tr><td class="idx">۲۸</td><td class="name" colspan="2">تی‌شرت نخی طرح ۲۸ <small>طوسی</small></td></tr>
-      <tr class="calc"><td class="idx"></td><td><span class="qty">۱</span> × <span class="unit">۲۱۶٬۰۰۰</span></td><td class="num">۲۱۶٬۰۰۰</td></tr>
+      <tr><td class="idx">28</td><td class="name" colspan="2">تی‌شرت نخی طرح 28 <small>طوسی</small></td></tr>
+      <tr class="calc"><td class="idx"></td><td><span class="qty">1</span> × <span class="unit">216,000</span></td><td class="num">216,000</td></tr>
     </tbody>
     <tbody class="item">
-      <tr><td class="idx">۲۹</td><td class="name" colspan="2">تی‌شرت نخی طرح ۲۹ <small>سفید</small></td></tr>
-      <tr class="calc"><td class="idx"></td><td><span class="qty">۲</span> × <span class="unit">۲۱۷٬۰۰۰</span></td><td class="num">۴۳۴٬۰۰۰</td></tr>
+      <tr><td class="idx">29</td><td class="name" colspan="2">تی‌شرت نخی طرح 29 <small>سفید</small></td></tr>
+      <tr class="calc"><td class="idx"></td><td><span class="qty">2</span> × <span class="unit">217,000</span></td><td class="num">434,000</td></tr>
     </tbody>
     <tbody class="item">
-      <tr><td class="idx">۳۰</td><td class="name" colspan="2">تی‌شرت نخی طرح ۳۰ <small>سفید</small></td></tr>
-      <tr class="calc"><td class="idx"></td><td><span class="qty">۳</span> × <span class="unit">۲۱۸٬۰۰۰</span></td><td class="num">۶۵۴٬۰۰۰</td></tr>
+      <tr><td class="idx">30</td><td class="name" colspan="2">تی‌شرت نخی طرح 30 <small>سفید</small></td></tr>
+      <tr class="calc"><td class="idx"></td><td><span class="qty">3</span> × <span class="unit">218,000</span></td><td class="num">654,000</td></tr>
     </tbody>
     <tbody class="item">
-      <tr><td class="idx">۳۱</td><td class="name" colspan="2">تی‌شرت نخی طرح ۳۱ <small>طوسی</small></td></tr>
-      <tr class="calc"><td class="idx"></td><td><span class="qty">۱</span> × <span class="unit">۲۱۹٬۰۰۰</span></td><td class="num">۲۰۰٬۱۰۰</td></tr>
-      <tr class="disc"><td class="idx"></td><td>تخفیف قلم</td><td class="num">− ۱۸٬۹۰۰</td></tr>
+      <tr><td class="idx">31</td><td class="name" colspan="2">تی‌شرت نخی طرح 31 <small>طوسی</small></td></tr>
+      <tr class="calc"><td class="idx"></td><td><span class="qty">1</span> × <span class="unit">219,000</span></td><td class="num">200,100</td></tr>
+      <tr class="disc"><td class="idx"></td><td>تخفیف قلم</td><td class="num"><bdi dir="ltr">− 18,900</bdi></td></tr>
     </tbody>
     <tbody class="item">
-      <tr><td class="idx">۳۲</td><td class="name" colspan="2">تی‌شرت نخی طرح ۳۲ <small>سفید</small></td></tr>
-      <tr class="calc"><td class="idx"></td><td><span class="qty">۲</span> × <span class="unit">۲۲۰٬۰۰۰</span></td><td class="num">۴۴۰٬۰۰۰</td></tr>
+      <tr><td class="idx">32</td><td class="name" colspan="2">تی‌شرت نخی طرح 32 <small>سفید</small></td></tr>
+      <tr class="calc"><td class="idx"></td><td><span class="qty">2</span> × <span class="unit">220,000</span></td><td class="num">440,000</td></tr>
     </tbody>
   </table>
 
   <table class="totals">
-    <tr><th>جمع کالاها</th><td class="num">۱۲٬۷۵۶٬۷۰۰</td></tr>
-    <tr class="incl"><th>شامل تخفیف اقلام</th><td class="num">۱۳۲٬۳۰۰</td></tr>
+    <tr><th>جمع کالاها</th><td class="num">12,756,700</td></tr>
+    <tr class="incl"><th>شامل تخفیف اقلام</th><td class="num">132,300</td></tr>
     
-    <tr class="grand"><th>قابل پرداخت</th><td class="num">۱۲٬۷۵۶٬۷۰۰ <small>تومان</small></td></tr>
-    <tr class="paid"><th>پرداخت‌شده</th><td class="num">۱۲٬۷۵۶٬۷۰۰</td></tr>
+    <tr class="grand"><th>قابل پرداخت</th><td class="num">12,756,700 <small>تومان</small></td></tr>
+    <tr class="paid"><th>پرداخت‌شده</th><td class="num">12,756,700</td></tr>
     
     
   </table>
@@ -318,7 +321,7 @@
 
   <footer class="foot">
     <strong>سپاس از خرید شما</strong>
-    <div class="policy">مهلت مرجوعی: ۲ روز (۴۸ ساعت) پس از خرید</div>
+    <div class="policy">مهلت مرجوعی: 2 روز (48 ساعت) پس از خرید</div>
     <div class="site"><bdi dir="ltr">labelmod.ir</bdi></div>
     <div class="unit">همه مبالغ به تومان است.</div>
   </footer>

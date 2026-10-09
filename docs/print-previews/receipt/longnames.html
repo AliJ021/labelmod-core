@@ -15,7 +15,8 @@
   html { min-height: 100%; background: linear-gradient(180deg, #F6F4F0 0%, var(--desk) 40%, var(--desk-2) 100%); }
   body {
     margin: 0; padding: 28px 14px 32px;
-    font-family: Vazirmatn, Vazir, Tahoma, "Segoe UI", sans-serif;
+    /* بی فونت‌های «FD» که رقم لاتین را فارسی می‌کشند؛ Vazirmatn و Tahoma رقم لاتین را لاتین می‌کشند. */
+    font-family: Vazirmatn, Tahoma, "Segoe UI", sans-serif;
     background: transparent;
     color: var(--ink); font-size: 13px; line-height: 1.6;
     -webkit-print-color-adjust: exact; print-color-adjust: exact;
@@ -93,6 +94,8 @@
   .due-tag { display: inline-block; padding: 1px 10px; border-radius: 999px; background: var(--ink); color: var(--paper); font-size: 12px; }
   .settle { margin-top: 10px; padding: 5px 8px; text-align: center; font-size: 11.5px; font-weight: 800; border: 1.5px dashed var(--line); border-radius: 8px; }
   .settle--open { border-style: solid; border-width: 2px; }
+  /* پیش‌فاکتور: هشدار قاب‌دار زیر سربرگ، روی کاغذ هم. */
+  .proforma-note { margin: 10px 0 0; padding: 6px 8px; text-align: center; font-size: 12px; font-weight: 800; border: 2px solid var(--line); border-radius: 8px; }
 
   .foot { margin-top: 16px; padding-top: 12px; border-top: 1.5px dashed var(--line); text-align: center; font-size: 11.5px; line-height: 1.8; }
   .foot strong { display: block; font-size: 14px; font-weight: 900; }
@@ -142,7 +145,7 @@
     .totals .grand th, .totals .grand td { font-size: 12pt; padding: 1.8mm 1.6mm 1.5mm; }
     .totals .due th, .totals .due td { font-size: 10pt; }
     .due-tag { font-size: 8pt; }
-    .settle, .foot { font-size: 8pt; }
+    .settle, .foot, .proforma-note { font-size: 8pt; }
     .foot strong { font-size: 10pt; }
     .foot .unit { font-size: 7pt; }
     /* یک قلم نباید وسطش بشکند (برای چاپگر صفحه‌ای و PDF). */
@@ -158,9 +161,9 @@
   </header>
   <dl class="meta">
     <div class="cell"><dt>شمارهٔ فاکتور</dt><dd><bdi dir="ltr" class="docno">WEB-1405-000127-LONG</bdi></dd></div>
-    <div class="cell"><dt>تاریخ و ساعت</dt><dd>۱۰ مهر ۱۴۰۵، ۱۹:۱۰</dd></div>
+    <div class="cell"><dt>تاریخ و ساعت</dt><dd>10 مهر 1405، 19:10</dd></div>
     <div class="cell"><dt>مشتری</dt><dd><bdi>Elizabeth Alexandra Montgomery-Smith / الیزابت</bdi></dd></div>
-    <div class="cell"><dt>اقلام</dt><dd>۲ قلم</dd></div>
+    <div class="cell"><dt>اقلام</dt><dd>2 قلم</dd></div>
   </dl>
 
   <table class="items">
@@ -169,30 +172,30 @@
       <tr><th class="idx">#</th><th>کالا · تعداد × قیمت واحد</th><th class="num">مبلغ</th></tr>
     </thead>
     <tbody class="item">
-      <tr><td class="idx">۱</td><td class="name" colspan="2">Oversized Linen Overshirt — Limited Atelier Collection Spring/Summer 2026 (Handmade) <small>Sand Beige / بژ شنی</small></td></tr>
-      <tr class="calc"><td class="idx"></td><td><span class="qty">۱</span> × <span class="unit">۷٬۵۰۰٬۰۰۰</span></td><td class="num">۷٬۵۰۰٬۰۰۰</td></tr>
+      <tr><td class="idx">1</td><td class="name" colspan="2">Oversized Linen Overshirt — Limited Atelier Collection Spring/Summer 2026 (Handmade) <small>Sand Beige / بژ شنی</small></td></tr>
+      <tr class="calc"><td class="idx"></td><td><span class="qty">1</span> × <span class="unit">7,500,000</span></td><td class="num">7,500,000</td></tr>
     </tbody>
     <tbody class="item">
-      <tr><td class="idx">۲</td><td class="name" colspan="2">دامن پلیسه بلند با کمربند پارچه‌ای و آستر ساتن مدل پاییزه‌ی محدود کالکشن ویژهٔ افتتاحیهٔ شعبهٔ مرکزی <small>زرشکی</small></td></tr>
-      <tr class="calc"><td class="idx"></td><td><span class="qty">۱</span> × <span class="unit">۴٬۱۲۵٬۰۰۰</span></td><td class="num">۴٬۰۰۰٬۰۰۰</td></tr>
-      <tr class="disc"><td class="idx"></td><td>تخفیف قلم</td><td class="num">− ۱۲۵٬۰۰۰</td></tr>
+      <tr><td class="idx">2</td><td class="name" colspan="2">دامن پلیسه بلند با کمربند پارچه‌ای و آستر ساتن مدل پاییزه‌ی محدود کالکشن ویژهٔ افتتاحیهٔ شعبهٔ مرکزی <small>زرشکی</small></td></tr>
+      <tr class="calc"><td class="idx"></td><td><span class="qty">1</span> × <span class="unit">4,125,000</span></td><td class="num">4,000,000</td></tr>
+      <tr class="disc"><td class="idx"></td><td>تخفیف قلم</td><td class="num"><bdi dir="ltr">− 125,000</bdi></td></tr>
     </tbody>
   </table>
 
   <table class="totals">
-    <tr><th>جمع کالاها</th><td class="num">۱۱٬۵۰۰٬۰۰۰</td></tr>
-    <tr class="incl"><th>شامل تخفیف اقلام</th><td class="num">۱۲۵٬۰۰۰</td></tr>
+    <tr><th>جمع کالاها</th><td class="num">11,500,000</td></tr>
+    <tr class="incl"><th>شامل تخفیف اقلام</th><td class="num">125,000</td></tr>
     
-    <tr class="grand"><th>قابل پرداخت</th><td class="num">۱۱٬۵۰۰٬۰۰۰ <small>تومان</small></td></tr>
-    <tr class="paid"><th>پرداخت‌شده</th><td class="num">۱٬۵۰۰٬۰۰۰</td></tr>
-    <tr><th>تسویه از تعویض</th><td class="num">۱۰٬۰۰۰٬۰۰۰</td></tr>
+    <tr class="grand"><th>قابل پرداخت</th><td class="num">11,500,000 <small>تومان</small></td></tr>
+    <tr class="paid"><th>پرداخت‌شده</th><td class="num">1,500,000</td></tr>
+    <tr><th>تسویه از تعویض</th><td class="num">10,000,000</td></tr>
     
   </table>
   <div class="settle">تسویه‌شده</div>
 
   <footer class="foot">
     <strong>سپاس از خرید شما</strong>
-    <div class="policy">مهلت مرجوعی: ۲ روز (۴۸ ساعت) پس از خرید</div>
+    <div class="policy">مهلت مرجوعی: 2 روز (48 ساعت) پس از خرید</div>
     <div class="site"><bdi dir="ltr">labelmod.ir</bdi></div>
     <div class="unit">همه مبالغ به تومان است.</div>
   </footer>

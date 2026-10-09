@@ -34,35 +34,48 @@
 دادهٔ ساختگی). `*-print.png` رندر رسانهٔ print با پهنای ۸۰mm است، `*-80mm.pdf` همان صفحه با کاغذ
 ۸۰mm (یک برگ پیوسته به طول محتوا، مثل رول)، و `*-screen-phone.png` نسخهٔ صفحهٔ مشتری در ۳۹۰px.
 
-پنج سناریو: `standard` (تخفیف قلم و مانده)، `rows32` (۳۲ قلم)، `zero100` (تخفیف ۱۰۰٪ و جمع صفر)،
-`debtor` (کرایه، پرداخت جزئی، بدهکار)، `longnames` (نام بلند فارسی/لاتین، تسویه از تعویض).
-در هر پنج سناریو هیچ عنصری از پهنای ۷۲mm بیرون نزد و هیچ عدد یا نامی بریده نشد (سنجش خودکار
-روی DOM رندرشده). جای چاپ فیزیکی روی MEVA TP-UNW را نمی‌گیرد؛ مرورگر بی تأیید کاربر چاپ نمی‌کند.
+شش سناریو: `standard` (تخفیف قلم و مانده)، `rows32` (۳۲ قلم)، `zero100` (تخفیف ۱۰۰٪ و جمع صفر)،
+`debtor` (کرایه، پرداخت جزئی، بدهکار)، `longnames` (نام بلند فارسی/لاتین، تسویه از تعویض)، و
+`proforma` (پیش‌فاکتور با `documentKind: "proforma"`: همان اقلام و مبالغ `standard`، تیتر «پیش‌فاکتور»،
+هشدار «فاکتور نهایی نیست»، «شمارهٔ مرجع» همان رشتهٔ فراخوان، بی وضعیت تسویه).
+در هر شش سناریو هیچ عنصری از پهنای ۷۲mm بیرون نزد، هیچ عدد یا نامی بریده نشد و **هیچ رقم فارسی یا
+عربی در متن صفحه نماند** (سنجش خودکار روی DOM رندرشده؛ نام کالای نمونه عمداً رقم فارسی دارد).
+
+**رقم‌ها لاتین‌اند** (خواستهٔ مالک ۱۴۰۵/۰۷/۱۷): مبلغ، تعداد، شمارهٔ ردیف، شماره، تاریخ جلالی
+(`numberingSystem: "latn"`)، ساعت، مهلت مرجوعی و رقم‌های فارسی/عربی متن ورودی. تقویم جلالی، متن
+فارسی و RTL همان‌اند و فهرست فونت هیچ فونت «FD» ندارد. پیش‌نمایش لیبل در این سند جداست و تغییر نکرد.
+
+این تصویرها جای چاپ فیزیکی روی MEVA TP-UNW را نمی‌گیرد؛ مرورگر بی تأیید کاربر چاپ نمی‌کند.
 
 | فایل | SHA-256 |
 |---|---|
-| `receipt-80mm-print.png` | `de07e603c1105ffb…` |
-| `receipt-80mm.pdf` | `23a639b33c8a1a3e…` |
-| `receipt-phone-screen.png` | `47519f498934c2a1…` |
-| `receipt-sample.html` | `dfdda9bb9bc6bca5…` |
-| `receipt/debtor-80mm.pdf` | `b7a4bcaba871eab3…` |
-| `receipt/debtor-print.png` | `0d76f90e52352f89…` |
-| `receipt/debtor-screen-phone.png` | `adf57867f1c460f8…` |
-| `receipt/debtor.html` | `b506cd0e1f9078ef…` |
-| `receipt/longnames-80mm.pdf` | `eb1ebecab416b4b7…` |
-| `receipt/longnames-print.png` | `b73c7d04ee583b01…` |
-| `receipt/longnames-screen-phone.png` | `4acf83f66da5b6f4…` |
-| `receipt/longnames.html` | `2d22e60fff44158c…` |
-| `receipt/rows32-80mm.pdf` | `da8753a6987294da…` |
-| `receipt/rows32-print.png` | `8876cb3e00de8a94…` |
-| `receipt/rows32-screen-phone.png` | `044f6b395e04d7e2…` |
-| `receipt/rows32.html` | `55f1e73c039efa45…` |
-| `receipt/standard-80mm.pdf` | `23a639b33c8a1a3e…` |
-| `receipt/standard-print.png` | `de07e603c1105ffb…` |
-| `receipt/standard-screen-desktop.png` | `de461e051ba908fd…` |
-| `receipt/standard-screen-phone.png` | `47519f498934c2a1…` |
-| `receipt/standard.html` | `dfdda9bb9bc6bca5…` |
-| `receipt/zero100-80mm.pdf` | `db9c72dd6137e5e7…` |
-| `receipt/zero100-print.png` | `ccb94e40ea71f73c…` |
-| `receipt/zero100-screen-phone.png` | `bb99020132198640…` |
-| `receipt/zero100.html` | `d5522a87970c4e95…` |
+| `receipt-80mm-print.png` | `d63bdf0cb2317610…` |
+| `receipt-80mm.pdf` | `ae6dc963b2529ca2…` |
+| `receipt-phone-screen.png` | `a885266e5faa8441…` |
+| `receipt-sample.html` | `4074e84146d3d574…` |
+| `receipt/debtor-80mm.pdf` | `55785e6458ca9cee…` |
+| `receipt/debtor-print.png` | `22c7dfb9f0c2106b…` |
+| `receipt/debtor-screen-phone.png` | `b470016a1724b353…` |
+| `receipt/debtor.html` | `7c28b539723125fc…` |
+| `receipt/longnames-80mm.pdf` | `d5fb0654a5f4b358…` |
+| `receipt/longnames-print.png` | `f9db0cc8aaf7c56b…` |
+| `receipt/longnames-screen-phone.png` | `8ded2e0d0ef0a3d8…` |
+| `receipt/longnames.html` | `0e0113e7046302f0…` |
+| `receipt/proforma-80mm.pdf` | `984722ca887f3463…` |
+| `receipt/proforma-print.png` | `0bbd7d4f4d196dbd…` |
+| `receipt/proforma-screen-desktop.png` | `b020562a512ed4e0…` |
+| `receipt/proforma-screen-phone.png` | `f53243f903c010c5…` |
+| `receipt/proforma.html` | `4e1a607d532909e7…` |
+| `receipt/rows32-80mm.pdf` | `24813fae05df1705…` |
+| `receipt/rows32-print.png` | `14386847f3ae5335…` |
+| `receipt/rows32-screen-phone.png` | `38d46c2205712bd7…` |
+| `receipt/rows32.html` | `e6e703524e29da51…` |
+| `receipt/standard-80mm.pdf` | `ae6dc963b2529ca2…` |
+| `receipt/standard-print.png` | `d63bdf0cb2317610…` |
+| `receipt/standard-screen-desktop.png` | `c20ce5ee1e202694…` |
+| `receipt/standard-screen-phone.png` | `a885266e5faa8441…` |
+| `receipt/standard.html` | `4074e84146d3d574…` |
+| `receipt/zero100-80mm.pdf` | `0994d9d64309efcb…` |
+| `receipt/zero100-print.png` | `d6f3a4dac4d70664…` |
+| `receipt/zero100-screen-phone.png` | `33858f143f5ea399…` |
+| `receipt/zero100.html` | `bc372336acdb36d9…` |

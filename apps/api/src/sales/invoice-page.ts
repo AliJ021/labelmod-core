@@ -94,6 +94,13 @@ export interface InvoicePageData {
    * `null` یعنی بدون لوگو — آن‌وقت نام شعبه نشان متنی است.
    */
   logo?: ReceiptLogo | null;
+  /**
+   * `proforma` = پیش‌فاکتور پیش از نهایی‌سازی، برای بررسی اقلام و قیمت‌ها
+   * توسط مشتری. فقط تیتر و برچسب‌ها عوض می‌شود: وضعیت «تسویه‌شده» ندارد و
+   * شماره را «قطعی» نمی‌نامد (همان رشته‌ای که فراخوان داده نمایش داده
+   * می‌شود). هیچ مبلغی عوض نمی‌شود. پیش‌فرض `sale`.
+   */
+  documentKind?: "sale" | "proforma";
 }
 
 /** خواندن امن دو تنظیم پابرگ رسید از ستون‌های خام SQL. */
@@ -109,11 +116,25 @@ export function receiptFooterFromSettings(raw: { return_hours: string | null; si
   };
 }
 
-/** «۴۸ ساعت» یا «۷ روز» — از همان عدد تنظیم، بی‌گرد کردن نادرست. */
+/**
+ * رقم‌های فاکتور لاتین‌اند (خواستهٔ مالک، ۱۴۰۵/۰۷/۱۷): مبلغ، تعداد، شماره،
+ * تاریخ جلالی، ساعت و مهلت مرجوعی. تقویم جلالی و متن فارسی و RTL می‌مانند؛
+ * فقط شکل رقم عوض می‌شود. ⚠️ `toToman` (متن پیامک) عمداً دست نخورده است.
+ */
+const latn = (n: number) => n.toLocaleString("en-US");
+
+/** رقم فارسی و عربی در متن ورودی (نام کالا، مشتری، شماره…) → ASCII. فقط رقم؛ متن دست نمی‌خورد. */
+export function latinDigits(text: string): string {
+  return text
+    .replace(/[\u06F0-\u06F9]/g, (d) => String(d.charCodeAt(0) - 0x06f0))
+    .replace(/[\u0660-\u0669]/g, (d) => String(d.charCodeAt(0) - 0x0660));
+}
+
+/** «48 ساعت» یا «2 روز (48 ساعت)» — از همان عدد تنظیم، بی‌گرد کردن نادرست. */
 function windowText(hours: number): string {
   return hours % 24 === 0 && hours >= 48
-    ? `${(hours / 24).toLocaleString("fa-IR")} روز (${hours.toLocaleString("fa-IR")} ساعت)`
-    : `${hours.toLocaleString("fa-IR")} ساعت`;
+    ? `${latn(hours / 24)} روز (${latn(hours)} ساعت)`
+    : `${latn(hours)} ساعت`;
 }
 
 /**
@@ -128,28 +149,29 @@ export function toToman(rial: bigint): string {
   return toman.toLocaleString("fa-IR");
 }
 
-/** تاریخ شمسی — مشتری تاریخ میلادی نمی‌خواند. */
+/** تاریخ شمسی با رقم لاتین — مشتری تاریخ میلادی نمی‌خواند؛ رقم‌ها مثل بقیهٔ فاکتور لاتین. */
 export function faDate(at: Date, timeZone: string): string {
   return new Intl.DateTimeFormat("fa-IR", {
     dateStyle: "medium",
     timeStyle: "short",
     timeZone,
+    numberingSystem: "latn",
   }).format(at);
 }
 
 /**
- * ریال → تومان **دقیق** برای صفحه رسید.
+ * ریال → تومان **دقیق** برای صفحه رسید، با رقم لاتین.
  *
  * `toToman` (بالا) برای متن پیامک است و کسر تومان را کنار می‌گذارد.
- * روی رسید چاپی هیچ ریالی نباید گم شود: ۱۲۳۴۵ ریال «۱٬۲۳۴٫۵» می‌شود، نه
- * «۱٬۲۳۴». حساب فقط روی bigint است؛ عدد شناور ساخته نمی‌شود.
+ * روی رسید چاپی هیچ ریالی نباید گم شود: ۱۲۳۴۵ ریال «1,234.5» می‌شود، نه
+ * «1,234». حساب فقط روی bigint است؛ عدد شناور ساخته نمی‌شود.
  */
 export function toTomanExact(rial: bigint): string {
   const negative = rial < 0n;
   const abs = negative ? -rial : rial;
-  const whole = (abs / 10n).toLocaleString("fa-IR");
+  const whole = (abs / 10n).toLocaleString("en-US");
   const fraction = abs % 10n;
-  const text = fraction === 0n ? whole : `${whole}٫${fraction.toLocaleString("fa-IR")}`;
+  const text = fraction === 0n ? whole : `${whole}.${fraction.toString()}`;
   return negative ? `−${text}` : text;
 }
 
@@ -188,7 +210,9 @@ export function toTomanExact(rial: bigint): string {
  */
 export function invoicePage(data: InvoicePageData, timeZone: string): string {
   const money = (rial: bigint) => esc(toTomanExact(rial));
-  const fa = (n: number) => n.toLocaleString("fa-IR");
+  // متن ورودی: رقم فارسی/عربی → لاتین، بعد escape.
+  const txt = (s: string) => esc(latinDigits(s));
+  const proforma = data.documentKind === "proforma";
   const items = data.lines
     .map((l, i) => {
       // فقط رنگِ ساخت‌یافته کنار نام می‌نشیند؛ سایز عمداً نه (بالا،
@@ -196,19 +220,20 @@ export function invoicePage(data: InvoicePageData, timeZone: string): string {
       // Regex از آن کنده نمی‌شود، حتی اگر شبیه سایز باشد.
       const name =
         l.color !== null && l.color !== ""
-          ? `${esc(l.productName)} <small>${esc(l.color)}</small>`
-          : esc(l.productName);
-      // تعداد «۲.۰۰۰» زشت است و «۲» درست: صفرهای اعشاری بی‌معنا حذف
-      // می‌شوند ولی «۱٫۵ متر» دست‌نخورده می‌ماند.
-      const qty = Number(l.qty).toLocaleString("fa-IR");
+          ? `${txt(l.productName)} <small>${txt(l.color)}</small>`
+          : txt(l.productName);
+      // تعداد «2.000» زشت است و «2» درست: صفرهای اعشاری بی‌معنا حذف
+      // می‌شوند ولی «1.5 متر» دست‌نخورده می‌ماند. گروه‌بندی هزارگان نمی‌خورد.
+      const qty = Number(l.qty).toLocaleString("en-US", { useGrouping: false, maximumFractionDigits: 3 });
+      // منفی در جای خودش: با رقم لاتین در سطر راست‌چین، «−» بی ایزوله پس از عدد دیده می‌شد.
       const discount =
         l.discountAmount > 0n
-          ? `\n      <tr class="disc"><td class="idx"></td><td>تخفیف قلم</td><td class="num">− ${money(l.discountAmount)}</td></tr>`
+          ? `\n      <tr class="disc"><td class="idx"></td><td>تخفیف قلم</td><td class="num"><bdi dir="ltr">− ${money(l.discountAmount)}</bdi></td></tr>`
           : "";
       // شمارهٔ ردیف در خانهٔ خودش، نه rowspan: rowspan ارتفاع اضافه را میان سطرهای
       // قلم پخش می‌کرد و میان نام و مبلغ فاصلهٔ ناخواسته می‌افتاد.
       return `    <tbody class="item">
-      <tr><td class="idx">${esc(fa(i + 1))}</td><td class="name" colspan="2">${name}</td></tr>
+      <tr><td class="idx">${latn(i + 1)}</td><td class="name" colspan="2">${name}</td></tr>
       <tr class="calc"><td class="idx"></td><td><span class="qty">${esc(qty)}</span> × <span class="unit">${money(l.unitPrice)}</span></td><td class="num">${money(l.netAmount)}</td></tr>${discount}
     </tbody>`;
     })
@@ -238,22 +263,27 @@ export function invoicePage(data: InvoicePageData, timeZone: string): string {
     due > 0n
       ? `<tr class="due"><th><span class="due-tag">مانده</span></th><td class="num">${money(due)} <small>تومان</small></td></tr>`
       : "";
-  const settle = due > 0n
-    ? `<div class="settle settle--open">تسویه نشده — مانده بدهی ثبت شده است</div>`
-    : `<div class="settle">تسویه‌شده</div>`;
-  const count = fa(data.lines.length);
+  // پیش‌فاکتور وضعیت تسویه ندارد: هنوز فروشی ثبت نشده که تسویه شده باشد.
+  const settle = proforma ? ""
+    : due > 0n
+      ? `<div class="settle settle--open">تسویه نشده — مانده بدهی ثبت شده است</div>`
+      : `<div class="settle">تسویه‌شده</div>`;
+  const count = latn(data.lines.length);
+  const docTitle = proforma ? "پیش‌فاکتور" : "رسید فروش";
+  const proformaNote = proforma
+    ? `\n  <div class="proforma-note">برای بررسی اقلام و قیمت‌ها؛ فاکتور نهایی نیست.</div>` : "";
   const logo = data.logo === undefined ? receiptLogo() : data.logo;
   // سربرگ کم‌ارتفاع: لوگو کامل دیده می‌شود (contain) و از ۱۴mm بلندتر نمی‌شود.
   const brand = logo
-    ? `<img class="logo logo--${logo.treatment}" src="${logo.dataUri}" width="${logo.width}" height="${logo.height}" alt="${esc(data.shopName)}">
-    <div class="shop">${esc(data.shopName)}</div>`
-    : `<div class="brand">${esc(data.shopName)}</div>`;
+    ? `<img class="logo logo--${logo.treatment}" src="${logo.dataUri}" width="${logo.width}" height="${logo.height}" alt="${txt(data.shopName)}">
+    <div class="shop">${txt(data.shopName)}</div>`
+    : `<div class="brand">${txt(data.shopName)}</div>`;
 
   return `<!doctype html>
 <html lang="fa" dir="rtl">
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>فاکتور ${esc(data.number)} — ${esc(data.shopName)}</title>
+<title>${proforma ? "پیش‌فاکتور" : "فاکتور"} ${txt(data.number)} — ${txt(data.shopName)}</title>
 <style>
   /* ── صفحه: کاغذ رسید روی میز، با یک رنگ برند (برنج) فقط برای نمایش. ── */
   :root {
@@ -266,7 +296,8 @@ export function invoicePage(data: InvoicePageData, timeZone: string): string {
   html { min-height: 100%; background: linear-gradient(180deg, #F6F4F0 0%, var(--desk) 40%, var(--desk-2) 100%); }
   body {
     margin: 0; padding: 28px 14px 32px;
-    font-family: Vazirmatn, Vazir, Tahoma, "Segoe UI", sans-serif;
+    /* بی فونت‌های «FD» که رقم لاتین را فارسی می‌کشند؛ Vazirmatn و Tahoma رقم لاتین را لاتین می‌کشند. */
+    font-family: Vazirmatn, Tahoma, "Segoe UI", sans-serif;
     background: transparent;
     color: var(--ink); font-size: 13px; line-height: 1.6;
     -webkit-print-color-adjust: exact; print-color-adjust: exact;
@@ -344,6 +375,8 @@ export function invoicePage(data: InvoicePageData, timeZone: string): string {
   .due-tag { display: inline-block; padding: 1px 10px; border-radius: 999px; background: var(--ink); color: var(--paper); font-size: 12px; }
   .settle { margin-top: 10px; padding: 5px 8px; text-align: center; font-size: 11.5px; font-weight: 800; border: 1.5px dashed var(--line); border-radius: 8px; }
   .settle--open { border-style: solid; border-width: 2px; }
+  /* پیش‌فاکتور: هشدار قاب‌دار زیر سربرگ، روی کاغذ هم. */
+  .proforma-note { margin: 10px 0 0; padding: 6px 8px; text-align: center; font-size: 12px; font-weight: 800; border: 2px solid var(--line); border-radius: 8px; }
 
   .foot { margin-top: 16px; padding-top: 12px; border-top: 1.5px dashed var(--line); text-align: center; font-size: 11.5px; line-height: 1.8; }
   .foot strong { display: block; font-size: 14px; font-weight: 900; }
@@ -393,7 +426,7 @@ export function invoicePage(data: InvoicePageData, timeZone: string): string {
     .totals .grand th, .totals .grand td { font-size: 12pt; padding: 1.8mm 1.6mm 1.5mm; }
     .totals .due th, .totals .due td { font-size: 10pt; }
     .due-tag { font-size: 8pt; }
-    .settle, .foot { font-size: 8pt; }
+    .settle, .foot, .proforma-note { font-size: 8pt; }
     .foot strong { font-size: 10pt; }
     .foot .unit { font-size: 7pt; }
     /* یک قلم نباید وسطش بشکند (برای چاپگر صفحه‌ای و PDF). */
@@ -404,12 +437,12 @@ export function invoicePage(data: InvoicePageData, timeZone: string): string {
 <div class="sheet">
   <header class="head">
     ${brand}
-    <div class="doc"><span>رسید فروش</span></div>
-  </header>
+    <div class="doc"><span>${docTitle}</span></div>
+  </header>${proformaNote}
   <dl class="meta">
-    <div class="cell"><dt>شمارهٔ فاکتور</dt><dd><bdi dir="ltr" class="docno">${esc(data.number)}</bdi></dd></div>
+    <div class="cell"><dt>${proforma ? "شمارهٔ مرجع" : "شمارهٔ فاکتور"}</dt><dd><bdi dir="ltr" class="docno">${txt(data.number)}</bdi></dd></div>
     <div class="cell"><dt>تاریخ و ساعت</dt><dd>${esc(faDate(data.occurredAt, timeZone))}</dd></div>
-    <div class="cell"><dt>مشتری</dt><dd>${data.customerName ? `<bdi>${esc(data.customerName)}</bdi>` : "مشتری عمومی"}</dd></div>
+    <div class="cell"><dt>مشتری</dt><dd>${data.customerName ? `<bdi>${txt(data.customerName)}</bdi>` : "مشتری عمومی"}</dd></div>
     <div class="cell"><dt>اقلام</dt><dd>${esc(count)} قلم</dd></div>
   </dl>
 
@@ -435,7 +468,7 @@ ${items}
   <footer class="foot">
     <strong>سپاس از خرید شما</strong>
     ${data.returnWindowHours ? `<div class="policy">مهلت مرجوعی: ${esc(windowText(data.returnWindowHours))} پس از خرید</div>` : ""}
-    ${data.website ? `<div class="site"><bdi dir="ltr">${esc(data.website)}</bdi></div>` : ""}
+    ${data.website ? `<div class="site"><bdi dir="ltr">${txt(data.website)}</bdi></div>` : ""}
     <div class="unit">همه مبالغ به تومان است.</div>
   </footer>
 </div>
