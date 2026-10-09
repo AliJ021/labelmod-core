@@ -2,9 +2,11 @@ import { useEffect, useState } from "react";
 import { api, ApiError } from "../lib/api.ts";
 import type { Variation } from "../lib/catalog.ts";
 import { normalizeDigits } from "../lib/settings-value.ts";
-import { clampCount, labelRequestBody, labelRequestProblem, queueTotal } from "../lib/label-print.ts";
+import { clampCount, labelContentWarning, labelRequestBody, labelRequestProblem, labelSizeProblem, queueTotal } from "../lib/label-print.ts";
 import { labelQueue } from "../lib/label-queue.ts";
-import { LabelPreviewFrame, LabelSizeFields, useLabelPreview, useLabelSize } from "./LabelPrint.tsx";
+import { Money } from "./ui/Money.tsx";
+import { StatusBadge } from "./ui/Status.tsx";
+import { LabelContentBadges, LabelPreviewFrame, LabelSizeFields, useLabelPreview, useLabelSize } from "./LabelPrint.tsx";
 
 interface Cell { variationId: string; onHand: string; reserved: string }
 interface Matrix { totalOnHand: string; cells: Record<string, Record<string, Cell>> }
@@ -36,6 +38,12 @@ export function ProductStockLabels({ productId, productName, variations, selecte
     return () => c.abort();
   }, [productId, revision]);
 
+  // قیمت/بارکدی که پس از افزودن به فهرست در همین صفحه تعیین شد، به فهرست گروهی هم برسد؛
+  // وگرنه هشدار «بدون قیمت» برای لیبلی می‌ماند که سرور با قیمت تازه چاپش می‌کند.
+  useEffect(() => {
+    labelQueue.syncMeta(variations.map((v) => ({ variationId: v.id, priced: v.price !== null, hasBarcode: v.barcode !== null && v.barcode !== "" })));
+  }, [variations]);
+
   // تیک جدول تنوع‌ها: تازه‌انتخاب‌شده دست‌کم ۱، برداشته‌شده صفر — هنگام
   // رندر (الگوی «تنظیم state از تغییر prop»)، نه با Effect پس از نقاشی.
   const [lastSelected, setLastSelected] = useState<string[]>([]);
@@ -48,9 +56,12 @@ export function ProductStockLabels({ productId, productName, variations, selecte
   }
 
   const cells = new Map(Object.values(stock?.cells ?? {}).flatMap(Object.values).map((c) => [c.variationId, c]));
-  const chosen = variations.filter((v) => (counts[v.id] ?? 0) > 0).map((v) => ({ variationId: v.id, count: counts[v.id] ?? 0 }));
+  const chosen = variations.filter((v) => (counts[v.id] ?? 0) > 0).map((v) => ({
+    variationId: v.id, count: counts[v.id] ?? 0, priced: v.price !== null, hasBarcode: v.barcode !== null && v.barcode !== "",
+  }));
   const total = queueTotal(chosen);
   const problem = labelRequestProblem(chosen, sizeState.size);
+  const warning = labelContentWarning(chosen);
   const body = labelRequestBody(chosen, sizeState.size);
   const currentKey = JSON.stringify([productId, body]);
 
@@ -65,6 +76,7 @@ export function ProductStockLabels({ productId, productName, variations, selecte
   function addToQueue() {
     labelQueue.add(variations.filter((v) => (counts[v.id] ?? 0) > 0).map((v) => ({
       variationId: v.id, productId, productName, sku: v.sku, color: v.color, size: v.size, count: counts[v.id] ?? 0,
+      priced: v.price !== null, hasBarcode: v.barcode !== null && v.barcode !== "",
     })));
     setAdded(`${total.toLocaleString("fa-IR")} لیبل از «${productName}» به فهرست چاپ گروهی افزوده شد.`);
   }
@@ -80,17 +92,22 @@ export function ProductStockLabels({ productId, productName, variations, selecte
       <button className="btn" type="button" disabled={!stock} onClick={() => fill((v) => Number(cells.get(v.id)?.onHand ?? 0))}>به‌اندازهٔ موجودی</button>
       <button className="btn" type="button" onClick={() => fill(() => 0)}>صفر کردن همه</button>
     </div>
-    <div className="grid-wrap"><table className="grid"><thead><tr><th>رنگ / سایز</th><th>موجودی</th><th>رزرو</th><th>تعداد لیبل</th></tr></thead>
-      <tbody>{variations.map((v) => <tr key={v.id}><td>{v.color ?? "بدون رنگ"} / {v.size ?? "آزاد"}</td>
+    <div className="grid-wrap"><table className="grid"><thead><tr><th>تنوع · قیمت لیبل</th><th>موجودی</th><th>رزرو</th><th>تعداد لیبل</th></tr></thead>
+      <tbody>{variations.map((v) => <tr key={v.id}>
+        {/* همان قیمتی که سرور روی لیبل می‌نشاند، زیر نام تنوع — نه ستون جدا، که در ۳۷۵px
+            ستون «تعداد لیبل» را از دید بیرون می‌برد. نبودنش پیش از چاپ دیده شود، نه روی رگال. */}
+        <td style={{ whiteSpace: "normal" }}><div>{v.color ?? "بدون رنگ"} / {v.size ?? "آزاد"}</div>
+          <div className="small">{v.price === null ? <LabelContentBadges priced={false} /> : <Money rial={BigInt(v.price)} size="sm" />}{v.barcode ? null : <> <LabelContentBadges hasBarcode={false} /></>}</div></td>
         <td>{stock ? cells.get(v.id)?.onHand ?? "—" : "…"}</td><td>{stock ? cells.get(v.id)?.reserved ?? "—" : "…"}</td>
-        <td><input aria-label={`تعداد لیبل ${v.sku}`} inputMode="numeric" style={{ width: "5.5em" }} value={String(counts[v.id] ?? 0)} onChange={(e) => setCount(v.id, e.target.value)} /></td></tr>)}</tbody></table></div>
+        <td><input aria-label={`تعداد لیبل ${v.sku}`} inputMode="numeric" style={{ width: "4.5em" }} value={String(counts[v.id] ?? 0)} onChange={(e) => setCount(v.id, e.target.value)} /></td></tr>)}</tbody></table></div>
     <LabelSizeFields state={sizeState} onChange={pv.reset} idPrefix={`product-${productId}`} />
     <p className="muted small">حداکثر ۱۰۰ لیبل از هر تنوع و ۵۰۰ لیبل در هر نوبت. در تنظیمات چاپ، مقیاس ۱۰۰٪ و اندازه کاغذ برابر لیبل انتخاب شود؛ سربرگ و پابرگ خاموش باشند.</p>
     <div className="row" style={{ gap: "var(--s-2)", flexWrap: "wrap" }}>
       <button className="btn btn--primary" type="button" disabled={problem !== null || pv.busy} onClick={() => void pv.preview(body, currentKey)}>پیش‌نمایش لیبل‌های انتخاب‌شده</button>
       <button className="btn" type="button" disabled={chosen.length === 0} onClick={addToQueue}>افزودن به فهرست چاپ گروهی</button>
     </div>
-    {problem && chosen.length > 0 ? <p className="small" role="status">{problem}</p> : null}
+    {problem && chosen.length > 0 && problem !== labelSizeProblem(sizeState.size) ? <p className="small" role="status">{problem}</p> : null}
+    {warning ? <p className="small" role="status"><StatusBadge state="warning" label="پیش از چاپ" /> {warning}</p> : null}
     {added ? <p className="small" role="status">{added}</p> : null}
     {error || pv.error ? <p role="alert">{error || pv.error}</p> : null}
     {pv.html && pv.key === currentKey ? <LabelPreviewFrame html={pv.html} /> : null}

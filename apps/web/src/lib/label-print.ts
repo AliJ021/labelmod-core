@@ -34,6 +34,12 @@ export interface QueueItem {
   color: string | null;
   size: string | null;
   count: number;
+  /**
+   * قیمت و بارکد هنگام افزودن — فقط برای هشدار پیش از چاپ؛ مقدار روی لیبل را
+   * سرور از دیتابیس می‌خواند. نبودن (فهرست ذخیره‌شدهٔ قدیمی) یعنی «نمی‌دانیم»، نه «دارد».
+   */
+  priced?: boolean;
+  hasBarcode?: boolean;
 }
 
 /** شمارهٔ معتبر از ورودی کاربر (رقم فارسی را فراخوان پیش‌تر نرمال کرده). */
@@ -49,10 +55,34 @@ export function mergeQueue(current: readonly QueueItem[], adds: readonly QueueIt
     const count = clampCount(add.count);
     if (count === 0) continue;
     const existing = out.find((i) => i.variationId === add.variationId);
-    if (existing) existing.count = clampCount(existing.count + count);
-    else out.push({ ...add, count });
+    if (existing) {
+      existing.count = clampCount(existing.count + count);
+      // قیمت/بارکد ممکن است میان دو افزودن تعیین یا برداشته شده باشد: فقط مقدار
+      // صریح تازه جایگزین می‌شود، تا افزودنِ بی‌فراداده دانستهٔ قبلی را پاک نکند.
+      if (add.priced !== undefined) existing.priced = add.priced;
+      if (add.hasBarcode !== undefined) existing.hasBarcode = add.hasBarcode;
+    } else out.push({ ...add, count });
   }
   return out;
+}
+
+/**
+ * قیمت/بارکدِ تازهٔ کاتالوگ برای تنوع‌هایی که از قبل در فهرست‌اند — تعداد و
+ * ترتیب دست نمی‌خورند و تنوعی به فهرست اضافه نمی‌شود. بی‌تغییر، همان آرایه
+ * برمی‌گردد تا ذخیره و رندرِ بی‌دلیل رخ ندهد.
+ */
+export function syncQueueMeta(
+  current: readonly QueueItem[],
+  facts: readonly { variationId: string; priced: boolean; hasBarcode: boolean }[],
+): readonly QueueItem[] {
+  let changed = false;
+  const next = current.map((i) => {
+    const f = facts.find((x) => x.variationId === i.variationId);
+    if (!f || (f.priced === i.priced && f.hasBarcode === i.hasBarcode)) return i;
+    changed = true;
+    return { ...i, priced: f.priced, hasBarcode: f.hasBarcode };
+  });
+  return changed ? next : current;
 }
 
 export function setQueueCount(current: readonly QueueItem[], variationId: string, count: number): QueueItem[] {
@@ -77,22 +107,63 @@ export function groupByProduct(items: readonly QueueItem[]): Array<{ productId: 
   return groups;
 }
 
+/** عدد پیام با رقم فارسی — همان رقم‌های بقیهٔ صفحه، نه «30» وسط جملهٔ فارسی. */
+const fa = (n: number) => n.toLocaleString("fa-IR");
+
+/**
+ * اندازهٔ نامعتبر رول — جدا از سنجش تعداد تا کنار خودِ میدان‌های اندازه دیده
+ * شود، حتی پیش از انتخاب هر تنوعی. `null` یعنی معتبر.
+ */
+export function labelSizeProblem(size: LabelSize): string | null {
+  const issues = labelSizeIssues(size);
+  return issues.width ?? issues.height;
+}
+
+/**
+ * خطای هر بُعد جدا — تا فقط میدانِ واقعاً نامعتبر `aria-invalid` بگیرد و
+ * صفحه‌خوان میدان درست را نادرست اعلام نکند.
+ */
+export function labelSizeIssues(size: LabelSize): { width: string | null; height: string | null } {
+  if (size.layout !== "roll") return { width: null, height: null };
+  const { minWidth, maxWidth, minHeight, maxHeight } = ROLL_LIMITS;
+  return {
+    width: size.width >= minWidth && size.width <= maxWidth ? null
+      : `عرض لیبل باید بین ${fa(minWidth)} و ${fa(maxWidth)} میلی‌متر باشد؛ باریک‌تر از ${fa(minWidth)} میلی‌متر بارکد با حاشیهٔ سکوت و قیمت کامل جا نمی‌شوند.`,
+    height: size.height >= minHeight && size.height <= maxHeight ? null
+      : `ارتفاع لیبل باید بین ${fa(minHeight)} و ${fa(maxHeight)} میلی‌متر باشد؛ کوتاه‌تر از ${fa(minHeight)} میلی‌متر نام، قیمت و بارکد خوانا با هم جا نمی‌شوند.`,
+  };
+}
+
 /** چرا این درخواست ارسال نمی‌شود — `null` یعنی معتبر. */
 export function labelRequestProblem(items: readonly { count: number }[], size: LabelSize): string | null {
   const total = queueTotal(items);
   if (items.length === 0 || total === 0) return "هیچ لیبلی انتخاب نشده است.";
-  if (items.length > MAX_ITEMS) return `حداکثر ${MAX_ITEMS} تنوع در هر نوبت چاپ.`;
+  if (items.length > MAX_ITEMS) return `حداکثر ${fa(MAX_ITEMS)} تنوع در هر نوبت چاپ.`;
   if (items.some((i) => !Number.isInteger(i.count) || i.count < 1 || i.count > MAX_PER_VARIANT))
-    return `تعداد هر تنوع باید بین ۱ و ${MAX_PER_VARIANT} باشد.`;
-  if (total > MAX_TOTAL) return `حداکثر ${MAX_TOTAL} لیبل در هر نوبت؛ اکنون ${total}.`;
-  if (size.layout === "roll") {
-    const { minWidth, maxWidth, minHeight, maxHeight } = ROLL_LIMITS;
-    if (!(size.width >= minWidth && size.width <= maxWidth))
-      return `عرض لیبل باید بین ${minWidth} و ${maxWidth} میلی‌متر باشد؛ باریک‌تر از ${minWidth} میلی‌متر بارکد با حاشیهٔ سکوت و قیمت کامل جا نمی‌شوند.`;
-    if (!(size.height >= minHeight && size.height <= maxHeight))
-      return `ارتفاع لیبل باید بین ${minHeight} و ${maxHeight} میلی‌متر باشد؛ کوتاه‌تر از ${minHeight} میلی‌متر نام، قیمت و بارکد خوانا با هم جا نمی‌شوند.`;
-  }
-  return null;
+    return `تعداد هر تنوع باید بین ۱ و ${fa(MAX_PER_VARIANT)} باشد.`;
+  if (total > MAX_TOTAL) return `حداکثر ${fa(MAX_TOTAL)} لیبل در هر نوبت؛ اکنون ${fa(total)}.`;
+  return labelSizeProblem(size);
+}
+
+/**
+ * هشدار محتوا — مانع چاپ نیست، چون سرور برچسب بی‌قیمت («بدون قیمت») و
+ * بی‌بارکد (فقط SKU) را عمداً می‌سازد. ولی لیبلی که قیمت یا بارکد ندارد
+ * روی رگال به کار صندوق‌دار نمی‌آید، پس پیش از چاپ صریح گفته می‌شود.
+ */
+export function labelContentWarning(items: readonly { count: number; priced?: boolean; hasBarcode?: boolean }[]): string | null {
+  const chosen = items.filter((i) => i.count > 0);
+  const noPrice = chosen.filter((i) => i.priced === false);
+  const noBarcode = chosen.filter((i) => i.hasBarcode === false);
+  const parts: string[] = [];
+  if (noPrice.length > 0)
+    parts.push(`${fa(noPrice.length)} تنوع انتخاب‌شده قیمت ندارد و روی لیبلش «بدون قیمت» چاپ می‌شود`);
+  if (noBarcode.length > 0)
+    parts.push(`${fa(noBarcode.length)} تنوع بارکد ندارد و لیبلش فقط SKU دارد و اسکن نمی‌شود`);
+  if (parts.length === 0) return null;
+  // راه‌حل همان مشکلِ گفته‌شده: «قیمت تعیین کنید» تنوعِ بی‌بارکد را درست نمی‌کند.
+  const fix = noPrice.length > 0 && noBarcode.length > 0 ? "قیمت را تعیین و بارکد را بررسی کنید"
+    : noPrice.length > 0 ? "قیمت را تعیین کنید" : "بارکد آن تنوع را بررسی کنید";
+  return `${parts.join("؛ ")}. پیش از چاپ ${fix} یا تعداد آن تنوع را صفر کنید.`;
 }
 
 /** بدنهٔ `POST /labels` — شکل همان قرارداد موجود. */
