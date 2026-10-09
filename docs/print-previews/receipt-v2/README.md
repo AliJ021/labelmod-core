@@ -14,7 +14,7 @@
 بازتولید از ریشهٔ مخزن:
 
 ```sh
-node --experimental-strip-types ops/render-receipts.mjs
+node --experimental-strip-types ops/render-receipts.ts
 ```
 
 Playwright Chromium لازم است؛ در ویندوز با Edge نصب‌شده متغیر `PLAYWRIGHT_EDGE=1` قابل استفاده است. ابزار، HTML و PNG و گزارش هندسه را در مسیر خروجی می‌سازد؛ مسیر دلخواه را به‌عنوان آرگومان اول بدهید.
