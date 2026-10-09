@@ -53,7 +53,9 @@ export const VALUATION_COLUMNS: Columns = [
   ["productName", "کالا"],
   ["color", "رنگ"],
   ["size", "سایز"],
-  ["onHand", "موجودی"],
+  ["onHand", "موجودی فیزیکی"],
+  ["reserved", "رزروشده"],
+  ["available", "قابل‌فروش"],
   ["unitCost", "بهای واحد (ریال)"],
   ["totalValue", "ارزش کل (ریال)"],
 ];

@@ -304,6 +304,9 @@ export interface CreatedInvoice extends Invoice {
 export const pos = {
   branches: (opts?: RequestOptions) => api.get<{ branches: Branch[]; allBranches: boolean }>("/branches", opts),
 
+  policy: (branchId: string, opts?: RequestOptions) => api.get<{ requireCustomer: boolean }>(
+    `/pos/policy?branchId=${encodeURIComponent(branchId)}`, opts),
+
   /**
    * روش‌های فعال. با `branchId`، اسنپ‌پی فقط وقتی می‌آید که **همان شعبه** حساب
    * معتبر دارد (همان سنجش ثبت پرداخت)؛ بی آن اسنپ‌پی هرگز نمی‌آید.

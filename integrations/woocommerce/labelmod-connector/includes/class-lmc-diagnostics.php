@@ -59,7 +59,8 @@ class LMC_Diagnostics
         $status = (string) $order->get_status();
         $out['status'] = in_array($status, ['pending', 'processing', 'on-hold', 'completed', 'cancelled', 'refunded', 'failed'], true) ? $status : 'unknown';
         $out['paymentConfirmed'] = $order->get_meta(LMC_Order_Sync::META_PAID) === 'yes';
-        $out['eligible'] = $out['paymentConfirmed'] && $order->has_status(['processing', 'completed', 'refunded']);
+        $out['eligible'] = $out['paymentConfirmed'] && $order->has_status(['processing', 'completed', 'refunded'])
+            && (($order->get_payment_method() !== 'cod' && !is_array($order->get_meta('_lmc_reservation_payload'))) || $order->has_status(['completed']));
         $out['recorded'] = $order->get_meta(LMC_Order_Sync::META_INVOICE) !== '';
         $out['scheduled'] = (bool) wp_next_scheduled(LMC_ORDER_EVENT, [$id]);
         $out['attempts'] = max(0, (int) $order->get_meta(LMC_Order_Sync::META_ATTEMPTS));

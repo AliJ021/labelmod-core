@@ -159,6 +159,7 @@ const CartLine = memo(function CartLine({ line: l, panel, on, error }: CartLineP
             </>
           )}
         </span>
+        <span className="muted small">هر عدد <Money rial={l.unitPrice} size="sm" /></span>
       </div>
       {/*
         سطری که تخفیف خورده یا قیمتش دستی عوض شده، تعدادش از این مسیر
@@ -198,7 +199,7 @@ const CartLine = memo(function CartLine({ line: l, panel, on, error }: CartLineP
         </button>
       </div>
       <button type="button" className="line-total line-total-edit" aria-label={`ویرایش قیمت ${l.productName}`}
-        aria-expanded={panel === "price"} onClick={() => on.openPrice(l.id)}><Money rial={l.netAmount} /></button>
+        aria-expanded={panel === "price"} onClick={() => on.openPrice(l.id)}><span className="line-total-label">جمع ردیف</span><Money rial={l.netAmount} /></button>
       {/*
         برچسب متنی، نه نویسهٔ ریال (U+FDFC) و درصد: آن نویسه کنار مبلغِ **تومانی** سطر روی
         صفحه «ریال» خوانده می‌شد — یعنی مبلغ سطر ده برابر کمتر دیده می‌شد.
@@ -263,6 +264,9 @@ function defaultWarehouse(b: Branch) {
 export function Pos({ actorId }: { actorId: string }) {
   const [branches, setBranches] = useState<Branch[]>([]);
   const [methods, setMethods] = useState<PaymentMethod[]>([]);
+  const [policy, setPolicy] = useState<{ branchId: string; requireCustomer: boolean } | null>(null);
+  const [policyError, setPolicyError] = useState<string | null>(null);
+  const [policyRetry, setPolicyRetry] = useState(0);
   const [branchId, setBranchId] = useUrlState("pos.branch");
   const [warehouseId, setWarehouseId] = useUrlState("pos.warehouse");
   const [shift, setShift] = useState<Shift | null>(null);
@@ -309,7 +313,7 @@ export function Pos({ actorId }: { actorId: string }) {
   const [discounting, setDiscounting] = useState<string | null>(null);
   const [pricing, setPricing] = useState<string | null>(null);
   const [camera, setCamera] = useState(false);
-  /** شماره مشتری — **اختیاری**. فروش ناشناس کارِ عادی است. */
+  /** شماره مشتری؛ اختیاری یا الزامی طبق تنظیم جاری صندوق. */
   const [mobile, setMobile] = useState("");
   /**
    * فروش‌های معلق در صف آفلاین (FND-002).
@@ -367,6 +371,31 @@ export function Pos({ actorId }: { actorId: string }) {
     return () => { alive = false; };
   }, [branchId]);
 
+  // بازگشت از تنظیمات یا از تب دیگر، سیاست قبلی را نگه نمی‌دارد.
+  useEffect(() => {
+    if (!branchId) return;
+    let controller: AbortController;
+    const refresh = () => {
+      controller?.abort();
+      controller = new AbortController();
+      const signal = controller.signal;
+      setPolicy(null); setPolicyError(null);
+      void pos.policy(branchId, { signal }).then((value) => {
+        if (!signal.aborted) setPolicy({ branchId, ...value });
+      }).catch((err: unknown) => {
+        if (!signal.aborted) setPolicyError(message(err));
+      });
+    };
+    refresh();
+    window.addEventListener("focus", refresh);
+    return () => { controller.abort(); window.removeEventListener("focus", refresh); };
+  }, [branchId, policyRetry]);
+
+  const policyReady = policy?.branchId === branchId;
+  const linkedCustomer = customer?.id === invoice?.customerId ? customer : null;
+  const customerMissing = policyReady && policy.requireCustomer && (!invoice?.customerId || !linkedCustomer?.mobile?.trim());
+  const customerGate = !policyReady || customerMissing;
+
   // مشتری وصل‌شده — با هر تغییر `customerId` از سرور خوانده می‌شود.
   const invoiceIdForCustomer = invoice?.id ?? null;
   const customerId = invoice?.customerId ?? null;
@@ -374,6 +403,7 @@ export function Pos({ actorId }: { actorId: string }) {
     setCustomerError(null);
     if (!invoiceIdForCustomer || !customerId) { setCustomer(null); setCustomerLoading(false); return; }
     const c = new AbortController();
+    setCustomer(null);
     setCustomerLoading(true);
     pos.invoiceCustomer(invoiceIdForCustomer, { signal: c.signal })
       .then((r) => { if (!c.signal.aborted) setCustomer(r.customer); })
@@ -839,6 +869,7 @@ export function Pos({ actorId }: { actorId: string }) {
     guarded(async () => {
       if (!invoice || invoice.id !== intent.invoiceId || !invoice.shiftId) return;
       if (!retry) {
+        if (customerGate) throw new Error(customerMissing ? "پیش از دریافت وجه، شماره مشتری را ثبت کنید." : "ابتدا سیاست صندوق را دوباره بررسی کنید.");
         const other = readPendingPayment(actorId);
         if (other) {
           if (other.invoiceId === invoice.id) setPayPhase({ kind: "unknown", intent: intentFromPending(other), reason: "ambiguous" });
@@ -973,6 +1004,7 @@ export function Pos({ actorId }: { actorId: string }) {
   const finalize = () =>
     exclusive(async () => {
       if (!invoice) return;
+      if (customerGate) throw new Error(customerMissing ? "پیش از نهایی‌کردن، شماره مشتری را ثبت کنید." : "ابتدا سیاست صندوق را دوباره بررسی کنید.");
       const action = `finalize:${invoice.id}`;
       const key = keys.current.keyFor(action);
       const amount = parseRial(invoice.payableAmount);
@@ -1143,7 +1175,8 @@ export function Pos({ actorId }: { actorId: string }) {
     : draftActive
       ? `قابل پرداخت ${toman(totals.payable)} تومان؛ ${totals.change > 0n ? `باقی پول ${toman(totals.change)}` : `مانده ${toman(totals.remaining)}`} تومان.${note ? ` ${note}` : ""}`
       : note ?? "";
-  const customerBlock = <CustomerSummary customer={customer} loading={customerLoading} error={customerError}
+  const customerBlock = <CustomerSummary customer={linkedCustomer} loading={customerLoading} error={customerError}
+    required={policyReady && policy.requireCustomer}
     mobile={mobile} onMobile={(v) => { setMobile(v); setNameForMobile(null); }} onAttach={() => void attachCustomer()}
     nameForMobile={nameForMobile} onConfirmName={(name) => void attachCustomer(name)} onCancelName={() => setNameForMobile(null)}
     canManage={canManageCustomer} onSaveName={(name) => void saveCustomerName(name)}
@@ -1159,7 +1192,7 @@ export function Pos({ actorId }: { actorId: string }) {
       {draftActive && !completed && <aside className="pos-mobile-summary solid" aria-label="خلاصهٔ پرداخت">
         <span className="pos-mobile-figures"><span className="muted">{countLabel}</span>
           <span>{totals.change > 0n ? "باقی پول" : "مانده"} <Money rial={totals.change > 0n ? totals.change : totals.remaining} size="sm" /></span></span>
-        {settled && payIdle
+        {customerMissing ? <button className="btn btn--primary" type="button" onClick={focusCustomer}>ثبت شماره مشتری</button> : settled && payIdle
           ? <button className="btn btn--primary" type="button" onClick={() => document.querySelector<HTMLElement>(".pay-finish")?.scrollIntoView({block:"center",behavior:"instant"})}>رفتن به نهایی‌سازی</button>
           : <button className="btn btn--primary" type="button" onClick={() => document.querySelector<HTMLElement>(".pay")?.scrollIntoView({block:"start",behavior:"instant"})}>رفتن به پرداخت</button>}
       </aside>}
@@ -1274,6 +1307,10 @@ export function Pos({ actorId }: { actorId: string }) {
           خالی یک حالت خالیِ فشرده است، نه یک قاب بزرگِ تهی.
         */}
         <Solid as="section" className="cart" aria-label="سبد خرید">
+          <h2 className="cart-title">مشتری فاکتور</h2>
+          {!policyReady ? <p className="field-hint" role={policyError ? "alert" : "status"}>
+            {policyError ? <>تنظیمات صندوق خوانده نشد؛ دریافت وجه تا بررسی آن بسته است. <button type="button" className="tool" onClick={() => setPolicyRetry((n) => n + 1)}>بررسی دوباره</button></> : "در حال بررسی تنظیمات صندوق…"}
+          </p> : customerMissing ? <p className="field-hint">شماره مشتری برای این صندوق الزامی است؛ پیش از دریافت وجه آن را ثبت کنید.</p> : null}
           {customerBlock}
           <PosProductPicker key={warehouseId} warehouseId={warehouseId} busy={busy} onPick={(id) => addByBarcode("", id)} />
           <div className="cart-head">
@@ -1326,21 +1363,21 @@ export function Pos({ actorId }: { actorId: string }) {
         {/*
           ستون پرداخت — چسبان در دسکتاپ تا نهایی‌سازی همیشه دیده شود. ترتیب جریان
           مبلغ‌ها ← روش پرداخت (کارت‌خوان، اسنپ‌پی|دیجی‌پی، بیشتر) ← ثبت نسیه ← نهایی‌کردن.
-          مشتری در ابتدای سبد، پیش از ورود کالا می‌ماند؛ سیاست الزام مشتری تغییر نکرده است.
+          مشتری در ابتدای سبد است و دریافت وجه تابع سیاست جاری الزام شماره است.
         */}
         <Solid as="aside" className="pay" aria-label="پرداخت">
-          <h2 className="sr-only">پرداخت</h2>
+          <h2 className="cart-title">پرداخت و ثبت فاکتور</h2>
           <CheckoutSummary totals={draftActive ? totals : null} />
           {invoice && received > 0n ? <PaymentBreakdown invoiceId={invoice.id} received={received} /> : null}
           <PaymentSelector layout={layout} remaining={totals.remaining} received={received} phase={payPhase}
-            disabled={!hasCart || busy} onPay={takePayment} onCheck={() => void checkPayment()}
+            disabled={!hasCart || busy || customerGate} onPay={takePayment} onCheck={() => void checkPayment()}
             onRetry={retryPayment} onAbandon={() => void abandonPayment()} />
           <div className="pay-finish">
-            {hasCart ? <CreditCheckout allowed={canCredit} customer={customer} remaining={totals.remaining} received={received}
-              payable={totals.payable} disabled={busy || !payIdle || (invoice?.customerId != null && customer === null)}
+            {hasCart ? <CreditCheckout allowed={canCredit} customer={linkedCustomer} remaining={totals.remaining} received={received}
+              payable={totals.payable} disabled={busy || !payIdle || !policyReady || (invoice?.customerId != null && (linkedCustomer === null || customerMissing))}
               onAttachCustomer={focusCustomer} run={finalize} verify={verifyFinalize} onDone={() => undefined} /> : null}
             <SafeAction trigger="نهایی‌کردن فاکتور" triggerVariant="primary" title="نهایی‌کردن فاکتور"
-              disabled={!settled || busy || !payIdle}
+              disabled={!settled || busy || !payIdle || customerGate}
               summary={<dl className="checkout-lines">
                 <div><dt>قابل پرداخت</dt><dd><Money rial={totals.payable} /></dd></div>
                 <div><dt>دریافت‌شده</dt><dd><Money rial={received} /></dd></div>
@@ -1349,7 +1386,10 @@ export function Pos({ actorId }: { actorId: string }) {
               consequence="شمارهٔ فاکتور صادر و کالا از انبار خارج می‌شود. پس از آن اصلاح فقط با مرجوعی ممکن است."
               confirmLabel="تأیید و نهایی‌کردن" pendingLabel="در حال نهایی‌سازی…"
               run={finalize} verify={verifyFinalize} onDone={() => undefined} />
-            <p className="field-hint pay-finish-why">{!hasCart ? "برای نهایی‌کردن، ابتدا کالا به سبد اضافه کنید."
+            {customerMissing && hasCart ? <button type="button" className="btn" onClick={focusCustomer}>ثبت شماره مشتری</button> : null}
+            <p className="field-hint pay-finish-why">{!policyReady ? "دریافت وجه پس از خواندن تنظیمات صندوق باز می‌شود."
+              : customerMissing ? "برای ادامه، شماره مشتری را ثبت کنید."
+              : !hasCart ? "برای نهایی‌کردن، ابتدا کالا به سبد اضافه کنید."
               : !payIdle ? "تا نتیجهٔ پرداخت روشن نشود، نهایی‌کردن بسته است."
                 : !settled ? "نهایی‌کردن پس از دریافت کامل مانده باز می‌شود." : "همهٔ مبلغ دریافت شده است؛ فاکتور را نهایی کنید."}</p>
           </div>

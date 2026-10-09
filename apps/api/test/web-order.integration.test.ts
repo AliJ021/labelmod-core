@@ -188,6 +188,153 @@ describe("سفارش سایت (ووکامرس)", { skip }, () => {
     disposable?.drop();
   });
 
+  test("رزرو پرداخت در محل، لغو و خروج پس از تحویل با پرداخت واقعی اتمی و تکرارپذیر است", async () => {
+    const code = `COD-${suffix}`;
+    const product = await sql<{ id: string }>`INSERT INTO catalog.product(code,name_internal)
+      VALUES(${code},'کالای آزمون رزرو سایت') RETURNING id`.execute(handle.db);
+    const variation = await sql<{ id: string }>`INSERT INTO catalog.variation(product_id,sku,color,size)
+      VALUES(${product.rows[0]!.id}::uuid,${code},'رزرو','M') RETURNING id`.execute(handle.db);
+    const variationId = variation.rows[0]!.id;
+    await sql`INSERT INTO catalog.price(variation_id,price_list,amount) VALUES(${variationId}::uuid,'default',2000000)`.execute(handle.db);
+    await sql`SELECT inventory.apply_movement(${variationId}::uuid,${STORE_WH}::uuid,3,'opening',
+      NULL,NULL,${SYSTEM_USER}::uuid,800000)`.execute(handle.db);
+    const base = { branchId: BRANCH, warehouseId: STORE_WH, externalId: `cod-${suffix}` };
+    const payload = { ...base, lines: [{ sku: code, qty: "2" }] };
+    const reserve = (p = payload) => order(p, "/web/order-reservations");
+    const release = (p = base) => order(p, "/web/order-reservations/release");
+    const balance = async () => (await sql<{ on_hand: string; reserved: string }>`SELECT on_hand::text,reserved::text
+      FROM inventory.stock_balance WHERE variation_id=${variationId}::uuid AND warehouse_id=${STORE_WH}::uuid`.execute(handle.db)).rows[0]!;
+    const before = await sql`SELECT (SELECT count(*) FROM sales.invoice) invoices,
+      (SELECT count(*) FROM treasury.payment) payments,(SELECT count(*) FROM inventory.stock_movement) movements`.execute(handle.db);
+    assert.equal((await app.inject({ method: "POST", url: "/web/order-reservations", payload })).statusCode, 401);
+    const concurrent = await Promise.all([reserve(), reserve()]);
+    assert.deepEqual(concurrent.map(r => r.statusCode).sort(), [200,201]);
+    assert.deepEqual(await balance(), { on_hand: "3.000", reserved: "2.000" });
+    const after = await sql`SELECT (SELECT count(*) FROM sales.invoice) invoices,
+      (SELECT count(*) FROM treasury.payment) payments,(SELECT count(*) FROM inventory.stock_movement) movements`.execute(handle.db);
+    assert.deepEqual(after.rows,before.rows,"رزرو سند مالی، دریافت وجه یا خروج فیزیکی ندارد");
+    const shortage = await reserve({ ...payload, externalId: `cod-short-${suffix}` });
+    assert.equal(shortage.statusCode,409,shortage.body);
+    const changed = await reserve({ ...payload, lines: [{ sku: code, qty: "1" }] });
+    assert.equal(changed.statusCode,409,changed.body);
+    const forbidden = await reserve({ ...payload, branchId: "00000000-0000-7000-8000-000000000999" });
+    assert.equal(forbidden.statusCode,403,forbidden.body);
+    await assert.rejects(sql`SELECT inventory.apply_movement(${variationId}::uuid,${STORE_WH}::uuid,-2,'sale',
+      'test',${variationId}::uuid,${SYSTEM_USER}::uuid)`.execute(handle.db), /رزرو/);
+    const paid = { ...base, lines: [{ sku: code, qty: "2", unitPrice: "2000000" }],
+      paymentMethod: "gateway", paymentRef: `cod-ref-${suffix}`, paidAmount: "4000000" };
+    const early = await order(paid);
+    assert.equal(early.statusCode,409,early.body);
+    await sql`INSERT INTO sales.customer(mobile_normalized,full_name,credit_limit)
+      VALUES('09123456701','مشتری دارای اعتبار آزمون رزرو',90000000)`.execute(handle.db);
+    for (const amount of ["0","1000000"]) {
+      const unpaid = await order({ ...paid, customerMobile: "09123456701", codDelivered: true, paidAmount: amount });
+      assert.equal(unpaid.statusCode,409,unpaid.body);
+      assert.equal(unpaid.json().error.code,"cod_payment_required",unpaid.body);
+    }
+    assert.deepEqual(await balance(), { on_hand: "3.000", reserved: "2.000" },"شکست پرداخت رزرو را آزاد نمی‌کند");
+    const finalized = await order({ ...paid, codDelivered: true });
+    assert.equal(finalized.statusCode,201,finalized.body);
+    assert.equal((await order({ ...paid, codDelivered: true })).statusCode,200);
+    assert.deepEqual(await balance(), { on_hand: "1.000", reserved: "0.000" });
+    assert.equal((await reserve()).json().status,"consumed");
+    assert.equal((await release()).json().status,"consumed");
+    const cancelled = { ...base, externalId: `cod-cancel-${suffix}` };
+    assert.equal((await reserve({ ...cancelled, lines: [{ sku: code, qty: "1" }] })).statusCode,201);
+    assert.equal((await release(cancelled)).json().status,"released");
+    assert.equal((await reserve({ ...cancelled, lines: [{ sku: code, qty: "1" }] })).json().status,"released");
+    assert.equal((await order({ ...paid, ...cancelled, codDelivered: true })).statusCode,409);
+    const firstCancel = { ...base, externalId: `cod-cancel-first-${suffix}` };
+    assert.equal((await release(firstCancel)).json().status,"released");
+    assert.equal((await reserve({ ...firstCancel, lines: [{ sku: code, qty: "1" }] })).json().status,"released");
+    assert.deepEqual(await balance(), { on_hand: "1.000", reserved: "0.000" });
+    // دو سفارش متفاوت بر سر آخرین کالا: فقط یکی رزرو می‌شود.
+    const race = await Promise.all(["a","b"].map(tag => reserve({ ...payload,
+      externalId: `cod-race-${tag}-${suffix}`, lines: [{ sku: code, qty: "1" }] })));
+    assert.deepEqual(race.map(r => r.statusCode).sort(),[201,409]);
+    assert.deepEqual(await balance(), { on_hand: "1.000", reserved: "1.000" });
+    for (const tag of ["a","b"]) await release({ ...base, externalId: `cod-race-${tag}-${suffix}` });
+
+    // تحویل و لغو هم‌زمان یا به یک فروش می‌رسند یا به لغو؛ نه آزادسازی دوباره.
+    const competing = { ...base, externalId: `cod-final-race-${suffix}` };
+    await reserve({ ...competing, lines: [{ sku: code, qty: "1" }] });
+    const [sold,cancel] = await Promise.all([
+      order({ ...paid,...competing, paymentRef:`cod-race-ref-${suffix}`,
+        lines: [{ sku: code,qty: "1",unitPrice: "2000000" }],paidAmount: "2000000",codDelivered:true }),
+      release(competing),
+    ]);
+    assert.ok([201,409].includes(sold.statusCode),sold.body);
+    assert.equal(cancel.statusCode,201 === sold.statusCode ? 200 : 201,cancel.body);
+    assert.deepEqual(await balance(), { on_hand: sold.statusCode===201 ? "0.000" : "1.000",reserved:"0.000" });
+
+    // تخفیف صددرصدی از قاعدهٔ دریافت وجه معاف است؛ دریافت صفر ساخته نمی‌شود.
+    await sql`SELECT inventory.apply_movement(${variationId}::uuid,${STORE_WH}::uuid,1,'opening',NULL,NULL,${SYSTEM_USER}::uuid,800000)`.execute(handle.db);
+    const free = { ...base,externalId:`cod-free-${suffix}` };
+    await reserve({ ...free,lines:[{sku:code,qty:"1"}] });
+    const zero = await order({ ...paid,...free,codDelivered:true,paidAmount:"0",
+      lines:[{sku:code,qty:"1",unitPrice:"2000000",discountAmount:"2000000"}] },"/web/discounted-orders");
+    assert.equal(zero.statusCode,201,zero.body);
+    const payments = await handle.db.selectFrom("treasury.payment").select("id")
+      .where("invoice_id","=",zero.json().invoiceId).execute();
+    assert.equal(payments.length,0);
+
+    // غیرفعال‌شدن محصول مادر نباید با فعال‌ماندن تنوع دور زده شود.
+    await sql`UPDATE catalog.product SET status='archived' WHERE id=${product.rows[0]!.id}::uuid`.execute(handle.db);
+    const archived = await reserve({ ...payload,externalId:`cod-archived-${suffix}`,lines:[{sku:code,qty:"1"}] });
+    assert.equal(archived.statusCode,409,archived.body);
+    assert.equal((await reserve({ ...free,lines:[{sku:code,qty:"1"}] })).json().status,"consumed");
+  });
+
+  test("قیمت دستی سفارش با لغو همان سفارش و رزرو سفارش دیگر وارونگی قفل ندارد", { timeout: 15000 }, async () => {
+    for (const action of ["release","reserve"] as const) {
+      const code = `COD-LOCK-${action}-${suffix}`;
+      const p = await sql<{ id: string }>`INSERT INTO catalog.product(code,name_internal)
+        VALUES(${code},'آزمون ترتیب قفل سفارش') RETURNING id`.execute(handle.db);
+      const v = await sql<{ id: string }>`INSERT INTO catalog.variation(product_id,sku,color,size)
+        VALUES(${p.rows[0]!.id}::uuid,${code},'آبی','M') RETURNING id`.execute(handle.db);
+      const variationId = v.rows[0]!.id;
+      await sql`INSERT INTO catalog.price(variation_id,price_list,amount) VALUES(${variationId}::uuid,'default',2000000)`.execute(handle.db);
+      await sql`SELECT inventory.apply_movement(${variationId}::uuid,${STORE_WH}::uuid,3,'opening',NULL,NULL,${SYSTEM_USER}::uuid,800000)`.execute(handle.db);
+      const base = { branchId:BRANCH,warehouseId:STORE_WH,externalId:code };
+      const reservation = { ...base,lines:[{sku:code,qty:"1"}] };
+      const held = await order(reservation,"/web/order-reservations");
+      assert.equal(held.statusCode,201,held.body);
+      const original = InvoiceService.prototype.addLineIn;
+      let competing: ReturnType<typeof order> | undefined;
+      InvoiceService.prototype.addLineIn = async function (...args) {
+        await original.apply(this,args);
+        if (args[1].variationId!==variationId) return;
+        // تغییر قیمت اینجا حسابرسی شده است؛ درخواست دوم حتماً پشت قفل می‌ایستد.
+        competing = action==="release" ? order(base,"/web/order-reservations/release")
+          : order({ ...reservation,externalId:`other-${code}` },"/web/order-reservations");
+        let blocked = false;
+        for (let attempt=0;attempt<80;attempt++) {
+          const waiting = await sql<{ waiting: boolean }>`SELECT EXISTS (
+            SELECT 1 FROM pg_stat_activity WHERE datname=current_database() AND pid<>pg_backend_pid()
+              AND query LIKE '%inventory.web_order_reserve%' AND wait_event_type='Lock'
+          ) AS waiting`.execute(handle.db);
+          if (waiting.rows[0]!.waiting) { blocked=true; break; }
+          await new Promise(resolve => setTimeout(resolve,25));
+        }
+        assert.equal(blocked,true,"درخواست رقیب باید پیش از ادامهٔ خروج پشت قفل قرار بگیرد");
+      };
+      try {
+        const sold = await order({ ...base,codDelivered:true,
+          lines:[{sku:code,qty:"1",unitPrice:"1800000"}],paymentMethod:"gateway",paidAmount:"1800000",paymentRef:code });
+        assert.equal(sold.statusCode,201,sold.body);
+        assert.ok(competing);
+        const result = await competing;
+        assert.equal(result.statusCode,action==="release" ? 200 : 201,result.body);
+        assert.equal(result.json().status,action==="release" ? "consumed" : "reserved");
+        const balance = await sql<{ on_hand:string;reserved:string }>`SELECT on_hand::text,reserved::text
+          FROM inventory.stock_balance WHERE variation_id=${variationId}::uuid AND warehouse_id=${STORE_WH}::uuid`.execute(handle.db);
+        assert.deepEqual(balance.rows[0],{on_hand:"2.000",reserved:action==="release" ? "0.000" : "1.000"});
+      } finally {
+        InvoiceService.prototype.addLineIn=original;
+      }
+    }
+  });
+
   // ── احراز هویت ──────────────────────────────────────────────────
 
   test("Woo diagnostics resolves warehouse codes and enforces the resolved branch", async () => {

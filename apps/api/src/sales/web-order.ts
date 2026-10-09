@@ -61,6 +61,7 @@ export interface WebOrderInput {
   paidAmount: bigint;
   note?: string | undefined;
   actorId: string;
+  codDelivered?: boolean | undefined;
 }
 
 export class WebOrderService {
@@ -176,6 +177,14 @@ export class WebOrderService {
       throw new InvoiceError("empty_order", "سفارش بدون قلم ثبت نمی‌شود", 422);
     }
 
+    // پیش از حسابرسی تغییر قیمت، هویت سفارش و تمام موجودی‌های آن به ترتیب قفل می‌شوند.
+    // این مرحله فقط قفل است؛ Snapshot هم‌زمان قیمت هیچ قفل حسابرسی از ما نمی‌بیند.
+    for (const line of input.lines) await this.resolveSku(trx, line.sku);
+    const reservationLines = JSON.stringify(input.lines.map(l => ({ sku: l.sku, qty: l.qty })));
+    await sql`SELECT inventory.web_order_reserve(${input.actorId}::uuid, ${input.externalId},
+      ${input.branchId}::uuid, ${input.warehouseId}::uuid, ${reservationLines}::jsonb,
+      'lock', ${input.codDelivered ?? false})`.execute(trx);
+
     // `null` از `resolveCustomer` یعنی «تلفن بی‌معنا بود» و با «تلفن
     // نفرستاد» یک‌طور رفتار می‌شود: فروش ناشناس، نه مشتریِ مشترک.
     const customerId =
@@ -219,6 +228,15 @@ export class WebOrderService {
       await sql`SELECT sales.refresh_invoice_totals(${invoiceId}::uuid)`.execute(trx);
     }
 
+    // پس از Snapshot قیمت و پیش از دریافت/خروج، سهم همین سفارش آزاد می‌شود.
+    // وب هنگام ساخت سطر فقط پیش‌نویس می‌سازد؛ کنترل قطعی موجودی در نهایی‌سازی است.
+    // قفل حسابرسی رزرو نباید پیش از خواندن Snapshot، تغییر هم‌زمان قیمت را معطل کند.
+    // شکست وجه، تحویل، لغو هم‌زمان یا نهایی‌سازی، کل پیش‌نویس و آزادسازی را برمی‌گرداند.
+    await sql`SELECT inventory.web_order_reserve(${input.actorId}::uuid, ${input.externalId},
+      ${input.branchId}::uuid, ${input.warehouseId}::uuid,
+      ${reservationLines}::jsonb,
+      'consume', ${input.codDelivered ?? false})`.execute(trx);
+
     if (input.paidAmount > 0n) {
       await this.#invoices.addPaymentIn(trx, {
         invoiceId,
@@ -230,6 +248,23 @@ export class WebOrderService {
         // دو بار Callback بزند، پرداخت دوم را نمی‌سازد.
         clientEventId: `woo:${input.externalId}`,
       });
+    }
+
+    if (input.codDelivered) {
+      // سقف اعتبار مشتری مجوز خروج سفارش پرداخت در محلِ پرداخت‌نشده نیست.
+      // سفارش کاملاً تخفیف‌خورده با مبلغ صفر بدون ساخت دریافت جعلی مجاز است.
+      const settled = await sql<{ payable: string; received: string }>`
+        SELECT i.payable_amount::text AS payable,
+          coalesce((SELECT sum(p.amount) FROM treasury.payment p
+            JOIN treasury.payment_method m ON m.code=p.method_code
+            WHERE p.invoice_id=i.id AND p.direction='in' AND p.status IN ('succeeded','settled','reconciled')
+              AND m.kind IN ('cash','card_reader','transfer','gateway')),0)::text AS received
+        FROM sales.invoice i WHERE i.id=${invoiceId}::uuid
+      `.execute(trx);
+      const row = settled.rows[0]!;
+      if (parseMoney(row.received) !== parseMoney(row.payable)) {
+        throw new InvoiceError("cod_payment_required", "خروج سفارش پرداخت در محل نیازمند ثبت دریافت کامل وجه پس از تحویل است", 409);
+      }
     }
 
     // نهایی‌سازی: کالا از انبار خارج می‌شود و شماره فاکتور می‌خورد.

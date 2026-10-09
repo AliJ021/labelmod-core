@@ -547,7 +547,9 @@ function StockReport({ period, periodIssue, branches, allBranches, filters }: {
     { key: "warehouse", header: "انبار", cell: r => r.warehouseName },
     { key: "product", header: "کالا", cell: r => <>{r.productName}<span className="cell-sub">{r.color} · {r.size}</span></> },
     { key: "sku", header: "SKU", cell: r => <Ltr>{r.sku}</Ltr> },
-    { key: "onHand", header: "موجودی", numeric: true, cell: r => <Qty value={r.onHand} /> },
+    { key: "onHand", header: "موجودی فیزیکی", numeric: true, cell: r => <Qty value={r.onHand} /> },
+    { key: "reserved", header: "رزروشده", numeric: true, cell: r => <Qty value={r.reserved} /> },
+    { key: "available", header: "قابل‌فروش", numeric: true, cell: r => <Qty value={r.available} /> },
     { key: "unitCost", header: "بهای واحد", numeric: true, cell: r => <Cell rial={r.unitCost} /> },
     { key: "value", header: "ارزش", numeric: true, cell: r => <Cell rial={r.totalValue} /> },
   ];
@@ -562,7 +564,7 @@ function StockReport({ period, periodIssue, branches, allBranches, filters }: {
   return <>
     <ReportFilters filters={filters} extra={extra} />
     <ReportSection title="موجودی و ارزش دفتری" query={query} empty="موجودی‌ای برای نمایش نیست — یا دسترسی بهای تمام‌شده ندارید."
-      description={`${TOMAN} «کاردکس» گردش همان کالا را در بازهٔ انتخابی زیر همین جدول باز می‌کند.`}
+      description={`${TOMAN} رزرو سفارش، موجودی قابل‌فروش را کم می‌کند؛ خروج فیزیکی و اثر مالی هنگام ثبت قطعی فروش انجام می‌شود. موجودی انبار معیوب، در راه یا غیرفعال قابل‌فروش نیست. «کاردکس» گردش همان کالا را در بازهٔ انتخابی زیر همین جدول باز می‌کند.`}
       csv={csvUrl("/reports/inventory-valuation", warehouseId === "" ? "" : `warehouseId=${encodeURIComponent(warehouseId)}`)}>
       {rows => {
         const totalValue = rows.reduce((a, r) => a + parseRial(r.totalValue), 0n);

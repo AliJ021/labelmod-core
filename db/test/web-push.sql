@@ -370,6 +370,11 @@ UPDATE inventory.stock_balance SET reserved = 9999
 PERFORM pg_temp.assert_txt('رزرو بیش از موجودی → صفر، نه منفی',
   trim_scale(inventory.web_stock_qty(v_var, WEB))::text, '0');
 
+-- مقدار نامعتبر بالا فقط آزمون Clamp بود؛ بخش بعد خروج واقعی کالا را می‌سنجد.
+-- همان رزرو معتبر پیش از این حالت مصنوعی را برمی‌گردانیم، نه اینکه نگهبان خروج را دور بزنیم.
+UPDATE inventory.stock_balance SET reserved = 6
+ WHERE variation_id = v_var AND warehouse_id = WEB;
+
 -- ═══════════════════════════════════════════════════════════════════
 RAISE NOTICE E'\n═══ ۱۱. تور ایمنی — پیکربندی ناسازگار دیده می‌شود ═══';
 -- ═══════════════════════════════════════════════════════════════════

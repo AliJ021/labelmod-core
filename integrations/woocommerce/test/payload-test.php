@@ -370,6 +370,39 @@ LMC_Order_Sync::confirm_legacy_payment($legacy_order, 'BANK-123');
 assert_eq('تأیید دوباره صف را تکراری نمی‌کند', count($GLOBALS['lmc_test_scheduled']), $queued);
 $GLOBALS['lmc_test_confirm_allowed'] = false;
 
+// پرداخت تأیید شده است ولی صف پیش از آزادشدن وضعیت on-hold اجرا می‌شود.
+$delayed_order = new WC_Order();
+$delayed_order->id = 1004;
+$delayed_order->status = 'on-hold';
+$GLOBALS['lmc_test_orders'][1004] = $delayed_order;
+LMC_Order_Sync::payment_complete(1004);
+$GLOBALS['lmc_test_scheduled'] = []; // WP-Cron رویداد تک‌اجرا را پیش از callback حذف می‌کند.
+LMC_Order_Sync::send(1004);
+assert_eq('پرداخت معلق هنوز ارسال نشده', $delayed_order->get_meta(LMC_Order_Sync::META_INVOICE), '');
+$status_hook = $GLOBALS['lmc_test_actions']['woocommerce_order_status_changed'] ?? null;
+assert_eq('تغییر وضعیت مسیر بازیابی پرداخت تأییدشده دارد', is_callable($status_hook), true);
+if (is_callable($status_hook)) {
+    $status_hook(1004);
+    assert_eq('وضعیت نامجاز دوباره صف نمی‌سازد', count($GLOBALS['lmc_test_scheduled']), 0);
+    $delayed_order->status = 'processing';
+    $status_hook(1004);
+    assert_eq('پرداخت تأییدشده پس از آزادشدن وضعیت دوباره صف می‌شود', count($GLOBALS['lmc_test_scheduled']), 1);
+    $status_hook(1004);
+    assert_eq('بازخوانی تغییر وضعیت صف تکراری نمی‌سازد', count($GLOBALS['lmc_test_scheduled']), 1);
+    $GLOBALS['lmc_test_scheduled'] = [];
+    foreach (['cod', 'bacs'] as $method) {
+        $cod_order->method = $method;
+        $status_hook($cod_order->id);
+        assert_eq('تغییر وضعیت بدون مدرک پرداخت صف نمی‌سازد: ' . $method, count($GLOBALS['lmc_test_scheduled']), 0);
+    }
+    foreach ([LMC_Order_Sync::META_ERROR => 'خطای دائمی', LMC_Order_Sync::META_ATTEMPTS => 6, LMC_Order_Sync::META_INVOICE => 'ثبت‌شده'] as $key => $value) {
+        $delayed_order->update_meta_data($key, $value);
+        $status_hook(1004);
+        assert_eq('تغییر وضعیت خطا/سقف تلاش/فاکتور قبلی را دور نمی‌زند: ' . $key, count($GLOBALS['lmc_test_scheduled']), 0);
+        $delayed_order->delete_meta_data($key);
+    }
+}
+
 // ── واحد پول ────────────────────────────────────────────────────────
 
 echo "── تبدیل واحد پول ────────────────────────────────────────────\n";

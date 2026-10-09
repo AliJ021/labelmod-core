@@ -247,6 +247,8 @@ describe("گزارش‌ها", { skip }, () => {
     const mine = rows.find((x) => x.variationId === variationId);
     assert.ok(mine, "کالای تست در ارزش‌گذاری هست");
     assert.equal(mine?.onHand, "18.000", "۲۰ خرید منهای ۲ فروش");
+    assert.equal(mine?.reserved, "0.000");
+    assert.equal(mine?.available, "18.000");
     assert.equal(mine?.unitCost, "400000");
 
     const no = await get(supervisor, `/reports/inventory-valuation?warehouseId=${STORE_WH}`);
@@ -606,5 +608,52 @@ describe("گزارش‌ها", { skip }, () => {
     assert.ok(a.hours.every((h) => h.salesAmount === "0" && h.receivedAmount === "0" && h.profitAmount === "0"));
     const s = await hourlyOf(supervisor, empty);
     assert.ok(s.hours.every((h) => h.salesAmount === "0" && h.profitAmount === null));
+  });
+
+  test("گزارش و CSV رزرو سفارش را از موجودی فیزیکی و ارزش دفتری جدا می‌کنند", async () => {
+    const p = await sql<{ id: string }>`INSERT INTO catalog.product(code,name_internal)
+      VALUES (${"RES-REPORT-"+suffix},'کالای گزارش رزرو') RETURNING id`.execute(handle.db);
+    const v = await sql<{ id: string }>`INSERT INTO catalog.variation(product_id,sku)
+      VALUES (${p.rows[0]!.id}::uuid,${"RES-REPORT-"+suffix}) RETURNING id`.execute(handle.db);
+    const id = v.rows[0]!.id;
+    await sql`SELECT inventory.apply_movement(${id}::uuid,${STORE_WH}::uuid,5.125,
+      'purchase_receipt','test_receipt',${id}::uuid,${adminId}::uuid,400000)`.execute(handle.db);
+    const lines = JSON.stringify([{ sku: "RES-REPORT-"+suffix, qty: "1.125" }]);
+    const reserve = (action: string) => sql`SELECT inventory.web_order_reserve(${adminId}::uuid,
+      ${"report-"+suffix},${BRANCH}::uuid,${STORE_WH}::uuid,${lines}::jsonb,${action})`.execute(handle.db);
+    const url = `/reports/inventory-valuation?warehouseId=${STORE_WH}`;
+    try {
+      await reserve("reserve");
+      const response = await get(admin, url);
+      assert.equal(response.statusCode, 200, response.body);
+      const row = response.json().rows.find((r: { variationId: string }) => r.variationId === id);
+      assert.equal(row.onHand, "5.125");
+      assert.equal(row.reserved, "1.125");
+      assert.equal(row.available, "4.000");
+      assert.equal(row.totalValue, "2050000", "رزرو ارزش دفتری را کم نمی‌کند");
+      assert.equal(row.unitCost, "400000");
+      const csv = await get(admin, url+"&format=csv");
+      assert.equal(csv.statusCode, 200, csv.body);
+      for (const label of ["موجودی فیزیکی", "رزروشده", "قابل‌فروش"]) assert.ok(csv.body.includes(label));
+      const line = csv.body.split("\r\n").find((r: string) => r.includes("RES-REPORT-"+suffix));
+      assert.ok(line?.includes("5.125") && line.includes("1.125") && line.includes("4.000"), csv.body);
+    } finally { await reserve("release"); }
+    const released = (await get(admin, url)).json().rows.find((r: { variationId: string }) => r.variationId === id);
+    assert.equal(released.reserved, "0.000");
+    assert.equal(released.available, "5.125");
+    for (const [kind, active] of [["defective", true], ["transit", true], ["stock", false]] as const) {
+      const w = await sql<{ id: string }>`INSERT INTO inventory.warehouse(branch_id,code,name,kind,is_active)
+        VALUES (${BRANCH}::uuid,${"RS-"+kind+suffix},'انبار غیرقابل‌فروش',${kind},${active}) RETURNING id`.execute(handle.db);
+      const wid = w.rows[0]!.id;
+      await sql`SELECT inventory.apply_movement(${id}::uuid,${wid}::uuid,1,
+        'purchase_receipt','test_receipt',${id}::uuid,${adminId}::uuid,400000)`.execute(handle.db);
+      // انبار غیرفعال در انتخابگر نمی‌آید ولی گزارش دفتری همهٔ انبارها باید ارزش آن را نگه دارد.
+      const rows = await get(admin, `/reports/inventory-valuation?warehouseId=${wid}`);
+      assert.equal(rows.statusCode, 200, rows.body);
+      const nonSellable = rows.json().rows.find((r: { variationId: string }) => r.variationId === id);
+      assert.equal(nonSellable.onHand, "1.000");
+      assert.equal(nonSellable.available, "0.000");
+      assert.equal(nonSellable.totalValue, "400000");
+    }
   });
 });

@@ -69,6 +69,8 @@ export interface ValuationRow {
   color: string;
   size: string;
   onHand: string;
+  reserved: string;
+  available: string;
   totalValue: string;
   unitCost: string | null;
 }

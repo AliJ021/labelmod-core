@@ -21,7 +21,7 @@ export function registerWooDiagnosticsRoutes(app: FastifyInstance, db: Db, secre
     reply.header("cache-control", "no-store");
     return { protocol: 1, authenticated: true, auth: "apiClientId" in req.session ? "api_key" : "session",
       branchId: q.branchId, warehouseId: q.warehouseId, orderIdentity: "sku", stockIdentity: "variationId",
-      features: { explicitLineDiscount: true },
+      features: { explicitLineDiscount: true, codReservations: true },
       mapping: q.sku ? { skuFound: !!variation, active: variation?.status === "active",
         matchesVariation: q.variationId ? variation?.id === q.variationId : null } : null,
     };
