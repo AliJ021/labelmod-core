@@ -1,33 +1,46 @@
 import { useRef, useState } from "react";
 import { api, ApiError } from "../lib/api.ts";
 import { Ltr } from "./ui/Bidi.tsx";
+import { StatusBadge } from "./ui/Status.tsx";
 import { normalizeDigits } from "../lib/settings-value.ts";
 import {
-  DEFAULT_PRESET, LABEL_PRESETS, MAX_PER_VARIANT, MAX_TOTAL, groupByProduct, labelRequestBody,
-  labelRequestProblem, queueTotal, type LabelLayout, type LabelSize,
+  DEFAULT_PRESET, LABEL_PRESETS, MAX_PER_VARIANT, MAX_TOTAL, groupByProduct, labelContentWarning, labelRequestBody,
+  labelRequestProblem, labelSizeProblem, queueTotal, type LabelLayout, type LabelSize,
 } from "../lib/label-print.ts";
 import { labelQueue, useLabelQueue } from "../lib/label-queue.ts";
+import { labelSize, useLabelSizeChoice } from "../lib/label-size.ts";
 
 const fa = (n: number) => n.toLocaleString("fa-IR");
 
-/** انتخاب اندازهٔ لیبل: اندازه‌های آماده، یا دلخواه، یا برگهٔ A4. */
+/**
+ * انتخاب اندازهٔ لیبل: اندازه‌های آماده، یا دلخواه، یا برگهٔ A4 — **مشترک**
+ * میان صفحهٔ کالا و فهرست چاپ گروهی و ماندگار روی همین دستگاه
+ * (`lib/label-size.ts`)؛ دو انتخاب جدا یعنی نوبت گروهی با اندازهٔ غلط.
+ */
 export function useLabelSize() {
-  const [layout, setLayout] = useState<LabelLayout>("roll");
-  const [preset, setPreset] = useState(DEFAULT_PRESET);
-  const [width, setWidth] = useState("50");
-  const [height, setHeight] = useState("30");
+  const { layout, preset, width, height } = useLabelSizeChoice();
   const chosen = LABEL_PRESETS.find((p) => p.id === preset);
   const size: LabelSize = {
     layout,
     width: chosen ? chosen.width : Number(normalizeDigits(width)),
     height: chosen ? chosen.height : Number(normalizeDigits(height)),
   };
-  return { size, layout, setLayout, preset, setPreset, width, setWidth, height, setHeight };
+  return {
+    size, layout, preset, width, height,
+    setLayout: (v: LabelLayout) => labelSize.set({ layout: v }),
+    setPreset: (v: string) => labelSize.set({ preset: v }),
+    setWidth: (v: string) => labelSize.set({ width: v }),
+    setHeight: (v: string) => labelSize.set({ height: v }),
+  };
 }
 export type LabelSizeState = ReturnType<typeof useLabelSize>;
 
 export function LabelSizeFields({ state, onChange, idPrefix }: { state: LabelSizeState; onChange: () => void; idPrefix: string }) {
   const { layout, preset, width, height } = state;
+  // خطای اندازه کنار خودِ میدان‌ها، نه زیر دکمه‌ها؛ و پیش از انتخاب هر تنوعی هم دیده می‌شود.
+  const problem = labelSizeProblem(state.size);
+  const errorId = `${idPrefix}-size-error`;
+  const invalid = problem !== null ? { "aria-invalid": true as const, "aria-describedby": errorId } : {};
   return <div className="stack" style={{ gap: "var(--s-2)" }}>
     <div className="row" style={{ flexWrap: "wrap", gap: "var(--s-3)" }}>
       <label className="auth-field">نوع برچسب<select value={layout} onChange={(e) => { state.setLayout(e.target.value as LabelLayout); onChange(); }}>
@@ -39,10 +52,19 @@ export function LabelSizeFields({ state, onChange, idPrefix }: { state: LabelSiz
         </select></label> : null}
     </div>
     {layout === "roll" && preset === "custom" ? <div className="row" style={{ flexWrap: "wrap", gap: "var(--s-3)" }}>
-      <label className="auth-field">عرض لیبل (میلی‌متر)<input inputMode="decimal" value={width} onChange={(e) => { state.setWidth(e.target.value); onChange(); }} /></label>
-      <label className="auth-field">ارتفاع لیبل (میلی‌متر)<input inputMode="decimal" value={height} onChange={(e) => { state.setHeight(e.target.value); onChange(); }} /></label>
+      <label className="auth-field">عرض لیبل (میلی‌متر)<input inputMode="decimal" value={width} {...invalid} onChange={(e) => { state.setWidth(e.target.value); onChange(); }} /></label>
+      <label className="auth-field">ارتفاع لیبل (میلی‌متر)<input inputMode="decimal" value={height} {...invalid} onChange={(e) => { state.setHeight(e.target.value); onChange(); }} /></label>
     </div> : null}
+    {problem ? <p id={errorId} className="small" role="status" style={{ margin: 0 }}><StatusBadge state="warning" label="اندازه نامعتبر" /> {problem}</p> : null}
   </div>;
+}
+
+/** «بدون قیمت»/«بدون بارکد» کنار تنوع — همان نشانهٔ وضعیت نظام طراحی (آیکون + برچسب). */
+export function LabelContentBadges({ priced, hasBarcode }: { priced?: boolean | undefined; hasBarcode?: boolean | undefined }) {
+  return <>
+    {priced === false ? <StatusBadge state="warning" quiet label="بدون قیمت" /> : null}
+    {hasBarcode === false ? <StatusBadge state="warning" quiet label="بدون بارکد" /> : null}
+  </>;
 }
 
 /** پیش‌نمایش در iframe و چاپ — نسخهٔ قدیمی پیش‌نمایش با تغییر انتخاب باطل می‌شود. */
@@ -76,6 +98,7 @@ export function LabelPrintQueue() {
   const pv = useLabelPreview();
   const total = queueTotal(items);
   const problem = labelRequestProblem(items, sizeState.size);
+  const warning = labelContentWarning(items);
   const body = labelRequestBody(items, sizeState.size);
   const currentKey = JSON.stringify(body);
   if (items.length === 0) {
@@ -94,7 +117,7 @@ export function LabelPrintQueue() {
       <strong style={{ overflowWrap: "anywhere" }}>{g.productName}</strong>
       <ul className="stack" style={{ gap: "var(--s-1)", listStyle: "none", margin: 0, padding: 0 }}>
         {g.items.map((i) => <li key={i.variationId} className="row" style={{ flexWrap: "wrap", alignItems: "center", gap: "var(--s-2)", minWidth: 0 }}>
-          <span style={{ flex: "1 1 8rem", minWidth: 0, overflowWrap: "anywhere" }}>{[i.color ?? "بدون رنگ", i.size ?? "آزاد"].join(" / ")} · <Ltr>{i.sku}</Ltr></span>
+          <span style={{ flex: "1 1 8rem", minWidth: 0, overflowWrap: "anywhere" }}>{[i.color ?? "بدون رنگ", i.size ?? "آزاد"].join(" / ")} · <Ltr>{i.sku}</Ltr> <LabelContentBadges priced={i.priced} hasBarcode={i.hasBarcode} /></span>
           <input aria-label={`تعداد لیبل ${i.sku}`} inputMode="numeric" style={{ width: "5em" }} value={String(i.count)}
             onChange={(e) => { labelQueue.setCount(i.variationId, Number(normalizeDigits(e.target.value)) || 0); pv.reset(); }} />
           <button type="button" className="btn btn--quiet" onClick={() => { labelQueue.setCount(i.variationId, 0); pv.reset(); }} aria-label={`حذف ${i.sku} از فهرست`}>حذف</button>
@@ -103,7 +126,8 @@ export function LabelPrintQueue() {
     </div>)}
     <LabelSizeFields state={sizeState} onChange={pv.reset} idPrefix="queue" />
     <p className="muted small" style={{ margin: 0 }}>حداکثر {fa(MAX_PER_VARIANT)} لیبل از هر تنوع و {fa(MAX_TOTAL)} لیبل در هر نوبت. در پنجرهٔ چاپ مقیاس ۱۰۰٪ و اندازهٔ کاغذ برابر لیبل؛ سربرگ و پابرگ خاموش.</p>
-    {problem ? <p className="small" role="status">{problem}</p> : null}
+    {problem && problem !== labelSizeProblem(sizeState.size) ? <p className="small" role="status">{problem}</p> : null}
+    {warning ? <p className="small" role="status"><StatusBadge state="warning" label="پیش از چاپ" /> {warning}</p> : null}
     <div className="row" style={{ gap: "var(--s-2)", flexWrap: "wrap" }}>
       <button className="btn btn--primary" type="button" disabled={problem !== null || pv.busy} onClick={() => void pv.preview(body, currentKey)}>{pv.busy ? "…" : `پیش‌نمایش ${fa(total)} لیبل`}</button>
       <button className="btn" type="button" disabled={pv.busy} onClick={() => { labelQueue.clear(); pv.reset(); }}>پاک‌کردن فهرست</button>

@@ -34,6 +34,12 @@ export interface QueueItem {
   color: string | null;
   size: string | null;
   count: number;
+  /**
+   * قیمت و بارکد هنگام افزودن — فقط برای هشدار پیش از چاپ؛ مقدار روی لیبل را
+   * سرور از دیتابیس می‌خواند. نبودن (فهرست ذخیره‌شدهٔ قدیمی) یعنی «نمی‌دانیم»، نه «دارد».
+   */
+  priced?: boolean;
+  hasBarcode?: boolean;
 }
 
 /** شمارهٔ معتبر از ورودی کاربر (رقم فارسی را فراخوان پیش‌تر نرمال کرده). */
@@ -77,22 +83,49 @@ export function groupByProduct(items: readonly QueueItem[]): Array<{ productId: 
   return groups;
 }
 
+/** عدد پیام با رقم فارسی — همان رقم‌های بقیهٔ صفحه، نه «30» وسط جملهٔ فارسی. */
+const fa = (n: number) => n.toLocaleString("fa-IR");
+
+/**
+ * اندازهٔ نامعتبر رول — جدا از سنجش تعداد تا کنار خودِ میدان‌های اندازه دیده
+ * شود، حتی پیش از انتخاب هر تنوعی. `null` یعنی معتبر.
+ */
+export function labelSizeProblem(size: LabelSize): string | null {
+  if (size.layout !== "roll") return null;
+  const { minWidth, maxWidth, minHeight, maxHeight } = ROLL_LIMITS;
+  if (!(size.width >= minWidth && size.width <= maxWidth))
+    return `عرض لیبل باید بین ${fa(minWidth)} و ${fa(maxWidth)} میلی‌متر باشد؛ باریک‌تر از ${fa(minWidth)} میلی‌متر بارکد با حاشیهٔ سکوت و قیمت کامل جا نمی‌شوند.`;
+  if (!(size.height >= minHeight && size.height <= maxHeight))
+    return `ارتفاع لیبل باید بین ${fa(minHeight)} و ${fa(maxHeight)} میلی‌متر باشد؛ کوتاه‌تر از ${fa(minHeight)} میلی‌متر نام، قیمت و بارکد خوانا با هم جا نمی‌شوند.`;
+  return null;
+}
+
 /** چرا این درخواست ارسال نمی‌شود — `null` یعنی معتبر. */
 export function labelRequestProblem(items: readonly { count: number }[], size: LabelSize): string | null {
   const total = queueTotal(items);
   if (items.length === 0 || total === 0) return "هیچ لیبلی انتخاب نشده است.";
-  if (items.length > MAX_ITEMS) return `حداکثر ${MAX_ITEMS} تنوع در هر نوبت چاپ.`;
+  if (items.length > MAX_ITEMS) return `حداکثر ${fa(MAX_ITEMS)} تنوع در هر نوبت چاپ.`;
   if (items.some((i) => !Number.isInteger(i.count) || i.count < 1 || i.count > MAX_PER_VARIANT))
-    return `تعداد هر تنوع باید بین ۱ و ${MAX_PER_VARIANT} باشد.`;
-  if (total > MAX_TOTAL) return `حداکثر ${MAX_TOTAL} لیبل در هر نوبت؛ اکنون ${total}.`;
-  if (size.layout === "roll") {
-    const { minWidth, maxWidth, minHeight, maxHeight } = ROLL_LIMITS;
-    if (!(size.width >= minWidth && size.width <= maxWidth))
-      return `عرض لیبل باید بین ${minWidth} و ${maxWidth} میلی‌متر باشد؛ باریک‌تر از ${minWidth} میلی‌متر بارکد با حاشیهٔ سکوت و قیمت کامل جا نمی‌شوند.`;
-    if (!(size.height >= minHeight && size.height <= maxHeight))
-      return `ارتفاع لیبل باید بین ${minHeight} و ${maxHeight} میلی‌متر باشد؛ کوتاه‌تر از ${minHeight} میلی‌متر نام، قیمت و بارکد خوانا با هم جا نمی‌شوند.`;
-  }
-  return null;
+    return `تعداد هر تنوع باید بین ۱ و ${fa(MAX_PER_VARIANT)} باشد.`;
+  if (total > MAX_TOTAL) return `حداکثر ${fa(MAX_TOTAL)} لیبل در هر نوبت؛ اکنون ${fa(total)}.`;
+  return labelSizeProblem(size);
+}
+
+/**
+ * هشدار محتوا — مانع چاپ نیست، چون سرور برچسب بی‌قیمت («بدون قیمت») و
+ * بی‌بارکد (فقط SKU) را عمداً می‌سازد. ولی لیبلی که قیمت یا بارکد ندارد
+ * روی رگال به کار صندوق‌دار نمی‌آید، پس پیش از چاپ صریح گفته می‌شود.
+ */
+export function labelContentWarning(items: readonly { count: number; priced?: boolean; hasBarcode?: boolean }[]): string | null {
+  const chosen = items.filter((i) => i.count > 0);
+  const noPrice = chosen.filter((i) => i.priced === false);
+  const noBarcode = chosen.filter((i) => i.hasBarcode === false);
+  const parts: string[] = [];
+  if (noPrice.length > 0)
+    parts.push(`${fa(noPrice.length)} تنوع انتخاب‌شده قیمت ندارد و روی لیبلش «بدون قیمت» چاپ می‌شود`);
+  if (noBarcode.length > 0)
+    parts.push(`${fa(noBarcode.length)} تنوع بارکد ندارد و لیبلش فقط SKU دارد و اسکن نمی‌شود`);
+  return parts.length === 0 ? null : `${parts.join("؛ ")}. پیش از چاپ قیمت را تعیین کنید یا تعداد آن تنوع را صفر کنید.`;
 }
 
 /** بدنهٔ `POST /labels` — شکل همان قرارداد موجود. */
