@@ -37,6 +37,7 @@ class LMC_Order_Sync
     const META_ATTEMPTS = '_lmc_attempts';
     const META_ERROR    = '_lmc_last_error';
     const META_PAID     = '_lmc_payment_complete';
+    const META_DELIVERED = '_lmc_cod_delivered';
     const META_PAYLOAD  = '_lmc_order_payload';
     const META_LINES    = '_lmc_order_line_map';
 
@@ -88,6 +89,15 @@ class LMC_Order_Sync
     {
         $order_id = (int) $order_id;
         $order = $order_id > 0 ? wc_get_order($order_id) : false;
+        // تحویل و وصول دو شاهد مستقل‌اند. تحویل را پیش از اجرای صف حفظ می‌کنیم
+        // تا مرجوعی کاملِ بعدی، سفارش تحویل‌شده را پیش از ارسال اصلی متوقف نکند.
+        // وضعیت refunded به‌تنهایی هرگز شاهد تحویل یا دریافت وجه نیست.
+        if ($order && $order->has_status('completed')
+            && ($order->get_payment_method() === 'cod' || is_array($order->get_meta('_lmc_reservation_payload')))
+            && $order->get_meta(self::META_DELIVERED) !== 'yes') {
+            $order->update_meta_data(self::META_DELIVERED, 'yes');
+            $order->save();
+        }
         // تغییر وضعیت دریافت وجه را اثبات نمی‌کند و توقف ناشی از خطا یا
         // سقف تلاش را دور نمی‌زند؛ فقط کار اجراشده هنگام on-hold جبران می‌شود.
         if (!$order || !self::is_eligible($order)
@@ -226,7 +236,9 @@ class LMC_Order_Sync
     {
         return $order->get_meta(self::META_PAID) === 'yes'
             && $order->has_status(['processing', 'completed', 'refunded'])
-            && (($order->get_payment_method() !== 'cod' && !is_array($order->get_meta('_lmc_reservation_payload'))) || $order->has_status('completed'));
+            && (($order->get_payment_method() !== 'cod' && !is_array($order->get_meta('_lmc_reservation_payload')))
+                || $order->has_status('completed')
+                || ($order->has_status('refunded') && $order->get_meta(self::META_DELIVERED) === 'yes'));
     }
 
     /**

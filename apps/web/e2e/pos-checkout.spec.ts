@@ -339,6 +339,36 @@ test("receipt print stays in the cashier tab, waits for fonts and the embedded l
   await expect(page.locator('iframe[title="رسید آمادهٔ چاپ"]')).toHaveCount(0);
 });
 
+test("receipt with an already failed embedded logo still prints once without changing the sale", async ({ page, api }) => {
+  const s = pos(api, { receivedAmount: "200000" });
+  let prints = 0;
+  await page.exposeFunction("recordReceiptPrint", () => { prints++; });
+  await page.addInitScript(() => {
+    if (window.parent !== window) window.print = () => {
+      const logo = document.querySelector("img");
+      if (!logo?.complete || logo.naturalWidth !== 0) throw new Error("expected failed logo");
+      Reflect.get(window, "recordReceiptPrint")();
+      window.dispatchEvent(new Event("afterprint"));
+    };
+  });
+  api.handlers.set(`GET /invoices/${INV}/print`, route => route.fulfill({
+    contentType: "text/html",
+    body: '<!doctype html><html><body><div class="sheet"><img alt="لیبل مد" src="data:image/png;base64,broken"><table class="totals"><tr><td>رسید</td></tr></table></div><button id="print-btn">چاپ</button></body></html>',
+  }));
+  await open(page, s);
+  await page.getByRole("button", { name: "نهایی‌کردن فاکتور", exact: true }).click();
+  await page.getByRole("dialog").getByRole("button", { name: "تأیید و نهایی‌کردن", exact: true }).click();
+  const button = page.getByRole("button", { name: "چاپ رسید", exact: true });
+  await expect(button).toBeVisible();
+  const mutations = api.calls.filter(call => !call.startsWith("GET "));
+  await button.click();
+  await expect.poll(() => prints).toBe(1);
+  await expect(button).toBeEnabled();
+  expect(page.context().pages()).toHaveLength(1);
+  expect(api.calls.filter(call => !call.startsWith("GET "))).toEqual(mutations);
+  expect(s.finalized).toBe(1);
+});
+
 test("receipt errors and timeout allow retry without reopening or mutating the sale", async ({ page, api }) => {
   const s = pos(api, { receivedAmount: "200000" });
   let prints = 0;
