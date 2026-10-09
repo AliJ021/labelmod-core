@@ -95,4 +95,29 @@ describe("فهرست چاپ گروهی لیبل", () => {
       { layout: "roll", preset: "custom", width: "۴۵", height: "28" });
     assert.equal(DEFAULT_SIZE_CHOICE.preset, "50x30");
   });
+
+  test("افزودن دوبارهٔ همان تنوع، قیمت/بارکدِ صریح تازه را جایگزین می‌کند؛ undefined دادهٔ معلوم را پاک نمی‌کند", () => {
+    const meta = (variationId: string, count: number, m: Partial<Pick<QueueItem, "priced" | "hasBarcode">>): QueueItem =>
+      ({ ...item(variationId, "p1", count), ...m });
+    // false → true: پس از تعیین قیمت و بارکد در صفحهٔ کالا و افزودن دوباره، هشدار برطرف می‌شود.
+    const first = [meta("v1", 2, { priced: false, hasBarcode: false }), meta("v2", 1, { priced: true, hasBarcode: true })];
+    const adds = [meta("v1", 3, { priced: true, hasBarcode: true })];
+    const snapshot = JSON.stringify([first, adds]);
+    let q = mergeQueue(first, adds);
+    assert.equal(JSON.stringify([first, adds]), snapshot, "ورودی‌ها دست نمی‌خورند");
+    assert.deepEqual(q.map((i) => [i.variationId, i.count, i.priced, i.hasBarcode]), [["v1", 5, true, true], ["v2", 1, true, true]]);
+    assert.equal(labelContentWarning(q), null);
+    // true → false: قیمت برداشته شد؛ هشدار باید برگردد. سقف هر تنوع هم می‌ماند.
+    q = mergeQueue(q, [meta("v2", 100, { priced: false })]);
+    assert.deepEqual(q.map((i) => [i.variationId, i.count, i.priced, i.hasBarcode]), [["v1", 5, true, true], ["v2", 100, false, true]]);
+    assert.match(labelContentWarning(q) ?? "", /۱ تنوع انتخاب‌شده قیمت ندارد/);
+    // صف قدیمی بی‌فراداده: افزودن تازه فرادادهٔ صریح را می‌گیرد…
+    q = mergeQueue([item("v3", "p2", 1)], [meta("v3", 1, { priced: false, hasBarcode: true })]);
+    assert.deepEqual(q.map((i) => [i.count, i.priced, i.hasBarcode]), [[2, false, true]]);
+    // …و افزودنِ بی‌فراداده دانستهٔ قبلی را پاک نمی‌کند.
+    q = mergeQueue(q, [item("v3", "p2", 1)]);
+    assert.deepEqual(q.map((i) => [i.count, i.priced, i.hasBarcode]), [[3, false, true]]);
+    assert.ok(!("priced" in mergeQueue([item("v4", "p3", 1)], [item("v4", "p3", 1)])[0]!), "نامعلوم نامعلوم می‌ماند");
+  });
 });
+

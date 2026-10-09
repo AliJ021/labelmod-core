@@ -55,8 +55,13 @@ export function mergeQueue(current: readonly QueueItem[], adds: readonly QueueIt
     const count = clampCount(add.count);
     if (count === 0) continue;
     const existing = out.find((i) => i.variationId === add.variationId);
-    if (existing) existing.count = clampCount(existing.count + count);
-    else out.push({ ...add, count });
+    if (existing) {
+      existing.count = clampCount(existing.count + count);
+      // قیمت/بارکد ممکن است میان دو افزودن تعیین یا برداشته شده باشد: فقط مقدار
+      // صریح تازه جایگزین می‌شود، تا افزودنِ بی‌فراداده دانستهٔ قبلی را پاک نکند.
+      if (add.priced !== undefined) existing.priced = add.priced;
+      if (add.hasBarcode !== undefined) existing.hasBarcode = add.hasBarcode;
+    } else out.push({ ...add, count });
   }
   return out;
 }
