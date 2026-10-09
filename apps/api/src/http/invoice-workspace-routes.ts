@@ -71,25 +71,34 @@ export function registerInvoiceWorkspaceRoutes(app: FastifyInstance, db: Db): vo
     return { payments: rows.rows };
   });
 
-  app.get("/invoices/:id/print", async (req, reply) => {
+  for (const documentKind of ["sale", "proforma"] as const) app.get(`/invoices/:id/${documentKind === "sale" ? "print" : "proforma-print"}`, async (req, reply) => {
     const s = session(req.session);
-    await requireInvoiceRead(db, s);
+    if (documentKind === "proforma") await requireForSession(db, s, "sale.create");
+    else await requireInvoiceRead(db, s);
     const { id } = z.object({ id: z.string().uuid() }).parse(req.params);
-    const inv = await invoices.byId(id);
-    if (!inv) throw new InvoiceError("invoice_not_found", "فاکتور یافت نشد", 404);
-    await assertBranch(db, s.userId, inv.branchId);
-    if (!["finalized", "paid", "partially_returned", "returned"].includes(inv.status))
-      throw new InvoiceError("invoice_not_finalized", "چاپ رسید فقط برای فاکتور قطعی ممکن است.");
-    const meta = await sql<{ shop: string; customer: string | null; zone: string; return_hours: string | null; site_url: string | null }>`
-      SELECT b.name AS shop,c.full_name AS customer,platform.setting_text('platform.timezone','Asia/Tehran') AS zone,
-        (SELECT value::text FROM platform.setting WHERE key='return.window_hours') AS return_hours,
-        platform.setting_text('web.site_url','') AS site_url
-      FROM sales.invoice i JOIN platform.branch b ON b.id=i.branch_id LEFT JOIN sales.customer c ON c.id=i.customer_id WHERE i.id=${id}::uuid`.execute(db);
-    const variants = await db.selectFrom("catalog.variation").select(["id", "color", "size"])
-      .where("id", "in", inv.lines.map(l => l.variationId)).execute();
-    const html = invoicePage({ ...inv, number: inv.number ?? "", shopName: meta.rows[0]?.shop ?? "", customerName: meta.rows[0]?.customer ?? null,
-      ...receiptFooterFromSettings({ return_hours: meta.rows[0]?.return_hours ?? null, site_url: meta.rows[0]?.site_url ?? null }),
-      lines: inv.lines.map(l => { const v = variants.find(x => x.id === l.variationId); return { ...l, color: v?.color ?? null, size: v?.size ?? null }; }) }, meta.rows[0]?.zone ?? "Asia/Tehran");
+    const html = await db.transaction().setIsolationLevel("repeatable read").execute(async trx => {
+      // Totals and draft lines must describe the same snapshot even if another till edits them.
+      await sql`SET TRANSACTION READ ONLY`.execute(trx);
+      const inv = await invoices.byId(id, trx);
+      if (!inv) throw new InvoiceError("invoice_not_found", "فاکتور یافت نشد", 404);
+      await assertBranch(trx, s.userId, inv.branchId);
+      if (documentKind === "proforma") {
+        if (inv.createdBy !== s.userId) await requireForSession(trx, s, "report.view");
+        if (inv.channel !== "pos" || inv.status !== "draft" || inv.lines.length === 0)
+          throw new InvoiceError("invoice_not_draft", "پیش‌فاکتور فقط برای سبد ذخیره‌شده و دارای کالا ممکن است.");
+      } else if (!["finalized", "paid", "partially_returned", "returned"].includes(inv.status))
+        throw new InvoiceError("invoice_not_finalized", "چاپ رسید فقط برای فاکتور قطعی ممکن است.");
+      const meta = await sql<{ shop: string; customer: string | null; zone: string; return_hours: string | null; site_url: string | null }>`
+        SELECT b.name AS shop,c.full_name AS customer,platform.setting_text('platform.timezone','Asia/Tehran') AS zone,
+          (SELECT value::text FROM platform.setting WHERE key='return.window_hours') AS return_hours,
+          platform.setting_text('web.site_url','') AS site_url
+        FROM sales.invoice i JOIN platform.branch b ON b.id=i.branch_id LEFT JOIN sales.customer c ON c.id=i.customer_id WHERE i.id=${id}::uuid`.execute(trx);
+      const variants = await trx.selectFrom("catalog.variation").select(["id", "color", "size"])
+        .where("id", "in", inv.lines.map(l => l.variationId)).execute();
+      return invoicePage({ ...inv, documentKind, number: documentKind === "proforma" ? inv.id : inv.number ?? "", shopName: meta.rows[0]?.shop ?? "", customerName: meta.rows[0]?.customer ?? null,
+        ...receiptFooterFromSettings({ return_hours: meta.rows[0]?.return_hours ?? null, site_url: meta.rows[0]?.site_url ?? null }),
+        lines: inv.lines.map(l => { const v = variants.find(x => x.id === l.variationId); return { ...l, color: v?.color ?? null, size: v?.size ?? null }; }) }, meta.rows[0]?.zone ?? "Asia/Tehran");
+    });
     return reply.header("content-type", "text/html; charset=utf-8").header("cache-control", "no-store")
       .header("content-security-policy", INVOICE_PAGE_CSP).header("x-robots-tag", "noindex, nofollow").send(html);
   });

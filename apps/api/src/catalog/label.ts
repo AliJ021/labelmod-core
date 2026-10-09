@@ -224,9 +224,9 @@ export class LabelSizeError extends Error {
 /** قیمت به تومان با رقم فارسی، بی‌آنکه ریالِ کسری گم شود. */
 function priceToman(rial: bigint): string {
   const abs = rial < 0n ? -rial : rial;
-  const whole = (abs / 10n).toLocaleString("fa-IR");
+  const whole = (abs / 10n).toLocaleString("en-US");
   const fraction = abs % 10n;
-  const text = fraction === 0n ? whole : `${whole}٫${fraction.toLocaleString("fa-IR")}`;
+  const text = fraction === 0n ? whole : `${whole}.${fraction}`;
   return rial < 0n ? `−${text}` : text;
 }
 
@@ -237,6 +237,12 @@ export function esc(value: string): string {
     .replace(/>/g, "&gt;")
     .replace(/"/g, "&quot;")
     .replace(/'/g, "&#39;");
+}
+
+/** Display-only normalization; SKU/barcode identity and encoded bars stay untouched. */
+function labelText(value: string): string {
+  return esc(value.replace(/[۰-۹٠-٩]/g, (digit) =>
+    String(digit.charCodeAt(0) - (digit >= "۰" ? 0x06f0 : 0x0660))));
 }
 
 /**
@@ -257,7 +263,7 @@ function labelHtml(item: LabelItem, shopName: string, g: LabelGeometry, width: n
   const price =
     item.priceRial === null
       ? '<span class="noprice">بدون قیمت</span>'
-      : `${esc(priceText)} <small>تومان</small>`;
+      : `<bdi class="digits" dir="ltr">${esc(priceText)}</bdi> <small>تومان</small>`;
   const pf = priceFontMm(priceText, g, width);
 
   // بارکد نداشتن، خطا نیست: کالایی که بارکدش هنوز ساخته نشده باید
@@ -266,24 +272,24 @@ function labelHtml(item: LabelItem, shopName: string, g: LabelGeometry, width: n
   const svgOpts = { moduleMm: g.moduleMm, heightMm: g.barHeightMm };
   const code = kind === "ean13" ? ean13Svg(item.barcode as string, svgOpts)
     : kind === "code128" ? code128Svg(item.barcode as string, svgOpts)
-    : `<div class="nobarcode">${esc(item.sku)}</div>`;
+    : `<div class="nobarcode">${labelText(item.sku)}</div>`;
 
   // شرح: دو سطر جدا (نام، سپس برند · رنگ · سایز) یا یک سطر پیوسته. هر سطر
   // nowrap با «…» است، پس هیچ‌وقت نیم‌سطری دیده نمی‌شود.
   const desc = g.nameLines === 2
-    ? `<span class="l">${esc(item.productName)}</span><span class="l">${details.map(esc).join(" · ")}</span>`
-    : `<span class="l">${[item.productName, ...details].map(esc).join(" · ")}</span>`;
+    ? `<span class="l">${labelText(item.productName)}</span><span class="l">${details.map(labelText).join(" · ")}</span>`
+    : `<span class="l">${[item.productName, ...details].map(labelText).join(" · ")}</span>`;
 
   return `<div class="label">
-  ${g.showShop ? `<div class="shop">${esc(shopName)}</div>` : ""}
+  ${g.showShop ? `<div class="shop">${labelText(shopName)}</div>` : ""}
   <div class="code">${code}</div>
   <div class="desc">${desc}</div>
   <div class="price" style="font-size:${pf.toFixed(2)}mm">${price}</div>
 </div>`;
 }
 
-/** راهنمای بالای پیش‌نمایش با رقم فارسی، هم‌خوان با صفحهٔ کالا؛ این سطر هرگز چاپ نمی‌شود. */
-const faNum = (n: number) => n.toLocaleString("fa-IR");
+/** Preview and printed labels both use Latin digits, as requested by the owner. */
+const printNum = (n: number) => n.toLocaleString("en-US");
 
 export function labelPage(items: LabelItem[], opts: LabelPageOptions): string {
   const roll = opts.rollMm ?? { width: 50, height: 30 };
@@ -331,7 +337,7 @@ export function labelPage(items: LabelItem[], opts: LabelPageOptions): string {
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>برچسب قیمت — ${esc(opts.shopName)}</title>
+<title>برچسب قیمت — ${labelText(opts.shopName)}</title>
 <style>
   ${page}
   * { box-sizing: border-box; }
@@ -366,6 +372,7 @@ export function labelPage(items: LabelItem[], opts: LabelPageOptions): string {
   .desc .l { display: block; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
   .price { height: ${g.rows.price}mm; line-height: ${g.rows.price}mm; font-weight: 800; direction: rtl; white-space: nowrap; }
   .price small { font-size: 0.5em; font-weight: 600; }
+  .digits { font-family: Arial, sans-serif; font-variant-numeric: tabular-nums; }
   .noprice { font-size: ${(f * 0.95).toFixed(2)}mm; font-weight: 700; }
   .code svg { display: block; }
   .nobarcode {
@@ -390,7 +397,7 @@ export function labelPage(items: LabelItem[], opts: LabelPageOptions): string {
 </style>
 </head>
 <body>
-<div class="hint">${faNum(repeated.length)} برچسب ${isRoll ? `${faNum(roll.width)}×${faNum(roll.height)} میلی‌متر` : "روی برگهٔ A4"} — مقیاس چاپ ۱۰۰٪ و بدون حاشیه.${warn}</div>
+<div class="hint">${printNum(repeated.length)} برچسب ${isRoll ? `${printNum(roll.width)}×${printNum(roll.height)} میلی‌متر` : "روی برگهٔ A4"} — مقیاس چاپ 100٪ و بدون حاشیه.${warn}</div>
 <div class="sheet">
 ${repeated.join("\n")}
 </div>

@@ -185,9 +185,9 @@ describe("برچسب قیمت", () => {
   test("قیمت به تومان نمایش داده می‌شود، نه ریال", () => {
     const html = labelPage([base], { layout: "a4", shopName: "ف" });
     // ۲۴٬۰۰۰٬۰۰۰ ریال = ۲٬۴۰۰٬۰۰۰ تومان
-    assert.ok(html.includes("۲٬۴۰۰٬۰۰۰"), "تومان با رقم فارسی و جداکننده هزارگان");
+    assert.ok(html.includes("2,400,000"), "Toman with Latin digits and grouping");
     assert.ok(html.includes("تومان"));
-    assert.ok(!html.includes("24٬000٬000"), "ریال نباید روی برچسب بیاید");
+    assert.ok(!html.includes("24,000,000"), "ریال نباید روی برچسب بیاید");
   });
 
   test("کالای بی‌قیمت، برگه را نمی‌شکند — «بدون قیمت» می‌گیرد", () => {
@@ -239,6 +239,23 @@ describe("برچسب قیمت", () => {
 });
 
 describe("اندازهٔ برچسب", () => {
+  test("printed text uses Latin digits without changing the stored barcode or inputs", () => {
+    const item: LabelItem = { barcode: "20514161201032064", sku: "کد-۱۲", productName: "مدل ۱۴۰۵ <جدید>",
+      brand: "برند ٢", color: "رنگ ۳", size: "۳۶", priceRial: 43_800_005n, count: 1 };
+    for (const layout of ["roll", "a4"] as const) {
+      const html = labelPage([item], { layout, shopName: "لیبل مد ۱", rollMm: { width: 50, height: 30 } });
+      const body = html.slice(html.indexOf("<body>"));
+      assert.doesNotMatch(body, /[۰-۹٠-٩]/);
+      assert.match(body, /4,380,000\.5/);
+      assert.match(body, /مدل 1405 &lt;جدید&gt;/);
+      assert.match(body, /برند 2/);
+      assert.match(body, /20514161201032064/);
+    }
+    assert.equal(item.size, "۳۶");
+    assert.equal(item.productName, "مدل ۱۴۰۵ <جدید>");
+    const fallback = labelPage([{ ...item, barcode: null }], { layout: "roll", shopName: "فروشگاه" });
+    assert.match(fallback, /کد-12/);
+  });
   const item: LabelItem = {
     barcode: makeEan13(7), sku: "P-7", productName: "مانتو کتان بلند با نام بسیار طولانی برای آزمون شکست سطر",
     color: "سرمه‌ای", size: "XL", priceRial: 12_345_675n, count: 1,
@@ -316,7 +333,7 @@ describe("اندازهٔ برچسب", () => {
 
   test("قیمت به تومان دقیق است؛ ریال کسری گم نمی‌شود", () => {
     const html = labelPage([item], { layout: "a4", shopName: "ف" });
-    assert.ok(html.includes("۱٬۲۳۴٬۵۶۷٫۵"), "۱۲٬۳۴۵٬۶۷۵ ریال = ۱٬۲۳۴٬۵۶۷٫۵ تومان");
+    assert.ok(html.includes("1,234,567.5"), "Exact fractional Toman uses Latin digits");
   });
 
   test("هندسه تعداد ماژول واقعی بارکد را می‌گیرد و زیر ۰٫۲۵mm نمی‌رود", () => {
