@@ -166,4 +166,7 @@ BEGIN
   RETURN jsonb_build_object('reservationId',v_order.id,'status',v_status,'replayed',false);
 END $$;
 
+-- نقش برنامه در ops/db-roles.sh مجوز صریح می‌گیرد؛ تابع با اختیار مالک عمومی نیست.
+REVOKE EXECUTE ON FUNCTION inventory.web_order_reserve(uuid,text,uuid,uuid,jsonb,text,boolean) FROM PUBLIC;
+
 COMMIT;
