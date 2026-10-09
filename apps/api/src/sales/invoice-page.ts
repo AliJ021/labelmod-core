@@ -314,73 +314,81 @@ export function invoicePage(data: InvoicePageData, timeZone: string): string {
     background: linear-gradient(-45deg, transparent 6px, var(--paper) 0) 0 0 / 12px 10px repeat-x,
                 linear-gradient(45deg, transparent 6px, var(--paper) 0) 0 0 / 12px 10px repeat-x;
   }
-  .head { text-align: center; }
+  .head { text-align: center; padding-bottom: 2px; }
   /* نشان متنی وقتی فایل لوگو نیست — لوگوی ساختگی نمی‌سازیم. */
   .brand { font-size: 24px; font-weight: 900; letter-spacing: -.2px; line-height: 1.25; overflow-wrap: anywhere; }
   .logo { display: block; margin: 0 auto; width: auto; height: auto; max-width: 70%; max-height: 56px; object-fit: contain; }
   /* کاغذ حرارتی فقط سیاه دارد؛ نوع درمان از پیکسل‌های خودِ فایل آمده است. */
   .logo--black { filter: brightness(0); }
   .logo--gray { filter: grayscale(1) contrast(1.2); }
-  .shop { margin-top: 6px; font-size: 12.5px; font-weight: 700; overflow-wrap: anywhere; }
-  .doc { display: flex; align-items: center; gap: 10px; margin: 12px 0 0; font-size: 10.5px; font-weight: 800; letter-spacing: 3px; }
+  .shop { margin-top: 8px; font-size: 12px; font-weight: 500; overflow-wrap: anywhere; }
+  .doc { display: flex; align-items: center; gap: 12px; margin: 16px 0 0; font-size: 11px; font-weight: 700; }
   .doc::before, .doc::after { content: ""; flex: 1; border-top: 1px solid var(--line); }
-  .doc span { padding: 2px 10px; border: 1.5px solid var(--line); border-radius: 999px; letter-spacing: 1.5px; }
+  .doc span { padding: 0 4px; }
 
   /* مشخصات سند: دو ستون، برچسب ریز بالای مقدار. */
-  .meta { display: grid; grid-template-columns: 1fr 1fr; margin: 14px 0 0; border: 1.5px solid var(--line); border-radius: 10px; }
-  .cell { min-width: 0; padding: 7px 10px 6px; }
+  .meta { display: grid; grid-template-columns: 1fr 1fr; margin: 16px 0 0; border: 1px solid var(--line); border-radius: 10px; }
+  .cell { min-width: 0; padding: 9px 12px; }
   .cell:nth-child(odd) { border-inline-end: 1px solid var(--line); }
   .cell:nth-child(n+3) { border-top: 1px solid var(--line); }
-  .meta dt { font-size: 10px; font-weight: 700; color: var(--ink-2); letter-spacing: .3px; }
-  .meta dd { margin: 1px 0 0; font-size: 12.5px; font-weight: 800; overflow-wrap: anywhere; }
-  .docno { font-variant-numeric: tabular-nums; letter-spacing: .3px; }
+  .meta dt { font-size: 10px; font-weight: 400; color: var(--ink-2); }
+  .meta dd { margin: 4px 0 0; font-size: 12px; font-weight: 600; overflow-wrap: anywhere; }
+  .docno { font-family: Arial, sans-serif; font-variant-numeric: tabular-nums; font-size: .95em; }
+
+  /* یک زبان بصری برای اقلام و خلاصه: قاب آرام، عنوان مشخص و فاصلهٔ داخلی ثابت.
+     overflow:hidden نمی‌گذاریم تا نام بلند یا شکست صفحهٔ چاپ بریده نشود. */
+  .receipt-panel { margin-top: 16px; border: 1px solid var(--line); border-radius: 10px; }
+  .panel-heading { display: flex; justify-content: space-between; align-items: baseline; gap: 8px; padding: 9px 12px; border-bottom: 1px solid var(--line); background: #F7F5F1; border-radius: 9px 9px 0 0; }
+  .panel-heading h2 { margin: 0; font-size: 12px; font-weight: 700; }
+  .panel-heading span { font-size: 10px; font-weight: 400; color: var(--ink-2); }
+  .panel-body { padding: 0 12px 10px; }
 
   table { width: 100%; border-collapse: collapse; table-layout: fixed; }
   th, td { text-align: right; padding: 0; vertical-align: top; }
-  .items { margin-top: 14px; }
+  .items { margin-top: 0; }
   .items col.idx { width: 22px; }
   .items col.amount { width: 36%; }
-  .items thead th { font-size: 10.5px; font-weight: 800; letter-spacing: .3px; padding: 0 0 5px; border-bottom: 2px solid var(--line); }
-  .idx { font-size: 10.5px; font-weight: 800; font-variant-numeric: tabular-nums; }
+  .items thead th { font-size: 10px; font-weight: 400; padding: 9px 0 7px; border-bottom: 1px solid var(--line); }
+  .idx { font-family: Arial, sans-serif; font-size: 10px; font-weight: 400; font-variant-numeric: tabular-nums; }
   .item td { padding-top: 2px; }
-  .item tr:first-child td { padding-top: 9px; }
-  .item + .item tr:first-child td { border-top: 1px dashed var(--line); }
-  .item:last-of-type tr:last-child td { padding-bottom: 8px; }
-  .name { font-weight: 800; font-size: 13px; line-height: 1.5; overflow-wrap: anywhere; word-break: normal; }
+  .item tr:first-child td { padding-top: 10px; }
+  .item + .item tr:first-child td { border-top: 1px solid var(--line); }
+  .item tr:last-child td { padding-bottom: 10px; }
+  .name { font-weight: 600; font-size: 13px; line-height: 1.7; overflow-wrap: anywhere; word-break: normal; }
   /* رنگ تنوع: برچسب قاب‌دار، نه متن کم‌رنگ — روی کاغذ حرارتی هم خوانا. */
   .name small {
     display: inline-block; margin-inline-start: 4px; padding: 0 6px; vertical-align: 1px;
-    font-size: 10.5px; font-weight: 700; line-height: 1.6; border: 1px solid var(--line); border-radius: 999px;
+    font-size: 10px; font-weight: 400; line-height: 1.6; border: 1px solid var(--line); border-radius: 4px;
   }
   .calc td { font-size: 12px; color: var(--ink-2); }
-  .calc .qty, .calc .unit { font-variant-numeric: tabular-nums; white-space: nowrap; }
-  .calc .qty { font-weight: 800; color: var(--ink); }
-  .num { text-align: left; font-variant-numeric: tabular-nums; white-space: nowrap; }
-  .calc .num { font-weight: 800; font-size: 13.5px; color: var(--ink); }
-  .disc td { font-size: 11.5px; font-weight: 700; }
+  .calc .qty, .calc .unit { font-family: Arial, sans-serif; font-variant-numeric: tabular-nums; white-space: nowrap; }
+  .calc .qty { font-weight: 600; color: var(--ink); }
+  .num { text-align: left; font-family: Arial, Tahoma, sans-serif; font-variant-numeric: tabular-nums; white-space: nowrap; }
+  .calc .num { font-weight: 700; font-size: 13.5px; color: var(--ink); }
+  .disc td { font-size: 11px; font-weight: 400; }
 
-  .totals { margin-top: 2px; border-top: 2px solid var(--line); }
-  .totals th { font-weight: 600; padding: 5px 0 2px; }
-  .totals td { padding: 5px 0 2px; }
+  .totals { margin-top: 6px; }
+  .totals th { font-weight: 400; padding: 6px 0; }
+  .totals td { padding: 6px 0; }
   .totals .incl th, .totals .incl td { font-size: 11.5px; color: var(--ink-2); padding-top: 1px; }
   .totals .grand th, .totals .grand td {
-    font-size: 17px; font-weight: 900; padding: 9px 10px 8px;
-    border-top: 2px solid var(--line); border-bottom: 2px solid var(--line);
+    font-size: 17px; font-weight: 700; padding: 12px 0;
+    border-top: 1.5px solid var(--line); border-bottom: 1.5px solid var(--line);
   }
-  .totals .grand th { border-inline-start: 2px solid var(--line); border-start-start-radius: 8px; }
-  .totals .grand td { border-inline-end: 2px solid var(--line); color: var(--brass); }
+  .totals .grand th { font-size: 13px; }
+  .totals .grand td { color: var(--brass); }
   .totals .grand small, .totals .due small { font-size: 11px; font-weight: 700; color: var(--ink); }
   .totals .paid th, .totals .paid td { padding-top: 9px; }
-  .totals .due th, .totals .due td { font-weight: 900; font-size: 14.5px; padding-top: 7px; }
-  .due-tag { display: inline-block; padding: 1px 10px; border-radius: 999px; background: var(--ink); color: var(--paper); font-size: 12px; }
-  .settle { margin-top: 10px; padding: 5px 8px; text-align: center; font-size: 11.5px; font-weight: 800; border: 1.5px dashed var(--line); border-radius: 8px; }
-  .settle--open { border-style: solid; border-width: 2px; }
+  .totals .due th, .totals .due td { font-weight: 700; font-size: 14px; padding-top: 7px; }
+  .due-tag { font-size: 12px; }
+  .settle { margin-top: 2px; padding-top: 9px; text-align: center; font-size: 10.5px; font-weight: 600; }
+  .settle--open { font-weight: 500; }
   /* پیش‌فاکتور: هشدار قاب‌دار زیر سربرگ، روی کاغذ هم. */
-  .proforma-note { margin: 10px 0 0; padding: 6px 8px; text-align: center; font-size: 12px; font-weight: 800; border: 2px solid var(--line); border-radius: 8px; }
+  .proforma-note { margin: 12px 0 0; padding: 8px 12px; text-align: center; font-size: 11px; font-weight: 500; border: 1px solid var(--line); border-radius: 10px; }
 
-  .foot { margin-top: 16px; padding-top: 12px; border-top: 1.5px dashed var(--line); text-align: center; font-size: 11.5px; line-height: 1.8; }
-  .foot strong { display: block; font-size: 14px; font-weight: 900; }
-  .foot .policy { font-weight: 700; }
+  .foot { margin-top: 18px; padding-top: 0; text-align: center; font-size: 10.5px; line-height: 1.9; }
+  .foot strong { display: block; margin-bottom: 5px; font-size: 13px; font-weight: 600; }
+  .foot .policy { font-weight: 400; }
   .foot .site { font-weight: 700; letter-spacing: .4px; }
   .foot .unit { color: var(--ink-2); font-size: 10.5px; }
 
@@ -409,28 +417,39 @@ export function invoicePage(data: InvoicePageData, timeZone: string): string {
     .sheet::after { display: none; }
     .sheet, .meta dt, .calc td, .totals .incl th, .totals .incl td, .totals .grand td, .foot .unit { color: #000; }
     .brand { font-size: 16pt; }
-    .logo { max-height: 14mm; max-width: 52mm; }
-    .shop { font-size: 9pt; margin-top: 1mm; }
+    .logo { max-height: 12mm; max-width: 48mm; }
+    .shop { font-size: 8pt; margin-top: 1.5mm; }
     .doc { font-size: 7.5pt; margin-top: 2.5mm; }
     .meta { margin-top: 3mm; border-radius: 1.5mm; }
-    .cell { padding: 1.2mm 2mm 1mm; }
-    .meta dt { font-size: 6.5pt; }
-    .meta dd { font-size: 8.5pt; }
-    .items { margin-top: 3mm; }
-    .items col.idx { width: 4.5mm; }
-    .items thead th, .idx { font-size: 7.5pt; }
-    .name { font-size: 9pt; }
+    .cell { padding: 1.5mm 2.4mm; }
+    .meta dt { font-size: 7pt; }
+    .meta dd { font-size: 8pt; margin-top: .8mm; }
+    .receipt-panel { margin-top: 3mm; border-radius: 1.5mm; }
+    .panel-heading { padding: 1.6mm 2.4mm; background: transparent; border-radius: 0; }
+    .panel-heading h2 { font-size: 8.5pt; }
+    .panel-heading span { font-size: 7pt; color: #000; }
+    .panel-body { padding: 0 2.4mm 1.4mm; }
+    .items { margin-top: 0; }
+    .items col.idx { width: 3.5mm; }
+    .items thead th, .idx { font-size: 7pt; }
+    .items thead th { padding: 1.6mm 0; }
+    .item tr:first-child td { padding-top: 2mm; }
+    .item tr:last-child td { padding-bottom: 2mm; }
+    .name { font-size: 8.5pt; }
     .name small { font-size: 7pt; }
     .calc td, .disc td, .totals .incl th, .totals .incl td { font-size: 8pt; }
-    .calc .num { font-size: 9pt; }
-    .totals .grand th, .totals .grand td { font-size: 12pt; padding: 1.8mm 1.6mm 1.5mm; }
-    .totals .due th, .totals .due td { font-size: 10pt; }
+    .calc .num { font-size: 8.5pt; }
+    .totals .grand th, .totals .grand td { padding: 2.2mm 0; }
+    .totals .grand td { font-size: 12pt; }
+    .totals .grand th { font-size: 9pt; }
+    .totals .due th, .totals .due td { font-size: 9pt; }
     .due-tag { font-size: 8pt; }
-    .settle, .foot, .proforma-note { font-size: 8pt; }
-    .foot strong { font-size: 10pt; }
+    .settle, .foot, .proforma-note { font-size: 7.5pt; }
+    .foot strong { font-size: 9pt; }
     .foot .unit { font-size: 7pt; }
     /* یک قلم نباید وسطش بشکند (برای چاپگر صفحه‌ای و PDF). */
-    .item, tr, .meta, .settle { break-inside: avoid; }
+    .item, tr, .meta, .settle, .summary-panel { break-inside: avoid; }
+    .panel-heading { break-after: avoid; }
     thead { display: table-header-group; }
   }
 </style>
@@ -446,6 +465,9 @@ export function invoicePage(data: InvoicePageData, timeZone: string): string {
     <div class="cell"><dt>اقلام</dt><dd>${esc(count)} قلم</dd></div>
   </dl>
 
+  <section class="receipt-panel" aria-labelledby="items-heading">
+    <div class="panel-heading"><h2 id="items-heading">جزئیات خرید</h2><span>مبالغ به تومان</span></div>
+    <div class="panel-body">
   <table class="items">
     <colgroup><col class="idx"><col><col class="amount"></colgroup>
     <thead>
@@ -453,7 +475,12 @@ export function invoicePage(data: InvoicePageData, timeZone: string): string {
     </thead>
 ${items}
   </table>
+    </div>
+  </section>
 
+  <section class="receipt-panel summary-panel" aria-labelledby="summary-heading">
+    <div class="panel-heading"><h2 id="summary-heading">خلاصه حساب</h2><span>تومان</span></div>
+    <div class="panel-body">
   <table class="totals">
     <tr><th>جمع کالاها</th><td class="num">${money(data.netAmount)}</td></tr>
     ${savingRow}
@@ -464,6 +491,8 @@ ${items}
     ${dueRow}
   </table>
   ${settle}
+    </div>
+  </section>
 
   <footer class="foot">
     <strong>سپاس از خرید شما</strong>
