@@ -282,6 +282,9 @@ function labelHtml(item: LabelItem, shopName: string, g: LabelGeometry, width: n
 </div>`;
 }
 
+/** راهنمای بالای پیش‌نمایش با رقم فارسی، هم‌خوان با صفحهٔ کالا؛ این سطر هرگز چاپ نمی‌شود. */
+const faNum = (n: number) => n.toLocaleString("fa-IR");
+
 export function labelPage(items: LabelItem[], opts: LabelPageOptions): string {
   const roll = opts.rollMm ?? { width: 50, height: 30 };
   const isRoll = opts.layout === "roll";
@@ -387,7 +390,7 @@ export function labelPage(items: LabelItem[], opts: LabelPageOptions): string {
 </style>
 </head>
 <body>
-<div class="hint">${repeated.length} برچسب ${isRoll ? `${roll.width}×${roll.height} میلی‌متر` : "روی برگهٔ A4"} — مقیاس چاپ ۱۰۰٪ و بدون حاشیه.${warn}</div>
+<div class="hint">${faNum(repeated.length)} برچسب ${isRoll ? `${faNum(roll.width)}×${faNum(roll.height)} میلی‌متر` : "روی برگهٔ A4"} — مقیاس چاپ ۱۰۰٪ و بدون حاشیه.${warn}</div>
 <div class="sheet">
 ${repeated.join("\n")}
 </div>
