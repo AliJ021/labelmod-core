@@ -583,12 +583,16 @@ test.describe("بازبینی دستهٔ ۱ — پیش‌نویس، اسنپ‌�
   test("B1-03 half-typed range keeps stock valuation visible; only the kardex waits and no invalid date is sent", async ({ page, api }) => {
     Object.assign(api.defaults, REPORT_DATA);
     api.defaults["GET /reports/inventory-valuation"] = { rows: [
-      { warehouseId: "w1", warehouseName: "انبار آزمایشی", variationId: "v1", sku: "LM-1", productName: "پیراهن", color: "آبی", size: "M", onHand: "3", totalValue: "3000000", unitCost: "1000000" },
+      { warehouseId: "w1", warehouseName: "انبار آزمایشی", variationId: "v1", sku: "LM-1", productName: "پیراهن", color: "آبی", size: "M", onHand: "3", reserved: "1", available: "2", totalValue: "3000000", unitCost: "1000000" },
     ] };
     api.defaults["GET /reports/stock-movements"] = { rows: [] };
     await page.goto("/?page=reports&reports.tab=stock");
     const table = page.getByRole("table", { name: "موجودی و ارزش دفتری" });
     await expect(table).toContainText("پیراهن");
+    for (const header of ["موجودی فیزیکی", "رزروشده", "قابل‌فروش"]) {
+      await expect(table.getByRole("columnheader", { name: header, exact: true })).toBeAttached();
+    }
+    await expect(page.getByText(/رزرو سفارش، موجودی قابل‌فروش را کم می‌کند/)).toBeVisible();
     await page.getByRole("button", { name: /^کاردکس/ }).click();
     await expect.poll(() => reportCalls(api, "/reports/stock-movements").length).toBe(1);
 

@@ -5,7 +5,11 @@
 # Caddy که TLS را می‌گیرد فایل‌ها را هم می‌دهد: یک سرویس کمتر، یک
 # Hop کمتر، و هدرهای امنیتی در یک جا.
 # ---------------------------------------------------------------------
-FROM node:22-alpine AS build
+# رجیستری ایمیج پایه — پیش‌فرض همان Docker Hub رسمی است و تولید و Compose
+# آن را عوض نمی‌کنند. فقط CI مقدار public.ecr.aws/docker/library را می‌دهد:
+# همان Docker Official Images با همان digest، بی محدودیت نرخ ناشناس Hub.
+ARG BASE_REGISTRY=docker.io/library
+FROM ${BASE_REGISTRY}/node:22-alpine AS build
 RUN corepack enable
 # بدون TTY، pnpm پیش از پاک‌کردن node_modules تأیید می‌خواهد و بیلد
 # با پیامی نامربوط می‌ایستد. آزموده شد.
@@ -24,7 +28,7 @@ COPY integrations/woocommerce integrations/woocommerce
 RUN pnpm --filter @labelmod/web build
 
 # ---------------------------------------------------------------------
-FROM caddy:2-alpine AS runtime
+FROM ${BASE_REGISTRY}/caddy:2-alpine AS runtime
 RUN apk add --no-cache tzdata
 ENV TZ=Asia/Tehran
 COPY --from=build /app/apps/web/dist /srv

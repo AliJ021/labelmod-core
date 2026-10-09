@@ -113,6 +113,8 @@ export interface ValuationRow {
   color: string;
   size: string;
   onHand: string;
+  reserved: string;
+  available: string;
   totalValue: string;
   unitCost: string | null;
 }
@@ -380,6 +382,8 @@ export class ReportService {
   }
 
   async valuation(warehouseId?: string | undefined): Promise<ValuationRow[]> {
+    // رزرو فقط ظرفیت فروش را کم می‌کند؛ بهای واحد و ارزش همچنان از موجودی فیزیکی‌اند.
+    // برخلاف گزارش قدیمی، ردیفِ صرفاً رزروشده هم باید برای رسیدگی دیده شود.
     const r = await sql<{
       warehouse_id: string;
       warehouse_name: string;
@@ -389,11 +393,24 @@ export class ReportService {
       color: string;
       size: string;
       on_hand: string;
+      reserved: string;
+      available: string;
       total_value: string;
       unit_cost: string | null;
-    }>`SELECT warehouse_id, warehouse_name, variation_id, sku, product_name,
-              color, size, on_hand::text, total_value::text, unit_cost::text
-         FROM inventory.report_valuation(${warehouseId ?? null}::uuid)`
+    }>`SELECT w.id AS warehouse_id, w.name AS warehouse_name, v.id AS variation_id,
+              v.sku, p.name_internal AS product_name, v.color, v.size,
+              b.on_hand::text, b.reserved::text,
+              (CASE WHEN w.is_active AND w.kind IN ('store','stock','outlet')
+                THEN greatest(b.on_hand-b.reserved,0) ELSE 0 END)::platform.qty::text AS available,
+              b.total_value::text,
+              (CASE WHEN b.on_hand>0 THEN round(b.total_value/b.on_hand) ELSE NULL END)::text AS unit_cost
+         FROM inventory.stock_balance b
+         JOIN inventory.warehouse w ON w.id=b.warehouse_id
+         JOIN catalog.variation v ON v.id=b.variation_id
+         JOIN catalog.product p ON p.id=v.product_id
+        WHERE (${warehouseId ?? null}::uuid IS NULL OR b.warehouse_id=${warehouseId ?? null}::uuid)
+          AND (b.on_hand<>0 OR b.total_value<>0 OR b.reserved<>0)
+        ORDER BY w.name,p.name_internal,v.color,v.size`
       .execute(this.#db);
     return r.rows.map((x) => ({
       warehouseId: x.warehouse_id,
@@ -404,6 +421,8 @@ export class ReportService {
       color: x.color,
       size: x.size,
       onHand: x.on_hand,
+      reserved: x.reserved,
+      available: x.available,
       totalValue: x.total_value,
       unitCost: x.unit_cost,
     }));

@@ -559,7 +559,7 @@ Microservice · Redis · Kubernetes · حالت آفلاین کامل · Windows
 ```
 db/migrations/   اسکیما و توابع — شماره‌دار، SQL خام، قابل حسابرسی
 db/seed/         کدینگ حساب، قواعد ثبت، تنظیمات، داده مرجع
-db/test/         ۵۰ فایل تست مالی — در CI و pre-push اجرا می‌شوند
+db/test/         ۵۲ فایل تست مالی — در CI و pre-push اجرا می‌شوند
 db/reconcile/    تطبیق پایانی «یک روز کامل» — از تست E2E صدا زده می‌شود
 docs/            ADR-001 تا ADR-007 · SECURITY.md · DEPLOYMENT.md
                  JOURNAL-GUARDS.md · MELIPAYAMAK.md

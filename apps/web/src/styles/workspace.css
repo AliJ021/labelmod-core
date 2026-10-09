@@ -209,6 +209,7 @@ a[role="tab"] { display: inline-flex; align-items: center; text-decoration: none
 .cart .line-name strong { font-weight: var(--weight-semibold); }
 /* ستون مبلغ سطرها هم‌تراز: عرض ثابت و چسبیده به انتهای ردیف. */
 .cart .line-total { min-inline-size: 8.5rem; text-align: end; font-size: var(--text-md); }
+.line-total-label { display: block; color: var(--ink-2); font-size: var(--text-xs); font-weight: var(--weight-regular); }
 
 /* سبد خالی: یک حالت فشرده و آگاهانه، نه یک قاب بزرگ تهی. */
 .cart-empty { display: flex; align-items: center; gap: var(--s-4); padding: var(--s-4); border-radius: var(--r-sm); background: var(--neutral-soft); }
@@ -400,6 +401,12 @@ a[role="tab"] { display: inline-flex; align-items: center; text-decoration: none
   .pos-tools { flex: 1 1 100%; min-inline-size: 0; flex-wrap: wrap; justify-content: flex-start; margin-inline-start: 0; }
   .cart, .pay { padding: var(--s-3); }
   .cart .line-total { min-inline-size: 0; }
+  .cart .lines li { position: relative; display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: var(--s-2); }
+  .cart .line-name { grid-column: 1 / -1; padding-inline-end: var(--touch); gap: var(--s-1); }
+  .cart .line-total { justify-self: end; }
+  .cart .line-tool { min-block-size: var(--touch); }
+  .cart .line-drop { position: absolute; inset-inline-end: 0; inset-block-start: var(--s-3); }
+  .cart .line-panel, .cart .line-error { grid-column: 1 / -1; }
   .pay-more-list { grid-template-columns: minmax(0, 1fr); }
   .sale-complete { padding: var(--s-4) !important; }
   .sale-complete-actions { grid-template-columns: minmax(0, 1fr); }

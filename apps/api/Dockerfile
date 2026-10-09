@@ -10,7 +10,11 @@
 #    Prebuild موجود نباشد به کامپایلر نیاز دارد. ابزار کامپایل نباید
 #    در ایمیج نهایی بماند.
 # ---------------------------------------------------------------------
-FROM node:22-alpine AS deps
+# رجیستری ایمیج پایه — پیش‌فرض همان Docker Hub رسمی است و تولید و Compose
+# آن را عوض نمی‌کنند. فقط CI مقدار public.ecr.aws/docker/library را می‌دهد:
+# همان Docker Official Images با همان digest، بی محدودیت نرخ ناشناس Hub.
+ARG BASE_REGISTRY=docker.io/library
+FROM ${BASE_REGISTRY}/node:22-alpine AS deps
 
 # python3/make/g++ فقط برای Fallback ساخت argon2 روی musl. اگر Prebuild
 # پیدا شود، اصلاً استفاده نمی‌شوند.
@@ -31,7 +35,7 @@ COPY apps/web/package.json apps/web/package.json
 RUN pnpm install --frozen-lockfile --prod --filter @labelmod/api
 
 # ---------------------------------------------------------------------
-FROM node:22-alpine AS runtime
+FROM ${BASE_REGISTRY}/node:22-alpine AS runtime
 
 # منطقه زمانی ظرف. «امروز» در منطق مالی از platform.timezone می‌آید نه
 # از اینجا (README)، ولی لاگ و ساعت ظرف باید خوانا باشند.

@@ -69,6 +69,7 @@ const webOrderBody = z.object({
   paymentMethod: z.string().trim().min(1).max(40),
   paymentRef: z.string().trim().max(120).optional(),
   paidAmount: moneyString.default("0"),
+  codDelivered: z.boolean().optional(),
   note: z.string().trim().max(500).optional(),
 });
 
@@ -88,6 +89,31 @@ export function registerWebRoutes(app: FastifyInstance, deps: WebRouteDeps): voi
     if (!s) throw new AuthError("no_session", "وارد نشده‌اید");
     return s;
   };
+
+  const reservationScope = z.object({
+    branchId: uuid, warehouseId: uuid, externalId: z.string().trim().min(1).max(64),
+  });
+  const reservationBody = reservationScope.extend({
+    lines: z.array(z.object({ sku: z.string().trim().min(1).max(64), qty: qtyString }).strict()).min(1).max(200),
+  }).strict();
+  for (const action of ["reserve", "release"] as const) {
+    app.post(action === "reserve" ? "/web/order-reservations" : "/web/order-reservations/release", async (req, reply) => {
+      const s = session(req);
+      const body = action === "reserve" ? reservationBody.parse(req.body) : reservationScope.strict().parse(req.body);
+      await requireForSession(db, s, "sale.create");
+      await assertBranch(db, s.userId, body.branchId);
+      await assertWarehouseInBranch(db, body.warehouseId, body.branchId);
+      const lines = "lines" in body ? body.lines : [];
+      const result = await db.transaction().execute(async trx => {
+        const out = await sql<{ result: { reservationId: string; status: string; replayed: boolean } }>`
+          SELECT inventory.web_order_reserve(${s.userId}::uuid, ${body.externalId},
+            ${body.branchId}::uuid, ${body.warehouseId}::uuid, ${JSON.stringify(lines)}::jsonb, ${action}) AS result
+        `.execute(trx);
+        return out.rows[0]!.result;
+      });
+      return reply.code(result.replayed ? 200 : 201).send(result);
+    });
+  }
 
   /**
    * ثبت یک سفارش سایت.
@@ -137,6 +163,7 @@ export function registerWebRoutes(app: FastifyInstance, deps: WebRouteDeps): voi
         shippingAmount: body.shippingAmount,
         paymentMethod: body.paymentMethod,
         paidAmount: body.paidAmount,
+        ...(body.codDelivered === undefined ? {} : { codDelivered: body.codDelivered }),
       },
       run: async (trx) => {
         const id = await webOrders.ingest(trx, {
@@ -153,6 +180,7 @@ export function registerWebRoutes(app: FastifyInstance, deps: WebRouteDeps): voi
           paymentMethod: body.paymentMethod,
           paidAmount: parseMoney(body.paidAmount),
           actorId: s.userId,
+          ...(body.codDelivered === undefined ? {} : { codDelivered: body.codDelivered }),
           ...(body.customerMobile === undefined
             ? {}
             : { customerMobile: body.customerMobile }),

@@ -2,7 +2,7 @@
 /**
  * Plugin Name: Label Mod Connector
  * Description: سفارش‌های ووکامرس را به سامانه «لیبل مد» می‌فرستد و موجودی سایت را از انبار همگام می‌کند.
- * Version: 1.2.2
+ * Version: 1.3.0
  * Requires PHP: 7.4
  * Requires at least: 6.0
  * License: proprietary
@@ -47,7 +47,7 @@ if (!defined('ABSPATH')) {
     exit;
 }
 
-define('LMC_VERSION', '1.2.2');
+define('LMC_VERSION', '1.3.0');
 define('LMC_PATH', plugin_dir_path(__FILE__));
 define('LMC_OPTION', 'labelmod_connector_settings');
 
@@ -62,6 +62,7 @@ require_once LMC_PATH . 'includes/class-lmc-client.php';
 require_once LMC_PATH . 'includes/class-lmc-diagnostics.php';
 require_once LMC_PATH . 'includes/class-lmc-settings.php';
 require_once LMC_PATH . 'includes/class-lmc-order-sync.php';
+require_once LMC_PATH . 'includes/class-lmc-order-reservation.php';
 require_once LMC_PATH . 'includes/class-lmc-refund-sync.php';
 require_once LMC_PATH . 'includes/class-lmc-stock-sync.php';
 require_once LMC_PATH . 'includes/class-lmc-instore.php';
@@ -112,6 +113,7 @@ add_action('plugins_loaded', function () {
     LMC_Settings::init();
     LMC_Diagnostics::init();
     LMC_Order_Sync::init();
+    LMC_Order_Reservation::init();
     LMC_Refund_Sync::init();
     LMC_Stock_Sync::init();
     LMC_Instore::init();

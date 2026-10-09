@@ -46,6 +46,7 @@ $order = new class {
     public $meta = []; public $status = 'processing';
     function get_type() { return 'shop_order'; }
     function get_status() { return $this->status; }
+    function get_payment_method() { return 'bacs'; }
     function get_meta($key) { return $this->meta[$key] ?? ''; }
     function has_status($values) { return in_array($this->status, $values, true); }
     function get_items() { return [new WC_Order_Item_Product()]; }

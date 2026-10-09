@@ -46,6 +46,7 @@ class LMC_Order_Sync
     public static function init(): void
     {
         add_action('woocommerce_payment_complete', [__CLASS__, 'payment_complete']);
+        add_action('woocommerce_order_status_changed', [__CLASS__, 'resume_confirmed_order']);
         add_action(LMC_ORDER_EVENT, [__CLASS__, 'send']);
 
         add_action('add_meta_boxes', [__CLASS__, 'meta_box']);
@@ -82,6 +83,24 @@ class LMC_Order_Sync
         }
     }
 
+    /** بازیابی پرداخت تأییدشده‌ای که هنگام اجرای صف هنوز وضعیت مجاز نداشت. */
+    public static function resume_confirmed_order($order_id): void
+    {
+        $order_id = (int) $order_id;
+        $order = $order_id > 0 ? wc_get_order($order_id) : false;
+        // تغییر وضعیت دریافت وجه را اثبات نمی‌کند و توقف ناشی از خطا یا
+        // سقف تلاش را دور نمی‌زند؛ فقط کار اجراشده هنگام on-hold جبران می‌شود.
+        if (!$order || !self::is_eligible($order)
+            || $order->get_meta(self::META_INVOICE) !== ''
+            || $order->get_meta(self::META_ERROR) !== ''
+            || (int) $order->get_meta(self::META_ATTEMPTS) > 0) {
+            return;
+        }
+        if (!wp_next_scheduled(LMC_ORDER_EVENT, [$order_id])) {
+            wp_schedule_single_event(time() + 10, LMC_ORDER_EVENT, [$order_id]);
+        }
+    }
+
     /** ارسال واقعی — از دل Cron. */
     public static function send($order_id): void
     {
@@ -94,10 +113,26 @@ class LMC_Order_Sync
             return;
         }
 
+        if ($order->get_payment_method() === 'cod' && self::to_rial($order->get_total()) > 0
+            && !isset(self::parse_map((string) lmc_setting('payment_map'))['cod'])) {
+            self::fail($order, new WP_Error('lmc_cod_payment_map', 'روش دریافت واقعی پرداخت در محل مشخص نیست؛ در تنظیمات اتصال، نگاشت cod را به روش دریافت صحیح تعیین کنید.'), false);
+            return;
+        }
+
         $payload = self::snapshot($order);
         if (is_wp_error($payload)) {
             self::fail($order, $payload, false);
             return;
+        }
+        if ($order->get_payment_method() === 'cod' && self::to_rial($order->get_total()) > 0
+            && ($payload['paymentMethod'] ?? '') !== self::map_payment_method($order)) {
+            self::fail($order, new WP_Error('lmc_cod_payment_snapshot', 'روش دریافت با تصویر ثبت‌شده سفارش متفاوت است؛ پیش از ارسال، تطبیق دستی لازم است.'), false);
+            return;
+        }
+
+        if ($order->get_payment_method() === 'cod' || is_array($order->get_meta('_lmc_reservation_payload'))) {
+            // تحویل و دریافت وجه دو شرط مستقل‌اند؛ وضعیت completed مدرک پول نیست.
+            $payload['codDelivered'] = true;
         }
 
         $supported = self::check_discount_support($payload);
@@ -190,7 +225,8 @@ class LMC_Order_Sync
     private static function is_eligible(WC_Order $order): bool
     {
         return $order->get_meta(self::META_PAID) === 'yes'
-            && $order->has_status(['processing', 'completed', 'refunded']);
+            && $order->has_status(['processing', 'completed', 'refunded'])
+            && (($order->get_payment_method() !== 'cod' && !is_array($order->get_meta('_lmc_reservation_payload'))) || $order->has_status('completed'));
     }
 
     /**
@@ -202,6 +238,11 @@ class LMC_Order_Sync
     {
         $branch    = (string) lmc_setting('branch_id');
         $warehouse = (string) lmc_setting('warehouse_id');
+        $reservation = $order->get_meta('_lmc_reservation_payload');
+        if (is_array($reservation)) {
+            $branch = (string) ($reservation['branchId'] ?? '');
+            $warehouse = (string) ($reservation['warehouseId'] ?? '');
+        }
         if ($branch === '' || $warehouse === '') {
             return new WP_Error(
                 'lmc_not_configured',
@@ -343,15 +384,17 @@ class LMC_Order_Sync
         foreach ($payload['lines'] as $line) {
             if (array_key_exists('discountAmount', $line)) { $has_discount = true; break; }
         }
-        if (!$has_discount) { return true; }
+        $cod = ($payload['codDelivered'] ?? false) === true;
+        if (!$has_discount && !$cod) { return true; }
         $response = LMC_Client::get('/web/connection', [
             'branchId' => $payload['branchId'], 'warehouseId' => $payload['warehouseId'],
         ]);
         if (is_wp_error($response)) { return $response; }
         if (($response['protocol'] ?? null) !== 1 || ($response['authenticated'] ?? false) !== true
             || ($response['branchId'] ?? '') !== $payload['branchId'] || ($response['warehouseId'] ?? '') !== $payload['warehouseId']
-            || ($response['features']['explicitLineDiscount'] ?? false) !== true) {
-            return new WP_Error('lmc_discount_api_upgrade', 'Core هنوز پشتیبانی تخفیف صریح سطر را تأیید نکرده است؛ ابتدا API را به‌روز کنید. سفارش ارسال نشد.', ['kind' => LMC_Client::PERMANENT]);
+            || ($has_discount && ($response['features']['explicitLineDiscount'] ?? false) !== true)
+            || ($cod && ($response['features']['codReservations'] ?? false) !== true)) {
+            return new WP_Error('lmc_discount_api_upgrade', 'Core قابلیت لازم برای تخفیف یا رزرو پرداخت در محل را تأیید نکرده است؛ ابتدا API را به‌روز کنید. سفارش ارسال نشد.', ['kind' => LMC_Client::PERMANENT]);
         }
         return true;
     }
@@ -521,6 +564,16 @@ class LMC_Order_Sync
             return;
         }
 
+        if (class_exists('LMC_Order_Reservation') && ($order->get_payment_method() === 'cod' || is_array($order->get_meta(LMC_Order_Reservation::PAYLOAD)))) {
+                $state = $order->get_meta(LMC_Order_Reservation::STATE);
+                $labels = ['reserved' => 'موجودی قابل فروش رزرو شده است.', 'released' => 'رزرو آزاد شده است.', 'consumed' => 'رزرو مصرف شده است.'];
+                echo '<p>' . esc_html($labels[$state] ?? 'رزرو هنوز تأیید نشده است؛ صف و خطای رزرو را بررسی کنید.') . '</p>';
+                echo '<p>' . esc_html__('خروج کالا و ثبت وجه فقط پس از تحویل (تکمیل‌شده) و تأیید واقعی دریافت وجه انجام می‌شود.', 'labelmod-connector') . '</p>';
+                $reservation_error = (string) $order->get_meta(LMC_Order_Reservation::ERROR);
+                if ($reservation_error !== '') { echo '<p role="alert">' . esc_html($reservation_error) . '</p>'; }
+                $retry_url = wp_nonce_url(admin_url('admin-post.php?action=lmc_resend&order=' . $order->get_id()), 'lmc_resend_' . $order->get_id());
+                printf('<p><a class="button" href="%s">%s</a></p>', esc_url($retry_url), esc_html__('ارسال دوباره رزرو', 'labelmod-connector'));
+        }
         if ($order->get_meta(self::META_PAID) !== 'yes') {
             $confirm_url = wp_nonce_url(
                 admin_url('admin-post.php?action=lmc_confirm_payment&order=' . $order->get_id()),
@@ -565,6 +618,9 @@ class LMC_Order_Sync
 
         $order = wc_get_order($order_id);
         if ($order) {
+            if (class_exists('LMC_Order_Reservation')) {
+                LMC_Order_Reservation::retry($order);
+            }
             // شمارنده تلاش صفر می‌شود: این یک تصمیم انسانی است، نه
             // ادامه همان صفِ ناموفق.
             $order->update_meta_data(self::META_ATTEMPTS, 0);

@@ -536,3 +536,31 @@ test("هر تست PHP افزونه مستقل اجرا می‌شود", () => {
     assert.notEqual(code, 255, `${f} کد خروج ۲۵۵ داد (Fatal)`);
   }
 });
+
+test("ایمیج‌های پایهٔ CI از آینهٔ رسمی ECR Public می‌آیند و پیش‌فرض تولید Docker Hub رسمی می‌ماند", () => {
+  // pull ناشناس Docker Hub روی رانرهای GitHub با 429 می‌شکست و deploy-build و
+  // db-tests پیش از اجرای هر آزمونی می‌مردند. آینه همان Docker Official Images است.
+  const MIRROR = "public.ecr.aws/docker/library";
+  const dockerfiles = ["apps/api/Dockerfile", "apps/web/Dockerfile", "ops/deploy/Dockerfile.scheduler"];
+  for (const f of dockerfiles) {
+    const src = readFileSync(join(ROOT, f), "utf8");
+    // پیش‌فرض تولید و Compose (که build arg نمی‌دهد) همان docker.io/library است.
+    assert.match(src, /^ARG BASE_REGISTRY=docker\.io\/library$/m, `${f}: پیش‌فرض رجیستری`);
+    const froms = src.match(/^FROM .+$/gm) ?? [];
+    assert.ok(froms.length > 0, `${f}: FROM ندارد`);
+    for (const from of froms) {
+      // مرحلهٔ ساخته‌شده در همین فایل (FROM deps) استثناست؛ هر ایمیج بیرونی از آرگومان.
+      assert.match(from, /^FROM \$\{BASE_REGISTRY\}\/[a-z0-9]+:[\w.-]+( AS \w+)?$/, `${f}: «${from}» از BASE_REGISTRY نمی‌خواند`);
+    }
+  }
+  const ci = readFileSync(join(ROOT, ".github/workflows/db-tests.yml"), "utf8");
+  const builds = ci.match(/docker build .*/g) ?? [];
+  assert.equal(builds.length, dockerfiles.length, "هر Dockerfile یک build در CI");
+  for (const b of builds) assert.ok(b.includes(`--build-arg BASE_REGISTRY=${MIRROR}`), `build بی آینه: ${b}`);
+  // ایمیج سرویس و هر ایمیج بیرونی که CI مستقیم اجرا می‌کند، با نشانی کامل آینه.
+  const code = ci.split("\n").filter((l) => !/^\s*#/.test(l)).join("\n");
+  for (const img of ["postgres:16-alpine", "caddy:2-alpine", "node:22-alpine"]) {
+    for (const m of code.matchAll(new RegExp(`(\\S*)${img.replace(/[.]/g, "\\.")}`, "g")))
+      assert.equal(m[1], `${MIRROR}/`, `ارجاع بی آینه به ${img}: «${m[0]}»`);
+  }
+});

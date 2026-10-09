@@ -183,7 +183,7 @@ class LMC_Settings
             __('نگاشت درگاه پرداخت', 'labelmod-connector'),
             '<textarea name="payment_map" rows="4" class="large-text" dir="ltr">'
                 . esc_textarea($s['payment_map']) . '</textarea>',
-            __('هر خط یکی: شناسه درگاه ووکامرس = کد روش پرداخت لیبل مد. مثال: zarinpal=gateway — بدون نگاشت، «gateway» فرض می‌شود.', 'labelmod-connector')
+            __('هر خط یکی: شناسه درگاه ووکامرس = کد روش پرداخت لیبل مد. مثال: zarinpal=gateway. برای پرداخت در محل، نگاشت cod به روش واقعی دریافت اجباری است؛ فقط اگر نقدی است cod=cash. بدون این نگاشت، رزرو انجام می‌شود ولی ثبت وجه متوقف می‌ماند. سایر درگاه‌های بدون نگاشت gateway فرض می‌شوند.', 'labelmod-connector')
         );
 
         self::row(
