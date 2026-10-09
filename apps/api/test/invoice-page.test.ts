@@ -230,6 +230,59 @@ describe("رسید حرارتی ۸۰ میلی‌متری", () => {
     // بی تنظیم معتبر، هیچ سطر سیاستی نیست — حدس زده نمی‌شود.
     assert.deepEqual(receiptFooterFromSettings({ return_hours: null, site_url: "javascript:alert(1)" }), { returnWindowHours: null, website: null });
     assert.doesNotMatch(html, /مهلت مرجوعی/);
-    assert.match(html, /<div class="meta-row"><span>فاکتور <bdi dir="ltr" class="docno">F-1405-000123<\/bdi><\/span>/);
+    // شماره فاکتور برچسب‌دار و LTR جدا، در جعبهٔ مشخصات (بازطراحی ۱۴۰۵/۰۷).
+    assert.match(html, /<dt>شمارهٔ فاکتور<\/dt><dd><bdi dir="ltr" class="docno">F-1405-000123<\/bdi><\/dd>/);
+  });
+});
+
+describe("بازطراحی رسید — جمع‌ها، پرداخت و وضعیت تسویه", () => {
+  const line = (over: Partial<{ discountAmount: bigint; netAmount: bigint; unitPrice: bigint }> = {}) => ({
+    productName: "شال", color: null, size: null, qty: "1", unitPrice: 1_000_000n, discountAmount: 0n, netAmount: 1_000_000n, ...over,
+  });
+  const base = {
+    number: "F-1", shopName: "لیبل مد", customerName: null, occurredAt: new Date("2026-09-06T10:00:00Z"),
+    taxAmount: 0n, shippingAmount: 0n,
+  };
+
+  test("پرداخت‌شده دیده می‌شود و مانده با برچسب و وضعیت «تسویه نشده» برجسته است", () => {
+    const html = invoicePage({ ...base, lines: [line()], netAmount: 1_000_000n, payableAmount: 1_000_000n, paidAmount: 400_000n }, "Asia/Tehran");
+    assert.match(html, /<tr class="paid"><th>پرداخت‌شده<\/th><td class="num">۴۰٬۰۰۰<\/td><\/tr>/);
+    assert.match(html, /<tr class="due"><th><span class="due-tag">مانده<\/span><\/th><td class="num">۶۰٬۰۰۰ <small>تومان<\/small><\/td><\/tr>/);
+    assert.match(html, /class="settle settle--open">تسویه نشده/);
+  });
+
+  test("فاکتور صفر (تخفیف ۱۰۰٪): قابل پرداخت ۰، بی سطر پرداخت و مانده، «تسویه‌شده»", () => {
+    const html = invoicePage({ ...base, lines: [line({ discountAmount: 1_000_000n, netAmount: 0n })],
+      netAmount: 0n, payableAmount: 0n, paidAmount: 0n }, "Asia/Tehran");
+    assert.match(html, /<tr class="grand"><th>قابل پرداخت<\/th><td class="num">۰ <small>تومان<\/small><\/td><\/tr>/);
+    assert.doesNotMatch(html, /class="paid"|class="due"/);
+    assert.match(html, /<div class="settle">تسویه‌شده<\/div>/);
+    assert.match(html, /<tr class="incl"><th>شامل تخفیف اقلام<\/th><td class="num">۱۰۰٬۰۰۰<\/td><\/tr>/);
+  });
+
+  test("«شامل تخفیف اقلام» جمع دقیق تخفیف‌های ذخیره‌شده است و بی تخفیف نمی‌آید؛ «سود» هرگز", () => {
+    const html = invoicePage({ ...base, lines: [line({ discountAmount: 12_345n, netAmount: 987_655n }), line({ discountAmount: 5n, netAmount: 999_995n })],
+      netAmount: 1_987_650n, payableAmount: 1_987_650n, paidAmount: 1_987_650n }, "Asia/Tehran");
+    assert.match(html, /شامل تخفیف اقلام<\/th><td class="num">۱٬۲۳۵<\/td>/, "۱۲٬۳۵۰ ریال = ۱٬۲۳۵ تومان، دقیق");
+    assert.ok(!html.includes("سود"));
+    const plain = invoicePage({ ...base, lines: [line()], netAmount: 1_000_000n, payableAmount: 1_000_000n, paidAmount: 1_000_000n }, "Asia/Tehran");
+    assert.doesNotMatch(plain, /class="incl"/);
+  });
+
+  test("اقلام شماره‌دارند، بی rowspan؛ ۳۰+ قلم هر کدام سطر خودش را دارد", () => {
+    const lines = Array.from({ length: 32 }, () => line());
+    const html = invoicePage({ ...base, lines, netAmount: 32_000_000n, payableAmount: 32_000_000n, paidAmount: 32_000_000n }, "Asia/Tehran");
+    assert.equal((html.match(/<tbody class="item">/g) ?? []).length, 32);
+    assert.match(html, /<td class="idx">۳۲<\/td><td class="name"/);
+    assert.doesNotMatch(html, /rowspan/);
+    assert.match(html, /<dt>اقلام<\/dt><dd>۳۲ قلم<\/dd>/);
+  });
+
+  test("نام مشتری ایزوله است و راهنمای چاپ محدودیت مرورگر را پنهان نمی‌کند", () => {
+    const html = invoicePage({ ...base, customerName: "Elizabeth / الیزابت", lines: [line()], netAmount: 1_000_000n, payableAmount: 1_000_000n, paidAmount: 1_000_000n }, "Asia/Tehran");
+    assert.match(html, /<dt>مشتری<\/dt><dd><bdi>Elizabeth \/ الیزابت<\/bdi><\/dd>/);
+    assert.match(html, /<p class="print-note">[^<]*بی تأیید شما چاپ نمی‌کند/);
+    // راهنما داخل print-bar است و همان قاعدهٔ «روی کاغذ نمی‌آید» را دارد.
+    assert.match(html, /<div class="print-bar">[\s\S]*class="print-note"[\s\S]*<\/div>/);
   });
 });

@@ -155,28 +155,42 @@ export function toTomanExact(rial: bigint): string {
 
 /**
  * رسید — طراحی تک‌رنگ برای چاپگر حرارتی ۸۰ میلی‌متری (MEVA TP-UNW روی
- * رایانهٔ صندوق) که روی گوشی و «ذخیره PDF» هم درست دیده می‌شود.
+ * رایانهٔ صندوق) که روی گوشی و «ذخیره PDF» هم نسخهٔ نمایشی خودش را دارد.
+ *
+ * ── ساختار (بازطراحی ۱۴۰۵/۰۷) ───────────────────────────────────────
+ *
+ * سربرگ برند (لوگوی اصیل یا نشان متنی) ← برچسب سند ← جعبهٔ مشخصات دوستونه
+ * (شماره، تاریخ، مشتری، تعداد قلم) ← اقلام شماره‌دار با رنگ تنوع به‌شکل
+ * برچسب قاب‌دار ← جمع‌ها با «قابل پرداخت» در قاب درشت ← پرداخت‌شده، تسویه
+ * از تعویض و مانده ← وضعیت تسویه ← پابرگ از تنظیمات زنده.
  *
  * ── قواعد چاپ حرارتی ────────────────────────────────────────────────
  *
  * - **فقط سیاه.** خاکستری روی کاغذ حرارتی نقطه‌نقطه و کم‌رنگ درمی‌آید؛
- *   سلسله‌مراتب با وزن و اندازهٔ قلم و خط‌چین ساخته می‌شود، نه با رنگ.
+ *   سلسله‌مراتب با وزن و اندازهٔ قلم، قاب و خط‌چین ساخته می‌شود، نه با رنگ.
+ *   تنها سطح سیاهِ پر، برچسب کوچک «مانده» است — نه پس‌زمینهٔ سنگین.
  * - **پهنای چاپ‌پذیر ۷۲mm.** کاغذ ۸۰ است ولی هد ~۷۲mm می‌نویسد؛ هر چیزی
- *   پهن‌تر بریده می‌شود. جدول چهارستونهٔ قبلی روی این پهنا قیمت را می‌برید.
- *   حالا هر قلم دو سطر دارد: نام تمام‌عرض، و «تعداد × قیمت واحد ← مبلغ».
+ *   پهن‌تر بریده می‌شود. هر قلم دو سطر دارد: نام تمام‌عرض، و «تعداد ×
+ *   قیمت واحد ← مبلغ»؛ ستون مبلغ عرض ثابت دارد.
  * - **ارتفاع صفحه تحمیل نمی‌شود.** `@page` فقط حاشیه را صفر می‌کند؛ طول
- *   کاغذ را درایور رول تعیین می‌کند و برش پس از آخرین سطر است. ارتفاع
- *   ثابت (مثل ۲۹۷mm) یعنی برای رسید سه‌قلمی ده سانت کاغذ سفید.
+ *   کاغذ را درایور رول تعیین می‌کند و برش پس از آخرین سطر است.
  * - **نام بلند می‌شکند، عدد نه.** `overflow-wrap:anywhere` روی نام، و
  *   `nowrap` روی مبلغ تا رقم‌ها هرگز دو تکه نشوند.
+ *
+ * ── اعداد ──────────────────────────────────────────────────────────
+ *
+ * هیچ عددی این‌جا ساخته نمی‌شود جز «شامل تخفیف اقلام» که جمع دقیق bigint
+ * همان `discountAmount`های ذخیره‌شده است و فقط اطلاع می‌دهد (از جمع کم
+ * نمی‌شود، چون مبلغ هر قلم از پیش خالص است). مانده همان محاسبهٔ قبلی است.
  *
  * ⚠️ قلاب‌های `.sheet`، `.totals` و `#print-btn` قرارداد چاپ مستقیم
  *    (iframe) هستند و تغییر نام نمی‌دهند.
  */
 export function invoicePage(data: InvoicePageData, timeZone: string): string {
   const money = (rial: bigint) => esc(toTomanExact(rial));
+  const fa = (n: number) => n.toLocaleString("fa-IR");
   const items = data.lines
-    .map((l) => {
+    .map((l, i) => {
       // فقط رنگِ ساخت‌یافته کنار نام می‌نشیند؛ سایز عمداً نه (بالا،
       // `InvoicePageLine.size`). نام کالا دست نمی‌خورد: هیچ کلمه‌ای با
       // Regex از آن کنده نمی‌شود، حتی اگر شبیه سایز باشد.
@@ -189,11 +203,13 @@ export function invoicePage(data: InvoicePageData, timeZone: string): string {
       const qty = Number(l.qty).toLocaleString("fa-IR");
       const discount =
         l.discountAmount > 0n
-          ? `\n      <tr class="disc"><td>تخفیف قلم</td><td class="num">− ${money(l.discountAmount)}</td></tr>`
+          ? `\n      <tr class="disc"><td class="idx"></td><td>تخفیف قلم</td><td class="num">− ${money(l.discountAmount)}</td></tr>`
           : "";
+      // شمارهٔ ردیف در خانهٔ خودش، نه rowspan: rowspan ارتفاع اضافه را میان سطرهای
+      // قلم پخش می‌کرد و میان نام و مبلغ فاصلهٔ ناخواسته می‌افتاد.
       return `    <tbody class="item">
-      <tr><td class="name" colspan="2">${name}</td></tr>
-      <tr class="calc"><td><span class="qty">${esc(qty)}</span> × <span class="unit">${money(l.unitPrice)}</span></td><td class="num">${money(l.netAmount)}</td></tr>${discount}
+      <tr><td class="idx">${esc(fa(i + 1))}</td><td class="name" colspan="2">${name}</td></tr>
+      <tr class="calc"><td class="idx"></td><td><span class="qty">${esc(qty)}</span> × <span class="unit">${money(l.unitPrice)}</span></td><td class="num">${money(l.netAmount)}</td></tr>${discount}
     </tbody>`;
     })
     .join("\n");
@@ -206,17 +222,26 @@ export function invoicePage(data: InvoicePageData, timeZone: string): string {
       ? `<tr><th>مالیات</th><td class="num">${money(data.taxAmount)}</td></tr>`
       : "",
   ].join("");
+  // اطلاع، نه کسر: مبلغ هر قلم از پیش خالص از تخفیف است.
+  const lineDiscounts = data.lines.reduce((sum, l) => sum + l.discountAmount, 0n);
+  const savingRow = lineDiscounts > 0n
+    ? `<tr class="incl"><th>شامل تخفیف اقلام</th><td class="num">${money(lineDiscounts)}</td></tr>` : "";
 
   // بدهی باقیمانده فقط وقتی واقعاً هست. «۰ تومان مانده» یک سطر اضافه
   // است که هیچ‌کس لازمش ندارد. محاسبه همان قبلی است؛ فقط نمایش عوض شد.
   const due = data.dueAmount ?? (data.payableAmount - data.paidAmount - (data.exchangeAmount ?? 0n));
+  const paidRow = data.paidAmount > 0n
+    ? `<tr class="paid"><th>پرداخت‌شده</th><td class="num">${money(data.paidAmount)}</td></tr>` : "";
   const exchangeRow = (data.exchangeAmount ?? 0n) > 0n
     ? `<tr><th>تسویه از تعویض</th><td class="num">${money(data.exchangeAmount!)}</td></tr>` : "";
   const dueRow =
     due > 0n
-      ? `<tr class="due"><th>مانده</th><td class="num">${money(due)}</td></tr>`
+      ? `<tr class="due"><th><span class="due-tag">مانده</span></th><td class="num">${money(due)} <small>تومان</small></td></tr>`
       : "";
-  const count = data.lines.length.toLocaleString("fa-IR");
+  const settle = due > 0n
+    ? `<div class="settle settle--open">تسویه نشده — مانده بدهی ثبت شده است</div>`
+    : `<div class="settle">تسویه‌شده</div>`;
+  const count = fa(data.lines.length);
   const logo = data.logo === undefined ? receiptLogo() : data.logo;
   // سربرگ کم‌ارتفاع: لوگو کامل دیده می‌شود (contain) و از ۱۴mm بلندتر نمی‌شود.
   const brand = logo
@@ -230,78 +255,114 @@ export function invoicePage(data: InvoicePageData, timeZone: string): string {
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>فاکتور ${esc(data.number)} — ${esc(data.shopName)}</title>
 <style>
-  :root { color-scheme: light; --ink: #000; --paper: #fff; }
+  /* ── صفحه: کاغذ رسید روی میز، با یک رنگ برند (برنج) فقط برای نمایش. ── */
+  :root {
+    color-scheme: light;
+    --ink: #000; --paper: #fff; --ink-2: #3D3A35; --line: #1A1917;
+    --desk: #EDEAE4; --desk-2: #E2DDD3; --brass: #8A6214;
+  }
   * { box-sizing: border-box; }
+  /* زمینهٔ میز روی html تا در صفحهٔ بلند (۳۰+ قلم) هم تا پایین برسد. */
+  html { min-height: 100%; background: linear-gradient(180deg, #F6F4F0 0%, var(--desk) 40%, var(--desk-2) 100%); }
   body {
-    margin: 0; padding: 16px 12px;
-    font-family: Vazirmatn, Tahoma, "Segoe UI", sans-serif;
-    background: #E9E9E9; color: var(--ink);
-    font-size: 13px; line-height: 1.55;
+    margin: 0; padding: 28px 14px 32px;
+    font-family: Vazirmatn, Vazir, Tahoma, "Segoe UI", sans-serif;
+    background: transparent;
+    color: var(--ink); font-size: 13px; line-height: 1.6;
     -webkit-print-color-adjust: exact; print-color-adjust: exact;
   }
-  /* روی صفحه: کاغذ رسید با پهنای واقعی‌اش (۷۲mm قابل چاپ ≈ ۳۸۰px در
-     نمایش راحت)، نه یک کارت پهن که در چاپ شکل دیگری دارد. */
+  /* کاغذ با پهنای واقعی‌اش (۷۲mm چاپ‌پذیر ≈ ۴۰۰px در نمایش راحت)، نه کارت پهن. */
   .sheet {
-    width: 100%; max-width: 380px; margin: 0 auto; padding: 18px 16px 14px;
-    background: var(--paper); color: var(--ink);
-    box-shadow: 0 1px 0 rgba(0,0,0,.08), 0 6px 22px rgba(0,0,0,.10);
+    position: relative; width: 100%; max-width: 400px; margin: 0 auto; padding: 26px 22px 30px;
+    background: var(--paper); color: var(--ink); border-radius: 14px 14px 0 0;
+    box-shadow: 0 1px 2px rgba(25,20,10,.06), 0 14px 40px -12px rgba(25,20,10,.28);
   }
-  .head { text-align: center; padding: 2px 0 6px; }
-  /* نشان فروشگاه: هیچ فایل لوگوی اصیلی در مخزن نیست، پس نام فروشگاه (از
-     شعبه) با حروف درشت و فشرده نوشته می‌شود — لوگوی ساختگی نمی‌سازیم. */
-  .brand { font-size: 22px; font-weight: 900; letter-spacing: -.2px; line-height: 1.25; overflow-wrap: anywhere; }
+  /* لبهٔ بریده‌شدهٔ رول — فقط روی صفحه. */
+  .sheet::after {
+    content: ""; position: absolute; inset-inline: 0; bottom: -9px; height: 10px;
+    background: linear-gradient(-45deg, transparent 6px, var(--paper) 0) 0 0 / 12px 10px repeat-x,
+                linear-gradient(45deg, transparent 6px, var(--paper) 0) 0 0 / 12px 10px repeat-x;
+  }
+  .head { text-align: center; }
+  /* نشان متنی وقتی فایل لوگو نیست — لوگوی ساختگی نمی‌سازیم. */
+  .brand { font-size: 24px; font-weight: 900; letter-spacing: -.2px; line-height: 1.25; overflow-wrap: anywhere; }
   .logo { display: block; margin: 0 auto; width: auto; height: auto; max-width: 70%; max-height: 56px; object-fit: contain; }
   /* کاغذ حرارتی فقط سیاه دارد؛ نوع درمان از پیکسل‌های خودِ فایل آمده است. */
   .logo--black { filter: brightness(0); }
   .logo--gray { filter: grayscale(1) contrast(1.2); }
-  .shop { margin-top: 3px; font-size: 12px; font-weight: 700; overflow-wrap: anywhere; }
-  .doc { display: flex; align-items: center; gap: 8px; margin-top: 5px; font-size: 11px; font-weight: 700; letter-spacing: 1.5px; }
-  .doc::before, .doc::after { content: ""; flex: 1; border-top: 1px solid var(--ink); }
-  .rule { border: 0; border-top: 1.5px dashed var(--ink); margin: 8px 0; }
-  .rule--double { border-top: 3px double var(--ink); }
-  .meta { font-size: 11.5px; line-height: 1.6; }
-  .meta-row { display: flex; justify-content: space-between; gap: 8px; }
-  .meta-row > span { min-width: 0; overflow-wrap: anywhere; }
-  .meta-row > span:last-child { text-align: left; white-space: nowrap; }
-  .docno { font-weight: 700; font-variant-numeric: tabular-nums; }
+  .shop { margin-top: 6px; font-size: 12.5px; font-weight: 700; overflow-wrap: anywhere; }
+  .doc { display: flex; align-items: center; gap: 10px; margin: 12px 0 0; font-size: 10.5px; font-weight: 800; letter-spacing: 3px; }
+  .doc::before, .doc::after { content: ""; flex: 1; border-top: 1px solid var(--line); }
+  .doc span { padding: 2px 10px; border: 1.5px solid var(--line); border-radius: 999px; letter-spacing: 1.5px; }
+
+  /* مشخصات سند: دو ستون، برچسب ریز بالای مقدار. */
+  .meta { display: grid; grid-template-columns: 1fr 1fr; margin: 14px 0 0; border: 1.5px solid var(--line); border-radius: 10px; }
+  .cell { min-width: 0; padding: 7px 10px 6px; }
+  .cell:nth-child(odd) { border-inline-end: 1px solid var(--line); }
+  .cell:nth-child(n+3) { border-top: 1px solid var(--line); }
+  .meta dt { font-size: 10px; font-weight: 700; color: var(--ink-2); letter-spacing: .3px; }
+  .meta dd { margin: 1px 0 0; font-size: 12.5px; font-weight: 800; overflow-wrap: anywhere; }
+  .docno { font-variant-numeric: tabular-nums; letter-spacing: .3px; }
+
   table { width: 100%; border-collapse: collapse; table-layout: fixed; }
   th, td { text-align: right; padding: 0; vertical-align: top; }
-  .items thead th { font-size: 11px; font-weight: 700; padding-bottom: 4px; border-bottom: 1.5px solid var(--ink); }
-  .items col.amount { width: 38%; }
-  .item td { padding-top: 1px; }
-  .item:first-of-type tr:first-child td { padding-top: 6px; }
-  .item + .item tr:first-child td { padding-top: 7px; border-top: 1px dotted var(--ink); }
-  .name { font-weight: 700; overflow-wrap: anywhere; word-break: normal; }
-  .name small { font-weight: 400; font-size: 11.5px; }
-  .calc td { font-size: 12px; }
-  .calc .qty, .calc .unit { font-variant-numeric: tabular-nums; white-space: nowrap; }
-  .num { text-align: left; font-variant-numeric: tabular-nums; white-space: nowrap; }
-  .calc .num { font-weight: 700; font-size: 13px; }
-  .disc td { font-size: 11.5px; }
-  .totals { margin-top: 2px; }
-  .totals th { font-weight: 600; padding: 2px 0; }
-  .totals td { padding: 2px 0; }
-  .totals .grand th, .totals .grand td {
-    font-size: 16px; font-weight: 800; padding: 7px 0 6px;
-    border-top: 1.5px solid var(--ink); border-bottom: 1.5px solid var(--ink);
+  .items { margin-top: 14px; }
+  .items col.idx { width: 22px; }
+  .items col.amount { width: 36%; }
+  .items thead th { font-size: 10.5px; font-weight: 800; letter-spacing: .3px; padding: 0 0 5px; border-bottom: 2px solid var(--line); }
+  .idx { font-size: 10.5px; font-weight: 800; font-variant-numeric: tabular-nums; }
+  .item td { padding-top: 2px; }
+  .item tr:first-child td { padding-top: 9px; }
+  .item + .item tr:first-child td { border-top: 1px dashed var(--line); }
+  .item:last-of-type tr:last-child td { padding-bottom: 8px; }
+  .name { font-weight: 800; font-size: 13px; line-height: 1.5; overflow-wrap: anywhere; word-break: normal; }
+  /* رنگ تنوع: برچسب قاب‌دار، نه متن کم‌رنگ — روی کاغذ حرارتی هم خوانا. */
+  .name small {
+    display: inline-block; margin-inline-start: 4px; padding: 0 6px; vertical-align: 1px;
+    font-size: 10.5px; font-weight: 700; line-height: 1.6; border: 1px solid var(--line); border-radius: 999px;
   }
-  .totals .grand small { font-size: 11px; font-weight: 600; }
-  .totals .due th, .totals .due td { font-weight: 800; padding-top: 5px; }
-  .totals .due th::before { content: "◄ "; }
-  .foot { margin-top: 10px; padding-top: 8px; border-top: 1.5px dashed var(--ink); text-align: center; font-size: 11px; line-height: 1.7; }
-  .foot strong { display: block; font-size: 13px; font-weight: 800; }
+  .calc td { font-size: 12px; color: var(--ink-2); }
+  .calc .qty, .calc .unit { font-variant-numeric: tabular-nums; white-space: nowrap; }
+  .calc .qty { font-weight: 800; color: var(--ink); }
+  .num { text-align: left; font-variant-numeric: tabular-nums; white-space: nowrap; }
+  .calc .num { font-weight: 800; font-size: 13.5px; color: var(--ink); }
+  .disc td { font-size: 11.5px; font-weight: 700; }
+
+  .totals { margin-top: 2px; border-top: 2px solid var(--line); }
+  .totals th { font-weight: 600; padding: 5px 0 2px; }
+  .totals td { padding: 5px 0 2px; }
+  .totals .incl th, .totals .incl td { font-size: 11.5px; color: var(--ink-2); padding-top: 1px; }
+  .totals .grand th, .totals .grand td {
+    font-size: 17px; font-weight: 900; padding: 9px 10px 8px;
+    border-top: 2px solid var(--line); border-bottom: 2px solid var(--line);
+  }
+  .totals .grand th { border-inline-start: 2px solid var(--line); border-start-start-radius: 8px; }
+  .totals .grand td { border-inline-end: 2px solid var(--line); color: var(--brass); }
+  .totals .grand small, .totals .due small { font-size: 11px; font-weight: 700; color: var(--ink); }
+  .totals .paid th, .totals .paid td { padding-top: 9px; }
+  .totals .due th, .totals .due td { font-weight: 900; font-size: 14.5px; padding-top: 7px; }
+  .due-tag { display: inline-block; padding: 1px 10px; border-radius: 999px; background: var(--ink); color: var(--paper); font-size: 12px; }
+  .settle { margin-top: 10px; padding: 5px 8px; text-align: center; font-size: 11.5px; font-weight: 800; border: 1.5px dashed var(--line); border-radius: 8px; }
+  .settle--open { border-style: solid; border-width: 2px; }
+
+  .foot { margin-top: 16px; padding-top: 12px; border-top: 1.5px dashed var(--line); text-align: center; font-size: 11.5px; line-height: 1.8; }
+  .foot strong { display: block; font-size: 14px; font-weight: 900; }
   .foot .policy { font-weight: 700; }
+  .foot .site { font-weight: 700; letter-spacing: .4px; }
+  .foot .unit { color: var(--ink-2); font-size: 10.5px; }
 
   /* ── آماده چاپ ────────────────────────────────────────────────────
-     دکمه روی صفحه است و روی کاغذ نمی‌آید. */
-  .print-bar { margin: 14px auto 0; max-width: 380px; text-align: center; }
+     دکمه و راهنما روی صفحه است و روی کاغذ نمی‌آید. */
+  .print-bar { margin: 26px auto 0; max-width: 400px; text-align: center; }
   .print-btn {
-    font: inherit; font-weight: 700; padding: 9px 22px; cursor: pointer;
+    font: inherit; font-weight: 800; padding: 10px 26px; cursor: pointer;
     /* هدف لمسی دست‌کم ۴۴px — مشتری این صفحه را روی گوشی باز می‌کند. */
-    min-height: 44px; border-radius: 10px;
-    border: 1.5px solid #000; background: #FFFFFF; color: #000;
+    min-height: 44px; border-radius: 12px;
+    border: 1.5px solid #000; background: #000; color: #FFFFFF;
   }
-  .print-btn:focus-visible { outline: 2px solid #000; outline-offset: 3px; }
+  .print-btn:hover { background: #2A2723; }
+  .print-btn:focus-visible { outline: 2px solid var(--brass); outline-offset: 3px; }
+  .print-note { margin: 8px auto 0; max-width: 320px; font-size: 11.5px; color: var(--ink-2); }
 
   @page { margin: 0; }
   @media print {
@@ -310,15 +371,33 @@ export function invoicePage(data: InvoicePageData, timeZone: string): string {
     /* ۸۰mm کاغذ، ۷۲mm چاپ‌پذیر؛ ۴mm حاشیهٔ هر طرف را خودِ برگه نگه می‌دارد. */
     .sheet {
       width: 72mm; max-width: 72mm; margin: 0 auto; padding: 3mm 0 5mm;
-      box-shadow: none; font-size: 9.5pt;
+      border-radius: 0; box-shadow: none; font-size: 9pt;
     }
+    .sheet::after { display: none; }
+    .sheet, .meta dt, .calc td, .totals .incl th, .totals .incl td, .totals .grand td, .foot .unit { color: #000; }
     .brand { font-size: 16pt; }
     .logo { max-height: 14mm; max-width: 52mm; }
-    .calc td, .meta, .disc td, .foot { font-size: 8.5pt; }
-    .calc .num { font-size: 9.5pt; }
-    .totals .grand th, .totals .grand td { font-size: 12pt; }
+    .shop { font-size: 9pt; margin-top: 1mm; }
+    .doc { font-size: 7.5pt; margin-top: 2.5mm; }
+    .meta { margin-top: 3mm; border-radius: 1.5mm; }
+    .cell { padding: 1.2mm 2mm 1mm; }
+    .meta dt { font-size: 6.5pt; }
+    .meta dd { font-size: 8.5pt; }
+    .items { margin-top: 3mm; }
+    .items col.idx { width: 4.5mm; }
+    .items thead th, .idx { font-size: 7.5pt; }
+    .name { font-size: 9pt; }
+    .name small { font-size: 7pt; }
+    .calc td, .disc td, .totals .incl th, .totals .incl td { font-size: 8pt; }
+    .calc .num { font-size: 9pt; }
+    .totals .grand th, .totals .grand td { font-size: 12pt; padding: 1.8mm 1.6mm 1.5mm; }
+    .totals .due th, .totals .due td { font-size: 10pt; }
+    .due-tag { font-size: 8pt; }
+    .settle, .foot { font-size: 8pt; }
+    .foot strong { font-size: 10pt; }
+    .foot .unit { font-size: 7pt; }
     /* یک قلم نباید وسطش بشکند (برای چاپگر صفحه‌ای و PDF). */
-    .item, tr { break-inside: avoid; }
+    .item, tr, .meta, .settle { break-inside: avoid; }
     thead { display: table-header-group; }
   }
 </style>
@@ -327,28 +406,31 @@ export function invoicePage(data: InvoicePageData, timeZone: string): string {
     ${brand}
     <div class="doc"><span>رسید فروش</span></div>
   </header>
-  <div class="meta">
-    <div class="meta-row"><span>فاکتور <bdi dir="ltr" class="docno">${esc(data.number)}</bdi></span><span>${esc(faDate(data.occurredAt, timeZone))}</span></div>
-    <div class="meta-row"><span>${data.customerName ? `مشتری: ${esc(data.customerName)}` : "مشتری عمومی"}</span><span>${esc(count)} قلم</span></div>
-  </div>
-  <hr class="rule">
+  <dl class="meta">
+    <div class="cell"><dt>شمارهٔ فاکتور</dt><dd><bdi dir="ltr" class="docno">${esc(data.number)}</bdi></dd></div>
+    <div class="cell"><dt>تاریخ و ساعت</dt><dd>${esc(faDate(data.occurredAt, timeZone))}</dd></div>
+    <div class="cell"><dt>مشتری</dt><dd>${data.customerName ? `<bdi>${esc(data.customerName)}</bdi>` : "مشتری عمومی"}</dd></div>
+    <div class="cell"><dt>اقلام</dt><dd>${esc(count)} قلم</dd></div>
+  </dl>
 
   <table class="items">
-    <colgroup><col><col class="amount"></colgroup>
+    <colgroup><col class="idx"><col><col class="amount"></colgroup>
     <thead>
-      <tr><th>کالا · تعداد × قیمت واحد</th><th class="num">مبلغ</th></tr>
+      <tr><th class="idx">#</th><th>کالا · تعداد × قیمت واحد</th><th class="num">مبلغ</th></tr>
     </thead>
 ${items}
   </table>
 
-  <hr class="rule rule--double">
   <table class="totals">
     <tr><th>جمع کالاها</th><td class="num">${money(data.netAmount)}</td></tr>
+    ${savingRow}
     ${extra}
     <tr class="grand"><th>قابل پرداخت</th><td class="num">${money(data.payableAmount)} <small>تومان</small></td></tr>
+    ${paidRow}
     ${exchangeRow}
     ${dueRow}
   </table>
+  ${settle}
 
   <footer class="foot">
     <strong>سپاس از خرید شما</strong>
@@ -370,6 +452,7 @@ ${items}
 -->
 <div class="print-bar">
   <button type="button" class="print-btn" id="print-btn">چاپ یا ذخیره PDF</button>
+  <p class="print-note">پنجرهٔ چاپ مرورگر باز می‌شود؛ چاپگر رسید یا «ذخیره به PDF» را انتخاب کنید. مرورگر بی تأیید شما چاپ نمی‌کند.</p>
 </div>
 <script>${PRINT_SCRIPT}</script>
 </html>`;
