@@ -217,8 +217,10 @@ describe("رسید حرارتی ۸۰ میلی‌متری", () => {
   test("نام بلند می‌شکند و مبلغ یکپارچه می‌ماند", () => {
     assert.match(html, /\.name \{[^}]*overflow-wrap: anywhere/);
     assert.match(html, /\.num \{[^}]*white-space: nowrap/);
-    assert.match(html, /<span class="qty">2<\/span> × <span class="unit">1,234,567\.5<\/span>/);
-    assert.match(html, /class="disc"><td class="idx"><\/td><td>تخفیف قلم<\/td><td class="num"><bdi dir="ltr">− 34,567\.5<\/bdi><\/td>/);
+    // تعداد، قیمت واحد و جمع هر کدام ستون خودشان را دارند (نسخهٔ ۳) — همان سه عدد دقیق.
+    assert.match(html, /<td class="qty">2<\/td><td class="num unit">1,234,567\.5<\/td><td class="num total">2,434,567\.5<\/td>/);
+    assert.match(html, /<th class="qty">تعداد<\/th><th class="num">قیمت واحد<\/th><th class="num">جمع<\/th>/);
+    assert.match(html, /class="disc"><td class="idx"><\/td><td colspan="2">تخفیف قلم<\/td><td class="num"><bdi dir="ltr">− 34,567\.5<\/bdi><\/td>/);
   });
 
   test("پابرگ از تنظیمات زنده: مهلت مرجوعی و سایت؛ متن ثابت سیاست چاپ نمی‌شود", () => {
@@ -318,7 +320,7 @@ describe("رقم لاتین روی فاکتور و پیش‌فاکتور (خوا
     assert.match(html, /<bdi dir="ltr" class="docno">F-1405-007<\/bdi>/);
     assert.match(html, /مانتو مدل 1405 سری 12 <small>طوسی 3<\/small>/);
     assert.match(html, /<bdi>مریم 0912<\/bdi>/);
-    assert.match(html, /<span class="qty">1\.5<\/span> × <span class="unit">1,234,567\.5<\/span>/);
+    assert.match(html, /<td class="qty">1\.5<\/td><td class="num unit">1,234,567\.5<\/td><td class="num total">1,817,283\.7<\/td>/);
     assert.match(html, /<dt>اقلام<\/dt><dd>1 قلم<\/dd>/);
     assert.match(html, /<td class="idx">1<\/td>/);
     assert.match(html, /مهلت مرجوعی: 2 روز \(48 ساعت\)/);
@@ -335,7 +337,7 @@ describe("رقم لاتین روی فاکتور و پیش‌فاکتور (خوا
   test("تعداد هزار به بالا گروه‌بندی نمی‌شود و اعشار بی‌معنا حذف می‌شود", () => {
     const html = invoicePage({ ...data, lines: [{ ...data.lines[0]!, qty: "1200.000", unitPrice: 10n, netAmount: 12_000n, discountAmount: 0n }],
       netAmount: 12_000n, payableAmount: 12_000n, paidAmount: 12_000n }, "Asia/Tehran");
-    assert.match(html, /<span class="qty">1200<\/span>/);
+    assert.match(html, /<td class="qty">1200<\/td>/);
   });
 
   test("پیش‌فاکتور: تیتر و هشدار «فاکتور نهایی نیست»، شمارهٔ مرجع، بی وضعیت تسویه؛ مبالغ همان", () => {
