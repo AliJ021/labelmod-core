@@ -2328,4 +2328,73 @@ describe("آمادگی API صندوق", { skip }, () => {
     assert.equal(own.statusCode, 200, own.body);
     assert.ok(own.json()?.id, "شیفت باز باید دیده شود");
   });
+
+  test("اجبار مشتری از سیاست صندوق تا پرداخت و نهایی‌سازی؛ سایت و سابقه قطعی مستقل‌اند", async () => {
+    const s = await loginAs(cashier);
+    const policy = () => app.inject({ method: "GET", url: `/pos/policy?branchId=${BRANCH}`, ...s });
+    const setRequired = (value: boolean) => sql`
+      SELECT platform.set_setting('pos.require_customer', ${JSON.stringify(value)}::jsonb,
+        'آزمون سیاست مشتری', ${cashierId}::uuid)`.execute(handle.db);
+    assert.equal((await app.inject({ method: "GET", url: `/pos/policy?branchId=${BRANCH}` })).statusCode, 401);
+    assert.equal((await app.inject({ method: "GET", url: `/pos/policy?branchId=${otherBranchId}`, ...s })).statusCode, 403);
+    assert.equal((await app.inject({ method: "GET", url: `/pos/policy?branchId=${BRANCH}`, ...await loginAs(warehouse) })).statusCode, 403);
+    assert.equal((await policy()).json().requireCustomer, false);
+    // آزمون قبلی ممکن است شیفت صندوق‌دار را بسته باشد؛ فقط نبودش را جبران می‌کنیم.
+    const shift = await app.inject({ method: "GET", url: `/shifts/current?branchId=${BRANCH}`, ...s });
+    if (!shift.json()?.id) {
+      const opened = await app.inject({ method: "POST", url: "/shifts", ...s, payload: { branchId: BRANCH, openingCash: "0" } });
+      assert.equal(opened.statusCode, 201, opened.body);
+    }
+    const historical = await newCart();
+    const pay = (id: string) => app.inject({ method: "POST", url: `/invoices/${id}/payments`, ...s, payload: { methodCode: "cash", amount: "1000001" } });
+    const finalize = (id: string) => app.inject({ method: "POST", url: `/invoices/${id}/finalize`, ...s, payload: {} });
+    assert.equal((await pay(historical.invoiceId)).statusCode, 201);
+    const oldFinal = await finalize(historical.invoiceId);
+    assert.equal(oldFinal.statusCode, 200, oldFinal.body);
+    const alreadyPaid = await newCart();
+    assert.equal((await pay(alreadyPaid.invoiceId)).statusCode, 201);
+    const unpaid = await newCart();
+    try {
+      await setRequired(true);
+      const required = await policy();
+      assert.equal(required.statusCode, 200, required.body);
+      assert.deepEqual(required.json(), { requireCustomer: true });
+      const denied = await pay(unpaid.invoiceId);
+      assert.equal(denied.statusCode, 409, denied.body);
+      assert.match(denied.body, /شماره مشتری/);
+      const blocked = await finalize(alreadyPaid.invoiceId);
+      assert.equal(blocked.statusCode, 409, blocked.body);
+      assert.match(blocked.body, /شماره مشتری/);
+      // مسیر مستقیم DB و مسیر نسیه هم باید همان سیاست را پیش از هر اثر اجرا کنند.
+      await assert.rejects(sql`SELECT sales.finalize_invoice(${unpaid.invoiceId}::uuid, ${cashierId}::uuid)`.execute(handle.db), /شماره مشتری/);
+      const effects = await sql<{ payments: number; movements: number; messages: number; status: string }>`
+        SELECT (SELECT count(*)::int FROM treasury.payment WHERE invoice_id=${unpaid.invoiceId}::uuid) payments,
+          (SELECT count(*)::int FROM inventory.stock_movement WHERE ref_id=${alreadyPaid.invoiceId}::uuid) movements,
+          (SELECT count(*)::int FROM platform.outbox_message WHERE topic='invoice.finalized'
+             AND payload->>'invoice_id'=${alreadyPaid.invoiceId}) messages,
+          (SELECT status FROM sales.invoice WHERE id=${alreadyPaid.invoiceId}::uuid) status`.execute(handle.db);
+      assert.deepEqual(effects.rows[0], { payments: 0, movements: 0, messages: 0, status: "draft" });
+      // فعال‌کردن سیاست، بازخوانی نهایی‌سازی پیشین را نمی‌شکند.
+      const replay = await finalize(historical.invoiceId);
+      assert.equal(replay.statusCode, 200, replay.body);
+      assert.equal(replay.json().number, oldFinal.json().number);
+      const customer = await sql<{ id: string }>`INSERT INTO sales.customer (mobile_normalized, full_name)
+        VALUES ('09129991122','مشتری سیاست صندوق') RETURNING id`.execute(handle.db);
+      await sql`UPDATE sales.invoice SET customer_id=${customer.rows[0]!.id}::uuid WHERE id=${alreadyPaid.invoiceId}::uuid`.execute(handle.db);
+      const named = await finalize(alreadyPaid.invoiceId);
+      assert.equal(named.statusCode, 200, named.body);
+      // سفارش سایت با پرداخت خود، مشتری را از این سیاست حضوری نمی‌گیرد.
+      const web = await newCart();
+      await sql`UPDATE sales.invoice SET channel='web' WHERE id=${web.invoiceId}::uuid`.execute(handle.db);
+      const webPayment = await pay(web.invoiceId);
+      assert.equal(webPayment.statusCode, 201, webPayment.body);
+      const webFinal = await finalize(web.invoiceId);
+      assert.equal(webFinal.statusCode, 200, webFinal.body);
+      await setRequired(false);
+      assert.equal((await policy()).json().requireCustomer, false);
+      const optionalPayment = await pay(unpaid.invoiceId);
+      assert.equal(optionalPayment.statusCode, 201, optionalPayment.body);
+      assert.equal((await finalize(unpaid.invoiceId)).statusCode, 200);
+    } finally { await setRequired(false); }
+  });
 });

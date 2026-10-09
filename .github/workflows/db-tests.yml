@@ -302,6 +302,8 @@ jobs:
 
       - name: منطق افزونه — واحد پول، قیمت واحد، نگاشت درگاه
         run: php integrations/woocommerce/test/payload-test.php
+      - name: رزرو سفارش پرداخت در محل
+        run: php integrations/woocommerce/test/reservation-test.php
       - name: تشخیص فقط‌خواندنی و کنترل ارتباط افزونه
         run: php integrations/woocommerce/test/diagnostics-test.php
 

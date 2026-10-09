@@ -135,6 +135,18 @@ export function registerSalesRoutes(app: FastifyInstance, deps: SalesRouteDeps):
     return s;
   };
 
+  // صندوق‌دار فقط سیاست لازم برای فروش را می‌خواند؛ تنظیمات مدیریتی افشا نمی‌شود.
+  app.get("/pos/policy", async (req) => {
+    const s = session(req);
+    const { branchId } = z.object({ branchId: uuid }).parse(req.query);
+    await assertBranch(db, s.userId, branchId);
+    await requireForSession(db, s, "sale.create");
+    const result = await sql<{ require_customer: boolean }>`
+      SELECT platform.setting_bool('pos.require_customer', false) AS require_customer
+    `.execute(db);
+    return { requireCustomer: result.rows[0]!.require_customer };
+  });
+
   /**
    * دروازه «کاهش قیمت» — تعریفش در `sales/markdown-gate.ts` است.
    *

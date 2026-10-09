@@ -106,6 +106,72 @@ async function pick(page: Page, name: string) {
   await method(page, name).click();
 }
 
+test("required customer policy blocks new payment until a customer is linked", async ({page, api}) => {
+  const s = pos(api);
+  api.defaults["GET /pos/policy"] = { requireCustomer: true };
+  api.handlers.set(`PATCH /invoices/${INV}/customer`, async route => {
+    s.invoice = { ...s.invoice, customerId: "c1" }; await route.fulfill({ json: s.invoice });
+  });
+  await open(page);
+  const mobile = page.getByLabel("موبایل مشتری (الزامی)", { exact: true });
+  await expect(mobile).toHaveAttribute("required", "");
+  await expect(method(page, "کارت‌خوان")).toBeDisabled();
+  await payPanel(page).getByRole("button", { name: "ثبت شماره مشتری", exact: true }).click();
+  await expect(mobile).toBeFocused();
+  await mobile.fill("09121234567");
+  await page.getByRole("button", { name: "افزودن مشتری", exact: true }).click();
+  await expect(method(page, "کارت‌خوان")).toBeEnabled();
+  expect(s.posted).toEqual([]);
+});
+
+test("customer policy refreshes after returning to the till and can become optional again", async ({page, api}) => {
+  pos(api); await open(page);
+  await expect(method(page, "کارت‌خوان")).toBeEnabled();
+  api.defaults["GET /pos/policy"] = { requireCustomer: true };
+  await page.evaluate(() => window.dispatchEvent(new Event("focus")));
+  await expect(page.getByLabel("موبایل مشتری (الزامی)", { exact: true })).toBeVisible();
+  await expect(method(page, "کارت‌خوان")).toBeDisabled();
+  api.defaults["GET /pos/policy"] = { requireCustomer: false };
+  await page.evaluate(() => window.dispatchEvent(new Event("focus")));
+  await expect(page.getByLabel("موبایل مشتری", { exact: false })).not.toHaveAttribute("required", "");
+  await expect(method(page, "کارت‌خوان")).toBeEnabled();
+});
+
+test("changing a required customer never keeps the previous identity or permits a phone-less credit sale", async ({page, api}) => {
+  const s = pos(api, { customerId: "c1" });
+  api.defaults["GET /pos/policy"] = { requireCustomer: true };
+  await open(page);
+  await expect(method(page, "کارت‌خوان")).toBeEnabled();
+  let waiting: Route | undefined;
+  api.handlers.set(`GET /invoices/${INV}/customer`, async route => { waiting = route; });
+  api.handlers.set(`PATCH /invoices/${INV}/customer`, async route => {
+    s.invoice = { ...s.invoice, customerId: "c2" }; await route.fulfill({ json: s.invoice });
+  });
+  const region = page.getByRole("region", { name: "مشتری", exact: true });
+  await region.getByRole("button", { name: "تغییر مشتری", exact: true }).click();
+  await page.getByLabel("شمارهٔ مشتری تازه", { exact: true }).fill("09121111111");
+  await region.getByRole("button", { name: "تغییر مشتری", exact: true }).click();
+  await expect.poll(() => Boolean(waiting)).toBe(true);
+  await expect(region).not.toContainText("مریم آزمون");
+  await expect(method(page, "کارت‌خوان")).toBeDisabled();
+  await waiting!.fulfill({ json: { customer: { ...customer, id: "c2", fullName: "مشتری بدون شماره", mobile: null } } });
+  await expect(region).toContainText("مشتری بدون شماره");
+  await expect(page.getByRole("button", { name: "ثبت نسیه", exact: true })).toBeDisabled();
+  expect(s.posted).toEqual([]);
+});
+
+test("unavailable customer policy has an explicit recovery action and never enables anonymous payment", async ({page, api}) => {
+  const s = pos(api);
+  api.handlers.set("GET /pos/policy", async route => { await route.abort(); });
+  await open(page);
+  await expect(page.getByText("تنظیمات صندوق خوانده نشد؛ دریافت وجه تا بررسی آن بسته است.", { exact: false })).toBeVisible();
+  await expect(method(page, "کارت‌خوان")).toBeDisabled();
+  api.handlers.delete("GET /pos/policy");
+  await page.getByRole("button", { name: "بررسی دوباره", exact: true }).click();
+  await expect(method(page, "کارت‌خوان")).toBeEnabled();
+  expect(s.posted).toEqual([]);
+});
+
 test("clicking the line amount opens the existing unit-price editor in Toman", async ({page, api}) => {
   const s=pos(api); const prices:unknown[]=[];
   api.handlers.set(`PATCH /invoices/${INV}/lines/l1/price`,async route=>{
@@ -616,6 +682,7 @@ test("layout: no page overflow, two columns from 900 with finalize in view, mobi
     await page.evaluate(() => window.scrollTo(0, 0));
     const size = await page.evaluate(() => ({ scroll: document.documentElement.scrollWidth, client: document.documentElement.clientWidth }));
     expect(size.scroll, `${width}: no page-level horizontal overflow`).toBeLessThanOrEqual(size.client);
+    if (width === own.width) await page.screenshot({ path: test.info().outputPath("pos-ux-review.png"), fullPage: true });
     const cart = (await page.locator(".cart").boundingBox())!, pay = (await payPanel(page).boundingBox())!;
     const finalize = page.getByRole("button", { name: "نهایی‌کردن فاکتور", exact: true });
     if (width >= 900) {

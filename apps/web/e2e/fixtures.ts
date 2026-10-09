@@ -46,6 +46,7 @@ export class MockApi {
   productRows = [product];
   permissionRows = [rule];
   defaults: Record<string, unknown> = {
+    "GET /pos/policy": { requireCustomer: false },
     "GET /auth/me": me, "GET /branches": { branches }, "GET /reports/daily": daily, "GET /reports/daily/hourly": DEFAULT_HOURLY,
     "GET /posting-batches/unposted": { rows: [] }, "GET /auth/can": { verdict: "allow", approver: null, reason: "" },
     "GET /settings": { groups: [] }, "GET /settlement-terms": { terms: [] }, "GET /customers": { customers: [] },
