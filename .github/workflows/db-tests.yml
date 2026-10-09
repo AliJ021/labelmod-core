@@ -25,7 +25,10 @@ jobs:
 
     services:
       postgres:
-        image: postgres:16-alpine
+        # همان postgres:16-alpine رسمی (Docker Official Image) با همان digest،
+        # از آینهٔ رسمی ECR Public؛ pull ناشناس Hub روی رانرها 429 می‌گرفت.
+        # services پیش از stepها ساخته می‌شوند، پس نشانی همین‌جا کامل است.
+        image: public.ecr.aws/docker/library/postgres:16-alpine
         env:
           POSTGRES_DB: labelmod
           POSTGRES_USER: labelmod
@@ -330,13 +333,13 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
 
       - name: ساخت ایمیج API
-        run: docker build -f apps/api/Dockerfile -t labelmod-api:ci .
+        run: docker build --build-arg BASE_REGISTRY=public.ecr.aws/docker/library -f apps/api/Dockerfile -t labelmod-api:ci .
 
       - name: ساخت ایمیج رابط کاربری
-        run: docker build -f apps/web/Dockerfile -t labelmod-web:ci .
+        run: docker build --build-arg BASE_REGISTRY=public.ecr.aws/docker/library -f apps/web/Dockerfile -t labelmod-web:ci .
 
       - name: ساخت ایمیج زمان‌بند
-        run: docker build -f ops/deploy/Dockerfile.scheduler -t labelmod-scheduler:ci .
+        run: docker build --build-arg BASE_REGISTRY=public.ecr.aws/docker/library -f ops/deploy/Dockerfile.scheduler -t labelmod-scheduler:ci .
 
       # ⚠️ `-w /app/apps/api` لازم است، نه تزئین: چیدمان pnpm وابستگی‌ها
       # را در `apps/api/node_modules` می‌گذارد، نه در ریشه. از `/app`،
@@ -371,7 +374,7 @@ jobs:
           docker run --rm \
             -v "$PWD/ops/deploy/Caddyfile:/etc/caddy/Caddyfile:ro" \
             -e SITE_ADDRESS=shop.example.com -e ACME_EMAIL=ci@example.com \
-            caddy:2-alpine caddy validate --config /etc/caddy/Caddyfile
+            public.ecr.aws/docker/library/caddy:2-alpine caddy validate --config /etc/caddy/Caddyfile
 
       - name: docker-compose تولیدی معتبر است
         run: |
@@ -397,7 +400,7 @@ jobs:
   browser-regression-shard:
     name: browser-regression (${{ matrix.shard }}/4)
     runs-on: ubuntu-latest
-    timeout-minutes: 30
+    timeout-minutes: 45
     strategy:
       fail-fast: false
       matrix:
