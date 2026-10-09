@@ -4,7 +4,11 @@
 # ایمیج پستگرس، فقط برای `psql` و `pg_dump`. نسخه‌اش عمداً همان نسخه
 # سرور است: `pg_dump` قدیمی‌تر از سرور، دامپ نمی‌گیرد.
 # ---------------------------------------------------------------------
-FROM postgres:16-alpine
+# رجیستری ایمیج پایه — پیش‌فرض همان Docker Hub رسمی است و تولید و Compose
+# آن را عوض نمی‌کنند. فقط CI مقدار public.ecr.aws/docker/library را می‌دهد:
+# همان Docker Official Images با همان digest، بی محدودیت نرخ ناشناس Hub.
+ARG BASE_REGISTRY=docker.io/library
+FROM ${BASE_REGISTRY}/postgres:16-alpine
 RUN apk add --no-cache bash tzdata
 ENV TZ=Asia/Tehran
 # اسکریپت‌ها از Volume می‌آیند تا تغییرشان نیاز به Build دوباره نداشته
