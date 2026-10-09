@@ -55,7 +55,7 @@ describe("لوگوی رسید", () => {
     assert.match(INVOICE_PAGE_CSP, /img-src data:/);
     assert.doesNotMatch(html, /src="https?:/, "هیچ منبع شبکه‌ای برای چاپ");
     assert.match(html, /\.logo \{[^}]*max-height: 56px; object-fit: contain;/);
-    assert.match(html, /\.logo \{ max-height: 14mm; max-width: 52mm; \}/);
+    assert.match(html, /\.logo \{ max-height: 12mm; max-width: 48mm; \}/); // سقف چاپ پس از اصلاح بصری ۴۲۳۸۸f1
     assert.match(html, /\.logo--black \{ filter: brightness\(0\); \}/);
     assert.match(html, /<div class="shop">فروشگاه لیبل مد<\/div>/);
     assert.doesNotMatch(html, /<div class="brand">/);
