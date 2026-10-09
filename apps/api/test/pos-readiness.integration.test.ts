@@ -407,6 +407,16 @@ describe("آمادگی API صندوق", { skip }, () => {
       assert.match(printed.body,new RegExp(id));
     }
     assert.deepEqual(await snapshot(),beforePrint,"printing cannot finalize, number, pay, reserve, move stock or post entries");
+    // پرداخت ثبت‌شده روی پیش‌نویس (paid_amount تا نهایی‌سازی صفر است) باید روی پیش‌فاکتور دیده شود،
+    // وگرنه کل مبلغ «مانده» چاپ و دوباره از مشتری مطالبه می‌شد. ۱٬۰۰۰٬۰۰۱ − ۴۰۰٬۰۰۰ ریال.
+    const paid = await app.inject({ method:"POST", url:`/invoices/${id}/payments`, ...s, payload:{ methodCode:"cash", amount:"400000" } });
+    assert.equal(paid.statusCode,201,paid.body);
+    const afterPay = await app.inject({ method:"GET", url, ...s });
+    assert.equal(afterPay.statusCode,200,afterPay.body);
+    assert.match(afterPay.body,/<tr class="paid"><th>پرداخت‌شده<\/th><td class="num">40,000<\/td><\/tr>/);
+    assert.match(afterPay.body,/<tr class="due">[\s\S]*?60,000\.1 <small>تومان/);
+    assert.match(afterPay.body,/<tr class="grand"><th>قابل پرداخت<\/th><td class="num">100,000\.1 <small>تومان/);
+    assert.doesNotMatch(afterPay.body,/class="settle/);
     assert.equal((await app.inject({ method:"GET",url:`/invoices/${id}/print`,...s })).statusCode,409,"final receipt route still rejects drafts");
     // A different cashier in the same branch cannot inspect this draft by guessing its UUID.
     await sql`UPDATE identity.user_role SET branch_id=${BRANCH}::uuid WHERE user_id=${outsiderId}::uuid AND role_code='cashier'`.execute(handle.db);
