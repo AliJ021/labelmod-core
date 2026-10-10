@@ -79,6 +79,13 @@ class LMC_Order_Sync
         $order->update_meta_data(self::META_PAID, 'yes');
         $order->save();
 
+        // تکرار اعلان پرداخت، تصمیم ارسال دستی نیست. صف موجود مسئول backoff است؛
+        // خطای دائمی یا پایان سقف تلاش با webhook تکراری دوباره باز نمی‌شود.
+        if ($order->get_meta(self::META_ERROR) !== ''
+            || (int) $order->get_meta(self::META_ATTEMPTS) >= self::MAX_ATTEMPTS) {
+            return;
+        }
+
         if (!wp_next_scheduled(LMC_ORDER_EVENT, [$order_id])) {
             wp_schedule_single_event(time() + 10, LMC_ORDER_EVENT, [$order_id]);
         }

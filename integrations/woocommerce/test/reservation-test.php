@@ -228,4 +228,62 @@ check($unknown->get_meta(LMC_Order_Sync::META_INVOICE) === 'invoice-40' && $unkn
 $calls = count(LMC_Client::$calls);
 LMC_Order_Sync::send(40);
 check(count(LMC_Client::$calls) === $calls, 'سند تأییدشده دوباره ارسال نمی‌شود');
-printf("✓ %d بررسی رزرو پرداخت در محل موفق بود\n", $checks);
+// قطعی طولانی: شش شکست و پنج فاصلهٔ نمایی، بدون خواب یا ارتباط واقعی.
+$orders[50] = $outage = new WC_Order(50);
+$outage->method = 'bacs';
+$outage->meta[LMC_Order_Sync::META_PAYLOAD] = $outagePayload = [
+    'branchId' => 'b', 'warehouseId' => 'w', 'externalId' => '50',
+    'lines' => [['sku' => 'ORIGINAL-SKU', 'qty' => '2', 'unitPrice' => '10']],
+    'paymentMethod' => 'bank', 'paymentRef' => 'RECEIPT-50',
+];
+$outage->meta[LMC_Order_Sync::META_LINES] = [1 => 1];
+LMC_Order_Sync::payment_complete(50);
+check((bool) wp_next_scheduled(LMC_ORDER_EVENT, [50]), 'پرداخت نخست صف ارسال می‌سازد');
+LMC_Client::$result = new WP_Error('network', 'قطع طولانی شبکه');
+$calls = count(LMC_Client::$calls);
+for ($attempt = 1; $attempt <= LMC_Order_Sync::MAX_ATTEMPTS; $attempt++) {
+    unset($scheduled[LMC_ORDER_EVENT . ':50']);
+    // تغییر تنظیمات و کالا طی قطعی، تصویر مالی تأییدشده را عوض نمی‌کند.
+    $settings['warehouse_id'] = 'changed-during-outage';
+    $outage->items[0]->sku = 'EDITED-SKU';
+    $start = time();
+    LMC_Order_Sync::send(50);
+    check(end(LMC_Client::$calls)[1] === $outagePayload, 'قطعی: هویت و بدنه در تمام تلاش‌ها ثابت می‌ماند');
+    check((int) $outage->get_meta(LMC_Order_Sync::META_ATTEMPTS) === $attempt, 'قطعی: شمارندهٔ شکست ذخیره می‌شود');
+    if ($attempt < LMC_Order_Sync::MAX_ATTEMPTS) {
+        $delay = 60 * (2 ** ($attempt - 1));
+        $due = wp_next_scheduled(LMC_ORDER_EVENT, [50]);
+        check($due >= $start + $delay && $due <= time() + $delay, 'قطعی: فاصلهٔ نمایی تلاش بعدی');
+        LMC_Order_Sync::payment_complete(50);
+        check(wp_next_scheduled(LMC_ORDER_EVENT, [50]) === $due, 'رویداد پرداخت تکراری موعد تلاش را جلو نمی‌اندازد');
+    }
+}
+check(count(LMC_Client::$calls) === $calls + 6 && !wp_next_scheduled(LMC_ORDER_EVENT, [50]), 'قطعی: پس از شش تلاش صف متوقف است');
+check($outage->get_meta(LMC_Order_Sync::META_INVOICE) === '', 'قطعی: شکست شناسهٔ فاکتور نمی‌سازد');
+LMC_Order_Sync::payment_complete(50);
+LMC_Order_Sync::resume_confirmed_order(50);
+check(!wp_next_scheduled(LMC_ORDER_EVENT, [50]), 'رویداد تکراری پرداخت توقف نیازمند بررسی دستی را دور نمی‌زند');
+// شبیه‌سازی تصمیم صریح ارسال دستی: همان reset شمارنده و send، نه رویداد پرداخت.
+$outage->update_meta_data(LMC_Order_Sync::META_ATTEMPTS, 0);
+LMC_Client::$result = ['invoiceId' => 'invoice-50', 'number' => 'F-50'];
+LMC_Order_Sync::send(50);
+check(end(LMC_Client::$calls)[1] === $outagePayload, 'بازیابی: بدنه و externalId قبلی حفظ می‌شود');
+check($outage->get_meta(LMC_Order_Sync::META_INVOICE) === 'invoice-50' && $outage->get_meta(LMC_Order_Sync::META_ERROR) === '', 'بازیابی: فقط پاسخ قطعی خطا را پاک می‌کند');
+$calls = count(LMC_Client::$calls);
+LMC_Order_Sync::payment_complete(50); LMC_Order_Sync::send(50);
+check(count(LMC_Client::$calls) === $calls && !wp_next_scheduled(LMC_ORDER_EVENT, [50]), 'بازیابی: سند تأییدشده دوباره ارسال نمی‌شود');
+$settings['warehouse_id'] = 'w';
+
+// خطای دائمی هم با اعلان تکراری پرداخت دوباره وارد صف نمی‌شود.
+$orders[51] = $permanent = new WC_Order(51);
+$permanent->method = 'bacs';
+$permanent->meta[LMC_Order_Sync::META_PAYLOAD] = array_replace($outagePayload, ['externalId' => '51']);
+$permanent->meta[LMC_Order_Sync::META_LINES] = [1 => 1];
+LMC_Order_Sync::payment_complete(51);
+unset($scheduled[LMC_ORDER_EVENT . ':51']);
+LMC_Client::$result = new WP_Error('permanent', 'نگاشت نیازمند اصلاح است');
+LMC_Order_Sync::send(51);
+LMC_Order_Sync::payment_complete(51);
+check((int) $permanent->get_meta(LMC_Order_Sync::META_ATTEMPTS) === 1 && !wp_next_scheduled(LMC_ORDER_EVENT, [51]), 'اعلان پرداخت خطای دائمی را به تلاش خودکار تبدیل نمی‌کند');
+
+printf("✓ %d بررسی رزرو و بازیابی سفارش موفق بود\n", $checks);
