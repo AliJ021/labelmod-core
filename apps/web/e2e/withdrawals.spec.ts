@@ -64,7 +64,7 @@ test("bulk settlement selects all filtered versions across pages, reviews exact 
   await page.getByLabel("کاربر برداشت",{exact:true}).selectOption(CASHIER.id);
   await page.getByLabel("وضعیت تسویه",{exact:true}).selectOption("open");
   await page.getByRole("button",{name:"انتخاب همهٔ تسویه‌نشده‌های این فیلتر",exact:true}).click();
-  expect(selectedOwner).toBe(CASHIER.id);
+  await expect.poll(()=>selectedOwner).toBe(CASHIER.id);
   await page.getByLabel("یادداشت تسویه",{exact:true}).fill("تسویهٔ دوره");
   await page.getByRole("button",{name:"تسویهٔ انتخاب‌ها",exact:true}).click();
   const dialog=page.getByRole("dialog",{name:"تأیید تسویهٔ برداشت‌های انتخاب‌شده"});
