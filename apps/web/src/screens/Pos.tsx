@@ -58,6 +58,7 @@ import { forgetCart, readCart, rememberCart } from "../lib/open-cart.ts";
 import { pendingLabel, saleQueue, summarize, type PendingSummary } from "../lib/sale-queue.ts";
 import { pos, type Branch, type Invoice, type InvoiceCustomer, type PaymentIntentStatus, type InvoiceLine, type PaymentMethod, type DraftPayment, type Shift } from "../lib/pos.ts";
 import { normalizeDigits } from "../lib/settings-value.ts";
+import { onSettingSaved } from "../lib/settings-events.ts";
 import { ScanBuffer } from "../lib/scanner.ts";
 
 function message(err: unknown): string {
@@ -381,7 +382,9 @@ export function Pos({ actorId }: { actorId: string }) {
     };
     refresh();
     window.addEventListener("focus", refresh);
-    return () => { controller.abort(); window.removeEventListener("focus", refresh); };
+    // ذخیرهٔ همین تنظیم در تب دیگر؛ تبِ دیده‌شده‌ای که focus نمی‌گیرد هم تازه می‌شود.
+    const unsubscribe = onSettingSaved((key) => { if (key === "pos.require_customer") refresh(); });
+    return () => { controller.abort(); window.removeEventListener("focus", refresh); unsubscribe(); };
   }, [branchId, policyRetry]);
 
   const policyReady = policy?.branchId === branchId;
