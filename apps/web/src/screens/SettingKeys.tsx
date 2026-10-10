@@ -39,6 +39,7 @@ import { useNavigationGuard } from "../lib/use-url-state.ts";
 import { admin, type SettlementTerm } from "../lib/admin.ts";
 import { isZeroFee } from "../lib/settlement.ts";
 import { formatCount } from "../lib/format.ts";
+import { announceSettingSaved } from "../lib/settings-events.ts";
 import { describeValue, fromInput, toInput, type SettingKind, type SettingMeta } from "../lib/settings-value.ts";
 
 interface Setting extends SettingMeta {
@@ -252,6 +253,7 @@ function Row({ setting, onSaved, onDirty }: { setting: Setting; onSaved: (s: Set
         needsReason ? { value: out.value, reason: reason.trim() } : { value: out.value });
       const next = { ...setting, value: res.value, updatedAt: res.updatedAt };
       onSaved(next);
+      announceSettingSaved(setting.key);
       setDraft(initial(next));
       setReason("");
       setTouched(false); setAttempted(false);
