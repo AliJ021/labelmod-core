@@ -17,10 +17,19 @@ import { useUrlFlag } from "../lib/use-url-state.ts";
  * نهایی است. تفاضلی‌بودن یعنی «برداشتن نقش» مسیر جدا و فراموش‌شدنی
  * خودش را لازم داشته باشد.
  */
-import { useCallback, useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { Solid } from "../components/Glass.tsx";
 import { PasswordDialog } from "../components/PasswordDialog.tsx";
+import { ResultState } from "../components/ResultState.tsx";
+import { Ltr } from "../components/ui/Bidi.tsx";
+import { Button, Field } from "../components/ui/Controls.tsx";
+import { DataTable, type Column } from "../components/ui/DataTable.tsx";
+import { PageHeader, SectionHeader } from "../components/ui/PageHeader.tsx";
+import { SafeAction } from "../components/ui/SafeAction.tsx";
+import { Skeleton } from "../components/ui/Skeleton.tsx";
+import { StatusBadge } from "../components/ui/Status.tsx";
 import { ApiError } from "../lib/api.ts";
+import { formatCount } from "../lib/format.ts";
 import { pos, type Branch } from "../lib/pos.ts";
 import {
   people,
@@ -35,12 +44,17 @@ function message(err: unknown): string {
 }
 
 export function Staff({ currentUserId, onOwnPassword }: { currentUserId: string; onOwnPassword: () => void }) {
-  const [users, setUsers] = useState<AppUser[]>([]);
+  /** `null` یعنی هنوز خوانده نشده — فهرست خالی فقط پس از پاسخ سرور «خالی» است. */
+  const [users, setUsers] = useState<AppUser[] | null>(null);
   const [roles, setRoles] = useState<Role[]>([]);
   const [branches, setBranches] = useState<Branch[]>([]);
   const [includeInactive, setIncludeInactive] = useUrlFlag("staff.inactive");
+  const [loadError, setLoadError] = useState<string | null>(null);
+  const [revision, setRevision] = useState(0);
 
   const [busy, setBusy] = useState(false);
+  /** قفل همگام: دو کلیک پشت‌سرهم پیش از رندر بعدی هم دو درخواست نمی‌سازند. */
+  const busyRef = useRef(false);
   const [error, setError] = useState<string | null>(null);
   /** رمز تازه — روی صفحه می‌ماند تا کاربر ببندش. هیچ‌جا ذخیره نمی‌شود. */
   const [secret, setSecret] = useState<{ title: string; password: string } | null>(null);
@@ -56,29 +70,35 @@ export function Staff({ currentUserId, onOwnPassword }: { currentUserId: string;
   const [passwordUser, setPasswordUser] = useState<AppUser | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
 
-  const reload = useCallback(async () => {
+  const reload = async () => {
     setUsers((await people.users(includeInactive)).users);
-  }, [includeInactive]);
+  };
 
   useEffect(() => {
+    const controller = { aborted: false };
+    setLoadError(null);
     void (async () => {
       try {
-        const [{ roles: rs }, { branches: bs }] = await Promise.all([
+        const [{ roles: rs }, { branches: bs }, { users: us }] = await Promise.all([
           people.roles(),
           pos.branches(),
+          people.users(includeInactive),
         ]);
+        if (controller.aborted) return;
         setRoles(rs);
         setBranches(bs);
-        setNewBranch(bs[0]?.id ?? "");
-        await reload();
+        setNewBranch((b) => b || (bs[0]?.id ?? ""));
+        setUsers(us);
       } catch (err) {
-        setError(message(err));
+        if (!controller.aborted) setLoadError(message(err));
       }
     })();
-  }, [reload]);
+    return () => { controller.aborted = true; };
+  }, [includeInactive, revision]);
 
   async function guarded(fn: () => Promise<void>) {
-    if (busy) return;
+    if (busyRef.current) return;
+    busyRef.current = true;
     setBusy(true);
     setError(null);
     try {
@@ -86,10 +106,12 @@ export function Staff({ currentUserId, onOwnPassword }: { currentUserId: string;
     } catch (err) {
       setError(message(err));
     } finally {
+      busyRef.current = false;
       setBusy(false);
     }
   }
 
+  // فرم تا موفقیت دست نمی‌خورد: خطای سرور (نام تکراری، موبایل نامعتبر) ورودی را پاک نمی‌کند.
   const create = () =>
     guarded(async () => {
       const out = await people.createUser({
@@ -106,12 +128,6 @@ export function Staff({ currentUserId, onOwnPassword }: { currentUserId: string;
       await reload();
     });
 
-  const toggleActive = (u: AppUser) =>
-    guarded(async () => {
-      await people.updateUser(u.id, { isActive: !u.isActive });
-      await reload();
-    });
-
   const saveRoles = (u: AppUser, next: RoleAssignment[]) =>
     guarded(async () => {
       await people.setRoles(u.id, next);
@@ -119,19 +135,69 @@ export function Staff({ currentUserId, onOwnPassword }: { currentUserId: string;
       await reload();
     });
 
-  const setPin = (u: AppUser, pin: string | null) =>
-    guarded(async () => {
-      await people.setPin(u.id, pin);
-      await reload();
-    });
+  /** آیا اثر نشسته است؟ — فقط خواندن؛ فهرست کامل (با غیرفعال‌ها) تا کاربرِ تازه غیرفعال هم پیدا شود. */
+  const readUser = async (id: string) => (await people.users(true)).users.find((x) => x.id === id);
+  const afterAction = (text: string) => {
+    setNotice(text);
+    void reload().catch((err: unknown) => setError(message(err)));
+  };
+
+  const columns: Column<AppUser>[] = [
+    { key: "name", header: "نام", cell: (u) => <strong>{u.fullName}</strong> },
+    { key: "username", header: "نام کاربری", cell: (u) => <Ltr>{u.username}</Ltr> },
+    {
+      key: "roles", header: "نقش", cell: (u) => <>
+        {u.roles.map((r) => r.roleName).join("، ")}
+        {u.roles.some((r) => r.branchId === null) ? <span className="muted small"> · همه شعبه‌ها</span> : null}
+      </>,
+    },
+    {
+      key: "pin", header: "PIN", cell: (u) =>
+        // «دارد یا ندارد» — خودِ PIN هرگز از سرور نمی‌آید.
+        u.hasPin ? <SafeAction trigger="برداشتن PIN" tone="destructive"
+          title={`برداشتن PIN ${u.fullName}`}
+          summary={<>PIN فعلی <strong>{u.fullName}</strong> برداشته می‌شود.</>}
+          consequence="تا PIN تازه بسازد، باز کردن قفل صفحه فقط با رمز کامل ممکن است."
+          confirmLabel="برداشتن PIN" pendingLabel="در حال برداشتن PIN…"
+          disabled={busy}
+          run={() => people.setPin(u.id, null).then(() => undefined)}
+          verify={async () => (await readUser(u.id))?.hasPin === false}
+          onDone={() => afterAction(`PIN ${u.fullName} برداشته شد.`)} />
+          : <span className="muted">ندارد</span>,
+    },
+    { key: "sessions", header: "نشست باز", numeric: true, cell: (u) => formatCount(u.activeSessions) },
+    {
+      key: "status", header: "وضعیت", cell: (u) => u.isActive
+        ? <StatusBadge state="completed" label="فعال" />
+        : <StatusBadge state="cancelled" label="غیرفعال" />,
+    },
+  ];
+
+  const header = <PageHeader title="پرسنل"
+    context="ساخت کاربر، نقش و شعبه، رمز تازه و PIN. کاربر حذف نمی‌شود؛ غیرفعال می‌شود تا ردّ حسابرسی‌اش بماند."
+    {...(users ? { meta: <span className="muted small">{formatCount(users.length)} کاربر{includeInactive ? " (با غیرفعال‌ها)" : ""}</span> } : {})}
+    actions={<>
+      <label className="row" style={{ gap: "var(--s-2)" }}>
+        <input type="checkbox" checked={includeInactive} onChange={(e) => setIncludeInactive(e.target.checked)} />
+        <span className="small">غیرفعال‌ها هم</span>
+      </label>
+      <Button variant="primary" onClick={() => setCreating((v) => !v)} aria-expanded={creating} disabled={users === null}>
+        {creating ? "بستن فرم" : "کاربر تازه"}
+      </Button>
+    </>} />;
+
+  if (loadError !== null && users === null) return <div className="settings-page">
+    {header}
+    <Solid as="section" className="settings-section">
+      <ResultState kind="error" title={loadError} actionLabel="تلاش دوباره" onAction={() => setRevision((v) => v + 1)} />
+    </Solid>
+  </div>;
 
   return (
-    <div className="stack" style={{ gap: "var(--s-3)" }}>
-      {error ? (
-        <p className="solid pos-alert" role="alert">
-          <span className="dot dot--crit" aria-hidden="true">●</span> {error}
-        </p>
-      ) : null}
+    <div className="settings-page">
+      {header}
+      {error ? <p className="solid pos-alert" role="alert"><span className="dot dot--crit" aria-hidden="true">●</span> {error}</p> : null}
+      {loadError !== null ? <ResultState kind="error" title={loadError} actionLabel="تلاش دوباره" onAction={() => setRevision((v) => v + 1)} /> : null}
 
       {/*
         رمز روی صفحه، یک بار.
@@ -141,18 +207,16 @@ export function Staff({ currentUserId, onOwnPassword }: { currentUserId: string;
         می‌خواند.
       */}
       {secret ? (
-        <Solid className="pad stack" style={{ gap: "var(--s-2)" }}>
-          <h3 style={{ margin: 0, fontSize: "1rem" }}>{secret.title}</h3>
-          <p className="num" style={{ fontSize: "1.4rem", userSelect: "all", margin: 0 }}>
+        <Solid as="section" className="settings-section" aria-label={secret.title}>
+          <SectionHeader title={secret.title} level={3} />
+          <p className="num" dir="ltr" style={{ fontSize: "1.4rem", userSelect: "all", margin: 0, overflowWrap: "anywhere" }}>
             {secret.password}
           </p>
           <p className="small" role="alert" style={{ margin: 0 }}>
             <span className="dot dot--warn" aria-hidden="true">▲</span> این رمز فقط همین
             یک بار نشان داده می‌شود. آن را از راه امن به کاربر بدهید تا در مدیر رمزها نگه دارد.
           </p>
-          <button type="button" className="btn btn--quiet" onClick={() => setSecret(null)}>
-            دیدم، ببند
-          </button>
+          <div><Button onClick={() => setSecret(null)}>دیدم، ببند</Button></div>
         </Solid>
       ) : null}
 
@@ -164,61 +228,27 @@ export function Staff({ currentUserId, onOwnPassword }: { currentUserId: string;
         void reload().catch((err: unknown) => setError(message(err)));
       }} /> : null}
 
-      <Solid className="pad">
-        <div className="row between">
-          <h2 style={{ margin: 0, fontSize: "1rem" }}>پرسنل</h2>
-          <div className="row" style={{ gap: "var(--s-3)" }}>
-            <label className="row" style={{ gap: "var(--s-2)" }}>
-              <input
-                type="checkbox"
-                checked={includeInactive}
-                onChange={(e) => setIncludeInactive(e.target.checked)}
-              />
-              <span className="small">غیرفعال‌ها هم</span>
-            </label>
-            <button
-              type="button"
-              className="btn btn--primary"
-              onClick={() => setCreating((v) => !v)}
-            >
-              {creating ? "انصراف" : "کاربر تازه"}
-            </button>
-          </div>
-        </div>
-      </Solid>
-
       {creating ? (
-        <Solid className="pad">
+        <Solid as="section" className="settings-section" aria-labelledby="staff-new-title">
+          <SectionHeader id="staff-new-title" title="کاربر تازه" level={3}
+            description="رمز را سرور می‌سازد و یک بار نشان می‌دهد — شما رمز انتخاب نمی‌کنید." />
           <form
-            className="filters"
+            className="settings-form"
             onSubmit={(e) => {
               e.preventDefault();
               void create();
             }}
           >
-            <label className="auth-field">
-              <span>نام کاربری (انگلیسی)</span>
-              <input
-                value={username}
-                onChange={(e) => setUsername(e.target.value)}
-                autoComplete="off"
-                dir="ltr"
-              />
-            </label>
-            <label className="auth-field">
-              <span>نام کامل</span>
-              <input value={fullName} onChange={(e) => setFullName(e.target.value)} />
-            </label>
-            <label className="auth-field">
-              <span>موبایل (اختیاری)</span>
-              <input
-                value={mobile}
-                onChange={(e) => setMobile(e.target.value)}
-                inputMode="numeric"
-              />
-            </label>
-            <label className="auth-field">
-              <span>نقش</span>
+            <Field label="نام کاربری (انگلیسی)" hint="دست‌کم ۳ نویسه.">
+              <input value={username} onChange={(e) => setUsername(e.target.value)} autoComplete="off" dir="ltr" required minLength={3} />
+            </Field>
+            <Field label="نام کامل">
+              <input value={fullName} onChange={(e) => setFullName(e.target.value)} required minLength={2} />
+            </Field>
+            <Field label="موبایل" optional>
+              <input value={mobile} onChange={(e) => setMobile(e.target.value)} inputMode="numeric" dir="ltr" autoComplete="off" />
+            </Field>
+            <Field label="نقش">
               <select value={newRole} onChange={(e) => setNewRole(e.target.value)}>
                 {roles.map((r) => (
                   <option key={r.code} value={r.code}>
@@ -226,10 +256,9 @@ export function Staff({ currentUserId, onOwnPassword }: { currentUserId: string;
                   </option>
                 ))}
               </select>
-            </label>
+            </Field>
             {branches.length > 1 ? (
-              <label className="auth-field">
-                <span>شعبه</span>
+              <Field label="شعبه">
                 <select value={newBranch} onChange={(e) => setNewBranch(e.target.value)}>
                   {branches.map((b) => (
                     <option key={b.id} value={b.id}>
@@ -237,109 +266,51 @@ export function Staff({ currentUserId, onOwnPassword }: { currentUserId: string;
                     </option>
                   ))}
                 </select>
-              </label>
+              </Field>
             ) : null}
-            <button
-              type="submit"
-              className="btn btn--primary"
-              disabled={busy || username.trim().length < 3 || fullName.trim().length < 2}
-            >
-              ساخت
-            </button>
+            <div className="settings-actions">
+              <Button type="submit" variant="primary" busy={busy} busyLabel="در حال ساخت…"
+                disabled={busy || username.trim().length < 3 || fullName.trim().length < 2}>
+                ساخت کاربر
+              </Button>
+              <Button type="button" onClick={() => setCreating(false)} disabled={busy}>انصراف</Button>
+            </div>
           </form>
-          <p className="muted small" style={{ margin: 0 }}>
-            رمز را سرور می‌سازد و یک بار نشان می‌دهد — شما رمز انتخاب نمی‌کنید.
-          </p>
         </Solid>
       ) : null}
 
-      <Solid className="pad">
-        <div className="grid-wrap">
-          <table className="grid">
-            <caption className="sr-only">فهرست پرسنل</caption>
-            <thead>
-              <tr>
-                <th scope="col">نام</th>
-                <th scope="col">نام کاربری</th>
-                <th scope="col">نقش</th>
-                <th scope="col">PIN</th>
-                <th scope="col">نشست باز</th>
-                <th scope="col">وضعیت</th>
-                <th scope="col"> </th>
-              </tr>
-            </thead>
-            <tbody>
-              {users.map((u) => (
-                <tr key={u.id}>
-                  <td>{u.fullName}</td>
-                  <td className="num" dir="ltr">{u.username}</td>
-                  <td>
-                    {u.roles.map((r) => r.roleName).join("، ")}
-                    {u.roles.some((r) => r.branchId === null) ? (
-                      <span className="muted small"> · همه شعبه‌ها</span>
-                    ) : null}
-                  </td>
-                  <td>
-                    {/* «دارد یا ندارد» — خودِ PIN هرگز از سرور نمی‌آید. */}
-                    {u.hasPin ? (
-                      <button
-                        type="button"
-                        className="link"
-                        onClick={() => void setPin(u, null)}
-                        disabled={busy}
-                      >
-                        برداشتن
-                      </button>
-                    ) : (
-                      <span className="muted">—</span>
-                    )}
-                  </td>
-                  <td className="num">{u.activeSessions}</td>
-                  <td>
-                    {u.isActive ? (
-                      <span className="small">
-                        <span className="dot dot--good" aria-hidden="true">●</span> فعال
-                      </span>
-                    ) : (
-                      <span className="small muted">
-                        <span className="dot dot--crit" aria-hidden="true">■</span> غیرفعال
-                      </span>
-                    )}
-                  </td>
-                  <td>
-                    <button
-                      type="button"
-                      className="link"
-                      onClick={() => setEditing(editing?.id === u.id ? null : u)}
-                      disabled={busy}
-                    >
-                      نقش‌ها
-                    </button>
-                    <button
-                      type="button"
-                      className="link"
-                      onClick={() => {
-                        if (u.id === currentUserId) onOwnPassword();
-                        else { setNotice(null); setPasswordUser(u); }
-                      }}
-                      disabled={busy}
-                    >
-                      رمز تازه
-                    </button>
-                    <button
-                      type="button"
-                      className="link"
-                      onClick={() => void toggleActive(u)}
-                      disabled={busy}
-                    >
-                      {u.isActive ? "غیرفعال" : "فعال"}
-                    </button>
-                  </td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
+      <Solid as="section" className="settings-section" aria-label="فهرست پرسنل">
+        {users === null ? <Skeleton variant="row" lines={4} label="در حال دریافت فهرست پرسنل…" />
+          : <DataTable caption="فهرست پرسنل" columns={columns} rows={users} rowKey={(u) => u.id} stack
+            empty={{ title: includeInactive ? "هنوز کاربری ساخته نشده است." : "کاربر فعالی نیست.", description: "با «کاربر تازه» اولین کاربر را بسازید." }}
+            rowActions={(u) => <div className="row" style={{ gap: "var(--s-2)", flexWrap: "wrap" }}>
+              <button type="button" className="link" aria-expanded={editing?.id === u.id}
+                onClick={() => setEditing(editing?.id === u.id ? null : u)} disabled={busy}>
+                نقش‌ها
+              </button>
+              <button type="button" className="link" disabled={busy}
+                onClick={() => {
+                  if (u.id === currentUserId) onOwnPassword();
+                  else { setNotice(null); setPasswordUser(u); }
+                }}>
+                رمز تازه
+              </button>
+              {/* خودِ کاربر دکمهٔ غیرفعال‌کردنش را نمی‌بیند: بیرون‌انداختن خود قاعدهٔ ایمنی است، نه دسترسی. */}
+              {u.id === currentUserId ? null : <SafeAction
+                trigger={u.isActive ? "غیرفعال" : "فعال"}
+                tone={u.isActive ? "destructive" : "final"}
+                title={u.isActive ? `غیرفعال‌کردن ${u.fullName}` : `فعال‌کردن ${u.fullName}`}
+                summary={<><strong>{u.fullName}</strong> (<Ltr>{u.username}</Ltr>)</>}
+                consequence={u.isActive
+                  ? "دیگر نمی‌تواند وارد شود و همهٔ نشست‌های بازش همان لحظه بسته می‌شود. سوابق و اسنادش می‌مانند."
+                  : "دوباره می‌تواند با رمز فعلی‌اش وارد شود."}
+                confirmLabel={u.isActive ? "غیرفعال کن" : "فعال کن"}
+                pendingLabel={u.isActive ? "در حال غیرفعال‌کردن…" : "در حال فعال‌کردن…"}
+                disabled={busy}
+                run={() => people.updateUser(u.id, { isActive: !u.isActive }).then(() => undefined)}
+                verify={async () => (await readUser(u.id))?.isActive === !u.isActive}
+                onDone={() => afterAction(u.isActive ? `${u.fullName} غیرفعال شد.` : `${u.fullName} فعال شد.`)} />}
+            </div>} />}
       </Solid>
 
       {editing ? (

@@ -18,6 +18,9 @@
  * اگر روزی QR واقعاً لازم شد، یک ADR می‌خواهد نه یک `pnpm add`.
  */
 import { useCallback, useEffect, useState } from "react";
+import { ResultState } from "../components/ResultState.tsx";
+import { PageHeader } from "../components/ui/PageHeader.tsx";
+import { Skeleton } from "../components/ui/Skeleton.tsx";
 import { Solid } from "../components/Glass.tsx";
 import { ApiError } from "../lib/api.ts";
 import { normalizeDigits } from "../lib/settings-value.ts";
@@ -34,6 +37,9 @@ export function TwoFactor({ onEnrolled }: { onEnrolled?: () => void } = {}) {
   const [status, setStatus] = useState<TwoFactorStatus | null>(null);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  /** خطای خواندن وضعیت، جدا از خطای عملیات؛ فقط این یکی «تلاش دوباره» دارد. */
+  const [loadError, setLoadError] = useState<string | null>(null);
+  const [attempt, setAttempt] = useState(0);
 
   const [secret, setSecret] = useState<string | null>(null);
   const [code, setCode] = useState("");
@@ -50,14 +56,15 @@ export function TwoFactor({ onEnrolled }: { onEnrolled?: () => void } = {}) {
   }, []);
 
   useEffect(() => {
+    setLoadError(null);
     void (async () => {
       try {
         await reload();
       } catch (err) {
-        setError(message(err));
+        setLoadError(message(err));
       }
     })();
-  }, [reload]);
+  }, [reload, attempt]);
 
   async function guarded(fn: () => Promise<void>) {
     if (busy) return;
@@ -138,12 +145,26 @@ export function TwoFactor({ onEnrolled }: { onEnrolled?: () => void } = {}) {
       await reload();
     });
 
+  // در حالت ثبت اجباری، سرعنوان صفحه را خودِ کارت ورود دارد؛ در تنظیمات، این بخش سرعنوان خودش را می‌گیرد.
+  const header = onEnrolled === undefined
+    ? <PageHeader title="ورود دومرحله‌ای"
+      context="پیامک، برنامهٔ Authenticator و کلید امنیتی. هر کدام جدا روشن یا خاموش می‌شود و هیچ‌کدام جای رمز ورود را نمی‌گیرد." />
+    : null;
+
   if (!status) {
-    return <Solid className="pad">{error ?? "در حال بارگذاری…"}</Solid>;
+    return <div className="settings-page">
+      {header}
+      <Solid as="section" className="settings-section">
+        {loadError !== null
+          ? <ResultState kind="error" title={loadError} actionLabel="تلاش دوباره" onAction={() => setAttempt((v) => v + 1)} />
+          : <Skeleton variant="row" lines={3} label="در حال دریافت وضعیت ورود دومرحله‌ای…" />}
+      </Solid>
+    </div>;
   }
 
   return (
     <div className="stack" style={{ gap: "var(--s-3)" }}>
+      {header}
       <SmsTwoFactor onEnrolled={() => { void reload().catch((e: unknown) => setError(message(e))); onEnrolled?.(); }} />
       {error ? (
         <p className="solid pos-alert" role="alert">
