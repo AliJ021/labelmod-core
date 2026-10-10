@@ -36,6 +36,7 @@ class LMC_Order_Sync
     const META_NUMBER   = '_lmc_invoice_number';
     const META_ATTEMPTS = '_lmc_attempts';
     const META_ERROR    = '_lmc_last_error';
+    const META_STOPPED  = '_lmc_order_stopped';
     const META_PAID     = '_lmc_payment_complete';
     const META_DELIVERED = '_lmc_cod_delivered';
     const META_PAYLOAD  = '_lmc_order_payload';
@@ -79,6 +80,14 @@ class LMC_Order_Sync
         $order->update_meta_data(self::META_PAID, 'yes');
         $order->save();
 
+        // تکرار اعلان پرداخت، تصمیم ارسال دستی نیست. صف موجود مسئول backoff است؛
+        // خطای دائمی یا پایان سقف تلاش با webhook تکراری دوباره باز نمی‌شود.
+        if ($order->get_meta(self::META_STOPPED) === 'yes'
+            || $order->get_meta(self::META_ERROR) !== ''
+            || (int) $order->get_meta(self::META_ATTEMPTS) >= self::MAX_ATTEMPTS) {
+            return;
+        }
+
         if (!wp_next_scheduled(LMC_ORDER_EVENT, [$order_id])) {
             wp_schedule_single_event(time() + 10, LMC_ORDER_EVENT, [$order_id]);
         }
@@ -102,6 +111,7 @@ class LMC_Order_Sync
         // سقف تلاش را دور نمی‌زند؛ فقط کار اجراشده هنگام on-hold جبران می‌شود.
         if (!$order || !self::is_eligible($order)
             || $order->get_meta(self::META_INVOICE) !== ''
+            || $order->get_meta(self::META_STOPPED) === 'yes'
             || $order->get_meta(self::META_ERROR) !== ''
             || (int) $order->get_meta(self::META_ATTEMPTS) > 0) {
             return;
@@ -119,7 +129,11 @@ class LMC_Order_Sync
         if (!$order) {
             return;
         }
-        if ($order->get_meta(self::META_INVOICE) !== '' || !self::is_eligible($order)) {
+        // A duplicate payment callback may queue work while another worker is
+        // awaiting HTTP. Every worker must enforce the persisted stop decision.
+        if ($order->get_meta(self::META_INVOICE) !== '' || !self::is_eligible($order)
+            || $order->get_meta(self::META_STOPPED) === 'yes'
+            || (int) $order->get_meta(self::META_ATTEMPTS) >= self::MAX_ATTEMPTS) {
             return;
         }
 
@@ -525,10 +539,10 @@ class LMC_Order_Sync
         $order->update_meta_data(self::META_ATTEMPTS, $attempts);
         $order->update_meta_data(self::META_ERROR, $err->get_error_message());
 
-        if ($retryable && $attempts < self::MAX_ATTEMPTS) {
+        $retry = $retryable && $attempts < self::MAX_ATTEMPTS;
+        if ($retry) {
             // ۱، ۲، ۴، ۸، ۱۶ دقیقه — تا حدود نیم ساعت.
             $delay = MINUTE_IN_SECONDS * (2 ** ($attempts - 1));
-            wp_schedule_single_event(time() + $delay, LMC_ORDER_EVENT, [$order->get_id()]);
             $order->add_order_note(sprintf(
                 /* translators: 1: پیام خطا 2: شماره تلاش 3: سقف تلاش */
                 __('ارسال به لیبل مد ناموفق بود (%1$s). تلاش %2$d از %3$d — دوباره تلاش می‌شود.', 'labelmod-connector'),
@@ -537,6 +551,7 @@ class LMC_Order_Sync
                 self::MAX_ATTEMPTS
             ));
         } else {
+            $order->update_meta_data(self::META_STOPPED, 'yes');
             $order->add_order_note(sprintf(
                 /* translators: %s: پیام خطا */
                 __('⛔ ارسال به لیبل مد متوقف شد: %s — این سفارش باید دستی بررسی شود.', 'labelmod-connector'),
@@ -545,6 +560,13 @@ class LMC_Order_Sync
         }
 
         $order->save();
+        // Publish the outcome before replacing any event queued during HTTP.
+        // A transient failure retains its full backoff; a terminal one leaves
+        // no queued work. send() also protects already-dispatched workers.
+        wp_clear_scheduled_hook(LMC_ORDER_EVENT, [$order->get_id()]);
+        if ($retry) {
+            wp_schedule_single_event(time() + $delay, LMC_ORDER_EVENT, [$order->get_id()]);
+        }
         lmc_log(sprintf('سفارش %d ناموفق: %s', $order->get_id(), $err->get_error_message()));
     }
 
@@ -640,16 +662,23 @@ class LMC_Order_Sync
             if (class_exists('LMC_Order_Reservation')) {
                 LMC_Order_Reservation::retry($order);
             }
-            // شمارنده تلاش صفر می‌شود: این یک تصمیم انسانی است، نه
-            // ادامه همان صفِ ناموفق.
-            $order->update_meta_data(self::META_ATTEMPTS, 0);
-            $order->delete_meta_data(self::META_INVOICE);
-            $order->save();
-            self::send($order_id);
+            self::retry($order);
         }
 
         wp_safe_redirect(wp_get_referer() ?: admin_url('admin.php?page=wc-orders'));
         exit;
+    }
+
+    /** Explicit manual retry; the admin handler checks capability and nonce. */
+    public static function retry(WC_Order $order): void
+    {
+        // The human decision reopens delivery, keeping the frozen payload and
+        // diagnostic error until a definitive response confirms the invoice.
+        $order->update_meta_data(self::META_ATTEMPTS, 0);
+        $order->delete_meta_data(self::META_STOPPED);
+        $order->delete_meta_data(self::META_INVOICE);
+        $order->save();
+        self::send($order->get_id());
     }
 
     /** مسیر صریح بازیابی سفارش قدیمی؛ وضعیت سفارش هرگز مدرک دریافت پول نیست. */
