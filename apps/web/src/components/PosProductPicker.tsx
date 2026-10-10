@@ -57,7 +57,15 @@ export function PosProductPicker({ warehouseId, busy, onPick }: {
         <span className="product-search-label">نام، کد یا بارکد محصول</span>
         <span className="product-search-input">
           <Icon name="search" size="sm" />
-          <input type="search" value={query} maxLength={80} placeholder="بارکد را اسکن کنید یا نام محصول را بنویسید" disabled={busy} autoComplete="off"
+          {/*
+            در حال کار «فقط‌خواندنی + aria-disabled»، نه disabled: ورودیِ disabled فوکوس را از دست
+            می‌دهد، پس پس از هر افزودن صندوق‌دار باید دوباره روی کادر بزند، و React پس از هر commit
+            موقعیت اسکرول همهٔ نیاکان را می‌خواند (restoreSelection) — یک style+layout اجباری روی کل
+            صفحه که با اندازهٔ سبد بزرگ می‌شود (۱۵۰ قلم: حدود ۵۰ms در هر افزودن، apps/web/e2e/perf).
+            تایپ را readOnly می‌بندد و ارسال را خودِ submit() با busy.
+          */}
+          <input type="search" value={query} maxLength={80} placeholder="بارکد را اسکن کنید یا نام محصول را بنویسید"
+            readOnly={busy} aria-disabled={busy || undefined} autoComplete="off"
             onChange={(e) => { revision.current++; setQuery(e.target.value); setSelected(null); }}
             onKeyDown={e => { if (e.nativeEvent.isComposing && e.key === "Enter") e.preventDefault(); }} />
         </span>
