@@ -281,9 +281,9 @@ export const admin = {
       { accountCode, reason },
     ),
 
-  healthAlerts: () => api.get<{ alerts: HealthAlert[] }>("/health/alerts"),
+  healthAlerts: (signal?: AbortSignal) => api.get<{ alerts: HealthAlert[] }>("/health/alerts", signal ? {signal} : {}),
 
-  deadLetters: () => api.get<{ messages: DeadLetter[] }>("/health/dead-letters"),
+  deadLetters: (signal?: AbortSignal) => api.get<{ messages: DeadLetter[] }>("/health/dead-letters", signal ? {signal} : {}),
 
   /**
    * زنده‌کردن یک پیامِ مرده.

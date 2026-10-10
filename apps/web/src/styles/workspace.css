@@ -426,6 +426,25 @@ a[role="tab"] { display: inline-flex; align-items: center; text-decoration: none
 .backup-confirm { border:2px solid var(--control-border); padding:16px; border-radius:14px; }
 .break-anywhere { overflow-wrap:anywhere; }
 
+/* سلامت و بکاپ: هر بخش یک سطح، جزئیات با خط جداکننده. */
+.operations-screen { display: grid; gap: var(--s-4); min-inline-size: 0; }
+.operations-section { display: grid; gap: var(--s-3); min-inline-size: 0; }
+.operations-screen p { margin-block: 0; }
+.operations-list { list-style: none; padding: 0; margin: 0; min-inline-size: 0; }
+.operations-entry { display: grid; gap: var(--s-2); padding-block: var(--s-4); min-inline-size: 0; overflow-wrap: anywhere; }
+.operations-entry + .operations-entry { border-block-start: var(--border-w) solid var(--rule); }
+.operations-entry:first-child { padding-block-start: 0; }
+.operations-entry:last-child { padding-block-end: 0; }
+.operations-entry-head, .operations-actions { display: flex; align-items: center; flex-wrap: wrap; gap: var(--s-2) var(--s-3); }
+.operations-entry-head { justify-content: space-between; }
+.operations-screen .status { white-space: normal; }
+.operations-error { border-inline-start: 3px solid var(--crit); padding-inline-start: var(--s-3); }
+.operations-requeue { display: flex; flex-wrap: wrap; align-items: end; gap: var(--s-3); }
+.operations-requeue .field { flex: 1 1 16rem; min-inline-size: 0; }
+.operations-fields { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 15rem), 1fr)); gap: var(--s-3); }
+.operations-fields input, .operations-fields select, .operations-requeue input { inline-size: 100%; min-inline-size: 0; }
+.operations-screen .backup-confirm { border-color: var(--crit); scroll-margin-block-start: var(--s-4); }
+
 @media (max-width: 767px) {
   .invoice-table { display:block; min-inline-size:0; white-space:normal; overflow:visible; }
   .invoice-table thead { position:absolute; inline-size:1px; block-size:1px; clip-path:inset(50%); overflow:hidden; }
