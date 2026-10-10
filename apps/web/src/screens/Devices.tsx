@@ -58,6 +58,18 @@ function when(iso: string | null): string {
   return iso === null ? "—" : formatJalaliMoment(iso);
 }
 
+/**
+ * «همه نشست‌ها» از این صفحه قابل اثبات نیست: فهرست نشست‌ها (`GET /sessions`) فقط کاربران و
+ * دستگاه‌های دامنهٔ همین مدیر را می‌دهد و حداکثر ۵۰۰ سطر دارد. پس نبودِ کاربر در آن نه
+ * اثبات بسته‌شدن همهٔ نشست‌هاست و نه دلیلی برای تکرار. پس از پاسخ نامعلوم، نتیجه نامعلوم
+ * می‌ماند (بی تأیید دوباره) و راه قطعی، «رمز تازه» از بخش پرسنل است که پاسخ سرورش
+ * بسته‌شدن همهٔ نشست‌ها را می‌گوید.
+ */
+const REVOKE_ALL_LIMIT = "اگر پاسخ قطعی نرسد، این صفحه نمی‌تواند بسته‌شدن همهٔ نشست‌ها را ثابت کند: فهرست نشست‌ها فقط دامنهٔ شما و حداکثر ۵۰۰ نشست را نشان می‌دهد. راه قطعی، «رمز تازه» برای همین کاربر در بخش پرسنل است که همهٔ نشست‌های او را می‌بندد.";
+async function unprovableRevokeAll(): Promise<boolean> {
+  throw new Error(REVOKE_ALL_LIMIT);
+}
+
 export function Devices() {
   const [devices, setDevices] = useState<Device[] | null>(null);
   const [sessions, setSessions] = useState<LiveSession[] | null>(null);
@@ -320,12 +332,15 @@ export function Devices() {
           : <DataTable caption="نشست‌های باز" columns={sessionColumns} rows={sessions} rowKey={(x) => x.id} stack
             rowActions={(x) => <SafeAction trigger="همه نشست‌ها" triggerVariant="button" tone="destructive"
               title={`بستن همهٔ نشست‌های ${x.fullName}`}
-              summary={<>همهٔ نشست‌های باز <strong>{x.fullName}</strong> (<Ltr>{x.username}</Ltr>) بسته می‌شود.</>}
+              summary={<>
+                <p style={{ margin: 0 }}>همهٔ نشست‌های باز <strong>{x.fullName}</strong> (<Ltr>{x.username}</Ltr>) بسته می‌شود.</p>
+                <p className="field-hint" style={{ margin: "var(--s-2) 0 0" }}>{REVOKE_ALL_LIMIT}</p>
+              </>}
               consequence="روی هر دستگاهی که باز است، باید دوباره با رمز کامل وارد شود. کار ثبت‌نشدهٔ روی صفحه از دست می‌رود."
               confirmLabel="بستن همهٔ نشست‌ها" pendingLabel="در حال بستن…"
               disabled={busy !== null || stale}
               run={() => admin.revokeUserSessions(x.userId, "ابطال از صفحه دستگاه‌ها").then(() => undefined)}
-              verify={async () => !(await admin.sessions()).sessions.some((y) => y.userId === x.userId)}
+              verify={unprovableRevokeAll}
               onDone={() => afterRevoke(`نشست‌های «${x.fullName}» بسته شد.`)} />} />}
       </Solid>
     </div>

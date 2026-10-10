@@ -19,10 +19,14 @@
  */
 import { useCallback, useEffect, useState } from "react";
 import { ResultState } from "../components/ResultState.tsx";
-import { PageHeader } from "../components/ui/PageHeader.tsx";
+import { Ltr } from "../components/ui/Bidi.tsx";
+import { Button, Field } from "../components/ui/Controls.tsx";
+import { PageHeader, SectionHeader } from "../components/ui/PageHeader.tsx";
+import { StatusBadge } from "../components/ui/Status.tsx";
 import { Skeleton } from "../components/ui/Skeleton.tsx";
 import { Solid } from "../components/Glass.tsx";
 import { ApiError } from "../lib/api.ts";
+import { formatCount, formatJalaliMoment } from "../lib/format.ts";
 import { normalizeDigits } from "../lib/settings-value.ts";
 import { session, type TwoFactorStatus, type WebauthnKey } from "../lib/session.ts";
 import { createCredential, webauthnAvailable } from "../lib/webauthn.ts";
@@ -50,10 +54,24 @@ export function TwoFactor({ onEnrolled }: { onEnrolled?: () => void } = {}) {
   const [keys, setKeys] = useState<WebauthnKey[]>([]);
   const [keyName, setKeyName] = useState("");
 
+  /**
+   * وضعیت و کلیدها با هم خوانده و با هم نشانده می‌شوند. پیش‌تر وضعیت اول نشسته بود و
+   * شکست خواندن کلیدها، صفحه را با `keys = []` («کلیدی ثبت نشده») نشان می‌داد.
+   */
   const reload = useCallback(async () => {
-    setStatus(await session.twoFactor());
-    setKeys((await session.webauthnKeys()).credentials);
+    const [nextStatus, nextKeys] = await Promise.all([session.twoFactor(), session.webauthnKeys()]);
+    setStatus(nextStatus);
+    setKeys(nextKeys.credentials);
   }, []);
+  /**
+   * خواندن دوباره پس از یک تغییر موفق: شکستش شکست آن تغییر نیست. وضعیت روی صفحه
+   * کهنه علامت می‌خورد و کنش‌ها تا خواندن موفق بسته‌اند؛ «به‌روزرسانی» فقط می‌خواند.
+   */
+  const [stale, setStale] = useState(false);
+  const refresh = useCallback(async () => {
+    try { await reload(); setStale(false); } catch { setStale(true); }
+  }, [reload]);
+  const blocked = busy || stale;
 
   useEffect(() => {
     setLoadError(null);
@@ -91,13 +109,13 @@ export function TwoFactor({ onEnrolled }: { onEnrolled?: () => void } = {}) {
       setCodes(out.recoveryCodes);
       setSecret(null);
       setCode("");
-      await reload();
+      await refresh();
     });
 
   const regenerate = () =>
     guarded(async () => {
       setCodes((await session.regenerateRecovery()).recoveryCodes);
-      await reload();
+      await refresh();
     });
 
   /**
@@ -127,14 +145,14 @@ export function TwoFactor({ onEnrolled }: { onEnrolled?: () => void } = {}) {
       }
       await session.finishWebauthnRegistration(response, keyName);
       setKeyName("");
-      await reload();
+      await refresh();
       onEnrolled?.();
     });
 
   const removeKey = (id: string) =>
     guarded(async () => {
       await session.removeWebauthnKey(id);
-      await reload();
+      await refresh();
     });
 
   const disable = () =>
@@ -142,7 +160,7 @@ export function TwoFactor({ onEnrolled }: { onEnrolled?: () => void } = {}) {
       await session.disableTwoFactor();
       setCodes(null);
       setSecret(null);
-      await reload();
+      await refresh();
     });
 
   // در حالت ثبت اجباری، سرعنوان صفحه را خودِ کارت ورود دارد؛ در تنظیمات، این بخش سرعنوان خودش را می‌گیرد.
@@ -165,12 +183,15 @@ export function TwoFactor({ onEnrolled }: { onEnrolled?: () => void } = {}) {
   return (
     <div className="stack" style={{ gap: "var(--s-3)" }}>
       {header}
-      <SmsTwoFactor onEnrolled={() => { void reload().catch((e: unknown) => setError(message(e))); onEnrolled?.(); }} />
+      <SmsTwoFactor onEnrolled={() => { void refresh(); onEnrolled?.(); }} />
       {error ? (
         <p className="solid pos-alert" role="alert">
           <span className="dot dot--crit" aria-hidden="true">●</span> {error}
         </p>
       ) : null}
+      {stale ? <ResultState kind="error" title="تغییر ثبت شد، ولی وضعیت به‌روز نشد."
+        description="وضعیت روی صفحه ممکن است قدیمی باشد؛ کنش‌ها تا به‌روزرسانی بسته‌اند."
+        actionLabel="به‌روزرسانی وضعیت" onAction={() => void refresh()} /> : null}
 
       {/*
         هشدار، نه قفل.
@@ -187,15 +208,6 @@ export function TwoFactor({ onEnrolled }: { onEnrolled?: () => void } = {}) {
         </p>
       ) : null}
 
-      <Solid className="pad stack" style={{ gap: "var(--s-2)" }}>
-        <h2 style={{ margin: 0, fontSize: "1rem" }}>برنامه Authenticator (TOTP)</h2>
-        <p className="muted small" style={{ margin: 0 }}>
-          {status.enabled
-            ? `فعال است · ${status.recoveryCodesLeft} کد بازیابی مانده`
-            : "غیرفعال — با یک برنامه Authenticator راه می‌افتد."}
-        </p>
-      </Solid>
-
       {/*
         کلید امنیتی — بند ۱ SECURITY.md آن را **اولویت اول** گذاشته،
         نه پشتیبان: کلید به دامنه گره خورده، پس صفحه جعلی نمی‌تواند
@@ -204,164 +216,107 @@ export function TwoFactor({ onEnrolled }: { onEnrolled?: () => void } = {}) {
         بخش مستقل از TOTP است چون کاربر می‌تواند فقط کلید داشته باشد:
         یک کلید ثبت‌شده خودش عامل دوم را الزامی می‌کند.
       */}
-      <Solid className="pad stack" style={{ gap: "var(--s-2)" }}>
-        <h3 style={{ margin: 0, fontSize: "1rem" }}>کلید امنیتی (Passkey)</h3>
-        <p className="muted small" style={{ margin: 0 }}>
-          در برابر فیشینگ مقاوم است: کلید به دامنه گره خورده و صفحه جعلی نمی‌تواند از
-          آن استفاده کند.
-        </p>
+      <Solid as="section" className="settings-section" aria-labelledby="mfa-passkey">
+        <SectionHeader id="mfa-passkey" title="کلید امنیتی (Passkey)" level={2}
+          description="در برابر فیشینگ مقاوم است: کلید به دامنه گره خورده و صفحه جعلی نمی‌تواند از آن استفاده کند."
+          actions={<StatusBadge state={keys.length > 0 ? "completed" : "draft"} label={keys.length > 0 ? `${formatCount(keys.length)} کلید` : "کلیدی ثبت نشده"} />} />
 
         {keys.length === 0 ? (
-          <p className="muted small" style={{ margin: 0 }}>کلیدی ثبت نشده است.</p>
+          <p className="empty">کلیدی ثبت نشده است.</p>
         ) : (
           <ul className="lines">
             {keys.map((k) => (
-              <li key={k.id} className="row" style={{ justifyContent: "space-between" }}>
+              <li key={k.id} className="row" style={{ justifyContent: "space-between", gap: "var(--s-2)", flexWrap: "wrap" }}>
                 <span>
-                  {k.name ?? "کلید بی‌نام"}
+                  <strong>{k.name ?? "کلید بی‌نام"}</strong>
                   <span className="muted small">
                     {" · "}
-                    {k.lastUsedAt === null
-                      ? "هنوز استفاده نشده"
-                      : `آخرین بار ${new Date(k.lastUsedAt).toLocaleDateString("fa-IR")}`}
+                    {k.lastUsedAt === null ? "هنوز استفاده نشده" : `آخرین بار ${formatJalaliMoment(k.lastUsedAt)}`}
                   </span>
                 </span>
-                <button
-                  type="button"
-                  className="btn btn--quiet"
-                  disabled={busy}
-                  onClick={() => void removeKey(k.id)}
-                >
+                <Button variant="quiet" disabled={blocked} onClick={() => void removeKey(k.id)}
+                  aria-label={`حذف ${k.name ?? "کلید بی‌نام"}`}>
                   حذف
-                </button>
+                </Button>
               </li>
             ))}
           </ul>
         )}
 
         {webauthnAvailable() ? (
-          <>
-            <label className="auth-field">
-              <span>نامی برای این کلید (اختیاری)</span>
-              <input
-                type="text"
-                value={keyName}
-                onChange={(e) => setKeyName(e.target.value)}
-                placeholder="مثلاً: یوبی‌کی جیبی"
-              />
-            </label>
-            <button
-              type="button"
-              className="btn btn--primary"
-              disabled={busy}
-              onClick={() => void addKey()}
-            >
-              افزودن کلید امنیتی
-            </button>
-          </>
+          <div className="settings-form">
+            <Field label="نامی برای این کلید" optional>
+              <input type="text" value={keyName} onChange={(e) => setKeyName(e.target.value)} placeholder="مثلاً: یوبی‌کی جیبی" />
+            </Field>
+            <div className="settings-actions">
+              <Button variant="primary" busy={busy} busyLabel="در حال ثبت کلید…" disabled={blocked} onClick={() => void addKey()}>افزودن کلید امنیتی</Button>
+            </div>
+          </div>
         ) : (
           /*
             دکمه‌ای که با کلیک خطای مبهم مرورگر بدهد، بدتر از نبودنش
             است. `PublicKeyCredential` روی هر چیزی که HTTPS نیست
             وجود ندارد.
           */
-          <p className="muted small" style={{ margin: 0 }}>
+          <p className="settings-note" style={{ margin: 0 }}>
             این مرورگر کلید امنیتی را پشتیبانی نمی‌کند. کلید امنیتی به اتصال امن
             (HTTPS) نیاز دارد.
           </p>
         )}
       </Solid>
 
-      {codes ? (
-        <Solid className="pad stack" style={{ gap: "var(--s-2)" }}>
-          <h3 style={{ margin: 0, fontSize: "1rem" }}>کدهای بازیابی</h3>
-          <p className="small" role="alert" style={{ margin: 0 }}>
-            <span className="dot dot--warn" aria-hidden="true">▲</span> این کدها فقط همین
-            یک بار نشان داده می‌شوند. جایی امن نگهشان دارید — بدون آن‌ها و بدون گوشی،
-            تنها راه، مدیر است.
-          </p>
-          <ul className="lines num" style={{ userSelect: "all" }}>
-            {codes.map((c) => (
-              <li key={c} dir="ltr">{c}</li>
-            ))}
-          </ul>
-          <button type="button" className="btn btn--quiet" onClick={() => { setCodes(null); onEnrolled?.(); }}>
-            نوشتمشان، ببند
-          </button>
-        </Solid>
-      ) : null}
+      <Solid as="section" className="settings-section" aria-labelledby="mfa-totp">
+        <SectionHeader id="mfa-totp" title="برنامه Authenticator (TOTP)" level={2}
+          description={status.enabled
+            ? `${formatCount(status.recoveryCodesLeft)} کد بازیابی مانده است.`
+            : "با یک برنامه Authenticator راه می‌افتد."}
+          actions={<StatusBadge state={status.enabled ? "completed" : "draft"} label={status.enabled ? "فعال" : "غیرفعال"} />} />
 
-      {!status.enabled ? (
-        secret === null ? (
-          <Solid className="pad">
-            <button
-              type="button"
-              className="btn btn--primary"
-              disabled={busy}
-              onClick={() => void begin()}
-            >
-              راه‌اندازی
-            </button>
-          </Solid>
+        {codes ? (
+          <div className="stack" style={{ gap: "var(--s-2)" }}>
+            <SectionHeader title="کدهای بازیابی" level={3} />
+            <p className="small" role="alert" style={{ margin: 0 }}>
+              <span className="dot dot--warn" aria-hidden="true">▲</span> این کدها فقط همین
+              یک بار نشان داده می‌شوند. جایی امن نگهشان دارید — بدون آن‌ها و بدون گوشی،
+              تنها راه، مدیر است.
+            </p>
+            <ul className="lines" style={{ userSelect: "all" }}>
+              {codes.map((c) => (
+                <li key={c}><Ltr>{c}</Ltr></li>
+              ))}
+            </ul>
+            <div><Button onClick={() => { setCodes(null); onEnrolled?.(); }}>نوشتمشان، ببند</Button></div>
+          </div>
+        ) : null}
+
+        {!status.enabled ? (
+          secret === null ? (
+            <div className="settings-actions">
+              <Button variant="primary" busy={busy} busyLabel="در حال آماده‌سازی…" disabled={blocked} onClick={() => void begin()}>راه‌اندازی</Button>
+            </div>
+          ) : (
+            <div className="settings-form">
+              <p style={{ margin: 0 }}>این کلید را در برنامه Authenticator وارد کنید (گزینه «ورود دستی»):</p>
+              <p style={{ fontSize: "1.2rem", userSelect: "all", margin: 0, overflowWrap: "anywhere" }}><Ltr>{secret}</Ltr></p>
+              <Field label="کد شش‌رقمی که برنامه نشان می‌دهد">
+                <input type="text" inputMode="numeric" autoComplete="one-time-code" value={code} onChange={(e) => setCode(e.target.value)} autoFocus />
+              </Field>
+              <div className="settings-actions">
+                <Button variant="primary" busy={busy} busyLabel="در حال تأیید…" disabled={blocked || code.trim() === ""} onClick={() => void confirm()}>تأیید و فعال‌سازی</Button>
+                <Button disabled={busy} onClick={() => setSecret(null)}>انصراف</Button>
+              </div>
+            </div>
+          )
         ) : (
-          <Solid className="pad stack" style={{ gap: "var(--s-3)" }}>
-            <p style={{ margin: 0 }}>
-              این کلید را در برنامه Authenticator وارد کنید (گزینه «ورود دستی»):
-            </p>
-            <p className="num" style={{ fontSize: "1.2rem", userSelect: "all" }} dir="ltr">
-              {secret}
-            </p>
-            <label className="auth-field">
-              <span>کد شش‌رقمی که برنامه نشان می‌دهد</span>
-              <input
-                type="text"
-                inputMode="numeric"
-                value={code}
-                onChange={(e) => setCode(e.target.value)}
-                autoFocus
-              />
-            </label>
-            <button
-              type="button"
-              className="btn btn--primary"
-              disabled={busy || code.trim() === ""}
-              onClick={() => void confirm()}
-            >
-              تأیید و فعال‌سازی
-            </button>
-            <button
-              type="button"
-              className="btn btn--quiet"
-              disabled={busy}
-              onClick={() => setSecret(null)}
-            >
-              انصراف
-            </button>
-          </Solid>
-        )
-      ) : (
-        <Solid className="pad stack" style={{ gap: "var(--s-2)" }}>
-          <button
-            type="button"
-            className="btn btn--quiet"
-            disabled={busy}
-            onClick={() => void regenerate()}
-          >
-            ساخت فهرست تازه کدهای بازیابی
-          </button>
-          <p className="muted small" style={{ margin: 0 }}>
-            کدهای قبلی از همان لحظه بی‌اعتبار می‌شوند.
-          </p>
-          <button
-            type="button"
-            className="btn btn--quiet"
-            disabled={busy}
-            onClick={() => void disable()}
-          >
-            برداشتن احراز هویت دومرحله‌ای
-          </button>
-        </Solid>
-      )}
+          <div className="settings-form">
+            <p className="settings-note" style={{ margin: 0 }}>ساخت فهرست تازه، کدهای قبلی را از همان لحظه بی‌اعتبار می‌کند.</p>
+            <div className="settings-actions">
+              <Button disabled={blocked} onClick={() => void regenerate()}>ساخت فهرست تازه کدهای بازیابی</Button>
+              <Button variant="danger" disabled={blocked} onClick={() => void disable()}>برداشتن احراز هویت دومرحله‌ای</Button>
+            </div>
+          </div>
+        )}
+      </Solid>
     </div>
   );
 }

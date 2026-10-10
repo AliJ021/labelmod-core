@@ -1,5 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import { Solid } from "../components/Glass.tsx";
+import { ResultState } from "../components/ResultState.tsx";
+import { Skeleton } from "../components/ui/Skeleton.tsx";
 import { Ltr } from "../components/ui/Bidi.tsx";
 import { Button, Field } from "../components/ui/Controls.tsx";
 import { SectionHeader } from "../components/ui/PageHeader.tsx";
@@ -19,10 +21,19 @@ export function SmsTwoFactor({ onEnrolled }: { onEnrolled?: () => void }) {
   const [pending, setPending] = useState(false), [busy, setBusy] = useState(false), [error, setError] = useState(""), [note, setNote] = useState("");
   /** قفل همگام: دو کلیک پیش از رندر بعدی، دو پیامک نمی‌فرستد. */
   const busyRef = useRef(false);
+  /**
+   * وضعیت نامعلوم هرگز «شماره‌ای تأیید نشده» نیست: تا خوانده نشود Skeleton، و اگر
+   * خوانده نشد خطا با «تلاش دوباره» که فقط همین وضعیت را دوباره می‌خواند.
+   */
+  const [statusError, setStatusError] = useState<string | null>(null);
+  const [attempt, setAttempt] = useState(0);
   useEffect(() => {
-    void api.get<SmsStatus>("/auth/2fa/sms/status").then(setStatus)
-      .catch((e: unknown) => setError(e instanceof ApiError ? e.message : "خواندن تنظیمات پیامک ممکن نشد."));
-  }, []);
+    let live = true;
+    setStatusError(null);
+    void api.get<SmsStatus>("/auth/2fa/sms/status").then((s) => { if (live) setStatus(s); })
+      .catch((e: unknown) => { if (live) setStatusError(e instanceof ApiError ? e.message : "خواندن تنظیمات پیامک ممکن نشد."); });
+    return () => { live = false; };
+  }, [attempt]);
   async function act(kind: "enroll" | "confirm" | "disable") {
     if (busyRef.current) return;
     busyRef.current = true; setBusy(true); setError(""); setNote("");
@@ -38,7 +49,11 @@ export function SmsTwoFactor({ onEnrolled }: { onEnrolled?: () => void }) {
     if (kind !== "enroll") onEnrolled?.();
     // درخواست ثبت شد؛ خطای خواندن دوبارهٔ وضعیت، شکست آن درخواست نیست.
     try { setStatus(await api.get<SmsStatus>("/auth/2fa/sms/status")); }
-    catch { setError("وضعیت پیامک پس از این تغییر خوانده نشد؛ برای دیدن وضعیت تازه صفحه را دوباره باز کنید."); }
+    catch {
+      // وضعیت قبلی دیگر معتبر نیست؛ به‌جای نمایش کهنه، همان حالت «خوانده نشد» با تلاش دوباره.
+      setStatus(null);
+      setStatusError("تغییر ثبت شد، ولی وضعیت پیامک پس از آن خوانده نشد.");
+    }
     finally { busyRef.current = false; setBusy(false); }
   }
   const codeOk = /^\d{6}$/.test(normalizeDigits(code));
@@ -46,9 +61,11 @@ export function SmsTwoFactor({ onEnrolled }: { onEnrolled?: () => void }) {
     <SectionHeader title="کد ورود با پیامک" level={3}
       description="پیامک یک روش اختیاری است. Passkey در برابر فیشینگ و تعویض سیم‌کارت امن‌تر است؛ می‌توانید روش‌های قبلی را نگه دارید."
       actions={status ? <StatusBadge state={status.enabled ? "completed" : "draft"} label={status.enabled ? "فعال" : "غیرفعال"} /> : null} />
-    <p className="settings-facts" style={{ margin: 0 }}>
-      {status?.enabled ? <>فعال برای <Ltr>{status.maskedMobile ?? "—"}</Ltr></> : "هنوز شماره‌ای تأیید نشده است."}
-    </p>
+    {status ? <p className="settings-facts" style={{ margin: 0 }}>
+      {status.enabled ? <>فعال برای <Ltr>{status.maskedMobile ?? "—"}</Ltr></> : "هنوز شماره‌ای تأیید نشده است."}
+    </p> : statusError !== null
+      ? <ResultState kind="error" title={statusError} actionLabel="تلاش دوباره" onAction={() => setAttempt((v) => v + 1)} />
+      : <Skeleton variant="row" lines={1} label="در حال دریافت وضعیت پیامک…" />}
     <p className="settings-note" style={{ margin: 0 }}>ابتدا ارسال پیامک و سرویس ملی‌پیامک را در تنظیمات آماده کنید. تغییر شماره فقط پس از تأیید شماره جدید اعمال می‌شود.</p>
     <div className="settings-form">
       <Field label="رمز عبور فعلی برای تنظیم پیامک" hint="برای ثبت شماره یا برداشتن ورود پیامکی لازم است.">
@@ -58,7 +75,7 @@ export function SmsTwoFactor({ onEnrolled }: { onEnrolled?: () => void }) {
         <input type="tel" value={mobile} onChange={(e) => setMobile(e.target.value)} placeholder="09xxxxxxxxx" />
       </Field>
       <div className="settings-actions">
-        <Button busy={busy && !pending} busyLabel="در حال ارسال…" disabled={busy || !password || !mobile} onClick={() => void act("enroll")}>ارسال کد تأیید شماره</Button>
+        <Button busy={busy && !pending} busyLabel="در حال ارسال…" disabled={busy || !status || !password || !mobile} onClick={() => void act("enroll")}>ارسال کد تأیید شماره</Button>
         {status?.enabled ? <Button variant="danger" disabled={busy || !password} onClick={() => void act("disable")}>برداشتن ورود پیامکی</Button> : null}
       </div>
       {pending ? <>

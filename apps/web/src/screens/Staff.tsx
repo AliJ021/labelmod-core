@@ -29,6 +29,7 @@ import { SafeAction } from "../components/ui/SafeAction.tsx";
 import { Skeleton } from "../components/ui/Skeleton.tsx";
 import { StatusBadge } from "../components/ui/Status.tsx";
 import { ApiError } from "../lib/api.ts";
+import { classifyFailure } from "../lib/safe-action.ts";
 import { formatCount } from "../lib/format.ts";
 import { pos, type Branch } from "../lib/pos.ts";
 import {
@@ -324,20 +325,8 @@ export function Staff({ currentUserId, onOwnPassword }: { currentUserId: string;
                 رمز تازه
               </button>
               {/* خودِ کاربر دکمهٔ غیرفعال‌کردنش را نمی‌بیند: بیرون‌انداختن خود قاعدهٔ ایمنی است، نه دسترسی. */}
-              {u.id === currentUserId ? null : <SafeAction
-                trigger={u.isActive ? "غیرفعال" : "فعال"}
-                tone={u.isActive ? "destructive" : "final"}
-                title={u.isActive ? `غیرفعال‌کردن ${u.fullName}` : `فعال‌کردن ${u.fullName}`}
-                summary={<><strong>{u.fullName}</strong> (<Ltr>{u.username}</Ltr>)</>}
-                consequence={u.isActive
-                  ? "دیگر نمی‌تواند وارد شود و همهٔ نشست‌های بازش همان لحظه بسته می‌شود. سوابق و اسنادش می‌مانند."
-                  : "دوباره می‌تواند با رمز فعلی‌اش وارد شود."}
-                confirmLabel={u.isActive ? "غیرفعال کن" : "فعال کن"}
-                pendingLabel={u.isActive ? "در حال غیرفعال‌کردن…" : "در حال فعال‌کردن…"}
-                disabled={busy || stale}
-                run={() => people.updateUser(u.id, { isActive: !u.isActive }).then(() => undefined)}
-                verify={async () => (await readUser(u.id)).isActive === !u.isActive}
-                onDone={() => afterAction(u.isActive ? `${u.fullName} غیرفعال شد.` : `${u.fullName} فعال شد.`)} />}
+              {u.id === currentUserId ? null : <ActiveToggle user={u} disabled={busy || stale}
+                readUser={readUser} onDone={afterAction} />}
             </div>} />}
       </Solid>
 
@@ -353,6 +342,59 @@ export function Staff({ currentUserId, onOwnPassword }: { currentUserId: string;
       ) : null}
     </div>
   );
+}
+
+/**
+ * فعال/غیرفعال‌کردن با **هدفِ ثابت**.
+ *
+ * هدف (`isActive` مقصد) در لحظهٔ شروع عملیات گرفته می‌شود و تا تعیین قطعی نتیجه
+ * همان می‌ماند — نه از ردیف تازه مشتق می‌شود. پس از پاسخ نامعلوم، اگر فهرست
+ * به‌روز شود و ردیف (چون عملیات واقعاً نشسته) وضعیت دیگری نشان دهد، «بررسی وضعیت»
+ * هنوز همان هدف را می‌سنجد و تأیید دوباره همان هدف را می‌فرستد؛ هرگز عمل معکوس.
+ * هدف فقط با نتیجهٔ قطعی رها می‌شود: انجام‌شده، یا ردّ صریح سرور (۴xx، بی اثر).
+ */
+function ActiveToggle({ user: u, disabled, readUser, onDone }: {
+  user: AppUser;
+  disabled: boolean;
+  readUser: (id: string) => Promise<AppUser>;
+  onDone: (text: string) => void;
+}) {
+  const targetRef = useRef<boolean | null>(null);
+  const [target, setTarget] = useState<boolean | null>(null);
+  const next = target ?? !u.isActive;
+  const hold = (t: boolean | null) => { targetRef.current = t; setTarget(t); };
+  return <SafeAction
+    trigger={next ? "فعال" : "غیرفعال"}
+    tone={next ? "final" : "destructive"}
+    title={next ? `فعال‌کردن ${u.fullName}` : `غیرفعال‌کردن ${u.fullName}`}
+    summary={<><strong>{u.fullName}</strong> (<Ltr>{u.username}</Ltr>)</>}
+    consequence={next
+      ? "دوباره می‌تواند با رمز فعلی‌اش وارد شود."
+      : "دیگر نمی‌تواند وارد شود و همهٔ نشست‌های بازش همان لحظه بسته می‌شود. سوابق و اسنادش می‌مانند."}
+    confirmLabel={next ? "فعال کن" : "غیرفعال کن"}
+    pendingLabel={next ? "در حال فعال‌کردن…" : "در حال غیرفعال‌کردن…"}
+    disabled={disabled}
+    run={async () => {
+      const goal = targetRef.current ?? !u.isActive;
+      hold(goal);
+      try {
+        await people.updateUser(u.id, { isActive: goal });
+      } catch (err) {
+        // ردّ صریح سرور یعنی اثری نماند؛ فقط آن‌وقت هدف رها می‌شود. نامعلوم، هدف را نگه می‌دارد.
+        if (classifyFailure(err).kind === "failed") hold(null);
+        throw err;
+      }
+    }}
+    verify={async () => {
+      const goal = targetRef.current;
+      if (goal === null) throw new Error("هدف این عملیات معلوم نیست؛ وضعیت را از فهرست بخوانید.");
+      return (await readUser(u.id)).isActive === goal;
+    }}
+    onDone={() => {
+      const goal = targetRef.current ?? next;
+      hold(null);
+      onDone(goal ? `${u.fullName} فعال شد.` : `${u.fullName} غیرفعال شد.`);
+    }} />;
 }
 
 /**

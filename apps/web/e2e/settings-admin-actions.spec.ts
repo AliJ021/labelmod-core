@@ -128,3 +128,91 @@ test("ابطال دستگاه: انصراف بی‌درخواست؛ پاسخ گ�
   await expect(page.getByRole("status").filter({ hasText: "باطل شد" })).toBeVisible();
   expect(count(api.calls, "POST /devices/d2/revoke")).toBe(1);
 });
+
+test("فعال‌کردن: هدف در شروع ثابت می‌شود؛ پس از نامعلوم و تغییر ردیف، بررسی همان هدف را می‌سنجد و عمل معکوس نمی‌رود", async ({ page, api }) => {
+  // سرور عملیات را نشانده ولی پاسخش گم شده: فهرست بعدی کاربر را فعال نشان می‌دهد.
+  let applied = false;
+  const bodies: unknown[] = [];
+  api.handlers.set("GET /users", async route => { await route.fulfill({ json: { users: [{ ...staff, isActive: applied }] } }); });
+  api.handlers.set(`PATCH /users/${staff.id}`, async route => {
+    bodies.push(route.request().postDataJSON()); applied = true; await route.abort("connectionreset");
+  });
+  await page.goto("/"); await settings(page, "staff", "پرسنل");
+  await staffRow(page).getByRole("button", { name: "فعال", exact: true }).click();
+  await dialog(page).getByRole("button", { name: "فعال کن" }).click();
+  await expect(dialog(page)).toContainText("نتیجه نامعلوم");
+  await page.keyboard.press("Escape");
+
+  // فهرست به‌روز می‌شود و ردیف حالا «فعال» است؛ دکمهٔ ردیف همچنان «نامعلوم» است، نه «غیرفعال».
+  await page.getByRole("checkbox", { name: "غیرفعال‌ها هم" }).check();
+  await expect(staffRow(page)).toContainText("فعال");
+  await expect(staffRow(page).getByRole("button", { name: "غیرفعال", exact: true })).toHaveCount(0);
+  await staffRow(page).getByRole("button", { name: "نتیجه نامعلوم؛ بررسی وضعیت" }).click();
+  await expect(dialog(page)).toContainText("فعال‌کردن");
+  await dialog(page).getByRole("button", { name: "بررسی وضعیت" }).click();
+  await expect(dialog(page)).toHaveCount(0);
+  await expect(page.getByRole("status").filter({ hasText: "فعال شد" })).toBeVisible();
+  expect(bodies).toEqual([{ isActive: true }]);
+});
+
+test("همه نشست‌ها: پاسخ نامعلوم از فهرست محدود نشست‌ها هرگز «انجام شد» یا اجازهٔ تکرار نمی‌گیرد", async ({ page, api }) => {
+  let sessions: unknown[] = [{ id: "s1", userId: "u9", username: "synthetic_cashier", fullName: "صندوق‌دار آزمایشی", deviceLabel: "صندوق آزمایشی",
+    authMethod: "password", pinUnlocked: false, ip: null, lastSeenAt: "2026-10-09T08:30:00Z", createdAt: "2026-10-09T08:00:00Z" }];
+  api.defaults["GET /devices"] = { devices: [] };
+  api.handlers.set("GET /sessions", async route => { await route.fulfill({ json: { sessions } }); });
+  api.handlers.set("POST /users/u9/revoke-sessions", route => route.abort("connectionreset"));
+  await page.goto("/"); await settings(page, "devices", "دستگاه‌ها");
+  await page.getByRole("button", { name: "همه نشست‌ها" }).click();
+  await expect(dialog(page)).toContainText("حداکثر ۵۰۰ نشست");
+  await dialog(page).getByRole("button", { name: "بستن همهٔ نشست‌ها" }).click();
+  await expect(dialog(page)).toContainText("نتیجه نامعلوم");
+  // کاربر دیگر در فهرست قابل‌دید نیست — این اثبات نیست.
+  sessions = [];
+  await dialog(page).getByRole("button", { name: "بررسی وضعیت" }).click();
+  await expect(dialog(page).getByRole("button", { name: "بررسی وضعیت" })).toBeEnabled();
+  await expect(dialog(page)).toContainText("نتیجه نامعلوم");
+  await expect(dialog(page).getByRole("button", { name: "بستن همهٔ نشست‌ها" })).toHaveCount(0);
+  await expect(dialog(page)).toContainText("«رمز تازه»");
+  await expect(page.getByRole("status").filter({ hasText: "بسته شد" })).toHaveCount(0);
+  expect(count(api.calls, "POST /users/u9/revoke-sessions")).toBe(1);
+});
+
+test("ورود دومرحله‌ای: وضعیت موفق و کلیدها ناموفق «کلیدی ثبت نشده» نمی‌گوید؛ تلاش دوباره فقط می‌خواند", async ({ page, api }) => {
+  api.defaults["GET /auth/2fa"] = { enabled: false, pending: false, recoveryCodesLeft: 0, webauthnKeys: 1, shouldHave: false };
+  let keysOk = false;
+  api.handlers.set("GET /auth/2fa/webauthn", async route => {
+    if (keysOk) await route.fulfill({ json: { credentials: [{ id: "k1", name: "کلید آزمایشی", createdAt: "2026-10-01T08:00:00Z", lastUsedAt: null }] } });
+    else await route.fulfill({ status: 503, json: { error: { code: "test", message: "خطای کلیدها" } } });
+  });
+  await page.goto("/"); await settings(page, "twofactor", "ورود دومرحله‌ای");
+  await expect(page.getByRole("alert").filter({ hasText: "خطای کلیدها" })).toBeVisible();
+  await expect(page.getByText("کلیدی ثبت نشده")).toHaveCount(0);
+  keysOk = true;
+  await page.locator("main").getByRole("button", { name: "تلاش دوباره" }).click();
+  await expect(page.getByText("کلید آزمایشی")).toBeVisible();
+  expect(api.calls.filter(c => c.startsWith("POST"))).toEqual([]);
+});
+
+test("پیامک: در بارگذاری و خطای وضعیت «شماره‌ای تأیید نشده» نمی‌گوید؛ تلاش دوباره فقط وضعیت را می‌خواند", async ({ page, api }) => {
+  api.defaults["GET /auth/2fa"] = { enabled: false, pending: false, recoveryCodesLeft: 0, webauthnKeys: 0, shouldHave: false };
+  api.defaults["GET /auth/2fa/webauthn"] = { credentials: [] };
+  let release!: () => void;
+  const held = new Promise<void>(r => { release = r; });
+  let phase: "hold" | "fail" | "ok" = "hold";
+  api.handlers.set("GET /auth/2fa/sms/status", async route => {
+    if (phase === "hold") { await held; await route.fulfill({ status: 503, json: { error: { code: "test", message: "خطای پیامک" } } }); return; }
+    await route.fulfill({ json: { enabled: false, maskedMobile: null } });
+  });
+  await page.goto("/"); await settings(page, "twofactor", "ورود دومرحله‌ای");
+  const panel = page.getByRole("region", { name: "ورود دومرحله‌ای پیامکی" });
+  await expect(panel).toBeVisible();
+  await expect(panel.getByText("هنوز شماره‌ای تأیید نشده است.")).toHaveCount(0);
+  phase = "fail"; release();
+  await expect(panel.getByRole("alert").filter({ hasText: "خطای پیامک" })).toBeVisible();
+  await expect(panel.getByText("هنوز شماره‌ای تأیید نشده است.")).toHaveCount(0);
+  await expect(panel.getByRole("button", { name: "ارسال کد تأیید شماره" })).toBeDisabled();
+  phase = "ok";
+  await panel.getByRole("button", { name: "تلاش دوباره" }).click();
+  await expect(panel.getByText("هنوز شماره‌ای تأیید نشده است.")).toBeVisible();
+  expect(api.calls.filter(c => c.startsWith("POST"))).toEqual([]);
+});
