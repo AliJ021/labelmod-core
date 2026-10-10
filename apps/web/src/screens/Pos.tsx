@@ -160,7 +160,10 @@ const CartLine = memo(function CartLine({ line: l, panel, on, error }: CartLineP
             </>
           )}
         </span>
-        <span className="muted small">هر عدد <Money rial={l.unitPrice} size="sm" /></span>
+        <button type="button" className="line-unit-edit" aria-label={`ویرایش قیمت ${l.productName}`}
+          aria-expanded={panel === "price"} onClick={() => on.openPrice(l.id)}>
+          <span>قیمت واحد</span> <Money rial={l.unitPrice} size="sm" /> <span className="line-unit-action">ویرایش</span>
+        </button>
       </div>
       {/*
         سطری که تخفیف خورده یا قیمتش دستی عوض شده، تعدادش از این مسیر
@@ -199,21 +202,7 @@ const CartLine = memo(function CartLine({ line: l, panel, on, error }: CartLineP
           +
         </button>
       </div>
-      <button type="button" className="line-total line-total-edit" aria-label={`ویرایش قیمت ${l.productName}`}
-        aria-expanded={panel === "price"} onClick={() => on.openPrice(l.id)}><span className="line-total-label">جمع ردیف</span><Money rial={l.netAmount} /></button>
-      {/*
-        برچسب متنی، نه نویسهٔ ریال (U+FDFC) و درصد: آن نویسه کنار مبلغِ **تومانی** سطر روی
-        صفحه «ریال» خوانده می‌شد — یعنی مبلغ سطر ده برابر کمتر دیده می‌شد.
-      */}
-      <button
-        type="button"
-        className="line-tool"
-        onClick={() => on.openPrice(l.id)}
-        aria-label={`تغییر قیمت ${l.productName}`}
-        aria-expanded={panel === "price"}
-      >
-        قیمت
-      </button>
+      <div className="line-total"><span className="line-total-label">جمع ردیف</span><Money rial={l.netAmount} /></div>
       <button
         type="button"
         className="line-tool"
@@ -1227,6 +1216,16 @@ export function Pos({ actorId }: { actorId: string }) {
           <button type="button" className="tool" disabled={!canPrintProforma} onClick={() => void printProforma()}>
             {proformaPrinting ? "در حال آماده‌سازی پیش‌فاکتور…" : "چاپ پیش‌فاکتور"}
           </button>
+          <details className="pos-more" onKeyDown={e => {
+            if (e.key === "Escape") { e.currentTarget.open = false; e.currentTarget.querySelector("summary")?.focus(); }
+          }}>
+          <summary className="tool">ابزارهای فروش</summary>
+          <div className="pos-more-actions" onClick={e => {
+            const action = (e.target as HTMLElement).closest<HTMLButtonElement | HTMLAnchorElement>("button, a");
+            if (!action || (action instanceof HTMLButtonElement && action.disabled)) return;
+            const details = e.currentTarget.closest("details");
+            if (details) { details.open = false; details.querySelector("summary")?.focus(); }
+          }}>
           <a className="tool" href="/?page=invoices&invoices.status=draft" onClick={e => { if (e.metaKey || e.ctrlKey || e.shiftKey) return; e.preventDefault(); navigate(e.currentTarget.href); }}>پیش‌نویس‌ها</a>
           <button type="button" className="tool" disabled={busy || !invoice || completed !== null || !payIdle} onClick={() => {
             if (!invoice || busy) return;
@@ -1244,6 +1243,8 @@ export function Pos({ actorId }: { actorId: string }) {
           <button type="button" className="tool" onClick={() => setClosing((v) => !v)}>
             بستن شیفت
           </button>
+          </div>
+          </details>
         </div>
       </header>
 

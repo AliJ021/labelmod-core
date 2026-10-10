@@ -10,6 +10,7 @@ function pos(api: MockApi) {
 async function camera(page: Page) {
   await page.goto("/");
   await page.getByRole("tab", { name: "صندوق", exact: true }).click();
+  await page.locator("summary", { hasText: "ابزارهای فروش" }).click();
   await page.getByRole("button", { name: "دوربین", exact: true }).click();
 }
 

@@ -161,7 +161,14 @@ class LMC_Order_Sync
             return;
         }
 
-        $order->update_meta_data(self::META_INVOICE, (string) ($res['invoiceId'] ?? ''));
+        // HTTP 2xx alone does not prove the invoice was recorded. Reuse the frozen
+        // externalId on retry so an unknown outcome cannot create a second sale.
+        if (!is_array($res) || !is_string($res['invoiceId'] ?? null) || trim($res['invoiceId']) === '') {
+            self::fail($order, new WP_Error('lmc_order_bad_response', 'پاسخ سامانه شناسه فاکتور معتبر ندارد؛ نتیجه ثبت هنوز مشخص نیست.'), true);
+            return;
+        }
+
+        $order->update_meta_data(self::META_INVOICE, $res['invoiceId']);
         $order->update_meta_data(self::META_NUMBER, (string) ($res['number'] ?? ''));
         $order->delete_meta_data(self::META_ERROR);
         $order->add_order_note(sprintf(

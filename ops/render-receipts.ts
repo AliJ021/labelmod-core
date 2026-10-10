@@ -10,7 +10,7 @@ import { resolve } from 'node:path';
 import { invoicePage } from '../apps/api/src/sales/invoice-page.ts';
 const require = createRequire(new URL('../apps/web/package.json', import.meta.url));
 const { chromium } = require('@playwright/test');
-const output = resolve(process.argv[2] ?? 'docs/print-previews/receipt-v2');
+const output = resolve(process.argv[2] ?? 'evidence/receipt-v3');
 await mkdir(output, { recursive: true });
 const lines = [
   { productName:'مانتو کتان بلند با آستین پفی و جیب‌های دوخت دستی مدل تابستانه ۱۴۰۵',color:'سرمه‌ای',size:'M',qty:'1.000',unitPrice:48900000n,discountAmount:4890000n,netAmount:44010000n },

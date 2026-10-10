@@ -201,4 +201,31 @@ $unpaidRefund->status = 'refunded';
 $calls = count(LMC_Client::$calls);
 LMC_Order_Sync::resume_confirmed_order(32); LMC_Order_Sync::send(32);
 check(count(LMC_Client::$calls) === $calls && $unpaidRefund->get_meta(LMC_Order_Sync::META_PAID) === '', 'مرجوعی پس از تحویل بدون وصول، فروش مالی نمی‌سازد');
+// پاسخ HTTP موفق بدون شناسه فاکتور، نتیجه قطعی نیست؛ با هویت ثابت retry می‌شود.
+$orders[40] = $unknown = new WC_Order(40);
+$unknown->method = 'bacs';
+$unknown->meta[LMC_Order_Sync::META_PAID] = 'yes';
+$frozen = ['branchId' => 'b', 'warehouseId' => 'w', 'externalId' => '40',
+    'lines' => [['sku' => 'SKU-1', 'qty' => '2', 'unitPrice' => '10']], 'paymentMethod' => 'bank', 'paymentRef' => 'RECEIPT-40'];
+$unknown->meta[LMC_Order_Sync::META_PAYLOAD] = $frozen;
+$unknown->meta[LMC_Order_Sync::META_LINES] = [1 => 1];
+foreach ([[], ['invoiceId' => ''], ['invoiceId' => '   '], ['invoiceId' => 9], ['invoiceId' => ['invalid']]] as $invalid) {
+    unset($scheduled[LMC_ORDER_EVENT . ':40']);
+    LMC_Client::$result = $invalid;
+    LMC_Order_Sync::send(40);
+    check($unknown->get_meta(LMC_Order_Sync::META_INVOICE) === '', 'پاسخ ناقص، شناسه فاکتور نمی‌سازد');
+    check($unknown->get_meta(LMC_Order_Sync::META_ERROR) !== '' && (bool) wp_next_scheduled(LMC_ORDER_EVENT, [40]), 'پاسخ ناقص خطا و تلاش مجدد دارد');
+    check(end(LMC_Client::$calls)[1] === $frozen, 'تلاش مجدد همان snapshot را می‌فرستد');
+}
+check(count(array_filter($unknown->notes, fn($n) => str_contains($n, 'در لیبل مد ثبت شد'))) === 0, 'پاسخ ناقص یادداشت موفقیت ندارد');
+unset($scheduled[LMC_ORDER_EVENT . ':40']);
+LMC_Client::$result = [];
+LMC_Order_Sync::send(40);
+check(!wp_next_scheduled(LMC_ORDER_EVENT, [40]), 'تلاش نامعلوم پس از سقف متوقف می‌شود');
+LMC_Client::$result = ['invoiceId' => 'invoice-40', 'number' => 'F-40'];
+LMC_Order_Sync::send(40);
+check($unknown->get_meta(LMC_Order_Sync::META_INVOICE) === 'invoice-40' && $unknown->get_meta(LMC_Order_Sync::META_ERROR) === '', 'بازپخش موفق همان سند را ثبت و خطا را پاک می‌کند');
+$calls = count(LMC_Client::$calls);
+LMC_Order_Sync::send(40);
+check(count(LMC_Client::$calls) === $calls, 'سند تأییدشده دوباره ارسال نمی‌شود');
 printf("✓ %d بررسی رزرو پرداخت در محل موفق بود\n", $checks);

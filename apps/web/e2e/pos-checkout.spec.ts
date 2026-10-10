@@ -172,7 +172,7 @@ test("unavailable customer policy has an explicit recovery action and never enab
   expect(s.posted).toEqual([]);
 });
 
-test("clicking the line amount opens the existing unit-price editor in Toman", async ({page, api}) => {
+test("clicking the unit price opens the existing unit-price editor in Toman", async ({page, api}) => {
   const s=pos(api); const prices:unknown[]=[];
   api.handlers.set(`PATCH /invoices/${INV}/lines/l1/price`,async route=>{
     prices.push(route.request().postDataJSON());
@@ -182,7 +182,7 @@ test("clicking the line amount opens the existing unit-price editor in Toman", a
   await open(page);
   await page.getByRole("button", {name:"ویرایش قیمت شلوار کتان", exact:true}).click();
   await expect(page.getByLabel(/قیمت واحد/)).toHaveValue("5000");
-  await expect(page.getByRole("button", {name:"تغییر قیمت شلوار کتان", exact:true})).toHaveAttribute("aria-expanded","true");
+  await expect(page.getByRole("button", {name:"ویرایش قیمت شلوار کتان", exact:true})).toHaveAttribute("aria-expanded","true");
   await page.getByLabel(/قیمت واحد/).fill("35000");
   await page.getByRole("button",{name:"ثبت قیمت",exact:true}).click();
   await expect.poll(()=>prices).toEqual([{unitPrice:"350000"}]);
@@ -732,11 +732,11 @@ test("keyboard: Enter picks a method and focuses the amount; Escape closes the p
   await expect(method(page, "کارت‌خوان")).toHaveAttribute("aria-pressed", "true");
   await expect(page.getByLabel("مبلغ (تومان)", { exact: true })).toBeFocused();
 
-  await page.getByRole("button", { name: "تغییر قیمت شلوار کتان" }).click();
+  await page.getByRole("button", { name: "ویرایش قیمت شلوار کتان" }).click();
   await expect(page.getByLabel(/قیمت واحد/)).toBeFocused();
   await page.keyboard.press("Escape");
   await expect(page.getByLabel(/قیمت واحد/)).toHaveCount(0);
-  await expect(page.getByRole("button", { name: "تغییر قیمت شلوار کتان" })).toHaveAttribute("aria-expanded", "false");
+  await expect(page.getByRole("button", { name: "ویرایش قیمت شلوار کتان" })).toHaveAttribute("aria-expanded", "false");
 
   await pick(page, "نقدی");
   await page.getByRole("button", { name: "دریافت وجه", exact: true }).click();
