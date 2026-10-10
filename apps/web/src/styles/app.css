@@ -850,8 +850,6 @@ select.set-input {
 
 .acct-actions button,
 .term-row button,
-.perm-row button,
-.perm-form button,
 .acct-form button,
 .acct-add-root {
   padding: var(--s-1) var(--s-2);
@@ -863,8 +861,7 @@ select.set-input {
 }
 
 .acct-actions button:disabled,
-.term-row button:disabled,
-.perm-form button:disabled {
+.term-row button:disabled {
   opacity: 0.5;
   cursor: default;
 }
@@ -963,8 +960,7 @@ select.set-input {
   padding: 0;
 }
 
-.perm-row,
-.perm-form {
+.perm-row {
   display: flex;
   align-items: center;
   gap: var(--s-2);
@@ -978,46 +974,14 @@ select.set-input {
   font-weight: 600;
 }
 
-/* رنگ تنها حامل معنا نیست: شکل نشانه هم فرق می‌کند (● در برابر ○) و
-   برچسب متنی «مجاز»/«ممنوع» همیشه کنارش هست. */
-.perm-yes { color: var(--good); }
-.perm-no  { color: var(--muted); }
+/* «مجاز»/«ممنوع» حالا StatusBadge است: آیکون + برچسب، نه رنگ تنها. */
 
 .perm-caps {
   flex: 1 1 auto;
 }
 
-.perm-field {
-  display: flex;
-  flex-direction: column;
-  gap: var(--s-1);
-}
-
-.perm-field span {
-  font-size: 0.85em;
-  color: var(--muted);
-}
-
-.perm-field input {
-  padding: var(--s-1) var(--s-2);
-  border-radius: var(--r-sm);
-  border: 1px solid var(--ring);
-  background: var(--surface-solid);
-  color: var(--ink);
-  max-width: 20ch;
-}
-
-.perm-check {
-  display: flex;
-  align-items: center;
-  gap: var(--s-1);
-}
-
-.perm-bad {
-  flex-basis: 100%;
-  margin: 0;
-  color: var(--crit);
-}
+/* فرم ویرایش مجوز با Field/Switch/Button نظام طراحی؛ فقط جداکنندهٔ ردیف از اینجاست. */
+.perm-form { padding-block: var(--s-3); border-block-end: 1px solid var(--ring); }
 
 /* ═══ افتتاحیه و تفصیلی ═════════════════════════════════════════════ */
 

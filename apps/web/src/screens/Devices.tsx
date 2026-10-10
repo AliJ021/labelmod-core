@@ -20,9 +20,17 @@
  * فهرست ممنوعه PIN هم هست، پس نشست بازشده با PIN حتی برای مدیر ۴۰۳
  * می‌گیرد — و پیامش همان را می‌گوید.
  */
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { Solid } from "../components/Glass.tsx";
+import { ResultState } from "../components/ResultState.tsx";
+import { Ltr } from "../components/ui/Bidi.tsx";
+import { DataTable, type Column } from "../components/ui/DataTable.tsx";
+import { PageHeader, SectionHeader } from "../components/ui/PageHeader.tsx";
+import { SafeAction } from "../components/ui/SafeAction.tsx";
+import { Skeleton } from "../components/ui/Skeleton.tsx";
+import { StatusBadge } from "../components/ui/Status.tsx";
 import { ApiError } from "../lib/api.ts";
+import { formatCount, formatJalaliMoment } from "../lib/format.ts";
 import { admin, type Device, type LiveSession } from "../lib/admin.ts";
 import { pos, type Branch } from "../lib/pos.ts";
 
@@ -45,24 +53,32 @@ function message(err: unknown): string {
   return "ارتباط با سرور برقرار نشد.";
 }
 
+/** تاریخ فقط از قالب‌گر مشترک (جلالی)، نه یک Intl جدا در هر صفحه. */
 function when(iso: string | null): string {
-  if (iso === null) return "—";
-  try {
-    return new Intl.DateTimeFormat("fa-IR", {
-      dateStyle: "short",
-      timeStyle: "short",
-    }).format(new Date(iso));
-  } catch {
-    return iso.slice(0, 16);
-  }
+  return iso === null ? "—" : formatJalaliMoment(iso);
+}
+
+/**
+ * «همه نشست‌ها» از این صفحه قابل اثبات نیست: فهرست نشست‌ها (`GET /sessions`) فقط کاربران و
+ * دستگاه‌های دامنهٔ همین مدیر را می‌دهد و حداکثر ۵۰۰ سطر دارد. پس نبودِ کاربر در آن نه
+ * اثبات بسته‌شدن همهٔ نشست‌هاست و نه دلیلی برای تکرار. پس از پاسخ نامعلوم، نتیجه نامعلوم
+ * می‌ماند (بی تأیید دوباره) و راه قطعی، «رمز تازه» از بخش پرسنل است که پاسخ سرورش
+ * بسته‌شدن همهٔ نشست‌ها را می‌گوید.
+ */
+const REVOKE_ALL_LIMIT = "اگر پاسخ قطعی نرسد، این صفحه نمی‌تواند بسته‌شدن همهٔ نشست‌ها را ثابت کند: فهرست نشست‌ها فقط دامنهٔ شما و حداکثر ۵۰۰ نشست را نشان می‌دهد. راه قطعی، «رمز تازه» برای همین کاربر در بخش پرسنل است که همهٔ نشست‌های او را می‌بندد.";
+async function unprovableRevokeAll(): Promise<boolean> {
+  throw new Error(REVOKE_ALL_LIMIT);
 }
 
 export function Devices() {
   const [devices, setDevices] = useState<Device[] | null>(null);
   const [sessions, setSessions] = useState<LiveSession[] | null>(null);
   const [error, setError] = useState<string | null>(null);
+  /** خطای خواندن جدا از خطای عملیات: فهرست خوانده‌نشده «خالی» نشان داده نمی‌شود. */
+  const [loadError, setLoadError] = useState<string | null>(null);
   const [note, setNote] = useState<string | null>(null);
   const [busy, setBusy] = useState<string | null>(null);
+  const busyRef = useRef(false);
   const [labelFor, setLabelFor] = useState<string | null>(null);
   const [label, setLabel] = useState("");
   const [branches, setBranches] = useState<Branch[]>([]);
@@ -74,11 +90,9 @@ export function Devices() {
       setDevices(d.devices);
       setSessions(s.sessions);
       setBranches(b.branches);
-      setError(null);
+      setLoadError(null);
     } catch (err) {
-      setError(message(err));
-      setDevices([]);
-      setSessions([]);
+      setLoadError(message(err));
     }
   }, []);
 
@@ -87,7 +101,8 @@ export function Devices() {
   }, [load]);
 
   async function run(key: string, fn: () => Promise<string>) {
-    if (busy !== null) return; // دو بار زدن دکمه، دو عملیات نمی‌سازد
+    if (busyRef.current) return; // دو بار زدن دکمه، دو عملیات نمی‌سازد — حتی پیش از رندر بعدی
+    busyRef.current = true;
     setBusy(key);
     setError(null);
     try {
@@ -97,6 +112,7 @@ export function Devices() {
       setError(message(err));
       setNote(null);
     } finally {
+      busyRef.current = false;
       setBusy(null);
     }
   }
@@ -104,8 +120,55 @@ export function Devices() {
   const pending = (devices ?? []).filter((d) => !d.isApproved);
   const trusted = (devices ?? []).filter((d) => d.isApproved);
 
+  /**
+   * عملیات ثبت شد ولی خواندن دوباره شکست خورد: فهرست روی صفحه قدیمی است. پیام موفقیت
+   * می‌ماند (شکست خواندن، شکست عملیات نیست) و کنش‌ها تا خواندن موفق بسته‌اند.
+   */
+  const stale = loadError !== null && devices !== null;
+  /** نبودِ دستگاه در پاسخ اثبات «انجام نشد» نیست — نتیجه نامعلوم می‌ماند. */
+  const readDevice = async (id: string): Promise<Device> => {
+    const found = (await admin.devices()).devices.find((x) => x.id === id);
+    if (!found) throw new Error("این دستگاه در فهرست قابل‌دید شما نیست؛ وضعیت معلوم نشد.");
+    return found;
+  };
+
+  /** پس از ابطال تأییدشده (یا تأیید از راه «بررسی وضعیت»): پیام و خواندن دوباره. */
+  const afterRevoke = (text: string) => {
+    setNote(text);
+    setError(null);
+    void load();
+  };
+
+  const header = <PageHeader title="دستگاه‌ها و نشست‌ها"
+    context="تأیید دستگاه تازه، ابطال دستگاه گم‌شده و بستن نشست‌های باز. راز دستگاه هرگز نمایش داده نمی‌شود."
+    {...(devices ? { meta: <span className="muted small">{formatCount(pending.length)} در انتظار · {formatCount(trusted.length)} مورد اعتماد · {formatCount(sessions?.length ?? 0)} نشست باز</span> } : {})} />;
+
+  if (loadError !== null && devices === null) return <div className="settings-page">
+    {header}
+    <Solid as="section" className="settings-section">
+      <ResultState kind="error" title={loadError} actionLabel="تلاش دوباره" onAction={() => { setLoadError(null); void load(); }} />
+    </Solid>
+  </div>;
+
+  const sessionColumns: Column<LiveSession>[] = [
+    { key: "user", header: "کاربر", cell: (s) => <>{s.fullName} <span className="muted small">(<Ltr>{s.username}</Ltr>)</span></> },
+    { key: "device", header: "دستگاه", cell: (s) => s.deviceLabel ?? "—" },
+    {
+      key: "method", header: "ورود با", cell: (s) => <>
+        {AUTH_METHOD[s.authMethod] ?? s.authMethod}
+        {s.pinUnlocked ? <> <StatusBadge state="warning" label="بازشده با PIN" quiet /></> : null}
+      </>,
+    },
+    { key: "ip", header: "IP", cell: (s) => s.ip ? <Ltr>{s.ip}</Ltr> : "—" },
+    { key: "seen", header: "آخرین فعالیت", cell: (s) => when(s.lastSeenAt) },
+  ];
+
   return (
-    <div className="stack" style={{ gap: "var(--s-4)" }}>
+    <div className="settings-page">
+      {header}
+      {stale ? <ResultState kind="error" title="فهرست به‌روز نشد."
+        description={`${loadError} فهرست روی صفحه ممکن است قدیمی باشد؛ کنش‌ها تا به‌روزرسانی بسته‌اند.`}
+        actionLabel="به‌روزرسانی فهرست" onAction={() => void load()} /> : null}
       {error !== null ? (
         <p className="solid pos-alert" role="alert">
           <span className="dot dot--crit" aria-hidden="true">
@@ -124,19 +187,16 @@ export function Devices() {
       ) : null}
 
       {/* ── در انتظار تأیید ────────────────────────────────────────── */}
-      <Solid as="section" className="pad stack">
-        <h3 style={{ fontSize: ".95rem", margin: 0 }}>در انتظار تأیید</h3>
-        <p className="muted small" style={{ margin: 0 }}>
+      <Solid as="section" className="settings-section" aria-labelledby="devices-pending">
+        <SectionHeader id="devices-pending" title="در انتظار تأیید" level={3} description={<>
           دستگاهی که یک بار وارد شده ولی هنوز تأیید نشده. تا تأیید نشود،
           صندوق‌دار روی آن نمی‌تواند قفل صفحه را با PIN باز کند — هر بار باید
           رمز کامل بزند.
           تأیید اولیه و انتخاب شعبه با مدیر همهٔ شعب است؛ سپس مدیر شعبه دستگاه‌های همان شعبه را مدیریت می‌کند.
-        </p>
+        </>} />
 
         {devices === null ? (
-          <p className="muted" style={{ margin: 0 }}>
-            در حال بارگذاری…
-          </p>
+          <Skeleton variant="row" lines={2} label="در حال دریافت دستگاه‌ها…" />
         ) : pending.length === 0 ? (
           <p className="empty">دستگاهی در انتظار تأیید نیست.</p>
         ) : (
@@ -150,7 +210,7 @@ export function Devices() {
                     {d.branchName !== null ? ` · ${d.branchName}` : ""} · آخرین
                     بازدید {when(d.lastSeenAt)}
                   </span>
-                  <span className="muted small num">{d.fingerprint}</span>
+                  <span className="muted small"><Ltr>{d.fingerprint}</Ltr></span>
                 </div>
 
                 {labelFor === d.id ? (
@@ -181,7 +241,7 @@ export function Devices() {
                       <option value="">انتخاب شعبه</option>
                       {branches.map((b) => <option key={b.id} value={b.id}>{b.name}</option>)}
                     </select>
-                    <button type="submit" className="btn btn--primary" disabled={busy !== null || branchId === ""}>
+                    <button type="submit" className="btn btn--primary" disabled={busy !== null || stale || branchId === ""}>
                       تأیید
                     </button>
                     <button
@@ -199,6 +259,7 @@ export function Devices() {
                   <button
                     type="button"
                     className="btn btn--primary"
+                    disabled={busy !== null || stale}
                     onClick={() => {
                       setLabelFor(d.id);
                       setLabel(d.label);
@@ -215,14 +276,13 @@ export function Devices() {
       </Solid>
 
       {/* ── مورد اعتماد ────────────────────────────────────────────── */}
-      <Solid as="section" className="pad stack">
-        <h3 style={{ fontSize: ".95rem", margin: 0 }}>دستگاه‌های مورد اعتماد</h3>
-        <p className="muted small" style={{ margin: 0 }}>
+      <Solid as="section" className="settings-section" aria-labelledby="devices-trusted">
+        <SectionHeader id="devices-trusted" title="دستگاه‌های مورد اعتماد" level={3} description={<>
           ابطال، همان لحظه همه نشست‌های زنده روی آن دستگاه را می‌بندد و راز
           ثبت‌نامش را پاک می‌کند. برای تبلتی که گم شده، همین کافی است.
-        </p>
+        </>} />
 
-        {devices === null ? null : trusted.length === 0 ? (
+        {devices === null ? <Skeleton variant="row" lines={2} label="در حال دریافت دستگاه‌ها…" /> : trusted.length === 0 ? (
           <p className="empty">هنوز دستگاهی تأیید نشده.</p>
         ) : (
           <ul className="lines">
@@ -235,46 +295,24 @@ export function Devices() {
                     {d.branchName !== null ? ` · ${d.branchName}` : ""} · تأیید
                     توسط {d.approvedByName ?? "—"} در {when(d.approvedAt)}
                   </span>
-                  <span className="muted small">
-                    {d.enrolled ? (
-                      <>
-                        <span className="dot dot--good" aria-hidden="true">
-                          ●
-                        </span>{" "}
-                        ثبت‌نام کامل — PIN روی این دستگاه کار می‌کند
-                      </>
-                    ) : (
-                      <>
-                        <span className="dot dot--warn" aria-hidden="true">
-                          ●
-                        </span>{" "}
-                        در انتظار اولین ورود کامل — تا آن موقع PIN باز نمی‌کند
-                      </>
-                    )}
+                  <span className="small">
+                    {d.enrolled
+                      ? <StatusBadge state="completed" label="ثبت‌نام کامل — PIN روی این دستگاه کار می‌کند" quiet />
+                      : <StatusBadge state="pending" label="در انتظار اولین ورود کامل — تا آن موقع PIN باز نمی‌کند" quiet />}
                     {" · "}
-                    <span className="num">{d.activeSessions}</span> نشست زنده
+                    {formatCount(d.activeSessions)} نشست زنده
                   </span>
                 </div>
-                <button
-                  type="button"
-                  className="btn"
-                  disabled={busy !== null}
-                  onClick={() => {
-                    if (
-                      !globalThis.confirm(
-                        `اعتماد «${d.label}» برداشته شود و ${d.activeSessions} نشست زنده‌اش بسته شود؟`,
-                      )
-                    ) {
-                      return;
-                    }
-                    void run(d.id, async () => {
-                      const r = await admin.revokeDevice(d.id, "ابطال از صفحه دستگاه‌ها");
-                      return `«${d.label}» باطل شد و ${r.sessionsRevoked} نشست بسته شد.`;
-                    });
-                  }}
-                >
-                  ابطال دستگاه
-                </button>
+                {/* تأیید در گفت‌وگوی خود برنامه، نه confirm مرورگر؛ نتیجهٔ نامعلوم از سرور بررسی می‌شود، نه ارسال دوباره. */}
+                <SafeAction trigger="ابطال دستگاه" triggerVariant="button" tone="destructive"
+                  title={`ابطال «${d.label}»`}
+                  summary={<>اعتماد <strong>{d.label}</strong>{d.branchName !== null ? ` (${d.branchName})` : ""} برداشته می‌شود.</>}
+                  consequence={`${formatCount(d.activeSessions)} نشست زندهٔ روی این دستگاه همان لحظه بسته و راز ثبت‌نامش پاک می‌شود. برای استفادهٔ دوباره، تأیید تازهٔ مدیر لازم است.`}
+                  confirmLabel="ابطال دستگاه" pendingLabel="در حال ابطال…"
+                  disabled={busy !== null || stale}
+                  run={() => admin.revokeDevice(d.id, "ابطال از صفحه دستگاه‌ها").then(() => undefined)}
+                  verify={async () => !(await readDevice(d.id)).isApproved}
+                  onDone={() => afterRevoke(`«${d.label}» باطل شد و نشست‌هایش بسته شد.`)} />
               </li>
             ))}
           </ul>
@@ -282,81 +320,28 @@ export function Devices() {
       </Solid>
 
       {/* ── نشست‌های زنده ──────────────────────────────────────────── */}
-      <Solid as="section" className="pad stack">
-        <h3 style={{ fontSize: ".95rem", margin: 0 }}>نشست‌های باز</h3>
-        <p className="muted small" style={{ margin: 0 }}>
+      <Solid as="section" className="settings-section" aria-labelledby="devices-sessions">
+        <SectionHeader id="devices-sessions" title="نشست‌های باز" level={3} description={<>
           «همه نشست‌ها» را وقتی بزنید که گوشی یا حساب کسی از دست رفته باشد.
           خودش نمی‌تواند این کار را بکند — دستگاه دستش نیست.
-        </p>
+        </>} />
 
-        {sessions === null ? null : sessions.length === 0 ? (
-          <p className="empty">نشست بازی نیست.</p>
-        ) : (
-          <div style={{ overflowX: "auto" }}>
-            <table className="grid">
-              <thead>
-                <tr>
-                  <th>کاربر</th>
-                  <th>دستگاه</th>
-                  <th>ورود با</th>
-                  <th>IP</th>
-                  <th>آخرین فعالیت</th>
-                  <th />
-                </tr>
-              </thead>
-              <tbody>
-                {sessions.map((s) => (
-                  <tr key={s.id}>
-                    <td>
-                      {s.fullName}
-                      <span className="muted small"> ({s.username})</span>
-                    </td>
-                    <td>{s.deviceLabel ?? "—"}</td>
-                    <td>
-                      {AUTH_METHOD[s.authMethod] ?? s.authMethod}
-                      {s.pinUnlocked ? (
-                        <>
-                          {" "}
-                          <span className="dot dot--warn" aria-hidden="true">
-                            ●
-                          </span>{" "}
-                          <span className="small">بازشده با PIN</span>
-                        </>
-                      ) : null}
-                    </td>
-                    <td className="num">{s.ip ?? "—"}</td>
-                    <td>{when(s.lastSeenAt)}</td>
-                    <td>
-                      <button
-                        type="button"
-                        className="btn"
-                        disabled={busy !== null}
-                        onClick={() => {
-                          if (
-                            !globalThis.confirm(
-                              `همه نشست‌های «${s.fullName}» بسته شود؟`,
-                            )
-                          ) {
-                            return;
-                          }
-                          void run(s.id, async () => {
-                            const r = await admin.revokeUserSessions(
-                              s.userId,
-                              "ابطال از صفحه دستگاه‌ها",
-                            );
-                            return `${r.revoked} نشست «${s.fullName}» بسته شد.`;
-                          });
-                        }}
-                      >
-                        همه نشست‌ها
-                      </button>
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
-        )}
+        {/* فهرست خالی پیام ثابت است نه اعلان: role="status" فقط برای نتیجهٔ عملیات می‌ماند. */}
+        {sessions === null ? <Skeleton variant="row" lines={3} label="در حال دریافت نشست‌ها…" />
+          : sessions.length === 0 ? <p className="empty">نشست بازی نیست.</p>
+          : <DataTable caption="نشست‌های باز" columns={sessionColumns} rows={sessions} rowKey={(x) => x.id} stack
+            rowActions={(x) => <SafeAction trigger="همه نشست‌ها" triggerVariant="button" tone="destructive"
+              title={`بستن همهٔ نشست‌های ${x.fullName}`}
+              summary={<>
+                <p style={{ margin: 0 }}>همهٔ نشست‌های باز <strong>{x.fullName}</strong> (<Ltr>{x.username}</Ltr>) بسته می‌شود.</p>
+                <p className="field-hint" style={{ margin: "var(--s-2) 0 0" }}>{REVOKE_ALL_LIMIT}</p>
+              </>}
+              consequence="روی هر دستگاهی که باز است، باید دوباره با رمز کامل وارد شود. کار ثبت‌نشدهٔ روی صفحه از دست می‌رود."
+              confirmLabel="بستن همهٔ نشست‌ها" pendingLabel="در حال بستن…"
+              disabled={busy !== null || stale}
+              run={() => admin.revokeUserSessions(x.userId, "ابطال از صفحه دستگاه‌ها").then(() => undefined)}
+              verify={unprovableRevokeAll}
+              onDone={() => afterRevoke(`نشست‌های «${x.fullName}» بسته شد.`)} />} />}
       </Solid>
     </div>
   );
