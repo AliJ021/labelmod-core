@@ -74,6 +74,12 @@ export class MockApi {
       this.calls.push(key + url.search);
       const handler = this.handlers.get(key);
       if (handler) { await handler(route, url); return; }
+      if (key === "GET /labels/frame") {
+        const labelModule = "../../api/src/catalog/label.ts";
+        const { LABEL_FRAME_HTML, LABEL_FRAME_CSP } = await import(labelModule);
+        await route.fulfill({ contentType: "text/html", body: LABEL_FRAME_HTML, headers: { "content-security-policy": LABEL_FRAME_CSP } });
+        return;
+      }
       const body = key === "GET /products" ? { products: this.productRows } : key === "GET /permission-rules" ? { rules: this.permissionRows } : this.defaults[key];
       if (body === undefined) { this.unexpected.push(key + url.search); await route.fulfill({ status: 501, json: { error: { code: "unmocked", message: key } } }); return; }
       await route.fulfill({ json: body });
