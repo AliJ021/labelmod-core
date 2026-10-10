@@ -51,6 +51,12 @@ export function Staff({ currentUserId, onOwnPassword }: { currentUserId: string;
   const [includeInactive, setIncludeInactive] = useUrlFlag("staff.inactive");
   const [loadError, setLoadError] = useState<string | null>(null);
   const [revision, setRevision] = useState(0);
+  /**
+   * عملیات ثبت شد ولی خواندن دوبارهٔ فهرست شکست خورد: فهرست روی صفحه قدیمی است.
+   * این شکستِ عملیات نیست، پس پیام موفقیت می‌ماند؛ ولی کنش‌های ردیف تا به‌روزرسانی
+   * بسته‌اند تا کسی روی دادهٔ کهنه تصمیم نگیرد.
+   */
+  const [stale, setStale] = useState(false);
 
   const [busy, setBusy] = useState(false);
   /** قفل همگام: دو کلیک پشت‌سرهم پیش از رندر بعدی هم دو درخواست نمی‌سازند. */
@@ -73,6 +79,15 @@ export function Staff({ currentUserId, onOwnPassword }: { currentUserId: string;
   const reload = async () => {
     setUsers((await people.users(includeInactive)).users);
   };
+  /** خواندن دوباره پس از یک تغییر موفق — هرگز throw نمی‌کند و خطایش را شکست عملیات جلوه نمی‌دهد. */
+  const refresh = async () => {
+    try {
+      await reload();
+      setStale(false);
+    } catch {
+      setStale(true);
+    }
+  };
 
   useEffect(() => {
     const controller = { aborted: false };
@@ -89,6 +104,7 @@ export function Staff({ currentUserId, onOwnPassword }: { currentUserId: string;
         setBranches(bs);
         setNewBranch((b) => b || (bs[0]?.id ?? ""));
         setUsers(us);
+        setStale(false);
       } catch (err) {
         if (!controller.aborted) setLoadError(message(err));
       }
@@ -125,21 +141,30 @@ export function Staff({ currentUserId, onOwnPassword }: { currentUserId: string;
       setUsername("");
       setFullName("");
       setMobile("");
-      await reload();
+      await refresh();
     });
 
   const saveRoles = (u: AppUser, next: RoleAssignment[]) =>
     guarded(async () => {
       await people.setRoles(u.id, next);
       setEditing(null);
-      await reload();
+      await refresh();
     });
 
-  /** آیا اثر نشسته است؟ — فقط خواندن؛ فهرست کامل (با غیرفعال‌ها) تا کاربرِ تازه غیرفعال هم پیدا شود. */
-  const readUser = async (id: string) => (await people.users(true)).users.find((x) => x.id === id);
+  /**
+   * آیا اثر نشسته است؟ — فقط خواندن؛ فهرست کامل (با غیرفعال‌ها) تا کاربرِ تازه غیرفعال هم پیدا شود.
+   * نبودِ کاربر در پاسخ (مثلاً دامنهٔ دسترسی عوض شده) اثبات «انجام نشد» نیست: throw می‌شود تا
+   * SafeAction نتیجه را نامعلوم نگه دارد و تأیید دوباره را باز نکند.
+   */
+  const readUser = async (id: string): Promise<AppUser> => {
+    const found = (await people.users(true)).users.find((x) => x.id === id);
+    if (!found) throw new Error("این کاربر در فهرست قابل‌دید شما نیست؛ وضعیت معلوم نشد.");
+    return found;
+  };
   const afterAction = (text: string) => {
     setNotice(text);
-    void reload().catch((err: unknown) => setError(message(err)));
+    setError(null);
+    void refresh();
   };
 
   const columns: Column<AppUser>[] = [
@@ -159,9 +184,9 @@ export function Staff({ currentUserId, onOwnPassword }: { currentUserId: string;
           summary={<>PIN فعلی <strong>{u.fullName}</strong> برداشته می‌شود.</>}
           consequence="تا PIN تازه بسازد، باز کردن قفل صفحه فقط با رمز کامل ممکن است."
           confirmLabel="برداشتن PIN" pendingLabel="در حال برداشتن PIN…"
-          disabled={busy}
+          disabled={busy || stale}
           run={() => people.setPin(u.id, null).then(() => undefined)}
-          verify={async () => (await readUser(u.id))?.hasPin === false}
+          verify={async () => (await readUser(u.id)).hasPin === false}
           onDone={() => afterAction(`PIN ${u.fullName} برداشته شد.`)} />
           : <span className="muted">ندارد</span>,
     },
@@ -198,6 +223,9 @@ export function Staff({ currentUserId, onOwnPassword }: { currentUserId: string;
       {header}
       {error ? <p className="solid pos-alert" role="alert"><span className="dot dot--crit" aria-hidden="true">●</span> {error}</p> : null}
       {loadError !== null ? <ResultState kind="error" title={loadError} actionLabel="تلاش دوباره" onAction={() => setRevision((v) => v + 1)} /> : null}
+      {stale ? <ResultState kind="error" title="تغییر ثبت شد، ولی فهرست به‌روز نشد."
+        description="فهرست روی صفحه ممکن است قدیمی باشد؛ کنش‌های ردیف تا به‌روزرسانی بسته‌اند."
+        actionLabel="به‌روزرسانی فهرست" onAction={() => void refresh()} /> : null}
 
       {/*
         رمز روی صفحه، یک بار.
@@ -209,8 +237,8 @@ export function Staff({ currentUserId, onOwnPassword }: { currentUserId: string;
       {secret ? (
         <Solid as="section" className="settings-section" aria-label={secret.title}>
           <SectionHeader title={secret.title} level={3} />
-          <p className="num" dir="ltr" style={{ fontSize: "1.4rem", userSelect: "all", margin: 0, overflowWrap: "anywhere" }}>
-            {secret.password}
+          <p style={{ fontSize: "1.4rem", userSelect: "all", margin: 0, overflowWrap: "anywhere" }}>
+            <Ltr>{secret.password}</Ltr>
           </p>
           <p className="small" role="alert" style={{ margin: 0 }}>
             <span className="dot dot--warn" aria-hidden="true">▲</span> این رمز فقط همین
@@ -225,7 +253,7 @@ export function Staff({ currentUserId, onOwnPassword }: { currentUserId: string;
         await people.resetPassword(passwordUser.id, password);
         setNotice(`رمز ${passwordUser.fullName} تغییر کرد و همهٔ نشست‌های او بسته شدند.`);
         setPasswordUser(null);
-        void reload().catch((err: unknown) => setError(message(err)));
+        void refresh();
       }} /> : null}
 
       {creating ? (
@@ -246,7 +274,7 @@ export function Staff({ currentUserId, onOwnPassword }: { currentUserId: string;
               <input value={fullName} onChange={(e) => setFullName(e.target.value)} required minLength={2} />
             </Field>
             <Field label="موبایل" optional>
-              <input value={mobile} onChange={(e) => setMobile(e.target.value)} inputMode="numeric" dir="ltr" autoComplete="off" />
+              <input value={mobile} onChange={(e) => setMobile(e.target.value)} inputMode="numeric" autoComplete="off" />
             </Field>
             <Field label="نقش">
               <select value={newRole} onChange={(e) => setNewRole(e.target.value)}>
@@ -285,10 +313,10 @@ export function Staff({ currentUserId, onOwnPassword }: { currentUserId: string;
             empty={{ title: includeInactive ? "هنوز کاربری ساخته نشده است." : "کاربر فعالی نیست.", description: "با «کاربر تازه» اولین کاربر را بسازید." }}
             rowActions={(u) => <div className="row" style={{ gap: "var(--s-2)", flexWrap: "wrap" }}>
               <button type="button" className="link" aria-expanded={editing?.id === u.id}
-                onClick={() => setEditing(editing?.id === u.id ? null : u)} disabled={busy}>
+                onClick={() => setEditing(editing?.id === u.id ? null : u)} disabled={busy || stale}>
                 نقش‌ها
               </button>
-              <button type="button" className="link" disabled={busy}
+              <button type="button" className="link" disabled={busy || stale}
                 onClick={() => {
                   if (u.id === currentUserId) onOwnPassword();
                   else { setNotice(null); setPasswordUser(u); }
@@ -306,9 +334,9 @@ export function Staff({ currentUserId, onOwnPassword }: { currentUserId: string;
                   : "دوباره می‌تواند با رمز فعلی‌اش وارد شود."}
                 confirmLabel={u.isActive ? "غیرفعال کن" : "فعال کن"}
                 pendingLabel={u.isActive ? "در حال غیرفعال‌کردن…" : "در حال فعال‌کردن…"}
-                disabled={busy}
+                disabled={busy || stale}
                 run={() => people.updateUser(u.id, { isActive: !u.isActive }).then(() => undefined)}
-                verify={async () => (await readUser(u.id))?.isActive === !u.isActive}
+                verify={async () => (await readUser(u.id)).isActive === !u.isActive}
                 onDone={() => afterAction(u.isActive ? `${u.fullName} غیرفعال شد.` : `${u.fullName} فعال شد.`)} />}
             </div>} />}
       </Solid>
@@ -318,7 +346,7 @@ export function Staff({ currentUserId, onOwnPassword }: { currentUserId: string;
           user={editing}
           roles={roles}
           branches={branches}
-          busy={busy}
+          busy={busy || stale}
           onSave={(next) => void saveRoles(editing, next)}
           onCancel={() => setEditing(null)}
         />

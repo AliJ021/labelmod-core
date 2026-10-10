@@ -19,13 +19,17 @@ import { useUrlState } from "../lib/use-url-state.ts";
  * صفحه این دو را یکی می‌کرد، خالی‌گذاشتن یک میدان می‌توانست بی‌صدا
  * دسترسی را باز کند یا ببندد.
  */
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { SearchField } from "../components/SearchField.tsx";
 import { ResultState } from "../components/ResultState.tsx";
-import { PageHeader } from "../components/ui/PageHeader.tsx";
+import { Button, Field, Switch } from "../components/ui/Controls.tsx";
+import { Money } from "../components/ui/Money.tsx";
+import { PageHeader, SectionHeader } from "../components/ui/PageHeader.tsx";
+import { StatusBadge } from "../components/ui/Status.tsx";
 import { Solid } from "../components/Glass.tsx";
 import { ApiError } from "../lib/api.ts";
 import { admin, type PermissionRule } from "../lib/admin.ts";
+import { formatCount } from "../lib/format.ts";
 import { rialFromTomanInput, toman } from "../lib/money.ts";
 import { normalizeDigits } from "../lib/settings-value.ts";
 
@@ -43,6 +47,7 @@ export function Permissions() {
   const [note, setNote] = useState<string | null>(null);
   const [editing, setEditing] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
+  const busyRef = useRef(false);
   const [filter, setFilter] = useUrlState("permissions.filter", "", true);
   const [revision, setRevision] = useState(0);
 
@@ -79,7 +84,8 @@ export function Permissions() {
       reason: string;
     },
   ) {
-    if (busy) return;
+    if (busyRef.current) return; // قفل همگام: دو کلیک پیش از رندر بعدی، دو ذخیره نمی‌سازد
+    busyRef.current = true;
     setBusy(true);
     setError(null);
     setNote(null);
@@ -99,6 +105,7 @@ export function Permissions() {
     } catch (e: unknown) {
       setError(message(e));
     } finally {
+      busyRef.current = false;
       setBusy(false);
     }
   }
@@ -141,8 +148,8 @@ export function Permissions() {
         {byOperation.size === 0 ? <ResultState title={filter ? "برای این جست‌وجو مجوزی پیدا نشد." : "مجوزی برای نمایش وجود ندارد."} actionLabel={filter ? "پاک‌کردن جست‌وجو" : undefined} onAction={() => setFilter("")} /> : null}
 
         {[...byOperation.entries()].map(([operation, list]) => (
-          <section key={operation} className="perm-group">
-            <h3 className="perm-op">{operation}</h3>
+          <section key={operation} className="perm-group" aria-labelledby={`perm-${operation}`}>
+            <SectionHeader id={`perm-${operation}`} title={operation} level={3} description={`${formatCount(list.length)} نقش`} />
             <ul className="perm-list">
               {list.map((r) =>
                 editing === key(r) ? (
@@ -157,26 +164,17 @@ export function Permissions() {
                 ) : (
                   <li key={key(r)} className="perm-row">
                     <span className="perm-role">{r.roleName}</span>
-                    <span className={r.allowed ? "perm-yes" : "perm-no"}>
-                      <span className="dot" aria-hidden="true">
-                        {r.allowed ? "●" : "○"}
-                      </span>{" "}
-                      {r.allowed ? "مجاز" : "ممنوع"}
-                    </span>
+                    {r.allowed ? <StatusBadge state="completed" label="مجاز" /> : <StatusBadge state="cancelled" label="ممنوع" />}
+                    {/* سقف تهی «بی‌سقف» است، نه «نامعلوم»؛ پس Money فقط برای مقدار واقعی. */}
                     <span className="muted small perm-caps">
-                      {r.maxPercent === null ? "بی‌سقف درصدی" : `تا ${r.maxPercent}٪`}
+                      {r.maxPercent === null ? "بی‌سقف درصدی" : `تا ${formatCount(r.maxPercent)}٪`}
                       {" · "}
-                      {r.maxAmount === null ? (
-                        "بی‌سقف مبلغی"
-                      ) : (
-                        <>
-                          تا <span className="num">{toman(BigInt(r.maxAmount))}</span> تومان
-                        </>
-                      )}
+                      {r.maxAmount === null ? "بی‌سقف مبلغی" : <>تا <Money rial={r.maxAmount} /></>}
                     </span>
-                    <button type="button" className="btn btn--quiet" onClick={() => setEditing(key(r))} disabled={busy}>
+                    <Button variant="quiet" onClick={() => setEditing(key(r))} disabled={busy}
+                      aria-label={`ویرایش مجوز «${operation}» برای ${r.roleName}`}>
                       ویرایش
-                    </button>
+                    </Button>
                   </li>
                 ),
               )}
@@ -238,55 +236,23 @@ function RuleForm(props: {
   }
 
   return (
-    <form className="perm-form" onSubmit={submit}>
+    <form className="perm-form settings-form" onSubmit={submit} aria-label={`ویرایش مجوز ${r.roleName}`}>
       <span className="perm-role">{r.roleName}</span>
-
-      <label className="perm-check">
-        <input type="checkbox" checked={allowed} onChange={(e) => setAllowed(e.target.checked)} />
-        <span>مجاز</span>
-      </label>
-
-      <label className="perm-field">
-        <span>سقف درصدی — خالی یعنی بی‌سقف</span>
-        <input
-          className="num"
-          type="text"
-          inputMode="decimal"
-          value={percent}
-          onChange={(e) => setPercent(e.target.value)}
-        />
-      </label>
-
-      <label className="perm-field">
-        <span>سقف مبلغی (تومان) — خالی یعنی بی‌سقف</span>
-        <input
-          className="num"
-          type="text"
-          inputMode="numeric"
-          value={amount}
-          onChange={(e) => setAmount(e.target.value)}
-        />
-      </label>
-
-      <label className="perm-field">
-        <span>دلیل (اختیاری)</span>
+      <Switch label="اجازهٔ این نقش" checked={allowed} onChange={setAllowed} stateLabels={["مجاز", "ممنوع"]} />
+      <Field label="سقف درصدی" optional hint="خالی یعنی بی‌سقف؛ صفر یعنی هیچ درصدی مجاز نیست.">
+        <input className="num" type="text" inputMode="decimal" value={percent} onChange={(e) => setPercent(e.target.value)} />
+      </Field>
+      <Field label="سقف مبلغی (تومان)" optional hint="خالی یعنی بی‌سقف؛ صفر یعنی هیچ مبلغی مجاز نیست.">
+        <input className="num" type="text" inputMode="numeric" value={amount} onChange={(e) => setAmount(e.target.value)} />
+      </Field>
+      <Field label="دلیل" optional hint="در ردّ حسابرسی تغییر می‌نشیند.">
         <input value={reason} onChange={(e) => setReason(e.target.value)} />
-      </label>
-
-      <span className="acct-actions">
-        <button type="submit" disabled={busy}>
-          ذخیره
-        </button>
-        <button type="button" onClick={props.onCancel} disabled={busy}>
-          انصراف
-        </button>
-      </span>
-
-      {bad ? (
-        <p className="perm-bad" role="alert">
-          <span className="dot dot--crit" aria-hidden="true">●</span> {bad}
-        </p>
-      ) : null}
+      </Field>
+      <div className="settings-actions">
+        <Button type="submit" variant="primary" busy={busy} busyLabel="در حال ذخیره…">ذخیره</Button>
+        <Button onClick={props.onCancel} disabled={busy}>انصراف</Button>
+      </div>
+      {bad ? <p className="field-error" role="alert">{bad}</p> : null}
     </form>
   );
 }

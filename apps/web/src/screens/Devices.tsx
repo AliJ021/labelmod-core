@@ -108,6 +108,18 @@ export function Devices() {
   const pending = (devices ?? []).filter((d) => !d.isApproved);
   const trusted = (devices ?? []).filter((d) => d.isApproved);
 
+  /**
+   * عملیات ثبت شد ولی خواندن دوباره شکست خورد: فهرست روی صفحه قدیمی است. پیام موفقیت
+   * می‌ماند (شکست خواندن، شکست عملیات نیست) و کنش‌ها تا خواندن موفق بسته‌اند.
+   */
+  const stale = loadError !== null && devices !== null;
+  /** نبودِ دستگاه در پاسخ اثبات «انجام نشد» نیست — نتیجه نامعلوم می‌ماند. */
+  const readDevice = async (id: string): Promise<Device> => {
+    const found = (await admin.devices()).devices.find((x) => x.id === id);
+    if (!found) throw new Error("این دستگاه در فهرست قابل‌دید شما نیست؛ وضعیت معلوم نشد.");
+    return found;
+  };
+
   /** پس از ابطال تأییدشده (یا تأیید از راه «بررسی وضعیت»): پیام و خواندن دوباره. */
   const afterRevoke = (text: string) => {
     setNote(text);
@@ -142,7 +154,9 @@ export function Devices() {
   return (
     <div className="settings-page">
       {header}
-      {loadError !== null ? <ResultState kind="error" title={loadError} actionLabel="تلاش دوباره" onAction={() => void load()} /> : null}
+      {stale ? <ResultState kind="error" title="فهرست به‌روز نشد."
+        description={`${loadError} فهرست روی صفحه ممکن است قدیمی باشد؛ کنش‌ها تا به‌روزرسانی بسته‌اند.`}
+        actionLabel="به‌روزرسانی فهرست" onAction={() => void load()} /> : null}
       {error !== null ? (
         <p className="solid pos-alert" role="alert">
           <span className="dot dot--crit" aria-hidden="true">
@@ -215,7 +229,7 @@ export function Devices() {
                       <option value="">انتخاب شعبه</option>
                       {branches.map((b) => <option key={b.id} value={b.id}>{b.name}</option>)}
                     </select>
-                    <button type="submit" className="btn btn--primary" disabled={busy !== null || branchId === ""}>
+                    <button type="submit" className="btn btn--primary" disabled={busy !== null || stale || branchId === ""}>
                       تأیید
                     </button>
                     <button
@@ -233,6 +247,7 @@ export function Devices() {
                   <button
                     type="button"
                     className="btn btn--primary"
+                    disabled={busy !== null || stale}
                     onClick={() => {
                       setLabelFor(d.id);
                       setLabel(d.label);
@@ -282,9 +297,9 @@ export function Devices() {
                   summary={<>اعتماد <strong>{d.label}</strong>{d.branchName !== null ? ` (${d.branchName})` : ""} برداشته می‌شود.</>}
                   consequence={`${formatCount(d.activeSessions)} نشست زندهٔ روی این دستگاه همان لحظه بسته و راز ثبت‌نامش پاک می‌شود. برای استفادهٔ دوباره، تأیید تازهٔ مدیر لازم است.`}
                   confirmLabel="ابطال دستگاه" pendingLabel="در حال ابطال…"
-                  disabled={busy !== null}
+                  disabled={busy !== null || stale}
                   run={() => admin.revokeDevice(d.id, "ابطال از صفحه دستگاه‌ها").then(() => undefined)}
-                  verify={async () => !(await admin.devices()).devices.some((x) => x.id === d.id && x.isApproved)}
+                  verify={async () => !(await readDevice(d.id)).isApproved}
                   onDone={() => afterRevoke(`«${d.label}» باطل شد و نشست‌هایش بسته شد.`)} />
               </li>
             ))}
@@ -308,7 +323,7 @@ export function Devices() {
               summary={<>همهٔ نشست‌های باز <strong>{x.fullName}</strong> (<Ltr>{x.username}</Ltr>) بسته می‌شود.</>}
               consequence="روی هر دستگاهی که باز است، باید دوباره با رمز کامل وارد شود. کار ثبت‌نشدهٔ روی صفحه از دست می‌رود."
               confirmLabel="بستن همهٔ نشست‌ها" pendingLabel="در حال بستن…"
-              disabled={busy !== null}
+              disabled={busy !== null || stale}
               run={() => admin.revokeUserSessions(x.userId, "ابطال از صفحه دستگاه‌ها").then(() => undefined)}
               verify={async () => !(await admin.sessions()).sessions.some((y) => y.userId === x.userId)}
               onDone={() => afterRevoke(`نشست‌های «${x.fullName}» بسته شد.`)} />} />}
