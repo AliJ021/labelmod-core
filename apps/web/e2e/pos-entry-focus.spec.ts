@@ -11,7 +11,7 @@ import { test, expect, type MockApi } from "./fixtures";
 const id = "33333333-3333-4333-8333-333333333333";
 const shift = "44444444-4444-4444-8444-444444444444";
 const actor = "22222222-2222-4222-8222-222222222222";
-const line = (n: number) => ({ id: `l${n}`, lineNo: n, variationId: `66666666-6666-4666-8666-00000000000${n}`, productName: `کالای ${n}`,
+const line = (n: number) => ({ id: `l${n}`, lineNo: n, variationId: `66666666-6666-4666-8666-${String(n).padStart(12, "0")}`, productName: `کالای ${n}`,
   sku: `SKU-${n}`, qty: "1", unitPrice: "100000", netAmount: "100000", discountAmount: "0", listPrice: null, priceOverrideReason: null, discountReason: null });
 const draft = (n: number) => ({ id, number: null, branchId: "b1", warehouseId: "w1", shiftId: shift, createdBy: actor, customerId: null, status: "draft",
   channel: "pos", grossAmount: String(100000 * n), discountAmount: "0", netAmount: String(100000 * n), taxAmount: "0", shippingAmount: "0",
@@ -67,18 +67,26 @@ test("در حین افزودن، کادر فوکوس را نگه می‌دارد
  */
 test("۳۲۰px: اسکرول کمینه «ثبت قیمت» را بالای خلاصهٔ چسبان و نوار پایین می‌آورد، نه زیر آن‌ها", async ({ page, api }) => {
   mock(api);
-  // ویرایشگر قلم آخرِ یک سبد هشت‌قلمی، تا دکمه در هر موتور (اندازهٔ قلم WebKit و Chromium فرق دارد)
-  // زیر لبهٔ صفحه بیفتد و اسکرول واقعاً لازم باشد؛ قلم اول در WebKit بالای لبه می‌ماند.
-  api.defaults[`GET /invoices/${id}`] = draft(8);
+  // ویرایشگر قلم آخرِ یک سبد بیست‌قلمی: دکمه باید در هر موتور، مستقل از ارتفاع قلم، زیر لبهٔ صفحه
+  // باشد تا اسکرول واقعاً لازم شود. با هشت قلم در WebKit هنوز بالای لبه بود.
+  api.defaults[`GET /invoices/${id}`] = draft(20);
   await page.setViewportSize({ width: 320, height: 640 });
   await page.addInitScript(([invoiceId, shiftId]) => localStorage.setItem("labelmod_open_cart", JSON.stringify({ invoiceId, shiftId })), [id, shift]);
   await page.goto("/?page=pos&pos.branch=b1&pos.warehouse=w1");
   await expect(page.getByRole("complementary", { name: "خلاصهٔ پرداخت" })).toBeVisible();
-  await page.getByRole("button", { name: "ویرایش قیمت کالای 8", exact: true }).click();
+  await page.getByRole("button", { name: "ویرایش قیمت کالای 20", exact: true }).click();
   const save = page.getByRole("button", { name: "ثبت قیمت", exact: true });
   await expect(save).toBeVisible();
-  await page.evaluate(() => window.scrollTo(0, 0));
-  expect(await save.evaluate(n => n.getBoundingClientRect().top > innerHeight), "پیش از فوکوس، دکمه زیر لبهٔ صفحه است").toBe(true);
+  // autoFocus کادر قیمت در WebKit صفحه را ناهمگام به کادر می‌برد و می‌تواند scrollTo را پس از ما خنثی کند؛
+  // پس فوکوس برداشته و پس از دو فریم دوباره به بالا رفته می‌شود. scrollIntoView به فوکوس نیاز ندارد.
+  await page.evaluate(async () => {
+    (document.activeElement as HTMLElement | null)?.blur();
+    const frame = () => new Promise(r => requestAnimationFrame(() => r(null)));
+    await frame(); await frame(); window.scrollTo(0, 0); await frame();
+  });
+  // مقدارها در پیام می‌آیند تا شکست در موتوری که محلی اجرا نمی‌شود، علتش را خودش بگوید.
+  const start = await save.evaluate(n => ({ top: Math.round(n.getBoundingClientRect().top), vh: innerHeight, y: scrollY }));
+  expect(start.top > start.vh, `پیش از اسکرول، دکمه زیر لبهٔ صفحه است: ${JSON.stringify(start)}`).toBe(true);
   await save.evaluate(n => n.scrollIntoView({ block: "nearest", behavior: "instant" }));
   expect(await save.evaluate(n => { const b = n.getBoundingClientRect(); const hit = document.elementFromPoint(b.left + b.width / 2, b.top + b.height / 2);
     return !!hit && (hit === n || n.contains(hit)); })).toBe(true);
