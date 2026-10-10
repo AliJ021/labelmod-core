@@ -506,6 +506,22 @@ describe("ساخت خودکار تنوع و ماتریس موجودی", { skip }
     assert.ok(html.includes("شعبه اصلی"), "نام فروشگاه از دیتابیس");
   });
 
+  test("قاب چاپ فقط سند خالیِ مجاز با CSP مستقل است", async () => {
+    const anonymous = await app.inject({ method: "GET", url: "/labels/frame" });
+    assert.equal(anonymous.statusCode, 401, anonymous.body);
+    const denied = await app.inject({ method: "GET", url: "/labels/frame", ...await loginAs(cashier) });
+    assert.equal(denied.statusCode, 403, denied.body);
+    const allowed = await app.inject({ method: "GET", url: "/labels/frame", ...await loginAs(supervisor) });
+    assert.equal(allowed.statusCode, 200, allowed.body);
+    assert.match(allowed.headers["content-type"] as string, /text\/html/);
+    assert.equal(allowed.headers["content-security-policy"], "default-src 'none'; style-src 'unsafe-inline'; img-src data:; base-uri 'none'; form-action 'none'; frame-ancestors 'self'");
+    assert.equal(allowed.headers["x-content-type-options"], "nosniff");
+    assert.equal(allowed.headers["cache-control"], "no-store");
+    assert.match(allowed.body, /data-label-frame/);
+    assert.match(allowed.body, /<body><\/body>/);
+    assert.doesNotMatch(allowed.body, /<script|class="label"/);
+  });
+
   test("درخواست چاپ بیش از سقف مجموع ۵۰۰ لیبل رد می‌شود", async () => {
     const sup=await loginAs(supervisor);
     const r=await app.inject({method:"POST",url:"/labels",...sup,payload:{

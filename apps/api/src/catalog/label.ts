@@ -22,6 +22,10 @@ import { code128Svg, code128TotalModules, isCode128Encodable } from "./code128.t
 export const LABEL_CSP =
   "default-src 'none'; style-src 'unsafe-inline'; img-src data:; base-uri 'none'; form-action 'none'";
 
+/** سند خالی شبکه‌ای: CSP والدِ srcdoc اجازهٔ CSS چاپ را نمی‌دهد. داده فقط از POST می‌آید. */
+export const LABEL_FRAME_HTML = '<!doctype html><html lang="fa" dir="rtl" data-label-frame><head><meta charset="utf-8"><title>پیش‌نمایش چاپ بارکد</title></head><body></body></html>';
+export const LABEL_FRAME_CSP = `${LABEL_CSP}; frame-ancestors 'self'`;
+
 export interface LabelItem {
   barcode: string | null;
   sku: string;
