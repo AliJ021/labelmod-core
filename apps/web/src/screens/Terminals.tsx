@@ -473,6 +473,18 @@ function TermRow(props: {
   const [fee, setFee] = useState(t.feePercent);
   const [reason, setReason] = useState("");
 
+  const previousTerms = useRef(t);
+  useEffect(() => {
+    const previous = previousTerms.current;
+    // Compare with the previous server values, not the newly refreshed values.
+    // Only untouched rows follow a refresh; edited drafts remain available.
+    if (normalizeDigits(days) === String(previous.settlementDays) && normalizeDigits(fee) === previous.feePercent) {
+      setDays(String(t.settlementDays));
+      setFee(t.feePercent);
+    }
+    previousTerms.current = t;
+  }, [t, days, fee]);
+
   const dirty = normalizeDigits(days) !== String(t.settlementDays) || normalizeDigits(fee) !== t.feePercent;
 
   const locked=busy || !t.canEdit;

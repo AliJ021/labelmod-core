@@ -78,3 +78,29 @@ test("saving terminal terms preserves its name and permission from the partial A
   await expect(fee).toBeEnabled();await expect(save).toBeDisabled();
   await fee.fill("0.600");await expect(save).toBeEnabled();
 });
+
+test("refresh synchronizes pristine terminal inputs without enabling an old-value overwrite",async({page,api})=>{
+  setup(api);await page.goto("/?page=settings&settings.tab=terminals");
+  const days=page.getByLabel("دوره تسویه (روز)",{exact:true});
+  const fee=page.getByLabel("کارمزد (٪)",{exact:true});
+  await expect(fee).toHaveValue("0.235");
+  api.defaults["GET /settlement-terms"]={terms:[{...term,settlementDays:3,feePercent:"0.750"}]};
+  await page.getByRole("button",{name:"تازه‌سازی شرایط",exact:true}).click();
+  await expect(days).toHaveValue("3");await expect(fee).toHaveValue("0.750");
+  await expect(page.getByRole("button",{name:"ذخیره شرایط",exact:true})).toBeDisabled();
+  expect(api.calls.filter(c=>c.startsWith("PATCH /settlement-terms"))).toEqual([]);
+});
+
+test("refresh preserves genuinely edited terminal drafts",async({page,api})=>{
+  setup(api);await page.goto("/?page=settings&settings.tab=terminals");
+  const days=page.getByLabel("دوره تسویه (روز)",{exact:true});
+  const fee=page.getByLabel("کارمزد (٪)",{exact:true});
+  await fee.fill("۰.۵۰۰");
+  await page.getByLabel("دلیل",{exact:false}).fill("پیش‌نویس قرارداد");
+  api.defaults["GET /settlement-terms"]={terms:[{...term,settlementDays:3,feePercent:"0.750"}]};
+  await page.getByRole("button",{name:"تازه‌سازی شرایط",exact:true}).click();
+  await expect(fee).toBeEnabled();await expect(fee).toHaveValue("۰.۵۰۰");await expect(days).toHaveValue("1");
+  await expect(page.getByLabel("دلیل",{exact:false})).toHaveValue("پیش‌نویس قرارداد");
+  await expect(page.getByRole("button",{name:"ذخیره شرایط",exact:true})).toBeEnabled();
+  expect(api.calls.filter(c=>c.startsWith("PATCH /settlement-terms"))).toEqual([]);
+});
