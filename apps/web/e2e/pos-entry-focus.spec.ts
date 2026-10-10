@@ -67,13 +67,14 @@ test("در حین افزودن، کادر فوکوس را نگه می‌دارد
  */
 test("۳۲۰px: اسکرول کمینه «ثبت قیمت» را بالای خلاصهٔ چسبان و نوار پایین می‌آورد، نه زیر آن‌ها", async ({ page, api }) => {
   mock(api);
-  // چند قلم تا دکمه زیر لبهٔ صفحه بیفتد و فوکوس واقعاً اسکرول کند.
-  api.defaults[`GET /invoices/${id}`] = draft(3);
+  // ویرایشگر قلم آخرِ یک سبد هشت‌قلمی، تا دکمه در هر موتور (اندازهٔ قلم WebKit و Chromium فرق دارد)
+  // زیر لبهٔ صفحه بیفتد و اسکرول واقعاً لازم باشد؛ قلم اول در WebKit بالای لبه می‌ماند.
+  api.defaults[`GET /invoices/${id}`] = draft(8);
   await page.setViewportSize({ width: 320, height: 640 });
   await page.addInitScript(([invoiceId, shiftId]) => localStorage.setItem("labelmod_open_cart", JSON.stringify({ invoiceId, shiftId })), [id, shift]);
   await page.goto("/?page=pos&pos.branch=b1&pos.warehouse=w1");
   await expect(page.getByRole("complementary", { name: "خلاصهٔ پرداخت" })).toBeVisible();
-  await page.getByRole("button", { name: "ویرایش قیمت کالای 1", exact: true }).click();
+  await page.getByRole("button", { name: "ویرایش قیمت کالای 8", exact: true }).click();
   const save = page.getByRole("button", { name: "ثبت قیمت", exact: true });
   await expect(save).toBeVisible();
   await page.evaluate(() => window.scrollTo(0, 0));
