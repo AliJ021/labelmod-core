@@ -28,6 +28,7 @@ for (const kind of ["cash", "transfer", "unknown"] as const) {
     await page.addInitScript(() => localStorage.setItem("labelmod_open_cart", JSON.stringify({ invoiceId: "draft1", shiftId: "s1" })));
     await page.goto("/");
     await page.getByRole("tab", { name: "صندوق", exact: true }).click();
+    await page.locator("summary", { hasText: "ابزارهای فروش" }).click();
     await page.getByRole("button", { name: "رها کردن سبد", exact: true }).click();
     const panel = page.getByRole("region", { name: "برگشت پرداخت پیش‌نویس" });
     await expect(panel).toBeVisible();

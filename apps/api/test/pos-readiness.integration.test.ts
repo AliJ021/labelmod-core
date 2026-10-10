@@ -361,6 +361,7 @@ describe("آمادگی API صندوق", { skip }, () => {
     const provenance=await sql<{finalized_by:string}>`SELECT finalized_by FROM sales.invoice WHERE id=${other}::uuid`.execute(handle.db);
     assert.equal(provenance.rows[0]!.finalized_by,cashierId);
     const print=await app.inject({method:"GET",url:`/invoices/${other}/print`,...s});assert.equal(print.statusCode,200,print.body);assert.match(print.body,/موجودی یک عدد/);
+    assert.equal((await app.inject({method:"GET",url:`/invoices/${other}/proforma-print`,...s})).statusCode,409);
     assert.equal((await app.inject({method:"GET",url:`/invoices/${first}/print`,...s})).statusCode,409);
     const list=await app.inject({method:"GET",url:"/invoices?status=draft",...s});assert.equal(list.statusCode,200,list.body);
     assert.ok(list.json().rows.some((r:{id:string;canResume:boolean})=>r.id===first&&r.canResume));
@@ -369,6 +370,58 @@ describe("آمادگی API صندوق", { skip }, () => {
       const r=await app.inject({method,url,...stranger,...(payload?{payload}:{})});assert.equal(r.statusCode,403,r.body);
     }
     const otherBranch=await app.inject({method:"GET",url:`/invoices?branchId=${BRANCH}`,...await loginAs(outsider)});assert.equal(otherBranch.statusCode,403);
+  });
+
+  test("proforma print is authenticated, branch and owner scoped, and has no sale or stock effects", async () => {
+    const s = await loginAs(cashier);
+    const created = await app.inject({ method:"POST", url:"/invoices", ...s,
+      payload:{ branchId:BRANCH, warehouseId:STORE_WH, channel:"pos" } });
+    assert.equal(created.statusCode,201,created.body);
+    const id = created.json().id as string;
+    const url = `/invoices/${id}/proforma-print`;
+    const token = (await sql<{ public_token:string }>`SELECT sales.ensure_public_token(${id}::uuid) AS public_token`.execute(handle.db)).rows[0]!.public_token;
+    assert.equal((await app.inject({method:"GET",url:`/i/${token}`})).statusCode,404,"public receipt token cannot expose a draft");
+    assert.equal((await app.inject({ method:"GET", url, ...s })).statusCode,409,"empty drafts are not printable");
+    const scan = await app.inject({ method:"POST", url:`/invoices/${id}/scan`, ...s, payload:{ variationId } });
+    assert.equal(scan.statusCode,200,scan.body);
+    assert.equal((await app.inject({ method:"GET", url })).statusCode,401,"no public draft print");
+    assert.equal((await app.inject({ method:"GET", url, ...await loginAs(outsider) })).statusCode,403,"branch isolation");
+    assert.equal((await app.inject({ method:"GET", url, ...await loginAs(returnReader) })).statusCode,403,"return-only permission cannot print drafts");
+    const snapshot = async () => (await sql`
+      SELECT to_jsonb(i) AS invoice,
+        (SELECT jsonb_agg(to_jsonb(l) ORDER BY l.id) FROM sales.invoice_line l WHERE l.invoice_id=i.id) AS lines,
+        (SELECT count(*) FROM sales.invoice) AS invoice_count,
+        (SELECT count(*) FROM treasury.payment p WHERE p.invoice_id=i.id) AS payments,
+        (SELECT count(*) FROM inventory.stock_movement m WHERE m.ref_id=i.id) AS movements,
+        (SELECT count(*) FROM ledger.journal_entry j WHERE j.ref_id=i.id) AS journals,
+        (SELECT jsonb_agg(to_jsonb(b) ORDER BY b.variation_id,b.warehouse_id) FROM inventory.stock_balance b) AS balances
+      FROM sales.invoice i WHERE i.id=${id}::uuid`.execute(handle.db)).rows;
+    const beforePrint = await snapshot();
+    for (let n=0;n<2;n++) {
+      const printed = await app.inject({ method:"GET", url, ...s });
+      assert.equal(printed.statusCode,200,printed.body);
+      assert.match(printed.headers["content-type"] as string,/text\/html/);
+      assert.equal(printed.headers["cache-control"],"no-store");
+      assert.ok(printed.headers["content-security-policy"]);
+      assert.match(printed.body,/پیش‌فاکتور/);
+      assert.match(printed.body,new RegExp(id));
+    }
+    assert.deepEqual(await snapshot(),beforePrint,"printing cannot finalize, number, pay, reserve, move stock or post entries");
+    // پرداخت ثبت‌شده روی پیش‌نویس (paid_amount تا نهایی‌سازی صفر است) باید روی پیش‌فاکتور دیده شود،
+    // وگرنه کل مبلغ «مانده» چاپ و دوباره از مشتری مطالبه می‌شد. ۱٬۰۰۰٬۰۰۱ − ۴۰۰٬۰۰۰ ریال.
+    const paid = await app.inject({ method:"POST", url:`/invoices/${id}/payments`, ...s, payload:{ methodCode:"cash", amount:"400000" } });
+    assert.equal(paid.statusCode,201,paid.body);
+    const afterPay = await app.inject({ method:"GET", url, ...s });
+    assert.equal(afterPay.statusCode,200,afterPay.body);
+    assert.match(afterPay.body,/<tr class="paid"><th>پرداخت‌شده<\/th><td class="num">40,000<\/td><\/tr>/);
+    assert.match(afterPay.body,/<tr class="due">[\s\S]*?60,000\.1 <small>تومان/);
+    assert.match(afterPay.body,/<tr class="grand"><th>قابل پرداخت<\/th><td class="num">100,000\.1 <small>تومان/);
+    assert.doesNotMatch(afterPay.body,/class="settle/);
+    assert.equal((await app.inject({ method:"GET",url:`/invoices/${id}/print`,...s })).statusCode,409,"final receipt route still rejects drafts");
+    // A different cashier in the same branch cannot inspect this draft by guessing its UUID.
+    await sql`UPDATE identity.user_role SET branch_id=${BRANCH}::uuid WHERE user_id=${outsiderId}::uuid AND role_code='cashier'`.execute(handle.db);
+    try { assert.equal((await app.inject({method:"GET",url,...await loginAs(outsider)})).statusCode,403,"creator/report scope"); }
+    finally { await sql`UPDATE identity.user_role SET branch_id=${otherBranchId}::uuid WHERE user_id=${outsiderId}::uuid AND role_code='cashier'`.execute(handle.db); }
   });
 
   // ── دامنه: شعبه و انبار ─────────────────────────────────────────

@@ -357,7 +357,7 @@ describe("Worker — صف پیام، پیامک و هشدار چک", { skip }, (
     assert.match(r.headers["x-robots-tag"] as string, /noindex/);
     assert.match(r.body, /پیراهن تست Worker/);
     // مبلغ به تومان نمایش داده می‌شود، نه ریال.
-    assert.match(r.body, /۱۵۰٬۰۰۰/);
+    assert.match(r.body, /150,000/); // رقم لاتین روی فاکتور (خواستهٔ مالک ۱۴۰۵/۰۷/۱۷)
   });
 
   test("توکن Idempotent است — لینک پیامک‌شده عوض نمی‌شود", async () => {

@@ -45,6 +45,7 @@ import { CheckoutSummary } from "../components/pos/CheckoutSummary.tsx";
 import { CustomerSummary } from "../components/pos/CustomerSummary.tsx";
 import { CreditCheckout } from "../components/pos/CreditCheckout.tsx";
 import { SaleComplete, type CompletedSale } from "../components/pos/SaleComplete.tsx";
+import { printReceipt } from "../lib/receipt-print.ts";
 import { cartCounts, checkoutErrorMessage, checkoutTotals, finalAmounts, intentFromPending, intentToPending, paymentBody,
   paymentFailureKind, paymentLayout, resolveIntentStatus, type PaymentIntent, type PaymentOption, type PaymentPhase,
   type UnresolvedReason } from "../lib/pos-payments.ts";
@@ -159,7 +160,10 @@ const CartLine = memo(function CartLine({ line: l, panel, on, error }: CartLineP
             </>
           )}
         </span>
-        <span className="muted small">هر عدد <Money rial={l.unitPrice} size="sm" /></span>
+        <button type="button" className="line-unit-edit" aria-label={`ویرایش قیمت ${l.productName}`}
+          aria-expanded={panel === "price"} onClick={() => on.openPrice(l.id)}>
+          <span>قیمت واحد</span> <Money rial={l.unitPrice} size="sm" /> <span className="line-unit-action">ویرایش</span>
+        </button>
       </div>
       {/*
         سطری که تخفیف خورده یا قیمتش دستی عوض شده، تعدادش از این مسیر
@@ -198,21 +202,7 @@ const CartLine = memo(function CartLine({ line: l, panel, on, error }: CartLineP
           +
         </button>
       </div>
-      <button type="button" className="line-total line-total-edit" aria-label={`ویرایش قیمت ${l.productName}`}
-        aria-expanded={panel === "price"} onClick={() => on.openPrice(l.id)}><span className="line-total-label">جمع ردیف</span><Money rial={l.netAmount} /></button>
-      {/*
-        برچسب متنی، نه نویسهٔ ریال (U+FDFC) و درصد: آن نویسه کنار مبلغِ **تومانی** سطر روی
-        صفحه «ریال» خوانده می‌شد — یعنی مبلغ سطر ده برابر کمتر دیده می‌شد.
-      */}
-      <button
-        type="button"
-        className="line-tool"
-        onClick={() => on.openPrice(l.id)}
-        aria-label={`تغییر قیمت ${l.productName}`}
-        aria-expanded={panel === "price"}
-      >
-        قیمت
-      </button>
+      <div className="line-total"><span className="line-total-label">جمع ردیف</span><Money rial={l.netAmount} /></div>
       <button
         type="button"
         className="line-tool"
@@ -295,7 +285,10 @@ export function Pos({ actorId }: { actorId: string }) {
   const pendingScanRef = useRef<PendingScan | null>(null);
   /** ذخیرهٔ پرداخت معلق خوانده نشد — مثل اسکن معلق، تا روشن‌شدن هیچ عمل مالی‌ای نه. */
   const [paymentStoreError, setPaymentStoreError] = useState<string | null>(null);
-  const busy = working || pendingScan !== null || scanStorageError !== null || paymentStoreError !== null;
+  const [proformaPrinting, setProformaPrinting] = useState(false);
+  const proformaJob = useRef<AbortController | null>(null);
+  useEffect(() => () => proformaJob.current?.abort(), [invoice?.id]);
+  const busy = working || proformaPrinting || pendingScan !== null || scanStorageError !== null || paymentStoreError !== null;
   useEffect(() => {
     const sync = () => {
       try { const p = readPendingScan(actorId); pendingScanRef.current = p; setPendingScan(p); }
@@ -495,7 +488,7 @@ export function Pos({ actorId }: { actorId: string }) {
     // روی صفحهٔ «ثبت شد»، اسکن فروش بعدی را بی‌صدا شروع نمی‌کند: باقی پول هنوز
     // روی صفحه است و فقط «فروش بعدی» آن را برمی‌دارد.
     if (completedRef.current && !retry) { setError("برای فروش تازه، اول «فروش بعدی» را بزنید."); return; }
-    if (scanRunning.current || mutationRunning.current || scanStorageError || (pendingScanRef.current && !retry)) {
+    if (scanRunning.current || mutationRunning.current || proformaJob.current || scanStorageError || (pendingScanRef.current && !retry)) {
       setError("عملیات قبلی هنوز تأیید نشده است؛ پس از بررسی دوباره اسکن کنید."); return;
     }
     scanRunning.current = true;
@@ -671,7 +664,7 @@ export function Pos({ actorId }: { actorId: string }) {
    */
   async function exclusive<T>(fn: () => Promise<T>): Promise<T> {
     const refuse = (text: string) => new ApiError(409, "pos_busy", text, null);
-    if (pendingScanRef.current || scanStorageError || paymentStoreError || scanRunning.current || mutationRunning.current)
+    if (pendingScanRef.current || scanStorageError || paymentStoreError || scanRunning.current || mutationRunning.current || proformaJob.current)
       throw refuse("عملیات قبلی هنوز تأیید نشده است؛ پس از بررسی دوباره تلاش کنید.");
     mutationRunning.current = true;
     setBusy(true);
@@ -1158,6 +1151,18 @@ export function Pos({ actorId }: { actorId: string }) {
   const layout = paymentLayout(methods, { hasCustomer: (invoice?.customerId ?? null) !== null });
   const hasCart = invoice !== null && lines.length > 0;
   const payIdle = payPhase.kind === "idle";
+  const canPrintProforma = hasCart && invoice.status === "draft" && !busy && payIdle && completed === null;
+  async function printProforma() {
+    if (!canPrintProforma || !invoice || proformaJob.current || mutationRunning.current || scanRunning.current || pendingScanRef.current) return;
+    const job = new AbortController();
+    proformaJob.current = job;
+    setProformaPrinting(true); setError(null);
+    try { await printReceipt(invoice.id, job.signal, "proforma"); }
+    catch (err) { if (!job.signal.aborted) setError(err instanceof Error ? err.message : "چاپ پیش‌فاکتور آغاز نشد."); }
+    finally {
+      if (proformaJob.current === job) { proformaJob.current = null; setProformaPrinting(false); }
+    }
+  }
   /*
    * «سبد خالیِ تازه» با «پیش‌نویسِ بی‌سطری که پرداخت دارد یا قصدش نامعلوم است» یکی نیست
    * (یافتهٔ Astra، P2). حذف آخرین سطر در میانهٔ یک پرداخت نامعلوم ممکن است و سرور هم
@@ -1208,6 +1213,19 @@ export function Pos({ actorId }: { actorId: string }) {
           <span className="pill">{countLabel}</span>
         </div>
         <div className="pos-tools">
+          <button type="button" className="tool" disabled={!canPrintProforma} onClick={() => void printProforma()}>
+            {proformaPrinting ? "در حال آماده‌سازی پیش‌فاکتور…" : "چاپ پیش‌فاکتور"}
+          </button>
+          <details className="pos-more" onKeyDown={e => {
+            if (e.key === "Escape") { e.currentTarget.open = false; e.currentTarget.querySelector("summary")?.focus(); }
+          }}>
+          <summary className="tool">ابزارهای فروش</summary>
+          <div className="pos-more-actions" onClick={e => {
+            const action = (e.target as HTMLElement).closest<HTMLButtonElement | HTMLAnchorElement>("button, a");
+            if (!action || (action instanceof HTMLButtonElement && action.disabled)) return;
+            const details = e.currentTarget.closest("details");
+            if (details) { details.open = false; details.querySelector("summary")?.focus(); }
+          }}>
           <a className="tool" href="/?page=invoices&invoices.status=draft" onClick={e => { if (e.metaKey || e.ctrlKey || e.shiftKey) return; e.preventDefault(); navigate(e.currentTarget.href); }}>پیش‌نویس‌ها</a>
           <button type="button" className="tool" disabled={busy || !invoice || completed !== null || !payIdle} onClick={() => {
             if (!invoice || busy) return;
@@ -1225,6 +1243,8 @@ export function Pos({ actorId }: { actorId: string }) {
           <button type="button" className="tool" onClick={() => setClosing((v) => !v)}>
             بستن شیفت
           </button>
+          </div>
+          </details>
         </div>
       </header>
 

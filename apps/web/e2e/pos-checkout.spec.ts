@@ -172,7 +172,7 @@ test("unavailable customer policy has an explicit recovery action and never enab
   expect(s.posted).toEqual([]);
 });
 
-test("clicking the line amount opens the existing unit-price editor in Toman", async ({page, api}) => {
+test("clicking the unit price opens the existing unit-price editor in Toman", async ({page, api}) => {
   const s=pos(api); const prices:unknown[]=[];
   api.handlers.set(`PATCH /invoices/${INV}/lines/l1/price`,async route=>{
     prices.push(route.request().postDataJSON());
@@ -182,7 +182,7 @@ test("clicking the line amount opens the existing unit-price editor in Toman", a
   await open(page);
   await page.getByRole("button", {name:"ویرایش قیمت شلوار کتان", exact:true}).click();
   await expect(page.getByLabel(/قیمت واحد/)).toHaveValue("5000");
-  await expect(page.getByRole("button", {name:"تغییر قیمت شلوار کتان", exact:true})).toHaveAttribute("aria-expanded","true");
+  await expect(page.getByRole("button", {name:"ویرایش قیمت شلوار کتان", exact:true})).toHaveAttribute("aria-expanded","true");
   await page.getByLabel(/قیمت واحد/).fill("35000");
   await page.getByRole("button",{name:"ثبت قیمت",exact:true}).click();
   await expect.poll(()=>prices).toEqual([{unitPrice:"350000"}]);
@@ -257,6 +257,54 @@ test("configured DigiPay records only explicit manual payment with reference; pa
   await receive.click();
   await expect.poll(()=>s.posted).toEqual([{methodCode:"digipay",amount:"200000",refNo:"DIGI-MANUAL-1"}]);
   expect(api.calls.some(c=>/payment-link|providers\//.test(c))).toBe(false);
+});
+
+test("proforma prints the saved draft once in the same tab without payment or finalization", async ({ page, api }) => {
+  const s = pos(api);
+  let prints = 0;
+  await page.exposeFunction("recordProformaPrint", () => { prints++; });
+  await page.addInitScript(() => {
+    if (window.parent !== window) window.print = () => {
+      if (!document.body.textContent?.includes("پیش‌فاکتور")) throw new Error("not a proforma");
+      Reflect.get(window,"recordProformaPrint")(); window.dispatchEvent(new Event("afterprint"));
+    };
+  });
+  let release!: () => void;
+  const ready = new Promise<void>(resolve => { release = resolve; });
+  api.handlers.set(`GET /invoices/${INV}/proforma-print`, async route => {
+    await ready;
+    await route.fulfill({contentType:"text/html",body:'<!doctype html><html><body><div class="sheet">پیش‌فاکتور — شلوار کتان<table class="totals"><tr><td>20,000 تومان</td></tr></table></div><button id="print-btn">چاپ</button></body></html>'});
+  });
+  await open(page,s);
+  const button = page.getByRole("button",{name:"چاپ پیش‌فاکتور",exact:true});
+  await expect(button).toBeEnabled();
+  const mutations = api.calls.filter(call => !call.startsWith("GET "));
+  await button.evaluate(el => { (el as HTMLButtonElement).click(); (el as HTMLButtonElement).click(); });
+  await expect(page.getByRole("button",{name:"در حال آماده‌سازی پیش‌فاکتور…",exact:true})).toBeDisabled();
+  await expect(method(page,"کارت‌خوان")).toBeDisabled();
+  release();
+  await expect.poll(() => prints).toBe(1);
+  await expect(button).toBeEnabled();
+  expect(api.calls.filter(call => call.endsWith("/proforma-print"))).toHaveLength(1);
+  expect(api.calls.filter(call => !call.startsWith("GET "))).toEqual(mutations);
+  expect(s.finalized).toBe(0); expect(s.posted).toEqual([]);
+  expect(page.context().pages()).toHaveLength(1);
+  await expect(page.locator('iframe[title="پیش‌فاکتور آمادهٔ چاپ"]')).toHaveCount(0);
+  await expect(page.locator(".lines li")).toHaveCount(2);
+});
+
+test("proforma load failure allows safe retry and an empty draft stays disabled", async ({page,api}) => {
+  const s = pos(api); await open(page,s);
+  api.handlers.set(`GET /invoices/${INV}/proforma-print`, route => route.fulfill({status:409,json:{error:{code:"invoice_not_draft"}}}));
+  const button = page.getByRole("button",{name:"چاپ پیش‌فاکتور",exact:true});
+  await button.click();
+  await expect(page.getByRole("alert").filter({hasText:"چاپ پیش‌فاکتور آغاز نشد"})).toBeVisible();
+  await expect(button).toBeEnabled();
+  expect(s.finalized).toBe(0); expect(s.posted).toEqual([]);
+  s.invoice = {...s.invoice,lines:[]};
+  await page.reload();
+  await expect(button).toBeDisabled();
+  expect(api.calls.filter(call => call.endsWith("/proforma-print"))).toHaveLength(1);
 });
 
 test("cash sale: confirm dialog, one finalize under double click, persistent success with change, print and next sale", async ({ page, api }) => {
@@ -488,6 +536,7 @@ test("same-amount collision: another payment of the same amount and method does 
   await expect(page.getByText("سرور تأیید کرد")).toHaveCount(0);
   await expect(method(page, "کارت‌خوان"), "قصد A باز است؛ روش و مبلغ قفل").toBeDisabled();
   await expect(moreToggle(page), "روش‌های بیشتر هم قفل").toBeDisabled();
+  await expect(page.getByRole("button",{name:"چاپ پیش‌فاکتور",exact:true})).toBeDisabled();
   expect(s.intentChecks).toEqual([`GET ${s.keys[0]}`]);
   await page.getByRole("button", { name: "ارسال دوبارهٔ همین پرداخت", exact: true }).click();
   await expect(page.locator(".pos-alert").filter({ hasText: "با همان شناسه ثبت شد" })).toBeVisible();
@@ -683,11 +732,11 @@ test("keyboard: Enter picks a method and focuses the amount; Escape closes the p
   await expect(method(page, "کارت‌خوان")).toHaveAttribute("aria-pressed", "true");
   await expect(page.getByLabel("مبلغ (تومان)", { exact: true })).toBeFocused();
 
-  await page.getByRole("button", { name: "تغییر قیمت شلوار کتان" }).click();
+  await page.getByRole("button", { name: "ویرایش قیمت شلوار کتان" }).click();
   await expect(page.getByLabel(/قیمت واحد/)).toBeFocused();
   await page.keyboard.press("Escape");
   await expect(page.getByLabel(/قیمت واحد/)).toHaveCount(0);
-  await expect(page.getByRole("button", { name: "تغییر قیمت شلوار کتان" })).toHaveAttribute("aria-expanded", "false");
+  await expect(page.getByRole("button", { name: "ویرایش قیمت شلوار کتان" })).toHaveAttribute("aria-expanded", "false");
 
   await pick(page, "نقدی");
   await page.getByRole("button", { name: "دریافت وجه", exact: true }).click();

@@ -1,10 +1,11 @@
 /** Load the authenticated receipt with its original CSP; only an explicit button calls this. */
-export function printReceipt(invoiceId: string, signal: AbortSignal): Promise<void> {
-  if (!/^[0-9a-f-]{36}$/i.test(invoiceId)) return Promise.reject(new Error("شناسهٔ رسید معتبر نیست."));
+export function printReceipt(invoiceId: string, signal: AbortSignal, documentKind: "sale" | "proforma" = "sale"): Promise<void> {
+  const documentName = documentKind === "proforma" ? "پیش‌فاکتور" : "رسید";
+  if (!/^[0-9a-f-]{36}$/i.test(invoiceId)) return Promise.reject(new Error(`شناسهٔ ${documentName} معتبر نیست.`));
   return new Promise((resolve, reject) => {
     const frame = document.createElement("iframe");
-    const path = `/api/invoices/${invoiceId}/print`;
-    frame.title = "رسید آمادهٔ چاپ";
+    const path = `/api/invoices/${invoiceId}/${documentKind === "proforma" ? "proforma-print" : "print"}`;
+    frame.title = documentKind === "proforma" ? "پیش‌فاکتور آمادهٔ چاپ" : "رسید آمادهٔ چاپ";
     frame.setAttribute("aria-hidden", "true");
     frame.tabIndex = -1;
     // Keep a laid-out document: display:none can produce blank receipts in browsers.
@@ -12,7 +13,7 @@ export function printReceipt(invoiceId: string, signal: AbortSignal): Promise<vo
     let settled = false;
     let requested = false;
     let finishTimer: ReturnType<typeof setTimeout> | undefined;
-    const timeout = setTimeout(() => finish(new Error("آماده‌سازی رسید طول کشید؛ اتصال را بررسی و دوباره تلاش کنید.")), 15000);
+    const timeout = setTimeout(() => finish(new Error(`آماده‌سازی ${documentName} طول کشید؛ اتصال را بررسی و دوباره تلاش کنید.`)), 15000);
     function finish(error?: Error) {
       if (settled) return;
       settled = true;
@@ -23,13 +24,13 @@ export function printReceipt(invoiceId: string, signal: AbortSignal): Promise<vo
       if (error) reject(error); else resolve();
     }
     function abort() { finish(new DOMException("چاپ لغو شد", "AbortError")); }
-    frame.onerror = () => finish(new Error("رسید خوانده نشد؛ اتصال و ورود به حساب را بررسی کنید."));
+    frame.onerror = () => finish(new Error(`${documentName} خوانده نشد؛ اتصال و ورود به حساب را بررسی کنید.`));
     frame.onload = () => { void (async () => {
       if (settled || requested) return;
       const win = frame.contentWindow, doc = frame.contentDocument;
       if (!win || !doc || win.location.origin !== location.origin || win.location.pathname !== path
         || doc.contentType !== "text/html" || !doc.querySelector(".sheet .totals") || !doc.getElementById("print-btn")) {
-        throw new Error("رسید معتبر خوانده نشد؛ اتصال و ورود به حساب را بررسی کنید.");
+        throw new Error(`${documentName} معتبر خوانده نشد؛ اتصال و ورود به حساب را بررسی کنید.`);
       }
       await doc.fonts.ready;
       // The embedded brand logo must be decoded before print, or the header can print empty.
@@ -50,7 +51,7 @@ export function printReceipt(invoiceId: string, signal: AbortSignal): Promise<vo
       win.print();
       // Some kiosk browsers omit afterprint. Retain the frame briefly after print returns.
       if (!finishTimer) finishTimer = setTimeout(() => finish(), 1000);
-    })().catch(() => finish(new Error("چاپ رسید آغاز نشد؛ اتصال و ورود به حساب را بررسی و دوباره تلاش کنید."))); };
+    })().catch(() => finish(new Error(`چاپ ${documentName} آغاز نشد؛ اتصال و ورود به حساب را بررسی و دوباره تلاش کنید.`))); };
     signal.addEventListener("abort", abort, { once: true });
     if (signal.aborted) { abort(); return; }
     frame.src = path;

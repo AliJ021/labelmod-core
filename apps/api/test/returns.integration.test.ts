@@ -302,7 +302,7 @@ describe("برگشت از فروش و دوره ثبت", { skip }, () => {
     assert.doesNotMatch(replacementReceipt, /class="due"/);
     const originalReceipt = await publicInvoice(sold.invoiceId);
     assert.match(originalReceipt, /class="due"/);
-    assert.ok(originalReceipt.includes((60000n).toLocaleString("fa-IR")), "بدهی واقعی شصت هزار تومان حفظ شده است");
+    assert.ok(originalReceipt.includes("60,000"), "بدهی واقعی شصت هزار تومان حفظ شده است");
     await policy("unset");
   });
 
