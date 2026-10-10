@@ -1,0 +1,12 @@
+.terminal-screen, .terminal-section { display: grid; gap: var(--s-4); min-inline-size: 0; }
+.terminal-list { list-style: none; margin: 0; padding: 0; }
+.terminal-entry { display: grid; gap: var(--s-3); padding-block: var(--s-4); min-inline-size: 0; overflow-wrap: anywhere; }
+.terminal-list > li + li { border-block-start: var(--border-w) solid var(--rule); }
+.terminal-entry-head { display: flex; align-items: center; justify-content: space-between; gap: var(--s-3); flex-wrap: wrap; }
+.terminal-screen p { margin-block: var(--s-2); }
+.terminal-fields { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 12rem), 1fr)); gap: var(--s-3); align-items: end; }
+.terminal-screen input, .terminal-screen select, .terminal-screen textarea { inline-size: 100%; min-inline-size: 0; }
+.terminal-screen .field { min-inline-size: 0; }
+.terminal-screen .row { flex-wrap: wrap; }
+.terminal-readiness { display: flex; flex-wrap: wrap; align-items: center; gap: var(--s-2); padding: var(--s-3); border-inline-start: var(--border-w) solid var(--warn); }
+.terminal-screen summary { cursor: pointer; padding-block: var(--s-3); }
