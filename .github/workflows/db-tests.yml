@@ -370,11 +370,14 @@ jobs:
           echo "نگهبان پیکربندی ✓"
 
       - name: Caddyfile معتبر است
+        # با ایمیج وبِ ساخته‌شده در همین job، نه pull جداگانهٔ caddy:2-alpine: سرویس caddy در
+        # docker-compose.prod.yml از همین apps/web/Dockerfile ساخته می‌شود (runtime همان caddy:2-alpine
+        # + tzdata + /srv)، پس همان باینری تولید سنجیده می‌شود و rate limit رجیستری دیگر مرحله را نمی‌شکند.
         run: |
           docker run --rm \
             -v "$PWD/ops/deploy/Caddyfile:/etc/caddy/Caddyfile:ro" \
             -e SITE_ADDRESS=shop.example.com -e ACME_EMAIL=ci@example.com \
-            public.ecr.aws/docker/library/caddy:2-alpine caddy validate --config /etc/caddy/Caddyfile
+            labelmod-web:ci caddy validate --config /etc/caddy/Caddyfile
 
       - name: docker-compose تولیدی معتبر است
         run: |
