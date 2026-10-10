@@ -250,7 +250,7 @@ export const admin = {
   postOpening: (input: { branchId: string; fiscalYear: number; legs: OpeningLeg[] }) =>
     api.post<{ entryId: string }>("/opening-balance", input),
 
-  accounts: () => api.get<{ accounts: Account[] }>("/accounts"),
+  accounts: (signal?: AbortSignal) => api.get<{ accounts: Account[] }>("/accounts", signal ? {signal} : {}),
 
   saveAccount: (code: string, input: AccountInput) =>
     api.put<Account>(`/accounts/${encodeURIComponent(code)}`, input),
@@ -261,8 +261,8 @@ export const admin = {
       { isActive },
     ),
 
-  postingRules: () =>
-    api.get<{ rules: PostingRule[]; accounts: PostingAccount[] }>("/posting-rules"),
+  postingRules: (signal?: AbortSignal) =>
+    api.get<{ rules: PostingRule[]; accounts: PostingAccount[] }>("/posting-rules", signal ? {signal} : {}),
 
   /**
    * تغییر نگاشت یک قاعده.
@@ -297,12 +297,12 @@ export const admin = {
       { reason },
     ),
 
-  settlementTerms: () => api.get<{ terms: SettlementTerm[] }>("/settlement-terms"),
+  settlementTerms: (signal?: AbortSignal) => api.get<{ terms: SettlementTerm[] }>("/settlement-terms", signal ? {signal} : {}),
 
   /** `includeRetired` بازنشسته‌ها را هم می‌آورد تا بشود برشان گرداند. */
-  deviceDrivers: (includeRetired = false) =>
+  deviceDrivers: (includeRetired = false, signal?: AbortSignal) =>
     api.get<{ drivers: DeviceDriver[] }>(
-      `/device-drivers${includeRetired ? "?includeRetired=1" : ""}`,
+      `/device-drivers${includeRetired ? "?includeRetired=1" : ""}`, signal ? {signal} : {},
     ),
 
   /**
@@ -321,7 +321,7 @@ export const admin = {
       { isActive, reason },
     ),
 
-  terminalDrivers: () => api.get<{ terminals: TerminalDriver[] }>("/terminal-drivers"),
+  terminalDrivers: (signal?: AbortSignal) => api.get<{ terminals: TerminalDriver[] }>("/terminal-drivers", signal ? {signal} : {}),
 
   /** راز اینجا نمی‌رود — کلید و رمز از متغیر محیطی سرور می‌آیند. */
   setTerminalDriver: (
@@ -332,7 +332,7 @@ export const admin = {
   saveTerms: (
     id: string,
     input: { settlementDays: number; feePercent: string; reason?: string },
-  ) => api.patch<SettlementTerm>(`/settlement-terms/${encodeURIComponent(id)}`, input),
+  ) => api.patch<Pick<SettlementTerm, "id" | "settlementDays" | "feePercent">>(`/settlement-terms/${encodeURIComponent(id)}`, input),
 
   permissionRules: () => api.get<{ rules: PermissionRule[] }>("/permission-rules"),
 

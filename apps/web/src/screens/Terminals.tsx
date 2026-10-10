@@ -14,7 +14,7 @@
  * `numeric(5,3)` اعشار دارد و `number` جاوااسکریپت ۰٫۲۳۵ را دقیق نگه
  * نمی‌دارد. همان قاعده پول، به همان دلیل.
  */
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { Solid } from "../components/Glass.tsx";
 import { ApiError } from "../lib/api.ts";
 import {
@@ -24,6 +24,14 @@ import {
   type SettlementTerm,
   type TerminalDriver,
 } from "../lib/admin.ts";
+import { PageHeader, SectionHeader } from "../components/ui/PageHeader.tsx";
+import { Button, Field } from "../components/ui/Controls.tsx";
+import { StatusBadge } from "../components/ui/Status.tsx";
+import { Ltr } from "../components/ui/Bidi.tsx";
+import { ResultState } from "../components/ResultState.tsx";
+import { useLatestQuery } from "../lib/use-latest-query.ts";
+import { session } from "../lib/session.ts";
+import "../styles/terminals.css";
 import { normalizeDigits } from "../lib/settings-value.ts";
 
 const KIND_LABEL: Record<string, string> = {
@@ -36,96 +44,51 @@ const KIND_LABEL: Record<string, string> = {
 function message(e: unknown): string {
   return e instanceof ApiError ? e.message : "ارتباط با سرور برقرار نشد";
 }
+const unclear = (e: unknown) => !(e instanceof ApiError) || e.status >= 500;
 
 export function Terminals() {
-  const [terms, setTerms] = useState<SettlementTerm[] | null>(null);
+  const [version, refresh] = useState(0);
   const [error, setError] = useState<string | null>(null);
   const [note, setNote] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
-
-  useEffect(() => {
-    let alive = true;
-    admin
-      .settlementTerms()
-      .then((r) => alive && setTerms(r.terms))
-      .catch((e: unknown) => alive && setError(message(e)));
-    return () => {
-      alive = false;
-    };
-  }, []);
-
+  const [uncertain, setUncertain] = useState(false);
+  const working = useRef(false);
+  const load = useCallback((signal: AbortSignal) => admin.settlementTerms(signal), []);
+  const query = useLatestQuery({key: "terminal-terms", version, load});
+  const [terms, setTerms] = useState<SettlementTerm[] | null>(null);
+  useEffect(() => {if(query.data) {setTerms(query.data.terms);setUncertain(false);setError(null);}}, [query.data]);
+  const blocked = busy || query.loading || !!query.error || uncertain;
   async function save(t: SettlementTerm, days: string, fee: string, reason: string) {
-    if (busy) return;
-    setBusy(true);
-    setError(null);
-    setNote(null);
+    if (working.current || blocked || !t.canEdit) return;
+    working.current = true; setBusy(true); setError(null); setNote(null);
     try {
-      // رقم فارسی و عربی هم پذیرفته می‌شود — صفحه‌کلید فارسی «۱» را
-      // این‌طور می‌فرستد و ورودی عددی مرورگر دورش می‌انداخت.
-      const d = Number(normalizeDigits(days));
-      const f = normalizeDigits(fee);
       const saved = await admin.saveTerms(t.id, {
-        settlementDays: d,
-        feePercent: f,
+        settlementDays: Number(normalizeDigits(days)), feePercent: normalizeDigits(fee),
         ...(reason.trim() === "" ? {} : { reason: reason.trim() }),
       });
-      setTerms((list) => (list ?? []).map((x) => (x.id === t.id ? saved : x)));
-      setNote(`شرایط «${t.name}» ذخیره شد.`);
-    } catch (e: unknown) {
-      setError(message(e));
-    } finally {
-      setBusy(false);
-    }
+      setTerms(list => (list ?? []).map(x => x.id === t.id ? {...x,...saved} : x));
+      setNote("شرایط «" + t.name + "» ذخیره شد.");
+    } catch (e) {
+      setError(message(e)); setUncertain(unclear(e));
+    } finally {working.current = false;setBusy(false);}
   }
-
-  if (error && !terms) {
-    return (
-      <Solid as="section" className="pad">
-        <p className="pos-alert" role="alert">
-          <span className="dot dot--crit" aria-hidden="true">●</span> {error}
-        </p>
-      </Solid>
-    );
-  }
-
-  if (!terms) {
-    return (
-      <Solid as="section" className="pad">
-        <p className="muted">در حال بارگذاری پایانه‌ها…</p>
-      </Solid>
-    );
-  }
-
-  return (
-    <div className="stack" style={{ gap: "var(--s-4)" }}>
-      {error ? (
-        <p className="solid pos-alert" role="alert">
-          <span className="dot dot--crit" aria-hidden="true">●</span> {error}
-        </p>
-      ) : null}
-      {note ? (
-        <p className="solid pos-alert" role="status">
-          <span className="dot dot--good" aria-hidden="true">●</span> {note}
-        </p>
-      ) : null}
-
-      <Solid as="section" className="pad">
-        <h2 style={{ marginTop: 0, marginBottom: "var(--s-1)" }}>کارمزد و دوره تسویه</h2>
-        <p className="muted small" style={{ marginTop: 0 }}>
-          هر پایانه قرارداد خودش را دارد. کارت‌خوان فروشگاه و درگاه سایت یک نرخ
-          ندارند، پس اینجا کلید سراسری نیست و نباید باشد.
-        </p>
-
-        <ul className="term-list">
-          {terms.map((t) => (
-            <TermRow key={t.id} term={t} busy={busy} onSave={save} />
-          ))}
-        </ul>
-      </Solid>
-
-      <DriverSection />
-    </div>
-  );
+  return <div className="terminal-screen">
+    <PageHeader title="پایانه‌ها" context="شرایط تسویه و اتصال دستگاه‌های هر پایانه را جداگانه مدیریت کنید." />
+    {error && <p className="solid pad" role="alert">{error}{uncertain && " پیش از تغییر بعدی، وضعیت شرایط را تازه‌سازی کنید."}</p>}
+    {note && <p className="solid pad" role="status">{note}</p>}
+    <Solid as="section" className="pad terminal-section">
+      <SectionHeader title="کارمزد و دوره تسویه" description="شرایط هر پایانه فقط برای همان پایانه ذخیره می‌شود."
+        actions={<Button disabled={busy || query.loading} onClick={() => refresh(v => v + 1)}>تازه‌سازی شرایط</Button>} />
+      {!terms ? <ResultState kind={query.error ? "error" : "loading"} title={query.error ? message(query.error) : "در حال بارگذاری پایانه‌ها…"}
+        {...(query.error ? {actionLabel:"تلاش دوباره",onAction:()=>refresh(v=>v+1)} : {})} /> : <>
+        {query.error && <p role="alert">{message(query.error)}؛ دادهٔ آخرین بررسی نمایش داده می‌شود و ذخیره تا تازه‌سازی موفق بسته است.</p>}
+        {query.loading && <p role="status" className="muted">در حال تازه‌سازی شرایط…</p>}
+        {terms.length ? <ul className="terminal-list">{terms.map(t => <TermRow key={t.id} term={t} busy={blocked} onSave={save} />)}</ul>
+          : <ResultState title="پایانه‌ای برای نمایش وجود ندارد." description="پس از تعریف حساب پایانه در خزانه، شرایط آن اینجا نمایش داده می‌شود." />}
+      </>}
+    </Solid>
+    <DriverSection />
+  </div>;
 }
 
 /**
@@ -152,76 +115,79 @@ function DriverSection() {
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
 
-  const load = async () => {
-    // بازنشسته‌ها هم می‌آیند تا بشود برشان گرداند؛ فهرست انتخاب پایانه
-    // پایین‌تر خودش فیلترشان می‌کند.
-    const [d, t] = await Promise.all([admin.deviceDrivers(true), admin.terminalDrivers()]);
-    setDrivers(d.drivers);
-    setTerminals(t.terminals);
-  };
-
-  useEffect(() => {
-    let alive = true;
-    void (async () => {
-      try {
-        await load();
-      } catch (err) {
-        if (alive) setError(message(err));
-      }
-    })();
-    return () => {
-      alive = false;
-    };
-  }, []);
+  const [version,refresh] = useState(0);
+  const [canManage,setCanManage] = useState(false);
+  const [uncertain,setUncertain] = useState(false);
+  const working=useRef(false);
+  const load = useCallback(async(signal:AbortSignal) => {
+    const [d,t] = await Promise.all([admin.deviceDrivers(true,signal),admin.terminalDrivers(signal)]);
+    return {drivers:d.drivers,terminals:t.terminals};
+  },[]);
+  const query=useLatestQuery({key:"terminal-drivers",version,load});
+  useEffect(()=>{if(query.data){setDrivers(query.data.drivers);setTerminals(query.data.terminals);setUncertain(false);setError(null);}},[query.data]);
+  useEffect(()=>{const controller=new AbortController();void session.can("settings.security",{signal:controller.signal})
+    .then(r=>{if(!controller.signal.aborted)setCanManage(r.verdict==="allow");}).catch(()=>{});return()=>controller.abort();},[]);
+  const blocked=busy||query.loading||!!query.error||uncertain;
+  const reload=()=>refresh(v=>v+1);
 
   async function pick(accountId: string, code: string) {
+    if(working.current || blocked || !canManage) return;
+    if(!terminals.some(t=>t.accountId===accountId && t.canEdit)) return;
+    if(code && !drivers?.some(d=>d.code===code && d.isActive && d.isImplemented && d.deviceKind==="card_terminal")) return;
+    working.current=true;
     setBusy(true);
     setError(null);
     try {
       await admin.setTerminalDriver(accountId, { driverCode: code === "" ? null : code });
-      await load();
+      reload();
     } catch (err) {
       // پیام نگهبان دیتابیس فارسی و برای کاربر است — «هنوز پیاده
       // نشده» دقیقاً همان چیزی است که کاربر باید بخواند.
-      setError(message(err));
+      setError(message(err)); setUncertain(unclear(err));
     } finally {
-      setBusy(false);
+      working.current=false; setBusy(false);
     }
   }
 
   async function save(code: string, input: DriverInput) {
+    if(working.current || blocked || !canManage) return false;
+    working.current=true;
     setBusy(true);
     setError(null);
     try {
       await admin.saveDriver(code, input);
-      await load();
+      reload();
       return true;
     } catch (err) {
       // اعتبارسنجی در دیتابیس است و پیامش فارسی و برای کاربر —
       // «نشانی مستندات باید با https:// شروع شود» دقیقاً همان چیزی
       // است که باید خوانده شود.
-      setError(message(err));
+      setError(message(err)); setUncertain(unclear(err));
       return false;
     } finally {
-      setBusy(false);
+      working.current=false; setBusy(false);
     }
   }
 
   async function setActive(code: string, isActive: boolean) {
+    if(working.current || blocked || !canManage) return;
+    working.current=true;
     setBusy(true);
     setError(null);
     try {
       await admin.setDriverActive(code, isActive);
-      await load();
+      reload();
     } catch (err) {
-      setError(message(err));
+      setError(message(err)); setUncertain(unclear(err));
     } finally {
-      setBusy(false);
+      working.current=false; setBusy(false);
     }
   }
 
   if (drivers === null) {
-    return <Solid as="section" className="pad muted">در حال بارگذاری درایورها…</Solid>;
+    return <Solid as="section" className="pad"><SectionHeader title="درایور دستگاه" />
+      <ResultState kind={query.error ? "error" : "loading"} title={query.error ? message(query.error) : "در حال بارگذاری درایورها…"}
+        {...(query.error ? {actionLabel:"تلاش دوباره برای دستگاه‌ها",onAction:reload} : {})} /></Solid>;
   }
 
   const live = drivers.filter((d) => d.isActive);
@@ -229,20 +195,13 @@ function DriverSection() {
 
   return (
     <Solid as="section" className="pad">
-      <h2 style={{ marginTop: 0, marginBottom: "var(--s-1)" }}>درایور دستگاه</h2>
-      <p className="muted small" style={{ marginTop: 0 }}>
-        هر پایانه دستگاه خودش را دارد. افزودن کارت‌خوان تازه یک ردیف در جدول است،
-        نه یک نسخه تازه نرم‌افزار.
-      </p>
-
+      <SectionHeader title="درایور دستگاه" description="ثبت مشخصات دستگاه به معنی آماده‌بودن اتصال آن نیست."
+        actions={<Button disabled={busy||query.loading} onClick={reload}>تازه‌سازی دستگاه‌ها</Button>} />
+      {(query.error || uncertain) && <p role="alert">وضعیت اتصال‌ها نیازمند بررسی دوباره است؛ برای ادامه، دستگاه‌ها را تازه‌سازی کنید.</p>}
+      {!canManage && <p className="muted">مشاهدهٔ مستندات؛ مجوز ویرایش دستگاه‌ها ندارید.</p>}
       {ready === 0 ? (
-        // رنگ به‌تنهایی حامل معنا نیست — آیکون و متن هم هست.
-        <p className="solid pos-alert" role="status">
-          <span className="dot dot--warn" aria-hidden="true">●</span>{" "}
-          <strong>هیچ درایوری هنوز پیاده نشده است.</strong> {live.length} دستگاه
-          شناخته‌شده ثبت شده‌اند ولی کدشان نوشته نشده — تا مستندات کتبی SDK از
-          شرکت پرداخت نرسد، ارتباط با دستگاه حدس است و حدس در مسیر پول یعنی
-          پرداختی که وضعیتش معلوم نیست.
+        <p className="terminal-readiness" role="status"><StatusBadge state="warning" label="اتصال آماده نیست" />
+          <strong>هیچ درایوری هنوز پیاده نشده است.</strong> برای اتصال خودکار، درایور سازگار و آزمون دستگاه لازم است.
         </p>
       ) : null}
 
@@ -252,20 +211,19 @@ function DriverSection() {
         </p>
       ) : null}
 
-      <ul className="term-list">
+      <ul className="terminal-list">
         {terminals.map((t) => (
           <li key={t.accountId}>
-            <Solid className="pad stack" style={{ gap: "var(--s-2)" }}>
+            <div className="terminal-entry">
               <div className="row between">
                 <strong>{t.accountName}</strong>
-                <code className="set-key">{t.accountCode}</code>
+                <Ltr>{t.accountCode}</Ltr>
               </div>
-              <label className="auth-field">
-                <span>دستگاه</span>
+              <Field label="دستگاه">
                 <select
                   className="set-input"
                   value={t.driverCode ?? ""}
-                  disabled={busy || !t.canEdit}
+                  disabled={blocked || !canManage || !t.canEdit}
                   onChange={(e) => void pick(t.accountId, e.target.value)}
                 >
                   <option value="">— بدون دستگاه —</option>
@@ -275,19 +233,19 @@ function DriverSection() {
                     // بازنشستگی‌اش را نمی‌داد، پس چیزی گم نمی‌شود.
                     .filter((d) => d.deviceKind === "card_terminal" && d.isActive)
                     .map((d) => (
-                      <option key={d.code} value={d.code}>
+                      <option key={d.code} value={d.code} disabled={!d.isImplemented}>
                         {d.label}
                         {d.isImplemented ? "" : " — هنوز پیاده نشده"}
                       </option>
                     ))}
                 </select>
-              </label>
+              </Field>
               {!t.canEdit ? (
                 <span className="pill set-lock">
                   <span aria-hidden="true">🔒</span> دسترسی ندارید
                 </span>
               ) : null}
-            </Solid>
+            </div>
           </li>
         ))}
       </ul>
@@ -309,13 +267,13 @@ function DriverSection() {
           محیطی سرور می‌آید.
         </p>
 
-        <ul className="term-list" style={{ marginTop: "var(--s-2)" }}>
+        <ul className="terminal-list" style={{ marginTop: "var(--s-2)" }}>
           {drivers.map((d) => (
-            <DriverRow key={d.code} driver={d} busy={busy} onSave={save} onActive={setActive} />
+            <DriverRow key={d.code} driver={d} busy={blocked || !canManage} onSave={save} onActive={setActive} />
           ))}
         </ul>
 
-        <DriverNew busy={busy} onSave={save} />
+        {canManage && <DriverNew busy={blocked} onSave={save} />}
       </details>
     </Solid>
   );
@@ -357,49 +315,33 @@ function DriverRow(props: {
 
   return (
     <li>
-      <Solid className="pad stack" style={{ gap: "var(--s-2)" }}>
+      <div className="terminal-entry">
         <div className="row between">
           <strong>{d.label}</strong>
           <span className="row" style={{ gap: "var(--s-1)" }}>
-            {d.isImplemented ? (
-              <span className="pill trend trend--good">
-                <span aria-hidden="true">✓</span> پیاده‌شده
-              </span>
-            ) : (
-              <span className="pill trend trend--warn">
-                <span aria-hidden="true">■</span> فقط ثبت‌شده
-              </span>
-            )}
-            {!d.isActive ? (
-              <span className="pill set-lock">
-                <span aria-hidden="true">■</span> بازنشسته
-              </span>
-            ) : null}
-            <code className="set-key">{d.code}</code>
+            <StatusBadge state={d.isImplemented ? "completed" : "warning"} label={d.isImplemented ? "پیاده‌شده" : "فقط ثبت‌شده"} />
+            {!d.isActive && <StatusBadge state="archived" label="بازنشسته" />}
+            <Ltr>{d.code}</Ltr>
           </span>
         </div>
 
-        <label className="auth-field">
-          <span>نام</span>
-          <input className="set-input" type="text" value={label}
+        <Field label="نام">
+          <input disabled={busy} className="set-input" type="text" value={label}
                  onChange={(e) => setLabel(e.target.value)} />
-        </label>
-        <label className="auth-field">
-          <span>سازنده</span>
-          <input className="set-input" type="text" value={vendor}
+        </Field>
+        <Field label="سازنده">
+          <input disabled={busy} className="set-input" type="text" value={vendor}
                  onChange={(e) => setVendor(e.target.value)} />
-        </label>
-        <label className="auth-field">
-          <span>نشانی مستندات SDK</span>
-          <input className="set-input" type="text" dir="ltr" value={url}
+        </Field>
+        <Field label="نشانی مستندات SDK">
+          <input disabled={busy} className="set-input" type="text" value={url}
                  placeholder="https://…"
                  onChange={(e) => setUrl(e.target.value)} />
-        </label>
-        <label className="auth-field">
-          <span>یادداشت فنی</span>
-          <textarea className="set-input" rows={2} value={notes}
+        </Field>
+        <Field label="یادداشت فنی">
+          <textarea disabled={busy} className="set-input" rows={2} value={notes}
                     onChange={(e) => setNotes(e.target.value)} />
-        </label>
+        </Field>
 
         <div className="row" style={{ gap: "var(--s-2)" }}>
           <button
@@ -427,7 +369,7 @@ function DriverRow(props: {
             {d.isActive ? "بازنشسته کن" : "برگردان"}
           </button>
         </div>
-      </Solid>
+      </div>
     </li>
   );
 }
@@ -446,7 +388,7 @@ function DriverNew(props: {
 
   if (!open) {
     return (
-      <button type="button" className="btn" style={{ marginTop: "var(--s-2)" }}
+      <button type="button" className="btn" disabled={props.busy} style={{ marginTop: "var(--s-2)" }}
               onClick={() => setOpen(true)}>
         افزودن دستگاه تازه
       </button>
@@ -456,32 +398,27 @@ function DriverNew(props: {
   return (
     <Solid className="pad stack" style={{ gap: "var(--s-2)", marginTop: "var(--s-2)" }}>
       <strong>دستگاه تازه</strong>
-      <label className="auth-field">
-        <span>کد (انگلیسی، بدون فاصله)</span>
-        <input className="set-input" type="text" dir="ltr" value={code}
+      <Field label="کد (انگلیسی، بدون فاصله)">
+        <input disabled={props.busy} className="set-input" type="text" value={code}
                placeholder="samankish" onChange={(e) => setCode(e.target.value)} />
-      </label>
-      <label className="auth-field">
-        <span>نام</span>
-        <input className="set-input" type="text" value={label}
+      </Field>
+      <Field label="نام">
+        <input disabled={props.busy} className="set-input" type="text" value={label}
                onChange={(e) => setLabel(e.target.value)} />
-      </label>
-      <label className="auth-field">
-        <span>نوع</span>
-        <select className="set-input" value={kind} onChange={(e) => setKind(e.target.value)}>
+      </Field>
+      <Field label="نوع">
+        <select disabled={props.busy} className="set-input" value={kind} onChange={(e) => setKind(e.target.value)}>
           {KINDS.map(([v, t]) => <option key={v} value={v}>{t}</option>)}
         </select>
-      </label>
-      <label className="auth-field">
-        <span>سازنده</span>
-        <input className="set-input" type="text" value={vendor}
+      </Field>
+      <Field label="سازنده">
+        <input disabled={props.busy} className="set-input" type="text" value={vendor}
                onChange={(e) => setVendor(e.target.value)} />
-      </label>
-      <label className="auth-field">
-        <span>نشانی مستندات SDK</span>
-        <input className="set-input" type="text" dir="ltr" value={url}
+      </Field>
+      <Field label="نشانی مستندات SDK">
+        <input disabled={props.busy} className="set-input" type="text" value={url}
                placeholder="https://…" onChange={(e) => setUrl(e.target.value)} />
-      </label>
+      </Field>
 
       <p className="muted small" style={{ margin: 0 }}>
         دستگاه تازه «فقط ثبت‌شده» ساخته می‌شود. تا کدِ ارتباط با آن نوشته نشود،
@@ -536,51 +473,17 @@ function TermRow(props: {
   const [fee, setFee] = useState(t.feePercent);
   const [reason, setReason] = useState("");
 
-  const dirty = days !== String(t.settlementDays) || fee !== t.feePercent;
+  const dirty = normalizeDigits(days) !== String(t.settlementDays) || normalizeDigits(fee) !== t.feePercent;
 
-  return (
-    <li className="term-row">
-      <div className="term-id">
-        <strong>{t.name}</strong>
-        <span className="muted small">
-          {KIND_LABEL[t.kind] ?? t.kind} · <span className="num">{t.code}</span>
-        </span>
-      </div>
-
-      <label className="term-field">
-        <span>دوره تسویه (روز)</span>
-        <input
-          className="num"
-          type="text"
-          inputMode="numeric"
-          value={days}
-          onChange={(e) => setDays(e.target.value)}
-        />
-      </label>
-
-      <label className="term-field">
-        <span>کارمزد (٪)</span>
-        <input
-          className="num"
-          type="text"
-          inputMode="decimal"
-          value={fee}
-          onChange={(e) => setFee(e.target.value)}
-        />
-      </label>
-
-      <label className="term-field term-reason">
-        <span>دلیل (اختیاری)</span>
-        <input value={reason} onChange={(e) => setReason(e.target.value)} />
-      </label>
-
-      <button
-        type="button"
-        disabled={busy || !dirty}
-        onClick={() => props.onSave(t, days, fee, reason)}
-      >
-        ذخیره
-      </button>
-    </li>
-  );
+  const locked=busy || !t.canEdit;
+  return <li className="terminal-entry">
+    <div className="terminal-entry-head"><div><strong>{t.name}</strong><p className="muted small">{KIND_LABEL[t.kind] ?? t.kind} · <Ltr>{t.code}</Ltr></p></div>
+      {!t.canEdit && <StatusBadge state="unknown" label="فقط مشاهده" />}</div>
+    <form className="terminal-fields" onSubmit={e=>{e.preventDefault();if(!locked && dirty)props.onSave(t,days,fee,reason);}}>
+      <Field label="دوره تسویه (روز)"><input className="num" type="text" inputMode="numeric" value={days} disabled={locked} onChange={e=>setDays(e.target.value)} /></Field>
+      <Field label="کارمزد (٪)"><input className="num" type="text" inputMode="decimal" value={fee} disabled={locked} onChange={e=>setFee(e.target.value)} /></Field>
+      <Field label="دلیل" optional><input value={reason} disabled={locked} onChange={e=>setReason(e.target.value)} /></Field>
+      <Button type="submit" variant="primary" disabled={locked || !dirty}>ذخیره شرایط</Button>
+    </form>
+  </li>;
 }
