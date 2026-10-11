@@ -35,6 +35,7 @@ import { ApiError } from "../lib/api.ts";
 import { ActionKeys, actionFor } from "../lib/action-key.ts";
 import { parseRial, rialFromTomanInput, toman } from "../lib/money.ts";
 import { pos, type Branch } from "../lib/pos.ts";
+import { ReceiptBulkAdd } from "./ReceiptBulkAdd.tsx";
 import {
   ALLOCATION_LABEL,
   RECEIPT_STATUS,
@@ -420,6 +421,16 @@ export function Purchasing() {
                 همان کالا با همان قیمت روی یک سطر جمع می‌شود؛ با قیمت متفاوت، سطر تازه.
               </p>
             </form>
+          ) : null}
+          {editable ? (
+            <ReceiptBulkAdd
+              receiptId={receipt.id}
+              disabled={busy}
+              onAdded={(next, count) => {
+                setReceipt(next);
+                setDone(`${count.toLocaleString("fa-IR")} قلم به رسید اضافه شد.`);
+              }}
+            />
           ) : null}
 
           {receipt.lines.length === 0 ? (

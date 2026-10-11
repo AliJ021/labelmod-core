@@ -29,6 +29,9 @@ import { StockCountError, type StockCountService } from "../inventory/stock-coun
 import type { PurchaseReturnService } from "../purchasing/return.ts";
 import type { PurchaseOrderService } from "../purchasing/order.ts";
 import { CONTROL_CHARS } from "../lib/text.ts";
+import { normalizeSearchTerm, searchActiveProducts } from "../catalog/search.ts";
+import { sizeRank } from "../catalog/size-order.ts";
+import { sql } from "kysely";
 
 const uuid = z.string().uuid("شناسه نامعتبر");
 
@@ -70,6 +73,17 @@ const createReceiptBody = z.object({
   occurredAt: z.string().datetime().optional(),
   supplierInvoiceNo: z.string().trim().max(60).optional(),
   note: z.string().trim().max(500).optional(),
+});
+
+/** افزودن گروهی: حداکثر ۲۰۰ قلم، هر تنوع یک بار. */
+const bulkLinesBody = z.object({
+  lines: z
+    .array(z.object({ variationId: uuid, qty: qtyString, unitPrice: moneyString }))
+    .min(1, "دست‌کم یک قلم لازم است")
+    .max(200, "حداکثر ۲۰۰ قلم در یک بار")
+    .refine((ls) => new Set(ls.map((l) => l.variationId)).size === ls.length, {
+      message: "هر رنگ/سایز فقط یک بار در یک افزودن گروهی می‌آید",
+    }),
 });
 
 const addLineBody = z
@@ -547,6 +561,103 @@ export function registerPurchasingRoutes(
           ...(body.orderLineId === undefined ? {} : { orderLineId: body.orderLineId }),
         });
         return { value: lineId, ref: lineId };
+      },
+      replay: async (ref) => ref,
+    });
+
+    const receipt = await loadInScope(s.userId, id);
+    return reply.code(out.replayed ? 200 : 201).send({ ...receipt, replayed: out.replayed });
+  });
+
+  /**
+   * جست‌وجوی کالا برای افزودن به رسید — نام، کد یا بارکد/SKU دقیق.
+   *
+   * همان تعریف جست‌وجوی صندوق (`catalog/search.ts`) ولی با مجوز
+   * `stock.receive` و دامنهٔ شعبهٔ رسید، نه `catalog.manage`: انباردار باید
+   * محموله را ثبت کند بی‌آنکه کاتالوگ را عوض کند. کالای بارکد/SKU دقیق، اگر
+   * با نام پیدا نشده باشد، اول فهرست می‌آید.
+   */
+  app.get("/receipts/:id/products", async (req) => {
+    const s = session(req);
+    const { id } = z.object({ id: uuid }).parse(req.params);
+    const q = z.object({ q: z.string().trim().min(2).max(80) }).parse(req.query);
+    await loadInScope(s.userId, id);
+    await requireForSession(db, s, "stock.receive");
+    const found = await searchActiveProducts(db, normalizeSearchTerm(q.q));
+    let products = found.products;
+    if (found.exactProductId !== null && !products.some((p) => p.id === found.exactProductId)) {
+      const extra = await sql<{ id: string; name: string; code: string; variationCount: number }>`
+        SELECT p.id, p.name_internal AS name, p.code, count(v.id)::int AS "variationCount"
+          FROM catalog.product p JOIN catalog.variation v ON v.product_id = p.id AND v.status = 'active'
+         WHERE p.id = ${found.exactProductId}::uuid GROUP BY p.id`.execute(db);
+      products = [...extra.rows, ...products];
+    }
+    return { products, exactVariationId: found.exactVariationId };
+  });
+
+  /**
+   * تنوع‌های فعال یک کالا برای انتخاب رنگ/سایز در رسید. سایز به ترتیب واقعی
+   * پوشاک (`size-order.ts`)، نه الفبایی. بی قیمت فروش و بی موجودی: انباردار
+   * قیمت خرید را از فاکتور تأمین‌کننده وارد می‌کند.
+   */
+  app.get("/receipts/:id/products/:productId/variations", async (req) => {
+    const s = session(req);
+    const { id, productId } = z.object({ id: uuid, productId: uuid }).parse(req.params);
+    await loadInScope(s.userId, id);
+    await requireForSession(db, s, "stock.receive");
+    const rows = await db
+      .selectFrom("catalog.variation as v")
+      .innerJoin("catalog.product as p", "p.id", "v.product_id")
+      .select(["v.id", "v.sku", "v.barcode", "v.color", "v.size"])
+      .where("p.id", "=", productId)
+      .where("p.status", "=", "active")
+      .where("v.status", "=", "active")
+      .execute();
+    rows.sort((a, b) =>
+      String(a.color ?? "").localeCompare(String(b.color ?? ""), "fa") ||
+      sizeRank(a.size) - sizeRank(b.size) ||
+      a.sku.localeCompare(b.sku));
+    return { variations: rows };
+  });
+
+  /**
+   * افزودن گروهی — چند رنگ/سایز از یک انتخاب، با تعداد هر کدام.
+   *
+   * - **همه یا هیچ:** یک تراکنش و یک کلید Idempotency؛ قلم بایگانی‌شده یا
+   *   ناموجود کل درخواست را رد می‌کند، نه نیمی از آن را.
+   * - هر قلم از همان `receipts.addLine` می‌گذرد که اسکن تکی: همان تنوع با همان
+   *   قیمت روی سطر موجود جمع می‌شود، قیمت متفاوت سطر تازه.
+   * - تنوع تکراری در **یک** درخواست ۴۰۰ است: جمع‌زدن تعدادها کار مرورگر نیست
+   *   و دو سطر از یک انتخاب یعنی خطای رابط.
+   * - قیمت خرید از کلاینت است (فاکتور تأمین‌کننده)، مثل اسکن تکی.
+   */
+  app.post("/receipts/:id/lines/bulk", async (req, reply) => {
+    const s = session(req);
+    const { id } = z.object({ id: uuid }).parse(req.params);
+    const body = bulkLinesBody.parse(req.body);
+    await loadInScope(s.userId, id);
+    await requireForSession(db, s, "stock.receive");
+
+    const variationIds: string[] = [];
+    for (const line of body.lines) {
+      variationIds.push(await resolveVariation(db, { variationId: line.variationId }));
+    }
+
+    const out = await runOnce<string>(db, {
+      key: idempotencyKey(req),
+      source: "api.receipt.line.bulk",
+      payload: { actorId: s.userId, receiptId: id, lines: body.lines },
+      run: async (trx) => {
+        for (const [i, line] of body.lines.entries()) {
+          await receipts.addLine(trx, {
+            receiptId: id,
+            variationId: variationIds[i]!,
+            qty: line.qty,
+            unitPrice: parseMoney(line.unitPrice),
+            actorId: s.userId,
+          });
+        }
+        return { value: id, ref: id };
       },
       replay: async (ref) => ref,
     });

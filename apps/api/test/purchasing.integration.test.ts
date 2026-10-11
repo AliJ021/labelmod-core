@@ -63,6 +63,7 @@ describe("رسید خرید", { skip }, () => {
   let variationA = "";
   let variationB = "";
   let barcodeA = "";
+  let productId = "";
 
   const sessions = new Map<
     string,
@@ -166,6 +167,7 @@ describe("رسید خرید", { skip }, () => {
       })
       .returning("id")
       .executeTakeFirstOrThrow();
+    productId = product.id;
 
     barcodeA = "2000000000015";
     const a = await handle.db
@@ -287,6 +289,84 @@ describe("رسید خرید", { skip }, () => {
     assert.equal(after.lines.length, 1, "دو بار همان کالا با همان قیمت = یک سطر");
     assert.equal(after.lines[0]?.qty, "6.000");
     assert.equal(after.goodsAmount, "6000000");
+  });
+
+  // ── جست‌وجو و افزودن گروهی ───────────────────────────────────────
+
+  test("جست‌وجوی رسید: نام، کد و بارکد دقیق؛ صندوق‌دار نه", async () => {
+    const s = await loginAs(keeper);
+    const draft = await newDraft(keeper);
+    const search = (q: string, sess = s) => app.inject({ method: "GET", url: `/receipts/${draft.id}/products?q=${encodeURIComponent(q)}`, ...sess });
+    for (const q of ["پیراهن تست", "پيراهن تست", `P-${suffix}`]) {
+      const r = await search(q);
+      assert.equal(r.statusCode, 200, r.body);
+      assert.ok((r.json() as { products: { id: string }[] }).products.some((p) => p.id === productId), q);
+    }
+    const byBarcode = (await search(barcodeA)).json() as { products: { id: string; variationCount: number }[]; exactVariationId: string | null };
+    assert.equal(byBarcode.products[0]?.id, productId, "کالای بارکد دقیق اول فهرست");
+    assert.equal(byBarcode.products[0]?.variationCount, 2);
+    assert.equal(byBarcode.exactVariationId, variationA);
+    const vars = await app.inject({ method: "GET", url: `/receipts/${draft.id}/products/${productId}/variations`, ...s });
+    assert.equal(vars.statusCode, 200, vars.body);
+    assert.deepEqual((vars.json() as { variations: { id: string }[] }).variations.map((v) => v.id).sort(), [variationA, variationB].sort());
+    const c = await loginAs(cashier);
+    assert.equal((await search("پیراهن", c)).statusCode, 403);
+  });
+
+  test("افزودن گروهی: همه یا هیچ، ادغام با سطر هم‌قیمت، Idempotency", async () => {
+    const s = await loginAs(keeper);
+    const draft = await newDraft(keeper);
+    const bulk = (lines: unknown[], key?: string) => app.inject({
+      method: "POST", url: `/receipts/${draft.id}/lines/bulk`, ...s,
+      headers: { ...s.headers, ...(key ? { "idempotency-key": key } : {}) },
+      payload: { lines },
+    });
+    const read = async () => (await app.inject({ method: "GET", url: `/receipts/${draft.id}`, ...s })).json() as ReceiptBody;
+
+    const first = await bulk([
+      { variationId: variationA, qty: "2", unitPrice: "1000000" },
+      { variationId: variationB, qty: "3.5", unitPrice: "1000000" },
+    ], `bulk-${suffix}`);
+    assert.equal(first.statusCode, 201, first.body);
+    assert.equal((first.json() as ReceiptBody).lines.length, 2);
+    assert.equal((first.json() as ReceiptBody).goodsAmount, "5500000", "جمع در SQL: ۲ + ۳٫۵ قلم × ۱٬۰۰۰٬۰۰۰");
+
+    // همان کلید = Replay، نه قلم دوباره.
+    const replay = await bulk([
+      { variationId: variationA, qty: "2", unitPrice: "1000000" },
+      { variationId: variationB, qty: "3.5", unitPrice: "1000000" },
+    ], `bulk-${suffix}`);
+    assert.equal(replay.statusCode, 200, replay.body);
+    assert.equal((await read()).goodsAmount, "5500000");
+
+    // همان قیمت روی سطر موجود جمع می‌شود؛ قیمت دیگر سطر تازه.
+    assert.equal((await bulk([{ variationId: variationA, qty: "1", unitPrice: "1000000" }])).statusCode, 201);
+    assert.equal((await bulk([{ variationId: variationA, qty: "1", unitPrice: "1200000" }])).statusCode, 201);
+    const after = await read();
+    assert.equal(after.lines.length, 3);
+    assert.deepEqual(after.lines.map((l) => `${l.qty}@${l.unitPrice}`).sort(), ["1.000@1200000", "3.000@1000000", "3.500@1000000"]);
+
+    // همه یا هیچ: یک قلم ناموجود، هیچ قلمی از این درخواست نمی‌نشیند.
+    const partial = await bulk([
+      { variationId: variationB, qty: "5", unitPrice: "1000000" },
+      { variationId: "00000000-0000-7000-8000-00000000dead", qty: "1", unitPrice: "1000000" },
+    ]);
+    assert.equal(partial.statusCode, 404, partial.body);
+    assert.equal((await read()).goodsAmount, after.goodsAmount, "نیمی از گروه ننشست");
+
+    // تکرار یک تنوع در یک درخواست، تعداد صفر، و مبلغ اعشاری ۴۰۰ هستند.
+    for (const lines of [
+      [{ variationId: variationA, qty: "1", unitPrice: "1000000" }, { variationId: variationA, qty: "2", unitPrice: "1000000" }],
+      [{ variationId: variationA, qty: "0", unitPrice: "1000000" }],
+      [{ variationId: variationA, qty: "1", unitPrice: "1000.5" }],
+      [],
+    ]) assert.equal((await bulk(lines)).statusCode, 400, JSON.stringify(lines));
+
+    const c = await loginAs(cashier);
+    const denied = await app.inject({ method: "POST", url: `/receipts/${draft.id}/lines/bulk`, ...c,
+      payload: { lines: [{ variationId: variationA, qty: "1", unitPrice: "1000000" }] } });
+    assert.equal(denied.statusCode, 403, denied.body);
+    assert.equal((await read()).goodsAmount, after.goodsAmount);
   });
 
   test("همان کالا با قیمت متفاوت، سطر جدا می‌گیرد", async () => {

@@ -103,7 +103,9 @@ export function Catalog() {
       <ProductDetail
         productId={selected}
         labelMode={labels === "1"}
+        initialNote={note}
         onBack={() => {
+          setNote(null);
           setSelected(null);
           reload();
         }}
@@ -138,9 +140,9 @@ export function Catalog() {
 
       {creating ? (
         <ProductForm
-          onDone={(id) => {
+          onDone={(id, code) => {
             setCreating(false);
-            setNote("کالا ساخته شد. حالا تنوع‌هایش را بسازید.");
+            setNote(`کالا با کد ${code} ساخته شد. حالا تنوع‌هایش را بسازید.`);
             setSelected(id);
           }}
           onError={setError}
@@ -249,7 +251,7 @@ function ProductForm({
   onDone,
   onError,
 }: {
-  onDone: (id: string) => void;
+  onDone: (id: string, code: string) => void;
   onError: (msg: string) => void;
 }) {
   const [code, setCode] = useState("");
@@ -295,7 +297,8 @@ function ProductForm({
     try {
       const r = await catalog.createProduct(
         {
-          code: code.trim(),
+          // خالی = کد خودکار یکتا از سرور؛ مرورگر هیچ کدی حدس نمی‌زند.
+          ...(code.trim() === "" ? {} : { code: code.trim() }),
           nameInternal: name.trim(),
           ...(nameWeb.trim() === "" ? {} : { nameWeb: nameWeb.trim() }),
           ...(fit.trim() === "" ? {} : { fit: fit.trim() }),
@@ -304,7 +307,7 @@ function ProductForm({
         { idempotencyKey: keys.keyFor(action) },
       );
       keys.clear(action);
-      onDone(r.id);
+      onDone(r.id, r.code);
     } catch (err) {
       onError(message(err));
     } finally {
@@ -316,16 +319,17 @@ function ProductForm({
     <Solid className="pad" as="section">
       <form onSubmit={submit} className="stack">
         <label>
-          <span>کد کالا — حروف لاتین، رقم و خط تیره</span>
+          <span>کد کالا — اختیاری</span>
           <input
             type="text"
             value={code}
             onChange={(e) => setCode(e.target.value)}
-            placeholder="TR-1405-01"
-            required
+            placeholder="خالی = خودکار، مثل LM00042"
+            autoComplete="off"
           />
           <small className="muted">
-            روی SKU و بارکد چاپ‌شده می‌نشیند و پس از ساخت عوض نمی‌شود.
+            خالی بگذارید تا سیستم یک کد یکتا بسازد؛ یا کد خودتان را با حروف لاتین، رقم و خط تیره بنویسید.
+            روی SKU می‌نشیند و پس از ساخت عوض نمی‌شود؛ بارکد کالاهای قبلی تغییر نمی‌کند.
           </small>
         </label>
         <label>
@@ -394,10 +398,13 @@ function ProductDetail({
   labelMode,
   productId,
   onBack,
+  initialNote = null,
 }: {
   productId: string;
   labelMode: boolean;
   onBack: () => void;
+  /** پیام ساخت کالا (با کد نهایی سرور) — پیش از این تنظیم می‌شد ولی صفحهٔ جزئیات آن را نشان نمی‌داد. */
+  initialNote?: string | null;
 }) {
   const [statusBusy, setStatusBusy] = useState(false);
   const [product, setProduct] = useState<Product | null>(null);
@@ -406,7 +413,7 @@ function ProductDetail({
   }, [labelMode, product]);
   const [variations, setVariations] = useState<Variation[]>([]);
   const [error, setError] = useState<string | null>(null);
-  const [note, setNote] = useState<string | null>(null);
+  const [note, setNote] = useState<string | null>(initialNote);
   const [picked, setPicked] = useState<Set<string>>(new Set());
   const [historyOf, setHistoryOf] = useState<string | null>(null);
 

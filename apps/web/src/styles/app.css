@@ -1066,6 +1066,22 @@ select.set-input {
 .rcpt-add input:nth-child(3) { flex: 2 1 12ch; }
 .rcpt-add .btn { flex: 0 0 auto; }
 
+/* افزودن گروهی: رنگ‌ها زیر هم، سایزها کنار هم و در عرض باریک می‌شکنند. */
+.rcpt-bulk { gap: var(--s-2); padding-block-start: var(--s-3); border-block-start: 1px solid var(--rule); }
+.rcpt-bulk-title { margin: 0; font-size: var(--text-sm); }
+.rcpt-bulk-hits { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: var(--s-1); }
+.rcpt-bulk-hits .btn { inline-size: 100%; justify-content: flex-start; text-align: start; white-space: normal; }
+.rcpt-bulk-pick { border: 1px solid var(--ring); border-radius: var(--r-sm); padding: var(--s-3); margin: 0; min-inline-size: 0; display: flex; flex-direction: column; gap: var(--s-2); }
+.rcpt-bulk-pick legend { padding-inline: var(--s-1); font-weight: var(--weight-semibold); overflow-wrap: anywhere; }
+.rcpt-bulk-tools { display: flex; flex-wrap: wrap; gap: var(--s-1); }
+.rcpt-bulk-colorname { display: flex; align-items: center; gap: var(--s-2); min-block-size: 44px; font-weight: var(--weight-semibold); }
+.rcpt-bulk-sizes { list-style: none; margin: 0; padding: 0; display: flex; flex-wrap: wrap; gap: var(--s-2); }
+.rcpt-bulk-sizes li { display: flex; align-items: center; gap: var(--s-1); padding: var(--s-1) var(--s-2); border: 1px solid var(--ring); border-radius: var(--r-sm); min-inline-size: 0; }
+.rcpt-bulk-sizes li.is-on { border-color: var(--accent); background: var(--accent-soft); }
+.rcpt-bulk-sizes label { display: flex; align-items: center; gap: var(--s-1); min-block-size: 44px; }
+.rcpt-bulk-qty { inline-size: 6ch; padding: var(--s-1); border-radius: var(--r-xs); border: 1px solid var(--ring); background: var(--surface-solid); color: var(--ink); font-variant-numeric: tabular-nums; }
+.rcpt-bulk-qty[aria-invalid="true"] { border-color: var(--crit); }
+
 /* برچسب وضعیت. رنگ به‌تنهایی معنا حمل نمی‌کند (ADR-002): متن فارسی
    خودش وضعیت را می‌گوید و رنگ فقط کمکش می‌کند. */
 .chip {

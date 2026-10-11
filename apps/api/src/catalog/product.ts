@@ -16,14 +16,16 @@
  * بزند. یک Trigger روی `catalog.price` این را اجبار می‌کند؛ اگر
  * منطق اینجا بود، اولین اسکریپت psql از کنارش رد می‌شد.
  */
-import { sql } from "kysely";
+import { sql, type Transaction } from "kysely";
+import type { Database } from "../db/types.ts";
 import type { Db } from "../db/client.ts";
 import { parseMoney, serializeMoney } from "../lib/money.ts";
 import { setActor } from "../lib/idempotency.ts";
 import { CatalogError } from "./variation.ts";
 
 export interface ProductInput {
-  code: string;
+  /** خالی یا نبود = کد خودکار سمت سرور (`catalog.next_product_code()`، مهاجرت ۰۹۴). */
+  code?: string | undefined;
   nameInternal: string;
   nameWeb?: string | undefined;
   brandId?: string | undefined;
@@ -336,8 +338,19 @@ export class ProductService {
     }));
   }
 
-  async create(input: ProductInput, actorId: string): Promise<string> {
-    return this.#upsert(null, input, actorId);
+  /**
+   * ساخت کالا. با `trx`، درون همان تراکنشی که Inbox Idempotency را درج کرده
+   * (`runOnce`) — اثر و Inbox یک تراکنش‌اند و درخواست یک اتصال می‌گیرد، نه دو.
+   * با دو اتصال، چند ساخت هم‌زمان Pool را تمام می‌کرد و هر کدام منتظر دیگری می‌ماند.
+   */
+  async create(input: ProductInput, actorId: string, trx?: Transaction<Database>): Promise<string> {
+    return trx ? this.#upsertIn(trx, null, input, actorId) : this.#upsert(null, input, actorId);
+  }
+
+  /** کد نهایی کالا — پاسخ ساخت آن را برمی‌گرداند (کد خودکار را کاربر ندیده است). */
+  async codeOf(id: string): Promise<string> {
+    const r = await this.#db.selectFrom("catalog.product").select("code").where("id", "=", id).executeTakeFirstOrThrow();
+    return r.code;
   }
 
   async update(id: string, input: ProductInput, actorId: string): Promise<string> {
@@ -349,11 +362,25 @@ export class ProductService {
     input: ProductInput,
     actorId: string,
   ): Promise<string> {
-    return this.#db.transaction().execute(async (trx) => {
+    return this.#db.transaction().execute((trx) => this.#upsertIn(trx, id, input, actorId));
+  }
+
+  async #upsertIn(
+    trx: Transaction<Database>,
+    id: string | null,
+    input: ProductInput,
+    actorId: string,
+  ): Promise<string> {
+    {
       await setActor(trx, actorId);
+      // کد خودکار در **همان تراکنش** درج: Sequence به دو درخواست هم‌زمان یک
+      // عدد نمی‌دهد، و کد دستیِ هم‌زمانِ هم‌نام روی قید یکتایی ۴۰۹ می‌گیرد.
+      const code = id === null && (input.code ?? "").trim() === ""
+        ? (await sql<{ code: string }>`SELECT catalog.next_product_code() AS code`.execute(trx)).rows[0]!.code
+        : input.code ?? "";
       const r = await sql<{ upsert_product: string }>`
         SELECT catalog.upsert_product(
-          ${id}::uuid, ${input.code}, ${input.nameInternal},
+          ${id}::uuid, ${code}, ${input.nameInternal},
           ${input.nameWeb ?? null}, ${input.brandId ?? null}::uuid,
           ${input.categoryId ?? null}::uuid, ${input.season ?? null},
           ${input.collection ?? null}, ${input.fabric ?? null},
@@ -365,7 +392,7 @@ export class ProductService {
         throw new CatalogError("upsert_failed", "ثبت کالا انجام نشد", 500);
       }
       return out;
-    });
+    }
   }
 
   async setProductStatus(

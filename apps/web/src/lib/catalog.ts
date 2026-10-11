@@ -176,8 +176,9 @@ export const catalog = {
       categories: Array<{ id: string; name: string; path: string }>;
     }>("/products/ref-data"),
 
-  createProduct: (input: ProductInput & { code: string }, opts?: RequestOptions) =>
-    api.post<{ id: string; replayed: boolean }>("/products", input, opts),
+  /** `code` نبود = کد خودکار یکتا سمت سرور (مهاجرت ۰۹۴)؛ پاسخ کد نهایی را دارد. */
+  createProduct: (input: ProductInput & { code?: string }, opts?: RequestOptions) =>
+    api.post<{ id: string; code: string; replayed: boolean }>("/products", input, opts),
 
   updateProduct: (id: string, input: ProductInput) =>
     api.patch<{ ok: boolean }>(`/products/${id}`, input),
