@@ -59,7 +59,8 @@ test.describe("زبانه‌های شاخص داشبورد", () => {
     const profit = panel(page).getByRole("figure", { name: "سود هر ساعت (تومان)" });
     await expect(profit).toContainText("بیشترین سود: ساعت ۱۸ با 200٬000 تومان");
     await expect(profit).toContainText("کمترین: ساعت ۲۰ با −50٬000 تومان");
-    await expect(profit.locator(".bar-chart-bar--negative")).toHaveCount(1);
+    // فقط نقطه‌های خط «سود» (پررنگ، انتخاب‌شده) شمرده می‌شوند؛ ساعت ۲۰ تنها منفی است.
+    await expect(profit.locator('g[data-series="profit"][data-emphasis] .line-chart-dot[data-sign="negative"]')).toHaveCount(1);
     await expect(panel(page)).not.toContainText("روند فروش");
 
     await tab(page, "فروش").click();

@@ -5,31 +5,35 @@
  *   ۱. چه چیزی رسیدگی می‌خواهد (دوره‌های ثبت‌نشده) — بالاترین اولویت.
  *   ۲. سه شاخص امروز: فروش · وجه دریافتی · سود (design.md) — زبانه‌هایی که
  *      یک پنل مشترک را عوض می‌کنند.
- *   ۳. روند ساعتیِ شاخص انتخاب‌شده — از `/reports/daily/hourly` (مهاجرت ۰۸۳)،
- *      که جمع ساعت‌هایش دقیقاً همان سه کارت است.
+ *   ۳. روند شاخص انتخاب‌شده، ساعتی/روزانه/ماهانه — نمودار خطی. ساعتی از
+ *      `/reports/daily/hourly` (مهاجرت ۰۸۳، جمع ساعت‌ها همان سه کارت)؛ روزانه و
+ *      ماهانه از `/reports/daily/trend` (مهاجرت ۰۹۳، جمع در SQL، ماه جلالی).
  *   ۴. کارهای پرتکرار.
  *
  * هیچ عدد ساختگی روی این صفحه نمی‌نشیند. بخشی که داده یا مجوزش
  * نیست، می‌گوید چرا — نه صفر، نه نمونه.
  */
-import { useId, useLayoutEffect, useState } from "react";
+import { useEffect, useId, useLayoutEffect, useRef, useState } from "react";
 import { navigate } from "../lib/use-url-state.ts";
 import { Solid } from "../components/Glass.tsx";
 import { Icon } from "../components/Icon.tsx";
-import { quickActionView, type NavAccess } from "../lib/navigation.ts";
+import { accessOf, quickActionView, routeUrl, type NavAccess } from "../lib/navigation.ts";
 import { ApiError } from "../lib/api.ts";
 import { parseRial } from "../lib/money.ts";
 import { channelLabel, formatCount, formatGregorian, formatJalali } from "../lib/format.ts";
 import {
-  canClosePeriod,
-  periodNote,
   pos,
   type Branch,
   type DailyHourly,
   type DailyReport,
+  type DailyTrend,
   type UnpostedRow,
 } from "../lib/pos.ts";
-import { hourlyView, METRIC_COPY, type Metric } from "../lib/dashboard-hourly.ts";
+import {
+  bucketPoints, GRAINS, hourPoints, trendBounds, trendCopy, trendView,
+  type Grain, type Metric, type TrendPoint,
+} from "../lib/dashboard-trend.ts";
+import { attentionItems, type AttentionItem } from "../lib/dashboard-attention.ts";
 import { session } from "../lib/session.ts";
 import { Money } from "../components/ui/Money.tsx";
 import { Kpi, KpiTabs, type KpiTab } from "../components/ui/Kpi.tsx";
@@ -37,7 +41,8 @@ import { PageHeader, SectionHeader } from "../components/ui/PageHeader.tsx";
 import { StatusBadge, StatusIcon } from "../components/ui/Status.tsx";
 import { Skeleton } from "../components/ui/Skeleton.tsx";
 import { SafeAction } from "../components/ui/SafeAction.tsx";
-import { BarChart } from "../components/ui/BarChart.tsx";
+import { LineChart, tickEvery } from "../components/ui/LineChart.tsx";
+import { Segmented } from "../components/ui/Controls.tsx";
 import { Ltr } from "../components/ui/Bidi.tsx";
 import { ResultState } from "../components/ResultState.tsx";
 
@@ -48,18 +53,24 @@ import { ResultState } from "../components/ResultState.tsx";
  */
 type Hourly = { state: "loading" } | { state: "ready"; data: DailyHourly } | { state: "error" } | { state: "denied" };
 
+/**
+ * روند روزانه/ماهانه — فقط با انتخاب، یک بار برای هر دانه‌بندی. `denied`: این نقش
+ * `report.view` ندارد (صریح از دسترسی ناوبری، یا ۴۰۳ سرور) — نه صفر، نه خطا.
+ */
+type Trend = { state: "loading" } | { state: "ready"; data: DailyTrend } | { state: "error"; reference: string | null } | { state: "denied" };
+
+/**
+ * درآمد ثبت‌نشده. سه «چیزی نیست» از هم جدا می‌مانند: `ready` با آرایهٔ خالی
+ * (سنجیدیم و مرتب است)، `denied` (این نقش `cost.view` ندارد — «مرتب» گفتن به او
+ * اطمینان بی‌پشتوانه است) و `error` (نتوانستیم بسنجیم؛ ممکن است موردی منتظر باشد).
+ */
+type Unposted = { state: "loading" } | { state: "ready"; rows: UnpostedRow[] } | { state: "denied" } | { state: "error"; reference: string | null };
+
 export function Dashboard({ access }: { access: NavAccess }) {
   const [branch, setBranch] = useState<Branch | null>(null);
   const [report, setReport] = useState<DailyReport | null>(null);
   const [error, setError] = useState<{ message: string; reference: string | null } | null>(null);
-  /**
-   * `null` یعنی «نمی‌دانیم» — این کاربر `cost.view` ندارد.
-   *
-   * جدا از آرایه خالی که یعنی «سنجیدیم و چیزی نبود». نشان‌دادن
-   * «همه‌چیز مرتب است» به کسی که اصلاً اجازه دیدنش را ندارد، یک
-   * اطمینان بی‌پشتوانه است.
-   */
-  const [unposted, setUnposted] = useState<UnpostedRow[] | null>(null);
+  const [unposted, setUnposted] = useState<Unposted>({ state: "loading" });
   /**
    * آیا این کاربر اجازه بستن دوره را دارد؟
    *
@@ -75,6 +86,24 @@ export function Dashboard({ access }: { access: NavAccess }) {
    * هر سه روند با یک درخواست آمده‌اند؛ تغییر زبانه هیچ درخواستی نمی‌سازد.
    */
   const [metric, setMetric] = useState<Metric>("sales");
+  /** دانه‌بندی روند هم محلی است؛ روزانه و ماهانه فقط با انتخاب و یک بار بار می‌شوند. */
+  const [grain, setGrain] = useState<Grain>("hour");
+  const [trends, setTrends] = useState<Partial<Record<"day" | "month", Trend>>>({});
+  /**
+   * دانه‌بندی‌هایی که درخواستشان رفته یا رسیده — در ref، نه state: دو کلیک پیش از
+   * رندر بعدی دو درخواست نمی‌سازد. Unmount همهٔ درخواست‌های در راه را لغو می‌کند.
+   */
+  const trendRequested = useRef(new Set<"day" | "month">());
+  const trendAbort = useRef<AbortController | null>(null);
+  // کنترلر **داخل** افکت ساخته می‌شود: StrictMode افکت را اجرا، پاک و دوباره اجرا
+  // می‌کند و ref می‌ماند؛ کنترلرِ ساخته‌شده در `useRef` پس از پاک‌سازی اول لغوشده
+  // می‌ماند و هر روند را برای همیشه «در حال بارگذاری» نگه می‌داشت.
+  useEffect(() => {
+    const c = new AbortController();
+    trendAbort.current = c;
+    const requested = trendRequested.current;
+    return () => { c.abort(); requested.clear(); };
+  }, []);
   const tabsId = useId();
 
   /**
@@ -104,15 +133,15 @@ export function Dashboard({ access }: { access: NavAccess }) {
         if (signal.aborted) return;
         setReport(report);
 
-        // درآمد ثبت‌نشده پشت `cost.view` است. نداشتنش خطا نیست —
-        // فقط یعنی این بخش برای این کاربر نیست.
+        // درآمد ثبت‌نشده پشت `cost.view` است. ۴۰۳ «این بخش برای این نقش
+        // نیست» است، نه خطا؛ ولی خطای واقعی هم «مرتب» یا «بی‌دسترسی» جلوه نمی‌کند.
         try {
           const { rows } = await pos.unpostedRevenue({ signal });
           if (signal.aborted) return;
-          setUnposted(rows);
-        } catch {
+          setUnposted({ state: "ready", rows });
+        } catch (err) {
           if (signal.aborted) return;
-          setUnposted(null);
+          setUnposted(unpostedFailure(err));
         }
 
         // جدا از بالا: اگر پرسش مجوز شکست بخورد، فهرست باید همچنان
@@ -162,8 +191,45 @@ export function Dashboard({ access }: { access: NavAccess }) {
   /** فهرست از سرور دوباره خوانده می‌شود، نه از حافظه: اگر بستن نیمه‌کاره مانده باشد، سطر باید بماند. */
   async function reload(): Promise<UnpostedRow[]> {
     const { rows } = await pos.unpostedRevenue();
-    setUnposted(rows);
+    setUnposted({ state: "ready", rows });
     return rows;
+  }
+
+  /** «بررسی دوباره» پس از خطا — همان درخواست؛ خطای دوباره همان حالت خطا را نگه می‌دارد. */
+  function retryUnposted() {
+    setUnposted({ state: "loading" });
+    void reload().catch(err => setUnposted(unpostedFailure(err)));
+  }
+
+  /**
+   * روند روزانه/ماهانه با اولین انتخاب. مرزها از «امروز» سرور (`businessDate`)
+   * ساخته می‌شوند، نه ساعت مرورگر. بی `report.view` صریح، درخواستی فرستاده نمی‌شود.
+   */
+  function chooseGrain(next: Grain) {
+    setGrain(next);
+    if (next === "hour" || !branch || !report) return;
+    if (trendRequested.current.has(next)) return;
+    if (access.verdicts.get("report.view") === "deny") {
+      setTrends(t => ({ ...t, [next]: { state: "denied" } }));
+      return;
+    }
+    const controller = trendAbort.current;
+    if (!controller) return;
+    trendRequested.current.add(next);
+    const { signal } = controller;
+    setTrends(t => ({ ...t, [next]: { state: "loading" } }));
+    pos.dailyTrend(branch.id, trendBounds(next, report.businessDate), { signal }).then(
+      data => { if (!signal.aborted) setTrends(t => ({ ...t, [next]: { state: "ready", data } })); },
+      err => {
+        if (signal.aborted) return;
+        // خطا دوباره قابل انتخاب است؛ بی‌دسترسی نه.
+        const denied = err instanceof ApiError && err.status === 403;
+        if (!denied) trendRequested.current.delete(next);
+        setTrends(t => ({ ...t, [next]: denied
+          ? { state: "denied" }
+          : { state: "error", reference: err instanceof ApiError ? err.correlationId : null } }));
+      },
+    );
   }
 
   const sales = parseRial(report.salesAmount);
@@ -171,7 +237,9 @@ export function Dashboard({ access }: { access: NavAccess }) {
   // نسیه = فروخته ولی پولش نیامده. منفی بی‌معناست (پیش‌پرداخت روز
   // قبل)، پس صفر می‌شود تا کارت «−۵۰٬۰۰۰ نسیه» نشان ندهد.
   const credit = sales > received ? sales - received : 0n;
-  const attention = unposted?.length ?? 0;
+  const posHref = accessOf(["sale.create"], access.verdicts) === "allow" ? routeUrl("pos") : null;
+  const items = unposted.state === "ready" ? attentionItems(unposted.rows, report.businessDate, mayClose, posHref) : [];
+  const attention = items.filter(i => i.tone === "attention").length;
   // سود بی `cost.view` نامعلوم است: کارتش می‌ماند (با دلیل)، ولی زبانه‌اش انتخاب نمی‌شود
   // و پنل هرگز روند سود را نمی‌سازد — نه صفر، نه ستون.
   const profitKnown = report.profitAmount !== null && (hourly.state !== "ready" || hourly.data.profitVisible);
@@ -211,47 +279,32 @@ export function Dashboard({ access }: { access: NavAccess }) {
       */}
       <Solid as="section" className="pad attention" aria-labelledby="dash-attention">
         <SectionHeader id="dash-attention" title="نیاز به رسیدگی"
-          actions={unposted && attention > 0 ? <StatusBadge state="attention" label={`${formatCount(attention)} مورد`} /> : null} />
+          actions={attention > 0 ? <StatusBadge state="attention" label={`${formatCount(attention)} مورد`} /> : null} />
         {closed ? <p className="attention-done" role="status"><StatusIcon state="completed" />{closed}</p> : null}
-        <ul className="tasks">
-          {unposted === null ? (
-            <Task state="warning" label="برای دیدن درآمد ثبت‌نشده، دسترسی بهای تمام‌شده لازم است" />
-          ) : unposted.length === 0 ? (
-            <Task state="completed" label="همه درآمدها به دفتر رفته‌اند" />
+        <ul className="tasks" aria-busy={unposted.state === "loading" || undefined}>
+          {unposted.state === "loading" ? (
+            <Task state="pending" label="در حال بررسی درآمد ثبت‌نشده…" />
+          ) : unposted.state === "denied" ? (
+            <Task state="unknown" label="درآمد ثبت‌نشده برای این نقش نمایش داده نمی‌شود"
+              cause="دیدن آن به دسترسی بهای تمام‌شده نیاز دارد؛ مدیر یا حسابدار آن را پیگیری می‌کند. این به معنای «همه‌چیز مرتب» نیست."
+              note="کاری از شما لازم نیست." />
+          ) : unposted.state === "error" ? (
+            <Task state="failed" label="وضعیت درآمد ثبت‌نشده خوانده نشد"
+              cause="ممکن است دوره‌ای منتظر ثبت در دفتر باشد؛ این خطا به معنای «همه‌چیز مرتب» نیست."
+              reference={unposted.reference}
+              action={<button type="button" className="btn" onClick={retryUnposted}>بررسی دوباره</button>} />
+          ) : items.length === 0 ? (
+            <Task state="completed" label="همه درآمدها به دفتر رفته‌اند"
+              cause="فروش و بهای تمام‌شدهٔ همهٔ دوره‌ها در دفتر حسابداری ثبت شده است." />
           ) : (
-            unposted.map((r) => {
-              const channel = channelLabel(r.channel);
-              const date = formatJalali(r.businessDate);
-              const note = periodNote(r, report.businessDate, mayClose);
-              return <Task key={r.batchId} state="attention"
-                label={`${formatCount(r.invoiceCount)} فاکتور ${channel} در ${date} هنوز به دفتر نرفته`}
-                detail={<Money rial={r.payableAmount} size="sm" />}
-                action={canClosePeriod(r, report.businessDate, mayClose) ? <SafeAction
-                  trigger="بستن دوره"
-                  title={`بستن دورهٔ ${channel} — ${date}`}
-                  summary={<dl className="safe-facts">
-                    <div><dt>فاکتورها</dt><dd>{formatCount(r.invoiceCount)}</dd></div>
-                    <div><dt>مبلغ قابل ثبت</dt><dd><Money rial={r.payableAmount} /></dd></div>
-                  </dl>}
-                  consequence="درآمد و بهای تمام‌شدهٔ این دوره در دفتر ثبت می‌شود و پس از آن فاکتور تازه‌ای به این دوره نمی‌نشیند. اصلاح بعدی فقط با سند معکوس ممکن است."
-                  confirmLabel="بستن دوره و ثبت در دفتر"
-                  pendingLabel="در حال بستن…"
-                  run={async () => {
-                    // کلید Idempotency فرستاده نمی‌شود: سرور آن را از
-                    // (شعبه، کانال، تاریخ) می‌سازد و تکرار Replay می‌گیرد.
-                    await pos.closeChannelDay({ branchId: r.branchId, channel: r.channel, date: r.businessDate });
-                  }}
-                  verify={async () => !(await reload()).some(x => x.batchId === r.batchId)}
-                  onDone={outcome => {
-                    setClosed(outcome === "verified"
-                      ? `بررسی شد: دورهٔ ${channel} در ${date} بسته شده است.`
-                      : `دورهٔ ${channel} در ${date} بسته شد.`);
-                    void reload().catch(() => {});
-                  }}
-                /> : null}
-                note={note}
-              />;
-            })
+            items.map(item => <AttentionTask key={item.key} item={item}
+              onClosed={(outcome, channel, date) => {
+                setClosed(outcome === "verified"
+                  ? `بررسی شد: دورهٔ ${channel} در ${date} بسته شده است.`
+                  : `دورهٔ ${channel} در ${date} بسته شد.`);
+                void reload().catch(() => {});
+              }}
+              reload={reload} />)
           )}
         </ul>
       </Solid>
@@ -267,7 +320,8 @@ export function Dashboard({ access }: { access: NavAccess }) {
           </section>
         : <>
             <KpiTabs items={kpis} value={selected} onChange={setMetric} label="شاخص‌های امروز" panelId={`${tabsId}-panel`} idPrefix={`${tabsId}-tab`} />
-            <HourlyPanel id={`${tabsId}-panel`} metric={selected} hourly={hourly} />
+            <TrendPanel id={`${tabsId}-panel`} metric={selected} grain={grain} onGrain={chooseGrain}
+              hourly={hourly} trend={grain === "hour" ? undefined : trends[grain]} />
           </>}
       </Solid>
 
@@ -298,44 +352,115 @@ function QuickActions({ access }: { access: NavAccess }) {
   </nav>;
 }
 
+function unpostedFailure(err: unknown): Unposted {
+  return err instanceof ApiError && err.status === 403
+    ? { state: "denied" }
+    : { state: "error", reference: err instanceof ApiError ? err.correlationId : null };
+}
+
 /**
- * روند ساعتیِ شاخص انتخاب‌شده — پنل مشترکِ سه زبانه. هر شاخص عنوان، توضیح،
- * حالت خالی و نمودار خودش را دارد؛ متن «فروش» زیر «سود» نمی‌ماند. داده برای
- * هر سه یک بار آمده و اینجا فقط انتخاب می‌شود. ساعت‌های زودتر سمت راست.
+ * روند شاخص انتخاب‌شده — پنل مشترکِ سه زبانه، با انتخاب ساعتی/روزانه/ماهانه.
+ * هر شاخص و هر دانه‌بندی عنوان، توضیح، حالت خالی و نمودار خودش را دارد؛ متن
+ * «فروش» زیر «سود» نمی‌ماند. نمودار همهٔ شاخص‌های معلوم را با هم می‌کشد و خط
+ * انتخاب‌شده پررنگ‌تر است. دوره‌های زودتر سمت راست.
  */
-function HourlyPanel({ id, metric, hourly }: { id: string; metric: Metric; hourly: Exclude<Hourly, { state: "denied" }> }) {
-  const copy = METRIC_COPY[metric];
+function TrendPanel({ id, metric, grain, onGrain, hourly, trend }: {
+  id: string; metric: Metric; grain: Grain; onGrain: (g: Grain) => void;
+  hourly: Exclude<Hourly, { state: "denied" }>; trend: Trend | undefined;
+}) {
+  const copy = trendCopy(metric, grain);
+  const what = grain === "hour" ? "روند ساعتی" : grain === "day" ? "روند روزانه" : "روند ماهانه";
   let body;
-  if (hourly.state === "loading") body = <Skeleton variant="chart" lines={1} label={`در حال بارگذاری ${copy.title}…`} />;
-  else if (hourly.state === "error") body = <ResultState kind="error" title="روند ساعتی خوانده نشد." description="کارت‌های بالا معتبرند؛ این بخش را بعداً دوباره ببینید." />;
-  else {
-    const view = hourlyView(hourly.data.hours, metric);
+  let busy = false;
+  if (grain === "hour" ? hourly.state === "loading" : !trend || trend.state === "loading") {
+    busy = true;
+    body = <Skeleton variant="chart" lines={1} label={`در حال بارگذاری ${copy.title}…`} />;
+  } else if (grain === "hour" ? hourly.state === "error" : trend?.state === "error") {
+    body = <ResultState kind="error" title={`${what} خوانده نشد.`}
+      reference={trend?.state === "error" ? trend.reference : null}
+      description={grain === "hour" ? "کارت‌های بالا معتبرند؛ این بخش را بعداً دوباره ببینید." : "کارت‌های بالا معتبرند؛ دوباره همین گزینه را انتخاب کنید."} />;
+  } else if (trend?.state === "denied") {
+    body = <ResultState kind="denied" title={`${what} برای این نقش در دسترس نیست.`}
+      description="روند روزهای گذشته به دسترسی گزارش نیاز دارد؛ روند ساعتی امروز در دسترس است." />;
+  } else {
+    const points: TrendPoint[] = grain === "hour"
+      ? (hourly.state === "ready" ? hourPoints(hourly.data.hours, hourly.data.currentHour) : [])
+      : trend?.state === "ready" ? bucketPoints(trend.data.buckets, grain) : [];
+    const view = trendView(points, metric, grain);
+    const tick = tickEvery(points.length, grain === "hour" ? 16 : 8);
     body = view.kind === "unknown"
-      ? <ResultState kind="denied" title="روند سود برای این نقش در دسترس نیست." description="دیدن سود به دسترسی بهای تمام‌شده نیاز دارد." />
+      ? <ResultState kind="denied" title={`روند سود برای این نقش در دسترس نیست.`} description="دیدن سود به دسترسی بهای تمام‌شده نیاز دارد." />
       : view.kind === "empty"
         ? <ResultState title={copy.empty[0]} description={copy.empty[1]} />
-        : <BarChart title={copy.chart} labelHeader="ساعت" valueHeader={copy.value} summary={view.summary} bars={view.bars} />;
+        : <LineChart title={copy.chart} summary={view.summary} note={view.note}
+            xHeader={grain === "hour" ? "ساعت" : grain === "day" ? "روز" : "ماه"}
+            points={points.map((p, i) => ({ key: p.key, label: p.label, long: p.long, partial: p.partial, tick: tick(i) }))}
+            series={view.series.map(s => ({ key: s.metric, label: s.label, values: s.values, displays: s.displays, emphasis: s.metric === metric }))} />;
   }
   // نام پنل عنوان خودش است («روند وجه دریافتی ساعتی»)، نه زبانه: ارجاع به زبانه متن کامل
   // آن (برچسب + مبلغ + یادداشت) را نام پنل می‌کرد. پیوند زبانه ↔ پنل با `aria-controls` است.
   const headingId = `${id}-h`;
-  return <section className="today-trend" id={id} role="tabpanel" aria-labelledby={headingId} tabIndex={0} aria-busy={hourly.state === "loading" || undefined}>
-    <SectionHeader id={headingId} title={copy.title} description={copy.description} />
+  return <section className="today-trend" id={id} role="tabpanel" aria-labelledby={headingId} tabIndex={0} aria-busy={busy || undefined}>
+    <SectionHeader id={headingId} title={copy.title} description={copy.description}
+      actions={<Segmented label="بازهٔ روند" options={GRAINS} value={grain} onChange={onGrain} />} />
     {body}
   </section>;
 }
 
-function Task({ state, label, note, action, detail }: {
-  state: "completed" | "warning" | "attention";
+/** یک دورهٔ ثبت‌نشده: چه شده، چرا مهم است، و دکمه/پیوند مجاز یا اینکه کار چه کسی است. */
+function AttentionTask({ item, onClosed, reload }: {
+  item: AttentionItem;
+  onClosed: (outcome: "verified" | "done", channel: string, date: string) => void;
+  reload: () => Promise<UnpostedRow[]>;
+}) {
+  const r = item.row;
+  const channel = channelLabel(r.channel);
+  const date = formatJalali(r.businessDate);
+  const action = item.action?.kind === "close" ? <SafeAction
+    trigger="بستن دوره"
+    title={`بستن دورهٔ ${channel} — ${date}`}
+    summary={<dl className="safe-facts">
+      <div><dt>فاکتورها</dt><dd>{formatCount(r.invoiceCount)}</dd></div>
+      <div><dt>مبلغ قابل ثبت</dt><dd><Money rial={r.payableAmount} /></dd></div>
+    </dl>}
+    consequence="درآمد و بهای تمام‌شدهٔ این دوره در دفتر ثبت می‌شود و پس از آن فاکتور تازه‌ای به این دوره نمی‌نشیند. اصلاح بعدی فقط با سند معکوس ممکن است."
+    confirmLabel="بستن دوره و ثبت در دفتر"
+    pendingLabel="در حال بستن…"
+    run={async () => {
+      // کلید Idempotency فرستاده نمی‌شود: سرور آن را از
+      // (شعبه، کانال، تاریخ) می‌سازد و تکرار Replay می‌گیرد.
+      await pos.closeChannelDay({ branchId: r.branchId, channel: r.channel, date: r.businessDate });
+    }}
+    verify={async () => !(await reload()).some(x => x.batchId === r.batchId)}
+    onDone={outcome => onClosed(outcome === "verified" ? "verified" : "done", channel, date)}
+  /> : item.action?.kind === "link" ? (() => {
+    const { href, label } = item.action;
+    return <a className="btn" href={href} onClick={e => { if (e.metaKey || e.ctrlKey || e.shiftKey) return; e.preventDefault(); navigate(href); }}>{label}</a>;
+  })() : null;
+  return <Task state={item.tone === "attention" ? "attention" : "active"} label={item.title} cause={item.cause}
+    detail={<Money rial={r.payableAmount} size="sm" />} action={action} note={item.note ?? undefined}
+    info={item.tone === "info"} />;
+}
+
+function Task({ state, label, cause, note, action, detail, reference, info = false }: {
+  state: "completed" | "warning" | "attention" | "active" | "pending" | "unknown" | "failed";
   label: string;
+  /** چرا مهم است / چرا این حالت — جملهٔ دوم زیر عنوان. */
+  cause?: string | undefined;
   note?: string | undefined;
   action?: React.ReactNode;
   detail?: React.ReactNode;
+  reference?: string | null | undefined;
+  info?: boolean;
 }) {
   return (
-    <li className={`task task--${state}`}>
+    <li className={`task task--${state}${info ? " task--info" : ""}`}>
       <StatusIcon state={state} />
-      <span className="task-label">{label}</span>
+      <span className="task-label">
+        {label}
+        {cause ? <span className="task-cause">{cause}</span> : null}
+        {reference ? <span className="task-cause">شناسهٔ پیگیری: <Ltr>{reference}</Ltr></span> : null}
+      </span>
       {detail ? <span className="task-detail">{detail}</span> : null}
       {/*
         دکمه فقط وقتی ساخته می‌شود که کاری برای انجام باشد؛ وگرنه

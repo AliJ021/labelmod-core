@@ -232,7 +232,28 @@ export interface DailyHour {
   returnCount: number;
   paymentCount: number;
 }
-export interface DailyHourly { businessDate: string; profitVisible: boolean; hours: DailyHour[] }
+/**
+ * `currentHour`: ساعت جاری کسب‌وکار برای امروز (از سرور)، `null` برای روز گذشته.
+ * ساعت‌های پس از آن «هنوز نیامده»اند، نه صفر.
+ */
+export interface DailyHourly { businessDate: string; currentHour: number | null; profitVisible: boolean; hours: DailyHour[] }
+
+/**
+ * یک سطل روند روزانه/ماهانه (مهاجرت ۰۹۳): جمع خلاصه روزِ روزهای `from` تا `to`
+ * (هر دو شامل)، حساب‌شده در SQL. `partial` یعنی امروز در این سطل است و هنوز تمام نشده.
+ */
+export interface DailyBucket {
+  from: string;
+  to: string;
+  partial: boolean;
+  salesAmount: string;
+  receivedAmount: string;
+  profitAmount: string | null;
+  invoiceCount: number;
+  returnCount: number;
+  paymentCount: number;
+}
+export interface DailyTrend { businessDate: string; profitVisible: boolean; buckets: DailyBucket[] }
 
 /** درآمدی که هنوز به دفتر نرفته — زنگ خطر داشبورد. */
 export interface UnpostedRow {
@@ -486,6 +507,16 @@ export const pos = {
     api.get<DailyHourly>(
       `/reports/daily/hourly?branchId=${encodeURIComponent(branchId)}` +
         (date === undefined ? "" : `&date=${encodeURIComponent(date)}`),
+      opts,
+    ),
+
+  /**
+   * روند روزانه/ماهانه: مرزها از مرورگر (ماه جلالی را مرورگر می‌فهمد)، جمع در SQL.
+   * `report.view` می‌خواهد؛ صندوق‌دار ۴۰۳ می‌گیرد و پنل «بی‌دسترسی» نشان می‌دهد.
+   */
+  dailyTrend: (branchId: string, bounds: readonly string[], opts?: RequestOptions) =>
+    api.get<DailyTrend>(
+      `/reports/daily/trend?branchId=${encodeURIComponent(branchId)}&bounds=${encodeURIComponent(bounds.join(","))}`,
       opts,
     ),
 
