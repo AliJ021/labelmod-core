@@ -15,8 +15,8 @@ const me: Me = { id: "22222222-2222-4222-8222-222222222222", fullName: "مدیر
 const branches: Branch[] = [{ id: "b1", code: "TEST", name: "شعبه آزمایشی", warehouses: [{ id: "w1", code: "STORE", name: "انبار آزمایشی", kind: "store" }] }];
 const daily: DailyReport = { businessDate: "2026-09-16", salesAmount: "12340000", receivedAmount: "11000000", profitAmount: "2340000", invoiceCount: 12, returnCount: 1 };
 /** ۲۴ ساعت خلاصه روز (مثل پاسخ سرور)؛ ساعت‌های نام‌برده جایگزین صفر می‌شوند. */
-export function hourlyDay(over: Record<number, Partial<DailyHour>> = {}, profitVisible = true, businessDate = daily.businessDate): DailyHourly {
-  return { businessDate, profitVisible, hours: Array.from({ length: 24 }, (_, hour) => ({
+export function hourlyDay(over: Record<number, Partial<DailyHour>> = {}, profitVisible = true, businessDate = daily.businessDate, currentHour: number | null = null): DailyHourly {
+  return { businessDate, currentHour, profitVisible, hours: Array.from({ length: 24 }, (_, hour) => ({
     hour, salesAmount: "0", receivedAmount: "0", profitAmount: profitVisible ? "0" : null,
     invoiceCount: 0, returnCount: 0, paymentCount: 0, ...over[hour],
     ...(profitVisible ? {} : { profitAmount: null }),

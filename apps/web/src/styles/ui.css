@@ -158,6 +158,8 @@
 .task:last-child { border-block-end: 0; }
 .task-label { flex: 1 1 14rem; min-inline-size: 0; overflow-wrap: anywhere; }
 .task-detail { flex: 0 0 auto; }
+.task-cause { display: block; margin-block-start: 2px; font-size: var(--text-xs); color: var(--ink-2); }
+.task--info .task-label { color: var(--ink-2); }
 .task-action { flex: 0 0 auto; margin-inline-start: auto; }
 /*
   یادداشت می‌تواند جمع شود و بشکند. با `flex: 0 0 auto` یادداشت دوره
@@ -221,6 +223,44 @@
   transform: translateX(50%); z-index: 2; padding: 4px 8px; border-radius: var(--r-xs);
   background: var(--surface-inverse); color: var(--surface-solid); font-size: var(--text-2xs); white-space: nowrap; pointer-events: none;
 }
+
+/* ── نمودار خطی (روند داشبورد) ─────────────────────────────────────
+   سه خط با رنگ **و** الگوی خط جدا؛ خط شاخص انتخاب‌شده پهن‌تر. نقطهٔ دورهٔ جاری توخالی. */
+.line-chart { margin: 0; display: flex; flex-direction: column; gap: var(--s-2); min-inline-size: 0; }
+.line-chart figcaption { display: flex; flex-wrap: wrap; justify-content: space-between; gap: var(--s-1) var(--s-3); font-size: var(--text-sm); color: var(--ink-2); }
+.line-chart-title { font-weight: var(--weight-semibold); color: var(--ink); }
+.line-chart-legend { display: flex; flex-wrap: wrap; gap: var(--s-1) var(--s-4); margin: 0; padding: 0; list-style: none; font-size: var(--text-xs); color: var(--ink-2); }
+.line-chart-legend li { display: inline-flex; align-items: center; gap: var(--s-1); }
+.line-chart-legend li[data-emphasis] { color: var(--ink); font-weight: var(--weight-semibold); }
+.line-chart-swatch { inline-size: 24px; block-size: 8px; overflow: visible; }
+.line-chart-plot { position: relative; block-size: 176px; padding-inline-end: 0; }
+.line-chart-svg { display: block; inline-size: 100%; block-size: 100%; overflow: visible; }
+.line-chart-grid { stroke: var(--rule); stroke-width: 1; fill: none; vector-effect: non-scaling-stroke; }
+.line-chart-zero { stroke: var(--rule-2); stroke-width: 1.5; fill: none; vector-effect: non-scaling-stroke; }
+.line-chart-line, .line-chart-swatch path { fill: none; stroke: var(--series); stroke-width: 2; stroke-linejoin: round; stroke-linecap: round; stroke-dasharray: var(--dash, none); vector-effect: non-scaling-stroke; }
+.line-chart-dot { fill: none; stroke: var(--series); stroke-width: 6; stroke-linecap: round; vector-effect: non-scaling-stroke; }
+.line-chart-dot.is-partial { stroke-width: 10; }
+.line-chart-dot-hole { fill: none; stroke: var(--surface-solid); stroke-width: 4; stroke-linecap: round; vector-effect: non-scaling-stroke; }
+.line-chart [data-series="sales"] { --series: var(--chart-1); }
+.line-chart [data-series="received"] { --series: var(--chart-2); --dash: 7 4; }
+.line-chart [data-series="profit"] { --series: var(--ink-2); --dash: 1 4; }
+.line-chart g[data-emphasis] .line-chart-line, .line-chart-legend li[data-emphasis] .line-chart-swatch path { stroke-width: 3.5; }
+.line-chart g[data-series]:not([data-emphasis]) .line-chart-dot { stroke-width: 4; }
+.line-chart g[data-series]:not([data-emphasis]) .line-chart-dot.is-partial { stroke-width: 8; }
+.line-chart-y { position: absolute; inset-inline-end: 0; inset-block-start: calc(var(--y) * 100%); transform: translateY(-50%); padding-inline: 4px; border-radius: var(--r-xs); background: color-mix(in srgb, var(--surface-solid) 85%, transparent); font-size: var(--text-2xs); color: var(--ink-2); font-variant-numeric: tabular-nums; pointer-events: none; }
+.line-chart-hit { position: absolute; inset-block: 0; inset-inline-start: calc(var(--x) * 100%); inline-size: calc(var(--w) * 100%); transform: translateX(50%); }
+.line-chart-hit:hover { background: color-mix(in srgb, var(--ink) 6%, transparent); }
+.line-chart-hit:hover::after {
+  content: attr(data-tip); position: absolute; inset-block-start: 0; inset-inline-start: 50%;
+  transform: translateX(50%); z-index: 2; padding: 4px 8px; border-radius: var(--r-xs);
+  background: var(--surface-inverse); color: var(--surface-solid); font-size: var(--text-2xs); white-space: nowrap; pointer-events: none;
+}
+.line-chart-x { position: relative; block-size: 1.4em; font-size: var(--text-xs); color: var(--ink-2); }
+.line-chart-x span { position: absolute; inset-inline-start: calc(var(--x) * 100%); transform: translateX(50%); white-space: nowrap; }
+.line-chart-x span:first-child { transform: none; }
+.line-chart-x span:last-child { transform: translateX(100%); }
+.line-chart-note { margin: 0; font-size: var(--text-xs); color: var(--ink-2); }
+@media (max-width: 560px) { .line-chart-x span[data-minor] { display: none; } }
 
 /* ── جدول داده ───────────────────────────────────────────────────── */
 .table-scroll { overflow: auto; overscroll-behavior-x: contain; max-inline-size: 100%; border: var(--border-w) solid var(--rule); border-radius: var(--r-sm); background: var(--surface-solid); }

@@ -264,6 +264,8 @@ export function registerScopeRoutes(app: FastifyInstance, deps: ScopeRouteDeps):
    *   هیچ ستونی از بها (نه `cogs`، نه حاشیه) بیرون نمی‌رود.
    * - پول رشته است (`serializeMoney`)؛ عدد منفی (ساعتِ مرجوعی، فروش زیر بها)
    *   همان‌طور که هست.
+   * - `currentHour` ساعت جاری کسب‌وکار برای امروز (روز گذشته `null`) — مرز
+   *   «هنوز نیامده» در نمودار، نه صفر.
    */
   app.get("/reports/daily/hourly", async (req) => {
     const { branchId, date, seesCost } = await dailyScope(req);
@@ -281,11 +283,111 @@ export function registerScopeRoutes(app: FastifyInstance, deps: ScopeRouteDeps):
          FROM sales.daily_summary_hourly(${branchId}::uuid, ${date}::date)
         ORDER BY hour_of_day`.execute(db);
     if (rows.rows.length !== 24) throw new Error("sales.daily_summary_hourly باید ۲۴ سطر بدهد");
+    // ساعت جاری کسب‌وکار، فقط برای «امروز»: ساعت‌های پس از آن هنوز نیامده‌اند
+    // و نمودار نباید آن‌ها را «صفر» نشان دهد. روز گذشته `null` است — همهٔ
+    // ساعت‌هایش کامل‌اند. از دیتابیس، نه ساعت مرورگر.
+    const now = await sql<{ today: string; hour: number }>`
+      SELECT platform.business_date()::text AS today, platform.business_hour() AS hour`.execute(db);
+    const currentHour = now.rows[0]!.today === date ? Number(now.rows[0]!.hour) : null;
     return {
       businessDate: date,
+      currentHour,
       profitVisible: seesCost,
       hours: rows.rows.map((r) => ({
         hour: Number(r.hour_of_day),
+        salesAmount: serializeMoney(BigInt(r.sales_amount)),
+        receivedAmount: serializeMoney(BigInt(r.received_amount)),
+        profitAmount: seesCost ? serializeMoney(BigInt(r.profit_amount)) : null,
+        invoiceCount: Number(r.invoice_count),
+        returnCount: Number(r.return_count),
+        paymentCount: Number(r.payment_count),
+      })),
+    };
+  });
+
+  /**
+   * روند روزانه و ماهانهٔ داشبورد — همان سه عدد خلاصه روز، جمع‌شده در
+   * بازه‌هایی که **کلاینت** مرزشان را می‌دهد (مهاجرت ۰۹۳،
+   * `sales.daily_summary_range`).
+   *
+   * - مرز از کلاینت است، مثل `/reports/compare`: ماه جلالی را مرورگر
+   *   می‌فهمد، نه سرور. `bounds` = n+۱ تاریخ صعودی؛ سطل i یعنی
+   *   [bounds[i]، bounds[i+1]). جمع پول در SQL است، نه اینجا.
+   * - بیش از یک روز یعنی گزارش: `report.view` می‌خواهد (صندوق‌دار فقط
+   *   «امروز» را از `/reports/daily` می‌بیند). سود فقط با `cost.view`،
+   *   وگرنه `null` در همهٔ سطل‌ها و `profitVisible: false`.
+   * - **آینده داده نیست:** سطلی که از امروز جلوتر برود ۴۲۲ است، نه صفر.
+   *   سطلِ شامل امروز `partial` است — روز هنوز تمام نشده.
+   */
+  app.get("/reports/daily/trend", async (req) => {
+    const s = session(req) as { userId: string; pinUnlocked: boolean };
+    const q = z
+      .object({
+        branchId: z.string().uuid("شناسه نامعتبر"),
+        bounds: z
+          .string()
+          .transform((v) => v.split(","))
+          .pipe(z.array(z.iso.date("تاریخ نامعتبر")).min(2, "دست‌کم یک بازه لازم است").max(33, "حداکثر ۳۲ بازه")),
+      })
+      .refine((v) => v.bounds.every((d, i) => i === 0 || v.bounds[i - 1]! < d), {
+        message: "مرزهای بازه باید صعودی و بی‌تکرار باشند",
+      })
+      .parse(req.query);
+    await assertBranch(db, s.userId, q.branchId);
+    await requireForSession(db, s, "report.view");
+    const costs = await can(db, { userId: s.userId, operation: "cost.view", viaPin: s.pinUnlocked });
+    const seesCost = costs.verdict === "allow";
+
+    const first = q.bounds[0]!;
+    const last = q.bounds[q.bounds.length - 1]!;
+    const check = await sql<{ today: string; span: number; future: boolean }>`
+      SELECT platform.business_date()::text AS today,
+             (${last}::date - ${first}::date) AS span,
+             (${last}::date > platform.business_date() + 1) AS future`.execute(db);
+    const { today, span, future } = check.rows[0]!;
+    // همان قالب ۴۰۰ ورودی نامعتبر Zod؛ «امروز» از دیتابیس است، پس این دو
+    // سنجش پس از Schema می‌آیند.
+    const invalid = (message: string) =>
+      new z.ZodError([{ code: "custom", path: ["bounds"], message, input: q.bounds }]);
+    if (span > 400) throw invalid("بازهٔ روند حداکثر ۴۰۰ روز است");
+    if (future) throw invalid("بازهٔ روند از امروز جلوتر است");
+
+    const rows = await sql<{
+      ord: string;
+      from_date: string;
+      to_date: string;
+      sales_amount: string;
+      received_amount: string;
+      profit_amount: string;
+      invoice_count: string;
+      return_count: string;
+      payment_count: string;
+    }>`WITH b AS (
+         SELECT d, ord FROM unnest(${q.bounds}::date[]) WITH ORDINALITY AS t(d, ord)
+       ),
+       k AS (
+         SELECT b1.ord, b1.d AS lo, b2.d AS hi FROM b b1 JOIN b b2 ON b2.ord = b1.ord + 1
+       )
+       SELECT k.ord::text, k.lo::text AS from_date, (k.hi - 1)::text AS to_date,
+              coalesce(sum(r.sales_amount), 0)::text    AS sales_amount,
+              coalesce(sum(r.received_amount), 0)::text AS received_amount,
+              coalesce(sum(r.profit_amount), 0)::text   AS profit_amount,
+              coalesce(sum(r.invoice_count), 0)::text   AS invoice_count,
+              coalesce(sum(r.return_count), 0)::text    AS return_count,
+              coalesce(sum(r.payment_count), 0)::text   AS payment_count
+         FROM k
+         LEFT JOIN sales.daily_summary_range(${q.branchId}::uuid, ${first}::date, ${last}::date - 1) r
+           ON r.business_date >= k.lo AND r.business_date < k.hi
+        GROUP BY k.ord, k.lo, k.hi
+        ORDER BY k.ord`.execute(db);
+    if (rows.rows.length !== q.bounds.length - 1) throw new Error("sales.daily_summary_range سطل کم برگرداند");
+    return {
+      businessDate: today,
+      profitVisible: seesCost,
+      buckets: rows.rows.map((r) => ({
+        from: r.from_date,
+        to: r.to_date,
+        partial: r.to_date >= today,
         salesAmount: serializeMoney(BigInt(r.sales_amount)),
         receivedAmount: serializeMoney(BigInt(r.received_amount)),
         profitAmount: seesCost ? serializeMoney(BigInt(r.profit_amount)) : null,
