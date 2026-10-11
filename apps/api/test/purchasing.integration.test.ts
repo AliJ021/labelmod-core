@@ -311,6 +311,19 @@ describe("رسید خرید", { skip }, () => {
     assert.deepEqual((vars.json() as { variations: { id: string }[] }).variations.map((v) => v.id).sort(), [variationA, variationB].sort());
     const c = await loginAs(cashier);
     assert.equal((await search("پیراهن", c)).statusCode, 403);
+
+    // شناسهٔ دقیق که با نام کالای دیگری هم جور است: کالای دقیق اول فهرست و صریح.
+    const term = `EXACT-${suffix}`.slice(0, 24);
+    const mk = async (code: string, name: string, sku: string) => {
+      const p = await handle.db.insertInto("catalog.product").values({ code, name_internal: name, name_web: null, tax_rate_code: "standard" }).returning("id").executeTakeFirstOrThrow();
+      await handle.db.insertInto("catalog.variation").values({ product_id: p.id, sku, color: "آبی", size: "M", status: "active" }).execute();
+      return p.id;
+    };
+    const decoy = await mk(`D-${suffix}`.slice(0, 24), `آ ${term} کالای دیگر`, `D-${suffix}-1`); // الفبایی جلوتر
+    const exactId = await mk(term, "کالای دقیق", term);
+    const both = (await search(term)).json() as { products: { id: string }[]; exactProductId: string | null };
+    assert.deepEqual(both.products.map((p) => p.id).slice(0, 2), [exactId, decoy], "کالای دقیق اول، حتی وقتی با نام هم پیدا شده");
+    assert.equal(both.exactProductId, exactId);
   });
 
   test("افزودن گروهی: همه یا هیچ، ادغام با سطر هم‌قیمت، Idempotency", async () => {
@@ -362,11 +375,35 @@ describe("رسید خرید", { skip }, () => {
       [],
     ]) assert.equal((await bulk(lines)).statusCode, 400, JSON.stringify(lines));
 
+    // شکست **درون** تراکنش (قلم دوم سرریز مبلغ سطر): قلم اول هم نمی‌نشیند.
+    const overflow = await bulk([
+      { variationId: variationB, qty: "1", unitPrice: "1000000" },
+      { variationId: variationA, qty: "99999999999", unitPrice: "999999999999999" },
+    ]);
+    assert.notEqual(overflow.statusCode, 201, overflow.body);
+    const afterOverflow = await read();
+    assert.equal(afterOverflow.goodsAmount, after.goodsAmount, "قلم اولِ گروهِ شکست‌خورده هم برگشت");
+    assert.equal(afterOverflow.lines.length, after.lines.length);
+
     const c = await loginAs(cashier);
     const denied = await app.inject({ method: "POST", url: `/receipts/${draft.id}/lines/bulk`, ...c,
       payload: { lines: [{ variationId: variationA, qty: "1", unitPrice: "1000000" }] } });
     assert.equal(denied.statusCode, 403, denied.body);
     assert.equal((await read()).goodsAmount, after.goodsAmount);
+  });
+
+  test("افزودن گروهی به رسید ثبت‌شده رد می‌شود و چیزی نمی‌نشیند", async () => {
+    const s = await loginAs(keeper);
+    const draft = await newDraft(keeper);
+    const one = await app.inject({ method: "POST", url: `/receipts/${draft.id}/lines`, ...s, payload: { variationId: variationA, qty: "1", unitPrice: "1000000" } });
+    assert.equal(one.statusCode, 201, one.body);
+    const posted = await app.inject({ method: "POST", url: `/receipts/${draft.id}/post`, ...s });
+    assert.equal(posted.statusCode, 200, posted.body);
+    const r = await app.inject({ method: "POST", url: `/receipts/${draft.id}/lines/bulk`, ...s,
+      payload: { lines: [{ variationId: variationB, qty: "1", unitPrice: "1000000" }] } });
+    assert.equal(r.statusCode, 409, r.body);
+    const after = (await app.inject({ method: "GET", url: `/receipts/${draft.id}`, ...s })).json() as ReceiptBody;
+    assert.equal(after.lines.length, 1);
   });
 
   test("همان کالا با قیمت متفاوت، سطر جدا می‌گیرد", async () => {

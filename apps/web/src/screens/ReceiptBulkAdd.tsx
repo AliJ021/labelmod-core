@@ -50,8 +50,10 @@ export function ReceiptBulkAdd({ receiptId, disabled, onAdded }: {
     setSelection(new Map());
     const r = await purchasing.searchProducts(receiptId, term);
     setHits(r.products);
-    // بارکد یا SKU دقیق: همان کالا باز و همان تنوع انتخاب می‌شود.
-    const only = r.exactVariationId !== null ? r.products[0] : r.products.length === 1 ? r.products[0] : undefined;
+    // بارکد یا SKU دقیق: همان کالا (با شناسهٔ صریح سرور، نه «اولین سطر») باز و
+    // همان تنوع انتخاب می‌شود.
+    const exact = r.exactProductId === null ? undefined : r.products.find(p => p.id === r.exactProductId);
+    const only = exact ?? (r.products.length === 1 ? r.products[0] : undefined);
     if (only) await choose(only, r.exactVariationId);
   });
 

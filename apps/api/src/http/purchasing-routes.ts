@@ -585,14 +585,16 @@ export function registerPurchasingRoutes(
     await requireForSession(db, s, "stock.receive");
     const found = await searchActiveProducts(db, normalizeSearchTerm(q.q));
     let products = found.products;
-    if (found.exactProductId !== null && !products.some((p) => p.id === found.exactProductId)) {
-      const extra = await sql<{ id: string; name: string; code: string; variationCount: number }>`
+    if (found.exactProductId !== null) {
+      // کالای بارکد/SKU دقیق **همیشه** اول است — چه با نام هم پیدا شده باشد
+      // چه نه — و شناسه‌اش صریح برمی‌گردد تا مرورگر به «اولین سطر» تکیه نکند.
+      const exact = products.find((p) => p.id === found.exactProductId) ?? (await sql<{ id: string; name: string; code: string; variationCount: number }>`
         SELECT p.id, p.name_internal AS name, p.code, count(v.id)::int AS "variationCount"
           FROM catalog.product p JOIN catalog.variation v ON v.product_id = p.id AND v.status = 'active'
-         WHERE p.id = ${found.exactProductId}::uuid GROUP BY p.id`.execute(db);
-      products = [...extra.rows, ...products];
+         WHERE p.id = ${found.exactProductId}::uuid GROUP BY p.id`.execute(db)).rows[0];
+      if (exact) products = [exact, ...products.filter((p) => p.id !== exact.id)].slice(0, 50);
     }
-    return { products, exactVariationId: found.exactVariationId };
+    return { products, exactVariationId: found.exactVariationId, exactProductId: found.exactProductId };
   });
 
   /**

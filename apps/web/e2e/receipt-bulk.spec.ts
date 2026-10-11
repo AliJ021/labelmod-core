@@ -27,7 +27,7 @@ async function openDraft(page: Page, api: import("./fixtures").MockApi) {
 
 test.describe("افزودن گروهی رسید خرید", () => {
   test("search by name, pick product, select a whole colour plus one size, edit qty, one all-or-nothing request", async ({ page, api }) => {
-    api.defaults["GET /receipts/r1/products"] = { products: [hit, { ...hit, id: "p2", name: "پیراهن دیگر", code: "LM00043" }], exactVariationId: null };
+    api.defaults["GET /receipts/r1/products"] = { products: [hit, { ...hit, id: "p2", name: "پیراهن دیگر", code: "LM00043" }], exactVariationId: null, exactProductId: null };
     const posts: unknown[] = [];
     api.handlers.set("POST /receipts/r1/lines/bulk", async route => {
       posts.push({ body: route.request().postDataJSON(), key: route.request().headers()["idempotency-key"] });
@@ -69,7 +69,8 @@ test.describe("افزودن گروهی رسید خرید", () => {
   });
 
   test("exact barcode opens its product with that size preselected; a server rejection keeps the selection", async ({ page, api }) => {
-    api.defaults["GET /receipts/r1/products"] = { products: [hit], exactVariationId: "v-bm" };
+    // کالای دقیق عمداً اول فهرست نیست: مرورگر با شناسهٔ صریح انتخاب می‌کند، نه «اولین سطر».
+    api.defaults["GET /receipts/r1/products"] = { products: [{ ...hit, id: "p0", name: "آ کالای دیگر", code: "LM00001" }, hit], exactVariationId: "v-bm", exactProductId: "p1" };
     api.handlers.set("POST /receipts/r1/lines/bulk", async route => {
       await route.fulfill({ status: 409, json: { error: { code: "variation_archived", message: "این کالا بایگانی شده است", correlationId: "req-1" } } });
     });

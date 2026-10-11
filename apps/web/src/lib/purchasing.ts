@@ -212,7 +212,7 @@ export const purchasing = {
 
   /** جست‌وجوی کالا برای رسید: نام، کد، یا بارکد/SKU دقیق (همان تعریف صندوق). */
   searchProducts: (id: string, q: string, opts?: RequestOptions) =>
-    api.get<{ products: ReceiptProductHit[]; exactVariationId: string | null }>(
+    api.get<{ products: ReceiptProductHit[]; exactVariationId: string | null; exactProductId: string | null }>(
       `/receipts/${id}/products?q=${encodeURIComponent(q)}`, opts),
 
   productVariations: (id: string, productId: string, opts?: RequestOptions) =>

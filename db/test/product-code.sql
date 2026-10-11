@@ -21,6 +21,7 @@ END $$;
 DO $test$
 DECLARE
   a text; b text; c text; n0 bigint; n1 bigint; v_seq bigint; v_user uuid;
+  v_last bigint; v_called boolean;
 BEGIN
   INSERT INTO identity.app_user (username, full_name) VALUES ('pcode','تست کد کالا') RETURNING id INTO v_user;
   PERFORM platform.set_actor(v_user);
@@ -55,6 +56,18 @@ BEGIN
   EXCEPTION WHEN unique_violation THEN
     RAISE NOTICE '  ✓ کد تکراری روی قید یکتایی رد شد';
   END;
+
+  RAISE NOTICE E'\n═══ ۵. پس از ۹۹۹۹۹ رقم ششم، نه کوتاه‌شدن (lpad) ═══';
+  -- `setval` تراکنشی نیست و با ROLLBACK برنمی‌گردد؛ پس مقدار پیشین صریح برگردانده می‌شود.
+  SELECT last_value, is_called INTO v_last, v_called FROM catalog.product_code_seq;
+  PERFORM setval('catalog.product_code_seq', 99999, false);
+  a := catalog.next_product_code();
+  b := catalog.next_product_code();
+  c := catalog.next_product_code();
+  PERFORM setval('catalog.product_code_seq', v_last, v_called);
+  PERFORM pg_temp.assert_eq('۹۹۹۹۹', a, 'LM99999');
+  PERFORM pg_temp.assert_eq('۱۰۰۰۰۰ شش رقمی', b, 'LM100000');
+  PERFORM pg_temp.assert_eq('۱۰۰۰۰۱', c, 'LM100001');
 
   RAISE NOTICE E'\n✔ کد خودکار کالا — همه ادعاها پاس شدند';
 END $test$;

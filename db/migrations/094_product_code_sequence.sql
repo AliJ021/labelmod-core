@@ -39,9 +39,13 @@ RETURNS text LANGUAGE plpgsql VOLATILE
 SET search_path = pg_catalog AS $$
 DECLARE
   v_code text;
+  v_n    text;
 BEGIN
   LOOP
-    v_code := 'LM' || lpad(nextval('catalog.product_code_seq')::text, 5, '0');
+    -- ⚠️ `lpad` رشتهٔ بلندتر از طول خواسته‌شده را **کوتاه** می‌کند
+    --    (lpad('123456', 5) = '12345')؛ پس طول از خودِ عدد می‌آید، نه ثابت ۵.
+    v_n := nextval('catalog.product_code_seq')::text;
+    v_code := 'LM' || lpad(v_n, greatest(5, length(v_n)), '0');
     -- کد دستیِ هم‌نام (حتی با حروف کوچک) یعنی این عدد گرفته شده است.
     EXIT WHEN NOT EXISTS (SELECT 1 FROM catalog.product p WHERE upper(p.code) = v_code);
   END LOOP;

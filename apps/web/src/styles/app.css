@@ -1079,7 +1079,7 @@ select.set-input {
 .rcpt-bulk-sizes li { display: flex; align-items: center; gap: var(--s-1); padding: var(--s-1) var(--s-2); border: 1px solid var(--ring); border-radius: var(--r-sm); min-inline-size: 0; }
 .rcpt-bulk-sizes li.is-on { border-color: var(--accent); background: var(--accent-soft); }
 .rcpt-bulk-sizes label { display: flex; align-items: center; gap: var(--s-1); min-block-size: 44px; }
-.rcpt-bulk-qty { inline-size: 6ch; padding: var(--s-1); border-radius: var(--r-xs); border: 1px solid var(--ring); background: var(--surface-solid); color: var(--ink); font-variant-numeric: tabular-nums; }
+.rcpt-bulk-qty { inline-size: 6ch; min-block-size: 44px; padding: var(--s-1); border-radius: var(--r-xs); border: 1px solid var(--ring); background: var(--surface-solid); color: var(--ink); font-variant-numeric: tabular-nums; }
 .rcpt-bulk-qty[aria-invalid="true"] { border-color: var(--crit); }
 
 /* برچسب وضعیت. رنگ به‌تنهایی معنا حمل نمی‌کند (ADR-002): متن فارسی
