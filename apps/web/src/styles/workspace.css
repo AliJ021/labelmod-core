@@ -357,6 +357,8 @@ a[role="tab"] { display: inline-flex; align-items: center; text-decoration: none
 /* CTA نامعتبر نباید فعال به نظر برسد: بی برنج، قاب خط‌چین، متن کم‌رنگ و دلیل زیرش. */
 .pay-finish .btn--primary:disabled { background: var(--surface-solid-2); color: var(--ink-2); border: var(--border-w) dashed var(--rule-2); opacity: 1; filter: none; }
 .pay-finish-why { margin: 0; text-align: center; }
+.receipt-auto { display: flex; align-items: center; gap: var(--s-2); min-block-size: var(--touch); font-size: var(--text-xs); cursor: pointer; }
+.receipt-auto input { flex: 0 0 auto; accent-color: var(--accent); }
 .pay-abandon { justify-self: center; inline-size: auto !important; min-block-size: var(--touch); font-size: var(--text-sm); }
 .credit-checkout { display: grid; gap: var(--s-1); }
 .credit-checkout--needs-customer { display: flex; justify-content: center; }

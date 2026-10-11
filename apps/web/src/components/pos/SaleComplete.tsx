@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { Ltr } from "../ui/Bidi.tsx";
 import { Money } from "../ui/Money.tsx";
 import { Button } from "../ui/Controls.tsx";
@@ -14,6 +14,8 @@ export interface CompletedSale {
   /** `null` یعنی هنوز در صف آفلاین است و شماره ندارد. */
   number: string | null;
   queued: boolean;
+  /** فقط انتخاب صریح صندوق‌دار در نهایی‌سازی همین فروش؛ بازیابی وضعیت چاپ نمی‌کند. */
+  printOnComplete?: boolean;
   /**
    * تسویهٔ قطعی سرور (F-115-02) — پاسخ نهایی‌سازی یا خواندن دوبارهٔ فاکتور.
    * `null` یعنی خوانده نشد (یا هنوز در صف است)؛ آن‌وقت عددی «قطعی» نشان داده نمی‌شود.
@@ -31,7 +33,7 @@ export interface CompletedSale {
  *    پرداختی که از تب یا دستگاه دیگر میان آن دو نشسته، باقی پول یا نسیه را عوض
  *    می‌کند و نهایی‌سازی آن را زیر قفل دیده است.
  *
- * چاپ فقط با دکمهٔ صریح و در قاب هم‌مبدأ انجام می‌شود؛ شکستش هیچ اثر مالی ندارد.
+ * چاپ با دکمه یا انتخاب صریح چاپ پس از ثبت، در قاب هم‌مبدأ است؛ شکستش اثر مالی ندارد.
  * فروش در صف آفلاین شماره و رسید ندارد و همین را صریح می‌گوید.
  */
 export function SaleComplete({ sale, onNext }: { sale: CompletedSale; onNext: () => void }) {
@@ -41,7 +43,7 @@ export function SaleComplete({ sale, onNext }: { sale: CompletedSale; onNext: ()
   const [printError, setPrintError] = useState<string | null>(null);
   const printJob = useRef<AbortController | null>(null);
   useEffect(() => () => printJob.current?.abort(), [sale.invoiceId]);
-  async function print() {
+  const print = useCallback(async () => {
     if (printJob.current) return;
     const job = new AbortController();
     printJob.current = job;
@@ -50,7 +52,17 @@ export function SaleComplete({ sale, onNext }: { sale: CompletedSale; onNext: ()
     try { await printReceipt(sale.invoiceId, job.signal); }
     catch (error) { if (!job.signal.aborted) setPrintError(error instanceof Error ? error.message : "چاپ رسید آغاز نشد."); }
     finally { if (printJob.current === job) printJob.current = null; if (!job.signal.aborted) setPrinting(false); }
-  }
+  }, [sale.invoiceId]);
+  const autoPrinted = useRef<string | null>(null);
+  useEffect(() => {
+    if (!sale.printOnComplete || sale.queued || !sale.number || autoPrinted.current === sale.invoiceId) return;
+    // پس از بستن تأیید مالی؛ cleanup اجرای آزمایشی StrictMode را لغو می‌کند.
+    const timer = setTimeout(() => {
+      autoPrinted.current = sale.invoiceId;
+      void print();
+    }, 0);
+    return () => clearTimeout(timer);
+  }, [sale.printOnComplete, sale.queued, sale.number, sale.invoiceId, print]);
   const heading = useRef<HTMLHeadingElement>(null);
   useEffect(() => { heading.current?.focus(); }, []);
   useEffect(() => {
@@ -99,9 +111,9 @@ export function SaleComplete({ sale, onNext }: { sale: CompletedSale; onNext: ()
     </section> : null}
 
     <div className="row sale-complete-actions">
-      {!sale.queued && sale.number ? <Button onClick={() => void print()} disabled={printing}>
+      {!sale.queued && sale.number ? <Button variant="primary" onClick={() => void print()} disabled={printing}>
         <Icon name="print" size="sm" /> {printing ? "در حال آماده‌سازی چاپ…" : "چاپ رسید"}</Button> : null}
-      <Button variant="primary" onClick={onNext}>فروش بعدی</Button>
+      <Button variant={!sale.queued && sale.number ? "secondary" : "primary"} onClick={onNext} disabled={printing}>فروش بعدی</Button>
     </div>
     {printError ? <p role="alert" className="field-hint">{printError} فروش ثبت شده است.</p> : null}
   </section>;

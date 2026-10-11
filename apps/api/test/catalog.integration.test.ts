@@ -498,6 +498,7 @@ describe("ساخت خودکار تنوع و ماتریس موجودی", { skip }
     assert.equal(r.headers["cache-control"], "no-store");
 
     const html = r.body;
+    assert.match(html, /class="shop">لیبل مد<\/div>/, "روی لیبل نام برند چاپ می‌شود، مستقل از شعبه");
     assert.equal(html.split('class="label"').length - 1, 3, "۲ + ۱ = سه برچسب");
     // ۳٬۲۰۰٬۰۰۰ ریال = ۳۲۰٬۰۰۰ تومان
     assert.ok(html.includes("320,000"), "قیمت باید به تومان با رقم انگلیسی روی برچسب بیاید");
