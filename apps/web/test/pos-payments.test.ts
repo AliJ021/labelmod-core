@@ -259,7 +259,7 @@ describe("«ثبت شد» از تسویهٔ قطعی", () => {
   test("نهایی‌سازی و بررسی آن تصویر پیش از نهایی‌سازی را منبع مبلغ نمی‌کنند", () => {
     const src = readFileSync(new URL("../src/screens/Pos.tsx", import.meta.url), "utf8");
     const fin = src.slice(src.indexOf("const finalize = () =>"), src.indexOf("function completeSale"));
-    assert.match(fin, /completeSale\(invoice\.id, done\.number, finalAmounts\(done\.settlement\), null\)/);
+    assert.match(fin, /completeSale\(invoice\.id, done\.number, finalAmounts\(done\.settlement\), null, printOnComplete\)/);
     assert.match(fin, /completeSale\(invoice\.id, fresh\.number, finalAmounts\(fresh\.settlement\), null\)/);
     assert.ok(!/snapshot/.test(fin), "تصویر کلاینت برگشته است");
     const sc = readFileSync(new URL("../src/components/pos/SaleComplete.tsx", import.meta.url), "utf8");
