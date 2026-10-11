@@ -87,6 +87,47 @@ test.describe("افزودن گروهی رسید خرید", () => {
   });
 });
 
+test("a pending bulk add locks receipt switch, post and edits; its answer lands on the same receipt; the panel resets per receipt", async ({ page, api }) => {
+  const other = { ...summary, id: "r2", supplierName: "تأمین‌کنندهٔ دوم" };
+  api.defaults["GET /receipts"] = [summary, other];
+  const line = { id: "l0", variationId: "v-bs", sku: "LM00042-001", barcode: null, productName: "پیراهن آزمایشی", color: "مشکی", size: "S", qty: "1.000", unitPrice: "1000000", lineAmount: "1000000", chargeAlloc: "0", landedUnitCost: "1000000" };
+  api.defaults["GET /receipts/r1"] = { ...receipt, lines: [line] };
+  api.defaults["GET /receipts/r2"] = { ...receipt, id: "r2", supplierName: "تأمین‌کنندهٔ دوم" };
+  api.defaults["GET /receipts/r1/products"] = { products: [hit], exactVariationId: null, exactProductId: null };
+  api.defaults["GET /receipts/r1/products/p1/variations"] = { variations };
+  let release: () => void = () => {};
+  const held = new Promise<void>(r => { release = r; });
+  api.handlers.set("POST /receipts/r1/lines/bulk", async route => {
+    await held;
+    await route.fulfill({ status: 201, json: { ...receipt, goodsAmount: "3000000", lines: [line, { ...line, id: "l1", variationId: "v-bm", size: "M", qty: "2.000" }], replayed: false } });
+  });
+  await page.goto("/?page=purchasing");
+  await page.getByRole("button", { name: "باز کن" }).first().click();
+  await page.getByLabel("جست‌وجوی کالا با نام، کد یا بارکد").fill("پیراهن");
+  await page.getByRole("button", { name: "جست‌وجو", exact: true }).click();
+  const pick = page.getByRole("group", { name: /پیراهن آزمایشی/ });
+  await pick.getByLabel("مشکی — همهٔ سایزها").check();
+  await pick.getByLabel("قیمت خرید هر عدد به تومان، برای همهٔ انتخاب‌شده‌ها").fill("100000");
+  await pick.getByRole("button", { name: "افزودن ۲ قلم" }).click();
+
+  // در راه: تعویض رسید، ثبت، ابطال و ویرایش سطر بسته‌اند — حتی با کلیک اجباری درخواستی نمی‌رود.
+  for (const name of ["ثبت رسید", "ابطال پیش‌نویس"]) await expect(page.getByRole("button", { name, exact: true })).toBeDisabled();
+  for (const b of await page.getByRole("button", { name: "باز کن" }).all()) await expect(b).toBeDisabled();
+  await page.getByRole("button", { name: "باز کن" }).nth(1).click({ force: true });
+  await page.getByRole("button", { name: "ثبت رسید", exact: true }).click({ force: true });
+  expect(api.calls.filter(c => c.startsWith("GET /receipts/r2") || c.startsWith("POST /receipts/r1/post"))).toEqual([]);
+
+  release();
+  await expect(page.getByText("۲ قلم به رسید اضافه شد.")).toBeVisible();
+  await expect(page.getByRole("button", { name: "ثبت رسید", exact: true })).toBeEnabled();
+
+  // رسید دیگر: پنل افزودن گروهی از نو — نه کالای انتخاب‌شده، نه نرخ.
+  await page.getByRole("button", { name: "باز کن" }).nth(1).click();
+  await expect(page.getByRole("heading", { name: /تأمین‌کنندهٔ دوم/ })).toBeVisible();
+  await expect(page.getByRole("group", { name: /پیراهن آزمایشی/ })).toHaveCount(0);
+  await expect(page.getByLabel("جست‌وجوی کالا با نام، کد یا بارکد")).toHaveValue("");
+});
+
 test("new product without a code: the server's generated code is shown", async ({ page, api }) => {
   const posts: unknown[] = [];
   api.handlers.set("POST /products", async route => {

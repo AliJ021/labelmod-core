@@ -20,10 +20,14 @@ function message(err: unknown): string {
   return err instanceof ApiError ? err.message : "ارتباط با سرور برقرار نشد.";
 }
 
-export function ReceiptBulkAdd({ receiptId, disabled, onAdded }: {
+export function ReceiptBulkAdd({ receiptId, disabled, runBulk }: {
   receiptId: string;
   disabled: boolean;
-  onAdded: (receipt: Receipt, count: number) => void;
+  /**
+   * ارسال از راه والد: قفل مشترک (رسید تا پاسخ عوض یا ثبت نمی‌شود) و کنار گذاشتن
+   * پاسخ کهنه. `false` یعنی پاسخ روی رسید جاری ننشست.
+   */
+  runBulk: (send: () => Promise<Receipt>, count: number) => Promise<boolean>;
 }) {
   const [q, setQ] = useState("");
   const [hits, setHits] = useState<ReceiptProductHit[] | null>(null);
@@ -79,9 +83,10 @@ export function ReceiptBulkAdd({ receiptId, disabled, onAdded }: {
       return;
     }
     const action = actionFor(`bulk:${receiptId}`, built.lines);
-    const receipt = await keys.run(action, key => purchasing.addLines(receiptId, built.lines, { idempotencyKey: key }));
-    setSelection(new Map());
-    onAdded(receipt, built.lines.length);
+    const applied = await runBulk(
+      () => keys.run(action, key => purchasing.addLines(receiptId, built.lines, { idempotencyKey: key })),
+      built.lines.length);
+    if (applied) setSelection(new Map());
   });
 
   const all = variations.map(v => v.id);
