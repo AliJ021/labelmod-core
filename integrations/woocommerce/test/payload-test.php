@@ -570,6 +570,74 @@ foreach (['rial' => ['10', '12'], 'toman' => ['1', '1.2']] as $currency => [$net
     assert_eq('بدون مبلغ اصلی معتبر اختلاف گردکردن رد می‌شود: ' . $currency,
         LMC_Order_Sync::build_payload($coupon)->get_error_code(), 'lmc_line_rounding');
 }
+// ── هر تخفیف کوپن مثبت، حتی تقسیم‌پذیر و تک‌عددی، صریح می‌رود (پذیرش زنده F-1405-000007) ──
+// پیش‌تر فقط خالص صفر یا تقسیم‌ناپذیر قیمت اصلی + تخفیف می‌فرستاد؛ کوپن ۱۰٪ روی یک عدد
+// ۴۵۰٬۰۰۰ تومانی به‌شکل «قیمت ۴۰۵٬۰۰۰ بی تخفیف» ثبت می‌شد و تخفیف از دفتر گم بود.
+function coupon_order(array $items, string $total, string $method = 'bacs'): WC_Order
+{
+    $o = new WC_Order();
+    $o->update_meta_data(LMC_Order_Sync::META_PAID, 'yes');
+    $o->items = $items; $o->total = $total; $o->shipping = '0'; $o->method = $method;
+    return $o;
+}
+function item(string $sku, int $qty, string $total, ?string $subtotal = null): WC_Order_Item_Product
+{
+    $i = new WC_Order_Item_Product($sku, $qty, $total); $i->subtotal = $subtotal; return $i;
+}
+function line_net(array $line): int { return (int) $line['unitPrice'] * (int) $line['qty'] - (int) ($line['discountAmount'] ?? 0); }
+
+foreach (['toman' => 1, 'rial' => 10] as $currency => $f) {
+    set_settings(['currency_unit' => $currency]);
+    // همان سفارش زنده: ۱ عدد، ۴۵۰٬۰۰۰ تومان، کوپن ۱۰٪.
+    $p = LMC_Order_Sync::build_payload(coupon_order([item('ONE', 1, (string) (405000 * $f), (string) (450000 * $f))], (string) (405000 * $f)));
+    assert_eq("تک‌عددی با کوپن: قیمت اصلی ($currency)", $p['lines'][0]['unitPrice'], '4500000');
+    assert_eq("تک‌عددی با کوپن: تخفیف صریح ($currency)", $p['lines'][0]['discountAmount'] ?? null, '450000');
+    assert_eq("تک‌عددی با کوپن: خالص = پرداخت ($currency)", (string) line_net($p['lines'][0]), $p['paidAmount']);
+    // چندعددیِ تقسیم‌پذیر.
+    $p = LMC_Order_Sync::build_payload(coupon_order([item('MULTI', 2, (string) (810000 * $f), (string) (900000 * $f))], (string) (810000 * $f)));
+    assert_eq("چندعددی تقسیم‌پذیر: قیمت اصلی ($currency)", $p['lines'][0]['unitPrice'], '4500000');
+    assert_eq("چندعددی تقسیم‌پذیر: تخفیف ($currency)", $p['lines'][0]['discountAmount'] ?? null, '900000');
+}
+set_settings(['currency_unit' => 'toman']);
+// جزئی + کامل + عادی (و قیمت حراج بی کوپن) در یک سفارش.
+$p = LMC_Order_Sync::build_payload(coupon_order([
+    item('PART', 1, '405000', '450000'),
+    item('FULL', 1, '0', '300000'),
+    item('PLAIN', 2, '200000'),
+    item('SALE', 1, '80000', '80000'),
+], '685000'));
+assert_eq('مختلط: جزئی صریح', [$p['lines'][0]['unitPrice'], $p['lines'][0]['discountAmount'] ?? null], ['4500000', '450000']);
+assert_eq('مختلط: کامل صریح', [$p['lines'][1]['unitPrice'], $p['lines'][1]['discountAmount'] ?? null], ['3000000', '3000000']);
+assert_eq('مختلط: سطر عادی بی فیلد تازه', $p['lines'][2], ['sku' => 'PLAIN', 'qty' => '2', 'unitPrice' => '1000000']);
+assert_eq('قیمت حراج بی کوپن قیمت اصلی ساختگی نمی‌گیرد', $p['lines'][3], ['sku' => 'SALE', 'qty' => '1', 'unitPrice' => '800000']);
+$sum = 0; foreach ($p['lines'] as $l) { $sum += line_net($l); }
+assert_eq('مختلط: جمع خالص سطرها = پرداخت', (string) $sum, $p['paidAmount']);
+// پرداخت در محلِ تحویل‌شده همان قاعده را دارد.
+$cod = coupon_order([item('COD', 1, '405000', '450000')], '405000', 'cod');
+$cod->status = 'completed';
+$p = LMC_Order_Sync::build_payload($cod);
+assert_eq('COD تحویل‌شده: تخفیف صریح', [$p['lines'][0]['unitPrice'], $p['lines'][0]['discountAmount'] ?? null], ['4500000', '450000']);
+// بدون تأیید پرداخت، تخفیف ساخته نمی‌شود (همان نگهبان قبلی).
+$unpaid = coupon_order([item('UNPAID', 1, '405000', '450000')], '405000');
+$unpaid->delete_meta_data(LMC_Order_Sync::META_PAID);
+assert_eq('بی تأیید پرداخت فیلد تخفیف نمی‌آید', array_key_exists('discountAmount', LMC_Order_Sync::build_payload($unpaid)['lines'][0]), false);
+// مبلغ اصلی بدشکل/منفی/کمتر از خالص تخفیف نمی‌سازد؛ تخفیفِ نمایش‌ناپذیر بسته می‌ماند.
+foreach (['abc', '-450000', '400000', ''] as $bad) {
+    $p = LMC_Order_Sync::build_payload(coupon_order([item('BAD', 1, '405000', $bad)], '405000'));
+    assert_eq('مبلغ اصلی نامعتبر تخفیف ساختگی نمی‌سازد: ' . $bad, [$p['lines'][0]['unitPrice'], array_key_exists('discountAmount', $p['lines'][0])], ['4050000', false]);
+}
+assert_eq('قیمت اصلی تقسیم‌ناپذیر با تخفیف واقعی بسته است',
+    LMC_Order_Sync::build_payload(coupon_order([item('ODD', 3, '270000', '300000.1')], '270000'))->get_error_code(), 'lmc_line_rounding');
+set_settings(['currency_unit' => 'rial']);
+assert_eq('کسر ریال در قیمت اصلی با تخفیف واقعی بسته است',
+    LMC_Order_Sync::build_payload(coupon_order([item('FRAC', 1, '4050000', '4500000.5')], '4050000'))->get_error_code(), 'lmc_line_rounding');
+set_settings(['currency_unit' => 'toman']);
+assert_eq('خالص کسری از ریال با تخفیف واقعی بسته است',
+    LMC_Order_Sync::build_payload(coupon_order([item('NETFRAC', 1, '405000.25', '450000')], '405000.25'))->get_error_code(), 'lmc_line_rounding');
+assert_eq('خالص صفر با قیمت اصلی نادقیق رایگان ثبت نمی‌شود',
+    LMC_Order_Sync::build_payload(coupon_order([item('ZEROFRAC', 1, '0', '450000.25')], '0'))->get_error_code(), 'lmc_zero_price');
+assert_eq('بیش از ۱۸ رقم ریال دقیق نیست', LMC_Order_Sync::exact_rial(str_repeat('9', 18)), null);
+assert_eq('۱۷ رقم تومان = ۱۸ رقم ریال دقیق است', LMC_Order_Sync::exact_rial(str_repeat('9', 17)), (int) (str_repeat('9', 17) . '0'));
 set_settings([]);
 
 // ⚠️ هسته این فایل: جمع سطرها به‌علاوه کرایه باید دقیقاً همان مبلغی
