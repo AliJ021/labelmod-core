@@ -18,7 +18,7 @@ import {
   generateToJson,
   type VariationService,
 } from "../catalog/variation.ts";
-import { labelPage, LABEL_CSP, ROLL_MIN_HEIGHT_MM, ROLL_MIN_WIDTH_MM, type LabelItem } from "../catalog/label.ts";
+import { labelPage, LABEL_CSP, LABEL_FRAME_CSP, LABEL_FRAME_HTML, ROLL_MIN_HEIGHT_MM, ROLL_MIN_WIDTH_MM, type LabelItem } from "../catalog/label.ts";
 import { CONTROL_CHARS } from "../lib/text.ts";
 
 const uuid = z.string().uuid("شناسه نامعتبر");
@@ -102,6 +102,17 @@ export function registerCatalogRoutes(
     if (!s) throw new AuthError("no_session", "وارد نشده‌اید");
     return s;
   };
+
+  // فقط قاب خالی با سیاست مستقل؛ بدون ذخیرهٔ داده، شناسهٔ چاپ یا پارامتر کالا در URL.
+  app.get("/labels/frame", async (req, reply) => {
+    await requireForSession(db, session(req), "catalog.manage");
+    return reply
+      .header("content-type", "text/html; charset=utf-8")
+      .header("content-security-policy", LABEL_FRAME_CSP)
+      .header("x-content-type-options", "nosniff")
+      .header("cache-control", "no-store")
+      .send(LABEL_FRAME_HTML);
+  });
 
   /**
    * ساخت خودکار همه ترکیب‌های رنگ×سایز.

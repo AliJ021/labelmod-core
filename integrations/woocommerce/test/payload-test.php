@@ -70,6 +70,14 @@ function wp_schedule_single_event(int $timestamp, string $hook, array $args): vo
     $GLOBALS['lmc_test_scheduled'][] = compact('timestamp', 'hook', 'args');
 }
 
+function wp_clear_scheduled_hook(string $hook, array $args): void
+{
+    $GLOBALS['lmc_test_scheduled'] = array_values(array_filter(
+        $GLOBALS['lmc_test_scheduled'],
+        fn($event) => $event['hook'] !== $hook || $event['args'] !== $args
+    ));
+}
+
 function lmc_setting(string $key, $default = '')
 {
     return $GLOBALS['lmc_test_settings'][$key] ?? $default;

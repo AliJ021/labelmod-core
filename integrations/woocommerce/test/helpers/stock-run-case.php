@@ -151,7 +151,8 @@ assert_eq('ناسازگاری Core پیش از POST مالی متوقف می‌�
 assert_eq('ناسازگاری Core فاکتور موفق وانمود نمی‌شود', $blocked_order->get_meta(LMC_Order_Sync::META_INVOICE), '');
 $GLOBALS['discount_capability']['warehouseId'] = 'w-uuid';
 $GLOBALS['stock_http_calls'] = [];
-LMC_Order_Sync::send(2001);
+// A corrected permanent capability error is reopened by the manual retry path.
+LMC_Order_Sync::retry($blocked_order);
 assert_eq('ارسال سازگار ابتدا قابلیت و سپس POST دارد', array_column($GLOBALS['stock_http_calls'], 1), ['GET', 'POST']);
 assert_eq('تخفیف هرگز به مسیر قدیمی ارسال نمی‌شود', str_ends_with($GLOBALS['stock_http_calls'][1][0], '/web/discounted-orders'), true);
 assert_eq('پاسخ مسیر سازگار ثبت می‌شود', $blocked_order->get_meta(LMC_Order_Sync::META_INVOICE), 'free-invoice');

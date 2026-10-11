@@ -137,6 +137,32 @@ test("customer policy refreshes after returning to the till and can become optio
   await expect(method(page, "کارت‌خوان")).toBeEnabled();
 });
 
+test("saving the customer policy in another tab reaches an open till without a focus event", async ({page, api}) => {
+  pos(api); await open(page);
+  await expect(method(page, "کارت‌خوان")).toBeEnabled();
+  await page.evaluate(() => window.addEventListener("focus", () => { (window as unknown as { __f: number }).__f = ((window as unknown as { __f?: number }).__f ?? 0) + 1; }));
+  // تب دوم همان مرورگر (همان origin و context)، با همان API ساختگی.
+  const other = await page.context().newPage(); await api.install(other);
+  api.defaults["GET /settings"] = { groups: [{ key: "sales", title: "فروش", subtitle: null, settings: [{
+    key: "pos.require_customer", value: false, kind: "bool", label: "الزام مشتری در صندوق", description: "", help: null, unit: null,
+    min: null, max: null, options: null, requiresApproval: false, isEditable: true, canEdit: true, permission: "settings.edit", updatedAt: "2026-10-10T00:00:00Z", updatedBy: null }] }] };
+  api.handlers.set("PATCH /settings/pos.require_customer", async r => {
+    api.defaults["GET /pos/policy"] = { requireCustomer: true };
+    await r.fulfill({ json: { value: true, updatedAt: "2026-10-11T00:00:00Z" } });
+  });
+  await other.goto("/?page=settings&settings.tab=keys");
+  const sw = other.getByRole("switch", { name: "الزام مشتری در صندوق", exact: true });
+  await sw.focus(); await other.keyboard.press("Space"); await expect(sw).toBeChecked();
+  await other.locator('[data-setting="pos.require_customer"]').getByRole("button", { name: /^ذخیره/ }).click();
+  await expect(other.locator('[data-setting="pos.require_customer"]')).toContainText("فعال");
+  // صندوق بی focus و بی reload همان سیاست تازه را نشان می‌دهد.
+  await expect(page.getByLabel("موبایل مشتری (الزامی)", { exact: true })).toBeVisible();
+  await expect(method(page, "کارت‌خوان")).toBeDisabled();
+  const focused = await page.evaluate(() => (window as unknown as { __f?: number }).__f ?? 0);
+  expect(focused, "هیچ رویداد focus روی تب صندوق نبود").toBe(0);
+  await other.close();
+});
+
 test("changing a required customer never keeps the previous identity or permits a phone-less credit sale", async ({page, api}) => {
   const s = pos(api, { customerId: "c1" });
   api.defaults["GET /pos/policy"] = { requireCustomer: true };
