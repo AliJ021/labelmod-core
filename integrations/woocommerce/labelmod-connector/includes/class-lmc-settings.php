@@ -237,6 +237,8 @@ class LMC_Settings
         submit_button(__('ذخیره', 'labelmod-connector'));
         echo '</form>';
 
+        LMC_Push_Secret_Settings::render();
+
         // همگام‌سازی دستی — فرم جدا، چون یک عمل است نه یک تنظیم.
         echo '<hr><form method="post" action="' . esc_url(admin_url('admin-post.php')) . '">';
         wp_nonce_field('lmc_sync_now');
