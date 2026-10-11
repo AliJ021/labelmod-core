@@ -544,9 +544,12 @@ describe("گزارش‌ها", { skip }, () => {
   test("ساعتی: ۲۴ ساعت مرتب و جمعش دقیقاً همان خلاصه روز است (مدیر، با سود)", async () => {
     const [daily, hourly] = [await dailyOf(admin), await hourlyOf(admin)];
     assert.equal(hourly.businessDate, daily.businessDate, "همان روز کاری سرور");
-    const hour = (await sql<{ h: number }>`SELECT platform.business_hour() AS h`.execute(handle.db)).rows[0]!.h;
-    assert.ok(hourly.currentHour === Number(hour) || hourly.currentHour === (Number(hour) + 1) % 24,
-      `ساعت جاری امروز از دیتابیس: ${hourly.currentHour} در برابر ${hour}`);
+    const now = (await sql<{ h: number; d: string }>`
+      SELECT platform.business_hour() AS h, platform.business_date()::text AS d`.execute(handle.db)).rows[0]!;
+    // تنها حالتِ پذیرفتنیِ `null`: گذر از نیمه‌شب تهران میان دو خواندن.
+    if (hourly.currentHour === null) assert.notEqual(now.d, hourly.businessDate, "امروز ساعت جاری دارد");
+    else assert.ok(hourly.currentHour === Number(now.h) || hourly.currentHour === (Number(now.h) + 23) % 24,
+      `ساعت جاری امروز از دیتابیس: ${hourly.currentHour} در برابر ${now.h}`);
     assert.deepEqual(hourly.hours.map((h) => h.hour), Array.from({ length: 24 }, (_, i) => i));
     assert.equal(hourly.profitVisible, true);
     for (const h of hourly.hours) {

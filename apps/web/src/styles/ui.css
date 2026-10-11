@@ -253,7 +253,8 @@
 .line-chart-hit:hover::after {
   content: attr(data-tip); position: absolute; inset-block-start: 0; inset-inline-start: 50%;
   transform: translateX(50%); z-index: 2; padding: 4px 8px; border-radius: var(--r-xs);
-  background: var(--surface-inverse); color: var(--surface-solid); font-size: var(--text-2xs); white-space: nowrap; pointer-events: none;
+  inline-size: max-content; max-inline-size: min(240px, 70vw); white-space: normal;
+  background: var(--surface-inverse); color: var(--surface-solid); font-size: var(--text-2xs); pointer-events: none;
 }
 .line-chart-x { position: relative; block-size: 1.4em; font-size: var(--text-xs); color: var(--ink-2); }
 .line-chart-x span { position: absolute; inset-inline-start: calc(var(--x) * 100%); transform: translateX(50%); white-space: nowrap; }

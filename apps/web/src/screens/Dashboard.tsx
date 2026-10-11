@@ -13,7 +13,7 @@
  * هیچ عدد ساختگی روی این صفحه نمی‌نشیند. بخشی که داده یا مجوزش
  * نیست، می‌گوید چرا — نه صفر، نه نمونه.
  */
-import { useId, useLayoutEffect, useState } from "react";
+import { useEffect, useId, useLayoutEffect, useRef, useState } from "react";
 import { navigate } from "../lib/use-url-state.ts";
 import { Solid } from "../components/Glass.tsx";
 import { Icon } from "../components/Icon.tsx";
@@ -89,6 +89,13 @@ export function Dashboard({ access }: { access: NavAccess }) {
   /** دانه‌بندی روند هم محلی است؛ روزانه و ماهانه فقط با انتخاب و یک بار بار می‌شوند. */
   const [grain, setGrain] = useState<Grain>("hour");
   const [trends, setTrends] = useState<Partial<Record<"day" | "month", Trend>>>({});
+  /**
+   * دانه‌بندی‌هایی که درخواستشان رفته یا رسیده — در ref، نه state: دو کلیک پیش از
+   * رندر بعدی دو درخواست نمی‌سازد. Unmount همهٔ درخواست‌های در راه را لغو می‌کند.
+   */
+  const trendRequested = useRef(new Set<"day" | "month">());
+  const trendAbort = useRef(new AbortController());
+  useEffect(() => () => trendAbort.current.abort(), []);
   const tabsId = useId();
 
   /**
@@ -193,18 +200,25 @@ export function Dashboard({ access }: { access: NavAccess }) {
   function chooseGrain(next: Grain) {
     setGrain(next);
     if (next === "hour" || !branch || !report) return;
-    const current = trends[next];
-    if (current && current.state !== "error") return;
+    if (trendRequested.current.has(next)) return;
     if (access.verdicts.get("report.view") === "deny") {
       setTrends(t => ({ ...t, [next]: { state: "denied" } }));
       return;
     }
+    trendRequested.current.add(next);
+    const { signal } = trendAbort.current;
     setTrends(t => ({ ...t, [next]: { state: "loading" } }));
-    pos.dailyTrend(branch.id, trendBounds(next, report.businessDate)).then(
-      data => setTrends(t => ({ ...t, [next]: { state: "ready", data } })),
-      err => setTrends(t => ({ ...t, [next]: err instanceof ApiError && err.status === 403
-        ? { state: "denied" }
-        : { state: "error", reference: err instanceof ApiError ? err.correlationId : null } })),
+    pos.dailyTrend(branch.id, trendBounds(next, report.businessDate), { signal }).then(
+      data => { if (!signal.aborted) setTrends(t => ({ ...t, [next]: { state: "ready", data } })); },
+      err => {
+        if (signal.aborted) return;
+        // خطا دوباره قابل انتخاب است؛ بی‌دسترسی نه.
+        const denied = err instanceof ApiError && err.status === 403;
+        if (!denied) trendRequested.current.delete(next);
+        setTrends(t => ({ ...t, [next]: denied
+          ? { state: "denied" }
+          : { state: "error", reference: err instanceof ApiError ? err.correlationId : null } }));
+      },
     );
   }
 

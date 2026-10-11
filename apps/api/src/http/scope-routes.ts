@@ -316,7 +316,7 @@ export function registerScopeRoutes(app: FastifyInstance, deps: ScopeRouteDeps):
    * - بیش از یک روز یعنی گزارش: `report.view` می‌خواهد (صندوق‌دار فقط
    *   «امروز» را از `/reports/daily` می‌بیند). سود فقط با `cost.view`،
    *   وگرنه `null` در همهٔ سطل‌ها و `profitVisible: false`.
-   * - **آینده داده نیست:** سطلی که از امروز جلوتر برود ۴۲۲ است، نه صفر.
+   * - **آینده داده نیست:** سطلی که از امروز جلوتر برود ۴۰۰ (ورودی نامعتبر) است، نه صفر.
    *   سطلِ شامل امروز `partial` است — روز هنوز تمام نشده.
    */
   app.get("/reports/daily/trend", async (req) => {
