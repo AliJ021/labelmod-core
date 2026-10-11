@@ -321,14 +321,23 @@ class LMC_Order_Sync
             $line_total = self::to_rial($raw_total);
             $unit       = (int) round($line_total / $qty);
             $discount = null;
-            // صفر دقیق پس از تخفیف کامل، با مبلغ اصلی مثبت؛ نه قیمت مفقود،
-            // منفی یا عدد مثبتی که با گردکردن صفر شده است.
-            if ($unit === 0 && preg_match('/^0+(?:\.0+)?$/D', $raw_total) && self::is_eligible($order)) {
-                $subtotal = trim((string) $item->get_subtotal());
-                $gross = self::to_rial($subtotal);
-                if (preg_match('/^\d+(?:\.\d+)?$/D', $subtotal) && $gross > 0 && $gross % $qty === 0) {
+            // هر تخفیف کوپن مثبت (کامل، جزئی، تقسیم‌پذیر یا نه) صریح می‌رود: قیمت اصلی واقعی
+            // = get_subtotal()/qty (قیمت پیش از کوپن؛ حراجِ بی کوپن همان خالص است و تخفیفی
+            // نمی‌سازد) و تخفیف = اصلی − خالص. پیش‌تر کوپنِ تقسیم‌پذیر به‌شکل «قیمت کمتر بی
+            // تخفیف» ثبت می‌شد (F-1405-000007). فقط پس از تأیید پرداخت؛ مبلغ اصلی بدشکل،
+            // منفی یا کمتر از خالص تخفیفی نمی‌سازد.
+            $subtotal = trim((string) $item->get_subtotal());
+            if (self::is_eligible($order) && preg_match('/^\d+(?:\.\d+)?$/D', $raw_total)
+                && preg_match('/^\d+(?:\.\d+)?$/D', $subtotal) && self::to_rial($subtotal) > $line_total) {
+                $gross = self::exact_rial($subtotal);
+                $net = self::exact_rial($raw_total);
+                if ($gross === null || $net === null || $gross % $qty !== 0) {
+                    // تخفیف واقعی هست ولی دقیق نمایش‌پذیر نیست: بسته، نه ارسالِ بی تخفیف.
+                    if ($line_total === 0) { $unit = 0; }
+                    else { return new WP_Error('lmc_line_rounding', 'مبلغ سطر با قیمت واحد صحیح برابر نیست؛ قیمت اصلی و تخفیف را بررسی کنید. اختلاف مبلغ ارسال نشد.', ['kind' => LMC_Client::PERMANENT]); }
+                } else {
                     $unit = intdiv($gross, $qty);
-                    $discount = $gross;
+                    $discount = $gross - $net;
                 }
             }
             if ($unit <= 0) {
@@ -343,18 +352,9 @@ class LMC_Order_Sync
                 );
             }
 
-            // کوپن روی چند عدد ممکن است مبلغ خالص را تقسیم‌ناپذیر کند.
-            // فقط قیمت اصلی واقعی + تخفیف صریح مجاز است؛ اختلاف گردکردن بدهی نمی‌سازد.
+            // بی تخفیف، خالص باید دقیقاً بر تعداد تقسیم شود؛ اختلاف گردکردن بدهی نمی‌سازد.
             if ($discount === null && $unit * $qty !== $line_total) {
-                $subtotal = trim((string) $item->get_subtotal());
-                $gross = self::to_rial($subtotal);
-                if (self::is_eligible($order) && preg_match('/^\d+(?:\.\d+)?$/D', $raw_total)
-                    && preg_match('/^\d+(?:\.\d+)?$/D', $subtotal) && $gross > $line_total && $gross % $qty === 0) {
-                    $unit = intdiv($gross, $qty);
-                    $discount = $gross - $line_total;
-                } else {
-                    return new WP_Error('lmc_line_rounding', 'مبلغ سطر با قیمت واحد صحیح برابر نیست؛ قیمت اصلی و تخفیف را بررسی کنید. اختلاف مبلغ ارسال نشد.', ['kind' => LMC_Client::PERMANENT]);
-                }
+                return new WP_Error('lmc_line_rounding', 'مبلغ سطر با قیمت واحد صحیح برابر نیست؛ قیمت اصلی و تخفیف را بررسی کنید. اختلاف مبلغ ارسال نشد.', ['kind' => LMC_Client::PERMANENT]);
             }
 
             $lines[] = [
@@ -444,6 +444,18 @@ class LMC_Order_Sync
             return new WP_Error('lmc_payment_reference_invalid', 'شماره سند دریافت وجه باید حداکثر ۱۲۰ نویسه باشد؛ سند تأیید دستی را بررسی کنید.', ['kind' => LMC_Client::PERMANENT]);
         }
         return $ref;
+    }
+
+    /** مبلغ ووکامرس به ریالِ دقیق، یا null اگر منفی، بدشکل یا کسری از ریال باشد (بی float). */
+    public static function exact_rial(string $amount): ?int
+    {
+        if (!preg_match('/^(\d+)(?:\.(\d+))?$/D', $amount, $m)) { return null; }
+        $shift = lmc_setting('currency_unit') === 'toman' ? 1 : 0;
+        $fraction = rtrim($m[2] ?? '', '0');
+        if (strlen($fraction) > $shift) { return null; }
+        $digits = ltrim($m[1] . str_pad($fraction, $shift, '0'), '0');
+        if (strlen($digits) > 18) { return null; }
+        return $digits === '' ? 0 : (int) $digits;
     }
 
     /**
