@@ -527,7 +527,7 @@ describe("گزارش‌ها", { skip }, () => {
     hour: number; salesAmount: string; receivedAmount: string; profitAmount: string | null;
     invoiceCount: number; returnCount: number; paymentCount: number;
   };
-  type Hourly = { businessDate: string; profitVisible: boolean; hours: HourRow[] };
+  type Hourly = { businessDate: string; currentHour: number | null; profitVisible: boolean; hours: HourRow[] };
   const hourlyOf = async (username: string, query = "") => {
     const r = await get(username, `/reports/daily/hourly?branchId=${BRANCH}${query}`);
     assert.equal(r.statusCode, 200, r.body);
@@ -544,6 +544,12 @@ describe("گزارش‌ها", { skip }, () => {
   test("ساعتی: ۲۴ ساعت مرتب و جمعش دقیقاً همان خلاصه روز است (مدیر، با سود)", async () => {
     const [daily, hourly] = [await dailyOf(admin), await hourlyOf(admin)];
     assert.equal(hourly.businessDate, daily.businessDate, "همان روز کاری سرور");
+    const now = (await sql<{ h: number; d: string }>`
+      SELECT platform.business_hour() AS h, platform.business_date()::text AS d`.execute(handle.db)).rows[0]!;
+    // تنها حالتِ پذیرفتنیِ `null`: گذر از نیمه‌شب تهران میان دو خواندن.
+    if (hourly.currentHour === null) assert.notEqual(now.d, hourly.businessDate, "امروز ساعت جاری دارد");
+    else assert.ok(hourly.currentHour === Number(now.h) || hourly.currentHour === (Number(now.h) + 23) % 24,
+      `ساعت جاری امروز از دیتابیس: ${hourly.currentHour} در برابر ${now.h}`);
     assert.deepEqual(hourly.hours.map((h) => h.hour), Array.from({ length: 24 }, (_, i) => i));
     assert.equal(hourly.profitVisible, true);
     for (const h of hourly.hours) {
@@ -605,9 +611,86 @@ describe("گزارش‌ها", { skip }, () => {
     const empty = "&date=2024-02-29";
     const a = await hourlyOf(admin, empty);
     assert.equal(a.hours.length, 24);
+    assert.equal(a.currentHour, null, "روز گذشته ساعت «هنوز نیامده» ندارد");
     assert.ok(a.hours.every((h) => h.salesAmount === "0" && h.receivedAmount === "0" && h.profitAmount === "0"));
     const s = await hourlyOf(supervisor, empty);
     assert.ok(s.hours.every((h) => h.salesAmount === "0" && h.profitAmount === null));
+  });
+
+  // ── روند روزانه/ماهانه (مهاجرت ۰۹۳) ──────────────────────────────
+
+  type Bucket = {
+    from: string; to: string; partial: boolean; salesAmount: string; receivedAmount: string;
+    profitAmount: string | null; invoiceCount: number; returnCount: number; paymentCount: number;
+  };
+  const trendDates = async () => (await sql<{ d: string[] }>`
+    SELECT array_agg((platform.business_date() + k)::text ORDER BY k) AS d
+      FROM generate_series(-9, 1) AS k`.execute(handle.db)).rows[0]!.d;
+
+  test("روند: هر سطل دقیقاً جمع خلاصه روزِ روزهای خودش است؛ سطل امروز partial", async () => {
+    const d = await trendDates(); // d[9] امروز، d[10] فردا
+    const bounds = [d[0], d[5], d[9], d[10]];
+    const r = await get(admin, `/reports/daily/trend?branchId=${BRANCH}&bounds=${bounds.join(",")}`);
+    assert.equal(r.statusCode, 200, r.body);
+    const body = JSON.parse(r.body) as { businessDate: string; profitVisible: boolean; buckets: Bucket[] };
+    assert.equal(body.businessDate, d[9]);
+    assert.equal(body.profitVisible, true);
+    assert.deepEqual(body.buckets.map((b) => [b.from, b.to, b.partial]),
+      [[d[0], d[4], false], [d[5], d[8], false], [d[9], d[9], true]]);
+    for (const b of body.buckets) {
+      let sales = 0n, received = 0n, profit = 0n, invoices = 0, returns = 0;
+      for (let i = d.indexOf(b.from); i <= d.indexOf(b.to); i++) {
+        const day = await dailyOf(admin, `&date=${d[i]}`);
+        sales += BigInt(day.salesAmount); received += BigInt(day.receivedAmount);
+        profit += BigInt(day.profitAmount as string); invoices += day.invoiceCount; returns += day.returnCount;
+      }
+      assert.equal(typeof b.salesAmount, "string", "پول رشته است");
+      assert.deepEqual([BigInt(b.salesAmount), BigInt(b.receivedAmount), BigInt(b.profitAmount as string), b.invoiceCount, b.returnCount],
+        [sales, received, profit, invoices, returns], `${b.from}…${b.to}`);
+    }
+    assert.ok(BigInt(body.buckets[2]!.salesAmount) > 0n, "فروش امروزِ این فایل دیده می‌شود — آشتی روی صفر نیست");
+  });
+
+  test("روند بی cost.view سود null دارد؛ بی report.view و شعبهٔ بیرونی ۴۰۳؛ ناشناس ۴۰۱", async () => {
+    const d = await trendDates();
+    const q = `bounds=${d[0]},${d[9]},${d[10]}`;
+    const s = await get(supervisor, `/reports/daily/trend?branchId=${BRANCH}&${q}`);
+    assert.equal(s.statusCode, 200, s.body);
+    const body = JSON.parse(s.body) as { profitVisible: boolean; buckets: Bucket[] };
+    assert.equal(body.profitVisible, false);
+    assert.ok(body.buckets.every((b) => b.profitAmount === null), "null، نه \"0\"");
+    for (const b of body.buckets) {
+      assert.deepEqual(Object.keys(b).sort(), ["from", "invoiceCount", "partial", "paymentCount", "profitAmount",
+        "receivedAmount", "returnCount", "salesAmount", "to"], "نه cogs، نه حاشیه");
+    }
+    for (const user of [cashier, marketing]) {
+      assert.equal((await get(user, `/reports/daily/trend?branchId=${BRANCH}&${q}`)).statusCode, 403, user);
+    }
+    const other = "00000000-0000-7000-8000-00000000dead";
+    assert.equal((await get(admin, `/reports/daily/trend?branchId=${other}&${q}`)).statusCode, 403);
+    const anon = await app.inject({ method: "GET", url: `/reports/daily/trend?branchId=${BRANCH}&${q}` });
+    assert.equal(anon.statusCode, 401);
+  });
+
+  test("روند: مرز نامعتبر ۴۰۰ می‌گیرد — آینده صفر جلوه داده نمی‌شود", async () => {
+    const d = await trendDates();
+    const far = (await sql<{ a: string; b: string }>`
+      SELECT (platform.business_date() - 401)::text AS a, (platform.business_date() + 2)::text AS b`.execute(handle.db)).rows[0]!;
+    const many = Array.from({ length: 34 }, (_, i) => `2025-01-${String(i + 1).padStart(2, "0")}`);
+    const cases: [string, string][] = [
+      ["تک مرز", d[0]!],
+      ["نزولی", `${d[5]},${d[0]}`],
+      ["تکراری", `${d[0]},${d[0]},${d[9]}`],
+      ["تاریخ ناممکن", "2026-02-30,2026-03-02"],
+      ["بیش از ۳۲ سطل", many.join(",")],
+      ["بیش از ۴۰۰ روز", `${far.a},${d[9]}`],
+      ["آینده", `${d[9]},${far.b}`],
+    ];
+    for (const [label, bounds] of cases) {
+      const r = await get(admin, `/reports/daily/trend?branchId=${BRANCH}&bounds=${bounds}`);
+      assert.equal(r.statusCode, 400, `${label}: ${r.body}`);
+      assert.equal((JSON.parse(r.body) as { error: { code: string } }).error.code, "invalid_input", label);
+    }
   });
 
   test("گزارش و CSV رزرو سفارش را از موجودی فیزیکی و ارزش دفتری جدا می‌کنند", async () => {
