@@ -94,8 +94,16 @@ export function Dashboard({ access }: { access: NavAccess }) {
    * رندر بعدی دو درخواست نمی‌سازد. Unmount همهٔ درخواست‌های در راه را لغو می‌کند.
    */
   const trendRequested = useRef(new Set<"day" | "month">());
-  const trendAbort = useRef(new AbortController());
-  useEffect(() => () => trendAbort.current.abort(), []);
+  const trendAbort = useRef<AbortController | null>(null);
+  // کنترلر **داخل** افکت ساخته می‌شود: StrictMode افکت را اجرا، پاک و دوباره اجرا
+  // می‌کند و ref می‌ماند؛ کنترلرِ ساخته‌شده در `useRef` پس از پاک‌سازی اول لغوشده
+  // می‌ماند و هر روند را برای همیشه «در حال بارگذاری» نگه می‌داشت.
+  useEffect(() => {
+    const c = new AbortController();
+    trendAbort.current = c;
+    const requested = trendRequested.current;
+    return () => { c.abort(); requested.clear(); };
+  }, []);
   const tabsId = useId();
 
   /**
@@ -205,8 +213,10 @@ export function Dashboard({ access }: { access: NavAccess }) {
       setTrends(t => ({ ...t, [next]: { state: "denied" } }));
       return;
     }
+    const controller = trendAbort.current;
+    if (!controller) return;
     trendRequested.current.add(next);
-    const { signal } = trendAbort.current;
+    const { signal } = controller;
     setTrends(t => ({ ...t, [next]: { state: "loading" } }));
     pos.dailyTrend(branch.id, trendBounds(next, report.businessDate), { signal }).then(
       data => { if (!signal.aborted) setTrends(t => ({ ...t, [next]: { state: "ready", data } })); },
