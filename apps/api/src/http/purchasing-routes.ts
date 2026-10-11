@@ -640,20 +640,21 @@ export function registerPurchasingRoutes(
     await loadInScope(s.userId, id);
     await requireForSession(db, s, "stock.receive");
 
-    const variationIds: string[] = [];
-    for (const line of body.lines) {
-      variationIds.push(await resolveVariation(db, { variationId: line.variationId }));
-    }
-
     const out = await runOnce<string>(db, {
       key: idempotencyKey(req),
       source: "api.receipt.line.bulk",
       payload: { actorId: s.userId, receiptId: id, lines: body.lines },
       run: async (trx) => {
-        for (const [i, line] of body.lines.entries()) {
+        // بازپخش نباید وضعیت امروز تنوع را دوباره بسنجد. در اجرای تازه،
+        // قفل‌ها به ترتیب ثابت تا پایان درج می‌مانند تا بایگانی سبقت نگیرد.
+        await trx.selectFrom("catalog.variation").select("id")
+          .where("id", "in", body.lines.map((line) => line.variationId))
+          .orderBy("id").forShare().execute();
+        for (const line of body.lines) {
+          const variationId = await resolveVariation(trx, { variationId: line.variationId });
           await receipts.addLine(trx, {
             receiptId: id,
-            variationId: variationIds[i]!,
+            variationId,
             qty: line.qty,
             unitPrice: parseMoney(line.unitPrice),
             actorId: s.userId,

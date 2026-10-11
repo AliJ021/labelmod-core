@@ -371,27 +371,38 @@ export class ProductService {
     input: ProductInput,
     actorId: string,
   ): Promise<string> {
-    {
-      await setActor(trx, actorId);
-      // کد خودکار در **همان تراکنش** درج: Sequence به دو درخواست هم‌زمان یک
-      // عدد نمی‌دهد، و کد دستیِ هم‌زمانِ هم‌نام روی قید یکتایی ۴۰۹ می‌گیرد.
-      const code = id === null && (input.code ?? "").trim() === ""
+    await setActor(trx, actorId);
+    const automatic = id === null && (input.code ?? "").trim() === "";
+    for (;;) {
+      const code = automatic
         ? (await sql<{ code: string }>`SELECT catalog.next_product_code() AS code`.execute(trx)).rows[0]!.code
         : input.code ?? "";
-      const r = await sql<{ upsert_product: string }>`
-        SELECT catalog.upsert_product(
-          ${id}::uuid, ${code}, ${input.nameInternal},
-          ${input.nameWeb ?? null}, ${input.brandId ?? null}::uuid,
-          ${input.categoryId ?? null}::uuid, ${input.season ?? null},
-          ${input.collection ?? null}, ${input.fabric ?? null},
-          ${input.fit ?? null}, ${input.originCountry ?? null},
-          ${input.taxRateCode ?? "standard"}, ${input.notes ?? null})
-      `.execute(trx);
-      const out = r.rows[0]?.upsert_product;
-      if (out === undefined) {
-        throw new CatalogError("upsert_failed", "ثبت کالا انجام نشد", 500);
+      // کد دستی ممکن است پس از تخصیص و پیش از درج برنده شود. فقط همین
+      // برخورد را برمی‌گردانیم؛ Inbox و تراکنش بیرونی حفظ می‌شوند.
+      if (automatic) await sql`SAVEPOINT product_code_attempt`.execute(trx);
+      try {
+        const r = await sql<{ upsert_product: string }>`
+          SELECT catalog.upsert_product(
+            ${id}::uuid, ${code}, ${input.nameInternal},
+            ${input.nameWeb ?? null}, ${input.brandId ?? null}::uuid,
+            ${input.categoryId ?? null}::uuid, ${input.season ?? null},
+            ${input.collection ?? null}, ${input.fabric ?? null},
+            ${input.fit ?? null}, ${input.originCountry ?? null},
+            ${input.taxRateCode ?? "standard"}, ${input.notes ?? null})
+        `.execute(trx);
+        const out = r.rows[0]?.upsert_product;
+        if (out === undefined) {
+          throw new CatalogError("upsert_failed", "ثبت کالا انجام نشد", 500);
+        }
+        if (automatic) await sql`RELEASE SAVEPOINT product_code_attempt`.execute(trx);
+        return out;
+      } catch (error) {
+        const pg = error as { code?: string; schema?: string; table?: string; constraint?: string };
+        if (!automatic || pg.code !== "23505" || pg.schema !== "catalog" ||
+            pg.table !== "product" || pg.constraint !== "product_code_key") throw error;
+        await sql`ROLLBACK TO SAVEPOINT product_code_attempt`.execute(trx);
+        await sql`RELEASE SAVEPOINT product_code_attempt`.execute(trx);
       }
-      return out;
     }
   }
 

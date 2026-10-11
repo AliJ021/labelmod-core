@@ -13,6 +13,8 @@ import { loginWithMfa } from "./helpers/login-with-mfa.ts";
  */
 import { after, before, describe, test } from "node:test";
 import assert from "node:assert/strict";
+import { setTimeout as pause } from "node:timers/promises";
+import { Client } from "pg";
 import { sql } from "kysely";
 import type { FastifyInstance } from "fastify";
 import { createDb, type DbHandle } from "../src/db/client.ts";
@@ -390,6 +392,75 @@ describe("رسید خرید", { skip }, () => {
       payload: { lines: [{ variationId: variationA, qty: "1", unitPrice: "1000000" }] } });
     assert.equal(denied.statusCode, 403, denied.body);
     assert.equal((await read()).goodsAmount, after.goodsAmount);
+  });
+
+  test("بازپخش گروه پس از بایگانی همان نتیجه را می‌دهد؛ کلید تازه رد می‌شود", async () => {
+    const s = await loginAs(keeper);
+    const draft = await newDraft(keeper);
+    const request = (key: string) => app.inject({ method: "POST", url: `/receipts/${draft.id}/lines/bulk`, ...s,
+      headers: { ...s.headers, "idempotency-key": key },
+      payload: { lines: [{ variationId: variationA, qty: "2", unitPrice: "1000000" }] } });
+    const first = await request(`archive-replay-${suffix}`);
+    assert.equal(first.statusCode, 201, first.body);
+    await handle.db.updateTable("catalog.variation").set({ status: "archived" }).where("id", "=", variationA).execute();
+    try {
+      const replay = await request(`archive-replay-${suffix}`);
+      assert.equal(replay.statusCode, 200, replay.body);
+      assert.equal(replay.json().replayed, true);
+      assert.deepEqual(replay.json().lines, first.json().lines);
+      const fresh = await request(`archive-new-${suffix}`);
+      assert.equal(fresh.statusCode, 409, fresh.body);
+      assert.equal(fresh.json().error.code, "variation_archived");
+      const read = await app.inject({ method: "GET", url: `/receipts/${draft.id}`, ...s });
+      assert.equal(read.json().goodsAmount, "2000000");
+    } finally {
+      await handle.db.updateTable("catalog.variation").set({ status: "active" }).where("id", "=", variationA).execute();
+    }
+  });
+
+  test("بایگانی هم‌زمان پیش از درج گروه برنده می‌شود؛ هیچ قلم یا Inbox باقی نمی‌ماند", async () => {
+    const s = await loginAs(keeper);
+    const draft = await newDraft(keeper);
+    const gate = new Client({ connectionString: disposable!.ownerUrl });
+    const key = `archive-race-${suffix}`;
+    let pending: Promise<Awaited<ReturnType<typeof app.inject>>> | undefined;
+    await gate.connect();
+    try {
+      await gate.query("BEGIN");
+      await gate.query("SELECT id FROM purchasing.receipt WHERE id=$1 FOR UPDATE", [draft.id]);
+      await gate.query("UPDATE catalog.variation SET status='archived' WHERE id=$1", [variationB]);
+      pending = app.inject({ method: "POST", url: `/receipts/${draft.id}/lines/bulk`, ...s,
+        headers: { ...s.headers, "idempotency-key": key }, payload: { lines: [
+          { variationId: variationA, qty: "1", unitPrice: "1000000" },
+          { variationId: variationB, qty: "1", unitPrice: "1000000" },
+        ] } });
+      // inject تنبل است؛ درخواست را پیش از مشاهدهٔ قفل راه می‌اندازیم.
+      const response = Promise.resolve(pending);
+      let blocked = false;
+      for (const deadline = Date.now() + 10000; Date.now() < deadline;) {
+        await gate.query("SELECT pg_stat_clear_snapshot()");
+        const r = await gate.query<{ blocked: boolean }>(`SELECT EXISTS (
+          SELECT 1 FROM pg_stat_activity WHERE datname=current_database()
+          AND pg_backend_pid() = ANY(pg_blocking_pids(pid))) AS blocked`);
+        if (r.rows[0]!.blocked) { blocked = true; break; }
+        await pause(20);
+      }
+      assert.equal(blocked, true, "درخواست واقعاً به قفل نشست بایگانی رسید");
+      await gate.query("COMMIT");
+      const result = await response;
+      assert.equal(result.statusCode, 409, result.body);
+      assert.equal(result.json().error.code, "variation_archived");
+      const read = await app.inject({ method: "GET", url: `/receipts/${draft.id}`, ...s });
+      assert.equal(read.json().lines.length, 0);
+      const inbox = await handle.db.selectFrom("platform.inbox_message").select("event_id")
+        .where("source", "=", "api.receipt.line.bulk").where("event_id", "=", key).execute();
+      assert.equal(inbox.length, 0);
+    } finally {
+      await gate.query("ROLLBACK");
+      await pending;
+      await gate.query("UPDATE catalog.variation SET status='active' WHERE id=$1", [variationB]);
+      await gate.end();
+    }
   });
 
   test("افزودن گروهی به رسید ثبت‌شده رد می‌شود و چیزی نمی‌نشیند", async () => {
