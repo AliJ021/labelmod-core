@@ -1,4 +1,4 @@
-import { useEffect, useRef, type KeyboardEvent as ReactKeyboardEvent, type MouseEvent as ReactMouseEvent, type SyntheticEvent } from "react";
+import { useEffect, useLayoutEffect, useRef, type KeyboardEvent as ReactKeyboardEvent, type MouseEvent as ReactMouseEvent, type SyntheticEvent } from "react";
 
 /**
  * زیرساخت مشترک لایهٔ مودال روی `<dialog>` بومی — Dialog/Sheet و برگهٔ
@@ -40,7 +40,9 @@ export function useModalDialog(open: boolean, options: {
   const redirect = useRef<HTMLElement | null>(null);
   const isOpen = useRef(open);
   const latest = useRef(options);
-  useEffect(() => { latest.current = options; });
+  // رویداد cancel می‌تواند بلافاصله پس از تغییر DOM از pending به unknown برسد؛
+  // قفل و callback باید پیش از paint همان commit تازه باشند، نه در effect دیررس.
+  useLayoutEffect(() => { latest.current = options; });
   const restore = () => {
     const back = opener.current;
     const target = redirect.current ?? latest.current.returnFocus?.() ?? (back instanceof HTMLElement ? back : null);
