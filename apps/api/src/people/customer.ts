@@ -528,7 +528,7 @@ export class CustomerService {
       paid_amount: string;
       occurred_at: Date;
     }>`
-      SELECT id, number, channel, status, net_amount::text, paid_amount::text, occurred_at
+      SELECT id, sales.invoice_display_number(id) AS number, channel, status, net_amount::text, paid_amount::text, occurred_at
         FROM sales.invoice
        WHERE customer_id = ${id}::uuid AND status <> 'draft'
          ${branches === "all" ? sql`` : sql`AND branch_id = ANY(${branches}::uuid[])`}

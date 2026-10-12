@@ -317,7 +317,7 @@ export function registerReportRoutes(app: FastifyInstance, deps: ReportRouteDeps
       AND platform.business_date(pay.occurred_at) BETWEEN ${p.from}::date AND ${p.to}::date
       AND (${p.branchId ?? null}::uuid IS NULL OR coalesce(i.branch_id,r.branch_id)=${p.branchId ?? null}::uuid)`;
     const rows=await sql`SELECT pay.id,pay.occurred_at AS "occurredAt",pay.direction,pay.amount::text,pay.ref_no AS reference,
-      a.name AS "accountName",coalesce(i.number,ri.number) AS "invoiceNumber",coalesce(i.status,ri.status) AS "invoiceStatus",
+      a.name AS "accountName",coalesce(sales.invoice_display_number(i.id),sales.invoice_display_number(ri.id)) AS "invoiceNumber",coalesce(i.status,ri.status) AS "invoiceStatus",
       r.number AS "returnNumber",pay.status,coalesce(i.branch_id,r.branch_id) AS "branchId"
       FROM treasury.payment pay LEFT JOIN sales.invoice i ON i.id=pay.invoice_id
       LEFT JOIN sales.sale_return r ON r.id=pay.return_id LEFT JOIN sales.invoice ri ON ri.id=r.invoice_id

@@ -73,7 +73,7 @@ export function registerPublicRoutes(app: FastifyInstance, deps: { db: Db }): vo
     const { token } = parsed.data;
 
     const head = await sql<Row>`
-      SELECT i.number, i.occurred_at,
+      SELECT sales.invoice_display_number(i.id) AS number, i.occurred_at,
              c.full_name AS customer_name,
              i.net_amount::text, i.tax_amount::text, i.shipping_amount::text,
              i.payable_amount::text, i.paid_amount::text,

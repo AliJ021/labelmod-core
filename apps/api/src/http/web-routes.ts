@@ -378,7 +378,7 @@ export function registerWebRoutes(app: FastifyInstance, deps: WebRouteDeps): voi
       .innerJoin("sales.customer as c", "c.id", "i.customer_id")
       .select([
         "i.id",
-        "i.number",
+        sql<string | null>`sales.invoice_display_number(i.id)`.as("number"),
         "i.channel",
         "i.occurred_at",
         // با دقت کامل و به‌شکل متن — همان چیزی که مکان‌نما می‌شود.

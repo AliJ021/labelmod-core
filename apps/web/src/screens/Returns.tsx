@@ -225,7 +225,7 @@ export function Returns() {
               id="ret-no"
               value={number}
               onChange={(e) => setNumber(e.target.value)}
-              placeholder={lookupKind === "number" ? "F-1405-000123" : "۰۹۱۲…"}
+              placeholder={lookupKind === "number" ? "123456" : "۰۹۱۲…"}
               disabled={!!operation.pending}
               autoComplete="off"
             />

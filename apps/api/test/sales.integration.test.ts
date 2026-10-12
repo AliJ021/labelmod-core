@@ -351,7 +351,7 @@ describe("فروش و صندوق روی دیتابیس واقعی", { skip }, ()
     });
     assert.equal(first.statusCode, 200, first.body);
     assert.equal(first.json().status, "finalized");
-    assert.ok(first.json().number, "شماره فاکتور باید تخصیص یابد");
+    assert.match(first.json().number, /^[1-9][0-9]*$/, "شماره فاکتور فقط رقم است");
     assert.equal(first.json().replayed, false);
 
     // موجودی دقیقاً ۳ تا کم شده

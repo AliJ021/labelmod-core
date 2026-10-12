@@ -7,7 +7,7 @@ import { can, requireForSession } from "../auth/permission.ts";
 import { assertBranch, branchesOf } from "../sales/scope.ts";
 import { requireInvoiceRead } from "../sales/invoice-access.ts";
 import { InvoiceError, InvoiceService, invoiceToJson } from "../sales/invoice.ts";
-import { invoicePage, INVOICE_PAGE_CSP, receiptFooterFromSettings } from "../sales/invoice-page.ts";
+import { invoicePage, INVOICE_PAGE_CSP, receiptFooterFromSettings, latinDigits } from "../sales/invoice-page.ts";
 import { parseMoney } from "../lib/money.ts";
 import { STORE_BRAND } from "../lib/store-brand.ts";
 
@@ -26,6 +26,7 @@ export function registerInvoiceWorkspaceRoutes(app: FastifyInstance, db: Db): vo
       from: z.iso.date().optional(), to: z.iso.date().optional(),
       branchId: z.string().uuid().optional(), search: z.string().trim().max(80).default("") }).parse(req.query);
     if (q.from && q.to && q.from > q.to) throw new InvoiceError("bad_period", "تاریخ پایان پیش از آغاز است.", 422);
+    const numberSearch = latinDigits(q.search);
     const scope = await branchesOf(db, s.userId);
     if (q.branchId) await assertBranch(db, s.userId, q.branchId);
     const all = (await can(db, { userId: s.userId, operation: "report.view", viaPin: s.pinUnlocked })).verdict === "allow";
@@ -35,8 +36,8 @@ export function registerInvoiceWorkspaceRoutes(app: FastifyInstance, db: Db): vo
       AND (${q.to ?? null}::date IS NULL OR platform.business_date(i.occurred_at)<=${q.to ?? null}::date)
       AND (${all} OR i.created_by=${s.userId}::uuid)
       AND (${q.status}='all' OR i.status=${q.status} OR (${q.status}='finalized' AND i.status IN ('paid','partially_returned')))
-      AND (${q.search}='' OR strpos(coalesce(i.number,''),${q.search})>0 OR strpos(coalesce(c.full_name,''),${q.search})>0)`;
-    const result = await sql`SELECT i.id,i.number,i.status,i.channel,i.branch_id AS "branchId",b.name AS "branchName",
+      AND (${q.search}='' OR strpos(coalesce(sales.invoice_display_number(i.id),''),${numberSearch})>0 OR strpos(coalesce(i.number,''),${numberSearch})>0 OR strpos(coalesce(c.full_name,''),${q.search})>0)`;
+    const result = await sql`SELECT i.id,sales.invoice_display_number(i.id) AS number,i.status,i.channel,i.branch_id AS "branchId",b.name AS "branchName",
       i.shift_id AS "shiftId",i.created_by AS "createdBy",creator.full_name AS "creatorName",
       i.finalized_by AS "finalizedBy",finisher.full_name AS "finalizerName",c.full_name AS "customerName",
       i.occurred_at AS "occurredAt",i.last_activity_at AS "lastActivityAt",i.payable_amount::text AS "payableAmount",
@@ -107,7 +108,7 @@ export function registerInvoiceWorkspaceRoutes(app: FastifyInstance, db: Db): vo
         : inv.paidAmount;
       const variants = await trx.selectFrom("catalog.variation").select(["id", "color", "size"])
         .where("id", "in", inv.lines.map(l => l.variationId)).execute();
-      return invoicePage({ ...inv, paidAmount, documentKind, number: documentKind === "proforma" ? inv.id : inv.number ?? "", shopName: STORE_BRAND, customerName: meta.rows[0]?.customer ?? null,
+      return invoicePage({ ...inv, paidAmount, documentKind, number: documentKind === "proforma" ? BigInt(`0x${inv.id.replaceAll("-", "")}`).toString(10) : inv.number ?? "", shopName: STORE_BRAND, customerName: meta.rows[0]?.customer ?? null,
         ...receiptFooterFromSettings({ return_hours: meta.rows[0]?.return_hours ?? null, site_url: meta.rows[0]?.site_url ?? null }),
         lines: inv.lines.map(l => { const v = variants.find(x => x.id === l.variationId); return { ...l, color: v?.color ?? null, size: v?.size ?? null }; }) }, meta.rows[0]?.zone ?? "Asia/Tehran");
     });

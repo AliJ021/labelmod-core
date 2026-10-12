@@ -1,4 +1,5 @@
 import { sql } from "kysely";
+import { latinDigits } from "../sales/invoice-page.ts";
 /**
  * مسیرهای فروش و صندوق.
  *
@@ -337,9 +338,8 @@ export function registerSalesRoutes(app: FastifyInstance, deps: SalesRouteDeps):
    * «lookup» را شناسه نخواند. ادعای پایدارش در تست هست، چون این
    * چیزی است که با یک جابه‌جایی بی‌ربط در همین فایل می‌شکند.
    *
-   * جست‌وجو **همیشه شعبه‌دار** است: شماره در سطح شعبه یکتاست، نه
-   * سراسری (`platform.next_document_no()` شمارنده را به شعبه
-   * می‌بندد). بدون این، صندوق‌دار شعبه A رسید شعبه B را پیدا می‌کرد.
+   * جست‌وجو همیشه شعبه‌دار است؛ شمارهٔ قدیمی می‌تواند در شعبه‌ها تکرار شود.
+   * شمارهٔ عددی تازه در همهٔ شعبه‌ها و سال‌های مالی یکتاست.
    */
   app.get("/invoices/by-phone", async (req) => {
     const s = session(req);
@@ -349,7 +349,7 @@ export function registerSalesRoutes(app: FastifyInstance, deps: SalesRouteDeps):
     await assertBranch(db, s.userId, q.branchId);
     // همان نرمال‌ساز مشتری؛ هرگز جست‌وجوی بخشی یا جست‌وجوی نام نیست.
     const result = await sql<{ id: string; number: string; occurredAt: Date; payableAmount: string; status: string }>`
-      SELECT i.id, i.number, i.occurred_at AS "occurredAt", i.payable_amount::text AS "payableAmount", i.status
+      SELECT i.id, sales.invoice_display_number(i.id) AS number, i.occurred_at AS "occurredAt", i.payable_amount::text AS "payableAmount", i.status
       FROM sales.invoice i JOIN sales.customer c ON c.id=i.customer_id
       WHERE i.branch_id=${q.branchId}::uuid AND c.mobile_normalized=sales.normalize_mobile(${q.phone})
         AND i.status IN ('finalized','paid','partially_returned','returned')
@@ -365,14 +365,15 @@ export function registerSalesRoutes(app: FastifyInstance, deps: SalesRouteDeps):
     const s = session(req);
     await requireInvoiceRead(db, s);
     const q = z
-      .object({ number: z.string().min(1).max(64), branchId: uuid })
+      .object({ number: z.string().trim().min(1).max(64).transform(latinDigits), branchId: uuid })
       .parse(req.query);
     await assertBranch(db, s.userId, q.branchId);
 
     const row = await db
       .selectFrom("sales.invoice")
       .select("id")
-      .where("number", "=", q.number.trim())
+      .where(eb => eb.or([eb("number", "=", q.number.trim()),
+        sql<boolean>`id IN (SELECT invoice_id FROM sales.invoice_number WHERE number=${q.number})`]))
       .where("branch_id", "=", q.branchId)
       .executeTakeFirst();
     if (!row) throw new InvoiceError("invoice_not_found", "فاکتوری با این شماره پیدا نشد", 404);

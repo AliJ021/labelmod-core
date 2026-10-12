@@ -135,7 +135,7 @@ export class ExchangeService {
       branchId: string; actorId: string; number: string; returnNumber: string; collectAmount: string; refundAmount: string;
       transferAmount: string; debtApplied: string; policy: string }>`
       SELECT e.id,e.original_invoice_id "invoiceId",e.replacement_invoice_id "replacementInvoiceId",e.return_id "returnId",
-        i.branch_id "branchId",e.actor_id "actorId",i.number,r.number "returnNumber",e.collect_amount::text "collectAmount",
+        i.branch_id "branchId",e.actor_id "actorId",sales.invoice_display_number(i.id) AS number,r.number "returnNumber",e.collect_amount::text "collectAmount",
         e.refund_amount::text "refundAmount",e.transfer_amount::text "transferAmount",e.debt_applied::text "debtApplied",e.policy
       FROM sales.exchange e JOIN sales.invoice i ON i.id=e.replacement_invoice_id
       JOIN sales.sale_return r ON r.id=e.return_id WHERE e.id=${id}::uuid

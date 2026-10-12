@@ -121,6 +121,8 @@ $PSQL <<SQL
 REVOKE CREATE ON SCHEMA $SCHEMAS FROM $APP_ROLE;
 
 -- ۲. جدول‌های تغییرناپذیر — علاوه بر Trigger، یعنی دو لایه
+REVOKE INSERT, UPDATE, DELETE, TRUNCATE ON sales.invoice_number, sales.invoice_number_counter FROM $APP_ROLE;
+REVOKE EXECUTE ON FUNCTION sales.assign_invoice_number() FROM $APP_ROLE;
 REVOKE UPDATE, DELETE ON platform.audit_log       FROM $APP_ROLE;
 REVOKE UPDATE, DELETE ON inventory.stock_movement FROM $APP_ROLE;
 
