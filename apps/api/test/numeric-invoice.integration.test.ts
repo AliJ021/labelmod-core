@@ -15,6 +15,7 @@ import { loginWithMfa } from "./helpers/login-with-mfa.ts";
 import { InvoiceService } from "../src/sales/invoice.ts";
 import { handleInvoiceFinalized } from "../src/worker/handlers.ts";
 import { readNotifySettings } from "../src/worker/settings.ts";
+import { drainDbOnClose } from "./helpers/drained-db.ts";
 
 const root = path.resolve(fileURLToPath(import.meta.url), "../../../..");
 const adminUrl = process.env.DATABASE_URL;
@@ -32,10 +33,10 @@ describe("شمارهٔ عددی فاکتور: مهاجرت، هم‌زمانی �
   const restricted = process.env.LMC_TEST_DB_ROLE === "app";
 
   before(async () => {
-    admin = createDb(adminUrl!, 1);
+    admin = drainDbOnClose(createDb(adminUrl!, 1));
     await sql.raw(`CREATE DATABASE ${name}`).execute(admin.db);
     const url = new URL(adminUrl!); url.pathname = `/${name}`;
-    owner = createDb(url.toString(), 4);
+    owner = drainDbOnClose(createDb(url.toString(), 4));
     // این آزمون عمداً ارتقای دادهٔ ۰۹۴ را می‌سنجد؛ بقیه آزمون‌ها runner کانونی را اجرا می‌کنند.
     for (const file of readdirSync(path.join(root,"db/migrations")).sort().filter(f => f.endsWith(".sql") && f < "095"))
       await sql.raw(readFileSync(path.join(root,"db/migrations",file),"utf8")).execute(owner.db);
@@ -65,14 +66,15 @@ describe("شمارهٔ عددی فاکتور: مهاجرت، هم‌زمانی �
       execFileSync("bash",[path.join(root,"ops/db-roles.sh")],{cwd:root,stdio:"pipe",env:{...process.env,DATABASE_URL:url.toString(),APP_ROLE:role,APP_PASSWORD:"numeric-test-only",PGCLIENTENCODING:"UTF8"}});
       url.username=role; url.password="numeric-test-only";
     }
-    app = createDb(url.toString(), 5);
+    app = drainDbOnClose(createDb(url.toString(), 5));
     await sql`INSERT INTO catalog.price(variation_id,price_list,amount) VALUES(${variation}::uuid,'default',100)`.execute(app.db);
     for (const wh of [WH,wh2]) await sql`SELECT inventory.apply_movement(${variation}::uuid,${wh}::uuid,10,'purchase_receipt','test_receipt',${variation}::uuid,${ACTOR}::uuid,50)`.execute(app.db);
   });
   after(async () => {
     if (app) await app.close(); if (owner) await owner.close();
     if (admin) {
-      await sql.raw(`DROP DATABASE IF EXISTS ${name} WITH (FORCE)`).execute(admin.db);
+      // اتصال نشت‌کرده باید teardown را بشکند، نه با FORCE پنهان شود.
+      await sql.raw(`DROP DATABASE IF EXISTS ${name}`).execute(admin.db);
       if (restricted) await sql.raw(`DROP ROLE IF EXISTS ${role}`).execute(admin.db);
       await admin.close();
     }
