@@ -184,7 +184,7 @@ export function toTomanExact(rial: bigint): string {
  *
  * سربرگ برند (لوگوی اصیل یا نشان متنی) ← برچسب سند ← مشخصات کوتاه
  * (شماره، تاریخ، مشتری، تعداد قلم) ← جدول خط‌کشی‌شدهٔ عنوان، تعداد و خالص
- * با قیمت واحد و تخفیف زیر عنوان ← جمع‌ها و «قابل پرداخت» ← پرداخت‌شده، تسویه
+ * (هر قلم بی قیمت واحد و تخفیف قلم) ← جمع‌ها و «قابل پرداخت» ← پرداخت‌شده، تسویه
  * از تعویض و مانده ← وضعیت تسویه ← پابرگ از تنظیمات زنده.
  *
  * ── قواعد چاپ حرارتی ────────────────────────────────────────────────
@@ -194,7 +194,7 @@ export function toTomanExact(rial: bigint): string {
  *   هیچ پس‌زمینهٔ سنگین و پُررنگی روی نسخهٔ چاپی نیست.
  * - **پهنای چاپ‌پذیر ۷۲mm.** کاغذ ۸۰ است ولی هد ~۷۲mm می‌نویسد؛ هر چیزی
  *   پهن‌تر بریده می‌شود. نام قلم، تعداد و خالص در ستون‌های هم‌راستا
- *   قرار دارند؛ قیمت واحد و تخفیف زیر عنوان همان قلم‌اند.
+ *   قرار دارند. قیمت واحد و تخفیف هر قلم چاپ نمی‌شوند (فاکتور خلوت).
  * - **ارتفاع صفحه تحمیل نمی‌شود.** `@page` فقط حاشیه را صفر می‌کند؛ طول
  *   کاغذ را درایور رول تعیین می‌کند و برش پس از آخرین سطر است.
  * - **نام بلند می‌شکند، عدد نه.** `overflow-wrap:anywhere` روی نام، و
@@ -229,10 +229,11 @@ export function invoicePage(data: InvoicePageData, timeZone: string): string {
       // تعداد «2.000» زشت است و «2» درست: صفرهای اعشاری بی‌معنا حذف
       // می‌شوند ولی «1.5 متر» دست‌نخورده می‌ماند. گروه‌بندی هزارگان نمی‌خورد.
       const qty = quantity(l.qty);
-      const discount = l.discountAmount > 0n
-        ? `<div class="line-discount">تخفیف قلم: <bdi dir="ltr">− ${money(l.discountAmount)}</bdi></div>` : "";
+      // فاکتور خلوت (خواستهٔ مالک، ۱۲ اکتبر): هر قلم فقط نام/ویژگی، تعداد و مبلغ
+      // نهایی سطر. قیمت واحد و تخفیف قلم چاپ نمی‌شوند؛ snapshot همان قلم در
+      // دیتابیس و «شامل تخفیف اقلام» در جمع‌ها دست‌نخورده‌اند.
       return `    <tbody class="item" data-line="${latn(i + 1)}">
-      <tr class="line"><td class="name"><div class="item-title">${name}</div><div class="unit-line">قیمت واحد: <bdi dir="ltr">${money(l.unitPrice)}</bdi></div>${discount}</td><td class="qty">${esc(qty)}</td><td class="num total">${money(l.netAmount)}</td></tr>
+      <tr class="line"><td class="name"><div class="item-title">${name}</div></td><td class="qty">${esc(qty)}</td><td class="num total">${money(l.netAmount)}</td></tr>
     </tbody>`;
     })
     .join("\n");

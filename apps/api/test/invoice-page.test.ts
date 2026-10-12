@@ -217,11 +217,33 @@ describe("رسید حرارتی ۸۰ میلی‌متری", () => {
   test("نام بلند می‌شکند و مبلغ یکپارچه می‌ماند", () => {
     assert.match(html, /\.name \{[^}]*overflow-wrap: anywhere/);
     assert.match(html, /\.num \{[^}]*white-space: nowrap/);
-    // جدول نمونه سه ستون دارد؛ قیمت واحد زیر عنوان و تخفیف با برچسب صریح حفظ می‌شود.
+    // جدول نمونه سه ستون دارد: نام/ویژگی، تعداد و مبلغ نهایی سطر.
     assert.match(html, /<td class="qty">2<\/td><td class="num total">2,434,567\.5<\/td>/);
-    assert.match(html, /قیمت واحد: <bdi dir="ltr">1,234,567\.5<\/bdi>/);
     assert.match(html, /<th>عنوان کالا<\/th><th class="qty">تعداد<\/th><th class="num">خالص<\/th>/);
-    assert.match(html, /class="line-discount">تخفیف قلم: <bdi dir="ltr">− 34,567\.5<\/bdi><\/div>/);
+  });
+
+  test("فاکتور خلوت: قیمت واحد و تخفیف قلم چاپ نمی‌شوند؛ نام، ویژگی، تعداد و مبلغ سطر می‌مانند", () => {
+    const row = html.slice(html.indexOf('<tr class="line">'), html.indexOf("</tr>", html.indexOf('<tr class="line">')));
+    assert.equal(row,
+      '<tr class="line"><td class="name"><div class="item-title">مانتو کتان بلند با آستین پفی و جیب‌های دوخت دستی مدل تابستانهٔ 1405 <small>سرمه‌ای</small></div></td>' +
+      '<td class="qty">2</td><td class="num total">2,434,567.5</td>', "دقیقاً سه خانه");
+    assert.doesNotMatch(html, /قیمت واحد|تخفیف قلم|unit-line|line-discount/);
+    assert.ok(!html.includes("1,234,567.5"), "قیمت واحد (۱۲٬۳۴۵٬۶۷۵ ریال) هیچ‌جا نیست");
+    for (const kind of ["sale", "proforma"] as const) {
+      const page = invoicePage({ ...data, documentKind: kind }, "Asia/Tehran");
+      assert.doesNotMatch(page, /قیمت واحد|تخفیف قلم/, kind);
+      assert.match(page, /<td class="qty">2<\/td><td class="num total">2,434,567\.5<\/td>/, kind);
+    }
+  });
+
+  test("کنترل عدم تغییر جمع: جمع کالاها، شامل تخفیف اقلام، قابل پرداخت و مانده همان bigintها", () => {
+    const totals = html.slice(html.indexOf('<table class="totals">'), html.indexOf("</table>", html.indexOf('<table class="totals">')));
+    assert.match(totals, /<tr><th>جمع کالاها<\/th><td class="num">2,434,567\.5<\/td><\/tr>/);
+    // جمع تخفیف اقلام (۳۴۵٬۶۷۵ ریال) هنوز در جمع‌ها اطلاع داده می‌شود و از جمع کم نمی‌شود.
+    assert.match(totals, /<tr class="incl"><th>شامل تخفیف اقلام<\/th><td class="num">34,567\.5<\/td><\/tr>/);
+    assert.match(totals, /<tr class="grand"><th>قابل پرداخت<\/th><td class="num">2,434,567\.5 <small>تومان<\/small><\/td><\/tr>/);
+    assert.match(totals, /<tr class="paid"><th>پرداخت‌شده<\/th><td class="num">2,000,000<\/td><\/tr>/);
+    assert.match(totals, /434,567\.5 <small>تومان/);
   });
 
   test("پابرگ از تنظیمات زنده: مهلت مرجوعی و سایت؛ متن ثابت سیاست چاپ نمی‌شود", () => {
@@ -324,7 +346,7 @@ describe("رقم لاتین روی فاکتور و پیش‌فاکتور (خوا
     assert.match(html, /<td class="qty">1\.5<\/td><td class="num total">1,817,283\.7<\/td>/);
     assert.match(html, /<dt>اقلام<\/dt><dd>1 قلم<\/dd>/);
     assert.match(html, /data-line="1"/);
-    assert.match(html, /قیمت واحد: <bdi dir="ltr">1,234,567\.5<\/bdi>/);
+    assert.doesNotMatch(html, /قیمت واحد/, "فاکتور خلوت: قیمت واحد چاپ نمی‌شود");
     assert.match(html, /مهلت مرجوعی: 2 روز \(48 ساعت\)/);
     assert.match(html, /<div class="shop">لیبل مد 2<\/div>|<div class="brand">لیبل مد 2<\/div>/);
     // مبالغ همان bigintها، فقط با رقم لاتین.
