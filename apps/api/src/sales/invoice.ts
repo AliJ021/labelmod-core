@@ -161,6 +161,7 @@ export class InvoiceService {
     const inv = await ex
       .selectFrom("sales.invoice")
       .selectAll()
+      .select(sql<string | null>`sales.invoice_display_number(id)`.as("display_number"))
       .where("id", "=", invoiceId)
       .executeTakeFirst();
     if (!inv) return null;
@@ -197,7 +198,7 @@ export class InvoiceService {
     return {
       id: inv.id,
       createdBy: inv.created_by,
-      number: inv.number,
+      number: inv.display_number,
       branchId: inv.branch_id,
       warehouseId: inv.warehouse_id,
       shiftId: inv.shift_id,

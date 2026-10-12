@@ -92,7 +92,7 @@ export async function handleInvoiceFinalized(
     consent: boolean | null;
     shop_name: string | null;
   }>`
-    SELECT i.number, i.payable_amount::text,
+    SELECT sales.invoice_display_number(i.id) AS number, i.payable_amount::text,
            c.mobile_normalized AS mobile,
            c.consent_sms       AS consent,
            (SELECT b.name FROM platform.branch b WHERE b.id = i.branch_id) AS shop_name

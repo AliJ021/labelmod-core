@@ -393,6 +393,7 @@ describe("آمادگی API صندوق", { skip }, () => {
       SELECT to_jsonb(i) AS invoice,
         (SELECT jsonb_agg(to_jsonb(l) ORDER BY l.id) FROM sales.invoice_line l WHERE l.invoice_id=i.id) AS lines,
         (SELECT count(*) FROM sales.invoice) AS invoice_count,
+        (SELECT last_value::text FROM sales.invoice_number_counter) AS invoice_number_counter,
         (SELECT count(*) FROM treasury.payment p WHERE p.invoice_id=i.id) AS payments,
         (SELECT count(*) FROM inventory.stock_movement m WHERE m.ref_id=i.id) AS movements,
         (SELECT count(*) FROM ledger.journal_entry j WHERE j.ref_id=i.id) AS journals,
@@ -406,7 +407,8 @@ describe("آمادگی API صندوق", { skip }, () => {
       assert.equal(printed.headers["cache-control"],"no-store");
       assert.ok(printed.headers["content-security-policy"]);
       assert.match(printed.body,/پیش‌فاکتور/);
-      assert.match(printed.body,new RegExp(id));
+      assert.match(printed.body,new RegExp(BigInt(`0x${id.replaceAll("-", "")}`).toString(10)));
+      assert.doesNotMatch(printed.body,new RegExp(id));
     }
     assert.deepEqual(await snapshot(),beforePrint,"printing cannot finalize, number, pay, reserve, move stock or post entries");
     // پرداخت ثبت‌شده روی پیش‌نویس: از ۱۴۰۵/۰۷/۲۰ (خواستهٔ مالک) نه پرداخت‌شده و نه مانده روی

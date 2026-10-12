@@ -43,7 +43,7 @@ export function registerWebRefundReviewRoutes(app: FastifyInstance, db: Db): voi
     await requireForSession(db, s, "web.refund.review");
     await assertBranch(db, s.userId, branchId);
     const rows = await sql<{ id: string; invoiceId: string; number: string; payload: WooRefundBody; status: string; requestedAt: Date; requestedBy: string }>`
-      SELECT r.id,r.invoice_id AS "invoiceId",i.number,a.context AS payload,a.status,
+      SELECT r.id,r.invoice_id AS "invoiceId",sales.invoice_display_number(i.id) AS number,a.context AS payload,a.status,
         a.requested_at AS "requestedAt",u.full_name AS "requestedBy"
       FROM sales.web_refund_request r JOIN identity.approval_request a ON a.id=r.id
       JOIN sales.invoice i ON i.id=r.invoice_id JOIN identity.app_user u ON u.id=a.requested_by
