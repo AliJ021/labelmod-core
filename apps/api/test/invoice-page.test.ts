@@ -25,16 +25,16 @@ import {
 } from "../src/sales/invoice-page.ts";
 
 describe("صفحه عمومی فاکتور", () => {
-  test("انتقال تعویض جدا از وجه و مانده معتبر نمایش داده می‌شود و متن‌ها escape می‌شوند", () => {
+  test("پرداخت، تسویه از تعویض و مانده روی چاپ نمی‌آیند و متن‌ها escape می‌شوند", () => {
     const data = { number: "<img src=x>", shopName: "<script>shop</script>", customerName: "<svg onload=x>",
       occurredAt: new Date("2026-09-06T10:00:00Z"), lines: [], netAmount: 1200000n, taxAmount: 0n,
       shippingAmount: 0n, payableAmount: 1200000n, paidAmount: 200000n, exchangeAmount: 1000000n, dueAmount: 0n };
     const html = invoicePage(data, "Asia/Tehran");
-    assert.match(html, /تسویه از تعویض/);
-    assert.doesNotMatch(html, /class="due"/);
+    assert.doesNotMatch(html, /تسویه از تعویض|class="due"|class="paid"/);
     assert.doesNotMatch(html, /<img src=x>|<svg onload=x>|<script>shop/);
     assert.match(html, /&lt;img src=x&gt;/);
-    assert.match(invoicePage({ ...data, dueAmount: 600000n }, "Asia/Tehran"), /class="due"/);
+    // مانده هم (خواستهٔ مالک ۱۴۰۵/۰۷/۲۰) — میدان در قرارداد می‌ماند و فقط چاپ نمی‌شود.
+    assert.doesNotMatch(invoicePage({ ...data, dueAmount: 600000n }, "Asia/Tehran"), /class="due"|مانده|تسویه/);
   });
   test("hash در CSP با متن واقعی اسکریپت می‌خواند", () => {
     const want =
@@ -196,7 +196,7 @@ describe("رسید حرارتی ۸۰ میلی‌متری", () => {
     assert.equal(toTomanExact(10n), "1");
     assert.equal(toTomanExact(-15n), "−1.5");
     assert.ok(html.includes("2,434,567.5"), "جمع دقیق روی رسید");
-    assert.ok(html.includes("434,567.5"), "مانده دقیق (۴٬۳۴۵٬۶۷۵ ریال)");
+    assert.doesNotMatch(html, /[^,0-9]434,567\.5/, "مانده (۴٬۳۴۵٬۶۷۵ ریال) چاپ نمی‌شود");
   });
 
   test("قلاب‌های چاپ مستقیم دست‌نخورده‌اند", () => {
@@ -220,6 +220,15 @@ describe("رسید حرارتی ۸۰ میلی‌متری", () => {
     // جدول نمونه سه ستون دارد: نام/ویژگی، تعداد و مبلغ نهایی سطر.
     assert.match(html, /<td class="qty">2<\/td><td class="num total">2,434,567\.5<\/td>/);
     assert.match(html, /<th>عنوان کالا<\/th><th class="qty">تعداد<\/th><th class="num">خالص<\/th>/);
+    // ستون خالص با بلندترین مبلغ (سطر یا جمع کالاها) پهن می‌شود و سقف دارد؛ رقم نمی‌شکند.
+    assert.match(html, /<col class="total" style="width:36%">/);
+    const small = invoicePage({ ...data, lines: [{ ...data.lines[0]!, netAmount: 18_900_000n }], netAmount: 18_900_000n, payableAmount: 18_900_000n }, "Asia/Tehran");
+    assert.match(small, /<col class="total" style="width:33%">/);
+    const huge = invoicePage({ ...data, lines: [{ ...data.lines[0]!, netAmount: 1_999_999_999_880n }], netAmount: 1_999_999_999_880n, payableAmount: 1_999_999_999_880n }, "Asia/Tehran");
+    assert.match(huge, /<col class="total" style="width:44%">/);
+    assert.match(huge, /<td class="num total">199,999,999,988<\/td>/);
+    // ستون خالص و هر رقمش، از جمله جمع کالاها، افقی و عمودی وسط است.
+    assert.match(html, /\.items th\.num, \.items td\.num \{ text-align: center; vertical-align: middle; \}/);
   });
 
   test("فاکتور خلوت: قیمت واحد و تخفیف قلم چاپ نمی‌شوند؛ نام، ویژگی، تعداد و مبلغ سطر می‌مانند", () => {
@@ -236,32 +245,41 @@ describe("رسید حرارتی ۸۰ میلی‌متری", () => {
     }
   });
 
-  test("کنترل عدم تغییر جمع: جمع کالاها، شامل تخفیف اقلام، قابل پرداخت و مانده همان bigintها", () => {
+  test("کنترل عدم تغییر جمع: جمع کالاها زیر ستون خالص، شامل تخفیف اقلام و قابل پرداخت همان bigintها", () => {
     const totals = html.slice(html.indexOf('<table class="totals">'), html.indexOf("</table>", html.indexOf('<table class="totals">')));
-    assert.match(totals, /<tr><th>جمع کالاها<\/th><td class="num">2,434,567\.5<\/td><\/tr>/);
+    // جمع کالاها پای جدول اقلام است: برچسب روی نام و تعداد (colspan=2)، مبلغ دقیقاً در ستون خالص.
+    const items = html.slice(html.indexOf('<table class="items">'), html.indexOf("</table>", html.indexOf('<table class="items">')));
+    assert.match(items, /<tfoot>\s*<tr class="sum"><th colspan="2">جمع کالاها<\/th><td class="num total">2,434,567\.5<\/td><\/tr>\s*<\/tfoot>\s*$/);
+    assert.equal((html.match(/جمع کالاها/g) ?? []).length, 1, "یک بار، فقط زیر ستون خالص");
     // جمع تخفیف اقلام (۳۴۵٬۶۷۵ ریال) هنوز در جمع‌ها اطلاع داده می‌شود و از جمع کم نمی‌شود.
     assert.match(totals, /<tr class="incl"><th>شامل تخفیف اقلام<\/th><td class="num">34,567\.5<\/td><\/tr>/);
     assert.match(totals, /<tr class="grand"><th>قابل پرداخت<\/th><td class="num">2,434,567\.5 <small>تومان<\/small><\/td><\/tr>/);
-    assert.match(totals, /<tr class="paid"><th>پرداخت‌شده<\/th><td class="num">2,000,000<\/td><\/tr>/);
-    assert.match(totals, /434,567\.5 <small>تومان/);
+    assert.doesNotMatch(html, /پرداخت‌شده|تسویه|مانده|class="settle/);
+    // پرداخت ناقص چیزی از جمع‌ها عوض نمی‌کند.
+    const fullyPaid = invoicePage({ ...data, paidAmount: data.payableAmount }, "Asia/Tehran");
+    assert.equal(fullyPaid, html);
   });
 
-  test("پابرگ از تنظیمات زنده: مهلت مرجوعی و سایت؛ متن ثابت سیاست چاپ نمی‌شود", () => {
+  test("پابرگ: مهلت تعویض از تنظیم زنده، سایت، تلفن و شعار؛ متن «همه مبالغ» نیست", () => {
     const f48 = receiptFooterFromSettings({ return_hours: "48", site_url: "https://labelmod.ir/" });
     assert.deepEqual(f48, { returnWindowHours: 48, website: "labelmod.ir" });
     const page48 = invoicePage({ ...data, ...f48 }, "Asia/Tehran");
-    assert.match(page48, /مهلت مرجوعی: 2 روز \(48 ساعت\) پس از خرید/);
-    assert.match(page48, /<bdi dir="ltr">labelmod\.ir<\/bdi>/);
-    assert.match(invoicePage({ ...data, returnWindowHours: 36 }, "Asia/Tehran"), /مهلت مرجوعی: 36 ساعت پس از خرید/);
+    assert.match(page48, /مهلت تعویض: 2 روز \(48 ساعت\) پس از خرید/);
+    assert.doesNotMatch(page48, /مهلت مرجوعی|همه مبالغ به تومان/);
+    // سایت، سپس تلفن زیرش، سپس شعار LTR با LABEL بولد.
+    assert.match(page48, /<div class="site"><bdi dir="ltr">labelmod\.ir<\/bdi><\/div>\s*<div class="tel">تلفن: <bdi dir="ltr">02188085042<\/bdi><\/div>\s*<div class="slogan" dir="ltr" lang="en">what your <b>LABEL<\/b> today\?<\/div>/);
+    assert.match(invoicePage({ ...data, returnWindowHours: 36 }, "Asia/Tehran"), /مهلت تعویض: 36 ساعت پس از خرید/);
     // بی تنظیم معتبر، هیچ سطر سیاستی نیست — حدس زده نمی‌شود.
     assert.deepEqual(receiptFooterFromSettings({ return_hours: null, site_url: "javascript:alert(1)" }), { returnWindowHours: null, website: null });
-    assert.doesNotMatch(html, /مهلت مرجوعی/);
+    assert.doesNotMatch(html, /مهلت تعویض|مهلت مرجوعی/);
+    // بی سایت، تلفن و شعار همچنان هستند.
+    assert.match(html, /<div class="tel">تلفن: <bdi dir="ltr">02188085042<\/bdi><\/div>/);
     // شماره فاکتور برچسب‌دار و LTR جدا، در جعبهٔ مشخصات (بازطراحی ۱۴۰۵/۰۷).
     assert.match(html, /<dt>شمارهٔ فاکتور<\/dt><dd><bdi dir="ltr" class="docno">F-1405-000123<\/bdi><\/dd>/);
   });
 });
 
-describe("بازطراحی رسید — جمع‌ها، پرداخت و وضعیت تسویه", () => {
+describe("بازطراحی رسید — جمع‌ها بی پرداخت و وضعیت تسویه", () => {
   const line = (over: Partial<{ discountAmount: bigint; netAmount: bigint; unitPrice: bigint }> = {}) => ({
     productName: "شال", color: null, size: null, qty: "1", unitPrice: 1_000_000n, discountAmount: 0n, netAmount: 1_000_000n, ...over,
   });
@@ -270,19 +288,18 @@ describe("بازطراحی رسید — جمع‌ها، پرداخت و وضعی
     taxAmount: 0n, shippingAmount: 0n,
   };
 
-  test("پرداخت‌شده دیده می‌شود و مانده با برچسب و وضعیت «تسویه نشده» برجسته است", () => {
+  test("پرداخت ناقص: نه پرداخت‌شده، نه مانده، نه وضعیت تسویه؛ قابل پرداخت همان", () => {
     const html = invoicePage({ ...base, lines: [line()], netAmount: 1_000_000n, payableAmount: 1_000_000n, paidAmount: 400_000n }, "Asia/Tehran");
-    assert.match(html, /<tr class="paid"><th>پرداخت‌شده<\/th><td class="num">40,000<\/td><\/tr>/);
-    assert.match(html, /<tr class="due"><th><span class="due-tag">مانده<\/span><\/th><td class="num">60,000 <small>تومان<\/small><\/td><\/tr>/);
-    assert.match(html, /class="settle settle--open">تسویه نشده/);
+    assert.doesNotMatch(html, /پرداخت‌شده|مانده|تسویه|class="paid"|class="due"|class="settle/);
+    assert.match(html, /<tr class="grand"><th>قابل پرداخت<\/th><td class="num">100,000 <small>تومان<\/small><\/td><\/tr>/);
   });
 
-  test("فاکتور صفر (تخفیف ۱۰۰٪): قابل پرداخت ۰، بی سطر پرداخت و مانده، «تسویه‌شده»", () => {
+  test("فاکتور صفر (تخفیف ۱۰۰٪): قابل پرداخت ۰، بی سطر پرداخت، مانده یا وضعیت تسویه", () => {
     const html = invoicePage({ ...base, lines: [line({ discountAmount: 1_000_000n, netAmount: 0n })],
       netAmount: 0n, payableAmount: 0n, paidAmount: 0n }, "Asia/Tehran");
     assert.match(html, /<tr class="grand"><th>قابل پرداخت<\/th><td class="num">0 <small>تومان<\/small><\/td><\/tr>/);
     assert.doesNotMatch(html, /class="paid"|class="due"/);
-    assert.match(html, /<div class="settle">تسویه‌شده<\/div>/);
+    assert.doesNotMatch(html, /تسویه/);
     assert.match(html, /<tr class="incl"><th>شامل تخفیف اقلام<\/th><td class="num">100,000<\/td><\/tr>/);
   });
 
@@ -301,7 +318,9 @@ describe("بازطراحی رسید — جمع‌ها، پرداخت و وضعی
     assert.equal((html.match(/<tbody class="item" data-line="[0-9]+">/g) ?? []).length, 32);
     assert.match(html, /<tbody class="item" data-line="32">\s*<tr class="line"><td class="name"/);
     assert.doesNotMatch(html, /rowspan/);
-    assert.match(html, /<dt>اقلام<\/dt><dd>32 قلم<\/dd>/);
+    // ردیف «اقلام: N قلم» از مشخصات حذف شد؛ تعداد هر قلم در جدول می‌ماند.
+    assert.doesNotMatch(html, /<dt>اقلام<\/dt>|قلم<\/dd>/);
+    assert.equal((html.match(/<td class="qty">1<\/td>/g) ?? []).length, 32);
   });
 
   test("نام مشتری ایزوله است و راهنمای چاپ محدودیت مرورگر را پنهان نمی‌کند", () => {
@@ -339,20 +358,22 @@ describe("رقم لاتین روی فاکتور و پیش‌فاکتور (خوا
     assert.doesNotMatch(body(html), PERSIAN_OR_ARABIC_DIGIT);
     assert.doesNotMatch(html.slice(0, html.indexOf("<style>")), PERSIAN_OR_ARABIC_DIGIT, "عنوان صفحه هم");
     // تقویم جلالی می‌ماند (۱۴۰۵/۰۷/۱۰، ساعت ۱۹:۱۰ تهران)؛ فقط شکل رقم لاتین است.
-    assert.match(html, /<dt>تاریخ و ساعت<\/dt><dd>10 مهر 1405،? 19:10<\/dd>/);
+    assert.match(html, /<dt>تاریخ<\/dt><dd>10 مهر 1405<\/dd>/);
+    assert.match(html, /<dt>ساعت<\/dt><dd><bdi dir="ltr">19:10<\/bdi><\/dd>/);
     assert.match(html, /<bdi dir="ltr" class="docno">F-1405-007<\/bdi>/);
     assert.match(html, /مانتو مدل 1405 سری 12 <small>طوسی 3<\/small>/);
     assert.match(html, /<bdi>مریم 0912<\/bdi>/);
     assert.match(html, /<td class="qty">1\.5<\/td><td class="num total">1,817,283\.7<\/td>/);
-    assert.match(html, /<dt>اقلام<\/dt><dd>1 قلم<\/dd>/);
+    assert.doesNotMatch(html, /<dt>اقلام<\/dt>/);
     assert.match(html, /data-line="1"/);
     assert.doesNotMatch(html, /قیمت واحد/, "فاکتور خلوت: قیمت واحد چاپ نمی‌شود");
-    assert.match(html, /مهلت مرجوعی: 2 روز \(48 ساعت\)/);
-    assert.match(html, /<div class="shop">لیبل مد 2<\/div>|<div class="brand">لیبل مد 2<\/div>/);
+    assert.match(html, /مهلت تعویض: 2 روز \(48 ساعت\)/);
+    // با لوگو زیرنویس ثابت «فروشگاه لیبل مد» است؛ نام شعبه alt لوگو یا نشان متنی بی لوگو.
+    assert.match(html, /alt="لیبل مد 2">\s*<div class="shop">فروشگاه لیبل مد<\/div>|<div class="brand">لیبل مد 2<\/div>/);
     // مبالغ همان bigintها، فقط با رقم لاتین.
     assert.ok(html.includes("1,817,283.7"));
-    assert.match(html, /<tr class="paid"><th>پرداخت‌شده<\/th><td class="num">1,000,000<\/td><\/tr>/);
-    assert.match(html, /<tr class="due">[\s\S]*?817,283\.7 <small>تومان/);
+    assert.match(html, /<tr class="grand"><th>قابل پرداخت<\/th><td class="num">1,817,283\.7 <small>تومان/);
+    assert.doesNotMatch(html, /پرداخت‌شده|class="due"/);
     // جهت و زبان صفحه فارسی می‌ماند؛ هیچ فونت «FD» که رقم را فارسی بکشد در فهرست نیست.
     assert.match(html, /<html lang="fa" dir="rtl">/);
     assert.doesNotMatch(html, /font-family:[^;]*(?:\bVazir\b(?!matn)|FD\b)/);
@@ -373,7 +394,7 @@ describe("رقم لاتین روی فاکتور و پیش‌فاکتور (خوا
     // شماره همان دادهٔ فراخوان است (فقط رقمش لاتین)، با برچسب «مرجع» نه «فاکتور».
     assert.match(pro, /<dt>شمارهٔ مرجع<\/dt><dd><bdi dir="ltr" class="docno">پیش‌نویس 12<\/bdi><\/dd>/);
     assert.doesNotMatch(pro, /شمارهٔ فاکتور|رسید فروش/);
-    assert.doesNotMatch(pro, /class="settle|تسویه‌شده|تسویه نشده/);
+    assert.doesNotMatch(pro, /class="settle|تسویه/);
     // جدول جمع و اقلام بایت‌به‌بایت همان فاکتور فروش است.
     const part = (html: string, from: string, to: string) => html.slice(html.indexOf(from), html.indexOf(to, html.indexOf(from)));
     assert.equal(part(pro, '<table class="items">', "</table>"), part(sale, '<table class="items">', "</table>"));
@@ -384,12 +405,12 @@ describe("رقم لاتین روی فاکتور و پیش‌فاکتور (خوا
     assert.match(pro, /<div class="sheet">[\s\S]*<table class="totals">/);
   });
 
-  test("پیش‌فرض فروش است: بی documentKind همان رسید فروش با وضعیت تسویه", () => {
+  test("پیش‌فرض فروش است: بی documentKind همان رسید فروش، بی وضعیت تسویه", () => {
     const html = invoicePage(data, "Asia/Tehran");
     assert.match(html, /<div class="doc"><span>رسید فروش<\/span><\/div>/);
     assert.match(html, /<dt>شمارهٔ فاکتور<\/dt>/);
     assert.doesNotMatch(body(html), /proforma-note|پیش‌فاکتور/);
-    assert.match(html, /class="settle settle--open">تسویه نشده/);
+    assert.doesNotMatch(html, /تسویه/);
     assert.equal(invoicePage({ ...data, documentKind: "sale" }, "Asia/Tehran"), html);
   });
 });
