@@ -64,7 +64,7 @@ export class ScanThrottle {
 
 /** شکل حداقلی چیزی که مرورگر می‌دهد — تا تست به مرورگر نیاز نداشته باشد. */
 interface DetectorLike {
-  detect(source: CanvasImageSource): Promise<Array<{ rawValue: string }>>;
+  detect(source: HTMLVideoElement): Promise<Array<{ rawValue: string }>>;
 }
 
 interface DetectorCtor {
@@ -91,53 +91,42 @@ export function nativeDetector(
   return new Ctor({ formats: BARCODE_FORMATS });
 }
 
-/**
- * آشکارساز، از هر راهی که این مرورگر می‌دهد.
- *
- * اندروید: `BarcodeDetector` بومی — **صفر بایت** اضافه.
- * آیفون: همان API از یک Polyfill، با `import()` پویا.
- *
- * `barcode-detector` عمداً به‌جای یک کتابخانه معمولی انتخاب شد چون
- * **همان رابط** را می‌دهد. یعنی از اینجا به بعد یک مسیر کد داریم نه
- * دو تا — و مسیری که فقط روی یک پلتفرم اجرا می‌شود، همان است که
- * خراب می‌ماند و کسی نمی‌فهمد.
- */
+/** تصویر همان فریم دوربین؛ بوم فقط یک بار ساخته و میان فریم‌ها استفاده می‌شود. */
+export function videoDetector(
+  read: (image: ImageData) => Promise<Array<{ text: string }>>,
+  makeCanvas: () => HTMLCanvasElement = () => document.createElement("canvas"),
+): DetectorLike {
+  let canvas: HTMLCanvasElement | undefined;
+  let context: CanvasRenderingContext2D | null | undefined;
+  return {
+    async detect(source) {
+      const width = source.videoWidth, height = source.videoHeight;
+      if (source.readyState < 2 || width === 0 || height === 0) return [];
+      canvas ??= makeCanvas();
+      context ??= canvas.getContext("2d", { willReadFrequently: true });
+      if (!context) throw new Error("خواندن تصویر دوربین ممکن نیست.");
+      if (canvas.width !== width) canvas.width = width;
+      if (canvas.height !== height) canvas.height = height;
+      context.drawImage(source, 0, 0, width, height);
+      const results = await read(context.getImageData(0, 0, width, height));
+      return results.map(result => ({ rawValue: result.text }));
+    },
+  };
+}
+
+/** بومی بدون دانلود رمزگشا؛ fallback با glue و WASM از یک نسخه و یک بسته. */
 export async function resolveDetector(
   g: Record<string, unknown> = globalThis,
 ): Promise<DetectorLike> {
   const native = nativeDetector(g);
   if (native) return native;
 
-  const mod = await import("barcode-detector/pure");
-
-  // ── چرا این خط حیاتی است ────────────────────────────────────────
-  //
-  // `barcode-detector` به‌صورت پیش‌فرض فایل WASM را در **زمان اجرا**
-  // از jsDelivr می‌گیرد. برای این پروژه سه دلیل جدا آن را رد می‌کند:
-  //
-  //   ۱. زنجیره تأمین (SECURITY.md بند ۵) — یک شخص ثالث می‌تواند هر
-  //      کدی را به‌عنوان WASM سرو کند، در صفحه‌ای که پول جابه‌جا
-  //      می‌کند.
-  //   ۲. CSP این پروژه دامنه بیرونی نمی‌دهد و باید هم ندهد.
-  //   ۳. دقیقاً همان لحظه‌ای که دوربین لازم می‌شود — قطعی برق، اینترنت
-  //      همراه ضعیف — یک دانلود از CDN آخرین چیزی است که می‌خواهیم.
-  //
-  // `?url` به Vite می‌گوید فایل را کنار بقیه دارایی‌ها بگذارد و آدرس
-  // محلی‌اش را بدهد. هیچ درخواستی از دامنه ما بیرون نمی‌رود.
-  // ⚠️ محلی‌بودن فایل کافی نیست: **اجرای** WASM هم از CSP اجازه
-  // می‌خواهد. یک `script-src` سخت‌گیرانه بدون `wasm-unsafe-eval`،
-  // نمونه‌سازی WebAssembly را در مرورگرهای Chromium می‌بندد — و این
-  // مسیر همان مسیر Polyfill است، یعنی آیفون و هر مرورگری که
-  // `BarcodeDetector` بومی ندارد.
-  //
-  // امروز هنوز CSP سراسری‌ای وجود ندارد (بند ۶ SECURITY.md آن را
-  // می‌خواهد و `docker-compose.yml` هنوز Caddy ندارد). پس این تله
-  // برای **روزی** است که اضافه شود: بدون آن کلیدواژه، دوربین بی‌صدا
-  // از کار می‌افتد — دقیقاً در قطعی برق، که تنها دلیل وجودش است.
+  const mod = await import("zxing-wasm/reader");
+  // Vite باینری همین بسته را کنار دارایی‌های برنامه منتشر می‌کند؛ CDN لازم نیست.
+  // آماده‌سازی پیش از گرفتن دوربین انجام می‌شود تا خطای WASM دوربین را روشن نگذارد.
   const { default: wasmUrl } = await import("zxing-wasm/reader/zxing_reader.wasm?url");
   await mod.prepareZXingModule({ overrides: { locateFile: () => wasmUrl }, fireImmediately: true });
-
-  return new mod.BarcodeDetector({ formats: [...BARCODE_FORMATS] }) as DetectorLike;
+  return videoDetector(image => mod.readBarcodes(image, { formats: ["EAN13", "EAN8", "Code128"], textMode: "Plain" }));
 }
 
 /**

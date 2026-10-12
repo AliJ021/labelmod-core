@@ -12,6 +12,8 @@ import {
   cameraError,
   hasNativeDetector,
   nativeDetector,
+  resolveDetector,
+  videoDetector,
   ScanThrottle,
 } from "../src/lib/camera-scan.ts";
 
@@ -70,6 +72,12 @@ describe("مهار تکرار", () => {
 });
 
 describe("تشخیص توان مرورگر", () => {
+  test("مسیر بومی بدون بارگذاری WASM یا DOM کار می‌کند", async () => {
+    class Native {
+      async detect() { return [{ rawValue: "00123" }]; }
+    }
+    assert.ok(await resolveDetector({ BarcodeDetector: Native }) instanceof Native);
+  });
   test("کروم اندروید — آشکارساز بومی", () => {
     const g = { BarcodeDetector: class {} } as unknown as Record<string, unknown>;
     assert.equal(hasNativeDetector(g), true);
@@ -87,6 +95,44 @@ describe("تشخیص توان مرورگر", () => {
     // بارکد داخلی این پروژه EAN-13 با پیشوند ۲۰ است.
     assert.ok(BARCODE_FORMATS.includes("ean_13"));
     assert.ok(BARCODE_FORMATS.includes("ean_8"));
+  });
+});
+
+describe("فریم ویدیوی رمزگشای محلی", () => {
+  test("فریم آماده‌نشده یا بدون اندازه بوم و رمزگشا را مصرف نمی‌کند", async () => {
+    const detector = videoDetector(async () => { throw new Error("نباید خوانده شود"); },
+      () => { throw new Error("نباید بوم ساخته شود"); });
+    for (const frame of [{ readyState: 1, videoWidth: 640, videoHeight: 480 },
+      { readyState: 4, videoWidth: 0, videoHeight: 480 }, { readyState: 4, videoWidth: 640, videoHeight: 0 }])
+      assert.deepEqual(await detector.detect(frame as HTMLVideoElement), []);
+  });
+
+  test("بوم دوباره استفاده می‌شود؛ اندازهٔ تازه و متن با صفر ابتدایی حفظ می‌شود", async () => {
+    let made = 0;
+    const drawn: unknown[][] = [], readSizes: number[][] = [];
+    const image = { width: 640, height: 480 } as ImageData;
+    const context = { drawImage: (...args: unknown[]) => { drawn.push(args); },
+      getImageData: (...args: number[]) => { readSizes.push(args); return image; } };
+    const canvas = { width: 0, height: 0, getContext: () => context } as unknown as HTMLCanvasElement;
+    const detector = videoDetector(async pixels => { assert.equal(pixels, image); return [{ text: "0012345" }]; },
+      () => { made++; return canvas; });
+    const frame = { readyState: 4, videoWidth: 640, videoHeight: 480 } as HTMLVideoElement;
+    assert.deepEqual(await detector.detect(frame), [{ rawValue: "0012345" }]);
+    Object.assign(frame, { videoWidth: 320, videoHeight: 240 });
+    await detector.detect(frame);
+    assert.equal(made, 1); assert.equal(canvas.width, 320); assert.equal(canvas.height, 240);
+    assert.deepEqual(drawn.map(args => args.slice(1)), [[0, 0, 640, 480], [0, 0, 320, 240]]);
+    assert.deepEqual(readSizes, [[0, 0, 640, 480], [0, 0, 320, 240]]);
+  });
+
+  test("خطای یک فریم مانع خواندن فریم بعدی نیست", async () => {
+    let calls = 0;
+    const context = { drawImage() {}, getImageData: () => ({}) as ImageData };
+    const detector = videoDetector(async () => { if (++calls === 1) throw new Error("فریم خراب"); return []; },
+      () => ({ width: 0, height: 0, getContext: () => context }) as unknown as HTMLCanvasElement);
+    const frame = { readyState: 4, videoWidth: 100, videoHeight: 100 } as HTMLVideoElement;
+    await assert.rejects(detector.detect(frame), /فریم خراب/);
+    assert.deepEqual(await detector.detect(frame), []);
   });
 });
 
