@@ -29,6 +29,7 @@ import { z } from "zod";
 import { sql } from "kysely";
 import type { Db } from "../db/client.ts";
 import { parseMoney } from "../lib/money.ts";
+import { STORE_BRAND } from "../lib/store-brand.ts";
 import {
   invoicePage,
   receiptFooterFromSettings,
@@ -133,7 +134,7 @@ export function registerPublicRoutes(app: FastifyInstance, deps: { db: Db }): vo
       {
         number: row.number,
         occurredAt: row.occurred_at,
-        shopName: row.shop_name ?? "فروشگاه",
+        shopName: STORE_BRAND,
         customerName: row.customer_name,
         lines: pageLines,
         netAmount: parseMoney(row.net_amount),

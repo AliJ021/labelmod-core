@@ -140,7 +140,7 @@ describe("صفحه عمومی فاکتور", () => {
     );
   }
   const nameCells = (html: string) =>
-    [...html.matchAll(/<td class="name"[^>]*>([\s\S]*?)<\/td>/g)].map((m) => m[1]);
+    [...html.matchAll(/<div class="item-title">([\s\S]*?)<\/div>/g)].map((m) => m[1]);
 
   test("عنوان قلم رنگ را دارد و سایز ساخت‌یافته را نه", () => {
     const cells = nameCells(page([{ productName: "پیراهن", color: "آبی", size: "XXL-SIZE" }]));
@@ -217,10 +217,11 @@ describe("رسید حرارتی ۸۰ میلی‌متری", () => {
   test("نام بلند می‌شکند و مبلغ یکپارچه می‌ماند", () => {
     assert.match(html, /\.name \{[^}]*overflow-wrap: anywhere/);
     assert.match(html, /\.num \{[^}]*white-space: nowrap/);
-    // تعداد، قیمت واحد و جمع هر کدام ستون خودشان را دارند (نسخهٔ ۳) — همان سه عدد دقیق.
-    assert.match(html, /<td class="qty">2<\/td><td class="num unit">1,234,567\.5<\/td><td class="num total">2,434,567\.5<\/td>/);
-    assert.match(html, /<th class="qty">تعداد<\/th><th class="num">قیمت واحد<\/th><th class="num">جمع<\/th>/);
-    assert.match(html, /class="disc"><td class="idx"><\/td><td colspan="2">تخفیف قلم<\/td><td class="num"><bdi dir="ltr">− 34,567\.5<\/bdi><\/td>/);
+    // جدول نمونه سه ستون دارد؛ قیمت واحد زیر عنوان و تخفیف با برچسب صریح حفظ می‌شود.
+    assert.match(html, /<td class="qty">2<\/td><td class="num total">2,434,567\.5<\/td>/);
+    assert.match(html, /قیمت واحد: <bdi dir="ltr">1,234,567\.5<\/bdi>/);
+    assert.match(html, /<th>عنوان کالا<\/th><th class="qty">تعداد<\/th><th class="num">خالص<\/th>/);
+    assert.match(html, /class="line-discount">تخفیف قلم: <bdi dir="ltr">− 34,567\.5<\/bdi><\/div>/);
   });
 
   test("پابرگ از تنظیمات زنده: مهلت مرجوعی و سایت؛ متن ثابت سیاست چاپ نمی‌شود", () => {
@@ -272,11 +273,11 @@ describe("بازطراحی رسید — جمع‌ها، پرداخت و وضعی
     assert.doesNotMatch(plain, /class="incl"/);
   });
 
-  test("اقلام شماره‌دارند، بی rowspan؛ ۳۰+ قلم هر کدام سطر خودش را دارد", () => {
+  test("ترتیب اقلام حفظ می‌شود، بی rowspan؛ ۳۰+ قلم هر کدام سطر خودش را دارد", () => {
     const lines = Array.from({ length: 32 }, () => line());
     const html = invoicePage({ ...base, lines, netAmount: 32_000_000n, payableAmount: 32_000_000n, paidAmount: 32_000_000n }, "Asia/Tehran");
-    assert.equal((html.match(/<tbody class="item">/g) ?? []).length, 32);
-    assert.match(html, /<td class="idx">32<\/td><td class="name"/);
+    assert.equal((html.match(/<tbody class="item" data-line="[0-9]+">/g) ?? []).length, 32);
+    assert.match(html, /<tbody class="item" data-line="32">\s*<tr class="line"><td class="name"/);
     assert.doesNotMatch(html, /rowspan/);
     assert.match(html, /<dt>اقلام<\/dt><dd>32 قلم<\/dd>/);
   });
@@ -320,9 +321,10 @@ describe("رقم لاتین روی فاکتور و پیش‌فاکتور (خوا
     assert.match(html, /<bdi dir="ltr" class="docno">F-1405-007<\/bdi>/);
     assert.match(html, /مانتو مدل 1405 سری 12 <small>طوسی 3<\/small>/);
     assert.match(html, /<bdi>مریم 0912<\/bdi>/);
-    assert.match(html, /<td class="qty">1\.5<\/td><td class="num unit">1,234,567\.5<\/td><td class="num total">1,817,283\.7<\/td>/);
+    assert.match(html, /<td class="qty">1\.5<\/td><td class="num total">1,817,283\.7<\/td>/);
     assert.match(html, /<dt>اقلام<\/dt><dd>1 قلم<\/dd>/);
-    assert.match(html, /<td class="idx">1<\/td>/);
+    assert.match(html, /data-line="1"/);
+    assert.match(html, /قیمت واحد: <bdi dir="ltr">1,234,567\.5<\/bdi>/);
     assert.match(html, /مهلت مرجوعی: 2 روز \(48 ساعت\)/);
     assert.match(html, /<div class="shop">لیبل مد 2<\/div>|<div class="brand">لیبل مد 2<\/div>/);
     // مبالغ همان bigintها، فقط با رقم لاتین.

@@ -498,12 +498,13 @@ describe("ساخت خودکار تنوع و ماتریس موجودی", { skip }
     assert.equal(r.headers["cache-control"], "no-store");
 
     const html = r.body;
+    assert.match(html, /class="shop">لیبل مد<\/div>/, "روی لیبل نام برند چاپ می‌شود، مستقل از شعبه");
     assert.equal(html.split('class="label"').length - 1, 3, "۲ + ۱ = سه برچسب");
     // ۳٬۲۰۰٬۰۰۰ ریال = ۳۲۰٬۰۰۰ تومان
     assert.ok(html.includes("320,000"), "قیمت باید به تومان با رقم انگلیسی روی برچسب بیاید");
     assert.ok(!html.includes("3,200,000"), "ریال نباید روی برچسب بیاید");
     assert.ok(html.includes("<svg"), "بارکد باید رسم شود");
-    assert.ok(html.includes("شعبه اصلی"), "نام فروشگاه از دیتابیس");
+    assert.ok(!html.includes("شعبه اصلی"), "نام شعبه جای برند روی لیبل چاپ نمی‌شود");
   });
 
   test("قاب چاپ فقط سند خالیِ مجاز با CSP مستقل است", async () => {

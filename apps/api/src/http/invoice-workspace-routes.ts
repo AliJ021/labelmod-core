@@ -9,6 +9,7 @@ import { requireInvoiceRead } from "../sales/invoice-access.ts";
 import { InvoiceError, InvoiceService, invoiceToJson } from "../sales/invoice.ts";
 import { invoicePage, INVOICE_PAGE_CSP, receiptFooterFromSettings } from "../sales/invoice-page.ts";
 import { parseMoney } from "../lib/money.ts";
+import { STORE_BRAND } from "../lib/store-brand.ts";
 
 export function registerInvoiceWorkspaceRoutes(app: FastifyInstance, db: Db): void {
   const invoices = new InvoiceService(db);
@@ -106,7 +107,7 @@ export function registerInvoiceWorkspaceRoutes(app: FastifyInstance, db: Db): vo
         : inv.paidAmount;
       const variants = await trx.selectFrom("catalog.variation").select(["id", "color", "size"])
         .where("id", "in", inv.lines.map(l => l.variationId)).execute();
-      return invoicePage({ ...inv, paidAmount, documentKind, number: documentKind === "proforma" ? inv.id : inv.number ?? "", shopName: meta.rows[0]?.shop ?? "", customerName: meta.rows[0]?.customer ?? null,
+      return invoicePage({ ...inv, paidAmount, documentKind, number: documentKind === "proforma" ? inv.id : inv.number ?? "", shopName: STORE_BRAND, customerName: meta.rows[0]?.customer ?? null,
         ...receiptFooterFromSettings({ return_hours: meta.rows[0]?.return_hours ?? null, site_url: meta.rows[0]?.site_url ?? null }),
         lines: inv.lines.map(l => { const v = variants.find(x => x.id === l.variationId); return { ...l, color: v?.color ?? null, size: v?.size ?? null }; }) }, meta.rows[0]?.zone ?? "Asia/Tehran");
     });

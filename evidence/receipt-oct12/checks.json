@@ -1,0 +1,100 @@
+[
+  {
+    "name": "standard",
+    "mode": "print",
+    "latin": true,
+    "horizontalOverflow": false,
+    "escapedCells": []
+  },
+  {
+    "name": "standard",
+    "mode": "screen",
+    "latin": true,
+    "horizontalOverflow": false,
+    "escapedCells": []
+  },
+  {
+    "name": "proforma",
+    "mode": "print",
+    "latin": true,
+    "horizontalOverflow": false,
+    "escapedCells": []
+  },
+  {
+    "name": "proforma",
+    "mode": "screen",
+    "latin": true,
+    "horizontalOverflow": false,
+    "escapedCells": []
+  },
+  {
+    "name": "zero100",
+    "mode": "print",
+    "latin": true,
+    "horizontalOverflow": false,
+    "escapedCells": []
+  },
+  {
+    "name": "zero100",
+    "mode": "screen",
+    "latin": true,
+    "horizontalOverflow": false,
+    "escapedCells": []
+  },
+  {
+    "name": "debtor",
+    "mode": "print",
+    "latin": true,
+    "horizontalOverflow": false,
+    "escapedCells": []
+  },
+  {
+    "name": "debtor",
+    "mode": "screen",
+    "latin": true,
+    "horizontalOverflow": false,
+    "escapedCells": []
+  },
+  {
+    "name": "longnames",
+    "mode": "print",
+    "latin": true,
+    "horizontalOverflow": false,
+    "escapedCells": []
+  },
+  {
+    "name": "longnames",
+    "mode": "screen",
+    "latin": true,
+    "horizontalOverflow": false,
+    "escapedCells": []
+  },
+  {
+    "name": "rows32",
+    "mode": "print",
+    "latin": true,
+    "horizontalOverflow": false,
+    "escapedCells": []
+  },
+  {
+    "name": "rows32",
+    "mode": "screen",
+    "latin": true,
+    "horizontalOverflow": false,
+    "escapedCells": []
+  },
+  {
+    "name": "quantities",
+    "mode": "print",
+    "latin": true,
+    "horizontalOverflow": false,
+    "escapedCells": []
+  },
+  {
+    "name": "quantities",
+    "mode": "screen",
+    "latin": true,
+    "horizontalOverflow": false,
+    "escapedCells": []
+  }
+]

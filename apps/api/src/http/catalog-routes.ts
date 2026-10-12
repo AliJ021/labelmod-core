@@ -20,6 +20,7 @@ import {
 } from "../catalog/variation.ts";
 import { labelPage, LABEL_CSP, LABEL_FRAME_CSP, LABEL_FRAME_HTML, ROLL_MIN_HEIGHT_MM, ROLL_MIN_WIDTH_MM, type LabelItem } from "../catalog/label.ts";
 import { CONTROL_CHARS } from "../lib/text.ts";
+import { STORE_BRAND } from "../lib/store-brand.ts";
 
 const uuid = z.string().uuid("شناسه نامعتبر");
 
@@ -162,13 +163,6 @@ export function registerCatalogRoutes(
       throw new CatalogError("variation_not_found", "هیچ‌کدام از کالاها یافت نشدند", 404);
     }
 
-    const shop = await db
-      .selectFrom("platform.branch")
-      .select("name")
-      .where("is_active", "=", true)
-      .orderBy("code")
-      .executeTakeFirst();
-
     // ترتیب چاپ همان ترتیب فهرست چاپ کاربر است، نه ترتیب دیتابیس: در چاپ
     // گروهی، برچسب‌های هر کالا پشت هم و به ترتیبی می‌آیند که انتخاب شده‌اند.
     const order = new Map(body.items.map((i, index) => [i.variationId, index]));
@@ -185,7 +179,7 @@ export function registerCatalogRoutes(
 
     const html = labelPage(items, {
       layout: body.layout,
-      shopName: shop?.name ?? "فروشگاه",
+      shopName: STORE_BRAND,
       ...(body.layout === "roll"
         ? {
             rollMm: {

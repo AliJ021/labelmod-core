@@ -17,7 +17,7 @@ const lines = [
   { productName:'شلوار پارچه‌ای رگولار',color:'مشکی',size:'36',qty:'2.000',unitPrice:12345675n,discountAmount:0n,netAmount:24691350n },
   { productName:'شال نخی',color:null,size:null,qty:'1.000',unitPrice:3500000n,discountAmount:0n,netAmount:3500000n },
 ];
-const base = {number:'F-1405-000123',occurredAt:new Date('2026-10-02T15:40:00Z'),shopName:'فروشگاه لیبل مد',customerName:'سارا محمدی',lines,netAmount:72201350n,taxAmount:0n,shippingAmount:0n,payableAmount:72201350n,paidAmount:70000000n,returnWindowHours:48,website:'labelmod.ir'};
+const base = {number:'F-1405-000123',occurredAt:new Date('2026-10-02T15:40:00Z'),shopName:'لیبل مد',customerName:'سارا محمدی',lines,netAmount:72201350n,taxAmount:0n,shippingAmount:0n,payableAmount:72201350n,paidAmount:70000000n,returnWindowHours:48,website:'labelmod.com'};
 const fixtures = {
   standard:base,
   proforma:{...base,documentKind:'proforma',number:'11111111-2222-4333-8444-555555555555',paidAmount:0n},
@@ -25,10 +25,13 @@ const fixtures = {
   debtor:{...base,shippingAmount:1000000n,taxAmount:100000n,payableAmount:73301350n,paidAmount:20000000n},
   longnames:{...base,customerName:'Elizabeth / مشتری با نام خانوادگی بسیار بلند',lines:[{...lines[0],productName:'Oversized-Waterproof-Collection-2026 مدل ویژه کت بلند پارچه‌ای با جیب‌های دوخت دستی',color:'آبی روشن',netAmount:44010000n}],netAmount:44010000n,payableAmount:44010000n,paidAmount:0n,exchangeAmount:44010000n},
   rows32:{...base,lines:Array.from({length:32},(_,i)=>({...lines[i%3],productName:`${lines[i%3].productName} — ${i+1}`}))},
+  quantities:{...base,lines:['1.125','10000','999999999.999'].map(qty=>({...lines[2],qty,unitPrice:10n,netAmount:BigInt(Math.round(Number(qty)*10))})),paidAmount:0n},
 };
 fixtures.rows32.netAmount = fixtures.rows32.lines.reduce((n,l)=>n+l.netAmount,0n);
 fixtures.rows32.payableAmount = fixtures.rows32.netAmount;
 fixtures.rows32.paidAmount = fixtures.rows32.netAmount;
+fixtures.quantities.netAmount = fixtures.quantities.lines.reduce((n,l)=>n+l.netAmount,0n);
+fixtures.quantities.payableAmount = fixtures.quantities.netAmount;
 const browser = await chromium.launch({headless:true,...(process.env.PLAYWRIGHT_EDGE==='1'?{channel:'msedge'}:{})});
 try {
   const page = await browser.newPage({viewport:{width:303,height:1100},deviceScaleFactor:2});
