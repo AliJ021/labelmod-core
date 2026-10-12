@@ -39,6 +39,7 @@ class LMC_Diagnostics
             'siteUrl' => untrailingslashit(home_url()),
             'branchId' => (string) lmc_setting('branch_id'), 'warehouseId' => (string) lmc_setting('warehouse_id'),
             'apiKeyConfigured' => lmc_setting('api_key') !== '',
+            'pushConfigured' => LMC_Push_Secret::read() !== '',
             'stockPolling' => lmc_setting('sync_stock') === 'yes',
             'pricePolling' => lmc_setting('sync_price') === 'yes',
             'cronDisabled' => defined('DISABLE_WP_CRON') && DISABLE_WP_CRON,

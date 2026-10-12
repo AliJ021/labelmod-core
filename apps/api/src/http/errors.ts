@@ -141,6 +141,15 @@ export function registerErrorHandler(app: FastifyInstance): void {
         );
     }
 
+    // کد کالای دستی که کالای دیگری دارد (یا هم‌زمان گرفته شد): خطای کاربر
+    // است، نه «خطای داخلی». پیش‌بررسی اتمیک نیست؛ نگهبان واقعی همین قید است.
+    if (dbError.code === "23505" && dbError.constraint === "product_code_key") {
+      req.log.info({ correlationId }, "کد کالای تکراری");
+      return reply
+        .code(409)
+        .send(body("product_code_taken", "این کد کالا قبلاً استفاده شده است. کد دیگری بدهید یا خالی بگذارید تا سیستم بسازد.", correlationId));
+    }
+
     // دو کاربر (یا دو Tab) هم‌زمان یک شیفت باز می‌کنند: پیش‌بررسی
     // `shift.open` هر دو را رد می‌کند، ولی اتمیک نیست — نگهبان واقعی
     // همین ایندکس یکتاست. بدون این نگاشت، قاعده‌ای که **درست کار

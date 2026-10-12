@@ -137,6 +137,32 @@ test("customer policy refreshes after returning to the till and can become optio
   await expect(method(page, "کارت‌خوان")).toBeEnabled();
 });
 
+test("saving the customer policy in another tab reaches an open till without a focus event", async ({page, api}) => {
+  pos(api); await open(page);
+  await expect(method(page, "کارت‌خوان")).toBeEnabled();
+  await page.evaluate(() => window.addEventListener("focus", () => { (window as unknown as { __f: number }).__f = ((window as unknown as { __f?: number }).__f ?? 0) + 1; }));
+  // تب دوم همان مرورگر (همان origin و context)، با همان API ساختگی.
+  const other = await page.context().newPage(); await api.install(other);
+  api.defaults["GET /settings"] = { groups: [{ key: "sales", title: "فروش", subtitle: null, settings: [{
+    key: "pos.require_customer", value: false, kind: "bool", label: "الزام مشتری در صندوق", description: "", help: null, unit: null,
+    min: null, max: null, options: null, requiresApproval: false, isEditable: true, canEdit: true, permission: "settings.edit", updatedAt: "2026-10-10T00:00:00Z", updatedBy: null }] }] };
+  api.handlers.set("PATCH /settings/pos.require_customer", async r => {
+    api.defaults["GET /pos/policy"] = { requireCustomer: true };
+    await r.fulfill({ json: { value: true, updatedAt: "2026-10-11T00:00:00Z" } });
+  });
+  await other.goto("/?page=settings&settings.tab=keys");
+  const sw = other.getByRole("switch", { name: "الزام مشتری در صندوق", exact: true });
+  await sw.focus(); await other.keyboard.press("Space"); await expect(sw).toBeChecked();
+  await other.locator('[data-setting="pos.require_customer"]').getByRole("button", { name: /^ذخیره/ }).click();
+  await expect(other.locator('[data-setting="pos.require_customer"]')).toContainText("فعال");
+  // صندوق بی focus و بی reload همان سیاست تازه را نشان می‌دهد.
+  await expect(page.getByLabel("موبایل مشتری (الزامی)", { exact: true })).toBeVisible();
+  await expect(method(page, "کارت‌خوان")).toBeDisabled();
+  const focused = await page.evaluate(() => (window as unknown as { __f?: number }).__f ?? 0);
+  expect(focused, "هیچ رویداد focus روی تب صندوق نبود").toBe(0);
+  await other.close();
+});
+
 test("changing a required customer never keeps the previous identity or permits a phone-less credit sale", async ({page, api}) => {
   const s = pos(api, { customerId: "c1" });
   api.defaults["GET /pos/policy"] = { requireCustomer: true };
@@ -385,6 +411,54 @@ test("receipt print stays in the cashier tab, waits for fonts and the embedded l
   expect(api.calls.filter(call => !call.startsWith("GET "))).toEqual(mutations);
   expect(s.finalized).toBe(1);
   await expect(page.locator('iframe[title="رسید آمادهٔ چاپ"]')).toHaveCount(0);
+});
+
+test("automatic receipt is opt-in and runs once after confirmed finalization, without a second print click", async ({ page, api }) => {
+  const s = pos(api, { receivedAmount: "200000" });
+  let prints = 0;
+  await page.exposeFunction("recordAutoReceipt", () => { prints++; });
+  await page.addInitScript(() => {
+    if (window.parent !== window) window.print = () => {
+      Reflect.get(window, "recordAutoReceipt")(); window.dispatchEvent(new Event("afterprint"));
+    };
+  });
+  let release!: () => void;
+  const ready = new Promise<void>(resolve => { release = resolve; });
+  api.handlers.set(`GET /invoices/${INV}/print`, async route => {
+    await ready;
+    await route.fulfill({ contentType: "text/html", body: '<!doctype html><html><body><div class="sheet"><table class="totals"><tr><td>20,000</td></tr></table></div><button id="print-btn">چاپ</button></body></html>' });
+  });
+  await open(page, s);
+  const option = page.getByRole("checkbox", { name: "چاپ رسید بلافاصله پس از ثبت" });
+  await expect(option).not.toBeChecked();
+  await option.check();
+  expect(api.calls.filter(call => call.endsWith("/print"))).toHaveLength(0);
+  await page.getByRole("button", { name: "نهایی‌کردن فاکتور", exact: true }).click();
+  await page.getByRole("dialog").getByRole("button", { name: "تأیید و نهایی‌کردن", exact: true }).dblclick();
+  await expect(page.getByRole("button", { name: "در حال آماده‌سازی چاپ…" })).toBeDisabled();
+  await expect(page.getByRole("button", { name: "فروش بعدی", exact: true })).toBeDisabled();
+  expect(s.finalized).toBe(1);
+  release();
+  await expect.poll(() => prints).toBe(1);
+  await expect(page.getByRole("button", { name: "چاپ رسید", exact: true })).toBeEnabled();
+  expect(api.calls.filter(call => call.endsWith("/print"))).toHaveLength(1);
+  expect(page.context().pages()).toHaveLength(1);
+  expect(s.finalized).toBe(1);
+});
+
+test("automatic receipt failure leaves the finalized sale intact and offers a manual print retry", async ({ page, api }) => {
+  const s = pos(api, { receivedAmount: "200000" });
+  api.handlers.set(`GET /invoices/${INV}/print`, route => route.fulfill({ status: 403, json: { error: { code: "branch_forbidden" } } }));
+  await open(page, s);
+  await page.getByRole("checkbox", { name: "چاپ رسید بلافاصله پس از ثبت" }).check();
+  await page.getByRole("button", { name: "نهایی‌کردن فاکتور", exact: true }).click();
+  await page.getByRole("dialog").getByRole("button", { name: "تأیید و نهایی‌کردن", exact: true }).click();
+  await expect(page.locator(".sale-complete [role=alert]")).toContainText("فروش ثبت شده است");
+  await expect(page.getByRole("button", { name: "چاپ رسید", exact: true })).toBeEnabled();
+  await expect(page.getByRole("button", { name: "فروش بعدی", exact: true })).toBeEnabled();
+  expect(s.finalized).toBe(1);
+  expect(s.posted).toHaveLength(0);
+  expect(api.calls.filter(call => call.endsWith("/print"))).toHaveLength(1);
 });
 
 test("receipt with an already failed embedded logo still prints once without changing the sale", async ({ page, api }) => {

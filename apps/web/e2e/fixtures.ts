@@ -15,8 +15,8 @@ const me: Me = { id: "22222222-2222-4222-8222-222222222222", fullName: "مدیر
 const branches: Branch[] = [{ id: "b1", code: "TEST", name: "شعبه آزمایشی", warehouses: [{ id: "w1", code: "STORE", name: "انبار آزمایشی", kind: "store" }] }];
 const daily: DailyReport = { businessDate: "2026-09-16", salesAmount: "12340000", receivedAmount: "11000000", profitAmount: "2340000", invoiceCount: 12, returnCount: 1 };
 /** ۲۴ ساعت خلاصه روز (مثل پاسخ سرور)؛ ساعت‌های نام‌برده جایگزین صفر می‌شوند. */
-export function hourlyDay(over: Record<number, Partial<DailyHour>> = {}, profitVisible = true, businessDate = daily.businessDate): DailyHourly {
-  return { businessDate, profitVisible, hours: Array.from({ length: 24 }, (_, hour) => ({
+export function hourlyDay(over: Record<number, Partial<DailyHour>> = {}, profitVisible = true, businessDate = daily.businessDate, currentHour: number | null = null): DailyHourly {
+  return { businessDate, currentHour, profitVisible, hours: Array.from({ length: 24 }, (_, hour) => ({
     hour, salesAmount: "0", receivedAmount: "0", profitAmount: profitVisible ? "0" : null,
     invoiceCount: 0, returnCount: 0, paymentCount: 0, ...over[hour],
     ...(profitVisible ? {} : { profitAmount: null }),
@@ -74,6 +74,12 @@ export class MockApi {
       this.calls.push(key + url.search);
       const handler = this.handlers.get(key);
       if (handler) { await handler(route, url); return; }
+      if (key === "GET /labels/frame") {
+        const labelModule = "../../api/src/catalog/label.ts";
+        const { LABEL_FRAME_HTML, LABEL_FRAME_CSP } = await import(labelModule);
+        await route.fulfill({ contentType: "text/html", body: LABEL_FRAME_HTML, headers: { "content-security-policy": LABEL_FRAME_CSP } });
+        return;
+      }
       const body = key === "GET /products" ? { products: this.productRows } : key === "GET /permission-rules" ? { rules: this.permissionRows } : this.defaults[key];
       if (body === undefined) { this.unexpected.push(key + url.search); await route.fulfill({ status: 501, json: { error: { code: "unmocked", message: key } } }); return; }
       await route.fulfill({ json: body });

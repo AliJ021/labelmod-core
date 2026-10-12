@@ -476,6 +476,9 @@ function TermRow(props: {
   const previousTerms = useRef(t);
   useEffect(() => {
     const previous = previousTerms.current;
+    // فقط وقتی شرایط سرور واقعاً عوض شده. بی این، effectِ mount با مقدارهای render نخست (closure کهنه)
+    // اجرا می‌شد و ورودیِ رسیده پیش از آن را به مقدار سرور برمی‌گرداند (شکست متناوب WebKit در terminals-ui).
+    if (previous === t) return;
     // Compare with the previous server values, not the newly refreshed values.
     // Only untouched rows follow a refresh; edited drafts remain available.
     if (normalizeDigits(days) === String(previous.settlementDays) && normalizeDigits(fee) === previous.feePercent) {

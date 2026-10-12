@@ -361,6 +361,7 @@ describe("آمادگی API صندوق", { skip }, () => {
     const provenance=await sql<{finalized_by:string}>`SELECT finalized_by FROM sales.invoice WHERE id=${other}::uuid`.execute(handle.db);
     assert.equal(provenance.rows[0]!.finalized_by,cashierId);
     const print=await app.inject({method:"GET",url:`/invoices/${other}/print`,...s});assert.equal(print.statusCode,200,print.body);assert.match(print.body,/موجودی یک عدد/);
+    assert.match(print.body, /class="shop">لیبل مد<\/div>|class="brand">لیبل مد<\/div>/);
     assert.equal((await app.inject({method:"GET",url:`/invoices/${other}/proforma-print`,...s})).statusCode,409);
     assert.equal((await app.inject({method:"GET",url:`/invoices/${first}/print`,...s})).statusCode,409);
     const list=await app.inject({method:"GET",url:"/invoices?status=draft",...s});assert.equal(list.statusCode,200,list.body);

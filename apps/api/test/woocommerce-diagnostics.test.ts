@@ -42,6 +42,22 @@ test("مقصد داخلی، mixed DNS، HTTP و نشانی دارای راز پ�
   assert.equal(r.code, "unsafe_target");
 });
 
+test("وضعیت کلید Push بولی حفظ می‌شود؛ گزارش قدیمی نامعلوم می‌ماند و نوع نامعتبر رد می‌شود", async () => {
+  for (const pushConfigured of [true, false, undefined]) {
+    const body = pushConfigured === undefined ? report : { ...report, pluginVersion: "1.3.5", pushConfigured };
+    const result = await testWooConnection(config, undefined, { resolve, read: async () => ({ status: 200, body }) });
+    assert.equal(result.ok, true);
+    assert.equal(result.remote?.pushConfigured, pushConfigured);
+    if (pushConfigured === undefined) assert.ok(!Object.hasOwn(result.remote!, "pushConfigured"));
+  }
+  for (const pushConfigured of ["false", null, 0, { secret: "never-return" }]) {
+    const result = await testWooConnection(config, undefined, { resolve, read: async () => ({ status: 200, body: { ...report, pushConfigured } }) });
+    assert.equal(result.code, "invalid_response");
+    assert.equal(result.remote, null);
+    assert.ok(!JSON.stringify(result).includes("never-return"));
+  }
+});
+
 test("خطاها و پاسخ نامعتبر/سایت دیگر موفقیت نمی‌شوند و متن خام را افشا نمی‌کنند", async () => {
   for (const [status, code] of [[302, "redirect"], [401, "authentication"], [403, "authentication"], [404, "plugin_route"], [503, "remote_unavailable"], [200, "invalid_response"]] as const) {
     let calls = 0;

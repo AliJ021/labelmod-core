@@ -71,7 +71,8 @@ const productCode = z
   .regex(/^[A-Za-z0-9][A-Za-z0-9-]*$/, "کد فقط حروف لاتین، رقم و خط تیره");
 
 const productBody = z.object({
-  code: productCode,
+  /** نبود یا خالی = کد خودکار یکتا سمت سرور (مهاجرت ۰۹۴). کد دستی همان قاعدهٔ قبلی را دارد. */
+  code: z.union([z.literal(""), productCode]).optional(),
   nameInternal: cleanText(120),
   nameWeb: optionalText(160),
   brandId: uuid.optional(),
@@ -167,8 +168,8 @@ export function registerProductRoutes(
       key: idempotencyKey(req),
       source: "api.product.create",
       payload: { actorId: s.userId, ...body },
-      run: async () => {
-        const id = await products.create(body, s.userId);
+      run: async (trx) => {
+        const id = await products.create(body, s.userId, trx);
         return { value: id, ref: id };
       },
       replay: async (ref) => ref,
@@ -176,7 +177,7 @@ export function registerProductRoutes(
 
     return reply
       .code(out.replayed ? 200 : 201)
-      .send({ id: out.value, replayed: out.replayed });
+      .send({ id: out.value, code: await products.codeOf(out.value), replayed: out.replayed });
   });
 
   app.patch("/products/:id", async (req) => {

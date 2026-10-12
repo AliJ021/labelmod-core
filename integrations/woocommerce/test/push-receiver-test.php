@@ -207,6 +207,7 @@ class Fake_Request
 
 require_once __DIR__ . '/../labelmod-connector/includes/class-lmc-stock-sync.php';
 require_once __DIR__ . '/../labelmod-connector/includes/class-lmc-push-guard.php';
+require_once __DIR__ . '/../labelmod-connector/includes/class-lmc-push-secret.php';
 require_once __DIR__ . '/../labelmod-connector/includes/class-lmc-push-receiver.php';
 
 // `find_by_meta` به دیتابیس وردپرس می‌رود؛ اینجا `get_posts` با همان

@@ -200,6 +200,24 @@ export const purchasing = {
     opts?: RequestOptions,
   ) => api.post<Receipt & { replayed: boolean }>(`/receipts/${id}/lines`, input, opts),
 
+  /**
+   * افزودن گروهی — همه یا هیچ، با یک کلید Idempotency. هر قلم مثل اسکن تکی
+   * با سطر هم‌قیمت جمع می‌شود. هر تنوع یک بار.
+   */
+  addLines: (
+    id: string,
+    lines: readonly { variationId: string; qty: string; unitPrice: string }[],
+    opts?: RequestOptions,
+  ) => api.post<Receipt & { replayed: boolean }>(`/receipts/${id}/lines/bulk`, { lines }, opts),
+
+  /** جست‌وجوی کالا برای رسید: نام، کد، یا بارکد/SKU دقیق (همان تعریف صندوق). */
+  searchProducts: (id: string, q: string, opts?: RequestOptions) =>
+    api.get<{ products: ReceiptProductHit[]; exactVariationId: string | null; exactProductId: string | null }>(
+      `/receipts/${id}/products?q=${encodeURIComponent(q)}`, opts),
+
+  productVariations: (id: string, productId: string, opts?: RequestOptions) =>
+    api.get<{ variations: ReceiptVariation[] }>(`/receipts/${id}/products/${productId}/variations`, opts),
+
   /** تعداد و قیمت **مطلق** است، نه دلتا. */
   setLine: (
     id: string,
@@ -493,3 +511,6 @@ export const purchaseOrders = {
   close: (id: string, reason?: string) =>
     api.post<Order>(`/purchase-orders/${id}/close`, reason ? { reason } : {}),
 };
+
+export interface ReceiptProductHit { id: string; name: string; code: string; variationCount: number }
+export interface ReceiptVariation { id: string; sku: string; barcode: string | null; color: string | null; size: string | null }

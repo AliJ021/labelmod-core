@@ -498,12 +498,29 @@ describe("ساخت خودکار تنوع و ماتریس موجودی", { skip }
     assert.equal(r.headers["cache-control"], "no-store");
 
     const html = r.body;
+    assert.match(html, /class="shop">لیبل مد<\/div>/, "روی لیبل نام برند چاپ می‌شود، مستقل از شعبه");
     assert.equal(html.split('class="label"').length - 1, 3, "۲ + ۱ = سه برچسب");
     // ۳٬۲۰۰٬۰۰۰ ریال = ۳۲۰٬۰۰۰ تومان
     assert.ok(html.includes("320,000"), "قیمت باید به تومان با رقم انگلیسی روی برچسب بیاید");
     assert.ok(!html.includes("3,200,000"), "ریال نباید روی برچسب بیاید");
     assert.ok(html.includes("<svg"), "بارکد باید رسم شود");
-    assert.ok(html.includes("شعبه اصلی"), "نام فروشگاه از دیتابیس");
+    assert.ok(!html.includes("شعبه اصلی"), "نام شعبه جای برند روی لیبل چاپ نمی‌شود");
+  });
+
+  test("قاب چاپ فقط سند خالیِ مجاز با CSP مستقل است", async () => {
+    const anonymous = await app.inject({ method: "GET", url: "/labels/frame" });
+    assert.equal(anonymous.statusCode, 401, anonymous.body);
+    const denied = await app.inject({ method: "GET", url: "/labels/frame", ...await loginAs(cashier) });
+    assert.equal(denied.statusCode, 403, denied.body);
+    const allowed = await app.inject({ method: "GET", url: "/labels/frame", ...await loginAs(supervisor) });
+    assert.equal(allowed.statusCode, 200, allowed.body);
+    assert.match(allowed.headers["content-type"] as string, /text\/html/);
+    assert.equal(allowed.headers["content-security-policy"], "default-src 'none'; style-src 'unsafe-inline'; img-src data:; base-uri 'none'; form-action 'none'; frame-ancestors 'self'");
+    assert.equal(allowed.headers["x-content-type-options"], "nosniff");
+    assert.equal(allowed.headers["cache-control"], "no-store");
+    assert.match(allowed.body, /data-label-frame/);
+    assert.match(allowed.body, /<body><\/body>/);
+    assert.doesNotMatch(allowed.body, /<script|class="label"/);
   });
 
   test("درخواست چاپ بیش از سقف مجموع ۵۰۰ لیبل رد می‌شود", async () => {

@@ -58,6 +58,7 @@ import { forgetCart, readCart, rememberCart } from "../lib/open-cart.ts";
 import { pendingLabel, saleQueue, summarize, type PendingSummary } from "../lib/sale-queue.ts";
 import { pos, type Branch, type Invoice, type InvoiceCustomer, type PaymentIntentStatus, type InvoiceLine, type PaymentMethod, type DraftPayment, type Shift } from "../lib/pos.ts";
 import { normalizeDigits } from "../lib/settings-value.ts";
+import { onSettingSaved } from "../lib/settings-events.ts";
 import { ScanBuffer } from "../lib/scanner.ts";
 
 function message(err: unknown): string {
@@ -264,6 +265,7 @@ export function Pos({ actorId }: { actorId: string }) {
   const [received, setReceived] = useState(0n);
   /** فروش تمام‌شده — تا «فروش بعدی» روی صفحه می‌ماند (Batch 2.1). */
   const [completed, setCompleted] = useState<CompletedSale | null>(null);
+  const [printOnComplete, setPrintOnComplete] = useState(false);
   const completedRef = useRef<CompletedSale | null>(null);
   completedRef.current = completed;
   /** قصد پرداختی که نتیجه‌اش روشن نیست — تا روشن شدن، روش و مبلغ قفل‌اند. */
@@ -381,7 +383,9 @@ export function Pos({ actorId }: { actorId: string }) {
     };
     refresh();
     window.addEventListener("focus", refresh);
-    return () => { controller.abort(); window.removeEventListener("focus", refresh); };
+    // ذخیرهٔ همین تنظیم در تب دیگر؛ تبِ دیده‌شده‌ای که focus نمی‌گیرد هم تازه می‌شود.
+    const unsubscribe = onSettingSaved((key) => { if (key === "pos.require_customer") refresh(); });
+    return () => { controller.abort(); window.removeEventListener("focus", refresh); unsubscribe(); };
   }, [branchId, policyRetry]);
 
   const policyReady = policy?.branchId === branchId;
@@ -1004,7 +1008,7 @@ export function Pos({ actorId }: { actorId: string }) {
       try {
         const done = await pos.finalize(invoice.id, { idempotencyKey: key });
         // F-115-02: مبلغ‌ها از تسویهٔ قطعی همین پاسخ، نه از تصویر پیش از نهایی‌سازی.
-        completeSale(invoice.id, done.number, finalAmounts(done.settlement), null);
+        completeSale(invoice.id, done.number, finalAmounts(done.settlement), null, printOnComplete);
       } catch (err) {
         // خطای قاعده‌ای (موجودی، دوره بسته، نسیه بی مشتری) صف نمی‌شود:
         // سرور جواب داده و جوابش «نه» است.
@@ -1046,8 +1050,8 @@ export function Pos({ actorId }: { actorId: string }) {
     return true;
   };
 
-  function completeSale(invoiceId: string, number: string | null, amounts: CompletedSale["amounts"], estimate: CompletedSale["estimate"]) {
-    setCompleted({ invoiceId, number, queued: estimate !== null, amounts, estimate });
+  function completeSale(invoiceId: string, number: string | null, amounts: CompletedSale["amounts"], estimate: CompletedSale["estimate"], printRequested = false) {
+    setCompleted({ invoiceId, number, queued: estimate !== null, amounts, estimate, printOnComplete: printRequested });
     setPayPhase({ kind: "idle" });
   }
 
@@ -1393,6 +1397,8 @@ export function Pos({ actorId }: { actorId: string }) {
             disabled={!hasCart || busy || customerGate} onPay={takePayment} onCheck={() => void checkPayment()}
             onRetry={retryPayment} onAbandon={() => void abandonPayment()} />
           <div className="pay-finish">
+            {hasCart ? <label className="receipt-auto"><input type="checkbox" checked={printOnComplete} disabled={busy || !payIdle}
+              onChange={e => setPrintOnComplete(e.target.checked)} /> چاپ رسید بلافاصله پس از ثبت</label> : null}
             {hasCart ? <CreditCheckout allowed={canCredit} customer={linkedCustomer} remaining={totals.remaining} received={received}
               payable={totals.payable} disabled={busy || !payIdle || !policyReady || (invoice?.customerId != null && (linkedCustomer === null || customerMissing))}
               onAttachCustomer={focusCustomer} run={finalize} verify={verifyFinalize} onDone={() => undefined} /> : null}

@@ -18,8 +18,9 @@ import {
   generateToJson,
   type VariationService,
 } from "../catalog/variation.ts";
-import { labelPage, LABEL_CSP, ROLL_MIN_HEIGHT_MM, ROLL_MIN_WIDTH_MM, type LabelItem } from "../catalog/label.ts";
+import { labelPage, LABEL_CSP, LABEL_FRAME_CSP, LABEL_FRAME_HTML, ROLL_MIN_HEIGHT_MM, ROLL_MIN_WIDTH_MM, type LabelItem } from "../catalog/label.ts";
 import { CONTROL_CHARS } from "../lib/text.ts";
+import { STORE_BRAND } from "../lib/store-brand.ts";
 
 const uuid = z.string().uuid("شناسه نامعتبر");
 
@@ -103,6 +104,17 @@ export function registerCatalogRoutes(
     return s;
   };
 
+  // فقط قاب خالی با سیاست مستقل؛ بدون ذخیرهٔ داده، شناسهٔ چاپ یا پارامتر کالا در URL.
+  app.get("/labels/frame", async (req, reply) => {
+    await requireForSession(db, session(req), "catalog.manage");
+    return reply
+      .header("content-type", "text/html; charset=utf-8")
+      .header("content-security-policy", LABEL_FRAME_CSP)
+      .header("x-content-type-options", "nosniff")
+      .header("cache-control", "no-store")
+      .send(LABEL_FRAME_HTML);
+  });
+
   /**
    * ساخت خودکار همه ترکیب‌های رنگ×سایز.
    *
@@ -151,13 +163,6 @@ export function registerCatalogRoutes(
       throw new CatalogError("variation_not_found", "هیچ‌کدام از کالاها یافت نشدند", 404);
     }
 
-    const shop = await db
-      .selectFrom("platform.branch")
-      .select("name")
-      .where("is_active", "=", true)
-      .orderBy("code")
-      .executeTakeFirst();
-
     // ترتیب چاپ همان ترتیب فهرست چاپ کاربر است، نه ترتیب دیتابیس: در چاپ
     // گروهی، برچسب‌های هر کالا پشت هم و به ترتیبی می‌آیند که انتخاب شده‌اند.
     const order = new Map(body.items.map((i, index) => [i.variationId, index]));
@@ -174,7 +179,7 @@ export function registerCatalogRoutes(
 
     const html = labelPage(items, {
       layout: body.layout,
-      shopName: shop?.name ?? "فروشگاه",
+      shopName: STORE_BRAND,
       ...(body.layout === "roll"
         ? {
             rollMm: {

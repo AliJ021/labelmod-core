@@ -2,7 +2,7 @@ import { api } from "./api.ts";
 export interface WooConfig { siteUrl: string; warehouseId: string; pushEnabled: boolean; signingConfigured: boolean; priceList: string }
 export interface WooResult {
   ok: boolean; message: string;
-  remote: null | { pluginVersion: string; wooVersion: string; siteUrl: string; apiKeyConfigured: boolean;
+  remote: null | { pluginVersion: string; wooVersion: string; siteUrl: string; apiKeyConfigured: boolean; pushConfigured?: boolean;
     stockPolling: boolean; pricePolling: boolean; cronDisabled: boolean; stockScheduled: boolean;
     mapping: { linkedProducts: number | null }; order: null | { found: boolean; status: string; paymentConfirmed: boolean;
       eligible: boolean; recorded: boolean; scheduled: boolean; attempts: number; hasError: boolean; missingSku: number; missingMapping: number } };

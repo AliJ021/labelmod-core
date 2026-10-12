@@ -87,9 +87,23 @@ export function useLabelPreview() {
 
 export function LabelPreviewFrame({ html }: { html: string }) {
   const frame = useRef<HTMLIFrameElement>(null);
+  const [readyHtml, setReadyHtml] = useState("");
+  const [error, setError] = useState(false);
+  function load() {
+    try {
+      const doc = frame.current?.contentDocument;
+      if (!doc || doc.location.pathname !== "/api/labels/frame" || !doc.documentElement.hasAttribute("data-label-frame")) throw new Error("label_frame");
+      // سند شبکه‌ای CSP چاپ را دارد. تعویض DOM سیاست آن را حفظ می‌کند؛
+      // بدون srcdoc یا بازکردن دوبارهٔ سند با document.write.
+      const parsed = new DOMParser().parseFromString(html, "text/html");
+      doc.replaceChild(doc.importNode(parsed.documentElement, true), doc.documentElement);
+      setError(false); setReadyHtml(html);
+    } catch { setError(true); }
+  }
   return <>
-    <iframe ref={frame} title="پیش‌نمایش چاپ بارکد" srcDoc={html} sandbox="allow-same-origin allow-modals" style={{ width: "100%", minHeight: 300, background: "white" }} />
-    <button className="btn btn--primary" type="button" onClick={() => { frame.current?.contentWindow?.focus(); frame.current?.contentWindow?.print(); }}>چاپ لیبل بارکد</button>
+    <iframe key={html} ref={frame} title="پیش‌نمایش چاپ بارکد" src="/api/labels/frame" onLoad={load} onError={() => setError(true)} sandbox="allow-same-origin allow-modals" style={{ width: "100%", minHeight: 300, background: "white" }} />
+    {error ? <p role="alert">بارگذاری پیش‌نمایش چاپ ممکن نشد. دوباره پیش‌نمایش بگیرید.</p> : null}
+    <button className="btn btn--primary" type="button" disabled={readyHtml !== html || error} onClick={() => { frame.current?.contentWindow?.focus(); frame.current?.contentWindow?.print(); }}>چاپ لیبل بارکد</button>
   </>;
 }
 

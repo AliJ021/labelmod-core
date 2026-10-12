@@ -186,7 +186,21 @@ Timestamp بی Nonce هم کافی نیست (پنجرهٔ ۳۰۰ ثانیه‌ا
 ⚠️ **راز در متغیر محیطی، نه در `platform.setting`** — همان قاعده‌ای که
 `SMS_API_KEY` دارد: مقدار هر تنظیم در `audit_log` می‌نشیند و صفحهٔ
 تنظیمات نشانش می‌دهد. راز نباید هیچ‌کدام را ببیند.
-سمت افزونه: در `wp-config.php` به‌عنوان ثابت، نه در `wp_options`.
+سمت افزونه (اصلاح تصمیم در 2026-10-12، نسخهٔ 1.3.5): برای رفع نیاز به دسترسی فایل‌های
+هاست، مدیر سایت می‌تواند راز را در فرم مستقل دارای nonce و هر دو مجوز `manage_options`
+و `manage_woocommerce` وارد کند. راز هرگز در تنظیمات عمومی `LMC_OPTION` نمی‌رود:
+گزینهٔ مستقل `labelmod_connector_push_secret` فقط envelope رمز‌شدهٔ AES-256-GCM با
+IV تصادفی 12 بایت و tag کامل 16 بایت، نسخه و AAD ثابت دارد؛ autoload خاموش است.
+کلید رمزگذاری با HKDF-SHA256 از `AUTH_KEY` و `AUTH_SALT` پیکربندی‌شده مشتق می‌شود؛
+از fallback دیتابیسی `wp_salt()` استفاده نمی‌شود. این حفاظت در برابر افشای صرف دیتابیس
+است، نه مهاجمی که کد یا فایل پیکربندی وردپرس را کنترل می‌کند. نبود OpenSSL یا ثابت‌های
+معتبر، ذخیره را رد می‌کند. تغییر ثابت‌ها یا خرابی ciphertext دریافت Push را می‌بندد و
+نیاز به ثبت دوبارهٔ کلید دارد. هیچ متن راز، ciphertext یا خطای خام رمزگذاری در فرم،
+URL، diagnostics یا لاگ چاپ نمی‌شود؛ diagnostics فقط `pushConfigured` بولی دارد.
+ورودی خالی حفظ می‌کند؛ پاک‌کردن صریح marker غیرفعال می‌نویسد. تنها **نبود** این گزینه
+اجازهٔ fallback سازگار به `LMC_PUSH_SECRET` در `wp-config.php` را می‌دهد، نه گزینهٔ
+خراب یا غیرفعال. حذف افزونه گزینه را در سایت‌های شبکه هم پاک می‌کند؛ غیرفعال‌سازی نه.
+قرارداد HMAC، timestamp، nonce اتمیک و نسخهٔ رویداد تغییری نمی‌کند.
 
 ⚠️ مقایسهٔ امضا با `hash_equals()` سمت PHP و `timingSafeEqual` سمت Node.
 
@@ -299,7 +313,7 @@ PR #51 همین رفتار صفر را تازه اصلاح کرده؛ Push آن 
 | گیرندهٔ REST | `integrations/woocommerce/…/class-lmc-push-receiver.php` |
 | تور ایمنی | نمای `platform.web_push_health` |
 | تنظیمات | `web.push_enabled` · `web.site_url` · `web.stock_warehouse` · `web.price_list` · `web.reconcile_minutes` |
-| کلید | `WEB_PUSH_SECRET` (Core) · `LMC_PUSH_SECRET` در `wp-config.php` (سایت) |
+| کلید | `WEB_PUSH_SECRET` (Core) · فرم رمز‌شدهٔ Push افزونه؛ ثابت `LMC_PUSH_SECRET` فقط برای سازگاری نصب‌های قدیمی |
 
 ### سه انحراف از همین سند، و دلیلشان
 
