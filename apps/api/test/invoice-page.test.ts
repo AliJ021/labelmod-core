@@ -266,13 +266,15 @@ describe("رسید حرارتی ۸۰ میلی‌متری", () => {
     const page48 = invoicePage({ ...data, ...f48 }, "Asia/Tehran");
     assert.match(page48, /مهلت تعویض: 2 روز \(48 ساعت\) پس از خرید/);
     assert.doesNotMatch(page48, /مهلت مرجوعی|همه مبالغ به تومان/);
-    // سایت، سپس تلفن زیرش، سپس شعار LTR با LABEL بولد.
-    assert.match(page48, /<div class="site"><bdi dir="ltr">labelmod\.ir<\/bdi><\/div>\s*<div class="tel">تلفن: <bdi dir="ltr">02188085042<\/bdi><\/div>\s*<div class="slogan" dir="ltr" lang="en">what your <b>LABEL<\/b> today\?<\/div>/);
+    // سایت برند ثابت (نه web.site_url که نشانی اتصال ووکامرس است)، سپس تلفن زیرش، سپس شعار LTR با LABEL بولد.
+    assert.doesNotMatch(page48, /labelmod\.ir/i);
+    assert.match(page48, /<div class="site"><bdi dir="ltr">Labelmod\.com<\/bdi><\/div>\s*<div class="tel">تلفن: <bdi dir="ltr">02188085042<\/bdi><\/div>\s*<div class="slogan" dir="ltr" lang="en">what your <b>LABEL<\/b> today\?<\/div>/);
     assert.match(invoicePage({ ...data, returnWindowHours: 36 }, "Asia/Tehran"), /مهلت تعویض: 36 ساعت پس از خرید/);
     // بی تنظیم معتبر، هیچ سطر سیاستی نیست — حدس زده نمی‌شود.
     assert.deepEqual(receiptFooterFromSettings({ return_hours: null, site_url: "javascript:alert(1)" }), { returnWindowHours: null, website: null });
     assert.doesNotMatch(html, /مهلت تعویض|مهلت مرجوعی/);
-    // بی سایت، تلفن و شعار همچنان هستند.
+    // بی تنظیم سایت، نشانی برند، تلفن و شعار همچنان هستند.
+    assert.match(html, /<div class="site"><bdi dir="ltr">Labelmod\.com<\/bdi><\/div>/);
     assert.match(html, /<div class="tel">تلفن: <bdi dir="ltr">02188085042<\/bdi><\/div>/);
     // شماره فاکتور برچسب‌دار و LTR جدا، در جعبهٔ مشخصات (بازطراحی ۱۴۰۵/۰۷).
     assert.match(html, /<dt>شمارهٔ فاکتور<\/dt><dd><bdi dir="ltr" class="docno">F-1405-000123<\/bdi><\/dd>/);

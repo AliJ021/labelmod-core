@@ -28,7 +28,7 @@
 import { RECEIPT_STYLES } from "./receipt-styles.ts";
 import { esc } from "../catalog/label.ts";
 import { receiptLogo, type ReceiptLogo } from "./receipt-logo.ts";
-import { STORE_PHONE, STORE_TITLE } from "../lib/store-brand.ts";
+import { STORE_PHONE, STORE_SITE, STORE_TITLE } from "../lib/store-brand.ts";
 
 /**
  * متن **دقیق** اسکریپت دکمه چاپ.
@@ -92,7 +92,10 @@ export interface InvoicePageData {
    * «مهلت تعویض» نام دارد (خواستهٔ مالک)؛ مقدار و قاعدهٔ مرجوعی همان تنظیم است.
    */
   returnWindowHours?: number | null;
-  /** نشانی سایت فروشگاه از تنظیم `web.site_url`، اگر ثبت شده باشد. */
+  /**
+   * نشانی `web.site_url` — **روی رسید چاپ نمی‌شود.** آن تنظیم نشانی اتصال ووکامرس
+   * است؛ رسید نشانی برند `STORE_SITE` را دارد (خواستهٔ مالک، ۱۴۰۵/۰۷/۲۰).
+   */
   website?: string | null;
   /**
    * لوگوی اصیل برند (`receipt-logo.ts`). نیامدن یعنی همان فایل بسته‌بندی‌شده؛
@@ -315,7 +318,7 @@ ${items}
   <footer class="foot">
     <strong>سپاس از خرید شما</strong>
     ${data.returnWindowHours ? `<div class="policy">مهلت تعویض: ${esc(windowText(data.returnWindowHours))} پس از خرید</div>` : ""}
-    ${data.website ? `<div class="site"><bdi dir="ltr">${txt(data.website)}</bdi></div>` : ""}
+    <div class="site"><bdi dir="ltr">${esc(STORE_SITE)}</bdi></div>
     <div class="tel">تلفن: <bdi dir="ltr">${esc(STORE_PHONE)}</bdi></div>
     <div class="slogan" dir="ltr" lang="en">what your <b>LABEL</b> today?</div>
   </footer>
