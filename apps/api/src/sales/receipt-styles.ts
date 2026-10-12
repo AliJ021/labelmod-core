@@ -31,7 +31,6 @@ export const RECEIPT_STYLES = `
   .name { font-size: 12px; font-weight: 500; line-height: 1.5; overflow-wrap: anywhere; }
   .name small { font-size: 10px; font-weight: 400; }
   .name small::before { content: " · "; }
-  .unit-line, .line-discount { font-size: 9px; font-weight: 400; color: var(--muted); }
   .num { text-align: left; font-family: Arial, Tahoma, sans-serif; font-variant-numeric: tabular-nums; white-space: nowrap; }
   .qty { font-family: Arial, Tahoma, sans-serif; font-variant-numeric: tabular-nums; white-space: nowrap; }
   th.num, th.qty { font-family: inherit; }
@@ -70,8 +69,8 @@ export const RECEIPT_STYLES = `
     .items th, .items td { padding: 1mm; border-width: .2mm; }
     .items thead th { font-size: 7pt; }
     .name, .total, .qty { font-size: 8pt; }
-    .name small, .unit-line, .line-discount { font-size: 6.5pt; }
-    .meta dt, .unit-line, .line-discount { color: #000; }
+    .name small { font-size: 6.5pt; }
+    .meta dt { color: #000; }
     .summary-panel { border-width: .2mm; padding: 1mm; }
     .totals th, .totals td { padding: .8mm 0; font-size: 8pt; }
     .totals .incl th, .totals .incl td { font-size: 7pt; }
