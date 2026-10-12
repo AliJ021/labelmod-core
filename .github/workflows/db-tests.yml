@@ -337,14 +337,17 @@ jobs:
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
 
+      - name: خطای ساخت پنهان نشود؛ fallback فقط برای محدودیت دانلود ECR
+        run: .github/scripts/test-build-image.sh
+
       - name: ساخت ایمیج API
-        run: docker build --build-arg BASE_REGISTRY=public.ecr.aws/docker/library -f apps/api/Dockerfile -t labelmod-api:ci .
+        run: .github/scripts/build-image.sh apps/api/Dockerfile labelmod-api:ci
 
       - name: ساخت ایمیج رابط کاربری
-        run: docker build --build-arg BASE_REGISTRY=public.ecr.aws/docker/library -f apps/web/Dockerfile -t labelmod-web:ci .
+        run: .github/scripts/build-image.sh apps/web/Dockerfile labelmod-web:ci
 
       - name: ساخت ایمیج زمان‌بند
-        run: docker build --build-arg BASE_REGISTRY=public.ecr.aws/docker/library -f ops/deploy/Dockerfile.scheduler -t labelmod-scheduler:ci .
+        run: .github/scripts/build-image.sh ops/deploy/Dockerfile.scheduler labelmod-scheduler:ci
 
       # ⚠️ `-w /app/apps/api` لازم است، نه تزئین: چیدمان pnpm وابستگی‌ها
       # را در `apps/api/node_modules` می‌گذارد، نه در ریشه. از `/app`،
