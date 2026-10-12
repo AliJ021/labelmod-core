@@ -537,7 +537,7 @@ test("هر تست PHP افزونه مستقل اجرا می‌شود", () => {
   }
 });
 
-test("ایمیج‌های پایهٔ CI از آینهٔ رسمی ECR Public می‌آیند و پیش‌فرض تولید Docker Hub رسمی می‌ماند", () => {
+test("ایمیج‌های پایهٔ CI ابتدا از ECR Public می‌آیند و fallback و پیش‌فرض تولید Docker Hub رسمی می‌ماند", () => {
   // pull ناشناس Docker Hub روی رانرهای GitHub با 429 می‌شکست و deploy-build و
   // db-tests پیش از اجرای هر آزمونی می‌مردند. آینه همان Docker Official Images است.
   const MIRROR = "public.ecr.aws/docker/library";
@@ -554,9 +554,29 @@ test("ایمیج‌های پایهٔ CI از آینهٔ رسمی ECR Public می
     }
   }
   const ci = readFileSync(join(ROOT, ".github/workflows/db-tests.yml"), "utf8");
-  const builds = ci.match(/docker build .*/g) ?? [];
-  assert.equal(builds.length, dockerfiles.length, "هر Dockerfile یک build در CI");
-  for (const b of builds) assert.ok(b.includes(`--build-arg BASE_REGISTRY=${MIRROR}`), `build بی آینه: ${b}`);
+  const wrapper = readFileSync(join(ROOT, ".github/scripts/build-image.sh"), "utf8");
+  const checkBuilds = (workflow: string, script: string): void => {
+    const calls = [...workflow.matchAll(/^\s*run: (\.github\/scripts\/build-image\.sh .+)\r?$/gm)]
+      .map((m) => m[1]!.trim());
+    assert.deepEqual(calls, [
+      ".github/scripts/build-image.sh apps/api/Dockerfile labelmod-api:ci",
+      ".github/scripts/build-image.sh apps/web/Dockerfile labelmod-web:ci",
+      ".github/scripts/build-image.sh ops/deploy/Dockerfile.scheduler labelmod-scheduler:ci",
+    ], "هر Dockerfile با tag درست دقیقاً یک بار از wrapper ساخته شود");
+    assert.doesNotMatch(workflow, /^\s*(?:run:\s*)?docker build\b/m, "build مستقیم نباید wrapper را دور بزند");
+    const builds = script.match(/docker build .*/g)?.map((s) => s.trim()) ?? [];
+    assert.deepEqual(builds, [
+      `docker build --progress=plain --build-arg BASE_REGISTRY=${MIRROR} -f "$1" -t "$2" . 2>&1 | tee "$log"; then`,
+      'docker build --progress=plain --build-arg BASE_REGISTRY=docker.io/library -f "$1" -t "$2" .',
+    ], "تلاش اول ECR و تنها تلاش جایگزین Docker Hub رسمی با همان ورودی‌ها باشد");
+    assert.ok(script.includes("if grep -Eq 'ERROR:.*(failed to resolve source metadata|failed to copy: httpReadSeeker).*https://public\\.ecr\\.aws/.*(429 Too Many Requests|toomanyrequests)' \"$log\"; then"), "fallback فقط با خطای دانلود 429 از ECR فعال شود");
+    assert.doesNotMatch(script, /^\s*(?:for|while|until)\b/m, "fallback نباید حلقهٔ retry داشته باشد");
+    assert.match(workflow, /^\s*run: \.github\/scripts\/test-build-image\.sh\s*$/m, "کنترل رفتاری محدودیت fallback در CI اجرا شود");
+  };
+  checkBuilds(ci, wrapper);
+  // کنترل منفی: حذف یک ساخت یا جایگزینی رجیستری اولیه باید همین نگهبان را بشکند.
+  assert.throws(() => checkBuilds(ci.replace("run: .github/scripts/build-image.sh apps/web/Dockerfile labelmod-web:ci", "run: echo missing-build"), wrapper), assert.AssertionError);
+  assert.throws(() => checkBuilds(ci, wrapper.replace(`BASE_REGISTRY=${MIRROR}`, "BASE_REGISTRY=docker.io/library")), assert.AssertionError);
   // ایمیج سرویس و هر ایمیج بیرونی که CI مستقیم اجرا می‌کند، با نشانی کامل آینه.
   const code = ci.split("\n").filter((l) => !/^\s*#/.test(l)).join("\n");
   for (const img of ["postgres:16-alpine", "caddy:2-alpine", "node:22-alpine"]) {
