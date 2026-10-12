@@ -361,7 +361,8 @@ describe("آمادگی API صندوق", { skip }, () => {
     const provenance=await sql<{finalized_by:string}>`SELECT finalized_by FROM sales.invoice WHERE id=${other}::uuid`.execute(handle.db);
     assert.equal(provenance.rows[0]!.finalized_by,cashierId);
     const print=await app.inject({method:"GET",url:`/invoices/${other}/print`,...s});assert.equal(print.statusCode,200,print.body);assert.match(print.body,/موجودی یک عدد/);
-    assert.match(print.body, /class="shop">لیبل مد<\/div>|class="brand">لیبل مد<\/div>/);
+    // نام برند alt لوگوست و زیرش «فروشگاه لیبل مد» (خواستهٔ مالک ۱۴۰۵/۰۷/۲۰)؛ بی لوگو نشان متنی برند.
+    assert.match(print.body, /alt="لیبل مد">\s*<div class="shop">فروشگاه لیبل مد<\/div>|class="brand">لیبل مد<\/div>/);
     assert.equal((await app.inject({method:"GET",url:`/invoices/${other}/proforma-print`,...s})).statusCode,409);
     assert.equal((await app.inject({method:"GET",url:`/invoices/${first}/print`,...s})).statusCode,409);
     const list=await app.inject({method:"GET",url:"/invoices?status=draft",...s});assert.equal(list.statusCode,200,list.body);
@@ -408,14 +409,13 @@ describe("آمادگی API صندوق", { skip }, () => {
       assert.match(printed.body,new RegExp(id));
     }
     assert.deepEqual(await snapshot(),beforePrint,"printing cannot finalize, number, pay, reserve, move stock or post entries");
-    // پرداخت ثبت‌شده روی پیش‌نویس (paid_amount تا نهایی‌سازی صفر است) باید روی پیش‌فاکتور دیده شود،
-    // وگرنه کل مبلغ «مانده» چاپ و دوباره از مشتری مطالبه می‌شد. ۱٬۰۰۰٬۰۰۱ − ۴۰۰٬۰۰۰ ریال.
+    // پرداخت ثبت‌شده روی پیش‌نویس: از ۱۴۰۵/۰۷/۲۰ (خواستهٔ مالک) نه پرداخت‌شده و نه مانده روی
+    // چاپ می‌آید، پس کل مبلغ هم «مانده» چاپ نمی‌شود؛ قابل پرداخت همان ۱٬۰۰۰٬۰۰۱ ریال است.
     const paid = await app.inject({ method:"POST", url:`/invoices/${id}/payments`, ...s, payload:{ methodCode:"cash", amount:"400000" } });
     assert.equal(paid.statusCode,201,paid.body);
     const afterPay = await app.inject({ method:"GET", url, ...s });
     assert.equal(afterPay.statusCode,200,afterPay.body);
-    assert.match(afterPay.body,/<tr class="paid"><th>پرداخت‌شده<\/th><td class="num">40,000<\/td><\/tr>/);
-    assert.match(afterPay.body,/<tr class="due">[\s\S]*?60,000\.1 <small>تومان/);
+    assert.doesNotMatch(afterPay.body,/پرداخت‌شده|مانده|class="paid"|class="due"/);
     assert.match(afterPay.body,/<tr class="grand"><th>قابل پرداخت<\/th><td class="num">100,000\.1 <small>تومان/);
     assert.doesNotMatch(afterPay.body,/class="settle/);
     assert.equal((await app.inject({ method:"GET",url:`/invoices/${id}/print`,...s })).statusCode,409,"final receipt route still rejects drafts");

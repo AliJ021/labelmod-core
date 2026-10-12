@@ -263,9 +263,9 @@ describe("برگشت از فروش و دوره ثبت", { skip }, () => {
     assert.deepEqual(evidence.rows[0], { payments: "0", movements: "2", credit: "0" });
     const replacement = await app.inject({ method: "GET", url: `/invoices/${posted.replacementInvoiceId}`, ...s });
     assert.equal(replacement.json().settlement.dueAmount, "0");
+    // از ۱۴۰۵/۰۷/۲۰ رسید چاپی تسویه، پرداخت و مانده را نشان نمی‌دهد (خواستهٔ مالک)؛ حقیقت مالی بالا از API سنجیده شد.
     const receipt = await publicInvoice(posted.replacementInvoiceId);
-    assert.match(receipt, /تسویه از تعویض/);
-    assert.doesNotMatch(receipt, /class="due"/);
+    assert.doesNotMatch(receipt, /تسویه از تعویض|class="due"|class="paid"/);
     const refund = await app.inject({ method: "POST", url: "/returns/commit", ...s,
       headers: { ...s.headers, "idempotency-key": randomUUID() }, payload: {
         invoiceId: posted.replacementInvoiceId, reasonCode: "changed_mind", refundAmount: "1000000", shiftId: supervisorShift,
@@ -298,11 +298,13 @@ describe("برگشت از فروش و دوره ثبت", { skip }, () => {
       WHERE invoice_id=${post.json().replacementInvoiceId}::uuid AND direction='in'`.execute(handle.db);
     assert.equal(amounts.rows[0]!.amount, "200000", "فقط وجه واقعی اختلاف، بدون پرداخت ناخالص ساختگی");
     const replacementReceipt = await publicInvoice(post.json().replacementInvoiceId);
-    assert.match(replacementReceipt, /تسویه از تعویض/);
-    assert.doesNotMatch(replacementReceipt, /class="due"/);
+    assert.doesNotMatch(replacementReceipt, /تسویه از تعویض|class="due"|class="paid"/);
+    // بدهی واقعی شصت هزار تومان حفظ شده است — از تسویهٔ سرور، چون رسید چاپی مانده را دیگر نشان نمی‌دهد.
+    const original = await app.inject({ method: "GET", url: `/invoices/${sold.invoiceId}`, ...s });
+    assert.equal(original.statusCode, 200, original.body);
+    assert.equal(original.json().settlement.dueAmount, "600000", "بدهی واقعی شصت هزار تومان حفظ شده است");
     const originalReceipt = await publicInvoice(sold.invoiceId);
-    assert.match(originalReceipt, /class="due"/);
-    assert.ok(originalReceipt.includes("60,000"), "بدهی واقعی شصت هزار تومان حفظ شده است");
+    assert.doesNotMatch(originalReceipt, /class="due"|مانده/);
     await policy("unset");
   });
 

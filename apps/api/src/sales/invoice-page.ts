@@ -28,6 +28,7 @@
 import { RECEIPT_STYLES } from "./receipt-styles.ts";
 import { esc } from "../catalog/label.ts";
 import { receiptLogo, type ReceiptLogo } from "./receipt-logo.ts";
+import { STORE_PHONE, STORE_SITE, STORE_TITLE } from "../lib/store-brand.ts";
 
 /**
  * متن **دقیق** اسکریپت دکمه چاپ.
@@ -86,9 +87,15 @@ export interface InvoicePageData {
   paidAmount: bigint;
   exchangeAmount?: bigint;
   dueAmount?: bigint;
-  /** مهلت مرجوعی از تنظیم زندهٔ `return.window_hours` — متن ثابت چاپ نمی‌شود. */
+  /**
+   * مهلت از تنظیم زندهٔ `return.window_hours` — متن ثابت چاپ نمی‌شود. روی رسید
+   * «مهلت تعویض» نام دارد (خواستهٔ مالک)؛ مقدار و قاعدهٔ مرجوعی همان تنظیم است.
+   */
   returnWindowHours?: number | null;
-  /** نشانی سایت فروشگاه از تنظیم `web.site_url`، اگر ثبت شده باشد. */
+  /**
+   * نشانی `web.site_url` — **روی رسید چاپ نمی‌شود.** آن تنظیم نشانی اتصال ووکامرس
+   * است؛ رسید نشانی برند `STORE_SITE` را دارد (خواستهٔ مالک، ۱۴۰۵/۰۷/۲۰).
+   */
   website?: string | null;
   /**
    * لوگوی اصیل برند (`receipt-logo.ts`). نیامدن یعنی همان فایل بسته‌بندی‌شده؛
@@ -150,14 +157,14 @@ export function toToman(rial: bigint): string {
   return toman.toLocaleString("fa-IR");
 }
 
-/** تاریخ شمسی با رقم لاتین — مشتری تاریخ میلادی نمی‌خواند؛ رقم‌ها مثل بقیهٔ فاکتور لاتین. */
-export function faDate(at: Date, timeZone: string): string {
-  return new Intl.DateTimeFormat("fa-IR", {
-    dateStyle: "medium",
-    timeStyle: "short",
-    timeZone,
-    numberingSystem: "latn",
-  }).format(at);
+/** فقط تاریخ شمسی (رقم لاتین) — ساعت در سطر جدای خودش. */
+function faDay(at: Date, timeZone: string): string {
+  return new Intl.DateTimeFormat("fa-IR", { dateStyle: "medium", timeZone, numberingSystem: "latn" }).format(at);
+}
+
+/** فقط ساعت و دقیقه، ۲۴ساعته و رقم لاتین. */
+function faTime(at: Date, timeZone: string): string {
+  return new Intl.DateTimeFormat("en-GB", { hour: "2-digit", minute: "2-digit", hourCycle: "h23", timeZone }).format(at);
 }
 
 /**
@@ -182,10 +189,11 @@ export function toTomanExact(rial: bigint): string {
  *
  * ── ساختار (بازطراحی ۱۴۰۵/۰۷) ───────────────────────────────────────
  *
- * سربرگ برند (لوگوی اصیل یا نشان متنی) ← برچسب سند ← مشخصات کوتاه
- * (شماره، تاریخ، مشتری، تعداد قلم) ← جدول خط‌کشی‌شدهٔ عنوان، تعداد و خالص
- * (هر قلم بی قیمت واحد و تخفیف قلم) ← جمع‌ها و «قابل پرداخت» ← پرداخت‌شده، تسویه
- * از تعویض و مانده ← وضعیت تسویه ← پابرگ از تنظیمات زنده.
+ * سربرگ برند (لوگوی اصیل بزرگ با نسبت ذاتی و «فروشگاه لیبل مد» زیرش) ←
+ * برچسب سند ← مشخصات درشت (شماره، تاریخ، ساعت، مشتری) ← کادر گرد اقلام: عنوان،
+ * تعداد و خالص (بی قیمت واحد و تخفیف قلم) و «جمع کالاها» در پای همان ستون
+ * خالص ← سایر جمع‌ها و «قابل پرداخت» ← پابرگ (مهلت تعویض از تنظیم، سایت،
+ * تلفن، شعار). پرداخت‌شده و وضعیت تسویه روی چاپ نمی‌آیند (۱۴۰۵/۰۷/۲۰).
  *
  * ── قواعد چاپ حرارتی ────────────────────────────────────────────────
  *
@@ -204,7 +212,7 @@ export function toTomanExact(rial: bigint): string {
  *
  * هیچ عددی این‌جا ساخته نمی‌شود جز «شامل تخفیف اقلام» که جمع دقیق bigint
  * همان `discountAmount`های ذخیره‌شده است و فقط اطلاع می‌دهد (از جمع کم
- * نمی‌شود، چون مبلغ هر قلم از پیش خالص است). مانده همان محاسبهٔ قبلی است.
+ * نمی‌شود، چون مبلغ هر قلم از پیش خالص است).
  *
  * ⚠️ قلاب‌های `.sheet`، `.totals` و `#print-btn` قرارداد چاپ مستقیم
  *    (iframe) هستند و تغییر نام نمی‌دهند.
@@ -217,6 +225,9 @@ export function invoicePage(data: InvoicePageData, timeZone: string): string {
   const quantity = (value: string) => Number(value).toLocaleString("en-US", { useGrouping: false, maximumFractionDigits: 3 });
   // تعداد اعشاری یا بلند نباید از ستون باریک رسید بیرون بزند.
   const quantityWidth = Math.min(34, 16 + Math.max(0, ...data.lines.map(l => quantity(l.qty).length - 5)) * 2);
+  // مبلغ بلند (از جمله «جمع کالاها» پای همین ستون) هم نباید به لبهٔ خانه بچسبد؛ رقم هرگز نمی‌شکند.
+  const amountChars = Math.max(...[data.netAmount, ...data.lines.map(l => l.netAmount)].map(v => toTomanExact(v).length));
+  const totalWidth = Math.min(44, 33 + Math.max(0, amountChars - 10) * 3);
   const items = data.lines
     .map((l, i) => {
       // فقط رنگِ ساخت‌یافته کنار نام می‌نشیند؛ سایز عمداً نه (بالا،
@@ -250,32 +261,17 @@ export function invoicePage(data: InvoicePageData, timeZone: string): string {
   const lineDiscounts = data.lines.reduce((sum, l) => sum + l.discountAmount, 0n);
   const savingRow = lineDiscounts > 0n
     ? `<tr class="incl"><th>شامل تخفیف اقلام</th><td class="num">${money(lineDiscounts)}</td></tr>` : "";
-
-  // بدهی باقیمانده فقط وقتی واقعاً هست. «۰ تومان مانده» یک سطر اضافه
-  // است که هیچ‌کس لازمش ندارد. محاسبه همان قبلی است؛ فقط نمایش عوض شد.
-  const due = data.dueAmount ?? (data.payableAmount - data.paidAmount - (data.exchangeAmount ?? 0n));
-  const paidRow = data.paidAmount > 0n
-    ? `<tr class="paid"><th>پرداخت‌شده</th><td class="num">${money(data.paidAmount)}</td></tr>` : "";
-  const exchangeRow = (data.exchangeAmount ?? 0n) > 0n
-    ? `<tr><th>تسویه از تعویض</th><td class="num">${money(data.exchangeAmount!)}</td></tr>` : "";
-  const dueRow =
-    due > 0n
-      ? `<tr class="due"><th><span class="due-tag">مانده</span></th><td class="num">${money(due)} <small>تومان</small></td></tr>`
-      : "";
-  // پیش‌فاکتور وضعیت تسویه ندارد: هنوز فروشی ثبت نشده که تسویه شده باشد.
-  const settle = proforma ? ""
-    : due > 0n
-      ? `<div class="settle settle--open">تسویه نشده — مانده بدهی ثبت شده است</div>`
-      : `<div class="settle">تسویه‌شده</div>`;
-  const count = latn(data.lines.length);
+  // پرداخت‌شده، تسویه از تعویض، مانده و وضعیت تسویه عمداً چاپ نمی‌شوند
+  // (خواستهٔ مالک، ۱۴۰۵/۰۷/۲۰). میدان‌هایشان در قرارداد و API و دیتابیس
+  // دست‌نخورده‌اند؛ فقط این صفحهٔ نمایشی آن‌ها را نمی‌نویسد.
   const docTitle = proforma ? "پیش‌فاکتور" : "رسید فروش";
   const proformaNote = proforma
     ? `\n  <div class="proforma-note">برای بررسی اقلام و قیمت‌ها؛ فاکتور نهایی نیست.</div>` : "";
   const logo = data.logo === undefined ? receiptLogo() : data.logo;
-  // لوگوی اصیل کامل و با نسبت واقعی، مطابق نمونهٔ رسید فروشگاه.
+  // لوگوی اصیل کامل و با نسبت واقعی (width/height ذاتی فایل)، بزرگ و بی بازطراحی.
   const brand = logo
     ? `<img class="logo logo--${logo.treatment}" src="${logo.dataUri}" width="${logo.width}" height="${logo.height}" alt="${txt(data.shopName)}">
-    <div class="shop">${txt(data.shopName)}</div>`
+    <div class="shop">${esc(STORE_TITLE)}</div>`
     : `<div class="brand">${txt(data.shopName)}</div>`;
 
   return `<!doctype html>
@@ -293,44 +289,38 @@ ${RECEIPT_STYLES}
   </header>${proformaNote}
   <dl class="meta">
     <div class="cell"><dt>${proforma ? "شمارهٔ مرجع" : "شمارهٔ فاکتور"}</dt><dd><bdi dir="ltr" class="docno">${txt(data.number)}</bdi></dd></div>
-    <div class="cell"><dt>تاریخ و ساعت</dt><dd>${esc(faDate(data.occurredAt, timeZone))}</dd></div>
+    <div class="cell"><dt>تاریخ</dt><dd>${esc(faDay(data.occurredAt, timeZone))}</dd></div>
+    <div class="cell"><dt>ساعت</dt><dd><bdi dir="ltr">${esc(faTime(data.occurredAt, timeZone))}</bdi></dd></div>
     <div class="cell"><dt>مشتری</dt><dd>${data.customerName ? `<bdi>${txt(data.customerName)}</bdi>` : "مشتری عمومی"}</dd></div>
-    <div class="cell"><dt>اقلام</dt><dd>${esc(count)} قلم</dd></div>
   </dl>
 
-  <section class="receipt-panel" aria-labelledby="items-heading">
-    <div class="panel-heading"><h2 id="items-heading">جزئیات خرید</h2><span>مبالغ به تومان</span></div>
-    <div class="panel-body">
+  <section class="items-box" aria-label="اقلام خرید">
   <table class="items">
-    <colgroup><col class="title"><col class="qty" style="width:${quantityWidth}%"><col class="total"></colgroup>
+    <colgroup><col class="title"><col class="qty" style="width:${quantityWidth}%"><col class="total" style="width:${totalWidth}%"></colgroup>
     <thead>
       <tr><th>عنوان کالا</th><th class="qty">تعداد</th><th class="num">خالص</th></tr>
     </thead>
 ${items}
+    <tfoot>
+      <tr class="sum"><th colspan="2">جمع کالاها</th><td class="num total">${money(data.netAmount)}</td></tr>
+    </tfoot>
   </table>
-    </div>
   </section>
 
-  <section class="receipt-panel summary-panel" aria-label="خلاصه حساب به تومان">
-    <div class="panel-body">
+  <section class="summary" aria-label="خلاصه حساب به تومان">
   <table class="totals">
-    <tr><th>جمع کالاها</th><td class="num">${money(data.netAmount)}</td></tr>
     ${savingRow}
     ${extra}
     <tr class="grand"><th>قابل پرداخت</th><td class="num">${money(data.payableAmount)} <small>تومان</small></td></tr>
-    ${paidRow}
-    ${exchangeRow}
-    ${dueRow}
   </table>
-  ${settle}
-    </div>
   </section>
 
   <footer class="foot">
     <strong>سپاس از خرید شما</strong>
-    ${data.returnWindowHours ? `<div class="policy">مهلت مرجوعی: ${esc(windowText(data.returnWindowHours))} پس از خرید</div>` : ""}
-    ${data.website ? `<div class="site"><bdi dir="ltr">${txt(data.website)}</bdi></div>` : ""}
-    <div class="unit">همه مبالغ به تومان است.</div>
+    ${data.returnWindowHours ? `<div class="policy">مهلت تعویض: ${esc(windowText(data.returnWindowHours))} پس از خرید</div>` : ""}
+    <div class="site"><bdi dir="ltr">${esc(STORE_SITE)}</bdi></div>
+    <div class="tel">تلفن: <bdi dir="ltr">${esc(STORE_PHONE)}</bdi></div>
+    <div class="slogan" dir="ltr" lang="en">what your <b>LABEL</b> today?</div>
   </footer>
 </div>
 

@@ -54,8 +54,9 @@ describe("لوگوی رسید", () => {
     assert.ok(html.includes(`<img class="logo logo--black" src="data:image/png;base64,${whiteOnTransparent.toString("base64")}" width="40" height="12" alt="فروشگاه لیبل مد">`));
     assert.match(INVOICE_PAGE_CSP, /img-src data:/);
     assert.doesNotMatch(html, /src="https?:/, "هیچ منبع شبکه‌ای برای چاپ");
-    assert.match(html, /\.logo \{[^}]*max-height: 110px; object-fit: contain;/);
-    assert.match(html, /\.logo \{ max-width: 54mm; max-height: 24mm; \}/); // نسبت لوگوی نمونهٔ مالک؛ حد عرض و ارتفاع چاپ همچنان صریح است
+    // لوگوی بزرگ‌تر با نسبت ذاتی: عرض صریح، ارتفاع auto، و حد ارتفاع صریح در چاپ.
+    assert.match(html, /\.logo \{[^}]*height: auto; max-height: 200px; object-fit: contain;/);
+    assert.match(html, /\.logo \{ width: 62mm; max-width: 62mm; max-height: 40mm; \}/);
     assert.match(html, /\.logo--black \{ filter: brightness\(0\); \}/);
     assert.match(html, /<div class="shop">فروشگاه لیبل مد<\/div>/);
     assert.doesNotMatch(html, /<div class="brand">/);
