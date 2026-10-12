@@ -12,6 +12,8 @@ import { loginWithMfa } from "./helpers/login-with-mfa.ts";
  */
 import { after, before, describe, test } from "node:test";
 import assert from "node:assert/strict";
+import { setTimeout as pause } from "node:timers/promises";
+import { Client } from "pg";
 import { sql } from "kysely";
 import type { FastifyInstance } from "fastify";
 import { createDb, type DbHandle } from "../src/db/client.ts";
@@ -527,6 +529,96 @@ describe("چرخه حیات کالا و قیمت", { skip }, () => {
   });
 
   // ── Idempotency ──────────────────────────────────────────────────────
+
+  // ── کد خودکار (مهاجرت ۰۹۴) ─────────────────────────────────────────
+
+  test("کد خالی: سرور کد یکتا می‌سازد — ۱۲ درخواست هم‌زمان، ۱۲ کد متفاوت", async () => {
+    const s = await loginAs(admin);
+    const results = await Promise.all(Array.from({ length: 12 }, (_, i) => app.inject({
+      method: "POST", url: "/products", ...s,
+      headers: { ...s.headers, "idempotency-key": `auto-${suffix}-${i}` },
+      payload: i % 2 === 0 ? { nameInternal: `کالای خودکار ${i}` } : { code: "", nameInternal: `کالای خودکار ${i}` },
+    })));
+    for (const r of results) assert.equal(r.statusCode, 201, r.body);
+    const codes = results.map((r) => (r.json() as { code: string }).code);
+    assert.equal(new Set(codes).size, 12, `کد تکراری: ${codes.join(",")}`);
+    for (const c of codes) assert.match(c, /^LM\d{5,}$/);
+    // پاسخ همان کدی است که در دیتابیس نشسته.
+    const first = results[0]!.json() as { id: string; code: string };
+    const read = await app.inject({ method: "GET", url: `/products/${first.id}`, ...s });
+    assert.equal(read.json().product.code, first.code);
+    // Replay همان کالا و همان کد را برمی‌گرداند، نه کد تازه.
+    const replay = await app.inject({ method: "POST", url: "/products", ...s,
+      headers: { ...s.headers, "idempotency-key": `auto-${suffix}-0` }, payload: { nameInternal: "کالای خودکار 0" } });
+    assert.equal(replay.statusCode, 200, replay.body);
+    assert.deepEqual([replay.json().id, replay.json().code], [first.id, first.code]);
+  });
+
+  test("کد دستی هم‌زمان برنده است؛ کد خودکار پس از برخورد درج دوباره تخصیص می‌یابد", async () => {
+    const s = await loginAs(admin);
+    const gate = new Client({ connectionString: disposable!.ownerUrl });
+    const key = `auto-manual-race-${suffix}`;
+    const request = () => app.inject({ method: "POST", url: "/products", ...s,
+      headers: { ...s.headers, "idempotency-key": key }, payload: { nameInternal: "کالای خودکار مسابقه" } });
+    let pending: ReturnType<typeof request> | undefined;
+    await gate.connect();
+    try {
+      const seq = await gate.query<{ n: string }>("SELECT (last_value + CASE WHEN is_called THEN 1 ELSE 0 END)::text AS n FROM catalog.product_code_seq");
+      const n = BigInt(seq.rows[0]!.n);
+      const manualCode = `LM${n.toString().padStart(5, "0")}`;
+      await gate.query("BEGIN");
+      // درجِ تأییدنشده برای تخصیص‌گر نامرئی است ولی قید یکتایی را نگه می‌دارد.
+      await gate.query("INSERT INTO catalog.product(code,name_internal) VALUES($1,'کالای دستی مسابقه')", [manualCode]);
+      pending = request();
+      const response = Promise.resolve(pending);
+      let blocked = false;
+      for (const deadline = Date.now() + 10000; Date.now() < deadline;) {
+        await gate.query("SELECT pg_stat_clear_snapshot()");
+        const r = await gate.query<{ blocked: boolean }>(`SELECT EXISTS (
+          SELECT 1 FROM pg_stat_activity WHERE datname=current_database()
+          AND query LIKE '%catalog.upsert_product%'
+          AND pg_backend_pid() = ANY(pg_blocking_pids(pid))) AS blocked`);
+        if (r.rows[0]!.blocked) { blocked = true; break; }
+        await pause(20);
+      }
+      assert.equal(blocked, true, "درج خودکار واقعاً منتظر کد دستی است، نه صرفاً دو Promise موازی");
+      await gate.query("COMMIT");
+      const created = await response;
+      assert.equal(created.statusCode, 201, created.body);
+      assert.equal(created.json().code, `LM${(n + 1n).toString().padStart(5, "0")}`);
+      const replay = await request();
+      assert.equal(replay.statusCode, 200, replay.body);
+      assert.equal(replay.json().replayed, true);
+      assert.equal(replay.json().id, created.json().id);
+      assert.equal(replay.json().code, created.json().code);
+      const manual = await gate.query("SELECT name_internal FROM catalog.product WHERE code=$1", [manualCode]);
+      assert.equal(manual.rows[0].name_internal, "کالای دستی مسابقه");
+      const duplicate = await app.inject({ method: "POST", url: "/products", ...s,
+        payload: { code: manualCode, nameInternal: "دستی تکراری" } });
+      assert.equal(duplicate.statusCode, 409, duplicate.body);
+      const rows = await gate.query("SELECT count(*)::int n FROM catalog.product WHERE code=ANY($1::text[])", [[manualCode, created.json().code]]);
+      assert.equal(rows.rows[0].n, 2);
+    } finally {
+      await gate.query("ROLLBACK");
+      await pending;
+      await gate.end();
+    }
+  });
+
+  test("کد دستی معتبر پذیرفته می‌شود؛ تکراری ۴۰۹ است نه ۵۰۰؛ نامعتبر ۴۰۰", async () => {
+    const s = await loginAs(admin);
+    const code = `MAN-${suffix}`.slice(0, 24);
+    const ok = await app.inject({ method: "POST", url: "/products", ...s, payload: { code, nameInternal: "کالای دستی" } });
+    assert.equal(ok.statusCode, 201, ok.body);
+    assert.equal(ok.json().code, code);
+    const dup = await app.inject({ method: "POST", url: "/products", ...s, payload: { code, nameInternal: "کالای دستی دوم" } });
+    assert.equal(dup.statusCode, 409, dup.body);
+    assert.equal(dup.json().error.code, "product_code_taken");
+    for (const bad of ["کد-فارسی", "A", "-AB", "AB CD"]) {
+      const r = await app.inject({ method: "POST", url: "/products", ...s, payload: { code: bad, nameInternal: "نامعتبر" } });
+      assert.equal(r.statusCode, 400, `${bad}: ${r.body}`);
+    }
+  });
 
   test("ساخت کالا با یک کلید، دو بار = یک کالا", async () => {
     const s = await loginAs(admin);

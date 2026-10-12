@@ -16,14 +16,16 @@
  * بزند. یک Trigger روی `catalog.price` این را اجبار می‌کند؛ اگر
  * منطق اینجا بود، اولین اسکریپت psql از کنارش رد می‌شد.
  */
-import { sql } from "kysely";
+import { sql, type Transaction } from "kysely";
+import type { Database } from "../db/types.ts";
 import type { Db } from "../db/client.ts";
 import { parseMoney, serializeMoney } from "../lib/money.ts";
 import { setActor } from "../lib/idempotency.ts";
 import { CatalogError } from "./variation.ts";
 
 export interface ProductInput {
-  code: string;
+  /** خالی یا نبود = کد خودکار سمت سرور (`catalog.next_product_code()`، مهاجرت ۰۹۴). */
+  code?: string | undefined;
   nameInternal: string;
   nameWeb?: string | undefined;
   brandId?: string | undefined;
@@ -336,8 +338,19 @@ export class ProductService {
     }));
   }
 
-  async create(input: ProductInput, actorId: string): Promise<string> {
-    return this.#upsert(null, input, actorId);
+  /**
+   * ساخت کالا. با `trx`، درون همان تراکنشی که Inbox Idempotency را درج کرده
+   * (`runOnce`) — اثر و Inbox یک تراکنش‌اند و درخواست یک اتصال می‌گیرد، نه دو.
+   * با دو اتصال، چند ساخت هم‌زمان Pool را تمام می‌کرد و هر کدام منتظر دیگری می‌ماند.
+   */
+  async create(input: ProductInput, actorId: string, trx?: Transaction<Database>): Promise<string> {
+    return trx ? this.#upsertIn(trx, null, input, actorId) : this.#upsert(null, input, actorId);
+  }
+
+  /** کد نهایی کالا — پاسخ ساخت آن را برمی‌گرداند (کد خودکار را کاربر ندیده است). */
+  async codeOf(id: string): Promise<string> {
+    const r = await this.#db.selectFrom("catalog.product").select("code").where("id", "=", id).executeTakeFirstOrThrow();
+    return r.code;
   }
 
   async update(id: string, input: ProductInput, actorId: string): Promise<string> {
@@ -349,23 +362,48 @@ export class ProductService {
     input: ProductInput,
     actorId: string,
   ): Promise<string> {
-    return this.#db.transaction().execute(async (trx) => {
-      await setActor(trx, actorId);
-      const r = await sql<{ upsert_product: string }>`
-        SELECT catalog.upsert_product(
-          ${id}::uuid, ${input.code}, ${input.nameInternal},
-          ${input.nameWeb ?? null}, ${input.brandId ?? null}::uuid,
-          ${input.categoryId ?? null}::uuid, ${input.season ?? null},
-          ${input.collection ?? null}, ${input.fabric ?? null},
-          ${input.fit ?? null}, ${input.originCountry ?? null},
-          ${input.taxRateCode ?? "standard"}, ${input.notes ?? null})
-      `.execute(trx);
-      const out = r.rows[0]?.upsert_product;
-      if (out === undefined) {
-        throw new CatalogError("upsert_failed", "ثبت کالا انجام نشد", 500);
+    return this.#db.transaction().execute((trx) => this.#upsertIn(trx, id, input, actorId));
+  }
+
+  async #upsertIn(
+    trx: Transaction<Database>,
+    id: string | null,
+    input: ProductInput,
+    actorId: string,
+  ): Promise<string> {
+    await setActor(trx, actorId);
+    const automatic = id === null && (input.code ?? "").trim() === "";
+    for (;;) {
+      const code = automatic
+        ? (await sql<{ code: string }>`SELECT catalog.next_product_code() AS code`.execute(trx)).rows[0]!.code
+        : input.code ?? "";
+      // کد دستی ممکن است پس از تخصیص و پیش از درج برنده شود. فقط همین
+      // برخورد را برمی‌گردانیم؛ Inbox و تراکنش بیرونی حفظ می‌شوند.
+      if (automatic) await sql`SAVEPOINT product_code_attempt`.execute(trx);
+      try {
+        const r = await sql<{ upsert_product: string }>`
+          SELECT catalog.upsert_product(
+            ${id}::uuid, ${code}, ${input.nameInternal},
+            ${input.nameWeb ?? null}, ${input.brandId ?? null}::uuid,
+            ${input.categoryId ?? null}::uuid, ${input.season ?? null},
+            ${input.collection ?? null}, ${input.fabric ?? null},
+            ${input.fit ?? null}, ${input.originCountry ?? null},
+            ${input.taxRateCode ?? "standard"}, ${input.notes ?? null})
+        `.execute(trx);
+        const out = r.rows[0]?.upsert_product;
+        if (out === undefined) {
+          throw new CatalogError("upsert_failed", "ثبت کالا انجام نشد", 500);
+        }
+        if (automatic) await sql`RELEASE SAVEPOINT product_code_attempt`.execute(trx);
+        return out;
+      } catch (error) {
+        const pg = error as { code?: string; schema?: string; table?: string; constraint?: string };
+        if (!automatic || pg.code !== "23505" || pg.schema !== "catalog" ||
+            pg.table !== "product" || pg.constraint !== "product_code_key") throw error;
+        await sql`ROLLBACK TO SAVEPOINT product_code_attempt`.execute(trx);
+        await sql`RELEASE SAVEPOINT product_code_attempt`.execute(trx);
       }
-      return out;
-    });
+    }
   }
 
   async setProductStatus(

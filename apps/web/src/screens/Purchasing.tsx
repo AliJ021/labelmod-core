@@ -29,12 +29,13 @@
  * صندوق قیمت نمی‌فرستد. **این صفحه می‌فرستد** — قیمت خرید تصمیم
  * تأمین‌کننده است. توضیح کامل در `lib/purchasing.ts`.
  */
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { Glass, Solid } from "../components/Glass.tsx";
 import { ApiError } from "../lib/api.ts";
 import { ActionKeys, actionFor } from "../lib/action-key.ts";
 import { parseRial, rialFromTomanInput, toman } from "../lib/money.ts";
 import { pos, type Branch } from "../lib/pos.ts";
+import { ReceiptBulkAdd } from "./ReceiptBulkAdd.tsx";
 import {
   ALLOCATION_LABEL,
   RECEIPT_STATUS,
@@ -93,6 +94,21 @@ export function Purchasing() {
   const [expenseCode, setExpenseCode] = useState("");
 
   const [busy, setBusy] = useState(false);
+  /**
+   * افزودن گروهی در راه. مشترک با والد: تا پاسخ نیامده، تعویض رسید، ثبت قطعی،
+   * ابطال و ویرایش سطر/هزینه بسته‌اند — وگرنه پاسخ دیررس رسیدِ کهنه را برمی‌گرداند.
+   * ref برای `guarded` (بی closure کهنه)، state برای رندر دکمه‌ها.
+   */
+  const [bulkPending, setBulkPending] = useState(false);
+  const bulkPendingRef = useRef(false);
+  const busyAll = busy || bulkPending;
+  /**
+   * نسخهٔ رسید نمایش‌داده‌شده: هر تغییر رسید (باز کردن، ثبت، ابطال، ویرایش) از
+   * `showReceipt` می‌گذرد و نسخه را جلو می‌برد. پاسخ گروهی فقط وقتی نشانده می‌شود که
+   * هم شناسه و هم نسخه همان لحظهٔ ارسال باشد.
+   */
+  const receiptGen = useRef(0);
+  const receiptIdRef = useRef<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [done, setDone] = useState<string | null>(null);
   const [keys] = useState(() => new ActionKeys());
@@ -126,8 +142,36 @@ export function Purchasing() {
     })();
   }, []);
 
+  function showReceipt(next: Receipt | null) {
+    receiptGen.current += 1;
+    receiptIdRef.current = next?.id ?? null;
+    setReceipt(next);
+  }
+
+  /**
+   * اجرای افزودن گروهی با قفل مشترک. `true` یعنی پاسخ روی همان رسید نشست؛
+   * `false` یعنی رسید در این فاصله عوض شده و پاسخ کهنه کنار گذاشته شد.
+   */
+  async function runBulk(send: () => Promise<Receipt>, count: number): Promise<boolean> {
+    if (busy || bulkPendingRef.current) return false;
+    const gen = receiptGen.current;
+    const id = receiptIdRef.current;
+    bulkPendingRef.current = true;
+    setBulkPending(true);
+    try {
+      const next = await send();
+      if (gen !== receiptGen.current || id !== next.id || receiptIdRef.current !== next.id) return false;
+      showReceipt(next);
+      setDone(`${count.toLocaleString("fa-IR")} قلم به رسید اضافه شد.`);
+      return true;
+    } finally {
+      bulkPendingRef.current = false;
+      setBulkPending(false);
+    }
+  }
+
   async function guarded(fn: () => Promise<void>) {
-    if (busy) return;
+    if (busy || bulkPendingRef.current) return;
     setBusy(true);
     setError(null);
     try {
@@ -168,7 +212,7 @@ export function Purchasing() {
       const draft = await keys.run(actionFor("receipt", body), (key) =>
         purchasing.createReceipt(body, { idempotencyKey: key }),
       );
-      setReceipt(draft);
+      showReceipt(draft);
       setInvoiceNo("");
       await refreshList();
     });
@@ -176,7 +220,7 @@ export function Purchasing() {
   const open = (id: string) =>
     guarded(async () => {
       setDone(null);
-      setReceipt(await purchasing.receipt(id));
+      showReceipt(await purchasing.receipt(id));
     });
 
   const addLine = () =>
@@ -193,7 +237,7 @@ export function Purchasing() {
       const next = await keys.run(actionFor(`line:${receipt.id}`, body), (key) =>
         purchasing.addLine(receipt.id, body, { idempotencyKey: key }),
       );
-      setReceipt(next);
+      showReceipt(next);
       setBarcode("");
       setQty("1");
       // قیمت عمداً پاک نمی‌شود: یک محموله معمولاً چند قلم با یک نرخ
@@ -203,13 +247,13 @@ export function Purchasing() {
   const setLineQty = (lineId: string, nextQty: string) =>
     guarded(async () => {
       if (!receipt) return;
-      setReceipt(await purchasing.setLine(receipt.id, lineId, { qty: nextQty }));
+      showReceipt(await purchasing.setLine(receipt.id, lineId, { qty: nextQty }));
     });
 
   const removeLine = (lineId: string) =>
     guarded(async () => {
       if (!receipt) return;
-      setReceipt(await purchasing.removeLine(receipt.id, lineId));
+      showReceipt(await purchasing.removeLine(receipt.id, lineId));
     });
 
   const addCharge = () =>
@@ -234,7 +278,7 @@ export function Purchasing() {
       const next = await keys.run(actionFor(`charge:${receipt.id}`, body), (key) =>
         purchasing.addCharge(receipt.id, body, { idempotencyKey: key }),
       );
-      setReceipt(next);
+      showReceipt(next);
       setChargeAmount("");
       setChargeOpen(false);
     });
@@ -242,7 +286,7 @@ export function Purchasing() {
   const removeCharge = (chargeId: string) =>
     guarded(async () => {
       if (!receipt) return;
-      setReceipt(await purchasing.removeCharge(receipt.id, chargeId));
+      showReceipt(await purchasing.removeCharge(receipt.id, chargeId));
     });
 
   const post = () =>
@@ -251,7 +295,7 @@ export function Purchasing() {
       const posted = await keys.run(`receipt-post:${receipt.id}`, (key) =>
         purchasing.post(receipt.id, { idempotencyKey: key }),
       );
-      setReceipt(posted);
+      showReceipt(posted);
       setDone(`رسید ${posted.number ?? ""} ثبت شد — کالا وارد انبار و سند به دفتر رفت.`);
       await refreshList();
     });
@@ -259,7 +303,7 @@ export function Purchasing() {
   const cancel = () =>
     guarded(async () => {
       if (!receipt) return;
-      setReceipt(await purchasing.cancel(receipt.id));
+      showReceipt(await purchasing.cancel(receipt.id));
       await refreshList();
     });
 
@@ -308,11 +352,11 @@ export function Purchasing() {
           </label>
 
           <div className="stack" style={{ gap: "var(--s-2)" }}>
-            <button type="button" className="btn" disabled={busy} onClick={() => setSupplierOpen(!supplierOpen)}>تأمین‌کننده جدید</button>
+            <button type="button" className="btn" disabled={busyAll} onClick={() => setSupplierOpen(!supplierOpen)}>تأمین‌کننده جدید</button>
             {supplierOpen ? <>
               <label className="auth-field"><span>کد تأمین‌کننده</span><input value={supplierCode} onChange={(e) => setSupplierCode(e.target.value)} maxLength={40} /></label>
               <label className="auth-field"><span>نام تأمین‌کننده</span><input value={supplierName} onChange={(e) => setSupplierName(e.target.value)} maxLength={120} /></label>
-              <button type="button" className="btn" disabled={busy || !supplierCode.trim() || !supplierName.trim()} onClick={() => void addSupplier()}>ذخیره تأمین‌کننده</button>
+              <button type="button" className="btn" disabled={busyAll || !supplierCode.trim() || !supplierName.trim()} onClick={() => void addSupplier()}>ذخیره تأمین‌کننده</button>
             </> : null}
           </div>
           <label className="auth-field">
@@ -339,7 +383,7 @@ export function Purchasing() {
           <button
             type="button"
             className="btn btn--primary"
-            disabled={busy || supplierId === "" || warehouseId === ""}
+            disabled={busyAll || supplierId === "" || warehouseId === ""}
             onClick={() => void startDraft()}
           >
             {busy ? "…" : "رسید خرید تازه"}
@@ -411,7 +455,7 @@ export function Purchasing() {
                 <button
                   type="submit"
                   className="btn btn--primary"
-                  disabled={busy || barcode.trim() === "" || price.trim() === ""}
+                  disabled={busyAll || barcode.trim() === "" || price.trim() === ""}
                 >
                   افزودن
                 </button>
@@ -420,6 +464,15 @@ export function Purchasing() {
                 همان کالا با همان قیمت روی یک سطر جمع می‌شود؛ با قیمت متفاوت، سطر تازه.
               </p>
             </form>
+          ) : null}
+          {editable ? (
+            <ReceiptBulkAdd
+              // کلید رسید: انتخاب رنگ/سایز و نرخ مال همین رسید است و با رسید دیگر از نو ساخته می‌شود.
+              key={receipt.id}
+              receiptId={receipt.id}
+              disabled={busyAll}
+              runBulk={runBulk}
+            />
           ) : null}
 
           {receipt.lines.length === 0 ? (
@@ -444,7 +497,7 @@ export function Purchasing() {
                       <button
                         type="button"
                         onClick={() => void setLineQty(l.id, String(Number(l.qty) - 1))}
-                        disabled={busy || Number(l.qty) <= 1}
+                        disabled={busyAll || Number(l.qty) <= 1}
                         aria-label={`کم کردن ${l.productName}`}
                       >
                         −
@@ -453,7 +506,7 @@ export function Purchasing() {
                       <button
                         type="button"
                         onClick={() => void setLineQty(l.id, String(Number(l.qty) + 1))}
-                        disabled={busy}
+                        disabled={busyAll}
                         aria-label={`اضافه کردن ${l.productName}`}
                       >
                         +
@@ -468,7 +521,7 @@ export function Purchasing() {
                       type="button"
                       className="line-drop"
                       onClick={() => void removeLine(l.id)}
-                      disabled={busy}
+                      disabled={busyAll}
                       aria-label={`حذف ${l.productName}`}
                     >
                       ×
@@ -521,7 +574,7 @@ export function Purchasing() {
                         type="button"
                         className="line-drop"
                         onClick={() => void removeCharge(c.id)}
-                        disabled={busy}
+                        disabled={busyAll}
                         aria-label={`حذف ${c.chargeType}`}
                       >
                         ×
@@ -647,7 +700,7 @@ export function Purchasing() {
               <button
                 type="button"
                 className="btn btn--primary"
-                disabled={busy || receipt.lines.length === 0}
+                disabled={busyAll || receipt.lines.length === 0}
                 onClick={() => void post()}
               >
                 {busy ? "…" : "ثبت رسید"}
@@ -655,7 +708,7 @@ export function Purchasing() {
               <button
                 type="button"
                 className="btn"
-                disabled={busy}
+                disabled={busyAll}
                 onClick={() => void cancel()}
               >
                 ابطال پیش‌نویس
@@ -693,7 +746,7 @@ export function Purchasing() {
                   type="button"
                   className="btn btn--quiet"
                   onClick={() => void open(r.id)}
-                  disabled={busy}
+                  disabled={busyAll}
                 >
                   باز کن
                 </button>
