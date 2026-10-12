@@ -63,6 +63,7 @@ test("غیرفعال‌کردن با پاسخ گمشده نامعلوم است؛
 
   // بستن پنجره هم نامعلوم را فراموش نمی‌کند: دکمهٔ ردیف «اجرا» نیست.
   await page.keyboard.press("Escape");
+  await expect(dialog(page)).toHaveCount(0);
   await expect(staffRow(page).getByRole("button", { name: "نتیجه نامعلوم؛ بررسی وضعیت" })).toBeVisible();
   await staffRow(page).getByRole("button", { name: "نتیجه نامعلوم؛ بررسی وضعیت" }).click();
   verifyRows = [{ ...staff, isActive: false }];
@@ -142,6 +143,7 @@ test("فعال‌کردن: هدف در شروع ثابت می‌شود؛ پس ا
   await dialog(page).getByRole("button", { name: "فعال کن" }).click();
   await expect(dialog(page)).toContainText("نتیجه نامعلوم");
   await page.keyboard.press("Escape");
+  await expect(dialog(page)).toHaveCount(0);
 
   // فهرست به‌روز می‌شود و ردیف حالا «فعال» است؛ دکمهٔ ردیف همچنان «نامعلوم» است، نه «غیرفعال».
   await page.getByRole("checkbox", { name: "غیرفعال‌ها هم" }).check();
@@ -175,6 +177,36 @@ test("همه نشست‌ها: پاسخ نامعلوم از فهرست محدود
   await expect(dialog(page)).toContainText("«رمز تازه»");
   await expect(page.getByRole("status").filter({ hasText: "بسته شد" })).toHaveCount(0);
   expect(count(api.calls, "POST /users/u9/revoke-sessions")).toBe(1);
+});
+
+test("قفل مودال هم‌زمان با DOM تازه می‌شود؛ cancel پس از pending→unknown گم نمی‌شود", async ({ page, api }) => {
+  let pending: Route | undefined;
+  api.handlers.set("GET /users", usersRoute(() => [staff]));
+  api.handlers.set(`PATCH /users/${staff.id}`, async route => { pending = route; });
+  await page.goto("/"); await settings(page, "staff", "پرسنل");
+  await staffRow(page).getByRole("button", { name: "غیرفعال", exact: true }).click();
+  await dialog(page).getByRole("button", { name: "غیرفعال کن" }).click();
+  await expect.poll(() => !!pending).toBe(true);
+  await expect(dialog(page).getByRole("button", { name: "در حال غیرفعال‌کردن…" })).toBeDisabled();
+  await page.keyboard.press("Escape");
+  await expect(dialog(page), "عمل در حال اجرا همچنان قفل است").toBeVisible();
+
+  // رویداد بومی cancel را در نخستین microtask پس از رندر نتیجه می‌فرستیم؛
+  // بدون sleep یا اتکا به بار CI، فاصلهٔ commit تا passive effect را می‌آزماید.
+  await dialog(page).evaluate(el => {
+    const observer = new MutationObserver(() => {
+      if (!el.querySelector(".safe-outcome--unknown")) return;
+      observer.disconnect();
+      el.dispatchEvent(new Event("cancel", { cancelable: true }));
+    });
+    observer.observe(el, { childList: true, subtree: true });
+  });
+  await pending!.abort("connectionreset");
+  await expect(dialog(page), "نتیجه نامعلوم دیگر قفل pending را ندارد").toHaveCount(0);
+  await staffRow(page).getByRole("button", { name: "نتیجه نامعلوم؛ بررسی وضعیت" }).click();
+  await expect(dialog(page)).toContainText("نتیجه نامعلوم");
+  await expect(dialog(page).getByRole("button", { name: "غیرفعال کن" })).toHaveCount(0);
+  expect(count(api.calls, `PATCH /users/${staff.id}`)).toBe(1);
 });
 
 test("ورود دومرحله‌ای: وضعیت موفق و کلیدها ناموفق «کلیدی ثبت نشده» نمی‌گوید؛ تلاش دوباره فقط می‌خواند", async ({ page, api }) => {

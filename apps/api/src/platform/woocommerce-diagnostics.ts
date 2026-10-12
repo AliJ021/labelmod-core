@@ -9,7 +9,7 @@ export const wooReport = z.object({
   protocol: z.literal(1), pluginVersion: z.string().regex(/^\d+\.\d+\.\d+$/),
   wooVersion: z.string().regex(/^(?:\d+\.\d+(?:\.\d+)?(?:[-.][a-zA-Z0-9]+)*|unknown)$/).max(40), siteUrl: z.string().url().max(500),
   branchId: uuidOrEmpty, warehouseId: uuidOrEmpty,
-  apiKeyConfigured: z.boolean(), stockPolling: z.boolean(), pricePolling: z.boolean(),
+  apiKeyConfigured: z.boolean(), pushConfigured: z.boolean().optional(), stockPolling: z.boolean(), pricePolling: z.boolean(),
   cronDisabled: z.boolean(), stockScheduled: z.boolean(),
   mapping: z.object({ linkedProducts: z.number().int().nonnegative().nullable(), orderIdentity: z.literal("sku"), stockIdentity: z.literal("variationId") }),
   order: z.object({

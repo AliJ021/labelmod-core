@@ -316,6 +316,11 @@ jobs:
       #    نمی‌گیرد.
       - name: گیرندهٔ ارسال لحظه‌ای — امضا، Replay، ترتیب، صفر و null
         run: php integrations/woocommerce/test/push-receiver-test.php
+      - name: کلید Push از پیشخوان — رمزگذاری، مجوز، nonce و سازگاری
+        run: |
+          php integrations/woocommerce/test/push-secret-test.php
+          php integrations/woocommerce/test/push-secret-test.php no-salts
+          php -d disable_functions=openssl_encrypt,openssl_decrypt integrations/woocommerce/test/push-secret-test.php no-crypto
       - name: Refund delivery and replay
         run: php integrations/woocommerce/test/refund-test.php
       - name: رگرسیون دریافت خرید حضوری، شکست ذخیره و رقابت قفل

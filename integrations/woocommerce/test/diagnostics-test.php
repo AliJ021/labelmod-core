@@ -10,6 +10,7 @@ $settings = ['base_url' => 'https://core.example.test', 'api_key' => 'secret-tes
     'branch_id' => '', 'warehouse_id' => '', 'sync_stock' => 'yes'];
 $calls = []; $logs = []; $routes = []; $events = []; $response = ['code' => 200, 'body' => '{}'];
 function lmc_setting($key, $default = '') { global $settings; return $settings[$key] ?? $default; }
+function get_option($key, $default = false) { return $default; }
 function __($text, $domain = '') { return $text; }
 function wp_parse_url($url) { return parse_url($url); }
 function wp_json_encode($body, $flags = 0) { return json_encode($body, $flags); }
@@ -59,6 +60,7 @@ $wpdb = new class {
 };
 require_once __DIR__ . '/../labelmod-connector/includes/class-lmc-client.php';
 require_once __DIR__ . '/../labelmod-connector/includes/class-lmc-order-sync.php';
+require_once __DIR__ . '/../labelmod-connector/includes/class-lmc-push-secret.php';
 require_once __DIR__ . '/../labelmod-connector/includes/class-lmc-push-receiver.php';
 require_once __DIR__ . '/../labelmod-connector/includes/class-lmc-diagnostics.php';
 $checks = 0;
@@ -69,6 +71,7 @@ check($routes['lmc/v1/diagnostics']['permission_callback'] === [LMC_Push_Receive
 $before = json_encode(get_object_vars($order));
 for ($i = 0; $i < 2; $i++) {
     $r = LMC_Diagnostics::report(42);
+    check($r['pushConfigured'] === false, 'وضعیت Push فقط بولی است؛ کلید وجود ندارد');
     check($r['order']['eligible'] === false, 'processing بدون تأیید پرداخت آمادهٔ ارسال نیست');
     check($r['order']['missingSku'] === 1, 'SKU مفقود');
     check($r['order']['missingMapping'] === 1, 'نگاشت مفقود');
