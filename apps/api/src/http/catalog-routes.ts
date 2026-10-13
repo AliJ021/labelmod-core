@@ -18,9 +18,8 @@ import {
   generateToJson,
   type VariationService,
 } from "../catalog/variation.ts";
-import { labelPage, LABEL_CSP, LABEL_FRAME_CSP, LABEL_FRAME_HTML, ROLL_MIN_HEIGHT_MM, ROLL_MIN_WIDTH_MM, type LabelItem } from "../catalog/label.ts";
+import { LABEL_BRAND, labelCalibrationPage, labelPage, LABEL_CSP, LABEL_FRAME_CSP, LABEL_FRAME_HTML, ROLL_MEDIA_MAX_MM, ROLL_MEDIA_MIN_MM, ROLL_MIN_HEIGHT_MM, ROLL_MIN_WIDTH_MM, ROLL_ROW_LIMITS, type LabelItem } from "../catalog/label.ts";
 import { CONTROL_CHARS } from "../lib/text.ts";
-import { STORE_BRAND } from "../lib/store-brand.ts";
 
 const uuid = z.string().uuid("شناسه نامعتبر");
 
@@ -62,6 +61,26 @@ const generateBody = z
  * مرورگر در چاپ گیر می‌کند — و تقریباً همیشه اشتباه ورودی است، نه یک
  * چاپ واقعی.
  */
+/**
+ * ردیف رول چندستونه (`RollRow` در `catalog/label.ts`). عددها اندازه‌گیری
+ * کاربرند و همه finite و در بازه؛ جاشدن ردیف در پهنای چاپ‌پذیر و کاغذ را
+ * `rollRowProblem` می‌سنجد و ردیف نامعتبر ۴۲۲ می‌گیرد، نه Fit یا برش.
+ */
+const rollRow = z.object({
+  columns: z.number().int().min(1).max(ROLL_ROW_LIMITS.maxColumns),
+  gapMm: z.number().finite().min(0).max(ROLL_ROW_LIMITS.maxGapMm),
+  mediaWidthMm: z.number().finite().min(ROLL_MEDIA_MIN_MM).max(ROLL_MEDIA_MAX_MM),
+  offsetXMm: z.number().finite().min(-ROLL_ROW_LIMITS.maxOffsetMm).max(ROLL_ROW_LIMITS.maxOffsetMm).default(0),
+  startSlot: z.number().int().min(1).max(ROLL_ROW_LIMITS.maxColumns).default(1),
+}).strict();
+
+const rollWidthMm = z.number()
+  .min(ROLL_MIN_WIDTH_MM, `عرض لیبل دست‌کم ${ROLL_MIN_WIDTH_MM} میلی‌متر است؛ باریک‌تر از آن بارکد با حاشیهٔ سکوت و قیمت کامل جا نمی‌شوند.`)
+  .max(120);
+const rollHeightMm = z.number()
+  .min(ROLL_MIN_HEIGHT_MM, `ارتفاع لیبل دست‌کم ${ROLL_MIN_HEIGHT_MM} میلی‌متر است؛ کوتاه‌تر از آن نام، قیمت و بارکد خوانا جا نمی‌شوند.`)
+  .max(120);
+
 const labelBody = z.object({
   items: z
     .array(
@@ -73,17 +92,20 @@ const labelBody = z.object({
     .min(1, "دست‌کم یک کالا لازم است")
     .max(200),
   layout: z.enum(["a4", "roll"]).default("a4"),
-  rollWidthMm: z.number()
-    .min(ROLL_MIN_WIDTH_MM, `عرض لیبل دست‌کم ${ROLL_MIN_WIDTH_MM} میلی‌متر است؛ باریک‌تر از آن بارکد با حاشیهٔ سکوت و قیمت کامل جا نمی‌شوند.`)
-    .max(120).optional(),
+  rollWidthMm: rollWidthMm.optional(),
   // کمتر از این، نام و قیمت و بارکد خوانا با هم جا نمی‌شوند (`labelGeometry`).
-  rollHeightMm: z.number()
-    .min(ROLL_MIN_HEIGHT_MM, `ارتفاع لیبل دست‌کم ${ROLL_MIN_HEIGHT_MM} میلی‌متر است؛ کوتاه‌تر از آن نام، قیمت و بارکد خوانا جا نمی‌شوند.`)
-    .max(120).optional(),
+  rollHeightMm: rollHeightMm.optional(),
+  rollRow: rollRow.optional(),
 }).refine((body) => body.items.reduce((sum, item) => sum + item.count, 0) <= 500, {
   message: "حداکثر ۵۰۰ لیبل در هر درخواست مجاز است",
   path: ["items"],
+}).refine((body) => body.layout === "roll" || body.rollRow === undefined, {
+  message: "چیدمان چندستونه فقط برای رول است",
+  path: ["rollRow"],
 });
+
+/** ردیف کالیبراسیون — فقط هندسه، بی کالا و بی هیچ دادهٔ دیتابیس. */
+const calibrationBody = z.object({ rollWidthMm, rollHeightMm, rollRow }).strict();
 
 export interface CatalogRouteDeps {
   db: Db;
@@ -179,17 +201,34 @@ export function registerCatalogRoutes(
 
     const html = labelPage(items, {
       layout: body.layout,
-      shopName: STORE_BRAND,
+      // روی لیبل «Label Mod» انگلیسی؛ برند فارسی فاکتور (`STORE_BRAND`) دست نمی‌خورد.
+      shopName: LABEL_BRAND,
       ...(body.layout === "roll"
         ? {
             rollMm: {
               width: body.rollWidthMm ?? 50,
               height: body.rollHeightMm ?? 30,
             },
+            rollRow: body.rollRow,
           }
         : {}),
     });
 
+    return reply
+      .code(200)
+      .header("content-type", "text/html; charset=utf-8")
+      .header("content-security-policy", LABEL_CSP)
+      .header("x-content-type-options", "nosniff")
+      .header("cache-control", "no-store")
+      .send(html);
+  });
+
+  /** یک ردیف کالیبراسیون رول چندستونه — همان مجوز، CSP و هدرهای `POST /labels`. */
+  app.post("/labels/calibration", async (req, reply) => {
+    const s = session(req);
+    const body = calibrationBody.parse(req.body);
+    await requireForSession(db, s, "catalog.manage");
+    const html = labelCalibrationPage({ width: body.rollWidthMm, height: body.rollHeightMm }, body.rollRow);
     return reply
       .code(200)
       .header("content-type", "text/html; charset=utf-8")

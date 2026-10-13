@@ -3,6 +3,7 @@ import assert from "node:assert/strict";
 import {
   LABEL_PRESETS, MAX_TOTAL, clampCount, groupByProduct, labelContentWarning, labelRequestBody, labelRequestProblem,
   labelSizeIssues, labelSizeProblem, mergeQueue, syncQueueMeta, queueTotal, ROLL_LIMITS, setQueueCount, type QueueItem,
+  labelCalibrationBody, labelRowIssue, labelRowProblem, parseMm, rowSlots, type LabelRow,
 } from "../src/lib/label-print.ts";
 import { DEFAULT_SIZE_CHOICE, parseSizeChoice } from "../src/lib/label-size.ts";
 
@@ -90,9 +91,9 @@ describe("فهرست چاپ گروهی لیبل", () => {
     assert.deepEqual(parseSizeChoice(JSON.stringify({ layout: "roll", preset: "99x99", width: "5", height: "5" })), DEFAULT_SIZE_CHOICE);
     assert.deepEqual(parseSizeChoice(JSON.stringify({ layout: "x", preset: "40x25", width: "40", height: "25" })), DEFAULT_SIZE_CHOICE);
     assert.deepEqual(parseSizeChoice(JSON.stringify({ layout: "roll", preset: "40x25", width: "40", height: "25" })),
-      { layout: "roll", preset: "40x25", width: "40", height: "25" });
+      { layout: "roll", preset: "40x25", width: "40", height: "25", columns: "1", gap: "", media: "", offset: "0" });
     assert.deepEqual(parseSizeChoice(JSON.stringify({ layout: "roll", preset: "custom", width: "۴۵", height: "28" })),
-      { layout: "roll", preset: "custom", width: "۴۵", height: "28" });
+      { layout: "roll", preset: "custom", width: "۴۵", height: "28", columns: "1", gap: "", media: "", offset: "0" });
     assert.equal(DEFAULT_SIZE_CHOICE.preset, "50x30");
   });
 
@@ -127,7 +128,7 @@ describe("فهرست چاپ گروهی لیبل", () => {
     assert.equal(h.width, null); assert.match(h.height ?? "", /ارتفاع/);
     const both = labelSizeIssues({ layout: "roll", width: 25, height: 15 });
     assert.ok(both.width && both.height);
-    assert.deepEqual(labelSizeIssues({ layout: "a4", width: NaN, height: NaN }), { width: null, height: null });
+    assert.deepEqual(labelSizeIssues({ layout: "a4", width: NaN, height: NaN }), { width: null, height: null, row: null });
   });
 
   test("راه‌حل هشدار با مشکل جور است: بی‌بارکدِ قیمت‌دار به «قیمت تعیین کنید» فرستاده نمی‌شود", () => {
@@ -152,3 +153,68 @@ describe("فهرست چاپ گروهی لیبل", () => {
   });
 });
 
+
+
+describe("رول دو‌ستونه — پروفایل و بدنهٔ درخواست", () => {
+  const row: LabelRow = { columns: 2, gapMm: 3, mediaWidthMm: 106, offsetXMm: 0, startSlot: 1 };
+  const size = { layout: "roll" as const, width: 50, height: 30, row };
+
+  test("پروفایل قدیمی ذخیره‌شده (بی ستون/فاصله) همان رول تک‌ستونی می‌ماند و اندازه‌اش حفظ می‌شود", () => {
+    const old = parseSizeChoice(JSON.stringify({ layout: "roll", preset: "40x25", width: "50", height: "30" }));
+    assert.deepEqual(old, { layout: "roll", preset: "40x25", width: "50", height: "30", columns: "1", gap: "", media: "", offset: "0" });
+    assert.equal(DEFAULT_SIZE_CHOICE.columns, "1", "پیش‌فرض همان رفتار قدیمی است");
+    assert.equal(DEFAULT_SIZE_CHOICE.gap, "", "فاصلهٔ اندازه‌گیری‌نشده مقدار ساختگی نمی‌گیرد");
+    const two = parseSizeChoice(JSON.stringify({ ...old, columns: "2", gap: "3", media: "106", offset: "-0.5" }));
+    assert.deepEqual([two.columns, two.gap, two.media, two.offset], ["2", "3", "106", "-0.5"]);
+    assert.equal(parseSizeChoice(JSON.stringify({ ...old, columns: "9" })).columns, "1");
+  });
+
+  test("بدنه: ردیف فقط برای رول دو‌ستونه می‌رود؛ تک‌ستونی و A4 همان قرارداد قبلی‌اند", () => {
+    const items = [{ variationId: "v1", count: 3 }];
+    assert.deepEqual(labelRequestBody(items, size).rollRow, row);
+    assert.deepEqual(labelRequestBody(items, { layout: "roll", width: 50, height: 30 }), { items, layout: "roll", rollWidthMm: 50, rollHeightMm: 30 });
+    assert.deepEqual(labelRequestBody(items, { layout: "a4", width: 50, height: 30, row }), { items, layout: "a4" });
+    assert.deepEqual(labelCalibrationBody({ ...size, row: { ...row, startSlot: 2 } }), { rollWidthMm: 50, rollHeightMm: 30, rollRow: { ...row, startSlot: 1 } });
+    assert.equal(labelCalibrationBody({ layout: "roll", width: 50, height: 30 }), null);
+  });
+
+  test("ورودی میلی‌متر: «,» و «٫» ممیزند نه هزارگان؛ رقم فارسی و منفی یونیکد؛ خالی = نامعلوم", () => {
+    assert.equal(parseMm("1,5"), 1.5);
+    assert.equal(parseMm("۲٫۵"), 2.5);
+    assert.equal(parseMm("−0.5"), -0.5);
+    assert.equal(parseMm("106"), 106);
+    assert.ok(Number.isNaN(parseMm("")) && Number.isNaN(parseMm("  ")));
+    assert.ok(Number.isNaN(parseMm("abc")));
+  });
+
+  test("تغییر هندسه کلید پیش‌نمایش را عوض می‌کند (پیش‌نمایش کهنه باطل است)", () => {
+    const items = [{ variationId: "v1", count: 1 }];
+    const k = (r: LabelRow) => JSON.stringify(labelRequestBody(items, { ...size, row: r }));
+    assert.notEqual(k(row), k({ ...row, gapMm: 2.5 }));
+    assert.notEqual(k(row), k({ ...row, offsetXMm: 0.5 }));
+    assert.notEqual(k(row), k({ ...row, mediaWidthMm: 108 }));
+    assert.notEqual(k(row), k({ ...row, startSlot: 2 }));
+  });
+
+  test("اعتبارسنجی همان مرزهای سرور: نامعلوم ≠ صفر؛ ۱۰۴ چاپ‌پذیر جدا از ۱۱۸ کاغذ؛ بیرون‌زدگی با جابه‌جایی", () => {
+    assert.equal(labelRowProblem(50, row), null);
+    assert.deepEqual(rowSlots(50, row), { spanMm: 103, leftMm: [1.5, 54.5] });
+    assert.match(labelRowProblem(50, { ...row, gapMm: Number.NaN })!, /فاصلهٔ افقی.*پیش‌فرض ندارد/);
+    assert.match(labelRowProblem(50, { ...row, mediaWidthMm: Number.NaN })!, /لاینر.*پیش‌فرض ندارد/);
+    assert.match(labelRowProblem(50, { ...row, gapMm: 5, mediaWidthMm: 112 })!, /پهنای چاپ‌پذیر/);
+    assert.match(labelRowProblem(50, { ...row, mediaWidthMm: 100 })!, /کمتر است/);
+    assert.match(labelRowProblem(50, { ...row, mediaWidthMm: 119 })!, /لاینر/);
+    assert.match(labelRowProblem(50, { ...row, offsetXMm: 2 })!, /بیرون از کاغذ/);
+    assert.match(labelRowProblem(50, { ...row, offsetXMm: 11 })!, /جابه‌جایی/);
+    assert.match(labelRowProblem(50, { ...row, gapMm: -1 })!, /فاصلهٔ میان/);
+    assert.match(labelRowProblem(50, { ...row, mediaWidthMm: 118, offsetXMm: -7 })!, /پهنای چاپ‌پذیر/);
+    // میدانِ مقصر: فقط همان aria-invalid می‌گیرد.
+    assert.equal(labelRowIssue(50, { ...row, offsetXMm: Number.NaN })?.field, "offset");
+    assert.equal(labelRowIssue(50, { ...row, offsetXMm: 2 })?.field, "offset");
+    assert.equal(labelRowIssue(50, { ...row, gapMm: Number.NaN })?.field, "gap");
+    assert.equal(labelRowIssue(50, { ...row, mediaWidthMm: 100 })?.field, "media");
+    assert.equal(labelSizeIssues(size).row, null);
+    assert.match(labelSizeProblem({ ...size, row: { ...row, gapMm: Number.NaN } })!, /پیش‌فرض ندارد/);
+    assert.match(labelRequestProblem([{ count: 1 }], { ...size, row: { ...row, mediaWidthMm: 100 } })!, /کمتر است/);
+  });
+});

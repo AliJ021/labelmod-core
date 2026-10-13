@@ -101,7 +101,7 @@ export function ProductStockLabels({ productId, productName, variations, selecte
         <td>{stock ? cells.get(v.id)?.onHand ?? "—" : "…"}</td><td>{stock ? cells.get(v.id)?.reserved ?? "—" : "…"}</td>
         <td><input aria-label={`تعداد لیبل ${v.sku}`} inputMode="numeric" style={{ width: "4.5em" }} value={String(counts[v.id] ?? 0)} onChange={(e) => setCount(v.id, e.target.value)} /></td></tr>)}</tbody></table></div>
     <LabelSizeFields state={sizeState} onChange={pv.reset} idPrefix={`product-${productId}`} />
-    <p className="muted small">حداکثر ۱۰۰ لیبل از هر تنوع و ۵۰۰ لیبل در هر نوبت. در تنظیمات چاپ، مقیاس ۱۰۰٪ و اندازه کاغذ برابر لیبل انتخاب شود؛ سربرگ و پابرگ خاموش باشند.</p>
+    <p className="muted small">حداکثر ۱۰۰ لیبل از هر تنوع و ۵۰۰ لیبل در هر نوبت. در تنظیمات چاپ، مقیاس ۱۰۰٪ و اندازه کاغذ برابر {sizeState.size.row ? "کل ردیف" : "لیبل"} انتخاب شود؛ سربرگ و پابرگ خاموش باشند.</p>
     <div className="row" style={{ gap: "var(--s-2)", flexWrap: "wrap" }}>
       <button className="btn btn--primary" type="button" disabled={problem !== null || pv.busy} onClick={() => void pv.preview(body, currentKey)}>پیش‌نمایش لیبل‌های انتخاب‌شده</button>
       <button className="btn" type="button" disabled={chosen.length === 0} onClick={addToQueue}>افزودن به فهرست چاپ گروهی</button>

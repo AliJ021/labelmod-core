@@ -19,6 +19,7 @@ import {
 } from "../src/catalog/barcode-svg.ts";
 import { makeEan13, ean13CheckDigit } from "../src/catalog/barcode.ts";
 import { esc, labelGeometry, labelPage, LabelSizeError, barcodeFitsWidth, minRollWidthFor, ROLL_MIN_HEIGHT_MM, ROLL_MIN_WIDTH_MM, ROLL_PRESETS_MM, type LabelItem } from "../src/catalog/label.ts";
+import { LABEL_BRAND, LabelRowError, labelCalibrationPage, rollRowProblem, rollRowSlots, type RollRow } from "../src/catalog/label.ts";
 
 describe("رسم EAN-13", () => {
   test("نوار ۹۵ ماژول است و نگهبان‌ها سر جایشان‌اند", () => {
@@ -345,5 +346,114 @@ describe("اندازهٔ برچسب", () => {
     assert.ok(g.fits && g.moduleMm === 0.25, "۵۰×۳۰ مرجع: ماژول ۰٫۲۵mm");
     assert.equal(labelGeometry("roll", 50, 30).moduleMm, 0.375, "EAN-13 همان قبلی");
     assert.equal(labelGeometry("roll", 30, 20, 165).fits, false);
+  });
+});
+
+
+describe("رول دو‌ستونه (BIXOLON XD3-40t، ۵۰×۳۰)", () => {
+  // پهنای لاینر و فاصله نمونه‌اند (اندازه‌گیری مالک هنوز نیامده)، نه پیش‌فرض محصول.
+  const ROW: RollRow = { columns: 2, gapMm: 3, mediaWidthMm: 106, offsetXMm: 0, startSlot: 1 };
+  const SIZE = { width: 50, height: 30 };
+  const mk = (sku: string, count: number, over: Partial<LabelItem> = {}): LabelItem => ({
+    barcode: makeEan13(Number(sku.replace(/\D/g, "")) || 1), sku, productName: `کالا ${sku}`, color: "مشکی", size: "M", priceRial: 1_000_000n, count, ...over,
+  });
+  const page = (items: LabelItem[], row: RollRow = ROW) => labelPage(items, { layout: "roll", shopName: LABEL_BRAND, rollMm: SIZE, rollRow: row });
+  /** [ردیف][ستون] → SKU یا «-» برای خانهٔ خالی، از خودِ HTML. */
+  const cells = (html: string) => [...html.matchAll(/<div class="slot( slot--empty)?" data-slot="(\d)" style="left:([\d.-]+)mm">(?:<div class="label">[\s\S]*?<span class="l">کالا (LM-\d+))?/g)]
+    .map((m) => ({ empty: m[1] !== undefined, slot: Number(m[2]), left: Number(m[3]), sku: m[4] ?? null }));
+  const rows = (html: string) => (html.match(/<div class="row" data-row=/g) ?? []).length;
+
+  test("کنترل منفی: رندرر قدیمی (بی rollRow) برای ۵۰×۳۰ هر لیبل را یک صفحهٔ ۵۰mm می‌کند، نه یک ردیف کامل", () => {
+    const old = labelPage([mk("LM-1", 2)], { layout: "roll", shopName: LABEL_BRAND, rollMm: SIZE });
+    assert.match(old, /@page \{ size: 50mm 30mm; margin: 0; \}/);
+    assert.match(old, /\.label \+ \.label \{ break-before: page; \}/);
+    assert.doesNotMatch(old, /class="row"|class="slot/);
+    const now = page([mk("LM-1", 2)]);
+    assert.match(now, /@page \{ size: 106mm 30mm; margin: 0; \}/, "صفحه = کل ردیف (پهنای لاینر)، جدا از اندازهٔ لیبل");
+    assert.match(now, /\.slot \{ position: absolute; top: 0; width: 50mm; height: 30mm; \}/);
+    assert.doesNotMatch(now, /\.label \+ \.label/);
+  });
+
+  test("خانه‌ها: ستون ۱ چپ فیزیکی، فاصله و حاشیهٔ دو طرف دقیق؛ ردیف ltr و لیبل rtl", () => {
+    assert.deepEqual(rollRowSlots(50, ROW), { spanMm: 103, leftMm: [1.5, 54.5] });
+    assert.deepEqual(rollRowSlots(50, { ...ROW, offsetXMm: -1.25 }).leftMm, [0.25, 53.25]);
+    const html = page([mk("LM-1", 2)]);
+    assert.match(html, /\.row \{ position: relative; direction: ltr;/);
+    assert.match(html, /\.slot > \.label \{ direction: rtl; \}/);
+    assert.deepEqual(cells(html).map((c) => [c.slot, c.left]), [[1, 1.5], [2, 54.5]]);
+  });
+
+  for (const n of [1, 2, 3, 5, 500]) {
+    test(`${n} لیبل: ترتیب، بی تکرار/گم‌شدن، ردیف آخر ناقص و بی صفحهٔ خالی اضافه`, () => {
+      const items = n === 500 ? Array.from({ length: 200 }, (_, i) => mk(`LM-${i + 1}`, i < 100 ? 3 : 2)) : [mk("LM-1", n)];
+      const html = page(items);
+      const c = cells(html);
+      const want = items.flatMap((i) => Array<string>(i.count).fill(i.sku));
+      assert.equal(want.length, n);
+      assert.equal(rows(html), Math.ceil(n / 2));
+      assert.deepEqual(c.filter((x) => !x.empty).map((x) => x.sku), want, "ترتیب درخواست، یک‌به‌یک");
+      assert.equal(c.filter((x) => x.empty).length, n % 2, "فقط خانهٔ آخر ردیف فرد خالی است");
+      assert.equal((html.match(/break-before: page/g) ?? []).length, 1, "شکست فقط میان ردیف‌ها (.row + .row)");
+      assert.equal((html.match(/class="label"/g) ?? []).length, n);
+    });
+  }
+
+  test("خانهٔ شروع ۲ روی رول نیمه‌مصرف: ۳ لیبل = ۲ ردیف، خانهٔ اول ردیف اول خالی، ترتیب تنوع‌ها حفظ", () => {
+    const html = page([mk("LM-7", 1), mk("LM-8", 2)], { ...ROW, startSlot: 2 });
+    assert.deepEqual(cells(html).map((x) => x.sku), [null, "LM-7", "LM-8", "LM-8"]);
+    assert.equal(rows(html), 2);
+    // startSlot ۲ با تعداد زوج یعنی ردیف آخر ناقص — باز هم بی ردیف خالی.
+    const two = page([mk("LM-9", 2)], { ...ROW, startSlot: 2 });
+    assert.deepEqual(cells(two).map((x) => x.sku), [null, "LM-9", "LM-9", null]);
+  });
+
+  test("محتوای دشوار در ردیف: نام بلند، بی‌قیمت، بی‌بارکد، EAN-13 و کد قدیمی ۱۷ رقمی Code128", () => {
+    const html = page([
+      mk("LM-1", 1, { productName: "شلوار پارچه‌ای رگولار با نام بسیار طولانی ".repeat(3) }),
+      mk("LM-2", 1, { priceRial: null }),
+      mk("LM-3", 1, { barcode: null }),
+      mk("LM-4", 1, { barcode: "12345678901234567" }),
+    ]);
+    assert.equal((html.match(/class="label"/g) ?? []).length, 4);
+    assert.match(html, /بدون قیمت/);
+    assert.match(html, /class="nobarcode">LM-3</);
+    assert.match(html, /<svg[^>]*>/);
+  });
+
+  test("عنوان بالای بارکد دقیقاً «Label Mod» انگلیسی و LTR است", () => {
+    const html = page([mk("LM-1", 1)]);
+    assert.equal(LABEL_BRAND, "Label Mod");
+    assert.match(html, /<div class="shop" dir="ltr" lang="en">Label Mod<\/div>/);
+    assert.doesNotMatch(html, /لیبل مد/);
+  });
+
+  test("اعتبارسنجی: پهنای چاپ‌پذیر ۱۰۴ از پهنای کاغذ ۱۱۸ جداست؛ هیچ Fit یا برش پنهانی نیست", () => {
+    assert.equal(rollRowProblem(50, ROW), null);
+    assert.equal(rollRowProblem(50, { ...ROW, gapMm: 4, mediaWidthMm: 110 }), null, "۱۰۴ دقیقاً مرز");
+    assert.match(rollRowProblem(50, { ...ROW, gapMm: 5, mediaWidthMm: 112 })!, /پهنای چاپ‌پذیر 104/, "۱۰۵ > ۱۰۴ حتی با کاغذ پهن‌تر");
+    assert.match(rollRowProblem(50, { ...ROW, mediaWidthMm: 100 })!, /پهنای کاغذ \(100\) از کل ردیف/);
+    assert.match(rollRowProblem(50, { ...ROW, mediaWidthMm: 119 })!, /بین 15 و 118/);
+    assert.match(rollRowProblem(50, { ...ROW, offsetXMm: 2 })!, /بیرون از کاغذ/, "حاشیهٔ ۱٫۵ + ۲ > لبه");
+    assert.match(rollRowProblem(50, { ...ROW, offsetXMm: 11 })!, /جابه‌جایی افقی/);
+    // کاغذ پهن‌تر از ۱۰۴: جابه‌جایی نمی‌تواند لیبل را از پنجرهٔ چاپ‌پذیر وسط کاغذ بیرون ببرد.
+    assert.match(rollRowProblem(50, { ...ROW, mediaWidthMm: 118, offsetXMm: -7 })!, /پهنای چاپ‌پذیر 104 میلی‌متر \(وسطِ کاغذ\)/);
+    assert.equal(rollRowProblem(50, { ...ROW, mediaWidthMm: 118, offsetXMm: -0.5 }), null);
+    assert.equal(rollRowProblem(50, { ...ROW, offsetXMm: -0.5 }), null, "لبهٔ پنجره (۱mm از چپ در کاغذ ۱۰۶) هنوز مجاز است");
+    assert.match(rollRowProblem(50, { ...ROW, gapMm: -1 })!, /فاصلهٔ میان/);
+    assert.match(rollRowProblem(50, { ...ROW, startSlot: 3 })!, /خانهٔ شروع/);
+    assert.match(rollRowProblem(50, { ...ROW, columns: 0 })!, /تعداد ستون/);
+    assert.match(rollRowProblem(50, { ...ROW, gapMm: Number.NaN })!, /نامعتبر/);
+    assert.match(rollRowProblem(50, { ...ROW, mediaWidthMm: Number.POSITIVE_INFINITY })!, /نامعتبر/);
+    assert.throws(() => page([mk("LM-1", 1)], { ...ROW, gapMm: 5, mediaWidthMm: 112 }), (e) => e instanceof LabelRowError && e.statusCode === 422);
+  });
+
+  test("ردیف کالیبراسیون: یک صفحه، یک قاب در هر خانه، بی کالا", () => {
+    const html = labelCalibrationPage(SIZE, ROW);
+    assert.equal(rows(html), 1);
+    assert.equal((html.match(/class="calib"/g) ?? []).length, 2);
+    assert.doesNotMatch(html, /class="label"|<svg/);
+    assert.match(html, /ردیف کالیبراسیون/);
+    assert.match(html, /@page \{ size: 106mm 30mm; margin: 0; \}/);
+    assert.throws(() => labelCalibrationPage(SIZE, { ...ROW, mediaWidthMm: 90 }), LabelRowError);
   });
 });
