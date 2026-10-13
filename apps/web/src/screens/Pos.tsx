@@ -574,37 +574,40 @@ export function Pos({ actorId }: { actorId: string }) {
   // می‌شود، نه از روی فوکوس.
   //
   // ⚠️ رقم اول پیش از تشخیص در کادر فوکوس‌دار می‌نشیند. پیش‌تر هیچ‌کس پاکش نمی‌کرد و
-  //    «2» (رقم اول بارکد داخلی) در کادر جست‌وجو می‌ماند. حالا وضعیت کادر پیش از
-  //    رقم اول نگه داشته و با رقم دوم (تشخیص اسکن) دقیقاً برگردانده می‌شود.
-  //    اسکنر بی‌پسوند با مکث پس از رشته تمام می‌شود (`flush`)، نه بلعیده.
+  //    «2» (رقم اول بارکد داخلی) در کادر جست‌وجو می‌ماند. حالا وضعیت کادر پیش از رقم اول
+  //    نگه داشته و فقط وقتی اسکن **تأیید شد** دقیقاً برگردانده می‌شود (نه با رقم دوم:
+  //    دو کلید تند انسانی نباید رقم اولشان پاک شود). کلید نگه‌داشته‌شده (repeat) اسکن نیست.
+  //    اسکنر بی‌پسوند با مکث پس از یک GTIN معتبر تمام می‌شود (`flush`)، نه بلعیده.
+  //    وضعیت در ref است تا بازسازی `addByBarcode` اسکنِ در جریان را گم نکند.
+  const scanLeak = useRef<FieldSnapshot | null>(null);
+  const scanIdle = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
+  const addByBarcodeRef = useRef(addByBarcode);
+  addByBarcodeRef.current = addByBarcode;
   useEffect(() => {
     if (!shift) return;
-    let leak: FieldSnapshot | null = null;
-    let idle: ReturnType<typeof setTimeout> | undefined;
-    const scanned = (barcode: string) => { retractLeak(leak); leak = null; void addByBarcode(barcode); };
+    const scanned = (barcode: string) => { retractLeak(scanLeak.current); scanLeak.current = null; void addByBarcodeRef.current(barcode); };
     function onKey(e: KeyboardEvent) {
       if (e.isComposing || e.ctrlKey || e.altKey || e.metaKey) return;
       const snap = snapshotField(e.target, e.key);
-      const step = buffer.current.push(e.key, e.timeStamp);
-      clearTimeout(idle);
+      const step = buffer.current.push(e.key, e.timeStamp, e.repeat);
+      clearTimeout(scanIdle.current);
       if (step.kind === "consumed") {
         // اسکن در جریان است — نگذار کاراکترها در فیلدی که فوکوس دارد بریزند.
         e.preventDefault();
-        if (buffer.current.pending.length === 2) { retractLeak(leak); leak = null; }
         if (buffer.current.pending.length > 0) {
-          idle = setTimeout(() => { const s = buffer.current.flush(performance.now()); if (s.kind === "scanned") scanned(s.barcode); }, 120);
+          scanIdle.current = setTimeout(() => { const s = buffer.current.flush(performance.now()); if (s.kind === "scanned") scanned(s.barcode); }, 120);
         }
       } else if (step.kind === "scanned") {
         e.preventDefault();
         scanned(step.barcode);
       } else {
         // رقم اولِ یک اسکن احتمالی: وضعیت کادر را پیش از نشستن آن نگه دار.
-        leak = buffer.current.pending.length === 1 ? snap : null;
+        scanLeak.current = buffer.current.pending.length === 1 ? snap : null;
       }
     }
     document.addEventListener("keydown", onKey, true);
-    return () => { clearTimeout(idle); document.removeEventListener("keydown", onKey, true); };
-  }, [shift, addByBarcode]);
+    return () => { clearTimeout(scanIdle.current); document.removeEventListener("keydown", onKey, true); };
+  }, [shift]);
 
   // ── عمل‌ها ────────────────────────────────────────────────────────
 

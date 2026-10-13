@@ -7,7 +7,7 @@
  */
 import { describe, test } from "node:test";
 import assert from "node:assert/strict";
-import { ScanBuffer, type ScanStep } from "../src/lib/scanner.ts";
+import { ScanBuffer, isValidGtin, type ScanStep } from "../src/lib/scanner.ts";
 
 /** یک رشته را با فاصله ثابت میان کلیدها می‌خوراند. */
 function type(buf: ScanBuffer, text: string, gapMs: number, start = 1000): ScanStep[] {
@@ -161,13 +161,14 @@ describe("اسکنر HID — چیدمان، پسوند و مکث", () => {
     assert.deepEqual(buf.push("Tab", 1000 + 17 * 6), { kind: "scanned", barcode: "12345678901234567" });
   });
 
-  test("بی‌پسوند: مکث پس از رشتهٔ سریع کامل، اسکن را تمام می‌کند؛ پیش از مکث نه", () => {
+  test("بی‌پسوند: مکث پس از رشتهٔ سریع کامل (GTIN معتبر)، اسکن را تمام می‌کند؛ پیش از مکث نه", () => {
+    const VALID = "2000000012018";
     const buf = new ScanBuffer();
-    type(buf, EAN13, 8);
+    type(buf, VALID, 8);
     const last = 1000 + 12 * 8;
     assert.deepEqual(buf.flush(last + 30), { kind: "ignored" }, "هنوز در جریان");
-    assert.equal(buf.pending, EAN13);
-    assert.deepEqual(buf.flush(last + 120), { kind: "scanned", barcode: EAN13 });
+    assert.equal(buf.pending, VALID);
+    assert.deepEqual(buf.flush(last + 120), { kind: "scanned", barcode: VALID });
     assert.equal(buf.pending, "");
     // Enter دیرِ همان اسکن فرم را ارسال نمی‌کند؛ ولی Enter بعدی دست‌نخورده است.
     assert.deepEqual(buf.push("Enter", last + 200), { kind: "consumed" });
@@ -178,8 +179,8 @@ describe("اسکنر HID — چیدمان، پسوند و مکث", () => {
     const buf = new ScanBuffer();
     type(buf, "200123", 8);
     assert.deepEqual(buf.flush(1300), { kind: "ignored" });
-    assert.equal(buf.pending, "");
     assert.deepEqual(buf.push("Enter", 1310), { kind: "ignored" });
+    assert.equal(buf.pending, "");
   });
 
   test("تایپ دستی رقم‌ها با سرعت انسان هرگز با مکث اسکن نمی‌شود", () => {
@@ -187,5 +188,56 @@ describe("اسکنر HID — چیدمان، پسوند و مکث", () => {
     const steps = type(buf, "2000000012018", 120);
     assert.ok(steps.every((s) => s.kind === "ignored"));
     assert.deepEqual(buf.flush(1000 + 13 * 120 + 500), { kind: "ignored" });
+  });
+});
+
+
+describe("اسکنر HID — پسوند دیررس، تکرار کلید و GTIN بی‌پسوند (یافتهٔ root و بازبینی)", () => {
+  const VALID = "2000000012018"; // EAN-13 با رقم کنترل درست
+  test("Enter یا Tab ۵۱ تا ۱۱۹ میلی‌ثانیه پس از رقم آخر، همان اسکن کامل است (پیش‌تر بافر پاک و اسکن گم می‌شد)", () => {
+    for (const key of ["Enter", "Tab"]) for (let delay = 51; delay <= 119; delay++) {
+      const buf = new ScanBuffer();
+      type(buf, VALID, 8);
+      const last = 1000 + 12 * 8;
+      assert.deepEqual(buf.push(key, last + delay), { kind: "scanned", barcode: VALID }, `${key} +${delay}ms`);
+    }
+  });
+
+  test("کنترل منفی: پسوند دیررس پس از رشتهٔ کوتاه یا تایپ انسانی اسکن نمی‌سازد و Enter عادی می‌ماند", () => {
+    const short = new ScanBuffer();
+    type(short, "200123", 8);
+    assert.deepEqual(short.push("Enter", 1000 + 5 * 8 + 80), { kind: "ignored" });
+    const human = new ScanBuffer();
+    type(human, VALID, 120);
+    assert.deepEqual(human.push("Enter", 1000 + 12 * 120 + 80), { kind: "ignored" });
+    const late = new ScanBuffer();
+    type(late, VALID, 8);
+    assert.deepEqual(late.push("Enter", 1000 + 12 * 8 + 400), { kind: "ignored" }, "بیش از مهلت پسوند، Enter مال فرم است");
+  });
+
+  test("کلید نگه‌داشته‌شده (repeat، حدود ۳۳ms) هرگز اسکن نیست و Enter بعدی را نمی‌بلعد", () => {
+    const buf = new ScanBuffer();
+    buf.push("5", 1000);
+    let t = 1300;
+    for (let i = 0; i < 12; i++, t += 33) assert.deepEqual(buf.push("0", t, i > 0), { kind: i === 0 ? "ignored" : "ignored" });
+    assert.deepEqual(buf.flush(t + 200), { kind: "ignored" });
+    assert.deepEqual(buf.push("Enter", t + 220), { kind: "ignored" });
+  });
+
+  test("بی‌پسوند فقط GTIN با رقم کنترل درست: پیشوند ۸ رقمیِ اسکنِ کندشده کالای دیگری نمی‌آورد", () => {
+    assert.equal(isValidGtin("2000000012018"), true);
+    assert.equal(isValidGtin("96385074"), true, "EAN-8");
+    assert.equal(isValidGtin("036000291452"), true, "UPC-A");
+    assert.equal(isValidGtin("20000000"), false);
+    assert.equal(isValidGtin("12345678901234567"), false, "کد قدیمی ۱۷ رقمی رقم کنترل GTIN ندارد");
+    const partial = new ScanBuffer();
+    type(partial, "20000000", 8);
+    assert.deepEqual(partial.flush(1000 + 7 * 8 + 150), { kind: "ignored" });
+    // بقیهٔ همان اسکن پس از مکث کوتاه نمی‌رسد؛ ولی Enter دیررس در مهلت، رشتهٔ موجود را کامل می‌کند.
+    const legacy = new ScanBuffer();
+    type(legacy, "12345678901234567", 6);
+    const last = 1000 + 16 * 6;
+    assert.deepEqual(legacy.flush(last + 130), { kind: "ignored" }, "۱۷ رقمی بی‌پسوند خودکار ثبت نمی‌شود");
+    assert.deepEqual(legacy.push("Enter", last + 160), { kind: "scanned", barcode: "12345678901234567" });
   });
 });

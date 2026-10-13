@@ -80,7 +80,9 @@ test("HID: اسکن با Enter در کادر فوکوس‌دار — بارکد 
   expect(scans[0]).toMatchObject({ barcode: EAN, qty: "1" });
   await expect(entry).toHaveValue("");
   await expect(entry).toBeFocused();
-  // اسکن دوم پشت سر هم: باز هم کامل و بی نشت.
+  // اسکن دوم پشت سر هم: باز هم کامل و بی نشت. اسکن اول باید پیش‌تر پایان یافته باشد
+  // (کادر در حال کار فقط‌خواندنی است و اسکن تازه را «عملیات قبلی» رد می‌کند).
+  await expect(entry).toBeEditable();
   await scan(page, [...digits(EAN), "Enter"], browserName);
   await expect.poll(() => scans.length).toBe(2);
   await expect(entry).toHaveValue("");
@@ -101,6 +103,7 @@ test("HID: اسکنر با پسوند Tab یا بی‌پسوند هم ثبت م�
   await scan(page, [...digits(EAN), "Tab"], browserName);
   await expect.poll(() => scans.length).toBe(1);
   await expect(entry).toHaveValue("");
+  await expect(entry).toBeEditable();
   await entry.focus();
   await scan(page, digits(EAN), browserName);
   await expect.poll(() => scans.length).toBe(2);
