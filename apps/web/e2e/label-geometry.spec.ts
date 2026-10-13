@@ -6,8 +6,9 @@ import { test, expect } from "@playwright/test";
  * زمان اجرا بار می‌شود (CI کل مخزن را دارد) و این‌جا فقط شکل لازم تعریف شده.
  */
 interface LabelItem { barcode: string | null; sku: string; productName: string; brand?: string | null; color: string | null; size: string | null; priceRial: bigint | null; count: number }
+interface RollRow { columns: number; gapMm: number; mediaWidthMm: number; offsetXMm: number; startSlot: number }
 interface LabelModule {
-  labelPage(items: LabelItem[], opts: { layout: "roll" | "a4"; shopName: string; rollMm?: { width: number; height: number } }): string;
+  labelPage(items: LabelItem[], opts: { layout: "roll" | "a4"; shopName: string; rollMm?: { width: number; height: number }; rollRow?: RollRow }): string;
   labelGeometry(layout: "roll" | "a4", width: number, height: number): { nameLines: number };
   ROLL_PRESETS_MM: ReadonlyArray<{ width: number; height: number }>;
   ROLL_MIN_WIDTH_MM: number; ROLL_MIN_HEIGHT_MM: number;
@@ -74,5 +75,74 @@ for (const s of [...sizes.map((x) => ({ layout: "roll" as const, ...x })), { lay
       return out;
     }, g.nameLines);
     expect(problems).toEqual([]);
+  });
+}
+
+
+/*
+ * رول دو‌ستونهٔ ۵۰×۳۰ (BIXOLON XD3-40t). فاصله و لاینر این‌جا نمونه‌اند، نه
+ * اندازه‌گیری رول مالک. ادعا: هر خانه دقیقاً در میلی‌متر خودش از لبهٔ چپ کاغذ،
+ * ستون ۱ چپ فیزیکی (مستقل از RTL)، تمام محتوای لیبل داخل خانهٔ خودش، و هر ردیف
+ * یک صفحه به اندازهٔ کل ردیف. PDF فقط از Chromium ساخته می‌شود (Playwright).
+ * این‌ها چاپ فیزیکی را ثابت نمی‌کنند؛ پذیرش فیزیکی با چاپ و اسکن مالک است.
+ */
+const ROW: RollRow = { columns: 2, gapMm: 3, mediaWidthMm: 106, offsetXMm: -0.5, startSlot: 1 };
+const PX_PER_MM = 96 / 25.4;
+for (const startSlot of [1, 2]) {
+  test(`two-across 50x30 row (start ${startSlot}): slots at exact mm, content inside each slot, one page per row`, async ({ page, browserName }) => {
+    const { label, makeEan13 } = await load();
+    const items = [...itemsFor(makeEan13), { barcode: "12345678901234567", sku: "LM-LEGACY", productName: "کد قدیمی", color: null, size: null, priceRial: 1_000n, count: 2 }];
+    const row = { ...ROW, startSlot };
+    const html = label.labelPage(items, { layout: "roll", shopName: "Label Mod", rollMm: { width: 50, height: 30 }, rollRow: row });
+    await page.setContent(html);
+    await page.emulateMedia({ media: "print" });
+    const m = await page.$$eval(".row", (rows, px) => rows.map((r) => {
+      const rr = r.getBoundingClientRect();
+      return { dir: getComputedStyle(r).direction, w: rr.width / px, h: rr.height / px, slots: Array.from(r.querySelectorAll<HTMLElement>(".slot")).map((s) => {
+        const sr = s.getBoundingClientRect();
+        const lab = s.querySelector(".label");
+        const out: string[] = [];
+        if (lab) for (const e of [lab, ...Array.from(lab.querySelectorAll("*"))]) {
+          const x = e.getBoundingClientRect();
+          if (x.width === 0 && x.height === 0) continue;
+          if (x.left < sr.left - 0.5 || x.right > sr.right + 0.5 || x.top < sr.top - 0.5 || x.bottom > sr.bottom + 0.5) out.push(`${e.tagName}.${e.getAttribute("class")}`);
+        }
+        return { slot: Number(s.dataset.slot), left: (sr.left - rr.left) / px, w: sr.width / px, h: sr.height / px, filled: lab !== null,
+          shop: s.querySelector(".shop")?.textContent ?? null, labelDir: lab ? getComputedStyle(lab).direction : null, out };
+      }) };
+    }), PX_PER_MM);
+    const n = 3 + 2;
+    expect(m.length).toBe(Math.ceil((n + startSlot - 1) / 2));
+    for (const r of m) {
+      expect(r.dir).toBe("ltr");
+      expect(r.w).toBeCloseTo(106, 1); expect(r.h).toBeCloseTo(30, 1);
+      expect(r.slots.map((s) => s.slot)).toEqual([1, 2]);
+      expect(r.slots[0]!.left).toBeCloseTo(1, 1);
+      expect(r.slots[1]!.left).toBeCloseTo(54, 1);
+      for (const s of r.slots) {
+        expect([s.w, s.h].map((v) => Math.round(v * 10) / 10)).toEqual([50, 30]);
+        expect(s.out).toEqual([]);
+        if (s.filled) { expect(s.labelDir).toBe("rtl"); expect([null, "Label Mod"]).toContain(s.shop); }
+      }
+    }
+    expect(m.flatMap((r) => r.slots.filter((s) => s.filled)).length).toBe(n);
+    expect(m[0]!.slots[0]!.filled).toBe(startSlot === 1);
+    if (browserName === "chromium") {
+      const pages = (pdf: Buffer) => {
+        const t = pdf.toString("latin1");
+        const boxes = [...t.matchAll(/\/MediaBox\s*\[\s*0 0 ([\d.]+) ([\d.]+)\s*\]/g)].map((b) => [Number(b[1]) / 72 * 25.4, Number(b[2]) / 72 * 25.4]);
+        return { count: (t.match(/\/Type\s*\/Page(?!s)/g) ?? []).length, boxes };
+      };
+      const now = pages(await page.pdf({ preferCSSPageSize: true, printBackground: true }));
+      expect(now.count).toBe(m.length);
+      expect(now.boxes.length, "ابعاد هر صفحه خوانده شد، نه حلقهٔ خالی").toBe(now.count);
+      for (const [w, h] of now.boxes) { expect(w!).toBeCloseTo(106, 0); expect(h!).toBeCloseTo(30, 0); }
+      // کنترل منفی: رندرر قدیمی (بی rollRow) هر لیبل را یک صفحهٔ ۵۰×۳۰ می‌کند — همان که روی رول دو‌ستونه وسط فاصله می‌افتاد.
+      await page.setContent(label.labelPage(items, { layout: "roll", shopName: "Label Mod", rollMm: { width: 50, height: 30 } }));
+      const old = pages(await page.pdf({ preferCSSPageSize: true, printBackground: true }));
+      expect(old.count).toBe(n);
+      expect(old.boxes.length).toBe(n);
+      for (const [w] of old.boxes) expect(w!).toBeCloseTo(50, 0);
+    }
   });
 }

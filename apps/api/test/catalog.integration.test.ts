@@ -498,13 +498,59 @@ describe("ساخت خودکار تنوع و ماتریس موجودی", { skip }
     assert.equal(r.headers["cache-control"], "no-store");
 
     const html = r.body;
-    assert.match(html, /class="shop">لیبل مد<\/div>/, "روی لیبل نام برند چاپ می‌شود، مستقل از شعبه");
+    assert.match(html, /class="shop" dir="ltr" lang="en">Label Mod<\/div>/, "روی لیبل «Label Mod» انگلیسی چاپ می‌شود، مستقل از شعبه و برند فارسی فاکتور");
     assert.equal(html.split('class="label"').length - 1, 3, "۲ + ۱ = سه برچسب");
     // ۳٬۲۰۰٬۰۰۰ ریال = ۳۲۰٬۰۰۰ تومان
     assert.ok(html.includes("320,000"), "قیمت باید به تومان با رقم انگلیسی روی برچسب بیاید");
     assert.ok(!html.includes("3,200,000"), "ریال نباید روی برچسب بیاید");
     assert.ok(html.includes("<svg"), "بارکد باید رسم شود");
     assert.ok(!html.includes("شعبه اصلی"), "نام شعبه جای برند روی لیبل چاپ نمی‌شود");
+  });
+
+  test("رول دو‌ستونه و ردیف کالیبراسیون: همان مجوز و هدرها؛ ردیف نامعتبر ۴۲۲ بی Fit", async () => {
+    const sup = await loginAs(supervisor);
+    const productId = await newProduct("label-two-across");
+    const gen = await app.inject({ method: "POST", url: `/products/${productId}/variations/generate`, ...sup,
+      payload: { colors: ["مشکی"], sizes: ["M"], price: "1000000" } });
+    const id = (gen.json().created as Created[])[0]!.id;
+    const rollRow = { columns: 2, gapMm: 3, mediaWidthMm: 106, offsetXMm: 0, startSlot: 1 };
+    const base = { items: [{ variationId: id, count: 3 }], layout: "roll", rollWidthMm: 50, rollHeightMm: 30 };
+    const ok = await app.inject({ method: "POST", url: "/labels", ...sup, payload: { ...base, rollRow } });
+    assert.equal(ok.statusCode, 200, ok.body);
+    assert.equal(ok.headers["content-security-policy"], "default-src 'none'; style-src 'unsafe-inline'; img-src data:; base-uri 'none'; form-action 'none'");
+    assert.match(ok.body, /@page \{ size: 106mm 30mm; margin: 0; \}/);
+    assert.equal((ok.body.match(/<div class="row" data-row=/g) ?? []).length, 2, "۳ لیبل = ۲ ردیف");
+    assert.equal((ok.body.match(/class="label"/g) ?? []).length, 3);
+    assert.doesNotMatch(ok.body, /<script/);
+    // بی rollRow همان رول تک‌ستونی قدیمی.
+    const legacy = await app.inject({ method: "POST", url: "/labels", ...sup, payload: base });
+    assert.match(legacy.body, /@page \{ size: 50mm 30mm; margin: 0; \}/);
+    assert.doesNotMatch(legacy.body, /class="row"/);
+    for (const [bad, code] of [
+      [{ ...rollRow, gapMm: 5, mediaWidthMm: 112 }, "label_row_invalid"],
+      [{ ...rollRow, mediaWidthMm: 100 }, "label_row_invalid"],
+      [{ ...rollRow, offsetXMm: 2 }, "label_row_invalid"],
+      [{ ...rollRow, startSlot: 3 }, "label_row_invalid"],
+    ] as const) {
+      const r = await app.inject({ method: "POST", url: "/labels", ...sup, payload: { ...base, rollRow: bad } });
+      assert.equal(r.statusCode, 422, r.body); assert.equal(r.json().error.code, code);
+    }
+    for (const bad of [{ ...rollRow, gapMm: -1 }, { ...rollRow, mediaWidthMm: 119 }, { ...rollRow, columns: 5 }, { ...rollRow, extra: 1 }]) {
+      const r = await app.inject({ method: "POST", url: "/labels", ...sup, payload: { ...base, rollRow: bad } });
+      assert.ok(r.statusCode === 400 || r.statusCode === 422, `${r.statusCode} ${r.body}`);
+    }
+    const a4 = await app.inject({ method: "POST", url: "/labels", ...sup, payload: { ...base, layout: "a4", rollRow } });
+    assert.ok(a4.statusCode === 400 || a4.statusCode === 422, a4.body);
+
+    const calBody = { rollWidthMm: 50, rollHeightMm: 30, rollRow };
+    assert.equal((await app.inject({ method: "POST", url: "/labels/calibration", payload: calBody })).statusCode, 401);
+    assert.equal((await app.inject({ method: "POST", url: "/labels/calibration", ...await loginAs(cashier), payload: calBody })).statusCode, 403);
+    const cal = await app.inject({ method: "POST", url: "/labels/calibration", ...sup, payload: calBody });
+    assert.equal(cal.statusCode, 200, cal.body);
+    assert.equal(cal.headers["content-security-policy"], ok.headers["content-security-policy"]);
+    assert.equal(cal.headers["cache-control"], "no-store");
+    assert.equal((cal.body.match(/class="calib"/g) ?? []).length, 2);
+    assert.doesNotMatch(cal.body, /class="label"|<script/);
   });
 
   test("قاب چاپ فقط سند خالیِ مجاز با CSP مستقل است", async () => {

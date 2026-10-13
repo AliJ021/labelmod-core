@@ -13,10 +13,15 @@
 import { useSyncExternalStore } from "react";
 import { DEFAULT_PRESET, LABEL_PRESETS, type LabelLayout } from "./label-print.ts";
 
-export interface LabelSizeChoice { layout: LabelLayout; preset: string; width: string; height: string }
+/**
+ * `columns` = «1» رول تک‌ستونی قدیمی یا «2» رول دو‌ستونه (BIXOLON XD3-40t).
+ * `gap` و `media` اندازه‌گیری کاربرند و پیش‌فرض ندارند (خالی = «اندازه‌گیری نشده»)؛
+ * `offset` جبران جابه‌جایی پس از ردیف کالیبراسیون است (پیش‌فرض ۰).
+ */
+export interface LabelSizeChoice { layout: LabelLayout; preset: string; width: string; height: string; columns: "1" | "2"; gap: string; media: string; offset: string }
 
 const KEY = "labelmod.label-size.v1";
-export const DEFAULT_SIZE_CHOICE: LabelSizeChoice = { layout: "roll", preset: DEFAULT_PRESET, width: "50", height: "30" };
+export const DEFAULT_SIZE_CHOICE: LabelSizeChoice = { layout: "roll", preset: DEFAULT_PRESET, width: "50", height: "30", columns: "1", gap: "", media: "", offset: "0" };
 
 /** فقط شکل معتبر پذیرفته می‌شود؛ هر چیز دیگر یعنی پیش‌فرض، نه حدس. */
 export function parseSizeChoice(raw: string | null): LabelSizeChoice {
@@ -27,7 +32,10 @@ export function parseSizeChoice(raw: string | null): LabelSizeChoice {
     const layout = o.layout === "a4" ? "a4" : o.layout === "roll" ? "roll" : null;
     const preset = typeof o.preset === "string" && (o.preset === "custom" || LABEL_PRESETS.some((p) => p.id === o.preset)) ? o.preset : null;
     if (layout === null || preset === null || typeof o.width !== "string" || typeof o.height !== "string") return DEFAULT_SIZE_CHOICE;
-    return { layout, preset, width: o.width.slice(0, 8), height: o.height.slice(0, 8) };
+    // پروفایل قدیمی (بی ستون/فاصله) همان رول تک‌ستونی می‌ماند، نه پیش‌فرض تازه.
+    const str = (v: unknown, fallback: string) => typeof v === "string" ? v.slice(0, 8) : fallback;
+    return { layout, preset, width: o.width.slice(0, 8), height: o.height.slice(0, 8),
+      columns: o.columns === "2" ? "2" : "1", gap: str(o.gap, ""), media: str(o.media, ""), offset: str(o.offset, "0") };
   } catch { return DEFAULT_SIZE_CHOICE; }
 }
 
