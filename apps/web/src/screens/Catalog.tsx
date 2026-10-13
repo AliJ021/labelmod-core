@@ -248,7 +248,8 @@ export function Catalog() {
                     <ProductPrice product={p} />
                   </td>
                   <td>
-                    <button type="button" className="btn" onClick={() => setSelected(p.id)}>
+                    {/* تا پایان افزودن گروهی، صفحهٔ کالا باز نمی‌شود؛ وگرنه نتیجه بی‌پیام در پس‌زمینه ثبت می‌شد. */}
+                    <button type="button" className="btn" disabled={adding} onClick={() => setSelected(p.id)}>
                       {labels === "1" ? "انتخاب تنوع و چاپ لیبل" : "باز کردن"}
                     </button>
                   </td>

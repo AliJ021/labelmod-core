@@ -253,6 +253,8 @@ test("a product ticked while the bulk add is still reading stays selected; only 
   await page.getByRole("checkbox", { name: `انتخاب ${product.nameInternal} برای چاپ گروهی` }).check();
   await page.getByRole("button", { name: "افزودن ۱ کالای انتخاب‌شده به فهرست چاپ" }).click();
   await expect(page.getByRole("button", { name: "در حال افزودن به فهرست چاپ…" })).toBeVisible();
+  // تا پایان افزودن، صفحهٔ کالا باز نمی‌شود (نتیجه بی‌پیام در پس‌زمینه ثبت نشود).
+  await expect(page.getByRole("button", { name: "انتخاب تنوع و چاپ لیبل" }).first()).toBeDisabled();
   // در حین خواندنِ کالای اول، کالای دوم تیک می‌خورد.
   await page.getByRole("checkbox", { name: `انتخاب ${other.nameInternal} برای چاپ گروهی` }).check();
   release();
@@ -261,6 +263,7 @@ test("a product ticked while the bulk add is still reading stays selected; only 
   await expect(page.getByRole("checkbox", { name: `انتخاب ${product.nameInternal} برای چاپ گروهی` })).not.toBeChecked();
   await expect(page.getByRole("button", { name: "افزودن ۱ کالای انتخاب‌شده به فهرست چاپ" })).toBeEnabled();
   await expect(page.getByRole("textbox", { name: "تعداد لیبل TR-3000-S" })).toHaveCount(0);
+  await expect(page.getByRole("button", { name: "انتخاب تنوع و چاپ لیبل" }).first()).toBeEnabled();
 });
 
 test("two-across profile (owner-measured 105 liner, 4 gap) persists across the product page, bulk queue and reload; not a global default", async ({ page, api }) => {
