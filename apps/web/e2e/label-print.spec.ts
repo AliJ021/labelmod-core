@@ -240,6 +240,29 @@ test("bulk selection survives search, a failed read leaves the queue untouched, 
   await expect(queue.getByRole("textbox", { name: "تعداد لیبل TR-2000-S" })).toHaveValue("2");
 });
 
+test("a product ticked while the bulk add is still reading stays selected; only the submitted products are cleared", async ({ page, api }) => {
+  const other = { ...product, id: "33333333-3333-4333-8333-333333333333", code: "TR-3000", nameInternal: "دامن آزمون" };
+  api.productRows = [product, other];
+  api.defaults["GET /products/" + product.id] = { product, variations };
+  api.defaults["GET /products/" + other.id] = { product: other, variations: [{ ...variations[0]!, id: "v8", sku: "TR-3000-S" }] };
+  let release!: () => void;
+  const gate = new Promise<void>((r) => { release = r; });
+  api.handlers.set("GET /products/" + product.id, async (route) => { await gate; await route.fulfill({ json: api.defaults["GET /products/" + product.id] }); });
+  await openCatalog(page);
+  await page.locator("main").getByRole("button", { name: "چاپ لیبل بارکد", exact: true }).click();
+  await page.getByRole("checkbox", { name: `انتخاب ${product.nameInternal} برای چاپ گروهی` }).check();
+  await page.getByRole("button", { name: "افزودن ۱ کالای انتخاب‌شده به فهرست چاپ" }).click();
+  await expect(page.getByRole("button", { name: "در حال افزودن به فهرست چاپ…" })).toBeVisible();
+  // در حین خواندنِ کالای اول، کالای دوم تیک می‌خورد.
+  await page.getByRole("checkbox", { name: `انتخاب ${other.nameInternal} برای چاپ گروهی` }).check();
+  release();
+  await expect(page.getByRole("status").filter({ hasText: "۲ لیبل از ۱ کالا به فهرست چاپ گروهی افزوده شد." })).toBeVisible();
+  await expect(page.getByRole("checkbox", { name: `انتخاب ${other.nameInternal} برای چاپ گروهی` })).toBeChecked();
+  await expect(page.getByRole("checkbox", { name: `انتخاب ${product.nameInternal} برای چاپ گروهی` })).not.toBeChecked();
+  await expect(page.getByRole("button", { name: "افزودن ۱ کالای انتخاب‌شده به فهرست چاپ" })).toBeEnabled();
+  await expect(page.getByRole("textbox", { name: "تعداد لیبل TR-3000-S" })).toHaveCount(0);
+});
+
 test("two-across profile (owner-measured 105 liner, 4 gap) persists across the product page, bulk queue and reload; not a global default", async ({ page, api }) => {
   const panel = await openLabels(page, api);
   await panel.getByRole("combobox", { name: "چیدمان رول" }).selectOption("2");

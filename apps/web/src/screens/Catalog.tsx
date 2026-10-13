@@ -129,7 +129,8 @@ export function Catalog() {
       for (const p of ids) items.push(...queueItemsForProduct(p, (await catalog.product(p.id)).variations, count));
       if (!alive.current) return;
       const r = labelQueue.add(items);
-      setPicked(new Map());
+      // فقط همان‌هایی که فرستاده شدند؛ تیکی که در حین خواندن زده شد می‌ماند.
+      setPicked((prev) => { const next = new Map(prev); for (const p of ids) next.delete(p.id); return next; });
       setNote(queueAddMessage(r.added, r.requested, `${ids.length.toLocaleString("fa-IR")} کالا`));
     } catch (e) {
       if (!alive.current) return;
