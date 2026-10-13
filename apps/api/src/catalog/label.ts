@@ -41,11 +41,90 @@ export interface LabelItem {
 
 export type LabelLayout = "a4" | "roll";
 
+/**
+ * نام بالای بارکد روی **لیبل** — انگلیسی و دقیقاً همین (خواستهٔ مالک،
+ * ۱۴۰۵/۰۷/۲۱). برند فارسی فاکتور (`STORE_BRAND`) جداست و دست نمی‌خورد.
+ */
+export const LABEL_BRAND = "Label Mod";
+
+/**
+ * چند لیبل کنار هم روی یک رول (مثل رول دو‌ستونهٔ ۵۰×۳۰ روی BIXOLON XD3-40t).
+ *
+ * اندازهٔ **هر لیبل** (`rollMm`) از اندازهٔ **صفحه** جداست: صفحه یک ردیف
+ * کامل است به پهنای لاینر (`mediaWidthMm`) و ارتفاع یک لیبل. همهٔ عددها
+ * اندازه‌گیری کاربرند؛ هیچ‌کدام از مرورگر یا سنسور چاپگر کشف نمی‌شود.
+ *
+ * - `gapMm`: فاصلهٔ افقی میان دو لیبل کنار هم روی لاینر.
+ * - لیبل‌ها روی لاینر وسط فرض می‌شوند (حاشیهٔ دو طرف برابر)؛ `offsetXMm`
+ *   باقی‌ماندهٔ جابه‌جایی واقعی چاپگر/درایور را جبران می‌کند (مثبت = راست).
+ * - `startSlot`: اولین خانهٔ خالی ردیف اول برای رول نیمه‌مصرف (۱ = چپ).
+ *
+ * ستون ۱ همیشه **چپِ فیزیکی** کاغذ چاپ‌شده است، مستقل از جهت RTL متن.
+ */
+export interface RollRow {
+  columns: number;
+  gapMm: number;
+  mediaWidthMm: number;
+  offsetXMm: number;
+  startSlot: number;
+}
+
+/**
+ * پهنای چاپ‌پذیر بیشینهٔ BIXOLON XD3-40t (۲۰۳dpi) — راهنمای کاربر V1.02
+ * بخش ۷-۱. **با پهنای کاغذ یکی نیست**: کاغذ تا ۱۱۸mm پهن است ولی هد فقط
+ * ۱۰۴mm می‌نویسد. کل ردیف لیبل‌ها (نه لاینر) باید در این پهنا جا شود.
+ */
+export const ROLL_PRINTABLE_MAX_MM = 104;
+/** بازهٔ پهنای کاغذ (لاینر) همان چاپگر — همان بخش ۷-۱. */
+export const ROLL_MEDIA_MIN_MM = 15;
+export const ROLL_MEDIA_MAX_MM = 118;
+export const ROLL_ROW_LIMITS = { maxColumns: 4, maxGapMm: 20, maxOffsetMm: 10 } as const;
+
+/** هندسهٔ افقی ردیف: لبهٔ چپ هر خانه از لبهٔ چپ کاغذ، به میلی‌متر. */
+export function rollRowSlots(widthMm: number, row: RollRow): { spanMm: number; leftMm: number[] } {
+  const spanMm = row.columns * widthMm + (row.columns - 1) * row.gapMm;
+  const start = (row.mediaWidthMm - spanMm) / 2 + row.offsetXMm;
+  const r3 = (v: number) => Math.round(v * 1000) / 1000;
+  return { spanMm: r3(spanMm), leftMm: Array.from({ length: row.columns }, (_, i) => r3(start + i * (widthMm + row.gapMm))) };
+}
+
+/**
+ * چرا این ردیف چاپ‌پذیر نیست — `null` یعنی معتبر. هیچ چیزی کوچک، بریده
+ * یا پنهان نمی‌شود: ردیفی که جا نشود رد می‌شود، نه Fit.
+ */
+export function rollRowProblem(widthMm: number, row: RollRow): string | null {
+  const { maxColumns, maxGapMm, maxOffsetMm } = ROLL_ROW_LIMITS;
+  const finite = [widthMm, row.columns, row.gapMm, row.mediaWidthMm, row.offsetXMm, row.startSlot].every(Number.isFinite);
+  if (!finite) return "اندازهٔ ردیف نامعتبر است.";
+  if (!Number.isInteger(row.columns) || row.columns < 1 || row.columns > maxColumns) return `تعداد ستون باید بین 1 و ${maxColumns} باشد.`;
+  if (!Number.isInteger(row.startSlot) || row.startSlot < 1 || row.startSlot > row.columns) return "خانهٔ شروع باید یکی از ستون‌های همین ردیف باشد.";
+  if (row.gapMm < 0 || row.gapMm > maxGapMm) return `فاصلهٔ میان لیبل‌ها باید بین 0 و ${maxGapMm} میلی‌متر باشد.`;
+  if (Math.abs(row.offsetXMm) > maxOffsetMm) return `جابه‌جایی افقی باید بین −${maxOffsetMm} و ${maxOffsetMm} میلی‌متر باشد.`;
+  if (row.mediaWidthMm < ROLL_MEDIA_MIN_MM || row.mediaWidthMm > ROLL_MEDIA_MAX_MM)
+    return `پهنای کاغذ (لاینر) باید بین ${ROLL_MEDIA_MIN_MM} و ${ROLL_MEDIA_MAX_MM} میلی‌متر باشد.`;
+  const { spanMm, leftMm } = rollRowSlots(widthMm, row);
+  if (spanMm > ROLL_PRINTABLE_MAX_MM + 1e-9)
+    return `کل ردیف لیبل‌ها ${spanMm} میلی‌متر است و از پهنای چاپ‌پذیر ${ROLL_PRINTABLE_MAX_MM} میلی‌متر چاپگر بیشتر است.`;
+  if (spanMm > row.mediaWidthMm + 1e-9) return `پهنای کاغذ (${row.mediaWidthMm}) از کل ردیف لیبل‌ها (${spanMm} میلی‌متر) کمتر است.`;
+  if (leftMm[0]! < -1e-9 || leftMm[leftMm.length - 1]! + widthMm > row.mediaWidthMm + 1e-9)
+    return "با این جابه‌جایی افقی بخشی از ردیف بیرون از کاغذ می‌افتد.";
+  return null;
+}
+
+/** ردیف نامعتبر — همان ۴۲۲ اندازهٔ کوچک، با علت دقیق. */
+export class LabelRowError extends Error {
+  readonly statusCode = 422;
+  readonly code = "label_row_invalid";
+  constructor(message: string) { super(message); this.name = "LabelRowError"; }
+}
+
 export interface LabelPageOptions {
   layout: LabelLayout;
   shopName: string;
   /** فقط برای `roll` — اندازه یک برچسب به میلی‌متر. */
   rollMm?: { width: number; height: number } | undefined;
+  /** فقط برای `roll` — نبودنش یعنی همان رول تک‌ستونی قدیمی (هر لیبل یک صفحه). */
+  rollRow?: RollRow | undefined;
 }
 
 /**
@@ -285,7 +364,7 @@ function labelHtml(item: LabelItem, shopName: string, g: LabelGeometry, width: n
     : `<span class="l">${[item.productName, ...details].map(labelText).join(" · ")}</span>`;
 
   return `<div class="label">
-  ${g.showShop ? `<div class="shop">${labelText(shopName)}</div>` : ""}
+  ${g.showShop ? `<div class="shop" dir="ltr" lang="en">${labelText(shopName)}</div>` : ""}
   <div class="code">${code}</div>
   <div class="desc">${desc}</div>
   <div class="price" style="font-size:${pf.toFixed(2)}mm">${price}</div>
@@ -336,6 +415,40 @@ export function labelPage(items: LabelItem[], opts: LabelPageOptions): string {
     ? ` <strong>هشدار: این عرض برای بارکد کامل کم است و ممکن است اسکن نشود.</strong>`
     : "";
 
+  // متن CSS خودِ لیبل در هر دو چیدمان یکی است (تک‌ستونی قدیمی بایت‌به‌بایت همان می‌ماند).
+  const cssA = `  .label {
+    ${labelBox}
+    /* حاشیهٔ افقی فقط نیم میلی‌متر: بارکد با حاشیهٔ سکوت تا پهنای داخلی
+       پهن است و نباید بریده شود؛ ردیف‌های متنی حاشیهٔ خودشان را دارند. */
+    padding: ${g.padY[0]}mm ${CODE_PAD_X_MM}mm ${g.padY[1]}mm;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    gap: ${ROW_GAP_MM}mm;
+    background: #fff;
+    break-inside: avoid;
+  }
+`;
+  const cssB = `  /* هر ردیف ارتفاع ثابت دارد و هرگز فشرده نمی‌شود (labelGeometry). */
+  .label > div { flex: none; width: 100%; overflow: hidden; text-align: center; }
+  .shop, .desc, .price { padding-inline: ${TEXT_PAD_X_MM}mm; }
+  .shop { height: ${g.rows.shop}mm; line-height: ${g.rows.shop}mm; font-size: ${(f * 1.05).toFixed(2)}mm; font-weight: 800; white-space: nowrap; text-overflow: ellipsis; }
+  .code { height: ${g.rows.code}mm; line-height: 0; display: flex; justify-content: center; align-items: flex-start; }
+  .desc { height: ${g.rows.desc}mm; font-size: ${f.toFixed(2)}mm; font-weight: 700; line-height: ${DESC_LINE}; }
+  .desc .l { display: block; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .price { height: ${g.rows.price}mm; line-height: ${g.rows.price}mm; font-weight: 800; direction: rtl; white-space: nowrap; }
+  .price small { font-size: 0.5em; font-weight: 600; }
+  .digits { font-family: Arial, sans-serif; font-variant-numeric: tabular-nums; }
+  .noprice { font-size: ${(f * 0.95).toFixed(2)}mm; font-weight: 700; }
+  .code svg { display: block; }
+  .nobarcode {
+    font-family: monospace; font-size: ${(f * 0.85).toFixed(2)}mm; direction: ltr;
+    border: 0.2mm solid #000; padding: 0.4mm 1mm; margin-top: 1mm;
+  }
+`;
+  if (isRoll && opts.rollRow) return rowPage(repeated, opts.shopName, roll, opts.rollRow, `${cssA}${cssB}`, warn);
+
   return `<!doctype html>
 <html lang="fa" dir="rtl">
 <head>
@@ -353,37 +466,8 @@ export function labelPage(items: LabelItem[], opts: LabelPageOptions): string {
     -webkit-print-color-adjust: exact; print-color-adjust: exact;
   }
   .sheet { ${sheet} }
-  .label {
-    ${labelBox}
-    /* حاشیهٔ افقی فقط نیم میلی‌متر: بارکد با حاشیهٔ سکوت تا پهنای داخلی
-       پهن است و نباید بریده شود؛ ردیف‌های متنی حاشیهٔ خودشان را دارند. */
-    padding: ${g.padY[0]}mm ${CODE_PAD_X_MM}mm ${g.padY[1]}mm;
-    display: flex;
-    flex-direction: column;
-    align-items: center;
-    justify-content: center;
-    gap: ${ROW_GAP_MM}mm;
-    background: #fff;
-    break-inside: avoid;
-  }
-  ${isRoll ? ".label + .label { break-before: page; }" : ""}
-  /* هر ردیف ارتفاع ثابت دارد و هرگز فشرده نمی‌شود (labelGeometry). */
-  .label > div { flex: none; width: 100%; overflow: hidden; text-align: center; }
-  .shop, .desc, .price { padding-inline: ${TEXT_PAD_X_MM}mm; }
-  .shop { height: ${g.rows.shop}mm; line-height: ${g.rows.shop}mm; font-size: ${(f * 1.05).toFixed(2)}mm; font-weight: 800; white-space: nowrap; text-overflow: ellipsis; }
-  .code { height: ${g.rows.code}mm; line-height: 0; display: flex; justify-content: center; align-items: flex-start; }
-  .desc { height: ${g.rows.desc}mm; font-size: ${f.toFixed(2)}mm; font-weight: 700; line-height: ${DESC_LINE}; }
-  .desc .l { display: block; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-  .price { height: ${g.rows.price}mm; line-height: ${g.rows.price}mm; font-weight: 800; direction: rtl; white-space: nowrap; }
-  .price small { font-size: 0.5em; font-weight: 600; }
-  .digits { font-family: Arial, sans-serif; font-variant-numeric: tabular-nums; }
-  .noprice { font-size: ${(f * 0.95).toFixed(2)}mm; font-weight: 700; }
-  .code svg { display: block; }
-  .nobarcode {
-    font-family: monospace; font-size: ${(f * 0.85).toFixed(2)}mm; direction: ltr;
-    border: 0.2mm solid #000; padding: 0.4mm 1mm; margin-top: 1mm;
-  }
-  /* روی صفحه: مستطیل سفید با گوشهٔ گرد مثل لیبل دای‌کات؛ روی کاغذ هیچ
+${cssA}  ${isRoll ? ".label + .label { break-before: page; }" : ""}
+${cssB}  /* روی صفحه: مستطیل سفید با گوشهٔ گرد مثل لیبل دای‌کات؛ روی کاغذ هیچ
      خط و سایه‌ای چاپ نمی‌شود (خودِ لیبل گوشهٔ گرد دارد). */
   @media screen {
     body { background: #ECECEC; }
@@ -407,4 +491,100 @@ ${repeated.join("\n")}
 </div>
 </body>
 </html>`;
+}
+
+
+/**
+ * رول چندستونه: هر **ردیف** یک صفحه به پهنای لاینر و ارتفاع یک لیبل؛
+ * لیبل‌ها با `left` مطلق به میلی‌متر در خانهٔ خودشان می‌نشینند. ردیف
+ * `direction: ltr` است تا ستون ۱ همیشه چپِ فیزیکی باشد؛ خودِ لیبل RTL می‌ماند.
+ * ترتیب لیبل‌ها همان ترتیب درخواست است؛ ردیف آخر ناقص می‌ماند (خانهٔ خالی
+ * چیزی چاپ نمی‌کند) و هیچ ردیف یا صفحهٔ خالی اضافه ساخته نمی‌شود.
+ */
+function rowPage(labels: string[], shopName: string, roll: { width: number; height: number }, row: RollRow, labelCss: string, warn: string): string {
+  const problem = rollRowProblem(roll.width, row);
+  if (problem) throw new LabelRowError(problem);
+  const { leftMm } = rollRowSlots(roll.width, row);
+  const cells: Array<string | null> = [...Array<null>(row.startSlot - 1).fill(null), ...labels];
+  const rows: string[] = [];
+  for (let r = 0; r * row.columns < cells.length; r++) {
+    const slots = leftMm.map((left, c) => {
+      const cell = cells[r * row.columns + c];
+      const at = `style="left:${left}mm"`;
+      return cell === undefined || cell === null
+        ? `<div class="slot slot--empty" data-slot="${c + 1}" ${at}></div>`
+        : `<div class="slot" data-slot="${c + 1}" ${at}>${cell}</div>`;
+    });
+    rows.push(`<div class="row" data-row="${r + 1}">${slots.join("")}</div>`);
+  }
+  return rowDocument(rows, labels.length, shopName, roll, row, labelCss, warn);
+}
+
+function rowDocument(rows: string[], count: number, shopName: string, roll: { width: number; height: number }, row: RollRow, labelCss: string, warn: string): string {
+  const media = row.mediaWidthMm;
+  return `<!doctype html>
+<html lang="fa" dir="rtl">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>برچسب قیمت — ${labelText(shopName)}</title>
+<style>
+  @page { size: ${media}mm ${roll.height}mm; margin: 0; }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; }
+  body {
+    font-family: Vazirmatn, Tahoma, sans-serif;
+    background: #fff;
+    color: #000;
+    -webkit-print-color-adjust: exact; print-color-adjust: exact;
+  }
+  .sheet { display: block; width: ${media}mm; }
+  .row { position: relative; direction: ltr; width: ${media}mm; height: ${roll.height}mm; break-inside: avoid; overflow: visible; }
+  .row + .row { break-before: page; }
+  .slot { position: absolute; top: 0; width: ${roll.width}mm; height: ${roll.height}mm; }
+  .slot > .label { direction: rtl; }
+${labelCss}  .calib { position: absolute; inset: 1mm; border: 0.25mm dashed #000; display: flex; flex-direction: column; align-items: center; justify-content: center; direction: ltr; font-family: Arial, sans-serif; }
+  .calib b { font-size: 9mm; line-height: 1; }
+  .calib span { font-size: 2.6mm; }
+  .calib::before, .calib::after { content: ""; position: absolute; background: #000; }
+  .calib::before { left: 50%; top: 0; bottom: 0; width: 0.25mm; opacity: .5; }
+  .calib::after { top: 50%; left: 0; right: 0; height: 0.25mm; opacity: .5; }
+  @media screen {
+    body { background: #ECECEC; }
+    .sheet { padding: 3mm; width: auto; display: flex; flex-direction: column; align-items: center; gap: 3mm; }
+    .row { background: #D6D6D6; }
+    .slot .label { border-radius: 2mm; box-shadow: 0 0 0 0.2mm #A8A8A8; }
+    .slot--empty { border: 0.3mm dashed #8A8A8A; border-radius: 2mm; }
+  }
+  @media print {
+    .hint { display: none; }
+  }
+  .hint {
+    font-size: 3mm; color: #333; padding: 3mm; text-align: center;
+    border-bottom: 1px solid #ddd;
+  }
+  .hint strong { color: #000; }
+</style>
+</head>
+<body>
+<div class="hint">${printNum(count)} برچسب ${printNum(roll.width)}×${printNum(roll.height)} میلی‌متر در ${printNum(rows.length)} ردیف ${printNum(row.columns)}تایی. در پنجرهٔ چاپ: اندازهٔ کاغذ <strong>${printNum(media)}×${printNum(roll.height)} میلی‌متر (کل ردیف، نه یک لیبل)</strong>، مقیاس 100٪، بدون Fit/Shrink، بدون سربرگ و پابرگ. ستون 1 = چپِ کاغذ چاپ‌شده. مرورگر نمی‌تواند تنظیم درایور را تضمین کند؛ یک ردیف آزمایشی بسنجید.${warn}</div>
+<div class="sheet">
+${rows.join("\n")}
+</div>
+</body>
+</html>`;
+}
+
+/**
+ * ردیف کالیبراسیون — یک صفحه، بی کالا: قاب خط‌چین ۱mm داخل هر خانه، شمارهٔ
+ * ستون و خط وسط. اگر قاب‌ها وسط لیبل‌های واقعی نیفتند، `offsetXMm` یا
+ * فاصله/پهنای لاینر را اصلاح کنید. کم‌مصرف: فقط یک ردیف.
+ */
+export function labelCalibrationPage(roll: { width: number; height: number }, row: RollRow): string {
+  const problem = rollRowProblem(roll.width, row);
+  if (problem) throw new LabelRowError(problem);
+  const { leftMm } = rollRowSlots(roll.width, row);
+  const slots = leftMm.map((left, c) => `<div class="slot" data-slot="${c + 1}" style="left:${left}mm"><div class="calib"><b>${c + 1}</b><span>${printNum(roll.width)}×${printNum(roll.height)} mm</span></div></div>`);
+  return rowDocument([`<div class="row" data-row="1">${slots.join("")}</div>`], 0, LABEL_BRAND, roll, { ...row, startSlot: 1 }, "", "")
+    .replace(/<div class="hint">0 برچسب /, '<div class="hint">ردیف کالیبراسیون — ');
 }
