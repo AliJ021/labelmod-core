@@ -709,6 +709,7 @@ describe("آمادگی API صندوق", { skip }, () => {
 
     // بدهی قبلی، ساخته‌شده وقتی کلید روشن بود (پیش‌فرض سازگار با رفتار قبلی).
     const old = await creditCart();
+    const oldCustomer = (await sql<{ c: string }>`SELECT customer_id::text c FROM sales.invoice WHERE id=${old}::uuid`.execute(handle.db)).rows[0]!.c;
     const oldOk = await fin(old, "old");
     assert.equal(oldOk.statusCode, 200, oldOk.body);
     assert.equal(oldOk.json().settlement.dueAmount, "700001");
@@ -741,6 +742,23 @@ describe("آمادگی API صندوق", { skip }, () => {
       const before = await status(old);
       assert.equal(before.status, "finalized");
       assert.equal(before.settlement?.dueAmount, "700001");
+
+      // Replay همان نهایی‌سازیِ قطعی (همان کلید) با کلید خاموش، پاسخ ذخیره‌شده را برمی‌گرداند نه ۴۰۹.
+      const replay = await fin(old, "old");
+      assert.equal(replay.statusCode, 200, replay.body);
+      assert.equal(replay.json().replayed, true);
+      assert.equal(replay.json().settlement.dueAmount, "700001");
+
+      // وصول واقعی باقی‌ماندهٔ همان بدهی، با کلید خاموش: دریافت از مشتری به حساب بانکی.
+      const bank = (await sql<{ id: string }>`SELECT id::text FROM treasury.account
+        WHERE kind='bank' AND is_active AND (branch_id IS NULL OR branch_id=${BRANCH}::uuid) ORDER BY id LIMIT 1`.execute(handle.db)).rows[0]!.id;
+      const receipt = await app.inject({ method: "POST", url: "/treasury/transactions", ...a,
+        headers: { ...a.headers, "idempotency-key": `toggle-receipt-${old}` },
+        payload: { branchId: BRANCH, purpose: "customer_receipt", amount: "700001", toAccountId: bank, partyType: "customer", partyId: oldCustomer } });
+      assert.equal(receipt.statusCode, 201, receipt.body);
+      const credited = await sql<{ amount: string }>`SELECT coalesce(sum(l.credit-l.debit),0)::text amount FROM ledger.journal_line l
+        WHERE l.party_type='customer' AND l.party_id=${oldCustomer}::uuid`.execute(handle.db);
+      assert.equal(credited.rows[0]!.amount, "700001", "دریافت بدهی مشتری در دفتر نشست، با کلید خاموش");
     } finally {
       assert.equal((await toggle(true)).statusCode, 200);
     }
