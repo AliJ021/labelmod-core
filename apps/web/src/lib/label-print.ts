@@ -63,6 +63,23 @@ export interface QueueItem {
   hasBarcode?: boolean;
 }
 
+/**
+ * چاپ گروهی از فهرست کالا: هر تنوعِ **فعال** کالا با همان تعداد، به همان شکل فهرست
+ * موجود (`mergeQueue` تکرار را جمع می‌کند، نه دوتا). تنوع بایگانی‌شده لیبل نمی‌گیرد.
+ */
+export function queueItemsForProduct(
+  product: { id: string; name: string },
+  variations: readonly { id: string; sku: string; color: string | null; size: string | null; status: string; price: string | null; barcode: string | null }[],
+  count: number,
+): QueueItem[] {
+  const n = clampCount(count);
+  if (n === 0) return [];
+  return variations.filter((v) => v.status === "active").map((v) => ({
+    variationId: v.id, productId: product.id, productName: product.name, sku: v.sku, color: v.color, size: v.size, count: n,
+    priced: v.price !== null, hasBarcode: v.barcode !== null && v.barcode !== "",
+  }));
+}
+
 /** شمارهٔ معتبر از ورودی کاربر (رقم فارسی را فراخوان پیش‌تر نرمال کرده). */
 export function clampCount(n: number): number {
   if (!Number.isFinite(n) || n <= 0) return 0;

@@ -345,7 +345,9 @@ function labelText(value: string): string {
  * ۳em از قلم کوچک خودش (۰٫۵em). آزمون مرورگر جاشدن را می‌سنجد.
  */
 function priceFontMm(text: string, g: LabelGeometry, width: number): number {
-  const base = g.fontMm * 1.75;
+  // قیمت کمی کوچک‌تر از پیش (۱٫۷۵ → ۱٫۶، خواستهٔ مالک ۱۴۰۵/۰۷/۲۱)؛ ارتفاع ردیف قیمت همان
+  // بودجهٔ `labelGeometry` است، پس بارکد و حاشیهٔ سکوت یک دهم میلی‌متر هم عوض نمی‌شوند.
+  const base = g.fontMm * 1.6;
   const inner = width - 2 * CODE_PAD_X_MM - 2 * TEXT_PAD_X_MM;
   const em = text.length * 0.6 + 0.35 + 3 * 0.5;
   return Math.min(base, Math.floor((inner / em) * 100) / 100);
@@ -381,6 +383,12 @@ function labelHtml(item: LabelItem, shopName: string, g: LabelGeometry, width: n
   <div class="price" style="font-size:${pf.toFixed(2)}mm">${price}</div>
 </div>`;
 }
+
+/**
+ * قلم «Label Mod» نسبت به قلم پایه — کمی بزرگ‌تر از پیش (۱٫۰۵ → ۱٫۲). ارتفاع ردیف همان
+ * `rows.shop` (۱٫۳۱۲۵ برابر قلم پایه) است، پس متن لاتین تک‌سطری بی بیرون‌زدگی جا می‌شود.
+ */
+const SHOP_FONT = 1.2;
 
 /** Preview and printed labels both use Latin digits, as requested by the owner. */
 const printNum = (n: number) => n.toLocaleString("en-US");
@@ -444,7 +452,7 @@ export function labelPage(items: LabelItem[], opts: LabelPageOptions): string {
   const cssB = `  /* هر ردیف ارتفاع ثابت دارد و هرگز فشرده نمی‌شود (labelGeometry). */
   .label > div { flex: none; width: 100%; overflow: hidden; text-align: center; }
   .shop, .desc, .price { padding-inline: ${TEXT_PAD_X_MM}mm; }
-  .shop { height: ${g.rows.shop}mm; line-height: ${g.rows.shop}mm; font-size: ${(f * 1.05).toFixed(2)}mm; font-weight: 800; white-space: nowrap; text-overflow: ellipsis; }
+  .shop { height: ${g.rows.shop}mm; line-height: ${g.rows.shop}mm; font-size: ${(f * SHOP_FONT).toFixed(2)}mm; font-weight: 800; white-space: nowrap; text-overflow: ellipsis; }
   .code { height: ${g.rows.code}mm; line-height: 0; display: flex; justify-content: center; align-items: flex-start; }
   .desc { height: ${g.rows.desc}mm; font-size: ${f.toFixed(2)}mm; font-weight: 700; line-height: ${DESC_LINE}; }
   .desc .l { display: block; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
@@ -578,7 +586,7 @@ ${labelCss}  .calib { position: absolute; inset: 1mm; border: 0.25mm dashed #000
 </style>
 </head>
 <body>
-<div class="hint">${printNum(count)} برچسب ${printNum(roll.width)}×${printNum(roll.height)} میلی‌متر در ${printNum(rows.length)} ردیف ${printNum(row.columns)}تایی. در پنجرهٔ چاپ: اندازهٔ کاغذ <strong>${printNum(media)}×${printNum(roll.height)} میلی‌متر (کل ردیف، نه یک لیبل)</strong>، مقیاس 100٪، بدون Fit/Shrink، بدون سربرگ و پابرگ. ستون 1 = چپِ کاغذ چاپ‌شده. مرورگر نمی‌تواند تنظیم درایور را تضمین کند؛ یک ردیف آزمایشی بسنجید.${warn}</div>
+<div class="hint">${printNum(count)} برچسب ${printNum(roll.width)}×${printNum(roll.height)} میلی‌متر در ${printNum(rows.length)} ردیف ${printNum(row.columns)}تایی. در پنجرهٔ چاپ: اندازهٔ کاغذ <strong>${printNum(media)}×${printNum(roll.height)} میلی‌متر (کل ردیف، نه یک لیبل)</strong>، مقیاس 100٪ (نه Fit to page width)، حاشیه None، بدون سربرگ و پابرگ. در درایور، ارتفاع کاغذ همان ارتفاع سفید لیبل (${printNum(roll.height)}) است، نه فاصلهٔ تکرار با فاصلهٔ عمودی؛ فاصلهٔ عمودی جدا با «Labels with gaps» تنظیم می‌شود. ستون 1 = چپِ کاغذ چاپ‌شده. مرورگر نمی‌تواند تنظیم درایور را تضمین کند؛ یک ردیف آزمایشی بسنجید.${warn}</div>
 <div class="sheet">
 ${rows.join("\n")}
 </div>

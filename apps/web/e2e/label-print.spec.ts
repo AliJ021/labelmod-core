@@ -177,3 +177,38 @@ test("an impossible custom size is flagged at the size fields with Persian digit
   await expect(panel.getByRole("button", { name: "پیش‌نمایش لیبل‌های انتخاب‌شده" })).toBeEnabled();
   expect(requests).toBe(0);
 });
+
+
+test("bulk from the product list: tick products, N labels per active variation, into the same bulk queue without opening each product", async ({ page, api }) => {
+  api.defaults["GET /products/" + product.id] = { product, variations: [...variations, { ...variations[0]!, id: "v3", sku: "TR-1405-OLD", status: "archived" }] };
+  await openCatalog(page);
+  await page.locator("main").getByRole("button", { name: "چاپ لیبل بارکد", exact: true }).click();
+  await page.getByRole("checkbox", { name: `انتخاب ${product.nameInternal} برای چاپ گروهی` }).check();
+  await page.getByRole("textbox", { name: "از هر تنوع (لیبل)" }).fill("۲");
+  await page.getByRole("button", { name: /افزودن .* کالای انتخاب‌شده به فهرست چاپ/ }).click();
+  const queue = page.getByRole("region", { name: "فهرست چاپ گروهی" });
+  await expect(queue.getByRole("textbox", { name: "تعداد لیبل TR-1405-NAVY-S" })).toHaveValue("2");
+  await expect(queue.getByRole("textbox", { name: "تعداد لیبل TR-1405-CREAM-XL" })).toHaveValue("2");
+  await expect(queue.getByRole("textbox", { name: "تعداد لیبل TR-1405-OLD" })).toHaveCount(0);
+  await expect(page.getByRole("status").filter({ hasText: "۴ لیبل از ۱ کالا" })).toBeVisible();
+});
+
+test("two-across profile (owner-measured 105 liner, 4 gap) persists across the product page, bulk queue and reload; not a global default", async ({ page, api }) => {
+  const panel = await openLabels(page, api);
+  await panel.getByRole("combobox", { name: "چیدمان رول" }).selectOption("2");
+  await panel.getByRole("textbox", { name: "پهنای کل کاغذ/لاینر (میلی‌متر)" }).fill("105");
+  await panel.getByRole("textbox", { name: "فاصلهٔ افقی میان دو لیبل (میلی‌متر)" }).fill("4");
+  await panel.getByRole("textbox", { name: "تعداد لیبل TR-1405-NAVY-S" }).fill("1");
+  await panel.getByRole("button", { name: "افزودن به فهرست چاپ گروهی" }).click();
+  const queue = page.getByRole("region", { name: "فهرست چاپ گروهی" });
+  await expect(queue.getByRole("textbox", { name: "پهنای کل کاغذ/لاینر (میلی‌متر)" })).toHaveValue("105");
+  await page.reload();
+  const after = page.getByRole("region", { name: "فهرست چاپ گروهی" });
+  await expect(after.getByRole("combobox", { name: "چیدمان رول" })).toHaveValue("2");
+  await expect(after.getByRole("textbox", { name: "پهنای کل کاغذ/لاینر (میلی‌متر)" })).toHaveValue("105");
+  await expect(after.getByRole("textbox", { name: "فاصلهٔ افقی میان دو لیبل (میلی‌متر)" })).toHaveValue("4");
+  // نصب/مرورگر تازه بی پروفایل: تک‌ستونی و فاصله/لاینر خالی (اندازه‌گیری نشده)، نه ۱۰۵/۴.
+  await page.evaluate(() => localStorage.removeItem("labelmod.label-size.v1"));
+  await page.reload();
+  await expect(page.getByRole("region", { name: "فهرست چاپ گروهی" }).getByRole("combobox", { name: "چیدمان رول" })).toHaveValue("1");
+});

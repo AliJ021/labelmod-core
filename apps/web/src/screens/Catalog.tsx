@@ -32,6 +32,9 @@ import { Glass, Solid } from "../components/Glass.tsx";
 import { SearchField } from "../components/SearchField.tsx";
 import { ProductStockLabels } from "../components/ProductStockLabels.tsx";
 import { LabelPrintQueue } from "../components/LabelPrint.tsx";
+import { labelQueue } from "../lib/label-queue.ts";
+import { clampCount, queueItemsForProduct } from "../lib/label-print.ts";
+import { normalizeDigits } from "../lib/settings-value.ts";
 import { ResultState } from "../components/ResultState.tsx";
 import { useLatestQuery } from "../lib/use-latest-query.ts";
 import { ApiError } from "../lib/api.ts";
@@ -96,6 +99,30 @@ export function Catalog() {
   const query = useLatestQuery({ key: JSON.stringify([search, showArchived]), version: revision, load, delay, enabled: selected === null });
   const products = query.data ?? [];
   function reload() { setDelay(0); setRevision(v => v + 1); }
+  // چاپ گروهی از همین فهرست: چند کالا را تیک بزنید، «از هر تنوع N لیبل»، و همه یک‌جا به
+  // همان فهرست چاپ گروهی می‌روند — بی باز کردن صفحهٔ تک‌تک کالاها.
+  const [picked, setPicked] = useState<Set<string>>(new Set());
+  const [perVariant, setPerVariant] = useState("1");
+  const [adding, setAdding] = useState(false);
+  async function addPickedToQueue() {
+    const ids = products.filter((p) => picked.has(p.id)).map((p) => ({ id: p.id, name: p.nameInternal }));
+    const count = clampCount(Number(normalizeDigits(perVariant)));
+    if (ids.length === 0 || count === 0 || adding) return;
+    setAdding(true); setError(null); setNote(null);
+    let labelsAdded = 0;
+    try {
+      for (const p of ids) {
+        const detail = await catalog.product(p.id);
+        const items = queueItemsForProduct(p, detail.variations, count);
+        labelQueue.add(items);
+        labelsAdded += items.length * count;
+      }
+      setPicked(new Set());
+      setNote(`${labelsAdded.toLocaleString("fa-IR")} لیبل از ${ids.length.toLocaleString("fa-IR")} کالا به فهرست چاپ گروهی افزوده شد.`);
+    } catch (e) {
+      setError(`${e instanceof ApiError ? e.message : "خواندن تنوع‌ها ممکن نشد."} کالاهای پیش از خطا افزوده شده‌اند؛ فهرست را بررسی کنید.`);
+    } finally { setAdding(false); }
+  }
   function changeSearch(value: string) { setSearch(value); setDelay(value === "" ? 0 : 250); }
 
   if (selected !== null) {
@@ -169,9 +196,17 @@ export function Catalog() {
         ) : products.length === 0 ? (
           <ResultState title={search ? "برای این جست‌وجو کالایی پیدا نشد." : "کالایی برای نمایش در این فهرست نیست."} description={search ? "کد یا نام دیگری را امتحان کنید." : "با افزودن کالا، تعریف تنوع‌ها و قیمت‌گذاری را شروع کنید."} actionLabel={search ? "پاک‌کردن جست‌وجو" : "افزودن کالا"} onAction={() => { if (search) { changeSearch(""); reload(); } else setCreating(true); }} />
         ) : (
+          <>
+          {labels === "1" ? <div className="row" style={{ gap: "var(--s-2)", flexWrap: "wrap", alignItems: "end", marginBottom: "var(--s-3)" }}>
+            <label className="auth-field">از هر تنوع (لیبل)<input inputMode="numeric" style={{ width: "5em" }} value={perVariant} onChange={(e) => setPerVariant(e.target.value)} /></label>
+            <button type="button" className="btn btn--primary" disabled={picked.size === 0 || adding || clampCount(Number(normalizeDigits(perVariant))) === 0}
+              onClick={() => void addPickedToQueue()}>{adding ? "…" : `افزودن ${picked.size.toLocaleString("fa-IR")} کالای انتخاب‌شده به فهرست چاپ`}</button>
+          </div> : null}
           <table className="grid">
             <thead>
               <tr>
+                {labels === "1" ? <th><input type="checkbox" aria-label="انتخاب همهٔ کالاهای این فهرست" checked={products.length > 0 && products.every((p) => picked.has(p.id))}
+                  onChange={(e) => setPicked(e.target.checked ? new Set(products.map((p) => p.id)) : new Set())} /></th> : null}
                 <th>کد</th>
                 <th>نام</th>
                 <th>برند</th>
@@ -183,6 +218,8 @@ export function Catalog() {
             <tbody>
               {products.map((p) => (
                 <tr key={p.id}>
+                  {labels === "1" ? <td><input type="checkbox" aria-label={`انتخاب ${p.nameInternal} برای چاپ گروهی`} checked={picked.has(p.id)}
+                    onChange={(e) => setPicked((prev) => { const next = new Set(prev); if (e.target.checked) next.add(p.id); else next.delete(p.id); return next; })} /></td> : null}
                   <td>{p.code}</td>
                   <td>
                     {p.nameInternal}
@@ -204,6 +241,7 @@ export function Catalog() {
               ))}
             </tbody>
           </table>
+          </>
         )}
       </Solid>
       </div>

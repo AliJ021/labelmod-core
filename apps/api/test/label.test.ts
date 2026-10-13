@@ -457,3 +457,31 @@ describe("رول دو‌ستونه (BIXOLON XD3-40t، ۵۰×۳۰)", () => {
     assert.throws(() => labelCalibrationPage(SIZE, { ...ROW, mediaWidthMm: 90 }), LabelRowError);
   });
 });
+
+
+describe("عنوان بزرگ‌تر و قیمت کوچک‌تر، بی تغییر بارکد (خواستهٔ مالک ۱۴۰۵/۰۷/۲۱)", () => {
+  test("ماژول، ارتفاع میله و ردیف بارکد هر اندازه دقیقاً همان main پیش از این تغییر است", () => {
+    // مقدارهای ثبت‌شده از a5cac0a (پیش از تغییر قلم‌ها).
+    const before: Array<[number, number, number, number, number, boolean, number]> = [
+      [30, 20, 0.25, 6.8, 10, false, 1], [40, 25, 0.25, 5.2, 8.4, true, 2], [40, 30, 0.25, 9.1, 12.3, true, 2],
+      [50, 25, 0.375, 5.2, 8.4, true, 2], [50, 30, 0.375, 6.7, 9.9, true, 2], [58, 40, 0.375, 13.6, 16.8, true, 2], [60, 40, 0.375, 13.6, 16.8, true, 2]];
+    for (const [w, h, mod, bar, code, shop, lines] of before) {
+      const g = labelGeometry("roll", w, h);
+      assert.deepEqual([g.moduleMm, g.barHeightMm, g.rows.code, g.showShop, g.nameLines], [mod, bar, code, shop, lines], `${w}×${h}`);
+      // ۲۰۳dpi: ماژول مضرب صحیح نقطهٔ ۰٫۱۲۵mm است.
+      assert.equal(Number.isInteger(g.moduleMm / 0.125), true, `${w}×${h} module ${g.moduleMm}`);
+    }
+    const a4 = labelGeometry("a4", 70, 37);
+    assert.deepEqual([a4.moduleMm, a4.barHeightMm], [0.3, 12]);
+  });
+
+  test("قلم «Label Mod» ۱٫۲ برابر و قیمت حداکثر ۱٫۶ برابر قلم پایه؛ ارتفاع ردیف‌ها همان بودجه", () => {
+    const g = labelGeometry("roll", 50, 30);
+    const html = labelPage([{ barcode: makeEan13(77), sku: "A", productName: "شال", color: null, size: null, priceRial: 1_000_000n, count: 1 }],
+      { layout: "roll", shopName: "Label Mod", rollMm: { width: 50, height: 30 } });
+    assert.match(html, new RegExp(`\\.shop \\{ height: ${g.rows.shop}mm; line-height: ${g.rows.shop}mm; font-size: ${(g.fontMm * 1.2).toFixed(2)}mm;`));
+    const price = Number(/<div class="price" style="font-size:([\d.]+)mm">/.exec(html)![1]);
+    assert.ok(price <= g.fontMm * 1.6 + 1e-9 && price > g.fontMm * 1.5, `price ${price}`);
+    assert.ok(g.fontMm * 1.6 * 1.12 <= g.rows.price + 1e-9, "قیمت در ارتفاع ردیف خودش جا می‌شود");
+  });
+});
