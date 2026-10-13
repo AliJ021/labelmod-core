@@ -577,10 +577,10 @@ export function Pos({ actorId }: { actorId: string }) {
   //    «2» (رقم اول بارکد داخلی) در کادر جست‌وجو می‌ماند. حالا وضعیت کادر پیش از رقم اول
   //    نگه داشته و فقط وقتی اسکن **تأیید شد** دقیقاً برگردانده می‌شود (نه با رقم دوم:
   //    دو کلید تند انسانی نباید رقم اولشان پاک شود). کلید نگه‌داشته‌شده (repeat) اسکن نیست.
-  //    اسکنر بی‌پسوند با مکث پس از یک GTIN معتبر تمام می‌شود (`flush`)، نه بلعیده.
+  //    پایان اسکن فقط پسوند Enter/Tab اسکنر است (تا ۲۵۰ms دیررس). ثبت خودکار با «مکث» عمداً
+  //    نیست: پیشوندِ یک اسکن کندشده خودش می‌تواند بارکد معتبر باشد (۲۰۰۰۰۰۰۴ در ۲۰۰۰۰۰۰۴۰۰۰۰۶).
   //    وضعیت در ref است تا بازسازی `addByBarcode` اسکنِ در جریان را گم نکند.
   const scanLeak = useRef<FieldSnapshot | null>(null);
-  const scanIdle = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
   const addByBarcodeRef = useRef(addByBarcode);
   addByBarcodeRef.current = addByBarcode;
   useEffect(() => {
@@ -590,13 +590,9 @@ export function Pos({ actorId }: { actorId: string }) {
       if (e.isComposing || e.ctrlKey || e.altKey || e.metaKey) return;
       const snap = snapshotField(e.target, e.key);
       const step = buffer.current.push(e.key, e.timeStamp, e.repeat);
-      clearTimeout(scanIdle.current);
       if (step.kind === "consumed") {
         // اسکن در جریان است — نگذار کاراکترها در فیلدی که فوکوس دارد بریزند.
         e.preventDefault();
-        if (buffer.current.pending.length > 0) {
-          scanIdle.current = setTimeout(() => { const s = buffer.current.flush(performance.now()); if (s.kind === "scanned") scanned(s.barcode); }, 120);
-        }
       } else if (step.kind === "scanned") {
         e.preventDefault();
         scanned(step.barcode);
@@ -606,7 +602,7 @@ export function Pos({ actorId }: { actorId: string }) {
       }
     }
     document.addEventListener("keydown", onKey, true);
-    return () => { clearTimeout(scanIdle.current); document.removeEventListener("keydown", onKey, true); };
+    return () => document.removeEventListener("keydown", onKey, true);
   }, [shift]);
 
   // ── عمل‌ها ────────────────────────────────────────────────────────

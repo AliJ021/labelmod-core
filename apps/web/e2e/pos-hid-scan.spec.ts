@@ -4,8 +4,8 @@
  * شکایت مالک: «اسکن بارکد چاپی فقط 2 در فیلد می‌گذارد». بارکد داخلی EAN-13 با پیشوند
  * ۲۰ است. `ScanBuffer` عمداً رقم **اول** را عبور می‌دهد (هنوز از تایپ انسان قابل تشخیص
  * نیست) و از رقم دوم به بعد را می‌بلعد؛ کامنتش می‌گفت «فراخوان همان یکی را پاک کند»، ولی
- * صندوق هرگز پاکش نمی‌کرد. پس «2» در کادر جست‌وجو می‌ماند. و اگر اسکنر پایان‌دهندهٔ
- * Enter نفرستد (Tab یا بی‌پسوند)، بقیهٔ رقم‌ها بی‌صدا بلعیده و هیچ کالایی اضافه نمی‌شد.
+ * صندوق هرگز پاکش نمی‌کرد. پس «2» در کادر جست‌وجو می‌ماند. پسوند Tab پذیرفته نمی‌شد؛
+ * اسکنر باید پسوند Enter یا Tab داشته باشد (ثبت خودکار بی‌پسوند عمداً نیست).
  *
  * هر کلید با `keyboard.down`/`up` واقعی و بی‌تأخیر فرستاده می‌شود (مثل اسکنر)؛ تایپ دستی
  * با فاصلهٔ انسانی. مقدار بارکد هرگز تغییر نمی‌کند: همان رشته به `POST …/scan` می‌رسد.
@@ -97,7 +97,7 @@ test("HID: بیرون از هر کادر، کد قدیمی ۱۷ رقمی هم ک
   await expect(entry).toHaveValue("");
 });
 
-test("HID: اسکنر با پسوند Tab یا بی‌پسوند هم ثبت می‌شود، نه بلعیده", async ({ page, api, browserName }) => {
+test("HID: پسوند Tab ثبت می‌شود؛ اسکنر بی‌پسوند هیچ کالایی ثبت نمی‌کند (ثبت خودکار با مکث عمداً نیست)", async ({ page, api, browserName }) => {
   const { scans, entry } = await open(page, api);
   await entry.focus();
   await scan(page, [...digits(EAN), "Tab"], browserName);
@@ -105,10 +105,11 @@ test("HID: اسکنر با پسوند Tab یا بی‌پسوند هم ثبت م�
   await expect(entry).toHaveValue("");
   await expect(entry).toBeEditable();
   await entry.focus();
+  // بی‌پسوند: پیشوندِ یک اسکن کندشده خودش می‌تواند بارکد معتبر باشد، پس حدس زده نمی‌شود.
+  // اسکنر باید پسوند Enter یا Tab داشته باشد (راهنمای PR).
   await scan(page, digits(EAN), browserName);
-  await expect.poll(() => scans.length).toBe(2);
-  expect(scans.map(s => (s as { barcode: string }).barcode)).toEqual([EAN, EAN]);
-  await expect(entry).toHaveValue("");
+  await page.waitForTimeout(400);
+  expect(scans).toHaveLength(1);
 });
 
 test("HID: چیدمان کیبورد فارسی (رقم ۰–۹ فارسی) همان بارکد لاتین را ثبت می‌کند", async ({ page, api, browserName }) => {

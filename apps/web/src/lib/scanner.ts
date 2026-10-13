@@ -45,29 +45,12 @@ const MIN_LENGTH = 8;
 const MAX_LENGTH = 64;
 
 /**
- * پس از پایان اسکن با «مکث» (اسکنر بی‌پسوند)، Enter/Tab دیررسِ همان اسکن تا این
- * مدت بلعیده می‌شود تا فرمی را که فوکوس دارد ارسال نکند.
- */
-const TRAILING_MS = 250;
-
-/**
  * پسوند Enter/Tab گاهی کمی دیرتر از رقم آخر می‌رسد (اسکنر بی‌سیم، صف رویداد).
  * تا این مدت پس از رقم آخرِ یک رشتهٔ سریع **کامل**، همان پسوند اسکن را تمام می‌کند؛
  * پیش‌تر هر فاصلهٔ بیش از ۵۰ms بافر را پاک می‌کرد و اسکن کامل گم می‌شد.
  */
 const TERMINATOR_GRACE_MS = 250;
 
-/**
- * رقم کنترل GTIN (EAN-8، UPC-A، EAN-13، GTIN-14) — فقط برای پذیرش اسکن بی‌پسوند.
- * مقدار بارکد عوض نمی‌شود؛ رشته‌ای که رقم کنترلش نخواند، با مکث «اسکن» حساب نمی‌شود
- * (پیشوندِ یک اسکن کندشده ممکن است خودش ۸ رقم باشد و کالای دیگری را بیاورد).
- */
-export function isValidGtin(code: string): boolean {
-  if (![8, 12, 13, 14].includes(code.length) || !/^\d+$/.test(code)) return false;
-  let sum = 0;
-  for (let i = code.length - 2, w = 3; i >= 0; i--, w = 4 - w) sum += Number(code[i]) * w;
-  return (10 - (sum % 10)) % 10 === Number(code[code.length - 1]);
-}
 
 /**
  * کلید رقمی، صرف‌نظر از چیدمان کیبورد. اسکنر HID کد کلید ردیف بالا را می‌فرستد و
@@ -112,8 +95,6 @@ export class ScanBuffer {
 
   #chars: string[] = [];
   #last = 0;
-  /** تا این زمان، Enter/Tab پایان همان اسکنِ تمام‌شده با مکث است. */
-  #trailingUntil = -1;
 
   constructor(opts: ScanOptions = {}) {
     this.#maxGap = opts.maxGapMs ?? MAX_GAP_MS;
@@ -138,11 +119,6 @@ export class ScanBuffer {
    * @param at  زمان رویداد به میلی‌ثانیه (`event.timeStamp` یا `Date.now()`)
    */
   push(key: string, at: number, repeat = false): ScanStep {
-    if ((key === "Enter" || key === "Tab") && this.#chars.length === 0 && at <= this.#trailingUntil) {
-      this.#trailingUntil = -1;
-      return { kind: "consumed" };
-    }
-    this.#trailingUntil = -1;
     // کلیدِ نگه‌داشته‌شده (تکرار خودکار سیستم‌عامل، حدود ۳۳ms) اسکن نیست، حتی اگر تند باشد.
     if (repeat) { this.reset(); return { kind: "ignored" }; }
     const gap = this.#chars.length === 0 ? 0 : at - this.#last;
@@ -197,21 +173,6 @@ export class ScanBuffer {
     return this.#chars.length === 1 ? { kind: "ignored" } : { kind: "consumed" };
   }
 
-  /**
-   * اسکنرِ بی‌پسوند: وقتی پس از یک رشتهٔ سریع مکثی بیش از آستانه آمد و رشته یک GTIN
-   * با رقم کنترل درست است، اسکن تمام است. فراخوان این را با زمان‌سنج صدا می‌زند.
-   * کد قدیمی ۱۷ رقمی (بی رقم کنترل) پسوند Enter/Tab لازم دارد. هر چیز دیگر دست
-   * نمی‌خورد و منتظر پسوند یا کلید بعدی می‌ماند. پس از اسکن، Enter/Tab دیررس بلعیده می‌شود.
-   */
-  flush(at: number): ScanStep {
-    if (this.#chars.length < 2 || at - this.#last <= this.#maxGap) return { kind: "ignored" };
-    // رشتهٔ ناقص‌شده نگه داشته می‌شود تا اگر Enter دیررس (≤ مهلت پسوند) آمد، همان کامل شود.
-    if (!isValidGtin(this.pending) || this.pending.length < this.#min || this.pending.length > this.#max) return { kind: "ignored" };
-    const barcode = this.pending;
-    this.reset();
-    this.#trailingUntil = at + TRAILING_MS;
-    return { kind: "scanned", barcode };
-  }
 }
 
 /**
