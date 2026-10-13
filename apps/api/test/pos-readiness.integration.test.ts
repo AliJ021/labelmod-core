@@ -703,9 +703,18 @@ describe("آمادگی API صندوق", { skip }, () => {
     };
     const status = async (id: string) => (await app.inject({ method: "GET", url: `/invoices/${id}`, ...a })).json() as { status: string; settlement?: { dueAmount: string } };
 
-    // ACL: کلید از همان مسیر تنظیمات با مجوز «settings.security» عوض می‌شود؛ صندوق‌دار نمی‌تواند.
+    // ACL: کلید از همان مسیر تنظیمات با مجوز «settings.security» عوض می‌شود؛ صندوق‌دار نمی‌تواند،
+    // و حسابدار هم نه — او «settings.manage» دارد ولی «settings.security» نه (اگر مجوز این کلید
+    // اشتباهاً settings.manage بود، همین ادعا قرمز می‌شد).
     const denied = await toggle(false, await loginAs(cashier));
     assert.equal(denied.statusCode, 403, denied.body);
+    const acctName = `pc_acct_${suffix}`;
+    if ((await sql<{ n: number }>`SELECT count(*)::int n FROM identity.app_user WHERE username=${acctName}`.execute(handle.db)).rows[0]!.n === 0) {
+      const u = await handle.db.insertInto("identity.app_user").values({ username: acctName, full_name: "حسابدار آزمون", password_hash: await hashSecret(PASSWORD), is_active: true, mobile: null, pin_hash: null, totp_secret: null }).returning("id").executeTakeFirstOrThrow();
+      await handle.db.insertInto("identity.user_role").values({ user_id: u.id, role_code: "accountant", branch_id: null }).execute();
+    }
+    const accountant = await toggle(false, await loginAs(acctName));
+    assert.equal(accountant.statusCode, 403, accountant.body);
 
     // بدهی قبلی، ساخته‌شده وقتی کلید روشن بود (پیش‌فرض سازگار با رفتار قبلی).
     const old = await creditCart();
@@ -748,6 +757,13 @@ describe("آمادگی API صندوق", { skip }, () => {
       assert.equal(replay.statusCode, 200, replay.body);
       assert.equal(replay.json().replayed, true);
       assert.equal(replay.json().settlement.dueAmount, "700001");
+      // نهایی‌سازی دوباره با کلید تازه هم به نگهبان نسیه نمی‌رسد: فاکتور قطعی همان پاسخ قطعی را
+      // می‌گیرد (۲۰۰، همان شماره و همان مانده)، نه ۴۰۹ «نسیه خاموش».
+      const again = await fin(old, "old-new-key");
+      assert.equal(again.statusCode, 200, again.body);
+      assert.equal(again.json().status, "finalized");
+      assert.equal(again.json().number, oldOk.json().number);
+      assert.equal(again.json().settlement.dueAmount, "700001");
 
       // وصول واقعی باقی‌ماندهٔ همان بدهی، با کلید خاموش: دریافت از مشتری به حساب بانکی.
       const bank = (await sql<{ id: string }>`SELECT id::text FROM treasury.account
