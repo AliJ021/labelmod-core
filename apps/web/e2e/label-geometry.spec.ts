@@ -1,4 +1,5 @@
 import { test, expect } from "@playwright/test";
+import { labelRowProblem, ROW_LIMITS } from "../src/lib/label-print.ts";
 
 /*
  * سازندهٔ برچسب در `apps/api` است و ایمیج وب (Dockerfile) آن را ندارد؛
@@ -12,6 +13,9 @@ interface LabelModule {
   labelGeometry(layout: "roll" | "a4", width: number, height: number): { nameLines: number };
   ROLL_PRESETS_MM: ReadonlyArray<{ width: number; height: number }>;
   ROLL_MIN_WIDTH_MM: number; ROLL_MIN_HEIGHT_MM: number;
+  rollRowProblem(widthMm: number, row: RollRow): string | null;
+  ROLL_PRINTABLE_MAX_MM: number; ROLL_MEDIA_MIN_MM: number; ROLL_MEDIA_MAX_MM: number;
+  ROLL_ROW_LIMITS: { maxColumns: number; maxGapMm: number; maxOffsetMm: number };
 }
 const LABEL_MODULE = "../../api/src/catalog/label.ts";
 const BARCODE_MODULE = "../../api/src/catalog/barcode.ts";
@@ -122,7 +126,7 @@ for (const startSlot of [1, 2]) {
       for (const s of r.slots) {
         expect([s.w, s.h].map((v) => Math.round(v * 10) / 10)).toEqual([50, 30]);
         expect(s.out).toEqual([]);
-        if (s.filled) { expect(s.labelDir).toBe("rtl"); expect([null, "Label Mod"]).toContain(s.shop); }
+        if (s.filled) { expect(s.labelDir).toBe("rtl"); expect(s.shop).toBe("Label Mod"); }
       }
     }
     expect(m.flatMap((r) => r.slots.filter((s) => s.filled)).length).toBe(n);
@@ -146,3 +150,16 @@ for (const startSlot of [1, 2]) {
     }
   });
 }
+
+test("web row validation mirrors the server: same limits and same accept/reject on a grid", async () => {
+  const { label } = await load();
+  expect(ROW_LIMITS).toEqual({ printableMax: label.ROLL_PRINTABLE_MAX_MM, mediaMin: label.ROLL_MEDIA_MIN_MM, mediaMax: label.ROLL_MEDIA_MAX_MM,
+    maxColumns: label.ROLL_ROW_LIMITS.maxColumns, maxGap: label.ROLL_ROW_LIMITS.maxGapMm, maxOffset: label.ROLL_ROW_LIMITS.maxOffsetMm });
+  const mismatches: string[] = [];
+  for (const width of [30, 40, 50, 58]) for (const columns of [1, 2, 3]) for (const gapMm of [-1, 0, 2, 3, 4, 5, 21])
+    for (const mediaWidthMm of [14, 60, 100, 103, 106, 110, 118, 119]) for (const offsetXMm of [-11, -7, -1.5, -0.5, 0, 1.5, 2, 11]) for (const startSlot of [1, 2, 4]) {
+      const row = { columns, gapMm, mediaWidthMm, offsetXMm, startSlot };
+      if ((label.rollRowProblem(width, row) === null) !== (labelRowProblem(width, row) === null)) mismatches.push(JSON.stringify({ width, ...row }));
+    }
+  expect(mismatches).toEqual([]);
+});

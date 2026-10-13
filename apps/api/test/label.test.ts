@@ -435,6 +435,10 @@ describe("رول دو‌ستونه (BIXOLON XD3-40t، ۵۰×۳۰)", () => {
     assert.match(rollRowProblem(50, { ...ROW, mediaWidthMm: 119 })!, /بین 15 و 118/);
     assert.match(rollRowProblem(50, { ...ROW, offsetXMm: 2 })!, /بیرون از کاغذ/, "حاشیهٔ ۱٫۵ + ۲ > لبه");
     assert.match(rollRowProblem(50, { ...ROW, offsetXMm: 11 })!, /جابه‌جایی افقی/);
+    // کاغذ پهن‌تر از ۱۰۴: جابه‌جایی نمی‌تواند لیبل را از پنجرهٔ چاپ‌پذیر وسط کاغذ بیرون ببرد.
+    assert.match(rollRowProblem(50, { ...ROW, mediaWidthMm: 118, offsetXMm: -7 })!, /پهنای چاپ‌پذیر 104 میلی‌متر \(وسطِ کاغذ\)/);
+    assert.equal(rollRowProblem(50, { ...ROW, mediaWidthMm: 118, offsetXMm: -0.5 }), null);
+    assert.equal(rollRowProblem(50, { ...ROW, offsetXMm: -0.5 }), null, "لبهٔ پنجره (۱mm از چپ در کاغذ ۱۰۶) هنوز مجاز است");
     assert.match(rollRowProblem(50, { ...ROW, gapMm: -1 })!, /فاصلهٔ میان/);
     assert.match(rollRowProblem(50, { ...ROW, startSlot: 3 })!, /خانهٔ شروع/);
     assert.match(rollRowProblem(50, { ...ROW, columns: 0 })!, /تعداد ستون/);

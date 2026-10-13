@@ -5,6 +5,8 @@
  * فقط برای بازخورد فوری‌اند و سرور دوباره می‌سنجد.
  */
 
+import { normalizeDigits } from "./settings-value.ts";
+
 export type LabelLayout = "roll" | "a4";
 
 /** اندازه‌های رایج رول لیبل‌زن — همان `ROLL_PRESETS_MM` سمت سرور. */
@@ -155,24 +157,45 @@ export function labelSizeIssues(size: LabelSize): { width: string | null; height
 }
 
 /**
+ * عدد میلی‌متری از ورودی؛ خالی یعنی «وارد نشده» (`NaN`)، نه صفر. «−» یونیکد منفی است
+ * و «,»/«،» این‌جا ممیز است نه جداکنندهٔ هزارگان (`normalizeDigits` آن را حذف می‌کرد و
+ * «1,5» پانزده میلی‌متر می‌شد).
+ */
+export function parseMm(v: string): number {
+  return v.trim() === "" ? Number.NaN : Number(normalizeDigits(v.replace(/[,،]/g, ".")).replace(/[−–]/g, "-"));
+}
+
+/** میدانی که خطای ردیف از آن است — تا فقط همان `aria-invalid` بگیرد. */
+export type LabelRowField = "gap" | "media" | "offset" | "row";
+
+/**
  * ردیف چندستونه — همان `rollRowProblem` سرور. عددی که وارد نشده (`NaN`) یعنی
  * «اندازه‌گیری نشده»، نه صفر: فاصله و پهنای لاینر پیش‌فرض ندارند.
  */
-export function labelRowProblem(width: number, row: LabelRow): string | null {
+export function labelRowIssue(width: number, row: LabelRow): { field: LabelRowField; message: string } | null {
   const { printableMax, mediaMin, mediaMax, maxColumns, maxGap, maxOffset } = ROW_LIMITS;
-  if (!Number.isFinite(row.gapMm)) return "فاصلهٔ افقی میان دو لیبل کنار هم را با خط‌کش اندازه بگیرید و وارد کنید؛ مقدار پیش‌فرض ندارد.";
-  if (!Number.isFinite(row.mediaWidthMm)) return "پهنای کل کاغذ (لاینر) را با خط‌کش اندازه بگیرید و وارد کنید؛ مقدار پیش‌فرض ندارد.";
-  if (!Number.isFinite(row.offsetXMm) || !Number.isFinite(width)) return "اندازهٔ ردیف نامعتبر است.";
-  if (!Number.isInteger(row.columns) || row.columns < 1 || row.columns > maxColumns) return `تعداد ستون باید بین ${fa(1)} و ${fa(maxColumns)} باشد.`;
-  if (!Number.isInteger(row.startSlot) || row.startSlot < 1 || row.startSlot > row.columns) return "خانهٔ شروع باید یکی از ستون‌های همین ردیف باشد.";
-  if (row.gapMm < 0 || row.gapMm > maxGap) return `فاصلهٔ میان لیبل‌ها باید بین ${fa(0)} و ${fa(maxGap)} میلی‌متر باشد.`;
-  if (Math.abs(row.offsetXMm) > maxOffset) return `جابه‌جایی افقی باید بین −${fa(maxOffset)} و ${fa(maxOffset)} میلی‌متر باشد.`;
-  if (row.mediaWidthMm < mediaMin || row.mediaWidthMm > mediaMax) return `پهنای کاغذ (لاینر) باید بین ${fa(mediaMin)} و ${fa(mediaMax)} میلی‌متر باشد.`;
+  const at = (field: LabelRowField, message: string) => ({ field, message });
+  if (!Number.isFinite(row.gapMm)) return at("gap", "فاصلهٔ افقی میان دو لیبل کنار هم را با خط‌کش اندازه بگیرید و وارد کنید؛ مقدار پیش‌فرض ندارد.");
+  if (!Number.isFinite(row.mediaWidthMm)) return at("media", "پهنای کل کاغذ (لاینر) را با خط‌کش اندازه بگیرید و وارد کنید؛ مقدار پیش‌فرض ندارد.");
+  if (!Number.isFinite(row.offsetXMm)) return at("offset", "جابه‌جایی افقی را به میلی‌متر وارد کنید (بی جابه‌جایی: ۰).");
+  if (!Number.isFinite(width)) return at("row", "اندازهٔ ردیف نامعتبر است.");
+  if (!Number.isInteger(row.columns) || row.columns < 1 || row.columns > maxColumns) return at("row", `تعداد ستون باید بین ${fa(1)} و ${fa(maxColumns)} باشد.`);
+  if (!Number.isInteger(row.startSlot) || row.startSlot < 1 || row.startSlot > row.columns) return at("row", "خانهٔ شروع باید یکی از ستون‌های همین ردیف باشد.");
+  if (row.gapMm < 0 || row.gapMm > maxGap) return at("gap", `فاصلهٔ میان لیبل‌ها باید بین ${fa(0)} و ${fa(maxGap)} میلی‌متر باشد.`);
+  if (Math.abs(row.offsetXMm) > maxOffset) return at("offset", `جابه‌جایی افقی باید بین −${fa(maxOffset)} و ${fa(maxOffset)} میلی‌متر باشد.`);
+  if (row.mediaWidthMm < mediaMin || row.mediaWidthMm > mediaMax) return at("media", `پهنای کاغذ (لاینر) باید بین ${fa(mediaMin)} و ${fa(mediaMax)} میلی‌متر باشد.`);
   const { spanMm, leftMm } = rowSlots(width, row);
-  if (spanMm > printableMax + 1e-9) return `کل ردیف لیبل‌ها ${fa(spanMm)} میلی‌متر است و از پهنای چاپ‌پذیر ${fa(printableMax)} میلی‌متر چاپگر بیشتر است.`;
-  if (spanMm > row.mediaWidthMm + 1e-9) return `پهنای کاغذ از کل ردیف لیبل‌ها (${fa(spanMm)} میلی‌متر) کمتر است.`;
-  if (leftMm[0]! < -1e-9 || leftMm[leftMm.length - 1]! + width > row.mediaWidthMm + 1e-9) return "با این جابه‌جایی افقی بخشی از ردیف بیرون از کاغذ می‌افتد.";
+  if (spanMm > printableMax + 1e-9) return at("gap", `کل ردیف لیبل‌ها ${fa(spanMm)} میلی‌متر است و از پهنای چاپ‌پذیر ${fa(printableMax)} میلی‌متر چاپگر بیشتر است.`);
+  if (spanMm > row.mediaWidthMm + 1e-9) return at("media", `پهنای کاغذ از کل ردیف لیبل‌ها (${fa(spanMm)} میلی‌متر) کمتر است.`);
+  if (leftMm[0]! < -1e-9 || leftMm[leftMm.length - 1]! + width > row.mediaWidthMm + 1e-9) return at("offset", "با این جابه‌جایی افقی بخشی از ردیف بیرون از کاغذ می‌افتد.");
+  const margin = Math.max(0, (row.mediaWidthMm - printableMax) / 2);
+  if (leftMm[0]! < margin - 1e-9 || leftMm[leftMm.length - 1]! + width > row.mediaWidthMm - margin + 1e-9)
+    return at("offset", `با این جابه‌جایی بخشی از ردیف بیرون از پهنای چاپ‌پذیر ${fa(printableMax)} میلی‌متر (وسطِ کاغذ) می‌افتد و چاپ نمی‌شود.`);
   return null;
+}
+
+export function labelRowProblem(width: number, row: LabelRow): string | null {
+  return labelRowIssue(width, row)?.message ?? null;
 }
 
 /** چرا این درخواست ارسال نمی‌شود — `null` یعنی معتبر. */

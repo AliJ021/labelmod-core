@@ -108,7 +108,18 @@ export function rollRowProblem(widthMm: number, row: RollRow): string | null {
   if (spanMm > row.mediaWidthMm + 1e-9) return `پهنای کاغذ (${row.mediaWidthMm}) از کل ردیف لیبل‌ها (${spanMm} میلی‌متر) کمتر است.`;
   if (leftMm[0]! < -1e-9 || leftMm[leftMm.length - 1]! + widthMm > row.mediaWidthMm + 1e-9)
     return "با این جابه‌جایی افقی بخشی از ردیف بیرون از کاغذ می‌افتد.";
+  // پنجرهٔ چاپ‌پذیر روی کاغذ: کاغذ با راهنمای رول زیر هد وسط فرض می‌شود، پس
+  // هد ۱۰۴mm بازهٔ وسط را می‌نویسد. جابه‌جایی نباید لیبل را بی‌صدا از آن بیرون ببرد.
+  const [lo, hi] = rollPrintableWindow(row.mediaWidthMm);
+  if (leftMm[0]! < lo - 1e-9 || leftMm[leftMm.length - 1]! + widthMm > hi + 1e-9)
+    return `با این جابه‌جایی بخشی از ردیف بیرون از پهنای چاپ‌پذیر ${ROLL_PRINTABLE_MAX_MM} میلی‌متر (وسطِ کاغذ) می‌افتد و چاپ نمی‌شود.`;
   return null;
+}
+
+/** بازهٔ چاپ‌پذیر روی کاغذ از لبهٔ چپ، با فرض کاغذ وسط زیر هد. */
+export function rollPrintableWindow(mediaWidthMm: number): [number, number] {
+  const margin = Math.max(0, (mediaWidthMm - ROLL_PRINTABLE_MAX_MM) / 2);
+  return [margin, mediaWidthMm - margin];
 }
 
 /** ردیف نامعتبر — همان ۴۲۲ اندازهٔ کوچک، با علت دقیق. */

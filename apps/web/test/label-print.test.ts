@@ -3,7 +3,7 @@ import assert from "node:assert/strict";
 import {
   LABEL_PRESETS, MAX_TOTAL, clampCount, groupByProduct, labelContentWarning, labelRequestBody, labelRequestProblem,
   labelSizeIssues, labelSizeProblem, mergeQueue, syncQueueMeta, queueTotal, ROLL_LIMITS, setQueueCount, type QueueItem,
-  labelCalibrationBody, labelRowProblem, rowSlots, type LabelRow,
+  labelCalibrationBody, labelRowIssue, labelRowProblem, parseMm, rowSlots, type LabelRow,
 } from "../src/lib/label-print.ts";
 import { DEFAULT_SIZE_CHOICE, parseSizeChoice } from "../src/lib/label-size.ts";
 
@@ -178,6 +178,15 @@ describe("رول دو‌ستونه — پروفایل و بدنهٔ درخواس
     assert.equal(labelCalibrationBody({ layout: "roll", width: 50, height: 30 }), null);
   });
 
+  test("ورودی میلی‌متر: «,» و «٫» ممیزند نه هزارگان؛ رقم فارسی و منفی یونیکد؛ خالی = نامعلوم", () => {
+    assert.equal(parseMm("1,5"), 1.5);
+    assert.equal(parseMm("۲٫۵"), 2.5);
+    assert.equal(parseMm("−0.5"), -0.5);
+    assert.equal(parseMm("106"), 106);
+    assert.ok(Number.isNaN(parseMm("")) && Number.isNaN(parseMm("  ")));
+    assert.ok(Number.isNaN(parseMm("abc")));
+  });
+
   test("تغییر هندسه کلید پیش‌نمایش را عوض می‌کند (پیش‌نمایش کهنه باطل است)", () => {
     const items = [{ variationId: "v1", count: 1 }];
     const k = (r: LabelRow) => JSON.stringify(labelRequestBody(items, { ...size, row: r }));
@@ -198,6 +207,12 @@ describe("رول دو‌ستونه — پروفایل و بدنهٔ درخواس
     assert.match(labelRowProblem(50, { ...row, offsetXMm: 2 })!, /بیرون از کاغذ/);
     assert.match(labelRowProblem(50, { ...row, offsetXMm: 11 })!, /جابه‌جایی/);
     assert.match(labelRowProblem(50, { ...row, gapMm: -1 })!, /فاصلهٔ میان/);
+    assert.match(labelRowProblem(50, { ...row, mediaWidthMm: 118, offsetXMm: -7 })!, /پهنای چاپ‌پذیر/);
+    // میدانِ مقصر: فقط همان aria-invalid می‌گیرد.
+    assert.equal(labelRowIssue(50, { ...row, offsetXMm: Number.NaN })?.field, "offset");
+    assert.equal(labelRowIssue(50, { ...row, offsetXMm: 2 })?.field, "offset");
+    assert.equal(labelRowIssue(50, { ...row, gapMm: Number.NaN })?.field, "gap");
+    assert.equal(labelRowIssue(50, { ...row, mediaWidthMm: 100 })?.field, "media");
     assert.equal(labelSizeIssues(size).row, null);
     assert.match(labelSizeProblem({ ...size, row: { ...row, gapMm: Number.NaN } })!, /پیش‌فرض ندارد/);
     assert.match(labelRequestProblem([{ count: 1 }], { ...size, row: { ...row, mediaWidthMm: 100 } })!, /کمتر است/);
