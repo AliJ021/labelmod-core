@@ -54,11 +54,20 @@ const listeners = new Set<() => void>();
  *    تب دومی که پیش از ذخیرهٔ تب اول باز شده بود، با یک تغییر کوچک (مثلاً جابه‌جایی)
  *    فاصله و لاینرِ تازهٔ تب اول را با مقدار کهنهٔ خودش بازنویسی می‌کرد. حالا آخرین
  *    مقدار ذخیره‌شده پایهٔ ادغام است و تب‌های باز با رویداد `storage` همگام می‌شوند.
+ *    این فقط حافظهٔ کهنهٔ تب را می‌بندد، نه هر رقابتی: دو `set` واقعاً هم‌زمان در دو تب
+ *    هنوز «آخری برنده» است، چون localStorage تراکنش ندارد. مقدار ذخیره‌شدهٔ خراب پایهٔ
+ *    ادغام نمی‌شود (وگرنه پیش‌فرض جای پروفایل معتبر حافظه می‌نشست).
  */
+function isRecord(v: unknown): boolean { return typeof v === "object" && v !== null && !Array.isArray(v); }
+
 export const labelSize = {
+  get: (): LabelSizeChoice => choice,
   set(patch: Partial<LabelSizeChoice>) {
     let latest = choice;
-    try { const raw = globalThis.localStorage?.getItem(KEY); if (raw != null) latest = parseSizeChoice(raw); } catch { /* همان نسخهٔ حافظه */ }
+    try {
+      const raw = globalThis.localStorage?.getItem(KEY);
+      if (raw != null && isRecord(JSON.parse(raw))) latest = parseSizeChoice(raw);
+    } catch { /* خراب یا در دسترس نیست: همان نسخهٔ حافظه */ }
     choice = { ...latest, ...patch };
     try { globalThis.localStorage?.setItem(KEY, JSON.stringify(choice)); } catch { /* فقط یادآوری از دست می‌رود */ }
     for (const l of listeners) l();
@@ -67,7 +76,9 @@ export const labelSize = {
 
 try {
   globalThis.addEventListener?.("storage", (e: StorageEvent) => {
-    if (e.key !== KEY) return;
+    // کلید تهی یعنی `localStorage.clear()` در تب دیگر: پروفایل آن‌جا پاک شد، این‌جا هم.
+    if (e.key !== KEY && e.key !== null) return;
+    if (e.key === null && e.storageArea !== globalThis.localStorage) return;
     choice = e.newValue === null ? DEFAULT_SIZE_CHOICE : parseSizeChoice(e.newValue);
     for (const l of listeners) l();
   });

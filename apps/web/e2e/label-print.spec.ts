@@ -193,6 +193,53 @@ test("bulk from the product list: tick products, N labels per active variation, 
   await expect(page.getByRole("status").filter({ hasText: "۴ لیبل از ۱ کالا" })).toBeVisible();
 });
 
+test("bulk selection survives search, a failed read leaves the queue untouched, and the note counts labels actually added under the per-variant cap", async ({ page, api }) => {
+  const other = { ...product, id: "22222222-2222-4222-8222-222222222222", code: "TR-2000", nameInternal: "پیراهن نخی آزمون" };
+  api.defaults["GET /products/" + product.id] = { product, variations };
+  api.defaults["GET /products/" + other.id] = { product: other, variations: [{ ...variations[0]!, id: "v9", sku: "TR-2000-S" }] };
+  let failOther = true;
+  api.handlers.set("GET /products/" + other.id, async (route) => {
+    if (failOther) { await route.fulfill({ status: 503, json: { error: { code: "unavailable", message: "خواندن موقتاً ممکن نیست" } } }); return; }
+    await route.fulfill({ json: api.defaults["GET /products/" + other.id] });
+  });
+  await openCatalog(page);
+  await page.locator("main").getByRole("button", { name: "چاپ لیبل بارکد", exact: true }).click();
+  await page.getByRole("checkbox", { name: `انتخاب ${product.nameInternal} برای چاپ گروهی` }).check();
+  // (۱) جست‌وجوی کالای دوم انتخاب اول را نمی‌خورد؛ شمارهٔ دکمه همان چیزی است که افزوده می‌شود.
+  api.productRows = [other];
+  await page.locator("main").getByRole("searchbox").fill("پیراهن");
+  await expect(page.getByRole("checkbox", { name: `انتخاب ${product.nameInternal} برای چاپ گروهی` })).toHaveCount(0);
+  await page.getByRole("checkbox", { name: `انتخاب ${other.nameInternal} برای چاپ گروهی` }).check();
+  await page.getByRole("textbox", { name: "از هر تنوع (لیبل)" }).fill("2");
+  const addButton = page.getByRole("button", { name: "افزودن ۲ کالای انتخاب‌شده به فهرست چاپ" });
+  // (۲) خواندن کالای دوم شکست می‌خورد: فهرست دست‌نخورده، انتخاب سر جایش.
+  await addButton.click();
+  await expect(page.getByRole("alert").filter({ hasText: "چیزی به فهرست چاپ افزوده نشد" })).toBeVisible();
+  await expect(page.getByRole("textbox", { name: "تعداد لیبل TR-1405-NAVY-S" })).toHaveCount(0);
+  await expect(addButton).toBeEnabled();
+  // تلاش دوباره کالای اول را دوبار نمی‌افزاید.
+  failOther = false;
+  await addButton.click();
+  const queue = page.getByRole("region", { name: "فهرست چاپ گروهی" });
+  await expect(page.getByRole("status").filter({ hasText: "۶ لیبل از ۲ کالا به فهرست چاپ گروهی افزوده شد." })).toBeVisible();
+  await expect(queue.getByRole("textbox", { name: "تعداد لیبل TR-1405-NAVY-S" })).toHaveValue("2");
+  await expect(queue.getByRole("textbox", { name: "تعداد لیبل TR-1405-CREAM-XL" })).toHaveValue("2");
+  await expect(queue.getByRole("textbox", { name: "تعداد لیبل TR-2000-S" })).toHaveValue("2");
+  // (۳) سقف ۱۰۰ هر تنوع: ۲ + ۱۰۰ فقط ۹۸ می‌افزاید؛ بار بعد هیچ — و پیام همین را می‌گوید.
+  api.productRows = [product];
+  await page.locator("main").getByRole("searchbox").fill("");
+  await page.getByRole("checkbox", { name: `انتخاب ${product.nameInternal} برای چاپ گروهی` }).check();
+  await page.getByRole("textbox", { name: "از هر تنوع (لیبل)" }).fill("100");
+  await page.getByRole("button", { name: "افزودن ۱ کالای انتخاب‌شده به فهرست چاپ" }).click();
+  await expect(page.getByRole("status").filter({ hasText: "۱۹۶ لیبل از ۱ کالا به فهرست چاپ گروهی افزوده شد. ۴ لیبل به‌خاطر سقف ۱۰۰ لیبل برای هر تنوع افزوده نشد." })).toBeVisible();
+  await expect(queue.getByRole("textbox", { name: "تعداد لیبل TR-1405-NAVY-S" })).toHaveValue("100");
+  await page.getByRole("checkbox", { name: `انتخاب ${product.nameInternal} برای چاپ گروهی` }).check();
+  await page.getByRole("textbox", { name: "از هر تنوع (لیبل)" }).fill("2");
+  await page.getByRole("button", { name: "افزودن ۱ کالای انتخاب‌شده به فهرست چاپ" }).click();
+  await expect(page.getByRole("status").filter({ hasText: "هیچ لیبلی از ۱ کالا افزوده نشد" })).toBeVisible();
+  await expect(queue.getByRole("textbox", { name: "تعداد لیبل TR-2000-S" })).toHaveValue("2");
+});
+
 test("two-across profile (owner-measured 105 liner, 4 gap) persists across the product page, bulk queue and reload; not a global default", async ({ page, api }) => {
   const panel = await openLabels(page, api);
   await panel.getByRole("combobox", { name: "چیدمان رول" }).selectOption("2");

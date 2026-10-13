@@ -130,6 +130,24 @@ export function setQueueCount(current: readonly QueueItem[], variationId: string
     : current.map((i) => (i.variationId === variationId ? { ...i, count: n } : i));
 }
 
+/**
+ * افزودن با گزارش راست: «چند لیبل واقعاً افزوده شد»، نه «چند تا خواسته شد».
+ * `mergeQueue` هر تنوع را در سقف ۱۰۰ می‌بُرد؛ پس ۹۹ + ۲ فقط ۱ می‌افزاید و ۱۰۰ + ۲ هیچ.
+ */
+export function mergeQueueCounted(current: readonly QueueItem[], adds: readonly QueueItem[]): { items: QueueItem[]; added: number; requested: number } {
+  const items = mergeQueue(current, adds);
+  const requested = adds.reduce((sum, a) => sum + clampCount(a.count), 0);
+  return { items, added: Math.max(0, queueTotal(items) - queueTotal(current)), requested };
+}
+
+/** پیام نتیجهٔ افزودن به فهرست گروهی — عدد واقعی و سهم بریده‌شده با سقف هر تنوع. */
+export function queueAddMessage(added: number, requested: number, source: string): string {
+  if (requested === 0) return `${source} تنوع فعالی ندارد؛ لیبلی افزوده نشد.`;
+  if (added === 0) return `هیچ لیبلی از ${source} افزوده نشد: تنوع‌هایش در فهرست به سقف ${fa(MAX_PER_VARIANT)} لیبل رسیده‌اند.`;
+  const base = `${fa(added)} لیبل از ${source} به فهرست چاپ گروهی افزوده شد.`;
+  return added < requested ? `${base} ${fa(requested - added)} لیبل به‌خاطر سقف ${fa(MAX_PER_VARIANT)} لیبل برای هر تنوع افزوده نشد.` : base;
+}
+
 export function queueTotal(items: readonly { count: number }[]): number {
   return items.reduce((sum, i) => sum + i.count, 0);
 }

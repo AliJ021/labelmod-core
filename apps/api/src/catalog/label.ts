@@ -586,7 +586,7 @@ ${labelCss}  .calib { position: absolute; inset: 1mm; border: 0.25mm dashed #000
 </style>
 </head>
 <body>
-<div class="hint">${printNum(count)} برچسب ${printNum(roll.width)}×${printNum(roll.height)} میلی‌متر در ${printNum(rows.length)} ردیف ${printNum(row.columns)}تایی. در پنجرهٔ چاپ: اندازهٔ کاغذ <strong>${printNum(media)}×${printNum(roll.height)} میلی‌متر (کل ردیف، نه یک لیبل)</strong>، مقیاس 100٪ (نه Fit to page width)، حاشیه None، بدون سربرگ و پابرگ. در درایور، ارتفاع کاغذ همان ارتفاع سفید لیبل (${printNum(roll.height)}) است، نه فاصلهٔ تکرار با فاصلهٔ عمودی؛ فاصلهٔ عمودی جدا با «Labels with gaps» تنظیم می‌شود. ستون 1 = چپِ کاغذ چاپ‌شده. مرورگر نمی‌تواند تنظیم درایور را تضمین کند؛ یک ردیف آزمایشی بسنجید.${warn}</div>
+<div class="hint">${printNum(count)} برچسب ${printNum(roll.width)}×${printNum(roll.height)} میلی‌متر در ${printNum(rows.length)} ردیف ${printNum(row.columns)}تایی. در پنجرهٔ چاپ: اندازهٔ کاغذ <strong>${printNum(media)}×${printNum(roll.height)} میلی‌متر (کل ردیف، نه یک لیبل)</strong>، مقیاس 100٪ (نه Fit to page width)، حاشیه None، بدون سربرگ و پابرگ. در درایور، ارتفاع کاغذ همان ارتفاع سفید لیبل (${printNum(roll.height)}) است، نه فاصلهٔ تکرار با فاصلهٔ عمودی؛ فاصلهٔ عمودی جدا در نوع کاغذِ «لیبل با فاصله» درایور تنظیم می‌شود (نام گزینه در هر درایور فرق دارد). ستون 1 = چپِ کاغذ چاپ‌شده. مرورگر نمی‌تواند تنظیم درایور را تضمین کند؛ یک ردیف آزمایشی بسنجید.${warn}</div>
 <div class="sheet">
 ${rows.join("\n")}
 </div>

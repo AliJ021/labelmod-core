@@ -2,7 +2,7 @@ import { describe, test } from "node:test";
 import assert from "node:assert/strict";
 import {
   LABEL_PRESETS, MAX_TOTAL, clampCount, groupByProduct, labelContentWarning, labelRequestBody, labelRequestProblem,
-  labelSizeIssues, labelSizeProblem, mergeQueue, syncQueueMeta, queueTotal, ROLL_LIMITS, setQueueCount, type QueueItem,
+  labelSizeIssues, labelSizeProblem, mergeQueue, mergeQueueCounted, queueAddMessage, syncQueueMeta, queueTotal, ROLL_LIMITS, setQueueCount, type QueueItem,
   labelCalibrationBody, labelRowIssue, labelRowProblem, parseMm, rowSlots, type LabelRow, queueItemsForProduct,
 } from "../src/lib/label-print.ts";
 import { DEFAULT_SIZE_CHOICE, parseSizeChoice } from "../src/lib/label-size.ts";
@@ -236,5 +236,21 @@ describe("چاپ گروهی از فهرست کالا", () => {
     const once = mergeQueue([], queueItemsForProduct({ id: "p1", name: "کالا" }, vs, 2));
     const twice = mergeQueue(once, queueItemsForProduct({ id: "p1", name: "کالا" }, vs, 3));
     assert.deepEqual(twice.map((i) => [i.variationId, i.count]), [["v1", 5], ["v3", 5]]);
+  });
+});
+
+describe("افزودن با شمارش واقعی (سقف هر تنوع)", () => {
+  test("۹۹ + ۲ فقط ۱ می‌افزاید و ۱۰۰ + ۲ هیچ؛ پیام عدد واقعی و سهم بریده را می‌گوید", () => {
+    const r1 = mergeQueueCounted([item("v1", "p1", 99)], [item("v1", "p1", 2)]);
+    assert.deepEqual([r1.added, r1.requested, r1.items[0]!.count], [1, 2, 100]);
+    const r2 = mergeQueueCounted([item("v1", "p1", 100)], [item("v1", "p1", 2)]);
+    assert.deepEqual([r2.added, r2.requested], [0, 2]);
+    const r3 = mergeQueueCounted([item("v1", "p1", 99)], [item("v1", "p1", 2), item("v2", "p1", 3)]);
+    assert.deepEqual([r3.added, r3.requested], [4, 5]);
+    assert.match(queueAddMessage(1, 2, "۱ کالا"), /^۱ لیبل از ۱ کالا .*۱ لیبل به‌خاطر سقف ۱۰۰/);
+    assert.match(queueAddMessage(0, 2, "۱ کالا"), /^هیچ لیبلی/);
+    assert.doesNotMatch(queueAddMessage(0, 2, "۱ کالا"), /افزوده شد\./);
+    assert.match(queueAddMessage(0, 0, "۱ کالا"), /تنوع فعالی ندارد/);
+    assert.equal(queueAddMessage(3, 3, "«الف»"), "۳ لیبل از «الف» به فهرست چاپ گروهی افزوده شد.");
   });
 });
