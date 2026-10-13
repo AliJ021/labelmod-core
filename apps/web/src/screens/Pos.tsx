@@ -255,7 +255,7 @@ function defaultWarehouse(b: Branch) {
 export function Pos({ actorId }: { actorId: string }) {
   const [branches, setBranches] = useState<Branch[]>([]);
   const [methods, setMethods] = useState<PaymentMethod[]>([]);
-  const [policy, setPolicy] = useState<{ branchId: string; requireCustomer: boolean } | null>(null);
+  const [policy, setPolicy] = useState<{ branchId: string; requireCustomer: boolean; creditEnabled?: boolean } | null>(null);
   const [policyError, setPolicyError] = useState<string | null>(null);
   const [policyRetry, setPolicyRetry] = useState(0);
   const [branchId, setBranchId] = useUrlState("pos.branch");
@@ -384,7 +384,7 @@ export function Pos({ actorId }: { actorId: string }) {
     refresh();
     window.addEventListener("focus", refresh);
     // ذخیرهٔ همین تنظیم در تب دیگر؛ تبِ دیده‌شده‌ای که focus نمی‌گیرد هم تازه می‌شود.
-    const unsubscribe = onSettingSaved((key) => { if (key === "pos.require_customer") refresh(); });
+    const unsubscribe = onSettingSaved((key) => { if (key === "pos.require_customer" || key === "sales.credit_enabled") refresh(); });
     return () => { controller.abort(); window.removeEventListener("focus", refresh); unsubscribe(); };
   }, [branchId, policyRetry]);
 
@@ -1399,7 +1399,7 @@ export function Pos({ actorId }: { actorId: string }) {
           <div className="pay-finish">
             {hasCart ? <label className="receipt-auto"><input type="checkbox" checked={printOnComplete} disabled={busy || !payIdle}
               onChange={e => setPrintOnComplete(e.target.checked)} /> چاپ رسید بلافاصله پس از ثبت</label> : null}
-            {hasCart ? <CreditCheckout allowed={canCredit} customer={linkedCustomer} remaining={totals.remaining} received={received}
+            {hasCart ? <CreditCheckout allowed={canCredit} creditOff={policyReady && policy.creditEnabled === false} customer={linkedCustomer} remaining={totals.remaining} received={received}
               payable={totals.payable} disabled={busy || !payIdle || !policyReady || (invoice?.customerId != null && (linkedCustomer === null || customerMissing))}
               onAttachCustomer={focusCustomer} run={finalize} verify={verifyFinalize} onDone={() => undefined} /> : null}
             <SafeAction trigger="نهایی‌کردن فاکتور" triggerVariant="primary" title="نهایی‌کردن فاکتور"

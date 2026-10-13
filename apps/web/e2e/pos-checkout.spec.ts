@@ -747,6 +747,22 @@ test("credit is a checkout outcome: attached customer shown, no credit in the se
   expect(s.finalizeKeys[1], "ردِ قطعی کلید را عوض نمی‌کند").toBe(s.finalizeKeys[0]);
 });
 
+test("credit switched off in settings: the credit CTA is disabled with a reason, no dialog, no finalize", async ({ page, api }) => {
+  const s = pos(api, { customerId: "c1", receivedAmount: "50000" });
+  api.defaults["GET /pos/policy"] = { requireCustomer: false, creditEnabled: false };
+  await open(page, s);
+  const cta = page.getByRole("button", { name: "ثبت نسیه", exact: true });
+  await expect(cta).toBeDisabled();
+  await expect(page.getByText("فروش نسیه در تنظیمات خاموش است؛ کل مبلغ را دریافت کنید.")).toBeVisible();
+  await cta.click({ force: true });
+  await expect(page.getByRole("dialog", { name: "ثبت فروش نسیه" })).toHaveCount(0);
+  expect(s.finalized).toBe(0);
+  // روشن‌شدن دوباره در تب تنظیمات، بی reload صندوق را تازه می‌کند (همان رویداد onSettingSaved).
+  api.defaults["GET /pos/policy"] = { requireCustomer: false, creditEnabled: true };
+  await page.evaluate(() => { const bc = new BroadcastChannel("labelmod-settings"); bc.postMessage({ key: "sales.credit_enabled" }); bc.close(); });
+  await expect(page.getByRole("button", { name: "ثبت نسیه", exact: true })).toBeEnabled();
+});
+
 test("credit without a customer guides to attaching one; points and gift card stay disabled with a visible reason until then", async ({ page, api }) => {
   const s = pos(api);
   api.handlers.set(`PATCH /invoices/${INV}/customer`, async (route: Route) => {
