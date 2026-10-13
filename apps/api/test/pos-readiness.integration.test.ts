@@ -682,6 +682,74 @@ describe("آمادگی API صندوق", { skip }, () => {
     assert.equal(await countPayments(id), 1);
   });
 
+  test("کلید «فروش نسیه»: خاموش، هیچ فاکتوری با مانده نهایی نمی‌شود؛ تسویه‌شده، صفر و بدهی قبلی دست نمی‌خورند", async () => {
+    const a = await checkoutAdmin();
+    const toggle = async (value: boolean, s = a) => app.inject({ method: "PATCH", url: "/settings/sales.credit_enabled", ...s,
+      payload: { value, reason: "آزمون کلید فروش نسیه" } });
+    const fin = (id: string, n: string) => app.inject({ method: "POST", url: `/invoices/${id}/finalize`, ...a,
+      headers: { ...a.headers, "idempotency-key": `toggle-${n}-${id}` }, payload: {} });
+    const pay = async (id: string, amount: string) => {
+      const r = await app.inject({ method: "POST", url: `/invoices/${id}/payments`, ...a, headers: { ...a.headers, "idempotency-key": `toggle-pay-${amount}-${id}` }, payload: { methodCode: "cash", amount } });
+      assert.equal(r.statusCode, 201, r.body);
+    };
+    /** سبد با مشتریِ دارای سقف اعتبار کافی و پرداخت ناقص — یعنی نهایی‌سازی‌اش بدهی تازه می‌سازد. */
+    const creditCart = async () => {
+      const id = await cartAs(a);
+      const att = await app.inject({ method: "PATCH", url: `/invoices/${id}/customer`, ...a, payload: { mobile: `0913${String(Date.now()).slice(-7)}` } });
+      assert.equal(att.statusCode, 200, att.body);
+      await sql`UPDATE sales.customer SET credit_limit=50000000 WHERE id=${att.json().customerId as string}::uuid`.execute(handle.db);
+      await pay(id, "300000");
+      return id;
+    };
+    const status = async (id: string) => (await app.inject({ method: "GET", url: `/invoices/${id}`, ...a })).json() as { status: string; settlement?: { dueAmount: string } };
+
+    // ACL: کلید از همان مسیر تنظیمات با مجوز «settings.security» عوض می‌شود؛ صندوق‌دار نمی‌تواند.
+    const denied = await toggle(false, await loginAs(cashier));
+    assert.equal(denied.statusCode, 403, denied.body);
+
+    // بدهی قبلی، ساخته‌شده وقتی کلید روشن بود (پیش‌فرض سازگار با رفتار قبلی).
+    const old = await creditCart();
+    const oldOk = await fin(old, "old");
+    assert.equal(oldOk.statusCode, 200, oldOk.body);
+    assert.equal(oldOk.json().settlement.dueAmount, "700001");
+
+    const fresh = await creditCart();
+    try {
+      assert.equal((await toggle(false)).statusCode, 200);
+      const blocked = await fin(fresh, "off");
+      assert.equal(blocked.statusCode, 409, blocked.body);
+      assert.match(blocked.json().error.message as string, /فروش نسیه در تنظیمات خاموش است/);
+      assert.equal((await status(fresh)).status, "draft", "رد شدن نهایی‌سازی چیزی را نیمه‌کاره ثبت نکرد");
+
+      // تسویهٔ کامل: مانده صفر، کلید بی‌اثر.
+      const cash = await cartAs(a);
+      await pay(cash, "1000001");
+      const paid = await fin(cash, "cash");
+      assert.equal(paid.statusCode, 200, paid.body);
+      assert.equal(paid.json().settlement.dueAmount, "0");
+
+      // تخفیف کامل: قابل پرداخت صفر، بدهی‌ای ساخته نمی‌شود.
+      const zero = await cartAs(a);
+      const lineId = ((await app.inject({ method: "GET", url: `/invoices/${zero}`, ...a })).json().lines as Array<{ id: string }>)[0]!.id;
+      const disc = await app.inject({ method: "PATCH", url: `/invoices/${zero}/lines/${lineId}/discount`, ...a, payload: { discountAmount: "1000001", discountReason: "هدیهٔ کامل آزمون" } });
+      assert.equal(disc.statusCode, 200, disc.body);
+      const free = await fin(zero, "zero");
+      assert.equal(free.statusCode, 200, free.body);
+      assert.equal(free.json().settlement.payableAmount, "0");
+
+      // بدهی قبلی دست نخورد.
+      const before = await status(old);
+      assert.equal(before.status, "finalized");
+      assert.equal(before.settlement?.dueAmount, "700001");
+    } finally {
+      assert.equal((await toggle(true)).statusCode, 200);
+    }
+    // دوباره روشن: همان سبد با همان قواعد قبلی نهایی می‌شود.
+    const again = await fin(fresh, "on");
+    assert.equal(again.statusCode, 200, again.body);
+    assert.equal(again.json().settlement.dueAmount, "700001");
+  });
+
   // ── F-115-01: وضعیت قصد پرداخت با شناسهٔ خودش، نه با جمع دریافتی ─────────────
 
   const intentUrl = (invoiceId: string, key: string, abandon = false) =>

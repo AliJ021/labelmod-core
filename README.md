@@ -79,6 +79,7 @@
 | رسید خرید با تخصیص هزینه حمل (Landed Cost) | ✅ تست‌شده |
 | رسید خرید — افزودن گروهی رنگ/سایز (جست‌وجوی نام، کد یا بارکد؛ همه یا هیچ؛ ادغام سطر هم‌قیمت) | ✅ تست‌شده |
 | کد خودکار کالای تازه (`catalog.next_product_code()`، مهاجرت ۰۹۴؛ Sequence اتمیک، کد دستی معتبر هم پذیرفته، تکراری ۴۰۹) | ✅ تست‌شده |
+| کلید «فروش نسیه مجاز باشد» (`sales.credit_enabled`، مهاجرت ۰۹۶؛ پیش‌فرض روشن = رفتار قبلی، ویرایش با `settings.security`). خاموش: نگهبان در `sales.finalize_invoice` هر نهایی‌سازی با مانده را از صندوق، سفارش سایت و تعویض رد می‌کند؛ فاکتور تسویه‌شده یا صفر، بدهی و فاکتور قطعی قبلی دست نمی‌خورند | ✅ تست‌شده |
 | فروش با Snapshot قیمت و بهای تمام‌شده | ✅ تست‌شده |
 | مرجوعی با بهای Snapshot فروش اصلی | ✅ تست‌شده |
 | بستن شیفت و سند تجمیعی | ✅ تست‌شده |
@@ -133,7 +134,7 @@ Fastify + Kysely؛ احراز هویت با توکن مات، مجوزهای د�
 | `PATCH .../lines/:lineId/discount` | تخفیف روی سطر موجود، بدون بازقیمت‌گذاری |
 | `DELETE /invoices/:id/lines/:lineId` | حذف قلم |
 | `POST /invoices/:id/payments` | `{ paymentId, replayed, receivedAmount, invoice }`؛ غیرنقدی بیش از مانده ۴۲۲ `non_cash_overpayment`؛ روش نسیه ۴۲۲ `credit_not_a_payment` |
-| `POST /invoices/:id/finalize` | شماره فاکتور، Idempotent؛ با مانده = نسیه (مشتری، `sale.credit`، سقف اعتبار) |
+| `POST /invoices/:id/finalize` | شماره فاکتور، Idempotent؛ با مانده = نسیه (کلید `sales.credit_enabled`، مشتری، `sale.credit`، سقف اعتبار) |
 | `POST /shifts/:id/close` | شمارش کشو؛ Retry به‌جای ۴۰۹، Replay می‌شود |
 
 چهار قاعده که کلاینت نمی‌تواند دورشان بزند:
