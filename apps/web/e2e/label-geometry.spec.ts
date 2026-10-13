@@ -163,3 +163,35 @@ test("web row validation mirrors the server: same limits and same accept/reject 
     }
   expect(mismatches).toEqual([]);
 });
+
+/*
+ * پروفایل اندازه‌گیری‌شدهٔ مالک (لیبل ۵۰×۳۰، لاینر ۱۰۵، فاصلهٔ افقی ۴): هر ردیف دقیقاً یک
+ * صفحهٔ ۱۰۵×۳۰ است — ارتفاع سفید لیبل، نه ۳۵ (فاصلهٔ تکرار درایور) — برای ۱، ۲، ۳، ۵، ۲۰ و
+ * ۵۰۰ لیبل و شروع از ستون ۲، بی صفحهٔ خالی. عنوان «Label Mod» درشت‌تر بیرون نمی‌زند.
+ * PDF فقط در Chromium؛ هندسهٔ print-media در هر موتور.
+ */
+for (const [n, start] of [[1, 1], [2, 1], [3, 1], [5, 1], [20, 1], [500, 1], [3, 2]] as const) {
+  test(`owner two-across 105/4: ${n} labels from column ${start} → one 105×30 page per row, no blank page, title fits`, async ({ page, browserName }) => {
+    const { label, makeEan13 } = await load();
+    const per = n === 500 ? 5 : 1;
+    const items: LabelItem[] = Array.from({ length: n / per }, (_, i) => ({ barcode: makeEan13(3000 + i), sku: `LM-${i}`,
+      productName: "شلوار پارچه‌ای رگولار با نام طولانی برای بررسی", color: "سرمه‌ای", size: "XL", priceRial: 99_999_999_995n, count: per }));
+    const html = label.labelPage(items, { layout: "roll", shopName: "Label Mod", rollMm: { width: 50, height: 30 },
+      rollRow: { columns: 2, gapMm: 4, mediaWidthMm: 105, offsetXMm: 0, startSlot: start } });
+    await page.setContent(html);
+    await page.emulateMedia({ media: "print" });
+    const rows = Math.ceil((n + start - 1) / 2);
+    const m = await page.evaluate(() => ({
+      rows: document.querySelectorAll(".row").length, labels: document.querySelectorAll(".slot > .label").length,
+      shopOverflow: Array.from(document.querySelectorAll<HTMLElement>(".shop")).filter((e) => e.scrollWidth > e.clientWidth + 1 || e.scrollHeight > e.clientHeight + 1).length,
+      firstLeft: Array.from(document.querySelectorAll<HTMLElement>(".row:first-child .slot")).map((e) => e.style.left) }));
+    expect(m).toEqual({ rows, labels: n, shopOverflow: 0, firstLeft: ["0.5mm", "54.5mm"] });
+    if (browserName === "chromium") {
+      const t = (await page.pdf({ preferCSSPageSize: true, printBackground: true })).toString("latin1");
+      const boxes = [...t.matchAll(/\/MediaBox\s*\[\s*0 0 ([\d.]+) ([\d.]+)\s*\]/g)].map((b) => [Number(b[1]) / 72 * 25.4, Number(b[2]) / 72 * 25.4]);
+      expect((t.match(/\/Type\s*\/Page(?!s)/g) ?? []).length).toBe(rows);
+      expect(boxes.length).toBe(rows);
+      for (const [w, h] of boxes) { expect(w!).toBeCloseTo(105, 0); expect(h!).toBeCloseTo(30, 0); }
+    }
+  });
+}

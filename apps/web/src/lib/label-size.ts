@@ -46,13 +46,43 @@ function read(): LabelSizeChoice {
 let choice = read();
 const listeners = new Set<() => void>();
 
+/**
+ * پروفایل لیبل (مثلاً رول دو‌ستونهٔ همین فروشگاه: لاینر ۱۰۵، فاصله ۴) روی همین دستگاه
+ * میان صفحهٔ کالا، فهرست گروهی و Reload می‌ماند. هیچ مقداری از آن پیش‌فرض سراسری نیست.
+ *
+ * ⚠️ «بخوان، ادغام کن، بنویس»: پیش‌تر `set` روی نسخهٔ درون‌حافظهٔ همین تب ادغام می‌کرد؛
+ *    تب دومی که پیش از ذخیرهٔ تب اول باز شده بود، با یک تغییر کوچک (مثلاً جابه‌جایی)
+ *    فاصله و لاینرِ تازهٔ تب اول را با مقدار کهنهٔ خودش بازنویسی می‌کرد. حالا آخرین
+ *    مقدار ذخیره‌شده پایهٔ ادغام است و تب‌های باز با رویداد `storage` همگام می‌شوند.
+ *    این فقط حافظهٔ کهنهٔ تب را می‌بندد، نه هر رقابتی: دو `set` واقعاً هم‌زمان در دو تب
+ *    هنوز «آخری برنده» است، چون localStorage تراکنش ندارد. مقدار ذخیره‌شدهٔ خراب پایهٔ
+ *    ادغام نمی‌شود (وگرنه پیش‌فرض جای پروفایل معتبر حافظه می‌نشست).
+ */
+function isRecord(v: unknown): boolean { return typeof v === "object" && v !== null && !Array.isArray(v); }
+
 export const labelSize = {
+  get: (): LabelSizeChoice => choice,
   set(patch: Partial<LabelSizeChoice>) {
-    choice = { ...choice, ...patch };
+    let latest = choice;
+    try {
+      const raw = globalThis.localStorage?.getItem(KEY);
+      if (raw != null && isRecord(JSON.parse(raw))) latest = parseSizeChoice(raw);
+    } catch { /* خراب یا در دسترس نیست: همان نسخهٔ حافظه */ }
+    choice = { ...latest, ...patch };
     try { globalThis.localStorage?.setItem(KEY, JSON.stringify(choice)); } catch { /* فقط یادآوری از دست می‌رود */ }
     for (const l of listeners) l();
   },
 };
+
+try {
+  globalThis.addEventListener?.("storage", (e: StorageEvent) => {
+    // کلید تهی یعنی `localStorage.clear()` در تب دیگر: پروفایل آن‌جا پاک شد، این‌جا هم.
+    if (e.key !== KEY && e.key !== null) return;
+    if (e.key === null && e.storageArea !== globalThis.localStorage) return;
+    choice = e.newValue === null ? DEFAULT_SIZE_CHOICE : parseSizeChoice(e.newValue);
+    for (const l of listeners) l();
+  });
+} catch { /* محیط بی رویداد */ }
 
 export function useLabelSizeChoice(): LabelSizeChoice {
   return useSyncExternalStore(

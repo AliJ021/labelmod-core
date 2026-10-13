@@ -177,3 +177,111 @@ test("an impossible custom size is flagged at the size fields with Persian digit
   await expect(panel.getByRole("button", { name: "پیش‌نمایش لیبل‌های انتخاب‌شده" })).toBeEnabled();
   expect(requests).toBe(0);
 });
+
+
+test("bulk from the product list: tick products, N labels per active variation, into the same bulk queue without opening each product", async ({ page, api }) => {
+  api.defaults["GET /products/" + product.id] = { product, variations: [...variations, { ...variations[0]!, id: "v3", sku: "TR-1405-OLD", status: "archived" }] };
+  await openCatalog(page);
+  await page.locator("main").getByRole("button", { name: "چاپ لیبل بارکد", exact: true }).click();
+  await page.getByRole("checkbox", { name: `انتخاب ${product.nameInternal} برای چاپ گروهی` }).check();
+  await page.getByRole("textbox", { name: "از هر تنوع (لیبل)" }).fill("۲");
+  await page.getByRole("button", { name: /افزودن .* کالای انتخاب‌شده به فهرست چاپ/ }).click();
+  const queue = page.getByRole("region", { name: "فهرست چاپ گروهی" });
+  await expect(queue.getByRole("textbox", { name: "تعداد لیبل TR-1405-NAVY-S" })).toHaveValue("2");
+  await expect(queue.getByRole("textbox", { name: "تعداد لیبل TR-1405-CREAM-XL" })).toHaveValue("2");
+  await expect(queue.getByRole("textbox", { name: "تعداد لیبل TR-1405-OLD" })).toHaveCount(0);
+  await expect(page.getByRole("status").filter({ hasText: "۴ لیبل از ۱ کالا" })).toBeVisible();
+});
+
+test("bulk selection survives search, a failed read leaves the queue untouched, and the note counts labels actually added under the per-variant cap", async ({ page, api }) => {
+  const other = { ...product, id: "22222222-2222-4222-8222-222222222222", code: "TR-2000", nameInternal: "پیراهن نخی آزمون" };
+  api.defaults["GET /products/" + product.id] = { product, variations };
+  api.defaults["GET /products/" + other.id] = { product: other, variations: [{ ...variations[0]!, id: "v9", sku: "TR-2000-S" }] };
+  let failOther = true;
+  api.handlers.set("GET /products/" + other.id, async (route) => {
+    if (failOther) { await route.fulfill({ status: 503, json: { error: { code: "unavailable", message: "خواندن موقتاً ممکن نیست" } } }); return; }
+    await route.fulfill({ json: api.defaults["GET /products/" + other.id] });
+  });
+  await openCatalog(page);
+  await page.locator("main").getByRole("button", { name: "چاپ لیبل بارکد", exact: true }).click();
+  await page.getByRole("checkbox", { name: `انتخاب ${product.nameInternal} برای چاپ گروهی` }).check();
+  // (۱) جست‌وجوی کالای دوم انتخاب اول را نمی‌خورد؛ شمارهٔ دکمه همان چیزی است که افزوده می‌شود.
+  api.productRows = [other];
+  await page.locator("main").getByRole("searchbox").fill("پیراهن");
+  await expect(page.getByRole("checkbox", { name: `انتخاب ${product.nameInternal} برای چاپ گروهی` })).toHaveCount(0);
+  await page.getByRole("checkbox", { name: `انتخاب ${other.nameInternal} برای چاپ گروهی` }).check();
+  await page.getByRole("textbox", { name: "از هر تنوع (لیبل)" }).fill("2");
+  const addButton = page.getByRole("button", { name: "افزودن ۲ کالای انتخاب‌شده به فهرست چاپ" });
+  // (۲) خواندن کالای دوم شکست می‌خورد: فهرست دست‌نخورده، انتخاب سر جایش.
+  await addButton.click();
+  await expect(page.getByRole("alert").filter({ hasText: "چیزی به فهرست چاپ افزوده نشد" })).toBeVisible();
+  await expect(page.getByRole("textbox", { name: "تعداد لیبل TR-1405-NAVY-S" })).toHaveCount(0);
+  await expect(addButton).toBeEnabled();
+  // تلاش دوباره کالای اول را دوبار نمی‌افزاید.
+  failOther = false;
+  await addButton.click();
+  const queue = page.getByRole("region", { name: "فهرست چاپ گروهی" });
+  await expect(page.getByRole("status").filter({ hasText: "۶ لیبل از ۲ کالا به فهرست چاپ گروهی افزوده شد." })).toBeVisible();
+  await expect(queue.getByRole("textbox", { name: "تعداد لیبل TR-1405-NAVY-S" })).toHaveValue("2");
+  await expect(queue.getByRole("textbox", { name: "تعداد لیبل TR-1405-CREAM-XL" })).toHaveValue("2");
+  await expect(queue.getByRole("textbox", { name: "تعداد لیبل TR-2000-S" })).toHaveValue("2");
+  // (۳) سقف ۱۰۰ هر تنوع: ۲ + ۱۰۰ فقط ۹۸ می‌افزاید؛ بار بعد هیچ — و پیام همین را می‌گوید.
+  api.productRows = [product];
+  await page.locator("main").getByRole("searchbox").fill("");
+  await page.getByRole("checkbox", { name: `انتخاب ${product.nameInternal} برای چاپ گروهی` }).check();
+  await page.getByRole("textbox", { name: "از هر تنوع (لیبل)" }).fill("100");
+  await page.getByRole("button", { name: "افزودن ۱ کالای انتخاب‌شده به فهرست چاپ" }).click();
+  await expect(page.getByRole("status").filter({ hasText: "۱۹۶ لیبل از ۱ کالا به فهرست چاپ گروهی افزوده شد. ۴ لیبل به‌خاطر سقف ۱۰۰ لیبل برای هر تنوع افزوده نشد." })).toBeVisible();
+  await expect(queue.getByRole("textbox", { name: "تعداد لیبل TR-1405-NAVY-S" })).toHaveValue("100");
+  await page.getByRole("checkbox", { name: `انتخاب ${product.nameInternal} برای چاپ گروهی` }).check();
+  await page.getByRole("textbox", { name: "از هر تنوع (لیبل)" }).fill("2");
+  await page.getByRole("button", { name: "افزودن ۱ کالای انتخاب‌شده به فهرست چاپ" }).click();
+  await expect(page.getByRole("status").filter({ hasText: "هیچ لیبلی از ۱ کالا افزوده نشد" })).toBeVisible();
+  await expect(queue.getByRole("textbox", { name: "تعداد لیبل TR-2000-S" })).toHaveValue("2");
+});
+
+test("a product ticked while the bulk add is still reading stays selected; only the submitted products are cleared", async ({ page, api }) => {
+  const other = { ...product, id: "33333333-3333-4333-8333-333333333333", code: "TR-3000", nameInternal: "دامن آزمون" };
+  api.productRows = [product, other];
+  api.defaults["GET /products/" + product.id] = { product, variations };
+  api.defaults["GET /products/" + other.id] = { product: other, variations: [{ ...variations[0]!, id: "v8", sku: "TR-3000-S" }] };
+  let release!: () => void;
+  const gate = new Promise<void>((r) => { release = r; });
+  api.handlers.set("GET /products/" + product.id, async (route) => { await gate; await route.fulfill({ json: api.defaults["GET /products/" + product.id] }); });
+  await openCatalog(page);
+  await page.locator("main").getByRole("button", { name: "چاپ لیبل بارکد", exact: true }).click();
+  await page.getByRole("checkbox", { name: `انتخاب ${product.nameInternal} برای چاپ گروهی` }).check();
+  await page.getByRole("button", { name: "افزودن ۱ کالای انتخاب‌شده به فهرست چاپ" }).click();
+  await expect(page.getByRole("button", { name: "در حال افزودن به فهرست چاپ…" })).toBeVisible();
+  // تا پایان افزودن، صفحهٔ کالا باز نمی‌شود (نتیجه بی‌پیام در پس‌زمینه ثبت نشود).
+  await expect(page.getByRole("button", { name: "انتخاب تنوع و چاپ لیبل" }).first()).toBeDisabled();
+  // در حین خواندنِ کالای اول، کالای دوم تیک می‌خورد.
+  await page.getByRole("checkbox", { name: `انتخاب ${other.nameInternal} برای چاپ گروهی` }).check();
+  release();
+  await expect(page.getByRole("status").filter({ hasText: "۲ لیبل از ۱ کالا به فهرست چاپ گروهی افزوده شد." })).toBeVisible();
+  await expect(page.getByRole("checkbox", { name: `انتخاب ${other.nameInternal} برای چاپ گروهی` })).toBeChecked();
+  await expect(page.getByRole("checkbox", { name: `انتخاب ${product.nameInternal} برای چاپ گروهی` })).not.toBeChecked();
+  await expect(page.getByRole("button", { name: "افزودن ۱ کالای انتخاب‌شده به فهرست چاپ" })).toBeEnabled();
+  await expect(page.getByRole("textbox", { name: "تعداد لیبل TR-3000-S" })).toHaveCount(0);
+  await expect(page.getByRole("button", { name: "انتخاب تنوع و چاپ لیبل" }).first()).toBeEnabled();
+});
+
+test("two-across profile (owner-measured 105 liner, 4 gap) persists across the product page, bulk queue and reload; not a global default", async ({ page, api }) => {
+  const panel = await openLabels(page, api);
+  await panel.getByRole("combobox", { name: "چیدمان رول" }).selectOption("2");
+  await panel.getByRole("textbox", { name: "پهنای کل کاغذ/لاینر (میلی‌متر)" }).fill("105");
+  await panel.getByRole("textbox", { name: "فاصلهٔ افقی میان دو لیبل (میلی‌متر)" }).fill("4");
+  await panel.getByRole("textbox", { name: "تعداد لیبل TR-1405-NAVY-S" }).fill("1");
+  await panel.getByRole("button", { name: "افزودن به فهرست چاپ گروهی" }).click();
+  const queue = page.getByRole("region", { name: "فهرست چاپ گروهی" });
+  await expect(queue.getByRole("textbox", { name: "پهنای کل کاغذ/لاینر (میلی‌متر)" })).toHaveValue("105");
+  await page.reload();
+  const after = page.getByRole("region", { name: "فهرست چاپ گروهی" });
+  await expect(after.getByRole("combobox", { name: "چیدمان رول" })).toHaveValue("2");
+  await expect(after.getByRole("textbox", { name: "پهنای کل کاغذ/لاینر (میلی‌متر)" })).toHaveValue("105");
+  await expect(after.getByRole("textbox", { name: "فاصلهٔ افقی میان دو لیبل (میلی‌متر)" })).toHaveValue("4");
+  // نصب/مرورگر تازه بی پروفایل: تک‌ستونی و فاصله/لاینر خالی (اندازه‌گیری نشده)، نه ۱۰۵/۴.
+  await page.evaluate(() => localStorage.removeItem("labelmod.label-size.v1"));
+  await page.reload();
+  await expect(page.getByRole("region", { name: "فهرست چاپ گروهی" }).getByRole("combobox", { name: "چیدمان رول" })).toHaveValue("1");
+});

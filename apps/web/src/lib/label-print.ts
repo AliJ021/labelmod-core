@@ -63,6 +63,23 @@ export interface QueueItem {
   hasBarcode?: boolean;
 }
 
+/**
+ * چاپ گروهی از فهرست کالا: هر تنوعِ **فعال** کالا با همان تعداد، به همان شکل فهرست
+ * موجود (`mergeQueue` تکرار را جمع می‌کند، نه دوتا). تنوع بایگانی‌شده لیبل نمی‌گیرد.
+ */
+export function queueItemsForProduct(
+  product: { id: string; name: string },
+  variations: readonly { id: string; sku: string; color: string | null; size: string | null; status: string; price: string | null; barcode: string | null }[],
+  count: number,
+): QueueItem[] {
+  const n = clampCount(count);
+  if (n === 0) return [];
+  return variations.filter((v) => v.status === "active").map((v) => ({
+    variationId: v.id, productId: product.id, productName: product.name, sku: v.sku, color: v.color, size: v.size, count: n,
+    priced: v.price !== null, hasBarcode: v.barcode !== null && v.barcode !== "",
+  }));
+}
+
 /** شمارهٔ معتبر از ورودی کاربر (رقم فارسی را فراخوان پیش‌تر نرمال کرده). */
 export function clampCount(n: number): number {
   if (!Number.isFinite(n) || n <= 0) return 0;
@@ -111,6 +128,24 @@ export function setQueueCount(current: readonly QueueItem[], variationId: string
   return n === 0
     ? current.filter((i) => i.variationId !== variationId)
     : current.map((i) => (i.variationId === variationId ? { ...i, count: n } : i));
+}
+
+/**
+ * افزودن با گزارش راست: «چند لیبل واقعاً افزوده شد»، نه «چند تا خواسته شد».
+ * `mergeQueue` هر تنوع را در سقف ۱۰۰ می‌بُرد؛ پس ۹۹ + ۲ فقط ۱ می‌افزاید و ۱۰۰ + ۲ هیچ.
+ */
+export function mergeQueueCounted(current: readonly QueueItem[], adds: readonly QueueItem[]): { items: QueueItem[]; added: number; requested: number } {
+  const items = mergeQueue(current, adds);
+  const requested = adds.reduce((sum, a) => sum + clampCount(a.count), 0);
+  return { items, added: Math.max(0, queueTotal(items) - queueTotal(current)), requested };
+}
+
+/** پیام نتیجهٔ افزودن به فهرست گروهی — عدد واقعی و سهم بریده‌شده با سقف هر تنوع. */
+export function queueAddMessage(added: number, requested: number, source: string): string {
+  if (requested === 0) return `${source} تنوع فعالی ندارد؛ لیبلی افزوده نشد.`;
+  if (added === 0) return `هیچ لیبلی از ${source} افزوده نشد: تنوع‌هایش در فهرست به سقف ${fa(MAX_PER_VARIANT)} لیبل رسیده‌اند.`;
+  const base = `${fa(added)} لیبل از ${source} به فهرست چاپ گروهی افزوده شد.`;
+  return added < requested ? `${base} ${fa(requested - added)} لیبل به‌خاطر سقف ${fa(MAX_PER_VARIANT)} لیبل برای هر تنوع افزوده نشد.` : base;
 }
 
 export function queueTotal(items: readonly { count: number }[]): number {
