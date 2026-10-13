@@ -59,7 +59,7 @@ import { pendingLabel, saleQueue, summarize, type PendingSummary } from "../lib/
 import { pos, type Branch, type Invoice, type InvoiceCustomer, type PaymentIntentStatus, type InvoiceLine, type PaymentMethod, type DraftPayment, type Shift } from "../lib/pos.ts";
 import { normalizeDigits } from "../lib/settings-value.ts";
 import { onSettingSaved } from "../lib/settings-events.ts";
-import { ScanBuffer } from "../lib/scanner.ts";
+import { ScanBuffer, retractLeak, snapshotField, type FieldSnapshot } from "../lib/scanner.ts";
 
 function message(err: unknown): string {
   if (err instanceof ApiError) return err.message;
@@ -572,21 +572,38 @@ export function Pos({ actorId }: { actorId: string }) {
   // کیبورد معرفی می‌کند و ممکن است هر جای صفحه فوکوس باشد. تصمیم
   // «اسکن بود یا تایپ» در `ScanBuffer` است و از روی سرعت گرفته
   // می‌شود، نه از روی فوکوس.
+  //
+  // ⚠️ رقم اول پیش از تشخیص در کادر فوکوس‌دار می‌نشیند. پیش‌تر هیچ‌کس پاکش نمی‌کرد و
+  //    «2» (رقم اول بارکد داخلی) در کادر جست‌وجو می‌ماند. حالا وضعیت کادر پیش از
+  //    رقم اول نگه داشته و با رقم دوم (تشخیص اسکن) دقیقاً برگردانده می‌شود.
+  //    اسکنر بی‌پسوند با مکث پس از رشته تمام می‌شود (`flush`)، نه بلعیده.
   useEffect(() => {
     if (!shift) return;
+    let leak: FieldSnapshot | null = null;
+    let idle: ReturnType<typeof setTimeout> | undefined;
+    const scanned = (barcode: string) => { retractLeak(leak); leak = null; void addByBarcode(barcode); };
     function onKey(e: KeyboardEvent) {
       if (e.isComposing || e.ctrlKey || e.altKey || e.metaKey) return;
+      const snap = snapshotField(e.target, e.key);
       const step = buffer.current.push(e.key, e.timeStamp);
+      clearTimeout(idle);
       if (step.kind === "consumed") {
         // اسکن در جریان است — نگذار کاراکترها در فیلدی که فوکوس دارد بریزند.
         e.preventDefault();
+        if (buffer.current.pending.length === 2) { retractLeak(leak); leak = null; }
+        if (buffer.current.pending.length > 0) {
+          idle = setTimeout(() => { const s = buffer.current.flush(performance.now()); if (s.kind === "scanned") scanned(s.barcode); }, 120);
+        }
       } else if (step.kind === "scanned") {
         e.preventDefault();
-        void addByBarcode(step.barcode);
+        scanned(step.barcode);
+      } else {
+        // رقم اولِ یک اسکن احتمالی: وضعیت کادر را پیش از نشستن آن نگه دار.
+        leak = buffer.current.pending.length === 1 ? snap : null;
       }
     }
     document.addEventListener("keydown", onKey, true);
-    return () => document.removeEventListener("keydown", onKey, true);
+    return () => { clearTimeout(idle); document.removeEventListener("keydown", onKey, true); };
   }, [shift, addByBarcode]);
 
   // ── عمل‌ها ────────────────────────────────────────────────────────
