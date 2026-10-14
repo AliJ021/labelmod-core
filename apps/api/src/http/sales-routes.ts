@@ -142,10 +142,13 @@ export function registerSalesRoutes(app: FastifyInstance, deps: SalesRouteDeps):
     const { branchId } = z.object({ branchId: uuid }).parse(req.query);
     await assertBranch(db, s.userId, branchId);
     await requireForSession(db, s, "sale.create");
-    const result = await sql<{ require_customer: boolean }>`
-      SELECT platform.setting_bool('pos.require_customer', false) AS require_customer
+    // نبودِ ردیف `sales.credit_enabled` (نصبِ پیش از ۰۹۶) یعنی روشن، همان رفتار قبلی.
+    // این فقط نمایش است؛ دروازهٔ واقعی نسیه در `sales.finalize_invoice` است.
+    const result = await sql<{ require_customer: boolean; credit_enabled: boolean }>`
+      SELECT platform.setting_bool('pos.require_customer', false) AS require_customer,
+             platform.setting_bool('sales.credit_enabled', true) AS credit_enabled
     `.execute(db);
-    return { requireCustomer: result.rows[0]!.require_customer };
+    return { requireCustomer: result.rows[0]!.require_customer, creditEnabled: result.rows[0]!.credit_enabled };
   });
 
   /**

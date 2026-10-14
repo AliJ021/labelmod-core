@@ -15,8 +15,10 @@ import type { InvoiceCustomer } from "../../lib/pos.ts";
  * پنهان وقتی `/auth/can` برای `sale.credit` «allow» نمی‌گوید (صندوق‌دار)؛ این
  * نمایش است، دروازه سرور است. بی مشتری، به‌جای عمل، راه وصل‌کردن مشتری.
  */
-export function CreditCheckout({ allowed, customer, remaining, received, payable, disabled, onAttachCustomer, run, verify, onDone }: {
+export function CreditCheckout({ allowed, creditOff = false, customer, remaining, received, payable, disabled, onAttachCustomer, run, verify, onDone }: {
   allowed: boolean;
+  /** کلید «فروش نسیه مجاز باشد» خاموش است (`/pos/policy`)؛ دروازهٔ واقعی سرور است. */
+  creditOff?: boolean;
   customer: InvoiceCustomer | null;
   remaining: bigint;
   received: bigint;
@@ -28,6 +30,12 @@ export function CreditCheckout({ allowed, customer, remaining, received, payable
   onDone: (outcome: "done" | "verified") => void;
 }) {
   if (!allowed || remaining <= 0n) return null;
+  if (creditOff) {
+    return <div className="credit-checkout credit-checkout--off">
+      <button type="button" className="btn" disabled aria-describedby="credit-off-note">ثبت نسیه</button>
+      <p id="credit-off-note" className="small muted" role="status" style={{ margin: 0 }}>فروش نسیه در تنظیمات خاموش است؛ کل مبلغ را دریافت کنید.</p>
+    </div>;
+  }
   if (!customer) {
     return <div className="credit-checkout credit-checkout--needs-customer">
       <button type="button" className="btn btn--quiet" disabled={disabled} onClick={onAttachCustomer}>وصل کردن مشتری برای نسیه</button>

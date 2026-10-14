@@ -325,7 +325,8 @@ export interface CreatedInvoice extends Invoice {
 export const pos = {
   branches: (opts?: RequestOptions) => api.get<{ branches: Branch[]; allBranches: boolean }>("/branches", opts),
 
-  policy: (branchId: string, opts?: RequestOptions) => api.get<{ requireCustomer: boolean }>(
+  /** `creditEnabled` نبود (API پیش از ۰۹۶) یعنی روشن — همان رفتار قبلی. */
+  policy: (branchId: string, opts?: RequestOptions) => api.get<{ requireCustomer: boolean; creditEnabled?: boolean }>(
     `/pos/policy?branchId=${encodeURIComponent(branchId)}`, opts),
 
   /**

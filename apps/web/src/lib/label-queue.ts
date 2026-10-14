@@ -7,7 +7,7 @@
  * از دست می‌دهد، نه کار را. این فهرست هیچ اثر مالی یا انباری ندارد.
  */
 import { useSyncExternalStore } from "react";
-import { mergeQueue, setQueueCount, syncQueueMeta, type QueueItem } from "./label-print.ts";
+import { mergeQueueCounted, setQueueCount, syncQueueMeta, type QueueItem } from "./label-print.ts";
 
 const KEY = "labelmod.label-queue.v1";
 let items: QueueItem[] = read();
@@ -31,7 +31,12 @@ function commit(next: QueueItem[]) {
 }
 
 export const labelQueue = {
-  add: (adds: QueueItem[]) => commit(mergeQueue(items, adds)),
+  /** یک commit برای همهٔ افزوده‌ها؛ عدد واقعیِ افزوده (پس از سقف هر تنوع) برمی‌گردد. */
+  add: (adds: QueueItem[]): { added: number; requested: number } => {
+    const r = mergeQueueCounted(items, adds);
+    commit(r.items);
+    return { added: r.added, requested: r.requested };
+  },
   setCount: (variationId: string, count: number) => commit(setQueueCount(items, variationId, count)),
   clear: () => commit([]),
   /** دادهٔ تازهٔ کاتالوگ (پس از تعیین قیمت) به تنوع‌های موجود فهرست می‌رسد. */

@@ -682,6 +682,108 @@ describe("آمادگی API صندوق", { skip }, () => {
     assert.equal(await countPayments(id), 1);
   });
 
+  test("کلید «فروش نسیه»: خاموش، هیچ فاکتوری با مانده نهایی نمی‌شود؛ تسویه‌شده، صفر و بدهی قبلی دست نمی‌خورند", async () => {
+    const a = await checkoutAdmin();
+    const toggle = async (value: boolean, s = a) => app.inject({ method: "PATCH", url: "/settings/sales.credit_enabled", ...s,
+      payload: { value, reason: "آزمون کلید فروش نسیه" } });
+    const fin = (id: string, n: string) => app.inject({ method: "POST", url: `/invoices/${id}/finalize`, ...a,
+      headers: { ...a.headers, "idempotency-key": `toggle-${n}-${id}` }, payload: {} });
+    const pay = async (id: string, amount: string) => {
+      const r = await app.inject({ method: "POST", url: `/invoices/${id}/payments`, ...a, headers: { ...a.headers, "idempotency-key": `toggle-pay-${amount}-${id}` }, payload: { methodCode: "cash", amount } });
+      assert.equal(r.statusCode, 201, r.body);
+    };
+    /** سبد با مشتریِ دارای سقف اعتبار کافی و پرداخت ناقص — یعنی نهایی‌سازی‌اش بدهی تازه می‌سازد. */
+    const creditCart = async () => {
+      const id = await cartAs(a);
+      const att = await app.inject({ method: "PATCH", url: `/invoices/${id}/customer`, ...a, payload: { mobile: `0913${String(Date.now()).slice(-7)}` } });
+      assert.equal(att.statusCode, 200, att.body);
+      await sql`UPDATE sales.customer SET credit_limit=50000000 WHERE id=${att.json().customerId as string}::uuid`.execute(handle.db);
+      await pay(id, "300000");
+      return id;
+    };
+    const status = async (id: string) => (await app.inject({ method: "GET", url: `/invoices/${id}`, ...a })).json() as { status: string; settlement?: { dueAmount: string } };
+
+    // ACL: کلید از همان مسیر تنظیمات با مجوز «settings.security» عوض می‌شود؛ صندوق‌دار نمی‌تواند،
+    // و حسابدار هم نه — او «settings.manage» دارد ولی «settings.security» نه (اگر مجوز این کلید
+    // اشتباهاً settings.manage بود، همین ادعا قرمز می‌شد).
+    const denied = await toggle(false, await loginAs(cashier));
+    assert.equal(denied.statusCode, 403, denied.body);
+    const acctName = `pc_acct_${suffix}`;
+    if ((await sql<{ n: number }>`SELECT count(*)::int n FROM identity.app_user WHERE username=${acctName}`.execute(handle.db)).rows[0]!.n === 0) {
+      const u = await handle.db.insertInto("identity.app_user").values({ username: acctName, full_name: "حسابدار آزمون", password_hash: await hashSecret(PASSWORD), is_active: true, mobile: null, pin_hash: null, totp_secret: null }).returning("id").executeTakeFirstOrThrow();
+      await handle.db.insertInto("identity.user_role").values({ user_id: u.id, role_code: "accountant", branch_id: null }).execute();
+    }
+    const accountant = await toggle(false, await loginAs(acctName));
+    assert.equal(accountant.statusCode, 403, accountant.body);
+
+    // بدهی قبلی، ساخته‌شده وقتی کلید روشن بود (پیش‌فرض سازگار با رفتار قبلی).
+    const old = await creditCart();
+    const oldCustomer = (await sql<{ c: string }>`SELECT customer_id::text c FROM sales.invoice WHERE id=${old}::uuid`.execute(handle.db)).rows[0]!.c;
+    const oldOk = await fin(old, "old");
+    assert.equal(oldOk.statusCode, 200, oldOk.body);
+    assert.equal(oldOk.json().settlement.dueAmount, "700001");
+
+    const fresh = await creditCart();
+    try {
+      assert.equal((await toggle(false)).statusCode, 200);
+      const blocked = await fin(fresh, "off");
+      assert.equal(blocked.statusCode, 409, blocked.body);
+      assert.match(blocked.json().error.message as string, /فروش نسیه در تنظیمات خاموش است/);
+      assert.equal((await status(fresh)).status, "draft", "رد شدن نهایی‌سازی چیزی را نیمه‌کاره ثبت نکرد");
+
+      // تسویهٔ کامل: مانده صفر، کلید بی‌اثر.
+      const cash = await cartAs(a);
+      await pay(cash, "1000001");
+      const paid = await fin(cash, "cash");
+      assert.equal(paid.statusCode, 200, paid.body);
+      assert.equal(paid.json().settlement.dueAmount, "0");
+
+      // تخفیف کامل: قابل پرداخت صفر، بدهی‌ای ساخته نمی‌شود.
+      const zero = await cartAs(a);
+      const lineId = ((await app.inject({ method: "GET", url: `/invoices/${zero}`, ...a })).json().lines as Array<{ id: string }>)[0]!.id;
+      const disc = await app.inject({ method: "PATCH", url: `/invoices/${zero}/lines/${lineId}/discount`, ...a, payload: { discountAmount: "1000001", discountReason: "هدیهٔ کامل آزمون" } });
+      assert.equal(disc.statusCode, 200, disc.body);
+      const free = await fin(zero, "zero");
+      assert.equal(free.statusCode, 200, free.body);
+      assert.equal(free.json().settlement.payableAmount, "0");
+
+      // بدهی قبلی دست نخورد.
+      const before = await status(old);
+      assert.equal(before.status, "finalized");
+      assert.equal(before.settlement?.dueAmount, "700001");
+
+      // Replay همان نهایی‌سازیِ قطعی (همان کلید) با کلید خاموش، پاسخ ذخیره‌شده را برمی‌گرداند نه ۴۰۹.
+      const replay = await fin(old, "old");
+      assert.equal(replay.statusCode, 200, replay.body);
+      assert.equal(replay.json().replayed, true);
+      assert.equal(replay.json().settlement.dueAmount, "700001");
+      // نهایی‌سازی دوباره با کلید تازه هم به نگهبان نسیه نمی‌رسد: فاکتور قطعی همان پاسخ قطعی را
+      // می‌گیرد (۲۰۰، همان شماره و همان مانده)، نه ۴۰۹ «نسیه خاموش».
+      const again = await fin(old, "old-new-key");
+      assert.equal(again.statusCode, 200, again.body);
+      assert.equal(again.json().status, "finalized");
+      assert.equal(again.json().number, oldOk.json().number);
+      assert.equal(again.json().settlement.dueAmount, "700001");
+
+      // وصول واقعی باقی‌ماندهٔ همان بدهی، با کلید خاموش: دریافت از مشتری به حساب بانکی.
+      const bank = (await sql<{ id: string }>`SELECT id::text FROM treasury.account
+        WHERE kind='bank' AND is_active AND (branch_id IS NULL OR branch_id=${BRANCH}::uuid) ORDER BY id LIMIT 1`.execute(handle.db)).rows[0]!.id;
+      const receipt = await app.inject({ method: "POST", url: "/treasury/transactions", ...a,
+        headers: { ...a.headers, "idempotency-key": `toggle-receipt-${old}` },
+        payload: { branchId: BRANCH, purpose: "customer_receipt", amount: "700001", toAccountId: bank, partyType: "customer", partyId: oldCustomer } });
+      assert.equal(receipt.statusCode, 201, receipt.body);
+      const credited = await sql<{ amount: string }>`SELECT coalesce(sum(l.credit-l.debit),0)::text amount FROM ledger.journal_line l
+        WHERE l.party_type='customer' AND l.party_id=${oldCustomer}::uuid`.execute(handle.db);
+      assert.equal(credited.rows[0]!.amount, "700001", "دریافت بدهی مشتری در دفتر نشست، با کلید خاموش");
+    } finally {
+      assert.equal((await toggle(true)).statusCode, 200);
+    }
+    // دوباره روشن: همان سبد با همان قواعد قبلی نهایی می‌شود.
+    const again = await fin(fresh, "on");
+    assert.equal(again.statusCode, 200, again.body);
+    assert.equal(again.json().settlement.dueAmount, "700001");
+  });
+
   // ── F-115-01: وضعیت قصد پرداخت با شناسهٔ خودش، نه با جمع دریافتی ─────────────
 
   const intentUrl = (invoiceId: string, key: string, abandon = false) =>
@@ -2414,7 +2516,7 @@ describe("آمادگی API صندوق", { skip }, () => {
       await setRequired(true);
       const required = await policy();
       assert.equal(required.statusCode, 200, required.body);
-      assert.deepEqual(required.json(), { requireCustomer: true });
+      assert.deepEqual(required.json(), { requireCustomer: true, creditEnabled: true });
       const denied = await pay(unpaid.invoiceId);
       assert.equal(denied.statusCode, 409, denied.body);
       assert.match(denied.body, /شماره مشتری/);

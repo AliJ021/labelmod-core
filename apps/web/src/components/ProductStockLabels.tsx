@@ -2,7 +2,7 @@ import { useEffect, useState } from "react";
 import { api, ApiError } from "../lib/api.ts";
 import type { Variation } from "../lib/catalog.ts";
 import { normalizeDigits } from "../lib/settings-value.ts";
-import { clampCount, labelContentWarning, labelRequestBody, labelRequestProblem, labelSizeProblem, queueTotal } from "../lib/label-print.ts";
+import { clampCount, labelContentWarning, labelRequestBody, labelRequestProblem, labelSizeProblem, queueAddMessage, queueTotal } from "../lib/label-print.ts";
 import { labelQueue } from "../lib/label-queue.ts";
 import { Money } from "./ui/Money.tsx";
 import { StatusBadge } from "./ui/Status.tsx";
@@ -74,11 +74,11 @@ export function ProductStockLabels({ productId, productName, variations, selecte
     setAdded("");
   }
   function addToQueue() {
-    labelQueue.add(variations.filter((v) => (counts[v.id] ?? 0) > 0).map((v) => ({
+    const r = labelQueue.add(variations.filter((v) => (counts[v.id] ?? 0) > 0).map((v) => ({
       variationId: v.id, productId, productName, sku: v.sku, color: v.color, size: v.size, count: counts[v.id] ?? 0,
       priced: v.price !== null, hasBarcode: v.barcode !== null && v.barcode !== "",
     })));
-    setAdded(`${total.toLocaleString("fa-IR")} لیبل از «${productName}» به فهرست چاپ گروهی افزوده شد.`);
+    setAdded(queueAddMessage(r.added, r.requested, `«${productName}»`));
   }
 
   return <section className="solid pad stack" aria-label="موجودی و چاپ بارکد">

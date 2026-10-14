@@ -27,11 +27,14 @@ import { useUrlState, useUrlFlag } from "../lib/use-url-state.ts";
  * و ورودی عددی مرورگر آن را دور می‌اندازد. `rialFromTomanInput` رقم
  * فارسی و عربی و جداکننده هزارگان را می‌فهمد.
  */
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { Glass, Solid } from "../components/Glass.tsx";
 import { SearchField } from "../components/SearchField.tsx";
 import { ProductStockLabels } from "../components/ProductStockLabels.tsx";
 import { LabelPrintQueue } from "../components/LabelPrint.tsx";
+import { labelQueue } from "../lib/label-queue.ts";
+import { clampCount, queueAddMessage, queueItemsForProduct, type QueueItem } from "../lib/label-print.ts";
+import { normalizeDigits } from "../lib/settings-value.ts";
 import { ResultState } from "../components/ResultState.tsx";
 import { useLatestQuery } from "../lib/use-latest-query.ts";
 import { ApiError } from "../lib/api.ts";
@@ -96,6 +99,44 @@ export function Catalog() {
   const query = useLatestQuery({ key: JSON.stringify([search, showArchived]), version: revision, load, delay, enabled: selected === null });
   const products = query.data ?? [];
   function reload() { setDelay(0); setRevision(v => v + 1); }
+  // چاپ گروهی از همین فهرست: چند کالا را تیک بزنید، «از هر تنوع N لیبل»، و همه یک‌جا به
+  // همان فهرست چاپ گروهی می‌روند — بی باز کردن صفحهٔ تک‌تک کالاها.
+  // انتخاب با جست‌وجو پاک نمی‌شود (شناسه → نام): A را تیک بزنید، B را جست‌وجو و تیک بزنید، هر دو می‌روند.
+  const [picked, setPicked] = useState<ReadonlyMap<string, string>>(new Map());
+  const [perVariant, setPerVariant] = useState("1");
+  const [adding, setAdding] = useState(false);
+  const alive = useRef(true);
+  useEffect(() => { alive.current = true; return () => { alive.current = false; }; }, []);
+  function togglePicked(list: readonly Product[], on: boolean) {
+    setPicked((prev) => {
+      const next = new Map(prev);
+      for (const p of list) { if (on) next.set(p.id, p.nameInternal); else next.delete(p.id); }
+      return next;
+    });
+  }
+  /**
+   * همه یا هیچ: تنوع‌های همهٔ کالاهای انتخاب‌شده اول خوانده می‌شوند و فهرست فقط یک بار
+   * عوض می‌شود. خطای یک کالا فهرست را دست‌نخورده و انتخاب را سر جایش می‌گذارد، پس تلاش
+   * دوباره کالایی را دوبار نمی‌افزاید.
+   */
+  async function addPickedToQueue() {
+    const ids = [...picked].map(([id, name]) => ({ id, name }));
+    const count = clampCount(Number(normalizeDigits(perVariant)));
+    if (ids.length === 0 || count === 0 || adding) return;
+    setAdding(true); setError(null); setNote(null);
+    try {
+      const items: QueueItem[] = [];
+      for (const p of ids) items.push(...queueItemsForProduct(p, (await catalog.product(p.id)).variations, count));
+      if (!alive.current) return;
+      const r = labelQueue.add(items);
+      // فقط همان‌هایی که فرستاده شدند؛ تیکی که در حین خواندن زده شد می‌ماند.
+      setPicked((prev) => { const next = new Map(prev); for (const p of ids) next.delete(p.id); return next; });
+      setNote(queueAddMessage(r.added, r.requested, `${ids.length.toLocaleString("fa-IR")} کالا`));
+    } catch (e) {
+      if (!alive.current) return;
+      setError(`${e instanceof ApiError ? e.message : "خواندن تنوع‌ها ممکن نشد."} چیزی به فهرست چاپ افزوده نشد و انتخاب‌ها سر جایشان هستند؛ دوباره تلاش کنید.`);
+    } finally { if (alive.current) setAdding(false); }
+  }
   function changeSearch(value: string) { setSearch(value); setDelay(value === "" ? 0 : 250); }
 
   if (selected !== null) {
@@ -169,9 +210,18 @@ export function Catalog() {
         ) : products.length === 0 ? (
           <ResultState title={search ? "برای این جست‌وجو کالایی پیدا نشد." : "کالایی برای نمایش در این فهرست نیست."} description={search ? "کد یا نام دیگری را امتحان کنید." : "با افزودن کالا، تعریف تنوع‌ها و قیمت‌گذاری را شروع کنید."} actionLabel={search ? "پاک‌کردن جست‌وجو" : "افزودن کالا"} onAction={() => { if (search) { changeSearch(""); reload(); } else setCreating(true); }} />
         ) : (
+          <>
+          {labels === "1" ? <div className="row" style={{ gap: "var(--s-2)", flexWrap: "wrap", alignItems: "end", marginBottom: "var(--s-3)" }}>
+            <label className="auth-field">از هر تنوع (لیبل)<input inputMode="numeric" style={{ width: "5em" }} value={perVariant} onChange={(e) => setPerVariant(e.target.value)} /></label>
+            <button type="button" className="btn btn--primary" disabled={picked.size === 0 || adding || clampCount(Number(normalizeDigits(perVariant))) === 0}
+              onClick={() => void addPickedToQueue()}>{adding ? "در حال افزودن به فهرست چاپ…" : `افزودن ${picked.size.toLocaleString("fa-IR")} کالای انتخاب‌شده به فهرست چاپ`}</button>
+            {picked.size > 0 ? <button type="button" className="btn" disabled={adding} onClick={() => setPicked(new Map())}>پاک‌کردن انتخاب</button> : null}
+          </div> : null}
           <table className="grid">
             <thead>
               <tr>
+                {labels === "1" ? <th><input type="checkbox" aria-label="انتخاب همهٔ کالاهای این فهرست" checked={products.length > 0 && products.every((p) => picked.has(p.id))}
+                  onChange={(e) => togglePicked(products, e.target.checked)} /></th> : null}
                 <th>کد</th>
                 <th>نام</th>
                 <th>برند</th>
@@ -183,6 +233,8 @@ export function Catalog() {
             <tbody>
               {products.map((p) => (
                 <tr key={p.id}>
+                  {labels === "1" ? <td><input type="checkbox" aria-label={`انتخاب ${p.nameInternal} برای چاپ گروهی`} checked={picked.has(p.id)}
+                    onChange={(e) => togglePicked([p], e.target.checked)} /></td> : null}
                   <td>{p.code}</td>
                   <td>
                     {p.nameInternal}
@@ -196,7 +248,8 @@ export function Catalog() {
                     <ProductPrice product={p} />
                   </td>
                   <td>
-                    <button type="button" className="btn" onClick={() => setSelected(p.id)}>
+                    {/* تا پایان افزودن گروهی، صفحهٔ کالا باز نمی‌شود؛ وگرنه نتیجه بی‌پیام در پس‌زمینه ثبت می‌شد. */}
+                    <button type="button" className="btn" disabled={adding} onClick={() => setSelected(p.id)}>
                       {labels === "1" ? "انتخاب تنوع و چاپ لیبل" : "باز کردن"}
                     </button>
                   </td>
@@ -204,6 +257,7 @@ export function Catalog() {
               ))}
             </tbody>
           </table>
+          </>
         )}
       </Solid>
       </div>

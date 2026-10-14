@@ -140,3 +140,64 @@ describe("تنظیم‌پذیری", () => {
     });
   });
 });
+
+
+describe("اسکنر HID — چیدمان، پسوند و تکرار کلید", () => {
+  const VALID = "2000000012018";
+  test("رقم فارسی و عربیِ چیدمان کیبورد همان رقم لاتین است؛ رقم اول هنوز عبور می‌کند", () => {
+    const buf = new ScanBuffer();
+    const fa = [...EAN13].map((d) => String.fromCharCode(0x06f0 + Number(d))).join("");
+    const steps = type(buf, fa, 8);
+    assert.deepEqual(steps[0], { kind: "ignored" });
+    assert.ok(steps.slice(1).every((s) => s.kind === "consumed"));
+    assert.deepEqual(buf.push("Enter", 1000 + 13 * 8), { kind: "scanned", barcode: EAN13 });
+    const ar = new ScanBuffer();
+    type(ar, [...EAN13].map((d) => String.fromCharCode(0x0660 + Number(d))).join(""), 8);
+    assert.deepEqual(ar.push("Enter", 1000 + 13 * 8), { kind: "scanned", barcode: EAN13 });
+  });
+
+  test("Tab پس از رشتهٔ سریع کامل پسوند اسکن است؛ کد ۱۷ رقمی قدیمی هم بی‌تغییر", () => {
+    const buf = new ScanBuffer();
+    type(buf, "12345678901234567", 6);
+    assert.deepEqual(buf.push("Tab", 1000 + 17 * 6), { kind: "scanned", barcode: "12345678901234567" });
+  });
+
+  test("یافتهٔ root: Enter یا Tab ۵۱ تا ۱۱۹ میلی‌ثانیه پس از رقم آخر، همان اسکن کامل است", () => {
+    for (const key of ["Enter", "Tab"]) for (let delay = 51; delay <= 119; delay++) {
+      const buf = new ScanBuffer();
+      type(buf, VALID, 8);
+      assert.deepEqual(buf.push(key, 1000 + 12 * 8 + delay), { kind: "scanned", barcode: VALID }, `${key} +${delay}ms`);
+    }
+  });
+
+  test("کنترل منفی: پسوند دیررس پس از رشتهٔ کوتاه، تایپ انسانی یا بیرون از مهلت، اسکن نیست و Enter عادی می‌ماند", () => {
+    const short = new ScanBuffer();
+    type(short, "200123", 8);
+    assert.deepEqual(short.push("Enter", 1000 + 5 * 8 + 80), { kind: "ignored" });
+    const human = new ScanBuffer();
+    type(human, VALID, 120);
+    assert.deepEqual(human.push("Enter", 1000 + 12 * 120 + 80), { kind: "ignored" });
+    const late = new ScanBuffer();
+    type(late, VALID, 8);
+    assert.deepEqual(late.push("Enter", 1000 + 12 * 8 + 400), { kind: "ignored" });
+  });
+
+  test("یافتهٔ root: اسکن کندشده پس از پیشوند معتبر (۲۰۰۰۰۰۰۴ در ۲۰۰۰۰۰۰۴۰۰۰۰۶) هیچ کالایی نمی‌سازد — ثبت خودکار با مکث نیست", () => {
+    const buf = new ScanBuffer();
+    const steps = [...type(buf, "20000004", 8, 1000), ...type(buf, "00006", 8, 1000 + 7 * 8 + 120)];
+    steps.push(buf.push("Enter", 1000 + 7 * 8 + 120 + 5 * 8));
+    assert.ok(steps.every((s) => s.kind !== "scanned"), JSON.stringify(steps.filter((s) => s.kind === "scanned")));
+    // همان بارکد بی مکث با پسوند، کامل و بی‌تغییر ثبت می‌شود.
+    const ok = new ScanBuffer();
+    type(ok, "2000000400006", 8);
+    assert.deepEqual(ok.push("Enter", 1000 + 13 * 8), { kind: "scanned", barcode: "2000000400006" });
+  });
+
+  test("کلید نگه‌داشته‌شده (repeat، حدود ۳۳ms) هرگز اسکن نیست و Enter بعدی را نمی‌بلعد", () => {
+    const buf = new ScanBuffer();
+    buf.push("5", 1000);
+    let t = 1300;
+    for (let i = 0; i < 12; i++, t += 33) assert.deepEqual(buf.push("0", t, i > 0), { kind: "ignored" });
+    assert.deepEqual(buf.push("Enter", t), { kind: "ignored" });
+  });
+});
