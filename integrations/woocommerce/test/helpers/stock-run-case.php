@@ -43,6 +43,19 @@ class LMC_Stored_Product
 }
 
 function get_option($key, $default = false) { return $default; }
+// Pull حالا از دفتر کسر و زیر قفل مشترک با Push می‌گذرد (docs/STOCK-SYNC-PROTOCOL.md).
+// این خوراک بی stockRev است، پس مسیر قدیمی (apply_legacy) را می‌سنجد؛ قفل همیشه آزاد است.
+$GLOBALS['wpdb'] = new class {
+    public string $prefix = 'wp_';
+    public function prepare($q, ...$a) { return vsprintf(str_replace(['%s', '%d'], ["'%s'", '%d'], $q), $a); }
+    public function get_var($q) { return str_contains($q, 'GET_LOCK') ? '1' : null; }
+    public function query($q) { return 1; }
+};
+function get_post_meta($id, $key, $single = false) { return ''; }
+function update_post_meta($id, $key, $value) { return true; }
+function delete_post_meta($id, $key) { $GLOBALS['stock_meta_deleted'][] = $key; return true; }
+require_once __DIR__ . '/../../labelmod-connector/includes/class-lmc-push-guard.php';
+require_once __DIR__ . '/../../labelmod-connector/includes/class-lmc-stock-ledger.php';
 function get_posts($args) { return $GLOBALS['stock_found'] ?? [42]; }
 function wc_get_product($id) { return clone $GLOBALS['stock_saved']; }
 function wp_parse_url($url) { return parse_url($url); }

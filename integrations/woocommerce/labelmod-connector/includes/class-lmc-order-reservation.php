@@ -115,6 +115,8 @@ class LMC_Order_Reservation
         $order->update_meta_data(self::STATE, $state);
         $order->delete_meta_data(self::ERROR);
         $order->save();
+        // ACK فقط با اثبات شمول (stockRev پس از رزرو)، نه با خودِ پاسخ موفق.
+        if ($state !== 'released') { LMC_Stock_Ledger::ack_order($order, $result['stock'] ?? null); }
     }
 
     private static function fail(WC_Order $order, WP_Error $error): void

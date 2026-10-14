@@ -314,6 +314,24 @@ class LMC_Push_Receiver
         }
         $on_hand = (int) $data['onHand'];
 
+        // Core ۰۹۷+: واترمارک مشترک با Pull و کسرهای محلی (docs/STOCK-SYNC-PROTOCOL.md).
+        if (isset($data['stockRev'])) {
+            $rev = (string) $data['stockRev'];
+            $wh  = (string) ($data['warehouseId'] ?? '');
+            if (!preg_match('/^[0-9]{1,18}$/D', $rev) || !preg_match('/^[0-9a-f-]{36}$/D', $wh)) {
+                return new WP_Error('lmc_bad_payload', 'stockRev یا warehouseId معتبر نیست.', ['status' => 400]);
+            }
+            if ($wh !== (string) lmc_setting('warehouse_id')) {
+                return ['ok' => true, 'applied' => false, 'note' => 'انبار این پیام انبار سایت نیست'];
+            }
+            $out = LMC_Stock_Ledger::apply_snapshot($r['product_id'], max(0, $on_hand), (int) $rev, $wh, 0, $r['version']);
+            if (!empty($out['busy'])) {
+                return new WP_Error('lmc_busy', 'همین کالا در حال نوشتن است؛ کمی بعد دوباره.', ['status' => 503]);
+            }
+            $out['onHand'] = $on_hand;
+            return $out;
+        }
+
         $out = self::apply_versioned(
             $r['product_id'],
             self::STOCK_VERSION_META,

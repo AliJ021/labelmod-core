@@ -90,6 +90,27 @@ export function registerWebRoutes(app: FastifyInstance, deps: WebRouteDeps): voi
     return s;
   };
 
+  /**
+   * اثبات شمول (ACK) — docs/STOCK-SYNC-PROTOCOL.md.
+   *
+   * پس از Commit رزرو یا سفارش، واترمارک هر تنوع (`stock_balance.row_version`) خوانده
+   * می‌شود. هر عکسِ موجودیِ همان تنوع و انبار با `stockRev` بزرگ‌تر یا مساوی این عدد،
+   * اثر همین سفارش را دارد؛ کمتر از آن ندارد. «HTTP 200» به‌تنهایی این را نمی‌گوید.
+   * خواندن پس از Commit عمدی است: واترمارک فقط جلو می‌رود، پس عدد خوانده‌شده هم
+   * برای Replay معتبر است.
+   */
+  async function stockWatermarks(warehouseId: string, skus: readonly string[]) {
+    if (skus.length === 0) return [];
+    const rows = await db
+      .selectFrom("inventory.stock_balance as b")
+      .innerJoin("catalog.variation as v", "v.id", "b.variation_id")
+      .select(["v.sku", "v.id as variation_id", "b.row_version"])
+      .where("b.warehouse_id", "=", warehouseId)
+      .where("v.sku", "in", [...new Set(skus)])
+      .execute();
+    return rows.map((r) => ({ sku: r.sku, variationId: r.variation_id, stockRev: String(r.row_version) }));
+  }
+
   const reservationScope = z.object({
     branchId: uuid, warehouseId: uuid, externalId: z.string().trim().min(1).max(64),
   });
@@ -111,7 +132,8 @@ export function registerWebRoutes(app: FastifyInstance, deps: WebRouteDeps): voi
         `.execute(trx);
         return out.rows[0]!.result;
       });
-      return reply.code(result.replayed ? 200 : 201).send(result);
+      const stock = await stockWatermarks(body.warehouseId, (lines as ReadonlyArray<{ sku: string }>).map((l) => l.sku));
+      return reply.code(result.replayed ? 200 : 201).send({ ...result, stock });
     });
   }
 
@@ -207,6 +229,7 @@ export function registerWebRoutes(app: FastifyInstance, deps: WebRouteDeps): voi
       // نمی‌شود Serialize کرد. `serializeMoney` تنها مرز تبدیل است.
       payableAmount: serializeMoney(invoice.payableAmount),
       replayed: out.replayed,
+      stock: await stockWatermarks(body.warehouseId, body.lines.map((l) => l.sku)),
     });
   };
   app.post("/web/orders", ingestWebOrder);
@@ -272,6 +295,7 @@ export function registerWebRoutes(app: FastifyInstance, deps: WebRouteDeps): voi
         "v.sku",
         "b.on_hand",
         "b.reserved",
+        "b.row_version",
         "b.updated_at",
         "v.status",
         // قیمت باز همان فهرست، در همین لحظه. سطر بسته (`valid_to`)
@@ -318,6 +342,8 @@ export function registerWebRoutes(app: FastifyInstance, deps: WebRouteDeps): voi
         // «قیمتش صفر است» یکی نیست. افزونه باید ردش کند، نه اینکه
         // کالا را مجانی کند.
         price: r.price === null ? null : serializeMoney(parseMoney(r.price)),
+        /** واترمارک همین سطر؛ با `stockRev` در Push و پاسخ رزرو/سفارش مقایسه‌پذیر است. */
+        stockRev: String(r.row_version),
       })),
     };
   });

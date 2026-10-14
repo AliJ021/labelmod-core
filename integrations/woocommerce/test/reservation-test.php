@@ -26,6 +26,7 @@ class WC_Order_Item_Product {
     public function get_product() { return $this; }
     public function get_sku() { return $this->sku; }
     public function get_meta($key) { return $this->original; }
+    public function get_stock_managed_by_id() { return 7; }
 }
 class WC_Order {
     public $method = 'cod'; public $status = 'processing'; public $meta = []; public $items; public $notes = []; public $total = '2';
@@ -59,6 +60,17 @@ class LMC_Client {
     }
     public static function is_retryable($e) { return $e->code === 'network'; }
 }
+// دفتر کسر: ACK رزرو به آن می‌رسد. پرس‌وجوها ثبت می‌شوند تا ادعا روی خودِ SQL باشد.
+$GLOBALS['wpdb'] = new class {
+    public string $prefix = 'wp_'; public array $log = [];
+    public function prepare($q, ...$a) { return vsprintf(str_replace(['%s', '%d'], ["'%s'", '%d'], $q), $a); }
+    public function get_var($q) { $this->log[] = $q; return str_contains($q, 'GET_LOCK') ? '1' : null; }
+    public function query($q) { $this->log[] = $q; return 1; }
+};
+function get_post_meta($id, $key, $single = false) { return ''; }
+function wc_get_product($id) { return null; }
+require __DIR__ . '/../labelmod-connector/includes/class-lmc-push-guard.php';
+require __DIR__ . '/../labelmod-connector/includes/class-lmc-stock-ledger.php';
 require __DIR__ . '/../labelmod-connector/includes/class-lmc-order-sync.php';
 require __DIR__ . '/../labelmod-connector/includes/class-lmc-order-reservation.php';
 require __DIR__ . '/../labelmod-connector/includes/class-lmc-refund-sync.php';
@@ -74,6 +86,8 @@ LMC_Order_Reservation::changed(1);
 check(count($scheduled) === 1, 'رویداد تکراری صف دوباره ندارد');
 $settings['warehouse_id'] = 'other';
 run_reservation(1);
+check(in_array("UPDATE wp_lmc_stock_hold SET ack_rev = 0 WHERE order_id = 1 AND product_id = 7 AND ack_rev IS NULL", $GLOBALS['wpdb']->log, true),
+    'پاسخ رزرو Core قدیمی (بی stock) کسر را با واترمارک ۰ تأیید می‌کند');
 check(LMC_Client::$calls[0] === ['/web/order-reservations', ['branchId' => 'b', 'warehouseId' => 'w', 'externalId' => '1', 'lines' => [['sku' => 'SKU-1', 'qty' => '2']]]], 'رزرو فقط SKU و تعداد با هویت ثابت انبار می‌فرستد');
 check($order->get_meta(LMC_Order_Sync::META_PAID) === '' && $order->get_meta(LMC_Order_Sync::META_INVOICE) === '', 'رزرو هیچ مدرک دریافت وجه یا فاکتور نمی‌سازد');
 check($order->get_meta(LMC_Order_Reservation::STATE) === 'reserved', 'وضعیت رزرو ذخیره می‌شود');

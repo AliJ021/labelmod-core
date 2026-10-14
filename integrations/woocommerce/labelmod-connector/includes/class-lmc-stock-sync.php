@@ -56,11 +56,11 @@ class LMC_Stock_Sync
     /**
      * یک دور همگام‌سازی.
      *
-     * @return array{updated:int,skipped:int,linked:int,received:int,unchanged:int,invalid:int,price_enabled:bool,link_enabled:bool,error:string}
+     * @return array{updated:int,skipped:int,busy:int,linked:int,received:int,unchanged:int,invalid:int,price_enabled:bool,link_enabled:bool,error:string}
      */
     public static function run(): array
     {
-        $out = ['updated' => 0, 'skipped' => 0, 'linked' => 0, 'received' => 0, 'unchanged' => 0,
+        $out = ['updated' => 0, 'skipped' => 0, 'busy' => 0, 'linked' => 0, 'received' => 0, 'unchanged' => 0,
             'invalid' => 0, 'price_enabled' => lmc_setting('sync_price') === 'yes',
             'link_enabled' => lmc_setting('link_by_sku') === 'yes', 'error' => ''];
 
@@ -132,14 +132,29 @@ class LMC_Stock_Sync
                 continue;
             }
 
-            $changed = self::apply_stock($product, $available);
+            // ⚠️ موجودی فقط از دفتر کسر و زیر قفل مشترک با Push نشانده می‌شود:
+            //    عکس Pull که از Push تازه‌تر کهنه‌تر است، یا کسر محلیِ تأییدنشده را در
+            //    خود ندارد، واحد فروخته‌شده را برنمی‌گرداند (docs/STOCK-SYNC-PROTOCOL.md).
+            $rev = isset($item['stockRev']) ? (string) $item['stockRev'] : '';
+            $res_stock = $rev !== '' && preg_match('/^[0-9]{1,18}$/D', $rev)
+                ? LMC_Stock_Ledger::apply_snapshot((int) $product_id, $available, (int) $rev, $warehouse, 5)
+                : LMC_Stock_Ledger::apply_legacy((int) $product_id, $available, 5);
+            if (!empty($res_stock['busy'])) {
+                // Push یا کسر هم‌زمان قفل را دارد؛ مکان‌نما جلو نمی‌رود تا این سطر دوباره بیاید.
+                $out['busy']++;
+                continue;
+            }
+            $changed = !empty($res_stock['applied']);
 
             if ($sync_price) {
-                $changed = self::apply_price($product, self::price_for_site($item)) || $changed;
+                $fresh = wc_get_product($product_id);
+                if ($fresh && self::apply_price($fresh, self::price_for_site($item))) {
+                    $fresh->save();
+                    $changed = true;
+                }
             }
 
             if ($changed) {
-                $product->save();
                 $out['updated']++;
             } else {
                 $out['unchanged']++;
@@ -149,7 +164,7 @@ class LMC_Stock_Sync
         // مکان‌نما فقط وقتی جلو می‌رود که واقعاً سطری آمده باشد.
         // ذخیره‌کردن `null` یعنی دور بعد از اول شروع کند — که درست
         // است ولی هر بار همه‌چیز را می‌فرستد.
-        if (!empty($res['cursor'])) {
+        if (!empty($res['cursor']) && $out['busy'] === 0) {
             update_option(self::CURSOR_OPTION, (string) $res['cursor'], false);
         }
 
