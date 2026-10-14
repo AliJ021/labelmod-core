@@ -219,8 +219,8 @@ describe("سفارش سایت (ووکامرس)", { skip }, () => {
     }
     const feed = await app.inject({ method: "GET", url: `/web/stock?warehouseId=${STORE_WH}&limit=5000`, ...auth() });
     assert.equal(feed.statusCode, 200, feed.body);
-    const fed = (feed.json().items as Array<{ variationId: string; available: string; stockRev: string }>).find(i => i.variationId === variationId);
-    assert.deepEqual(fed && { available: fed.available, stockRev: fed.stockRev }, { available: "1", stockRev: reservedRev });
+    const fed = (feed.json().items as Array<{ variationId: string; available: string; stockRev: string; active: boolean }>).find(i => i.variationId === variationId);
+    assert.deepEqual(fed && { available: fed.available, stockRev: fed.stockRev, active: fed.active }, { available: "1", stockRev: reservedRev, active: true });
     const after = await sql`SELECT (SELECT count(*) FROM sales.invoice) invoices,
       (SELECT count(*) FROM treasury.payment) payments,(SELECT count(*) FROM inventory.stock_movement) movements`.execute(handle.db);
     assert.deepEqual(after.rows,before.rows,"رزرو سند مالی، دریافت وجه یا خروج فیزیکی ندارد");

@@ -68,6 +68,22 @@ BEGIN
   IF (v_payload->>'version')::bigint <= (v_msg->>'version')::bigint THEN
     RAISE EXCEPTION 'نسخهٔ سراسری Push جلو نرفت';
   END IF;
+  -- ۴. وضعیت تنوع جزو محتوای عکس است: غیرفعال‌شدن واترمارک را جلو می‌برد و Push صفر می‌برد،
+  --    همان چیزی که خوراک برای تنوع غیرفعال می‌دهد.
+  SELECT row_version INTO v_rev FROM inventory.stock_balance WHERE variation_id=v_variation AND warehouse_id=v_warehouse;
+  UPDATE catalog.variation SET status='paused' WHERE id=v_variation;
+  SELECT payload INTO v_msg FROM platform.outbox_message
+   WHERE topic='web.stock_push' AND status='pending' AND payload->>'variationId'=v_variation::text;
+  IF (SELECT row_version FROM inventory.stock_balance WHERE variation_id=v_variation AND warehouse_id=v_warehouse) <> v_rev + 1 THEN
+    RAISE EXCEPTION 'تغییر وضعیت تنوع واترمارک را جلو نبرد';
+  END IF;
+  IF v_msg->>'stockRev' IS DISTINCT FROM (v_rev+1)::text OR (v_msg->>'onHand')::numeric <> 0 OR (v_msg->>'active')::boolean THEN
+    RAISE EXCEPTION 'Push تنوع غیرفعال صفر و active=false نیست: %', v_msg;
+  END IF;
+  UPDATE catalog.variation SET status='paused' WHERE id=v_variation;
+  IF (SELECT row_version FROM inventory.stock_balance WHERE variation_id=v_variation AND warehouse_id=v_warehouse) <> v_rev + 1 THEN
+    RAISE EXCEPTION 'به‌روزرسانی بی تغییر وضعیت واترمارک را جلو برد';
+  END IF;
   RAISE NOTICE 'واترمارک ۰۹۷: یک واحد به‌ازای هر تغییر، Trigger مستقل از نویسنده (با کنترل منفی) و stockRev در Push تأیید شد';
 END $$;
 ROLLBACK;

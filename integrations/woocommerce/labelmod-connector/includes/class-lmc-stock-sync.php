@@ -79,6 +79,9 @@ class LMC_Stock_Sync
         if ($list !== '') {
             $query['priceList'] = $list;
         }
+        // عقب‌ماندهٔ کسر، آشتی اولیه و بازمحاسبه‌های معوق پیش از هر خواندن.
+        LMC_Stock_Ledger::maintain();
+
         $since = get_option(self::CURSOR_OPTION, '');
         if (is_string($since) && $since !== '') {
             $query['since'] = $since;
@@ -135,12 +138,18 @@ class LMC_Stock_Sync
             // ⚠️ موجودی فقط از دفتر کسر و زیر قفل مشترک با Push نشانده می‌شود:
             //    عکس Pull که از Push تازه‌تر کهنه‌تر است، یا کسر محلیِ تأییدنشده را در
             //    خود ندارد، واحد فروخته‌شده را برنمی‌گرداند (docs/STOCK-SYNC-PROTOCOL.md).
-            $rev = isset($item['stockRev']) ? (string) $item['stockRev'] : '';
-            $res_stock = $rev !== '' && preg_match('/^[0-9]{1,18}$/D', $rev)
-                ? LMC_Stock_Ledger::apply_snapshot((int) $product_id, $available, (int) $rev, $warehouse, 5)
-                : LMC_Stock_Ledger::apply_legacy((int) $product_id, $available, 5);
-            if (!empty($res_stock['busy'])) {
-                // Push یا کسر هم‌زمان قفل را دارد؛ مکان‌نما جلو نمی‌رود تا این سطر دوباره بیاید.
+            if (array_key_exists('stockRev', $item)) {
+                $rev = (string) $item['stockRev'];
+                $res_stock = preg_match('/^[0-9]{1,18}$/D', $rev)
+                    ? LMC_Stock_Ledger::apply_snapshot((int) $product_id, $available, ($item['active'] ?? true) !== false,
+                        (int) $rev, $warehouse, 5, true)
+                    : ['ok' => false, 'applied' => false, 'rejected' => true];
+            } else {
+                $res_stock = LMC_Stock_Ledger::apply_legacy((int) $product_id, $available, 5);
+            }
+            if (!empty($res_stock['busy']) || !empty($res_stock['blocked']) || !empty($res_stock['rejected']) || isset($res_stock['error'])) {
+                // مشغول، دفتر ناقص، عکس بی‌واترمارک/بدشکل یا شکست نوشتن: مکان‌نما جلو نمی‌رود تا
+                // این سطر دوباره بیاید؛ و دیده می‌شود، نه بی‌صدا.
                 $out['busy']++;
                 continue;
             }
@@ -317,6 +326,7 @@ class LMC_Stock_Sync
         }
         if (!$result['link_enabled']) { $text .= ' اتصال اولیه با SKU خاموش است.'; }
         if (!$result['price_enabled']) { $text .= ' همگام‌سازی قیمت خاموش است؛ قیمت سایت تغییر نمی‌کند.'; }
+        if (!empty($result['busy'])) { $text .= sprintf(' %d سطر نشانده نشد (مشغول، دفتر کسر ناقص یا عکس بی‌واترمارک)؛ دور بعد دوباره می‌آید.', $result['busy']); }
         if ($result['received'] >= self::BATCH) { $text .= ' صفحه پر است؛ ادامهٔ دریافت به زمان‌بند سپرده شد.'; }
         return $text;
     }

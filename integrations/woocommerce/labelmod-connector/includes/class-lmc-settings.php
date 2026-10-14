@@ -248,6 +248,16 @@ class LMC_Settings
             . esc_html__('همه کالاها را دوباره می‌گیرد، نه فقط تغییرات تازه.', 'labelmod-connector')
             . '</span></form>';
 
+        // بازنشانی صریح واترمارک (docs/STOCK-SYNC-PROTOCOL.md): فقط پس از بازیابی Core از بکاپ
+        // قدیمی‌تر یا برگشت عمدی به Core پیش از ۰۹۷. کسرهای محلی پاک نمی‌شوند.
+        echo '<form method="post" action="' . esc_url(admin_url('admin-post.php')) . '">';
+        wp_nonce_field('lmc_stock_reset');
+        echo '<input type="hidden" name="action" value="lmc_stock_reset">';
+        submit_button(__('بازنشانی واترمارک موجودی', 'labelmod-connector'), 'secondary', 'submit', false);
+        echo ' <span class="description">'
+            . esc_html__('فقط پس از بازیابی سامانه از بکاپ یا برگشت عمدی نسخهٔ سامانه.', 'labelmod-connector')
+            . '</span></form>';
+
         echo '</div>';
     }
 

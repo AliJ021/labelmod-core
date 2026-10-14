@@ -344,6 +344,8 @@ export function registerWebRoutes(app: FastifyInstance, deps: WebRouteDeps): voi
         price: r.price === null ? null : serializeMoney(parseMoney(r.price)),
         /** واترمارک همین سطر؛ با `stockRev` در Push و پاسخ رزرو/سفارش مقایسه‌پذیر است. */
         stockRev: String(r.row_version),
+        /** وضعیت جزو محتوای عکس است: تغییرش در Core واترمارک را جلو می‌برد (۰۹۷). */
+        active: r.status === "active",
       })),
     };
   });

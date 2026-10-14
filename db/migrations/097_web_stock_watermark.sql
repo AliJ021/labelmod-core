@@ -55,13 +55,16 @@ DECLARE
   v_sku text;
   v_rev bigint;
   v_qty platform.qty;
+  v_active boolean;
 BEGIN
   IF NOT platform.setting_bool('web.push_enabled', false) THEN RETURN; END IF;
   IF p_warehouse IS DISTINCT FROM platform.web_warehouse_id() THEN RETURN; END IF;
 
-  SELECT sku INTO v_sku FROM catalog.variation WHERE id = p_variation;
-  -- عدد و واترمارک از **یک** خواندن، تا عکسِ ناسازگار ساخته نشود.
-  SELECT greatest(0, coalesce(b.on_hand, 0) - coalesce(b.reserved, 0)), b.row_version
+  SELECT sku, status = 'active' INTO v_sku, v_active FROM catalog.variation WHERE id = p_variation;
+  -- عدد و واترمارک از **یک** خواندن، تا عکسِ ناسازگار ساخته نشود. تنوع غیرفعال صفر است،
+  -- همان قاعدهٔ خوراک؛ پس «یک واترمارک، یک محتوا» در Push و Pull یکی است.
+  SELECT CASE WHEN v_active THEN greatest(0, coalesce(b.on_hand, 0) - coalesce(b.reserved, 0)) ELSE 0 END,
+         b.row_version
     INTO v_qty, v_rev
     FROM inventory.stock_balance b
    WHERE b.variation_id = p_variation AND b.warehouse_id = p_warehouse;
@@ -73,10 +76,41 @@ BEGIN
       'sku',         v_sku,
       'onHand',      trim_scale(coalesce(v_qty, 0)),
       'warehouseId', p_warehouse::text,
+      'active',      coalesce(v_active, false),
       'stockRev',    coalesce(v_rev, 0)::text,
       'at',          to_char(now() AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS"Z"')
     ));
 END $$;
 REVOKE ALL ON FUNCTION inventory.push_web_stock(uuid, uuid) FROM PUBLIC;
+
+-- وضعیت تنوع بخشی از محتوای عکس است (غیرفعال = صفر). پس تغییرش واترمارک همهٔ سطرهای
+-- آن تنوع را جلو می‌برد و updated_at را تازه می‌کند (تا خوراک مکان‌نما‌دار آن را ببیند)،
+-- و Push تازه می‌سازد. بی این، Pull و Push با یک واترمارک دو عدد متفاوت می‌بردند و
+-- عکس تازه‌تر «تکراری» رد می‌شد. DEFINER است چون نقش برنامه حق نوشتن stock_balance ندارد.
+CREATE FUNCTION inventory.bump_rev_on_variation_status() RETURNS trigger
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = pg_catalog, public, inventory, platform, catalog
+AS $$
+DECLARE
+  v_wh uuid;
+BEGIN
+  IF NEW.status IS DISTINCT FROM OLD.status THEN
+    FOR v_wh IN
+      UPDATE inventory.stock_balance
+         SET row_version = row_version + 1, updated_at = now()
+       WHERE variation_id = NEW.id
+      RETURNING warehouse_id
+    LOOP
+      PERFORM inventory.push_web_stock(NEW.id, v_wh);
+    END LOOP;
+  END IF;
+  RETURN NULL;
+END $$;
+REVOKE ALL ON FUNCTION inventory.bump_rev_on_variation_status() FROM PUBLIC;
+
+CREATE TRIGGER variation_status_bumps_stock_rev
+  AFTER UPDATE OF status ON catalog.variation
+  FOR EACH ROW EXECUTE FUNCTION inventory.bump_rev_on_variation_status();
 
 COMMIT;

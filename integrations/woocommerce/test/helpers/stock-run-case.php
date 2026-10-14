@@ -50,7 +50,11 @@ $GLOBALS['wpdb'] = new class {
     public function prepare($q, ...$a) { return vsprintf(str_replace(['%s', '%d'], ["'%s'", '%d'], $q), $a); }
     public function get_var($q) { return str_contains($q, 'GET_LOCK') ? '1' : null; }
     public function query($q) { return 1; }
+    public function get_results($q, $o = null) { return []; }
 };
+if (!defined('ARRAY_A')) { define('ARRAY_A', 'ARRAY_A'); }
+if (!function_exists('dbDelta')) { function dbDelta($sql) { return []; } }
+if (!function_exists('wp_cache_delete')) { function wp_cache_delete($id, $group = '') { return true; } }
 function get_post_meta($id, $key, $single = false) { return ''; }
 function update_post_meta($id, $key, $value) { return true; }
 function delete_post_meta($id, $key) { $GLOBALS['stock_meta_deleted'][] = $key; return true; }

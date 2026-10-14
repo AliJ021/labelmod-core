@@ -314,8 +314,8 @@ class LMC_Push_Receiver
         }
         $on_hand = (int) $data['onHand'];
 
-        // Core ۰۹۷+: واترمارک مشترک با Pull و کسرهای محلی (docs/STOCK-SYNC-PROTOCOL.md).
-        if (isset($data['stockRev'])) {
+        // همهٔ موجودی از دفتر کسر و واترمارک مشترک با Pull می‌گذرد (docs/STOCK-SYNC-PROTOCOL.md).
+        if (array_key_exists('stockRev', $data)) {
             $rev = (string) $data['stockRev'];
             $wh  = (string) ($data['warehouseId'] ?? '');
             if (!preg_match('/^[0-9]{1,18}$/D', $rev) || !preg_match('/^[0-9a-f-]{36}$/D', $wh)) {
@@ -324,21 +324,22 @@ class LMC_Push_Receiver
             if ($wh !== (string) lmc_setting('warehouse_id')) {
                 return ['ok' => true, 'applied' => false, 'note' => 'انبار این پیام انبار سایت نیست'];
             }
-            $out = LMC_Stock_Ledger::apply_snapshot($r['product_id'], max(0, $on_hand), (int) $rev, $wh, 0, $r['version']);
-            if (!empty($out['busy'])) {
-                return new WP_Error('lmc_busy', 'همین کالا در حال نوشتن است؛ کمی بعد دوباره.', ['status' => 503]);
-            }
-            $out['onHand'] = $on_hand;
-            return $out;
+            $out = LMC_Stock_Ledger::apply_snapshot($r['product_id'], max(0, $on_hand),
+                ($data['active'] ?? true) !== false, (int) $rev, $wh, 0, false, $r['version']);
+        } else {
+            $out = LMC_Stock_Ledger::apply_legacy($r['product_id'], max(0, $on_hand), 0, $r['version']);
         }
-
-        $out = self::apply_versioned(
-            $r['product_id'],
-            self::STOCK_VERSION_META,
-            $r['version'],
-            static fn ($product): bool => LMC_Stock_Sync::apply_stock($product, $on_hand)
-        );
-        if (is_array($out)) { $out['onHand'] = $on_hand; }
+        if (!empty($out['busy']) || !empty($out['blocked'])) {
+            return new WP_Error('lmc_busy', 'همین کالا در حال نوشتن است یا دفتر کسر کامل نیست؛ کمی بعد دوباره.', ['status' => 503]);
+        }
+        if (!empty($out['rejected'])) {
+            return new WP_Error('lmc_protocol', 'این کالا فقط عکس واترمارک‌دار می‌پذیرد.', ['status' => 409]);
+        }
+        if (isset($out['error'])) {
+            // ⚠️ نسخه جلو نرفته؛ صف همین پیام را دوباره می‌فرستد.
+            return new WP_Error('lmc_apply_failed', 'نشاندن موجودی ناموفق بود.', ['status' => 500]);
+        }
+        $out['onHand'] = $on_hand;
         return $out;
     }
 
