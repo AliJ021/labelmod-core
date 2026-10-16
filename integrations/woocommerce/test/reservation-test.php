@@ -92,6 +92,8 @@ check(!array_filter($GLOBALS['wpdb']->log, static fn ($q) => str_contains($q, 'S
     'پاسخ رزرو بی stock هیچ کسری را تأیید نمی‌کند');
 check((bool) array_filter($orders[1]->notes, static fn ($n) => str_contains($n, 'اثبات شمول')),
     'نبود اثبات شمول در یادداشت سفارش دیده می‌شود');
+check(($orders[1]->meta['_lmc_reservation_items'] ?? null) === [0 => 1], 'نگاشت قلم → سطر همراه Payload یخ می‌زند (ACK تعداد همان ارسال)');
+check(LMC_Stock_Ledger::sent_from($orders[1]->meta['_lmc_reservation_payload'], $orders[1]->meta['_lmc_reservation_items']) === [0 => 2], 'تعداد ارسالی هر قلم از Payload یخ‌زده خوانده می‌شود');
 check(LMC_Client::$calls[0] === ['/web/order-reservations', ['branchId' => 'b', 'warehouseId' => 'w', 'externalId' => '1', 'lines' => [['sku' => 'SKU-1', 'qty' => '2']]]], 'رزرو فقط SKU و تعداد با هویت ثابت انبار می‌فرستد');
 check($order->get_meta(LMC_Order_Sync::META_PAID) === '' && $order->get_meta(LMC_Order_Sync::META_INVOICE) === '', 'رزرو هیچ مدرک دریافت وجه یا فاکتور نمی‌سازد');
 check($order->get_meta(LMC_Order_Reservation::STATE) === 'reserved', 'وضعیت رزرو ذخیره می‌شود');

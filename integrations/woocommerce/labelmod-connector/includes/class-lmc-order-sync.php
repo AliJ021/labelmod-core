@@ -184,7 +184,8 @@ class LMC_Order_Sync
 
         $order->update_meta_data(self::META_INVOICE, $res['invoiceId']);
         // ACK کسر محلی: پاسخ فاکتور واترمارک هر تنوع پس از Commit را دارد.
-        LMC_Stock_Ledger::ack_order($order, $res['stock'] ?? null, (string) ($payload['warehouseId'] ?? ''));
+        LMC_Stock_Ledger::ack_order($order, $res['stock'] ?? null, (string) ($payload['warehouseId'] ?? ''),
+            LMC_Stock_Ledger::sent_from($payload, $order->get_meta(self::META_LINES)));
         $order->update_meta_data(self::META_NUMBER, (string) ($res['number'] ?? ''));
         $order->delete_meta_data(self::META_ERROR);
         $order->add_order_note(sprintf(

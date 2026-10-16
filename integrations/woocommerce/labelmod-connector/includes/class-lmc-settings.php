@@ -253,6 +253,8 @@ class LMC_Settings
         echo '<form method="post" action="' . esc_url(admin_url('admin-post.php')) . '">';
         wp_nonce_field('lmc_stock_reset');
         echo '<input type="hidden" name="action" value="lmc_stock_reset">';
+        echo '<label>' . esc_html__('زمان بکاپ بازیابی‌شده (UTC، اختیاری):', 'labelmod-connector')
+            . ' <input type="datetime-local" name="lmc_restore_point" step="1"></label> ';
         submit_button(__('بازنشانی واترمارک موجودی', 'labelmod-connector'), 'secondary', 'submit', false);
         echo ' <span class="description">'
             . esc_html__('فقط پس از بازیابی سامانه از بکاپ یا برگشت عمدی نسخهٔ سامانه.', 'labelmod-connector')
