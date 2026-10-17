@@ -204,7 +204,7 @@ class SqliteWpdb
         $this->pdo->setAttribute(PDO::ATTR_ERRMODE, PDO::ERRMODE_EXCEPTION);
         $this->pdo->exec('CREATE TABLE IF NOT EXISTS wp_lmc_stock_hold (order_id INTEGER NOT NULL, item_id INTEGER NOT NULL,
             product_id INTEGER NOT NULL, qty INTEGER NOT NULL, confirmed INTEGER NOT NULL DEFAULT 1, ack_rev INTEGER NULL, ack_wh TEXT NULL,
-            ack_epoch INTEGER NULL, ack_at INTEGER NULL, release_after INTEGER NULL, created_at INTEGER NOT NULL, PRIMARY KEY (order_id, item_id))');
+            ack_epoch INTEGER NULL, ack_at INTEGER NULL, release_after INTEGER NULL, release_epoch INTEGER NULL, created_at INTEGER NOT NULL, PRIMARY KEY (order_id, item_id))');
         $this->pdo->exec('CREATE TABLE IF NOT EXISTS wp_lmc_stock_mark (kind TEXT NOT NULL, ref INTEGER NOT NULL, token TEXT NOT NULL,
             at INTEGER NOT NULL, PRIMARY KEY (kind, ref, token))');
         $this->pdo->exec('CREATE TABLE IF NOT EXISTS wp_postmeta (meta_id INTEGER PRIMARY KEY, post_id INTEGER, meta_key TEXT, meta_value TEXT)');
@@ -237,6 +237,8 @@ class SqliteWpdb
         if (str_contains($q, 'information_schema.TABLES')) { return $GLOBALS['engine'] ?? 'InnoDB'; }
         // MariaDB `@@in_transaction`؛ null یعنی MySQL (متغیر نیست).
         if ($q === 'SELECT @@in_transaction') { return array_key_exists('in_tx', $GLOBALS) ? $GLOBALS['in_tx'] : '0'; }
+        if ($q === 'SELECT @@autocommit') { return $GLOBALS['autocommit'] ?? '1'; }
+        if ($q === 'SELECT @@transaction_read_only') { return '0'; }
         if (preg_match("/^SHOW TABLES LIKE '([^']+)'/", $q, $m)) {
             $r = $this->pdo->query("SELECT name FROM sqlite_master WHERE type='table' AND name=" . $this->pdo->quote($m[1]))->fetchColumn();
             return $r === false ? null : (string) $r;
@@ -256,6 +258,14 @@ class SqliteWpdb
     {
         $this->last_error = '';
         if (str_contains($q, 'RELEASE_LOCK')) { return 1; }
+        // MySQL Oracle `@@in_transaction` ندارد؛ `SET TRANSACTION` درون تراکنش در جریان خطای ۱۵۶۸ می‌دهد.
+        if (str_starts_with($q, 'SET TRANSACTION ')) {
+            $GLOBALS['set_tx_sql'][] = $q;
+            $m = $GLOBALS['set_tx'] ?? 'ok';
+            if ($m === 'in') { $this->last_error = "ERROR 1568 (25001): Transaction characteristics can't be changed while a transaction is in progress"; return false; }
+            if ($m === 'err') { $this->last_error = 'خطای دیگر'; return false; }
+            return 0;
+        }
         if (in_array($q, ['START TRANSACTION', 'COMMIT', 'ROLLBACK'], true)) {
             // یک اتصال SQLite: تراکنش بی‌اثر است و فقط ترتیبش ثبت می‌شود (قفل سطری در real-wc).
             if ($this->failing($q)) { return false; }
@@ -291,6 +301,9 @@ function fresh(): void
     $GLOBALS['tx'] = [];
     $GLOBALS['engine'] = 'InnoDB';
     $GLOBALS['in_tx'] = '0';
+    $GLOBALS['set_tx'] = 'ok';
+    $GLOBALS['autocommit'] = '1';
+    $GLOBALS['set_tx_sql'] = [];
     $GLOBALS['meta'] = [];
     $GLOBALS['orders'] = [];
     $GLOBALS['other_holds'] = [];
@@ -1089,7 +1102,8 @@ function release_form(array $row, string $reason = 'در Core دیدم'): array
     return ['lmc_order' => (string) $row['order_id'], 'lmc_item' => (string) $row['item_id'], 'lmc_qty' => (string) $row['qty'],
         'lmc_confirmed' => (string) $row['confirmed'], 'lmc_created' => (string) $row['created_at'],
         'lmc_ack_rev' => $row['ack_rev'] === null ? '' : (string) $row['ack_rev'],
-        'lmc_ack_epoch' => $row['ack_epoch'] === null ? '' : (string) $row['ack_epoch'], 'lmc_reason' => $reason];
+        'lmc_ack_epoch' => $row['ack_epoch'] === null ? '' : (string) $row['ack_epoch'], 'lmc_reason' => $reason,
+        'lmc_epoch' => (string) LMC_Stock_Ledger::epoch()];
 }
 function release_post(array $post): string
 {
@@ -1104,7 +1118,7 @@ $GLOBALS['wpdb']->pdo->exec('UPDATE wp_lmc_stock_hold SET created_at = ' . (time
 check('R9. پیش از رها کردن: ۸ با واترمارک نشستهٔ ۳۰', [stock(), rev()], [8, 30]);
 $row = LMC_Stock_Ledger::unresolved()[0];
 $ok = LMC_Stock_Ledger::release_hold(9901, 101, ['qty' => $row['qty'], 'confirmed' => $row['confirmed'], 'created_at' => $row['created_at'],
-    'ack_rev' => $row['ack_rev'], 'ack_epoch' => $row['ack_epoch']], 'Verified in Core rev31', 'manager');
+    'ack_rev' => $row['ack_rev'], 'ack_epoch' => $row['ack_epoch'], 'epoch' => LMC_Stock_Ledger::epoch()], 'Verified in Core rev31', 'manager');
 LMC_Stock_Ledger::recompute(P);
 check('R9. root: درخواست ثبت شد ولی هیچ عکسی را تأیید نکرد — عدد ۸ می‌ماند (نه ۱۰)', [$ok, stock()], [true, 8]);
 $r = wpush(10, 30, 100);                                                     // عکس کش‌شده/کهنهٔ پیش از Commit
@@ -1169,12 +1183,55 @@ $r = snap(5, 20);
 check('R11. نشاندن درون تراکنش فراخواننده: «مشغول»، بی START TRANSACTION', [$r['busy'] ?? false, stock(), in_array('START TRANSACTION', $GLOBALS['tx'], true)], [true, 8, false]);
 woo_refund_restock(9911, 111, 1);                                            // Hook ووکامرس درون همان تراکنش
 check('R11. Hook درون تراکنش: «دوباره»، بی نوشتن', [marks('redo') > 0, in_array('START TRANSACTION', $GLOBALS['tx'], true)], [true, false]);
-$GLOBALS['in_tx'] = null; $GLOBALS['tx'] = [];                              // MySQL: نامعلوم
+// MySQL Oracle: `@@in_transaction` نیست؛ سنجش با `SET TRANSACTION`.
+$GLOBALS['in_tx'] = null; $GLOBALS['set_tx'] = 'in'; $GLOBALS['tx'] = [];
+$r = snap(5, 21);
+check('R11. MySQL درون تراکنش (خطای ۱۵۶۸): نشاندن «مشغول»، بی START TRANSACTION', [$r['busy'] ?? false, in_array('START TRANSACTION', $GLOBALS['tx'], true)], [true, false]);
+$GLOBALS['set_tx'] = 'err'; $GLOBALS['tx'] = [];
+$r = snap(5, 22);
+check('R11. MySQL با سنجش نامعلوم: بسته در شکست («مشغول»)', [$r['busy'] ?? false, in_array('START TRANSACTION', $GLOBALS['tx'], true)], [true, false]);
 woo_refund_restock(9911, 111, 1);
-check('R11. نامعلوم (MySQL): در Hook نوشته نمی‌شود', in_array('START TRANSACTION', $GLOBALS['tx'], true), false);
-$GLOBALS['in_tx'] = '0';
+check('R11. نامعلوم: در Hook نوشته نمی‌شود', in_array('START TRANSACTION', $GLOBALS['tx'], true), false);
+$GLOBALS['in_tx'] = null; $GLOBALS['set_tx'] = 'ok';                         // MySQL، بیرون از تراکنش
 LMC_Stock_Ledger::flush_deferred();
+check('R11. سنجش MySQL فقط حالت دسترسی خود نشست را می‌گذارد، نه سطح جداسازی', array_unique($GLOBALS['set_tx_sql']), ['SET TRANSACTION READ WRITE']);
 check('R11. پایان درخواست: بازمحاسبهٔ موکول‌شده انجام شد', [in_array('START TRANSACTION', $GLOBALS['tx'], true), stock()], [true, 10]);
+
+// ── R11-ب. autocommit=0: هر جمله تراکنش ضمنی باز می‌کند؛ «درون تراکنش»، در هر موتوری ──
+fresh();
+snap(10, 10);
+$GLOBALS['autocommit'] = '0'; $GLOBALS['tx'] = [];
+$r = snap(5, 20);
+check('R11-ب. autocommit=0: «مشغول»، بی START TRANSACTION، و گزارش علت', [$r['busy'] ?? false, in_array('START TRANSACTION', $GLOBALS['tx'], true), (bool) array_filter($GLOBALS['logs'] ?? [], static fn ($l) => str_contains($l, 'موکول شد'))], [true, false, true]);
+$GLOBALS['autocommit'] = '1';
+$r = snap(5, 20);
+check('R11-ب. درخواست بعدی (Pull/دکمه) همان عکس را می‌نشاند', [$r['applied'] ?? false, stock()], [true, 5]);
+
+// ── R13. درخواست رها کردن به دورهٔ صفحه بسته است، حتی با ack_epoch تهی ──
+fresh();
+snap(10, 30);
+woo_order(9921, [[121, 2]]);
+$GLOBALS['wpdb']->pdo->exec('UPDATE wp_lmc_stock_hold SET created_at = ' . (time() - 7200));
+$old_form = release_form(LMC_Stock_Ledger::unresolved()[0]);                 // صفحه پیش از بازنشانی دیده شد
+LMC_Stock_Ledger::reset_epoch(null);                                         // Core از بکاپ بازیابی شد
+pull(['available' => '10', 'stockRev' => '5']);
+$GLOBALS['can'] = true; $GLOBALS['nonce'] = 'lmc_stock_release';
+$GLOBALS['feed'] = ['items' => [['available' => '10', 'stockRev' => '6', 'variationId' => VAR_ID, 'sku' => 'SKU-42']], 'cursor' => 'C6'];
+release_post($old_form);
+check('R13. فرم پیش از بازنشانی پس از آن هیچ درخواستی ثبت نمی‌کند', [(int) $GLOBALS['wpdb']->get_var('SELECT COUNT(*) FROM wp_lmc_stock_hold WHERE release_after IS NOT NULL'), stock(), holds_unacked()], [0, 8, 1]);
+// درخواستی که در دورهٔ قبل ثبت شد و هنوز تأیید نشده، با Pull دورهٔ تازه تأیید نمی‌شود.
+fresh();
+snap(10, 30);
+woo_order(9922, [[122, 2]]);
+$GLOBALS['wpdb']->pdo->exec('UPDATE wp_lmc_stock_hold SET created_at = ' . (time() - 7200));
+$row = LMC_Stock_Ledger::unresolved()[0];
+LMC_Stock_Ledger::release_hold(9922, 122, ['qty' => $row['qty'], 'confirmed' => $row['confirmed'], 'created_at' => $row['created_at'],
+    'ack_rev' => $row['ack_rev'], 'ack_epoch' => $row['ack_epoch'], 'epoch' => LMC_Stock_Ledger::epoch()], 'در Core دیدم', 'manager');
+LMC_Stock_Ledger::reset_epoch(null);
+$GLOBALS['feed'] = ['items' => [['available' => '10', 'stockRev' => '7', 'variationId' => VAR_ID, 'sku' => 'SKU-42']], 'cursor' => 'C7'];
+LMC_Stock_Sync::run();
+check('R13. درخواست دورهٔ قبل در دورهٔ تازه تأیید نمی‌شود (۱۰−۲)', [stock(), holds_unacked()], [8, 1]);
+$GLOBALS['can'] = false;
 
 // ── R12. «فعال‌شدن پروتکل» از دیتابیس، نه از Cache درخواست ────────────
 fresh();

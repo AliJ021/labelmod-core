@@ -58,7 +58,7 @@ class LMC_Stock_Ledger_Nested extends LMC_Stock_Ledger_Error {}
 
 class LMC_Stock_Ledger
 {
-    const SCHEMA_VERSION  = 2;
+    const SCHEMA_VERSION  = 3;
     const SCHEMA_OPTION   = 'lmc_stock_ledger_schema';
     const RECONCILE       = 'lmc_stock_reconcile';
     /** خرابی پایدار: نوشتن نشانهٔ پایدار هم شکست خورد. فقط بازنشانی مدیر پاکش می‌کند. */
@@ -101,6 +101,7 @@ class LMC_Stock_Ledger
             ack_epoch INT UNSIGNED NULL,
             ack_at BIGINT UNSIGNED NULL,
             release_after BIGINT UNSIGNED NULL,
+            release_epoch INT UNSIGNED NULL,
             created_at BIGINT UNSIGNED NOT NULL,
             PRIMARY KEY  (order_id,item_id),
             KEY product_id (product_id)
@@ -234,16 +235,37 @@ class LMC_Stock_Ledger
 
     /**
      * آیا اتصال درون تراکنشی است که کس دیگری باز کرده؟ `START TRANSACTION` در MySQL تراکنش باز را
-     * **ضمنی Commit** می‌کند؛ پس درون تراکنش دیگری نمی‌نویسیم. MariaDB `@@in_transaction` دارد؛
-     * MySQL ندارد و نتیجه null («نمی‌دانم») است.
+     * **ضمنی Commit** می‌کند؛ پس درون تراکنش دیگری نمی‌نویسیم.
+     *
+     * ۰. `@@autocommit = 0`: هر جملهٔ فراخواننده تراکنش ضمنی باز می‌کند و ما نمی‌دانیم چه نگه داشته
+     *    (روی MariaDB یک SELECT ساده با autocommit=0 خطای ۱۵۶۸ نمی‌دهد)؛ پس «درون تراکنش».
+     * ۱. MariaDB: `@@in_transaction`.
+     * ۲. جایی که آن متغیر نیست (MySQL Oracle): `SET TRANSACTION` درون تراکنش در جریان خطای ۱۵۶۸
+     *    می‌دهد و Commit ضمنی نمی‌کند. فقط حالت دسترسی تراکنش **بعدی** را می‌گذارد، نه سطح جداسازی؛ و
+     *    همان حالت خود نشست (`@@transaction_read_only`) را می‌گذاریم، پس چیزی برای فراخواننده عوض نمی‌شود.
+     *    روی MariaDB 10.11 سنجیده شد؛ روی MySQL Oracle فقط از مستندات — آزموده نشده.
+     * ۳. هر نتیجهٔ دیگر: null («نمی‌دانم»)؛ نویسنده آن را مثل «درون تراکنش» می‌گیرد (بسته در شکست) و
+     *    «دوباره» می‌ماند تا درخواست بعدی (Pull، دکمهٔ همگام‌سازی) که از ابتدای خودش اجرا می‌شود.
      */
     public static function in_transaction(): ?bool
     {
         global $wpdb;
         $quiet = method_exists($wpdb, 'suppress_errors') ? $wpdb->suppress_errors(true) : null;
-        $v = $wpdb->get_var('SELECT @@in_transaction');
-        if ($quiet !== null) { $wpdb->suppress_errors($quiet); }
-        return $v === null ? null : ((int) $v === 1);
+        try {
+            $ac = $wpdb->get_var('SELECT @@autocommit');
+            if ($ac === null) { return null; }
+            if ((int) $ac === 0) { return true; }
+            $v = $wpdb->get_var('SELECT @@in_transaction');
+            if ($v !== null) { return (int) $v === 1; }
+            $ro = $wpdb->get_var('SELECT @@transaction_read_only');
+            if ($ro === null) { $ro = $wpdb->get_var('SELECT @@tx_read_only'); }
+            if ($ro === null) { return null; }
+            if ($wpdb->query('SET TRANSACTION ' . ((int) $ro === 1 ? 'READ ONLY' : 'READ WRITE')) !== false) { return false; }
+            $err = (string) $wpdb->last_error;
+            return (str_contains($err, '1568') || stripos($err, 'transaction is in progress') !== false) ? true : null;
+        } finally {
+            if ($quiet !== null) { $wpdb->suppress_errors($quiet); }
+        }
     }
 
     /** null = هنوز سنجیده نشده؛ در هر درخواست یک بار. */
@@ -997,8 +1019,9 @@ class LMC_Stock_Ledger
         }
         // همان کاری که ووکامرس پیش از هر تغییر موجودی می‌کند: سطر باید باشد تا قفل شود.
         add_post_meta($pid, '_stock', 0, true);
-        if (self::in_transaction() === true) {
-            // تراکنش کس دیگری باز است؛ START TRANSACTION آن را ضمنی Commit می‌کرد.
+        if (self::in_transaction() !== false) {
+            // تراکنش کس دیگری باز است (یا نمی‌دانیم)؛ START TRANSACTION آن را ضمنی Commit می‌کرد.
+            lmc_log('نوشتن موجودی کالای ' . $pid . ' به بعد موکول شد: اتصال درون تراکنش دیگری است یا وضعیتش معلوم نیست؛ Pull بعدی یا دکمهٔ همگام‌سازی آن را می‌نشاند.');
             throw new LMC_Stock_Ledger_Nested('درون تراکنش دیگری؛ نوشتن موجودی به بعد موکول شد');
         }
         $pm = $wpdb->postmeta;
@@ -1191,7 +1214,11 @@ class LMC_Stock_Ledger
      * فرم همان نسخهٔ نمایش‌داده را می‌فرستد (تعداد، وضعیت، ACK، دوره، زمان ساخت)؛ اگر سطر از آن پس
      * عوض شده (کسر تازه‌تر)، درخواست رد می‌شود.
      *
-     * @param array{qty:int,confirmed:int,ack_rev:?int,ack_epoch:?int,created_at:int} $seen
+     * فرم به **دورهٔ** صفحه‌ای که مدیر دیده هم بسته است (`epoch`)، حتی وقتی `ack_epoch` تهی است: بررسیِ
+     * پیش از «بازنشانی» (Core بازیابی‌شده از بکاپ) اثبات دورهٔ تازه نیست. دوره در همان UPDATE سنجیده و
+     * با درخواست ذخیره می‌شود؛ `bind_releases` فقط درخواستِ همان دوره را تأیید می‌کند.
+     *
+     * @param array{qty:int,confirmed:int,ack_rev:?int,ack_epoch:?int,created_at:int,epoch:int} $seen
      */
     public static function release_hold(int $order_id, int $item_id, array $seen, string $reason, string $who): bool
     {
@@ -1199,8 +1226,10 @@ class LMC_Stock_Ledger
         $t = self::table();
         $same = static fn (string $col, ?int $v) => $v === null ? "{$col} IS NULL" : $wpdb->prepare("{$col} = %d", $v);
         $done = $wpdb->query($wpdb->prepare(
-            "UPDATE {$t} SET release_after = %d WHERE order_id = %d AND item_id = %d AND qty = %d AND confirmed = %d AND created_at = %d AND ",
-            self::now_ms(), $order_id, $item_id, (int) $seen['qty'], (int) $seen['confirmed'], (int) $seen['created_at'])
+            "UPDATE {$t} SET release_after = %d, release_epoch = %d WHERE order_id = %d AND item_id = %d AND qty = %d AND confirmed = %d AND created_at = %d
+               AND COALESCE((SELECT o.option_value + 0 FROM {$wpdb->options} o WHERE o.option_name = %s), 1) = %d AND ",
+            self::now_ms(), (int) $seen['epoch'], $order_id, $item_id, (int) $seen['qty'], (int) $seen['confirmed'], (int) $seen['created_at'],
+            self::EPOCH, (int) $seen['epoch'])
             . $same('ack_rev', $seen['ack_rev']) . ' AND ' . $same('ack_epoch', $seen['ack_epoch']));
         if ($done === false) { throw new LMC_Stock_Ledger_Error('ثبت درخواست رها کردن ناموفق: ' . (string) $wpdb->last_error); }
         if ($done === 0) { return false; }
@@ -1221,11 +1250,11 @@ class LMC_Stock_Ledger
         global $wpdb;
         $t = self::table();
         $n = $wpdb->query($wpdb->prepare(
-            "UPDATE {$t} SET confirmed = 1, ack_rev = %d, ack_wh = %s, ack_epoch = %d, ack_at = %d, release_after = NULL
-              WHERE product_id = %d AND release_after IS NOT NULL AND release_after < %d
+            "UPDATE {$t} SET confirmed = 1, ack_rev = %d, ack_wh = %s, ack_epoch = %d, ack_at = %d, release_after = NULL, release_epoch = NULL
+              WHERE product_id = %d AND release_after IS NOT NULL AND release_after < %d AND release_epoch = %d
                 AND (ack_rev IS NULL OR ack_wh IS NULL OR ack_wh <> %s OR ack_epoch IS NULL OR ack_epoch <> %d)
                 AND COALESCE((SELECT o.option_value + 0 FROM {$wpdb->options} o WHERE o.option_name = %s), 1) = %d",
-            $rev, $wh, $epoch, time(), $pid, $fetched_ms, $wh, $epoch, self::EPOCH, $epoch));
+            $rev, $wh, $epoch, time(), $pid, $fetched_ms, $epoch, $wh, $epoch, self::EPOCH, $epoch));
         if ($n === false) { throw new LMC_Stock_Ledger_Error('تأیید درخواست رها کردن ناموفق: ' . (string) $wpdb->last_error); }
         if ($n > 0) { lmc_log(sprintf('%d کسر رهاشدهٔ کالای %d با عکس زندهٔ Core (واترمارک %d) تأیید شد.', $n, $pid, $rev)); }
         return (int) $n;
@@ -1240,9 +1269,9 @@ class LMC_Stock_Ledger
         $int = static fn (string $k) => isset($_POST[$k]) && preg_match('/^[0-9]{1,18}$/D', (string) $_POST[$k]) ? (int) $_POST[$k] : null;
         $order = $int('lmc_order'); $item = $int('lmc_item');
         $seen = ['qty' => $int('lmc_qty'), 'confirmed' => $int('lmc_confirmed'), 'created_at' => $int('lmc_created'),
-            'ack_rev' => $int('lmc_ack_rev'), 'ack_epoch' => $int('lmc_ack_epoch')];
+            'ack_rev' => $int('lmc_ack_rev'), 'ack_epoch' => $int('lmc_ack_epoch'), 'epoch' => $int('lmc_epoch')];
         $reason = isset($_POST['lmc_reason']) ? trim(sanitize_text_field(wp_unslash($_POST['lmc_reason']))) : '';
-        if (!$order || !$item || $seen['qty'] === null || $seen['confirmed'] === null || $seen['created_at'] === null
+        if (!$order || !$item || $seen['qty'] === null || $seen['confirmed'] === null || $seen['created_at'] === null || !$seen['epoch']
             || $reason === '' || mb_strlen($reason) > 200) {
             wp_die(esc_html__('سفارش، قلم، نسخهٔ نمایش‌داده و دلیل (حداکثر ۲۰۰ نویسه) لازم است.', 'labelmod-connector'));
         }

@@ -273,6 +273,7 @@ class LMC_Settings
     {
         try {
             $rows = LMC_Stock_Ledger::unresolved(50);
+            $epoch = LMC_Stock_Ledger::epoch();
         } catch (Throwable $e) {
             echo '<p id="lmc-stuck">' . esc_html__('فهرست کسرهای گیرکرده خوانده نشد.', 'labelmod-connector') . '</p>';
             return;
@@ -309,6 +310,8 @@ class LMC_Settings
                 . '<input type="hidden" name="lmc_created" value="' . esc_attr((string) $r['created_at']) . '">'
                 . '<input type="hidden" name="lmc_ack_rev" value="' . esc_attr($r['ack_rev'] === null ? '' : (string) $r['ack_rev']) . '">'
                 . '<input type="hidden" name="lmc_ack_epoch" value="' . esc_attr($r['ack_epoch'] === null ? '' : (string) $r['ack_epoch']) . '">'
+                // دورهٔ واترمارکی که این صفحه در آن ساخته شد؛ پس از «بازنشانی» این فرم کهنه است.
+                . '<input type="hidden" name="lmc_epoch" value="' . esc_attr((string) $epoch) . '">'
                 . '<input type="text" name="lmc_reason" maxlength="200" required placeholder="'
                 . esc_attr__('دلیل (مثلاً «در Core ثبت شد»)', 'labelmod-connector') . '"> ';
             submit_button(__('رها کن', 'labelmod-connector'), 'secondary small', 'submit', false);

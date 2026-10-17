@@ -76,6 +76,15 @@ switch ($cmd) {
         $wpdb->query('ROLLBACK');
         $probe = $wpdb->get_var($wpdb->prepare("SELECT COUNT(*) FROM {$wpdb->options} WHERE option_name = %s", 'lmc_outer_probe_' . $pid));
         out(['apply' => $r, 'probe_survived_rollback' => (int) $probe === 1, 'stock' => stock_now($pid)]); break;
+    case 'autocommit0':                                 // فراخواننده با autocommit=0 که بعد Rollback می‌کند
+        global $wpdb;
+        $pid = (int) $args[0];
+        $wpdb->query('SET autocommit = 0');
+        $wpdb->query($wpdb->prepare("INSERT INTO {$wpdb->options} (option_name, option_value, autoload) VALUES (%s, '1', 'no')", 'lmc_ac0_probe_' . $pid));
+        $r = LMC_Stock_Ledger::apply_snapshot($pid, (int) $args[1], true, (int) $args[2], WH, 5, true);
+        $wpdb->query('ROLLBACK'); $wpdb->query('SET autocommit = 1');
+        $probe = $wpdb->get_var($wpdb->prepare("SELECT COUNT(*) FROM {$wpdb->options} WHERE option_name = %s", 'lmc_ac0_probe_' . $pid));
+        out(['apply' => $r, 'probe_survived_rollback' => (int) $probe === 1, 'stock' => stock_now($pid)]); break;
     case 'apply':                                       // عکس Core (Pull)
         $r = LMC_Stock_Ledger::apply_snapshot((int) $args[0], (int) $args[1], true, (int) $args[2], WH, 10, true);
         out($r); break;
