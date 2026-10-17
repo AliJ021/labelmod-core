@@ -210,6 +210,17 @@ describe("سفارش سایت (ووکامرس)", { skip }, () => {
     const concurrent = await Promise.all([reserve(), reserve()]);
     assert.deepEqual(concurrent.map(r => r.statusCode).sort(), [200,201]);
     assert.deepEqual(await balance(), { on_hand: "3.000", reserved: "2.000" });
+    // ACK اثبات شمول است، نه فقط ۲۰۱: واترمارکِ پس از رزرو، و همان واترمارک در خوراک.
+    const rev = async () => (await sql<{ v: string }>`SELECT row_version::text v FROM inventory.stock_balance
+      WHERE variation_id=${variationId}::uuid AND warehouse_id=${STORE_WH}::uuid`.execute(handle.db)).rows[0]!.v;
+    const reservedRev = await rev();
+    for (const r of concurrent) {
+      assert.deepEqual(r.json().stock, [{ sku: code, variationId, stockRev: reservedRev }], r.body);
+    }
+    const feed = await app.inject({ method: "GET", url: `/web/stock?warehouseId=${STORE_WH}&limit=5000`, ...auth() });
+    assert.equal(feed.statusCode, 200, feed.body);
+    const fed = (feed.json().items as Array<{ variationId: string; available: string; stockRev: string; active: boolean }>).find(i => i.variationId === variationId);
+    assert.deepEqual(fed && { available: fed.available, stockRev: fed.stockRev, active: fed.active }, { available: "1", stockRev: reservedRev, active: true });
     const after = await sql`SELECT (SELECT count(*) FROM sales.invoice) invoices,
       (SELECT count(*) FROM treasury.payment) payments,(SELECT count(*) FROM inventory.stock_movement) movements`.execute(handle.db);
     assert.deepEqual(after.rows,before.rows,"رزرو سند مالی، دریافت وجه یا خروج فیزیکی ندارد");
@@ -235,6 +246,8 @@ describe("سفارش سایت (ووکامرس)", { skip }, () => {
     assert.deepEqual(await balance(), { on_hand: "3.000", reserved: "2.000" },"شکست پرداخت رزرو را آزاد نمی‌کند");
     const finalized = await order({ ...paid, codDelivered: true });
     assert.equal(finalized.statusCode,201,finalized.body);
+    assert.deepEqual(finalized.json().stock, [{ sku: code, variationId, stockRev: await rev() }], finalized.body);
+    assert.ok(BigInt(await rev()) > BigInt(reservedRev), "مصرف رزرو واترمارک را جلو برد");
     assert.equal((await order({ ...paid, codDelivered: true })).statusCode,200);
     assert.deepEqual(await balance(), { on_hand: "1.000", reserved: "0.000" });
     assert.equal((await reserve()).json().status,"consumed");

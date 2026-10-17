@@ -56,11 +56,11 @@ class LMC_Stock_Sync
     /**
      * یک دور همگام‌سازی.
      *
-     * @return array{updated:int,skipped:int,linked:int,received:int,unchanged:int,invalid:int,price_enabled:bool,link_enabled:bool,error:string}
+     * @return array{updated:int,skipped:int,busy:int,linked:int,received:int,unchanged:int,invalid:int,price_enabled:bool,link_enabled:bool,error:string}
      */
     public static function run(): array
     {
-        $out = ['updated' => 0, 'skipped' => 0, 'linked' => 0, 'received' => 0, 'unchanged' => 0,
+        $out = ['updated' => 0, 'skipped' => 0, 'busy' => 0, 'linked' => 0, 'received' => 0, 'unchanged' => 0,
             'invalid' => 0, 'price_enabled' => lmc_setting('sync_price') === 'yes',
             'link_enabled' => lmc_setting('link_by_sku') === 'yes', 'error' => ''];
 
@@ -79,11 +79,27 @@ class LMC_Stock_Sync
         if ($list !== '') {
             $query['priceList'] = $list;
         }
-        $since = get_option(self::CURSOR_OPTION, '');
-        if (is_string($since) && $since !== '') {
-            $query['since'] = $since;
+        // عقب‌ماندهٔ کسر، آشتی اولیه و بازمحاسبه‌های معوق پیش از هر خواندن.
+        LMC_Stock_Ledger::maintain();
+        // بازنشانی‌ای که پردازه‌اش پس از Commit دوره مُرد، پیش از هر خواندن ادامه می‌یابد؛ تا تمام نشده
+        // این دور «خطا» گزارش می‌شود، نه موفقیت بی‌صدا (Pull کامل در همین دور باز هم انجام می‌شود).
+        try {
+            $reset = LMC_Stock_Ledger::resume_reset();
+        } catch (Throwable $e) {
+            $reset = ['pending' => true, 'failed' => 0];
+            lmc_log('ادامهٔ بازنشانی واترمارک ناموفق: ' . $e->getMessage());
         }
 
+        // دورهٔ واترمارک پیش از خواندن Core؛ اگر میان خواندن و نشاندن «بازنشانی» شود، این صفحه رد می‌شود.
+        $epoch = LMC_Stock_Ledger::epoch();
+        // مکان‌نما فقط در همان دوره معتبر است: پس از بازنشانی (حتی اگر پردازه‌اش پیش از هر کار دیگری
+        // مُرده باشد) و برای مکان‌نمایی که Pull نسل قبل دیر نوشته، Pull کامل است نه افزایشی.
+        $since = self::cursor_for($epoch);
+        if ($since !== '') {
+            $query['since'] = $since;
+        }
+        // زمان آغاز خواندن: درخواست رها کردن کسر فقط با عکسی تأیید می‌شود که پس از آن خوانده شده.
+        $fetched_ms = (int) floor(microtime(true) * 1000);
         $res = LMC_Client::get('/web/stock', $query);
         if (is_wp_error($res)) {
             $out['error'] = $res->get_error_message();
@@ -132,14 +148,35 @@ class LMC_Stock_Sync
                 continue;
             }
 
-            $changed = self::apply_stock($product, $available);
+            // ⚠️ موجودی فقط از دفتر کسر و زیر قفل مشترک با Push نشانده می‌شود:
+            //    عکس Pull که از Push تازه‌تر کهنه‌تر است، یا کسر محلیِ تأییدنشده را در
+            //    خود ندارد، واحد فروخته‌شده را برنمی‌گرداند (docs/STOCK-SYNC-PROTOCOL.md).
+            if (array_key_exists('stockRev', $item)) {
+                $rev = (string) $item['stockRev'];
+                $res_stock = preg_match('/^[0-9]{1,18}$/D', $rev)
+                    ? LMC_Stock_Ledger::apply_snapshot((int) $product_id, $available, ($item['active'] ?? true) !== false,
+                        (int) $rev, $warehouse, 5, true, null, $epoch, $fetched_ms)
+                    : ['ok' => false, 'applied' => false, 'rejected' => true];
+            } else {
+                $res_stock = LMC_Stock_Ledger::apply_legacy((int) $product_id, $available, 5);
+            }
+            if (!empty($res_stock['busy']) || !empty($res_stock['blocked']) || !empty($res_stock['rejected']) || isset($res_stock['error'])) {
+                // مشغول، دفتر ناقص، عکس بی‌واترمارک/بدشکل یا شکست نوشتن: مکان‌نما جلو نمی‌رود تا
+                // این سطر دوباره بیاید؛ و دیده می‌شود، نه بی‌صدا.
+                $out['busy']++;
+                continue;
+            }
+            $changed = !empty($res_stock['applied']);
 
             if ($sync_price) {
-                $changed = self::apply_price($product, self::price_for_site($item)) || $changed;
+                $fresh = wc_get_product($product_id);
+                if ($fresh && self::apply_price($fresh, self::price_for_site($item))) {
+                    $fresh->save();
+                    $changed = true;
+                }
             }
 
             if ($changed) {
-                $product->save();
                 $out['updated']++;
             } else {
                 $out['unchanged']++;
@@ -149,8 +186,11 @@ class LMC_Stock_Sync
         // مکان‌نما فقط وقتی جلو می‌رود که واقعاً سطری آمده باشد.
         // ذخیره‌کردن `null` یعنی دور بعد از اول شروع کند — که درست
         // است ولی هر بار همه‌چیز را می‌فرستد.
-        if (!empty($res['cursor'])) {
-            update_option(self::CURSOR_OPTION, (string) $res['cursor'], false);
+        if (!empty($res['cursor']) && $out['busy'] === 0) {
+            update_option(self::CURSOR_OPTION, $epoch . ':' . (string) $res['cursor'], false);
+        }
+        if ($reset['pending']) {
+            $out['error'] = __('بازنشانی واترمارک هنوز کامل نشده است (بازمحاسبهٔ بخشی از کالاها ماند)؛ دور بعد دوباره تلاش می‌کند. گزارش افزونه را ببینید.', 'labelmod-connector');
         }
 
         lmc_log(sprintf('موجودی: %d به‌روز، %d رد شد، %d اتصال تازه',
@@ -165,6 +205,14 @@ class LMC_Stock_Sync
         return $out;
     }
 
+
+    /** مکان‌نمای ذخیره‌شده برای این دوره، یا خالی (دورهٔ دیگر، قالب پیش از برچسب، یا بدشکل). */
+    public static function cursor_for(int $epoch): string
+    {
+        $raw = get_option(self::CURSOR_OPTION, '');
+        if (!is_string($raw) || !preg_match('/^([0-9]{1,18}):(.+)$/sD', $raw, $m)) { return ''; }
+        return (int) $m[1] === $epoch ? $m[2] : '';
+    }
 
     /**
      * کالای سایت از روی کلید اتصال.
@@ -183,6 +231,15 @@ class LMC_Stock_Sync
      *
      * برمی‌گرداند: آیا چیزی واقعاً عوض شد.
      */
+    /** فقط مدیریت موجودی و منع پیش‌خرید، بی دست‌زدن به عدد؛ عدد را دفتر کسر با تفاضل اتمیک می‌نویسد. */
+    public static function prepare_managed($product): bool
+    {
+        $changed = false;
+        if (!$product->get_manage_stock()) { $product->set_manage_stock(true); $changed = true; }
+        if ($product->get_backorders() !== 'no') { $product->set_backorders('no'); $changed = true; }
+        return $changed;
+    }
+
     public static function apply_stock($product, int $available): bool
     {
         $changed = false;
@@ -302,6 +359,7 @@ class LMC_Stock_Sync
         }
         if (!$result['link_enabled']) { $text .= ' اتصال اولیه با SKU خاموش است.'; }
         if (!$result['price_enabled']) { $text .= ' همگام‌سازی قیمت خاموش است؛ قیمت سایت تغییر نمی‌کند.'; }
+        if (!empty($result['busy'])) { $text .= sprintf(' %d سطر نشانده نشد (مشغول، دفتر کسر ناقص یا عکس بی‌واترمارک)؛ دور بعد دوباره می‌آید.', $result['busy']); }
         if ($result['received'] >= self::BATCH) { $text .= ' صفحه پر است؛ ادامهٔ دریافت به زمان‌بند سپرده شد.'; }
         return $text;
     }

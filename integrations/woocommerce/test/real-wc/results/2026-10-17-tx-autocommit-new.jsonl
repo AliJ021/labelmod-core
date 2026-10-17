@@ -1,0 +1,2 @@
+{"scenario":"new/outer-tx","result":{"apply":{"ok":false,"applied":false,"busy":true,"note":"درون تراکنش دیگری؛ نوشتن موجودی به بعد موکول شد"},"probe_survived_rollback":false,"stock":10}}
+{"scenario":"new/autocommit0","result":{"apply":{"ok":false,"applied":false,"busy":true,"note":"درون تراکنش دیگری؛ نوشتن موجودی به بعد موکول شد"},"probe_survived_rollback":false,"stock":10}}

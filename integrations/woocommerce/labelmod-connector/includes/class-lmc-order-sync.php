@@ -124,6 +124,7 @@ class LMC_Order_Sync
     /** ارسال واقعی — از دل Cron. */
     public static function send($order_id): void
     {
+        $epoch    = LMC_Stock_Ledger::epoch();
         $order_id = (int) $order_id;
         $order    = wc_get_order($order_id);
         if (!$order) {
@@ -183,6 +184,9 @@ class LMC_Order_Sync
         }
 
         $order->update_meta_data(self::META_INVOICE, $res['invoiceId']);
+        // ACK کسر محلی: پاسخ فاکتور واترمارک هر تنوع پس از Commit را دارد.
+        LMC_Stock_Ledger::ack_order($order, $res['stock'] ?? null, (string) ($payload['warehouseId'] ?? ''),
+            LMC_Stock_Ledger::sent_from($payload, $order->get_meta(self::META_LINES)), $epoch);
         $order->update_meta_data(self::META_NUMBER, (string) ($res['number'] ?? ''));
         $order->delete_meta_data(self::META_ERROR);
         $order->add_order_note(sprintf(

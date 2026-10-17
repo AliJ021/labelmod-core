@@ -2,7 +2,7 @@
 /**
  * Plugin Name: Label Mod Connector
  * Description: سفارش‌های ووکامرس را به سامانه «لیبل مد» می‌فرستد و موجودی سایت را از انبار همگام می‌کند.
- * Version: 1.3.5
+ * Version: 1.4.0
  * Requires PHP: 7.4
  * Requires at least: 6.0
  * License: proprietary
@@ -47,7 +47,7 @@ if (!defined('ABSPATH')) {
     exit;
 }
 
-define('LMC_VERSION', '1.3.5');
+define('LMC_VERSION', '1.4.0');
 define('LMC_PATH', plugin_dir_path(__FILE__));
 define('LMC_OPTION', 'labelmod_connector_settings');
 
@@ -70,6 +70,7 @@ require_once LMC_PATH . 'includes/class-lmc-stock-sync.php';
 require_once LMC_PATH . 'includes/class-lmc-instore.php';
 require_once LMC_PATH . 'includes/class-lmc-push-receiver.php';
 require_once LMC_PATH . 'includes/class-lmc-push-guard.php';
+require_once LMC_PATH . 'includes/class-lmc-stock-ledger.php';
 
 /**
  * سازگاری با HPOS را **اعلام** کن.
@@ -125,6 +126,9 @@ add_action('plugins_loaded', function () {
     //    نمی‌کند. بی این سطر، جدول هرگز ساخته نمی‌شد و هر Push با ۵۰۳
     //    رد می‌شد — یک قابلیتِ بی‌صدا خاموش.
     LMC_Push_Guard::ensure_schema();
+    // دفتر کسر محلی (docs/STOCK-SYNC-PROTOCOL.md) — همان دلیل: به‌روزرسانی Hook فعال‌سازی ندارد.
+    LMC_Stock_Ledger::ensure_schema();
+    LMC_Stock_Ledger::init();
     // گیرندهٔ ارسال لحظه‌ای (ADR-007) — مسیر REST خودش را ثبت می‌کند.
     LMC_Push_Receiver::init();
 });
@@ -145,6 +149,7 @@ register_activation_hook(__FILE__, function () {
     }
     // جدول Nonce گیرندهٔ Push — بی آن، هر Push با ۵۰۳ رد می‌شود.
     LMC_Push_Guard::install();
+    LMC_Stock_Ledger::install();
     // نقطه پایان تازه بدون این، ۴۰۴ می‌دهد — و کسی نمی‌فهمد چرا.
     LMC_Instore::register_post_type();
     LMC_Instore::register_endpoint();
