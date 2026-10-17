@@ -2,6 +2,7 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import {
   awardPayload, bonusStorageKey, decisionPayload, parseBonusOperation, persistBonusOperation, requestPayload, selectable,
+  type BonusBody,
 } from "../src/lib/bonuses.ts";
 
 const KEY = "22222222-2222-4222-8222-222222222222";
@@ -36,13 +37,14 @@ test("انتخاب تسویه همان شرط سرور است: فقط تأیید
 });
 
 test("عملیات ماندگار: بدنه و کلید پس از بارگذاری دوباره همان است؛ بدنهٔ دیگر کلید تازه نمی‌سازد", () => {
-  for (const [target, body] of [
+  const cases: Array<[string, BonusBody]> = [
     ["request", { amount: "101", reason: "دقیق" }],
     ["award", { ownerId: ID, ownerName: "کارمند", amount: "101", reason: "دقیق" }],
     [`decide.${ID}`, { decision: "rejected", note: "دلیل" }],
     [`decide.${ID}`, { decision: "approved" }],
     ["settle", { items: [{ id: ID, amount: "999999999999999999", ownerName: "کارمند" }], note: "تسویه" }],
-  ] as const) {
+  ];
+  for (const [target, body] of cases) {
     const storage = memory();
     const first = persistBonusOperation(storage, "manager", target, body, KEY);
     assert.deepEqual(parseBonusOperation(storage.getItem(bonusStorageKey("manager", target)), "manager", target), first);
