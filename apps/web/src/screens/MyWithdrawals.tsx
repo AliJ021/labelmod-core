@@ -17,7 +17,7 @@ import { useNavigationGuard, useUrlState } from "../lib/use-url-state.ts";
 import { checkAmount, checkText, createPayload, PAGE_SIZE, REASON_MAX, tomanDraft, type WithdrawalDetail, type WithdrawalItem, type WithdrawalPage } from "../lib/withdrawals.ts";
 
 /**
- * برداشت‌های من — بخش شخصی «حساب من» (مهاجرت ۰۸۴).
+ * برداشت‌های من — بخش شخصی ناحیهٔ «برداشت و پاداش» (مهاجرت ۰۸۴).
  *
  * هر کاربر واردشده، بی‌توجه به نقش، برداشت خودش را با مبلغ و دلیل ثبت
  * می‌کند و فقط برداشت‌های خودش را می‌بیند. مالک و زمان از سرور می‌آیند؛
@@ -30,8 +30,8 @@ import { checkAmount, checkText, createPayload, PAGE_SIZE, REASON_MAX, tomanDraf
  *    فرم قفل می‌ماند تا بدنهٔ دیگری با کلید تازه ثبت دوم نسازد.
  */
 export function MyWithdrawals({ currentUserId }: { currentUserId: string }) {
-  const [pageText, setPage] = useUrlState("settings.wdPage", "1");
-  const [selected, setSelected] = useUrlState("settings.wd");
+  const [pageText, setPage] = useUrlState("personnel.wdPage", "1");
+  const [selected, setSelected] = useUrlState("personnel.wd");
   const page = Math.max(1, Math.floor(Number(pageText)) || 1);
   const [reload, setReload] = useState(0);
   const loadList = useCallback((signal: AbortSignal) =>

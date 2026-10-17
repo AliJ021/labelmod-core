@@ -8,7 +8,7 @@
 import { test, expect, fontsReady, hourlyDay } from "./fixtures";
 import type { Page, Route } from "@playwright/test";
 
-const ZONE_LABELS = ["داشبورد", "صندوق", "فاکتورها", "مرجوعی", "کالا و قیمت", "انبار و خرید", "خزانه و چک", "مشتریان", "گزارش‌ها", "تنظیمات"];
+const ZONE_LABELS = ["داشبورد", "صندوق", "فاکتورها", "مرجوعی", "کالا و قیمت", "انبار و خرید", "خزانه و چک", "مشتریان", "برداشت و پاداش", "گزارش‌ها", "تنظیمات"];
 const GROUPS = ["کار روزانه", "کالا و انبار", "مالی و گزارش", "اشخاص", "سامانه"];
 
 async function noOverflow(page: Page, what: string) {

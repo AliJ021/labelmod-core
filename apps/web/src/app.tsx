@@ -15,6 +15,7 @@ const Treasury = lazy(() => import("./screens/Treasury.tsx").then(m => ({ defaul
 const Warehouse = lazy(() => import("./screens/Warehouse.tsx").then(m => ({ default: m.Warehouse })));
 const Returns = lazy(() => import("./screens/Returns.tsx").then(m => ({ default: m.Returns })));
 const Settings = lazy(() => import("./screens/Settings.tsx").then(m => ({ default: m.Settings })));
+const Personnel = lazy(() => import("./screens/Personnel.tsx").then(m => ({ default: m.Personnel })));
 import { TwoFactor } from "./screens/TwoFactor.tsx";
 import {
   authView,
@@ -301,6 +302,8 @@ export function App() {
             <Reports />
           ) : zone === "customers" ? (
             <Customers />
+          ) : zone === "personnel" ? (
+            <Personnel access={access} currentUserId={me?.id ?? ""} />
           ) : (
             <Settings access={access} currentUserId={me?.id ?? ""} onOwnPassword={() => setPasswordOpen(true)} />
           )}

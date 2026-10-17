@@ -13,8 +13,8 @@ import { NAV_OPERATIONS } from "../src/lib/navigation";
 
 type Decision = "allow" | "deny" | "fail";
 const PROTECTED = ["صندوق", "فاکتورها", "مرجوعی", "کالا و قیمت", "انبار و خرید", "خزانه و چک", "مشتریان", "گزارش‌ها"];
-const PERSONAL = ["نمایش و عملکرد", "PIN من — ساخت و تغییر", "ورود دومرحله‌ای", "برداشت‌های من"];
-const ADMIN = ["تنظیمات", "سلامت سیستم", "اتصال ووکامرس", "پشتیبان‌گیری و بازیابی", "کدینگ حساب", "نگاشت حساب", "اسنپ‌پی", "دیجی‌پی", "پایانه‌ها", "افتتاحیه و تفصیلی", "پرسنل", "دفتر برداشت پرسنل", "مجوزها", "دستگاه‌ها"];
+const PERSONAL = ["نمایش و عملکرد", "PIN من — ساخت و تغییر", "ورود دومرحله‌ای"];
+const ADMIN = ["تنظیمات", "سلامت سیستم", "اتصال ووکامرس", "پشتیبان‌گیری و بازیابی", "کدینگ حساب", "نگاشت حساب", "اسنپ‌پی", "دیجی‌پی", "پایانه‌ها", "افتتاحیه و تفصیلی", "پرسنل", "مجوزها", "دستگاه‌ها"];
 
 /** پاسخ‌های مجوز تا `release()` نگه داشته می‌شوند؛ تصمیم هر عملیات قابل عوض‌کردن است. */
 function authorize(api: MockApi, decide: (operation: string) => Decision, held = false) {
@@ -93,16 +93,16 @@ test.describe("F-110-01 — conservative permission loading", () => {
     const auth = authorize(api, op => allowed.has(op) ? "allow" : "deny", true);
     await page.goto("/");
     await expect(page.getByRole("heading", { name: "امروز", exact: true })).toBeVisible();
-    // در حال بررسی: فقط داشبورد و تنظیمات (شخصی) — به‌علاوهٔ جای‌نگهدارِ بی‌برچسب.
-    expect((await tabLabels(page)).sort()).toEqual(["تنظیمات", "داشبورد"].sort());
+    // در حال بررسی: فقط داشبورد، برداشت و پاداش (من) و تنظیمات (شخصی) — به‌علاوهٔ جای‌نگهدارِ بی‌برچسب.
+    expect((await tabLabels(page)).sort()).toEqual(["برداشت و پاداش", "تنظیمات", "داشبورد"].sort());
     await expect(mainList(page).locator(".tab-pending")).toHaveCount(PROTECTED.length);
     expect(await mainList(page).locator(".tab-pending").evaluateAll(nodes => nodes.every(n => n.textContent === "" && n.getAttribute("aria-hidden") === "true"))).toBe(true);
     await expect(page.getByRole("status").filter({ hasText: "در حال بررسی دسترسی بخش‌ها…" }).first()).toBeAttached();
     auth.release();
     await expect(mainList(page).getByRole("tab", { name: "مرجوعی", includeHidden: true })).toHaveCount(1);
     await expect(mainList(page).locator(".tab-pending")).toHaveCount(0);
-    expect(await tabLabels(page)).toEqual(["داشبورد", "صندوق", "فاکتورها", "مرجوعی", "تنظیمات"]);
-    expect(await seen(), "no protected label was ever rendered before an allow verdict").toEqual(["تنظیمات", "داشبورد", "صندوق", "فاکتورها", "مرجوعی"].sort());
+    expect(await tabLabels(page)).toEqual(["داشبورد", "صندوق", "فاکتورها", "مرجوعی", "برداشت و پاداش", "تنظیمات"]);
+    expect(await seen(), "no protected label was ever rendered before an allow verdict").toEqual(["برداشت و پاداش", "تنظیمات", "داشبورد", "صندوق", "فاکتورها", "مرجوعی"].sort());
   });
 
   test("placeholders hold the navigation in place until every destination is allowed", async ({ page, api }) => {
@@ -112,7 +112,7 @@ test.describe("F-110-01 — conservative permission loading", () => {
     await expect(dashboard).toBeVisible();
     const before = { tab: (await dashboard.boundingBox())!, nav: (await page.locator(".workspace-nav").boundingBox())! };
     auth.release();
-    await expect(mainList(page).getByRole("tab", { includeHidden: true })).toHaveCount(10);
+    await expect(mainList(page).getByRole("tab", { includeHidden: true })).toHaveCount(11);
     const after = { tab: (await dashboard.boundingBox())!, nav: (await page.locator(".workspace-nav").boundingBox())! };
     // زیر ۳۶۰ پیکسل برچسب «کالا و قیمت» پس از رسیدن دو خط می‌شود و نوار بلندتر؛
     // جای‌نگهدار طول برچسب را نمی‌داند و نباید بداند (برچسب در DOM یعنی همان افشا).
@@ -159,12 +159,12 @@ test.describe("F-110-01 — conservative permission loading", () => {
     await page.goto("/?page=treasury");
     const current = mainList(page).getByRole("tab", { name: "خزانه و چک", includeHidden: true });
     await expect(current).toHaveAttribute("aria-selected", "true");
-    expect((await tabLabels(page)).sort()).toEqual(["تنظیمات", "خزانه و چک", "داشبورد"].sort());
+    expect((await tabLabels(page)).sort()).toEqual(["برداشت و پاداش", "تنظیمات", "خزانه و چک", "داشبورد"].sort());
     auth.release();
     await expect(mainList(page).locator(".tab-pending")).toHaveCount(0);
     // رد شد: بخش باز همچنان همان است (سرور دادهٔ پشتش را می‌سنجد)؛ بقیه هرگز ساخته نشدند.
     await expect(current).toHaveAttribute("aria-selected", "true");
-    expect(await seen()).toEqual(["تنظیمات", "خزانه و چک", "داشبورد"].sort());
+    expect(await seen()).toEqual(["برداشت و پاداش", "تنظیمات", "خزانه و چک", "داشبورد"].sort());
     await page.waitForLoadState("networkidle");
   });
 });
@@ -176,7 +176,7 @@ test.describe("F-110-02 — personal settings apart from administrative settings
     await expect(page.getByRole("heading", { name: "نمایش و عملکرد", exact: true })).toBeVisible();
     expect(await settingsLabels(page)).toEqual(PERSONAL);
     expect(api.calls.some(c => c.startsWith("GET /settings")), "administrative settings were not requested").toBe(false);
-    for (const [tab, call] of [["staff", "GET /users"], ["withdrawal-log", "GET /withdrawals?"], ["devices", "GET /devices"], ["permissions", "GET /permission-rules"], ["keys", "GET /settings"], ["woocommerce", "GET /settings/woocommerce"], ["digipay", "GET /digipay/config"]] as const) {
+    for (const [tab, call] of [["staff", "GET /users"], ["devices", "GET /devices"], ["permissions", "GET /permission-rules"], ["keys", "GET /settings"], ["woocommerce", "GET /settings/woocommerce"], ["digipay", "GET /digipay/config"]] as const) {
       await page.goto(`/?page=settings&settings.tab=${tab}`);
       await expect(page.getByRole("heading", { name: "دسترسی ندارید" })).toBeVisible();
       expect(await settingsLabels(page), `${tab} label stays hidden`).toEqual(PERSONAL);

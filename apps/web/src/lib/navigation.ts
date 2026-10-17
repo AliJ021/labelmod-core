@@ -22,6 +22,7 @@
  */
 import type { IconName } from "../components/Icon.tsx";
 import { SETTINGS_OPERATIONS, settingsAnyOf } from "./settings-registry.ts";
+import { PERSONNEL_OPERATIONS, personnelAnyOf } from "./personnel-registry.ts";
 
 export const NAV_GROUPS = [
   { key: "daily", label: "کار روزانه" },
@@ -42,6 +43,7 @@ export const ZONES = [
   { key: "purchasing", label: "انبار و خرید", icon: "box", navGroup: "stock", mobilePrimary: false, anyOf: ["stock.receive"] },
   { key: "treasury", label: "خزانه و چک", icon: "vault", navGroup: "money", mobilePrimary: false, anyOf: ["treasury.manage"] },
   { key: "customers", label: "مشتریان", icon: "people", navGroup: "people", mobilePrimary: false, anyOf: ["customer.manage"] },
+  { key: "personnel", label: "برداشت و پاداش", icon: "user", navGroup: "people", mobilePrimary: false, anyOf: [] },
   { key: "reports", label: "گزارش‌ها", icon: "chart", navGroup: "money", mobilePrimary: false, anyOf: ["report.view"] },
   { key: "settings", label: "تنظیمات", icon: "settings", navGroup: "system", mobilePrimary: false, anyOf: [] },
 ] as const satisfies readonly {
@@ -58,8 +60,8 @@ export type NavItem = ZoneEntry & { group: string };
 export const NAV_ITEMS: readonly NavItem[] = NAV_GROUPS.flatMap(g =>
   ZONES.filter(z => z.navGroup === g.key).map(z => ({ ...z, group: g.label })));
 
-/** همهٔ عملیاتی که نمایش ناوبری به آن‌ها وابسته است — مقصدها و بخش‌های تنظیمات. */
-export const NAV_OPERATIONS: readonly string[] = [...new Set([...ZONES.flatMap(z => z.anyOf), ...SETTINGS_OPERATIONS])];
+/** همهٔ عملیاتی که نمایش ناوبری به آن‌ها وابسته است — مقصدها، بخش‌های تنظیمات و برداشت و پاداش. */
+export const NAV_OPERATIONS: readonly string[] = [...new Set([...ZONES.flatMap(z => z.anyOf), ...SETTINGS_OPERATIONS, ...PERSONNEL_OPERATIONS])];
 
 export type Verdict = "allow" | "deny" | "unknown";
 
@@ -129,8 +131,10 @@ export const FEATURES: readonly Feature[] = [
   { label: "فروش هر کاربر", words: "صندوق دار فروشنده ثبت کننده نهایی کننده", href: routeUrl("reports", "staff"), anyOf: ["report.view"] },
   { label: "ساخت و تغییر PIN", words: "پین رمز قفل PIN", href: routeUrl("settings", "pin"), anyOf: settingsAnyOf("pin") },
   { label: "ورود دومرحله‌ای و پیامک", words: "امنیت پیامک OTP", href: routeUrl("settings", "twofactor"), anyOf: settingsAnyOf("twofactor") },
-  { label: "برداشت‌های من", words: "برداشت مساعده دریافت شخصی ثبت برداشت", href: routeUrl("settings", "withdrawals"), anyOf: settingsAnyOf("withdrawals") },
-  { label: "دفتر برداشت پرسنل", words: "برداشت پرسنل کارکنان مساعده اصلاح مدیر", href: routeUrl("settings", "withdrawal-log"), anyOf: settingsAnyOf("withdrawal-log") },
+  { label: "برداشت‌های من", words: "برداشت مساعده دریافت شخصی ثبت برداشت", href: routeUrl("personnel", "withdrawals"), anyOf: personnelAnyOf("withdrawals") },
+  { label: "پاداش‌های من", words: "پاداش درخواست پاداش تشویقی شخصی", href: routeUrl("personnel", "bonuses"), anyOf: personnelAnyOf("bonuses") },
+  { label: "دفتر برداشت پرسنل", words: "برداشت پرسنل کارکنان مساعده اصلاح مدیر", href: routeUrl("personnel", "withdrawal-log"), anyOf: personnelAnyOf("withdrawal-log") },
+  { label: "دفتر پاداش پرسنل", words: "پاداش پرسنل کارکنان تأیید اعطا تسویه مدیر", href: routeUrl("personnel", "bonus-log"), anyOf: personnelAnyOf("bonus-log") },
   { label: "چاپ لیبل بارکد کالا", words: "بارکد لیبل چاپ برچسب", href: "/?page=catalog&catalog.labels=1", anyOf: ["catalog.manage"] },
   { label: "موجودی و گردش کالا", words: "انبار موجودی گردش", href: routeUrl("reports", "stock"), anyOf: ["report.view"] },
   { label: "کدینگ حساب", words: "دفتر حساب کدینگ", href: routeUrl("settings", "accounts"), anyOf: settingsAnyOf("accounts") },

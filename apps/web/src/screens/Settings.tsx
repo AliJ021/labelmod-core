@@ -5,7 +5,7 @@ import { DigipaySettings } from "./DigipaySettings.tsx";
 import { SnappaySettings } from "./SnappaySettings.tsx";
 import { WooCommerceSettings } from "./WooCommerceSettings.tsx";
 import { Backups } from "./Backups.tsx";
-import { useUrlState } from "../lib/use-url-state.ts";
+import { navigate, useUrlState } from "../lib/use-url-state.ts";
 import { SettingsNavigation, TabPanels, useTabsId, type TabItem } from "../components/Tabs.tsx";
 import { useMediaQuery } from "../lib/use-media-query.ts";
 /**
@@ -29,8 +29,8 @@ import { Appearance } from "./Appearance.tsx";
 import { Staff } from "./Staff.tsx";
 import { TwoFactor } from "./TwoFactor.tsx";
 import { PersonalPin } from "./PersonalPin.tsx";
-import { MyWithdrawals } from "./MyWithdrawals.tsx";
-import { WithdrawalLog } from "./WithdrawalLog.tsx";
+import { legacyPersonnelUrl } from "../lib/personnel-registry.ts";
+import { useEffect } from "react";
 
 /**
  * پوسته ناحیه تنظیمات — ده زیرتب.
@@ -55,11 +55,15 @@ import { WithdrawalLog } from "./WithdrawalLog.tsx";
  */
 export function Settings({ access, currentUserId, onOwnPassword }: { access: NavAccess; currentUserId: string; onOwnPassword: () => void }) {
   const [requested, setRequested] = useUrlState("settings.tab");
+  // پیوند قدیمی برداشت (پیش از انتقال به منوی اصلی) نمی‌شکند: همان نشانی با
+  // جایگزینی در تاریخچه به «برداشت و پاداش» می‌رود. تا آن لحظه چیزی mount نمی‌شود.
+  const legacy = legacyPersonnelUrl(window.location.search);
+  useEffect(() => { if (legacy) navigate(legacy, true, true); }, [legacy]);
   const setTab = (key: SettingsKey) => setRequested(key);
   const tabsId = useTabsId();
   const mobile = useMediaQuery("(max-width: 767px)");
   const view = settingsView(requested === "" ? null : requested, access);
-  const tab = view.selected;
+  const tab = legacy ? null : view.selected;
   const navItems = SETTINGS_SECTIONS.flatMap((s): TabItem<SettingsKey>[] => view.visible.includes(s)
     ? [{ key: s.key, label: s.label, group: s.group }]
     : view.pending.includes(s) ? [{ key: s.key, label: "", pending: true }] : []);
@@ -68,7 +72,8 @@ export function Settings({ access, currentUserId, onOwnPassword }: { access: Nav
   return (
     <div className="settings-layout">
       <SettingsNavigation hrefFor={key => routeUrl("settings", key)} id={tabsId} items={navItems} value={tab} onChange={setTab} mobile={mobile} />
-      {view.blocked ? <SettingsBlocked reason={view.blocked} onRetry={access.retry} /> : null}
+      {legacy ? <p className="muted pad" role="status">در حال انتقال به «برداشت و پاداش»…</p>
+        : view.blocked ? <SettingsBlocked reason={view.blocked} onRetry={access.retry} /> : null}
       <TabPanels id={tabsId} items={panels} value={tab} className="settings-content" mobileLabel={mobile}>
 
       {tab === "keys" ? (
@@ -97,10 +102,6 @@ export function Settings({ access, currentUserId, onOwnPassword }: { access: Nav
         <PersonalPin />
       ) : tab === "twofactor" ? (
         <TwoFactor />
-      ) : tab === "withdrawals" ? (
-        <MyWithdrawals key={currentUserId} currentUserId={currentUserId} />
-      ) : tab === "withdrawal-log" ? (
-        <WithdrawalLog key={currentUserId} currentUserId={currentUserId} write={settingsWriteAccess("withdrawal-log", access.verdicts)} writeState={access.state} />
       ) : tab === "devices" ? (
         <Devices />
       ) : tab === "health" ? (
@@ -114,9 +115,9 @@ export function Settings({ access, currentUserId, onOwnPassword }: { access: Nav
 }
 
 /** چرا بخشی mount نشد — هر سه حالت آرام و بی‌اثر؛ هیچ‌کدام درخواستی به بخش نمی‌فرستد. */
-function SettingsBlocked({ reason, onRetry }: { reason: "loading" | "degraded" | "denied"; onRetry: () => void }) {
+export function SettingsBlocked({ reason, onRetry, title = "تنظیمات" }: { reason: "loading" | "degraded" | "denied"; onRetry: () => void; title?: string }) {
   if (reason === "loading") return <Solid as="section" className="pad settings-content settings-state" aria-labelledby="settings-state-title">
-    <h2 id="settings-state-title" className="sr-only">تنظیمات</h2>
+    <h2 id="settings-state-title" className="sr-only">{title}</h2>
     <p className="muted" role="status">در حال بررسی دسترسی…</p>
   </Solid>;
   if (reason === "degraded") return <Solid as="section" className="pad settings-content settings-state" aria-labelledby="settings-state-title">
@@ -126,6 +127,6 @@ function SettingsBlocked({ reason, onRetry }: { reason: "loading" | "degraded" |
   </Solid>;
   return <Solid as="section" className="pad settings-content settings-state" aria-labelledby="settings-state-title">
     <h2 id="settings-state-title"><Icon name="lock" /> دسترسی ندارید</h2>
-    <p className="muted">این بخش تنظیمات برای نقش شما باز نیست. اگر لازمش دارید، از مدیر بخواهید.</p>
+    <p className="muted">این بخش {title} برای نقش شما باز نیست. اگر لازمش دارید، از مدیر بخواهید.</p>
   </Solid>;
 }
