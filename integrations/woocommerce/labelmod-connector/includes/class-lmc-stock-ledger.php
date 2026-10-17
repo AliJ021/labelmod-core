@@ -55,8 +55,8 @@ class LMC_Stock_Ledger
     const FAULT           = 'lmc_stock_fault';
     /** دورهٔ واترمارک؛ «بازنشانی» آن را جلو می‌برد و ACKهای دورهٔ قبل بی‌اعتبار می‌شوند. */
     const EPOCH           = 'lmc_stock_epoch';
-    /** حصاری که پردازه‌اش مرده: پس از این مدت از دادهٔ خود ووکامرس بازسازی می‌شود. */
-    const FENCE_STALE     = 900;
+    /** پروتکل واترمارک دست‌کم یک بار فعال شده؛ پس از آن Push کالای بی‌حالت منتظر Pull می‌ماند. */
+    const ACTIVE          = 'lmc_stock_protocol_active';
     const STATE_META      = '_lmc_stock_state';
     /** همان `LMC_Push_Receiver::STOCK_VERSION_META`؛ هم نام قفل و هم نسخهٔ سراسری Push. */
     const VERSION_META    = '_lmc_stock_version';
@@ -249,13 +249,11 @@ class LMC_Stock_Ledger
 
     public static function init(): void
     {
-        // پیش از تغییر `_stock`: نیت کسر (در حلقهٔ wc_reduce_stock_levels) و حصار کالا.
+        // پیش از کم‌شدن `_stock` به دست ووکامرس، نیت پایدار: کسر سفارش و افزایش دستی تعداد قلم.
         add_filter('woocommerce_can_reduce_order_stock', [__CLASS__, 'on_can_reduce'], PHP_INT_MAX, 2);
         add_filter('woocommerce_order_item_quantity', [__CLASS__, 'on_item_quantity'], PHP_INT_MAX, 3);
-        add_action('woocommerce_product_before_set_stock', [__CLASS__, 'on_before_set_stock'], 10, 1);
-        add_action('woocommerce_variation_before_set_stock', [__CLASS__, 'on_before_set_stock'], 10, 1);
+        add_filter('woocommerce_prevent_adjust_line_item_product_stock', [__CLASS__, 'on_prevent_adjust'], PHP_INT_MAX, 3);
         add_action('woocommerce_reduce_order_stock', [__CLASS__, 'on_reduce_done'], 10, 1);
-        add_action('shutdown', [__CLASS__, 'shutdown'], 10, 0);
         add_action('woocommerce_reduce_order_item_stock', [__CLASS__, 'on_reduce'], 10, 3);
         add_action('woocommerce_restore_order_item_stock', [__CLASS__, 'on_restore'], 10, 4);
         add_action('woocommerce_update_order_item', [__CLASS__, 'on_item_saved'], 10, 3);
@@ -267,8 +265,6 @@ class LMC_Stock_Ledger
         add_action('admin_post_lmc_stock_reset', [__CLASS__, 'handle_reset']);
     }
 
-    /** @var array<string,int> token حصارهای همین درخواست → کالا */
-    private static array $own = [];
     /** @var array<int,bool> سفارش‌هایی که همین درخواست وسط wc_reduce_stock_levels است */
     private static array $reducing = [];
 
@@ -299,19 +295,6 @@ class LMC_Stock_Ledger
         return $qty;
     }
 
-    /**
-     * WC 11.1.1، `wc_update_product_stock`: پیش از هر نوشتن `_stock` با API ووکامرس. حصار تا
-     * پایان همین درخواست (یا ذخیرهٔ `_reduced_stock`) نشاندن عکس دیگران را روی این کالا می‌بندد؛
-     * قفل مشورتی ما نوشتن خود ووکامرس را پوشش نمی‌داد.
-     */
-    public static function on_before_set_stock($product): void
-    {
-        if (!is_object($product) || !method_exists($product, 'get_id')) { return; }
-        $pid = (int) $product->get_id();
-        $token = self::mark('mut', $pid);
-        if ($token !== null) { self::$own[$token] = $pid; }
-    }
-
     /** پایان حلقهٔ کسر: نیت‌هایی که کسر نخوردند (خطای ووکامرس) پاک می‌شوند. */
     public static function on_reduce_done($order): void
     {
@@ -320,45 +303,29 @@ class LMC_Stock_Ledger
         self::sync_order_safe($order, true);
     }
 
-    /**
-     * پایان درخواست: حصارهای همین درخواست برداشته و کالاها بازمحاسبه می‌شوند — مگر درخواست با
-     * خطای مهلک تمام شده باشد؛ آن‌وقت حصار می‌ماند تا `maintain()` از دادهٔ ووکامرس بازسازی کند.
-     */
-    public static function shutdown(): void
-    {
-        if (!self::$own) { return; }
-        $err = error_get_last();
-        if (is_array($err) && in_array($err['type'] ?? 0, [E_ERROR, E_PARSE, E_CORE_ERROR, E_COMPILE_ERROR, E_USER_ERROR, E_RECOVERABLE_ERROR], true)) {
-            return;
-        }
-        self::release_own_fences();
-    }
-
-    private static function release_own_fences(): void
-    {
-        $by_pid = [];
-        foreach (self::$own as $token => $pid) { $by_pid[$pid][] = $token; }
-        self::$own = [];
-        foreach ($by_pid as $pid => $tokens) {
-            try { self::unmark('mut', (int) $pid, $tokens); } catch (LMC_Stock_Ledger_Error $e) { lmc_log('برداشتن حصار کالای ' . $pid . ' ناموفق: ' . $e->getMessage()); continue; }
-            self::recompute((int) $pid);
-        }
-    }
-
     /** وضعیت هر درخواست؛ پردازه‌های بلند (CLI) و آزمون میان دو «درخواست» صدایش می‌زنند. */
     public static function new_request(): void
     {
-        self::$own = [];
         self::$reducing = [];
     }
 
-    /** آیا پردازهٔ دیگری الان `_stock` این کالا را عوض می‌کند (یا وسط کار مرده)؟ */
-    private static function fenced(int $pid): bool
+    /**
+     * WC 11.1.1، `wc_maybe_adjust_line_item_product_stock`: این فیلتر پیش از هر تغییر `_stock` برای
+     * ویرایش دستی تعداد قلم اعمال می‌شود (با قلم و تعداد تازه). اگر تعدادِ کسرشدنیِ تازه بیشتر از
+     * کسر ثبت‌شده است، همین‌جا نیت (confirmed=2) با تعداد تازه پایدار می‌شود؛ پس `_stock`ی که
+     * ووکامرس کم می‌کند هیچ‌وقت بی کسر متناظر در دفتر نیست. کاهش (افزایش `_stock`) نیت نمی‌خواهد.
+     */
+    public static function on_prevent_adjust($prevent, $item = null, $item_quantity = -1)
     {
-        foreach (self::marked('mut', $pid) as $m) {
-            if (!isset(self::$own[$m['token']])) { return true; }
+        if ($prevent || !is_object($item) || !method_exists($item, 'get_order_id')) { return $prevent; }
+        try {
+            $qty = (float) ($item_quantity >= 0 ? $item_quantity : $item->get_quantity());
+            $target = (int) ceil($qty - (float) $item->get_meta('_restock_refunded_items', true));
+            if ($qty > 0 && $target > 0) { self::record_adjust_intent((int) $item->get_order_id(), $item, $target); }
+        } catch (LMC_Stock_Ledger_Error $e) {
+            self::fault('نیت ویرایش قلم ثبت نشد: ' . $e->getMessage());
         }
-        return false;
+        return $prevent;
     }
 
     public static function on_reduce($item, $change, $order): void { if ($order) { self::sync_item_safe($order, $item); } }
@@ -467,6 +434,7 @@ class LMC_Stock_Ledger
             // نکرده: حلقهٔ کسر تمام شده، سفارش لغو/ناموفق است، یا پرچم کسر سفارش خورده و این
             // درخواست وسط حلقه نیست. وگرنه (مرگ پردازه وسط کسر) می‌ماند — محافظه‌کار.
             if ((int) $row['confirmed'] === 0 && !self::intent_resolved($order, $finished)) { return $touched; }
+            if ((int) $row['confirmed'] === 2 && !self::order_closed($order)) { return $touched; }
             self::exec($wpdb->prepare("DELETE FROM {$t} WHERE order_id = %d AND item_id = %d", $order_id, $item_id));
             return array_values(array_unique(array_merge($touched, [(int) $row['product_id']])));
         }
@@ -481,6 +449,15 @@ class LMC_Stock_Ledger
                 : $wpdb->prepare("INSERT INTO {$t} (order_id, item_id, product_id, qty, confirmed, created_at) VALUES (%d, %d, %d, %d, 1, %d)",
                     $order_id, $item_id, $pid, $qty, time()), 1);
             return $touched;
+        }
+        if ((int) $row['confirmed'] === 2) {
+            // نیت ویرایش دستی: فقط وقتی `_reduced_stock` به تعداد تازه رسید (یا سفارش بسته شد)
+            // تأیید می‌شود؛ پیش از آن تعداد بزرگ‌تر می‌ماند (محافظه‌کار).
+            if ($qty < (int) $row['qty'] && !self::order_closed($order)) { return $touched; }
+            self::exec($wpdb->prepare(
+                "UPDATE {$t} SET product_id = %d, qty = %d, confirmed = 1 WHERE order_id = %d AND item_id = %d",
+                $pid, $qty, $order_id, $item_id), 1);
+            return array_values(array_unique([$pid, (int) $row['product_id']]));
         }
         if ((int) $row['confirmed'] === 0) {
             // نیت پیش از کسر حالا با `_reduced_stock` واقعی تأیید می‌شود؛ ACK هنوز ندارد.
@@ -522,10 +499,38 @@ class LMC_Stock_Ledger
         }
     }
 
+    private static function order_closed($order): bool
+    {
+        return method_exists($order, 'has_status') && $order->has_status(['cancelled', 'failed', 'refunded', 'trash']);
+    }
+
+    /** نیت ویرایش دستی؛ تأیید پیشین باطل می‌شود چون Core تعداد تازه را ندیده است. */
+    private static function record_adjust_intent(int $order_id, $item, int $target): void
+    {
+        global $wpdb;
+        $t = self::table();
+        $product = method_exists($item, 'get_product') ? $item->get_product() : null;
+        $iid = method_exists($item, 'get_id') ? (int) $item->get_id() : 0;
+        if (!$product || $iid <= 0 || $order_id <= 0) { return; }
+        $pid = (int) $product->get_id();
+        $rows = self::rows($wpdb->prepare("SELECT qty FROM {$t} WHERE order_id = %d AND item_id = %d", $order_id, $iid));
+        $have = $rows ? (int) $rows[0]['qty'] : (int) ceil((float) $item->get_meta('_reduced_stock', true));
+        if ($target <= $have) { return; }
+        if ($rows) {
+            self::exec($wpdb->prepare(
+                "UPDATE {$t} SET product_id = %d, qty = %d, confirmed = 2, ack_rev = NULL, ack_wh = NULL, ack_epoch = NULL, ack_at = NULL
+                  WHERE order_id = %d AND item_id = %d", $pid, $target, $order_id, $iid), 1);
+        } else {
+            self::exec($wpdb->prepare(
+                "INSERT INTO {$t} (order_id, item_id, product_id, qty, confirmed, created_at) VALUES (%d, %d, %d, %d, 2, %d)",
+                $order_id, $iid, $pid, $target, time()), 1);
+        }
+    }
+
     private static function intent_resolved($order, bool $finished): bool
     {
         if ($finished) { return true; }
-        if (method_exists($order, 'has_status') && $order->has_status(['cancelled', 'failed', 'refunded', 'trash'])) { return true; }
+        if (self::order_closed($order)) { return true; }
         if (!empty(self::$reducing[(int) $order->get_id()])) { return false; }
         $store = method_exists($order, 'get_data_store') ? $order->get_data_store() : null;
         return $store && method_exists($store, 'get_stock_reduced') && (bool) $store->get_stock_reduced((int) $order->get_id());
@@ -614,8 +619,15 @@ class LMC_Stock_Ledger
      *
      * @param array<int,int> $sent
      */
-    public static function ack_order($order, $stock, string $warehouse, array $sent): void
+    public static function ack_order($order, $stock, string $warehouse, array $sent, int $epoch): void
     {
+        if ($epoch !== self::epoch()) {
+            // پاسخ درخواستی که پیش از «بازنشانی» فرستاده شده: از Core پیشین است و اثبات دورهٔ تازه نیست.
+            if (method_exists($order, 'add_order_note')) {
+                $order->add_order_note('لیبل مد — پاسخ Core به درخواستی پیش از بازنشانی واترمارک رسید و تأیید نشد؛ کسر محلی می‌ماند.');
+            }
+            return;
+        }
         if (!is_array($stock) || !preg_match('/^[0-9a-f-]{36}$/D', $warehouse)) {
             if (method_exists($order, 'add_order_note')) {
                 $order->add_order_note('لیبل مد — پاسخ Core اثبات شمول موجودی (stock) نداشت؛ کسر محلی تا عکس تأییدشده می‌ماند.');
@@ -641,7 +653,7 @@ class LMC_Stock_Ledger
                 $done = $wpdb->query($wpdb->prepare(
                     "UPDATE {$t} SET ack_rev = %d, ack_wh = %s, ack_epoch = %d, ack_at = %d
                       WHERE order_id = %d AND item_id = %d AND ack_rev IS NULL AND confirmed = 1 AND qty <= %d",
-                    $by_sku[$sku], $warehouse, self::epoch(), time(), (int) $order->get_id(), $iid, (int) $sent[$iid]));
+                    $by_sku[$sku], $warehouse, $epoch, time(), (int) $order->get_id(), $iid, (int) $sent[$iid]));
                 if ($done === false) { throw new LMC_Stock_Ledger_Error((string) $wpdb->last_error); }
             } catch (LMC_Stock_Ledger_Error $e) {
                 lmc_log('ثبت ACK موجودی سفارش ' . (int) $order->get_id() . ' ناموفق: ' . $e->getMessage() . '؛ کسر می‌ماند.');
@@ -716,18 +728,21 @@ class LMC_Stock_Ledger
         $raw = get_post_meta($product_id, self::STATE_META, true);
         $s = is_string($raw) ? json_decode($raw, true) : null;
         if (!is_array($s) || !isset($s['w'], $s['r'], $s['c'])) { return null; }
+        // حالتی از دورهٔ پیشین (نوشته‌شده هم‌زمان با بازنشانی) حالت نیست.
+        if ((int) ($s['e'] ?? 1) !== self::epoch()) { return null; }
         return ['w' => (string) $s['w'], 'r' => (int) $s['r'], 'c' => (int) $s['c'],
-            'a' => ($s['a'] ?? true) !== false, 'd' => !empty($s['d'])];
+            'a' => ($s['a'] ?? true) !== false, 'd' => !empty($s['d']), 'e' => (int) ($s['e'] ?? 1)];
     }
 
     private static function write_state(int $product_id, array $s): void
     {
-        $json = wp_json_encode(['w' => $s['w'], 'r' => $s['r'], 'c' => $s['c'], 'a' => $s['a'], 'd' => $s['d']]);
+        $json = wp_json_encode(['w' => $s['w'], 'r' => $s['r'], 'c' => $s['c'], 'a' => $s['a'], 'd' => $s['d'], 'e' => $s['e'] ?? self::epoch()]);
         update_post_meta($product_id, self::STATE_META, $json);
         self::fresh_meta($product_id);
         if (get_post_meta($product_id, self::STATE_META, true) !== $json) {
             throw new LMC_Stock_Ledger_Error('حالت موجودی کالا ذخیره نشد');
         }
+        if (!get_option(self::ACTIVE, false)) { update_option(self::ACTIVE, 1, false); }
     }
 
     private static function restore_state(int $product_id, $raw): void
@@ -757,8 +772,12 @@ class LMC_Stock_Ledger
      * @param bool $may_enter فقط Pull (خواندن زنده) کالای بی‌حالت را وارد پروتکل می‌کند.
      * @return array{ok:bool,applied:bool,stale?:bool,busy?:bool,blocked?:bool,legacy?:bool,error?:string,display?:int,note?:string}
      */
-    public static function apply_snapshot(int $pid, int $available, bool $active, int $rev, string $wh, int $wait, bool $may_enter, ?int $version = null): array
+    public static function apply_snapshot(int $pid, int $available, bool $active, int $rev, string $wh, int $wait, bool $may_enter, ?int $version = null, ?int $epoch = null): array
     {
+        if ($epoch !== null && $epoch !== self::epoch()) {
+            // عکس درخواستی که پیش از بازنشانی آغاز شده؛ از Core پیشین است.
+            return ['ok' => false, 'applied' => false, 'busy' => true, 'note' => 'دورهٔ واترمارک عوض شده است'];
+        }
         if (!self::ready()) {
             return ['ok' => false, 'applied' => false, 'blocked' => true, 'note' => 'دفتر کسر کامل نیست'];
         }
@@ -767,12 +786,15 @@ class LMC_Stock_Ledger
             return ['ok' => false, 'applied' => false, 'busy' => true];
         }
         try {
-            if (self::fenced($pid)) {
-                // ووکامرس در پردازهٔ دیگری `_stock` این کالا را عوض می‌کند (یا وسط کار مرده است).
-                return ['ok' => false, 'applied' => false, 'busy' => true, 'note' => 'کالا زیر حصار تغییر ووکامرس'];
-            }
             self::fresh_meta($pid);
+            if ($epoch !== null && $epoch !== self::epoch()) {
+                return ['ok' => false, 'applied' => false, 'busy' => true, 'note' => 'دورهٔ واترمارک عوض شده است'];
+            }
             $state = self::state($pid);
+            if ($state === null && !$may_enter && get_option(self::ACTIVE, false)) {
+                // پس از فعال‌شدن پروتکل (و پس از هر بازنشانی)، کالای بی‌حالت فقط با Pull زنده وارد می‌شود.
+                return ['ok' => false, 'applied' => false, 'busy' => true, 'note' => 'کالا منتظر Pull است'];
+            }
             if ($state === null && !$may_enter) {
                 // Push در راه، کالای بیرون از پروتکل: رفتار پیشین (نه ورود).
                 return ['legacy' => true] + self::legacy_locked($pid, $available, $version);
@@ -789,7 +811,7 @@ class LMC_Stock_Ledger
                 return ['ok' => true, 'applied' => false, 'stale' => true, 'note' => 'واترمارک قدیمی یا تکراری'];
             }
             $prev = get_post_meta($pid, self::STATE_META, true);
-            $next = ['w' => $wh, 'r' => $rev, 'c' => max(0, $available), 'a' => $active, 'd' => true];
+            $next = ['w' => $wh, 'r' => $rev, 'c' => max(0, $available), 'a' => $active, 'd' => true, 'e' => self::epoch()];
             self::write_state($pid, $next);
             try {
                 $display = self::write_stock($pid, $next);
@@ -850,35 +872,49 @@ class LMC_Stock_Ledger
     }
 
     /**
-     * نوشتن عدد مطلق، با بازبینی **پس از** ذخیره.
+     * نوشتن عدد سایت **به‌صورت تفاضل اتمیک**، نه مقدار مطلق.
      *
-     * ووکامرس در پردازه‌ای دیگر می‌تواند میان خواندن `pending` و `save()` ما نیتش را ثبت و `_stock`
-     * را کم کند. آن‌وقت ذخیرهٔ ما کسرش را بازنویسی می‌کند. چون نیت **پیش از** کسر ووکامرس ثبت
-     * می‌شود، هر کسری که ما بازنویسی کرده باشیم در خواندن دوبارهٔ `pending` دیده می‌شود و عدد
-     * دوباره نوشته می‌شود. کسری که پس از خواندن دوباره برسد، عدد درست ما را کم می‌کند: لحظه‌ای
-     * کمتر، نه بیشتر، تا Hook خودش بازمحاسبه کند. اگر حصار تازه‌ای بی نیت ظاهر شود (ویرایش دستی
-     * قلم)، پایان همان درخواست بازمحاسبه می‌کند و کالا در «دوباره» هم می‌نشیند.
+     * ۱. `_stock` فعلی از دیتابیس خوانده می‌شود. ۲. **بعد** جمع کسرها. ۳. تفاوت با
+     * `wc_update_product_stock(..., 'increase'|'decrease')` اعمال می‌شود، یعنی همان `meta_value ± n`
+     * اتمیک ووکامرس. نوشتن ما و نوشتن هم‌زمان ووکامرس روی هم جمع می‌شوند و هیچ‌کدام دیگری را
+     * بازنویسی نمی‌کند؛ پس مرگ پردازهٔ ما پس از نوشتن چیزی را لو نمی‌دهد.
+     *
+     * چرا ترتیب ۱ پیش از ۲ کافی است: هر کم‌کردنِ ووکامرس **پس از** نیت پایدارش است (کسر سفارش و
+     * ویرایش دستی). اگر کم‌کردن پیش از خواندن ۱ باشد، نیتش پیش از ۲ است و هر دو دیده می‌شوند (دقیق).
+     * اگر نیت پس از ۲ باشد، کم‌کردن هم پس از ۱ است و روی هدف ما جمع می‌شود (دقیق). اگر نیت میان ۱
+     * و ۲ و کم‌کردن پس از ۱ باشد، یک بار اضافه کم می‌شود (کمتر، تا بازمحاسبهٔ Hook). در هیچ ترتیبی
+     * عدد از «موجودی Core − کسرها» بیشتر نمی‌شود. افزایش ووکامرس (لغو، استرداد) هم جمع می‌شود و تا
+     * Hook همان درخواست (یا عکس بعدی، اگر بمیرد) دیده می‌شود؛ همان رفتار خود ووکامرس.
      *
      * @param array{w:string,r:int,c:int,a:bool} $s
      */
     private static function write_stock(int $pid, array $s): int
     {
-        $display = 0;
-        for ($round = 0; $round < 3; $round++) {
-            $product = wc_get_product($pid);
-            if (!$product) { throw new LMC_Stock_Ledger_Error('کالا خوانده نشد'); }
-            $pending = $s['a'] ? self::pending($pid, $s['r'], $s['w']) : 0;
-            $display = $s['a'] ? max(0, $s['c'] - $pending) : 0;
-            if (LMC_Stock_Sync::apply_stock($product, $display)) {
-                $saved = $product->save();
-                if (!$saved) { throw new LMC_Stock_Ledger_Error('ذخیرهٔ کالا ناموفق'); }
-            }
-            $after = $s['a'] ? self::pending($pid, $s['r'], $s['w']) : 0;
-            if (self::fenced($pid)) { self::mark_redo($pid); }
-            if ($after === $pending) { return $display; }
+        $product = wc_get_product($pid);
+        if (!$product) { throw new LMC_Stock_Ledger_Error('کالا خوانده نشد'); }
+        if (LMC_Stock_Sync::prepare_managed($product)) {
+            // فقط مدیریت موجودی و منع پیش‌خرید؛ ذخیره‌شان `_stock` را نمی‌نویسد.
+            if (!$product->save()) { throw new LMC_Stock_Ledger_Error('ذخیرهٔ کالا ناموفق'); }
         }
-        self::mark_redo($pid);
-        return $display;
+        self::fresh_meta($pid);
+        $current = (int) floor((float) get_post_meta($pid, '_stock', true));
+        self::probe('stock_read', $pid);
+        $target = $s['a'] ? max(0, $s['c'] - self::pending($pid, $s['r'], $s['w'])) : 0;
+        self::probe('pending_read', $pid);
+        $delta = $target - $current;
+        if ($delta !== 0) {
+            $res = wc_update_product_stock($product, abs($delta), $delta > 0 ? 'increase' : 'decrease');
+            if ($res === false || $res === null || (function_exists('is_wp_error') && is_wp_error($res))) {
+                throw new LMC_Stock_Ledger_Error('تغییر اتمیک موجودی ووکامرس ناموفق');
+            }
+        }
+        return $target;
+    }
+
+    /** نقطهٔ مشاهده برای بازتولید با پردازه‌های واقعی (`lmc_stock_probe`)؛ در تولید بی‌اثر. */
+    private static function probe(string $stage, int $pid): void
+    {
+        if (function_exists('do_action')) { do_action('lmc_stock_probe', $stage, $pid); }
     }
 
     private static function recompute_locked(int $pid): bool
@@ -897,7 +933,7 @@ class LMC_Stock_Ledger
     public static function recompute(int $pid, int $wait = self::LOCK_WAIT): bool
     {
         try {
-            $blocked = (int) get_option(self::FAULT, 0) > 0 || self::marked('order') !== [] || self::fenced($pid);
+            $blocked = (int) get_option(self::FAULT, 0) > 0 || self::marked('order') !== [];
         } catch (LMC_Stock_Ledger_Error $e) {
             $blocked = true;
         }
@@ -932,12 +968,6 @@ class LMC_Stock_Ledger
     {
         if (!self::ready()) { return false; }
         try {
-            foreach (self::marked('mut') as $m) {
-                if ($m['at'] > time() - self::FENCE_STALE || isset(self::$own[$m['token']])) { continue; }
-                self::rebuild_product($m['ref']);
-                self::unmark('mut', $m['ref'], [$m['token']]);
-                self::mark_redo($m['ref']);
-            }
             $redo = self::marked('redo');
         } catch (LMC_Stock_Ledger_Error $e) {
             lmc_log('نگه‌داری دفتر کسر ناموفق: ' . $e->getMessage());
@@ -948,7 +978,7 @@ class LMC_Stock_Ledger
         foreach ($redo as $r) { $by_pid[$r['ref']][] = $r['token']; }
         foreach ($by_pid as $pid => $tokens) {
             $lock = self::lock_name((int) $pid);
-            if (self::fenced((int) $pid) || !LMC_Push_Guard::acquire($lock, 0)) { $left++; continue; }
+            if (!LMC_Push_Guard::acquire($lock, 0)) { $left++; continue; }
             try {
                 self::fresh_meta((int) $pid);
                 self::recompute_locked((int) $pid);
@@ -961,35 +991,6 @@ class LMC_Stock_Ledger
             }
         }
         return $left === 0;
-    }
-
-    /**
-     * بازسازی کسرهای یک کالا از دادهٔ خود ووکامرس، پس از حصاری که پردازه‌اش مرده است: هر سفارشِ
-     * دارای قلمی از این کالا با `_reduced_stock` (جدول اقلام سفارش؛ با HPOS هم همین است) یا با
-     * سطری در دفتر، دوباره همگام می‌شود. نیتِ بی `_reduced_stock` تا حل‌شدن (پرچم کسر سفارش،
-     * لغو) می‌ماند؛ پس مرگ میان کسر و Hook واحد را برنمی‌گرداند. فقط خواندن جدول ووکامرس.
-     */
-    private static function rebuild_product(int $pid): void
-    {
-        global $wpdb;
-        $items = $wpdb->prefix . 'woocommerce_order_items';
-        $meta  = $wpdb->prefix . 'woocommerce_order_itemmeta';
-        $ids = array_map(static fn ($r) => (int) $r['order_id'], self::rows($wpdb->prepare(
-            "SELECT DISTINCT oi.order_id AS order_id FROM {$items} oi
-               JOIN {$meta} p ON p.order_item_id = oi.order_item_id AND p.meta_key IN ('_product_id', '_variation_id') AND p.meta_value = %s
-               JOIN {$meta} r ON r.order_item_id = oi.order_item_id AND r.meta_key = '_reduced_stock'
-              WHERE oi.order_item_type = 'line_item'", (string) $pid)));
-        $t = self::table();
-        foreach (self::rows($wpdb->prepare("SELECT DISTINCT order_id FROM {$t} WHERE product_id = %d", $pid)) as $r) {
-            $ids[] = (int) $r['order_id'];
-        }
-        foreach (array_unique($ids) as $oid) {
-            $order = function_exists('wc_get_order') ? wc_get_order($oid) : null;
-            if (!$order) { self::drop_order($oid); continue; }
-            $has_rows = self::rows($wpdb->prepare("SELECT 1 FROM {$t} WHERE order_id = %d LIMIT 1", $oid)) !== [];
-            if (!$has_rows && (self::confirmed_before($order) || !self::connector_owned($order))) { continue; }
-            self::sync_order($order);
-        }
     }
 
     // ── بازنشانی صریح ───────────────────────────────────────────────────
@@ -1008,6 +1009,8 @@ class LMC_Stock_Ledger
         update_option(self::EPOCH, $old + 1, false);
         if (self::epoch() !== $old + 1) { throw new LMC_Stock_Ledger_Error('دورهٔ تازه ثبت نشد'); }
         delete_post_meta_by_key(self::STATE_META);
+        // Core بازیابی‌شده دنبالهٔ نسخهٔ Push را هم عقب برده است؛ نسخهٔ قدیمی Pushهای تازه را رد می‌کرد.
+        delete_post_meta_by_key(self::VERSION_META);
         delete_option(LMC_Stock_Sync::CURSOR_OPTION);
         if ($restore_point === null) { return 0; }
         $done = $wpdb->query($wpdb->prepare(

@@ -70,6 +70,7 @@ $GLOBALS['wpdb'] = new class {
 };
 function get_post_meta($id, $key, $single = false) { return ''; }
 function wc_get_product($id) { return null; }
+function get_option($k, $d = false) { return $GLOBALS['test_options'][$k] ?? $d; }
 require __DIR__ . '/../labelmod-connector/includes/class-lmc-push-guard.php';
 require __DIR__ . '/../labelmod-connector/includes/class-lmc-stock-ledger.php';
 require __DIR__ . '/../labelmod-connector/includes/class-lmc-order-sync.php';

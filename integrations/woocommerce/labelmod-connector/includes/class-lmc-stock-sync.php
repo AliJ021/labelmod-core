@@ -87,6 +87,8 @@ class LMC_Stock_Sync
             $query['since'] = $since;
         }
 
+        // دورهٔ واترمارک پیش از خواندن Core؛ اگر میان خواندن و نشاندن «بازنشانی» شود، این صفحه رد می‌شود.
+        $epoch = LMC_Stock_Ledger::epoch();
         $res = LMC_Client::get('/web/stock', $query);
         if (is_wp_error($res)) {
             $out['error'] = $res->get_error_message();
@@ -142,7 +144,7 @@ class LMC_Stock_Sync
                 $rev = (string) $item['stockRev'];
                 $res_stock = preg_match('/^[0-9]{1,18}$/D', $rev)
                     ? LMC_Stock_Ledger::apply_snapshot((int) $product_id, $available, ($item['active'] ?? true) !== false,
-                        (int) $rev, $warehouse, 5, true)
+                        (int) $rev, $warehouse, 5, true, null, $epoch)
                     : ['ok' => false, 'applied' => false, 'rejected' => true];
             } else {
                 $res_stock = LMC_Stock_Ledger::apply_legacy((int) $product_id, $available, 5);
@@ -207,6 +209,15 @@ class LMC_Stock_Sync
      *
      * برمی‌گرداند: آیا چیزی واقعاً عوض شد.
      */
+    /** فقط مدیریت موجودی و منع پیش‌خرید، بی دست‌زدن به عدد؛ عدد را دفتر کسر با تفاضل اتمیک می‌نویسد. */
+    public static function prepare_managed($product): bool
+    {
+        $changed = false;
+        if (!$product->get_manage_stock()) { $product->set_manage_stock(true); $changed = true; }
+        if ($product->get_backorders() !== 'no') { $product->set_backorders('no'); $changed = true; }
+        return $changed;
+    }
+
     public static function apply_stock($product, int $available): bool
     {
         $changed = false;

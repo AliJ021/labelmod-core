@@ -89,6 +89,8 @@ class LMC_Order_Reservation
 
     public static function send($id): void
     {
+        // دورهٔ واترمارک با خودِ درخواست یخ می‌زند؛ پاسخی که پس از «بازنشانی» برسد اثبات دورهٔ تازه نیست.
+        $epoch = LMC_Stock_Ledger::epoch();
         $order = wc_get_order((int) $id);
         if (!$order || $order->get_meta(LMC_Order_Sync::META_INVOICE) !== '') { return; }
         $action = self::action($order);
@@ -122,7 +124,7 @@ class LMC_Order_Reservation
         $order->delete_meta_data(self::ERROR);
         $order->save();
         // ACK فقط با اثبات شمول (stockRev پس از رزرو)، نه با خودِ پاسخ موفق.
-        if ($state !== 'released') { LMC_Stock_Ledger::ack_order($order, $result['stock'] ?? null, (string) $payload['warehouseId'], $sent); }
+        if ($state !== 'released') { LMC_Stock_Ledger::ack_order($order, $result['stock'] ?? null, (string) $payload['warehouseId'], $sent, $epoch); }
     }
 
     private static function fail(WC_Order $order, WP_Error $error): void

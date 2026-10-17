@@ -301,6 +301,7 @@ class LMC_Push_Receiver
 
     public static function handle_stock($request)
     {
+        $epoch = LMC_Stock_Ledger::epoch();
         if (lmc_setting('sync_stock') !== 'yes') {
             return ['ok' => true, 'applied' => false, 'note' => 'همگام‌سازی موجودی خاموش است'];
         }
@@ -325,7 +326,7 @@ class LMC_Push_Receiver
                 return ['ok' => true, 'applied' => false, 'note' => 'انبار این پیام انبار سایت نیست'];
             }
             $out = LMC_Stock_Ledger::apply_snapshot($r['product_id'], max(0, $on_hand),
-                ($data['active'] ?? true) !== false, (int) $rev, $wh, 0, false, $r['version']);
+                ($data['active'] ?? true) !== false, (int) $rev, $wh, 0, false, $r['version'], $epoch);
         } else {
             $out = LMC_Stock_Ledger::apply_legacy($r['product_id'], max(0, $on_hand), 0, $r['version']);
         }
