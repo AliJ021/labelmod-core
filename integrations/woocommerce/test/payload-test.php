@@ -287,6 +287,13 @@ define('LMC_INSTORE_EVENT', 'lmc_sync_instore');
 require_once __DIR__ . '/../labelmod-connector/includes/class-lmc-client.php';
 // ارسال سفارش دورهٔ واترمارک را با خود درخواست یخ می‌کند (docs/STOCK-SYNC-PROTOCOL.md).
 function get_option($key, $default = false) { return $default; }
+// دورهٔ واترمارک موجودی از جدول گزینه‌ها با SQL خوانده می‌شود (نه Cache)؛ گزینه نیست = دورهٔ ۱.
+$GLOBALS['wpdb'] = new class {
+    public string $options = 'wp_options';
+    public string $last_error = '';
+    public function prepare($q, ...$a) { return $q; }
+    public function get_var($q) { return null; }
+};
 require_once __DIR__ . '/../labelmod-connector/includes/class-lmc-push-guard.php';
 require_once __DIR__ . '/../labelmod-connector/includes/class-lmc-stock-ledger.php';
 require_once __DIR__ . '/../labelmod-connector/includes/class-lmc-order-sync.php';

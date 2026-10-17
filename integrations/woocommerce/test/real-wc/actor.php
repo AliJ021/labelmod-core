@@ -57,6 +57,15 @@ switch ($cmd) {
         }
         wc_maybe_adjust_line_item_product_stock($item, (int) $args[1]);
         out(['done' => 'adjust']); break;
+    case 'cancel':                                      // لغو: wc_maybe_increase_stock_levels روی Hook وضعیت
+        $o = wc_get_order((int) $args[0]); $o->update_status('cancelled');
+        out(['done' => 'cancel']); break;
+    case 'refund':                                      // برگرداندن کالای استرداد به انبار (wc_restock_refunded_items)
+        $o = wc_get_order((int) $args[0]); $item = array_values($o->get_items())[0];
+        wc_restock_refunded_items($o, [$item->get_id() => ['qty' => (int) $args[1]]]);
+        out(['done' => 'refund']); break;
+    case 'reset':                                       // «بازنشانی واترمارک» مدیر (بی زمان بکاپ)
+        out(['carried' => LMC_Stock_Ledger::reset_epoch(null), 'epoch' => LMC_Stock_Ledger::epoch()]); break;
     case 'apply':                                       // عکس Core (Pull)
         $r = LMC_Stock_Ledger::apply_snapshot((int) $args[0], (int) $args[1], true, (int) $args[2], WH, 10, true);
         out($r); break;

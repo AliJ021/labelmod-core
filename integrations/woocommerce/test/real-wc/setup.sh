@@ -14,7 +14,7 @@ fi
 grep -q "^\$wp_version = '7.0.7';" "$W/wp/wp-includes/version.php" || { echo "وردپرس 7.0.7 نیست" >&2; exit 1; }
 grep -q '^ \* Version: 11.1.1$' "$W/wp/wp-content/plugins/woocommerce/woocommerce.php" || { echo "ووکامرس 11.1.1 نیست" >&2; exit 1; }
 mkdir -p "$W/wp/wp-content/mu-plugins"
-cp "$HERE/mu-repro.php" "$W/wp/wp-content/mu-plugins/lmc-repro.php"
+ln -sfn "$HERE/mu-repro.php" "$W/wp/wp-content/mu-plugins/lmc-repro.php"   # پیوند، نه کپی: نسخهٔ جاری همیشه اجرا شود
 ln -sfn "$PLUGIN" "$W/wp/wp-content/plugins/labelmod-connector"
 cat > "$W/wp/wp-config.php" <<PHP
 <?php

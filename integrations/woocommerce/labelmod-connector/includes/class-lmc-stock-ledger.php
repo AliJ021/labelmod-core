@@ -10,8 +10,8 @@
  *   می‌شود، نه از روی حدسِ رویداد. Replay و تکرار Hook بی‌اثرند. TTL ندارد.
  * - **ACK** = `(ack_rev, ack_wh)` که فقط از `stock` پاسخ Core می‌آید. پاسخ بی `stock` یا
  *   بدشکل اثبات نیست و هیچ‌چیز تأیید نمی‌کند.
- * - **حالت کالا** = یک متای JSON `{w,r,c,a,d}`: انبار، واترمارک، موجودی Core، فعال‌بودن و
- *   «کثیف». یک مقدار است تا نیمه‌نوشته نشود.
+ * - **حالت کالا** = یک متای JSON `{w,r,c,a,d,e}`: انبار، واترمارک، موجودی Core، فعال‌بودن،
+ *   «کثیف» و دورهٔ بازنشانی. یک مقدار است تا نیمه‌نوشته نشود.
  * - **عدد سایت** = فعال ? max(0, c − Σ کسرهایی که این عکس در خود ندارد) : ۰.
  *
  * ── ترتیب نوشتن (بازیابی‌پذیر) ───────────────────────────────────────
@@ -35,9 +35,15 @@
  * تأیید سفارشی قدیمی ساخته شده باشد. پیش از آن رفتار قدیم است. پس از آن، عکس بی واترمارک
  * یا بدشکل **رد** می‌شود (نه نشاندن بی‌صدا). بازگشت فقط با «بازنشانی واترمارک» صریح.
  *
- * ⚠️ قفل مشورتی کالا نوشتن‌های خودِ ووکامرس را سریال نمی‌کند (کسر ووکامرس پیش از Hook است).
- *    همگرایی از این است که Hook پس از نوشتن `_reduced_stock` زیر قفل بازمحاسبه می‌کند و
- *    عدد مطلق را از نو می‌سازد؛ مرز این ادعا در سند پروتکل است.
+ * ── هماهنگی با نوشتن خودِ ووکامرس ────────────────────────────────────
+ *
+ * قفل مشورتی کالا نوشتن‌های ووکامرس را سریال نمی‌کند؛ قفل سطری InnoDB روی خودِ سطر `_stock`
+ * می‌کند. ووکامرس `_stock` را فقط با یک UPDATE اتمیک (`meta_value ± n`) عوض می‌کند و آن UPDATE
+ * همان قفل سطر را می‌خواهد. `write_stock` در یک تراکنش: سطر را `FOR UPDATE` قفل می‌کند، بعد
+ * دوره و جمع کسرها را می‌خواند، بعد عدد مطلق را می‌نویسد و Commit می‌کند. پس هیچ تغییر `_stock`
+ * ووکامرس میان خواندن کسرها و نوشتن ما نمی‌نشیند، و با دو ترتیب ثابت ووکامرس (کم‌کردن پس از
+ * نیت؛ افزودن پیش از برداشتن کسر) در هیچ ترتیبی عدد از «Core − کسرها» بیشتر نمی‌شود — برای
+ * کم‌کردن و افزودن هر دو. استدلال کامل در سند پروتکل است.
  */
 
 if (!defined('ABSPATH')) {
@@ -45,6 +51,8 @@ if (!defined('ABSPATH')) {
 }
 
 class LMC_Stock_Ledger_Error extends RuntimeException {}
+/** دوره هنگام نوشتن عوض شد (بازنشانی هم‌زمان): «مشغول»، نه خطا. */
+class LMC_Stock_Ledger_Epoch extends LMC_Stock_Ledger_Error {}
 
 class LMC_Stock_Ledger
 {
@@ -64,6 +72,8 @@ class LMC_Stock_Ledger
     const RECONCILE_PAGE  = 100;
     /** زمان نصب دفتر؛ مرز «تأییدشده پیش از دفتر». */
     const SINCE           = 'lmc_stock_ledger_since';
+    /** کسری که پس از این مدت هنوز تأیید یا حل نشده، در صفحهٔ اتصال برای رسیدگی دیده می‌شود. */
+    const STUCK_AFTER     = 3600;
 
     // ── اسکیما و آشتی اولیه ─────────────────────────────────────────────
 
@@ -195,9 +205,36 @@ class LMC_Stock_Ledger
         lmc_log('خرابی دفتر کسر موجودی: ' . $why . ($ok ? '؛ نشاندن موجودی تا بازنشانی مدیر متوقف است.' : '؛ ثبت خرابی هم ناموفق بود.'));
     }
 
+    /**
+     * دورهٔ جاری از **دیتابیس**، نه از Cache گزینه‌ها: بازنشانی در پردازهٔ دیگری رخ می‌دهد و
+     * `get_option` درون یک درخواست مقدار Cacheشده را برمی‌گرداند.
+     */
     public static function epoch(): int
     {
-        return max(1, (int) get_option(self::EPOCH, 1));
+        global $wpdb;
+        $v = $wpdb->get_var($wpdb->prepare("SELECT option_value FROM {$wpdb->options} WHERE option_name = %s", self::EPOCH));
+        if ($v === null && (string) $wpdb->last_error !== '') { throw new LMC_Stock_Ledger_Error('دورهٔ واترمارک خوانده نشد'); }
+        return max(1, (int) $v);
+    }
+
+    /** null = هنوز سنجیده نشده؛ در هر درخواست یک بار. */
+    private static ?bool $transactional = null;
+
+    /**
+     * هماهنگی با ووکامرس به قفل سطری InnoDB روی `postmeta` تکیه دارد. روی موتور بی تراکنش
+     * (MyISAM) `FOR UPDATE` بی‌اثر است، پس نشاندن بسته می‌ماند — نه «کار کند ولی ناامن».
+     */
+    public static function transactional(): bool
+    {
+        if (self::$transactional !== null) { return self::$transactional; }
+        global $wpdb;
+        $engine = $wpdb->get_var($wpdb->prepare(
+            'SELECT ENGINE FROM information_schema.TABLES WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = %s', $wpdb->postmeta));
+        self::$transactional = is_string($engine) && strcasecmp($engine, 'InnoDB') === 0;
+        if (!self::$transactional) {
+            lmc_log('جدول postmeta تراکنشی (InnoDB) نیست یا موتورش خوانده نشد؛ نشاندن موجودی متوقف است.');
+        }
+        return self::$transactional;
     }
 
     /**
@@ -263,6 +300,8 @@ class LMC_Stock_Ledger
         // قلمی اجرا نمی‌شود؛ نیت باید همین‌جا حل شود.
         add_action('woocommerce_order_status_changed', [__CLASS__, 'on_status_changed'], 20, 1);
         add_action('admin_post_lmc_stock_reset', [__CLASS__, 'handle_reset']);
+        add_action('admin_post_lmc_stock_release', [__CLASS__, 'handle_release']);
+        add_action('admin_notices', [__CLASS__, 'stuck_notice']);
     }
 
     /** @var array<int,bool> سفارش‌هایی که همین درخواست وسط wc_reduce_stock_levels است */
@@ -602,6 +641,7 @@ class LMC_Stock_Ledger
             if ((int) get_option(self::SCHEMA_OPTION, 0) < self::SCHEMA_VERSION) { return false; }
         }
         if ((int) get_option(self::FAULT, 0) > 0) { return false; }
+        if (!self::transactional()) { return false; }
         return self::drain_backlog() && self::reconcile_step(2);
     }
 
@@ -650,10 +690,13 @@ class LMC_Stock_Ledger
             $iid = (int) (method_exists($item, 'get_id') ? $item->get_id() : $item_id);
             if ($sku === '' || !isset($by_sku[$sku]) || !isset($sent[$iid])) { $unproven++; continue; }
             try {
+                // دوره در **همان** UPDATE سنجیده می‌شود: بازنشانی‌ای که میان سنجش بالا و این نوشتن
+                // رخ دهد، ACK درخواست پیشین را به دورهٔ تازه نمی‌چسباند.
                 $done = $wpdb->query($wpdb->prepare(
                     "UPDATE {$t} SET ack_rev = %d, ack_wh = %s, ack_epoch = %d, ack_at = %d
-                      WHERE order_id = %d AND item_id = %d AND ack_rev IS NULL AND confirmed = 1 AND qty <= %d",
-                    $by_sku[$sku], $warehouse, $epoch, time(), (int) $order->get_id(), $iid, (int) $sent[$iid]));
+                      WHERE order_id = %d AND item_id = %d AND ack_rev IS NULL AND confirmed = 1 AND qty <= %d
+                        AND COALESCE((SELECT o.option_value + 0 FROM {$wpdb->options} o WHERE o.option_name = %s), 1) = %d",
+                    $by_sku[$sku], $warehouse, $epoch, time(), (int) $order->get_id(), $iid, (int) $sent[$iid], self::EPOCH, $epoch));
                 if ($done === false) { throw new LMC_Stock_Ledger_Error((string) $wpdb->last_error); }
             } catch (LMC_Stock_Ledger_Error $e) {
                 lmc_log('ثبت ACK موجودی سفارش ' . (int) $order->get_id() . ' ناموفق: ' . $e->getMessage() . '؛ کسر می‌ماند.');
@@ -687,14 +730,14 @@ class LMC_Stock_Ledger
     // ── خواندن دفتر ─────────────────────────────────────────────────────
 
     /** جمع کسرهایی که عکس (`$rev`، `$wh`) هنوز در خود ندارد. خطای دیتابیس = استثنا، نه صفر. */
-    public static function pending(int $product_id, int $rev, string $wh): int
+    public static function pending(int $product_id, int $rev, string $wh, ?int $epoch = null): int
     {
         global $wpdb;
         $t = self::table();
         $rows = self::rows($wpdb->prepare(
             "SELECT COALESCE(SUM(qty), 0) AS n FROM {$t} WHERE product_id = %d
                AND (ack_rev IS NULL OR ack_wh IS NULL OR ack_wh <> %s OR ack_epoch IS NULL OR ack_epoch <> %d OR ack_rev > %d)",
-            $product_id, $wh, self::epoch(), $rev));
+            $product_id, $wh, $epoch ?? self::epoch(), $rev));
         if (!isset($rows[0]['n'])) { throw new LMC_Stock_Ledger_Error('جمع کسر خوانده نشد'); }
         return (int) $rows[0]['n'];
     }
@@ -754,6 +797,21 @@ class LMC_Stock_Ledger
         }
     }
 
+    /**
+     * نسخهٔ Push نشسته برای دورهٔ جاری. مقدار «دوره:نسخه» است؛ عدد خالی (افزونهٔ پیشین/رفتار
+     * پیش از پروتکل) فقط پیش از فعال‌شدن پروتکل یا در دورهٔ ۱ معتبر است. نسخهٔ دورهٔ دیگر صفر است، پس Push تازهٔ Core
+     * بازیابی‌شده با نسخهٔ کوچک‌تر «قدیمی» شمرده نمی‌شود.
+     */
+    public static function version(int $product_id): int
+    {
+        $raw = (string) get_post_meta($product_id, self::VERSION_META, true);
+        if (preg_match('/^([0-9]+):([0-9]+)$/D', $raw, $m)) {
+            return (int) $m[1] === self::epoch() ? (int) $m[2] : 0;
+        }
+        // عدد خالی را مسیر پیش از پروتکل (و افزونهٔ پیشین) می‌نویسد؛ همان‌جا معتبر است.
+        return (self::epoch() === 1 || !get_option(self::ACTIVE, false)) ? (int) $raw : 0;
+    }
+
     public static function lock_name(int $product_id): string
     {
         return LMC_Push_Guard::lock_name($product_id, self::VERSION_META);
@@ -800,7 +858,7 @@ class LMC_Stock_Ledger
                 return ['legacy' => true] + self::legacy_locked($pid, $available, $version);
             }
             if ($version !== null) {
-                $sv = (int) get_post_meta($pid, self::VERSION_META, true);
+                $sv = self::version($pid);
                 if ($sv > 0 && $version <= $sv) {
                     if ($state && $state['d']) { self::recompute_locked($pid); }
                     return ['ok' => true, 'applied' => false, 'stale' => true, 'note' => 'نسخهٔ قدیمی یا تکراری'];
@@ -815,6 +873,9 @@ class LMC_Stock_Ledger
             self::write_state($pid, $next);
             try {
                 $display = self::write_stock($pid, $next);
+            } catch (LMC_Stock_Ledger_Epoch $e) {
+                self::restore_state($pid, $prev);
+                return ['ok' => false, 'applied' => false, 'busy' => true, 'note' => 'دورهٔ واترمارک عوض شده است'];
             } catch (Throwable $e) {
                 self::restore_state($pid, $prev);
                 lmc_log('نشاندن موجودی کالای ' . $pid . ' ناموفق؛ حالت قبلی برگشت: ' . $e->getMessage());
@@ -822,7 +883,8 @@ class LMC_Stock_Ledger
             }
             $next['d'] = false;
             try { self::write_state($pid, $next); } catch (LMC_Stock_Ledger_Error $e) { self::mark_redo($pid); }
-            if ($version !== null) { update_post_meta($pid, self::VERSION_META, $version); }
+            // نسخه با دوره برچسب می‌خورد: نوشتنی که پس از بازنشانی برسد، نسخهٔ دورهٔ تازه نیست.
+            if ($version !== null) { update_post_meta($pid, self::VERSION_META, $next['e'] . ':' . $version); }
             return ['ok' => true, 'applied' => true, 'display' => $display];
         } catch (LMC_Stock_Ledger_Error $e) {
             lmc_log('نشاندن موجودی کالای ' . $pid . ' ناموفق: ' . $e->getMessage());
@@ -844,10 +906,13 @@ class LMC_Stock_Ledger
         }
         try {
             self::fresh_meta($pid);
-            if (self::state($pid) !== null) {
-                lmc_log('عکس موجودی بی واترمارک برای کالای ' . $pid . ' رد شد؛ کالا در پروتکل واترمارک است.');
+            // پس از فعال‌شدن پروتکل (حتی پس از بازنشانی که حالت را پاک کرده) عکس بی واترمارک کسرهای
+            // تأییدنشده را نمی‌بیند؛ نشاندنش یعنی واحد فروخته‌شده برگردد. بازگشت به رفتار پیشین فقط با
+            // برگرداندن خود افزونه است، نه بی‌صدا.
+            if (self::state($pid) !== null || get_option(self::ACTIVE, false)) {
+                lmc_log('عکس موجودی بی واترمارک برای کالای ' . $pid . ' رد شد؛ پروتکل واترمارک فعال است.');
                 return ['ok' => false, 'applied' => false, 'rejected' => true,
-                    'note' => 'عکس بی واترمارک؛ برای بازگشت عمدی «بازنشانی واترمارک» لازم است'];
+                    'note' => 'عکس بی واترمارک پس از فعال‌شدن پروتکل پذیرفته نمی‌شود'];
             }
             return self::legacy_locked($pid, $available, $version);
         } finally {
@@ -858,7 +923,7 @@ class LMC_Stock_Ledger
     private static function legacy_locked(int $pid, int $available, ?int $version): array
     {
         if ($version !== null) {
-            $sv = (int) get_post_meta($pid, self::VERSION_META, true);
+            $sv = self::version($pid);
             if ($sv > 0 && $version <= $sv) {
                 return ['ok' => true, 'applied' => false, 'stale' => true, 'note' => 'نسخهٔ قدیمی یا تکراری'];
             }
@@ -872,41 +937,68 @@ class LMC_Stock_Ledger
     }
 
     /**
-     * نوشتن عدد سایت **به‌صورت تفاضل اتمیک**، نه مقدار مطلق.
+     * نوشتن عدد سایت در یک تراکنش، زیر قفل سطری خودِ `_stock`.
      *
-     * ۱. `_stock` فعلی از دیتابیس خوانده می‌شود. ۲. **بعد** جمع کسرها. ۳. تفاوت با
-     * `wc_update_product_stock(..., 'increase'|'decrease')` اعمال می‌شود، یعنی همان `meta_value ± n`
-     * اتمیک ووکامرس. نوشتن ما و نوشتن هم‌زمان ووکامرس روی هم جمع می‌شوند و هیچ‌کدام دیگری را
-     * بازنویسی نمی‌کند؛ پس مرگ پردازهٔ ما پس از نوشتن چیزی را لو نمی‌دهد.
+     * ۱. `SELECT … FOR UPDATE` روی سطر `_stock`. ۲. دورهٔ جاری؛ اگر عوض شده، Rollback و «مشغول».
+     * ۳. جمع کسرهایی که این عکس ندارد. ۴. عدد مطلق `max(0, c − کسرها)`. ۵. Commit.
      *
-     * چرا ترتیب ۱ پیش از ۲ کافی است: هر کم‌کردنِ ووکامرس **پس از** نیت پایدارش است (کسر سفارش و
-     * ویرایش دستی). اگر کم‌کردن پیش از خواندن ۱ باشد، نیتش پیش از ۲ است و هر دو دیده می‌شوند (دقیق).
-     * اگر نیت پس از ۲ باشد، کم‌کردن هم پس از ۱ است و روی هدف ما جمع می‌شود (دقیق). اگر نیت میان ۱
-     * و ۲ و کم‌کردن پس از ۱ باشد، یک بار اضافه کم می‌شود (کمتر، تا بازمحاسبهٔ Hook). در هیچ ترتیبی
-     * عدد از «موجودی Core − کسرها» بیشتر نمی‌شود. افزایش ووکامرس (لغو، استرداد) هم جمع می‌شود و تا
-     * Hook همان درخواست (یا عکس بعدی، اگر بمیرد) دیده می‌شود؛ همان رفتار خود ووکامرس.
+     * ووکامرس `_stock` را فقط با `UPDATE … SET meta_value = meta_value ± n` عوض می‌کند و آن UPDATE
+     * پشت قفل ۱ می‌ماند. پس هر تغییر `_stock` ووکامرس یا پیش از ۱ است یا پس از ۵؛ هیچ‌کدام میان
+     * خواندن ۳ و نوشتن ۴ نمی‌نشیند و عدد مطلق ما با چیزی که ندیده‌ایم ترکیب نمی‌شود. با دو ترتیب
+     * ثابت ووکامرس — کم‌کردن **پس از** نیت پایدارش، و افزودن (لغو، استرداد، کاهش تعداد) **پیش از**
+     * کم‌شدن کسرش — هر رویداد ووکامرس در هر جای این بازه یا دقیق است یا یک بار بیشتر کم می‌کند؛
+     * هرگز بیشتر از «Core − کسرها» نشان نمی‌دهد (جدول در سند پروتکل).
      *
-     * @param array{w:string,r:int,c:int,a:bool} $s
+     * مرگ پردازه پیش از Commit یعنی Rollback خودِ دیتابیس و آزاد شدن قفل؛ پس از Commit عدد درست
+     * نشسته است. نسخهٔ پیشین تفاضل `هدف − خوانده` را می‌افزود و افزایشِ ووکامرسی که میان دو خواندن
+     * می‌نشست دو بار شمرده می‌شد (لغو هم‌زمان: ۱۲ به‌جای ۱۰).
+     *
+     * @param array{w:string,r:int,c:int,a:bool,e:int} $s
      */
     private static function write_stock(int $pid, array $s): int
     {
+        global $wpdb;
         $product = wc_get_product($pid);
         if (!$product) { throw new LMC_Stock_Ledger_Error('کالا خوانده نشد'); }
         if (LMC_Stock_Sync::prepare_managed($product)) {
             // فقط مدیریت موجودی و منع پیش‌خرید؛ ذخیره‌شان `_stock` را نمی‌نویسد.
             if (!$product->save()) { throw new LMC_Stock_Ledger_Error('ذخیرهٔ کالا ناموفق'); }
         }
-        self::fresh_meta($pid);
-        $current = (int) floor((float) get_post_meta($pid, '_stock', true));
-        self::probe('stock_read', $pid);
-        $target = $s['a'] ? max(0, $s['c'] - self::pending($pid, $s['r'], $s['w'])) : 0;
-        self::probe('pending_read', $pid);
-        $delta = $target - $current;
-        if ($delta !== 0) {
-            $res = wc_update_product_stock($product, abs($delta), $delta > 0 ? 'increase' : 'decrease');
-            if ($res === false || $res === null || (function_exists('is_wp_error') && is_wp_error($res))) {
-                throw new LMC_Stock_Ledger_Error('تغییر اتمیک موجودی ووکامرس ناموفق');
+        // همان کاری که ووکامرس پیش از هر تغییر موجودی می‌کند: سطر باید باشد تا قفل شود.
+        add_post_meta($pid, '_stock', 0, true);
+        $pm = $wpdb->postmeta;
+        if ($wpdb->query('START TRANSACTION') === false) { throw new LMC_Stock_Ledger_Error('تراکنش موجودی باز نشد'); }
+        $done = false;
+        try {
+            $locked = self::rows($wpdb->prepare("SELECT meta_value FROM {$pm} WHERE post_id = %d AND meta_key = '_stock' FOR UPDATE", $pid));
+            if ($locked === []) { throw new LMC_Stock_Ledger_Error('سطر موجودی کالا نیست'); }
+            self::probe('locked', $pid);
+            if (self::epoch() !== (int) $s['e']) {
+                throw new LMC_Stock_Ledger_Epoch('دورهٔ واترمارک هنگام نوشتن عوض شد');
             }
+            $target = $s['a'] ? max(0, $s['c'] - self::pending($pid, $s['r'], $s['w'], (int) $s['e'])) : 0;
+            self::probe('pending_read', $pid);
+            if ($wpdb->query($wpdb->prepare("UPDATE {$pm} SET meta_value = %s WHERE post_id = %d AND meta_key = '_stock'", (string) $target, $pid)) === false) {
+                throw new LMC_Stock_Ledger_Error('نوشتن موجودی ناموفق: ' . (string) $wpdb->last_error);
+            }
+            if ($wpdb->query('COMMIT') === false) { throw new LMC_Stock_Ledger_Error('Commit موجودی ناموفق'); }
+            $done = true;
+        } finally {
+            if (!$done) { $wpdb->query('ROLLBACK'); }
+        }
+        self::probe('committed', $pid);
+        // وضعیت انبار و Cacheهای ووکامرس از همان مسیر خودش؛ `+0` عدد را دست نمی‌زند.
+        // عدد پس از Commit نشسته است؛ شکست این گام فقط وضعیت/Cache را کهنه می‌گذارد و حالت قبلی
+        // را برنمی‌گرداند (برگرداندن حالت، عددی را که نشسته بی‌پشتوانه می‌کرد). «دوباره» تازه‌اش می‌کند.
+        self::fresh_meta($pid);
+        try {
+            $res = wc_update_product_stock($product, 0, 'increase');
+            if ($res === false || $res === null || (function_exists('is_wp_error') && is_wp_error($res))) {
+                throw new LMC_Stock_Ledger_Error('تازه‌سازی وضعیت ووکامرس ناموفق');
+            }
+        } catch (Throwable $e) {
+            lmc_log('موجودی کالای ' . $pid . ' نشست ولی تازه‌سازی وضعیتش ناموفق بود: ' . $e->getMessage());
+            self::mark_redo($pid);
         }
         return $target;
     }
@@ -993,6 +1085,95 @@ class LMC_Stock_Ledger
         return $left === 0;
     }
 
+    // ── رسیدگی به کسرِ گیرکرده ──────────────────────────────────────────
+
+    /**
+     * کسرهایی که دیگر خودبه‌خود حل نمی‌شوند و عدد سایت را پایین نگه داشته‌اند: نیت کسر یا
+     * ویرایش دستی که پردازه‌اش وسط کار مرده، یا کسری که ACK نگرفته — هر کدام پس از
+     * `STUCK_AFTER`. بی این فهرست، کمتر نشان دادن «محافظه‌کار» عملاً یخ‌زدن بی‌پایان بود.
+     *
+     * @return list<array{order_id:int,item_id:int,product_id:int,qty:int,confirmed:int,created_at:int}>
+     */
+    public static function unresolved(int $limit = 50): array
+    {
+        global $wpdb;
+        $t = self::table();
+        $rows = self::rows($wpdb->prepare(
+            "SELECT order_id, item_id, product_id, qty, confirmed, created_at FROM {$t}
+              WHERE created_at < %d AND (confirmed <> 1 OR ack_rev IS NULL OR ack_epoch IS NULL OR ack_epoch <> %d)
+              ORDER BY created_at LIMIT %d",
+            time() - self::STUCK_AFTER, self::epoch(), max(1, $limit)));
+        return array_map(static fn ($r) => array_map('intval', $r), $rows);
+    }
+
+    /**
+     * رها کردن صریح یک کسر با تصمیم مدیر: «Core این قلم را دارد» (یا ووکامرس تغییر را اعمال
+     * نکرده). سطر حذف نمی‌شود؛ با واترمارک ۰ در دورهٔ جاری تأیید می‌شود تا هیچ عکسی کمش نکند و
+     * رویداد بعدی همان قلم (استرداد، لغو) از همین سطر پیش برود. دوره در همان UPDATE سنجیده می‌شود.
+     */
+    public static function release_hold(int $order_id, int $item_id, string $reason, string $who): bool
+    {
+        global $wpdb;
+        $t = self::table();
+        $epoch = self::epoch();
+        $rows = self::rows($wpdb->prepare("SELECT product_id, qty, confirmed FROM {$t} WHERE order_id = %d AND item_id = %d", $order_id, $item_id));
+        if ($rows === []) { return false; }
+        $done = $wpdb->query($wpdb->prepare(
+            "UPDATE {$t} SET confirmed = 1, ack_rev = 0, ack_wh = %s, ack_epoch = %d, ack_at = %d
+              WHERE order_id = %d AND item_id = %d
+                AND COALESCE((SELECT o.option_value + 0 FROM {$wpdb->options} o WHERE o.option_name = %s), 1) = %d",
+            (string) lmc_setting('warehouse_id'), $epoch, time(), $order_id, $item_id, self::EPOCH, $epoch));
+        if ($done === false) { throw new LMC_Stock_Ledger_Error('رها کردن کسر ناموفق: ' . (string) $wpdb->last_error); }
+        if ($done === 0) { return false; }
+        $msg = sprintf('لیبل مد — کسر محلی قلم %d (کالای %d، تعداد %d، وضعیت %d) با تصمیم %s رها شد. دلیل: %s',
+            $item_id, (int) $rows[0]['product_id'], (int) $rows[0]['qty'], (int) $rows[0]['confirmed'], $who, $reason);
+        $order = function_exists('wc_get_order') ? wc_get_order($order_id) : false;
+        if ($order && method_exists($order, 'add_order_note')) { $order->add_order_note($msg); }
+        lmc_log($msg);
+        self::recompute((int) $rows[0]['product_id']);
+        return true;
+    }
+
+    public static function handle_release(): void
+    {
+        if (!current_user_can('manage_woocommerce')) {
+            wp_die(esc_html__('دسترسی ندارید.', 'labelmod-connector'));
+        }
+        check_admin_referer('lmc_stock_release');
+        $order = isset($_POST['lmc_order']) ? (int) $_POST['lmc_order'] : 0;
+        $item = isset($_POST['lmc_item']) ? (int) $_POST['lmc_item'] : 0;
+        $reason = isset($_POST['lmc_reason']) ? trim(sanitize_text_field(wp_unslash($_POST['lmc_reason']))) : '';
+        if ($order <= 0 || $item <= 0 || $reason === '' || mb_strlen($reason) > 200) {
+            wp_die(esc_html__('سفارش، قلم و دلیل (حداکثر ۲۰۰ نویسه) لازم است.', 'labelmod-connector'));
+        }
+        $user = wp_get_current_user();
+        try {
+            $ok = self::release_hold($order, $item, $reason, (string) ($user->user_login ?? 'مدیر'));
+        } catch (LMC_Stock_Ledger_Error $e) {
+            wp_die(esc_html($e->getMessage()));
+        }
+        wp_safe_redirect(add_query_arg(['lmc_msg' => 'synced', 'lmc_count' => 0,
+            'lmc_detail' => rawurlencode($ok ? 'کسر رها شد و عدد کالا از نو حساب شد.' : 'کسر پیدا نشد یا دورهٔ واترمارک عوض شده است؛ چیزی تغییر نکرد.')],
+            admin_url('admin.php?page=labelmod-connector')));
+        exit;
+    }
+
+    /** هشدار پیشخوان: کسر گیرکرده‌ای هست که عدد سایت را پایین نگه داشته است. */
+    public static function stuck_notice(): void
+    {
+        if (!function_exists('current_user_can') || !current_user_can('manage_woocommerce')) { return; }
+        try {
+            $n = count(self::unresolved(50));
+        } catch (Throwable $e) {
+            return;
+        }
+        if ($n === 0) { return; }
+        printf('<div class="notice notice-warning"><p>%s <a href="%s">%s</a></p></div>',
+            esc_html(sprintf('لیبل مد: %d کسر موجودی بیش از یک ساعت حل نشده و موجودی سایت را پایین نگه داشته است.', $n)),
+            esc_url(admin_url('admin.php?page=labelmod-connector#lmc-stuck')),
+            esc_html__('رسیدگی', 'labelmod-connector'));
+    }
+
     // ── بازنشانی صریح ───────────────────────────────────────────────────
 
     /**
@@ -1020,7 +1201,7 @@ class LMC_Stock_Ledger
     }
 
     /**
-     * «بازنشانی واترمارک»: پس از بازیابی Core از بکاپ قدیمی‌تر یا برگشت عمدی به Core قدیم.
+     * «بازنشانی واترمارک»: پس از بازیابی Core از بکاپ قدیمی‌تر (برگشت API یعنی برگشت افزونه، نه بازنشانی).
      * حالت همهٔ کالاها پاک و مکان‌نما صفر می‌شود؛ Pull بعدی دوباره واردشان می‌کند. کسرها
      * می‌مانند. فقط مدیر فروشگاه با Nonce.
      */

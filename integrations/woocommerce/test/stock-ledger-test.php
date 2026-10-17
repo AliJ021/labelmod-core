@@ -11,6 +11,10 @@
  *
  * ⚠️ این آزمون ترتیبی است و هم‌زمانی واقعی MySQL را نمی‌سنجد؛ ادعای «هرگز فروش اضافه» از
  *    آن برنمی‌آید. هم‌زمانی با قفل نگه‌داشتهٔ «دیگری» و ترتیب‌های معکوس شبیه‌سازی شده است.
+ *    `_stock` و دورهٔ واترمارک در جدول‌های SQLite (`wp_postmeta`، `wp_options`) می‌نشینند تا SQL
+ *    خودِ دفتر رویشان اجرا شود. تراکنش در SQLite بی‌اثر است (یک اتصال)؛ قفل سطری InnoDB با
+ *    زمان‌بند مدل می‌شود: گام `_stock` ووکامرس که درون بازهٔ قفل بیفتد تا پس از Commit صبر
+ *    می‌کند. خودِ قفل در `test/real-wc` با پردازه‌های واقعی سنجیده می‌شود.
  */
 
 declare(strict_types=1);
@@ -34,25 +38,67 @@ function lmc_log(string $m): void { $GLOBALS['logs'][] = $m; }
 function __($t, $d = '') { return $t; }
 function esc_html__($t, $d = '') { return $t; }
 function add_action(...$a): void {}
+// مسیر مدیریت «رها کردن کسر»: نقش، Nonce و تغییر مسیر.
+class Lmc_Test_Exit extends RuntimeException {}
+function current_user_can($cap) { return ($GLOBALS['can'] ?? false) && $cap === 'manage_woocommerce'; }
+function check_admin_referer($a) { if (($GLOBALS['nonce'] ?? '') !== $a) { throw new Lmc_Test_Exit('nonce'); } return 1; }
+function wp_die($m = '') { throw new Lmc_Test_Exit('die: ' . $m); }
+function wp_safe_redirect($u) { $GLOBALS['redirect'] = $u; throw new Lmc_Test_Exit('redirect'); }
+function add_query_arg($a, $u) { return $u . '?' . http_build_query($a); }
+function admin_url($p = '') { return 'https://shop.test/wp-admin/' . $p; }
+function esc_html($t) { return htmlspecialchars((string) $t, ENT_QUOTES); }
+function sanitize_text_field($t) { return trim(strip_tags((string) $t)); }
+function wp_unslash($v) { return $v; }
+function wp_get_current_user() { return (object) ['user_login' => 'manager']; }
 function add_filter(...$a): void {}
 function get_option($k, $d = false) { return array_key_exists($k, $GLOBALS['options']) ? $GLOBALS['options'][$k] : $d; }
-function update_option($k, $v, $a = null) { $GLOBALS['options'][$k] = $v; return true; }
-function delete_option($k) { unset($GLOBALS['options'][$k]); return true; }
+/** مثل وردپرس: گزینه در جدول هم نوشته می‌شود (دفتر دوره را با SQL از همان‌جا می‌خواند). */
+function update_option($k, $v, $a = null)
+{
+    $GLOBALS['options'][$k] = $v;
+    $pdo = $GLOBALS['wpdb']->pdo;
+    $pdo->prepare('INSERT OR REPLACE INTO wp_options (option_name, option_value) VALUES (?, ?)')->execute([$k, is_scalar($v) ? (string) $v : serialize($v)]);
+    return true;
+}
+function delete_option($k) { unset($GLOBALS['options'][$k]); $GLOBALS['wpdb']->pdo->prepare('DELETE FROM wp_options WHERE option_name = ?')->execute([$k]); return true; }
 function dbDelta($sql) { return []; }
 function wp_json_encode($v, $f = 0) { return json_encode($v, $f); }
 function wp_cache_delete($id, $group = '') { return true; }
+/** `_stock` در جدول `wp_postmeta` SQLite؛ null یعنی سطری نیست. */
+function stock_of(int $id): ?int
+{
+    $v = $GLOBALS['wpdb']->pdo->query("SELECT meta_value FROM wp_postmeta WHERE post_id = {$id} AND meta_key = '_stock'")->fetchColumn();
+    return $v === false ? null : (int) $v;
+}
+/** همان UPDATE اتمیک ووکامرس: `meta_value = meta_value ± n`. */
+function stock_add(int $id, int $n): void
+{
+    $GLOBALS['wpdb']->pdo->exec("UPDATE wp_postmeta SET meta_value = meta_value + ({$n}) WHERE post_id = {$id} AND meta_key = '_stock'");
+}
+function stock_set(int $id, int $v): void
+{
+    $pdo = $GLOBALS['wpdb']->pdo;
+    if (stock_of($id) === null) { $pdo->exec("INSERT INTO wp_postmeta (post_id, meta_key, meta_value) VALUES ({$id}, '_stock', '{$v}')"); }
+    else { $pdo->exec("UPDATE wp_postmeta SET meta_value = '{$v}' WHERE post_id = {$id} AND meta_key = '_stock'"); }
+}
 function get_post_meta($id, $k, $s = false)
 {
-    if ($k === '_stock') { return (string) ($GLOBALS['stock'][$id] ?? ''); }
+    if ($k === '_stock') { $v = stock_of((int) $id); return $v === null ? '' : (string) $v; }
     return $GLOBALS['meta'][$id][$k] ?? '';
+}
+function add_post_meta($id, $k, $v, $unique = false)
+{
+    if ($k === '_stock') { if (stock_of((int) $id) === null) { stock_set((int) $id, (int) $v); } return true; }
+    if ($unique && isset($GLOBALS['meta'][$id][$k])) { return false; }
+    $GLOBALS['meta'][$id][$k] = (string) $v; return true;
 }
 /** WC 11.1.1 `wc_update_product_stock`: `meta_value ± n` اتمیک در دیتابیس. */
 function wc_update_product_stock($product, $qty, $op = 'set')
 {
     if (!empty($GLOBALS['fail_save'])) { throw new RuntimeException('تغییر موجودی ووکامرس شکست خورد (تزریق آزمون)'); }
     $id = $product->get_id();
-    $GLOBALS['stock'][$id] += $op === 'increase' ? (int) $qty : -(int) $qty;
-    return $GLOBALS['stock'][$id];
+    stock_add($id, $op === 'increase' ? (int) $qty : -(int) $qty);
+    return stock_of($id);
 }
 /** نقطه‌های probe دفتر: «درخواست دیگری» یک بار درست در همان مرحله اجرا می‌شود. */
 function do_action($hook, ...$a)
@@ -65,7 +111,7 @@ function update_post_meta($id, $k, $v) { if (!empty($GLOBALS['fail_meta'])) { re
 function delete_post_meta($id, $k) { unset($GLOBALS['meta'][$id][$k]); return true; }
 function delete_post_meta_by_key($k) { foreach ($GLOBALS['meta'] as $id => $m) { unset($GLOBALS['meta'][$id][$k]); } return true; }
 function get_posts($args) { return ($args['meta_value'] ?? '') === VAR_ID ? [P] : []; }
-function wc_get_product($id) { return isset($GLOBALS['stock'][$id]) ? new Product((int) $id) : false; }
+function wc_get_product($id) { return stock_of((int) $id) !== null ? new Product((int) $id) : false; }
 function wc_get_order($id)
 {
     // نقطهٔ درج interleaving قطعی: یک «درخواست دیگر» درست وسط کار ما اجرا می‌شود.
@@ -90,7 +136,7 @@ class LMC_Order_Sync { const META_INVOICE = '_lmc_invoice_id'; const META_ATTEMP
 class LMC_Order_Reservation { const STATE = '_lmc_reservation_state'; const PAYLOAD = '_lmc_reservation_payload'; }
 class LMC_Client { public static function get($path, $q) { $GLOBALS['feed_queries'][] = $q; return $GLOBALS['feed']; } }
 
-/** کالای ووکامرس؛ `_stock` در `$GLOBALS['stock']`. ذخیره می‌تواند عمداً استثنا دهد. */
+/** کالای ووکامرس؛ `_stock` در `wp_postmeta`. ذخیره می‌تواند عمداً استثنا دهد. */
 class Product
 {
     public ?int $pending = null;
@@ -99,7 +145,7 @@ class Product
     public function get_sku() { return 'SKU-' . $this->id; }
     public function get_manage_stock() { return true; }
     public function set_manage_stock($v) {}
-    public function get_stock_quantity() { return $GLOBALS['stock'][$this->id]; }
+    public function get_stock_quantity() { return stock_of($this->id); }
     public function set_stock_quantity($v) { $this->pending = (int) $v; }
     public function get_backorders() { return 'no'; }
     public function set_backorders($v) {}
@@ -111,7 +157,7 @@ class Product
     {
         if (!empty($GLOBALS['fail_save'])) { throw new RuntimeException('ذخیرهٔ کالا شکست خورد (تزریق آزمون)'); }
         // interleaving: «درخواست دیگری» درست پیش از نوشتن ما اجرا می‌شود (یک بار).
-        if ($this->pending !== null) { $GLOBALS['stock'][$this->id] = $this->pending; }
+        if ($this->pending !== null) { stock_set($this->id, $this->pending); }
         return $this->id;
     }
 }
@@ -133,7 +179,9 @@ class Order
     /** @param Item[] $items */
     public function __construct(public int $id, public array $items) { foreach ($items as $i) { $i->order = $id; } }
     public function get_id() { return $this->id; }
-    public function get_items() { $o = []; foreach ($this->items as $i) { $o[$i->id] = $i; } return $o; }
+    /** @var ?callable نقطهٔ درج interleaving: «درخواست دیگری» درست هنگام خواندن اقلام. */
+    public $on_items = null;
+    public function get_items() { if ($this->on_items) { $f = $this->on_items; $this->on_items = null; $f(); } $o = []; foreach ($this->items as $i) { $o[$i->id] = $i; } return $o; }
     public function get_meta($k) { return $this->meta[$k] ?? ''; }
     public function has_status($s) { return in_array($this->status, (array) $s, true); }
     public function add_order_note($n) { $this->notes[] = $n; }
@@ -146,6 +194,8 @@ class Fake_Request { public function __construct(private array $p) {} public fun
 class SqliteWpdb
 {
     public string $prefix = 'wp_';
+    public string $postmeta = 'wp_postmeta';
+    public string $options = 'wp_options';
     public string $last_error = '';
     public PDO $pdo;
     public function __construct(string $file)
@@ -157,6 +207,8 @@ class SqliteWpdb
             ack_epoch INTEGER NULL, ack_at INTEGER NULL, created_at INTEGER NOT NULL, PRIMARY KEY (order_id, item_id))');
         $this->pdo->exec('CREATE TABLE IF NOT EXISTS wp_lmc_stock_mark (kind TEXT NOT NULL, ref INTEGER NOT NULL, token TEXT NOT NULL,
             at INTEGER NOT NULL, PRIMARY KEY (kind, ref, token))');
+        $this->pdo->exec('CREATE TABLE IF NOT EXISTS wp_postmeta (meta_id INTEGER PRIMARY KEY, post_id INTEGER, meta_key TEXT, meta_value TEXT)');
+        $this->pdo->exec('CREATE TABLE IF NOT EXISTS wp_options (option_name TEXT PRIMARY KEY, option_value TEXT)');
         // جدول‌های اقلام سفارش ووکامرس (با HPOS هم همین‌ها) — فقط برای بازسازی خوانده می‌شوند.
         $this->pdo->exec('CREATE TABLE IF NOT EXISTS wp_woocommerce_order_items (order_item_id INTEGER PRIMARY KEY, order_id INTEGER, order_item_type TEXT)');
         $this->pdo->exec('CREATE TABLE IF NOT EXISTS wp_woocommerce_order_itemmeta (order_item_id INTEGER, meta_key TEXT, meta_value TEXT)');
@@ -177,9 +229,11 @@ class SqliteWpdb
     }
     public function get_var($q)
     {
+        $this->last_error = '';                                              // مثل wpdb: هر پرسش از نو
         if (preg_match("/GET_LOCK\\('([^']+)', (\\d+)\\)/", $q, $m)) {
             return ($GLOBALS['other_holds'][$m[1]] ?? false) === true ? '0' : '1';
         }
+        if (str_contains($q, 'information_schema.TABLES')) { return $GLOBALS['engine'] ?? 'InnoDB'; }
         if (preg_match("/^SHOW TABLES LIKE '([^']+)'/", $q, $m)) {
             $r = $this->pdo->query("SELECT name FROM sqlite_master WHERE type='table' AND name=" . $this->pdo->quote($m[1]))->fetchColumn();
             return $r === false ? null : (string) $r;
@@ -190,13 +244,22 @@ class SqliteWpdb
     }
     public function get_results($q, $o = null)
     {
+        $this->last_error = '';
         if ($this->failing($q)) { return null; }
+        if (str_ends_with(rtrim($q), 'FOR UPDATE')) { $GLOBALS['tx'][] = 'lock'; $q = substr(rtrim($q), 0, -10); }
         return $this->pdo->query($q)->fetchAll(PDO::FETCH_ASSOC);
     }
     public function query($q)
     {
+        $this->last_error = '';
         if (str_contains($q, 'RELEASE_LOCK')) { return 1; }
+        if (in_array($q, ['START TRANSACTION', 'COMMIT', 'ROLLBACK'], true)) {
+            // یک اتصال SQLite: تراکنش بی‌اثر است و فقط ترتیبش ثبت می‌شود (قفل سطری در real-wc).
+            if ($this->failing($q)) { return false; }
+            $GLOBALS['tx'][] = $q; return 1;
+        }
         if ($this->failing($q)) { return false; }
+        if (str_starts_with($q, 'UPDATE wp_postmeta')) { $GLOBALS['tx'][] = 'write'; }
         try { return $this->pdo->exec($q); } catch (PDOException $e) { $this->last_error = $e->getMessage(); return false; }
     }
 }
@@ -221,7 +284,9 @@ function fresh(): void
     global $db_file;
     @unlink($db_file);
     $GLOBALS['wpdb'] = new SqliteWpdb($db_file);
-    $GLOBALS['stock'] = [P => 0];
+    stock_set(P, 0);
+    $GLOBALS['tx'] = [];
+    $GLOBALS['engine'] = 'InnoDB';
     $GLOBALS['meta'] = [];
     $GLOBALS['orders'] = [];
     $GLOBALS['other_holds'] = [];
@@ -252,7 +317,7 @@ function crash(string $name): void
 {
     as_request($name, static function () { (new ReflectionProperty(LMC_Stock_Ledger::class, 'reducing'))->setValue(null, []); });
 }
-function stock(): int { return $GLOBALS['stock'][P]; }
+function stock(): int { return stock_of(P); }
 function rev(): ?int { $s = LMC_Stock_Ledger::state(P); return $s ? $s['r'] : null; }
 
 /** wc_reduce_stock_levels: `_stock` کم، بعد `_reduced_stock` و ذخیرهٔ قلم، بعد Hook. */
@@ -275,7 +340,7 @@ function woo_reduce_item(Order $order, Item $item, bool $stop_after_decrement = 
 {
     if ($item->get_meta('_reduced_stock') !== '') { return; }
     LMC_Stock_Ledger::on_item_quantity($item->qty, $order, $item);           // پیش از کسر
-    $GLOBALS['stock'][P] -= $item->qty;                                      // UPDATE اتمیک _stock
+    stock_add(P, -$item->qty);                                               // UPDATE اتمیک _stock
     if ($stop_after_decrement) { return; }
     woo_reduce_item_finish($order, $item);
 }
@@ -298,7 +363,7 @@ function woo_cancel(int $id): void
     foreach ($order->items as $item) {
         $r = (int) $item->get_meta('_reduced_stock');
         if ($r <= 0) { continue; }
-        $GLOBALS['stock'][P] += $r;
+        stock_add(P, $r);
         unset($item->meta['_reduced_stock']);
         LMC_Stock_Ledger::on_item_saved($item->id, $item, $id);
         LMC_Stock_Ledger::on_restore($item, 0, 0, $order);
@@ -310,7 +375,7 @@ function woo_refund_restock(int $id, int $item_id, int $qty): void
     $order = $GLOBALS['orders'][$id];
     foreach ($order->items as $item) {
         if ($item->id !== $item_id) { continue; }
-        $GLOBALS['stock'][P] += $qty;
+        stock_add(P, $qty);
         $item->meta['_reduced_stock'] = (int) $item->get_meta('_reduced_stock') - $qty;
         LMC_Stock_Ledger::on_item_saved($item->id, $item, $id);
     }
@@ -324,7 +389,7 @@ function woo_admin_adjust(int $id, int $item_id, int $new_qty): void
         if ($item->id !== $item_id) { continue; }
         $item->qty = $new_qty;
         LMC_Stock_Ledger::on_prevent_adjust(false, $item, $new_qty);           // WC 11.1.1: پیش از تغییر _stock
-        $GLOBALS['stock'][P] -= $new_qty - (int) $item->get_meta('_reduced_stock');
+        stock_add(P, -($new_qty - (int) $item->get_meta('_reduced_stock')));
         $item->meta['_reduced_stock'] = $new_qty;
         LMC_Stock_Ledger::on_item_saved($item->id, $item, $id);
     }
@@ -411,7 +476,7 @@ $out = pull(['available' => '5', 'stockRev' => 'abc']);
 check('R3. Pull با stockRev بدشکل هم رد و مکان‌نما ثابت', [$out['busy'], get_option(LMC_Stock_Sync::CURSOR_OPTION)], [1, 'C0']);
 // کنترل منفی: کالای بیرون از پروتکل همان رفتار پیشین را دارد (پیش از ارتقای Core).
 fresh();
-$GLOBALS['stock'][P] = 9;
+stock_set(P, 9);
 check('R3. کنترل منفی: کالای بی‌حالت عکس بی واترمارک را می‌نشاند', [LMC_Stock_Ledger::apply_legacy(P, 6, 0)['applied'] ?? null, stock()], [true, 6]);
 
 // ── R4. شکست ذخیره میان مراحل: هیچ کسری پیش از نشستن عکس حذف نمی‌شود ──
@@ -419,23 +484,29 @@ fresh();
 snap(5, 10);
 woo_order(7001, [[31, 1]]);
 ack(7001, 11);
-$GLOBALS['fail_save'] = true;
+$GLOBALS['fail_sql'] = '/^UPDATE wp_postmeta/';                             // نوشتن `_stock` شکست خورد
 $r = snap(3, 12);
 check('R4. شکست ذخیره دیده شد', isset($r['error']), true);
 check('R4. حالت قبلی برگشت (واترمارک ۱۰)', rev(), 10);
 check('R4. کسر سر جایش ماند', holds(), 1);
-$GLOBALS['fail_save'] = false;
+$GLOBALS['fail_sql'] = null;
+check('R4. Rollback: تراکنش بی Commit بسته شد', array_slice($GLOBALS['tx'], -1), ['ROLLBACK']);
 LMC_Stock_Ledger::recompute(P);
 check('R4. بازمحاسبه پس از شکست واحد را برنمی‌گرداند', stock(), 4);
 snap(3, 12);
 check('R4. تکرار همان عکس پس از رفع: عدد تازهٔ Core', stock(), 3);
 // Push: نسخه با شکست جلو نمی‌رود و تکرار همان نسخه اعمال می‌شود.
-$GLOBALS['fail_save'] = true;
+$GLOBALS['fail_sql'] = '/^UPDATE wp_postmeta/';
 $e = wpush(2, 13, 900);
 check('R4. Push ناموفق: ۵۰۰ و نسخه جلو نرفت', [$e instanceof WP_Error ? $e->data['status'] : null, get_post_meta(P, LMC_Stock_Ledger::VERSION_META)], [500, '']);
-$GLOBALS['fail_save'] = false;
+$GLOBALS['fail_sql'] = null;
 $r = wpush(2, 13, 900);
-check('R4. تکرار همان Push اعمال شد', [$r['applied'] ?? null, stock(), get_post_meta(P, LMC_Stock_Ledger::VERSION_META)], [true, 2, '900']);
+check('R4. تکرار همان Push اعمال شد (نسخه با دوره برچسب خورد)', [$r['applied'] ?? null, stock(), get_post_meta(P, LMC_Stock_Ledger::VERSION_META)], [true, 2, '1:900']);
+// شکست تازه‌سازی وضعیت ووکامرس **پس از** Commit عدد نشسته را بی‌پشتوانه نمی‌کند: حالت می‌ماند و «دوباره».
+$GLOBALS['fail_save'] = true;
+$r = wpush(1, 14, 901);
+$GLOBALS['fail_save'] = false;
+check('R4. شکست پس از Commit: عدد و حالت تازه می‌مانند و «دوباره» گذاشته شد', [$r['applied'] ?? null, stock(), rev(), marks('redo')], [true, 1, 14, 1]);
 // مرگ پردازه پس از نوشتن حالت (d=1) و پیش از ذخیرهٔ کالا: بازیابی از حالت پایدار.
 fresh();
 snap(5, 10);
@@ -604,7 +675,7 @@ check('۱۰. Push هم ۵۰۳', (wpush(1, 61, 980) instanceof WP_Error), true);
 $GLOBALS['other_holds'] = [];
 check('۱۰. Push و Pull یک نام قفل دارند', LMC_Stock_Ledger::lock_name(P), LMC_Push_Guard::lock_name(P, '_lmc_stock_version'));
 fresh();
-$GLOBALS['stock'][P] = 7;
+stock_set(P, 7);
 $r = wpush(4, 5, 10);
 check('۱۰. Push کالای بیرون از پروتکل را وارد نمی‌کند (رفتار پیشین)', [$r['legacy'] ?? null, stock(), rev()], [true, 4, null]);
 
@@ -653,7 +724,7 @@ $GLOBALS['on_get_order'] = static function () {
     $GLOBALS['fail_sql'] = '/^(INSERT INTO wp_lmc_stock_hold|UPDATE wp_lmc_stock_hold SET product_id = \d+, qty = \d+, confirmed = 1)/';
     as_request('Y', static function () {
         $o = new Order(8302, [new Item(45, P, 1)]); $GLOBALS['orders'][8302] = $o;
-        $GLOBALS['stock'][P] -= 1; $o->items[0]->meta['_reduced_stock'] = 1;
+        stock_add(P, -1); $o->items[0]->meta['_reduced_stock'] = 1;
         LMC_Stock_Ledger::sync_item_safe($o, $o->items[0]);
         LMC_Stock_Ledger::sync_item_safe($GLOBALS['orders'][8301], $GLOBALS['orders'][8301]->items[0]);
     });
@@ -670,67 +741,189 @@ $y = get_option('old_backlog', []); $y[8302] = 1; update_option('old_backlog', $
 unset($read[8301]); update_option('old_backlog', $read);
 check('N1. کنترل منفی: الگوی option شکست هم‌زمان را گم می‌کند', array_keys(get_option('old_backlog', [])), []);
 
-// ── N2. نوشتن تفاضلی در برابر کم‌کردن هم‌زمان ووکامرس — همهٔ interleavingها ──
-// گام‌های ما: S (خواندن `_stock`) ‹ P (خواندن کسرها) ‹ W (تفاضل اتمیک).
-// گام‌های ووکامرس: I (نیت) ‹ D (کم‌کردن `_stock`)، بعد F (`_reduced_stock` + Hook) یا مرگ.
-// برای هر جایگذاری I و D میان گام‌های ما، عدد پس از W و پس از F (یا مرگ) هرگز از درست بیشتر نیست.
-// «درست» = موجودی Core − همهٔ کسرهای واقعی (سفارش تازه هم).
-$stages = ['before_S', 'stock_read', 'pending_read', 'after_W'];            // جای اجرای گام ووکامرس
-$cases = 0; $exact = 0;
-foreach (['reduce', 'adjust'] as $kind) {
-    foreach ($stages as $ai => $at_i) {
-        foreach ($stages as $ad => $at_d) {
-            if ($ad < $ai) { continue; }                                     // D پس از I
-            foreach ([false, true] as $die) {
-                fresh();
-                snap(10, 10);
-                if ($kind === 'adjust') { woo_order(9000, [[90, 1]]); ack(9000, 11); snap(9, 11); }
-                $base = stock();                                             // ۱۰ یا ۹
-                $core = $kind === 'adjust' ? 8 : 9;                          // Core پس از یک فروش حضوری
-                $o = $kind === 'reduce' ? new Order(9100, [new Item(91, P, 1)]) : $GLOBALS['orders'][9000];
-                $GLOBALS['orders'][$o->id] = $o;
-                $item = $o->items[0];
-                $step_i = static function () use ($kind, $o, $item) {
-                    as_request('W', static function () use ($kind, $o, $item) {
-                        if ($kind === 'reduce') { woo_reduce_begin($o); LMC_Stock_Ledger::on_item_quantity(1, $o, $item); }
-                        else { $item->qty = 3; LMC_Stock_Ledger::on_prevent_adjust(false, $item, 3); }
-                    });
-                };
-                $step_d = static function () use ($kind) { $GLOBALS['stock'][P] -= $kind === 'reduce' ? 1 : 2; };
-                $plan = [];
-                $plan[$at_i][] = $step_i;
-                $plan[$at_d][] = $step_d;
-                foreach ($plan['before_S'] ?? [] as $f) { $f(); }
-                foreach (['stock_read', 'pending_read'] as $st) {
-                    if (!empty($plan[$st])) { $fs = $plan[$st]; $GLOBALS['probe'][$st] = static function () use ($fs) { foreach ($fs as $f) { $f(); } }; }
-                }
-                snap($core, 20);                                             // نوشتن ما (S، P، W)
-                foreach ($plan['after_W'] ?? [] as $f) { $f(); }
-                $truth = $kind === 'reduce' ? $core - 1 : $core - 3 + 1;     // adjust: قلم ۳ تأییدنشده؛ ۱ قبلاً در Core
-                if ($kind === 'adjust') { $truth = $core - 2; }              // Core قلم را ۱ دارد؛ ۲ واحد تازه تأییدنشده
-                $label = "N2. {$kind} I@{$at_i} D@{$at_d}" . ($die ? ' +مرگ' : '');
-                check("$label: پس از نوشتن ما بیشتر از درست نیست", stock() <= $truth, true);
-                if ($die) {
-                    crash('W');
-                    snap($core, 21);                                         // عکس بعدی پس از مرگ
-                } else {
-                    as_request('W', static function () use ($kind, $o, $item) {
-                        if ($kind === 'reduce') { woo_reduce_item_finish($o, $item); woo_reduce_end($o); }
-                        else { $item->meta['_reduced_stock'] = 3; LMC_Stock_Ledger::on_item_saved($item->id, $item, $o->id); }
-                    });
-                }
-                check("$label: پس از پایان/مرگ بیشتر از درست نیست", stock() <= $truth, true);
-                // طراحی: کسر سفارش دقیق؛ افزایش دستیِ قلمِ تأییدشده کل قلم را دوباره تأییدنشده می‌شمارد
-                // (Core یک واحدش را دارد) — پس یک واحد کمتر، محافظه‌کار.
-                $designed = $kind === 'reduce' ? $truth : $truth - 1;
-                if (stock() === $designed) { $exact++; }
-                $cases++;
+// ── N2. نوشتن زیر قفل سطر `_stock` در برابر هر نوشتن هم‌زمان ووکامرس — هر دو جهت ──
+// مراحل ما: 0 پیش از نشاندن · 1 «locked» (سطر قفل شد) · 2 «pending_read» (کسرها خوانده شد، پیش از
+// نوشتن) · 3 «committed» · 4 پس از نشاندن. گام‌های ووکامرس به ترتیب ثابت WC 11.1.1:
+//   کم‌کردن: I نیت (h) ‹ D `_stock−` (s) ‹ F `_reduced_stock` + Hook (h)
+//   افزودن (لغو، استرداد، کاهش دستی): S `_stock+` (s) ‹ H برداشتن/کم‌کردن کسر + Hook (h)
+// گام s که درون قفل (۱ یا ۲) بیفتد، مثل InnoDB تا Commit صبر می‌کند و گام‌های بعدی همان درخواست هم.
+// هر جایگذاری یکنواخت، با مرگ ووکامرس پس از هر پیشوند. «درست» = Core − کسرهای واقعی.
+const PH = ['before', 'locked', 'pending_read', 'committed', 'after'];
+/** همهٔ جایگذاری‌های یکنواخت $n گام روی ۵ مرحله. */
+function placements(int $n, int $from = 0): array
+{
+    if ($n === 0) { return [[]]; }
+    $out = [];
+    for ($p = $from; $p < 5; $p++) { foreach (placements($n - 1, $p) as $rest) { $out[] = array_merge([$p], $rest); } }
+    return $out;
+}
+/** بی قفل سطری؛ قفل در اجرا و فقط اگر خودِ کد `FOR UPDATE` زده باشد اعمال می‌شود (run_schedule). */
+function effective(array $types, array $place): array
+{
+    $eff = []; $floor = 0;
+    foreach ($place as $k => $p) { $eff[$k] = $floor = max($p, $floor); }
+    return $eff;
+}
+/** آیا تراکنش باز نوشتن ما سطر `_stock` را قفل کرده است؟ (از گزارش shim، نه فرض.) */
+function row_locked(): bool
+{
+    $tx = $GLOBALS['tx'];
+    $open = array_keys($tx, 'START TRANSACTION');
+    if ($open === []) { return false; }
+    $tail = array_slice($tx, end($open));
+    return in_array('lock', $tail, true) && !in_array('COMMIT', $tail, true) && !in_array('ROLLBACK', $tail, true);
+}
+/**
+ * سناریوهای ووکامرس. setup پیش از نشاندن ما (عکس 10/10 نشسته)؛ core = عکس تازهٔ ما؛ before/truth
+ * = عدد درست پیش و پس از گام s (تغییر واقعی `_stock` ووکامرس)؛ designed = عدد طراحی‌شده (افزایش
+ * دستیِ قلم تأییدشده کل قلم را تأییدنشده می‌شمارد: یک واحد کمتر، محافظه‌کار).
+ */
+function scenario(string $kind): array
+{
+    switch ($kind) {
+        case 'reduce':
+            return ['setup' => static function () { $o = new Order(9100, [new Item(91, P, 1)]); $GLOBALS['orders'][9100] = $o; },
+                'core' => 9, 'before' => 9, 'truth' => 8, 'designed' => 8, 'types' => ['h', 's', 'h'], 'steps' => [
+                static function () { $o = $GLOBALS['orders'][9100]; woo_reduce_begin($o); LMC_Stock_Ledger::on_item_quantity(1, $o, $o->items[0]); },
+                static function () { stock_add(P, -1); },
+                static function () { $o = $GLOBALS['orders'][9100]; woo_reduce_item_finish($o, $o->items[0]); woo_reduce_end($o); }]];
+        case 'adjust_up':
+            return ['setup' => static function () { woo_order(9000, [[90, 1]]); ack(9000, 11); snap(9, 11); },
+                'core' => 8, 'before' => 8, 'truth' => 6, 'designed' => 5, 'types' => ['h', 's', 'h'], 'steps' => [
+                static function () { $it = $GLOBALS['orders'][9000]->items[0]; $it->qty = 3; LMC_Stock_Ledger::on_prevent_adjust(false, $it, 3); },
+                static function () { stock_add(P, -2); },
+                static function () { $it = $GLOBALS['orders'][9000]->items[0]; $it->meta['_reduced_stock'] = 3; LMC_Stock_Ledger::on_item_saved($it->id, $it, 9000); }]];
+        case 'cancel':
+            return ['setup' => static function () { woo_order(9200, [[92, 2]]); },
+                'core' => 10, 'before' => 8, 'truth' => 10, 'designed' => 10, 'types' => ['s', 'h'], 'steps' => [
+                static function () { $GLOBALS['orders'][9200]->status = 'cancelled'; stock_add(P, 2); },
+                static function () { $o = $GLOBALS['orders'][9200]; $it = $o->items[0]; unset($it->meta['_reduced_stock']);
+                    LMC_Stock_Ledger::on_item_saved($it->id, $it, 9200); LMC_Stock_Ledger::on_restore($it, 0, 0, $o); }]];
+        case 'refund':
+            return ['setup' => static function () { woo_order(9300, [[93, 2]]); },
+                'core' => 10, 'before' => 8, 'truth' => 9, 'designed' => 9, 'types' => ['s', 'h'], 'steps' => [
+                static function () { stock_add(P, 1); },
+                static function () { $o = $GLOBALS['orders'][9300]; $it = $o->items[0]; $it->meta['_reduced_stock'] = 1;
+                    LMC_Stock_Ledger::on_item_saved($it->id, $it, 9300); LMC_Stock_Ledger::on_refund_restock(P, 0, 0, $o); }]];
+        case 'adjust_down':
+            return ['setup' => static function () { woo_order(9400, [[94, 2]]); },
+                'core' => 10, 'before' => 8, 'truth' => 9, 'designed' => 9, 'types' => ['s', 'h'], 'steps' => [
+                static function () { $it = $GLOBALS['orders'][9400]->items[0]; $it->qty = 1; LMC_Stock_Ledger::on_prevent_adjust(false, $it, 1); stock_add(P, 1); },
+                static function () { $it = $GLOBALS['orders'][9400]->items[0]; $it->meta['_reduced_stock'] = 1; LMC_Stock_Ledger::on_item_saved($it->id, $it, 9400); }]];
+    }
+    throw new LogicException($kind);
+}
+/**
+ * یک اجرا: گام‌ها (event, k, eff) به ترتیب مرحله؛ مراحل ۱ تا ۳ درون نشاندن ما و زیر قفل نام‌دار ما
+ * (Hook ووکامرس قفل نمی‌گیرد و «دوباره» می‌گذارد). برمی‌گرداند [عدد پس از نشاندن، درستِ همان لحظه،
+ * عدد پایانی، درستِ پایانی] — «درست» از گام‌های s که واقعاً اجرا شده‌اند.
+ */
+function truth_at(array $sc, array $done): int
+{
+    $t = reset($sc)['core'];
+    foreach ($sc as $ev => $x) {
+        $s_done = false;
+        foreach ($done as [$e, $k]) { if ($e === $ev && $x['types'][$k] === 's') { $s_done = true; } }
+        $t += ($s_done ? $x['truth'] : $x['before']) - $x['core'];
+    }
+    return $t;
+}
+function run_schedule(array $sc, array $runs, int $core, ?string $die = null): array
+{
+    $by = [];
+    foreach ($runs as [$ev, $k, $ph]) { $by[$ph][] = [$ev, $k]; }
+    $done = []; $deferred = []; $blocked = [];
+    // گام s ووکامرس وقتی سطر را قفل کرده‌ایم مثل InnoDB صبر می‌کند؛ بقیهٔ همان درخواست پشتش.
+    $exec = static function (int $ph) use (&$by, &$done, &$deferred, &$blocked, $sc) {
+        if ($ph === 3) { $queue = array_merge($deferred, $by[3] ?? []); $deferred = []; $blocked = []; }
+        else { $queue = $by[$ph] ?? []; }
+        foreach ($queue as [$ev, $k]) {
+            if (!empty($blocked[$ev]) || ($sc[$ev]['types'][$k] === 's' && row_locked())) {
+                $blocked[$ev] = true; $deferred[] = [$ev, $k]; continue;
             }
+            as_request('W' . $ev, $sc[$ev]['steps'][$k]);
+            $done[] = [$ev, $k];
+        }
+    };
+    $lock = LMC_Stock_Ledger::lock_name(P);
+    $exec(0);
+    foreach ([1 => 'locked', 2 => 'pending_read', 3 => 'committed'] as $ph => $stage) {
+        $GLOBALS['probe'][$stage] = static function () use ($exec, $ph, $lock) {
+            $GLOBALS['other_holds'][$lock] = true; $exec($ph); $GLOBALS['other_holds'][$lock] = false;
+        };
+    }
+    snap($core, 20);
+    $GLOBALS['probe'] = [];
+    if ($deferred !== []) { $exec(3); }                                      // نوشتن ما پیش از Commit متوقف شد
+    $after_write = stock(); $t_write = truth_at($sc, $done);
+    $exec(4);
+    if ($die !== null) { crash('W' . $die); snap($core, 21); }
+    LMC_Stock_Ledger::maintain();
+    return [$after_write, $t_write, stock(), truth_at($sc, $done)];
+}
+$cases = 0; $exact = 0; $over = [];
+foreach (['reduce', 'adjust_up', 'cancel', 'refund', 'adjust_down'] as $kind) {
+    $n = count(scenario($kind)['types']);
+    for ($len = $n; $len >= 1; $len--) {                                    // len < n = مرگ ووکامرس پس از len گام
+        foreach (placements($len) as $place) {
+            fresh(); snap(10, 10);
+            $sc = ['A' => scenario($kind)];
+            $sc['A']['setup']();
+            $eff = effective(array_slice($sc['A']['types'], 0, $len), $place);
+            $runs = [];
+            foreach ($eff as $k => $ph) { $runs[] = ['A', $k, $ph]; }
+            [$w, $tw, $f, $tf] = run_schedule($sc, $runs, $sc['A']['core'], $len < $n ? 'A' : null);
+            $tag = $kind . "[" . implode(',', array_map(static fn ($p) => PH[$p], $place)) . ']' . ($len < $n ? " مرگ پس از $len" : '');
+            if ($w > $tw || $f > $tf) { $over[] = "$tag: $w>$tw یا $f>$tf"; }
+            if ($len === $n && $f === $sc['A']['designed']) { $exact++; }
+            if ($len === $n) { $cases++; }
         }
     }
 }
-check('N2. همهٔ ۴۰ interleaving سنجیده شد', $cases, 40);
-check('N2. و در همهٔ آن‌ها پس از پایان یا مرگ عدد همان مقدار طراحی‌شده است (نه فقط کمتر)', $exact, 40);
+check('N2. هیچ جایگذاری (کم‌کردن و افزودن، با مرگ) بیش از درست نشان نداد', $over, []);
+check('N2. جایگذاری‌های کامل سنجیده شد (۳۵×۲ کم‌کردن + ۱۵×۳ افزودن)', $cases, 115);
+check('N2. و همهٔ کامل‌ها به عدد طراحی‌شده رسیدند', $exact, 115);
+
+// ── N2-ب. دو رویداد هم‌زمان: لغو یک سفارش و کسر سفارشی دیگر، با هر دو ترتیب درون یک مرحله ──
+// همان کلاسی که «بیشینهٔ دو خواندن» را می‌شکند (کسر کامل پیش از قفل، افزودن پس از آن).
+$mixed = 0; $mixed_over = []; $mixed_exact = 0;
+foreach (placements(2) as $pa) {
+    foreach (placements(3) as $pb) {
+        foreach (['AB', 'BA'] as $tie) {
+            fresh(); snap(10, 10);
+            $sc = ['A' => scenario('cancel'), 'B' => scenario('reduce')];
+            $sc['A']['setup'](); $sc['B']['setup']();
+            $runs = [];
+            foreach (['A' => $pa, 'B' => $pb] as $ev => $place) {
+                foreach (effective($sc[$ev]['types'], $place) as $k => $ph) { $runs[] = [$ev, $k, $ph]; }
+            }
+            usort($runs, static fn ($x, $y) => [$x[2], ($tie === 'AB') === ($x[0] === 'A') ? 0 : 1, $x[1]] <=> [$y[2], ($tie === 'AB') === ($y[0] === 'A') ? 0 : 1, $y[1]]);
+            [$w, $tw, $f, $tf] = run_schedule($sc, $runs, 10);
+            if ($w > $tw || $f > $tf) { $mixed_over[] = implode(',', $pa) . '|' . implode(',', $pb) . " $tie: $w>$tw یا $f>$tf"; }
+            if ($f === 9) { $mixed_exact++; }
+            $mixed++;
+        }
+    }
+}
+check('N2-ب. لغو + کسر هم‌زمان: هیچ ترتیبی بیش از درستِ همان لحظه نشان نداد', $mixed_over, []);
+check('N2-ب. ۱۵×۳۵×۲ ترتیب سنجیده شد و همه به ۹ رسیدند', [$mixed, $mixed_exact], [1050, 1050]);
+
+// ── R6. سه بازتولید root روی bbae0d1: ووکامرس افزودن را درست وقتی می‌زند که ما `_stock` را خوانده‌ایم ──
+// (نسخهٔ تفاضلی: لغو ۱۲ به‌جای ۱۰، استرداد ۱۰ به‌جای ۹، کاهش دستی ۱۰ به‌جای ۹.)
+foreach (['cancel' => 10, 'refund' => 9, 'adjust_down' => 9] as $kind => $want) {
+    fresh(); snap(10, 10);
+    $sc = ['A' => scenario($kind)];
+    $sc['A']['setup']();
+    $runs = [];
+    foreach (effective($sc['A']['types'], [1, 1]) as $k => $ph) { $runs[] = ['A', $k, $ph]; }
+    [$w, $tw, $f] = run_schedule($sc, $runs, 10);
+    check("R6. $kind هم‌زمان با قفل ما: هرگز بیش از $want و در پایان دقیق", [$w <= $tw, $tw, $f], [true, $want, $want]);
+}
+check('R6. نوشتن ما درون بازهٔ قفل است: قفل، بعد نوشتن، بعد Commit', (static function () {
+    fresh(); snap(10, 10); $GLOBALS['tx'] = [];
+    snap(9, 20);
+    return $GLOBALS['tx'];
+})(), ['START TRANSACTION', 'lock', 'write', 'COMMIT']);
 
 // ── N3. مرگ پردازه پس از کم‌کردن `_stock` و پیش از Hook: نیت می‌ماند تا اثبات ──
 fresh();
@@ -761,7 +954,7 @@ woo_order(8503, [[50, 1]]);
 ack(8503, 31);
 snap(9, 31);
 $it = $GLOBALS['orders'][8503]->items[0];
-as_request('B', static function () use ($it) { $it->qty = 3; LMC_Stock_Ledger::on_prevent_adjust(false, $it, 3); $GLOBALS['stock'][P] -= 2; });
+as_request('B', static function () use ($it) { $it->qty = 3; LMC_Stock_Ledger::on_prevent_adjust(false, $it, 3); stock_add(P, -2); });
 crash('B');
 snap(9, 32);
 check('N3. ویرایش دستی مرده: تعداد تازه کسر می‌ماند (۹−۳)', stock(), 6);
@@ -834,6 +1027,100 @@ ack(8703, 61);
 LMC_Stock_Ledger::reset_epoch(null);
 pull(['available' => '10', 'stockRev' => '103']);
 check('N5. بی زمان بکاپ هیچ تأییدی منتقل نمی‌شود (محافظه‌کار)', stock(), 9);
+
+// ── R7. بی واترمارک پس از فعال‌شدن، حتی پس از بازنشانی: نه Push نه Pull، بی بازگشت بی‌صدا ──
+fresh();
+snap(5, 10);
+woo_order(9701, [[97, 1]]);                                                  // عدد ۴، کسر محلی
+LMC_Stock_Ledger::reset_epoch(null);                                        // حالت پاک شد، پروتکل فعال ماند
+$r = push(['onHand' => 5, 'version' => 7000]);                               // Push کهنهٔ بی stockRev در راه
+check('R7. Push بی واترمارک پس از بازنشانی: ۴۰۹ و عدد دست نخورد', [$r instanceof WP_Error ? $r->data['status'] : null, stock()], [409, 4]);
+$GLOBALS['options'][LMC_Stock_Sync::CURSOR_OPTION] = 'C3';
+$out = pull(['available' => '5'], 'C4');
+check('R7. Pull بی واترمارک پس از بازنشانی: نشانده نشد، مکان‌نما ثابت', [$out['busy'], stock(), get_option(LMC_Stock_Sync::CURSOR_OPTION)], [1, 4, 'C3']);
+$out = pull(['available' => '5', 'stockRev' => '3'], 'C4');
+check('R7. Pull واترمارک‌دار دورهٔ تازه کالا را دوباره وارد می‌کند (۵−۱)', [stock(), rev()], [4, 3]);
+// کنترل منفی: پیش از فعال‌شدن پروتکل رفتار پیشین می‌ماند (R3 هم همین را دارد).
+fresh();
+check('R7. کنترل منفی: پیش از فعال‌شدن، بی واترمارک نشانده می‌شود', LMC_Stock_Ledger::apply_legacy(P, 6, 0)['applied'] ?? null, true);
+
+// ── R8. بازنشانی وسط نوشتن ما ──────────────────────────────────────────
+// (الف) پس از قفل و پیش از خواندن دوره: نوشتن انجام نمی‌شود، Rollback، و «مشغول».
+fresh();
+snap(10, 10);
+woo_order(9801, [[98, 1]]);                                                  // ۹
+$GLOBALS['probe']['locked'] = static function () { LMC_Stock_Ledger::reset_epoch(null); };
+$r = snap(50, 20);
+check('R8. بازنشانی پس از قفل: نشانده نشد، Rollback، حالت معتبری نماند', [$r['busy'] ?? false, stock(), rev(), array_slice($GLOBALS['tx'], -1)], [true, 9, null, ['ROLLBACK']]);
+// (ب) پس از خواندن دوره و کسرها و پیش از نوشتن: نوشتن پیش از بازنشانی خطی می‌شود (قفل سطر و قفل
+// کالا نویسندهٔ دورهٔ تازه را پشت سر نگه می‌دارند)، ولی حالت و نسخه‌اش در دورهٔ تازه اعتبار ندارند.
+fresh();
+snap(10, 10);
+woo_order(9802, [[99, 1]]);
+$GLOBALS['probe']['pending_read'] = static function () { LMC_Stock_Ledger::reset_epoch(null); };
+$r = wpush(50, 20, 8000);
+check('R8. بازنشانی پس از خواندن: عدد دورهٔ قبل، با کسر (۵۰−۱)', stock(), 49);
+check('R8. ولی حالت و نسخهٔ آن نوشتن در دورهٔ تازه اعتبار ندارند', [rev(), LMC_Stock_Ledger::version(P)], [null, 0]);
+$r = wpush(40, 21, 10);                                                      // Push دورهٔ تازه با نسخهٔ کوچک‌تر (Core بازیابی‌شده)
+check('R8. Push دورهٔ تازه برای کالای بی‌حالت منتظر Pull می‌ماند', $r instanceof WP_Error ? $r->data['status'] : null, 503);
+pull(['available' => '40', 'stockRev' => '21']);
+$r = wpush(30, 22, 11);
+check('R8. پس از Pull، Push دورهٔ تازه با نسخهٔ ۱۱ «قدیمی» شمرده نمی‌شود', [is_array($r) ? ($r['applied'] ?? null) : null, stock()], [true, 29]);
+// (ج) بازنشانی میان سنجش دوره در PHP و UPDATE ACK: همان UPDATE رد می‌کند.
+fresh();
+snap(10, 10);
+$o = woo_order(9803, [[100, 1]]);
+$e0 = LMC_Stock_Ledger::epoch();
+$o->on_items = static function () { LMC_Stock_Ledger::reset_epoch(null); };
+ack(9803, 11, WH, null, $e0);
+check('R8. ACK هم‌زمان با بازنشانی تأیید نکرد', (int) $GLOBALS['wpdb']->get_var('SELECT COUNT(*) FROM wp_lmc_stock_hold WHERE ack_rev IS NOT NULL'), 0);
+pull(['available' => '10', 'stockRev' => '30']);
+check('R8. و کسرش در دورهٔ تازه می‌ماند (۱۰−۱)', stock(), 9);
+
+// ── R9. کسر گیرکرده دیده و با تصمیم مدیر رها می‌شود ──────────────────
+fresh();
+snap(10, 30);
+woo_order(8504, [[54, 1]]);
+ack(8504, 31);
+snap(9, 31);
+$it = $GLOBALS['orders'][8504]->items[0];
+as_request('B', static function () use ($it) { $it->qty = 3; LMC_Stock_Ledger::on_prevent_adjust(false, $it, 3); stock_add(P, -2); });
+crash('B');                                                                  // ویرایش دستی وسط کار مرد
+snap(9, 32);
+check('R9. نیت ویرایش دستی بی اثبات: کمتر از واقع (۹−۳)', stock(), 6);
+check('R9. پیش از یک ساعت در فهرست رسیدگی نیست', LMC_Stock_Ledger::unresolved(), []);
+$GLOBALS['wpdb']->pdo->exec('UPDATE wp_lmc_stock_hold SET created_at = ' . (time() - 7200));
+$u = LMC_Stock_Ledger::unresolved();
+check('R9. پس از یک ساعت دیده می‌شود (نیت ویرایش دستی، تعداد ۳)', [count($u), $u[0]['confirmed'] ?? null, $u[0]['qty'] ?? null], [1, 2, 3]);
+// مدیر در Core دو واحد اضافه را ثبت کرد (Core ۷) و بعد رها کرد.
+snap(7, 33);
+check('R9. پیش از رها کردن هنوز کمتر (۷−۳)', stock(), 4);
+$GLOBALS['can'] = false; $GLOBALS['nonce'] = 'lmc_stock_release';
+$_POST = ['lmc_order' => '8504', 'lmc_item' => '54', 'lmc_reason' => 'در Core ثبت شد'];
+try { LMC_Stock_Ledger::handle_release(); $x = 'none'; } catch (Lmc_Test_Exit $e) { $x = $e->getMessage(); }
+check('R9. بی نقش manage_woocommerce رها نمی‌شود', [str_starts_with($x, 'die'), stock()], [true, 4]);
+$GLOBALS['can'] = true; $GLOBALS['nonce'] = 'other';
+try { LMC_Stock_Ledger::handle_release(); $x = 'none'; } catch (Lmc_Test_Exit $e) { $x = $e->getMessage(); }
+check('R9. بی Nonce درست رها نمی‌شود', [$x, stock()], ['nonce', 4]);
+$GLOBALS['nonce'] = 'lmc_stock_release'; $_POST['lmc_reason'] = '';
+try { LMC_Stock_Ledger::handle_release(); $x = 'none'; } catch (Lmc_Test_Exit $e) { $x = $e->getMessage(); }
+check('R9. بی دلیل رها نمی‌شود', [str_starts_with($x, 'die'), stock()], [true, 4]);
+$_POST['lmc_reason'] = 'در Core ثبت شد';
+try { LMC_Stock_Ledger::handle_release(); $x = 'none'; } catch (Lmc_Test_Exit $e) { $x = $e->getMessage(); }
+check('R9. رها شد و عدد از نو حساب شد (۷)', [$x, stock(), LMC_Stock_Ledger::unresolved()], ['redirect', 7, []]);
+check('R9. یادداشت سفارش نام مدیر و دلیل را دارد', (bool) array_filter($GLOBALS['orders'][8504]->notes, static fn ($n) => str_contains($n, 'manager') && str_contains($n, 'در Core ثبت شد')), true);
+woo_refund_restock(8504, 54, 1);                                             // رویداد بعدی همان قلم از همان سطر
+snap(8, 34);
+check('R9. استرداد بعدی دوبار کم نمی‌کند (Core ۸، کسر رهاشده)', stock(), 8);
+$GLOBALS['can'] = false; $_POST = [];
+
+// ── R10. موتور بی تراکنش: نشاندن بسته، نه «کار کند ولی ناامن» ─────────
+fresh();
+$GLOBALS['engine'] = 'MyISAM';
+(new ReflectionProperty(LMC_Stock_Ledger::class, 'transactional'))->setValue(null, null);
+$r = snap(5, 10);
+check('R10. postmeta غیر InnoDB: نشانده نشد', [$r['blocked'] ?? false, stock()], [true, 0]);
+(new ReflectionProperty(LMC_Stock_Ledger::class, 'transactional'))->setValue(null, null);
 
 @unlink($db_file);
 if ($failed > 0) { fwrite(STDERR, "✗ $failed ادعا شکست خورد ($checks پاس)\n"); exit(1); }

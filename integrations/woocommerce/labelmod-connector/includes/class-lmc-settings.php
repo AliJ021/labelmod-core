@@ -249,7 +249,7 @@ class LMC_Settings
             . '</span></form>';
 
         // بازنشانی صریح واترمارک (docs/STOCK-SYNC-PROTOCOL.md): فقط پس از بازیابی Core از بکاپ
-        // قدیمی‌تر یا برگشت عمدی به Core پیش از ۰۹۷. کسرهای محلی پاک نمی‌شوند.
+        // قدیمی‌تر. کسرهای محلی پاک نمی‌شوند و عکس بی واترمارک باز پذیرفته نمی‌شود.
         echo '<form method="post" action="' . esc_url(admin_url('admin-post.php')) . '">';
         wp_nonce_field('lmc_stock_reset');
         echo '<input type="hidden" name="action" value="lmc_stock_reset">';
@@ -257,10 +257,57 @@ class LMC_Settings
             . ' <input type="datetime-local" name="lmc_restore_point" step="1"></label> ';
         submit_button(__('بازنشانی واترمارک موجودی', 'labelmod-connector'), 'secondary', 'submit', false);
         echo ' <span class="description">'
-            . esc_html__('فقط پس از بازیابی سامانه از بکاپ یا برگشت عمدی نسخهٔ سامانه.', 'labelmod-connector')
+            . esc_html__('فقط پس از بازیابی سامانه از بکاپ قدیمی‌تر.', 'labelmod-connector')
             . '</span></form>';
 
+        self::stuck_holds();
+
         echo '</div>';
+    }
+
+    /**
+     * کسرهای گیرکرده (docs/STOCK-SYNC-PROTOCOL.md): عدد سایت تا رسیدگی پایین‌تر از واقع است.
+     * رها کردن یک تصمیم انسانی است با دلیل؛ در یادداشت سفارش و گزارش افزونه ثبت می‌شود.
+     */
+    private static function stuck_holds(): void
+    {
+        try {
+            $rows = LMC_Stock_Ledger::unresolved(50);
+        } catch (Throwable $e) {
+            echo '<p id="lmc-stuck">' . esc_html__('فهرست کسرهای گیرکرده خوانده نشد.', 'labelmod-connector') . '</p>';
+            return;
+        }
+        echo '<h2 id="lmc-stuck">' . esc_html__('کسرهای حل‌نشده', 'labelmod-connector') . '</h2>';
+        if ($rows === []) {
+            echo '<p>' . esc_html__('کسری بیش از یک ساعت معلق نمانده است.', 'labelmod-connector') . '</p>';
+            return;
+        }
+        echo '<p class="description">' . esc_html__(
+            'این قلم‌ها از موجودی سایت کم شده‌اند ولی تأیید Core ندارند (یا پردازهٔ ووکامرس وسط کسر/ویرایش دستی مرده است). '
+            . 'فقط وقتی «رها کن» بزنید که در سامانه دیده‌اید این قلم ثبت شده، یا مطمئنید ووکامرس تغییر را اعمال نکرده است.',
+            'labelmod-connector') . '</p>';
+        $labels = [0 => 'نیت کسر بی اثبات', 1 => 'بی تأیید Core', 2 => 'نیت ویرایش دستی بی اثبات'];
+        echo '<table class="widefat striped"><thead><tr><th>' . esc_html__('سفارش', 'labelmod-connector') . '</th><th>'
+            . esc_html__('کالا', 'labelmod-connector') . '</th><th>' . esc_html__('تعداد', 'labelmod-connector') . '</th><th>'
+            . esc_html__('وضعیت', 'labelmod-connector') . '</th><th>' . esc_html__('رسیدگی', 'labelmod-connector') . '</th></tr></thead><tbody>';
+        foreach ($rows as $r) {
+            // نشانی ویرایش از خود سفارش (با HPOS صفحهٔ دیگری است).
+            $o = wc_get_order($r['order_id']);
+            $order_url = $o && method_exists($o, 'get_edit_order_url') ? $o->get_edit_order_url() : admin_url('post.php?post=' . $r['order_id'] . '&action=edit');
+            echo '<tr><td><a href="' . esc_url($order_url) . '">#' . esc_html((string) $r['order_id']) . '</a></td><td>'
+                . esc_html((string) $r['product_id']) . '</td><td>' . esc_html((string) $r['qty']) . '</td><td>'
+                . esc_html($labels[$r['confirmed']] ?? (string) $r['confirmed']) . '</td><td>';
+            echo '<form method="post" action="' . esc_url(admin_url('admin-post.php')) . '">';
+            wp_nonce_field('lmc_stock_release');
+            echo '<input type="hidden" name="action" value="lmc_stock_release">'
+                . '<input type="hidden" name="lmc_order" value="' . esc_attr((string) $r['order_id']) . '">'
+                . '<input type="hidden" name="lmc_item" value="' . esc_attr((string) $r['item_id']) . '">'
+                . '<input type="text" name="lmc_reason" maxlength="200" required placeholder="'
+                . esc_attr__('دلیل (مثلاً «در Core ثبت شد»)', 'labelmod-connector') . '"> ';
+            submit_button(__('رها کن', 'labelmod-connector'), 'secondary small', 'submit', false);
+            echo '</form></td></tr>';
+        }
+        echo '</tbody></table>';
     }
 
     /** پیام‌های بعد از ذخیره و همگام‌سازی. */
