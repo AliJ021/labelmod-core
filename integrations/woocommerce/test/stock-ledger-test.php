@@ -1310,6 +1310,71 @@ $GLOBALS['feed_queries'] = [];
 LMC_Stock_Sync::run();
 check('R15. کنترل مثبت: مکان‌نمای همان دوره فرستاده می‌شود', $GLOBALS['feed_queries'][0]['since'] ?? null, 'C-ok');
 
+// ── R16. بازنشانی دوباره پس از مرگ بازنشانی قبلی (بازبینی root روی aa3f966) ─────────
+// مدیر پس از مرگ پردازه دوباره «بازنشانی» می‌زند. پایهٔ بازیابی (حالت Commitشدهٔ دورهٔ ۱) نباید با نیت
+// تازهٔ ۲→۳ گم شود؛ وگرنه بازمحاسبه کالا را رد می‌کند، نیت پاک می‌شود و Pull خالی ۱۰ را نگه می‌دارد.
+function intent_now(): ?string { return $GLOBALS['wpdb']->get_var("SELECT option_value FROM wp_options WHERE option_name = '" . LMC_Stock_Ledger::RESET_INTENT . "'"); }
+function r16_base(int $order, int $item): void
+{
+    fresh();
+    snap(10, 30);
+    woo_order($order, [[$item, 2]]);
+    ack($order, 31);
+    snap(10, 32);
+    $GLOBALS['probe']['reset_committed'] = static function () { throw new RuntimeException('مرگ پردازهٔ بازنشانی (تزریق آزمون)'); };
+    try { LMC_Stock_Ledger::reset_epoch(null); } catch (RuntimeException $e) { }
+}
+r16_base(9961, 161);
+check('R16. پس از مرگ نخست: دوره ۲، نیت ۱→۲، عدد ۱۰', [LMC_Stock_Ledger::epoch(), intent_now(), stock()], [2, '{"from":1,"to":2}', 10]);
+LMC_Stock_Ledger::new_request();
+LMC_Stock_Ledger::reset_epoch(null);                                         // تلاش دوبارهٔ مدیر، این بار تا پایان
+check('R16. بازنشانی دوباره: دوره ۳، پایهٔ دورهٔ ۱ حفظ و بازمحاسبه ۸، نیت پاک', [LMC_Stock_Ledger::epoch(), stock(), intent_now()], [3, 8, null]);
+$GLOBALS['feed_queries'] = [];
+$GLOBALS['feed'] = ['items' => [], 'cursor' => null];
+$out = LMC_Stock_Sync::run();
+check('R16. Pull خالی Core بازیابی‌شده پس از آن: ۸، بی since، بی خطا', [stock(), array_key_exists('since', $GLOBALS['feed_queries'][0] ?? []), $out['error']], [8, false, '']);
+
+// بازنشانی دوم پیش از نسل تازه ادامهٔ قبلی را تمام نمی‌کند (قفل کالا نرسید) و خودش هم پس از Commit
+// می‌میرد: نیت ادغام‌شده با پایهٔ اصلی (۱→۳)، عدد هنوز ۱۰، و Pull بعدی از حالت دورهٔ ۱ کامل می‌کند.
+r16_base(9962, 162);
+LMC_Stock_Ledger::new_request();
+$GLOBALS['probe']['locked'] = static function () { throw new LMC_Stock_Ledger_Error('قفل نرسید (تزریق آزمون)'); };
+$GLOBALS['probe']['reset_committed'] = static function () { throw new RuntimeException('مرگ دوم'); };
+try { LMC_Stock_Ledger::reset_epoch(null); } catch (RuntimeException $e) { }
+check('R16. دو مرگ پیاپی: نیت با پایهٔ اصلی (۱→۳)، عدد هنوز ۱۰', [LMC_Stock_Ledger::epoch(), intent_now(), stock()], [3, '{"from":1,"to":3}', 10]);
+$GLOBALS['feed'] = ['items' => [], 'cursor' => null];
+$out = LMC_Stock_Sync::run();
+check('R16. Pull بعدی: ۸ و نیت پاک', [stock(), intent_now(), $out['error']], [8, null, '']);
+
+// بازنشانی تازه وسط ادامهٔ بازنشانی قبلی (پردازهٔ دیگر): نوشتن ادامه رد می‌شود، نیت با پایهٔ اصلی می‌ماند.
+r16_base(9963, 163);
+LMC_Stock_Ledger::new_request();
+$GLOBALS['probe']['locked'] = static function () { LMC_Stock_Ledger::new_request(); LMC_Stock_Ledger::reset_epoch(null); };
+$r = LMC_Stock_Ledger::resume_reset();
+check('R16. ادامه هم‌زمان با بازنشانی تازه: ادامه «ناتمام» و عدد ۸ از بازنشانی تازه', [$r['pending'], LMC_Stock_Ledger::epoch(), stock(), intent_now()], [true, 3, 8, null]);
+
+// پایهٔ قدیمی‌تر از «از» نیت: ادامهٔ نخست کامل شد (۸، نیت پاک، حالت کالا هنوز دورهٔ ۱). سفارش در دورهٔ ۲ پیش
+// از بکاپ دوباره تأیید شده بود؛ بازنشانی دوم با زمان بکاپ آن تأیید را منتقل می‌کند، پس Core بازیابی‌شده سفارش را
+// دارد و درست ۱۰ است. کالا باید از حالت دورهٔ ۱ با کسرهای دورهٔ ۳ دوباره حساب شود، نه به‌خاطر «از=۲» رد.
+r16_base(9965, 165);
+LMC_Stock_Ledger::new_request();
+LMC_Stock_Ledger::resume_reset();
+check('R16. پیش از بازنشانی دوم: نیت پاک، عدد ۸', [intent_now(), stock()], [null, 8]);
+$GLOBALS['wpdb']->pdo->exec('UPDATE wp_lmc_stock_hold SET ack_rev = 33, ack_epoch = 2, ack_at = 1000 WHERE order_id = 9965');
+LMC_Stock_Ledger::reset_epoch(2000);                                         // بکاپ پس از آن تأیید
+check('R16. بازنشانی با انتقال تأیید: پایهٔ دورهٔ ۱ با کسرهای دورهٔ ۳ (۱۰)، نیت پاک',
+    [LMC_Stock_Ledger::epoch(), (int) $GLOBALS['wpdb']->get_var('SELECT ack_epoch FROM wp_lmc_stock_hold WHERE order_id = 9965'), stock(), intent_now()], [3, 3, 10, null]);
+
+// پاک‌کردن نیت شکست می‌خورد (خطای SQL): موفقیت گزارش نمی‌شود.
+r16_base(9964, 164);
+LMC_Stock_Ledger::new_request();
+$GLOBALS['fail_sql'] = '/^DELETE FROM wp_options WHERE option_name = .lmc_stock_reset_pending. AND option_value/';
+$r = LMC_Stock_Ledger::resume_reset();
+$GLOBALS['fail_sql'] = null;
+check('R16. حذف نیت ناموفق: «ناتمام»، نیت می‌ماند', [$r['pending'], intent_now() !== null, stock()], [true, true, 8]);
+$r = LMC_Stock_Ledger::resume_reset();
+check('R16. دور بعد: پاک و تمام', [$r, intent_now()], [['pending' => false, 'failed' => 0], null]);
+
 // ── R13. درخواست رها کردن به دورهٔ صفحه بسته است، حتی با ack_epoch تهی ──
 fresh();
 snap(10, 30);

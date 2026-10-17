@@ -1010,8 +1010,9 @@ class LMC_Stock_Ledger
      * می‌نشست دو بار شمرده می‌شد (لغو هم‌زمان: ۱۲ به‌جای ۱۰).
      *
      * `$publish`: حالت تازه و نسخهٔ Push در **همان** تراکنش منتشر می‌شوند (apply_snapshot).
-     * `$reset_from`: مسیر بازنشانی؛ پایه، حالت **Commitشدهٔ** دورهٔ قبل است که درون همین تراکنش و پس از
-     * قفل‌ها خوانده می‌شود؛ اگر کالا حالت آن دوره را ندارد (یا Pull دورهٔ تازه زودتر واردش کرده) دست نمی‌خورد.
+     * `$reset_from`: مسیر بازنشانی؛ پایه، حالت **Commitشدهٔ** کالا از دوره‌ای در بازهٔ [`$reset_from`، دورهٔ جاری)
+     * است که درون همین تراکنش و پس از قفل‌ها خوانده می‌شود — همان پایهٔ عددی که نشسته، حتی پس از چند بازنشانی
+     * پیاپی. اگر کالا حالتی در آن بازه ندارد (یا Pull دورهٔ تازه زودتر واردش کرده) دست نمی‌خورد.
      *
      * @param array{w:string,r:int,c:int,a:bool,e:int} $s
      * @param array{state:string,version:?string}|null $publish
@@ -1051,7 +1052,8 @@ class LMC_Stock_Ledger
             if ($reset_from !== null) {
                 $raw = self::rows($wpdb->prepare("SELECT meta_value FROM {$pm} WHERE post_id = %d AND meta_key = %s LIMIT 1", $pid, self::STATE_META));
                 $old = isset($raw[0]['meta_value']) ? json_decode((string) $raw[0]['meta_value'], true) : null;
-                if (!is_array($old) || !isset($old['w'], $old['r'], $old['c']) || (int) ($old['e'] ?? 1) !== $reset_from) {
+                $old_e = is_array($old) ? (int) ($old['e'] ?? 1) : 0;
+                if (!is_array($old) || !isset($old['w'], $old['r'], $old['c']) || $old_e < $reset_from || $old_e >= (int) $s['e']) {
                     if ($wpdb->query('COMMIT') === false) { throw new LMC_Stock_Ledger_Error('Commit موجودی ناموفق'); }
                     $done = true;
                     return -1;
@@ -1361,6 +1363,13 @@ class LMC_Stock_Ledger
         if (self::in_transaction() !== false) {
             throw new LMC_Stock_Ledger_Error('اتصال درون تراکنش دیگری است؛ بازنشانی انجام نشد');
         }
+        // بازنشانیِ نیمه‌تمام قبلی پیش از نسل تازه تمام می‌شود (best effort)؛ اگر نشد، پایه‌اش درون تراکنش
+        // پایین ادغام می‌شود، نه گم (بازبینی root روی aa3f966: تلاش دوبارهٔ مدیر پس از مرگ بازنشانی).
+        try {
+            self::resume_reset();
+        } catch (Throwable $e) {
+            lmc_log('ادامهٔ بازنشانی قبلی پیش از بازنشانی تازه ناموفق: ' . $e->getMessage());
+        }
         self::ensure_epoch_row();
         $old = self::epoch();
         // یک تراکنش: دورهٔ تازه، انتقال تأییدها و نیت پایدار با هم Commit می‌شوند یا هیچ‌کدام. مکان‌نمای
@@ -1383,7 +1392,16 @@ class LMC_Stock_Ledger
                 if ($c === false) { throw new LMC_Stock_Ledger_Error('انتقال تأییدها ناموفق: ' . (string) $wpdb->last_error); }
                 $carried = (int) $c;
             }
-            $intent = (string) wp_json_encode(['from' => $old, 'to' => $old + 1]);
+            // UPDATE بالا سطر دوره را انحصاری قفل کرده است، پس بازنشانی‌ها پشت هم‌اند و نیت قبلی جایگزین می‌شود نه
+            // گم: نیتی که هنوز مانده (ادامه شکست خورد یا هم‌زمان رسید) «از» خودش را به نیت تازه می‌دهد تا گزارش
+            // پایهٔ اصلی بازیابی را نشان دهد؛ بازمحاسبه هم پایه را از آخرین حالت Commitشدهٔ هر دورهٔ پیشین می‌گیرد.
+            $from = $old;
+            $prev = self::rows($wpdb->prepare("SELECT option_value FROM {$wpdb->options} WHERE option_name = %s FOR UPDATE", self::RESET_INTENT));
+            if ($prev !== []) {
+                $p = json_decode((string) $prev[0]['option_value'], true);
+                $from = is_array($p) && isset($p['from']) && (int) $p['from'] >= 1 && (int) $p['from'] <= $old ? (int) $p['from'] : 1;
+            }
+            $intent = (string) wp_json_encode(['from' => $from, 'to' => $old + 1]);
             if ($wpdb->query($wpdb->prepare("DELETE FROM {$wpdb->options} WHERE option_name = %s", self::RESET_INTENT)) === false
                 || $wpdb->query($wpdb->prepare("INSERT INTO {$wpdb->options} (option_name, option_value, autoload) VALUES (%s, %s, 'no')",
                     self::RESET_INTENT, $intent)) === false) {
@@ -1425,7 +1443,7 @@ class LMC_Stock_Ledger
         $now = self::epoch();
         // نیت بدشکل یا دوره‌ای که با آن نمی‌خواند: نامعلوم، پس بسته (پیام، نه حدس). فقط «بازنشانی» مدیر
         // آن را با نیت تازه جایگزین می‌کند.
-        if (!is_array($i) || !isset($i['from'], $i['to']) || (int) $i['to'] !== $now || (int) $i['from'] !== $now - 1) {
+        if (!is_array($i) || !isset($i['from'], $i['to']) || (int) $i['to'] !== $now || (int) $i['from'] < 1 || (int) $i['from'] >= $now) {
             lmc_log('نیت بازنشانی واترمارک با دورهٔ جاری نمی‌خواند؛ بازنشانی را دوباره اجرا کنید.');
             return ['pending' => true, 'failed' => 1];
         }
@@ -1434,16 +1452,28 @@ class LMC_Stock_Ledger
         foreach (self::rows("SELECT DISTINCT product_id FROM " . self::table()) as $r) {
             $pid = (int) $r['product_id'];
             try {
-                self::write_stock($pid, ['w' => '', 'r' => 0, 'c' => 0, 'a' => true, 'e' => $now], null, $now - 1);
+                // پایه: آخرین حالت Commitشدهٔ کالا از **هر** دورهٔ پیشین، نه فقط «از» نیت. در هر دوره عدد کالای دارای
+                // کسر یا از حالت همان دوره است یا از بازمحاسبهٔ بازنشانی روی حالتی قدیمی‌تر؛ پس حالت قدیمی‌تر هنوز
+                // پایهٔ عدد نشسته است، حتی وقتی نیت قبلی کامل و پاک شده و تأییدهای این بازنشانی منتقل شده‌اند.
+                self::write_stock($pid, ['w' => '', 'r' => 0, 'c' => 0, 'a' => true, 'e' => $now], null, 1);
             } catch (Throwable $e) {
                 $failed++;
                 lmc_log('بازمحاسبهٔ کالای ' . $pid . ' پس از بازنشانی ناموفق: ' . $e->getMessage() . '؛ Pull بعدی دوباره تلاش می‌کند.');
             }
         }
         if ($failed > 0) { return ['pending' => true, 'failed' => $failed]; }
-        // پاک‌کردن شرطی: نیت بازنشانیِ تازه‌تری که در این فاصله ثبت شده دست نمی‌خورد.
-        $wpdb->query($wpdb->prepare("DELETE FROM {$wpdb->options} WHERE option_name = %s AND option_value = %s", self::RESET_INTENT, (string) $raw));
+        // پاک‌کردن شرطی: نیت بازنشانیِ تازه‌تری که در این فاصله ثبت شده دست نمی‌خورد. شکست SQL یا «صفر سطر» با
+        // نیتی که هنوز هست، موفقیت نیست؛ صفر سطر بی نیت یعنی ادامهٔ دیگری همین را تمام کرده است.
+        $d = $wpdb->query($wpdb->prepare("DELETE FROM {$wpdb->options} WHERE option_name = %s AND option_value = %s", self::RESET_INTENT, (string) $raw));
         self::forget_option(self::RESET_INTENT);
+        if ($d === false) {
+            lmc_log('پاک‌کردن نیت بازنشانی ناموفق: ' . (string) $wpdb->last_error);
+            return ['pending' => true, 'failed' => 0];
+        }
+        if ($d !== 1) {
+            $left = $wpdb->get_var($wpdb->prepare("SELECT option_value FROM {$wpdb->options} WHERE option_name = %s", self::RESET_INTENT));
+            if ($left !== null || (string) $wpdb->last_error !== '') { return ['pending' => true, 'failed' => 0]; }
+        }
         return ['pending' => false, 'failed' => 0];
     }
 

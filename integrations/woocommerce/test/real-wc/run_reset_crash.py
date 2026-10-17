@@ -10,6 +10,8 @@ reset-process-killed: عکس ۱۰ (rev 30)، سفارش ۲، ACK rev 31، Pull �
 بازنشانی(null) در پردازهٔ R پس از Commit دوره SIGKILL می‌خورد (نسخهٔ تازه: probe_reset_committed؛ نسخهٔ قبل:
 نخستین probe_locked بازمحاسبه، که پس از UPDATE خودکار دوره است). Core بازیابی‌شده خوراک افزایشی خالی
 می‌دهد؛ دور بعد باید Pull کامل (بی since) باشد و عدد ۸ (۱۰ − ۲).
+repeat-reset-after-death: پس از مرگ بازنشانی نخست، مدیر دوباره بازنشانی می‌کند؛ پایهٔ بازیابی (حالت دورهٔ ۱) نباید
+گم شود و Pull خالی بعدی باید ۸ بماند (بازبینی root روی aa3f966).
 late-old-cursor: Pull نسل قبل پس از Commit نوشتنش و پیش از نوشتن مکان‌نما می‌ایستد؛ بازنشانی کامل
 می‌شود؛ Pull ادامه می‌دهد و مکان‌نمای نسل قبل را می‌نویسد. دور بعد باید باز هم Pull کامل باشد.
 """
@@ -85,7 +87,30 @@ def late_old_cursor(version):
     obs['ok'] = not obs['next_sync_sent_since'] and obs['after_next_sync']['stock'] == 8
     return obs
 
+def repeat_reset(version):
+    """بازنشانی دوم پس از مرگ بازنشانی نخست (بازبینی root روی aa3f966): مدیر دوباره می‌زند و تا پایان می‌رود."""
+    pid, vid, first = base(version)
+    RS = R.start('R', ['probe_reset_committed', 'probe_locked'], 'reset')
+    stage = None; t = time.time()
+    while stage is None and time.time() - t < 60:
+        for s in ('probe_reset_committed', 'probe_locked'):
+            if os.path.exists(os.path.join(R.BAR, f'R.{s}.reached')): stage = s
+        if RS.poll() is not None: break
+        time.sleep(0.02)
+    R.kill(RS)
+    obs = {'first_reset_killed_at': stage, 'after_kill': R.run('state', pid)}
+    obs['second_reset'] = R.run('reset')
+    obs['after_second_reset'] = R.run('state', pid)
+    empty = os.path.join(R.BAR, 'feed-empty.json'); feed(empty, [], None)
+    out, urls = sync('S4', empty)
+    obs['next_sync'] = out; obs['next_sync_sent_since'] = any('since=' in u for u in urls)
+    obs['after_next_sync'] = R.run('state', pid)
+    obs['expected'] = 8
+    obs['ok'] = obs['after_next_sync']['stock'] == 8 and obs['after_next_sync']['intent'] is None and not obs['next_sync_sent_since']
+    return obs
+
 if __name__ == '__main__':
     for v in sys.argv[3:]:
         print(json.dumps({'scenario': f'{v}/reset-process-killed', **reset_killed(v)}, ensure_ascii=False))
         print(json.dumps({'scenario': f'{v}/late-old-cursor', **late_old_cursor(v)}, ensure_ascii=False))
+        print(json.dumps({'scenario': f'{v}/repeat-reset-after-death', **repeat_reset(v)}, ensure_ascii=False))
