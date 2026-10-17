@@ -168,6 +168,9 @@ describe("دفتر پاداش پرسنل", { skip: DATABASE_URL ? false : "DATAB
     assert.equal(ok.statusCode, 200, ok.body); assert.equal(ok.json().bonus.status, "approved");
     const replay = await decide(gm, b.id, "approved", undefined, key);
     assert.equal(replay.json().replayed, true); assert.equal(await count("staff_bonus_decision", b.id), 1);
+    assert.equal((await call(gm, "GET", `/bonuses/decisions/by-key/${key}`)).json().status, "recorded");
+    assert.equal((await call(gm2, "GET", `/bonuses/decisions/by-key/${key}`)).json().status, "not_found", "تصمیم مدیر دیگر نشسته شمرده نمی‌شود");
+    assert.equal((await call(gm, "GET", `/bonuses/decisions/by-key/${randomUUID()}`)).json().status, "not_found");
     const second = await decide(gm2, b.id, "rejected", "دیر");
     assert.equal(second.statusCode, 409); assert.equal(second.json().error.code, "bonus_stale");
     const audit = (await sql<{ before: { status: string }; after: { status: string }; actor_id: string }>`SELECT before, after, actor_id

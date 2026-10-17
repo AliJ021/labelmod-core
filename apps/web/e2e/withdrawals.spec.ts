@@ -8,7 +8,7 @@
  * می‌کند؛ بی‌مجوز هیچ درخواستی به دفتر مدیر نمی‌فرستد؛ مدیر مجاز ثبت خودش را
  * هم اصلاح می‌کند. تصویرهای شواهد با API ماک‌اند و در نامشان «mock» دارند.
  */
-import { test, expect, settings, fontsReady, type MockApi } from "./fixtures";
+import { test, expect, personnel, fontsReady, type MockApi } from "./fixtures";
 import type { Page, Route } from "@playwright/test";
 import type { WithdrawalDetail, WithdrawalItem } from "../src/lib/withdrawals";
 
@@ -40,7 +40,7 @@ function denyWithdrawalOps(api: MockApi) {
 }
 
 async function openMine(page: Page) {
-  await page.goto("/?page=settings&settings.tab=withdrawals");
+  await page.goto("/?page=personnel&personnel.tab=withdrawals");
   await expect(page.getByRole("heading", { name: "برداشت‌های من", level: 1 })).toBeVisible();
 }
 
@@ -60,7 +60,7 @@ test("bulk settlement selects all filtered versions across pages, reviews exact 
     api.handlers.set(`GET /withdrawals/settlements/by-key/${key}`,r=>json(r,{status:"recorded",count:2}));
     await json(route,{error:{code:"response_lost",message:"پاسخ قطع شد"}},502);
   });
-  await page.goto("/?page=settings&settings.tab=withdrawal-log");
+  await page.goto("/?page=personnel&personnel.tab=withdrawal-log");
   await page.getByLabel("کاربر برداشت",{exact:true}).selectOption(CASHIER.id);
   await page.getByLabel("وضعیت تسویه",{exact:true}).selectOption("open");
   await page.getByRole("button",{name:"انتخاب همهٔ تسویه‌نشده‌های این فیلتر",exact:true}).click();
@@ -90,7 +90,7 @@ test("bulk settlement conflict clears selection, while settled rows remain visib
     row={...row,version:2,amount:"102"};
     await json(route,{error:{code:"withdrawal_stale",message:"انتخاب قدیمی است؛ دوباره انتخاب کنید"}},409);
   });
-  await page.goto("/?page=settings&settings.tab=withdrawal-log");
+  await page.goto("/?page=personnel&personnel.tab=withdrawal-log");
   await expect(page.getByRole("checkbox",{name:`انتخاب برداشت ${GM.name}، تسویه قبلی`})).toBeDisabled();
   await page.getByRole("button",{name:"انتخاب تسویه‌نشده‌های این صفحه",exact:true}).click();
   await page.getByLabel("یادداشت تسویه",{exact:true}).fill("تسویه");
@@ -227,7 +227,7 @@ test.describe("دفتر برداشت پرسنل (مدیر کل)", () => {
         { version: 2, amount: body.amount, reason: body.reason, note: body.note, actor: GM, at: "2026-10-02T08:00:00Z" }]);
       await json(route, { appliedVersion: 2, withdrawal: current.value, replayed: false });
     });
-    await page.goto(`/?page=settings&settings.tab=withdrawal-log&settings.wdl=${W1}`);
+    await page.goto(`/?page=personnel&personnel.tab=withdrawal-log&personnel.wdl=${W1}`);
     await page.getByLabel("مبلغ درست (تومان)").fill("101.1");
     await page.getByLabel("دلیل اصلاح").fill("یک ریال بیشتر");
     await expect(page.locator(".field-hint").filter({ hasText: "ثبت می‌شود:" }).locator(".money-digits")).toHaveText("101٫1");
@@ -239,7 +239,7 @@ test.describe("دفتر برداشت پرسنل (مدیر کل)", () => {
     await expect(page.getByRole("status").filter({ hasText: "اصلاح ثبت شد" })).toBeVisible();
     await expect(page.getByRole("region", { name: "دفتر برداشت پرسنل", exact: true }).getByText("101٫1", { exact: true })).toBeVisible();
     await expect(page.getByRole("region", { name: `تاریخچهٔ برداشت ${GM.name}`, exact: true }).getByText("101٫1", { exact: true })).toBeVisible();
-    await page.goto(`/?page=settings&settings.tab=withdrawals&settings.wd=${W1}`);
+    await page.goto(`/?page=personnel&personnel.tab=withdrawals&personnel.wd=${W1}`);
     await expect(page.getByRole("region", { name: "برداشت‌های من", exact: true }).getByText("101٫1", { exact: true })).toBeVisible();
     await expect(page.getByRole("region", { name: "تاریخچهٔ نسخه‌های این برداشت", exact: true }).getByText("101٫1", { exact: true })).toBeVisible();
     await expect(page.getByRole("region", { name: "تاریخچهٔ برداشت", exact: true }).locator(".section-description .money-digits")).toHaveText("101٫1");
@@ -256,7 +256,7 @@ test.describe("دفتر برداشت پرسنل (مدیر کل)", () => {
         { version: 2, amount: body.amount, reason: body.reason, note: body.note, actor: GM, at: "2026-10-02T08:00:00Z" }]);
       await json(route, { error: { code: "internal", message: "نامعلوم" } }, 503);
     });
-    await page.goto(`/?page=settings&settings.tab=withdrawal-log&settings.wdl=${W1}`);
+    await page.goto(`/?page=personnel&personnel.tab=withdrawal-log&personnel.wdl=${W1}`);
     await expect(page.getByLabel("مبلغ درست (تومان)")).toHaveValue("0.1");
     await page.getByLabel("دلیل برداشت").fill("جدید");
     await page.getByLabel("دلیل اصلاح").fill("فقط دلیل");
@@ -287,7 +287,7 @@ test.describe("دفتر برداشت پرسنل (مدیر کل)", () => {
         ...current.value.history, { version: 2, amount: body.amount, reason: body.reason, note: body.note, actor: GM, at: "2026-10-02T08:00:00Z" }]);
       await json(route, { appliedVersion: 2, withdrawal: current.value, replayed: false });
     });
-    await page.goto("/?page=settings&settings.tab=withdrawal-log");
+    await page.goto("/?page=personnel&personnel.tab=withdrawal-log");
     await expect(page.getByRole("heading", { name: "دفتر برداشت پرسنل", level: 1 })).toBeVisible();
     await page.getByRole("button", { name: new RegExp(`^تاریخچه و اصلاح برداشت ${CASHIER.name}`) }).click();
     await expect(page.getByRole("heading", { name: `برداشت ${CASHIER.name}` })).toBeFocused();
@@ -313,7 +313,7 @@ test.describe("دفتر برداشت پرسنل (مدیر کل)", () => {
         ...current.value.history, { version: 2, amount: "100000", reason: "کرایه", note: "مدیر دیگر", actor: { id: "x", name: "مدیر دیگر" }, at: "2026-10-02T08:00:00Z" }]);
       await json(route, { error: { code: "withdrawal_stale", message: "این ثبت در این فاصله تغییر کرده است (نسخهٔ جاری 2).", correlationId: "req-wd2" } }, 409);
     });
-    await page.goto(`/?page=settings&settings.tab=withdrawal-log&settings.wdl=${W1}`);
+    await page.goto(`/?page=personnel&personnel.tab=withdrawal-log&personnel.wdl=${W1}`);
     await page.getByLabel("مبلغ درست (تومان)").fill("0");
     await page.getByLabel("دلیل اصلاح").fill("اصلاح من");
     await page.getByRole("button", { name: "ثبت اصلاح" }).click();
@@ -327,7 +327,7 @@ test.describe("دفتر برداشت پرسنل (مدیر کل)", () => {
 
   test("مدیر مجاز برای برداشت خودش هم فرم اصلاح دارد", async ({ page, api }) => {
     gmLog(api, { value: detail(item(W1, CASHIER, "900000", "کرایه"), true) });
-    await page.goto(`/?page=settings&settings.tab=withdrawal-log&settings.wdl=${W2}`);
+    await page.goto(`/?page=personnel&personnel.tab=withdrawal-log&personnel.wdl=${W2}`);
     await expect(page.getByLabel("مبلغ درست (تومان)")).toHaveValue("30,000");
     await page.getByLabel("دلیل برداشت").fill("دلیل درست مدیر");
     await page.getByLabel("دلیل اصلاح").fill("اصلاح دلیل");
@@ -337,17 +337,17 @@ test.describe("دفتر برداشت پرسنل (مدیر کل)", () => {
   test("بی‌مجوز: دفتر مدیر mount نمی‌شود و درخواستی نمی‌رود؛ برداشت‌های من می‌ماند", async ({ page, api }) => {
     denyWithdrawalOps(api);
     api.handlers.set("GET /withdrawals/mine", route => json(route, { items: [], total: 0, page: 1, pageSize: 20 }));
-    await page.goto("/?page=settings&settings.tab=withdrawal-log");
+    await page.goto("/?page=personnel&personnel.tab=withdrawal-log");
     await expect(page.getByRole("heading", { name: "دسترسی ندارید" })).toBeVisible();
     expect(api.calls.some(c => c.startsWith("GET /withdrawals?") || c.startsWith("GET /withdrawals/5"))).toBe(false);
-    await settings(page, "withdrawals", "برداشت‌های من");
+    await personnel(page, "withdrawals", "برداشت‌های من");
     await expect(page.getByRole("heading", { name: "برداشت‌های من", level: 1 })).toBeVisible();
     expect(api.calls.some(c => c.startsWith("GET /withdrawals?"))).toBe(false);
   });
 
   test("سرور ۴۰۳ می‌دهد (مثلاً نشست PIN): حالت بی‌مجوز، نه خطای سامانه", async ({ page, api }) => {
     api.handlers.set("GET /withdrawals", route => json(route, { error: { code: "branch_forbidden", message: "نشست انسانی معتبر و کامل برای این تصمیم یافت نشد", correlationId: "req-wd3" } }, 403));
-    await page.goto("/?page=settings&settings.tab=withdrawal-log");
+    await page.goto("/?page=personnel&personnel.tab=withdrawal-log");
     await expect(page.getByText("نشست انسانی معتبر و کامل برای این تصمیم یافت نشد")).toBeVisible();
     await expect(page.getByRole("alert")).toHaveCount(0);
   });
@@ -398,7 +398,7 @@ test.describe("شواهد بصری دفتر برداشت (mock API)", () => {
     const rows = [item(W1, CASHIER, "900000", "کرایه"), item(W2, { id: "s2", name: "انباردار با نام بلند برای بررسی چیدمان" }, "12500000", "پیش‌پرداخت", 2)];
     api.handlers.set("GET /withdrawals", route => json(route, { items: rows, total: 47, page: 1, pageSize: 20 }));
     api.handlers.set(`GET /withdrawals/${W1}`, route => json(route, detail(rows[0]!, true)));
-    await page.goto("/?page=settings&settings.tab=withdrawal-log");
+    await page.goto("/?page=personnel&personnel.tab=withdrawal-log");
     await expect(page.getByRole("heading", { name: "دفتر برداشت پرسنل", level: 1 })).toBeVisible();
     await shot("gm-log");
     await page.getByRole("button", { name: new RegExp(`^تاریخچه و اصلاح برداشت ${CASHIER.name}`) }).click();

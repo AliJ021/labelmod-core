@@ -21,9 +21,9 @@ import {
 } from "../lib/withdrawals.ts";
 
 /**
- * دفتر برداشت پرسنل — بخش مدیریتی «کاربران و امنیت» (مهاجرت ۰۸۴).
+ * دفتر برداشت پرسنل — بخش مدیریتی ناحیهٔ «برداشت و پاداش» (مهاجرت ۰۸۴).
  *
- * فقط با `withdrawal.view_all` دیده می‌شود (رجیستری تنظیمات) و فرم اصلاح فقط
+ * فقط با `withdrawal.view_all` دیده می‌شود (`lib/personnel-registry.ts`) و فرم اصلاح فقط
  * با `withdrawal.correct` و `canCorrect` سرور. هر دو نمایش‌اند؛ دروازه سرور
  * و Trigger نسخه است: نشست کامل، دامنهٔ شعبه و شرط نسخه.
  *
@@ -33,10 +33,10 @@ import {
  *    تاریخچه دوباره خوانده می‌شود؛ پیش‌نویس مدیر می‌ماند تا آگاهانه دوباره تأیید کند.
  */
 export function WithdrawalLog({ currentUserId, write, writeState }: { currentUserId: string; write: Verdict; writeState: "loading" | "ready" | "degraded" }) {
-  const [pageText, setPage] = useUrlState("settings.wdlPage", "1");
-  const [selected, setSelected] = useUrlState("settings.wdl");
-  const [ownerId, setOwnerId] = useUrlState("settings.wdlOwner", "");
-  const [filter, setFilter] = useUrlState("settings.wdlStatus", "all");
+  const [pageText, setPage] = useUrlState("personnel.wdlPage", "1");
+  const [selected, setSelected] = useUrlState("personnel.wdl");
+  const [ownerId, setOwnerId] = useUrlState("personnel.wdlOwner", "");
+  const [filter, setFilter] = useUrlState("personnel.wdlStatus", "all");
   const page = Math.max(1, Math.floor(Number(pageText)) || 1);
   const [reload, setReload] = useState(0);
   const query = `ownerId=${encodeURIComponent(ownerId)}&status=${filter}`;

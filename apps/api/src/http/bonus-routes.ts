@@ -11,7 +11,7 @@
  *   دفتر مدیر       GET  /bonuses · /bonuses/owners · /bonuses/:id            — bonus.view_all
  *                   GET  /bonuses/beneficiaries · /bonuses/selection          — bonus.manage
  *                   POST /bonuses/awards · /bonuses/:id/decisions · /bonuses/settlements
- *                   GET  /bonuses/awards/by-key/:key · /bonuses/settlements/by-key/:key
+ *                   GET  /bonuses/{awards,decisions,settlements}/by-key/:key
  *                   همه نشست انسانی کامل (نه PIN، نه کلید API) و دامنهٔ شعبه.
  *
  * ⚠️ نگهبان‌های اصلی در دیتابیس‌اند (Trigger، مهاجرت ۰۹۸): عامل، ذی‌نفع،
@@ -269,6 +269,17 @@ export function registerBonusRoutes(app: FastifyInstance, db: Db): void {
       },
     });
     return reply.code(out.replayed ? 200 : 201).send({ bonus: out.value, replayed: out.replayed });
+  });
+
+  // «آیا تصمیمِ نامعلوم نشست؟» — با همان شناسهٔ عملیات و همان مدیر؛ تصمیم مدیر دیگر «نشسته» شمرده نمی‌شود.
+  app.get("/bonuses/decisions/by-key/:key", async req => {
+    const s = await managerSession(db, req, "bonus.manage");
+    const { key } = z.object({ key: z.string().min(1).max(200) }).parse(req.params);
+    const row = (await sql<{ ref: string | null }>`SELECT result_ref AS ref FROM platform.inbox_message
+      WHERE source = 'api.bonus.decide' AND event_id = ${key} AND payload->>'actorId' = ${s.userId}`.execute(db)).rows[0];
+    if (!row?.ref) return { status: "not_found" as const };
+    if (!await inScope(db, row.ref, s.userId)) throw notFound();
+    return { status: "recorded" as const, bonus: await detail(db, row.ref) };
   });
 
   app.get("/bonuses/settlements/by-key/:key", async req => {
