@@ -195,3 +195,17 @@ for (const [n, start] of [[1, 1], [2, 1], [3, 1], [5, 1], [20, 1], [500, 1], [3,
     }
   });
 }
+
+
+test("50x30 label centers price digits independently of Toman", async ({page}) => {
+  const {label,makeEan13}=await load();
+  await page.setContent(label.labelPage(itemsFor(makeEan13), {layout:"roll",shopName:"Label Mod",rollMm:{width:50,height:30}}));
+  await page.emulateMedia({media:"print"});
+  for (const digits of await page.locator(".price .digits").all()) {
+    const centers=await digits.evaluate(el=>{
+      const a=el.getBoundingClientRect(),b=el.parentElement!.getBoundingClientRect();
+      return {digit:(a.left+a.right)/2,row:(b.left+b.right)/2};
+    });
+    expect(Math.abs(centers.digit-centers.row)).toBeLessThan(0.6);
+  }
+});

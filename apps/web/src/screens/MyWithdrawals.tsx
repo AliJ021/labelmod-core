@@ -1,3 +1,4 @@
+import { AmountInput } from "../components/ui/AmountInput.tsx";
 import { useCallback, useEffect, useId, useRef, useState } from "react";
 import { Solid } from "../components/Glass.tsx";
 import { ResultState } from "../components/ResultState.tsx";
@@ -95,7 +96,7 @@ export function MyWithdrawals({ currentUserId }: { currentUserId: string }) {
       <div className="settings-form">
         <Field label="مبلغ (تومان)" error={amountCheck.error}
           hint={amountCheck.rial ? <>ثبت می‌شود: <Money rial={amountCheck.rial} exact size="sm" /></> : "بدون اعشار؛ رقم فارسی یا لاتین."}>
-          <input type="text" inputMode="numeric" autoComplete="off" value={frozen ? tomanDraft(frozen.amount) : amount} disabled={locked}
+          <AmountInput type="text" inputMode="numeric" autoComplete="off" value={frozen ? tomanDraft(frozen.amount) : amount} disabled={locked}
             onChange={e => { setAmount(e.target.value); setDone(null); }} />
         </Field>
         <Field label="دلیل برداشت" error={reasonError} hint={`حداکثر ${formatCount(REASON_MAX)} نویسه.`}>

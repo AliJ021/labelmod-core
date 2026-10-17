@@ -16,6 +16,7 @@ import { AuthService } from "../src/auth/service.ts";
 import { hashSecret } from "../src/auth/password.ts";
 import { buildApp } from "../src/http/app.ts";
 import { loadConfig } from "../src/lib/config.ts";
+import { normalizeSearchTerm, searchActiveProducts } from "../src/catalog/search.ts";
 
 const DATABASE_URL = process.env.DATABASE_URL;
 const skip = DATABASE_URL ? false : "DATABASE_URL تنظیم نشده — تست یکپارچه رد شد";
@@ -329,7 +330,7 @@ describe("آمادگی API صندوق", { skip }, () => {
   test("stock is checked across draft lines before payment without reserving goods", async () => {
     const s = await loginAs(cashier);
     const p = await sql<{id:string}>`INSERT INTO catalog.product(code,name_internal) VALUES (${"ONE-"+suffix},'موجودی یک عدد') RETURNING id`.execute(handle.db);
-    const v = await sql<{id:string}>`INSERT INTO catalog.variation(product_id,sku,barcode) VALUES (${p.rows[0]!.id}::uuid,${"ONE-"+suffix},${"ONE-"+suffix}) RETURNING id`.execute(handle.db);
+    const v = await sql<{id:string}>`INSERT INTO catalog.variation(product_id,sku,barcode,color,size) VALUES (${p.rows[0]!.id}::uuid,${"ONE-"+suffix},${"ONE-"+suffix},'مشکی','36') RETURNING id`.execute(handle.db);
     const variation = v.rows[0]!.id;
     await sql`INSERT INTO catalog.price(variation_id,price_list,amount) VALUES (${variation}::uuid,'default',100000)`.execute(handle.db);
     await sql`SELECT inventory.apply_movement(${variation}::uuid,${STORE_WH}::uuid,1,'purchase_receipt','test_receipt',${variation}::uuid,${cashierId}::uuid,40000)`.execute(handle.db);
@@ -340,6 +341,8 @@ describe("آمادگی API صندوق", { skip }, () => {
     const first=await create();
     const scan=await app.inject({method:"POST",url:`/invoices/${first}/scan`,...s,payload:{variationId:variation}});
     assert.equal(scan.statusCode,200,scan.body);
+    assert.equal(scan.json().invoice.lines[0].color,"مشکی");
+    assert.equal(scan.json().invoice.lines[0].size,"36");
     const line=scan.json().invoice.lines[0].id;
     for (const [method,url,payload] of [
       ["POST",`/invoices/${first}/scan`,{variationId:variation}],
@@ -347,9 +350,14 @@ describe("آمادگی API صندوق", { skip }, () => {
       ["PATCH",`/invoices/${first}/lines/${line}`,{qty:"2"}],
     ] as const) {
       const r=await app.inject({method,url,...s,payload});assert.equal(r.statusCode,409,r.body);assert.equal(r.json().error.code,"insufficient_stock");
+      assert.match(r.json().error.message,/موجودی یک عدد/);
+      assert.ok(!r.json().error.message.includes("ONE-"+suffix),"shortage must identify the product rather than expose its SKU");
+      assert.ok(!r.json().error.message.includes("1.000"),"whole stock has no redundant fraction");
     }
     const intact=await app.inject({method:"GET",url:`/invoices/${first}`,...s});
     assert.equal(intact.json().lines[0].qty,"1.000");assert.equal(intact.json().lines.length,1);
+    assert.equal(intact.json().lines[0].color,"مشکی");
+    assert.equal(intact.json().lines[0].size,"36");
     const other=await create();
     assert.equal((await app.inject({method:"POST",url:`/invoices/${other}/scan`,...s,payload:{variationId:variation}})).statusCode,200,"draft does not reserve stock");
     assert.equal((await app.inject({method:"POST",url:`/invoices/${other}/payments`,...s,payload:{methodCode:"cash",amount:"100000"}})).statusCode,201);
@@ -372,6 +380,24 @@ describe("آمادگی API صندوق", { skip }, () => {
       const r=await app.inject({method,url,...stranger,...(payload?{payload}:{})});assert.equal(r.statusCode,403,r.body);
     }
     const otherBranch=await app.inject({method:"GET",url:`/invoices?branchId=${BRANCH}`,...await loginAs(outsider)});assert.equal(otherBranch.statusCode,403);
+  });
+
+  test("product search combines name, Persian digits, size and colour on the same variant",async()=>{
+    // Identifiers deliberately contain both sizes: they must not supply a size
+    // token for a different colour in a natural-language product query.
+    const p=await sql<{id:string}>`INSERT INTO catalog.product(code,name_internal) VALUES (${"SHOE-3638-"+suffix},'کتونی آزمون جستجو') RETURNING id`.execute(handle.db);
+    const id=p.rows[0]!.id;
+    await sql`INSERT INTO catalog.variation(product_id,sku,color,size) VALUES
+      (${id}::uuid,${"SHOE-A-38-"+suffix},'مشکی','36'),(${id}::uuid,${"SHOE-B-36-"+suffix},'آبی','38')`.execute(handle.db);
+    for(const query of ['کتونی 36 مشکی','مشكي ۳۶ کتونی','کتونی ٣٨ آبی']) {
+      const r=await searchActiveProducts(handle.db,normalizeSearchTerm(query));
+      assert.ok(r.products.some(x=>x.id===id),query);
+      assert.equal(r.products.find(x=>x.id===id)?.variationCount,2,query);
+    }
+    for(const query of ['کتونی 38 مشکی','کتونی 36 آبی','کتونی %','کتونی _']) {
+      const r=await searchActiveProducts(handle.db,normalizeSearchTerm(query));
+      assert.ok(!r.products.some(x=>x.id===id),query);
+    }
   });
 
   test("proforma print is authenticated, branch and owner scoped, and has no sale or stock effects", async () => {

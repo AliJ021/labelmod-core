@@ -74,6 +74,8 @@ export interface InvoiceLine {
   variationId: string;
   sku: string;
   productName: string;
+  color?: string | null;
+  size?: string | null;
   qty: string;
   unitPrice: string;
   discountAmount: string;

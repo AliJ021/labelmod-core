@@ -26,6 +26,7 @@
  */
 import { useCallback, useEffect, useId, useState } from "react";
 import { Solid } from "../components/Glass.tsx";
+import { AmountInput } from "../components/ui/AmountInput.tsx";
 import { Icon } from "../components/Icon.tsx";
 import { ResultState } from "../components/ResultState.tsx";
 import { PageHeader } from "../components/ui/PageHeader.tsx";
@@ -340,10 +341,11 @@ function Control({ setting, id, value, disabled, describedBy, invalid, onChange,
     </fieldset>;
   }
   const numeric = setting.kind === "int" || setting.kind === "percent" || setting.kind === "money";
+  const ValueInput = setting.kind === "money" ? AmountInput : "input";
   return <span className="set-field">
     {/* عمداً `type="text"` و نه `type="number"`: صفحه‌کلید فارسی «۴۸» می‌فرستد و
         ورودی عددی مرورگر آن را دور می‌اندازد. تبدیل رقم در `normalizeDigits`. */}
-    <input id={id} className={`set-input${numeric ? " num" : ""}`} type="text" inputMode={numeric ? "numeric" : "text"}
+    <ValueInput id={id} className={`set-input${numeric ? " num" : ""}`} type="text" inputMode={numeric ? "numeric" : "text"}
       value={typeof value === "string" ? value : ""} disabled={disabled} aria-describedby={describedBy} aria-invalid={invalid || undefined}
       onChange={e => onChange(e.target.value)} onBlur={onBlur} />
     {setting.unit ? <span className="set-unit">{setting.unit}</span> : null}

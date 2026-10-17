@@ -475,13 +475,13 @@ describe("عنوان بزرگ‌تر و قیمت کوچک‌تر، بی تغیی
     assert.deepEqual([a4.moduleMm, a4.barHeightMm], [0.3, 12]);
   });
 
-  test("قلم «Label Mod» ۱٫۲ برابر و قیمت حداکثر ۱٫۶ برابر قلم پایه؛ ارتفاع ردیف‌ها همان بودجه", () => {
+  test("قلم «Label Mod» ۱٫۲ برابر و قیمت حداکثر ۱٫۴ برابر قلم پایه؛ ارتفاع ردیف‌ها همان بودجه", () => {
     const g = labelGeometry("roll", 50, 30);
     const html = labelPage([{ barcode: makeEan13(77), sku: "A", productName: "شال", color: null, size: null, priceRial: 1_000_000n, count: 1 }],
       { layout: "roll", shopName: "Label Mod", rollMm: { width: 50, height: 30 } });
     assert.match(html, new RegExp(`\\.shop \\{ height: ${g.rows.shop}mm; line-height: ${g.rows.shop}mm; font-size: ${(g.fontMm * 1.2).toFixed(2)}mm;`));
     const price = Number(/<div class="price" style="font-size:([\d.]+)mm">/.exec(html)![1]);
-    assert.ok(price <= g.fontMm * 1.6 + 1e-9 && price > g.fontMm * 1.5, `price ${price}`);
-    assert.ok(g.fontMm * 1.6 * 1.12 <= g.rows.price + 1e-9, "قیمت در ارتفاع ردیف خودش جا می‌شود");
+    assert.equal(price, Number((g.fontMm * 1.4).toFixed(2)), "قیمت کوتاه با اندازهٔ درخواست‌شده چاپ می‌شود");
+    assert.ok(price * 1.12 <= g.rows.price + 1e-9, "قیمت در ارتفاع ردیف خودش جا می‌شود");
   });
 });

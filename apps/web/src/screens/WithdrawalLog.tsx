@@ -1,3 +1,4 @@
+import { AmountInput } from "../components/ui/AmountInput.tsx";
 import { useCallback, useEffect, useId, useRef, useState } from "react";
 import { Solid } from "../components/Glass.tsx";
 import { ResultState } from "../components/ResultState.tsx";
@@ -237,7 +238,7 @@ function WithdrawalInspector({ currentUserId, id, write, writeState, onClose, on
           : <div className="settings-form">
             <Field label="مبلغ درست (تومان)" error={amountCheck?.error ?? null}
               hint={amountCheck?.rial !== null && amountCheck?.rial !== undefined ? <>ثبت می‌شود: <Money rial={amountCheck.rial} exact size="sm" /> · صفر مجاز است؛ دقت تا یک ریال.</> : "صفر مجاز است؛ حداکثر یک رقم اعشار تومان."}>
-              <input type="text" inputMode="decimal" autoComplete="off" value={form.amount} disabled={!!sent}
+              <AmountInput type="text" inputMode="decimal" autoComplete="off" value={form.amount} disabled={!!sent}
                 onChange={e => edit({ amount: e.target.value })} />
             </Field>
             <Field label="دلیل برداشت" error={checkText(form.reason, "دلیل")} hint={form.reason.trim() === "" ? "دلیل نمی‌تواند خالی باشد." : undefined}>

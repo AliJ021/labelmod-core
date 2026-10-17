@@ -38,3 +38,4 @@ done
 docker logs postgres >&2 || true
 echo "postgres did not become healthy ($ref)" >&2
 exit 1
+

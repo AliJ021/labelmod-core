@@ -16,7 +16,9 @@ import { NAV_ITEMS, routeUrl, type AccessState, type NavItem, type Zone } from "
  * نمی‌شود و فقط جای‌نگهدارِ بی‌برچسب جایش را نگه می‌دارد. اگر پرسش نرسید،
  * پیامی آرام با «بررسی دوباره» می‌آید؛ مقصدِ نامعلوم هرگز نشان داده نمی‌شود.
  */
-export function ShellNav({ id, items, pending, access, onRetry, zone, onZone, compact, more, onMore }: {
+export function ShellNav({ id, items, pending, access, onRetry, zone, onZone, compact, more, onMore, collapsed, onToggle }: {
+  collapsed: boolean;
+  onToggle: () => void;
   id: string;
   items: readonly NavItem[];
   pending: readonly NavItem[];
@@ -55,6 +57,12 @@ export function ShellNav({ id, items, pending, access, onRetry, zone, onZone, co
     : pending.includes(z) ? [{ key: z.key, label: "", primary: z.mobilePrimary, pending: true }] : []);
   return <>
     <Glass as="nav" className="workspace-nav" refract={false} aria-label="ناوبری اصلی">
+      {!compact ? <button type="button" className="btn nav-collapse" onClick={onToggle}
+        aria-expanded={!collapsed} aria-controls={`${id}-list`}
+        aria-label={collapsed ? "باز کردن منوی کناری" : "جمع کردن منوی کناری"}
+        title={collapsed ? "باز کردن منو" : "جمع کردن منو"}>
+        <Icon name="menu" /><span className="nav-collapse-label">جمع کردن منو</span>
+      </button> : null}
       {waiting ? <p className="sr-only" role="status">در حال بررسی دسترسی بخش‌ها…</p> : null}
       <TabList id={id} items={tabs} value={zone} onChange={onZone} label="بخش‌ها" className="zones workspace-zones" vertical={!compact} hrefFor={key => routeUrl(key)} />
       {!compact && access === "degraded" ? <div className="nav-access-note" role="status">
