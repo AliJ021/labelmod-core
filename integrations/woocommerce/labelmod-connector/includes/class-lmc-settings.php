@@ -284,7 +284,8 @@ class LMC_Settings
         }
         echo '<p class="description">' . esc_html__(
             'این قلم‌ها از موجودی سایت کم شده‌اند ولی تأیید Core ندارند (یا پردازهٔ ووکامرس وسط کسر/ویرایش دستی مرده است). '
-            . 'فقط وقتی «رها کن» بزنید که در سامانه دیده‌اید این قلم ثبت شده، یا مطمئنید ووکامرس تغییر را اعمال نکرده است.',
+            . 'فقط وقتی «رها کن» بزنید که در سامانه دیده‌اید این قلم ثبت شده، یا مطمئنید ووکامرس تغییر را اعمال نکرده است. '
+            . 'رها کردن با یک خواندن زندهٔ Core همان لحظه اعمال می‌شود؛ اگر Core در دسترس نباشد، کسر می‌ماند.',
             'labelmod-connector') . '</p>';
         $labels = [0 => 'نیت کسر بی اثبات', 1 => 'بی تأیید Core', 2 => 'نیت ویرایش دستی بی اثبات'];
         echo '<table class="widefat striped"><thead><tr><th>' . esc_html__('سفارش', 'labelmod-connector') . '</th><th>'
@@ -302,6 +303,12 @@ class LMC_Settings
             echo '<input type="hidden" name="action" value="lmc_stock_release">'
                 . '<input type="hidden" name="lmc_order" value="' . esc_attr((string) $r['order_id']) . '">'
                 . '<input type="hidden" name="lmc_item" value="' . esc_attr((string) $r['item_id']) . '">'
+                // نسخهٔ همین سطر؛ اگر تا ارسال فرم عوض شود (کسر تازه‌تر)، رها کردن رد می‌شود.
+                . '<input type="hidden" name="lmc_qty" value="' . esc_attr((string) $r['qty']) . '">'
+                . '<input type="hidden" name="lmc_confirmed" value="' . esc_attr((string) $r['confirmed']) . '">'
+                . '<input type="hidden" name="lmc_created" value="' . esc_attr((string) $r['created_at']) . '">'
+                . '<input type="hidden" name="lmc_ack_rev" value="' . esc_attr($r['ack_rev'] === null ? '' : (string) $r['ack_rev']) . '">'
+                . '<input type="hidden" name="lmc_ack_epoch" value="' . esc_attr($r['ack_epoch'] === null ? '' : (string) $r['ack_epoch']) . '">'
                 . '<input type="text" name="lmc_reason" maxlength="200" required placeholder="'
                 . esc_attr__('دلیل (مثلاً «در Core ثبت شد»)', 'labelmod-connector') . '"> ';
             submit_button(__('رها کن', 'labelmod-connector'), 'secondary small', 'submit', false);

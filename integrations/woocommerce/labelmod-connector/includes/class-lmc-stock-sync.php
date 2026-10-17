@@ -89,6 +89,8 @@ class LMC_Stock_Sync
 
         // دورهٔ واترمارک پیش از خواندن Core؛ اگر میان خواندن و نشاندن «بازنشانی» شود، این صفحه رد می‌شود.
         $epoch = LMC_Stock_Ledger::epoch();
+        // زمان آغاز خواندن: درخواست رها کردن کسر فقط با عکسی تأیید می‌شود که پس از آن خوانده شده.
+        $fetched_ms = (int) floor(microtime(true) * 1000);
         $res = LMC_Client::get('/web/stock', $query);
         if (is_wp_error($res)) {
             $out['error'] = $res->get_error_message();
@@ -144,7 +146,7 @@ class LMC_Stock_Sync
                 $rev = (string) $item['stockRev'];
                 $res_stock = preg_match('/^[0-9]{1,18}$/D', $rev)
                     ? LMC_Stock_Ledger::apply_snapshot((int) $product_id, $available, ($item['active'] ?? true) !== false,
-                        (int) $rev, $warehouse, 5, true, null, $epoch)
+                        (int) $rev, $warehouse, 5, true, null, $epoch, $fetched_ms)
                     : ['ok' => false, 'applied' => false, 'rejected' => true];
             } else {
                 $res_stock = LMC_Stock_Ledger::apply_legacy((int) $product_id, $available, 5);

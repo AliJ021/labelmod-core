@@ -204,7 +204,7 @@ class SqliteWpdb
         $this->pdo->setAttribute(PDO::ATTR_ERRMODE, PDO::ERRMODE_EXCEPTION);
         $this->pdo->exec('CREATE TABLE IF NOT EXISTS wp_lmc_stock_hold (order_id INTEGER NOT NULL, item_id INTEGER NOT NULL,
             product_id INTEGER NOT NULL, qty INTEGER NOT NULL, confirmed INTEGER NOT NULL DEFAULT 1, ack_rev INTEGER NULL, ack_wh TEXT NULL,
-            ack_epoch INTEGER NULL, ack_at INTEGER NULL, created_at INTEGER NOT NULL, PRIMARY KEY (order_id, item_id))');
+            ack_epoch INTEGER NULL, ack_at INTEGER NULL, release_after INTEGER NULL, created_at INTEGER NOT NULL, PRIMARY KEY (order_id, item_id))');
         $this->pdo->exec('CREATE TABLE IF NOT EXISTS wp_lmc_stock_mark (kind TEXT NOT NULL, ref INTEGER NOT NULL, token TEXT NOT NULL,
             at INTEGER NOT NULL, PRIMARY KEY (kind, ref, token))');
         $this->pdo->exec('CREATE TABLE IF NOT EXISTS wp_postmeta (meta_id INTEGER PRIMARY KEY, post_id INTEGER, meta_key TEXT, meta_value TEXT)');
@@ -213,6 +213,7 @@ class SqliteWpdb
         $this->pdo->exec('CREATE TABLE IF NOT EXISTS wp_woocommerce_order_items (order_item_id INTEGER PRIMARY KEY, order_id INTEGER, order_item_type TEXT)');
         $this->pdo->exec('CREATE TABLE IF NOT EXISTS wp_woocommerce_order_itemmeta (order_item_id INTEGER, meta_key TEXT, meta_value TEXT)');
     }
+    public function suppress_errors($v = true) { return false; }
     public function prepare($q, ...$a)
     {
         $i = 0;
@@ -234,6 +235,8 @@ class SqliteWpdb
             return ($GLOBALS['other_holds'][$m[1]] ?? false) === true ? '0' : '1';
         }
         if (str_contains($q, 'information_schema.TABLES')) { return $GLOBALS['engine'] ?? 'InnoDB'; }
+        // MariaDB `@@in_transaction`؛ null یعنی MySQL (متغیر نیست).
+        if ($q === 'SELECT @@in_transaction') { return array_key_exists('in_tx', $GLOBALS) ? $GLOBALS['in_tx'] : '0'; }
         if (preg_match("/^SHOW TABLES LIKE '([^']+)'/", $q, $m)) {
             $r = $this->pdo->query("SELECT name FROM sqlite_master WHERE type='table' AND name=" . $this->pdo->quote($m[1]))->fetchColumn();
             return $r === false ? null : (string) $r;
@@ -287,6 +290,7 @@ function fresh(): void
     stock_set(P, 0);
     $GLOBALS['tx'] = [];
     $GLOBALS['engine'] = 'InnoDB';
+    $GLOBALS['in_tx'] = '0';
     $GLOBALS['meta'] = [];
     $GLOBALS['orders'] = [];
     $GLOBALS['other_holds'] = [];
@@ -420,6 +424,7 @@ function ack(int $order, ?int $rev, string $wh = WH, ?array $sent = null, ?int $
     LMC_Stock_Ledger::ack_order($o, $rev === null ? null : [['sku' => 'SKU-' . P, 'variationId' => VAR_ID, 'stockRev' => (string) $rev]], $wh, $sent, $epoch ?? LMC_Stock_Ledger::epoch());
 }
 function holds(): int { return (int) $GLOBALS['wpdb']->get_var('SELECT COUNT(*) FROM wp_lmc_stock_hold'); }
+function holds_unacked(): int { return (int) $GLOBALS['wpdb']->get_var('SELECT COUNT(*) FROM wp_lmc_stock_hold WHERE ack_rev IS NULL'); }
 
 // ── ۰. ثابت‌های مشترک با پرونده‌های واقعی ─────────────────────────────
 $src = static fn ($f) => file_get_contents(__DIR__ . '/../labelmod-connector/includes/' . $f);
@@ -1077,7 +1082,40 @@ check('R8. ACK هم‌زمان با بازنشانی تأیید نکرد', (int)
 pull(['available' => '10', 'stockRev' => '30']);
 check('R8. و کسرش در دورهٔ تازه می‌ماند (۱۰−۱)', stock(), 9);
 
-// ── R9. کسر گیرکرده دیده و با تصمیم مدیر رها می‌شود ──────────────────
+// ── R9. کسر گیرکرده دیده و فقط با اثبات زندهٔ Core رها می‌شود ─────────
+/** فرم رها کردن همان نسخهٔ نمایش‌داده را می‌فرستد. */
+function release_form(array $row, string $reason = 'در Core دیدم'): array
+{
+    return ['lmc_order' => (string) $row['order_id'], 'lmc_item' => (string) $row['item_id'], 'lmc_qty' => (string) $row['qty'],
+        'lmc_confirmed' => (string) $row['confirmed'], 'lmc_created' => (string) $row['created_at'],
+        'lmc_ack_rev' => $row['ack_rev'] === null ? '' : (string) $row['ack_rev'],
+        'lmc_ack_epoch' => $row['ack_epoch'] === null ? '' : (string) $row['ack_epoch'], 'lmc_reason' => $reason];
+}
+function release_post(array $post): string
+{
+    $_POST = $post;
+    try { LMC_Stock_Ledger::handle_release(); return 'none'; } catch (Lmc_Test_Exit $e) { return $e->getMessage(); } finally { $_POST = []; }
+}
+// بازتولید root روی 2a7817b: Core این ۲ واحد را در rev 31 (موجودی ۸) Commit کرده ولی عکس/ACK آن هنوز نرسیده.
+fresh();
+snap(10, 30);
+woo_order(9901, [[101, 2]]);
+$GLOBALS['wpdb']->pdo->exec('UPDATE wp_lmc_stock_hold SET created_at = ' . (time() - 7200));
+check('R9. پیش از رها کردن: ۸ با واترمارک نشستهٔ ۳۰', [stock(), rev()], [8, 30]);
+$row = LMC_Stock_Ledger::unresolved()[0];
+$ok = LMC_Stock_Ledger::release_hold(9901, 101, ['qty' => $row['qty'], 'confirmed' => $row['confirmed'], 'created_at' => $row['created_at'],
+    'ack_rev' => $row['ack_rev'], 'ack_epoch' => $row['ack_epoch']], 'Verified in Core rev31', 'manager');
+LMC_Stock_Ledger::recompute(P);
+check('R9. root: درخواست ثبت شد ولی هیچ عکسی را تأیید نکرد — عدد ۸ می‌ماند (نه ۱۰)', [$ok, stock()], [true, 8]);
+$r = wpush(10, 30, 100);                                                     // عکس کش‌شده/کهنهٔ پیش از Commit
+check('R9. عکس کهنه پس از درخواست هم ۱۰ نمی‌نشاند', stock() <= 8, true);
+$ra = (int) $GLOBALS['wpdb']->get_var('SELECT release_after FROM wp_lmc_stock_hold WHERE order_id = 9901');
+$r = LMC_Stock_Ledger::apply_snapshot(P, 10, true, 31, WH, 0, true, null, LMC_Stock_Ledger::epoch(), $ra - 1);
+check('R9. Pull که خواندنش پیش از درخواست آغاز شده تأیید نمی‌کند (۱۰−۲، کسر بی ACK)', [stock(), holds_unacked()], [8, 1]);
+$r = LMC_Stock_Ledger::apply_snapshot(P, 8, true, 32, WH, 0, true, null, LMC_Stock_Ledger::epoch(), $ra + 1);
+check('R9. Pull زندهٔ پس از درخواست: تأیید با واترمارک همان عکس (۳۲)، عدد ۸', [stock(), (int) $GLOBALS['wpdb']->get_var('SELECT ack_rev FROM wp_lmc_stock_hold')], [8, 32]);
+check('R9. و عکس کهنه‌تر از آن (۳۱) کسر را هنوز می‌بیند', LMC_Stock_Ledger::pending(P, 31, WH), 2);
+// نیت ویرایش دستی مرده، رها کردن از مسیر مدیریت با خواندن زندهٔ کامل.
 fresh();
 snap(10, 30);
 woo_order(8504, [[54, 1]]);
@@ -1092,27 +1130,59 @@ check('R9. پیش از یک ساعت در فهرست رسیدگی نیست', LMC
 $GLOBALS['wpdb']->pdo->exec('UPDATE wp_lmc_stock_hold SET created_at = ' . (time() - 7200));
 $u = LMC_Stock_Ledger::unresolved();
 check('R9. پس از یک ساعت دیده می‌شود (نیت ویرایش دستی، تعداد ۳)', [count($u), $u[0]['confirmed'] ?? null, $u[0]['qty'] ?? null], [1, 2, 3]);
-// مدیر در Core دو واحد اضافه را ثبت کرد (Core ۷) و بعد رها کرد.
-snap(7, 33);
-check('R9. پیش از رها کردن هنوز کمتر (۷−۳)', stock(), 4);
+$form = release_form($u[0]);
 $GLOBALS['can'] = false; $GLOBALS['nonce'] = 'lmc_stock_release';
-$_POST = ['lmc_order' => '8504', 'lmc_item' => '54', 'lmc_reason' => 'در Core ثبت شد'];
-try { LMC_Stock_Ledger::handle_release(); $x = 'none'; } catch (Lmc_Test_Exit $e) { $x = $e->getMessage(); }
-check('R9. بی نقش manage_woocommerce رها نمی‌شود', [str_starts_with($x, 'die'), stock()], [true, 4]);
+check('R9. بی نقش manage_woocommerce رها نمی‌شود', [str_starts_with(release_post($form), 'die'), (int) $GLOBALS['wpdb']->get_var('SELECT COUNT(*) FROM wp_lmc_stock_hold WHERE release_after IS NOT NULL')], [true, 0]);
 $GLOBALS['can'] = true; $GLOBALS['nonce'] = 'other';
-try { LMC_Stock_Ledger::handle_release(); $x = 'none'; } catch (Lmc_Test_Exit $e) { $x = $e->getMessage(); }
-check('R9. بی Nonce درست رها نمی‌شود', [$x, stock()], ['nonce', 4]);
-$GLOBALS['nonce'] = 'lmc_stock_release'; $_POST['lmc_reason'] = '';
-try { LMC_Stock_Ledger::handle_release(); $x = 'none'; } catch (Lmc_Test_Exit $e) { $x = $e->getMessage(); }
-check('R9. بی دلیل رها نمی‌شود', [str_starts_with($x, 'die'), stock()], [true, 4]);
-$_POST['lmc_reason'] = 'در Core ثبت شد';
-try { LMC_Stock_Ledger::handle_release(); $x = 'none'; } catch (Lmc_Test_Exit $e) { $x = $e->getMessage(); }
-check('R9. رها شد و عدد از نو حساب شد (۷)', [$x, stock(), LMC_Stock_Ledger::unresolved()], ['redirect', 7, []]);
-check('R9. یادداشت سفارش نام مدیر و دلیل را دارد', (bool) array_filter($GLOBALS['orders'][8504]->notes, static fn ($n) => str_contains($n, 'manager') && str_contains($n, 'در Core ثبت شد')), true);
+check('R9. بی Nonce درست رها نمی‌شود', release_post($form), 'nonce');
+$GLOBALS['nonce'] = 'lmc_stock_release';
+check('R9. بی دلیل رها نمی‌شود', str_starts_with(release_post(['lmc_reason' => ''] + $form), 'die'), true);
+check('R9. بی نسخهٔ نمایش‌داده رها نمی‌شود', str_starts_with(release_post(array_diff_key($form, ['lmc_qty' => 1])), 'die'), true);
+// فرم کهنه: از وقتی صفحه دیده شد، کسر تازه‌تری روی همان قلم نشسته (۳ → ۴).
+$it->qty = 4; LMC_Stock_Ledger::on_prevent_adjust(false, $it, 4);
+release_post($form);
+check('R9. فرم کهنه کسر تازه‌تر را رها نمی‌کند', [(int) $GLOBALS['wpdb']->get_var('SELECT COUNT(*) FROM wp_lmc_stock_hold WHERE release_after IS NOT NULL'), str_contains(urldecode(urldecode($GLOBALS['redirect'])), 'عوض شده')], [0, true]);
+$form = release_form(LMC_Stock_Ledger::unresolved()[0]);
+// خواندن Core در دسترس نیست: درخواست ثبت می‌شود ولی چیزی رها نمی‌شود.
+$GLOBALS['feed'] = new WP_Error('lmc_http', 'Core در دسترس نیست');
+$before = stock();
+$x = release_post($form);
+check('R9. بی خواندن زندهٔ Core کسر می‌ماند (بسته در شکست)', [$x, stock(), holds_unacked()], ['redirect', $before, 1]);
+// مدیر در Core دو واحد اضافه را ثبت کرد (Core ۶) و خواندن زنده برقرار شد: Pull بعدی تأیید می‌کند.
+$GLOBALS['options'][LMC_Stock_Sync::CURSOR_OPTION] = '';
+$x = release_post(release_form(LMC_Stock_Ledger::unresolved()[0]) + []);
+$GLOBALS['feed'] = ['items' => [['available' => '6', 'stockRev' => '40', 'variationId' => VAR_ID, 'sku' => 'SKU-42']], 'cursor' => 'C40'];
+LMC_Stock_Sync::run();
+check('R9. Pull زنده پس از درخواست تأیید کرد: عدد Core (۶)', [stock(), LMC_Stock_Ledger::unresolved()], [6, []]);
+check('R9. یادداشت سفارش نام مدیر و دلیل را دارد', (bool) array_filter($GLOBALS['orders'][8504]->notes, static fn ($n) => str_contains($n, 'manager') && str_contains($n, 'در Core دیدم')), true);
 woo_refund_restock(8504, 54, 1);                                             // رویداد بعدی همان قلم از همان سطر
-snap(8, 34);
-check('R9. استرداد بعدی دوبار کم نمی‌کند (Core ۸، کسر رهاشده)', stock(), 8);
-$GLOBALS['can'] = false; $_POST = [];
+snap(7, 41);
+check('R9. استرداد بعدی دوبار کم نمی‌کند (Core ۷، کسر رهاشده)', stock(), 7);
+$GLOBALS['can'] = false;
+
+// ── R11. درون تراکنش دیگری: نه Commit ضمنی، نه نوشتن ──────────────────
+fresh();
+snap(10, 10);
+woo_order(9911, [[111, 2]]);                                                 // ۸
+$GLOBALS['in_tx'] = '1'; $GLOBALS['tx'] = [];
+$r = snap(5, 20);
+check('R11. نشاندن درون تراکنش فراخواننده: «مشغول»، بی START TRANSACTION', [$r['busy'] ?? false, stock(), in_array('START TRANSACTION', $GLOBALS['tx'], true)], [true, 8, false]);
+woo_refund_restock(9911, 111, 1);                                            // Hook ووکامرس درون همان تراکنش
+check('R11. Hook درون تراکنش: «دوباره»، بی نوشتن', [marks('redo') > 0, in_array('START TRANSACTION', $GLOBALS['tx'], true)], [true, false]);
+$GLOBALS['in_tx'] = null; $GLOBALS['tx'] = [];                              // MySQL: نامعلوم
+woo_refund_restock(9911, 111, 1);
+check('R11. نامعلوم (MySQL): در Hook نوشته نمی‌شود', in_array('START TRANSACTION', $GLOBALS['tx'], true), false);
+$GLOBALS['in_tx'] = '0';
+LMC_Stock_Ledger::flush_deferred();
+check('R11. پایان درخواست: بازمحاسبهٔ موکول‌شده انجام شد', [in_array('START TRANSACTION', $GLOBALS['tx'], true), stock()], [true, 10]);
+
+// ── R12. «فعال‌شدن پروتکل» از دیتابیس، نه از Cache درخواست ────────────
+fresh();
+$GLOBALS['options'][LMC_Stock_Ledger::ACTIVE] = false;                       // درخواستی که پیش‌تر false خوانده
+$GLOBALS['wpdb']->pdo->exec("INSERT OR REPLACE INTO wp_options (option_name, option_value) VALUES ('" . LMC_Stock_Ledger::ACTIVE . "', '1')");
+stock_set(P, 4);
+$r = LMC_Stock_Ledger::apply_legacy(P, 9, 0);
+check('R12. فعال‌شدن هم‌زمان در پردازهٔ دیگر: legacy با Cache کهنه رد شد', [$r['rejected'] ?? false, stock()], [true, 4]);
 
 // ── R10. موتور بی تراکنش: نشاندن بسته، نه «کار کند ولی ناامن» ─────────
 fresh();
