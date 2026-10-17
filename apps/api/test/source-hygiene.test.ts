@@ -583,4 +583,30 @@ test("ایمیج‌های پایهٔ CI ابتدا از ECR Public می‌آین
     for (const m of code.matchAll(new RegExp(`(\\S*)${img.replace(/[.]/g, "\\.")}`, "g")))
       assert.equal(m[1], `${MIRROR}/`, `ارجاع بی آینه به ${img}: «${m[0]}»`);
   }
+  // پستگرس db-tests سرویس نیست (کشیدن سرویس پیش از checkout بی fallback می‌مرد)؛ همان قاعدهٔ
+  // ساخت ایمیج: اول ECR، و Docker Hub رسمی فقط یک بار و فقط پس از محدودیت دانلود.
+  const pg = readFileSync(join(ROOT, ".github/scripts/start-postgres.sh"), "utf8");
+  const checkPostgres = (workflow: string, script: string): void => {
+    assert.doesNotMatch(workflow.split("\n").filter((l) => !/^\s*#/.test(l)).join("\n"), /^\s*services:/m,
+      "ایمیج سرویس پیش از هر step کشیده می‌شود و fallback ندارد");
+    const steps = [...workflow.matchAll(/^\s*run: (\.github\/scripts\/(?:test-)?start-postgres\.sh)\s*$/gm)].map((m) => m[1]);
+    assert.deepEqual(steps, [".github/scripts/test-start-postgres.sh", ".github/scripts/start-postgres.sh"],
+      "کنترل رفتاری و راه‌اندازی پستگرس هر کدام یک بار، کنترل اول");
+    assert.ok(workflow.indexOf("run: .github/scripts/start-postgres.sh") < workflow.indexOf("run: ./ops/db.sh migrate"),
+      "پستگرس پیش از مهاجرت بالا بیاید");
+    const refs = [...script.matchAll(/^(ECR|HUB)_REF=(\S+)$/gm)].map((m) => `${m[1]}=${m[2]}`);
+    assert.deepEqual(refs, [`ECR=${MIRROR}/postgres:16-alpine`, "HUB=docker.io/library/postgres:16-alpine"], "همان ایمیج رسمی از دو رجیستری");
+    const pulls = script.match(/docker pull .*/g)?.map((s) => s.trim()) ?? [];
+    assert.deepEqual(pulls, ['docker pull "$ECR_REF" 2>&1 | tee "$log"; then', 'docker pull "$HUB_REF" || exit "$?"'],
+      "تلاش اول ECR و تنها تلاش جایگزین Docker Hub");
+    assert.ok(script.includes(`if ! grep -Eq '429 Too Many Requests|toomanyrequests|Data limit exceeded' "$log"; then exit "\${statuses[0]}"; fi`),
+      "خطای غیرمحدودیت کد خودش را نگه دارد");
+    assert.ok(script.indexOf('docker pull "$HUB_REF"') < script.indexOf("for _ in"), "حلقهٔ انتظار سلامت، حلقهٔ retry کشیدن نیست");
+  };
+  checkPostgres(ci, pg);
+  // کنترل منفی: برگرداندن سرویس، Hub در تلاش اول یا fallback بی شرط باید همین نگهبان را بشکند.
+  assert.throws(() => checkPostgres(ci.replace("    env:\n      DATABASE_URL:", "    services:\n      postgres: {}\n    env:\n      DATABASE_URL:"), pg), assert.AssertionError);
+  assert.throws(() => checkPostgres(ci, pg.replace(`ECR_REF=${MIRROR}/`, "ECR_REF=docker.io/library/")), assert.AssertionError);
+  assert.throws(() => checkPostgres(ci, pg.replace("if ! grep -Eq", "if false && ! grep -Eq")), assert.AssertionError);
+  assert.match(ci, /^\s*run: \.github\/scripts\/test-start-postgres\.sh\s*$/m, "کنترل رفتاری fallback پستگرس در CI اجرا شود");
 });
