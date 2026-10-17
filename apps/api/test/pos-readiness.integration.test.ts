@@ -383,13 +383,16 @@ describe("آمادگی API صندوق", { skip }, () => {
   });
 
   test("product search combines name, Persian digits, size and colour on the same variant",async()=>{
-    const p=await sql<{id:string}>`INSERT INTO catalog.product(code,name_internal) VALUES (${"SHOE-"+suffix},'کتونی آزمون جستجو') RETURNING id`.execute(handle.db);
+    // Identifiers deliberately contain both sizes: they must not supply a size
+    // token for a different colour in a natural-language product query.
+    const p=await sql<{id:string}>`INSERT INTO catalog.product(code,name_internal) VALUES (${"SHOE-3638-"+suffix},'کتونی آزمون جستجو') RETURNING id`.execute(handle.db);
     const id=p.rows[0]!.id;
     await sql`INSERT INTO catalog.variation(product_id,sku,color,size) VALUES
-      (${id}::uuid,${"SHOE-A-"+suffix},'مشکی','36'),(${id}::uuid,${"SHOE-B-"+suffix},'آبی','38')`.execute(handle.db);
+      (${id}::uuid,${"SHOE-A-38-"+suffix},'مشکی','36'),(${id}::uuid,${"SHOE-B-36-"+suffix},'آبی','38')`.execute(handle.db);
     for(const query of ['کتونی 36 مشکی','مشكي ۳۶ کتونی','کتونی ٣٨ آبی']) {
       const r=await searchActiveProducts(handle.db,normalizeSearchTerm(query));
       assert.ok(r.products.some(x=>x.id===id),query);
+      assert.equal(r.products.find(x=>x.id===id)?.variationCount,2,query);
     }
     for(const query of ['کتونی 38 مشکی','کتونی 36 آبی','کتونی %','کتونی _']) {
       const r=await searchActiveProducts(handle.db,normalizeSearchTerm(query));

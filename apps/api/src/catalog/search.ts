@@ -19,20 +19,27 @@ export function normalizeSearchTerm(q: string): string {
 export interface ProductHit { id: string; name: string; code: string; variationCount: number }
 
 export async function searchActiveProducts(db: Db, term: string): Promise<{ products: ProductHit[]; exactVariationId: string | null; exactProductId: string | null }> {
-  // Every token must match the same product/variant pair; size and colour cannot
-  // accidentally come from two different variants. All values remain SQL parameters.
+  // Human queries combine name/size/colour on one variant. Identifier fragments
+  // are searched as a whole query: digits in an unrelated SKU must not supply size.
+  const identifierPattern = `%${term.replace(/[\\%_]/g, "\\$&")}%`;
   const predicates = term.split(/\s+/).filter(Boolean).map(token => {
     const pattern = `%${token.replace(/[\\%_]/g, "\\$&")}%`;
     return sql`regexp_replace(translate(concat_ws(' ', p.name_internal, p.name_web,
-      p.code, v.color, v.size, v.sku, v.barcode),
+      v.color, v.size),
       'يكى۰۱۲۳۴۵۶۷۸۹٠١٢٣٤٥٦٧٨٩', 'یکی01234567890123456789'),
       '[‌‍[:space:]]+', ' ', 'g') ILIKE ${pattern}`;
   });
   const result = await sql<ProductHit>`
-    SELECT p.id, p.name_internal AS name, p.code, count(v.id)::int AS "variationCount"
-    FROM catalog.product p JOIN catalog.variation v ON v.product_id=p.id
-    WHERE p.status='active' AND v.status='active'
-      AND (${predicates.length ? sql.join(predicates, sql` AND `) : sql`false`})
+    SELECT p.id, p.name_internal AS name, p.code, count(all_v.id)::int AS "variationCount"
+    FROM catalog.product p JOIN catalog.variation all_v ON all_v.product_id=p.id
+    WHERE p.status='active' AND all_v.status='active'
+      AND EXISTS (SELECT 1 FROM catalog.variation v
+        WHERE v.product_id=p.id AND v.status='active' AND (
+          (${predicates.length ? sql.join(predicates, sql` AND `) : sql`false`})
+          OR (${term !== ''} AND regexp_replace(translate(concat_ws(' ', p.code, v.sku, v.barcode),
+            'يكى۰۱۲۳۴۵۶۷۸۹٠١٢٣٤٥٦٧٨٩', 'یکی01234567890123456789'),
+            '[‌‍[:space:]]+', ' ', 'g') ILIKE ${identifierPattern})
+        ))
     GROUP BY p.id ORDER BY p.name_internal, p.id LIMIT 50
   `.execute(db);
   const exact = await sql<{ id: string; product_id: string }>`SELECT v.id, v.product_id FROM catalog.variation v
