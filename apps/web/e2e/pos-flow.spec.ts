@@ -23,11 +23,17 @@ async function open(page: Page, api: MockApi) {
   await expect(page.locator(".lines li")).toContainText("شلوار کتان");
 }
 
-test("cashier workspace keeps customer before product entry without horizontal overflow", async ({page, api}, info) => {
+test("cashier workspace keeps search above independent collapsible customer and cart without overflow", async ({page, api}, info) => {
   await open(page, api);
-  const customer = (await page.getByRole("region", {name: "مشتری", exact: true}).boundingBox())!;
+  const customer = (await page.locator(".pos-customer-details").boundingBox())!;
   const product = (await page.getByRole("region", {name: "افزودن کالا"}).boundingBox())!;
-  expect(customer.y + customer.height).toBeLessThanOrEqual(product.y);
+  expect(product.y + product.height).toBeLessThanOrEqual(customer.y);
+  await expect(page.getByRole("region", {name:"سبد خرید", exact:true}).getByRole("region",{name:"مشتری",exact:true})).toHaveCount(0);
+  const details=page.locator(".pos-customer-details");
+  await expect(details).not.toHaveAttribute("open", "");
+  await details.locator("summary").focus();
+  await page.keyboard.press("Enter");
+  await expect(page.getByRole("region", {name:"مشتری",exact:true})).toBeVisible();
   expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
   if (process.env.POS_FLOW_EVIDENCE) await page.screenshot({path: `${process.env.POS_FLOW_EVIDENCE}-${info.project.name}.png`, fullPage: true});
 });
@@ -60,7 +66,7 @@ test("the editable unit price is distinct from the total for a quantity of two",
   await expect(page.locator(".line-total")).not.toHaveRole("button");
   const size = (await edit.boundingBox())!; expect(size.height).toBeGreaterThanOrEqual(44);
   await edit.focus(); await page.keyboard.press("Enter");
-  await expect(page.getByLabel(/قیمت واحد/)).toHaveValue("10000");
+  await expect(page.getByLabel(/قیمت واحد/)).toHaveValue("10,000");
   await expect(page.getByLabel(/قیمت واحد/)).toBeFocused();
   await page.keyboard.press("Escape");
   await expect(edit).toHaveAttribute("aria-expanded", "false");

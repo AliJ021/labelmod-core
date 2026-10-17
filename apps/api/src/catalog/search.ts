@@ -19,12 +19,20 @@ export function normalizeSearchTerm(q: string): string {
 export interface ProductHit { id: string; name: string; code: string; variationCount: number }
 
 export async function searchActiveProducts(db: Db, term: string): Promise<{ products: ProductHit[]; exactVariationId: string | null; exactProductId: string | null }> {
-  const pattern = `%${term.replace(/[\\%_]/g, "\\$&")}%`;
+  // Every token must match the same product/variant pair; size and colour cannot
+  // accidentally come from two different variants. All values remain SQL parameters.
+  const predicates = term.split(/\s+/).filter(Boolean).map(token => {
+    const pattern = `%${token.replace(/[\\%_]/g, "\\$&")}%`;
+    return sql`regexp_replace(translate(concat_ws(' ', p.name_internal, p.name_web,
+      p.code, v.color, v.size, v.sku, v.barcode),
+      'يكى۰۱۲۳۴۵۶۷۸۹٠١٢٣٤٥٦٧٨٩', 'یکی01234567890123456789'),
+      '[‌‍[:space:]]+', ' ', 'g') ILIKE ${pattern}`;
+  });
   const result = await sql<ProductHit>`
     SELECT p.id, p.name_internal AS name, p.code, count(v.id)::int AS "variationCount"
     FROM catalog.product p JOIN catalog.variation v ON v.product_id=p.id
     WHERE p.status='active' AND v.status='active'
-      AND (regexp_replace(translate(p.name_internal, 'يك', 'یک'), '[‌‍[:space:]]+', ' ', 'g') ILIKE ${pattern} OR regexp_replace(translate(p.name_web, 'يك', 'یک'), '[‌‍[:space:]]+', ' ', 'g') ILIKE ${pattern} OR p.code ILIKE ${pattern})
+      AND (${predicates.length ? sql.join(predicates, sql` AND `) : sql`false`})
     GROUP BY p.id ORDER BY p.name_internal, p.id LIMIT 50
   `.execute(db);
   const exact = await sql<{ id: string; product_id: string }>`SELECT v.id, v.product_id FROM catalog.variation v

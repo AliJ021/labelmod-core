@@ -77,7 +77,7 @@ export function TabList<K extends string>({ id, items, value, onChange, label, c
   }, [value, vertical]);
   // سرعنوان گروه فقط کنار زبانهٔ واقعی؛ جای‌نگهدار گروهی را افشا یا تکرار نمی‌کند.
   let lastGroup: string | undefined;
-  return <div ref={root} className={className} role="tablist" aria-label={label} aria-orientation={vertical ? "vertical" : "horizontal"}>
+  return <div ref={root} id={`${id}-list`} className={className} role="tablist" aria-label={label} aria-orientation={vertical ? "vertical" : "horizontal"}>
     {items.map(item => {
       if (item.pending) return <div className="tab-item tab-item--pending" role="presentation" key={item.key} data-primary={item.primary ? "" : undefined}>
         <span className="skeleton tab-pending" aria-hidden="true" />
@@ -86,7 +86,7 @@ export function TabList<K extends string>({ id, items, value, onChange, label, c
       lastGroup = item.group;
       return <div className="tab-item" role="presentation" key={item.key} data-primary={item.primary ? "" : undefined}>
       {heading ? <span className="tab-group" role="presentation">{item.group}</span> : null}
-      <a id={`${id}-tab-${item.key}`} href={hrefFor?.(item.key) ?? `#${id}-panel-${item.key}`} role="tab" aria-selected={value === item.key} aria-controls={`${id}-panel-${item.key}`} tabIndex={focusKey === item.key ? 0 : -1} className={value === item.key ? "on" : ""}
+      <a id={`${id}-tab-${item.key}`} href={hrefFor?.(item.key) ?? `#${id}-panel-${item.key}`} role="tab" title={item.label} aria-selected={value === item.key} aria-controls={`${id}-panel-${item.key}`} tabIndex={focusKey === item.key ? 0 : -1} className={value === item.key ? "on" : ""}
         onClick={e => { if ((e.ctrlKey || e.metaKey || e.shiftKey || e.altKey)) return; e.preventDefault(); onChange(item.key); }}
         onFocus={(e) => { setFocusKey(item.key); e.currentTarget.scrollIntoView({ block: "nearest", inline: "nearest", behavior: "instant" }); }}
         onKeyDown={(e) => {

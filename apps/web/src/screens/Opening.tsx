@@ -1,3 +1,4 @@
+import { AmountInput } from "../components/ui/AmountInput.tsx";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Solid } from "../components/Glass.tsx";
 import { api, ApiError } from "../lib/api.ts";
@@ -156,7 +157,7 @@ export function Opening() {
           {(["debit", "credit"] as const).map(side => <fieldset key={side} className="opening-side" disabled={blocked}>
             <legend>{side === "debit" ? "مانده‌های بدهکار" : "مانده‌های بستانکار"}</legend>
             {OPENING_LEGS.filter(leg => leg.side === side).map(leg => <Field key={leg.leg} label={`${leg.label} (تومان)`} error={totals.invalid[leg.leg] ?? null}>
-              <input className="num" inputMode="numeric" value={amounts[leg.leg] ?? ""} onChange={e => setAmounts(previous => ({...previous, [leg.leg]: e.target.value}))} />
+              <AmountInput className="num" inputMode="numeric" value={amounts[leg.leg] ?? ""} onChange={e => setAmounts(previous => ({...previous, [leg.leg]: e.target.value}))} />
             </Field>)}
           </fieldset>)}
         </div>

@@ -18,12 +18,15 @@ export function CheckoutSummary({ totals }: { totals: CheckoutTotals | null }) {
   const m = (v: bigint | undefined, size: "sm" | "md" | "lg" | "xl" = "sm") =>
     <Money rial={totals && v !== undefined ? v : null} size={size} unknownLabel={none} />;
   return <section className={`checkout-summary${totals ? "" : " checkout-summary--idle"}`} aria-label="خلاصهٔ مبلغ">
+    <details className="checkout-detail">
+    <summary>ریز مبلغ فاکتور</summary>
     <dl className="checkout-lines">
       <div><dt>جمع کالا</dt><dd>{m(totals?.gross)}</dd></div>
       <div><dt>تخفیف</dt><dd>{m(totals ? (totals.discount === 0n ? 0n : -totals.discount) : undefined)}</dd></div>
       <div><dt>مالیات</dt><dd>{m(totals?.tax)}</dd></div>
       {totals && totals.shipping !== 0n ? <div><dt>هزینهٔ ارسال</dt><dd>{m(totals.shipping)}</dd></div> : null}
     </dl>
+    </details>
     <div className="checkout-payable">
       <span className="checkout-payable-label">قابل پرداخت</span>
       {m(totals?.payable, "xl")}

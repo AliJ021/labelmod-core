@@ -345,11 +345,11 @@ function labelText(value: string): string {
  * ۳em از قلم کوچک خودش (۰٫۵em). آزمون مرورگر جاشدن را می‌سنجد.
  */
 function priceFontMm(text: string, g: LabelGeometry, width: number): number {
-  // قیمت کمی کوچک‌تر از پیش (۱٫۷۵ → ۱٫۶، خواستهٔ مالک ۱۴۰۵/۰۷/۲۱)؛ ارتفاع ردیف قیمت همان
+  // قیمت کوچک‌تر (ضریب ۱٫۴) و فضای تومان در دو طرف متقارن؛ ارتفاع ردیف قیمت همان
   // بودجهٔ `labelGeometry` است، پس بارکد و حاشیهٔ سکوت یک دهم میلی‌متر هم عوض نمی‌شوند.
-  const base = g.fontMm * 1.6;
+  const base = g.fontMm * 1.4;
   const inner = width - 2 * CODE_PAD_X_MM - 2 * TEXT_PAD_X_MM;
-  const em = text.length * 0.6 + 0.35 + 3 * 0.5;
+  const em = text.length * 0.6 + 2 * (0.35 + 3 * 0.5);
   return Math.min(base, Math.floor((inner / em) * 100) / 100);
 }
 
@@ -456,8 +456,10 @@ export function labelPage(items: LabelItem[], opts: LabelPageOptions): string {
   .code { height: ${g.rows.code}mm; line-height: 0; display: flex; justify-content: center; align-items: flex-start; }
   .desc { height: ${g.rows.desc}mm; font-size: ${f.toFixed(2)}mm; font-weight: 700; line-height: ${DESC_LINE}; }
   .desc .l { display: block; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-  .price { height: ${g.rows.price}mm; line-height: ${g.rows.price}mm; font-weight: 800; direction: rtl; white-space: nowrap; }
-  .price small { font-size: 0.5em; font-weight: 600; }
+  .price { display: grid; grid-template-columns: minmax(0, 1fr) max-content minmax(0, 1fr); align-items: center; column-gap: 0.35em; height: ${g.rows.price}mm; line-height: ${g.rows.price}mm; font-weight: 800; direction: rtl; white-space: nowrap; }
+  .price .digits { grid-column: 2; }
+  .price small { grid-column: 3; justify-self: start; font-size: 0.5em; font-weight: 600; }
+  .price .noprice { grid-column: 1 / -1; }
   .digits { font-family: Arial, sans-serif; font-variant-numeric: tabular-nums; }
   .noprice { font-size: ${(f * 0.95).toFixed(2)}mm; font-weight: 700; }
   .code svg { display: block; }

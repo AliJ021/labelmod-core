@@ -1,3 +1,4 @@
+import { AmountInput } from "../components/ui/AmountInput.tsx";
 /**
  * افزودن گروهی به رسید خرید: جست‌وجوی نام / کد / بارکد → انتخاب کالا → همه یا
  * بخشی از رنگ/سایزها با تعداد قابل ویرایش → یک درخواست «همه یا هیچ».
@@ -138,7 +139,7 @@ export function ReceiptBulkAdd({ receiptId, disabled, runBulk }: {
         </div>;
       })}
       <div className="rcpt-add">
-        <input value={price} onChange={e => setPrice(e.target.value)} inputMode="numeric" placeholder="قیمت خرید (تومان)" aria-label="قیمت خرید هر عدد به تومان، برای همهٔ انتخاب‌شده‌ها" />
+        <AmountInput value={price} onChange={e => setPrice(e.target.value)} inputMode="numeric" placeholder="قیمت خرید (تومان)" aria-label="قیمت خرید هر عدد به تومان، برای همهٔ انتخاب‌شده‌ها" />
         <button type="button" className="btn btn--primary" onClick={() => void add()} disabled={count === 0}>
           {count === 0 ? "افزودن" : `افزودن ${formatCount(count)} قلم`}
         </button>

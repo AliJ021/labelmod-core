@@ -1,3 +1,4 @@
+import { AmountInput } from "../components/ui/AmountInput.tsx";
 import { routeUrl } from "../lib/navigation.ts";
 import { useUrlTab } from "../lib/use-url-state.ts";
 import { TabList, TabPanels, useTabsId } from "../components/Tabs.tsx";
@@ -337,7 +338,7 @@ function CashMoves() {
             <label style={{ flex: 1, minWidth: "10rem" }}>
               <span>مبلغ (تومان)</span>
               {/* type="text" و نه number — صفحه‌کلید فارسی «۴۸» می‌فرستد */}
-              <input
+              <AmountInput
                 type="text"
                 inputMode="numeric"
                 value={raw}

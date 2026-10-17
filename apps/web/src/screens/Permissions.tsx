@@ -1,3 +1,4 @@
+import { AmountInput } from "../components/ui/AmountInput.tsx";
 import { useUrlState } from "../lib/use-url-state.ts";
 /**
  * سقف مجوزها — سقف تخفیف، سقف بازپرداخت، و «چه نقشی چه کاری می‌کند».
@@ -243,7 +244,7 @@ function RuleForm(props: {
         <input className="num" type="text" inputMode="decimal" value={percent} onChange={(e) => setPercent(e.target.value)} />
       </Field>
       <Field label="سقف مبلغی (تومان)" optional hint="خالی یعنی بی‌سقف؛ صفر یعنی هیچ مبلغی مجاز نیست.">
-        <input className="num" type="text" inputMode="numeric" value={amount} onChange={(e) => setAmount(e.target.value)} />
+        <AmountInput className="num" type="text" inputMode="numeric" value={amount} onChange={(e) => setAmount(e.target.value)} />
       </Field>
       <Field label="دلیل" optional hint="در ردّ حسابرسی تغییر می‌نشیند.">
         <input value={reason} onChange={(e) => setReason(e.target.value)} />

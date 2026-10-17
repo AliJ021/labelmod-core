@@ -1,3 +1,4 @@
+import { AmountInput } from "../components/ui/AmountInput.tsx";
 /**
  * انبار و خرید — رسید خرید.
  *
@@ -445,7 +446,7 @@ export function Purchasing() {
                   placeholder="تعداد"
                   aria-label="تعداد"
                 />
-                <input
+                <AmountInput
                   value={price}
                   onChange={(e) => setPrice(e.target.value)}
                   inputMode="numeric"
@@ -593,7 +594,7 @@ export function Purchasing() {
                 </label>
                 <label className="auth-field">
                   <span>مبلغ (تومان)</span>
-                  <input
+                  <AmountInput
                     value={chargeAmount}
                     onChange={(e) => setChargeAmount(e.target.value)}
                     inputMode="numeric"

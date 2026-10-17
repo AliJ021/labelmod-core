@@ -95,6 +95,8 @@ async function open(page: Page, s?: ReturnType<typeof pos>) {
   await page.addInitScript(([inv, sh]) => localStorage.setItem("labelmod_open_cart", JSON.stringify({ invoiceId: inv, shiftId: sh })), [INV, SHIFT]);
   await page.goto("/?page=pos&pos.branch=b1&pos.warehouse=w1");
   await expect(page.locator(".lines li").first()).toContainText("شلوار کتان");
+  const details=page.locator(".pos-customer-details");
+  if(await details.getAttribute("open")===null) await details.locator("summary").click();
 }
 const payPanel = (page: Page) => page.getByRole("complementary", { name: "پرداخت", exact: true });
 const selector = (page: Page) => page.getByRole("region", { name: "روش پرداخت" });
@@ -207,18 +209,18 @@ test("clicking the unit price opens the existing unit-price editor in Toman", as
   });
   await open(page);
   await page.getByRole("button", {name:"ویرایش قیمت شلوار کتان", exact:true}).click();
-  await expect(page.getByLabel(/قیمت واحد/)).toHaveValue("5000");
+  await expect(page.getByLabel(/قیمت واحد/)).toHaveValue("5,000");
   await expect(page.getByRole("button", {name:"ویرایش قیمت شلوار کتان", exact:true})).toHaveAttribute("aria-expanded","true");
   await page.getByLabel(/قیمت واحد/).fill("35000");
   await page.getByRole("button",{name:"ثبت قیمت",exact:true}).click();
   await expect.poll(()=>prices).toEqual([{unitPrice:"350000"}]);
   await page.getByRole("button", {name:"ویرایش قیمت شلوار کتان", exact:true}).click();
-  await expect(page.getByLabel(/قیمت واحد/)).toHaveValue("35000");
+  await expect(page.getByLabel(/قیمت واحد/)).toHaveValue("35,000");
   await page.keyboard.press("Escape");
   await expect(page.getByLabel(/قیمت واحد/)).toHaveCount(0);
 });
 
-test("customer entry precedes product entry on a fresh sale and a fresh phone requires a name before linking", async ({page, api}) => {
+test("search precedes expandable customer entry and a fresh phone requires a name before linking", async ({page, api}) => {
   const s=pos(api); s.invoice={...s.invoice,lines:[]};
   let creates=0; const attached: unknown[]=[];
   api.handlers.set("POST /invoices",async route=>{creates++;await route.fulfill({json:s.invoice})});
@@ -228,9 +230,10 @@ test("customer entry precedes product entry on a fresh sale and a fresh phone re
     s.invoice={...s.invoice,customerId:"c1"};await route.fulfill({json:s.invoice});
   });
   await page.goto("/?page=pos&pos.branch=b1&pos.warehouse=w1");
+  await page.locator(".pos-customer-details:not([open]) > summary").click();
   const mobile=page.getByLabel("موبایل مشتری",{exact:false});
-  const picker=page.getByLabel("نام، کد یا بارکد محصول",{exact:false});
-  expect((await mobile.boundingBox())!.y).toBeLessThan((await picker.boundingBox())!.y);
+  const picker=page.getByRole("region",{name:"افزودن کالا"}).getByRole("searchbox");
+  expect((await picker.boundingBox())!.y).toBeLessThan((await mobile.boundingBox())!.y);
   await mobile.fill("۰۹۱۲۱۲۳۴۵۶۷");await page.getByRole("button",{name:"افزودن مشتری",exact:true}).click();
   await expect(page.getByLabel("نام و نام خانوادگی مشتری")).toBeVisible();
   await expect(page.getByRole("button",{name:"ثبت نام و افزودن مشتری",exact:true})).toBeDisabled();
@@ -550,7 +553,7 @@ test("card reader is primary; non-cash overpayment is blocked before any request
   await amount.fill("20000");
   await page.getByRole("button", { name: "دریافت وجه", exact: true }).click();
   await expect(page.getByRole("alert").filter({ hasText: "حداکثر مبلغ برای این روش" })).toBeVisible();
-  await expect(amount).toHaveValue("20000");
+  await expect(amount).toHaveValue("20,000");
   await expect(card).toBeEnabled();
   await moreToggle(page).click();
   await expect(method(page, "نقدی"), "فقط یک روش انتخاب‌شده").toHaveAttribute("aria-pressed", "false");
@@ -855,7 +858,9 @@ test("layout: no page overflow, two columns from 900 with finalize in view, mobi
     const cart = (await page.locator(".cart").boundingBox())!, pay = (await payPanel(page).boundingBox())!;
     const finalize = page.getByRole("button", { name: "نهایی‌کردن فاکتور", exact: true });
     if (width >= 900) {
-      expect(Math.abs(cart.y - pay.y), `${width}: cart and payment side by side`).toBeLessThan(2);
+      const workspace = (await page.locator(".pos-workspace").boundingBox())!;
+      expect(Math.abs(workspace.y - pay.y), `${width}: workspace and payment side by side`).toBeLessThan(2);
+      expect(cart.x, `${width}: independent cart stays in the workspace column`).toBe(workspace.x);
       await expect(finalize, `${width}: finalize visible without scrolling`).toBeInViewport();
       await page.evaluate(() => window.scrollTo(0, document.documentElement.scrollHeight));
       await expect(finalize, `${width}: payment panel stays in view (sticky)`).toBeInViewport();

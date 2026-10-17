@@ -151,7 +151,7 @@ test.describe("برداشت‌های من", () => {
     await expect(dialog.getByRole("button", { name: "ثبت برداشت" })).toHaveCount(0);
     await expect(page.getByLabel("مبلغ (تومان)")).toBeDisabled();
     await page.reload();
-    await expect(page.getByLabel("مبلغ (تومان)")).toHaveValue("20000");
+    await expect(page.getByLabel("مبلغ (تومان)")).toHaveValue("20,000");
     await expect(page.getByLabel("دلیل برداشت")).toHaveValue("قسط");
     await expect(page.getByLabel("مبلغ (تومان)")).toBeDisabled();
     expect(keys).toHaveLength(1);
@@ -292,7 +292,7 @@ test.describe("دفتر برداشت پرسنل (مدیر کل)", () => {
     await page.getByRole("button", { name: new RegExp(`^تاریخچه و اصلاح برداشت ${CASHIER.name}`) }).click();
     await expect(page.getByRole("heading", { name: `برداشت ${CASHIER.name}` })).toBeFocused();
     const amount = page.getByLabel("مبلغ درست (تومان)");
-    await expect(amount).toHaveValue("90000");
+    await expect(amount).toHaveValue("90,000");
     await expect(page.getByRole("button", { name: "ثبت اصلاح" })).toBeDisabled();
     await amount.fill("0");
     await page.getByLabel("دلیل اصلاح").fill("ثبت تکراری");
@@ -328,7 +328,7 @@ test.describe("دفتر برداشت پرسنل (مدیر کل)", () => {
   test("مدیر مجاز برای برداشت خودش هم فرم اصلاح دارد", async ({ page, api }) => {
     gmLog(api, { value: detail(item(W1, CASHIER, "900000", "کرایه"), true) });
     await page.goto(`/?page=settings&settings.tab=withdrawal-log&settings.wdl=${W2}`);
-    await expect(page.getByLabel("مبلغ درست (تومان)")).toHaveValue("30000");
+    await expect(page.getByLabel("مبلغ درست (تومان)")).toHaveValue("30,000");
     await page.getByLabel("دلیل برداشت").fill("دلیل درست مدیر");
     await page.getByLabel("دلیل اصلاح").fill("اصلاح دلیل");
     await expect(page.getByRole("button", { name: "ثبت اصلاح" })).toBeEnabled();

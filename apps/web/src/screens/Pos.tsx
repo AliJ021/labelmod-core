@@ -1,3 +1,4 @@
+import { AmountInput } from "../components/ui/AmountInput.tsx";
 import { useUrlState, navigate } from "../lib/use-url-state.ts";
 import { readPendingScan, writePendingScan, clearPendingScan, type PendingScan } from "../lib/pending-scan.ts";
 /**
@@ -50,7 +51,7 @@ import { cartCounts, checkoutErrorMessage, checkoutTotals, finalAmounts, intentF
   paymentFailureKind, paymentLayout, resolveIntentStatus, type PaymentIntent, type PaymentOption, type PaymentPhase,
   type UnresolvedReason } from "../lib/pos-payments.ts";
 import { clearPendingPayment, readPendingPayment, writePendingPayment, type PendingPayment } from "../lib/pending-payment.ts";
-import { formatCount } from "../lib/format.ts";
+import { formatCount, formatQty } from "../lib/format.ts";
 import { session } from "../lib/session.ts";
 import { people } from "../lib/people.ts";
 import { isNetworkFailure } from "../lib/offline-queue.ts";
@@ -118,7 +119,7 @@ function sameLine(a: Readonly<CartLineProps>, b: Readonly<CartLineProps>): boole
   return (
     x.id === y.id &&
     x.productName === y.productName &&
-    x.sku === y.sku &&
+    x.sku === y.sku && x.color === y.color && x.size === y.size &&
     x.qty === y.qty &&
     x.unitPrice === y.unitPrice &&
     x.listPrice === y.listPrice &&
@@ -143,7 +144,7 @@ const CartLine = memo(function CartLine({ line: l, panel, on, error }: CartLineP
       <div className="line-name">
         <strong>{l.productName}</strong>
         <span className="muted small">
-          {l.sku}
+          {[l.color, l.size].filter(Boolean).join(" · ")}
           {/*
             قیمت فهرست فقط وقتی نوشته می‌شود که سطر واقعاً دستکاری شده
             باشد. صندوق‌دار باید ببیند از چه عددی پایین آمده — وگرنه
@@ -192,7 +193,7 @@ const CartLine = memo(function CartLine({ line: l, panel, on, error }: CartLineP
         </button>
         {/* بی aria-live: اعلام زندهٔ هر سطر صفحه‌خوان را پرحرف می‌کرد. یک ناحیهٔ
             زنده برای کل صندوق هست (قابل پرداخت، مانده، وضعیت). */}
-        <span className="num">{Number(l.qty)}</span>
+        <span className="num">{formatQty(l.qty)}</span>
         <button
           type="button"
           onClick={() => on.changeQty(l.id, l.qty, 1)}
@@ -274,6 +275,7 @@ export function Pos({ actorId }: { actorId: string }) {
   const [customerLoading, setCustomerLoading] = useState(false);
   const [customerError, setCustomerError] = useState<string | null>(null);
   const customerInput = useRef<HTMLInputElement>(null);
+  const customerDetails = useRef<HTMLDetailsElement>(null);
   /** فقط نمایش؛ دروازهٔ `sale.credit` سرور است. «نامعلوم» مجاز نیست. */
   const [canCredit, setCanCredit] = useState(false);
   const [canManageCustomer, setCanManageCustomer] = useState(false);
@@ -391,6 +393,9 @@ export function Pos({ actorId }: { actorId: string }) {
   const policyReady = policy?.branchId === branchId;
   const linkedCustomer = customer?.id === invoice?.customerId ? customer : null;
   const customerMissing = policyReady && policy.requireCustomer && (!invoice?.customerId || !linkedCustomer?.mobile?.trim());
+  useEffect(() => {
+    if ((customerMissing || customerError || nameForMobile) && customerDetails.current) customerDetails.current.open = true;
+  }, [customerMissing, customerError, nameForMobile, ready]);
   const customerGate = !policyReady || customerMissing;
 
   // مشتری وصل‌شده — با هر تغییر `customerId` از سرور خوانده می‌شود.
@@ -539,7 +544,7 @@ export function Pos({ actorId }: { actorId: string }) {
   // ستون چسبان باید از همان جایی که شروع می‌شود تا پایین پنجره جا شود، وگرنه
   // «نهایی‌کردن» پیش از هر اسکرولی زیر خط دید می‌افتاد (نوار عملیات و پیام‌ها
   // بالای ستون‌اند). سقف ارتفاع از فاصلهٔ واقعی ستون تا بالای سند حساب می‌شود و
-  // پایان ستون (`.pay-finish`) درون آن می‌چسبد. ResizeObserver پس از چیدمان صدا
+  // خلاصه و پایان ستون ثابت‌اند و فقط بخش روش پرداخت اسکرول می‌شود. ResizeObserver پس از چیدمان صدا
   // زده می‌شود، پس هیچ چیدمان همگامی به بودجهٔ افزودن قلم (۱۰۰ms) اضافه نمی‌شود.
   //
   // ⚠️ نوشتن در همان Callback ممنوع است: سقف تازه اندازهٔ همان ظرفی را عوض می‌کند که
@@ -1207,6 +1212,7 @@ export function Pos({ actorId }: { actorId: string }) {
     canManage={canManageCustomer} onSaveName={(name) => void saveCustomerName(name)}
     busy={busy} inputRef={customerInput} />;
   const focusCustomer = () => {
+    if (customerDetails.current) customerDetails.current.open = true;
     customerInput.current?.scrollIntoView({ block: "center", behavior: "instant" });
     customerInput.current?.focus();
   };
@@ -1342,17 +1348,18 @@ export function Pos({ actorId }: { actorId: string }) {
       ) : null}
 
       {completed ? <SaleComplete sale={completed} onNext={nextSale} /> : <div className="pos-body">
-        {/*
-          فضای کار: جست‌وجو/اسکن و سبد روی **یک** سطح مات — نه دو کارت تودرتو. سبد
-          خالی یک حالت خالیِ فشرده است، نه یک قاب بزرگِ تهی.
-        */}
-        <Solid as="section" className="cart" aria-label="سبد خرید">
-          <h2 className="cart-title">مشتری فاکتور</h2>
+        <div className="pos-workspace">
+          <Solid as="section" className="pos-search-card" aria-label="جست‌وجوی کالا">
+            <PosProductPicker key={warehouseId} warehouseId={warehouseId} busy={busy} onPick={(id) => addByBarcode("", id)} />
+          </Solid>
+          <details ref={customerDetails} className="solid pos-customer-details">
+            <summary>مشتری فاکتور <span className="muted small">{linkedCustomer?.fullName || (customerMissing ? "ثبت شماره لازم است" : "انتخاب یا افزودن مشتری")}</span></summary>
           {!policyReady ? <p className="field-hint" role={policyError ? "alert" : "status"}>
             {policyError ? <>تنظیمات صندوق خوانده نشد؛ دریافت وجه تا بررسی آن بسته است. <button type="button" className="tool" onClick={() => setPolicyRetry((n) => n + 1)}>بررسی دوباره</button></> : "در حال بررسی تنظیمات صندوق…"}
           </p> : customerMissing ? <p className="field-hint">شماره مشتری برای این صندوق الزامی است؛ پیش از دریافت وجه آن را ثبت کنید.</p> : null}
           {customerBlock}
-          <PosProductPicker key={warehouseId} warehouseId={warehouseId} busy={busy} onPick={(id) => addByBarcode("", id)} />
+          </details>
+        <Solid as="section" className="cart" aria-label="سبد خرید">
           <div className="cart-head">
             <h2 className="cart-title">سبد خرید</h2>
             {lines.length ? <span className="cart-count">{countLabel}</span> : null}
@@ -1397,21 +1404,26 @@ export function Pos({ actorId }: { actorId: string }) {
             </div>
           </div> : null}
 
-          {invoice ? <GiftPanel invoice={invoice} onChange={setInvoice} /> : null}
         </Solid>
+          {invoice ? <div className="pos-gift-card"><GiftPanel invoice={invoice} onChange={setInvoice} /></div> : null}
+        </div>
 
         {/*
           ستون پرداخت — چسبان در دسکتاپ تا نهایی‌سازی همیشه دیده شود. ترتیب جریان
           مبلغ‌ها ← روش پرداخت (کارت‌خوان، اسنپ‌پی|دیجی‌پی، بیشتر) ← ثبت نسیه ← نهایی‌کردن.
-          مشتری در ابتدای سبد است و دریافت وجه تابع سیاست جاری الزام شماره است.
+          مشتری در کارت بازشوندهٔ مستقل است و دریافت وجه تابع سیاست جاری الزام شماره است.
         */}
         <Solid as="aside" className="pay" aria-label="پرداخت">
+          <div className="pay-summary-fixed">
           <h2 className="cart-title">پرداخت و ثبت فاکتور</h2>
           <CheckoutSummary totals={draftActive ? totals : null} />
+          </div>
+          <div className="pay-scroll">
           {invoice && received > 0n ? <PaymentBreakdown invoiceId={invoice.id} received={received} /> : null}
           <PaymentSelector layout={layout} remaining={totals.remaining} received={received} phase={payPhase}
             disabled={!hasCart || busy || customerGate} onPay={takePayment} onCheck={() => void checkPayment()}
             onRetry={retryPayment} onAbandon={() => void abandonPayment()} />
+          </div>
           <div className="pay-finish">
             {hasCart ? <label className="receipt-auto"><input type="checkbox" checked={printOnComplete} disabled={busy || !payIdle}
               onChange={e => setPrintOnComplete(e.target.checked)} /> چاپ رسید بلافاصله پس از ثبت</label> : null}
@@ -1741,7 +1753,7 @@ function OpenShiftPanel({
         <span>موجودی اولیه (تومان)</span>
         {/* `type="text"` نه `number`: صفحه‌کلید فارسی «۱۵۰۰۰» می‌فرستد
             و ورودی عددی مرورگر آن را دور می‌اندازد. */}
-        <input
+        <AmountInput
           type="text"
           inputMode="numeric"
           value={cash}
@@ -1798,7 +1810,7 @@ function CloseShiftPanel({
       ) : null}
       <label className="auth-field">
         <span>پول شمرده‌شده در کشو (تومان)</span>
-        <input
+        <AmountInput
           type="text"
           inputMode="numeric"
           value={cash}
@@ -1883,7 +1895,7 @@ function PricePanel({
           قیمت واحد (تومان)
           {listPrice === null ? null : <> — قیمت فهرست <Money rial={listPrice} size="sm" /></>}
         </span>
-        <input
+        <AmountInput
           type="text"
           inputMode="numeric"
           value={amount}
@@ -1955,7 +1967,7 @@ function DiscountPanel({
     <Solid className="line-discount stack" style={{ gap: "var(--s-2)" }}>
       <label className="auth-field">
         <span>تخفیف (تومان) — حداکثر <Money rial={gross} size="sm" /></span>
-        <input
+        <AmountInput
           type="text"
           inputMode="numeric"
           value={amount}

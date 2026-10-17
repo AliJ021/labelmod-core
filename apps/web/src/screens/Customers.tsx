@@ -1,3 +1,4 @@
+import { AmountInput } from "../components/ui/AmountInput.tsx";
 import { useUrlState } from "../lib/use-url-state.ts";
 /**
  * پرونده مشتری.
@@ -547,7 +548,7 @@ function CustomerFile({
           </label>
           <label className="auth-field">
             <span>سقف اعتبار (تومان)</span>
-            <input
+            <AmountInput
               type="text"
               inputMode="numeric"
               value={limit}

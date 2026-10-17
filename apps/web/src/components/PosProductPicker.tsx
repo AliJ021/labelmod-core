@@ -1,3 +1,4 @@
+import { formatQty } from "../lib/format.ts";
 import { useEffect, useRef, useState } from "react";
 import { api, ApiError } from "../lib/api.ts";
 import { toman } from "../lib/money.ts";
@@ -54,7 +55,7 @@ export function PosProductPicker({ warehouseId, busy, onPick }: {
   return <section className="product-entry" aria-label="افزودن کالا">
     <form className="product-search" onSubmit={e => { e.preventDefault(); void submit(); }}>
       <label className="product-search-field">
-        <span className="product-search-label">نام، کد یا بارکد محصول</span>
+        <span className="product-search-label">نام، رنگ، سایز یا بارکد</span>
         <span className="product-search-input">
           <Icon name="search" size="sm" />
           {/*
@@ -64,7 +65,7 @@ export function PosProductPicker({ warehouseId, busy, onPick }: {
             صفحه که با اندازهٔ سبد بزرگ می‌شود (۱۵۰ قلم: حدود ۵۰ms در هر افزودن، apps/web/e2e/perf).
             تایپ را readOnly می‌بندد و ارسال را خودِ submit() با busy.
           */}
-          <input type="search" value={query} maxLength={80} placeholder="بارکد را اسکن کنید یا نام محصول را بنویسید"
+          <input type="search" value={query} maxLength={80} placeholder="بارکد یا نام و تنوع؛ مثلاً کتونی 36 مشکی"
             readOnly={busy} aria-disabled={busy || undefined} autoComplete="off"
             onChange={(e) => { revision.current++; setQuery(e.target.value); setSelected(null); }}
             onKeyDown={e => { if (e.nativeEvent.isComposing && e.key === "Enter") e.preventDefault(); }} />
@@ -78,7 +79,7 @@ export function PosProductPicker({ warehouseId, busy, onPick }: {
     {!selected && !loading && query.trim().length >= 2 && products.length === 0 && !error ? <p className="product-note">محصولی پیدا نشد.</p> : null}
     {!selected && products.length === 50 ? <p className="product-note">۵۰ نتیجهٔ نخست؛ برای محدودکردن نتایج، نام کامل‌تری وارد کنید.</p> : null}
     {!selected ? <div className="product-chips">{products.map((p) => <button className="btn pick-chip" type="button" key={p.id} disabled={busy}
-      onClick={() => { revision.current++; setSelected(p); }}>{p.name} · {p.code} · {p.variationCount} تنوع</button>)}</div> : <>
+      onClick={() => { revision.current++; setSelected(p); }}>{p.name} · {p.variationCount} تنوع</button>)}</div> : <>
       <div className="product-chosen"><strong>{selected.name}</strong><button type="button" className="btn btn--quiet" onClick={() => setSelected(null)}>بازگشت به محصولات</button></div>
       <div role="group" aria-label="انتخاب رنگ" className="product-chips">{colors.map((c) => <button type="button" className="btn pick-chip" key={c ?? ""}
         aria-pressed={chosenColor === c} disabled={busy} onClick={() => setColor(c)}>{c ?? "بدون رنگ"}</button>)}</div>
@@ -86,7 +87,7 @@ export function PosProductPicker({ warehouseId, busy, onPick }: {
       <div role="group" aria-label="انتخاب سایز" className="product-chips">{variations.filter((v) => v.color === chosenColor).map((v) => <button
         type="button" className="btn pick-chip" key={v.id} disabled={busy || v.price === null || Number(v.available) <= 0}
         onClick={() => { if (selecting.current) return; selecting.current = true; void onPick(v.id).finally(() => { selecting.current = false; }); }}>
-        سایز {v.size ?? "آزاد"} · موجودی {v.available} · {v.price === null ? "بدون قیمت" : `${toman(BigInt(v.price))} تومان`}
+        سایز {v.size ?? "آزاد"} · موجودی {formatQty(v.available)} · {v.price === null ? "بدون قیمت" : `${toman(BigInt(v.price))} تومان`}
       </button>)}</div>
       <p className="product-note muted small">با انتخاب سایز، یک عدد به سبد اضافه می‌شود. موجودی و قیمت هنگام ثبت دوباره کنترل می‌شوند.</p>
     </>}
