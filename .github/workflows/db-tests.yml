@@ -23,20 +23,10 @@ jobs:
   db-tests:
     runs-on: ubuntu-latest
 
-    services:
-      postgres:
-        # همان postgres:16-alpine رسمی (Docker Official Image) با همان digest،
-        # از آینهٔ رسمی ECR Public؛ pull ناشناس Hub روی رانرها 429 می‌گرفت.
-        # services پیش از stepها ساخته می‌شوند، پس نشانی همین‌جا کامل است.
-        image: public.ecr.aws/docker/library/postgres:16-alpine
-        env:
-          POSTGRES_DB: labelmod
-          POSTGRES_USER: labelmod
-          POSTGRES_PASSWORD: ci_only_not_a_real_secret
-        ports: ['5432:5432']
-        options: >-
-          --health-cmd "pg_isready -U labelmod -d labelmod"
-          --health-interval 10s --health-timeout 5s --health-retries 10
+    # پستگرس عمداً services نیست: ایمیج سرویس پیش از هر step کشیده می‌شود و محدودیت دانلود
+    # ECR («Data limit exceeded») کل job را پیش از checkout می‌کشت، بی هیچ راه جایگزین.
+    # همان postgres:16-alpine رسمی (Docker Official Image) از آینهٔ ECR Public؛ فقط محدودیت
+    # دانلود تأییدشده یک بار به Docker Hub رسمی می‌رود (.github/scripts/start-postgres.sh).
 
     env:
       DATABASE_URL: postgres://labelmod:ci_only_not_a_real_secret@localhost:5432/labelmod
@@ -47,6 +37,12 @@ jobs:
 
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
+
+      - name: کنترل رفتاری fallback ایمیج پستگرس
+        run: .github/scripts/test-start-postgres.sh
+
+      - name: راه‌اندازی پستگرس (آینهٔ ECR، fallback رسمی فقط برای محدودیت دانلود)
+        run: .github/scripts/start-postgres.sh
 
       - name: نصب کلاینت پستگرس
         run: sudo apt-get update -qq && sudo apt-get install -y -qq postgresql-client
