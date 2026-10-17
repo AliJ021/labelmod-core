@@ -1216,6 +1216,14 @@ export function Pos({ actorId }: { actorId: string }) {
     customerInput.current?.scrollIntoView({ block: "center", behavior: "instant" });
     customerInput.current?.focus();
   };
+  const customerEntry = <>
+    {!policyReady ? <p className="field-hint" role={policyError ? "alert" : "status"}>
+      {policyError ? <>تنظیمات صندوق خوانده نشد؛ دریافت وجه تا بررسی آن بسته است. <button type="button" className="tool" onClick={() => setPolicyRetry((n) => n + 1)}>بررسی دوباره</button></> : "در حال بررسی تنظیمات صندوق…"}
+    </p> : customerMissing ? <p className="field-hint">شماره مشتری برای این صندوق الزامی است؛ پیش از دریافت وجه آن را ثبت کنید.</p> : null}
+    {customerBlock}
+  </>;
+  // Required identity stays visible even after linking; optional identity can fold away.
+  const customerAlwaysVisible = !policyReady || policy.requireCustomer;
 
   return (
     <div ref={rootRef} className={`pos${draftActive && !completed ? " pos--has-items" : ""}${!draftActive && !completed ? " pos--empty" : ""}`}>
@@ -1349,16 +1357,17 @@ export function Pos({ actorId }: { actorId: string }) {
 
       {completed ? <SaleComplete sale={completed} onNext={nextSale} /> : <div className="pos-body">
         <div className="pos-workspace">
+          {customerAlwaysVisible ? <Solid as="section" className="pos-customer-required" aria-label="مشتری فاکتور">
+            <h2 className="cart-title">مشتری فاکتور</h2>
+            {customerEntry}
+          </Solid> : null}
           <Solid as="section" className="pos-search-card" aria-label="جست‌وجوی کالا">
             <PosProductPicker key={warehouseId} warehouseId={warehouseId} busy={busy} onPick={(id) => addByBarcode("", id)} />
           </Solid>
-          <details ref={customerDetails} className="solid pos-customer-details">
+          {!customerAlwaysVisible ? <details ref={customerDetails} className="solid pos-customer-details">
             <summary>مشتری فاکتور <span className="muted small">{linkedCustomer?.fullName || (customerMissing ? "ثبت شماره لازم است" : "انتخاب یا افزودن مشتری")}</span></summary>
-          {!policyReady ? <p className="field-hint" role={policyError ? "alert" : "status"}>
-            {policyError ? <>تنظیمات صندوق خوانده نشد؛ دریافت وجه تا بررسی آن بسته است. <button type="button" className="tool" onClick={() => setPolicyRetry((n) => n + 1)}>بررسی دوباره</button></> : "در حال بررسی تنظیمات صندوق…"}
-          </p> : customerMissing ? <p className="field-hint">شماره مشتری برای این صندوق الزامی است؛ پیش از دریافت وجه آن را ثبت کنید.</p> : null}
-          {customerBlock}
-          </details>
+          {customerEntry}
+          </details> : null}
         <Solid as="section" className="cart" aria-label="سبد خرید">
           <div className="cart-head">
             <h2 className="cart-title">سبد خرید</h2>

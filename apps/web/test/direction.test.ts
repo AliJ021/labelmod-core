@@ -100,10 +100,14 @@ describe("جهت رابط", () => {
       // برگ LTR مشترک نظام طراحی — `<bdi dir="ltr">` برای SKU، موبایل،
       // نشانی و شناسه؛ مصرف‌کننده‌ها دیگر `dir` نمی‌نویسند.
       "components/ui/Bidi.tsx",
+      "components/ui/AmountInput.tsx", // فقط input مبلغ؛ ظرف و برچسب‌ها RTL می‌مانند.
     ]);
     const unexpected = [...new Set(found)].filter((f) => !allowed.has(f));
     assert.deepEqual(unexpected, [],
       `چپ‌چینی در جای تازه — باید برگ باشد، نه ظرف:\n${unexpected.join("\n")}`);
+    const amount = readFileSync(path.join(SRC, "components/ui/AmountInput.tsx"), "utf8");
+    const amountLtr = [...amount.matchAll(/<([A-Za-z][\w.]*)\b[^>]*\bdir="ltr"/g)];
+    assert.deepEqual(amountLtr.map(m => m[1]), ["input"], "LTR مبلغ فقط روی خود ورودی مجاز است");
   });
 
   /**

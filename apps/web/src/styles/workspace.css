@@ -189,7 +189,8 @@ a[role="tab"] { display: inline-flex; align-items: center; text-decoration: none
 
 /* هر کار یک سطح مستقل؛ کنترل اسکن از باز و بسته شدن جزئیات جدا می‌ماند. */
 .pos-workspace { display: grid; align-content: start; min-inline-size: 0; gap: var(--s-3); }
-.pos-search-card, .pos-customer-details { padding: var(--s-3) var(--s-4); }
+.pos-search-card, .pos-customer-details, .pos-customer-required { padding: var(--s-3) var(--s-4); }
+.pos-customer-required { display: grid; gap: var(--s-3); }
 .pos-search-card .product-entry { border: 0; padding: 0; }
 .pos-customer-details > summary { display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: var(--s-2); cursor: pointer; min-block-size: var(--touch); font-weight: var(--weight-semibold); }
 .pos-customer-details > summary::after { content: "+"; }
