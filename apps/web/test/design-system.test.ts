@@ -12,6 +12,7 @@ import { fileURLToPath } from "node:url";
 import path from "node:path";
 import { FEATURES, NAV_GROUPS, NAV_ITEMS, NAV_OPERATIONS, ZONES, accessOf, pendingZones, visibleZones, type Verdict } from "../src/lib/navigation.ts";
 import { SETTINGS_OPERATIONS, SETTINGS_SECTIONS, settingsView } from "../src/lib/settings-registry.ts";
+import { PERSONNEL_OPERATIONS, PERSONNEL_SECTIONS, legacyPersonnelUrl, personnelView, personnelWriteAccess } from "../src/lib/personnel-registry.ts";
 import { channelLabel, formatCount, formatGregorian, formatJalali, formatMoney, formatPercent, formatQty, moneyParts } from "../src/lib/format.ts";
 import { classifyFailure, mayConfirm } from "../src/lib/safe-action.ts";
 import { ApiError } from "../src/lib/api.ts";
@@ -130,7 +131,7 @@ describe("حرکت", () => {
 
 describe("رجیستری ناوبری", () => {
   test("هیچ مسیری حذف نشده و هر مقصد گروه، آیکون و فهرست مجوز دارد", () => {
-    assert.deepEqual(ZONES.map(z => z.key), ["dashboard", "pos", "invoices", "returns", "catalog", "purchasing", "treasury", "customers", "reports", "settings"]);
+    assert.deepEqual(ZONES.map(z => z.key), ["dashboard", "pos", "invoices", "returns", "catalog", "purchasing", "treasury", "customers", "personnel", "reports", "settings"]);
     const icons = read("components/Icon.tsx");
     for (const z of ZONES) {
       assert.ok(NAV_GROUPS.some(g => g.key === z.navGroup), z.key);
@@ -153,13 +154,13 @@ describe("رجیستری ناوبری", () => {
     const all = (v: Verdict) => new Map(NAV_OPERATIONS.map(op => [op, v] as const));
     const keys = (items: { key: string }[]) => items.map(z => z.key).sort();
     // پیش از پاسخ سرور (loading) و پس از خطای شبکه (degraded) نقشه خالی یا ناقص است.
-    assert.deepEqual(keys(visibleZones(new Map(), "dashboard")), ["dashboard", "settings"], "نامعلوم هرگز مجاز نیست");
-    assert.deepEqual(keys(visibleZones(all("unknown"), "dashboard")), ["dashboard", "settings"]);
-    assert.deepEqual(keys(visibleZones(all("deny"), "dashboard")), ["dashboard", "settings"], "داشبورد امروز و تنظیمات شخصی برای همه");
+    assert.deepEqual(keys(visibleZones(new Map(), "dashboard")), ["dashboard", "personnel", "settings"], "نامعلوم هرگز مجاز نیست");
+    assert.deepEqual(keys(visibleZones(all("unknown"), "dashboard")), ["dashboard", "personnel", "settings"]);
+    assert.deepEqual(keys(visibleZones(all("deny"), "dashboard")), ["dashboard", "personnel", "settings"], "داشبورد امروز، برداشت/پاداش من و تنظیمات شخصی برای همه");
     assert.equal(visibleZones(all("allow"), "dashboard").length, ZONES.length);
     // بخشی که کاربر خودش باز کرده ناپدید نمی‌شود؛ بقیهٔ طبقه‌بندی هم باز نمی‌شود.
-    assert.deepEqual(keys(visibleZones(new Map(), "treasury")), ["dashboard", "settings", "treasury"]);
-    assert.deepEqual(keys(visibleZones(all("deny"), "treasury")), ["dashboard", "settings", "treasury"]);
+    assert.deepEqual(keys(visibleZones(new Map(), "treasury")), ["dashboard", "personnel", "settings", "treasury"]);
+    assert.deepEqual(keys(visibleZones(all("deny"), "treasury")), ["dashboard", "personnel", "settings", "treasury"]);
     // مخلوط: یکی از عملیات مجاز کافی است؛ رد یکی، دیگری را نمی‌بندد؛ نامعلوم کمکی نمی‌کند.
     const mixed = new Map<string, Verdict>([["return.same_day", "allow"], ["return.late", "deny"], ["sale.create", "deny"], ["catalog.manage", "deny"]]);
     assert.ok(visibleZones(mixed, "dashboard").some(z => z.key === "returns"), "کافی است یکی از عملیات مجاز باشد");
@@ -192,6 +193,17 @@ describe("رجیستری ناوبری", () => {
       assert.ok(section, `بخش ناموجود: ${tab}`);
       assert.deepEqual(f.anyOf, section.anyOf, `${f.label} ↔ ${tab}`);
     }
+    // همین برای «برداشت و پاداش»؛ و هیچ پیوندی دیگر به جای قدیمی برداشت در تنظیمات نمی‌رود.
+    for (const f of FEATURES) {
+      const url = new URL(f.href, "http://x");
+      assert.equal(legacyPersonnelUrl(url.search), null, `${f.label} به نشانی قدیمی تنظیمات می‌رود`);
+      const tab = url.searchParams.get("personnel.tab");
+      if (tab === null) continue;
+      const section = PERSONNEL_SECTIONS.find(s => s.key === tab);
+      assert.ok(section, `بخش ناموجود: ${tab}`);
+      assert.deepEqual(f.anyOf, section.anyOf, `${f.label} ↔ ${tab}`);
+    }
+    for (const s of PERSONNEL_SECTIONS) assert.ok(FEATURES.some(f => f.href.includes(`personnel.tab=${s.key}`)), `جست‌وجو ${s.key} را ندارد`);
   });
 });
 
@@ -214,7 +226,6 @@ describe("رجیستری تنظیمات — شخصی جدا از مدیریتی 
     terminals: ["settings-routes.ts", "/terminal-drivers"],
     opening: ["admin-routes.ts", "/tafsili"],
     staff: ["people-routes.ts", "/users"],
-    "withdrawal-log": ["withdrawal-routes.ts", "/withdrawals"],
     permissions: ["admin-routes.ts", "/permission-rules"],
     devices: ["auth-routes.ts", "/devices"],
   };
@@ -235,20 +246,11 @@ describe("رجیستری تنظیمات — شخصی جدا از مدیریتی 
   });
   test("بخش شخصی هیچ مجوز مدیریتی نمی‌خواهد و فقط نشست خود کاربر را می‌خواند", () => {
     const personal = SETTINGS_SECTIONS.filter(s => s.scope === "personal").map(s => s.key);
-    assert.deepEqual(personal, ["appearance", "pin", "twofactor", "withdrawals"]);
+    assert.deepEqual(personal, ["appearance", "pin", "twofactor"]);
     for (const s of SETTINGS_SECTIONS) if (s.scope === "personal") assert.deepEqual(s.anyOf, []);
     const auth = api("auth-routes.ts");
     const pin = auth.slice(auth.indexOf('app.get("/auth/pin"'), auth.indexOf('app.get("/auth/pin"') + 300);
     assert.ok(!/requireForSession|requirePermission/.test(pin), "PIN من مجوز مدیریتی نمی‌خواهد");
-    // برداشت‌های من: فقط نشست خودِ کاربر؛ مالک از نشست، نه از پرس‌وجو یا بدنه.
-    const wd = api("withdrawal-routes.ts");
-    for (const route of ['app.get("/withdrawals/mine"', 'app.get("/withdrawals/mine/:id"', 'app.post("/withdrawals",']) {
-      const at = wd.indexOf(route);
-      assert.ok(at >= 0, route);
-      const handler = wd.slice(at, wd.indexOf("\n  });", at));
-      assert.ok(!/requireForSession|requirePermission|managerSession/.test(handler), `${route} مجوز مدیریتی نمی‌خواهد`);
-      assert.ok(/s\.userId/.test(handler), `${route} مالک را از نشست می‌گیرد`);
-    }
     for (const op of SETTINGS_OPERATIONS) assert.ok(NAV_OPERATIONS.includes(op), `${op} همراه پرسش‌های ناوبری پرسیده می‌شود`);
   });
   const all = (v: Verdict) => new Map(NAV_OPERATIONS.map(op => [op, v] as const));
@@ -256,7 +258,7 @@ describe("رجیستری تنظیمات — شخصی جدا از مدیریتی 
   test("کاربر عادی (صندوق‌دار): فقط بخش‌های شخصی؛ پیوند مستقیم مدیریتی mount نمی‌شود", () => {
     const cashier = { state: "ready" as const, verdicts: all("deny") };
     const view = settingsView(null, cashier);
-    assert.deepEqual(keys(view.visible), ["appearance", "pin", "twofactor", "withdrawals"]);
+    assert.deepEqual(keys(view.visible), ["appearance", "pin", "twofactor"]);
     assert.equal(view.selected, "appearance", "پیش‌فرض نخستین بخش شخصی");
     for (const s of SETTINGS_SECTIONS.filter(s => s.scope === "admin")) {
       const deep = settingsView(s.key, cashier);
@@ -276,14 +278,14 @@ describe("رجیستری تنظیمات — شخصی جدا از مدیریتی 
   test("مجوز مدیریتی جزئی: فقط بخش‌های همان مجوز", () => {
     const verdicts = new Map([...all("deny"), ["settings.view", "allow"]] as [string, Verdict][]);
     const view = settingsView(null, { state: "ready", verdicts });
-    assert.deepEqual(keys(view.visible), ["appearance", "pin", "twofactor", "withdrawals", "keys", "health", "woocommerce", "accounts", "mapping", "snappay", "digipay", "terminals", "opening"]);
+    assert.deepEqual(keys(view.visible), ["appearance", "pin", "twofactor", "keys", "health", "woocommerce", "accounts", "mapping", "snappay", "digipay", "terminals", "opening"]);
     assert.equal(view.selected, "keys");
-    for (const denied of ["backups", "staff", "withdrawal-log", "permissions", "devices"] as const) assert.equal(settingsView(denied, { state: "ready", verdicts }).blocked, "denied", denied);
+    for (const denied of ["backups", "staff", "permissions", "devices"] as const) assert.equal(settingsView(denied, { state: "ready", verdicts }).blocked, "denied", denied);
   });
   test("در حال بررسی: شخصی دیده می‌شود، مدیریتی جای‌نگهدار است و هیچ بخش مدیریتی mount نمی‌شود", () => {
     const loading = { state: "loading" as const, verdicts: new Map<string, Verdict>() };
     const view = settingsView(null, loading);
-    assert.deepEqual(keys(view.visible), ["appearance", "pin", "twofactor", "withdrawals"]);
+    assert.deepEqual(keys(view.visible), ["appearance", "pin", "twofactor"]);
     assert.deepEqual(keys(view.pending), SETTINGS_SECTIONS.filter(s => s.scope === "admin").map(s => s.key));
     assert.equal(view.selected, null, "پیش‌فرض تا پاسخ صبر می‌کند");
     assert.equal(view.blocked, "loading");
@@ -293,11 +295,97 @@ describe("رجیستری تنظیمات — شخصی جدا از مدیریتی 
   test("خطای بررسی: نامعلوم به مجاز تبدیل نمی‌شود؛ پیوند مستقیم «بررسی دوباره» می‌گیرد", () => {
     const degraded = { state: "degraded" as const, verdicts: new Map<string, Verdict>([["user.manage", "allow"]]) };
     const view = settingsView(null, degraded);
-    assert.deepEqual(keys(view.visible), ["appearance", "pin", "twofactor", "withdrawals", "staff"]);
+    assert.deepEqual(keys(view.visible), ["appearance", "pin", "twofactor", "staff"]);
     assert.deepEqual(view.pending, [], "خطا جای‌نگهدار دائمی نمی‌سازد");
     assert.equal(view.selected, "staff", "بخش مجازِ رسیده باز می‌شود");
     assert.deepEqual([settingsView("devices", degraded).selected, settingsView("devices", degraded).blocked], [null, "degraded"]);
-    assert.deepEqual([settingsView("withdrawal-log", degraded).selected, settingsView("withdrawal-log", degraded).blocked], [null, "degraded"], "دفتر مدیر با پاسخ نرسیده باز نمی‌شود");
+  });
+  test("برداشت از تنظیمات بیرون رفت: نه بخش، نه عملیات، نه mount", () => {
+    for (const key of ["withdrawals", "withdrawal-log"]) {
+      assert.ok(!SETTINGS_SECTIONS.some(s => s.key === key), key);
+      assert.equal(settingsView(key, { state: "ready", verdicts: all("allow") }).selected, "keys", `${key} در تنظیمات ناشناخته است`);
+    }
+    assert.ok(!SETTINGS_OPERATIONS.some(op => op.startsWith("withdrawal.") || op.startsWith("bonus.")));
+  });
+});
+
+describe("برداشت و پاداش — ناحیهٔ منوی اصلی", () => {
+  const api = (file: string) => readFileSync(fileURLToPath(new URL(`../../api/src/http/${file}`, import.meta.url)), "utf8");
+  const all = (v: Verdict) => new Map(NAV_OPERATIONS.map(op => [op, v] as const));
+  const keys = (list: { key: string }[]) => list.map(s => s.key);
+  /** هر دفتر مدیر همان عملیاتی را دارد که مسیر خواندن و نوشتنش در API می‌سنجد — از خودِ منبع. */
+  const SERVER: Record<string, readonly [file: string, read: string, write: readonly string[]]> = {
+    "withdrawal-log": ["withdrawal-routes.ts", 'app.get("/withdrawals",', ['app.post("/withdrawals/settlements"', 'app.post("/withdrawals/:id/corrections"']],
+    "bonus-log": ["bonus-routes.ts", 'app.get("/bonuses",', ['app.post("/bonuses/settlements"', 'app.post("/bonuses/awards"', 'app.post("/bonuses/:id/decisions"']],
+  };
+  test("هر دفتر مدیر عملیات مسیرهای خواندن و نوشتنش در API را دارد", () => {
+    const admin = PERSONNEL_SECTIONS.filter(s => s.scope === "admin");
+    assert.deepEqual(admin.map(s => s.key).sort(), Object.keys(SERVER).sort());
+    for (const section of admin) {
+      const [file, read, writes] = SERVER[section.key]!;
+      const source = api(file);
+      const handler = (route: string) => { const at = source.indexOf(route); assert.ok(at >= 0, route); return source.slice(at, source.indexOf("\n  });", at)); };
+      assert.equal(section.anyOf.length, 1);
+      assert.ok(handler(read).includes(`"${section.anyOf[0]}"`), `${section.key}: ${section.anyOf[0]}`);
+      assert.equal(section.writeAnyOf.length, 1);
+      for (const w of writes) assert.ok(handler(w).includes(`"${section.writeAnyOf[0]}"`), `${w}: ${section.writeAnyOf[0]}`);
+    }
+    for (const op of PERSONNEL_OPERATIONS) assert.ok(NAV_OPERATIONS.includes(op), `${op} همراه پرسش‌های ناوبری پرسیده می‌شود`);
+  });
+  test("«من»ها مجوز مدیریتی نمی‌خواهند و مالک را از نشست می‌گیرند", () => {
+    assert.deepEqual(PERSONNEL_SECTIONS.filter(s => s.scope === "personal").map(s => s.key), ["withdrawals", "bonuses"]);
+    for (const s of PERSONNEL_SECTIONS) if (s.scope === "personal") assert.deepEqual(s.anyOf, []);
+    for (const [file, routes] of [["withdrawal-routes.ts", ['app.get("/withdrawals/mine"', 'app.get("/withdrawals/mine/:id"', 'app.post("/withdrawals",']],
+      ["bonus-routes.ts", ['app.get("/bonuses/mine"', 'app.get("/bonuses/mine/:id"', 'app.post("/bonuses",']]] as const) {
+      const src = api(file);
+      for (const route of routes) {
+        const at = src.indexOf(route);
+        assert.ok(at >= 0, route);
+        const handler = src.slice(at, src.indexOf("\n  });", at));
+        assert.ok(!/requireForSession|requirePermission|managerSession/.test(handler), `${route} مجوز مدیریتی نمی‌خواهد`);
+        assert.ok(/s\.userId/.test(handler), `${route} مالک را از نشست می‌گیرد`);
+      }
+    }
+  });
+  test("صندوق‌دار: فقط «من»ها؛ پیوند مستقیم دفتر مدیر mount نمی‌شود", () => {
+    const cashier = { state: "ready" as const, verdicts: all("deny") };
+    const view = personnelView(null, cashier);
+    assert.deepEqual(keys(view.visible), ["withdrawals", "bonuses"]);
+    assert.equal(view.selected, "withdrawals");
+    for (const key of ["withdrawal-log", "bonus-log"]) {
+      assert.deepEqual([personnelView(key, cashier).selected, personnelView(key, cashier).blocked], [null, "denied"], key);
+    }
+    assert.equal(personnelView("bonuses", cashier).selected, "bonuses");
+  });
+  test("مجوز جزئی و مستقل: دیدن پاداش بی مدیریت پاداش فقط‌خواندنی است", () => {
+    const verdicts = new Map([...all("deny"), ["bonus.view_all", "allow"]] as [string, Verdict][]);
+    const view = personnelView(null, { state: "ready", verdicts });
+    assert.deepEqual(keys(view.visible), ["withdrawals", "bonuses", "bonus-log"]);
+    assert.equal(view.selected, "bonus-log", "پیش‌فرض نخستین دفتر مدیر مجاز");
+    assert.equal(personnelView("withdrawal-log", { state: "ready", verdicts }).blocked, "denied");
+    assert.equal(personnelWriteAccess("bonus-log", verdicts), "deny");
+    assert.equal(personnelWriteAccess("bonus-log", new Map([["bonus.manage", "allow"]])), "allow");
+    assert.equal(personnelWriteAccess("bonus-log", new Map()), "unknown", "نامعلوم فرم نوشتن نمی‌سازد");
+  });
+  test("در حال بررسی و خطا: «من»ها می‌مانند؛ دفتر مدیر نه mount می‌شود نه مجاز فرض می‌شود", () => {
+    const loading = personnelView(null, { state: "loading", verdicts: new Map() });
+    assert.deepEqual([keys(loading.visible), keys(loading.pending), loading.selected], [["withdrawals", "bonuses"], ["withdrawal-log", "bonus-log"], null]);
+    const degraded = { state: "degraded" as const, verdicts: new Map<string, Verdict>() };
+    assert.deepEqual([personnelView("bonus-log", degraded).selected, personnelView("bonus-log", degraded).blocked], [null, "degraded"]);
+    assert.deepEqual([personnelView("withdrawal-log", degraded).selected, personnelView("withdrawal-log", degraded).blocked], [null, "degraded"]);
+    assert.equal(personnelView(null, degraded).selected, "withdrawals");
+  });
+  test("پیوندهای قدیمی تنظیمات بازنویسی می‌شوند، نه شکسته", () => {
+    assert.equal(legacyPersonnelUrl("?page=settings&settings.tab=withdrawals&settings.wdPage=3&settings.wd=abc"),
+      "/?page=personnel&personnel.tab=withdrawals&personnel.wdPage=3&personnel.wd=abc");
+    assert.equal(legacyPersonnelUrl("?page=settings&settings.tab=withdrawal-log&settings.wdlOwner=u1&settings.wdlStatus=open&settings.wdlPage=2&x=1"),
+      "/?page=personnel&personnel.tab=withdrawal-log&personnel.wdlOwner=u1&personnel.wdlStatus=open&personnel.wdlPage=2&x=1");
+    for (const other of ["?page=settings&settings.tab=pin", "?page=settings", "?page=personnel&personnel.tab=withdrawals", "?page=dashboard&settings.tab=withdrawals", ""]) {
+      assert.equal(legacyPersonnelUrl(other), null, other);
+    }
+    // نشانی تازه همان بخش را باز می‌کند.
+    const to = new URL(legacyPersonnelUrl("?page=settings&settings.tab=withdrawal-log")!, "http://x");
+    assert.equal(personnelView(to.searchParams.get("personnel.tab"), { state: "ready", verdicts: all("allow") }).selected, "withdrawal-log");
   });
 });
 

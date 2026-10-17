@@ -120,8 +120,10 @@ export function TabPanels<K extends string>({ id, items, value, children, classN
 
 export function useTabsId() { return useId(); }
 
-export function SettingsNavigation<K extends string>({ id, items, value, onChange, mobile, hrefFor }: {
+export function SettingsNavigation<K extends string>({ id, items, value, onChange, mobile, hrefFor, label = "تنظیمات" }: {
   id: string; items: readonly TabItem<K>[]; value: K | null; onChange: (value: K) => void; mobile: boolean; hrefFor?: (value: K) => string;
+  /** نام ناحیه برای برچسب دسترس‌پذیر («بخش تنظیمات»، «بخش برداشت و پاداش»). */
+  label?: string;
 }) {
   const area = useRef<HTMLDivElement>(null);
   const focused = useRef(false);
@@ -131,9 +133,9 @@ export function SettingsNavigation<K extends string>({ id, items, value, onChang
   const real = items.filter(item => !item.pending);
   const groups = [...new Set(real.map(item => item.group ?? "بخش‌ها"))];
   return <div ref={area} className="settings-nav" onFocusCapture={() => { focused.current = true; }} onBlurCapture={e => { if (e.relatedTarget && !e.currentTarget.contains(e.relatedTarget)) focused.current = false; }}>
-    {mobile ? <label className="settings-picker"><span>بخش تنظیمات</span><select value={value ?? ""} aria-controls={value === null ? undefined : `${id}-panel-${value}`} onChange={e => onChange(e.target.value as K)}>
+    {mobile ? <label className="settings-picker"><span>بخش {label}</span><select value={value ?? ""} aria-controls={value === null ? undefined : `${id}-panel-${value}`} onChange={e => onChange(e.target.value as K)}>
       {value === null ? <option value="" disabled>بخشی را انتخاب کنید</option> : null}
       {groups.map(group => <optgroup label={group} key={group}>{real.filter(item => (item.group ?? "بخش‌ها") === group).map(item => <option key={item.key} value={item.key}>{item.label}</option>)}</optgroup>)}
-    </select></label> : <TabList id={id} items={items} value={value} onChange={onChange} label="بخش‌های تنظیمات" className="subtabs settings-tabs" vertical {...(hrefFor ? { hrefFor } : {})} />}
+    </select></label> : <TabList id={id} items={items} value={value} onChange={onChange} label={`بخش‌های ${label}`} className="subtabs settings-tabs" vertical {...(hrefFor ? { hrefFor } : {})} />}
   </div>;
 }
