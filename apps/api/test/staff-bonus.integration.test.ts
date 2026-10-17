@@ -131,7 +131,8 @@ describe("دفتر پاداش پرسنل", { skip: DATABASE_URL ? false : "DATAB
 
   test("درخواست تکراری با همان کلید Replay است؛ کلید کاربر دیگر لو نمی‌رود", async () => {
     const key = randomUUID();
-    const first = await call(cashier, "POST", "/bonuses", { amount: "250000", reason: "شب عید" }, key);
+    const first = await call(cashier, "POST", "/bonuses", { amount: "00250000", reason: "شب عید" }, key);
+    assert.equal(first.json().bonus.amount, "250000", "صفر پیشین هویت تازه نمی‌سازد");
     const again = await call(cashier, "POST", "/bonuses", { amount: "250000", reason: "شب عید" }, key);
     assert.equal(first.statusCode, 201, first.body); assert.equal(again.statusCode, 200);
     assert.equal(again.json().replayed, true); assert.equal(again.json().bonus.id, first.json().bonus.id);
@@ -204,8 +205,10 @@ describe("دفتر پاداش پرسنل", { skip: DATABASE_URL ? false : "DATAB
     assert.equal(self.statusCode, 422, self.body); assert.equal(self.json().error.code, "bonus_self");
     const detail = await call(gm, "GET", `/bonuses/${own.id}`);
     assert.equal(detail.json().canManage, false);
-    const selfAward = await call(gm, "POST", "/bonuses/awards", { ownerId: gm.id, amount: "1", reason: "x" }, randomUUID());
-    assert.equal(selfAward.statusCode, 422); assert.equal(selfAward.json().error.code, "bonus_self");
+    for (const ownerId of [gm.id, gm.id.toUpperCase()]) {
+      const selfAward = await call(gm, "POST", "/bonuses/awards", { ownerId, amount: "1", reason: "x" }, randomUUID());
+      assert.equal(selfAward.statusCode, 422); assert.equal(selfAward.json().error.code, "bonus_self");
+    }
     assert.equal((await decide(gm2, own.id, "approved")).statusCode, 200);
     const sel = await call(gm, "GET", "/bonuses/selection");
     assert.ok(!sel.json().items.some((i: Bonus) => i.id === own.id), "پاداش خود در انتخاب همه نیست");
@@ -228,7 +231,8 @@ describe("دفتر پاداش پرسنل", { skip: DATABASE_URL ? false : "DATAB
     assert.equal((await call(gm, "POST", "/bonuses/awards", { ...body, amount: "1" }, key)).statusCode, 409);
     assert.equal((await call(gm, "GET", `/bonuses/awards/by-key/${key}`)).json().status, "recorded");
     assert.equal((await call(gm2, "GET", `/bonuses/awards/by-key/${key}`)).json().status, "not_found");
-    assert.equal((await decide(gm2, b.id, "rejected", "x")).statusCode, 409, "اعطا بررسی ندارد");
+    const review = await decide(gm2, b.id, "rejected", "x");
+    assert.equal(review.statusCode, 422, "اعطا بررسی ندارد"); assert.equal(review.json().error.code, "bonus_not_reviewable");
     assert.equal((await call(cashier, "GET", `/bonuses/mine/${b.id}`)).json().status, "approved");
     const audit = await sql<{ n: number }>`SELECT count(*)::int n FROM platform.audit_log WHERE action='bonus.award'
       AND entity_id=${b.id} AND actor_id=${gm.id}::uuid AND after->>'ownerId'=${cashier.id}`.execute(owner.db);
@@ -319,6 +323,7 @@ describe("دفتر پاداش پرسنل", { skip: DATABASE_URL ? false : "DATAB
     assert.equal(withPending.statusCode, 409, withPending.body); assert.equal(withPending.json().error.code, "bonus_stale");
     assert.equal(await count("staff_bonus_settlement", ok.id), 0, "همه یا هیچ");
     assert.equal((await settle(gm, [ok.id, ok.id])).statusCode, 400);
+    assert.equal((await settle(gm, [ok.id, ok.id.toUpperCase()])).statusCode, 400, "حروف بزرگ همان شناسه است");
     assert.equal((await settle(gm, [ok.id, randomUUID()])).statusCode, 404);
     assert.equal(await count("staff_bonus_settlement", ok.id), 0);
     await owner.db.updateTable("identity.session").set({ pin_unlocked: true }).where("user_id", "=", gm.id).execute();
@@ -350,6 +355,14 @@ describe("دفتر پاداش پرسنل", { skip: DATABASE_URL ? false : "DATAB
     await assert.rejects(sql`UPDATE identity.staff_bonus_settlement SET note='تغییر' WHERE bonus_id=${b.id}::uuid`.execute(owner.db), /فقط قابل درج/);
     await assert.rejects(sql`DELETE FROM identity.staff_bonus_decision WHERE bonus_id=${pending.id}::uuid`.execute(owner.db), /فقط قابل درج/);
     await assert.rejects(sql`UPDATE identity.staff_bonus SET amount=1 WHERE id=${b.id}::uuid`.execute(owner.db), /فقط قابل درج/);
+    // دستهٔ تسویه از آنِ یک عملیات است: حتی همان مدیر در تراکنش دیگر به آن نمی‌افزاید.
+    const extra = await award(gm, cashier, "106", "افزودن به دسته");
+    const batch = (await settle(gm, [(await award(gm, cashier, "107", "دسته")).id])).json().batchId as string;
+    await assert.rejects(owner.db.transaction().execute(async trx => {
+      await sql`SELECT platform.set_actor(${gm.id}::uuid)`.execute(trx);
+      await sql`INSERT INTO identity.staff_bonus_settlement(bonus_id,batch_id,actor_id,note)
+        VALUES(${extra.id}::uuid,${batch}::uuid,${gm.id}::uuid,'افزودن')`.execute(trx);
+    }), /عملیات دیگری/);
     const unrecorded = await award(gm, cashier, "105", "رد مستقیم");
     await assert.rejects(owner.db.transaction().execute(async trx => {
       await sql`SELECT platform.set_actor(${cashier.id}::uuid)`.execute(trx);

@@ -261,6 +261,14 @@ BEGIN
   IF FOUND THEN
     RAISE EXCEPTION 'این پاداش پیش‌تر تسویه شده است؛ فهرست را تازه کنید';
   END IF;
+  -- دسته از آنِ یک عملیات است: همان مدیر، همان تراکنش. وگرنه درج مستقیم می‌توانست
+  -- به دستهٔ مدیر دیگری ردیف بیفزاید و جمع و تعداد بازپخش او را عوض کند.
+  PERFORM 1 FROM identity.staff_bonus_settlement s
+   WHERE s.batch_id = NEW.batch_id
+     AND (s.actor_id <> v_actor OR s.xmin <> (pg_current_xact_id()::text::numeric % 4294967296)::text::xid);
+  IF FOUND THEN
+    RAISE EXCEPTION 'شناسهٔ دستهٔ تسویه به عملیات دیگری تعلق دارد';
+  END IF;
   NEW.at := clock_timestamp();
   RETURN NEW;
 END $$;

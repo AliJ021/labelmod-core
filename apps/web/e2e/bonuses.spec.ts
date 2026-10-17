@@ -172,6 +172,22 @@ test.describe("دفتر پاداش مدیر", () => {
     expect(body).toEqual({ ownerId: CASHIER.id, amount: "2500000", reason: "رضایت مشتری" });
   });
 
+  test("مجوز وسط کار گرفته شد (۴۰۳): عملیات ذخیره‌شده آزاد می‌شود و فرم قفل نمی‌ماند", async ({ page, api }) => {
+    api.handlers.set("GET /bonuses", route => json(route, page1([])));
+    api.handlers.set("POST /bonuses/awards", route => json(route, { error: { code: "forbidden", message: "مجوز این کار را ندارید" } }, 403));
+    await openLog(page);
+    const award = page.getByRole("region", { name: "اعطای مستقیم پاداش" });
+    await award.getByLabel("کارمند ذی‌نفع").selectOption(CASHIER.id);
+    await award.getByLabel("مبلغ پاداش (تومان)").fill("1000");
+    await award.getByLabel("دلیل اعطا").fill("آزمون");
+    await award.getByRole("button", { name: "اعطای پاداش" }).click();
+    await page.getByRole("dialog", { name: "تأیید اعطای پاداش" }).getByRole("button", { name: "ثبت اعطا" }).click();
+    await expect(page.getByRole("dialog", { name: "تأیید اعطای پاداش" })).toContainText("مجوز این کار را ندارید");
+    await page.reload();
+    await expect(award.getByLabel("دلیل اعطا")).toBeEnabled();
+    await expect(page.getByRole("button", { name: "نتیجه نامعلوم؛ بررسی وضعیت" })).toHaveCount(0);
+  });
+
   test("تسویهٔ گروهی: انتخاب همه از سرور، جمع دقیق، پاسخ گم‌شده فقط با همان کلید", async ({ page, api }) => {
     const a = bonus(B1, CASHIER, "101", "یک", "approved"), b = bonus(B2, CASHIER, "999999999999999999", "دو", "approved", "award");
     api.handlers.set("GET /bonuses", route => json(route, { items: [a], total: 21, page: 1, pageSize: 20 }));

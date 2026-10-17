@@ -32,6 +32,8 @@ import { checkAmount, checkText, PAGE_SIZE, REASON_MAX, tomanDraft } from "../li
  * ⚠️ هیچ سند، پرداخت یا حرکت صندوقی ساخته نمی‌شود — صفحه هم چنین ادعایی ندارد.
  * ⚠️ تعارض (۴۰۹ `bonus_stale`): پیام سرور نشان داده و فهرست تازه می‌شود.
  * ⚠️ نتیجهٔ نامعلوم «ارسال دوباره» ندارد؛ فقط با همان شناسهٔ عملیات بررسی می‌شود.
+ * ⚠️ ۴۰۳ هنگام ارسال (مجوز گرفته شد) قطعی است: سرور مجوز را **پیش از** Inbox و اثر
+ *    می‌سنجد، پس عملیات ذخیره‌شده آزاد می‌شود و فرم قفل نمی‌ماند.
  */
 export function BonusLog({ currentUserId, write, writeState }: { currentUserId: string; write: Verdict; writeState: "loading" | "ready" | "degraded" }) {
   const [pageText, setPage] = useUrlState("personnel.bnlPage", "1");
@@ -74,7 +76,7 @@ export function BonusLog({ currentUserId, write, writeState }: { currentUserId: 
       await api.post("/bonuses/settlements", { items: body.items.map(i => i.id), note: body.note }, { idempotencyKey: op.key });
       recovery.clear(op.key);
     } catch (err) {
-      if (err instanceof ApiError && [400, 404, 409, 422].includes(err.status) && !["idempotency_in_flight", "idempotency_key_reused"].includes(err.code)) {
+      if (err instanceof ApiError && [400, 403, 404, 409, 422].includes(err.status) && !["idempotency_in_flight", "idempotency_key_reused"].includes(err.code)) {
         recovery.clear(op.key); clearChoice(); setReload(v => v + 1);
       }
       throw err;
@@ -184,7 +186,7 @@ function AwardForm({ currentUserId, onAwarded }: { currentUserId: string; onAwar
       await api.post("/bonuses/awards", { ownerId: body.ownerId, amount: body.amount, reason: body.reason }, { idempotencyKey: op.key });
       recovery.clear(op.key);
     } catch (err) {
-      if (err instanceof ApiError && [400, 404, 409, 422].includes(err.status) && !["idempotency_in_flight", "idempotency_key_reused"].includes(err.code)) {
+      if (err instanceof ApiError && [400, 403, 404, 409, 422].includes(err.status) && !["idempotency_in_flight", "idempotency_key_reused"].includes(err.code)) {
         recovery.clear(op.key);
       }
       throw err;
@@ -267,7 +269,7 @@ function BonusInspector({ currentUserId, id, write, writeState, onClose, onDecid
       await api.post(`/bonuses/${encodeURIComponent(id)}/decisions`, op.body, { idempotencyKey: op.key });
       recovery.clear(op.key);
     } catch (err) {
-      if (err instanceof ApiError && [400, 404, 409, 422].includes(err.status) && !["idempotency_in_flight", "idempotency_key_reused"].includes(err.code)) {
+      if (err instanceof ApiError && [400, 403, 404, 409, 422].includes(err.status) && !["idempotency_in_flight", "idempotency_key_reused"].includes(err.code)) {
         recovery.clear(op.key);
         if (err.code === "bonus_stale") setVersion(v => v + 1);
       }

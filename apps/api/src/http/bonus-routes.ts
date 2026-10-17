@@ -47,13 +47,17 @@ export class BonusError extends Error {
 const STATUSES = ["pending", "approved", "rejected", "settled"] as const;
 type Status = typeof STATUSES[number];
 
-const uuid = z.string().uuid("شناسه نامعتبر");
+// حروف کوچک: یکتایی انتخاب، ترتیب قفل و سنجش «خود» باید با برابری پستگرس یکی باشند،
+// وگرنه A و a دو شناسه شمرده می‌شدند و دو تسویهٔ هم‌زمان با ترتیب قفل متفاوت بن‌بست می‌ساختند.
+const uuid = z.string().uuid("شناسه نامعتبر").transform(v => v.toLowerCase());
 const text = z.string().trim().min(1, "نمی‌تواند خالی باشد").max(500, "حداکثر ۵۰۰ نویسه")
   .refine(v => !CONTROL_CHARS.test(v), { message: CONTROL_CHARS_MESSAGE });
 // Zod پس از شکست Regex هم refine را اجرا می‌کند؛ نگهبان دوم «12.5» را از BigInt دور نگه می‌دارد.
 const amount = z.string().regex(/^\d+$/, "مبلغ باید رقم صحیح باشد (ریال، بدون اعشار)")
   .refine(v => v.length <= 18, { message: "مبلغ بزرگ‌تر از حد مجاز است" })
-  .refine(v => !/^\d+$/.test(v) || BigInt(v) > 0n, { message: "مبلغ پاداش باید بیشتر از صفر باشد" });
+  .refine(v => !/^\d+$/.test(v) || BigInt(v) > 0n, { message: "مبلغ پاداش باید بیشتر از صفر باشد" })
+  // «00100» و «100» یک مبلغ‌اند و باید یک هویت Idempotency داشته باشند.
+  .transform(v => BigInt(v).toString());
 
 const requestBody = z.object({ amount, reason: text }).strict();
 const awardBody = z.object({ ownerId: uuid, amount, reason: text }).strict();
@@ -345,7 +349,8 @@ export function registerBonusRoutes(app: FastifyInstance, db: Db): void {
         if (!head?.inScope) throw notFound();
         if (head.ownerId === s.userId) throw new BonusError("bonus_self", "درخواست پاداش خود را نمی‌توانید بررسی کنید.", 422);
         const cur = (await sql<{ status: Status }>`SELECT status FROM identity.staff_bonus_current WHERE id = ${id}::uuid`.execute(trx)).rows[0]!;
-        if (head.origin !== "request" || cur.status !== "pending") {
+        if (head.origin !== "request") throw new BonusError("bonus_not_reviewable", "پاداش اعطایی مستقیم تأییدشده است و بررسی ندارد.", 422);
+        if (cur.status !== "pending") {
           throw new BonusError("bonus_stale", "این پاداش دیگر در انتظار بررسی نیست؛ فهرست را تازه کنید.", 409);
         }
         await setActor(trx, s.userId);

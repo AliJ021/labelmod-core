@@ -202,6 +202,11 @@ BEGIN
   INSERT INTO identity.staff_bonus_settlement(bonus_id,batch_id,actor_id,note)
   VALUES (v_r, '00000000-0000-7000-8000-00000000b001', v_gm, 'تسویهٔ مهر'),
          (v_aw, '00000000-0000-7000-8000-00000000b001', v_gm, 'تسویهٔ مهر');
+  PERFORM platform.set_actor(v_gm2);
+  PERFORM pg_temp.assert_raises('افزودن به دستهٔ مدیر دیگر',
+    format('INSERT INTO identity.staff_bonus_settlement(bonus_id,batch_id,actor_id,note) VALUES (%L,%L,%L,''x'')', v_rg, '00000000-0000-7000-8000-00000000b001', v_gm2),
+    'عملیات دیگری');
+  PERFORM platform.set_actor(v_gm);
   PERFORM pg_temp.assert_eq('هر دو مسیر تسویه‌شده (کنترل مثبت)', pg_temp.status(v_r)||'/'||pg_temp.status(v_aw), 'settled/settled');
   PERFORM pg_temp.assert_raises('تسویهٔ دوباره',
     format('INSERT INTO identity.staff_bonus_settlement(bonus_id,batch_id,actor_id,note) VALUES (%L,%L,%L,''x'')', v_r, gen_random_uuid(), v_gm),
