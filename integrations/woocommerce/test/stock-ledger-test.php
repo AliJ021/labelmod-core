@@ -84,13 +84,16 @@ function stock_set(int $id, int $v): void
 function get_post_meta($id, $k, $s = false)
 {
     if ($k === '_stock') { $v = stock_of((int) $id); return $v === null ? '' : (string) $v; }
-    return $GLOBALS['meta'][$id][$k] ?? '';
+    $st = $GLOBALS['wpdb']->pdo->prepare('SELECT meta_value FROM wp_postmeta WHERE post_id = ? AND meta_key = ? LIMIT 1');
+    $st->execute([(int) $id, $k]);
+    $v = $st->fetchColumn();
+    return $v === false ? '' : (string) $v;
 }
 function add_post_meta($id, $k, $v, $unique = false)
 {
     if ($k === '_stock') { if (stock_of((int) $id) === null) { stock_set((int) $id, (int) $v); } return true; }
-    if ($unique && isset($GLOBALS['meta'][$id][$k])) { return false; }
-    $GLOBALS['meta'][$id][$k] = (string) $v; return true;
+    if ($unique && get_post_meta($id, $k) !== '') { return false; }
+    return update_post_meta($id, $k, $v);
 }
 /** WC 11.1.1 `wc_update_product_stock`: `meta_value ± n` اتمیک در دیتابیس. */
 function wc_update_product_stock($product, $qty, $op = 'set')
@@ -107,9 +110,19 @@ function do_action($hook, ...$a)
     $stage = $a[0];
     if (!empty($GLOBALS['probe'][$stage])) { $f = $GLOBALS['probe'][$stage]; unset($GLOBALS['probe'][$stage]); $f(); }
 }
-function update_post_meta($id, $k, $v) { if (!empty($GLOBALS['fail_meta'])) { return false; } $GLOBALS['meta'][$id][$k] = is_string($v) ? $v : (string) $v; return true; }
-function delete_post_meta($id, $k) { unset($GLOBALS['meta'][$id][$k]); return true; }
-function delete_post_meta_by_key($k) { foreach ($GLOBALS['meta'] as $id => $m) { unset($GLOBALS['meta'][$id][$k]); } return true; }
+/** متا در جدول `wp_postmeta` (مثل وردپرس)؛ دفتر بخشی از آن را با SQL درون تراکنش می‌نویسد. */
+function update_post_meta($id, $k, $v)
+{
+    if (!empty($GLOBALS['fail_meta'])) { return false; }
+    $pdo = $GLOBALS['wpdb']->pdo; $v = is_string($v) ? $v : (string) $v;
+    $up = $pdo->prepare('UPDATE wp_postmeta SET meta_value = ? WHERE post_id = ? AND meta_key = ?'); $up->execute([$v, (int) $id, $k]);
+    if ($up->rowCount() === 0 && get_post_meta($id, $k) === '') {
+        $pdo->prepare('INSERT INTO wp_postmeta (post_id, meta_key, meta_value) VALUES (?, ?, ?)')->execute([(int) $id, $k, $v]);
+    }
+    return true;
+}
+function delete_post_meta($id, $k) { $GLOBALS['wpdb']->pdo->prepare('DELETE FROM wp_postmeta WHERE post_id = ? AND meta_key = ?')->execute([(int) $id, $k]); return true; }
+function delete_post_meta_by_key($k) { $GLOBALS['wpdb']->pdo->prepare('DELETE FROM wp_postmeta WHERE meta_key = ?')->execute([$k]); return true; }
 function get_posts($args) { return ($args['meta_value'] ?? '') === VAR_ID ? [P] : []; }
 function wc_get_product($id) { return stock_of((int) $id) !== null ? new Product((int) $id) : false; }
 function wc_get_order($id)
@@ -208,7 +221,7 @@ class SqliteWpdb
         $this->pdo->exec('CREATE TABLE IF NOT EXISTS wp_lmc_stock_mark (kind TEXT NOT NULL, ref INTEGER NOT NULL, token TEXT NOT NULL,
             at INTEGER NOT NULL, PRIMARY KEY (kind, ref, token))');
         $this->pdo->exec('CREATE TABLE IF NOT EXISTS wp_postmeta (meta_id INTEGER PRIMARY KEY, post_id INTEGER, meta_key TEXT, meta_value TEXT)');
-        $this->pdo->exec('CREATE TABLE IF NOT EXISTS wp_options (option_name TEXT PRIMARY KEY, option_value TEXT)');
+        $this->pdo->exec('CREATE TABLE IF NOT EXISTS wp_options (option_name TEXT PRIMARY KEY, option_value TEXT, autoload TEXT)');
         // جدول‌های اقلام سفارش ووکامرس (با HPOS هم همین‌ها) — فقط برای بازسازی خوانده می‌شوند.
         $this->pdo->exec('CREATE TABLE IF NOT EXISTS wp_woocommerce_order_items (order_item_id INTEGER PRIMARY KEY, order_id INTEGER, order_item_type TEXT)');
         $this->pdo->exec('CREATE TABLE IF NOT EXISTS wp_woocommerce_order_itemmeta (order_item_id INTEGER, meta_key TEXT, meta_value TEXT)');
@@ -231,6 +244,7 @@ class SqliteWpdb
     public function get_var($q)
     {
         $this->last_error = '';                                              // مثل wpdb: هر پرسش از نو
+        if (str_ends_with(rtrim($q), 'LOCK IN SHARE MODE')) { $GLOBALS['tx'][] = 'epoch-lock'; $q = substr(rtrim($q), 0, -18); }
         if (preg_match("/GET_LOCK\\('([^']+)', (\\d+)\\)/", $q, $m)) {
             return ($GLOBALS['other_holds'][$m[1]] ?? false) === true ? '0' : '1';
         }
@@ -252,6 +266,7 @@ class SqliteWpdb
         $this->last_error = '';
         if ($this->failing($q)) { return null; }
         if (str_ends_with(rtrim($q), 'FOR UPDATE')) { $GLOBALS['tx'][] = 'lock'; $q = substr(rtrim($q), 0, -10); }
+        if (str_ends_with(rtrim($q), 'LOCK IN SHARE MODE')) { $GLOBALS['tx'][] = 'epoch-lock'; $q = substr(rtrim($q), 0, -18); }
         return $this->pdo->query($q)->fetchAll(PDO::FETCH_ASSOC);
     }
     public function query($q)
@@ -273,6 +288,7 @@ class SqliteWpdb
         }
         if ($this->failing($q)) { return false; }
         if (str_starts_with($q, 'UPDATE wp_postmeta')) { $GLOBALS['tx'][] = 'write'; }
+        if (str_starts_with($q, 'INSERT IGNORE ')) { $q = 'INSERT OR IGNORE ' . substr($q, 14); }
         try { return $this->pdo->exec($q); } catch (PDOException $e) { $this->last_error = $e->getMessage(); return false; }
     }
 }
@@ -300,6 +316,8 @@ function fresh(): void
     stock_set(P, 0);
     $GLOBALS['tx'] = [];
     $GLOBALS['engine'] = 'InnoDB';
+    // سطر دوره را نصب می‌سازد (ensure_epoch_row)؛ نویسنده قفل اشتراکی آن را می‌گیرد.
+    $GLOBALS['wpdb']->pdo->exec("INSERT INTO wp_options (option_name, option_value) VALUES ('" . LMC_Stock_Ledger::EPOCH . "', '1')");
     $GLOBALS['in_tx'] = '0';
     $GLOBALS['set_tx'] = 'ok';
     $GLOBALS['autocommit'] = '1';
@@ -530,7 +548,7 @@ fresh();
 snap(5, 10);
 woo_order(7101, [[32, 1]]);
 ack(7101, 11);
-$GLOBALS['meta'][P][LMC_Stock_Ledger::STATE_META] = json_encode(['w' => WH, 'r' => 12, 'c' => 3, 'a' => true, 'd' => true]);
+update_post_meta(P, LMC_Stock_Ledger::STATE_META, json_encode(['w' => WH, 'r' => 12, 'c' => 3, 'a' => true, 'd' => true]));
 LMC_Stock_Ledger::mark('redo', P);
 LMC_Stock_Ledger::maintain();
 check('R4. بازیابی کالای «کثیف»: عدد عکس نشسته، بی برگشت واحد', [stock(), LMC_Stock_Ledger::state(P)['d']], [3, false]);
@@ -937,11 +955,11 @@ foreach (['cancel' => 10, 'refund' => 9, 'adjust_down' => 9] as $kind => $want) 
     [$w, $tw, $f] = run_schedule($sc, $runs, 10);
     check("R6. $kind هم‌زمان با قفل ما: هرگز بیش از $want و در پایان دقیق", [$w <= $tw, $tw, $f], [true, $want, $want]);
 }
-check('R6. نوشتن ما درون بازهٔ قفل است: قفل، بعد نوشتن، بعد Commit', (static function () {
+check('R6. نوشتن و انتشار حالت در یک تراکنش: قفل سطر، قفل اشتراکی دوره، `_stock`، حالت، Commit', (static function () {
     fresh(); snap(10, 10); $GLOBALS['tx'] = [];
     snap(9, 20);
     return $GLOBALS['tx'];
-})(), ['START TRANSACTION', 'lock', 'write', 'COMMIT']);
+})(), ['START TRANSACTION', 'lock', 'epoch-lock', 'write', 'lock', 'write', 'COMMIT']);
 
 // ── N3. مرگ پردازه پس از کم‌کردن `_stock` و پیش از Hook: نیت می‌ماند تا اثبات ──
 fresh();
@@ -992,13 +1010,13 @@ $r = LMC_Stock_Ledger::apply_snapshot(P, 50, true, 500, WH, 0, true, null, $e0);
 check('N6. عکس Pull آغازشده پیش از بازنشانی رد شد', [$r['busy'] ?? false, stock()], [true, 9]);
 fresh();
 snap(10, 70);
-$GLOBALS['meta'][P][LMC_Stock_Ledger::STATE_META] = json_encode(['w' => WH, 'r' => 999, 'c' => 50, 'a' => true, 'd' => false, 'e' => 1]);
+update_post_meta(P, LMC_Stock_Ledger::STATE_META, json_encode(['w' => WH, 'r' => 999, 'c' => 50, 'a' => true, 'd' => false, 'e' => 1]));
 LMC_Stock_Ledger::reset_epoch(null);
-$GLOBALS['meta'][P][LMC_Stock_Ledger::STATE_META] = json_encode(['w' => WH, 'r' => 999, 'c' => 50, 'a' => true, 'd' => false, 'e' => 1]); // نوشتنِ هم‌زمانِ دورهٔ قبل
+update_post_meta(P, LMC_Stock_Ledger::STATE_META, json_encode(['w' => WH, 'r' => 999, 'c' => 50, 'a' => true, 'd' => false, 'e' => 1])); // نوشتنِ هم‌زمانِ دورهٔ قبل
 check('N6. حالتِ نوشته‌شده با دورهٔ قبل حالت نیست', rev(), null);
 $r = wpush(50, 1000, 2000);
 check('N6. Push کالای بی‌حالت پس از فعال‌شدن: منتظر Pull (۵۰۳)، نه نشاندن خام', $r instanceof WP_Error ? $r->data['status'] : null, 503);
-check('N6. بازنشانی نسخهٔ Push را هم پاک کرد', get_post_meta(P, LMC_Stock_Ledger::VERSION_META), '');
+check('N6. نسخهٔ Push دورهٔ قبل پس از بازنشانی اعتبار ندارد', LMC_Stock_Ledger::version(P), 0);
 
 // ── N4. ACK دقیقاً تعداد همان ارسال ──────────────────────────────────
 fresh();
@@ -1075,7 +1093,9 @@ check('R8. بازنشانی پس از قفل: نشانده نشد، Rollback، �
 fresh();
 snap(10, 10);
 woo_order(9802, [[99, 1]]);
-$GLOBALS['probe']['pending_read'] = static function () { LMC_Stock_Ledger::reset_epoch(null); };
+// در MySQL، UPDATE بازنشانی پشت قفل اشتراکی سطر دوره تا Commit همین نوشتن می‌ماند (real-wc: reset-after-check)؛
+// SQLite نمی‌تواند صبر کند، پس همان ترتیب اجباری مدل می‌شود: بازنشانی درست پس از Commit و پیش از پایان نشاندن.
+$GLOBALS['probe']['committed'] = static function () { LMC_Stock_Ledger::reset_epoch(null); };
 $r = wpush(50, 20, 8000);
 check('R8. بازنشانی پس از خواندن: عدد دورهٔ قبل، با کسر (۵۰−۱)', stock(), 49);
 check('R8. ولی حالت و نسخهٔ آن نوشتن در دورهٔ تازه اعتبار ندارند', [rev(), LMC_Stock_Ledger::version(P)], [null, 0]);
@@ -1206,6 +1226,22 @@ check('R11-ب. autocommit=0: «مشغول»، بی START TRANSACTION، و گزا
 $GLOBALS['autocommit'] = '1';
 $r = snap(5, 20);
 check('R11-ب. درخواست بعدی (Pull/دکمه) همان عکس را می‌نشاند', [$r['applied'] ?? false, stock()], [true, 5]);
+
+// ── R14. بازنشانی پس از سنجش دوره و خواندن کسرها، پیش از UPDATE (مدل root روی c5d9623) ──
+// در MySQL قفل اشتراکی سطر دوره UPDATE بازنشانی را تا Commit نوشتن ما نگه می‌دارد (real-wc همین را با دو
+// پردازه می‌سنجد)؛ اینجا همان ترتیبِ اجباری مدل می‌شود: نوشتن نسل قبل Commit، بعد بازنشانی.
+fresh();
+snap(10, 30);
+woo_order(9931, [[131, 2]]);                                                 // ۸
+ack(9931, 31);
+check('R14. عکس کش‌شدهٔ ۳۰ هنوز کسر را می‌بیند', stock(), 8);
+$r = snap(10, 32);                                                           // عکس نسل قبل، شامل سفارش
+check('R14. نوشتن نسل قبل: ۱۰ (ACK در rev 31)', [$r['applied'] ?? null, stock()], [true, 10]);
+LMC_Stock_Ledger::reset_epoch(null);                                         // Core پیش از آن سفارش بازیابی شد
+check('R14. پس از بازنشانی عدد بر پایهٔ ACK دورهٔ قبل بالا نمی‌ماند (۱۰−۲)', stock(), 8);
+pull(['available' => '10', 'stockRev' => '1']);                              // Pull نسل تازه
+check('R14. Pull نسل تازه هم ۸', stock(), 8);
+// بازنشانی هرگز عدد را بالا نمی‌برد، حتی با پایهٔ حالتی که نوشتنش هنوز Commit نشده (R8 الف).
 
 // ── R13. درخواست رها کردن به دورهٔ صفحه بسته است، حتی با ack_epoch تهی ──
 fresh();

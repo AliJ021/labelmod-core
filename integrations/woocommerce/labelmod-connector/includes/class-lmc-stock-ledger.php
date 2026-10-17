@@ -58,7 +58,7 @@ class LMC_Stock_Ledger_Nested extends LMC_Stock_Ledger_Error {}
 
 class LMC_Stock_Ledger
 {
-    const SCHEMA_VERSION  = 3;
+    const SCHEMA_VERSION  = 4;
     const SCHEMA_OPTION   = 'lmc_stock_ledger_schema';
     const RECONCILE       = 'lmc_stock_reconcile';
     /** خرابی پایدار: نوشتن نشانهٔ پایدار هم شکست خورد. فقط بازنشانی مدیر پاکش می‌کند. */
@@ -128,6 +128,7 @@ class LMC_Stock_Ledger
             return;
         }
         if ((int) get_option(self::SINCE, 0) === 0) { update_option(self::SINCE, time(), false); }
+        self::ensure_epoch_row();
         if (get_option(self::RECONCILE, null) === null) {
             update_option(self::RECONCILE, ['page' => 1, 'done' => false], false);
             // ورود به پروتکل با Pull کامل: مکان‌نما پاک می‌شود تا همهٔ کالاها یک بار زنده خوانده شوند.
@@ -828,24 +829,21 @@ class LMC_Stock_Ledger
             'a' => ($s['a'] ?? true) !== false, 'd' => !empty($s['d']), 'e' => (int) ($s['e'] ?? 1)];
     }
 
-    private static function write_state(int $product_id, array $s): void
+    private static function state_json(array $s): string
     {
-        $json = wp_json_encode(['w' => $s['w'], 'r' => $s['r'], 'c' => $s['c'], 'a' => $s['a'], 'd' => $s['d'], 'e' => $s['e'] ?? self::epoch()]);
-        update_post_meta($product_id, self::STATE_META, $json);
-        self::fresh_meta($product_id);
-        if (get_post_meta($product_id, self::STATE_META, true) !== $json) {
-            throw new LMC_Stock_Ledger_Error('حالت موجودی کالا ذخیره نشد');
-        }
-        if (!self::active()) { update_option(self::ACTIVE, 1, false); }
+        return (string) wp_json_encode(['w' => $s['w'], 'r' => $s['r'], 'c' => $s['c'], 'a' => $s['a'], 'd' => false, 'e' => $s['e']]);
     }
 
-    private static function restore_state(int $product_id, $raw): void
+    /** نوشتن متا درون تراکنش جاری با SQL (نه API متا که مقدار تکراری را «شکست» می‌خواند و Cache را جلو می‌برد). */
+    private static function put_meta_tx(int $pid, string $key, string $value): void
     {
-        if (is_string($raw) && $raw !== '') {
-            update_post_meta($product_id, self::STATE_META, $raw);
-        } else {
-            delete_post_meta($product_id, self::STATE_META);
-        }
+        global $wpdb;
+        $pm = $wpdb->postmeta;
+        $has = self::rows($wpdb->prepare("SELECT meta_id FROM {$pm} WHERE post_id = %d AND meta_key = %s FOR UPDATE", $pid, $key));
+        $ok = $has !== []
+            ? $wpdb->query($wpdb->prepare("UPDATE {$pm} SET meta_value = %s WHERE post_id = %d AND meta_key = %s", $value, $pid, $key))
+            : $wpdb->query($wpdb->prepare("INSERT INTO {$pm} (post_id, meta_key, meta_value) VALUES (%d, %s, %s)", $pid, $key, $value));
+        if ($ok === false) { throw new LMC_Stock_Ledger_Error('نوشتن ' . $key . ' ناموفق: ' . (string) $wpdb->last_error); }
     }
 
     /**
@@ -921,23 +919,22 @@ class LMC_Stock_Ledger
                 if ($state['d'] || $bound > 0) { self::recompute_locked($pid); }
                 return ['ok' => true, 'applied' => false, 'stale' => true, 'note' => 'واترمارک قدیمی یا تکراری'];
             }
-            $prev = get_post_meta($pid, self::STATE_META, true);
-            $next = ['w' => $wh, 'r' => $rev, 'c' => max(0, $available), 'a' => $active, 'd' => true, 'e' => self::epoch()];
-            self::write_state($pid, $next);
+            // حالت، نسخه و `_stock` در **یک** تراکنش و زیر قفل اشتراکی دوره منتشر می‌شوند (write_stock):
+            // هیچ‌کس — از جمله «بازنشانی» — حالتی را نمی‌بیند که عددش Commit نشده؛ مرگ پیش از Commit هر سه را
+            // برمی‌گرداند. دوره همان دورهٔ یخ‌زدهٔ درخواست است، پس عکس آغازشده پیش از بازنشانی Commit نمی‌شود.
+            $next = ['w' => $wh, 'r' => $rev, 'c' => max(0, $available), 'a' => $active, 'd' => false, 'e' => $epoch ?? self::epoch()];
             try {
-                $display = self::write_stock($pid, $next);
+                $display = self::write_stock($pid, $next, [
+                    'state' => self::state_json($next),
+                    // نسخه با دوره برچسب می‌خورد: نسخهٔ دورهٔ دیگر هیچ Push دورهٔ تازه‌ای را «قدیمی» نمی‌کند.
+                    'version' => $version !== null ? $next['e'] . ':' . $version : null,
+                ]);
             } catch (LMC_Stock_Ledger_Epoch | LMC_Stock_Ledger_Nested $e) {
-                self::restore_state($pid, $prev);
                 return ['ok' => false, 'applied' => false, 'busy' => true, 'note' => $e->getMessage()];
             } catch (Throwable $e) {
-                self::restore_state($pid, $prev);
-                lmc_log('نشاندن موجودی کالای ' . $pid . ' ناموفق؛ حالت قبلی برگشت: ' . $e->getMessage());
+                lmc_log('نشاندن موجودی کالای ' . $pid . ' ناموفق؛ هیچ‌چیز تغییر نکرد: ' . $e->getMessage());
                 return ['ok' => false, 'applied' => false, 'error' => $e->getMessage()];
             }
-            $next['d'] = false;
-            try { self::write_state($pid, $next); } catch (LMC_Stock_Ledger_Error $e) { self::mark_redo($pid); }
-            // نسخه با دوره برچسب می‌خورد: نوشتنی که پس از بازنشانی برسد، نسخهٔ دورهٔ تازه نیست.
-            if ($version !== null) { update_post_meta($pid, self::VERSION_META, $next['e'] . ':' . $version); }
             return ['ok' => true, 'applied' => true, 'display' => $display];
         } catch (LMC_Stock_Ledger_Error $e) {
             lmc_log('نشاندن موجودی کالای ' . $pid . ' ناموفق: ' . $e->getMessage());
@@ -1006,9 +1003,14 @@ class LMC_Stock_Ledger
      * نشسته است. نسخهٔ پیشین تفاضل `هدف − خوانده` را می‌افزود و افزایشِ ووکامرسی که میان دو خواندن
      * می‌نشست دو بار شمرده می‌شد (لغو هم‌زمان: ۱۲ به‌جای ۱۰).
      *
+     * `$publish`: حالت تازه و نسخهٔ Push در **همان** تراکنش منتشر می‌شوند (apply_snapshot).
+     * `$reset_from`: مسیر بازنشانی؛ پایه، حالت **Commitشدهٔ** دورهٔ قبل است که درون همین تراکنش و پس از
+     * قفل‌ها خوانده می‌شود؛ اگر کالا حالت آن دوره را ندارد (یا Pull دورهٔ تازه زودتر واردش کرده) دست نمی‌خورد.
+     *
      * @param array{w:string,r:int,c:int,a:bool,e:int} $s
+     * @param array{state:string,version:?string}|null $publish
      */
-    private static function write_stock(int $pid, array $s): int
+    private static function write_stock(int $pid, array $s, ?array $publish = null, ?int $reset_from = null): int
     {
         global $wpdb;
         $product = wc_get_product($pid);
@@ -1031,18 +1033,45 @@ class LMC_Stock_Ledger
             $locked = self::rows($wpdb->prepare("SELECT meta_value FROM {$pm} WHERE post_id = %d AND meta_key = '_stock' FOR UPDATE", $pid));
             if ($locked === []) { throw new LMC_Stock_Ledger_Error('سطر موجودی کالا نیست'); }
             self::probe('locked', $pid);
-            if (self::epoch() !== (int) $s['e']) {
+            // قفل اشتراکی روی سطر دوره تا Commit: «بازنشانی» (UPDATE همین سطر) پشت این نوشتن می‌ماند، پس
+            // هیچ نوشتن نسل قبل پس از ساخته‌شدن نسل تازه Commit نمی‌شود. بازنشانی پس از آن، این کالا را با
+            // دورهٔ تازه از نو حساب می‌کند (reset_epoch). بی قفل، سنجش دوباره فقط پنجره را جابه‌جا می‌کرد.
+            $e_now = $wpdb->get_var($wpdb->prepare(
+                "SELECT option_value FROM {$wpdb->options} WHERE option_name = %s LOCK IN SHARE MODE", self::EPOCH));
+            if ($e_now === null) { throw new LMC_Stock_Ledger_Error('سطر دورهٔ واترمارک نیست یا خوانده نشد'); }
+            if (max(1, (int) $e_now) !== (int) $s['e']) {
                 throw new LMC_Stock_Ledger_Epoch('دورهٔ واترمارک هنگام نوشتن عوض شد');
+            }
+            if ($reset_from !== null) {
+                $raw = self::rows($wpdb->prepare("SELECT meta_value FROM {$pm} WHERE post_id = %d AND meta_key = %s LIMIT 1", $pid, self::STATE_META));
+                $old = isset($raw[0]['meta_value']) ? json_decode((string) $raw[0]['meta_value'], true) : null;
+                if (!is_array($old) || !isset($old['w'], $old['r'], $old['c']) || (int) ($old['e'] ?? 1) !== $reset_from) {
+                    if ($wpdb->query('COMMIT') === false) { throw new LMC_Stock_Ledger_Error('Commit موجودی ناموفق'); }
+                    $done = true;
+                    return -1;
+                }
+                $s = ['w' => (string) $old['w'], 'r' => (int) $old['r'], 'c' => (int) $old['c'], 'a' => ($old['a'] ?? true) !== false, 'e' => (int) $s['e']];
             }
             $target = $s['a'] ? max(0, $s['c'] - self::pending($pid, $s['r'], $s['w'], (int) $s['e'])) : 0;
             self::probe('pending_read', $pid);
             if ($wpdb->query($wpdb->prepare("UPDATE {$pm} SET meta_value = %s WHERE post_id = %d AND meta_key = '_stock'", (string) $target, $pid)) === false) {
                 throw new LMC_Stock_Ledger_Error('نوشتن موجودی ناموفق: ' . (string) $wpdb->last_error);
             }
+            if ($publish !== null) {
+                self::put_meta_tx($pid, self::STATE_META, $publish['state']);
+                if ($publish['version'] !== null) { self::put_meta_tx($pid, self::VERSION_META, $publish['version']); }
+                // «پروتکل فعال شده» هم‌زمان با نخستین حالت؛ پس پس از هر بازنشانی هم عکس بی واترمارک رد می‌شود.
+                if ($wpdb->query($wpdb->prepare("INSERT IGNORE INTO {$wpdb->options} (option_name, option_value, autoload) VALUES (%s, '1', 'no')", self::ACTIVE)) === false
+                    || $wpdb->query($wpdb->prepare("UPDATE {$wpdb->options} SET option_value = '1' WHERE option_name = %s", self::ACTIVE)) === false) {
+                    throw new LMC_Stock_Ledger_Error('ثبت فعال‌شدن پروتکل ناموفق');
+                }
+            }
             if ($wpdb->query('COMMIT') === false) { throw new LMC_Stock_Ledger_Error('Commit موجودی ناموفق'); }
             $done = true;
         } finally {
             if (!$done) { $wpdb->query('ROLLBACK'); }
+            self::fresh_meta($pid);
+            if ($publish !== null) { self::forget_option(self::ACTIVE); }
         }
         self::probe('committed', $pid);
         // وضعیت انبار و Cacheهای ووکامرس از همان مسیر خودش؛ `+0` عدد را دست نمی‌زند.
@@ -1071,8 +1100,8 @@ class LMC_Stock_Ledger
     {
         $s = self::state($pid);
         if ($s === null) { return false; }
-        self::write_stock($pid, $s);
-        if ($s['d']) { $s['d'] = false; self::write_state($pid, $s); }
+        // `d` فقط در حالت‌های نسخهٔ پیشین (انتشار جدا از نوشتن) دیده می‌شود؛ همین‌جا با هم پاک می‌شود.
+        self::write_stock($pid, $s, $s['d'] ? ['state' => self::state_json($s), 'version' => null] : null);
         return true;
     }
 
@@ -1323,18 +1352,65 @@ class LMC_Stock_Ledger
     {
         global $wpdb;
         $t = self::table();
+        if (self::in_transaction() !== false) {
+            throw new LMC_Stock_Ledger_Error('اتصال درون تراکنش دیگری است؛ بازنشانی انجام نشد');
+        }
+        self::ensure_epoch_row();
         $old = self::epoch();
-        update_option(self::EPOCH, $old + 1, false);
-        if (self::epoch() !== $old + 1) { throw new LMC_Stock_Ledger_Error('دورهٔ تازه ثبت نشد'); }
-        delete_post_meta_by_key(self::STATE_META);
-        // Core بازیابی‌شده دنبالهٔ نسخهٔ Push را هم عقب برده است؛ نسخهٔ قدیمی Pushهای تازه را رد می‌کرد.
-        delete_post_meta_by_key(self::VERSION_META);
+        // UPDATE شرطی روی همان سطری که نویسنده‌ها قفل اشتراکی‌اش را تا Commit نگه می‌دارند: پشت هر
+        // نوشتن در جریان صبر می‌کند، و بازنشانی هم‌زمان دوم یک بار حساب نمی‌شود.
+        $n = $wpdb->query($wpdb->prepare(
+            "UPDATE {$wpdb->options} SET option_value = %s WHERE option_name = %s AND option_value + 0 = %d",
+            (string) ($old + 1), self::EPOCH, $old));
+        if ($n !== 1) { throw new LMC_Stock_Ledger_Error('دورهٔ تازه ثبت نشد (بازنشانی هم‌زمان؟)'); }
+        self::forget_option(self::EPOCH);
+        $carried = 0;
+        if ($restore_point !== null) {
+            $done = $wpdb->query($wpdb->prepare(
+                "UPDATE {$t} SET ack_rev = 0, ack_epoch = %d WHERE ack_epoch = %d AND ack_at IS NOT NULL AND ack_at < %d",
+                $old + 1, $old, $restore_point));
+            $carried = is_int($done) ? $done : 0;
+        }
+        // عددِ نشسته‌ای که بر پایهٔ ACKهای دورهٔ قبل بود (از جمله نوشتنی که درست پیش از بازنشانی Commit شد)
+        // تا Pull دورهٔ تازه بالا نمی‌ماند: هر کالای دارای کسر از آخرین عکسش، با کسرهای دورهٔ تازه، از نو
+        // نوشته می‌شود. پایه همان عکس قبلی است (Core بازیابی‌شده هنوز خوانده نشده)؛ Pull پس از بازنشانی
+        // عدد Core تازه را می‌نشاند.
+        // نوشتن نسل قبل همه پیش از UPDATE بالا Commit شده‌اند (قفل اشتراکی سطر دوره). حالا هر کالای دارای
+        // کسر از حالت **Commitشدهٔ** دورهٔ قبل (همان پایهٔ عدد نشسته) با کسرهای دورهٔ تازه از نو نوشته
+        // می‌شود؛ حالت تازه منتشر نمی‌شود، پس کالا تا Pull دورهٔ تازه بی‌حالت می‌ماند. حالت و نسخهٔ دورهٔ
+        // قبل پاک نمی‌شوند: state() و version() آن‌ها را نمی‌بینند، و پاک‌کردن سراسری می‌توانست حالت Pull
+        // دورهٔ تازه‌ای را که زودتر رسیده پاک کند.
+        foreach (self::rows("SELECT DISTINCT product_id FROM {$t}") as $r) {
+            $pid = (int) $r['product_id'];
+            try {
+                self::write_stock($pid, ['w' => '', 'r' => 0, 'c' => 0, 'a' => true, 'e' => $old + 1], null, $old);
+            } catch (Throwable $e) {
+                self::mark_redo($pid);
+                lmc_log('بازمحاسبهٔ کالای ' . $pid . ' هنگام بازنشانی ناموفق: ' . $e->getMessage() . '؛ Pull پس از بازنشانی آن را می‌نشاند.');
+            }
+        }
         delete_option(LMC_Stock_Sync::CURSOR_OPTION);
-        if ($restore_point === null) { return 0; }
-        $done = $wpdb->query($wpdb->prepare(
-            "UPDATE {$t} SET ack_rev = 0, ack_epoch = %d WHERE ack_epoch = %d AND ack_at IS NOT NULL AND ack_at < %d",
-            $old + 1, $old, $restore_point));
-        return is_int($done) ? $done : 0;
+        return $carried;
+    }
+
+    /** سطر دوره باید باشد تا نویسنده‌ها قفل اشتراکی‌اش را بگیرند (روی سطر نبوده قفلی نیست). */
+    private static function ensure_epoch_row(): void
+    {
+        global $wpdb;
+        if ($wpdb->query($wpdb->prepare(
+            "INSERT IGNORE INTO {$wpdb->options} (option_name, option_value, autoload) VALUES (%s, '1', 'no')", self::EPOCH)) === false) {
+            throw new LMC_Stock_Ledger_Error('سطر دورهٔ واترمارک ساخته نشد: ' . (string) $wpdb->last_error);
+        }
+        self::forget_option(self::EPOCH);
+    }
+
+    /** Cache گزینه‌های وردپرس پس از نوشتن مستقیم SQL. */
+    private static function forget_option(string $name): void
+    {
+        if (!function_exists('wp_cache_delete')) { return; }
+        wp_cache_delete($name, 'options');
+        wp_cache_delete('notoptions', 'options');
+        wp_cache_delete('alloptions', 'options');
     }
 
     /**
