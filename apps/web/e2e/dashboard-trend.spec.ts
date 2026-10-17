@@ -14,6 +14,25 @@ const grain = (page: Page, name: string) => panel(page).getByRole("radio", { nam
 const trendCalls = (api: MockApi) => api.calls.filter(c => c.startsWith("GET /reports/daily/trend"));
 const boundsOf = (call: string) => decodeURIComponent(new URL(call.replace(/^GET /, "http://x")).searchParams.get("bounds") ?? "").split(",");
 
+for (const persisted of [false, true]) test(`dashboard pagehide: request chain ${persisted ? "survives bfcache" : "stops on departure"}`, async ({ page, api }) => {
+  let release!: () => void;
+  const held = new Promise<void>(resolve => { release = resolve; });
+  api.handlers.set("GET /auth/can", async (route, url) => {
+    if (url.searchParams.get("operation") === "period.close") await held;
+    await route.fulfill({ json: { verdict: "allow" } });
+  });
+  await page.goto("/");
+  await expect.poll(() => api.calls.includes("GET /auth/can?operation=period.close")).toBe(true);
+  await page.evaluate(persisted => window.dispatchEvent(new PageTransitionEvent("pagehide", { persisted })), persisted);
+  // A request issued after the document departs is the regression, even if its
+  // rejection is caught by the UI. Keep fixture error assertions unchanged.
+  const nextRequest = page.waitForRequest(url => url.url().includes("/reports/daily/hourly"), { timeout: persisted ? 7000 : 1000 })
+    .then(() => true, err => { if (err.name === "TimeoutError") return false; throw err; });
+  release();
+  expect(await nextRequest).toBe(persisted);
+  if (persisted) await expect(panel(page).getByRole("figure", { name: "فروش هر ساعت (تومان)" })).toBeVisible();
+});
+
 /** پاسخ سرور برای همان مرزهایی که مرورگر فرستاده؛ سطل آخر شامل امروز است. */
 function bucketsFor(bounds: string[], over: (i: number) => Partial<DailyBucket> = () => ({})): { businessDate: string; profitVisible: boolean; buckets: DailyBucket[] } {
   const buckets = bounds.slice(0, -1).map((from, i) => {
