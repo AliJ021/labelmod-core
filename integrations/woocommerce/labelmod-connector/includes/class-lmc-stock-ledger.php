@@ -67,6 +67,12 @@ class LMC_Stock_Ledger
     const EPOCH           = 'lmc_stock_epoch';
     /** پروتکل واترمارک دست‌کم یک بار فعال شده؛ پس از آن Push کالای بی‌حالت منتظر Pull می‌ماند. */
     const ACTIVE          = 'lmc_stock_protocol_active';
+    /**
+     * نیت پایدار بازنشانی (`{"from":n,"to":n+1}`)، در **همان تراکنش** جلو بردن دوره نوشته می‌شود و فقط
+     * پس از بازمحاسبهٔ کامل پاک می‌شود. مرگ پردازهٔ بازنشانی پس از Commit دوره، کار نیمه‌تمام را گم
+     * نمی‌کند: هر Pull پیش از خواندن Core آن را ادامه می‌دهد (`resume_reset`).
+     */
+    const RESET_INTENT    = 'lmc_stock_reset_pending';
     const STATE_META      = '_lmc_stock_state';
     /** همان `LMC_Push_Receiver::STOCK_VERSION_META`؛ هم نام قفل و هم نسخهٔ سراسری Push. */
     const VERSION_META    = '_lmc_stock_version';
@@ -1357,40 +1363,88 @@ class LMC_Stock_Ledger
         }
         self::ensure_epoch_row();
         $old = self::epoch();
-        // UPDATE شرطی روی همان سطری که نویسنده‌ها قفل اشتراکی‌اش را تا Commit نگه می‌دارند: پشت هر
-        // نوشتن در جریان صبر می‌کند، و بازنشانی هم‌زمان دوم یک بار حساب نمی‌شود.
-        $n = $wpdb->query($wpdb->prepare(
-            "UPDATE {$wpdb->options} SET option_value = %s WHERE option_name = %s AND option_value + 0 = %d",
-            (string) ($old + 1), self::EPOCH, $old));
-        if ($n !== 1) { throw new LMC_Stock_Ledger_Error('دورهٔ تازه ثبت نشد (بازنشانی هم‌زمان؟)'); }
-        self::forget_option(self::EPOCH);
+        // یک تراکنش: دورهٔ تازه، انتقال تأییدها و نیت پایدار با هم Commit می‌شوند یا هیچ‌کدام. مکان‌نمای
+        // Pull برچسب دوره دارد (LMC_Stock_Sync)، پس همین Commit مکان‌نمای نسل قبل را هم باطل می‌کند؛ مرگ
+        // پردازه پس از آن، Pull بعدی را کامل (بی since) می‌کند، نه افزایشی از مکان‌نمای قدیمی.
+        if ($wpdb->query('START TRANSACTION') === false) { throw new LMC_Stock_Ledger_Error('تراکنش بازنشانی باز نشد'); }
+        $done = false;
         $carried = 0;
-        if ($restore_point !== null) {
-            $done = $wpdb->query($wpdb->prepare(
-                "UPDATE {$t} SET ack_rev = 0, ack_epoch = %d WHERE ack_epoch = %d AND ack_at IS NOT NULL AND ack_at < %d",
-                $old + 1, $old, $restore_point));
-            $carried = is_int($done) ? $done : 0;
+        try {
+            // UPDATE شرطی روی همان سطری که نویسنده‌ها قفل اشتراکی‌اش را تا Commit نگه می‌دارند: پشت هر
+            // نوشتن در جریان صبر می‌کند، و بازنشانی هم‌زمان دوم یک بار حساب نمی‌شود.
+            $n = $wpdb->query($wpdb->prepare(
+                "UPDATE {$wpdb->options} SET option_value = %s WHERE option_name = %s AND option_value + 0 = %d",
+                (string) ($old + 1), self::EPOCH, $old));
+            if ($n !== 1) { throw new LMC_Stock_Ledger_Error('دورهٔ تازه ثبت نشد (بازنشانی هم‌زمان؟)'); }
+            if ($restore_point !== null) {
+                $c = $wpdb->query($wpdb->prepare(
+                    "UPDATE {$t} SET ack_rev = 0, ack_epoch = %d WHERE ack_epoch = %d AND ack_at IS NOT NULL AND ack_at < %d",
+                    $old + 1, $old, $restore_point));
+                if ($c === false) { throw new LMC_Stock_Ledger_Error('انتقال تأییدها ناموفق: ' . (string) $wpdb->last_error); }
+                $carried = (int) $c;
+            }
+            $intent = (string) wp_json_encode(['from' => $old, 'to' => $old + 1]);
+            if ($wpdb->query($wpdb->prepare("DELETE FROM {$wpdb->options} WHERE option_name = %s", self::RESET_INTENT)) === false
+                || $wpdb->query($wpdb->prepare("INSERT INTO {$wpdb->options} (option_name, option_value, autoload) VALUES (%s, %s, 'no')",
+                    self::RESET_INTENT, $intent)) === false) {
+                throw new LMC_Stock_Ledger_Error('ثبت نیت بازنشانی ناموفق: ' . (string) $wpdb->last_error);
+            }
+            if ($wpdb->query('COMMIT') === false) { throw new LMC_Stock_Ledger_Error('Commit بازنشانی ناموفق'); }
+            $done = true;
+        } finally {
+            if (!$done) { $wpdb->query('ROLLBACK'); }
+            self::forget_option(self::EPOCH);
+            self::forget_option(self::RESET_INTENT);
         }
-        // عددِ نشسته‌ای که بر پایهٔ ACKهای دورهٔ قبل بود (از جمله نوشتنی که درست پیش از بازنشانی Commit شد)
-        // تا Pull دورهٔ تازه بالا نمی‌ماند: هر کالای دارای کسر از آخرین عکسش، با کسرهای دورهٔ تازه، از نو
-        // نوشته می‌شود. پایه همان عکس قبلی است (Core بازیابی‌شده هنوز خوانده نشده)؛ Pull پس از بازنشانی
-        // عدد Core تازه را می‌نشاند.
-        // نوشتن نسل قبل همه پیش از UPDATE بالا Commit شده‌اند (قفل اشتراکی سطر دوره). حالا هر کالای دارای
-        // کسر از حالت **Commitشدهٔ** دورهٔ قبل (همان پایهٔ عدد نشسته) با کسرهای دورهٔ تازه از نو نوشته
-        // می‌شود؛ حالت تازه منتشر نمی‌شود، پس کالا تا Pull دورهٔ تازه بی‌حالت می‌ماند. حالت و نسخهٔ دورهٔ
-        // قبل پاک نمی‌شوند: state() و version() آن‌ها را نمی‌بینند، و پاک‌کردن سراسری می‌توانست حالت Pull
-        // دورهٔ تازه‌ای را که زودتر رسیده پاک کند.
-        foreach (self::rows("SELECT DISTINCT product_id FROM {$t}") as $r) {
+        self::probe('reset_committed', 0);
+        $r = self::resume_reset();
+        if ($r['pending']) {
+            lmc_log(sprintf('بازنشانی واترمارک ثبت شد ولی بازمحاسبهٔ %d کالا ماند؛ هر Pull آن را ادامه می‌دهد.', $r['failed']));
+        }
+        return $carried;
+    }
+
+    /**
+     * ادامهٔ بازنشانی ثبت‌شده، Idempotent: هر کالای دارای کسر از حالت **Commitشدهٔ** دورهٔ قبل (همان پایهٔ
+     * عدد نشسته) با کسرهای دورهٔ تازه از نو نوشته می‌شود؛ کالایی که حالت دورهٔ قبل را ندارد (یا Pull دورهٔ
+     * تازه زودتر واردش کرده) دست نمی‌خورد. حالت تازه منتشر نمی‌شود؛ حالت و نسخهٔ دورهٔ قبل پاک
+     * **نمی‌شوند** — `state()` و `version()` آن‌ها را نمی‌بینند، و پاک‌کردن سراسری می‌توانست حالت Pull دورهٔ
+     * تازه‌ای را که زودتر رسیده پاک کند. نیت فقط وقتی پاک می‌شود که هیچ کالایی نماند؛ تا آن وقت `pending`.
+     *
+     * @return array{pending:bool,failed:int}
+     */
+    public static function resume_reset(): array
+    {
+        global $wpdb;
+        $raw = $wpdb->get_var($wpdb->prepare("SELECT option_value FROM {$wpdb->options} WHERE option_name = %s", self::RESET_INTENT));
+        if ($raw === null) {
+            if ((string) $wpdb->last_error !== '') { return ['pending' => true, 'failed' => 0]; }
+            return ['pending' => false, 'failed' => 0];
+        }
+        $i = json_decode((string) $raw, true);
+        $now = self::epoch();
+        // نیت بدشکل یا دوره‌ای که با آن نمی‌خواند: نامعلوم، پس بسته (پیام، نه حدس). فقط «بازنشانی» مدیر
+        // آن را با نیت تازه جایگزین می‌کند.
+        if (!is_array($i) || !isset($i['from'], $i['to']) || (int) $i['to'] !== $now || (int) $i['from'] !== $now - 1) {
+            lmc_log('نیت بازنشانی واترمارک با دورهٔ جاری نمی‌خواند؛ بازنشانی را دوباره اجرا کنید.');
+            return ['pending' => true, 'failed' => 1];
+        }
+        if (self::in_transaction() !== false) { return ['pending' => true, 'failed' => 0]; }
+        $failed = 0;
+        foreach (self::rows("SELECT DISTINCT product_id FROM " . self::table()) as $r) {
             $pid = (int) $r['product_id'];
             try {
-                self::write_stock($pid, ['w' => '', 'r' => 0, 'c' => 0, 'a' => true, 'e' => $old + 1], null, $old);
+                self::write_stock($pid, ['w' => '', 'r' => 0, 'c' => 0, 'a' => true, 'e' => $now], null, $now - 1);
             } catch (Throwable $e) {
-                self::mark_redo($pid);
-                lmc_log('بازمحاسبهٔ کالای ' . $pid . ' هنگام بازنشانی ناموفق: ' . $e->getMessage() . '؛ Pull پس از بازنشانی آن را می‌نشاند.');
+                $failed++;
+                lmc_log('بازمحاسبهٔ کالای ' . $pid . ' پس از بازنشانی ناموفق: ' . $e->getMessage() . '؛ Pull بعدی دوباره تلاش می‌کند.');
             }
         }
-        delete_option(LMC_Stock_Sync::CURSOR_OPTION);
-        return $carried;
+        if ($failed > 0) { return ['pending' => true, 'failed' => $failed]; }
+        // پاک‌کردن شرطی: نیت بازنشانیِ تازه‌تری که در این فاصله ثبت شده دست نمی‌خورد.
+        $wpdb->query($wpdb->prepare("DELETE FROM {$wpdb->options} WHERE option_name = %s AND option_value = %s", self::RESET_INTENT, (string) $raw));
+        self::forget_option(self::RESET_INTENT);
+        return ['pending' => false, 'failed' => 0];
     }
 
     /** سطر دوره باید باشد تا نویسنده‌ها قفل اشتراکی‌اش را بگیرند (روی سطر نبوده قفلی نیست). */
@@ -1415,8 +1469,8 @@ class LMC_Stock_Ledger
 
     /**
      * «بازنشانی واترمارک»: پس از بازیابی Core از بکاپ قدیمی‌تر (برگشت API یعنی برگشت افزونه، نه بازنشانی).
-     * حالت همهٔ کالاها پاک و مکان‌نما صفر می‌شود؛ Pull بعدی دوباره واردشان می‌کند. کسرها
-     * می‌مانند. فقط مدیر فروشگاه با Nonce.
+     * دوره جلو می‌رود؛ حالت دورهٔ قبل پاک نمی‌شود ولی دیگر خوانده نمی‌شود، و مکان‌نمای نسل قبل باطل است،
+     * پس Pull بعدی کامل است. کسرها می‌مانند. فقط مدیر فروشگاه با Nonce.
      */
     public static function handle_reset(): void
     {

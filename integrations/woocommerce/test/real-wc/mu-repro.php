@@ -59,3 +59,13 @@ add_action('woocommerce_product_set_stock', static function () {
 add_action('woocommerce_update_product', static function () {
     if (!empty($GLOBALS['lmc_repro_sum_seen'])) { lmc_repro_barrier('old_after_save'); }
 }, 10, 0);
+
+// Core جعلی محلی برای `LMC_Stock_Sync::run`: پاسخ از LMC_FAKE_FEED (JSON) و نشانی هر درخواست در
+// <role>.urls تا راننده ببیند `since` فرستاده شد یا نه. هیچ درخواستی به شبکه نمی‌رود.
+add_filter('pre_http_request', static function ($pre, $args, $url) {
+    $feed = getenv('LMC_FAKE_FEED');
+    if (!$feed) { return $pre; }
+    $dir = rtrim((string) getenv('LMC_BAR'), '/');
+    file_put_contents("$dir/" . getenv('LMC_ROLE') . '.urls', $url . "\n", FILE_APPEND);
+    return ['headers' => [], 'body' => (string) file_get_contents($feed), 'response' => ['code' => 200, 'message' => 'OK'], 'cookies' => [], 'filename' => null];
+}, 10, 3);

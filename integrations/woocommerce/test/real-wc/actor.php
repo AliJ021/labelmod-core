@@ -97,6 +97,17 @@ switch ($cmd) {
             ? LMC_Stock_Ledger::ack_order($o, $stock, WH, [$item->get_id() => (int) $args[2]], LMC_Stock_Ledger::epoch())
             : LMC_Stock_Ledger::ack_order($o, $stock, WH, [$item->get_id() => (int) $args[2]]);
         out(['done' => 'ack']); break;
+    case 'set-cursor':                                  // مکان‌نمای ذخیره‌شده، همان‌طور که Pull می‌نویسد
+        update_option(LMC_Stock_Sync::CURSOR_OPTION, (string) $args[0], false);
+        out(['cursor' => get_option(LMC_Stock_Sync::CURSOR_OPTION)]); break;
+    case 'sync':                                        // یک دور واقعی LMC_Stock_Sync::run (Core جعلی mu-repro)
+        $r = LMC_Stock_Sync::run();
+        out(['updated' => $r['updated'], 'busy' => $r['busy'], 'error' => $r['error']]); break;
+    case 'state':                                       // دوره، نیت بازنشانی، مکان‌نما و عدد — از دیتابیس
+        global $wpdb;
+        $opt = static fn ($n) => $wpdb->get_var($wpdb->prepare("SELECT option_value FROM {$wpdb->options} WHERE option_name = %s", $n));
+        out(['epoch' => (int) $opt('lmc_stock_epoch'), 'intent' => $opt('lmc_stock_reset_pending'), 'cursor' => $opt('lmc_stock_cursor'),
+            'stock' => stock_now((int) $args[0]), 'vid' => get_post_meta((int) $args[0], '_lmc_variation_id', true)]); break;
     case 'read':
         out(['stock' => stock_now((int) $args[0]), 'holds' => holds_now((int) $args[0])]); break;
 }

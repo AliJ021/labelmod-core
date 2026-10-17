@@ -610,7 +610,7 @@ pull(['available' => '3', 'stockRev' => '10']);
 check('۶. Pull کالا را وارد پروتکل کرد', rev(), 10);
 wpush(3, 12, 500);
 $out = pull(['available' => '5', 'stockRev' => '11'], 'C2');
-check('۶. Pull کهنه‌تر از Push نشانده نشد؛ مکان‌نما جلو رفت (رد قدیمی، نه شکست)', [stock(), get_option(LMC_Stock_Sync::CURSOR_OPTION)], [3, 'C2']);
+check('۶. Pull کهنه‌تر از Push نشانده نشد؛ مکان‌نما (با برچسب دوره) جلو رفت (رد قدیمی، نه شکست)', [stock(), get_option(LMC_Stock_Sync::CURSOR_OPTION)], [3, '1:C2']);
 woo_order(9001, [[51, 1]]);
 ack(9001, 13);
 wpush(2, 13, 501);
@@ -1242,6 +1242,73 @@ check('R14. پس از بازنشانی عدد بر پایهٔ ACK دورهٔ ق�
 pull(['available' => '10', 'stockRev' => '1']);                              // Pull نسل تازه
 check('R14. Pull نسل تازه هم ۸', stock(), 8);
 // بازنشانی هرگز عدد را بالا نمی‌برد، حتی با پایهٔ حالتی که نوشتنش هنوز Commit نشده (R8 الف).
+
+// ── R15. مرگ پردازهٔ «بازنشانی» درست پس از Commit دوره (مدل root روی 29df1bb) ──────
+// عکس ۱۰ (rev 30)، سفارش ۲، ACK rev 31، عکس نسل قبل ۱۰ (rev 32)، مکان‌نمای قدیمی؛ بازنشانی(null) پس از
+// Commit دوره می‌میرد. پیش از اصلاح: درخواست بعدی since=مکان‌نمای قدیمی، خوراک خالی، موجودی ۱۰ (انتظار ۸).
+fresh();
+snap(10, 30);
+woo_order(9951, [[151, 2]]);
+ack(9951, 31);
+pull(['available' => '10', 'stockRev' => '32'], '2026-10-17T06:00Z');           // مکان‌نمای نسل ۱
+check('R15. پیش از بازنشانی: ۱۰ و مکان‌نمای برچسب‌دار', [stock(), get_option(LMC_Stock_Sync::CURSOR_OPTION)], [10, '1:2026-10-17T06:00Z']);
+$GLOBALS['probe']['reset_committed'] = static function () { throw new RuntimeException('مرگ پردازهٔ بازنشانی (تزریق آزمون)'); };
+$died = false;
+try { LMC_Stock_Ledger::reset_epoch(null); } catch (RuntimeException $e) { $died = true; }
+$intent = $GLOBALS['wpdb']->get_var("SELECT option_value FROM wp_options WHERE option_name = '" . LMC_Stock_Ledger::RESET_INTENT . "'");
+check('R15. پس از مرگ: دوره ۲، نیت پایدار، عدد هنوز ۱۰، مکان‌نمای نسل قبل برای دورهٔ ۲ باطل',
+    [$died, LMC_Stock_Ledger::epoch(), $intent, stock(), LMC_Stock_Sync::cursor_for(2)], [true, 2, '{"from":1,"to":2}', 10, '']);
+// درخواست بعدی: Core بازیابی‌شده (پیش از سفارش) خوراک افزایشی خالی می‌داد؛ حالا Pull کامل است.
+$GLOBALS['feed_queries'] = [];
+$GLOBALS['feed'] = ['items' => [], 'cursor' => null];
+$out = LMC_Stock_Sync::run();
+check('R15. Pull پس از مرگ: بی since، ادامهٔ بازنشانی ۸، نیت پاک، بی خطا',
+    [array_key_exists('since', $GLOBALS['feed_queries'][0] ?? []), stock(), (int) $GLOBALS['wpdb']->get_var("SELECT COUNT(*) FROM wp_options WHERE option_name = '" . LMC_Stock_Ledger::RESET_INTENT . "'"), $out['error']],
+    [false, 8, 0, '']);
+pull(['available' => '10', 'stockRev' => '1'], 'N1');
+check('R15. عکس نسل تازه از Core بازیابی‌شده: ۸ و مکان‌نمای دورهٔ ۲', [stock(), get_option(LMC_Stock_Sync::CURSOR_OPTION)], [8, '2:N1']);
+
+// ادامه شکست می‌خورد ← نیت می‌ماند و دور «خطا» گزارش می‌شود، نه موفقیت بی‌صدا؛ دور بعد کامل می‌کند.
+fresh();
+snap(10, 30);
+woo_order(9952, [[152, 2]]);
+ack(9952, 31);
+snap(10, 32);
+$GLOBALS['probe']['reset_committed'] = static function () { throw new RuntimeException('مرگ'); };
+try { LMC_Stock_Ledger::reset_epoch(null); } catch (RuntimeException $e) { }
+$GLOBALS['probe']['locked'] = static function () { throw new LMC_Stock_Ledger_Error('قفل نرسید (تزریق آزمون)'); };
+$GLOBALS['feed'] = ['items' => [], 'cursor' => null];
+$out = LMC_Stock_Sync::run();
+check('R15. ادامهٔ ناموفق: نیت می‌ماند، عدد ۱۰، خطای دیدنی',
+    [stock(), (int) $GLOBALS['wpdb']->get_var("SELECT COUNT(*) FROM wp_options WHERE option_name = '" . LMC_Stock_Ledger::RESET_INTENT . "'"), $out['error'] !== ''],
+    [10, 1, true]);
+$out = LMC_Stock_Sync::run();
+check('R15. دور بعد: ادامه کامل، ۸، نیت پاک', [stock(), (int) $GLOBALS['wpdb']->get_var("SELECT COUNT(*) FROM wp_options WHERE option_name = '" . LMC_Stock_Ledger::RESET_INTENT . "'"), $out['error']], [8, 0, '']);
+check('R15. ادامهٔ دوباره بی‌اثر (Idempotent)', [LMC_Stock_Ledger::resume_reset(), stock()], [['pending' => false, 'failed' => 0], 8]);
+
+// Pull نسل قبل که پیش از بازنشانی خواند و مکان‌نمایش را پس از آن نوشت: مکان‌نما باطل است.
+fresh();
+snap(10, 30);
+woo_order(9953, [[153, 2]]);
+ack(9953, 31);
+$GLOBALS['probe']['locked'] = static function () { LMC_Stock_Ledger::reset_epoch(null); };   // بازنشانی وسط نوشتن Pull
+$GLOBALS['feed_queries'] = [];
+pull(['available' => '10', 'stockRev' => '32'], 'OLD');
+check('R15. Pull نسل قبل پس از بازنشانی: نشانده نشد، مکان‌نما جلو نرفت، ۸', [stock(), LMC_Stock_Sync::cursor_for(2)], [8, '']);
+// حتی اگر مکان‌نمای نسل قبل نوشته شده باشد (مثلاً صفحهٔ بی‌کالا)، در دورهٔ تازه خوانده نمی‌شود.
+update_option(LMC_Stock_Sync::CURSOR_OPTION, '1:OLD');
+$GLOBALS['feed_queries'] = [];
+$GLOBALS['feed'] = ['items' => [], 'cursor' => null];
+LMC_Stock_Sync::run();
+check('R15. مکان‌نمای برچسب دورهٔ ۱ در دورهٔ ۲: Pull کامل', array_key_exists('since', $GLOBALS['feed_queries'][0] ?? []), false);
+update_option(LMC_Stock_Sync::CURSOR_OPTION, 'C-legacy');
+$GLOBALS['feed_queries'] = [];
+LMC_Stock_Sync::run();
+check('R15. مکان‌نمای بی برچسب (پیش از ارتقا): یک Pull کامل', array_key_exists('since', $GLOBALS['feed_queries'][0] ?? []), false);
+update_option(LMC_Stock_Sync::CURSOR_OPTION, '2:C-ok');
+$GLOBALS['feed_queries'] = [];
+LMC_Stock_Sync::run();
+check('R15. کنترل مثبت: مکان‌نمای همان دوره فرستاده می‌شود', $GLOBALS['feed_queries'][0]['since'] ?? null, 'C-ok');
 
 // ── R13. درخواست رها کردن به دورهٔ صفحه بسته است، حتی با ack_epoch تهی ──
 fresh();

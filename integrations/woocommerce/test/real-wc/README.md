@@ -14,4 +14,7 @@ python3 run.py <work> <plugins> new bbae0d1 > result.jsonl
 - `actor.php`: یک فرمان در یک پردازهٔ PHP (`prep`، `reduce`، `adjust`، `apply`، `ack`، `read`).
 - `run.py`: دو پردازهٔ هم‌زمان (نشاندن عکس، و کسر/ویرایش دستی/لغو/استرداد ووکامرس)، سه حالت through/complete/crash،
   SIGKILL در نقطه‌های بحرانی، و `over_truth_in` = سناریوهایی که عدد سایت از «درستِ همان لحظه» بیشتر شد.
+- `run_reset.py`: بازنشانی پس از سنجش دوره و خواندن کسرها (دو پردازه، با و بی کشتن نویسنده).
+- `run_reset_crash.py`: مرگ پردازهٔ بازنشانی پس از Commit دوره، و Pull نسل قبل که مکان‌نمایش را پس از بازنشانی
+  می‌نویسد؛ `LMC_Stock_Sync::run` واقعی با Core جعلی محلی (`LMC_FAKE_FEED` در `mu-repro.php`).
 - `results/`: خروجی خام اجراها (فقط دادهٔ مصنوعی).

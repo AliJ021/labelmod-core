@@ -81,14 +81,23 @@ class LMC_Stock_Sync
         }
         // عقب‌ماندهٔ کسر، آشتی اولیه و بازمحاسبه‌های معوق پیش از هر خواندن.
         LMC_Stock_Ledger::maintain();
-
-        $since = get_option(self::CURSOR_OPTION, '');
-        if (is_string($since) && $since !== '') {
-            $query['since'] = $since;
+        // بازنشانی‌ای که پردازه‌اش پس از Commit دوره مُرد، پیش از هر خواندن ادامه می‌یابد؛ تا تمام نشده
+        // این دور «خطا» گزارش می‌شود، نه موفقیت بی‌صدا (Pull کامل در همین دور باز هم انجام می‌شود).
+        try {
+            $reset = LMC_Stock_Ledger::resume_reset();
+        } catch (Throwable $e) {
+            $reset = ['pending' => true, 'failed' => 0];
+            lmc_log('ادامهٔ بازنشانی واترمارک ناموفق: ' . $e->getMessage());
         }
 
         // دورهٔ واترمارک پیش از خواندن Core؛ اگر میان خواندن و نشاندن «بازنشانی» شود، این صفحه رد می‌شود.
         $epoch = LMC_Stock_Ledger::epoch();
+        // مکان‌نما فقط در همان دوره معتبر است: پس از بازنشانی (حتی اگر پردازه‌اش پیش از هر کار دیگری
+        // مُرده باشد) و برای مکان‌نمایی که Pull نسل قبل دیر نوشته، Pull کامل است نه افزایشی.
+        $since = self::cursor_for($epoch);
+        if ($since !== '') {
+            $query['since'] = $since;
+        }
         // زمان آغاز خواندن: درخواست رها کردن کسر فقط با عکسی تأیید می‌شود که پس از آن خوانده شده.
         $fetched_ms = (int) floor(microtime(true) * 1000);
         $res = LMC_Client::get('/web/stock', $query);
@@ -178,7 +187,10 @@ class LMC_Stock_Sync
         // ذخیره‌کردن `null` یعنی دور بعد از اول شروع کند — که درست
         // است ولی هر بار همه‌چیز را می‌فرستد.
         if (!empty($res['cursor']) && $out['busy'] === 0) {
-            update_option(self::CURSOR_OPTION, (string) $res['cursor'], false);
+            update_option(self::CURSOR_OPTION, $epoch . ':' . (string) $res['cursor'], false);
+        }
+        if ($reset['pending']) {
+            $out['error'] = __('بازنشانی واترمارک هنوز کامل نشده است (بازمحاسبهٔ بخشی از کالاها ماند)؛ دور بعد دوباره تلاش می‌کند. گزارش افزونه را ببینید.', 'labelmod-connector');
         }
 
         lmc_log(sprintf('موجودی: %d به‌روز، %d رد شد، %d اتصال تازه',
@@ -193,6 +205,14 @@ class LMC_Stock_Sync
         return $out;
     }
 
+
+    /** مکان‌نمای ذخیره‌شده برای این دوره، یا خالی (دورهٔ دیگر، قالب پیش از برچسب، یا بدشکل). */
+    public static function cursor_for(int $epoch): string
+    {
+        $raw = get_option(self::CURSOR_OPTION, '');
+        if (!is_string($raw) || !preg_match('/^([0-9]{1,18}):(.+)$/sD', $raw, $m)) { return ''; }
+        return (int) $m[1] === $epoch ? $m[2] : '';
+    }
 
     /**
      * کالای سایت از روی کلید اتصال.
