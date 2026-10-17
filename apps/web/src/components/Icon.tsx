@@ -16,9 +16,10 @@ export type IconName =
   | "dashboard" | "register" | "receipt" | "return" | "tag" | "box" | "vault" | "people"
   | "chart" | "settings" | "more" | "bell" | "check" | "alert" | "info" | "clock"
   | "refresh" | "plus" | "filter" | "sort" | "download" | "print" | "offline" | "shield"
-  | "database" | "chevron" | "external" | "card" | "link" | "sparkle";
+  | "menu" | "database" | "chevron" | "external" | "card" | "link" | "sparkle";
 
 const paths: Record<IconName, ReactNode> = {
+  menu: <path d="M4 6h16M4 12h16M4 18h16" />,
   search: <><circle cx="10.5" cy="10.5" r="6.5" /><path d="m16 16 4.5 4.5" /></>,
   close: <path d="m6 6 12 12M18 6 6 18" />,
   user: <><circle cx="12" cy="8" r="3.5" /><path d="M4.5 21v-2a7.5 7.5 0 0 1 15 0v2" /></>,

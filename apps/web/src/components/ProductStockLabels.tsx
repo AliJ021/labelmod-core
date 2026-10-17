@@ -1,3 +1,4 @@
+import { formatQty } from "../lib/format.ts";
 import { useEffect, useState } from "react";
 import { api, ApiError } from "../lib/api.ts";
 import type { Variation } from "../lib/catalog.ts";
@@ -98,7 +99,7 @@ export function ProductStockLabels({ productId, productName, variations, selecte
             ستون «تعداد لیبل» را از دید بیرون می‌برد. نبودنش پیش از چاپ دیده شود، نه روی رگال. */}
         <td style={{ whiteSpace: "normal" }}><div>{v.color ?? "بدون رنگ"} / {v.size ?? "آزاد"}</div>
           <div className="small">{v.price === null ? <LabelContentBadges priced={false} /> : <Money rial={BigInt(v.price)} size="sm" />}{v.barcode ? null : <> <LabelContentBadges hasBarcode={false} /></>}</div></td>
-        <td>{stock ? cells.get(v.id)?.onHand ?? "—" : "…"}</td><td>{stock ? cells.get(v.id)?.reserved ?? "—" : "…"}</td>
+        <td>{stock ? (cells.has(v.id) ? formatQty(cells.get(v.id)!.onHand) : "—") : "…"}</td><td>{stock ? (cells.has(v.id) ? formatQty(cells.get(v.id)!.reserved) : "—") : "…"}</td>
         <td><input aria-label={`تعداد لیبل ${v.sku}`} inputMode="numeric" style={{ width: "4.5em" }} value={String(counts[v.id] ?? 0)} onChange={(e) => setCount(v.id, e.target.value)} /></td></tr>)}</tbody></table></div>
     <LabelSizeFields state={sizeState} onChange={pv.reset} idPrefix={`product-${productId}`} />
     <p className="muted small">حداکثر ۱۰۰ لیبل از هر تنوع و ۵۰۰ لیبل در هر نوبت. در تنظیمات چاپ، مقیاس ۱۰۰٪ و اندازه کاغذ برابر {sizeState.size.row ? "کل ردیف" : "لیبل"} انتخاب شود؛ سربرگ و پابرگ خاموش باشند.</p>

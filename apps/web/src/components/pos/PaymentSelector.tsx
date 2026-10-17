@@ -1,3 +1,4 @@
+import { AmountInput } from "../ui/AmountInput.tsx";
 import { useEffect, useId, useRef, useState, type FormEvent, type KeyboardEvent, type ReactNode } from "react";
 import { Money } from "../ui/Money.tsx";
 import { Button, Field } from "../ui/Controls.tsx";
@@ -139,7 +140,16 @@ export function PaymentSelector({ layout, remaining, received, phase, disabled, 
   // روشی که دیگر فرستاده نمی‌شود (مثلاً پس از تغییر شعبه) انتخاب‌شده نمی‌ماند.
   useEffect(() => { if (selected !== "" && !chosen) setSelected(""); }, [selected, chosen]);
   useEffect(() => {
-    if (focusAmount.current && chosen) { focusAmount.current = false; amountRef.current?.focus(); }
+    if (focusAmount.current && chosen) {
+      focusAmount.current = false;
+      const input = amountRef.current;
+      input?.focus({ preventScroll: true });
+      const form = input?.closest<HTMLElement>(".pay-form");
+      const scroll = input?.closest<HTMLElement>(".pay-scroll");
+      // Keep the entire form visible when it fits; on short screens prioritize the amount.
+      if (form && scroll && form.offsetHeight <= scroll.clientHeight) form.scrollIntoView({ block: "nearest", behavior: "instant" });
+      else input?.scrollIntoView({ block: "center", behavior: "instant" });
+    }
   }, [chosen]);
   // بخش بازشده در ستون قابل‌اسکرول پرداخت دیده شود، نه زیر پایان چسبان ستون.
   const morePanel = useRef<HTMLDivElement>(null);
@@ -265,7 +275,7 @@ export function PaymentSelector({ layout, remaining, received, phase, disabled, 
       <div className="pay-form-fields">
         <Field label="مبلغ (تومان)" error={amountError}
           hint={max === null ? <>خالی یعنی همهٔ مانده؛ اضافه، باقی پول می‌شود.</> : <>خالی یعنی همهٔ مانده؛ حداکثر <Money rial={max} size="sm" /></>}>
-          <input ref={amountRef} type="text" inputMode="numeric" autoComplete="off" value={amount} disabled={disabled}
+          <AmountInput ref={amountRef} type="text" inputMode="numeric" autoComplete="off" value={amount} disabled={disabled}
             onChange={(e) => setAmount(e.target.value)} placeholder={remaining > 0n ? (remaining / 10n).toString() : ""} />
         </Field>
         {chosen.requiresRef ? <Field label="شماره پیگیری" error={attempted && refMissing ? "شمارهٔ پیگیری لازم است." : null}>

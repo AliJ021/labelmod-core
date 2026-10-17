@@ -270,3 +270,57 @@ test("two tabs preserve an uncertain scan and retry its original key without a s
   await expect(second.locator(".cart .qty .num")).toHaveText("1");
   await second.close();
 });
+
+
+test("money grouping preserves caret, exact payment payload, and collapsed navigation",async({page,api})=>{
+  pos(api);
+  let payment: Record<string,unknown>|undefined;
+  api.handlers.set(`GET /invoices/${invoice.id}/payments`,async route=>{
+    await route.fulfill({json:{payments:payment ? [{id:"test-payment",name:"نقد",amount:"120000"}] : []}});
+  });
+  api.handlers.set(`POST /invoices/${invoice.id}/payments`,async route=>{
+    payment=route.request().postDataJSON();
+    await route.fulfill({json:{invoice:{...invoice,receivedAmount:"120000"},receivedAmount:"120000",paymentId:"test-payment",replayed:false}});
+  });
+  await page.addInitScript(()=>localStorage.setItem("labelmod_open_cart",JSON.stringify({invoiceId:"33333333-3333-4333-8333-333333333333",shiftId:"44444444-4444-4444-8444-444444444444"})));
+  await page.goto("/?page=pos");
+  if ((page.viewportSize()?.width ?? 0)>=900) {
+    await page.getByRole("button",{name:"جمع کردن منوی کناری",exact:true}).click();
+    await expect(page.getByRole("button",{name:"باز کردن منوی کناری",exact:true})).toHaveAttribute("aria-expanded","false");
+    await page.reload();
+    await expect(page.getByRole("button",{name:"باز کردن منوی کناری",exact:true})).toBeVisible();
+    await expect(page.getByRole("tab",{name:"صندوق",exact:true})).toBeVisible();
+  }
+  await page.getByRole("button",{name:/^روش‌های بیشتر/}).click();
+  await page.getByRole("button",{name:"نقد",exact:true}).click();
+  const amount=page.getByRole("textbox",{name:"مبلغ (تومان)",exact:true});
+  await amount.fill("۵۰۰۰۰۰۰");
+  await expect(amount).toHaveValue("5,000,000");
+  await amount.press("Home");
+  await amount.pressSequentially("2");
+  await expect(amount).toHaveValue("25,000,000");
+  await amount.press("Backspace");
+  await expect(amount).toHaveValue("5,000,000");
+  await amount.fill("12000");
+  await expect(amount).toHaveValue("12,000");
+  const cart=page.getByRole("region",{name:"سبد خرید",exact:true});
+  await expect(cart.getByRole("searchbox")).toHaveCount(0);
+  await expect(page.locator(".pos-customer-details")).not.toHaveAttribute("open","");
+  if((page.viewportSize()?.width ?? 0)>=900) {
+    const visible=await amount.evaluate(el=>{
+      const input=el.getBoundingClientRect(),scroll=el.closest(".pay-scroll")!.getBoundingClientRect(),footer=document.querySelector(".pay-finish")!.getBoundingClientRect();
+      return input.top>=scroll.top && input.bottom<=Math.min(scroll.bottom,footer.top);
+    });
+    expect(visible,"amount input must stay completely above fixed footer").toBe(true);
+    const receiveVisible=await page.getByRole("button",{name:"دریافت وجه",exact:true}).evaluate(el=>{
+      const button=el.getBoundingClientRect(),scroll=el.closest(".pay-scroll")!.getBoundingClientRect();
+      return button.top>=scroll.top && button.bottom<=scroll.bottom;
+    });
+    expect(receiveVisible,"receive action must fit alongside the amount without extra scrolling").toBe(true);
+  }
+  await expect(page.locator(".cart")).not.toContainText("TEST");
+  if(process.env.LMC_REVIEW_SCREENSHOT) await page.screenshot({path:process.env.LMC_REVIEW_SCREENSHOT.replace(/\.png$/,`-${test.info().project.name}.png`),fullPage:true});
+  await page.getByRole("button",{name:"دریافت وجه",exact:true}).click();
+  await expect.poll(()=>payment).toMatchObject({methodCode:"cash",amount:"120000"});
+  await expect(page.getByRole("complementary",{name:"پرداخت",exact:true}).locator(".checkout-lines--state")).toContainText("8٬000");
+});

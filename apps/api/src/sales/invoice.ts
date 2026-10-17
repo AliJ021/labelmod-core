@@ -51,6 +51,8 @@ export interface InvoiceLine {
   variationId: string;
   sku: string;
   productName: string;
+  color?: string | null;
+  size?: string | null;
   qty: string;
   unitPrice: bigint;
   discountAmount: bigint;
@@ -189,6 +191,8 @@ export class InvoiceService {
         "l.list_price",
         "l.price_override_reason",
         "v.sku",
+        "v.color",
+        "v.size",
         "p.name_internal",
       ])
       .where("l.invoice_id", "=", invoiceId)
@@ -230,6 +234,8 @@ export class InvoiceService {
         variationId: l.variation_id,
         sku: l.sku,
         productName: l.name_internal,
+        color: l.color,
+        size: l.size,
         qty: l.qty,
         unitPrice: parseMoney(l.unit_price),
         discountAmount: parseMoney(l.discount_amount),
@@ -1348,20 +1354,20 @@ export class InvoiceService {
 
   /** Advisory stock check under the invoice lock: no reservation or inventory mutation. */
   private async assertStock(ex: Executor, invoiceId: string, variationId?: string, qty = "0", excludeLineId?: string): Promise<void> {
-    const result = await sql<{ sku: string; available: string; requested: string }>`
+    const result = await sql<{ product_name: string; available: string; requested: string }>`
       WITH quantities AS (
         SELECT variation_id, qty FROM sales.invoice_line WHERE invoice_id=${invoiceId}::uuid
           AND (${excludeLineId ?? null}::uuid IS NULL OR id<>${excludeLineId ?? null}::uuid)
         UNION ALL SELECT ${variationId ?? null}::uuid, ${qty}::numeric WHERE ${variationId ?? null}::uuid IS NOT NULL
       ), totals AS (SELECT variation_id, sum(qty) AS requested FROM quantities GROUP BY variation_id)
-      SELECT v.sku, greatest(coalesce(b.on_hand,0)-coalesce(b.reserved,0),0)::text AS available, t.requested::text
-      FROM sales.invoice i JOIN totals t ON true JOIN catalog.variation v ON v.id=t.variation_id
+      SELECT concat_ws(' · ', p.name_internal, v.color, v.size) AS product_name, greatest(coalesce(b.on_hand,0)-coalesce(b.reserved,0),0)::text AS available, t.requested::text
+      FROM sales.invoice i JOIN totals t ON true JOIN catalog.variation v ON v.id=t.variation_id JOIN catalog.product p ON p.id=v.product_id
       LEFT JOIN inventory.stock_balance b ON b.variation_id=t.variation_id AND b.warehouse_id=i.warehouse_id
       WHERE i.id=${invoiceId}::uuid AND i.channel='pos' AND i.status='draft'
         AND t.requested>greatest(coalesce(b.on_hand,0)-coalesce(b.reserved,0),0)
       ORDER BY v.sku LIMIT 1`.execute(ex);
     const shortage = result.rows[0];
-    if (shortage) throw new InvoiceError("insufficient_stock", `موجودی قابل‌فروش ${shortage.sku}: ${shortage.available}؛ تعداد درخواست‌شده: ${shortage.requested}. تعداد قبلی حفظ شد.`, 409);
+    if (shortage) throw new InvoiceError("insufficient_stock", `موجودی «${shortage.product_name}» کافی نیست. موجودی قابل‌فروش: ${shortage.available.replace(/(\.\d*?[1-9])0+$|\.0+$/, "$1")}؛ تعداد قبلی حفظ شد.`, 409);
   }
 
   private async requireDraft(invoiceId: string, ex: Executor = this.#db): Promise<Invoice> {
@@ -1455,6 +1461,8 @@ export function invoiceToJson(inv: Invoice) {
       variationId: l.variationId,
       sku: l.sku,
       productName: l.productName,
+      color: l.color ?? null,
+      size: l.size ?? null,
       qty: l.qty,
       unitPrice: serializeMoney(l.unitPrice),
       discountAmount: serializeMoney(l.discountAmount),

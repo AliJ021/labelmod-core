@@ -1,3 +1,4 @@
+import { AmountInput } from "../components/ui/AmountInput.tsx";
 /**
  * سفارش خرید — تعهد به تأمین‌کننده.
  *
@@ -296,7 +297,7 @@ export function PurchaseOrder() {
                   placeholder="تعداد"
                   aria-label="تعداد"
                 />
-                <input
+                <AmountInput
                   value={price}
                   onChange={(e) => setPrice(e.target.value)}
                   inputMode="numeric"

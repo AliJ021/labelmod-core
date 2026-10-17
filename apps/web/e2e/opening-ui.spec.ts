@@ -27,7 +27,7 @@ test("opening review can cancel, then posts exact large amounts and Persian year
   await review(page).click();await expect(page.getByRole("dialog",{name:"تأیید سند افتتاحیه"})).toBeVisible();
   expect(api.calls.filter(call=>call==="POST /opening-balance")).toEqual([]);
   await page.getByRole("button",{name:"بازگشت به ویرایش",exact:true}).click();
-  await expect(page.getByLabel("موجودی صندوق (تومان)",{exact:true})).toHaveValue("۹٬۰۰۷٬۱۹۹٬۲۵۴٬۷۴۰٬۹۹۳");
+  await expect(page.getByLabel("موجودی صندوق (تومان)",{exact:true})).toHaveValue("9,007,199,254,740,993");
   api.handlers.set("POST /opening-balance",async route=>{
     expect(route.request().postDataJSON()).toEqual({branchId:"b1",fiscalYear:1405,legs:[{leg:"cash",amount:"90071992547409930"},{leg:"payable",amount:"90071992547409930"}]});
     await route.fulfill({json:{entryId}});
@@ -107,7 +107,7 @@ test("opening definitive rejection preserves amounts and removes only the submis
   api.handlers.set("POST /opening-balance",async route=>{await route.fulfill({status:409,json:{error:{code:"rejected",message:"سال مالی بسته است"}}});});
   await review(page).click();await confirm(page).click();
   await expect(page.getByText("سال مالی بسته است",{exact:true})).toBeVisible();
-  await expect(page.getByLabel("موجودی صندوق (تومان)",{exact:true})).toHaveValue("1200");await expect(review(page)).toBeEnabled();
+  await expect(page.getByLabel("موجودی صندوق (تومان)",{exact:true})).toHaveValue("1,200");await expect(review(page)).toBeEnabled();
   expect(await page.evaluate(()=>sessionStorage.getItem("labelmod.opening.b1.1405"))).toBeNull();
 });
 
@@ -117,5 +117,5 @@ test("opening draft navigation requires discard confirmation",async({page,api})=
   const select=page.getByRole("combobox",{name:"بخش تنظیمات"});
   if(await select.isVisible()) await select.selectOption("accounts");
   else await page.getByRole("tab",{name:"کدینگ حساب",exact:true}).click();
-  await expect(page.getByLabel("موجودی صندوق (تومان)",{exact:true})).toHaveValue("1200");
+  await expect(page.getByLabel("موجودی صندوق (تومان)",{exact:true})).toHaveValue("1,200");
 });

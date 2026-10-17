@@ -51,6 +51,14 @@ const UiKit = UI_KIT_ENABLED ? lazy(() => import("./screens/dev/UiKit.tsx").then
 
 export function App() {
   const tabsId = useTabsId();
+  const [navCollapsed, setNavCollapsed] = useState(() => {
+    try { return localStorage.getItem("labelmod.nav-collapsed") === "1"; } catch { return false; }
+  });
+  const toggleNav = () => setNavCollapsed(previous => {
+    const next = !previous;
+    try { localStorage.setItem("labelmod.nav-collapsed", next ? "1" : "0"); } catch { /* session still usable */ }
+    return next;
+  });
   const [zone, setZone] = useUrlTab("page", ZONES, "dashboard");
   const pathname = usePathname();
   const [more, setMore] = useState(false);
@@ -262,12 +270,12 @@ export function App() {
       <GlassFilters />
       <Backdrop variant="workspace" />
 
-      <div className={`app workspace${more ? " workspace--more" : ""}${keyboard ? " workspace--keyboard" : ""}`}>
+      <div className={`app workspace${navCollapsed ? " workspace--collapsed" : ""}${more ? " workspace--more" : ""}${keyboard ? " workspace--keyboard" : ""}`}>
         <a className="skip-content" href="#workspace-content">رفتن به محتوا</a>
         {sessionError && <p className="solid pos-alert" role="alert">{sessionError}</p>}
         <ShellHeader searchKey={`${me?.id}:${me?.elevated}`} tools={me ? <HeaderTools me={me} theme={theme} onTheme={cycleTheme} onLock={() => void lockScreen()} onLogout={() => void signOut()} onPassword={() => setPasswordOpen(true)} onReauth={() => setUpgrading(true)} /> : null} />
 
-        <ShellNav id={tabsId} items={navItems} pending={pendingItems} access={access.state} onRetry={access.retry} zone={zone} onZone={switchZone} compact={compact} more={more} onMore={setMore} />
+        <ShellNav collapsed={navCollapsed} onToggle={toggleNav} id={tabsId} items={navItems} pending={pendingItems} access={access.state} onRetry={access.retry} zone={zone} onZone={switchZone} compact={compact} more={more} onMore={setMore} />
         <main id="workspace-content" tabIndex={-1}>
         {uiKit && UiKit ? <SectionBoundary key="ui-kit"><Suspense fallback={<p className="solid pad" role="status">در حال بارگذاری UI Kit…</p>}><UiKit /></Suspense></SectionBoundary> : null}
         <SectionBoundary key={`${me?.id}:${zone}`}>

@@ -1,3 +1,4 @@
+import { AmountInput } from "../components/ui/AmountInput.tsx";
 /**
  * مرجوعی/تعویض با جست‌وجوی دقیق، انتخاب جزئی، تأیید دوم و بازیابی پایدار.
  * اثر مالی از endpoint اتمیک می‌آید؛ نتیجه نامعلوم فقط بررسی می‌شود.
@@ -349,7 +350,7 @@ export function Returns() {
                 مبلغ بازپرداخت (تومان) — خالی یعنی پیشنهاد سرور:{" "}
                 <span className="num">{toman(suggestion)}</span>
               </span>
-              <input
+              <AmountInput
                 type="text"
                 inputMode="numeric"
                 value={refund}

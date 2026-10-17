@@ -1,3 +1,4 @@
+import { AmountInput } from "../components/ui/AmountInput.tsx";
 import { useUrlState, useUrlFlag } from "../lib/use-url-state.ts";
 /**
  * کالا و قیمت — تعریف مدل، ساخت تنوع‌ها، و تغییر قیمت.
@@ -806,7 +807,7 @@ function PricePanel({
               type="text" و نه number — صفحه‌کلید فارسی «۴۸» می‌فرستد و
               ورودی عددی مرورگر آن را دور می‌اندازد.
             */}
-            <input
+            <AmountInput
               type="text"
               inputMode="numeric"
               value={raw}

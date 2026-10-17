@@ -119,6 +119,11 @@ export function Dashboard({ access }: { access: NavAccess }) {
   useLayoutEffect(() => {
     const controller = new AbortController();
     const { signal } = controller;
+    // A document reload does not unmount React. Stop this request chain before
+    // a late response starts the next fetch in the departing document (WebKit).
+    // A persisted page keeps its requests so a bfcache restore can finish loading.
+    const leaving = (event: PageTransitionEvent) => { if (!event.persisted) controller.abort(); };
+    window.addEventListener("pagehide", leaving);
     void (async () => {
       try {
         const { branches } = await pos.branches({ signal });
@@ -173,7 +178,7 @@ export function Dashboard({ access }: { access: NavAccess }) {
           : { message: "ارتباط با سرور برقرار نشد.", reference: null });
       }
     })();
-    return () => controller.abort();
+    return () => { window.removeEventListener("pagehide", leaving); controller.abort(); };
   }, []);
 
   if (error) {
