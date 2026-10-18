@@ -10,6 +10,8 @@ class LMC_Order_Reservation
     const ACTION = '_lmc_reservation_action';
     const ATTEMPTS = '_lmc_reservation_attempts';
     const ERROR = '_lmc_reservation_error';
+    /** قلم → شمارهٔ سطر Payload (۱-مبنا)، یخ‌زده با Payload؛ ACK تعداد همان ارسال را اثبات می‌کند. */
+    const ITEMS = '_lmc_reservation_items';
 
     public static function init(): void
     {
@@ -62,8 +64,9 @@ class LMC_Order_Reservation
         if ($payload['branchId'] === '' || $payload['warehouseId'] === '') {
             return new WP_Error('lmc_reservation_scope', 'برای رزرو سفارش، شعبه و انبار اتصال را انتخاب کنید.');
         }
+        $map = [];
         if ($action !== 'release') {
-            foreach ($order->get_items() as $item) {
+            foreach ($order->get_items() as $item_key => $item) {
                 if (!$item instanceof WC_Order_Item_Product) { continue; }
                 $qty = (string) $item->get_quantity();
                 $product = $item->get_product();
@@ -72,18 +75,22 @@ class LMC_Order_Reservation
                     return new WP_Error('lmc_reservation_line', 'رزرو ممکن نشد؛ SKU و تعداد اقلام سفارش را بررسی کنید.');
                 }
                 $payload['lines'][] = ['sku' => $sku, 'qty' => $qty];
+                $map[(int) (method_exists($item, 'get_id') ? $item->get_id() : $item_key)] = count($payload['lines']);
             }
             if (!$payload['lines'] || count($payload['lines']) > 200) {
                 return new WP_Error('lmc_reservation_lines', 'رزرو باید بین ۱ تا ۲۰۰ قلم داشته باشد.');
             }
         }
         $order->update_meta_data(self::PAYLOAD, $payload);
+        $order->update_meta_data(self::ITEMS, $map);
         $order->save();
         return $payload;
     }
 
     public static function send($id): void
     {
+        // دورهٔ واترمارک با خودِ درخواست یخ می‌زند؛ پاسخی که پس از «بازنشانی» برسد اثبات دورهٔ تازه نیست.
+        $epoch = LMC_Stock_Ledger::epoch();
         $order = wc_get_order((int) $id);
         if (!$order || $order->get_meta(LMC_Order_Sync::META_INVOICE) !== '') { return; }
         $action = self::action($order);
@@ -98,6 +105,7 @@ class LMC_Order_Reservation
             self::fail($order, new WP_Error('lmc_reservation_upgrade', 'Core هنوز رزرو پرداخت در محل را پشتیبانی نمی‌کند؛ ابتدا سامانه را به‌روز کنید.'));
             return;
         }
+        $sent = LMC_Stock_Ledger::sent_from($payload, $order->get_meta(self::ITEMS));
         if ($action === 'release') { unset($payload['lines']); }
         $result = LMC_Client::post('/web/order-reservations' . ($action === 'release' ? '/release' : ''), $payload);
         if (is_wp_error($result)) { self::fail($order, $result); return; }
@@ -115,6 +123,8 @@ class LMC_Order_Reservation
         $order->update_meta_data(self::STATE, $state);
         $order->delete_meta_data(self::ERROR);
         $order->save();
+        // ACK فقط با اثبات شمول (stockRev پس از رزرو)، نه با خودِ پاسخ موفق.
+        if ($state !== 'released') { LMC_Stock_Ledger::ack_order($order, $result['stock'] ?? null, (string) $payload['warehouseId'], $sent, $epoch); }
     }
 
     private static function fail(WC_Order $order, WP_Error $error): void

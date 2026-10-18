@@ -303,6 +303,8 @@ jobs:
         run: php integrations/woocommerce/test/payload-test.php
       - name: رزرو سفارش پرداخت در محل
         run: php integrations/woocommerce/test/reservation-test.php
+      - name: دفتر کسر محلی و واترمارک مشترک Push/Pull (SQLite واقعی)
+        run: php integrations/woocommerce/test/stock-ledger-test.php
       - name: تشخیص فقط‌خواندنی و کنترل ارتباط افزونه
         run: php integrations/woocommerce/test/diagnostics-test.php
 

@@ -1,0 +1,6 @@
+{"scenario": "new/reset-after-check", "before": 8, "reset_waited_for_writer": true, "L_result": {"ok": true, "applied": true, "display": 10}, "reset": {"carried": 0, "epoch": 9}, "after": 8, "expected": 8, "ok": true}
+{"scenario": "new/reset-after-check/L-killed-in-tx", "before": 8, "reset_waited_for_writer": true, "L_result": null, "reset": {"carried": 0, "epoch": 10}, "after": 8, "expected": 8, "ok": true}
+{"scenario": "eaec6ba/reset-after-check", "before": 8, "reset_waited_for_writer": true, "L_result": {"ok": false, "applied": false, "error": "نوشتن موجودی ناموفق: Deadlock found when trying to get lock; try restarting transaction"}, "reset": {"carried": 0, "epoch": 11}, "after": 8, "expected": 8, "ok": true}
+{"scenario": "eaec6ba/reset-after-check/L-killed-in-tx", "before": 8, "reset_waited_for_writer": true, "L_result": null, "reset": {"carried": 0, "epoch": 12}, "after": 8, "expected": 8, "ok": true}
+{"scenario": "no-reset-recompute/reset-after-check", "before": 8, "reset_waited_for_writer": true, "L_result": {"ok": true, "applied": true, "display": 10}, "reset": {"carried": 0, "epoch": 13}, "after": 10, "expected": 8, "ok": false}
+{"scenario": "no-reset-recompute/reset-after-check/L-killed-in-tx", "before": 8, "reset_waited_for_writer": true, "L_result": null, "reset": {"carried": 0, "epoch": 14}, "after": 8, "expected": 8, "ok": true}

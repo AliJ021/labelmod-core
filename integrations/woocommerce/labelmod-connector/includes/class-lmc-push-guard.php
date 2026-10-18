@@ -157,10 +157,11 @@ class LMC_Push_Guard
      *    این پیام باید **بعداً دوباره** بیاید، نه اینکه نخِ PHP را
      *    اشغال کند. صف Outbox خودش Backoff دارد.
      */
-    public static function acquire(string $name): bool
+    public static function acquire(string $name, int $wait = 0): bool
     {
         global $wpdb;
-        $got = $wpdb->get_var($wpdb->prepare('SELECT GET_LOCK(%s, 0)', $name));
+        // Push بی انتظار (۰) است؛ Pull و دفتر کسر چند ثانیه منتظر همان قفل می‌مانند.
+        $got = $wpdb->get_var($wpdb->prepare('SELECT GET_LOCK(%s, %d)', $name, max(0, $wait)));
         return (string) $got === '1';
     }
 
