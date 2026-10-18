@@ -50,13 +50,14 @@ export type AmountCheck = { rial: string; error: null } | { rial: null; error: s
  * مبلغ تومانیِ تایپ‌شده → ریال رشته‌ای.
  *   خالی     خطا نیست (هنوز تایپ نشده) ولی معتبر هم نیست.
  *   صفر      برای ثبت تازه رد؛ برای اصلاح مدیر مجاز (`allowZero`).
+ * `noun` فقط متن پیام صفر است؛ دفتر پاداش همین تابع را با «پاداش» صدا می‌زند.
  */
-export function checkAmount(raw: string, allowZero: boolean, exact = false): AmountCheck {
+export function checkAmount(raw: string, allowZero: boolean, exact = false, noun = "برداشت"): AmountCheck {
   if (raw.trim() === "") return { rial: null, error: null };
   const rial = exact ? rialFromExactTomanInput(raw) : rialFromTomanInput(raw);
   if (rial === null) return { rial: null, error: exact ? "مبلغ به تومان با حداکثر یک رقم اعشار است." : "فقط رقم بنویسید؛ مبلغ به تومان و بدون اعشار است." };
   if (rial > RIAL_MAX) return { rial: null, error: "مبلغ بزرگ‌تر از حد مجاز است." };
-  if (rial === 0n && !allowZero) return { rial: null, error: "مبلغ برداشت باید بیشتر از صفر باشد." };
+  if (rial === 0n && !allowZero) return { rial: null, error: `مبلغ ${noun} باید بیشتر از صفر باشد.` };
   return { rial: rial.toString(), error: null };
 }
 

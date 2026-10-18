@@ -12,11 +12,11 @@ import { SafeAction } from "../components/ui/SafeAction.tsx";
 import { Skeleton } from "../components/ui/Skeleton.tsx";
 import { useBonusOperation } from "../lib/use-withdrawal-operation.ts";
 import { api, ApiError } from "../lib/api.ts";
-import { ORIGIN_LABEL, requestPayload, type BonusDetail, type BonusItem, type BonusPage, type RequestBody } from "../lib/bonuses.ts";
+import { checkBonusAmount, ORIGIN_LABEL, requestPayload, type BonusDetail, type BonusItem, type BonusPage, type RequestBody } from "../lib/bonuses.ts";
 import { formatCount, formatJalaliMoment } from "../lib/format.ts";
 import { useLatestQuery } from "../lib/use-latest-query.ts";
 import { useNavigationGuard, useUrlState } from "../lib/use-url-state.ts";
-import { checkAmount, checkText, PAGE_SIZE, REASON_MAX, tomanDraft } from "../lib/withdrawals.ts";
+import { checkText, PAGE_SIZE, REASON_MAX, tomanDraft } from "../lib/withdrawals.ts";
 
 /**
  * پاداش‌های من — بخش شخصی «برداشت و پاداش» (مهاجرت ۰۹۸).
@@ -43,7 +43,7 @@ export function MyBonuses({ currentUserId }: { currentUserId: string }) {
   const recovery = useBonusOperation(currentUserId, "request");
   const frozen = (recovery.pending?.body ?? null) as RequestBody | null;
   const shown = frozen ?? requestPayload(amount, reason);
-  const amountCheck = checkAmount(amount, false);
+  const amountCheck = checkBonusAmount(amount);
   const reasonError = checkText(reason, "دلیل");
   useNavigationGuard(amount !== "" || reason !== "", "درخواست پاداشِ ثبت‌نشده دارید. صفحه را ترک کنید؟");
 

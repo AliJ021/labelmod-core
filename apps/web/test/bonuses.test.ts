@@ -1,9 +1,10 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import {
-  awardPayload, bonusStorageKey, decisionPayload, parseBonusOperation, persistBonusOperation, requestPayload, selectable,
+  awardPayload, bonusStorageKey, checkBonusAmount, decisionPayload, parseBonusOperation, persistBonusOperation, requestPayload, selectable,
   type BonusBody,
 } from "../src/lib/bonuses.ts";
+import { checkAmount } from "../src/lib/withdrawals.ts";
 
 const KEY = "22222222-2222-4222-8222-222222222222";
 const ID = "33333333-3333-4333-8333-333333333333";
@@ -18,6 +19,8 @@ test("درخواست و اعطا: مبلغ مثبت تومانی → ریال ر
     assert.equal(requestPayload(amount!, reason!), null, `${amount}/${reason}`);
   }
   assert.equal(awardPayload(null, "10", "x"), null, "بی ذی‌نفع فرستادنی نیست");
+  assert.deepEqual(checkBonusAmount("0"), { rial: null, error: "مبلغ پاداش باید بیشتر از صفر باشد." }, "پیام پاداش، نه برداشت");
+  assert.deepEqual(checkAmount("0", false), { rial: null, error: "مبلغ برداشت باید بیشتر از صفر باشد." }, "برداشت دست‌نخورده");
   assert.deepEqual(awardPayload({ id: ID, name: "کارمند" }, "10", "x"), { ownerId: ID, ownerName: "کارمند", amount: "100", reason: "x" });
 });
 

@@ -6,7 +6,7 @@
  * ریال رشته‌ای می‌رود (همان `checkAmount` دفتر برداشت) و بدنه و عملیات
  * ماندگار ساخته می‌شود — سرور دوباره می‌سنجد.
  */
-import { checkAmount, checkText } from "./withdrawals.ts";
+import { checkAmount, checkText, type AmountCheck } from "./withdrawals.ts";
 
 export type BonusStatus = "pending" | "approved" | "rejected" | "settled";
 export interface BonusItem {
@@ -43,9 +43,14 @@ export type DecisionBody = { decision: "approved"; note?: string } | { decision:
 export interface BonusSettlementBody { items: Array<{ id: string; amount: string; ownerName: string }>; note: string }
 export type BonusBody = RequestBody | AwardBody | DecisionBody | BonusSettlementBody;
 
+/** همان سنجش برداشت، با پیام «مبلغ پاداش» برای صفر. */
+export function checkBonusAmount(amount: string): AmountCheck {
+  return checkAmount(amount, false, false, "پاداش");
+}
+
 /** بدنهٔ درخواست، یا `null` اگر هنوز معتبر نیست. */
 export function requestPayload(amount: string, reason: string): RequestBody | null {
-  const a = checkAmount(amount, false);
+  const a = checkBonusAmount(amount);
   if (a.rial === null || reason.trim() === "" || checkText(reason, "دلیل")) return null;
   return { amount: a.rial, reason: reason.trim() };
 }
