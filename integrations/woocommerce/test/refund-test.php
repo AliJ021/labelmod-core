@@ -4,6 +4,7 @@ class WP_Error {
     public function __construct(private $code, private $message) {}
     public function get_error_code() { return $this->code; }
     public function get_error_message() { return $this->message; }
+    public function get_error_data() { return null; }
 }
 function is_wp_error($x) { return $x instanceof WP_Error; }
 function lmc_setting($key) { return $key === 'currency_unit' ? 'toman' : ''; }
@@ -39,6 +40,7 @@ class LMC_Client {
     public static function post($url,$payload) { self::$calls[]=[$url,$payload]; return self::$result; }
     public static function is_retryable($error) { return $error->get_error_code()==='temporary'; }
 }
+require __DIR__.'/../labelmod-connector/includes/class-lmc-queue.php';
 require __DIR__.'/../labelmod-connector/includes/class-lmc-order-sync.php';
 require __DIR__.'/../labelmod-connector/includes/class-lmc-refund-sync.php';
 $n=0;

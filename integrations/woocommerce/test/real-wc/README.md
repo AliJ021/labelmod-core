@@ -18,3 +18,11 @@ python3 run.py <work> <plugins> new bbae0d1 > result.jsonl
 - `run_reset_crash.py`: مرگ پردازهٔ بازنشانی پس از Commit دوره، بازنشانی دوباره پس از آن، و Pull نسل قبل که مکان‌نمایش را پس از بازنشانی
   می‌نویسد؛ `LMC_Stock_Sync::run` واقعی با Core جعلی محلی (`LMC_FAKE_FEED` در `mu-repro.php`).
 - `results/`: خروجی خام اجراها (فقط دادهٔ مصنوعی).
+- `run_queue.py` + `mu-queue.php` + `queue-actor.php`: صف بحرانی ۱٫۵٫۰ با اجراکنندهٔ واقعی WP-CLI
+  (`wp labelmod queue run`)، Core جعلی برای `POST /api/web/orders` (ok، ۵۰۳/۴۲۹ با Retry-After، hang):
+  تأخیر صف تا تلاش، دو اجراکنندهٔ هم‌زمان، تخلیهٔ انباشت، SIGKILL و بازیابی، کنترل منفی با Hook بازیابی
+  خاموش و با افزونهٔ main، و سقف شش تلاش. نتیجه در `results/2026-10-18-queue.jsonl`.
+
+  ```bash
+  python3 run_queue.py <wp-root> <plugin-new> <plugin-old> <wp-cli.phar> <lab-dir> [scenario...]
+  ```

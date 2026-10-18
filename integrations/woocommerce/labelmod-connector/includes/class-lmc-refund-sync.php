@@ -38,16 +38,18 @@ class LMC_Refund_Sync
         } else {
             // Freeze the event so later product/order edits cannot change a retry.
             $refund->update_meta_data(self::PAYLOAD, $payload);
-            self::schedule((int) $refund_id, 15);
         }
         $refund->save();
+        // صف فقط **پس از** ذخیرهٔ Payload: اجراکنندهٔ فوری Payload نداشته را
+        // «حدس‌نزدنی» می‌بیند و بی‌صدا برمی‌گردد — یعنی مرجوعی گم می‌شد.
+        if (!is_wp_error($payload)) {
+            LMC_Queue::enqueue(self::EVENT, [(int) $refund_id]);
+        }
     }
 
     private static function schedule(int $id, int $delay): void
     {
-        if (!wp_next_scheduled(self::EVENT, [$id])) {
-            wp_schedule_single_event(time() + $delay, self::EVENT, [$id]);
-        }
+        LMC_Queue::enqueue(self::EVENT, [$id], $delay);
     }
 
     public static function build_payload($order, $refund)
@@ -98,7 +100,7 @@ class LMC_Refund_Sync
             $refund->update_meta_data(self::ERROR, $result->get_error_message());
             $retryable = $result->get_error_code() === 'lmc_order_pending' || LMC_Client::is_retryable($result);
             if ($retryable && $attempt < LMC_Order_Sync::MAX_ATTEMPTS) {
-                self::schedule((int) $id, min(3600, 60 * (2 ** $attempt)));
+                self::schedule((int) $id, LMC_Queue::retry_delay($attempt + 1, $result));
             }
             $order->add_order_note('ارسال مرجوعی به لیبل مد ناموفق: ' . $result->get_error_message());
         } elseif (!empty($result['requestId']) && in_array($result['status'] ?? '', ['pending', 'rejected'], true)) {
@@ -133,7 +135,7 @@ class LMC_Refund_Sync
             if ($refund->get_meta(self::DONE) !== '' || $refund->get_meta(self::STATUS) === 'rejected' || !is_array($refund->get_meta(self::PAYLOAD))) { continue; }
             $refund->update_meta_data(self::ATTEMPTS, 0);
             $refund->save();
-            self::schedule((int) $refund->get_id(), 10);
+            self::schedule((int) $refund->get_id(), 0);
         }
     }
 }

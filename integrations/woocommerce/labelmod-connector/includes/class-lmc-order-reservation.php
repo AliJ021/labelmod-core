@@ -45,14 +45,7 @@ class LMC_Order_Reservation
         // هویت انبار و اقلام پیش از اجرای ناهم‌زمان ثابت می‌شود.
         $payload = self::snapshot($order, $action);
         if (is_wp_error($payload)) { self::fail($order, $payload); return; }
-        self::schedule($order->get_id(), 10);
-    }
-
-    private static function schedule(int $id, int $delay): void
-    {
-        if (!wp_next_scheduled(self::EVENT, [$id])) {
-            wp_schedule_single_event(time() + $delay, self::EVENT, [$id]);
-        }
+        LMC_Queue::enqueue(self::EVENT, [$order->get_id()]);
     }
 
     public static function snapshot(WC_Order $order, string $action)
@@ -133,7 +126,7 @@ class LMC_Order_Reservation
         $order->update_meta_data(self::ATTEMPTS, $attempt);
         $order->update_meta_data(self::ERROR, $error->get_error_message());
         $retry = LMC_Client::is_retryable($error) && $attempt < LMC_Order_Sync::MAX_ATTEMPTS;
-        if ($retry) { self::schedule($order->get_id(), MINUTE_IN_SECONDS * (2 ** ($attempt - 1))); }
+        if ($retry) { LMC_Queue::enqueue(self::EVENT, [$order->get_id()], LMC_Queue::retry_delay($attempt, $error)); }
         $order->add_order_note('لیبل مد — رزرو: ' . $error->get_error_message()
             . ($retry ? '؛ تلاش دوباره زمان‌بندی شد.' : '؛ متوقف شد، بررسی و ارسال دوباره لازم است.'));
         $order->save();

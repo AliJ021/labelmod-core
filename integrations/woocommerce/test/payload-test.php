@@ -285,6 +285,7 @@ define('LMC_STOCK_EVENT', 'lmc_sync_stock');
 define('LMC_INSTORE_EVENT', 'lmc_sync_instore');
 
 require_once __DIR__ . '/../labelmod-connector/includes/class-lmc-client.php';
+require_once __DIR__ . '/../labelmod-connector/includes/class-lmc-queue.php';
 // ارسال سفارش دورهٔ واترمارک را با خود درخواست یخ می‌کند (docs/STOCK-SYNC-PROTOCOL.md).
 function get_option($key, $default = false) { return $default; }
 // دورهٔ واترمارک موجودی از جدول گزینه‌ها با SQL خوانده می‌شود (نه Cache)؛ گزینه نیست = دورهٔ ۱.

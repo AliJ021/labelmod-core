@@ -19,6 +19,7 @@ class WP_Error {
     public function __construct(public $code, public $message) {}
     public function get_error_code() { return $this->code; }
     public function get_error_message() { return $this->message; }
+    public function get_error_data() { return null; }
 }
 class WC_Order_Item_Product {
     public function __construct(public $sku = 'SKU-1', public $qty = 2, public $original = 1) {}
@@ -73,6 +74,7 @@ function wc_get_product($id) { return null; }
 function get_option($k, $d = false) { return $GLOBALS['test_options'][$k] ?? $d; }
 require __DIR__ . '/../labelmod-connector/includes/class-lmc-push-guard.php';
 require __DIR__ . '/../labelmod-connector/includes/class-lmc-stock-ledger.php';
+require __DIR__ . '/../labelmod-connector/includes/class-lmc-queue.php';
 require __DIR__ . '/../labelmod-connector/includes/class-lmc-order-sync.php';
 require __DIR__ . '/../labelmod-connector/includes/class-lmc-order-reservation.php';
 require __DIR__ . '/../labelmod-connector/includes/class-lmc-refund-sync.php';
@@ -279,7 +281,8 @@ for ($attempt = 1; $attempt <= LMC_Order_Sync::MAX_ATTEMPTS; $attempt++) {
     if ($attempt < LMC_Order_Sync::MAX_ATTEMPTS) {
         $delay = 60 * (2 ** ($attempt - 1));
         $due = wp_next_scheduled(LMC_ORDER_EVENT, [50]);
-        check($due >= $start + $delay && $due <= time() + $delay, 'قطعی: فاصلهٔ نمایی تلاش بعدی');
+        // jitter برابر (LMC_Queue::retry_delay): موعد در [نیمه، کامل] فاصلهٔ نمایی همان تلاش.
+        check($due >= $start + intdiv($delay, 2) && $due <= time() + $delay, 'قطعی: فاصلهٔ نمایی تلاش بعدی');
         LMC_Order_Sync::payment_complete(50);
         check(wp_next_scheduled(LMC_ORDER_EVENT, [50]) === $due, 'رویداد پرداخت تکراری موعد تلاش را جلو نمی‌اندازد');
     }
@@ -361,7 +364,8 @@ foreach ([0, 5] as $failedBefore) {
     $calls = count(LMC_Client::$calls);
     if ($failedBefore === 0) {
         $due = wp_next_scheduled(LMC_ORDER_EVENT, [$id]);
-        check($due >= $start + 60 && $due <= time() + 60, 'concurrent callback does not shorten first retry backoff');
+        // jitter برابر: اولین تلاش در [۳۰، ۶۰] ثانیه؛ کار فوریِ صف‌شده حین HTTP (۰) هنوز رد می‌شود.
+        check($due >= $start + 30 && $due <= time() + 60, 'concurrent callback does not shorten first retry backoff');
         check($racing->get_meta(LMC_Order_Sync::META_STOPPED) === '', 'retryable failure leaves delivery open');
         unset($scheduled[LMC_ORDER_EVENT . ':' . $id]);
         LMC_Client::$result = ['invoiceId' => 'invoice-60', 'number' => 'F-60'];

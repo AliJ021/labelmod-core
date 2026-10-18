@@ -57,11 +57,12 @@ class LMC_Order_Sync
     }
 
     /**
-     * زمان‌بندی ارسال.
+     * زمان‌بندی ارسال — فوری و ماندگار (LMC_Queue، گروه labelmod-critical).
      *
-     * تأخیر ۱۰ ثانیه‌ای عمدی است: در لحظه `processing` ووکامرس هنوز
-     * ممکن است متای پرداخت را ننوشته باشد و `get_transaction_id()`
-     * تهی برگردد — شماره پیگیری‌ای که بعداً هیچ‌جا پیدا نمی‌شود.
+     * تأخیر ثابت ۱۰ ثانیه‌ای نسخه‌های قبل برای این بود که شمارهٔ پیگیری
+     * پرداخت هنوز ننشسته باشد. در ووکامرس این Hook پس از
+     * `set_transaction_id()` و `save()` صدا زده می‌شود
+     * (`WC_Order::payment_complete`)، و کار در پردازهٔ دیگری اجرا می‌شود.
      */
     public static function payment_complete($order_id): void
     {
@@ -88,9 +89,7 @@ class LMC_Order_Sync
             return;
         }
 
-        if (!wp_next_scheduled(LMC_ORDER_EVENT, [$order_id])) {
-            wp_schedule_single_event(time() + 10, LMC_ORDER_EVENT, [$order_id]);
-        }
+        LMC_Queue::enqueue(LMC_ORDER_EVENT, [$order_id]);
     }
 
     /** بازیابی پرداخت تأییدشده‌ای که هنگام اجرای صف هنوز وضعیت مجاز نداشت. */
@@ -116,12 +115,10 @@ class LMC_Order_Sync
             || (int) $order->get_meta(self::META_ATTEMPTS) > 0) {
             return;
         }
-        if (!wp_next_scheduled(LMC_ORDER_EVENT, [$order_id])) {
-            wp_schedule_single_event(time() + 10, LMC_ORDER_EVENT, [$order_id]);
-        }
+        LMC_Queue::enqueue(LMC_ORDER_EVENT, [$order_id]);
     }
 
-    /** ارسال واقعی — از دل Cron. */
+    /** ارسال واقعی — از دل صف (Action Scheduler یا WP-Cron جایگزین). */
     public static function send($order_id): void
     {
         $epoch    = LMC_Stock_Ledger::epoch();
@@ -557,8 +554,8 @@ class LMC_Order_Sync
 
         $retry = $retryable && $attempts < self::MAX_ATTEMPTS;
         if ($retry) {
-            // ۱، ۲، ۴، ۸، ۱۶ دقیقه — تا حدود نیم ساعت.
-            $delay = MINUTE_IN_SECONDS * (2 ** ($attempts - 1));
+            // ۱، ۲، ۴، ۸، ۱۶ دقیقه — هر کدام با jitter بین نیمه و کامل، و Retry-After ۴۲۹ به‌عنوان کف.
+            $delay = LMC_Queue::retry_delay($attempts, $err);
             $order->add_order_note(sprintf(
                 /* translators: 1: پیام خطا 2: شماره تلاش 3: سقف تلاش */
                 __('ارسال به لیبل مد ناموفق بود (%1$s). تلاش %2$d از %3$d — دوباره تلاش می‌شود.', 'labelmod-connector'),
@@ -579,9 +576,10 @@ class LMC_Order_Sync
         // Publish the outcome before replacing any event queued during HTTP.
         // A transient failure retains its full backoff; a terminal one leaves
         // no queued work. send() also protects already-dispatched workers.
-        wp_clear_scheduled_hook(LMC_ORDER_EVENT, [$order->get_id()]);
         if ($retry) {
-            wp_schedule_single_event(time() + $delay, LMC_ORDER_EVENT, [$order->get_id()]);
+            LMC_Queue::reschedule(LMC_ORDER_EVENT, [$order->get_id()], $delay);
+        } else {
+            LMC_Queue::cancel(LMC_ORDER_EVENT, [$order->get_id()]);
         }
         lmc_log(sprintf('سفارش %d ناموفق: %s', $order->get_id(), $err->get_error_message()));
     }
@@ -716,9 +714,7 @@ class LMC_Order_Sync
         ]);
         $order->update_meta_data(self::META_PAID, 'yes');
         $order->save();
-        if (!wp_next_scheduled(LMC_ORDER_EVENT, [$order->get_id()])) {
-            wp_schedule_single_event(time() + 10, LMC_ORDER_EVENT, [$order->get_id()]);
-        }
+        LMC_Queue::enqueue(LMC_ORDER_EVENT, [$order->get_id()]);
         return true;
     }
 
