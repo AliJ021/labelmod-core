@@ -14,6 +14,7 @@
 define('ABSPATH', __DIR__);
 define('LMC_ORDER_EVENT', 'lmc_send_order');
 define('MINUTE_IN_SECONDS', 60);
+define('ARRAY_A', 'ARRAY_A');
 
 $GLOBALS['hooks'] = [];
 function add_action($hook, $cb, $priority = 10, $args = 1) { $GLOBALS['hooks'][$hook][] = $cb; }
@@ -113,6 +114,10 @@ class FakeStore {
     public function get_claim_id($id) { return $GLOBALS['as'][$id]['claim']; }
     public function release_claim($claim) { foreach ($claim->get_actions() as $id) { $GLOBALS['as'][$id]['claim'] = 0; } }
     public function fetch_action($id) { return isset($GLOBALS['as'][$id]) ? new FakeAction($GLOBALS['as'][$id]) : null; }
+    public function query_actions($q, $ret = 'ids') {
+        $ids = array_keys(array_filter($GLOBALS['as'], fn($a) => $a['group'] === ($q['group'] ?? $a['group']) && $a['status'] === ($q['status'] ?? $a['status'])));
+        return $ret === 'count' ? count($ids) : $ids;
+    }
 }
 class FakeRunner {
     /** همان ترتیب ActionScheduler_Abstract_QueueRunner::process_action (AS 4.0.0). */
@@ -139,15 +144,25 @@ class FakeRunner {
 $GLOBALS['wpdb'] = new class {
     public $prefix = 'wp_'; public $options = 'wp_options';
     public array $rows = []; public array $locks = []; public string $me = 'p1'; public array $log = []; public int $denied = 0;
+    public string $last_error = '';
+    /** تزریق شکست: الگوهای Regex روی متن پرسش؛ نوشتنِ منطبق false و خواندنِ منطبق خطای SQL می‌گیرد. */
+    public array $fail_write = []; public array $fail_read = []; public bool $lock_error = false;
+    private function failing(array $patterns, string $q): bool {
+        foreach ($patterns as $re) { if (preg_match($re, $q)) { return true; } }
+        return false;
+    }
     public function prepare($q, ...$a) {
         $i = 0;
-        return preg_replace_callback('/%[sd]/', function ($m) use (&$i, $a) {
+        $q = preg_replace_callback('/%[sd%]/', function ($m) use (&$i, $a) {
+            if ($m[0] === '%%') { return '%'; }
             $v = $a[$i++]; return $m[0] === '%d' ? (string) (int) $v : "'" . addslashes((string) $v) . "'";
         }, $q);
+        return $q;
     }
     public function get_var($q) {
-        $this->log[] = $q;
+        $this->log[] = $q; $this->last_error = '';
         if (preg_match("/GET_LOCK\\('([^']+)', \\d+\\)/", $q, $m)) {
+            if ($this->lock_error) { $this->last_error = 'lock service gone'; return null; }
             $o = $this->locks[$m[1]] ?? null;
             if ($o === null || $o === $this->me) { $this->locks[$m[1]] = $this->me; return '1'; }
             $this->denied++;
@@ -157,24 +172,46 @@ $GLOBALS['wpdb'] = new class {
             if (($this->locks[$m[1]] ?? null) === $this->me) { unset($this->locks[$m[1]]); return '1'; }
             return '0';
         }
+        if ($this->failing($this->fail_read, $q)) { $this->last_error = 'injected read failure'; return null; }
         if (preg_match("/SELECT option_value FROM wp_options WHERE option_name = '([^']+)'/", $q, $m)) { return $this->rows[$m[1]] ?? null; }
-        if (str_contains($q, 'COUNT(*)')) { return (string) count(array_filter(array_keys($this->rows), fn($k) => str_starts_with($k, 'lmc_qd_'))); }
+        if (preg_match('/COUNT\(\*\).*lmc.{1,2}(q[a-z]).{1,2}%/', $q, $m)) {
+            return (string) count(array_filter(array_keys($this->rows), fn($k) => str_starts_with($k, 'lmc_' . $m[1] . '_')));
+        }
         return null;
     }
+    public function get_results($q, $o = null) {
+        $this->log[] = $q; $this->last_error = '';
+        if (preg_match('/lmc.{1,2}qp.{1,2}%. ORDER BY option_id LIMIT (\d+)/', $q, $m)) {
+            $out = [];
+            foreach ($this->rows as $k => $v) { if (str_starts_with($k, 'lmc_qp_')) { $out[] = ['option_name' => $k, 'option_value' => $v]; } }
+            return array_slice($out, 0, (int) $m[1]);
+        }
+        return [];
+    }
     public function query($q) {
-        $this->log[] = $q;
+        $this->log[] = $q; $this->last_error = '';
+        if ($this->failing($this->fail_write, $q)) { $this->last_error = 'injected write failure'; return false; }
         if (preg_match("/VALUES \\('([^']+)', '1', 'no'\\)\\s+ON DUPLICATE KEY UPDATE option_value = option_value \\+ 1/", $q, $m)) {
             $this->rows[$m[1]] = (string) ((int) ($this->rows[$m[1]] ?? 0) + 1); return 1;
         }
-        if (preg_match("/VALUES \\('([^']+)', '(.*)', 'no'\\)\\s+ON DUPLICATE KEY UPDATE option_value = /s", $q, $m)) {
+        if (preg_match("/VALUES \\('([^']+)', '(.*)', 'no'\\)\\s+ON DUPLICATE KEY UPDATE option_name = option_name/s", $q, $m)) {
+            if (!isset($this->rows[$m[1]])) { $this->rows[$m[1]] = stripslashes($m[2]); return 1; }
+            return 0;
+        }
+        if (preg_match("/VALUES \\('([^']+)', '(.*?)', 'no'\\)\\s+ON DUPLICATE KEY UPDATE option_value = /s", $q, $m)) {
             $this->rows[$m[1]] = stripslashes($m[2]); return 1;
         }
         if (preg_match("/DELETE FROM wp_options WHERE option_name IN \\('([^']+)', '([^']+)'\\)/", $q, $m)) {
             unset($this->rows[$m[1]], $this->rows[$m[2]]); return 1;
         }
+        if (preg_match("/DELETE FROM wp_options WHERE option_name = '([^']+)' AND option_value = '(.*)'$/s", $q, $m)) {
+            if (($this->rows[$m[1]] ?? null) === stripslashes($m[2])) { unset($this->rows[$m[1]]); return 1; }
+            return 0;
+        }
         return 1;
     }
 };
+function marker_rows() { return array_map(fn($v) => json_decode($v, true), array_filter($GLOBALS['wpdb']->rows, fn($k) => str_starts_with($k, 'lmc_qp_'), ARRAY_FILTER_USE_KEY)); }
 function crash_rows() { return array_filter($GLOBALS['wpdb']->rows, fn($k) => str_starts_with($k, 'lmc_qc_'), ARRAY_FILTER_USE_KEY); }
 function dead_rows() { return array_map(fn($v) => json_decode($v, true), array_filter($GLOBALS['wpdb']->rows, fn($k) => str_starts_with($k, 'lmc_qd_'), ARRAY_FILTER_USE_KEY)); }
 class ActionScheduler {
@@ -222,6 +259,7 @@ function check($ok, $label) { global $checks; if (!$ok) { fwrite(STDERR, "FAIL: 
 function reset_queue() {
     $GLOBALS['as'] = []; $GLOBALS['cron'] = []; $GLOBALS['options'] = []; $GLOBALS['log'] = [];
     $GLOBALS['wpdb']->rows = []; $GLOBALS['wpdb']->locks = []; $GLOBALS['wpdb']->me = 'p1'; $GLOBALS['wpdb']->log = []; $GLOBALS['wpdb']->denied = 0;
+    $GLOBALS['wpdb']->fail_write = []; $GLOBALS['wpdb']->fail_read = []; $GLOBALS['wpdb']->lock_error = false;
     $GLOBALS['as_fail'] = false; $GLOBALS['cron_fail'] = false; $GLOBALS['as_on_add'] = null;
 }
 function pending_rows($hook, $args) {
@@ -405,5 +443,137 @@ check(is_array($payload_seen) && $payload_seen['refundId'] === '101', 'مرجو�
 check(count(pending_rows(LMC_Refund_Sync::EVENT, [101])) === 1, 'مرجوعی: یک کار فوری');
 
 // بی Action Scheduler (WP-Cron جایگزین) در payload/reservation/refund-test سنجیده می‌شود: آنجا as_* تعریف نشده است.
+
+// ── ۱۰. شکست قفل و نوشتن وضعیت (بازبینی دوم ریشه؛ کنترل منفی با تزریق شکست) ──────────────────
+function qlock($kind, $hook, $args) { return 'lmc_q' . $kind . '_' . md5('|wp_|' . md5($hook . '|' . json_encode($args))); }
+function due_now() { foreach ($GLOBALS['as'] as $aid => $a) { if ($a['status'] === 'pending') { $GLOBALS['as'][$aid]['at'] = null; } } }
+
+// ۱۰الف. قفل صف در دست پردازهٔ دیگر (مهلت تمام): نه پرسش «معلق هست؟» نه درج؛ نشان معوق، و Checkout استثنا نمی‌گیرد.
+reset_queue();
+$GLOBALS['wpdb']->locks[qlock('e', 'lmc_send_refund', [61])] = 'other-process';
+check(LMC_Queue::enqueue('lmc_send_refund', [61]) === true, 'قفل گرفته نشد: enqueue بی استثنا و ماندگار (true)');
+check(pending_rows('lmc_send_refund', [61]) === [], 'قفل گرفته نشد: هیچ سطر صفی بی قفل درج نشد');
+check($GLOBALS['wpdb']->locks[qlock('e', 'lmc_send_refund', [61])] === 'other-process', 'قفل پردازهٔ دیگر دست نخورد');
+$m = array_values(marker_rows());
+check(count($m) === 1 && $m[0]['op'] === 'e' && $m[0]['args'] === [61], 'نشان معوق «صف کن» ذخیره شد');
+check(LMC_Queue::health()['deferredTasks'] === 1, 'تشخیص: کار معوق شمرده می‌شود');
+LMC_Queue::enqueue('lmc_send_refund', [61]);
+check(count(marker_rows()) === 1, 'تکرار: همان یک نشان');
+check(LMC_Queue::drain() === 0 && pending_rows('lmc_send_refund', [61]) === [] && count(marker_rows()) === 1, 'drain تا قفل آزاد نشود کاری نمی‌کند');
+unset($GLOBALS['wpdb']->locks[qlock('e', 'lmc_send_refund', [61])]);
+check(LMC_Queue::drain() === 1, 'drain پس از آزادشدن قفل');
+check(count(pending_rows('lmc_send_refund', [61])) === 1 && marker_rows() === [], 'drain: دقیقاً یک سطر، نشان حذف شد');
+check(LMC_Queue::health()['deferredTasks'] === 0 && $GLOBALS['wpdb']->locks === [], 'پس از drain: هیچ کار معوق و هیچ قفلی');
+
+// ۱۰ب. خطای SQL در GET_LOCK (null): همان رفتار — بی قفل وارد بخش محافظت‌شده نمی‌شود؛ تا سقف عمر نشان، بعد مرده.
+reset_queue();
+$GLOBALS['wpdb']->lock_error = true;
+check(LMC_Queue::enqueue(LMC_ORDER_EVENT, [62]) === true && pending_rows(LMC_ORDER_EVENT, [62]) === [], 'خطای قفل: درج بی قفل نشد');
+check(count(marker_rows()) === 1, 'خطای قفل: نشان معوق');
+LMC_Queue::drain();
+check(count(marker_rows()) === 1 && dead_rows() === [], 'خطای قفل در drain: نشان پیش از سقف عمر می‌ماند');
+$name = array_keys(marker_rows())[0];
+$old = json_decode($GLOBALS['wpdb']->rows[$name], true); $old['at'] = time() - LMC_Queue::DEFER_MAX_AGE - 1;
+$GLOBALS['wpdb']->rows[$name] = json_encode($old);
+LMC_Queue::drain();
+$dead = array_values(dead_rows());
+check(marker_rows() === [] && count($dead) === 1 && $dead[0]['reason'] === 'queue_lock_unavailable', 'سقف عمر: نشان مرده ثبت شد (بی‌انتها نیست)');
+check(pending_rows(LMC_ORDER_EVENT, [62]) === [] && LMC_Queue::health()['deadTasks'] === 1, 'مرده دیده می‌شود و هیچ درجی بی قفل نشد');
+
+// ۱۰ج. reschedule بی قفل: سطر معلق موجود لغو یا جایگزین نمی‌شود؛ drain پس از قفل همان Backoff را می‌نشاند.
+reset_queue();
+LMC_Queue::enqueue(LMC_ORDER_EVENT, [63]);
+$GLOBALS['wpdb']->locks[qlock('e', LMC_ORDER_EVENT, [63])] = 'other-process';
+check(LMC_Queue::reschedule(LMC_ORDER_EVENT, [63], 300) === true, 'reschedule بی قفل: ماندگار (معوق)');
+$p = pending_rows(LMC_ORDER_EVENT, [63]);
+check(count($p) === 1 && $p[0]['at'] === null, 'reschedule بی قفل: سطر موجود دست نخورد');
+unset($GLOBALS['wpdb']->locks[qlock('e', LMC_ORDER_EVENT, [63])]);
+LMC_Queue::drain();
+$p = pending_rows(LMC_ORDER_EVENT, [63]);
+check(count($p) === 1 && $p[0]['at'] >= time() + 299 && marker_rows() === [], 'drain: فقط Backoff کامل ماند');
+
+// ۱۰د. بازیابی بی قفل: نه شمارش نه صف؛ drain زیر قفل همان تصمیم را می‌گیرد.
+reset_queue();
+$GLOBALS['hooks']['lmc_send_refund'] = [function () { throw new RuntimeException('x'); }];
+$aid = as_enqueue_async_action('lmc_send_refund', [64], LMC_Queue::GROUP);
+$GLOBALS['wpdb']->locks[qlock('e', 'lmc_send_refund', [64])] = 'other-process';
+ActionScheduler::runner()->process_action($aid, 'test');
+check(crash_rows() === [] && pending_rows('lmc_send_refund', [64]) === [], 'بازیابی بی قفل: نه شمارش نه صف');
+check(array_values(marker_rows())[0]['op'] === 'c', 'بازیابی بی قفل: نشان معوق بازیابی');
+unset($GLOBALS['wpdb']->locks[qlock('e', 'lmc_send_refund', [64])]);
+LMC_Queue::drain();
+check(array_values(crash_rows()) === ['1'] && count(pending_rows('lmc_send_refund', [64])) === 1 && marker_rows() === [], 'drain: یک شکست شمرده و دوباره صف شد');
+
+// ۱۰ه. قفل اجرا با خطای SQL: Handler بی سریال‌سازی اجرا نمی‌شود (BUSY، بی شمردن).
+reset_queue();
+$ran = 0;
+$GLOBALS['hooks']['lmc_send_refund'] = [function () use (&$ran) { $ran++; }];
+$aid = as_enqueue_async_action('lmc_send_refund', [65], LMC_Queue::GROUP);
+$GLOBALS['wpdb']->lock_error = true;
+ActionScheduler::runner()->process_action($aid, 'test');
+check($ran === 0 && $GLOBALS['as'][$aid]['status'] === 'failed' && crash_rows() === [], 'قفل اجرا null: Handler اجرا نشد و شمرده نشد');
+check(array_values(marker_rows())[0]['why'] === 'busy', 'BUSY بی قفل صف هم معوق ماند');
+
+// ۱۰و. همان تزریق ریشه: نوشتن شمارندهٔ شکست (lmc_qc_) همیشه ناموفق. پیش از اصلاح: شش اجرا با سقف سه، deadTasks=0.
+reset_queue();
+$runs = 0;
+$GLOBALS['hooks']['lmc_send_refund'] = [function () use (&$runs) { $runs++; throw new RuntimeException('x'); }];
+$GLOBALS['wpdb']->fail_write = ['/lmc_qc_/'];
+LMC_Queue::enqueue('lmc_send_refund', [66]);
+for ($i = 0; $i < 8; $i++) { due_now(); LMC_Queue::run(10, 'test'); }
+$dead = array_values(dead_rows());
+check($runs === 1, 'شمارنده ذخیره نشد: هیچ تلاش شمرده‌نشده‌ای صف نشد (یک اجرا، نه شش)');
+check(count($dead) === 1 && $dead[0]['reason'] === 'counter_write_failed', 'توقف دیده‌شده: counter_write_failed');
+check(pending_rows('lmc_send_refund', [66]) === [] && LMC_Queue::health()['deadTasks'] === 1, 'بی سطر معلق؛ تشخیص صفر نمی‌گوید');
+
+// ۱۰ز. خواندن شمارنده خطا می‌دهد (ردیف «نیست» شمرده نمی‌شود).
+reset_queue();
+$runs = 0;
+$GLOBALS['wpdb']->fail_read = ["/option_name = 'lmc_qc_/"];
+LMC_Queue::enqueue('lmc_send_refund', [67]);
+for ($i = 0; $i < 8; $i++) { due_now(); LMC_Queue::run(10, 'test'); }
+check($runs === 1 && array_values(dead_rows())[0]['reason'] === 'counter_write_failed', 'خطای خواندن شمارنده: یک اجرا و توقف دیده‌شده');
+
+// ۱۰ز۲. خطای خواندن ثبت مرده «زنده» شمرده نمی‌شود: کار مردهٔ بی‌شمارنده (counter_write_failed) دوباره صف نمی‌شود.
+reset_queue(); // Handler همان ۱۰و: همیشه استثنا (و $runs می‌شمارد)
+$GLOBALS['wpdb']->rows['lmc_qd_' . md5('lmc_send_refund|[71]')] = json_encode(['hook' => 'lmc_send_refund', 'args' => [71], 'reason' => 'counter_write_failed']);
+$GLOBALS['wpdb']->fail_read = ["/option_name = 'lmc_qd_/"];
+$aid = as_enqueue_async_action('lmc_send_refund', [71], LMC_Queue::GROUP);
+ActionScheduler::runner()->process_action($aid, 'test');
+check(pending_rows('lmc_send_refund', [71]) === [] && crash_rows() === [], 'خطای خواندن ثبت مرده: نه شمارش نه صف');
+check(array_values(marker_rows())[0]['op'] === 'c', 'خطای خواندن ثبت مرده: تصمیم معوق ماند');
+
+// ۱۰ح. شمارنده و ثبت مرده هر دو ناموفق: نشان معوق؛ تشخیص سالم و خالی نمی‌گوید.
+reset_queue();
+$runs = 0;
+$GLOBALS['wpdb']->fail_write = ['/lmc_qc_/', '/lmc_qd_/'];
+LMC_Queue::enqueue('lmc_send_refund', [68]);
+for ($i = 0; $i < 8; $i++) { due_now(); LMC_Queue::run(10, 'test'); }
+$h = LMC_Queue::health();
+check($runs === 1 && pending_rows('lmc_send_refund', [68]) === [], 'هیچ تکرار شمرده‌نشده‌ای');
+check($h['deadTasks'] === 0 && $h['deferredTasks'] === 1 && $h['failedActions'] === 1, 'تشخیص: معوق ۱ و سطر failed ۱، نه «صف سالم»');
+check((bool) preg_grep('/⛔ ثبت مرده/u', $GLOBALS['log']), 'شکست ثبت مرده در لاگ');
+$GLOBALS['wpdb']->fail_write = [];
+LMC_Queue::drain();
+check(array_values(crash_rows()) === ['1'] && count(pending_rows('lmc_send_refund', [68])) === 1 && marker_rows() === [],
+    'پس از بهبود پایگاه، drain همان شکست را یک بار شمرد و با Backoff دوباره صف کرد');
+
+// ۱۰ط. همهٔ نوشتن‌ها ناموفق: چیزی بی‌صدا «سالم» نمی‌شود — سطر failed و لاگ خطا.
+reset_queue();
+$runs = 0;
+$GLOBALS['wpdb']->fail_write = ['/lmc_q[cdp]_/'];
+LMC_Queue::enqueue('lmc_send_refund', [69]);
+for ($i = 0; $i < 4; $i++) { due_now(); LMC_Queue::run(10, 'test'); }
+$h = LMC_Queue::health();
+check($runs === 1 && $h['failedActions'] === 1 && $h['deadTasks'] === 0 && $h['deferredTasks'] === 0, 'همه ناموفق: یک اجرا و failedActions=۱');
+check((bool) preg_grep('/⛔ تغییر صف lmc_send_refund انجام نشد و نشان معوقش هم ذخیره نشد/u', $GLOBALS['log']), 'همه ناموفق: لاگ خطای صریح');
+
+// ۱۰ی. «ارسال دوباره» که نتواند ثبت مرده را پاک کند false می‌دهد (فراخوان یادداشت سفارش می‌گذارد).
+reset_queue();
+$GLOBALS['wpdb']->rows['lmc_qd_' . md5('lmc_send_refund|[70]')] = '{}';
+$GLOBALS['wpdb']->fail_write = ['/DELETE FROM wp_options WHERE option_name IN/'];
+check(LMC_Queue::forget('lmc_send_refund', [70]) === false && count(dead_rows()) === 1, 'forget ناموفق false می‌دهد');
+$GLOBALS['wpdb']->fail_write = [];
+check(LMC_Queue::forget('lmc_send_refund', [70]) === true && dead_rows() === [], 'forget موفق');
 
 echo "OK: $checks queue assertions\n";

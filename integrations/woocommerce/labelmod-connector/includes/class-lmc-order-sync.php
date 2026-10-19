@@ -692,7 +692,10 @@ class LMC_Order_Sync
         $order->delete_meta_data(self::META_STOPPED);
         $order->delete_meta_data(self::META_INVOICE);
         $order->save();
-        LMC_Queue::forget(LMC_ORDER_EVENT, [$order->get_id()]);
+        if (!LMC_Queue::forget(LMC_ORDER_EVENT, [$order->get_id()])) {
+            $order->add_order_note('لیبل مد: پاک‌کردن ثبت شکست صف ناموفق بود؛ اگر ارسال دوباره متوقف شد، «ارسال دوباره» را تکرار کنید.');
+            $order->save();
+        }
         self::send($order->get_id());
     }
 

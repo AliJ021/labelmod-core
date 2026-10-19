@@ -293,7 +293,9 @@ $GLOBALS['wpdb'] = new class {
     public string $options = 'wp_options';
     public string $last_error = '';
     public function prepare($q, ...$a) { return $q; }
-    public function get_var($q) { return null; }
+    // قفل نام‌دار صف بحرانی گرفته می‌شود (رفتار قفل و شکستش در queue-test.php)؛ بقیه «ردیف نیست».
+    public function get_var($q) { return str_contains($q, 'GET_LOCK') || str_contains($q, 'RELEASE_LOCK') ? '1' : null; }
+    public function query($q) { return 1; }
 };
 require_once __DIR__ . '/../labelmod-connector/includes/class-lmc-push-guard.php';
 require_once __DIR__ . '/../labelmod-connector/includes/class-lmc-stock-ledger.php';

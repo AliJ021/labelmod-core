@@ -135,7 +135,9 @@ class LMC_Refund_Sync
             if ($refund->get_meta(self::DONE) !== '' || $refund->get_meta(self::STATUS) === 'rejected' || !is_array($refund->get_meta(self::PAYLOAD))) { continue; }
             $refund->update_meta_data(self::ATTEMPTS, 0);
             $refund->save();
-            LMC_Queue::forget(self::EVENT, [(int) $refund->get_id()]);
+            if (!LMC_Queue::forget(self::EVENT, [(int) $refund->get_id()])) {
+                $order->add_order_note('لیبل مد: پاک‌کردن ثبت شکست صف ناموفق بود؛ اگر ارسال دوباره متوقف شد، «ارسال دوباره» را تکرار کنید.');
+            }
             self::schedule((int) $refund->get_id(), 0);
         }
     }

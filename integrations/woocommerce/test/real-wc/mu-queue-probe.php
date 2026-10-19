@@ -8,7 +8,25 @@
  *   enqueue_insert درج سطر Action Scheduler پس از پرسش «کار معلق هست؟» (پنجرهٔ TOCTOU)
  *   crash_write    نوشتن شمارندهٔ شکست (آرایهٔ مشترک قدیمی یا ردیف هر کار)
  *   dead_write     نوشتن ثبت مرده (آرایهٔ مشترک قدیمی یا ردیف هر کار)
+ *
+ * تزریق شکست (بازبینی دوم ریشه): LMC_QFAIL یک Regex روی نام ردیف است؛ هر INSERT/UPDATE/DELETE
+ * منطبق در **پایگاه دادهٔ واقعی** به پرسشی خراب بدل می‌شود (خطای SQL واقعی و `false` واقعی wpdb).
  */
+$qfail = getenv('LMC_QFAIL');
+if ($qfail) {
+    add_filter('query', static function ($q) use ($qfail) {
+        if (is_string($q) && preg_match('/^\s*(INSERT|UPDATE|DELETE)/i', $q) && preg_match($qfail, $q)) {
+            return 'SELECT * FROM lmc_injected_failure_no_such_table';
+        }
+        return $q;
+    }, 1);
+}
+// LMC_QLOCKFAIL: هر GET_LOCK صف خطای SQL واقعی می‌گیرد (`null` در wpdb).
+if (getenv('LMC_QLOCKFAIL')) {
+    add_filter('query', static function ($q) {
+        return is_string($q) && preg_match("/GET_LOCK\\('lmc_q/", $q) ? 'SELECT GET_LOCK_INJECTED_FAILURE()' : $q;
+    }, 1);
+}
 $role = getenv('LMC_QROLE');
 if (!$role) { return; }
 function lmc_qprobe_barrier(string $stage, string $query = ''): void

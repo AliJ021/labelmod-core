@@ -134,6 +134,17 @@ class LMC_Diagnostics
         } elseif ($r['queue']['deadTasks'] > 0) {
             echo '<p role="alert">' . esc_html(sprintf('%d کار بحرانی پس از سه شکست غیرمنتظره متوقف شده است (توقف کسب‌وکاری سفارش جداست)؛ سفارش‌ها و Scheduled Actions را بررسی کنید.', $r['queue']['deadTasks'])) . '</p>';
         }
+        $deferred = $r['queue']['deferredTasks'] ?? null;
+        if ($deferred === null) {
+            echo '<p>شمار کارهای معوق صف (منتظر قفل) خوانده نشد.</p>';
+        } elseif ($deferred > 0) {
+            echo '<p>' . esc_html(sprintf('%d تغییر صف منتظر قفل پایگاه داده است و در دور بعدی اجراکننده انجام می‌شود.', $deferred)) . '</p>';
+        }
+        $failed = $r['queue']['failedActions'] ?? null;
+        if (is_int($failed) && $failed > 0) {
+            // هر سطر failed، از جمله آن‌هایی که دوباره صف شده‌اند؛ شمار کار منطقی نیست.
+            echo '<p>' . esc_html(sprintf('%d سطر ناموفق گروه بحرانی در Scheduled Actions نگه داشته شده است (شامل تلاش‌هایی که دوباره صف شده‌اند).', $failed)) . '</p>';
+        }
         if ($r['order'] !== null) {
             $o = $r['order'];
             echo '<p>' . esc_html(!$o['found'] ? 'سفارش یافت نشد.' : ($o['recorded'] ? 'شناسهٔ فاکتور Core روی سفارش ثبت شده است.'

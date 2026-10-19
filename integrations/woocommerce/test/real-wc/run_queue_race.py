@@ -8,6 +8,12 @@
   crash_lost       بازیابی هم‌زمان دو کار متفاوت، چهار دور؛ آیا شمارندهٔ کار اول گم می‌شود و سقف را دور می‌زند؟
   dead_lost        سومین شکست هم‌زمان دو کار متفاوت؛ آیا هر دو ثبت مرده می‌مانند؟
   exec_overlap     دو سطر AS برای یک سفارش و دو اجراکننده؛ تلاش اول کند و ۵۰۳، دوم موفق.
+بازبینی دوم ریشه — تزریق شکست روی پایگاه دادهٔ واقعی (ادعای هم‌زمانی تازه نیست):
+  lock_timeout     پردازهٔ دیگری قفل صف همان کار را دارد؛ enqueue نباید درج کند، نشان معوق، drain پس از آزادی.
+  lock_sql_error   GET_LOCK خطای SQL؛ نشان معوق، تا سقف عمر می‌ماند و بعد مرده ثبت می‌شود.
+  counter_fail     نوشتن lmc_qc_ ناموفق؛ هیچ تلاش شمرده‌نشده‌ای صف نمی‌شود، مرده counter_write_failed.
+  counter_dead_fail نوشتن lmc_qc_ و lmc_qd_ ناموفق؛ نشان معوق، و پس از بهبود drain تصمیم را می‌گیرد.
+  all_state_fail   همهٔ نوشتن‌های وضعیت ناموفق؛ تشخیص failedActions صفر نیست.
 """
 import json, os, signal, subprocess, sys, time
 
@@ -30,8 +36,9 @@ def env(role=None, pause=None):
     return e
 
 
-def actor(*args, e=None):
-    out = subprocess.run(['php', ACTOR, WP, *map(str, args)], capture_output=True, text=True, env=e or env(), timeout=120)
+def actor(*args, e=None, extra=None):
+    e = dict(e or env(), **(extra or {}))
+    out = subprocess.run(['php', ACTOR, WP, *map(str, args)], capture_output=True, text=True, env=e, timeout=120)
     if out.returncode != 0:
         raise RuntimeError(out.stderr[-2000:])
     return [json.loads(l) for l in out.stdout.splitlines() if l.startswith('{')]
@@ -160,7 +167,8 @@ def exec_overlap():
     oid = actor('orders', 1, 0)[0]['id']               # payment_complete خودش یک سطر می‌سازد
     actor('raw_enqueue', 'lmc_send_order', oid)        # سطر دوم همان کار منطقی (تکراری)
     r1, r2 = runner(), runner()
-    end = time.time() + 40
+    # تلاش دوم پس از Backoff تلاش اول ([۳۰، ۶۰] ثانیه با jitter) می‌آید؛ پنجره هر دو سر بازه را می‌پوشاند.
+    end = time.time() + 75
     while time.time() < end and len(core()) < 2:
         time.sleep(0.1)
     time.sleep(6)
@@ -181,7 +189,82 @@ def core():
         return [json.loads(l) for l in fh if l.strip()]
 
 
-SCENARIOS = {'enqueue_race': enqueue_race, 'crash_lost': crash_lost, 'dead_lost': dead_lost, 'exec_overlap': exec_overlap}
+def health():
+    return actor('health')[0]
+
+
+def markers():
+    return actor('markers')[0]['markers']
+
+
+def lock_timeout():
+    reset()
+    holder = subprocess.Popen(['php', ACTOR, WP, 'holdlock', 'e', HOOK, '901', '9'], env=env(), stdout=subprocess.PIPE, text=True)
+    got = json.loads(holder.stdout.readline())['got']
+    t0 = time.time()
+    out = actor('enqueue', HOOK, 901)[0]
+    waited = round(time.time() - t0, 2)
+    during = dict(state=state(901)[901], markers=len(markers()), health=health())
+    during['health'].setdefault('deferredTasks', None)
+    holder.wait(timeout=30)
+    try:
+        drained = actor('drain')[0]['settled']
+    except RuntimeError:
+        drained = None  # نسخهٔ پیش از اصلاح drain ندارد (کنترل منفی)
+    after = dict(state=state(901)[901], markers=len(markers()))
+    emit(scenario='lock_timeout', holder_got=got, enqueue_returned=out['ok'], enqueue_wait_s=waited,
+         pending_while_locked=during['state']['pending'], markers_while_locked=during['markers'],
+         deferred_health=during['health']['deferredTasks'], drained=drained,
+         pending_after_drain=after['state']['pending'], markers_after_drain=after['markers'])
+
+
+def lock_sql_error():
+    reset()
+    fail = {'LMC_QLOCKFAIL': '1'}
+    out = actor('enqueue', HOOK, 902, extra=fail)[0]
+    first = dict(pending=state(902)[902]['pending'], markers=len(markers()))
+    actor('drain', extra=fail)
+    second = dict(pending=state(902)[902]['pending'], markers=len(markers()), dead=state(902)[902]['dead'])
+    actor('age_markers')
+    actor('drain', extra=fail)
+    s = state(902)[902]
+    emit(scenario='lock_sql_error', enqueue_returned=out['ok'], pending_after_enqueue=first['pending'], markers_after_enqueue=first['markers'],
+         after_young_drain=second, after_aged_drain=dict(pending=s['pending'], dead=s['dead'], reason=s['deadReason'], markers=len(markers())),
+         health=health())
+
+
+def counter_fail():
+    reset()
+    aid = actor('mkfailed', HOOK, 903)[0]['id']
+    actor('recover', aid, extra={'LMC_QFAIL': '/lmc_qc_/'})
+    s = state(903)[903]
+    emit(scenario='counter_fail', crashes=s['crashes'], pending=s['pending'], dead=s['dead'], reason=s['deadReason'],
+         markers=len(markers()), health=health())
+
+
+def counter_dead_fail():
+    reset()
+    aid = actor('mkfailed', HOOK, 904)[0]['id']
+    actor('recover', aid, extra={'LMC_QFAIL': '/lmc_q[cd]_/'})
+    s = state(904)[904]
+    during = dict(crashes=s['crashes'], pending=s['pending'], dead=s['dead'], markers=len(markers()), health=health())
+    actor('drain')
+    s = state(904)[904]
+    emit(scenario='counter_dead_fail', during=during,
+         after_db_recovers=dict(crashes=s['crashes'], pending=s['pending'], dead=s['dead'], markers=len(markers())))
+
+
+def all_state_fail():
+    reset()
+    aid = actor('mkfailed', HOOK, 905)[0]['id']
+    actor('recover', aid, extra={'LMC_QFAIL': '/lmc_q[cdp]_/'})
+    s = state(905)[905]
+    emit(scenario='all_state_fail', crashes=s['crashes'], pending=s['pending'], dead=s['dead'], markers=len(markers()), health=health())
+
+
+SCENARIOS = {'lock_timeout': lock_timeout, 'lock_sql_error': lock_sql_error, 'counter_fail': counter_fail,
+             'counter_dead_fail': counter_dead_fail, 'all_state_fail': all_state_fail,
+             'enqueue_race': enqueue_race, 'crash_lost': crash_lost, 'dead_lost': dead_lost, 'exec_overlap': exec_overlap}
 link()
 for name in (sys.argv[6:] or SCENARIOS):
     SCENARIOS[name]()

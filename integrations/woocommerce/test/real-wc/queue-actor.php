@@ -96,8 +96,33 @@ switch ($cmd) {
             out(['arg' => (int) $a,
                 'crashes' => $row !== null ? (int) $row : (int) (((array) $legacyCrash)[$key] ?? 0),
                 'dead' => $dead !== null || $legacyIsDead,
+                'deadReason' => $dead !== null ? (json_decode($dead, true)['reason'] ?? null) : null,
                 'pending' => count(as_get_scheduled_actions(['hook' => $hook, 'args' => [(int) $a], 'group' => LMC_Queue::GROUP, 'status' => 'pending', 'per_page' => 10], 'ids'))]);
         }
+        break;
+    case 'drain':          // drain — همان تخلیهٔ نشان‌های معوق که اجراکننده‌ها می‌زنند
+        out(['settled' => LMC_Queue::drain()]);
+        break;
+    case 'health':
+        out(LMC_Queue::health());
+        break;
+    case 'holdlock':       // holdlock <e|x> <hook> <arg> <seconds> — پردازهٔ دیگری که قفل همان کار را نگه می‌دارد
+        global $wpdb;
+        $name = 'lmc_q' . $args[0] . '_' . md5(DB_NAME . '|' . $wpdb->prefix . '|' . md5($args[1] . '|' . wp_json_encode([(int) $args[2]])));
+        out(['name' => $name, 'got' => $wpdb->get_var($wpdb->prepare('SELECT GET_LOCK(%s, 0)', $name))]);
+        sleep((int) $args[3]);
+        break;
+    case 'markers':
+        global $wpdb;
+        out(['markers' => $wpdb->get_results("SELECT option_name, option_value FROM {$wpdb->options} WHERE option_name LIKE 'lmc\\_qp\\_%'", ARRAY_A)]);
+        break;
+    case 'age_markers':    // نشان‌ها را قدیمی‌تر از سقف عمر می‌کند (جلو بردن ساعت)
+        global $wpdb;
+        foreach ($wpdb->get_results("SELECT option_name, option_value FROM {$wpdb->options} WHERE option_name LIKE 'lmc\\_qp\\_%'", ARRAY_A) as $r) {
+            $d = json_decode($r['option_value'], true); $d['at'] = time() - LMC_Queue::DEFER_MAX_AGE - 5;
+            $wpdb->update($wpdb->options, ['option_value' => wp_json_encode($d)], ['option_name' => $r['option_name']]);
+        }
+        out(['ok' => true]);
         break;
     default:
         fwrite(STDERR, "unknown command\n"); exit(2);

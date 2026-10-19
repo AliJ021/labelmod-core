@@ -54,7 +54,7 @@ $order = new class {
     function save() { throw new Exception('تشخیص نباید سفارش را ذخیره کند'); }
 };
 $wpdb = new class {
-    public $posts = 'wp_posts'; public $postmeta = 'wp_postmeta';
+    public $posts = 'wp_posts'; public $postmeta = 'wp_postmeta'; public $options = 'wp_options';
     function prepare($query, ...$args) { return $query; }
     function get_var($query) { if (strpos($query, 'SELECT COUNT') !== 0) { throw new Exception('فقط خواندن'); } return 3; }
 };

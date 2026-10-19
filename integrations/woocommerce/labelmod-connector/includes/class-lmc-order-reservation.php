@@ -138,7 +138,10 @@ class LMC_Order_Reservation
         $order->update_meta_data(self::ATTEMPTS, 0);
         $order->delete_meta_data(self::ERROR);
         $order->save();
-        LMC_Queue::forget(self::EVENT, [$order->get_id()]);
+        if (!LMC_Queue::forget(self::EVENT, [$order->get_id()])) {
+            $order->add_order_note('لیبل مد: پاک‌کردن ثبت شکست صف ناموفق بود؛ اگر ارسال دوباره متوقف شد، «ارسال دوباره» را تکرار کنید.');
+            $order->save();
+        }
         self::changed($order->get_id());
     }
 }
