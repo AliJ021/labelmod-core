@@ -539,36 +539,32 @@ export function Pos({ actorId }: { actorId: string }) {
     } finally { scanRunning.current = false; setBusy(false); }
   }, [actorId, openDraft, ensureInvoice, shift, scanStorageError]);
 
-  // ── ستون پرداخت در قاب پنجره ─────────────────────────────────────
+  // ── ستون پرداخت ──────────────────────────────────────────────────
   //
-  // ستون چسبان باید از همان جایی که شروع می‌شود تا پایین پنجره جا شود، وگرنه
-  // «نهایی‌کردن» پیش از هر اسکرولی زیر خط دید می‌افتاد (نوار عملیات و پیام‌ها
-  // بالای ستون‌اند). سقف ارتفاع از فاصلهٔ واقعی ستون تا بالای سند حساب می‌شود و
-  // خلاصه و پایان ستون ثابت‌اند و فقط بخش روش پرداخت اسکرول می‌شود. ResizeObserver پس از چیدمان صدا
-  // زده می‌شود، پس هیچ چیدمان همگامی به بودجهٔ افزودن قلم (۱۰۰ms) اضافه نمی‌شود.
-  //
-  // ⚠️ نوشتن در همان Callback ممنوع است: سقف تازه اندازهٔ همان ظرفی را عوض می‌کند که
-  //    دیده می‌شود، و WebKit آن را «ResizeObserver loop completed with undelivered
-  //    notifications» به‌عنوان خطای صفحه پرتاب می‌کند. نوشتن به فریم بعد می‌رود و فقط
-  //    وقتی عدد واقعاً عوض شده باشد — پس دور بعد چیزی نمی‌نویسد و حلقه بسته می‌شود.
+  // ستون دیگر سقف ارتفاع و اسکرول تودرتو ندارد (بازطراحی مصوب مالک): کادر مبلغ زیر یک
+  // ناحیهٔ اسکرول کوچک پنهان می‌شد. صفحه خودش اسکرول می‌شود و فقط «نهایی‌کردن» چسبان است.
+  // ارتفاع واقعی آن پایان چسبان `--pay-finish-h` می‌شود (scroll-padding سند در workspace.css)،
+  // تا فوکوس و scrollIntoView کادر مبلغ را زیر آن نبرند. نوشتن روی ریشهٔ سند اندازهٔ خودِ
+  // پایان را عوض نمی‌کند، پس حلقهٔ ResizeObserver ساخته نمی‌شود؛ باز هم به فریم بعد می‌رود.
   useEffect(() => {
-    const root = rootRef.current;
-    if (!root || typeof ResizeObserver === "undefined") return;
+    const pos = rootRef.current;
+    if (!pos || typeof ResizeObserver === "undefined") return;
     let frame = 0;
-    const fit = () => {
+    const root = document.documentElement;
+    const observer = new ResizeObserver(() => {
       cancelAnimationFrame(frame);
       frame = requestAnimationFrame(() => {
-        const pay = root.querySelector<HTMLElement>(".pay");
-        if (!pay) return;
-        const top = pay.getBoundingClientRect().top + window.scrollY;
-        const max = `${Math.max(360, Math.round(window.innerHeight - top - 16))}px`;
-        if (pay.style.getPropertyValue("--pay-max") !== max) pay.style.setProperty("--pay-max", max);
+        // پایان ممکن است بعداً ساخته یا برداشته شود (سبد تازه، فروش تمام‌شده)؛ هر بار از نو پیدا می‌شود.
+        const finish = pos.querySelector<HTMLElement>(".pay-finish");
+        const h = finish ? `${Math.ceil(finish.getBoundingClientRect().height) + 16}px` : "";
+        if (root.style.getPropertyValue("--pay-finish-h") === h) return;
+        if (h) root.style.setProperty("--pay-finish-h", h); else root.style.removeProperty("--pay-finish-h");
       });
-    };
-    const observer = new ResizeObserver(fit);
-    observer.observe(root);
-    window.addEventListener("resize", fit);
-    return () => { cancelAnimationFrame(frame); observer.disconnect(); window.removeEventListener("resize", fit); };
+    });
+    observer.observe(pos);
+    const finish = pos.querySelector<HTMLElement>(".pay-finish");
+    if (finish) observer.observe(finish);
+    return () => { cancelAnimationFrame(frame); observer.disconnect(); root.style.removeProperty("--pay-finish-h"); };
   }, [shift, ready, branchId, warehouseId]);
 
   // ── بارکدخوان ─────────────────────────────────────────────────────
@@ -1427,15 +1423,16 @@ export function Pos({ actorId }: { actorId: string }) {
           <h2 className="cart-title">پرداخت و ثبت فاکتور</h2>
           <CheckoutSummary totals={draftActive ? totals : null} />
           </div>
-          <div className="pay-scroll">
+          <div className="pay-body">
           {invoice && received > 0n ? <PaymentBreakdown invoiceId={invoice.id} received={received} /> : null}
           <PaymentSelector layout={layout} remaining={totals.remaining} received={received} phase={payPhase}
             disabled={!hasCart || busy || customerGate} onPay={takePayment} onCheck={() => void checkPayment()}
             onRetry={retryPayment} onAbandon={() => void abandonPayment()} />
           </div>
+          {hasCart ? <label className="receipt-auto"><input type="checkbox" checked={printOnComplete} disabled={busy || !payIdle}
+            onChange={e => setPrintOnComplete(e.target.checked)} /> چاپ رسید بلافاصله پس از ثبت</label> : null}
+          {/* فقط همین پایان فشرده چسبان است (≥۹۰۰ و ارتفاع کافی)؛ scroll-padding همان ارتفاع، پس کادرِ فوکوس‌شده زیرش نمی‌رود. */}
           <div className="pay-finish">
-            {hasCart ? <label className="receipt-auto"><input type="checkbox" checked={printOnComplete} disabled={busy || !payIdle}
-              onChange={e => setPrintOnComplete(e.target.checked)} /> چاپ رسید بلافاصله پس از ثبت</label> : null}
             {hasCart ? <CreditCheckout allowed={canCredit} creditOff={policyReady && policy.creditEnabled === false} customer={linkedCustomer} remaining={totals.remaining} received={received}
               payable={totals.payable} disabled={busy || !payIdle || !policyReady || (invoice?.customerId != null && (linkedCustomer === null || customerMissing))}
               onAttachCustomer={focusCustomer} run={finalize} verify={verifyFinalize} onDone={() => undefined} /> : null}

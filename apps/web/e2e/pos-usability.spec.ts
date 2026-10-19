@@ -1,5 +1,6 @@
 import { test, expect, product, openCatalog, settings } from "./fixtures";
 import type { MockApi } from "./fixtures";
+import { expectUncovered } from "./uncovered.ts";
 const invoice = { id:"33333333-3333-4333-8333-333333333333",number:null,branchId:"b1",warehouseId:"w1",shiftId:"44444444-4444-4444-8444-444444444444",createdBy:"22222222-2222-4222-8222-222222222222",customerId:null,
   status:"draft",channel:"pos",grossAmount:"200000",discountAmount:"0",netAmount:"200000",taxAmount:"0",
   shippingAmount:"0",payableAmount:"200000",paidAmount:"0",receivedAmount:"0",recipientId:null,gift:null,
@@ -68,8 +69,8 @@ test("split payment: an ambiguous 503 locks the method until a status check by i
   // ۵۰۳ «نامعلوم» است: روش و مبلغ قفل‌اند و هیچ ارسال کوری نیست.
   await expect(page.getByRole("alert").filter({hasText:"پاسخ قطعی"})).toBeVisible();
   await expect(card).toBeDisabled();
-  // نقد زیر «روش‌های بیشتر» است (POS-08)؛ قفل یعنی ورودی آن هم بسته است.
-  await expect(page.getByRole("button",{name:/^روش‌های بیشتر/})).toBeDisabled();
+  // قفل یعنی تراشهٔ نقد هم بسته است (بازطراحی مصوب مالک: همهٔ روش‌های فعال تراشه‌اند).
+  await expect(page.getByRole("button",{name:"نقد",exact:true})).toBeDisabled();
   await expect(page.getByRole("button",{name:"دریافت وجه",exact:true})).toHaveCount(0);
   expect(attempts).toBe(1);
   await page.getByRole("button",{name:"بررسی وضعیت",exact:true}).click();
@@ -83,9 +84,10 @@ test("split payment: an ambiguous 503 locks the method until a status check by i
   const summary=page.getByRole("complementary",{name:"پرداخت",exact:true});
   await expect(summary.getByText("مانده",{exact:true})).toBeVisible();
   await expect(summary.locator(".checkout-lines--state")).toContainText("8٬000");
-  await page.getByRole("button",{name:/^روش‌های بیشتر/}).click();
+  // ردیف کارت‌خوانِ پرداخت‌شده برداشته شد؛ نقد ردیف تازه است و مانده را پیشنهاد می‌دهد.
+  await expect(page.getByRole("form",{name:"دریافت با کارت‌خوان"})).toHaveCount(0);
   await page.getByRole("button",{name:"نقد",exact:true}).click();
-  await page.getByRole("button",{name:"دریافت وجه",exact:true}).click();
+  await page.getByRole("form",{name:"دریافت با نقد"}).getByRole("button",{name:"دریافت وجه",exact:true}).click();
   await expect.poll(()=>payments).toEqual([{id:"p2",name:"کارت‌خوان",amount:"120000"},{id:"p3",name:"نقد",amount:"80000"}]);
   expect(keys[2]).not.toBe(keys[0]);
   await expect(page.getByRole("button",{name:"نهایی‌کردن فاکتور",exact:true})).toBeEnabled();
@@ -291,7 +293,6 @@ test("money grouping preserves caret, exact payment payload, and collapsed navig
     await expect(page.getByRole("button",{name:"باز کردن منوی کناری",exact:true})).toBeVisible();
     await expect(page.getByRole("tab",{name:"صندوق",exact:true})).toBeVisible();
   }
-  await page.getByRole("button",{name:/^روش‌های بیشتر/}).click();
   await page.getByRole("button",{name:"نقد",exact:true}).click();
   const amount=page.getByRole("textbox",{name:"مبلغ (تومان)",exact:true});
   await amount.fill("۵۰۰۰۰۰۰");
@@ -306,18 +307,9 @@ test("money grouping preserves caret, exact payment payload, and collapsed navig
   const cart=page.getByRole("region",{name:"سبد خرید",exact:true});
   await expect(cart.getByRole("searchbox")).toHaveCount(0);
   await expect(page.locator(".pos-customer-details")).not.toHaveAttribute("open","");
-  if((page.viewportSize()?.width ?? 0)>=900) {
-    const visible=await amount.evaluate(el=>{
-      const input=el.getBoundingClientRect(),scroll=el.closest(".pay-scroll")!.getBoundingClientRect(),footer=document.querySelector(".pay-finish")!.getBoundingClientRect();
-      return input.top>=scroll.top && input.bottom<=Math.min(scroll.bottom,footer.top);
-    });
-    expect(visible,"amount input must stay completely above fixed footer").toBe(true);
-    const receiveVisible=await page.getByRole("button",{name:"دریافت وجه",exact:true}).evaluate(el=>{
-      const button=el.getBoundingClientRect(),scroll=el.closest(".pay-scroll")!.getBoundingClientRect();
-      return button.top>=scroll.top && button.bottom<=scroll.bottom;
-    });
-    expect(receiveVisible,"receive action must fit alongside the amount without extra scrolling").toBe(true);
-  }
+  // دیدنی و بی‌پوشش از دید کاربر (جایگزین آزمون هندسهٔ «.pay-scroll»؛ e2e/uncovered.ts).
+  await expectUncovered(amount,"کادر مبلغ");
+  await expectUncovered(page.getByRole("button",{name:"دریافت وجه",exact:true}),"دریافت وجه");
   await expect(page.locator(".cart")).not.toContainText("TEST");
   if(process.env.LMC_REVIEW_SCREENSHOT) await page.screenshot({path:process.env.LMC_REVIEW_SCREENSHOT.replace(/\.png$/,`-${test.info().project.name}.png`),fullPage:true});
   await page.getByRole("button",{name:"دریافت وجه",exact:true}).click();
