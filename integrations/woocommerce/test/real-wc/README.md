@@ -26,3 +26,10 @@ python3 run.py <work> <plugins> new bbae0d1 > result.jsonl
   ```bash
   python3 run_queue.py <wp-root> <plugin-new> <plugin-old> <wp-cli.phar> <lab-dir> [scenario...]
   ```
+- `run_queue_race.py` + `mu-queue-probe.php`: رقابت‌های صف با مانع روی پرسش SQL واقعی (TOCTOU «صف کن»، گم‌شدن
+  شمارنده و ثبت مرده، اجرای هم‌زمان دو سطرِ یک سفارش)؛ با یک افزونهٔ داده‌شده اجرا می‌شود تا پیش/پس مقایسه شود.
+  نتیجه در `results/2026-10-19-queue-race.jsonl`.
+
+  ```bash
+  python3 run_queue_race.py <wp-root> <plugin-dir> <label> <wp-cli.phar> <lab-dir> [scenario...]
+  ```

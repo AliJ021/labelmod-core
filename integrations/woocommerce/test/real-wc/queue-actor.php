@@ -20,8 +20,9 @@ switch ($cmd) {
         $p->set_name('queue lab'); $p->set_sku('Q-SKU'); $p->set_regular_price('1000');
         $p->set_manage_stock(false); $p->save();
         global $wpdb;
-        $wpdb->query("DELETE a, l FROM {$wpdb->prefix}actionscheduler_actions a LEFT JOIN {$wpdb->prefix}actionscheduler_logs l ON l.action_id = a.action_id WHERE a.hook IN ('lmc_send_order','lmc_reserve_order','lmc_send_refund')");
+        $wpdb->query("DELETE a, l FROM {$wpdb->prefix}actionscheduler_actions a LEFT JOIN {$wpdb->prefix}actionscheduler_logs l ON l.action_id = a.action_id WHERE a.hook IN ('lmc_send_order','lmc_reserve_order','lmc_send_refund','lmc_lab_probe')");
         delete_option('lmc_queue_dead'); delete_option('lmc_queue_crashes');
+        $wpdb->query("DELETE FROM {$wpdb->options} WHERE option_name LIKE 'lmc\\_q_\\_%'");
         out(['product' => $p->get_id(), 'plugin' => LMC_VERSION, 'queue' => class_exists('LMC_Queue') ? LMC_Queue::health() : 'legacy-wp-cron']);
         break;
     case 'orders':
@@ -61,6 +62,42 @@ switch ($cmd) {
                 WHERE hook = 'lmc_send_order' AND args = %s AND status = 'pending'", wp_json_encode([(int) $id])));
         }
         out(['ok' => true]);
+        break;
+    case 'enqueue':        // enqueue <hook> <arg> — مسیر واقعی LMC_Queue::enqueue
+        $ok = LMC_Queue::enqueue($args[0], [(int) $args[1]]);
+        global $wpdb;
+        out(['ok' => $ok, 'insert_id' => (int) $wpdb->insert_id, 'last_error' => $wpdb->last_error]);
+        break;
+    case 'raw_enqueue':    // raw_enqueue <hook> <arg> — یک سطر AS بی نگهبان (کار تکراری)
+        out(['id' => as_enqueue_async_action($args[0], [(int) $args[1]], LMC_Queue::GROUP)]);
+        break;
+    case 'mkfailed':       // mkfailed <hook> <arg> — کار failed آماده برای بازیابی
+        $id = as_enqueue_async_action($args[0], [(int) $args[1]], LMC_Queue::GROUP);
+        ActionScheduler::store()->mark_failure($id);
+        out(['id' => $id]);
+        break;
+    case 'recover':        // recover <action-id> — همان ورودی مسیر پاک‌کنندهٔ Action Scheduler
+        LMC_Queue::on_failed((int) $args[0]);
+        out(['ok' => true]);
+        break;
+    case 'qstate':         // qstate <hook> <arg>... — شمارنده، مرده و کارهای معلق هر کار منطقی
+        global $wpdb;
+        $legacyCrash = $wpdb->get_var("SELECT option_value FROM {$wpdb->options} WHERE option_name = 'lmc_queue_crashes'");
+        $legacyDead = $wpdb->get_var("SELECT option_value FROM {$wpdb->options} WHERE option_name = 'lmc_queue_dead'");
+        $legacyCrash = $legacyCrash === null ? [] : maybe_unserialize($legacyCrash);
+        $legacyDead = $legacyDead === null ? [] : maybe_unserialize($legacyDead);
+        $hook = array_shift($args);
+        foreach ($args as $a) {
+            $key = md5($hook . '|' . wp_json_encode([(int) $a]));
+            $row = $wpdb->get_var($wpdb->prepare("SELECT option_value FROM {$wpdb->options} WHERE option_name = %s", 'lmc_qc_' . $key));
+            $dead = $wpdb->get_var($wpdb->prepare("SELECT option_value FROM {$wpdb->options} WHERE option_name = %s", 'lmc_qd_' . $key));
+            $legacyIsDead = false;
+            foreach ((array) $legacyDead as $d) { if (($d['hook'] ?? '') === $hook && ($d['args'] ?? null) === [(int) $a]) { $legacyIsDead = true; } }
+            out(['arg' => (int) $a,
+                'crashes' => $row !== null ? (int) $row : (int) (((array) $legacyCrash)[$key] ?? 0),
+                'dead' => $dead !== null || $legacyIsDead,
+                'pending' => count(as_get_scheduled_actions(['hook' => $hook, 'args' => [(int) $a], 'group' => LMC_Queue::GROUP, 'status' => 'pending', 'per_page' => 10], 'ids'))]);
+        }
         break;
     default:
         fwrite(STDERR, "unknown command\n"); exit(2);

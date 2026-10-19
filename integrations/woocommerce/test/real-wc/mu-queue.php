@@ -4,7 +4,7 @@
  *
  * Core جعلی برای `POST /api/web/orders`: هر درخواست با زمان میلی‌ثانیه در `<LMC_QUEUE_LAB>/core.jsonl`
  * ثبت می‌شود و پاسخ از `<LMC_QUEUE_LAB>/mode.json` می‌آید: برای هر externalId فهرستی به ترتیب تلاش
- * (`ok`، `503:<retry-after>`، `429:<retry-after>`، `hang`). پاسخ ok برای همان externalId همیشه همان
+ * (`ok`، `503:<retry-after>`، `429:<retry-after>`، `slow503:<ثانیه>`، `hang`). پاسخ ok برای همان externalId همیشه همان
  * فاکتور است — همان Idempotency سرور واقعی. هیچ درخواستی به شبکه نمی‌رود.
  */
 $lab = getenv('LMC_QUEUE_LAB');
@@ -34,6 +34,10 @@ add_filter('pre_http_request', static function ($pre, $args, $url) use ($lab) {
     if ($mode === 'hang') {
         touch("$lab/hang.$ext.reached");
         sleep(600);
+    }
+    if (preg_match('/^slow503:(\d+)$/', $mode, $m)) {
+        sleep((int) $m[1]);
+        $mode = '503:0';
     }
     if (preg_match('/^(503|429):(\d+)$/', $mode, $m)) {
         return ['headers' => ['retry-after' => $m[2]], 'body' => json_encode(['error' => ['code' => 'busy', 'message' => 'آزمایشگاه: مشغول']]),

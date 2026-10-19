@@ -135,6 +135,7 @@ class LMC_Refund_Sync
             if ($refund->get_meta(self::DONE) !== '' || $refund->get_meta(self::STATUS) === 'rejected' || !is_array($refund->get_meta(self::PAYLOAD))) { continue; }
             $refund->update_meta_data(self::ATTEMPTS, 0);
             $refund->save();
+            LMC_Queue::forget(self::EVENT, [(int) $refund->get_id()]);
             self::schedule((int) $refund->get_id(), 0);
         }
     }

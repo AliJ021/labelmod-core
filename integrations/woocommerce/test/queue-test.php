@@ -115,12 +115,13 @@ class FakeStore {
     public function fetch_action($id) { return isset($GLOBALS['as'][$id]) ? new FakeAction($GLOBALS['as'][$id]) : null; }
 }
 class FakeRunner {
-    /** همان ترتیب ActionScheduler_Abstract_QueueRunner::process_action. */
+    /** همان ترتیب ActionScheduler_Abstract_QueueRunner::process_action (AS 4.0.0). */
     public function process_action($id, $context = '') {
-        if ($GLOBALS['as'][$id]['status'] !== 'pending') { return; }
-        $GLOBALS['as'][$id]['status'] = 'in-progress';
-        $action = new FakeAction($GLOBALS['as'][$id]);
         try {
+            do_action('action_scheduler_before_execute', $id, $context);
+            if ($GLOBALS['as'][$id]['status'] !== 'pending') { do_action('action_scheduler_execution_ignored', $id, $context); return; }
+            $GLOBALS['as'][$id]['status'] = 'in-progress';
+            $action = new FakeAction($GLOBALS['as'][$id]);
             do_action($action->get_hook(), ...array_values($action->get_args()));
             do_action('action_scheduler_after_execute', $id, $action, $context);
             $GLOBALS['as'][$id]['status'] = 'complete';
@@ -130,6 +131,52 @@ class FakeRunner {
         }
     }
 }
+
+/**
+ * $wpdb جعلی: قفل نام‌دار با «صاحب پردازه» (`me`) و ردیف‌های `wp_options` صف. فقط همان
+ * پرسش‌هایی که LMC_Queue می‌سازد؛ رقابت واقعی میان پردازه‌ها در test/real-wc/run_queue_race.py است.
+ */
+$GLOBALS['wpdb'] = new class {
+    public $prefix = 'wp_'; public $options = 'wp_options';
+    public array $rows = []; public array $locks = []; public string $me = 'p1'; public array $log = []; public int $denied = 0;
+    public function prepare($q, ...$a) {
+        $i = 0;
+        return preg_replace_callback('/%[sd]/', function ($m) use (&$i, $a) {
+            $v = $a[$i++]; return $m[0] === '%d' ? (string) (int) $v : "'" . addslashes((string) $v) . "'";
+        }, $q);
+    }
+    public function get_var($q) {
+        $this->log[] = $q;
+        if (preg_match("/GET_LOCK\\('([^']+)', \\d+\\)/", $q, $m)) {
+            $o = $this->locks[$m[1]] ?? null;
+            if ($o === null || $o === $this->me) { $this->locks[$m[1]] = $this->me; return '1'; }
+            $this->denied++;
+            return '0';
+        }
+        if (preg_match("/RELEASE_LOCK\\('([^']+)'\\)/", $q, $m)) {
+            if (($this->locks[$m[1]] ?? null) === $this->me) { unset($this->locks[$m[1]]); return '1'; }
+            return '0';
+        }
+        if (preg_match("/SELECT option_value FROM wp_options WHERE option_name = '([^']+)'/", $q, $m)) { return $this->rows[$m[1]] ?? null; }
+        if (str_contains($q, 'COUNT(*)')) { return (string) count(array_filter(array_keys($this->rows), fn($k) => str_starts_with($k, 'lmc_qd_'))); }
+        return null;
+    }
+    public function query($q) {
+        $this->log[] = $q;
+        if (preg_match("/VALUES \\('([^']+)', '1', 'no'\\)\\s+ON DUPLICATE KEY UPDATE option_value = option_value \\+ 1/", $q, $m)) {
+            $this->rows[$m[1]] = (string) ((int) ($this->rows[$m[1]] ?? 0) + 1); return 1;
+        }
+        if (preg_match("/VALUES \\('([^']+)', '(.*)', 'no'\\)\\s+ON DUPLICATE KEY UPDATE option_value = /s", $q, $m)) {
+            $this->rows[$m[1]] = stripslashes($m[2]); return 1;
+        }
+        if (preg_match("/DELETE FROM wp_options WHERE option_name IN \\('([^']+)', '([^']+)'\\)/", $q, $m)) {
+            unset($this->rows[$m[1]], $this->rows[$m[2]]); return 1;
+        }
+        return 1;
+    }
+};
+function crash_rows() { return array_filter($GLOBALS['wpdb']->rows, fn($k) => str_starts_with($k, 'lmc_qc_'), ARRAY_FILTER_USE_KEY); }
+function dead_rows() { return array_map(fn($v) => json_decode($v, true), array_filter($GLOBALS['wpdb']->rows, fn($k) => str_starts_with($k, 'lmc_qd_'), ARRAY_FILTER_USE_KEY)); }
 class ActionScheduler {
     public static $store, $runner;
     public static function is_initialized($f = null) { return true; }
@@ -174,6 +221,7 @@ $checks = 0;
 function check($ok, $label) { global $checks; if (!$ok) { fwrite(STDERR, "FAIL: $label\n"); exit(1); } $checks++; }
 function reset_queue() {
     $GLOBALS['as'] = []; $GLOBALS['cron'] = []; $GLOBALS['options'] = []; $GLOBALS['log'] = [];
+    $GLOBALS['wpdb']->rows = []; $GLOBALS['wpdb']->locks = []; $GLOBALS['wpdb']->me = 'p1'; $GLOBALS['wpdb']->log = []; $GLOBALS['wpdb']->denied = 0;
     $GLOBALS['as_fail'] = false; $GLOBALS['cron_fail'] = false; $GLOBALS['as_on_add'] = null;
 }
 function pending_rows($hook, $args) {
@@ -259,20 +307,62 @@ for ($round = 1; $round <= LMC_Queue::MAX_CRASHES; $round++) {
     }
 }
 check($crash === LMC_Queue::MAX_CRASHES, 'دقیقاً MAX_CRASHES اجرا');
-$dead = get_option(LMC_Queue::DEAD);
-check(count($dead) === 1 && $dead[0]['hook'] === 'lmc_send_refund' && $dead[0]['args'] === [9], 'مرده ثبت شد');
-check(LMC_Queue::health()['dead'] === 1 && LMC_Queue::health()['backend'] === 'action-scheduler', 'تشخیص: مرده دیده می‌شود');
+$dead = array_values(dead_rows());
+check(count($dead) === 1 && $dead[0]['hook'] === 'lmc_send_refund' && $dead[0]['args'] === [9] && $dead[0]['crashes'] === 3, 'مرده ثبت شد');
+check(LMC_Queue::health()['deadTasks'] === 1 && LMC_Queue::health()['backend'] === 'action-scheduler', 'تشخیص: مرده دیده می‌شود');
+check(LMC_Queue::health()['deadScope'] === 'unexpected_failure_only', 'تشخیص: فقط شکست غیرمنتظره، نه توقف کسب‌وکاری');
 check(count($GLOBALS['log']) === 1, 'مرده در لاگ هم هست');
+check($GLOBALS['wpdb']->locks === [], 'هیچ قفلی پس از اجراها نمانده است');
+// کار مرده با شکست بعدی (مثلاً سطر تکراری که پیش‌تر صف شده بود) دوباره صف نمی‌شود و شمارنده صفر نمی‌شود.
+$dup = as_enqueue_async_action('lmc_send_refund', [9], LMC_Queue::GROUP);
+LMC_Queue::run(10, 'test');
+check($GLOBALS['as'][$dup]['status'] === 'failed' && pending_rows('lmc_send_refund', [9]) === [], 'مرده مرده می‌ماند: شکست بعدی صف نمی‌سازد');
+check(array_values(crash_rows()) === ['3'], 'شمارندهٔ کار مرده صفر نشد');
+LMC_Queue::forget('lmc_send_refund', [9]);
+check(crash_rows() === [] && dead_rows() === [], 'تصمیم انسانی شمارنده و ثبت مرده را پاک می‌کند');
 
 reset_queue();
 $fail_once = true;
 $GLOBALS['hooks']['lmc_send_refund'] = [function ($id) use (&$fail_once) { if ($fail_once) { $fail_once = false; throw new RuntimeException('x'); } }];
 LMC_Queue::enqueue('lmc_send_refund', [10]);
 LMC_Queue::run(10, 'test');
-check(count(get_option(LMC_Queue::CRASHES, [])) === 1, 'یک شکست شمرده شد');
+check(array_values(crash_rows()) === ['1'], 'یک شکست شمرده شد');
 foreach ($GLOBALS['as'] as $aid => $a) { if ($a['status'] === 'pending') { $GLOBALS['as'][$aid]['at'] = null; } }
 LMC_Queue::run(10, 'test');
-check(get_option(LMC_Queue::CRASHES, []) === [], 'اجرای سالم شمارنده را صفر کرد');
+check(crash_rows() === [], 'اجرای سالم شمارنده را صفر کرد');
+
+// ۶ب. شمارندهٔ هر کار جداست: شکست‌های درهم‌آمیختهٔ دو کار یکدیگر را پاک نمی‌کنند و هر کدام در سومین مرده است.
+reset_queue();
+$GLOBALS['hooks']['lmc_send_refund'] = [function () { throw new RuntimeException('x'); }];
+foreach ([[21], [22], [21], [22], [21], [22]] as $args) {
+    $aid = as_enqueue_async_action('lmc_send_refund', $args, LMC_Queue::GROUP);
+    ActionScheduler::runner()->process_action($aid, 'test');
+}
+$byArg = []; foreach (dead_rows() as $d) { $byArg[$d['args'][0]] = $d['crashes']; }
+check($byArg === [21 => 3, 22 => 3], 'دو کار درهم: هر دو دقیقاً در سومین شکست مرده');
+
+// ۶ج. قفل اجرا: سطر دوم همان کار وقتی پردازهٔ دیگری قفل را دارد اجرا نمی‌شود (BUSY)، شمرده نمی‌شود و بعداً دوباره صف است.
+reset_queue();
+$ran = 0;
+$GLOBALS['hooks']['lmc_send_refund'] = [function () use (&$ran) { $ran++; }];
+$aid = as_enqueue_async_action('lmc_send_refund', [31], LMC_Queue::GROUP);
+// پردازهٔ دیگر (p2) قفل همین کار را دارد — همان نام قفل LMC_Queue (پایگاه، پیشوند، کلید).
+$GLOBALS['wpdb']->locks['lmc_qx_' . md5('|wp_|' . md5('lmc_send_refund|[31]'))] = 'p2';
+// قفل اجرای پردازهٔ دیگر «صف کن» همان کار را منتظر نمی‌گذارد (Callback پرداخت در Checkout).
+$deniedBefore = $GLOBALS['wpdb']->denied;
+check(LMC_Queue::enqueue('lmc_send_refund', [31]) === true && count(pending_rows('lmc_send_refund', [31])) === 1
+    && $GLOBALS['wpdb']->denied === $deniedBefore, 'قفل اجرا صف‌کردن را نمی‌بندد (قفل صف جداست و منتظر نماند)');
+LMC_Queue::cancel('lmc_send_refund', [31]);
+ActionScheduler::runner()->process_action($aid, 'test');
+check($ran === 0 && $GLOBALS['as'][$aid]['status'] === 'failed', 'قفل گرفته: Handler اجرا نشد');
+$busy = pending_rows('lmc_send_refund', [31]);
+check(count($busy) === 1 && $busy[0]['at'] >= time() + 30 && crash_rows() === [], 'BUSY: بی شمردن، با تأخیر ۳۰ تا ۶۰ ثانیه دوباره صف');
+
+// ۶د. قفل «صف کن»: پرسش «معلق هست؟» و درج زیر قفل همان کار است، و قفل آزاد می‌شود.
+reset_queue();
+LMC_Queue::enqueue('lmc_send_refund', [41]);
+$log = implode("\n", $GLOBALS['wpdb']->log);
+check(preg_match('/GET_LOCK.*\\n.*RELEASE_LOCK/s', $log) === 1 && $GLOBALS['wpdb']->locks === [], 'enqueue: GET_LOCK … RELEASE_LOCK');
 
 // ۷. فقط کارهای خودِ صف: گروه یا Hook دیگر دوباره صف نمی‌شوند و run گروه دیگر را برنمی‌دارد.
 reset_queue();
@@ -292,7 +382,7 @@ $fallback = wp_next_scheduled(LMC_ORDER_EVENT, [11]);
 check($fallback !== false && $fallback <= time(), 'جایگزین هم بی تأخیر ثابت است');
 $GLOBALS['cron'] = []; $GLOBALS['cron_fail'] = true;
 check(LMC_Queue::enqueue(LMC_ORDER_EVENT, [12]) === false, 'هیچ صفی نگرفت');
-check(get_option(LMC_Queue::DEAD)[0]['reason'] === 'enqueue_failed', 'شکست صف ثبت شد');
+check(array_values(dead_rows())[0]['reason'] === 'enqueue_failed', 'شکست صف ثبت شد');
 
 // ۹. مرجوعی: کار پس از ذخیرهٔ Payload صف می‌شود (اجراکنندهٔ فوری Payload را می‌بیند).
 reset_queue();

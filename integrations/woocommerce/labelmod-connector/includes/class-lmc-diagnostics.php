@@ -129,8 +129,10 @@ class LMC_Diagnostics
         echo '<p>' . esc_html($r['queue']['backend'] === 'action-scheduler'
             ? 'صف بحرانی: Action Scheduler، گروه ' . $r['queue']['group'] . '.'
             : 'صف بحرانی: WP-Cron (Action Scheduler در دسترس نیست).') . '</p>';
-        if ($r['queue']['dead'] > 0) {
-            echo '<p role="alert">' . esc_html(sprintf('%d کار بحرانی پس از شکست‌های پیاپی متوقف شده است؛ سفارش‌ها و Scheduled Actions را بررسی کنید.', $r['queue']['dead'])) . '</p>';
+        if ($r['queue']['deadTasks'] === null) {
+            echo '<p>شمار کارهای بحرانی متوقف خوانده نشد.</p>';
+        } elseif ($r['queue']['deadTasks'] > 0) {
+            echo '<p role="alert">' . esc_html(sprintf('%d کار بحرانی پس از سه شکست غیرمنتظره متوقف شده است (توقف کسب‌وکاری سفارش جداست)؛ سفارش‌ها و Scheduled Actions را بررسی کنید.', $r['queue']['deadTasks'])) . '</p>';
         }
         if ($r['order'] !== null) {
             $o = $r['order'];

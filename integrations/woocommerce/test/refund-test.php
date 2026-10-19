@@ -40,6 +40,13 @@ class LMC_Client {
     public static function post($url,$payload) { self::$calls[]=[$url,$payload]; return self::$result; }
     public static function is_retryable($error) { return $error->get_error_code()==='temporary'; }
 }
+// صف بحرانی قفل نام‌دار و ردیف‌های شمارنده را از $wpdb می‌خواند (queue-test.php رفتارش را می‌سنجد).
+$GLOBALS['wpdb'] = new class {
+    public $prefix = 'wp_'; public $options = 'wp_options';
+    public function prepare($q, ...$a) { return $q; }
+    public function get_var($q) { return str_contains($q, 'GET_LOCK') || str_contains($q, 'RELEASE_LOCK') ? '1' : null; }
+    public function query($q) { return 1; }
+};
 require __DIR__.'/../labelmod-connector/includes/class-lmc-queue.php';
 require __DIR__.'/../labelmod-connector/includes/class-lmc-order-sync.php';
 require __DIR__.'/../labelmod-connector/includes/class-lmc-refund-sync.php';

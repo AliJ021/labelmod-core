@@ -39,6 +39,22 @@
  * می‌نشیند — دیده می‌شود (تشخیص اتصال، لاگ، صفحهٔ Scheduled Actions)،
  * نه بی‌صدا. همهٔ Handlerها تکرار را تحمل می‌کنند: Core با `externalId`
  * و شناسهٔ مرجوعی Idempotent است.
+ *
+ * ── هم‌زمانی (بازبینی ریشه روی PR183، با درهم‌آمیزی کنترل‌شده بازتولید شد) ──
+ *
+ * کلید هر «کار منطقی» = (Hook، آرگومان). سه نگهبان، هیچ‌کدام آرایهٔ مشترک نیست:
+ *   ۱. **قفل نام‌دار کوتاه** (`GET_LOCK`، پیشوند `lmc_qe_`) برای تغییر صف هر کار: «معلق هست؟» و
+ *      درج یک عمل اتمیک می‌شوند؛ پیش از آن، دو Callback هم‌زمان هر دو «نیست» می‌دیدند و دو سطر
+ *      می‌ساختند. Claim خودِ Action Scheduler فقط شناسهٔ سطر را سریال می‌کند، نه کار منطقی را.
+ *   ۲. **قفل اجرای جدا** (`lmc_qx_`) **پیش از بررسی وضعیت** هر اجرا (`action_scheduler_before_execute`):
+ *      دو سطرِ یک سفارش روی دو اجراکننده دیگر هم‌زمان HTTP نمی‌زنند، و اجرای دوم پس از اولی وضعیت
+ *      تازه را می‌خواند (سطری که اولی لغو کرده نادیده گرفته می‌شود). جداست تا Callback پرداخت در
+ *      درخواست Checkout پشت HTTP یک اجرا (تا ۲۰ ثانیه) منتظر نماند. ترتیب همیشه اجرا ← صف است، پس
+ *      چرخهٔ بن‌بست ندارد.
+ *   ۳. شمارندهٔ شکست و ثبت مرده **یک ردیف جدا برای هر کار** با افزایش اتمیک SQL است، نه
+ *      get_option/update_option روی آرایه: دو بازیابی هم‌زمانِ دو کار متفاوت شمارش یکدیگر را
+ *      پاک نمی‌کنند. کار مرده مرده می‌ماند (شمارنده صفر نمی‌شود) تا اجرای انسانی یا یک اجرای سالم.
+ * پایگاهی که GET_LOCK ندارد: همان رفتار پیشین (تکرار ممکن، با Idempotency Core)، و در لاگ.
  */
 
 if (!defined('ABSPATH')) {
@@ -50,12 +66,21 @@ class LMC_Queue
     const GROUP = 'labelmod-critical';
     /** شتاب‌دهنده: رویداد WP-Cron که فقط گروه بحرانی را می‌راند. */
     const KICK = 'lmc_queue_kick';
-    const CRASHES = 'lmc_queue_crashes';
-    const DEAD = 'lmc_queue_dead';
-    /** شکست غیرمنتظرهٔ پیاپی تا ثبت در فهرست مرده. */
+    /** ردیف هر کار در `wp_options` (autoload خاموش): شمارندهٔ شکست غیرمنتظره و ثبت مرده. */
+    const CRASH_PREFIX = 'lmc_qc_';
+    const DEAD_PREFIX = 'lmc_qd_';
+    /** شکست غیرمنتظرهٔ پیاپی تا ثبت مرده. */
     const MAX_CRASHES = 3;
-    const DEAD_KEEP = 50;
     const KICK_BATCH = 10;
+    /** انتظار اجرای دوم همان کار: بیش از Timeout درخواست Core (۲۰ ثانیه). */
+    const EXEC_LOCK_WAIT = 45;
+    const ENQUEUE_LOCK_WAIT = 5;
+    const BUSY = 'lmc_queue_busy';
+
+    /** قفل‌های گرفته‌شده در همین پردازه: نام ← عمق (بی تکیه بر بازگشتی‌بودن GET_LOCK). */
+    private static $locks = [];
+    /** شناسهٔ سطر در حال اجرا ← نام قفلش. */
+    private static $running = [];
 
     /** فقط این رویدادها مال این صف‌اند؛ هیچ کار دیگری در گروه دوباره صف نمی‌شود. */
     public static function hooks(): array
@@ -66,10 +91,16 @@ class LMC_Queue
     public static function init(): void
     {
         add_action(self::KICK, [__CLASS__, 'kick']);
+        // قفل پیش از بررسی وضعیت خودِ Action Scheduler؛ آزادسازی پس از همهٔ Hookهای پایان.
+        add_action('action_scheduler_before_execute', [__CLASS__, 'before_execute'], 0, 1);
         add_action('action_scheduler_failed_execution', [__CLASS__, 'on_failed_execution'], 10, 2);
         add_action('action_scheduler_failed_action', [__CLASS__, 'on_failed'], 10, 1);
         add_action('action_scheduler_unexpected_shutdown', [__CLASS__, 'on_failed'], 10, 1);
         add_action('action_scheduler_after_execute', [__CLASS__, 'on_executed'], 10, 2);
+        foreach (['action_scheduler_after_execute', 'action_scheduler_failed_execution', 'action_scheduler_execution_ignored',
+            'action_scheduler_canceled_corrupted_action'] as $done) {
+            add_action($done, [__CLASS__, 'after_execute'], 1000, 1);
+        }
         if (defined('WP_CLI') && WP_CLI && class_exists('WP_CLI')) {
             WP_CLI::add_command('labelmod queue', 'LMC_Queue_Command');
         }
@@ -87,10 +118,15 @@ class LMC_Queue
     /** کار تازه؛ اگر همان کار هنوز معلق است، همان می‌ماند (دو ارسال برای یک رویداد نه). */
     public static function enqueue(string $hook, array $args, int $delay = 0): bool
     {
-        if (self::pending($hook, $args)) {
-            return true;
+        $lock = self::lock($hook, $args, self::ENQUEUE_LOCK_WAIT);
+        try {
+            if (self::pending($hook, $args)) {
+                return true;
+            }
+            return self::schedule($hook, $args, $delay);
+        } finally {
+            self::unlock($lock);
         }
-        return self::schedule($hook, $args, $delay);
     }
 
     /**
@@ -99,8 +135,19 @@ class LMC_Queue
      */
     public static function reschedule(string $hook, array $args, int $delay): bool
     {
-        self::cancel($hook, $args);
-        return self::schedule($hook, $args, $delay);
+        $lock = self::lock($hook, $args, self::ENQUEUE_LOCK_WAIT);
+        try {
+            self::cancel($hook, $args);
+            return self::schedule($hook, $args, $delay);
+        } finally {
+            self::unlock($lock);
+        }
+    }
+
+    /** تصمیم انسانی («ارسال دوباره»): شمارنده و ثبت مرده پاک می‌شوند. */
+    public static function forget(string $hook, array $args): void
+    {
+        self::clear_rows(self::key($hook, $args));
     }
 
     /** هر کار **معلق** را برمی‌دارد؛ کارِ در حال اجرا (همین فراخوان) دست نمی‌خورد. */
@@ -160,7 +207,7 @@ class LMC_Queue
         $ok = wp_schedule_single_event(time() + $delay, $hook, $args);
         if ($ok === false || is_wp_error($ok)) {
             // هیچ صفی کار را نگرفت: گم نمی‌شود، دیده می‌شود.
-            self::record_dead($hook, $args, 'enqueue_failed');
+            self::record_dead($hook, $args, 'enqueue_failed', 0);
             return false;
         }
         return true;
@@ -227,6 +274,8 @@ class LMC_Queue
                     break;
                 }
                 ActionScheduler::runner()->process_action($action_id, $context);
+                // اجراکنندهٔ بلندمدت قفلی را که مسیری از AS آزاد نکرده نگه نمی‌دارد.
+                self::after_execute($action_id);
                 $done++;
             }
         } finally {
@@ -256,9 +305,36 @@ class LMC_Queue
         $cleaner->mark_failures();
     }
 
+    /**
+     * پیش از بررسی وضعیت هر سطر (`process_action`): قفل همان کار منطقی. اگر اجرای دیگری از همان
+     * کار بیش از EXEC_LOCK_WAIT طول بکشد، این سطر با BUSY شکست می‌خورد و بی شمردن دوباره صف می‌شود.
+     */
+    public static function before_execute($action_id): void
+    {
+        $action = self::owned((int) $action_id);
+        if (!$action) {
+            return;
+        }
+        $lock = self::lock((string) $action->get_hook(), (array) $action->get_args(), self::EXEC_LOCK_WAIT, 'x');
+        if ($lock === false) {
+            throw new RuntimeException(self::BUSY);
+        }
+        if (is_string($lock)) {
+            self::$running[(int) $action_id] = $lock;
+        }
+    }
+
+    public static function after_execute($action_id): void
+    {
+        $lock = self::$running[(int) $action_id] ?? null;
+        unset(self::$running[(int) $action_id]);
+        self::unlock($lock);
+    }
+
     public static function on_failed_execution($action_id, $error = null): void
     {
-        self::recover((int) $action_id, $error instanceof Throwable ? 'exception' : 'failed');
+        $busy = $error instanceof Throwable && $error->getMessage() === self::BUSY;
+        self::recover((int) $action_id, $busy ? 'busy' : ($error instanceof Throwable ? 'exception' : 'failed'));
     }
 
     public static function on_failed($action_id): void
@@ -266,79 +342,175 @@ class LMC_Queue
         self::recover((int) $action_id, 'timeout_or_shutdown');
     }
 
-    /** اجرای بی‌استثنا شمارندهٔ شکست غیرمنتظره را صفر می‌کند (نتیجهٔ کسب‌وکار جداست). */
+    /** اجرای بی‌استثنا شمارنده و ثبت مردهٔ همان کار را پاک می‌کند (نتیجهٔ کسب‌وکار جداست). */
     public static function on_executed($action_id, $action = null): void
     {
         if (!is_object($action) || !method_exists($action, 'get_group') || $action->get_group() !== self::GROUP) {
             return;
         }
-        $crashes = get_option(self::CRASHES, []);
-        $key = self::key((string) $action->get_hook(), (array) $action->get_args());
-        if (is_array($crashes) && isset($crashes[$key])) {
-            unset($crashes[$key]);
-            update_option(self::CRASHES, $crashes, false);
-        }
+        self::clear_rows(self::key((string) $action->get_hook(), (array) $action->get_args()));
     }
 
     /**
-     * شکست غیرمنتظره: Action Scheduler کار را failed می‌کند و خودش دوباره
-     * صف نمی‌کند. اینجا تا سقف دوباره صف می‌شود؛ بعد از آن مرده و دیدنی.
+     * شکست غیرمنتظره: Action Scheduler کار را failed می‌کند و خودش دوباره صف نمی‌کند.
+     * زیر قفل همان کار: افزایش اتمیک شمارنده؛ تا سقف دوباره صف، بعد ثبت مرده و لغو هر سطر
+     * معلق. کار مرده با شکست بعدی (مثلاً سطر تکراری) دوباره صف **نمی‌شود**.
      */
     private static function recover(int $action_id, string $why): void
     {
         if ($action_id <= 0 || !self::action_scheduler()) {
             return;
         }
-        $action = ActionScheduler::store()->fetch_action($action_id);
-        if (!$action || !method_exists($action, 'get_group') || $action->get_group() !== self::GROUP
-            || !in_array($action->get_hook(), self::hooks(), true)) {
+        $action = self::owned($action_id);
+        if (!$action) {
             return;
         }
         $hook = (string) $action->get_hook();
         $args = (array) $action->get_args();
         $key = self::key($hook, $args);
-        $crashes = get_option(self::CRASHES, []);
-        $crashes = is_array($crashes) ? $crashes : [];
-        $n = (int) ($crashes[$key] ?? 0) + 1;
-        if ($n >= self::MAX_CRASHES) {
-            unset($crashes[$key]);
-            update_option(self::CRASHES, $crashes, false);
-            self::record_dead($hook, $args, $why);
-            return;
-        }
-        $crashes[$key] = $n;
-        update_option(self::CRASHES, $crashes, false);
-        // پایهٔ کوتاه (۵ ثانیه با jitter): رایج‌ترین شکست غیرمنتظره روی MariaDB واقعی بن‌بست InnoDB
-        // در `log_execution` خودِ Action Scheduler بود — پیش از اجرای Handler — وقتی دو اجراکننده
-        // هم‌زمان Claim می‌کنند. با پایهٔ ۶۰ ثانیه همان سفارش ~۵۰ ثانیه عقب می‌افتاد.
-        if (!self::pending($hook, $args)) {
-            self::schedule($hook, $args, self::retry_delay($n, null, 5, 300));
+        $lock = self::lock($hook, $args, 10);
+        try {
+            if ($why === 'busy') {
+                // اجرای دیگری از همین کار هنوز در جریان است؛ شکست نیست، شمرده نمی‌شود.
+                if (!self::pending($hook, $args)) {
+                    self::schedule($hook, $args, 30 + random_int(0, 30));
+                }
+                return;
+            }
+            if (self::row(self::DEAD_PREFIX . $key) !== null) {
+                self::cancel($hook, $args);
+                return;
+            }
+            $n = self::bump(self::CRASH_PREFIX . $key);
+            if ($n >= self::MAX_CRASHES) {
+                self::record_dead($hook, $args, $why, $n);
+                self::cancel($hook, $args);
+                return;
+            }
+            // پایهٔ کوتاه (۵ ثانیه با jitter): رایج‌ترین شکست غیرمنتظره روی MariaDB واقعی بن‌بست InnoDB
+            // در `log_execution` خودِ Action Scheduler بود — پیش از اجرای Handler — وقتی دو اجراکننده
+            // هم‌زمان Claim می‌کنند. با پایهٔ ۶۰ ثانیه همان سفارش ~۵۰ ثانیه عقب می‌افتاد.
+            if (!self::pending($hook, $args)) {
+                self::schedule($hook, $args, self::retry_delay($n, null, 5, 300));
+            }
+        } finally {
+            self::unlock($lock);
         }
     }
 
-    private static function record_dead(string $hook, array $args, string $why): void
+    private static function record_dead(string $hook, array $args, string $why, int $crashes): void
     {
-        $dead = get_option(self::DEAD, []);
-        $dead = is_array($dead) ? $dead : [];
-        $dead[] = ['hook' => $hook, 'args' => array_values($args), 'reason' => $why, 'at' => gmdate('c')];
-        update_option(self::DEAD, array_slice($dead, -self::DEAD_KEEP), false);
+        global $wpdb;
+        $value = wp_json_encode(['hook' => $hook, 'args' => array_values($args), 'reason' => $why, 'crashes' => $crashes, 'at' => gmdate('c')]);
+        $wpdb->query($wpdb->prepare(
+            "INSERT INTO {$wpdb->options} (option_name, option_value, autoload) VALUES (%s, %s, 'no')
+             ON DUPLICATE KEY UPDATE option_value = %s",
+            self::DEAD_PREFIX . self::key($hook, $args), $value, $value
+        ));
         lmc_log(sprintf('کار %s متوقف شد (%s)؛ بررسی دستی و «ارسال دوباره» لازم است.', $hook, $why));
     }
 
-    /** برای تشخیص اتصال؛ هیچ داده‌ای از سفارش در آن نیست. */
+    /**
+     * برای تشخیص اتصال؛ هیچ دادهٔ سفارشی در آن نیست. `deadTasks` شمار **کل** کارهای منطقی
+     * مرده از شکست غیرمنتظره است (نه نمونه)؛ توقف کسب‌وکاری (شش تلاش ناموفق HTTP، خطای دائمی)
+     * وضعیت خودِ سفارش است و اینجا شمرده نمی‌شود.
+     */
     public static function health(): array
     {
-        $dead = get_option(self::DEAD, []);
+        global $wpdb;
+        $dead = $wpdb->get_var("SELECT COUNT(*) FROM {$wpdb->options} WHERE option_name LIKE 'lmc\\_qd\\_%'");
         return [
             'backend' => self::action_scheduler() ? 'action-scheduler' : 'wp-cron',
             'group' => self::GROUP,
-            'dead' => is_array($dead) ? count($dead) : 0,
+            'deadTasks' => $dead === null ? null : (int) $dead,
+            'deadScope' => 'unexpected_failure_only',
         ];
+    }
+
+    private static function owned(int $action_id)
+    {
+        if ($action_id <= 0 || !self::action_scheduler()) {
+            return null;
+        }
+        $action = ActionScheduler::store()->fetch_action($action_id);
+        if (!$action || !method_exists($action, 'get_group') || $action->get_group() !== self::GROUP
+            || !in_array($action->get_hook(), self::hooks(), true)) {
+            return null;
+        }
+        return $action;
+    }
+
+    /** افزایش اتمیک در یک دستور SQL؛ خواندن پس از آن زیر قفل همان کار است. */
+    private static function bump(string $name): int
+    {
+        global $wpdb;
+        $wpdb->query($wpdb->prepare(
+            "INSERT INTO {$wpdb->options} (option_name, option_value, autoload) VALUES (%s, '1', 'no')
+             ON DUPLICATE KEY UPDATE option_value = option_value + 1",
+            $name
+        ));
+        return (int) self::row($name);
+    }
+
+    private static function row(string $name): ?string
+    {
+        global $wpdb;
+        $v = $wpdb->get_var($wpdb->prepare("SELECT option_value FROM {$wpdb->options} WHERE option_name = %s", $name));
+        return $v === null ? null : (string) $v;
+    }
+
+    private static function clear_rows(string $key): void
+    {
+        global $wpdb;
+        $wpdb->query($wpdb->prepare("DELETE FROM {$wpdb->options} WHERE option_name IN (%s, %s)",
+            self::CRASH_PREFIX . $key, self::DEAD_PREFIX . $key));
+    }
+
+    /**
+     * قفل نام‌دار همان کار منطقی: `e` تغییر صف (کوتاه)، `x` اجرا. `string` = نام قفل گرفته‌شده (برای unlock)، `false` = تا
+     * مهلت گرفته نشد، `null` = پایگاه پشتیبانی نکرد (رفتار پیشین). نام شامل پایگاه و پیشوند
+     * جدول است، چون قفل نام‌دار در سطح سرور MySQL است نه پایگاه.
+     *
+     * @return string|false|null
+     */
+    private static function lock(string $hook, array $args, int $wait, string $kind = 'e')
+    {
+        global $wpdb;
+        $name = 'lmc_q' . $kind . '_' . md5((defined('DB_NAME') ? DB_NAME : '') . '|' . $wpdb->prefix . '|' . self::key($hook, $args));
+        if (isset(self::$locks[$name])) {
+            self::$locks[$name]++;
+            return $name;
+        }
+        $got = $wpdb->get_var($wpdb->prepare('SELECT GET_LOCK(%s, %d)', $name, $wait));
+        if ((string) $got === '1') {
+            self::$locks[$name] = 1;
+            return $name;
+        }
+        if ($got === null) {
+            lmc_log('قفل نام‌دار پایگاه داده در دسترس نیست؛ صف بحرانی بی سریال‌سازی کار ادامه می‌دهد.');
+            return null;
+        }
+        return false;
+    }
+
+    /** @param string|false|null $name */
+    private static function unlock($name): void
+    {
+        if (!is_string($name) || !isset(self::$locks[$name])) {
+            return;
+        }
+        if (--self::$locks[$name] > 0) {
+            return;
+        }
+        unset(self::$locks[$name]);
+        global $wpdb;
+        $wpdb->get_var($wpdb->prepare('SELECT RELEASE_LOCK(%s)', $name));
     }
 
     private static function key(string $hook, array $args): string
     {
-        return md5($hook . '|' . wp_json_encode(array_values($args)));
+        // آرگومان‌ها فقط شناسهٔ عددی‌اند؛ همان خروجی wp_json_encode.
+        return md5($hook . '|' . json_encode(array_values($args)));
     }
 }
 

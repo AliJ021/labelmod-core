@@ -138,6 +138,7 @@ class LMC_Order_Reservation
         $order->update_meta_data(self::ATTEMPTS, 0);
         $order->delete_meta_data(self::ERROR);
         $order->save();
+        LMC_Queue::forget(self::EVENT, [$order->get_id()]);
         self::changed($order->get_id());
     }
 }

@@ -692,6 +692,7 @@ class LMC_Order_Sync
         $order->delete_meta_data(self::META_STOPPED);
         $order->delete_meta_data(self::META_INVOICE);
         $order->save();
+        LMC_Queue::forget(LMC_ORDER_EVENT, [$order->get_id()]);
         self::send($order->get_id());
     }
 
