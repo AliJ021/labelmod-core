@@ -140,6 +140,11 @@ class LMC_Diagnostics
         } elseif ($deferred > 0) {
             echo '<p>' . esc_html(sprintf('%d تغییر صف منتظر قفل پایگاه داده است و در دور بعدی اجراکننده انجام می‌شود.', $deferred)) . '</p>';
         }
+        $busy = $r['queue']['busyTasks'] ?? null;
+        if (is_int($busy) && $busy > 0) {
+            // اشغال قفل اجرا خطا نیست؛ اجرای دیگری از همان کار در جریان است (بیش از ۱۵ دقیقه: مرده).
+            echo '<p>' . esc_html(sprintf('%d کار پشت اجرای در جریانِ همان کار منتظر است.', $busy)) . '</p>';
+        }
         $failed = $r['queue']['failedActions'] ?? null;
         if (is_int($failed) && $failed > 0) {
             // هر سطر failed، از جمله آن‌هایی که دوباره صف شده‌اند؛ شمار کار منطقی نیست.

@@ -22,9 +22,12 @@ if ($qfail) {
     }, 1);
 }
 // LMC_QLOCKFAIL: هر GET_LOCK صف خطای SQL واقعی می‌گیرد (`null` در wpdb).
-if (getenv('LMC_QLOCKFAIL')) {
-    add_filter('query', static function ($q) {
-        return is_string($q) && preg_match("/GET_LOCK\\('lmc_q/", $q) ? 'SELECT GET_LOCK_INJECTED_FAILURE()' : $q;
+// مقدار «1» همهٔ قفل‌های صف؛ هر مقدار دیگر یک Regex روی پرسش (مثلاً فقط قفل اجرا: `/GET_LOCK\('lmc_qx_/`).
+$qlockfail = getenv('LMC_QLOCKFAIL');
+if ($qlockfail) {
+    $re = $qlockfail === '1' ? "/GET_LOCK\\('lmc_q/" : $qlockfail;
+    add_filter('query', static function ($q) use ($re) {
+        return is_string($q) && preg_match($re, $q) ? 'SELECT GET_LOCK_INJECTED_FAILURE()' : $q;
     }, 1);
 }
 $role = getenv('LMC_QROLE');
@@ -52,7 +55,7 @@ add_filter('query', static function ($q) {
         lmc_qprobe_barrier('enqueue_insert', $q);
     }
     // نسخهٔ قدیمی: update_option آرایهٔ مشترک؛ نسخهٔ تازه: ردیف جدا برای هر کار.
-    if (preg_match("/^\s*(INSERT|UPDATE)/i", $q) && preg_match("/'(lmc_queue_crashes|lmc_qc_[0-9a-f]+)'/", $q)) {
+    if (preg_match("/^\s*(INSERT|UPDATE)/i", $q) && preg_match("/'(lmc_queue_crashes|lmc_qc_[0-9a-f]+(?:_\d+)?)'/", $q)) {
         lmc_qprobe_barrier('crash_write', $q);
     }
     if (preg_match("/^\s*(INSERT|UPDATE)/i", $q) && preg_match("/'(lmc_queue_dead|lmc_qd_[0-9a-f]+)'/", $q)) {

@@ -89,7 +89,9 @@ switch ($cmd) {
         $hook = array_shift($args);
         foreach ($args as $a) {
             $key = md5($hook . '|' . wp_json_encode([(int) $a]));
-            $row = $wpdb->get_var($wpdb->prepare("SELECT option_value FROM {$wpdb->options} WHERE option_name = %s", 'lmc_qc_' . $key));
+            // نسخهٔ تازه: یک ردیف برای هر شکست (`lmc_qc_<کلید>_<سطر>`)؛ نسخهٔ پیشین: یک ردیف شمارنده.
+            $per = (int) $wpdb->get_var($wpdb->prepare("SELECT COUNT(*) FROM {$wpdb->options} WHERE option_name LIKE %s", $wpdb->esc_like('lmc_qc_' . $key . '_') . '%'));
+            $row = $per > 0 ? (string) $per : $wpdb->get_var($wpdb->prepare("SELECT option_value FROM {$wpdb->options} WHERE option_name = %s", 'lmc_qc_' . $key));
             $dead = $wpdb->get_var($wpdb->prepare("SELECT option_value FROM {$wpdb->options} WHERE option_name = %s", 'lmc_qd_' . $key));
             $legacyIsDead = false;
             foreach ((array) $legacyDead as $d) { if (($d['hook'] ?? '') === $hook && ($d['args'] ?? null) === [(int) $a]) { $legacyIsDead = true; } }
@@ -99,6 +101,26 @@ switch ($cmd) {
                 'deadReason' => $dead !== null ? (json_decode($dead, true)['reason'] ?? null) : null,
                 'pending' => count(as_get_scheduled_actions(['hook' => $hook, 'args' => [(int) $a], 'group' => LMC_Queue::GROUP, 'status' => 'pending', 'per_page' => 10], 'ids'))]);
         }
+        break;
+    case 'reschedule':     // reschedule <hook> <arg> <delay>
+        out(['ok' => LMC_Queue::reschedule($args[0], [(int) $args[1]], (int) $args[2])]);
+        break;
+    case 'recover_exec':   // recover_exec <action-id> — همان Hook شکست اجرای Action Scheduler (استثنا)
+        LMC_Queue::on_failed_execution((int) $args[0], new RuntimeException('lab'));
+        out(['ok' => true]);
+        break;
+    case 'runonce':        // runonce <hook> — سررسید همهٔ کارهای معلق همین Hook و یک دور اجراکننده
+        global $wpdb;
+        $wpdb->query($wpdb->prepare("UPDATE {$wpdb->prefix}actionscheduler_actions SET scheduled_date_gmt = UTC_TIMESTAMP(), scheduled_date_local = NOW() WHERE hook = %s AND status = 'pending'", $args[0]));
+        out(['ran' => LMC_Queue::run(10, 'LMC lab')]);
+        break;
+    case 'pending_due':    // pending_due <hook> <arg> — ثانیه تا موعد هر کار معلق
+        global $wpdb;
+        out(['due' => array_map('intval', $wpdb->get_col($wpdb->prepare("SELECT UNIX_TIMESTAMP(scheduled_date_gmt) - UNIX_TIMESTAMP(UTC_TIMESTAMP()) FROM {$wpdb->prefix}actionscheduler_actions WHERE hook = %s AND args = %s AND status = 'pending'", $args[0], wp_json_encode([(int) $args[1]]))))]);
+        break;
+    case 'statuses':       // statuses <hook> <arg>
+        global $wpdb;
+        out(['statuses' => $wpdb->get_col($wpdb->prepare("SELECT status FROM {$wpdb->prefix}actionscheduler_actions WHERE hook = %s AND args = %s ORDER BY action_id", $args[0], wp_json_encode([(int) $args[1]])))]);
         break;
     case 'drain':          // drain — همان تخلیهٔ نشان‌های معوق که اجراکننده‌ها می‌زنند
         out(['settled' => LMC_Queue::drain()]);

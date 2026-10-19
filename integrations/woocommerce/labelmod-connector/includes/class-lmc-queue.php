@@ -68,6 +68,23 @@
  *     نیست» شمرده نمی‌شود.
  *   • نوشتن ثبت مرده یا نشان معوق هم ناموفق: لاگ خطا؛ سطر failed خودِ Action Scheduler می‌ماند و
  *     `health().failedActions` آن را می‌شمارد، پس تشخیص «صف سالم و خالی» نمی‌گوید.
+ *
+ * ── بازپخش تصمیم ماندگار (بازبینی سوم ریشه) ──
+ *
+ *   • هر شکست غیرمنتظره **هویت** دارد: شناسهٔ سطر Action Scheduler. شمارنده یک ردیف برای هر شکست است
+ *     (`lmc_qc_<کلید>_<شناسهٔ سطر>`، درج تکراری بی‌اثر) و شمار = تعداد ردیف‌ها. پس بازپخش همان تصمیم
+ *     (drain پس از شکست حذف نشان، یا دو Hook برای یک سطر) همان شکست را دوباره نمی‌شمارد.
+ *   • اجرای سالم «واترمارک» شناسهٔ سطر را بالا می‌برد (`lmc_qs_`)؛ شکستی با شناسهٔ کوچک‌تر یا برابر
+ *     کهنه است و بازپخشش نه می‌شمارد نه صف می‌سازد. تصمیم انسانی («ارسال دوباره») نشان‌های بازیابی
+ *     همان کار را هم پاک می‌کند.
+ *   • نشان `e`/`r` **آخرین تصمیم** را نگه می‌دارد (اجراها پشت قفل اجرا پشت سر هم‌اند، پس آخرین نوشتن
+ *     تازه‌ترین نتیجه است)؛ reschedule مستقیم زیر قفل نشان کهنهٔ `r` را برمی‌دارد، و drain نشان را
+ *     **زیر قفل دوباره می‌خواند** تا نشان کهنه نتیجهٔ تازه‌تر را بازنویسی نکند.
+ *   • قفل اجرا: مهلت تمام‌شده (`false`) یعنی اجرای دیگری واقعاً در جریان است — BUSY، شمرده نمی‌شود،
+ *     ولی «دورهٔ اشغال» ثبت می‌شود و بیش از BUSY_MAX_AGE مرده ثبت می‌شود. خطای SQL (`null`) BUSY
+ *     نیست: شکست شمرده‌شده است (`lock_error`) و پس از MAX_CRASHES مرده. هر دو پس از بررسی ثبت مرده.
+ *   • ارسال دستی و رویداد WP-Cron (جایگزین یا مانده از پیش از ارتقا) هم از `exclusive()` می‌گذرند:
+ *     همان قفل اجرا (بازگشتی برای اجرای خودِ AS)، و اگر گرفته نشد دوباره صف — نه ارسال هم‌زمان.
  */
 
 if (!defined('ABSPATH')) {
@@ -89,7 +106,17 @@ class LMC_Queue
     const EXEC_LOCK_WAIT = 45;
     const ENQUEUE_LOCK_WAIT = 5;
     const BUSY = 'lmc_queue_busy';
-    /** نشان کار معوق (قفل صف گرفته نشد): `lmc_qp_<e|r|c>_<کلید>`. */
+    const LOCK_ERROR = 'lmc_queue_lock_error';
+    /** واترمارک بزرگ‌ترین سطر اجراشدهٔ سالم، و آغاز دورهٔ اشغال قفل اجرا. */
+    const SUCCESS_PREFIX = 'lmc_qs_';
+    const BUSY_PREFIX = 'lmc_qb_';
+    /** اشغال پیاپی قفل اجرا بیش از این (اجرای واقعی حداکثر ده‌ها ثانیه است) مرده ثبت می‌شود. */
+    const BUSY_MAX_AGE = 900;
+    /** فاصله‌ای که پس از آن اشغال تازه دورهٔ تازه است (بیش از دو برابر فاصلهٔ تلاش BUSY). */
+    const BUSY_GAP = 300;
+    /** انتظار قفل اجرا برای ارسال دستی و WP-Cron (بیرون از اجراکنندهٔ AS). */
+    const EXCLUSIVE_WAIT = 10;
+    /** نشان کار معوق (قفل صف گرفته نشد): `lmc_qp_<e|r>_<کلید>` و `lmc_qp_c_<کلید>_<شناسهٔ سطر>`. */
     const DEFER_PREFIX = 'lmc_qp_';
     /** نشانی که این مدت قفل نگیرد مرده ثبت می‌شود. */
     const DEFER_MAX_AGE = 1800;
@@ -165,10 +192,34 @@ class LMC_Queue
         }
         try {
             self::cancel($hook, $args);
-            return self::schedule($hook, $args, $delay);
+            $ok = self::schedule($hook, $args, $delay);
+            // تصمیم تازه‌تر زیر قفل: نشان کهنهٔ «r» (از اجرای قبلی) دیگر نباید آن را بازنویسی کند.
+            self::delete_option(self::DEFER_PREFIX . 'r_' . self::key($hook, $args));
+            return $ok;
         } finally {
             self::unlock($lock);
         }
+    }
+
+    /**
+     * قفل اجرای همان کار برای هر ورودی Handler بیرون از اجراکنندهٔ AS (ارسال دستی، رویداد WP-Cron
+     * جایگزین یا مانده از پیش از ارتقا). درون اجرای AS همان قفل بازگشتی است. `null` = گرفته نشد:
+     * Handler اجرا نمی‌شود و کار دوباره صف می‌شود (همان مسیر enqueue، با همهٔ نگهبان‌هایش).
+     */
+    public static function exclusive(string $hook, array $args): ?string
+    {
+        $lock = self::lock($hook, $args, self::EXCLUSIVE_WAIT, 'x');
+        if (is_string($lock)) {
+            return $lock;
+        }
+        lmc_log(sprintf('اجرای %s هم‌اکنون ممکن نشد (قفل اجرا %s)؛ دوباره صف شد.', $hook, $lock === false ? 'در دست اجرای دیگر' : 'در دسترس نیست'));
+        self::enqueue($hook, $args, 30 + random_int(0, 30));
+        return null;
+    }
+
+    public static function release(?string $lock): void
+    {
+        self::unlock($lock);
     }
 
     /**
@@ -177,7 +228,11 @@ class LMC_Queue
      */
     public static function forget(string $hook, array $args): bool
     {
-        $ok = self::clear_rows(self::key($hook, $args));
+        global $wpdb;
+        $key = self::key($hook, $args);
+        // تصمیم انسانی بر تصمیم‌های بازیابی معوقِ همان کار مقدم است.
+        $ok = self::clear_rows($key) && $wpdb->query($wpdb->prepare(
+            "DELETE FROM {$wpdb->options} WHERE option_name LIKE %s", self::like_prefix(self::DEFER_PREFIX . 'c_' . $key . '_'))) !== false;
         if (!$ok) {
             lmc_log(sprintf('پاک‌کردن شمارنده/ثبت مردهٔ %s ناموفق بود؛ «ارسال دوباره» را تکرار کنید.', $hook));
         }
@@ -272,6 +327,10 @@ class LMC_Queue
     /** رویداد kick: فقط گروه بحرانی، با Claim خودِ Action Scheduler. */
     public static function kick(): void
     {
+        if (!self::action_scheduler()) {
+            self::drain();
+            return;
+        }
         if (self::run(self::KICK_BATCH, 'LMC Kick') >= self::KICK_BATCH) {
             self::request_kick();
         }
@@ -351,9 +410,13 @@ class LMC_Queue
             return;
         }
         $lock = self::lock((string) $action->get_hook(), (array) $action->get_args(), self::EXEC_LOCK_WAIT, 'x');
-        if (!is_string($lock)) {
-            // مهلت تمام شد یا خطای SQL: بی سریال‌سازی اجرا نمی‌شود؛ BUSY بی شمردن دوباره صفش می‌کند.
+        if ($lock === false) {
+            // مالک واقعی: اجرای دیگری از همین کار در جریان است. BUSY، شمرده نمی‌شود (دورهٔ اشغال محدود است).
             throw new RuntimeException(self::BUSY);
+        }
+        if (!is_string($lock)) {
+            // خطای SQL، نه مالک: بی سریال‌سازی اجرا نمی‌شود و شکستی **شمرده‌شده** است.
+            throw new RuntimeException(self::LOCK_ERROR);
         }
         self::$running[(int) $action_id] = $lock;
     }
@@ -367,8 +430,9 @@ class LMC_Queue
 
     public static function on_failed_execution($action_id, $error = null): void
     {
-        $busy = $error instanceof Throwable && $error->getMessage() === self::BUSY;
-        self::recover((int) $action_id, $busy ? 'busy' : ($error instanceof Throwable ? 'exception' : 'failed'));
+        $message = $error instanceof Throwable ? $error->getMessage() : '';
+        self::recover((int) $action_id, $message === self::BUSY ? 'busy'
+            : ($message === self::LOCK_ERROR ? 'lock_error' : ($error instanceof Throwable ? 'exception' : 'failed')));
     }
 
     public static function on_failed($action_id): void
@@ -382,7 +446,15 @@ class LMC_Queue
         if (!is_object($action) || !method_exists($action, 'get_group') || $action->get_group() !== self::GROUP) {
             return;
         }
-        if (!self::clear_rows(self::key((string) $action->get_hook(), (array) $action->get_args()))) {
+        global $wpdb;
+        $key = self::key((string) $action->get_hook(), (array) $action->get_args());
+        // واترمارک پیش از پاک‌کردن: بازپخش دیرهنگام شکستی کهنه‌تر از این اجرا دیگر نمی‌شمارد.
+        $mark = $wpdb->query($wpdb->prepare(
+            "INSERT INTO {$wpdb->options} (option_name, option_value, autoload) VALUES (%s, %d, 'no')
+             ON DUPLICATE KEY UPDATE option_value = GREATEST(CAST(option_value AS UNSIGNED), %d)",
+            self::SUCCESS_PREFIX . $key, (int) $action_id, (int) $action_id
+        ));
+        if ($mark === false || !self::clear_rows($key)) {
             // شمارندهٔ کهنه فقط زودتر مرده می‌کند (محافظه‌کارانه)، ولی دیده شود.
             lmc_log(sprintf('پاک‌کردن شمارندهٔ شکست %s پس از اجرای سالم ناموفق بود.', (string) $action->get_hook()));
         }
@@ -406,14 +478,14 @@ class LMC_Queue
         $args = (array) $action->get_args();
         $lock = self::lock($hook, $args, 10);
         if (!is_string($lock)) {
-            // بی قفل نه شمارش نه تصمیم: نشان معوق؛ drain همان تصمیم را زیر قفل می‌گیرد.
-            self::defer('c', $hook, $args, ['why' => $why]);
+            // بی قفل نه شمارش نه تصمیم: نشان معوق با هویت همین شکست؛ drain همان تصمیم را زیر قفل می‌گیرد.
+            self::defer('c', $hook, $args, ['why' => $why, 'action' => $action_id]);
             return;
         }
         try {
-            if (!self::recover_locked($hook, $args, $why)) {
+            if (!self::recover_locked($hook, $args, $why, $action_id)) {
                 // تصمیم ذخیره نشد (نوشتن وضعیت شکست خورد): نشان معوق تا drain دوباره بکوشد.
-                self::defer('c', $hook, $args, ['why' => $why]);
+                self::defer('c', $hook, $args, ['why' => $why, 'action' => $action_id]);
             }
         } finally {
             self::unlock($lock);
@@ -422,15 +494,12 @@ class LMC_Queue
 
     /**
      * تصمیم بازیابی، **فقط زیر قفل صف همان کار**. `true` = تصمیم ماندگار شد (دوباره صف، ثبت مرده،
-     * یا کار مرده لغو)؛ `false` = نوشتن وضعیت شکست خورد و هیچ تلاش شمرده‌نشده‌ای صف نشد.
+     * یا کار مرده لغو، یا شکست کهنه)؛ `false` = نوشتن وضعیت شکست خورد و هیچ تلاش شمرده‌نشده‌ای صف نشد.
+     * **Idempotent** برای همان `$action_id`: بازپخش همان شکست را دوباره نمی‌شمارد و صف دوم نمی‌سازد.
      */
-    private static function recover_locked(string $hook, array $args, string $why): bool
+    private static function recover_locked(string $hook, array $args, string $why, int $action_id): bool
     {
         $key = self::key($hook, $args);
-        if ($why === 'busy') {
-            // اجرای دیگری از همین کار هنوز در جریان است؛ شکست نیست، شمرده نمی‌شود.
-            return self::pending($hook, $args) || self::schedule($hook, $args, 30 + random_int(0, 30));
-        }
         $dead = self::read(self::DEAD_PREFIX . $key, $ok);
         if (!$ok) {
             return false;
@@ -439,7 +508,30 @@ class LMC_Queue
             self::cancel($hook, $args);
             return true;
         }
-        $n = self::bump(self::CRASH_PREFIX . $key);
+        if ($why === 'busy') {
+            // اجرای دیگری از همین کار هنوز در جریان است؛ شکست نیست، شمرده نمی‌شود — ولی بی‌انتها هم نه.
+            $since = self::busy_since($key);
+            if ($since === null) {
+                return false;
+            }
+            if (time() - $since > self::BUSY_MAX_AGE) {
+                if (!self::record_dead($hook, $args, 'exec_lock_held', 0)) {
+                    return false;
+                }
+                self::cancel($hook, $args);
+                return true;
+            }
+            return self::pending($hook, $args) || self::schedule($hook, $args, 30 + random_int(0, 30));
+        }
+        $mark = self::read(self::SUCCESS_PREFIX . $key, $ok);
+        if (!$ok) {
+            return false;
+        }
+        if ($mark !== null && $action_id <= (int) $mark) {
+            // اجرای سالمِ تازه‌تری پس از این شکست رخ داده است: بازپخش کهنه، نه شمارش نه صف.
+            return true;
+        }
+        $n = self::bump($key, $action_id);
         if ($n === null) {
             // شمارنده ذخیره نشد: تلاش شمرده‌نشده یعنی سقف دور زده شود. توقف دیده‌شده به‌جای تکرار بی‌حد.
             if (!self::record_dead($hook, $args, 'counter_write_failed', 0)) {
@@ -470,12 +562,16 @@ class LMC_Queue
     private static function defer(string $op, string $hook, array $args, array $extra): bool
     {
         global $wpdb;
-        $value = wp_json_encode(['op' => $op, 'hook' => $hook, 'args' => array_values($args), 'at' => time()] + $extra);
-        $done = $wpdb->query($wpdb->prepare(
-            "INSERT INTO {$wpdb->options} (option_name, option_value, autoload) VALUES (%s, %s, 'no')
-             ON DUPLICATE KEY UPDATE option_name = option_name",
-            self::DEFER_PREFIX . $op . '_' . self::key($hook, $args), $value
-        ));
+        // `seq` هر نوشتن را یکتا می‌کند: drain فقط نشانی را حذف می‌کند که هنوز همان است که خوانده بود.
+        $value = wp_json_encode(['op' => $op, 'hook' => $hook, 'args' => array_values($args), 'at' => time(),
+            'seq' => bin2hex(random_bytes(8))] + $extra);
+        $name = self::marker_name($op, $hook, $args, (int) ($extra['action'] ?? 0));
+        // «e»/«r»: آخرین تصمیم برنده است (تازه‌ترین Backoff/Retry-After). «c»: هویتِ یک شکست — نسخهٔ اول کافی است.
+        $done = $wpdb->query($op === 'c'
+            ? $wpdb->prepare("INSERT INTO {$wpdb->options} (option_name, option_value, autoload) VALUES (%s, %s, 'no')
+                 ON DUPLICATE KEY UPDATE option_name = option_name", $name, $value)
+            : $wpdb->prepare("INSERT INTO {$wpdb->options} (option_name, option_value, autoload) VALUES (%s, %s, 'no')
+                 ON DUPLICATE KEY UPDATE option_value = %s", $name, $value, $value));
         if ($done === false) {
             lmc_log(sprintf('⛔ تغییر صف %s انجام نشد و نشان معوقش هم ذخیره نشد؛ پایگاه داده را بررسی کنید.', $hook));
             return false;
@@ -507,8 +603,9 @@ class LMC_Queue
             $hook = is_array($d) ? (string) ($d['hook'] ?? '') : '';
             $args = is_array($d) && is_array($d['args'] ?? null) ? $d['args'] : null;
             $op = is_array($d) ? (string) ($d['op'] ?? '') : '';
+            $action_id = is_array($d) ? (int) ($d['action'] ?? 0) : 0;
             if (!in_array($hook, self::hooks(), true) || $args === null || !in_array($op, ['e', 'r', 'c'], true)
-                || $name !== self::DEFER_PREFIX . $op . '_' . self::key($hook, $args)) {
+                || ($op === 'c' && $action_id <= 0) || $name !== self::marker_name($op, $hook, $args, $action_id)) {
                 lmc_log('نشان معوق نامعتبر صف کنار گذاشته شد.');
                 self::forget_marker($name, $raw);
                 continue;
@@ -522,6 +619,11 @@ class LMC_Queue
                 continue;
             }
             try {
+                // زیر قفل دوباره خوانده می‌شود: اگر در این فاصله تصمیمی تازه‌تر نشان را عوض یا حذف کرده،
+                // نشانِ خوانده‌شده کهنه است و اعمال نمی‌شود (دور بعد، اگر هنوز هست، تازه‌اش را می‌خواند).
+                if (self::read($name, $fresh) !== $raw || !$fresh) {
+                    continue;
+                }
                 $due = max(0, (int) ($d['due'] ?? 0) - time());
                 if ($op === 'e') {
                     $ok = self::pending($hook, $args) || self::schedule($hook, $args, $due);
@@ -529,7 +631,7 @@ class LMC_Queue
                     self::cancel($hook, $args);
                     $ok = self::schedule($hook, $args, $due);
                 } else {
-                    $ok = self::recover_locked($hook, $args, (string) ($d['why'] ?? 'deferred'));
+                    $ok = self::recover_locked($hook, $args, (string) ($d['why'] ?? 'deferred'), $action_id);
                 }
                 // شکست درج صف خودش مرده ثبت می‌کند؛ آن هم نتیجهٔ ماندگار است.
                 $ok = $ok || self::read(self::DEAD_PREFIX . self::key($hook, $args), $read) !== null;
@@ -541,6 +643,47 @@ class LMC_Queue
             }
         }
         return $settled;
+    }
+
+    private static function marker_name(string $op, string $hook, array $args, int $action_id): string
+    {
+        return self::DEFER_PREFIX . $op . '_' . self::key($hook, $args) . ($op === 'c' ? '_' . $action_id : '');
+    }
+
+    private static function delete_option(string $name): bool
+    {
+        global $wpdb;
+        return $wpdb->query($wpdb->prepare("DELETE FROM {$wpdb->options} WHERE option_name = %s", $name)) !== false;
+    }
+
+    /** الگوی LIKE برای پیشوند (`_` و `%` و `\` لفظی). */
+    private static function like_prefix(string $prefix): string
+    {
+        global $wpdb;
+        return (method_exists($wpdb, 'esc_like') ? $wpdb->esc_like($prefix) : addcslashes($prefix, '_%\\')) . '%';
+    }
+
+    /**
+     * آغاز دورهٔ اشغال قفل اجرای همین کار (زیر قفل صف همان کار، پس خواندن و نوشتن یک‌جا امن است).
+     * اشغالی که بیش از BUSY_GAP پس از قبلی بیاید، دورهٔ تازه است. `null` = خواندن یا نوشتن شکست خورد.
+     */
+    private static function busy_since(string $key): ?int
+    {
+        global $wpdb;
+        $raw = self::read(self::BUSY_PREFIX . $key, $ok);
+        if (!$ok) {
+            return null;
+        }
+        $now = time();
+        [$since, $last] = array_map('intval', explode(':', (string) $raw) + [0, 0]);
+        if ($raw === null || $now - $last > self::BUSY_GAP) {
+            $since = $now;
+        }
+        $value = $since . ':' . $now;
+        $done = $wpdb->query($wpdb->prepare(
+            "INSERT INTO {$wpdb->options} (option_name, option_value, autoload) VALUES (%s, %s, 'no')
+             ON DUPLICATE KEY UPDATE option_value = %s", self::BUSY_PREFIX . $key, $value, $value));
+        return $done === false ? null : $since;
     }
 
     private static function forget_marker(string $name, string $raw): bool
@@ -578,6 +721,7 @@ class LMC_Queue
         global $wpdb;
         $dead = $wpdb->get_var("SELECT COUNT(*) FROM {$wpdb->options} WHERE option_name LIKE 'lmc\\_qd\\_%'");
         $deferred = $wpdb->get_var("SELECT COUNT(*) FROM {$wpdb->options} WHERE option_name LIKE 'lmc\\_qp\\_%'");
+        $busy = $wpdb->get_var("SELECT COUNT(*) FROM {$wpdb->options} WHERE option_name LIKE 'lmc\\_qb\\_%'");
         $failed = null;
         if (self::action_scheduler()) {
             try {
@@ -592,6 +736,8 @@ class LMC_Queue
             'deadTasks' => $dead === null ? null : (int) $dead,
             'deadScope' => 'unexpected_failure_only',
             'deferredTasks' => $deferred === null ? null : (int) $deferred,
+            // کارهایی که آخرین تلاششان پشت قفل اجرای در دستِ اجرای دیگری ماند (پس از اجرای سالم پاک می‌شود).
+            'busyTasks' => $busy === null ? null : (int) $busy,
             'failedActions' => $failed,
             'failedActionsScope' => 'action_scheduler_retained_rows',
         ];
@@ -611,22 +757,25 @@ class LMC_Queue
     }
 
     /**
-     * افزایش اتمیک در یک دستور SQL؛ خواندن پس از آن زیر قفل همان کار است. `null` = نوشتن یا
-     * خواندن شکست خورد، یا ردیف پس از نوشتن نبود — هرگز «صفر» نمی‌شود.
+     * یک ردیف برای **هر شکست** (کلید + شناسهٔ سطر AS؛ درج تکراری بی‌اثر)، و شمار = تعداد ردیف‌ها.
+     * بازپخش همان شکست شمار را بالا نمی‌برد. `null` = نوشتن یا شمردن شکست خورد، یا ردیف پس از
+     * نوشتن نبود — هرگز «صفر» نمی‌شود.
      */
-    private static function bump(string $name): ?int
+    private static function bump(string $key, int $action_id): ?int
     {
         global $wpdb;
         $done = $wpdb->query($wpdb->prepare(
             "INSERT INTO {$wpdb->options} (option_name, option_value, autoload) VALUES (%s, '1', 'no')
-             ON DUPLICATE KEY UPDATE option_value = option_value + 1",
-            $name
+             ON DUPLICATE KEY UPDATE option_name = option_name",
+            self::CRASH_PREFIX . $key . '_' . $action_id
         ));
         if ($done === false) {
             return null;
         }
-        $v = self::read($name, $ok);
-        return $ok && $v !== null && ctype_digit($v) && (int) $v > 0 ? (int) $v : null;
+        $n = $wpdb->get_var($wpdb->prepare("SELECT COUNT(*) FROM {$wpdb->options} WHERE option_name LIKE %s",
+            self::like_prefix(self::CRASH_PREFIX . $key . '_')));
+        $ok = (string) ($wpdb->last_error ?? '') === '';
+        return $ok && $n !== null && (int) $n > 0 ? (int) $n : null;
     }
 
     /** `$ok = false` یعنی پرسش خطا داد؛ `null` با `$ok = true` یعنی واقعاً ردیفی نیست. */
@@ -641,8 +790,8 @@ class LMC_Queue
     private static function clear_rows(string $key): bool
     {
         global $wpdb;
-        return $wpdb->query($wpdb->prepare("DELETE FROM {$wpdb->options} WHERE option_name IN (%s, %s)",
-            self::CRASH_PREFIX . $key, self::DEAD_PREFIX . $key)) !== false;
+        return $wpdb->query($wpdb->prepare("DELETE FROM {$wpdb->options} WHERE option_name IN (%s, %s) OR option_name LIKE %s",
+            self::DEAD_PREFIX . $key, self::BUSY_PREFIX . $key, self::like_prefix(self::CRASH_PREFIX . $key . '_'))) !== false;
     }
 
     /**

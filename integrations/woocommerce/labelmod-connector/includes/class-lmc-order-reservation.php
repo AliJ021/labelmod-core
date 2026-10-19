@@ -80,7 +80,24 @@ class LMC_Order_Reservation
         return $payload;
     }
 
+    /**
+     * ورودی Handler از هر مسیری (اجرای Action Scheduler، رویداد WP-Cron، ارسال دستی): زیر قفل اجرای
+     * همان کار (`LMC_Queue::exclusive`)، پس دو ارسالِ یک کار هرگز هم‌زمان HTTP نمی‌زنند.
+     */
     public static function send($id): void
+    {
+        $lock = LMC_Queue::exclusive(self::EVENT, [(int) $id]);
+        if ($lock === null) {
+            return;
+        }
+        try {
+            self::deliver((int) $id);
+        } finally {
+            LMC_Queue::release($lock);
+        }
+    }
+
+    private static function deliver($id): void
     {
         // دورهٔ واترمارک با خودِ درخواست یخ می‌زند؛ پاسخی که پس از «بازنشانی» برسد اثبات دورهٔ تازه نیست.
         $epoch = LMC_Stock_Ledger::epoch();

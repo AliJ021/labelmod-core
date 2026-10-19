@@ -118,8 +118,25 @@ class LMC_Order_Sync
         LMC_Queue::enqueue(LMC_ORDER_EVENT, [$order_id]);
     }
 
-    /** ارسال واقعی — از دل صف (Action Scheduler یا WP-Cron جایگزین). */
-    public static function send($order_id): void
+    /**
+     * ورودی Handler از هر مسیری (اجرای Action Scheduler، رویداد WP-Cron، ارسال دستی): زیر قفل اجرای
+     * همان کار (`LMC_Queue::exclusive`)، پس دو ارسالِ یک کار هرگز هم‌زمان HTTP نمی‌زنند.
+     */
+    public static function send($id): void
+    {
+        $lock = LMC_Queue::exclusive(LMC_ORDER_EVENT, [(int) $id]);
+        if ($lock === null) {
+            return;
+        }
+        try {
+            self::deliver((int) $id);
+        } finally {
+            LMC_Queue::release($lock);
+        }
+    }
+
+    /** ارسال واقعی — فقط زیر قفل اجرا (از `send`). */
+    private static function deliver($order_id): void
     {
         $epoch    = LMC_Stock_Ledger::epoch();
         $order_id = (int) $order_id;

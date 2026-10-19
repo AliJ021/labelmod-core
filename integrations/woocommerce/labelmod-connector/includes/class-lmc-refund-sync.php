@@ -81,7 +81,24 @@ class LMC_Refund_Sync
         ];
     }
 
+    /**
+     * ورودی Handler از هر مسیری (اجرای Action Scheduler، رویداد WP-Cron، ارسال دستی): زیر قفل اجرای
+     * همان کار (`LMC_Queue::exclusive`)، پس دو ارسالِ یک کار هرگز هم‌زمان HTTP نمی‌زنند.
+     */
     public static function send($id): void
+    {
+        $lock = LMC_Queue::exclusive(self::EVENT, [(int) $id]);
+        if ($lock === null) {
+            return;
+        }
+        try {
+            self::deliver((int) $id);
+        } finally {
+            LMC_Queue::release($lock);
+        }
+    }
+
+    private static function deliver($id): void
     {
         $refund = wc_get_order((int) $id);
         if (!$refund instanceof WC_Order_Refund || $refund->get_meta(self::DONE) !== '' || $refund->get_meta(self::STATUS) === 'rejected') { return; }
