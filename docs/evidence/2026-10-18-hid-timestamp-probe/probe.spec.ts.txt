@@ -1,0 +1,105 @@
+/**
+ * بارکدخوان USB/HID (keyboard wedge) روی صندوق — رویدادهای واقعی کیبورد، نه `fill`.
+ *
+ * شکایت مالک: «اسکن بارکد چاپی فقط 2 در فیلد می‌گذارد». بارکد داخلی EAN-13 با پیشوند
+ * ۲۰ است. `ScanBuffer` عمداً رقم **اول** را عبور می‌دهد (هنوز از تایپ انسان قابل تشخیص
+ * نیست) و از رقم دوم به بعد را می‌بلعد؛ کامنتش می‌گفت «فراخوان همان یکی را پاک کند»، ولی
+ * صندوق هرگز پاکش نمی‌کرد. پس «2» در کادر جست‌وجو می‌ماند. پسوند Tab پذیرفته نمی‌شد؛
+ * اسکنر باید پسوند Enter یا Tab داشته باشد (ثبت خودکار بی‌پسوند عمداً نیست).
+ *
+ * هر کلید با `keyboard.down`/`up` واقعی و بی‌تأخیر فرستاده می‌شود (مثل اسکنر)؛ تایپ دستی
+ * با فاصلهٔ انسانی. مقدار بارکد هرگز تغییر نمی‌کند: همان رشته به `POST …/scan` می‌رسد.
+ */
+import { test, expect, type MockApi } from "./fixtures";
+import type { Page } from "@playwright/test";
+
+const id = "33333333-3333-4333-8333-333333333333";
+const shift = "44444444-4444-4444-8444-444444444444";
+const actor = "22222222-2222-4222-8222-222222222222";
+const draft = { id, number: null, branchId: "b1", warehouseId: "w1", shiftId: shift, createdBy: actor, customerId: null, status: "draft",
+  channel: "pos", grossAmount: "0", discountAmount: "0", netAmount: "0", taxAmount: "0", shippingAmount: "0",
+  payableAmount: "0", paidAmount: "0", receivedAmount: "0", recipientId: null, gift: null, occurredAt: "2026-10-10T08:00:00Z", lines: [] };
+
+function mock(api: MockApi): unknown[] {
+  api.defaults["GET /payment-methods"] = { methods: [{ code: "cash", name: "نقد", kind: "cash", requiresRef: false }] };
+  api.defaults["GET /shifts/current"] = { id: shift, userId: actor, branchId: "b1", status: "open", openingCash: "0" };
+  api.defaults["GET /gift-options"] = { wraps: [], colors: [], flowers: [] };
+  api.defaults[`GET /invoices/${id}`] = draft;
+  api.defaults[`GET /invoices/${id}/customer`] = { customer: null };
+  api.defaults[`GET /invoices/${id}/payments`] = { payments: [] };
+  api.defaults["GET /pos/products"] = { products: [], exactVariationId: null };
+  const scans: unknown[] = [];
+  api.handlers.set(`POST /invoices/${id}/scan`, async route => {
+    scans.push(route.request().postDataJSON());
+    await route.fulfill({ json: { invoice: draft, replayed: false } });
+  });
+  return scans;
+}
+
+async function open(page: Page, api: MockApi) {
+  const scans = mock(api);
+  await page.addInitScript(([invoiceId, shiftId]) => localStorage.setItem("labelmod_open_cart", JSON.stringify({ invoiceId, shiftId })), [id, shift]);
+  await page.goto("/?page=pos&pos.branch=b1&pos.warehouse=w1");
+  const entry = page.getByRole("region", { name: "افزودن کالا" }).getByRole("searchbox");
+  await expect(entry).toBeVisible();
+  return { scans, entry };
+}
+
+
+const LEGACY = "12345678901234567";
+const keys = [...LEGACY, "Enter"];
+async function gaps(page: Page) { return page.evaluate(() => (window as unknown as { __ts: number[] }).__ts); }
+async function record(page: Page) {
+  await page.evaluate(() => { const w = window as unknown as { __ts: number[] }; w.__ts = [];
+    document.addEventListener("keydown", e => { w.__ts.push(e.timeStamp); }, true); });
+}
+
+test("P1 synthetic sequential + 60ms stall after key 1 (current WebKit path)", async ({ page, api }) => {
+  const { scans } = await open(page, api);
+  await page.locator("body").click({ position: { x: 1, y: 1 } });
+  await record(page);
+  await page.evaluate(ks => { const t = document.activeElement ?? document.body; let i = 0;
+    for (const key of ks) { t.dispatchEvent(new KeyboardEvent("keydown", { key, bubbles: true, cancelable: true }));
+      if (i++ === 0) { const s = performance.now(); while (performance.now() - s < 60) { /* stall */ } } } }, keys);
+  await expect.poll(() => scans.length).toBe(1);
+  console.log("P1", JSON.stringify(scans[0]), "gap1-2", ((await gaps(page))[1]! - (await gaps(page))[0]!).toFixed(1));
+});
+
+test("P2 synthetic sequential, no stall", async ({ page, api }) => {
+  const { scans } = await open(page, api);
+  await page.locator("body").click({ position: { x: 1, y: 1 } });
+  await page.evaluate(ks => { const t = document.activeElement ?? document.body;
+    for (const key of ks) t.dispatchEvent(new KeyboardEvent("keydown", { key, bubbles: true, cancelable: true })); }, keys);
+  await expect.poll(() => scans.length).toBe(1);
+  console.log("P2", JSON.stringify(scans[0]));
+});
+
+test("P3 pre-created events + same 60ms stall after key 1", async ({ page, api }) => {
+  const { scans } = await open(page, api);
+  await page.locator("body").click({ position: { x: 1, y: 1 } });
+  await record(page);
+  await page.evaluate(ks => { const t = document.activeElement ?? document.body;
+    const events = ks.map(key => new KeyboardEvent("keydown", { key, bubbles: true, cancelable: true })); let i = 0;
+    for (const e of events) { t.dispatchEvent(e);
+      if (i++ === 0) { const s = performance.now(); while (performance.now() - s < 60) { /* stall */ } } } }, keys);
+  await expect.poll(() => scans.length).toBe(1);
+  const ts = await gaps(page);
+  console.log("P3", JSON.stringify(scans[0]), "gap1-2", (ts[1]! - ts[0]!).toFixed(3));
+});
+
+test("P4 real input (CDP) + 100ms main-thread stall in a keydown handler on key 1", async ({ page, api, browserName }) => {
+  test.skip(browserName !== "chromium");
+  const { scans } = await open(page, api);
+  await page.locator("body").click({ position: { x: 1, y: 1 } });
+  await record(page);
+  await page.evaluate(() => { let first = true; document.addEventListener("keydown", () => { if (first) { first = false;
+    const s = performance.now(); while (performance.now() - s < 100) { /* jank */ } } }); });
+  const cdp = await page.context().newCDPSession(page);
+  const code = (k: string) => k === "Enter" ? { key: "Enter", text: "\r", code: "Enter", windowsVirtualKeyCode: 13 }
+    : { key: k, text: k, code: `Digit${k}`, windowsVirtualKeyCode: 48 + Number(k) };
+  await Promise.all(keys.flatMap(k => { const c = code(k); const { text: _t, ...up } = c as { text?: string };
+    return [cdp.send("Input.dispatchKeyEvent", { type: "keyDown", ...c }), cdp.send("Input.dispatchKeyEvent", { type: "keyUp", ...up })]; }));
+  await expect.poll(() => scans.length).toBe(1);
+  const ts = await gaps(page);
+  console.log("P4", JSON.stringify(scans[0]), "gap1-2", (ts[1]! - ts[0]!).toFixed(3));
+});

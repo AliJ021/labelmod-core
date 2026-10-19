@@ -51,6 +51,12 @@ async function open(page: Page, api: MockApi) {
  * جدا برای هر کلید زیر بار CI از آستانهٔ ۵۰ms کندتر می‌شد و آزمون دیگر اسکنر نبود.
  * موتورهای دیگر CDP ندارند: رویداد keydown در یک تکهٔ کد صفحه (نویسه‌ای درج نمی‌شود، پس
  * آن‌جا فقط تشخیص، پسوند و مقدار بارکد سنجیده می‌شود؛ نشت رقم اول را Chromium می‌سنجد).
+ * ⚠️ `timeStamp` رویداد ساخته‌شده زمانِ **ساختن** آن است، نه رسیدن کلید. همهٔ رویدادها اول
+ *    ساخته و بعد فرستاده می‌شوند؛ ساختن هر کدام پس از فرستادن قبلی یعنی هر توقف میزبان
+ *    (CI با بار ۲۰ روی ۴ هسته) فاصلهٔ کلید ۱ و ۲ را از ۵۰ms رد می‌کرد و بافر رقم اول را
+ *    دور می‌انداخت: «2345678901234567» در PR180 (webkit-dark-768). در Chromium ورودی واقعی
+ *    (CDP) زمانش را هنگام رسیدن گرفت و کندی صفحه آن را بزرگ نکرد؛ WebKit بومی سنجیده نشده
+ *    است (docs/evidence/2026-10-18-hid-timestamp-probe).
  */
 async function scan(page: Page, keys: string[], browserName: string) {
   if (browserName === "chromium") {
@@ -65,7 +71,8 @@ async function scan(page: Page, keys: string[], browserName: string) {
     await cdp.detach();
   } else {
     await page.evaluate(ks => { const t = document.activeElement ?? document.body;
-      for (const key of ks) t.dispatchEvent(new KeyboardEvent("keydown", { key, bubbles: true, cancelable: true })); }, keys);
+      const events = ks.map(key => new KeyboardEvent("keydown", { key, bubbles: true, cancelable: true }));
+      for (const e of events) t.dispatchEvent(e); }, keys);
   }
 }
 const digits = (s: string) => [...s];

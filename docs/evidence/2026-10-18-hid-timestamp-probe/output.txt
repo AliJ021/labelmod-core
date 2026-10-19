@@ -1,0 +1,10 @@
+# خروجی واقعی همان یک اجرا (۲۰۲۶-۱۰-۱۸)، بی ویرایش؛ دوباره اجرا نشد.
+# build: origin/main f8bb5a2 (پیش از اصلاح آزمون؛ کد محصول در این PR تغییر نمی‌کند)
+# command (apps/web، پیکربندی محلی که فقط executablePath را به /opt/pw-browsers/chromium می‌دهد):
+#   npx playwright test -c pw-local.config.ts e2e/zz-hid-probe.spec.ts --project=chromium-dark-768 --reporter=line \
+#     | grep -E "^P[1-4]|passed|failed|Error"
+P2 {"barcode":"12345678901234567","qty":"1"}
+P3 {"barcode":"12345678901234567","qty":"1"} gap1-2 0.200
+P1 {"barcode":"2345678901234567","qty":"1"} gap1-2 60.5
+P4 {"barcode":"12345678901234567","qty":"1"} gap1-2 0.300
+  4 passed (5.3s)

@@ -255,7 +255,8 @@ test("two tabs preserve an uncertain scan and retry its original key without a s
   await expect(entry(second)).toBeDisabled();
   // رویداد اسکنر حتی با ورودی غیرفعال به listener سراسری می‌رسد.
   await second.bringToFront();
-  await second.evaluate(()=>{for(const key of [..."5901234123457","Enter"]) document.dispatchEvent(new KeyboardEvent("keydown",{key,bubbles:true}));});
+  // رویدادها اول ساخته می‌شوند: timeStamp زمان ساختن است (pos-hid-scan.spec.ts، scan).
+  await second.evaluate(()=>{const events=[..."5901234123457","Enter"].map(key=>new KeyboardEvent("keydown",{key,bubbles:true})); for(const e of events) document.dispatchEvent(e);});
   expect(attempts).toHaveLength(1);
   const storageKey="labelmod_pending_scan_v1:"+invoice.createdBy;
   const saved=await second.evaluate(key=>localStorage.getItem(key),storageKey);
