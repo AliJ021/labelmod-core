@@ -13,14 +13,14 @@ import { Skeleton } from "../components/ui/Skeleton.tsx";
 import { useBonusOperation } from "../lib/use-withdrawal-operation.ts";
 import { api, ApiError } from "../lib/api.ts";
 import {
-  awardPayload, decisionPayload, ORIGIN_LABEL, selectable, STATUS_LABEL,
+  awardPayload, checkBonusAmount, decisionPayload, ORIGIN_LABEL, selectable, STATUS_LABEL,
   type AwardBody, type BonusDetail, type BonusItem, type BonusPage, type BonusSettlementBody, type DecisionBody,
 } from "../lib/bonuses.ts";
 import { formatCount, formatJalaliMoment } from "../lib/format.ts";
 import type { Verdict } from "../lib/navigation.ts";
 import { useLatestQuery } from "../lib/use-latest-query.ts";
 import { useNavigationGuard, useUrlState } from "../lib/use-url-state.ts";
-import { checkAmount, checkText, PAGE_SIZE, REASON_MAX, tomanDraft } from "../lib/withdrawals.ts";
+import { checkText, PAGE_SIZE, REASON_MAX, tomanDraft } from "../lib/withdrawals.ts";
 
 /**
  * دفتر پاداش پرسنل — بخش مدیریتی «برداشت و پاداش» (مهاجرت ۰۹۸).
@@ -175,7 +175,7 @@ function AwardForm({ currentUserId, onAwarded }: { currentUserId: string; onAwar
   const frozen = (recovery.pending?.body ?? null) as AwardBody | null;
   const owner = people.data?.beneficiaries.find(p => p.id === ownerId) ?? null;
   const shown = frozen ?? awardPayload(owner, amount, reason);
-  const amountCheck = checkAmount(amount, false);
+  const amountCheck = checkBonusAmount(amount);
   useNavigationGuard(ownerId !== "" || amount !== "" || reason !== "", "اعطای پاداشِ ثبت‌نشده دارید. صفحه را ترک کنید؟");
 
   async function run() {

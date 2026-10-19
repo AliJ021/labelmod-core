@@ -93,7 +93,7 @@ test.describe("پاداش‌های من", () => {
     await page.goto("/?page=personnel&personnel.tab=bonuses");
     await expect(page.getByRole("region", { name: "پاداش‌های من" }).getByText("اعطای مدیر")).toBeVisible();
     await page.getByLabel("مبلغ (تومان)").fill("0");
-    await expect(page.getByText("مبلغ برداشت باید بیشتر از صفر باشد.")).toBeVisible();
+    await expect(page.getByText("مبلغ پاداش باید بیشتر از صفر باشد.")).toBeVisible();
     await expect(page.getByRole("button", { name: "ثبت درخواست پاداش" })).toBeDisabled();
     await page.getByLabel("مبلغ (تومان)").fill("۱۵۰٬۰۰۰");
     await page.getByLabel("دلیل پاداش").fill("  فروش ویژه ");
