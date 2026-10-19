@@ -1,13 +1,14 @@
 /**
  * داشبورد — مرکز کنترل امروز، نه ویترین کارت (docs/UI_PATTERNS.md، «داشبورد»).
  *
- * ترتیب خواندن عمدی است:
- *   ۱. چه چیزی رسیدگی می‌خواهد (دوره‌های ثبت‌نشده) — بالاترین اولویت.
- *   ۲. سه شاخص امروز: فروش · وجه دریافتی · سود (design.md) — زبانه‌هایی که
+ * ترتیب خواندن (بازطراحی مصوب مالک، ۲۰۲۶/۱۰/۱۸):
+ *   ۱. سه شاخص **امروز**: فروش · وجه دریافتی · سود (design.md) — زبانه‌هایی که
  *      یک پنل مشترک را عوض می‌کنند.
- *   ۳. روند شاخص انتخاب‌شده، ساعتی/روزانه/ماهانه — نمودار خطی. ساعتی از
- *      `/reports/daily/hourly` (مهاجرت ۰۸۳، جمع ساعت‌ها همان سه کارت)؛ روزانه و
- *      ماهانه از `/reports/daily/trend` (مهاجرت ۰۹۳، جمع در SQL، ماه جلالی).
+ *   ۲. روند **فقط** شاخص انتخاب‌شده، ساعتی/روزانه/ماهانه؛ «مقایسهٔ هر سه» صریح است.
+ *      ساعتی از `/reports/daily/hourly` (مهاجرت ۰۸۳، جمع ساعت‌ها همان سه کارت)؛ روزانه
+ *      و ماهانه از `/reports/daily/trend` (مهاجرت ۰۹۳، جمع در SQL، ماه جلالی).
+ *   ۳. پیگیری ثبت حسابداری فروش — بازشوندهٔ بسته با شمار و وضعیت واقعی در خلاصه.
+ *      این ثبت دورهٔ فروش و شیفت در دفتر است، نه وضعیت کلی سایت یا سامانه.
  *   ۴. کارهای پرتکرار.
  *
  * هیچ عدد ساختگی روی این صفحه نمی‌نشیند. بخشی که داده یا مجوزش
@@ -30,7 +31,7 @@ import {
   type UnpostedRow,
 } from "../lib/pos.ts";
 import {
-  bucketPoints, GRAINS, hourPoints, trendBounds, trendCopy, trendView,
+  bucketPoints, DAYS, GRAINS, hourPoints, MONTHS, trendBounds, trendCopy, trendView,
   type Grain, type Metric, type TrendPoint,
 } from "../lib/dashboard-trend.ts";
 import { attentionItems, type AttentionItem } from "../lib/dashboard-attention.ts";
@@ -88,6 +89,8 @@ export function Dashboard({ access }: { access: NavAccess }) {
   const [metric, setMetric] = useState<Metric>("sales");
   /** دانه‌بندی روند هم محلی است؛ روزانه و ماهانه فقط با انتخاب و یک بار بار می‌شوند. */
   const [grain, setGrain] = useState<Grain>("hour");
+  /** «مقایسهٔ هر سه شاخص» — صریح و محلی؛ پیش‌فرض فقط شاخص انتخاب‌شده. */
+  const [compare, setCompare] = useState(false);
   const [trends, setTrends] = useState<Partial<Record<"day" | "month", Trend>>>({});
   /**
    * دانه‌بندی‌هایی که درخواستشان رفته یا رسیده — در ref، نه state: دو کلیک پیش از
@@ -239,9 +242,10 @@ export function Dashboard({ access }: { access: NavAccess }) {
 
   const sales = parseRial(report.salesAmount);
   const received = parseRial(report.receivedAmount);
-  // نسیه = فروخته ولی پولش نیامده. منفی بی‌معناست (پیش‌پرداخت روز
-  // قبل)، پس صفر می‌شود تا کارت «−۵۰٬۰۰۰ نسیه» نشان ندهد.
-  const credit = sales > received ? sales - received : 0n;
+  // ⚠️ تفاوت فروش و وجه دریافتیِ امروز «طلب» نیست و صفرشدنش «همه پول رسیده» نیست:
+  //    دریافتِ امروز می‌تواند بابت فاکتور دیروز باشد و بازپرداخت از آن کم می‌شود
+  //    (ریشه دید دریافتی بیش از فروش رخ می‌دهد). فقط مقایسهٔ خنثی، بی ادعای فاکتوری.
+  const diff = received - sales;
   const posHref = accessOf(["sale.create"], access.verdicts) === "allow" ? routeUrl("pos") : null;
   const items = unposted.state === "ready" ? attentionItems(unposted.rows, report.businessDate, mayClose, posHref) : [];
   const attention = items.filter(i => i.tone === "attention").length;
@@ -257,8 +261,8 @@ export function Dashboard({ access }: { access: NavAccess }) {
         : `${formatCount(report.invoiceCount)} فاکتور` },
     { key: "received", label: "وجه دریافتی", icon: "card",
       value: <Money rial={received} size="xl" />,
-      state: credit > 0n ? "warning" : "completed",
-      note: credit > 0n ? <><Money rial={credit} size="sm" /> هنوز نرسیده</> : "همه پول رسیده" },
+      note: diff === 0n ? "برابر با فروش امروز"
+        : <><Money rial={diff < 0n ? -diff : diff} size="sm" /> {diff < 0n ? "کمتر" : "بیشتر"} از فروش امروز</> },
     // سود `null` یعنی این کاربر `cost.view` ندارد — نه اینکه سود صفر بوده.
     // نشان‌دادن «۰» به‌جایش، به صندوق‌دار می‌گفت فروشگاه امروز ضرر کرده.
     { key: "profit", label: "سود", icon: "chart", unavailable: !profitKnown,
@@ -279,42 +283,6 @@ export function Dashboard({ access }: { access: NavAccess }) {
       />
 
       {/*
-        نیاز به رسیدگی اول می‌آید: کاری که انجام نشود، عدد فردا را غلط می‌کند.
-        «پاک» هم یک پاسخ است و دیده می‌شود.
-      */}
-      <Solid as="section" className="pad attention" aria-labelledby="dash-attention">
-        <SectionHeader id="dash-attention" title="نیاز به رسیدگی"
-          actions={attention > 0 ? <StatusBadge state="attention" label={`${formatCount(attention)} مورد`} /> : null} />
-        {closed ? <p className="attention-done" role="status"><StatusIcon state="completed" />{closed}</p> : null}
-        <ul className="tasks" aria-busy={unposted.state === "loading" || undefined}>
-          {unposted.state === "loading" ? (
-            <Task state="pending" label="در حال بررسی درآمد ثبت‌نشده…" />
-          ) : unposted.state === "denied" ? (
-            <Task state="unknown" label="درآمد ثبت‌نشده برای این نقش نمایش داده نمی‌شود"
-              cause="دیدن آن به دسترسی بهای تمام‌شده نیاز دارد؛ مدیر یا حسابدار آن را پیگیری می‌کند. این به معنای «همه‌چیز مرتب» نیست."
-              note="کاری از شما لازم نیست." />
-          ) : unposted.state === "error" ? (
-            <Task state="failed" label="وضعیت درآمد ثبت‌نشده خوانده نشد"
-              cause="ممکن است دوره‌ای منتظر ثبت در دفتر باشد؛ این خطا به معنای «همه‌چیز مرتب» نیست."
-              reference={unposted.reference}
-              action={<button type="button" className="btn" onClick={retryUnposted}>بررسی دوباره</button>} />
-          ) : items.length === 0 ? (
-            <Task state="completed" label="همه درآمدها به دفتر رفته‌اند"
-              cause="فروش و بهای تمام‌شدهٔ همهٔ دوره‌ها در دفتر حسابداری ثبت شده است." />
-          ) : (
-            items.map(item => <AttentionTask key={item.key} item={item}
-              onClosed={(outcome, channel, date) => {
-                setClosed(outcome === "verified"
-                  ? `بررسی شد: دورهٔ ${channel} در ${date} بسته شده است.`
-                  : `دورهٔ ${channel} در ${date} بسته شد.`);
-                void reload().catch(() => {});
-              }}
-              reload={reload} />)
-          )}
-        </ul>
-      </Solid>
-
-      {/*
         یک سطح مات برای «امروز»: سه شاخص در یک نوار با خط جداکننده و روند
         ساعتی زیرش — یک فضای کار، نه چند ویجت (بازبینی بصری ۱).
       */}
@@ -326,8 +294,52 @@ export function Dashboard({ access }: { access: NavAccess }) {
         : <>
             <KpiTabs items={kpis} value={selected} onChange={setMetric} label="شاخص‌های امروز" panelId={`${tabsId}-panel`} idPrefix={`${tabsId}-tab`} />
             <TrendPanel id={`${tabsId}-panel`} metric={selected} grain={grain} onGrain={chooseGrain}
+              compare={compare} onCompare={setCompare} today={report.businessDate}
               hourly={hourly} trend={grain === "hour" ? undefined : trends[grain]} />
           </>}
+      </Solid>
+
+      {/*
+        پیگیری ثبت حسابداری فروش — پس از شاخص‌ها و روند، بسته به‌طور پیش‌فرض. خلاصه
+        شمار و وضعیت واقعی را می‌گوید (در حال بررسی، خوانده نشد، بی‌دسترسی، پاک، n مورد) —
+        خطا هرگز سبز نیست. دکمه‌ها همان SafeAction و همان دروازهٔ سرور‌اند.
+      */}
+      <Solid as="section" className="pad attention" aria-labelledby="dash-attention">
+        <details className="attention-disclosure">
+          <summary>
+            <span className="attention-title" id="dash-attention">پیگیری ثبت حسابداری فروش</span>
+            <AttentionSummary unposted={unposted} attention={attention} info={items.length - attention} />
+          </summary>
+          <p className="attention-scope">ثبت فروش و بهای تمام‌شدهٔ هر دورهٔ فروش (شیفت صندوق یا روز هر کانال) در دفتر حسابداری.
+            این بخش وضعیت کلی سایت یا سامانه نیست. دورهٔ امروز از اینجا بسته نمی‌شود.</p>
+          {closed ? <p className="attention-done" role="status"><StatusIcon state="completed" />{closed}</p> : null}
+          <ul className="tasks" aria-busy={unposted.state === "loading" || undefined}>
+            {unposted.state === "loading" ? (
+              <Task state="pending" label="در حال بررسی درآمد ثبت‌نشده…" />
+            ) : unposted.state === "denied" ? (
+              <Task state="unknown" label="درآمد ثبت‌نشده برای این نقش نمایش داده نمی‌شود"
+                cause="دیدن آن به دسترسی بهای تمام‌شده نیاز دارد؛ مدیر یا حسابدار آن را پیگیری می‌کند. این به معنای «همه‌چیز مرتب» نیست."
+                note="کاری از شما لازم نیست." />
+            ) : unposted.state === "error" ? (
+              <Task state="failed" label="وضعیت درآمد ثبت‌نشده خوانده نشد"
+                cause="ممکن است دوره‌ای منتظر ثبت در دفتر باشد؛ این خطا به معنای «همه‌چیز مرتب» نیست."
+                reference={unposted.reference}
+                action={<button type="button" className="btn" onClick={retryUnposted}>بررسی دوباره</button>} />
+            ) : items.length === 0 ? (
+              <Task state="completed" label="همه درآمدها به دفتر رفته‌اند"
+                cause="فروش و بهای تمام‌شدهٔ همهٔ دوره‌ها در دفتر حسابداری ثبت شده است." />
+            ) : (
+              items.map(item => <AttentionTask key={item.key} item={item}
+                onClosed={(outcome, channel, date) => {
+                  setClosed(outcome === "verified"
+                    ? `بررسی شد: دورهٔ ${channel} در ${date} بسته شده است.`
+                    : `دورهٔ ${channel} در ${date} بسته شد.`);
+                  void reload().catch(() => {});
+                }}
+                reload={reload} />)
+            )}
+          </ul>
+        </details>
       </Solid>
 
       <QuickActions access={access} />
@@ -369,8 +381,9 @@ function unpostedFailure(err: unknown): Unposted {
  * «فروش» زیر «سود» نمی‌ماند. نمودار همهٔ شاخص‌های معلوم را با هم می‌کشد و خط
  * انتخاب‌شده پررنگ‌تر است. دوره‌های زودتر سمت راست.
  */
-function TrendPanel({ id, metric, grain, onGrain, hourly, trend }: {
+function TrendPanel({ id, metric, grain, onGrain, compare, onCompare, today, hourly, trend }: {
   id: string; metric: Metric; grain: Grain; onGrain: (g: Grain) => void;
+  compare: boolean; onCompare: (v: boolean) => void; today: string;
   hourly: Exclude<Hourly, { state: "denied" }>; trend: Trend | undefined;
 }) {
   const copy = trendCopy(metric, grain);
@@ -391,7 +404,7 @@ function TrendPanel({ id, metric, grain, onGrain, hourly, trend }: {
     const points: TrendPoint[] = grain === "hour"
       ? (hourly.state === "ready" ? hourPoints(hourly.data.hours, hourly.data.currentHour) : [])
       : trend?.state === "ready" ? bucketPoints(trend.data.buckets, grain) : [];
-    const view = trendView(points, metric, grain);
+    const view = trendView(points, metric, grain, compare);
     const tick = tickEvery(points.length, grain === "hour" ? 16 : 8);
     body = view.kind === "unknown"
       ? <ResultState kind="denied" title={`روند سود برای این نقش در دسترس نیست.`} description="دیدن سود به دسترسی بهای تمام‌شده نیاز دارد." />
@@ -408,8 +421,31 @@ function TrendPanel({ id, metric, grain, onGrain, hourly, trend }: {
   return <section className="today-trend" id={id} role="tabpanel" aria-labelledby={headingId} tabIndex={0} aria-busy={busy || undefined}>
     <SectionHeader id={headingId} title={copy.title} description={copy.description}
       actions={<Segmented label="بازهٔ روند" options={GRAINS} value={grain} onChange={onGrain} />} />
+    <div className="trend-tools">
+      {/* کارت‌های بالا همیشه «امروز»اند؛ وقتی بازهٔ روند امروز نیست، صریح گفته می‌شود. */}
+      <p className="trend-scope">
+        {grain === "hour" ? <>کارت‌ها و نمودار: امروز ({formatJalali(today)})</>
+          : <>کارت‌های بالا: فقط امروز ({formatJalali(today)}) · نمودار: {grain === "day" ? `${formatCount(DAYS)} روز اخیر` : `${formatCount(MONTHS)} ماه شمسی اخیر`}</>}
+      </p>
+      <label className="trend-compare"><input type="checkbox" checked={compare} onChange={e => onCompare(e.target.checked)} />
+        مقایسهٔ هر سه شاخص</label>
+    </div>
     {body}
   </section>;
+}
+
+/**
+ * خلاصهٔ بستهٔ «پیگیری ثبت حسابداری فروش» — شمار و وضعیت واقعی، هر حالت جدا:
+ * در حال بررسی · خوانده نشد (خطا، نه سبز) · بی‌دسترسی (نامعلوم، نه «مرتب») · n مورد · فقط
+ * دورهٔ باز امروز · همه ثبت شده. «n مورد» فقط با شمار واقعی همان فهرست.
+ */
+function AttentionSummary({ unposted, attention, info }: { unposted: Unposted; attention: number; info: number }) {
+  if (unposted.state === "loading") return <StatusBadge state="pending" label="در حال بررسی…" />;
+  if (unposted.state === "error") return <StatusBadge state="failed" label="وضعیت خوانده نشد" />;
+  if (unposted.state === "denied") return <StatusBadge state="unknown" label="برای این نقش نمایش داده نمی‌شود" />;
+  if (attention > 0) return <StatusBadge state="attention" label={`${formatCount(attention)} مورد نیازمند بررسی`} />;
+  if (info > 0) return <StatusBadge state="pending" label="دورهٔ امروز هنوز باز است؛ کاری لازم نیست" />;
+  return <StatusBadge state="completed" label="همه ثبت شده‌اند" />;
 }
 
 /** یک دورهٔ ثبت‌نشده: چه شده، چرا مهم است، و دکمه/پیوند مجاز یا اینکه کار چه کسی است. */

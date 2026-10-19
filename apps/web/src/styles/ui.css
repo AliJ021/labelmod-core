@@ -168,6 +168,19 @@
 */
 .task-note { flex: 0 1 auto; min-inline-size: 0; max-inline-size: 100%; overflow-wrap: anywhere; margin-inline-start: auto; }
 .attention-done { display: flex; align-items: center; gap: var(--s-2); margin: 0 0 var(--s-2); color: var(--ink-2); font-size: var(--text-sm); }
+/* پیگیری ثبت حسابداری فروش: بازشوندهٔ بسته؛ خلاصه عنوان + وضعیت واقعی (خطا هرگز سبز نیست). */
+.attention-disclosure > summary { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: var(--s-2) var(--s-3);
+  min-block-size: var(--touch); cursor: pointer; list-style: none; }
+.attention-disclosure > summary::-webkit-details-marker { display: none; }
+.attention-disclosure > summary::after { content: "+"; margin-inline-start: var(--s-2); color: var(--ink-2); }
+.attention-disclosure[open] > summary::after { content: "−"; }
+.attention-disclosure > summary:focus-visible { outline: 2px solid var(--accent); outline-offset: 3px; border-radius: var(--r-xs); }
+.attention-title { flex: 1 1 auto; font-size: var(--text-md); font-weight: var(--weight-semibold); }
+.attention-scope { margin: var(--s-2) 0 var(--s-3); color: var(--ink-2); font-size: var(--text-sm); line-height: var(--leading-snug); }
+.trend-tools { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: var(--s-2) var(--s-4); margin-block: var(--s-2) var(--s-3); }
+.trend-scope { margin: 0; color: var(--ink-2); font-size: var(--text-xs); }
+.trend-compare { display: inline-flex; align-items: center; gap: var(--s-2); min-block-size: var(--touch); font-size: var(--text-sm); cursor: pointer; }
+.trend-compare input { inline-size: 18px; block-size: 18px; accent-color: var(--accent); margin: 0; }
 
 /* ── داشبورد ─────────────────────────────────────────────────────── */
 .dashboard { display: flex; flex-direction: column; gap: var(--s-5); min-inline-size: 0; }
@@ -233,7 +246,11 @@
 .line-chart-legend li { display: inline-flex; align-items: center; gap: var(--s-1); }
 .line-chart-legend li[data-emphasis] { color: var(--ink); font-weight: var(--weight-semibold); }
 .line-chart-swatch { inline-size: 24px; block-size: 8px; overflow: visible; }
-.line-chart-plot { position: relative; block-size: 176px; padding-inline-end: 0; }
+.line-chart-frame { display: grid; gap: 2px; }
+.line-chart-unit { justify-self: end; font-size: var(--text-2xs); color: var(--ink-2); }
+/* ارتفاع راحت برای خواندن شیب (پیش‌تر ۱۷۶px). یک توقف Tab برای بررسی نقطه‌ها. */
+.line-chart-plot { position: relative; block-size: 240px; padding-inline-end: 0; touch-action: pan-y; cursor: crosshair; border-radius: var(--r-xs); }
+.line-chart-plot:focus-visible { outline: 2px solid var(--accent); outline-offset: 4px; }
 .line-chart-svg { display: block; inline-size: 100%; block-size: 100%; overflow: visible; }
 .line-chart-grid { stroke: var(--rule); stroke-width: 1; fill: none; vector-effect: non-scaling-stroke; }
 .line-chart-zero { stroke: var(--rule-2); stroke-width: 1.5; fill: none; vector-effect: non-scaling-stroke; }
@@ -247,21 +264,22 @@
 .line-chart g[data-emphasis] .line-chart-line, .line-chart-legend li[data-emphasis] .line-chart-swatch path { stroke-width: 3.5; }
 .line-chart g[data-series]:not([data-emphasis]) .line-chart-dot { stroke-width: 4; }
 .line-chart g[data-series]:not([data-emphasis]) .line-chart-dot.is-partial { stroke-width: 8; }
-.line-chart-y { position: absolute; inset-inline-end: 0; inset-block-start: calc(var(--y) * 100%); transform: translateY(-50%); padding-inline: 4px; border-radius: var(--r-xs); background: color-mix(in srgb, var(--surface-solid) 85%, transparent); font-size: var(--text-2xs); color: var(--ink-2); font-variant-numeric: tabular-nums; pointer-events: none; }
-.line-chart-hit { position: absolute; inset-block: 0; inset-inline-start: calc(var(--x) * 100%); inline-size: calc(var(--w) * 100%); transform: translateX(50%); }
-.line-chart-hit:hover { background: color-mix(in srgb, var(--ink) 6%, transparent); }
-.line-chart-hit:hover::after {
-  content: attr(data-tip); position: absolute; inset-block-start: 0; inset-inline-start: 50%;
-  transform: translateX(50%); z-index: 2; padding: 4px 8px; border-radius: var(--r-xs);
-  inline-size: max-content; max-inline-size: min(240px, 70vw); white-space: normal;
-  background: var(--surface-inverse); color: var(--surface-solid); font-size: var(--text-2xs); pointer-events: none;
-}
+.line-chart-y { position: absolute; inset-inline-end: 0; inset-block-start: calc(var(--y) * 100%); transform: translateY(-50%); padding-inline: 4px; border-radius: var(--r-xs); background: color-mix(in srgb, var(--surface-solid) 85%, transparent); font-size: var(--text-xs); color: var(--ink-2); font-variant-numeric: tabular-nums; pointer-events: none; }
+.line-chart-cursor { stroke: var(--rule-2); stroke-width: 1; stroke-dasharray: 3 3; fill: none; vector-effect: non-scaling-stroke; }
+.line-chart-dot.is-active { stroke-width: 10; }
+.line-chart-readout { margin: 0; min-block-size: 1.5em; font-size: var(--text-sm); font-variant-numeric: tabular-nums; color: var(--ink); }
+.line-chart-table-toggle { justify-self: start; align-self: flex-start; min-block-size: var(--touch); font-size: var(--text-sm); }
+.line-chart-table-wrap { overflow-x: auto; max-inline-size: 100%; }
+.line-chart-table { inline-size: 100%; border-collapse: collapse; font-size: var(--text-sm); font-variant-numeric: tabular-nums; }
+.line-chart-table caption { text-align: start; color: var(--ink-2); font-size: var(--text-xs); padding-block-end: var(--s-1); }
+.line-chart-table th, .line-chart-table td { padding: var(--s-1) var(--s-2); border-block-end: var(--border-w) solid var(--rule); text-align: start; white-space: nowrap; }
+.line-chart-table td { text-align: end; }
 .line-chart-x { position: relative; block-size: 1.4em; font-size: var(--text-xs); color: var(--ink-2); }
 .line-chart-x span { position: absolute; inset-inline-start: calc(var(--x) * 100%); transform: translateX(50%); white-space: nowrap; }
 .line-chart-x span:first-child { transform: none; }
 .line-chart-x span:last-child { transform: translateX(100%); }
 .line-chart-note { margin: 0; font-size: var(--text-xs); color: var(--ink-2); }
-@media (max-width: 560px) { .line-chart-x span[data-minor] { display: none; } }
+@media (max-width: 560px) { .line-chart-x span[data-minor] { display: none; } .line-chart-plot { block-size: 200px; } }
 
 /* ── جدول داده ───────────────────────────────────────────────────── */
 .table-scroll { overflow: auto; overscroll-behavior-x: contain; max-inline-size: 100%; border: var(--border-w) solid var(--rule); border-radius: var(--r-sm); background: var(--surface-solid); }

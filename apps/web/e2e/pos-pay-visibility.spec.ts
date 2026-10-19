@@ -19,6 +19,9 @@ const draft = { id: INV, number: null, branchId: "b1", warehouseId: "w1", shiftI
   payableAmount: "600000", paidAmount: "0", receivedAmount: "0", recipientId: null, gift: null, occurredAt: "2026-10-01T08:00:00Z",
   lines: [1, 2, 3, 4, 5, 6].map(line) };
 
+/** مثل سرور: فهرست پرداخت نام روش را می‌دهد، نه کد. */
+const METHOD_NAME: Record<string, string> = { card: "کارت‌خوان", cash: "نقدی", transfer: "کارت‌به‌کارت" };
+
 function mock(api: MockApi, requireCustomer = false) {
   const posted: Array<{ methodCode: string; amount: string; refNo?: string }> = [];
   let received = 0n;
@@ -33,7 +36,7 @@ function mock(api: MockApi, requireCustomer = false) {
   api.handlers.set(`GET /invoices/${INV}`, async (route) => { await route.fulfill({ json: { ...draft, receivedAmount: received.toString() } }); });
   api.handlers.set(`GET /invoices/${INV}/customer`, async (route) => { await route.fulfill({ json: { customer: null } }); });
   api.handlers.set(`GET /invoices/${INV}/payments`, async (route) => {
-    await route.fulfill({ json: { payments: posted.map((p, i) => ({ id: `p${i}`, name: p.methodCode, amount: p.amount })) } });
+    await route.fulfill({ json: { payments: posted.map((p, i) => ({ id: `p${i}`, name: METHOD_NAME[p.methodCode] ?? p.methodCode, amount: p.amount })) } });
   });
   api.handlers.set(`POST /invoices/${INV}/payments`, async (route: Route) => {
     const body = route.request().postDataJSON() as (typeof posted)[number];
@@ -79,6 +82,7 @@ for (const size of [{ width: 1440, height: 960 }, { width: 1366, height: 768 }, 
     // ردیف اول حتی پس از کار روی ردیف دوم، با فوکوس دوباره کامل دیده می‌شود.
     await card.focus();
     await expectUncovered(card, "مبلغ کارت‌خوان پس از بازگشت");
+    if (process.env.LMC_REVIEW_SCREENSHOT) await page.screenshot({ path: test.info().outputPath(`pay-${size.width}x${size.height}-two-rows.png`) });
     await row(page, "کارت‌خوان").getByRole("button", { name: "دریافت وجه", exact: true }).click();
     await expect.poll(() => s.posted).toEqual([{ methodCode: "card", amount: "250000", refNo: "TR-1" }]);
     // ردیف پرداخت‌شده برداشته شد؛ ورودی نقد (پرداخت ترکیبی) ماند.
@@ -96,7 +100,12 @@ for (const size of [{ width: 1440, height: 960 }, { width: 1366, height: 768 }, 
       const st = getComputedStyle(el); return /(auto|scroll)/.test(st.overflowY) && el.scrollHeight > el.clientHeight + 1;
     }).map((el) => el.className));
     expect(nested, "ستون پرداخت اسکرول تودرتو ندارد").toEqual([]);
-    if (process.env.LMC_REVIEW_SCREENSHOT) await page.screenshot({ path: test.info().outputPath(`pay-${size.width}x${size.height}.png`), fullPage: true });
+    if (process.env.LMC_REVIEW_SCREENSHOT) {
+      // همان قاب کاربر (دکمهٔ نهایی در فوکوس)، و کل صفحه از بالا — عکس fullPage با اسکرول، عنصر fixed را جابه‌جا می‌کشد.
+      await page.screenshot({ path: test.info().outputPath(`pay-${size.width}x${size.height}-viewport.png`) });
+      await page.evaluate(() => window.scrollTo(0, 0));
+      await page.screenshot({ path: test.info().outputPath(`pay-${size.width}x${size.height}.png`), fullPage: true });
+    }
   });
 }
 

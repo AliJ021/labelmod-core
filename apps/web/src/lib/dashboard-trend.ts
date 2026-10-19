@@ -188,16 +188,16 @@ export type TrendView =
 const display = (v: bigint | null) => (v === null ? "هنوز نرسیده" : `${formatMoney(v)} تومان`);
 
 /**
- * نمای شاخص انتخاب‌شده. نمودار همهٔ شاخص‌های **معلوم** را با هم می‌کشد (خط
- * انتخاب‌شده پررنگ‌تر)؛ سود نامعلوم هیچ خطی ندارد. «خالی» و «نامعلوم» برای
- * شاخص انتخاب‌شده سنجیده می‌شوند.
+ * نمای شاخص انتخاب‌شده. پیش‌فرض (بازطراحی مصوب مالک) **فقط همان شاخص** است؛ `compare`
+ * صریح همهٔ شاخص‌های **معلوم** را با رنگ و الگوی خط متمایز کنار هم می‌گذارد (خط انتخاب‌شده
+ * پررنگ‌تر). سود نامعلوم هیچ خطی ندارد. «خالی» و «نامعلوم» برای شاخص انتخاب‌شده سنجیده می‌شوند.
  */
-export function trendView(points: readonly TrendPoint[], metric: Metric, grain: Grain): TrendView {
+export function trendView(points: readonly TrendPoint[], metric: Metric, grain: Grain, compare = false): TrendView {
   const reached = points.filter(p => !p.pending);
   const known = (m: Metric) => reached.every(p => p.values[m] !== null);
   if (metric === "profit" && !known("profit")) return { kind: "unknown" };
   if (!reached.some(p => p.events[metric])) return { kind: "empty" };
-  const series = METRICS.filter(m => known(m.key)).map(m => ({
+  const series = METRICS.filter(m => known(m.key) && (compare || m.key === metric)).map(m => ({
     metric: m.key, label: m.label,
     values: points.map(p => p.values[m.key]),
     displays: points.map(p => display(p.values[m.key])),

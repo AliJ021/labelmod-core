@@ -1,5 +1,5 @@
 /**
- * روند داشبورد — ساعتی/روزانه/ماهانه (مهاجرت ۰۹۳) و «نیاز به رسیدگی».
+ * روند داشبورد — ساعتی/روزانه/ماهانه (مهاجرت ۰۹۳) و «پیگیری ثبت حسابداری فروش».
  *
  * رفتار واقعی مرورگر: مرز بازه از «امروز» سرور (نه ساعت مرورگر)، ماه جلالی، یک
  * درخواست برای هر دانه‌بندی، «هنوز نیامده» ≠ صفر، بی‌دسترسی ≠ خطا ≠ خالی، RTL
@@ -55,7 +55,9 @@ test.describe("روند داشبورد", () => {
     await page.goto("/");
     await expect(grain(page, "ساعتی")).toBeChecked();
     const hourly = panel(page).getByRole("figure", { name: "فروش هر ساعت (تومان)" });
-    await expect(hourly.locator(".line-chart-line")).toHaveCount(3);
+    // پیش‌فرض فقط شاخص انتخاب‌شده (بازطراحی مصوب مالک)؛ مقایسه صریح است.
+    await expect(hourly.locator(".line-chart-line")).toHaveCount(1);
+    await expect(hourly.locator('g[data-series="sales"] .line-chart-line')).toHaveCount(1);
     expect(trendCalls(api), "nothing fetched before a choice").toHaveLength(0);
 
     await grain(page, "روزانه").check();
@@ -71,7 +73,8 @@ test.describe("روند داشبورد", () => {
     await expect(daily.locator("table tbody tr")).toHaveCount(30);
     await expect(daily.locator("table tbody tr").last()).toContainText("(ناقص)");
     await expect(daily).toContainText("امروز هنوز تمام نشده");
-    await expect(daily.locator(".line-chart-dot.is-partial")).toHaveCount(3);
+    // یک نقطهٔ ناقص برای هر خطِ نشان‌داده؛ پیش‌فرض فقط شاخص انتخاب‌شده.
+    await expect(daily.locator(".line-chart-dot.is-partial")).toHaveCount(1);
 
     await grain(page, "ماهانه").check();
     const monthly = panel(page).getByRole("figure", { name: "فروش هر ماه (تومان)" });
@@ -166,18 +169,109 @@ test.describe("روند داشبورد", () => {
   });
 });
 
-test.describe("نیاز به رسیدگی", () => {
-  const row = { branchId: "b1", invoiceCount: 12, payableAmount: "12340000", cogsAmount: "9000000" };
-  const section = (page: Page) => page.getByRole("region", { name: "نیاز به رسیدگی" });
+test.describe("بررسی نمودار و مقایسه", () => {
+  test("compare-all is explicit: three lines with distinct colours AND dash patterns; off again shows only the selected metric", async ({ page }) => {
+    await page.goto("/");
+    const chart = panel(page).getByRole("figure", { name: "فروش هر ساعت (تومان)" });
+    await expect(chart.locator(".line-chart-line")).toHaveCount(1);
+    const compare = panel(page).getByRole("checkbox", { name: "مقایسهٔ هر سه شاخص" });
+    await expect(compare).not.toBeChecked();
+    await compare.check();
+    await expect(chart.locator(".line-chart-line")).toHaveCount(3);
+    const style = await chart.locator(".line-chart-line").evaluateAll(els => els.map(el => {
+      const st = getComputedStyle(el); return { color: st.stroke, dash: st.strokeDasharray, series: el.parentElement!.getAttribute("data-series") };
+    }));
+    expect(new Set(style.map(s => s.color)).size, "سه رنگ").toBe(3);
+    expect(new Set(style.map(s => s.dash)).size, "سه الگوی خط").toBe(3);
+    await expect(chart.locator(".line-chart-legend li")).toHaveText(["فروش", "وجه دریافتی", "سود"]);
+    await expect(chart.locator("g[data-emphasis]")).toHaveAttribute("data-series", "sales");
+    await compare.uncheck();
+    await expect(chart.locator(".line-chart-line")).toHaveCount(1);
+  });
 
-  test("each item states cause and an allowed action; today is information, not a count", async ({ page, api }) => {
+  test("keyboard and touch inspection: one Tab stop, RTL arrows/Home/End move the readout; tap picks the nearest point; table can be shown", async ({ page }) => {
+    await page.goto("/");
+    const chart = panel(page).getByRole("figure", { name: "فروش هر ساعت (تومان)" });
+    const plot = chart.getByRole("group");
+    const readout = chart.locator(".line-chart-readout");
+    await expect(readout, "پیش‌فرض: آخرین نقطهٔ رسیده").toContainText("ساعت ۲۲");
+    await plot.focus();
+    await expect(plot).toBeFocused();
+    await page.keyboard.press("Home");
+    await expect(readout).toContainText("ساعت ۸");
+    await page.keyboard.press("ArrowLeft"); // RTL: چپ = بعدی
+    await expect(readout).toContainText("ساعت ۹");
+    await page.keyboard.press("ArrowRight");
+    await expect(readout).toContainText("ساعت ۸");
+    await page.keyboard.press("End");
+    await expect(readout).toContainText("ساعت ۲۲");
+    await expect(readout).toHaveAttribute("aria-live", "polite");
+    // لمس/کلیک: نقطهٔ نزدیک — لبهٔ راست (RTL) قدیمی‌ترین ساعت است.
+    const box = (await plot.boundingBox())!;
+    await page.mouse.click(box.x + box.width - 2, box.y + box.height / 2);
+    await expect(readout).toContainText("ساعت ۸");
+    await expect(readout).toContainText("فروش");
+    await expect(readout).toContainText("تومان");
+    // جدول آشکار — همان جدول، بی نسخهٔ دوم.
+    const toggle = chart.getByRole("button", { name: "نمایش جدول داده" });
+    await expect(toggle).toHaveAttribute("aria-expanded", "false");
+    await toggle.click();
+    const table = chart.getByRole("table");
+    await expect(table).toBeVisible();
+    await expect(chart.getByRole("table")).toHaveCount(1);
+    await expect(table.locator("thead th")).toHaveText(["ساعت", "فروش"]);
+    const size = await page.evaluate(() => ({ scroll: document.documentElement.scrollWidth, client: document.documentElement.clientWidth }));
+    expect(size.scroll, "جدول آشکار صفحه را افقی نمی‌کشد").toBeLessThanOrEqual(size.client);
+  });
+
+  test("axis has a unit and round ticks that include zero; negative profit stays below zero, not clamped", async ({ page }) => {
+    await page.goto("/");
+    await page.getByRole("tab", { name: "سود", exact: true }).click();
+    const chart = panel(page).getByRole("figure", { name: "سود هر ساعت (تومان)" });
+    await expect(chart.locator(".line-chart-unit")).toHaveText("تومان");
+    const ys = await chart.locator(".line-chart-y").allTextContents();
+    expect(ys).toContain("0");
+    expect(ys.some(t => t.startsWith("−")), "تیک منفی برای زیان").toBe(true);
+    await expect(chart.locator(".line-chart-zero")).toHaveCount(1);
+    await expect(chart.locator('.line-chart-dot[data-sign="negative"]')).toHaveCount(1);
+  });
+
+  test("when the trend period is not today, the today-only scope of the KPI cards is stated", async ({ page, api }) => {
+    serveTrend(api, () => ({}));
+    await page.goto("/");
+    const scope = panel(page).locator(".trend-scope");
+    await expect(scope).toContainText("کارت‌ها و نمودار: امروز");
+    await grain(page, "روزانه").check();
+    await expect(scope).toContainText("کارت‌های بالا: فقط امروز");
+    await expect(scope).toContainText("۳۰ روز اخیر");
+    await grain(page, "ماهانه").check();
+    await expect(scope).toContainText("۱۲ ماه شمسی اخیر");
+  });
+});
+
+test.describe("پیگیری ثبت حسابداری فروش", () => {
+  const row = { branchId: "b1", invoiceCount: 12, payableAmount: "12340000", cogsAmount: "9000000" };
+  const section = (page: Page) => page.getByRole("region", { name: "پیگیری ثبت حسابداری فروش" });
+  const summary = (page: Page) => section(page).locator("summary");
+  async function expand(page: Page) {
+    const d = section(page).locator("details");
+    await expect(d, "بسته به‌طور پیش‌فرض").not.toHaveAttribute("open", "");
+    await summary(page).click();
+    await expect(d).toHaveAttribute("open", "");
+  }
+
+  test("collapsed below the KPI band and the chart; the summary carries the real count; each item states cause and an allowed action", async ({ page, api }) => {
     api.defaults["GET /posting-batches/unposted"] = { rows: [
       { ...row, batchId: "t", batchKind: "channel_day", channel: "web", businessDate: "2026-09-16" },
       { ...row, batchId: "p", batchKind: "channel_day", channel: "web", businessDate: "2026-09-15" },
       { ...row, batchId: "s", batchKind: "shift", channel: "pos", businessDate: "2026-09-14" },
     ] };
     await page.goto("/");
-    await expect(section(page).getByText("۲ مورد", { exact: true })).toBeVisible();
+    await expect(summary(page)).toContainText("۲ مورد نیازمند بررسی");
+    const today = (await page.locator(".today").boundingBox())!, own = (await section(page).boundingBox())!;
+    expect(own.y, "پس از شاخص‌ها و نمودار").toBeGreaterThan(today.y + today.height - 1);
+    await expand(page);
+    await expect(section(page)).toContainText("این بخش وضعیت کلی سایت یا سامانه نیست");
     const items = section(page).locator(".task");
     await expect(items).toHaveCount(3);
     await expect(items.nth(0)).toContainText("سود و ترازنامه ناقص‌اند");
@@ -189,28 +283,46 @@ test.describe("نیاز به رسیدگی", () => {
     await expect(page).toHaveURL(/page=pos/);
   });
 
-  test("empty, no permission and failure read differently; failure can be re-checked", async ({ page, api }) => {
+  test("today's open period alone is information, not a count", async ({ page, api }) => {
+    api.defaults["GET /posting-batches/unposted"] = { rows: [{ ...row, batchId: "t", batchKind: "channel_day", channel: "web", businessDate: "2026-09-16" }] };
     await page.goto("/");
+    await expect(summary(page)).toContainText("دورهٔ امروز هنوز باز است؛ کاری لازم نیست");
+    await expect(summary(page)).not.toContainText("مورد");
+  });
+
+  test("empty, no permission, loading and failure read differently in the collapsed summary; failure is never green and can be re-checked", async ({ page, api }) => {
+    await page.goto("/");
+    await expect(summary(page)).toContainText("همه ثبت شده‌اند");
+    await expect(summary(page).locator(".status")).toHaveAttribute("data-state", "completed");
+    await expand(page);
     await expect(section(page)).toContainText("همه درآمدها به دفتر رفته‌اند");
 
     let status = 403;
+    let release: (() => void) | null = null;
     api.handlers.set("GET /posting-batches/unposted", async route => {
+      if (status === 0) { await new Promise<void>(r => { release = r; }); await route.fulfill({ json: { rows: [] } }); return; }
       if (status === 200) await route.fulfill({ json: { rows: [] } });
       else await route.fulfill({ status, json: { error: { code: "x", message: "x", correlationId: "req-7" } } });
     });
     await page.reload();
-    await expect(section(page)).toContainText("درآمد ثبت‌نشده برای این نقش نمایش داده نمی‌شود");
+    await expect(summary(page)).toContainText("برای این نقش نمایش داده نمی‌شود");
+    await expect(summary(page).locator(".status")).toHaveAttribute("data-state", "unknown");
+    await expand(page);
     await expect(section(page)).toContainText("به معنای «همه‌چیز مرتب» نیست");
     await expect(section(page)).not.toContainText("همه درآمدها به دفتر رفته‌اند");
     await expect(section(page).getByRole("button")).toHaveCount(0);
 
     status = 500;
     await page.reload();
-    await expect(section(page)).toContainText("وضعیت درآمد ثبت‌نشده خوانده نشد");
+    await expect(summary(page)).toContainText("وضعیت خوانده نشد");
+    await expect(summary(page).locator(".status"), "خطا سبز نیست").toHaveAttribute("data-state", "failed");
+    await expand(page);
     await expect(section(page)).toContainText("req-7");
-    await expect(section(page)).not.toContainText("برای این نقش");
-    status = 200;
+    status = 0;
     await section(page).getByRole("button", { name: "بررسی دوباره" }).click();
-    await expect(section(page)).toContainText("همه درآمدها به دفتر رفته‌اند");
+    await expect(summary(page)).toContainText("در حال بررسی");
+    await expect.poll(() => release !== null).toBe(true);
+    release!();
+    await expect(summary(page)).toContainText("همه ثبت شده‌اند");
   });
 });
