@@ -173,7 +173,10 @@ test("dashboard unposted-period notes wrap instead of widening the page",async({
     {...row,batchId:"p2",batchKind:"channel_day",channel:"web",businessDate:"2026-09-16"},
     {...row,batchId:"p3",batchKind:"channel_day",channel:"web",businessDate:"2026-09-15"},
   ]};
+  // «پیگیری ثبت حسابداری فروش» بسته است (بازطراحی مصوب مالک)؛ یادداشت‌ها پس از بازکردن سنجیده می‌شوند.
+  const expand=async()=>{await page.locator(".attention-disclosure > summary").click();await expect(page.locator(".attention-disclosure")).toHaveAttribute("open","");};
   await page.goto("/");
+  await expand();
   await expect(page.getByText("با بستن شیفت صندوق بسته می‌شود",{exact:true})).toBeVisible();
   await expect(page.getByText("دوره امروز هنوز باز است",{exact:true})).toBeVisible();
   await expect(page.getByRole("button",{name:"بستن دوره",exact:true})).toBeVisible();
@@ -182,6 +185,7 @@ test("dashboard unposted-period notes wrap instead of widening the page",async({
   expect(size.scroll,"Dashboard must not scroll horizontally").toBeLessThanOrEqual(size.client);
   api.handlers.set("GET /auth/can",async route=>{await route.fulfill({json:{verdict:"deny",approver:null,reason:""}});});
   await page.reload();
+  await expand();
   await expect(page.getByText("بستن دوره دسترسی حسابدار می‌خواهد",{exact:true})).toBeVisible();
   await fontsReady(page);
   const denied=await page.evaluate(()=>({scroll:document.documentElement.scrollWidth,client:document.documentElement.clientWidth}));
@@ -192,6 +196,7 @@ test("dashboard unposted-period notes wrap instead of widening the page",async({
     for(const width of NARROW_WIDTHS){
       await page.setViewportSize({width,height:900});
       await page.goto("/");
+      await expand();
       await expect(page.getByText("با بستن شیفت صندوق بسته می‌شود",{exact:true})).toBeVisible();
       await expect(verdict==="allow"?page.getByRole("button",{name:"بستن دوره",exact:true}):page.getByText("بستن دوره دسترسی حسابدار می‌خواهد",{exact:true})).toBeVisible();
       await fontsReady(page);

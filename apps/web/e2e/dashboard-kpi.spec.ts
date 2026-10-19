@@ -200,4 +200,21 @@ test.describe("زبانه‌های شاخص داشبورد", () => {
       expect(size.scroll, `${width}: no page-level horizontal overflow`).toBeLessThanOrEqual(size.client);
     }
   });
+
+  // ریشه دید دریافتی بیش از فروش رخ می‌دهد (دریافت امروز بابت فاکتور دیروز): «همه پول رسیده» از
+  // max(sales − received, 0) گمراه‌کننده بود. حالا مقایسهٔ خنثی، بی رنگ هشدار یا «انجام‌شده».
+  for (const [label, received, text] of [
+    // ریال در API، تومان روی صفحه: ۱۲٬۳۴۰٬۰۰۰ − ۱۱٬۰۰۰٬۰۰۰ ریال = ۱۳۴٬۰۰۰ تومان.
+    ["less", "11000000", /134٬000\s*تومان\s*کمتر از فروش امروز/],
+    ["more", "13000000", /66٬000\s*تومان\s*بیشتر از فروش امروز/],
+    ["equal", "12340000", /برابر با فروش امروز/],
+  ] as const) test(`received note is a neutral comparison with today's sales (${label}); never "all money arrived"`, async ({ page, api }) => {
+    api.defaults["GET /reports/daily"] = { businessDate: "2026-09-16", salesAmount: "12340000", receivedAmount: received, profitAmount: "2000000", invoiceCount: 12, returnCount: 0 };
+    await page.goto("/");
+    const t = tab(page, "وجه دریافتی");
+    await expect(t).toContainText(text);
+    await expect(t).not.toContainText("همه پول رسیده");
+    await expect(t).not.toContainText("هنوز نرسیده");
+    await expect(t.locator(".status-icon"), "بی رنگ وضعیت: تفاوت طلب نیست").toHaveCount(0);
+  });
 });

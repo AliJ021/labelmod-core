@@ -76,7 +76,7 @@ test("visual, local fonts, contrast, targets, long names and 200% text", async (
   await noOverflow(page);
   await screenshot(page, "settings");
   await page.getByRole("tab", { name: "داشبورد", exact: true }).click();
-  await expect(page.getByText("نیاز به رسیدگی", { exact: true })).toBeVisible();
+  await expect(page.getByText("پیگیری ثبت حسابداری فروش", { exact: true })).toBeVisible();
   await expect(page.locator("main .glass")).toHaveCount(0);
   await screenshot(page, "dashboard");
 });
@@ -282,7 +282,7 @@ test("password suggestion, cancellation, server error, duplicate submit and succ
   await page.getByRole("button", { name: "پیشنهاد رمز امن" }).click();
   await page.getByRole("button", { name: "بررسی و ادامه" }).click();
   await expect(page.getByRole("button", { name: "تأیید نهایی و تغییر رمز" })).toBeDisabled();
-  await page.getByRole("checkbox").check();
+  await page.getByRole("dialog").getByRole("checkbox").check();
   let pending: Route | undefined;
   api.handlers.set("POST /auth/change-password", async route => { pending = route; });
   await page.getByRole("button", { name: "تأیید نهایی و تغییر رمز" }).click();

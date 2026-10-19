@@ -180,11 +180,17 @@ a[role="tab"] { display: inline-flex; align-items: center; text-decoration: none
   /* ستون سبد در ۹۰۰ تا ~۱۱۰۰ باریک است: نام کالا کف عرض دارد تا سطر بشکند، نه اینکه
      نام واژه‌به‌واژه زیر هم بیفتد. */
   .lines li .line-name { flex: 1 1 12rem; }
-  /* سقف ارتفاع از Pos.tsx (`--pay-max`: فاصلهٔ واقعی ستون تا پایین پنجره) می‌آید؛
-     بی آن، همان سقف قبلی. */
-  .pay { position: sticky; inset-block-start: var(--s-4); max-block-size: var(--pay-max, calc(100dvh - var(--s-6))); grid-template-rows: auto minmax(120px, 1fr) auto; overflow: hidden; }
-  .pay-scroll { min-block-size: 0; overflow-y: auto; overscroll-behavior: contain; padding: 3px; scroll-padding-block: var(--s-3); }
-  .pay-finish { padding-block-start: var(--s-3); background: var(--surface-solid); border-block-start: var(--border-w) solid var(--rule); }
+}
+/* ستون پرداخت سقف ارتفاع و اسکرول تودرتو ندارد (بازطراحی مصوب مالک، ۲۰۲۶/۱۰/۱۸): ردیف
+   `minmax(120px, 1fr)` با `.pay-scroll` کادر مبلغ را زیر یک ناحیهٔ اسکرول کوچک پنهان می‌کرد.
+   فقط پایان فشرده (نسیه + نهایی‌کردن) چسبان است، آن هم فقط وقتی ارتفاع پنجره جا دارد؛ و
+   scroll-padding برابر ارتفاعش است تا فوکوس، کادر مبلغ را زیر آن نبرد. زیر ۹۰۰ و با زوم/کیبورد
+   (ارتفاع کم) چیزی چسبان نیست و خلاصهٔ پایین موبایل همان قاعدهٔ قبلی را دارد. */
+@media (min-width: 900px) and (min-height: 600px) {
+  .pay-finish { position: sticky; inset-block-end: 0; z-index: 2; margin-inline: calc(-1 * var(--s-4)); margin-block-end: calc(-1 * var(--s-4));
+    padding: var(--s-3) var(--s-4) var(--s-4); background: var(--surface-solid); border-block-start: var(--border-w) solid var(--rule);
+    border-end-start-radius: inherit; border-end-end-radius: inherit; }
+  html:has(.pos .pay-finish) { scroll-padding-block-end: var(--pay-finish-h, 9rem); }
 }
 
 /* هر کار یک سطح مستقل؛ کنترل اسکن از باز و بسته شدن جزئیات جدا می‌ماند. */
@@ -198,7 +204,7 @@ a[role="tab"] { display: inline-flex; align-items: center; text-decoration: none
 .pos-customer-details[open] > summary { margin-block-end: var(--s-3); }
 .pos-customer-details > summary:focus-visible { outline: 2px solid var(--accent); outline-offset: 3px; }
 .pos-gift-card { padding-inline: var(--s-2); }
-.pay-summary-fixed, .pay-scroll { display: grid; align-content: start; gap: var(--s-3); }
+.pay-summary-fixed, .pay-body { display: grid; align-content: start; gap: var(--s-3); }
 .cart { display: grid; gap: var(--s-3); padding: var(--s-4); align-content: start; }
 .product-entry { display: grid; gap: var(--s-2); padding-block-end: var(--s-3); border-block-end: var(--border-w) solid var(--rule); }
 .product-search { display: flex; flex-wrap: wrap; align-items: end; gap: var(--s-2); }
@@ -285,64 +291,31 @@ a[role="tab"] { display: inline-flex; align-items: center; text-decoration: none
 .payment-breakdown, .sale-complete-payments ul { list-style: none; margin: 0; padding: 0; display: grid; gap: var(--s-1); }
 .payment-breakdown li, .sale-complete-payments li { display: flex; justify-content: space-between; gap: var(--s-3); font-size: var(--text-sm); }
 
-/* ── انتخاب‌گر پرداخت: کارت‌خوان ← اسنپ‌پی|دیجی‌پی ← بیشتر ───────── */
+/* ── انتخاب‌گر پرداخت: تراشه‌های فعال ← ردیف مبلغ هر روش؛ ناموجودها بازشونده ── */
 .pay-select { display: grid; gap: var(--s-2); }
 .pay-step { margin: 0; color: var(--ink-2); font-size: var(--text-xs); font-weight: var(--weight-semibold); }
-.pay-options { display: grid; gap: var(--s-2); }
-.pay-providers { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: var(--s-2); }
-
-.pay-option { display: grid; grid-template-columns: minmax(0, 1fr) auto; align-items: center; gap: var(--s-2) var(--s-3); inline-size: 100%;
-  min-block-size: 56px; padding: var(--s-2) var(--s-3); border: var(--border-w) solid var(--rule-2); border-radius: var(--r-sm);
-  background: var(--surface-solid-2); color: var(--ink); font: inherit; text-align: start; cursor: pointer;
+.pay-step-note { margin: 0; }
+.pay-chips { display: flex; flex-wrap: wrap; gap: var(--s-2); }
+.pay-chip { display: inline-flex; align-items: center; gap: var(--s-2); min-block-size: var(--touch); padding-inline: var(--s-3);
+  border: var(--border-w) solid var(--control-border); border-radius: var(--r-pill); background: var(--surface-solid-2); color: var(--ink);
+  font: inherit; font-size: var(--text-sm); font-weight: var(--weight-medium); cursor: pointer;
   transition: background-color var(--dur-fast) var(--ease-out), border-color var(--dur-fast) var(--ease-out); }
-.pay-option:has(.pay-option-icon) { grid-template-columns: auto minmax(0, 1fr) auto; }
-.pay-option-icon { display: grid; place-items: center; inline-size: 36px; block-size: 36px; border-radius: var(--r-xs); background: var(--surface-solid); color: var(--ink-2); }
-.pay-option-text { display: grid; gap: 2px; min-inline-size: 0; }
-.pay-option-name { display: flex; flex-wrap: wrap; align-items: center; gap: var(--s-1) var(--s-2); font-size: var(--text-md); font-weight: var(--weight-semibold); line-height: var(--leading-tight); }
-.pay-option-caption { color: var(--ink-2); font-size: var(--text-xs); line-height: var(--leading-snug); }
-.pay-option-mark { display: grid; place-items: center; min-inline-size: 16px; color: var(--accent); }
-.pay-option-tag { padding: 1px var(--s-2); border-radius: var(--r-pill); background: var(--neutral-soft); color: var(--ink-2); font-size: var(--text-2xs); font-weight: var(--weight-semibold); white-space: nowrap; }
-.pay-option--primary { min-block-size: 64px; border-color: var(--control-border); }
-.pay-option--primary .pay-option-name { font-size: var(--text-lg); }
-.pay-option--primary .pay-option-icon { inline-size: 40px; block-size: 40px; color: var(--ink); }
-.pay-option--provider { min-block-size: 60px; }
-.pay-option:hover:not(:disabled):not([aria-disabled="true"]) { border-color: var(--control-border); background: var(--neutral-soft); }
-.pay-option:active:not(:disabled):not([aria-disabled="true"]) { transform: scale(0.99); }
-/* انتخاب فقط با رنگ گفته نمی‌شود: قاب ضخیم، نشانهٔ ✓ و وزن قلم هم عوض می‌شوند. */
-.pay-option[data-state="selected"] { border-color: var(--accent); box-shadow: inset 0 0 0 1px var(--accent); background: var(--accent-soft); }
-.pay-option[data-state="selected"] .pay-option-name { font-weight: var(--weight-bold); }
-.pay-option[data-state="selected"] .pay-option-icon { color: var(--accent); }
-.pay-option[data-state="error"] { border-color: var(--crit); box-shadow: inset 0 0 0 1px var(--crit); background: var(--crit-soft); }
-/* ناموجود: آگاهانه، نه شکسته — قاب خط‌چین، برچسب «ناموجود» و دلیل خوانا. */
-.pay-option[data-state="unavailable"] { border-style: dashed; background: transparent; color: var(--ink-2); cursor: not-allowed; }
-.pay-option[data-state="unavailable"] .pay-option-name { color: var(--ink-2); font-weight: var(--weight-medium); }
-/* قفل موقت (سبد خالی، عمل در جریان، قصد نامعلوم) — جدا از ناموجود. */
-.pay-option:disabled { opacity: .5; cursor: not-allowed; }
-
-.pay-channel { display: grid; gap: var(--s-2); margin: 0; padding: var(--s-2) var(--s-3) var(--s-3); border: 0; border-radius: var(--r-sm); background: var(--neutral-soft); min-inline-size: 0; }
-.pay-channel legend { float: inline-start; inline-size: 100%; margin-block-end: var(--s-1); padding: 0; color: var(--ink-2); font-size: var(--text-xs); font-weight: var(--weight-semibold); }
-.pay-channel-options { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: var(--s-2); }
-.pay-channel-option { white-space: nowrap; display: flex; align-items: center; gap: var(--s-2); min-block-size: var(--touch); padding-inline: var(--s-3); border: var(--border-w) solid var(--rule-2);
-  border-radius: var(--r-xs); background: var(--surface-solid); font-size: var(--text-sm); font-weight: var(--weight-medium); cursor: pointer; }
-.pay-channel-option input { accent-color: var(--accent); inline-size: 18px; block-size: 18px; margin: 0; }
-.pay-channel-option[data-state="selected"] { border-color: var(--accent); box-shadow: inset 0 0 0 1px var(--accent); }
-.pay-channel-option[data-state="unavailable"] { border-style: dashed; background: transparent; color: var(--ink-2); cursor: not-allowed; }
-.pay-channel-why { display: flex; align-items: flex-start; gap: var(--s-1); margin: 0; color: var(--ink-2); font-size: var(--text-xs); line-height: var(--leading-snug); }
-
-.pay-more { display: grid; gap: var(--s-2); }
-.pay-more-toggle { display: flex; align-items: center; gap: var(--s-2); inline-size: 100%; min-block-size: var(--touch); padding-inline: var(--s-3);
-  border: var(--border-w) solid var(--rule); border-radius: var(--r-sm); background: transparent; color: var(--ink); font: inherit; font-size: var(--text-sm); font-weight: var(--weight-medium); cursor: pointer; }
-.pay-more-toggle:hover:not(:disabled) { background: var(--neutral-soft); border-color: var(--rule-2); }
-.pay-more-current { display: inline-flex; align-items: center; gap: var(--s-1); padding: 1px var(--s-2); border-radius: var(--r-pill); background: var(--accent-soft); font-size: var(--text-xs); font-weight: var(--weight-semibold); }
-.pay-more-chevron { display: inline-grid; margin-inline-start: auto; color: var(--ink-2); transition: transform var(--dur-fast) var(--ease-out); }
-.pay-more-toggle[aria-expanded="true"] .pay-more-chevron { transform: rotate(180deg); }
-.pay-more-panel { padding: var(--s-2); border-radius: var(--r-sm); background: var(--neutral-soft); }
-.pay-more-panel[hidden] { display: none; }
-.pay-more-list { display: grid; grid-template-columns: minmax(0, 1fr); gap: var(--s-1); margin: 0; padding: 0; list-style: none; }
-.pay-more-list .pay-option { min-block-size: 48px; padding-block: var(--s-1); background: var(--surface-solid); }
-.pay-more-list .pay-option-name { font-size: var(--text-sm); }
-.pay-more-list .pay-option-icon { inline-size: 32px; block-size: 32px; background: var(--surface-solid-2); }
-.ui-dialog .pay-more-list { grid-template-columns: minmax(0, 1fr); margin-block-start: var(--s-3); }
+.pay-chip-icon { display: inline-grid; color: var(--ink-2); }
+.pay-chip-mark { display: inline-grid; min-inline-size: 16px; color: var(--accent); }
+.pay-chip:hover:not(:disabled) { background: var(--neutral-soft); }
+.pay-chip:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+.pay-chip[aria-pressed="true"] { border-color: var(--accent); box-shadow: inset 0 0 0 1px var(--accent); background: var(--accent-soft); font-weight: var(--weight-semibold); }
+.pay-chip[aria-pressed="true"] .pay-chip-icon { color: var(--accent); }
+.pay-chip:disabled { opacity: .55; cursor: not-allowed; }
+.pay-chip[aria-pressed="true"]:disabled { opacity: 1; }
+.pay-unavailable { border-radius: var(--r-sm); }
+.pay-unavailable > summary { display: flex; align-items: center; gap: var(--s-1); min-block-size: var(--touch); cursor: pointer; color: var(--ink-2); font-size: var(--text-xs); font-weight: var(--weight-semibold); }
+.pay-unavailable > summary:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+.pay-unavailable-list { display: grid; gap: var(--s-1); margin: 0; padding: var(--s-2) var(--s-3); list-style: none; border-radius: var(--r-sm); background: var(--neutral-soft); }
+.pay-unavailable-list li { display: grid; gap: 2px; font-size: var(--text-xs); line-height: var(--leading-snug); }
+.pay-unavailable-list li strong { font-size: var(--text-sm); }
+.pay-unavailable-list li span { color: var(--ink-2); }
+.pay-rows { display: grid; gap: var(--s-2); }
 
 .pay-intent { display: grid; gap: var(--s-2); padding: var(--s-3); border-radius: var(--r-sm); background: var(--surface-solid-2); box-shadow: inset 0 0 0 1px var(--rule-2); }
 .pay-intent--unknown { box-shadow: inset 0 0 0 1px var(--warn); border-inline-start: 3px solid var(--warn); }
@@ -355,6 +328,8 @@ a[role="tab"] { display: inline-flex; align-items: center; text-decoration: none
 .pay-form-note { margin: 0; }
 .pay-form-fields { display: grid; gap: var(--s-2); }
 .pay-form input { inline-size: 100%; }
+/* فوکوس با اسکرول بالا، کادر را لب پنجره و برچسبش را بیرون نگذارد (۷۶۸×۶۰۰ دیده شد). */
+.pay-form input, .pay-form .btn, .pay-finish .btn { scroll-margin-block-start: 4.5rem; }
 .pay-form .btn { inline-size: 100%; min-block-size: 48px; }
 
 /* ── پایان فروش: نسیه جدا، نهایی‌کردن عمل اصلی ─────────────────── */
@@ -380,7 +355,7 @@ a[role="tab"] { display: inline-flex; align-items: center; text-decoration: none
 .line-tool { min-inline-size: var(--touch); min-block-size: var(--touch); padding-inline: var(--s-2); border: 0; border-radius: var(--r-xs); background: transparent; color: var(--ink-2); font: inherit; font-size: var(--text-sm); cursor: pointer; }
 .line-tool:hover:not([disabled]), .line-tool[aria-expanded="true"] { color: var(--ink); background: var(--surface-solid-2); }
 .line-tool[disabled] { opacity: .4; cursor: default; }
-.line-tool:focus-visible, .pay-more-toggle:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+.line-tool:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
 .line-panel { flex-basis: 100%; }
 
 /* ── «ثبت شد»: تا «فروش بعدی» می‌ماند ───────────────────────────── */
@@ -432,7 +407,6 @@ a[role="tab"] { display: inline-flex; align-items: center; text-decoration: none
   .cart .line-tool { min-block-size: var(--touch); }
   .cart .line-drop { position: absolute; inset-inline-end: 0; inset-block-start: var(--s-3); }
   .cart .line-panel, .cart .line-error { grid-column: 1 / -1; }
-  .pay-more-list { grid-template-columns: minmax(0, 1fr); }
   .sale-complete { padding: var(--s-4) !important; }
   .sale-complete-actions { grid-template-columns: minmax(0, 1fr); }
 }

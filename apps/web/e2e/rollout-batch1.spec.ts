@@ -304,7 +304,7 @@ test.describe("کارهای پرتکرار داشبورد", () => {
   test("no permission at all: no quick-action row", async ({ page, api }) => {
     api.handlers.set("GET /auth/can", async route => { await route.fulfill({ json: { verdict: "deny", approver: null, reason: "" } }); });
     await page.goto("/");
-    await expect(page.getByText("نیاز به رسیدگی", { exact: true })).toBeVisible();
+    await expect(page.getByText("پیگیری ثبت حسابداری فروش", { exact: true })).toBeVisible();
     await expect(quick(page)).toHaveCount(0);
   });
 
@@ -325,7 +325,7 @@ test.describe("کارهای پرتکرار داشبورد", () => {
       await route.fulfill({ json: { verdict: "allow", approver: null, reason: "" } });
     });
     await page.goto("/");
-    await expect(page.getByText("نیاز به رسیدگی", { exact: true })).toBeVisible();
+    await expect(page.getByText("پیگیری ثبت حسابداری فروش", { exact: true })).toBeVisible();
     await expect(quick(page).locator(".quick-action--pending")).toHaveCount(4);
     await expect(quick(page).getByRole("link")).toHaveCount(0);
     release();
@@ -390,7 +390,7 @@ test.describe("بازبینی دستهٔ ۱ — پیش‌نویس، اسنپ‌�
     const dialog = prompts(page);
     // ورود به تنظیمات از داخل برنامه، تا «بازگشت» مرورگر یک جابه‌جایی همان سند باشد.
     await page.goto("/");
-    await expect(page.getByText("نیاز به رسیدگی", { exact: true })).toBeVisible();
+    await expect(page.getByText("پیگیری ثبت حسابداری فروش", { exact: true })).toBeVisible();
     await openZone(page, "تنظیمات");
     const hours = page.getByLabel("مهلت مرجوعی", { exact: true });
     await expect(hours).toHaveValue("48");
@@ -433,13 +433,13 @@ test.describe("بازبینی دستهٔ ۱ — پیش‌نویس، اسنپ‌�
     await zoneTab(page, "داشبورد").click();
     await expect.poll(() => dialog.seen.length).toBe(4);
     await expect(page).not.toHaveURL(/page=settings/);
-    await expect(page.getByText("نیاز به رسیدگی", { exact: true })).toBeVisible();
+    await expect(page.getByText("پیگیری ثبت حسابداری فروش", { exact: true })).toBeVisible();
     // هیچ نگهبان یا شنونده‌ای پس از Unmount نمی‌ماند.
     await expect.poll(() => unloadBlocked(page), "no stale beforeunload listener").toBe(false);
     await openZone(page, "تنظیمات");
     await expect(page.getByLabel("مهلت مرجوعی", { exact: true })).toHaveValue("48");
     await zoneTab(page, "داشبورد").click();
-    await expect(page.getByText("نیاز به رسیدگی", { exact: true })).toBeVisible();
+    await expect(page.getByText("پیگیری ثبت حسابداری فروش", { exact: true })).toBeVisible();
     expect(dialog.seen, "no prompt after the draft was discarded").toHaveLength(4);
   });
 
@@ -477,7 +477,7 @@ test.describe("بازبینی دستهٔ ۱ — پیش‌نویس، اسنپ‌�
     await expect.poll(() => unloadBlocked(page), "revert clears the row's draft").toBe(false);
 
     await zoneTab(page, "داشبورد").click();
-    await expect(page.getByText("نیاز به رسیدگی", { exact: true })).toBeVisible();
+    await expect(page.getByText("پیگیری ثبت حسابداری فروش", { exact: true })).toBeVisible();
     expect(dialog.seen, "only the failed-save exit asked").toHaveLength(1);
   });
 
@@ -572,11 +572,11 @@ test.describe("بازبینی دستهٔ ۱ — پیش‌نویس، اسنپ‌�
     await page.goto("/?page=settings&settings.tab=snappay");
     await expect.poll(() => api.calls.includes("GET /snappay/config")).toBe(true);
     await zoneTab(page, "داشبورد").click();
-    await expect(page.getByText("نیاز به رسیدگی", { exact: true })).toBeVisible();
+    await expect(page.getByText("پیگیری ثبت حسابداری فروش", { exact: true })).toBeVisible();
     const failed = await aborted;
     expect(failed.failure()?.errorText, "cancelled by the page, not by the network").toMatch(/ERR_ABORTED|cancel/i);
     release();
-    await expect(page.getByText("نیاز به رسیدگی", { exact: true })).toBeVisible();
+    await expect(page.getByText("پیگیری ثبت حسابداری فروش", { exact: true })).toBeVisible();
     await expect(page.getByRole("alert"), "an aborted read is not a user error").toHaveCount(0);
   });
 

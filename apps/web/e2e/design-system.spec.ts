@@ -228,7 +228,7 @@ test("navigation hides server-denied destinations but keeps the open section and
   // زبانه نمی‌شوند، چون پنلی برای نشان‌دادن نیست.
   api.handlers.set("GET /reports/daily/hourly", async route => { await route.fulfill({ status: 403, json: { error: { code: "forbidden", message: "اجازه ندارید" } } }); });
   await page.goto("/");
-  await expect(page.getByRole("heading", { name: "نیاز به رسیدگی" })).toBeVisible();
+  await expect(page.getByRole("region", { name: "پیگیری ثبت حسابداری فروش" })).toBeVisible();
   await expect(page.getByRole("region", { name: "فروش", exact: true })).toBeVisible();
   await expect(page.getByRole("heading", { name: "روند فروش ساعتی" })).toHaveCount(0);
   await expect(page.getByRole("tablist", { name: "شاخص‌های امروز" })).toHaveCount(0);
@@ -267,6 +267,9 @@ test("dashboard reference: Jalali date, human channel labels, three labelled KPI
   await expect(page.getByText("۲۵ شهریور ۱۴۰۵", { exact: false }).first()).toBeVisible();
   for (const label of ["فروش", "وجه دریافتی", "سود"]) await expect(page.getByRole("tab", { name: label, exact: true })).toBeVisible();
   await expect(page.getByRole("tab", { name: "فروش", exact: true })).toContainText("1٬234٬000");
+  // پیگیری ثبت حسابداری فروش بسته است و شمار واقعی را در خلاصه می‌گوید.
+  await expect(page.locator(".attention-disclosure > summary")).toContainText("۱ مورد نیازمند بررسی");
+  await page.locator(".attention-disclosure > summary").click();
   await expect(page.getByText("۱۲ فاکتور سایت در ۲۴ شهریور ۱۴۰۵ هنوز به دفتر نرفته")).toBeVisible();
   await expect(page.getByText("۱۲ فاکتور صندوق در ۲۵ شهریور ۱۴۰۵ هنوز به دفتر نرفته")).toBeVisible();
   expect(await page.locator("main").innerText(), "raw channel codes never reach the user").not.toMatch(/\b(pos|web)\b/);
@@ -282,6 +285,7 @@ test("dashboard reference: Jalali date, human channel labels, three labelled KPI
 
 async function openClose(page: Page) {
   await page.goto("/");
+  await page.locator(".attention-disclosure > summary").click();
   await page.getByRole("button", { name: "بستن دوره", exact: true }).click();
   const dialog = page.getByRole("dialog", { name: /بستن دورهٔ سایت/ });
   await expect(dialog).toBeVisible();

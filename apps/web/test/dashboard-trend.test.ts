@@ -87,7 +87,10 @@ describe("روند ساعتی داشبورد", () => {
     assert.deepEqual(hourlyView(hidden, "profit"), { kind: "unknown" });
     assert.equal(hourlyView(hidden, "sales").kind, "chart", "فروش مستقل از بها می‌ماند");
     const sales = hourlyView(hidden, "sales");
-    if (sales.kind === "chart") assert.deepEqual(sales.series.map(x => x.metric), ["sales", "received"], "خط سود نامعلوم کشیده نمی‌شود");
+    if (sales.kind === "chart") assert.deepEqual(sales.series.map(x => x.metric), ["sales"], "پیش‌فرض فقط شاخص انتخاب‌شده");
+    const compared = trendView(hourPoints(hidden, null), "sales", "hour", true);
+    assert.equal(compared.kind, "chart");
+    if (compared.kind === "chart") assert.deepEqual(compared.series.map(x => x.metric), ["sales", "received"], "در مقایسه هم خط سود نامعلوم کشیده نمی‌شود");
     // حتی یک ساعتِ null کافی است: نیمه‌معلوم را کامل نشان نمی‌دهیم.
     const partial = day({ 9: { salesAmount: "1", invoiceCount: 1 }, 10: { profitAmount: null } });
     assert.deepEqual(hourlyView(partial, "profit"), { kind: "unknown" });
