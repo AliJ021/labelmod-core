@@ -79,8 +79,9 @@ for (const size of [{ width: 1440, height: 960 }, { width: 1366, height: 768 }, 
       await btn.focus();
       await expectUncovered(btn, `دریافت وجه ${name}`);
     }
-    // ردیف اول حتی پس از کار روی ردیف دوم، با فوکوس دوباره کامل دیده می‌شود.
-    await card.focus();
+    // ردیف اول حتی پس از کار روی ردیف دوم، با فوکوس دوباره کامل دیده می‌شود — خودِ برنامه می‌آوردش، نه مرورگر:
+    // WebKit فیلدِ نیمه‌دیدنی را با focus() اسکرول نمی‌کند (CI، ۷۶۸×۶۰۰)، پس preventScroll همان رفتار را همه‌جا می‌سازد.
+    await card.evaluate((el) => (el as HTMLElement).focus({ preventScroll: true }));
     await expectUncovered(card, "مبلغ کارت‌خوان پس از بازگشت");
     if (process.env.LMC_REVIEW_SCREENSHOT) await page.screenshot({ path: test.info().outputPath(`pay-${size.width}x${size.height}-two-rows.png`) });
     await row(page, "کارت‌خوان").getByRole("button", { name: "دریافت وجه", exact: true }).click();

@@ -1,5 +1,5 @@
 import { AmountInput } from "../ui/AmountInput.tsx";
-import { useEffect, useId, useRef, useState, type FormEvent } from "react";
+import { useEffect, useId, useRef, useState, type FocusEvent, type FormEvent } from "react";
 import { Money } from "../ui/Money.tsx";
 import { Button, Field } from "../ui/Controls.tsx";
 import { StatusBadge } from "../ui/Status.tsx";
@@ -81,7 +81,13 @@ function PayRow({ option, label, viaProvider, channelBlocked, remaining, input, 
     // شمارهٔ پیگیری فقط برای روشی که می‌خواهدش؛ بخشی از بدنهٔ قصد روش دیگر نیست.
     onPay(option, check.amount, option.requiresRef ? input.refNo.trim() : "");
   }
-  return <form className="pay-form" onSubmit={submit} noValidate aria-label={`دریافت با ${label}`}>
+  // بازگشت فوکوس به ردیفی که نیمه‌اش بیرون پنجره است: Chromium آن را کامل می‌آورد ولی WebKit (Safari/iPad)
+  // فیلدِ نیمه‌دیدنی را همان‌جا می‌گذارد (CI، ۷۶۸×۶۰۰). `nearest` همان scroll-margin و scroll-padding پایان چسبان را
+  // رعایت می‌کند و اگر عنصر کامل دیده می‌شود، صفحه را تکان نمی‌دهد.
+  function reveal(e: FocusEvent<HTMLFormElement>) {
+    if (e.target instanceof HTMLElement && e.target.matches("input, button")) e.target.scrollIntoView({ block: "nearest", behavior: "instant" });
+  }
+  return <form className="pay-form" onSubmit={submit} onFocus={reveal} noValidate aria-label={`دریافت با ${label}`}>
     <p className="pay-form-head"><span className="muted">دریافت با</span> <strong>{label}</strong>
       {viaProvider ? <span className="muted"> · حضوری</span> : null}</p>
     {unavailable ? <p className="field-hint pay-form-note" role="status"><Icon name="info" size="sm" /> {unavailable}</p>
