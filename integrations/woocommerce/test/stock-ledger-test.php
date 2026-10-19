@@ -311,6 +311,8 @@ $db_file = tempnam(sys_get_temp_dir(), 'lmc-ledger-');
 function fresh(): void
 {
     global $db_file;
+    // Windows cannot unlink the SQLite file while the previous PDO owns it.
+    unset($GLOBALS['wpdb']);
     @unlink($db_file);
     $GLOBALS['wpdb'] = new SqliteWpdb($db_file);
     stock_set(P, 0);
@@ -1146,6 +1148,8 @@ check('R9. عکس کهنه پس از درخواست هم ۱۰ نمی‌نشان�
 $ra = (int) $GLOBALS['wpdb']->get_var('SELECT release_after FROM wp_lmc_stock_hold WHERE order_id = 9901');
 $r = LMC_Stock_Ledger::apply_snapshot(P, 10, true, 31, WH, 0, true, null, LMC_Stock_Ledger::epoch(), $ra - 1);
 check('R9. Pull که خواندنش پیش از درخواست آغاز شده تأیید نمی‌کند (۱۰−۲، کسر بی ACK)', [stock(), holds_unacked()], [8, 1]);
+$r = LMC_Stock_Ledger::apply_snapshot(P, 10, true, 31, WH, 0, true, null, LMC_Stock_Ledger::epoch(), $ra);
+check('R9. Pull در همان میلی‌ثانیه هم اثباتِ پس از درخواست نیست', [stock(), holds_unacked()], [8, 1]);
 $r = LMC_Stock_Ledger::apply_snapshot(P, 8, true, 32, WH, 0, true, null, LMC_Stock_Ledger::epoch(), $ra + 1);
 check('R9. Pull زندهٔ پس از درخواست: تأیید با واترمارک همان عکس (۳۲)، عدد ۸', [stock(), (int) $GLOBALS['wpdb']->get_var('SELECT ack_rev FROM wp_lmc_stock_hold')], [8, 32]);
 check('R9. و عکس کهنه‌تر از آن (۳۱) کسر را هنوز می‌بیند', LMC_Stock_Ledger::pending(P, 31, WH), 2);
@@ -1185,6 +1189,15 @@ check('R9. بی خواندن زندهٔ Core کسر می‌ماند (بسته د
 // مدیر در Core دو واحد اضافه را ثبت کرد (Core ۶) و خواندن زنده برقرار شد: Pull بعدی تأیید می‌کند.
 $GLOBALS['options'][LMC_Stock_Sync::CURSOR_OPTION] = '';
 $x = release_post(release_form(LMC_Stock_Ledger::unresolved()[0]) + []);
+// This scenario requires a strictly later read. Fast CI can issue the release and
+// Pull within the same millisecond; production correctly leaves that hold intact.
+// Wait for the fixture's actual timestamp, with a monotonic deadline (no blind sleep).
+$releaseMs = (int) $GLOBALS['wpdb']->get_var('SELECT release_after FROM wp_lmc_stock_hold WHERE order_id = 8504');
+$clockDeadline = hrtime(true) + 100_000_000;
+while ((int) floor(microtime(true) * 1000) <= $releaseMs) {
+    if (hrtime(true) >= $clockDeadline) { throw new RuntimeException('R9: fixture clock did not advance beyond release'); }
+    usleep(100);
+}
 $GLOBALS['feed'] = ['items' => [['available' => '6', 'stockRev' => '40', 'variationId' => VAR_ID, 'sku' => 'SKU-42']], 'cursor' => 'C40'];
 LMC_Stock_Sync::run();
 check('R9. Pull زنده پس از درخواست تأیید کرد: عدد Core (۶)', [stock(), LMC_Stock_Ledger::unresolved()], [6, []]);
