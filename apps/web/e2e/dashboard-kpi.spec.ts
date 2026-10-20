@@ -176,8 +176,10 @@ test.describe("زبانه‌های شاخص داشبورد", () => {
     fail = false;
   });
 
-  test("layout: three selectors side by side or stacked, never overlapping, no page overflow, panel below them", async ({ page }) => {
-    for (const width of [320, 375, 390, 412, 768, 1024, 1440, 1920]) {
+  // یک آزمون برای هر عرض، با همان ادعاها: هشت بارگذاری داشبورد در یک آزمون روی WebKit تیره به
+  // ۳۰–۳۶ ثانیه از سقف ۴۵ ثانیه رسیده بود و هر بخش تازهٔ داشبورد آن را از سقف رد می‌کرد.
+  for (const width of [320, 375, 390, 412, 768, 1024, 1440, 1920]) {
+    test(`layout at ${width}: three selectors side by side or stacked, never overlapping, no page overflow, panel below them`, async ({ page }) => {
       await page.setViewportSize({ width, height: 900 });
       await page.goto("/");
       await expect(panel(page).getByRole("figure")).toBeVisible();
@@ -198,8 +200,8 @@ test.describe("زبانه‌های شاخص داشبورد", () => {
       expect(p.y, `${width}: panel below the selectors`).toBeGreaterThanOrEqual(Math.max(...boxes.map(b => b.y + b.height)) - 1);
       const size = await page.evaluate(() => ({ scroll: document.documentElement.scrollWidth, client: document.documentElement.clientWidth }));
       expect(size.scroll, `${width}: no page-level horizontal overflow`).toBeLessThanOrEqual(size.client);
-    }
-  });
+    });
+  }
 
   // ریشه دید دریافتی بیش از فروش رخ می‌دهد (دریافت امروز بابت فاکتور دیروز): «همه پول رسیده» از
   // max(sales − received, 0) گمراه‌کننده بود. حالا مقایسهٔ خنثی، بی رنگ هشدار یا «انجام‌شده».
