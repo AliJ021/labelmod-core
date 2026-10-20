@@ -13,8 +13,14 @@
  *
  * هیچ عدد ساختگی روی این صفحه نمی‌نشیند. بخشی که داده یا مجوزش
  * نیست، می‌گوید چرا — نه صفر، نه نمونه.
+ *
+ * **تازگی** (lib/dashboard-freshness.ts): زیر عنوان می‌گوید داده‌ها از کی‌اند، و «به‌روزرسانی»
+ * دستی دارد. خودکار هر دقیقه **فقط وقتی صفحه دیده می‌شود و شبکه هست**، با Backoff پس از شکست.
+ * هم‌زمان فقط یک به‌روزرسانی در راه است؛ پاسخ‌ها با هم و یک‌جا نشانده می‌شوند و هیچ پاسخ
+ * کهنه‌ای (خواندن روند پیش از به‌روزرسانی) نتیجهٔ تازه‌تر را بازنویسی نمی‌کند. شکست داده‌های
+ * قبلی را نگه می‌دارد و صریح می‌گوید از کی‌اند — نه صفحهٔ خطا، نه سبز.
  */
-import { useEffect, useId, useLayoutEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useId, useLayoutEffect, useRef, useState } from "react";
 import { navigate } from "../lib/use-url-state.ts";
 import { Solid } from "../components/Glass.tsx";
 import { Icon } from "../components/Icon.tsx";
@@ -46,6 +52,10 @@ import { LineChart, tickEvery } from "../components/ui/LineChart.tsx";
 import { Segmented } from "../components/ui/Controls.tsx";
 import { Ltr } from "../components/ui/Bidi.tsx";
 import { ResultState } from "../components/ResultState.tsx";
+import { Button } from "../components/ui/Controls.tsx";
+import { useOnline } from "../lib/use-online.ts";
+import { usePageVisible } from "../lib/use-page-visible.ts";
+import { ageText, dueIn, formatClock, freshness, type Freshness } from "../lib/dashboard-freshness.ts";
 
 /**
  * روند ساعتی خلاصه روز. `denied`: سرور این جزئیات را نداد (همان دروازهٔ
@@ -66,6 +76,55 @@ type Trend = { state: "loading" } | { state: "ready"; data: DailyTrend } | { sta
  * اطمینان بی‌پشتوانه است) و `error` (نتوانستیم بسنجیم؛ ممکن است موردی منتظر باشد).
  */
 type Unposted = { state: "loading" } | { state: "ready"; rows: UnpostedRow[] } | { state: "denied" } | { state: "error"; reference: string | null };
+
+type Today = { report: DailyReport; unposted: Unposted; mayClose: boolean; hourly: Hourly };
+
+/**
+ * خواندن «امروز» — یک مسیر برای بار اول و هر به‌روزرسانی، **به ترتیب** (هر درخواست پس از قبلی، تا
+ * لغو با pagehide درخواست بعدی را پس از رفتن سند نفرستد). شکست کارت‌ها پرتاب می‌شود؛ شکست هر بخش
+ * دیگر همان حالت خطا یا بی‌دسترسیِ همان بخش است. `step` هر تکه را همان لحظه می‌دهد. `null` = لغو.
+ */
+async function readToday(branchId: string, signal: AbortSignal, step?: (part: Partial<Today>) => void): Promise<Today | null> {
+  const report = await pos.dailyReport(branchId, undefined, { signal });
+  if (signal.aborted) return null;
+  step?.({ report });
+
+  // درآمد ثبت‌نشده پشت `cost.view` است. ۴۰۳ «این بخش برای این نقش
+  // نیست» است، نه خطا؛ ولی خطای واقعی هم «مرتب» یا «بی‌دسترسی» جلوه نمی‌کند.
+  let unposted: Unposted;
+  try {
+    const { rows } = await pos.unpostedRevenue({ signal });
+    unposted = { state: "ready", rows };
+  } catch (err) {
+    unposted = unpostedFailure(err);
+  }
+  if (signal.aborted) return null;
+  step?.({ unposted });
+
+  // جدا از بالا: اگر پرسش مجوز شکست بخورد، فهرست باید همچنان
+  // دیده شود — فقط بدون دکمه.
+  let mayClose: boolean;
+  try {
+    mayClose = (await session.can("period.close", { signal })).verdict === "allow";
+  } catch {
+    mayClose = false;
+  }
+  if (signal.aborted) return null;
+  step?.({ mayClose });
+
+  // روند ساعتی همان روز کاریِ کارت‌ها (تاریخ از پاسخ سرور، نه ساعت
+  // مرورگر) و همان دروازه. یک درخواست برای هر سه شاخص؛ ۴۰۳ حالت
+  // «بی‌جزئیات» است نه خطا، و خطای واقعی فقط همین بخش را می‌گیرد.
+  let hourly: Hourly;
+  try {
+    hourly = { state: "ready", data: await pos.dailyHourly(branchId, report.businessDate, { signal }) };
+  } catch (err) {
+    hourly = err instanceof ApiError && err.status === 403 ? { state: "denied" } : { state: "error" };
+  }
+  if (signal.aborted) return null;
+  step?.({ hourly });
+  return { report, unposted, mayClose, hourly };
+}
 
 export function Dashboard({ access }: { access: NavAccess }) {
   const [branch, setBranch] = useState<Branch | null>(null);
@@ -98,6 +157,32 @@ export function Dashboard({ access }: { access: NavAccess }) {
    */
   const trendRequested = useRef(new Set<"day" | "month">());
   const trendAbort = useRef<AbortController | null>(null);
+  /** نسل هر دانه‌بندی: به‌روزرسانی بالا می‌بردش و پاسخِ خواندنِ پیش از آن نادیده می‌ماند. */
+  const trendGen = useRef({ day: 0, month: 0 });
+
+  // ── تازگی ─────────────────────────────────────────────────────────
+  const online = useOnline();
+  const visible = usePageVisible();
+  const [lastOk, setLastOk] = useState<number | null>(null);
+  const [refreshing, setRefreshing] = useState(false);
+  const [failure, setFailure] = useState<{ reference: string | null } | null>(null);
+  /** هر تلاش (موفق یا ناموفق) زمان‌بندی بعدی را از نو می‌سازد. */
+  const [attempts, setAttempts] = useState(0);
+  const [now, setNow] = useState(() => Date.now());
+  const lastAttempt = useRef<number | null>(null);
+  const failures = useRef(0);
+  /** تنها به‌روزرسانیِ در راه؛ دومی تا پایان اولی شروع نمی‌شود. */
+  const inflight = useRef<AbortController | null>(null);
+  // آخرین مقدارها برای زمان‌سنج و کال‌بک‌هایی که پیش از رندر بعدی اجرا می‌شوند.
+  const latest = useRef({ branch, report, grain, access });
+  latest.current = { branch, report, grain, access };
+  /** نشاندن هر تکه از خواندن «امروز» (بار اول تکه‌تکه، به‌روزرسانی یک‌جا). */
+  const applyToday = useCallback((part: Partial<Today>) => {
+    if (part.report) setReport(part.report);
+    if (part.unposted) setUnposted(part.unposted);
+    if (part.mayClose !== undefined) setMayClose(part.mayClose);
+    if (part.hourly) setHourly(part.hourly);
+  }, []);
   // کنترلر **داخل** افکت ساخته می‌شود: StrictMode افکت را اجرا، پاک و دوباره اجرا
   // می‌کند و ref می‌ماند؛ کنترلرِ ساخته‌شده در `useRef` پس از پاک‌سازی اول لغوشده
   // می‌ماند و هر روند را برای همیشه «در حال بارگذاری» نگه می‌داشت.
@@ -125,7 +210,7 @@ export function Dashboard({ access }: { access: NavAccess }) {
     // A document reload does not unmount React. Stop this request chain before
     // a late response starts the next fetch in the departing document (WebKit).
     // A persisted page keeps its requests so a bfcache restore can finish loading.
-    const leaving = (event: PageTransitionEvent) => { if (!event.persisted) controller.abort(); };
+    const leaving = (event: PageTransitionEvent) => { if (!event.persisted) { controller.abort(); inflight.current?.abort(); } };
     window.addEventListener("pagehide", leaving);
     void (async () => {
       try {
@@ -137,43 +222,16 @@ export function Dashboard({ access }: { access: NavAccess }) {
           return;
         }
         setBranch(first);
-        const report = await pos.dailyReport(first.id, undefined, { signal });
-        if (signal.aborted) return;
-        setReport(report);
-
-        // درآمد ثبت‌نشده پشت `cost.view` است. ۴۰۳ «این بخش برای این نقش
-        // نیست» است، نه خطا؛ ولی خطای واقعی هم «مرتب» یا «بی‌دسترسی» جلوه نمی‌کند.
-        try {
-          const { rows } = await pos.unpostedRevenue({ signal });
-          if (signal.aborted) return;
-          setUnposted({ state: "ready", rows });
-        } catch (err) {
-          if (signal.aborted) return;
-          setUnposted(unpostedFailure(err));
-        }
-
-        // جدا از بالا: اگر پرسش مجوز شکست بخورد، فهرست باید همچنان
-        // دیده شود — فقط بدون دکمه.
-        try {
-          const decision = await session.can("period.close", { signal });
-          if (signal.aborted) return;
-          setMayClose(decision.verdict === "allow");
-        } catch {
-          if (signal.aborted) return;
-          setMayClose(false);
-        }
-
-        // روند ساعتی همان روز کاریِ کارت‌ها (تاریخ از پاسخ سرور، نه ساعت
-        // مرورگر) و همان دروازه. یک درخواست برای هر سه شاخص؛ ۴۰۳ حالت
-        // «بی‌جزئیات» است نه خطا، و خطای واقعی فقط همین بخش را می‌گیرد.
-        try {
-          const data = await pos.dailyHourly(first.id, report.businessDate, { signal });
-          if (signal.aborted) return;
-          setHourly({ state: "ready", data });
-        } catch (err) {
-          if (signal.aborted) return;
-          setHourly(err instanceof ApiError && err.status === 403 ? { state: "denied" } : { state: "error" });
-        }
+        // بار اول تکه‌تکه نشانده می‌شود: کارت‌ها همان لحظه که رسیدند، بقیه پشت سرشان.
+        await readToday(first.id, signal, part => {
+          applyToday(part);
+          if (part.report) {
+            const at = Date.now();
+            setLastOk(at);
+            setNow(at);
+            lastAttempt.current = at;
+          }
+        });
       } catch (err) {
         if (signal.aborted) return;
         setError(err instanceof ApiError
@@ -181,8 +239,101 @@ export function Dashboard({ access }: { access: NavAccess }) {
           : { message: "ارتباط با سرور برقرار نشد.", reference: null });
       }
     })();
-    return () => { window.removeEventListener("pagehide", leaving); controller.abort(); };
+    return () => { window.removeEventListener("pagehide", leaving); controller.abort(); inflight.current?.abort(); };
+  }, [applyToday]);
+
+  /**
+   * روند روزانه/ماهانه برای روزِ کاریِ همان گزارش. مرزها از «امروز» سرور ساخته می‌شوند، نه ساعت
+   * مرورگر. بی `report.view` صریح، درخواستی فرستاده نمی‌شود. پاسخی که نسلش کهنه شده نادیده می‌ماند.
+   */
+  const loadTrend = useCallback((next: "day" | "month", branchId: string, report: DailyReport) => {
+    if (trendRequested.current.has(next)) return;
+    if (latest.current.access.verdicts.get("report.view") === "deny") {
+      setTrends(t => ({ ...t, [next]: { state: "denied" } }));
+      return;
+    }
+    const controller = trendAbort.current;
+    if (!controller) return;
+    trendRequested.current.add(next);
+    const { signal } = controller;
+    const gen = trendGen.current[next];
+    const current = () => !signal.aborted && trendGen.current[next] === gen;
+    setTrends(t => ({ ...t, [next]: { state: "loading" } }));
+    pos.dailyTrend(branchId, trendBounds(next, report.businessDate), { signal }).then(
+      data => { if (current()) setTrends(t => ({ ...t, [next]: { state: "ready", data } })); },
+      err => {
+        if (!current()) return;
+        // خطا دوباره قابل انتخاب است؛ بی‌دسترسی نه.
+        const denied = err instanceof ApiError && err.status === 403;
+        if (!denied) trendRequested.current.delete(next);
+        setTrends(t => ({ ...t, [next]: denied
+          ? { state: "denied" }
+          : { state: "error", reference: err instanceof ApiError ? err.correlationId : null } }));
+      },
+    );
   }, []);
+
+  /**
+   * یک به‌روزرسانی کامل: کارت‌ها، روند ساعتی، پیگیری ثبت و مجوز بستن — همه با هم خوانده و یک‌جا
+   * نشانده می‌شوند. فقط یکی در راه؛ لغو با Unmount/pagehide. شکستِ خودِ کارت‌ها داده‌های قبلی را
+   * نگه می‌دارد؛ شکست بخش‌های دیگر همان حالت خطای آن بخش است (مثل بار اول).
+   */
+  const refresh = useCallback(async () => {
+    const { branch: b } = latest.current;
+    if (!b || inflight.current) return;
+    const controller = new AbortController();
+    inflight.current = controller;
+    const { signal } = controller;
+    lastAttempt.current = Date.now();
+    setRefreshing(true);
+    try {
+      // همان خواندن ترتیبی بار اول، ولی **یک‌جا** نشانده می‌شود: نیمی تازه و نیمی کهنه دیده نمی‌شود.
+      const today = await readToday(b.id, signal);
+      if (!today || signal.aborted) return;
+      applyToday(today);
+      const report = today.report;
+      // روند روزانه/ماهانه هم کهنه است (و اگر روز کاری عوض شده، مرزهایش هم): نسل تازه، و دانه‌بندیِ
+      // دیده‌شده دوباره خوانده می‌شود.
+      trendGen.current = { day: trendGen.current.day + 1, month: trendGen.current.month + 1 };
+      trendRequested.current.clear();
+      setTrends({});
+      const g = latest.current.grain;
+      if (g !== "hour") loadTrend(g, b.id, report);
+      const at = Date.now();
+      failures.current = 0;
+      setFailure(null);
+      setLastOk(at);
+      setNow(at);
+    } catch (err) {
+      if (signal.aborted) return;
+      failures.current += 1;
+      setFailure({ reference: err instanceof ApiError ? err.correlationId : null });
+      setNow(Date.now());
+    } finally {
+      if (inflight.current === controller) inflight.current = null;
+      if (!signal.aborted) {
+        setRefreshing(false);
+        setAttempts(n => n + 1);
+      }
+    }
+  }, [loadTrend, applyToday]);
+
+  // خودکار: فقط دیده‌شده و برخط؛ موعد از آخرین تلاش (با Backoff). پنهان‌شدن زمان‌سنج را برمی‌دارد و
+  // دیده‌شدنِ دوباره، اگر موعد گذشته، همان لحظه به‌روز می‌کند.
+  const loaded = report !== null;
+  useEffect(() => {
+    if (!loaded || !visible || !online) return;
+    const timer = window.setTimeout(() => { void refresh(); }, dueIn(Date.now(), lastAttempt.current, failures.current));
+    return () => window.clearTimeout(timer);
+  }, [loaded, visible, online, attempts, refresh]);
+
+  // سنِ داده («۳ دقیقه پیش») فقط وقتی دیده می‌شود جلو می‌رود.
+  useEffect(() => {
+    if (!visible) return;
+    setNow(Date.now());
+    const tick = window.setInterval(() => setNow(Date.now()), 15_000);
+    return () => window.clearInterval(tick);
+  }, [visible]);
 
   if (error) {
     return <Solid className="pad"><ResultState kind="error" title={error.message} reference={error.reference}
@@ -209,35 +360,11 @@ export function Dashboard({ access }: { access: NavAccess }) {
     void reload().catch(err => setUnposted(unpostedFailure(err)));
   }
 
-  /**
-   * روند روزانه/ماهانه با اولین انتخاب. مرزها از «امروز» سرور (`businessDate`)
-   * ساخته می‌شوند، نه ساعت مرورگر. بی `report.view` صریح، درخواستی فرستاده نمی‌شود.
-   */
+  /** روند روزانه/ماهانه با اولین انتخاب (و پس از هر به‌روزرسانی، از نو). */
   function chooseGrain(next: Grain) {
     setGrain(next);
     if (next === "hour" || !branch || !report) return;
-    if (trendRequested.current.has(next)) return;
-    if (access.verdicts.get("report.view") === "deny") {
-      setTrends(t => ({ ...t, [next]: { state: "denied" } }));
-      return;
-    }
-    const controller = trendAbort.current;
-    if (!controller) return;
-    trendRequested.current.add(next);
-    const { signal } = controller;
-    setTrends(t => ({ ...t, [next]: { state: "loading" } }));
-    pos.dailyTrend(branch.id, trendBounds(next, report.businessDate), { signal }).then(
-      data => { if (!signal.aborted) setTrends(t => ({ ...t, [next]: { state: "ready", data } })); },
-      err => {
-        if (signal.aborted) return;
-        // خطا دوباره قابل انتخاب است؛ بی‌دسترسی نه.
-        const denied = err instanceof ApiError && err.status === 403;
-        if (!denied) trendRequested.current.delete(next);
-        setTrends(t => ({ ...t, [next]: denied
-          ? { state: "denied" }
-          : { state: "error", reference: err instanceof ApiError ? err.correlationId : null } }));
-      },
-    );
+    loadTrend(next, branch.id, report);
   }
 
   const sales = parseRial(report.salesAmount);
@@ -280,6 +407,9 @@ export function Dashboard({ access }: { access: NavAccess }) {
           {/* میلادی فقط زمینهٔ ثانوی است: کوچک‌تر و کم‌رنگ‌تر، در برگ LTR. */}
           <span className="page-context-secondary"><Ltr mono={false}>{formatGregorian(report.businessDate)}</Ltr></span>
         </>}
+        meta={<FreshnessLine state={freshness({ now, lastOk, online, refreshing, failure })} now={now} />}
+        actions={<Button icon={<Icon name="refresh" size="sm" />} busy={refreshing} busyLabel="در حال به‌روزرسانی…"
+          disabled={!online} onClick={() => { void refresh(); }}>به‌روزرسانی</Button>}
       />
 
       {/*
@@ -345,6 +475,32 @@ export function Dashboard({ access }: { access: NavAccess }) {
       <QuickActions access={access} />
     </div>
   );
+}
+
+/**
+ * «داده‌ها از کی‌اند». متن دیدنی هر ۱۵ ثانیه سنش را جلو می‌برد، ولی ناحیهٔ زندهٔ صفحه‌خوان فقط
+ * وقتی حرف می‌زند که **حالت** عوض شود (ناموفق، قطع، قدیمی) — نه هر دقیقه.
+ */
+function FreshnessLine({ state, now }: { state: Freshness; now: number }) {
+  if (state.kind === "loading") return null;
+  const clock = formatClock(state.at);
+  const age = ageText(now, state.at);
+  const announce = state.kind === "failed" ? `به‌روزرسانی ناموفق بود؛ داده‌ها از ساعت ${clock} است.`
+    : state.kind === "offline" ? `اتصال قطع است؛ داده‌ها از ساعت ${clock} است.`
+      : state.kind === "stale" ? `داده‌ها از ساعت ${clock} است و تازه نیست.` : "";
+  return <p className="freshness" data-state={state.kind}>
+    {state.kind === "refreshing" ? <StatusBadge state="pending" label="در حال به‌روزرسانی" quiet />
+      : state.kind === "failed" ? <StatusBadge state="warning" label="به‌روزرسانی ناموفق" />
+        : state.kind === "offline" ? <StatusBadge state="offline" />
+          : state.kind === "stale" ? <StatusBadge state="warning" label="قدیمی" /> : null}
+    <span className="freshness-text">
+      {state.kind === "failed" ? <>داده‌ها از ساعت <span className="nowrap">{clock}</span> ({age})؛ دوباره خودکار تلاش می‌شود.</>
+        : state.kind === "offline" ? <>داده‌ها از ساعت <span className="nowrap">{clock}</span> ({age})؛ پس از وصل‌شدن به‌روز می‌شود.</>
+          : <>به‌روزشده ساعت <span className="nowrap">{clock}</span> · {age}</>}
+    </span>
+    {state.kind === "failed" && state.reference ? <span className="freshness-ref">کد پیگیری <Ltr>{state.reference}</Ltr></span> : null}
+    <span className="sr-only" role="status">{announce}</span>
+  </p>;
 }
 
 /**
