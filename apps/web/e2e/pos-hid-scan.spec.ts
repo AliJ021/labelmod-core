@@ -51,8 +51,9 @@ async function open(page: Page, api: MockApi) {
  * جدا برای هر کلید زیر بار CI از آستانهٔ ۵۰ms کندتر می‌شد و آزمون دیگر اسکنر نبود.
  * موتورهای دیگر CDP ندارند: رویداد keydown در یک تکهٔ کد صفحه (نویسه‌ای درج نمی‌شود، پس
  * آن‌جا فقط تشخیص، پسوند و مقدار بارکد سنجیده می‌شود؛ نشت رقم اول را Chromium می‌سنجد).
- * ⚠️ `timeStamp` رویداد ساخته‌شده زمانِ **ساختن** آن است، نه رسیدن کلید. همهٔ رویدادها اول
- *    ساخته و بعد فرستاده می‌شوند؛ ساختن هر کدام پس از فرستادن قبلی یعنی هر توقف میزبان
+ * ⚠️ `timeStamp` رویداد ساخته‌شده زمانِ **ساختن** آن است، نه رسیدن کلید؛ پس زمان صریحِ اسکنر روی هر
+ *    رویداد گذاشته می‌شود (بازبینی PR189 پایین). پیش از آن همهٔ رویدادها اول ساخته و بعد فرستاده می‌شدند؛
+ *    ساختن هر کدام پس از فرستادن قبلی یعنی هر توقف میزبان
  *    (CI با بار ۲۰ روی ۴ هسته) فاصلهٔ کلید ۱ و ۲ را از ۵۰ms رد می‌کرد و بافر رقم اول را
  *    دور می‌انداخت: «2345678901234567» در PR180 (webkit-dark-768). در Chromium ورودی واقعی
  *    (CDP) زمانش را هنگام رسیدن گرفت و کندی صفحه آن را بزرگ نکرد؛ WebKit بومی سنجیده نشده
@@ -70,8 +71,16 @@ async function scan(page: Page, keys: string[], browserName: string) {
       return [cdp.send("Input.dispatchKeyEvent", { type: "keyDown", ...c }), cdp.send("Input.dispatchKeyEvent", { type: "keyUp", ...up })]; }));
     await cdp.detach();
   } else {
+    // زمان هر رویداد صریح و مثل اسکنر (۲ms فاصله) است، نه لحظهٔ ساختنش: حتی ساختن همه پیش از فرستادن، توقف
+    // میزبان **میان ساختن** دو رویداد را دور نمی‌زد و فاصلهٔ کلید ۲ و ۳ از ۵۰ms رد می‌شد — «345678901234567» در
+    // PR189 (webkit-dark-320، CI با بار ~۲۰). شاهد: docs/evidence/2026-10-20-hid-synthetic-timestamp.
     await page.evaluate(ks => { const t = document.activeElement ?? document.body;
-      const events = ks.map(key => new KeyboardEvent("keydown", { key, bubbles: true, cancelable: true }));
+      const t0 = performance.now();
+      const events = ks.map((key, i) => {
+        const e = new KeyboardEvent("keydown", { key, bubbles: true, cancelable: true });
+        Object.defineProperty(e, "timeStamp", { value: t0 + i * 2 });
+        return e;
+      });
       for (const e of events) t.dispatchEvent(e); }, keys);
   }
 }
