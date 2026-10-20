@@ -795,16 +795,48 @@ class LMC_Queue
         $deferred = $wpdb->get_var("SELECT COUNT(*) FROM {$wpdb->options} WHERE option_name LIKE 'lmc\\_qp\\_%'");
         $busy = $wpdb->get_var("SELECT COUNT(*) FROM {$wpdb->options} WHERE option_name LIKE 'lmc\\_qb\\_%'");
         $failed = null;
+        // صف زنده (داشبورد Core، دستهٔ C): سررسیده، آینده و در حال اجرا. هر شمارش جداگانه؛ شکستِ هر کدام
+        // همان یکی را `null` («نمی‌دانم») می‌کند، هرگز صفر.
+        $due = $future = $running = null;
         if (self::action_scheduler()) {
-            try {
-                $failed = (int) ActionScheduler::store()->query_actions(['group' => self::GROUP, 'status' => 'failed'], 'count');
-            } catch (Throwable $e) {
-                $failed = null;
+            $store = ActionScheduler::store();
+            $count = static function (array $q) use ($store): ?int {
+                try {
+                    return (int) $store->query_actions(['group' => self::GROUP] + $q, 'count');
+                } catch (Throwable $e) {
+                    return null;
+                }
+            };
+            $failed = $count(['status' => 'failed']);
+            $now = function_exists('as_get_datetime_object') ? as_get_datetime_object() : null;
+            if ($now instanceof DateTime) {
+                $due = $count(['status' => 'pending', 'date' => $now, 'date_compare' => '<=']);
+                $future = $count(['status' => 'pending', 'date' => $now, 'date_compare' => '>']);
+            }
+            $running = $count(['status' => 'in-progress']);
+        } elseif (function_exists('_get_cron_array')) {
+            // WP-Cron: رویدادهای همین صف در جدول cron؛ «در حال اجرا» را WP-Cron ثبت نمی‌کند، پس `null`.
+            $crons = _get_cron_array();
+            if (is_array($crons)) {
+                $due = $future = 0;
+                foreach ($crons as $at => $events) {
+                    foreach (self::hooks() as $hook) {
+                        $n = isset($events[$hook]) && is_array($events[$hook]) ? count($events[$hook]) : 0;
+                        if ((int) $at <= time()) {
+                            $due += $n;
+                        } else {
+                            $future += $n;
+                        }
+                    }
+                }
             }
         }
         return [
             'backend' => self::action_scheduler() ? 'action-scheduler' : 'wp-cron',
             'group' => self::GROUP,
+            'pendingDue' => $due,
+            'pendingFuture' => $future,
+            'running' => $running,
             'deadTasks' => $dead === null ? null : (int) $dead,
             'deadScope' => 'unexpected_failure_only',
             'deferredTasks' => $deferred === null ? null : (int) $deferred,

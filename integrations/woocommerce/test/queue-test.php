@@ -63,6 +63,7 @@ function as_add($at, $hook, $args, $group) {
     if ($GLOBALS['as_on_add']) { ($GLOBALS['as_on_add'])($id); }
     return $id;
 }
+function as_get_datetime_object($s = null) { return new DateTime('@' . time()); }
 function as_enqueue_async_action($hook, $args = [], $group = '') { return as_add(null, $hook, $args, $group); }
 function as_schedule_single_action($at, $hook, $args = [], $group = '') { return as_add($at, $hook, $args, $group); }
 function as_match($a, $q) {
@@ -117,7 +118,13 @@ class FakeStore {
     public function release_claim($claim) { foreach ($claim->get_actions() as $id) { $GLOBALS['as'][$id]['claim'] = 0; } }
     public function fetch_action($id) { return isset($GLOBALS['as'][$id]) ? new FakeAction($GLOBALS['as'][$id]) : null; }
     public function query_actions($q, $ret = 'ids') {
-        $ids = array_keys(array_filter($GLOBALS['as'], fn($a) => $a['group'] === ($q['group'] ?? $a['group']) && $a['status'] === ($q['status'] ?? $a['status'])));
+        // شکست شبیه‌سازی‌شدهٔ یک شمارش (۱۳ب): فقط وضعیت‌های نام‌برده.
+        if (in_array($q['status'] ?? '', $GLOBALS['as_query_fail'] ?? [], true)) { throw new RuntimeException('store down'); }
+        // `date`/`date_compare` مثل ActionScheduler_DBStore روی زمان سررسید؛ کار async (`at` تهی) سررسیده است.
+        $when = fn($a) => $a['at'] ?? 0;
+        $date = isset($q['date']) ? $q['date']->getTimestamp() : null;
+        $ids = array_keys(array_filter($GLOBALS['as'], fn($a) => $a['group'] === ($q['group'] ?? $a['group']) && $a['status'] === ($q['status'] ?? $a['status'])
+            && ($date === null || (($q['date_compare'] ?? '<=') === '<=' ? $when($a) <= $date : $when($a) > $date))));
         return $ret === 'count' ? count($ids) : $ids;
     }
 }
@@ -285,6 +292,7 @@ function reset_queue() {
     $GLOBALS['wpdb']->fail_write = []; $GLOBALS['wpdb']->fail_read = []; $GLOBALS['wpdb']->lock_error = false;
     $GLOBALS['wpdb']->lock_error_re = null; $GLOBALS['wpdb']->on_lock = null;
     $GLOBALS['as_fail'] = false; $GLOBALS['cron_fail'] = false; $GLOBALS['as_on_add'] = null; $GLOBALS['crash_on_cancel'] = false;
+    $GLOBALS['as_query_fail'] = [];
 }
 function pending_rows($hook, $args) {
     return array_values(array_filter($GLOBALS['as'], fn($a) => $a['hook'] === $hook && $a['args'] === $args && $a['status'] === 'pending'));
@@ -833,5 +841,34 @@ $GLOBALS['wpdb']->rows['lmc_qs_' . md5(LMC_ORDER_EVENT . '|[99]')] = '500';
 $GLOBALS['wpdb']->rows['lmc_qp_r_' . md5(LMC_ORDER_EVENT . '|[99]')] = json_encode(['op' => 'r', 'hook' => LMC_ORDER_EVENT, 'args' => [99], 'at' => time(), 'seq' => 'legacy', 'due' => time() + 60]);
 LMC_Queue::drain();
 check(one_pending(LMC_ORDER_EVENT, 99) !== null && marker_rows() === [], 'نشان قدیمی بی floor اعمال شد');
+
+// ۱۳. صف زنده برای داشبورد Core: سررسیده، آینده و در حال اجرا جدا؛ کار دیگران و وضعیت‌های پایانی شمرده نمی‌شوند.
+reset_queue();
+LMC_Queue::enqueue('lmc_send_refund', [131]);
+LMC_Queue::enqueue('lmc_send_refund', [132]);
+LMC_Queue::enqueue('lmc_send_refund', [133], 600);
+as_add(null, 'other_plugin_hook', [], 'other-group');
+$GLOBALS['as'][count($GLOBALS['as'])]['status'] = 'pending';
+$h = LMC_Queue::health();
+check([$h['pendingDue'], $h['pendingFuture'], $h['running']] === [2, 1, 0], 'سررسیده ۲، آینده ۱، در حال اجرا ۰ — فقط گروه همین صف');
+$first = array_key_first(array_filter($GLOBALS['as'], fn($a) => $a['args'] === [131]));
+$GLOBALS['as'][$first]['status'] = 'in-progress';
+$h = LMC_Queue::health();
+check([$h['pendingDue'], $h['pendingFuture'], $h['running']] === [1, 1, 1], 'در حال اجرا از سررسیده جدا شمرده می‌شود');
+$GLOBALS['as'][$first]['status'] = 'complete';
+check(LMC_Queue::health()['running'] === 0 && LMC_Queue::health()['pendingDue'] === 1, 'کار تمام‌شده در هیچ‌کدام نیست');
+
+// ۱۳ب. شمارشی که شکست بخورد «نمی‌دانم» است، نه صفر — و شمارش‌های دیگر را نمی‌برد.
+$GLOBALS['as_query_fail'] = ['in-progress'];
+$h = LMC_Queue::health();
+check($h['running'] === null && $h['pendingDue'] === 1 && $h['pendingFuture'] === 1, 'شکست شمارش در حال اجرا فقط همان را null می‌کند');
+$GLOBALS['as_query_fail'] = ['pending', 'failed'];
+$h = LMC_Queue::health();
+check($h['pendingDue'] === null && $h['pendingFuture'] === null && $h['failedActions'] === null && $h['running'] === 0, 'شکست شمارش معلق: null، هرگز ۰');
+
+// ۱۳ج. قرارداد با Core (`queueTelemetry` در apps/api/src/platform/woocommerce-diagnostics.ts): همین کلیدها، نه بیشتر.
+$keys = array_keys(LMC_Queue::health()); sort($keys);
+check($keys === ['backend', 'busyTasks', 'deadScope', 'deadTasks', 'deferredTasks', 'failedActions', 'failedActionsScope', 'group', 'pendingDue', 'pendingFuture', 'running'],
+    'کلیدهای گزارش صف همان قرارداد Core است');
 
 echo "OK: $checks queue assertions\n";
