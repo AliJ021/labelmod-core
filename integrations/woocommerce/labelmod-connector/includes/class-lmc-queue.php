@@ -107,6 +107,7 @@ class LMC_Queue
     const ENQUEUE_LOCK_WAIT = 5;
     const BUSY = 'lmc_queue_busy';
     const LOCK_ERROR = 'lmc_queue_lock_error';
+    const DECISION_LOST = 'lmc_queue_decision_lost';
     /** واترمارک بزرگ‌ترین سطر اجراشدهٔ سالم، و آغاز دورهٔ اشغال قفل اجرا. */
     const SUCCESS_PREFIX = 'lmc_qs_';
     const BUSY_PREFIX = 'lmc_qb_';
@@ -126,6 +127,8 @@ class LMC_Queue
     private static $locks = [];
     /** شناسهٔ سطر در حال اجرا ← نام قفلش. */
     private static $running = [];
+    /** کلید کارهایی که در همین پردازه مرده ثبت شدند — on_executed همان اجرا پاکشان نمی‌کند. */
+    private static $dead_now = [];
 
     /** فقط این رویدادها مال این صف‌اند؛ هیچ کار دیگری در گروه دوباره صف نمی‌شود. */
     public static function hooks(): array
@@ -230,7 +233,7 @@ class LMC_Queue
                 }
             }
             self::cancel($hook, $args);
-            $done = $delay === null || self::schedule($hook, $args, $delay);
+            $done = $delay === null || self::schedule($hook, $args, $delay, ['op' => 'r'] + $decision);
             if ($mine !== null && !self::forget_marker($name, $mine)) {
                 lmc_log(sprintf('پاک‌سازی نشان تصمیم %s ناموفق بود؛ بازپخشش همین تصمیم است.', $hook));
             }
@@ -246,6 +249,17 @@ class LMC_Queue
      */
     private static function floor(string $hook, array $args): int
     {
+        $running = self::running_id($hook, $args);
+        if ($running > 0) {
+            return $running;
+        }
+        $mark = self::read(self::SUCCESS_PREFIX . self::key($hook, $args), $ok);
+        return $ok ? (int) $mark : 0;
+    }
+
+    /** شناسهٔ سطر AS در حال اجرای همین کار در این پردازه، یا `0`. */
+    private static function running_id(string $hook, array $args): int
+    {
         global $wpdb;
         $x = 'lmc_qx_' . md5((defined('DB_NAME') ? DB_NAME : '') . '|' . $wpdb->prefix . '|' . self::key($hook, $args));
         foreach (self::$running as $action_id => $lock) {
@@ -253,8 +267,7 @@ class LMC_Queue
                 return (int) $action_id;
             }
         }
-        $mark = self::read(self::SUCCESS_PREFIX . self::key($hook, $args), $ok);
-        return $ok ? (int) $mark : 0;
+        return 0;
     }
 
     /**
@@ -330,7 +343,17 @@ class LMC_Queue
             && as_has_scheduled_action($hook, $args, self::GROUP);
     }
 
-    private static function schedule(string $hook, array $args, int $delay): bool
+    /**
+     * درج در صف. اگر هیچ صفی (Action Scheduler و WP-Cron) کار را نگرفت، تصمیم گم نمی‌شود:
+     *
+     * 1. **نشان معوق ماندگار** با همان تصمیم (`$marker`: «r» با due/stop/floor یا پیش‌فرض «e» با due و floor)؛
+     *    drain پس از بهبود زیر قفل انجامش می‌دهد و `true` (تصمیم ماندگار است). اجرای سالمِ تازه‌تر از floor آن را
+     *    بی‌اثر می‌کند.
+     * 2. نشد → ثبت مردهٔ `enqueue_failed` که on_executed همان اجرا پاکش **نمی‌کند**؛ `false`.
+     * 3. آن هم نشد و درون اجرای AS همین کاریم → استثنا: اجرا failed می‌شود (بازیابی AS)، نه complete بی‌صدا.
+     *    بیرون از اجرا (Checkout) استثنا نمی‌دهد و `false`.
+     */
+    private static function schedule(string $hook, array $args, int $delay, ?array $marker = null): bool
     {
         $delay = max(0, $delay);
         if (self::action_scheduler()) {
@@ -350,12 +373,24 @@ class LMC_Queue
             lmc_log(sprintf('صف Action Scheduler برای %s ذخیره نشد؛ WP-Cron جایگزین شد.', $hook));
         }
         $ok = wp_schedule_single_event(time() + $delay, $hook, $args);
-        if ($ok === false || is_wp_error($ok)) {
-            // هیچ صفی کار را نگرفت: گم نمی‌شود، دیده می‌شود (record_dead شکست نوشتن خودش را لاگ می‌کند).
-            self::record_dead($hook, $args, 'enqueue_failed', 0);
+        if ($ok !== false && !is_wp_error($ok)) {
+            return true;
+        }
+        $m = $marker ?? ['op' => 'e', 'due' => time() + $delay, 'floor' => self::floor($hook, $args)];
+        $op = (string) $m['op'];
+        unset($m['op']);
+        if (self::put_marker($op, $hook, $args, $m, true) !== null) {
+            lmc_log(sprintf('صف %s ذخیره نشد؛ تصمیم به‌صورت نشان معوق ماندگار شد و پس از بهبود انجام می‌شود.', $hook));
+            return true;
+        }
+        if (self::record_dead($hook, $args, 'enqueue_failed', 0)) {
             return false;
         }
-        return true;
+        lmc_log(sprintf('⛔ تصمیم صف %s ماندگار نشد (نه صف، نه نشان، نه ثبت مرده).', $hook));
+        if (self::running_id($hook, $args) > 0) {
+            throw new RuntimeException(self::DECISION_LOST);
+        }
+        return false;
     }
 
     private static function request_kick(): void
@@ -510,7 +545,10 @@ class LMC_Queue
              ON DUPLICATE KEY UPDATE option_value = GREATEST(CAST(option_value AS UNSIGNED), %d)",
             self::SUCCESS_PREFIX . $key, (int) $action_id, (int) $action_id
         ));
-        if ($mark === false || !self::clear_rows($key)) {
+        // مرده‌ای که همین اجرا ثبت کرد (مثلاً enqueue_failed تلاش دوباره) نتیجهٔ همین اجراست و پاک نمی‌شود.
+        $keep_dead = isset(self::$dead_now[$key]);
+        unset(self::$dead_now[$key]);
+        if ($mark === false || !self::clear_rows($key, $keep_dead)) {
             // شمارندهٔ کهنه فقط زودتر مرده می‌کند (محافظه‌کارانه)، ولی دیده شود.
             lmc_log(sprintf('پاک‌کردن شمارندهٔ شکست %s پس از اجرای سالم ناموفق بود.', (string) $action->get_hook()));
         }
@@ -689,25 +727,28 @@ class LMC_Queue
                     continue;
                 }
                 $due = max(0, (int) ($d['due'] ?? 0) - time());
-                if ($op === 'e') {
-                    $ok = self::pending($hook, $args) || self::schedule($hook, $args, $due);
-                } elseif ($op === 'r') {
-                    // تصمیمی که اجرای سالمِ تازه‌تری پس از آن مصرفش کرده، بی‌اثر است (نه ارسال تکراری).
-                    // نشان‌های پیش از این نسخه `floor` ندارند و مثل قبل اعمال می‌شوند.
-                    if (array_key_exists('floor', $d)) {
-                        $mark = self::read(self::SUCCESS_PREFIX . self::key($hook, $args), $mok);
-                        if (!$mok) {
-                            continue;
-                        }
-                        if ((int) $mark > (int) $d['floor']) {
-                            if (self::forget_marker($name, $raw)) {
-                                $settled++;
-                            }
-                            continue;
-                        }
+                // تصمیمی («e» از درج ناموفق یا «r») که اجرای سالمِ تازه‌تری پس از آن مصرفش کرده، بی‌اثر است (نه
+                // ارسال تکراری). نشان‌های بی `floor` (پیش از این نسخه، یا «e»ی Checkout بی قفل) مثل قبل اعمال می‌شوند.
+                if ($op !== 'c' && array_key_exists('floor', $d)) {
+                    $mark = self::read(self::SUCCESS_PREFIX . self::key($hook, $args), $mok);
+                    if (!$mok) {
+                        continue;
                     }
+                    if ((int) $mark > (int) $d['floor']) {
+                        if (self::forget_marker($name, $raw)) {
+                            $settled++;
+                        }
+                        continue;
+                    }
+                }
+                // اعمال دوباره ناموفق، همان تصمیم را (با همان floor و due) دوباره نشان می‌کند؛ نشان خوانده‌شده عوض
+                // شده، پس forget پایین حذفش نمی‌کند و drain بعدی دوباره می‌کوشد.
+                $again = ['op' => $op] + array_intersect_key($d, ['due' => 1, 'stop' => 1, 'floor' => 1]);
+                if ($op === 'e') {
+                    $ok = self::pending($hook, $args) || self::schedule($hook, $args, $due, $again);
+                } elseif ($op === 'r') {
                     self::cancel($hook, $args);
-                    $ok = !empty($d['stop']) || self::schedule($hook, $args, $due);
+                    $ok = !empty($d['stop']) || self::schedule($hook, $args, $due, $again);
                 } else {
                     $ok = self::recover_locked($hook, $args, (string) ($d['why'] ?? 'deferred'), $action_id);
                 }
@@ -777,6 +818,7 @@ class LMC_Queue
             lmc_log(sprintf('⛔ ثبت مردهٔ %s (%s) ذخیره نشد؛ سطر failed در Action Scheduler تنها ردِ آن است.', $hook, $why));
             return false;
         }
+        self::$dead_now[self::key($hook, $args)] = true;
         lmc_log(sprintf('کار %s متوقف شد (%s)؛ بررسی دستی و «ارسال دوباره» لازم است.', $hook, $why));
         return true;
     }
@@ -859,11 +901,12 @@ class LMC_Queue
         return $v === null ? null : (string) $v;
     }
 
-    private static function clear_rows(string $key): bool
+    private static function clear_rows(string $key, bool $keep_dead = false): bool
     {
         global $wpdb;
         return $wpdb->query($wpdb->prepare("DELETE FROM {$wpdb->options} WHERE option_name IN (%s, %s) OR option_name LIKE %s",
-            self::DEAD_PREFIX . $key, self::BUSY_PREFIX . $key, self::like_prefix(self::CRASH_PREFIX . $key . '_'))) !== false;
+            $keep_dead ? self::BUSY_PREFIX . $key : self::DEAD_PREFIX . $key, self::BUSY_PREFIX . $key,
+            self::like_prefix(self::CRASH_PREFIX . $key . '_'))) !== false;
     }
 
     /**
