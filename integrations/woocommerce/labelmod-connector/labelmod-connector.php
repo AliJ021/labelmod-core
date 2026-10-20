@@ -62,6 +62,7 @@ require_once LMC_PATH . 'includes/class-lmc-client.php';
 require_once LMC_PATH . 'includes/class-lmc-push-secret.php';
 require_once LMC_PATH . 'includes/class-lmc-push-secret-settings.php';
 require_once LMC_PATH . 'includes/class-lmc-diagnostics.php';
+require_once LMC_PATH . 'includes/class-lmc-orders-view.php';
 require_once LMC_PATH . 'includes/class-lmc-settings.php';
 require_once LMC_PATH . 'includes/class-lmc-order-sync.php';
 require_once LMC_PATH . 'includes/class-lmc-order-reservation.php';
@@ -116,6 +117,7 @@ add_action('plugins_loaded', function () {
     LMC_Settings::init();
     LMC_Push_Secret_Settings::init();
     LMC_Diagnostics::init();
+    LMC_Orders_View::init();
     LMC_Order_Sync::init();
     LMC_Order_Reservation::init();
     LMC_Refund_Sync::init();
