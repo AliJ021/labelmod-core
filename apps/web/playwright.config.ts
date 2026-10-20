@@ -11,9 +11,13 @@ export default defineConfig({
   expect: { timeout: 7000 },
   reporter: [["list"], ["html", { open: "never" }], ["json", { outputFile: "test-results/results.json" }]],
   use: { baseURL: "http://127.0.0.1:4173", trace: "retain-on-failure", screenshot: "only-on-failure", serviceWorkers: "block" },
-  projects: (["chromium", "webkit"] as const).flatMap(browserName =>
-    (["light", "dark"] as const).flatMap(colorScheme =>
-      widths.map(width => ({
+  // ترتیب پروژه‌ها مرورگر را **درونی‌ترین** حلقه می‌گذارد. `--shard` فهرست را به تکه‌های
+  // پشت‌سرهم می‌بُرد؛ با مرورگر بیرونی، shard ۱ و ۲ تمام Chromium و ۳ و ۴ تمام WebKit بودند
+  // (۱۶–۲۲ دقیقه در برابر ۳۵–۴۵+ و لغو با سقف ۴۵ دقیقهٔ job). حالا هر shard نیمی از هر موتور
+  // را دارد. همان ۲۴ پروژه، همان نام‌ها، همان چهار shard — فقط ترتیب.
+  projects: (["light", "dark"] as const).flatMap(colorScheme =>
+    widths.flatMap(width =>
+      (["chromium", "webkit"] as const).map(browserName => ({
         name: browserName + "-" + colorScheme + "-" + width,
         use: { browserName, colorScheme, viewport: { width, height: 960 },
           ...(browserName === "chromium" && process.env.PLAYWRIGHT_EDGE === "1" ? { channel: "msedge" } : {}) },
