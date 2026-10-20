@@ -526,3 +526,14 @@
 .settings-readonly dd { margin: 0; font-weight: 600; }
 .settings-facts { display: flex; flex-wrap: wrap; gap: var(--s-2) var(--s-4); margin: 0; font-size: var(--text-sm); color: var(--ink-2); }
 .settings-note { margin: 0; font-size: var(--text-sm); color: var(--ink-2); max-inline-size: var(--measure); }
+
+/* ── مرور دوره در داشبورد (دستهٔ B) ─────────────────────────────────── */
+.period { display: flex; flex-direction: column; gap: var(--s-4); min-inline-size: 0; }
+.period-controls { display: flex; flex-wrap: wrap; align-items: center; gap: var(--s-3); }
+.period-branch { display: inline-flex; align-items: center; gap: var(--s-2); font-size: var(--text-sm); color: var(--ink-2); }
+.period-branch select { min-block-size: 44px; }
+.period-kpis .kpi-note { font-size: var(--text-xs); }
+.period-note { margin: 0; font-size: var(--text-sm); color: var(--ink-2); }
+.period-table { display: flex; flex-direction: column; gap: var(--s-2); min-inline-size: 0; }
+.period-subtitle { font-size: var(--text-md); margin: 0; }
+.period-delta { white-space: nowrap; }

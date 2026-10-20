@@ -5,7 +5,7 @@ import { redactText, safeRequestPath } from "./redact";
 import type { Product, Variation } from "../src/lib/catalog";
 import type { AppUser, Customer } from "../src/lib/people";
 import type { Me } from "../src/lib/session";
-import type { Branch, DailyHour, DailyHourly, DailyReport } from "../src/lib/pos";
+import type { Branch, DailyHour, DailyHourly, DailyReport, DashboardPeriod, PeriodPayments, PeriodSales } from "../src/lib/pos";
 import type { PermissionRule } from "../src/lib/admin";
 import { ZONES } from "../src/lib/navigation";
 
@@ -31,6 +31,56 @@ export const DEFAULT_HOURLY = hourlyDay({
   18: { salesAmount: "9000000", receivedAmount: "7500000", profitAmount: "2000000", invoiceCount: 7, paymentCount: 6 },
   20: { salesAmount: "-1000000", receivedAmount: "-500000", profitAmount: "-500000", returnCount: 1, paymentCount: 1 },
 });
+/**
+ * خلاصهٔ دورهٔ پیش‌فرض داشبورد — **خودسازگار** مثل پاسخ سرور: جمع کانال‌ها = جمع، خالص =
+ * دریافتی − بازپرداخت، و تفاضل = جاری − مبنا. هر آزمونی که عدد خاصی بخواهد، `periodBody` را صدا می‌زند.
+ */
+export function periodBody(o: { profitVisible?: boolean; branchId?: string | null; from?: string; to?: string; prevFrom?: string; prevTo?: string } = {}): DashboardPeriod {
+  const pv = o.profitVisible ?? true;
+  const sales = (n: number, g: bigint, rn: number, r: bigint, p: bigint): PeriodSales => ({
+    invoiceCount: n, grossAmount: String(g), returnCount: rn, returnAmount: String(r), salesAmount: String(g - r),
+    profitAmount: pv ? String(p) : null, averageInvoice: n === 0 ? null : String((g * 2n + BigInt(n)) / (BigInt(n) * 2n)),
+  });
+  const pay = (i: bigint, out: bigint, n: number, rn: number): PeriodPayments =>
+    ({ receivedAmount: String(i), refundedAmount: String(out), netAmount: String(i - out), paymentCount: n, refundCount: rn });
+  const sub = (a: string, b: string) => String(BigInt(a) - BigInt(b));
+  const curPos = sales(30, 45_000_000n, 2, 1_500_000n, 9_000_000n), curWeb = sales(12, 18_000_001n, 1, 2_000_000n, 3_000_000n);
+  const prevPos = sales(25, 40_000_000n, 1, 500_000n, 8_000_000n), prevWeb = sales(0, 0n, 0, 0n, 0n);
+  const total = (a: PeriodSales, b: PeriodSales) => sales(a.invoiceCount + b.invoiceCount, BigInt(a.grossAmount) + BigInt(b.grossAmount),
+    a.returnCount + b.returnCount, BigInt(a.returnAmount) + BigInt(b.returnAmount),
+    pv ? BigInt(a.profitAmount!) + BigInt(b.profitAmount!) : 0n);
+  const cur = { totals: total(curPos, curWeb), channels: [{ channel: "pos", ...curPos }, { channel: "web", ...curWeb }],
+    payments: { totals: pay(52_000_000n, 3_500_000n, 41, 2), methods: [
+      { methodCode: "card", methodName: "کارت‌خوان", ...pay(30_000_000n, 2_000_000n, 25, 1) },
+      { methodCode: "cash", methodName: "نقدی", ...pay(22_000_000n, 1_500_000n, 16, 1) },
+      { methodCode: "transfer", methodName: "کارت‌به‌کارت", ...pay(0n, 0n, 0, 0) }] } };
+  const prev = { totals: total(prevPos, prevWeb), channels: [{ channel: "pos", ...prevPos }, { channel: "web", ...prevWeb }],
+    payments: { totals: pay(39_000_000n, 500_000n, 24, 1), methods: [
+      { methodCode: "card", methodName: "کارت‌خوان", ...pay(20_000_000n, 0n, 12, 0) },
+      { methodCode: "cash", methodName: "نقدی", ...pay(18_000_000n, 500_000n, 11, 1) },
+      { methodCode: "transfer", methodName: "کارت‌به‌کارت", ...pay(1_000_000n, 0n, 1, 0) }] } };
+  const dSales = (a: PeriodSales, b: PeriodSales): PeriodSales => ({
+    invoiceCount: a.invoiceCount - b.invoiceCount, grossAmount: sub(a.grossAmount, b.grossAmount), returnCount: a.returnCount - b.returnCount,
+    returnAmount: sub(a.returnAmount, b.returnAmount), salesAmount: sub(a.salesAmount, b.salesAmount),
+    profitAmount: pv ? sub(a.profitAmount!, b.profitAmount!) : null,
+    averageInvoice: a.averageInvoice === null || b.averageInvoice === null ? null : sub(a.averageInvoice, b.averageInvoice),
+  });
+  const dPay = (a: PeriodPayments, b: PeriodPayments): PeriodPayments => ({
+    receivedAmount: sub(a.receivedAmount, b.receivedAmount), refundedAmount: sub(a.refundedAmount, b.refundedAmount),
+    netAmount: sub(a.netAmount, b.netAmount), paymentCount: a.paymentCount - b.paymentCount, refundCount: a.refundCount - b.refundCount,
+  });
+  return {
+    businessDate: daily.businessDate, branchId: o.branchId === undefined ? "b1" : o.branchId, profitVisible: pv,
+    current: { from: o.from ?? "2026-09-10", to: o.to ?? daily.businessDate, partial: (o.to ?? daily.businessDate) === daily.businessDate, ...cur },
+    previous: { from: o.prevFrom ?? "2026-09-03", to: o.prevTo ?? "2026-09-09", ...prev },
+    delta: {
+      totals: dSales(cur.totals, prev.totals),
+      channels: cur.channels.map((c, i) => ({ channel: c.channel, ...dSales(c, prev.channels[i]!) })),
+      payments: { totals: dPay(cur.payments.totals, prev.payments.totals),
+        methods: cur.payments.methods.map((m, i) => ({ methodCode: m.methodCode, methodName: m.methodName, ...dPay(m, prev.payments.methods[i]!) })) },
+    },
+  };
+}
 export const staff: AppUser = { id: "33333333-3333-4333-8333-333333333333", username: "synthetic_staff", fullName: "پرسنل آزمایشی", mobile: null, isActive: true, createdAt: "2026-01-01T00:00:00Z", hasPin: false, hasTotp: false, roles: [{ roleCode: "cashier", roleName: "صندوق‌دار", branchId: null, branchName: null }], activeSessions: 1 };
 export const customer: Customer = { id: "c1", mobile: "09000000000", fullName: "مشتری آزمایشی با نام بلند برای بررسی چیدمان جدول", email: null, status: "active", creditLimit: "0", dueDays: 0, consentSms: false, consentMarketing: false, address: null, postalCode: null, city: null, province: null, tags: [], internalNote: null, createdAt: "2026-01-01T00:00:00Z", invoiceCount: 2, totalPurchased: "9876000", balance: "1234000" };
 export const rule: PermissionRule = { roleCode: "admin", roleName: "مدیر", operation: "price.change", allowed: true, maxAmount: null, maxPercent: null, needsApprovalFrom: null, hasRule: true };
@@ -48,6 +98,7 @@ export class MockApi {
   defaults: Record<string, unknown> = {
     "GET /pos/policy": { requireCustomer: false },
     "GET /auth/me": me, "GET /branches": { branches }, "GET /reports/daily": daily, "GET /reports/daily/hourly": DEFAULT_HOURLY,
+    "GET /reports/dashboard/period": periodBody(),
     "GET /posting-batches/unposted": { rows: [] }, "GET /auth/can": { verdict: "allow", approver: null, reason: "" },
     "GET /settings": { groups: [] }, "GET /settlement-terms": { terms: [] }, "GET /customers": { customers: [] },
     "GET /products/ref-data": { brands: [], categories: [] }, "GET /seasons": { seasons: [] },

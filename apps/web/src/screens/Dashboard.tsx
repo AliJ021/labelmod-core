@@ -7,6 +7,8 @@
  *   ۲. روند **فقط** شاخص انتخاب‌شده، ساعتی/روزانه/ماهانه؛ «مقایسهٔ هر سه» صریح است.
  *      ساعتی از `/reports/daily/hourly` (مهاجرت ۰۸۳، جمع ساعت‌ها همان سه کارت)؛ روزانه
  *      و ماهانه از `/reports/daily/trend` (مهاجرت ۰۹۳، جمع در SQL، ماه جلالی).
+ *   ۲٫۵. مرور دوره (`DashboardPeriod`): بازه و دورهٔ مبنا، صندوق/سایت، مرجوعی جدا از
+ *      بازپرداخت، ترکیب پرداخت — فقط با `report.view`.
  *   ۳. پیگیری ثبت حسابداری فروش — بازشوندهٔ بسته با شمار و وضعیت واقعی در خلاصه.
  *      این ثبت دورهٔ فروش و شیفت در دفتر است، نه وضعیت کلی سایت یا سامانه.
  *   ۴. کارهای پرتکرار.
@@ -46,6 +48,7 @@ import { LineChart, tickEvery } from "../components/ui/LineChart.tsx";
 import { Segmented } from "../components/ui/Controls.tsx";
 import { Ltr } from "../components/ui/Bidi.tsx";
 import { ResultState } from "../components/ResultState.tsx";
+import { DashboardPeriod } from "./DashboardPeriod.tsx";
 
 /**
  * روند ساعتی خلاصه روز. `denied`: سرور این جزئیات را نداد (همان دروازهٔ
@@ -69,6 +72,8 @@ type Unposted = { state: "loading" } | { state: "ready"; rows: UnpostedRow[] } |
 
 export function Dashboard({ access }: { access: NavAccess }) {
   const [branch, setBranch] = useState<Branch | null>(null);
+  /** همهٔ شعبه‌های در دامنه و اینکه دامنه سراسری است — برای انتخاب‌گر «مرور دوره». */
+  const [scope, setScope] = useState<{ branches: Branch[]; allBranches: boolean }>({ branches: [], allBranches: false });
   const [report, setReport] = useState<DailyReport | null>(null);
   const [error, setError] = useState<{ message: string; reference: string | null } | null>(null);
   const [unposted, setUnposted] = useState<Unposted>({ state: "loading" });
@@ -129,8 +134,9 @@ export function Dashboard({ access }: { access: NavAccess }) {
     window.addEventListener("pagehide", leaving);
     void (async () => {
       try {
-        const { branches } = await pos.branches({ signal });
+        const { branches, allBranches } = await pos.branches({ signal });
         if (signal.aborted) return;
+        setScope({ branches, allBranches });
         const first = branches[0];
         if (!first) {
           setError({ message: "به هیچ شعبه‌ای دسترسی ندارید.", reference: null });
@@ -298,6 +304,11 @@ export function Dashboard({ access }: { access: NavAccess }) {
               hourly={hourly} trend={grain === "hour" ? undefined : trends[grain]} />
           </>}
       </Solid>
+
+      {/* مرور دوره (دستهٔ B): فقط برای نقش دارای گزارش؛ پیش از پاسخ دسترسی رندر نمی‌شود. */}
+      {accessOf(["report.view"], access.verdicts) === "allow"
+        ? <DashboardPeriod today={report.businessDate} branches={scope.branches} allBranches={scope.allBranches} />
+        : null}
 
       {/*
         پیگیری ثبت حسابداری فروش — پس از شاخص‌ها و روند، بسته به‌طور پیش‌فرض. خلاصه
