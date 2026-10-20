@@ -71,13 +71,25 @@ test("manual refresh: one chain at a time, old numbers stay until the new ones l
 });
 
 test("auto refresh runs every minute only while visible; becoming visible after the due time refreshes at once", async ({ page, api }) => {
-  serveDaily(api, () => ({}));
-  await open(page);
+  // «هنوز نه در ۵۹ ثانیه» فقط وقتی معنا دارد که لحظهٔ تلاش اول دقیق باشد. `install` زمان واقعی را جاری
+  // می‌گذارد و زیر بار موازی چند ثانیهٔ واقعیِ بارگذاری به آن ۵۹ ثانیه اضافه می‌شد (اندازه‌گیری شد: ۱۰ از ۱۶
+  // اجرا با ۸ Worker زمان‌سنج را زودتر دید). پس پاسخ اول نگه داشته می‌شود، ساعت روی T0+۳۰ثانیه می‌ایستد و
+  // بعد پاسخ می‌نشیند: تلاش اول دقیقاً همان لحظه است. پس از این بخش ساعت دوباره جاری می‌شود.
+  let releaseFirst!: () => void;
+  serveDaily(api, () => ({}), { n: 1, until: new Promise(r => { releaseFirst = r; }) });
+  await page.clock.install({ time: T0 });
+  await page.goto("/");
+  await expect.poll(() => dailyCalls(api)).toBe(1);
+  await page.clock.pauseAt(new Date(T0.getTime() + 30_000));
+  releaseFirst();
+  await expect(freshness(page)).toHaveAttribute("data-state", "fresh");
+  await expect(freshness(page)).toContainText("به‌روزشده ساعت ۱۰:۴۰");
   await page.clock.runFor(59_000);
   expect(dailyCalls(api)).toBe(1);
   await page.clock.runFor(2_000);
   await expect.poll(() => dailyCalls(api)).toBe(2);
   await expect(freshness(page)).toHaveAttribute("data-state", "fresh");
+  await page.clock.resume();
 
   await setVisibility(page, "hidden");
   await page.clock.runFor(5 * 60_000);
