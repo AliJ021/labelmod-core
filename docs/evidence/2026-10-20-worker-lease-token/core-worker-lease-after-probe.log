@@ -1,0 +1,49 @@
+# شاخهٔ claude/worker-lease-token (main 4cdde90 + مهاجرت ۱۰۰) · PostgreSQL 16.13 (Ubuntu 16.13-0ubuntu0.24.04.1) · دیتابیس یک‌بارمصرف lmc_lease_new
+BEGIN
+INSERT 0 1
+-- اجارهٔ ۰ ثانیه رد می‌شود
+SAVEPOINT
+psql:core-worker-lease-after-probe.sql:10: ERROR:  مهلت اجارهٔ Outbox باید بین ۳۰ و ۳۶۰۰ ثانیه باشد: 0
+CONTEXT:  PL/pgSQL function platform.claim_outbox(integer,text,integer,text[],text[]) line 7 at RAISE
+ROLLBACK
+-- A برمی‌دارد (۱۲۰)، اجاره‌اش می‌گذرد، B دوباره برمی‌دارد
+UPDATE 1
+ status  | attempts | claimed_by | owned_by_b 
+---------+----------+------------+------------
+ sending |        2 | B          | t
+
+-- نسخهٔ بی‌توکن دیگر وجود ندارد
+SAVEPOINT
+psql:core-worker-lease-after-probe.sql:21: ERROR:  function platform.complete_outbox(bigint) does not exist
+LINE 1: SELECT platform.complete_outbox(id) FROM platform.outbox_mes...
+               ^
+HINT:  No function matches the given name and argument types. You might need to add explicit type casts.
+ROLLBACK
+-- A دیررس: complete_outbox(id, token_a)
+ complete_outbox 
+-----------------
+ f
+
+ status  | attempts | claimed_by | has_sent_at | owned_by_b 
+---------+----------+------------+-------------+------------
+ sending |        2 | B          | f           | t
+
+-- A دیررس: fail_outbox(id, token_a, ...)
+ fail_outbox 
+-------------
+ lost
+
+ status  | attempts | claimed_by | last_error | owned_by_b 
+---------+----------+------------+------------+------------
+ sending |        2 | B          |            | t
+
+-- کنترل مثبت: B می‌بندد
+ complete_outbox 
+-----------------
+ t
+
+ status | token_cleared 
+--------+---------------
+ sent   | t
+
+ROLLBACK

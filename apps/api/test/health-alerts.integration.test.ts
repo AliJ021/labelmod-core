@@ -96,7 +96,9 @@ describe("سلامت سیستم از مسیر API", { skip }, () => {
          WHERE id = ${id}::bigint`.execute(handle.db);
       await sql`SELECT platform.claim_outbox(10, 'test', 60)`.execute(handle.db);
       await sql`
-        SELECT platform.fail_outbox(${id}::bigint, 'خطای ساختگی', 3, false)`
+        SELECT platform.fail_outbox(${id}::bigint,
+          (SELECT claim_token FROM platform.outbox_message WHERE id = ${id}::bigint),
+          'خطای ساختگی', 3, false)`
         .execute(handle.db);
     }
     const st = await sql<{ status: string }>`

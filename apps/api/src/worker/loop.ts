@@ -62,14 +62,53 @@ export interface LoopOptions {
   webPushDeps?: Parameters<typeof makeWebPushSender>[1];
   batchSize: number;
   leaseSeconds: number;
+  /**
+   * کدام خطِ موضوع‌ها (`WORKER_LANES`). پیش‌فرض `all`: یک Worker برای همه،
+   * همان رفتار پیش از تفکیک.
+   */
+  lane?: WorkerLane | undefined;
   log: (line: string) => void;
 }
+
+/**
+ * موضوع‌های Push سایت — خطِ `web`.
+ *
+ * ⚠️ تقسیم با **مکمل** است، نه با دو فهرست: خط `notify` همه‌چیز است جز
+ *    همین‌ها (`p_exclude`). پس دو خط هرگز هم‌پوشانی ندارند و با هم کامل‌اند،
+ *    حتی برای موضوعی که فردا اضافه شود یا اصلاً Handler نداشته باشد (آن
+ *    در `notify` نامهٔ مرده می‌شود، نه اینکه هیچ‌کس برش ندارد).
+ *    `worker-lanes.test.ts` همین را روی `HANDLERS` می‌سنجد.
+ */
+export const WEB_TOPICS = ["web.stock_push", "web.price_push", "web.instore_push"] as const;
+
+export type WorkerLane = "all" | "web" | "notify";
+
+export const WORKER_LANES: Record<WorkerLane, {
+  topics: readonly string[] | null;
+  exclude: readonly string[] | null;
+  /** هشدار چک و سلامت را می‌سازد؟ فقط خطی که مصرف‌کنندهٔ همان موضوع‌هاست. */
+  producers: boolean;
+}> = {
+  all: { topics: null, exclude: null, producers: true },
+  web: { topics: WEB_TOPICS, exclude: null, producers: false },
+  notify: { topics: null, exclude: WEB_TOPICS, producers: true },
+};
+
+/**
+ * بیشینهٔ زمان یک پیام: پیامک ۲۰ ثانیه + Webhook ۱۰ ثانیه برای فاکتور،
+ * با حاشیهٔ دوبرابر. اجاره پیش از **هر** پیام تمدید می‌شود، پس فقط باید
+ * یک پیام را بپوشاند، نه کل دسته — ولی کمتر از این یعنی پیام وسط ارسال
+ * به Worker دیگری برسد.
+ */
+export const MESSAGE_BUDGET_SECONDS = 60;
 
 export interface TickResult {
   claimed: number;
   sent: number;
   failed: number;
   dead: number;
+  /** پیامی که اجاره‌اش به Worker دیگری رسید؛ این Worker هیچ وضعیتی از آن را عوض نکرد. */
+  lost: number;
   enqueuedCheques: number;
   enqueuedAlerts: number;
 }
@@ -97,40 +136,49 @@ export async function tick(opts: LoopOptions): Promise<TickResult> {
     sent: 0,
     failed: 0,
     dead: 0,
+    lost: 0,
     enqueuedCheques: 0,
     enqueuedAlerts: 0,
   };
 
+  assertLease(opts.leaseSeconds);
+  const lane = WORKER_LANES[opts.lane ?? "all"];
   const settings = await readNotifySettings(opts.db);
 
-  // هشدار چک: تولید پیام، پیش از مصرف. اگر همین دور تولید شود، همین
-  // دور هم فرستاده می‌شود.
-  const cheques = await sql<{ n: number }>`
-    SELECT treasury.enqueue_due_cheque_alerts() AS n
-  `.execute(opts.db);
-  out.enqueuedCheques = Number(cheques.rows[0]?.n ?? 0);
+  // تولیدکننده‌ها فقط در خطی که مصرف‌کنندهٔ پیامشان است (نه `web`).
+  if (lane.producers) {
+    // هشدار چک: تولید پیام، پیش از مصرف. اگر همین دور تولید شود، همین
+    // دور هم فرستاده می‌شود.
+    const cheques = await sql<{ n: number }>`
+      SELECT treasury.enqueue_due_cheque_alerts() AS n
+    `.execute(opts.db);
+    out.enqueuedCheques = Number(cheques.rows[0]?.n ?? 0);
 
-  /*
-   * زنگ خطر سیستم — همان‌جا و به همان دلیل که هشدار چک اینجاست.
-   *
-   * هشت زنگ از قبل بودند و کار می‌کردند؛ آنچه نبود، رسیدنشان به آدم
-   * بود: همه فقط با اجرای دستی `ops/deploy.sh status` دیده می‌شدند.
-   * `enqueue_health_alerts()` روی کلید (کد زنگ، روز کاری) Idempotent
-   * است، پس فراخوانی ساعتی‌اش حداکثر یک پیام در روز می‌سازد.
-   */
-  const alerts = await sql<{ n: number }>`
-    SELECT platform.enqueue_health_alerts() AS n
-  `.execute(opts.db);
-  out.enqueuedAlerts = Number(alerts.rows[0]?.n ?? 0);
+    /*
+     * زنگ خطر سیستم — همان‌جا و به همان دلیل که هشدار چک اینجاست.
+     *
+     * هشت زنگ از قبل بودند و کار می‌کردند؛ آنچه نبود، رسیدنشان به آدم
+     * بود: همه فقط با اجرای دستی `ops/deploy.sh status` دیده می‌شدند.
+     * `enqueue_health_alerts()` روی کلید (کد زنگ، روز کاری) Idempotent
+     * است، پس فراخوانی ساعتی‌اش حداکثر یک پیام در روز می‌سازد.
+     */
+    const alerts = await sql<{ n: number }>`
+      SELECT platform.enqueue_health_alerts() AS n
+    `.execute(opts.db);
+    out.enqueuedAlerts = Number(alerts.rows[0]?.n ?? 0);
+  }
 
   const claimed = await sql<{
     id: string;
     topic: string;
     payload: Record<string, unknown>;
     attempts: number;
+    claim_token: string;
   }>`
     SELECT * FROM platform.claim_outbox(
-      ${opts.batchSize}::int, ${opts.workerName}::text, ${opts.leaseSeconds}::int)
+      ${opts.batchSize}::int, ${opts.workerName}::text, ${opts.leaseSeconds}::int,
+      ${lane.topics === null ? null : [...lane.topics]}::text[],
+      ${lane.exclude === null ? null : [...lane.exclude]}::text[])
   `.execute(opts.db);
 
   out.claimed = claimed.rows.length;
@@ -171,19 +219,35 @@ export async function tick(opts: LoopOptions): Promise<TickResult> {
       payload: row.payload ?? {},
       attempts: row.attempts,
     };
+    const lease: Lease = { id: row.id, token: row.claim_token };
+
+    /*
+     * ⚠️ تمدید پیش از هر پیام، با همان توکن. دسته پشت سر هم فرستاده
+     *    می‌شود و انتهایش ممکن است پیش از نوبتش منقضی و به Worker دیگری
+     *    رسیده باشد. `false` یعنی مالک دیگری دارد: نه فرستاده می‌شود، نه
+     *    بسته — وگرنه همان تحویل دوگانه‌ای بود که اجاره برای جلوگیری از آن
+     *    است.
+     */
+    if (!(await renew(opts, lease))) {
+      out.lost++;
+      opts.log(`↷ ${msg.topic} #${msg.id} — اجاره به Worker دیگری رسید؛ فرستاده نشد`);
+      continue;
+    }
 
     const handler = HANDLERS[msg.topic];
     if (!handler) {
       // موضوع ناشناخته با تلاش دوباره شناخته نمی‌شود. مستقیم نامه
       // مرده، تا در `platform.outbox_dead` دیده شود.
-      await failMessage(
+      const status = await failMessage(
         opts,
-        msg.id,
+        lease,
         `موضوع ناشناخته: ${msg.topic}`,
         settings.maxAttempts,
         true,
+        null,
       );
-      out.dead++;
+      if (status === "lost") out.lost++;
+      else out.dead++;
       continue;
     }
 
@@ -202,51 +266,134 @@ export async function tick(opts: LoopOptions): Promise<TickResult> {
      *    `sent` علامت می‌خورد بی‌آنکه هرگز فرستاده شود.
      */
     if (!settings.smsEnabled && SMS_ONLY_TOPICS.has(msg.topic)) {
-      await complete(opts, msg.id);
-      out.sent++;
+      if (await complete(opts, lease)) out.sent++;
+      else out.lost++;
       continue;
     }
 
+    let result: Awaited<ReturnType<typeof handler>>;
     try {
-      const result = await handler(ctx, msg);
-      await complete(opts, msg.id);
-      out.sent++;
-      opts.log(`✓ ${msg.topic} #${msg.id} — ${result.note}`);
+      result = await handler(ctx, msg);
     } catch (err) {
       const permanent = err instanceof SmsError && err.permanent;
+      const retryAfter = err instanceof SmsError ? err.retryAfterSeconds : null;
       const message = err instanceof Error ? err.message : String(err);
       const status = await failMessage(
         opts,
-        msg.id,
+        lease,
         message,
         settings.maxAttempts,
         permanent,
+        retryAfter,
       );
+      if (status === "lost") {
+        out.lost++;
+        opts.log(`↷ ${msg.topic} #${msg.id} — شکست خورد ولی اجاره دیگر مال این Worker نبود؛ ثبت نشد`);
+        continue;
+      }
       if (status === "dead") out.dead++;
       else out.failed++;
       opts.log(`✗ ${msg.topic} #${msg.id} — ${message}${status === "dead" ? " (مرده)" : ""}`);
+      continue;
+    }
+
+    /*
+     * ⚠️ فرستاده شد ولی بستن رد شد: اجاره وسط ارسال به Worker دیگری رسید.
+     *    وضعیت مال مالک تازه است و دست نمی‌خورد؛ تحویل «حداقل یک بار» است
+     *    و Handlerها Idempotent‌اند. این «فرستاده» شمرده نمی‌شود.
+     */
+    if (await complete(opts, lease)) {
+      out.sent++;
+      opts.log(`✓ ${msg.topic} #${msg.id} — ${result.note}`);
+    } else {
+      out.lost++;
+      opts.log(`↷ ${msg.topic} #${msg.id} — فرستاده شد ولی اجاره به Worker دیگری رسیده بود؛ بسته نشد`);
     }
   }
 
   return out;
 }
 
-async function complete(opts: LoopOptions, id: string): Promise<void> {
-  await sql`SELECT platform.complete_outbox(${id}::bigint)`.execute(opts.db);
+/** شناسه و توکن اجارهٔ همین برداشت — بستن و تمدید فقط با هر دو. */
+interface Lease {
+  id: string;
+  token: string;
+}
+
+export function assertLease(leaseSeconds: number): void {
+  if (!Number.isInteger(leaseSeconds) || leaseSeconds < MESSAGE_BUDGET_SECONDS || leaseSeconds > 3600) {
+    throw new Error(
+      `مهلت اجارهٔ Worker باید بین ${MESSAGE_BUDGET_SECONDS} و ۳۶۰۰ ثانیه باشد تا یک پیام را بپوشاند: ${leaseSeconds}`,
+    );
+  }
+}
+
+async function renew(opts: LoopOptions, lease: Lease): Promise<boolean> {
+  const r = await sql<{ ok: boolean }>`
+    SELECT platform.renew_outbox(
+      ${lease.id}::bigint, ${lease.token}::uuid, ${opts.leaseSeconds}::int) AS ok
+  `.execute(opts.db);
+  return r.rows[0]?.ok === true;
+}
+
+async function complete(opts: LoopOptions, lease: Lease): Promise<boolean> {
+  const r = await sql<{ ok: boolean }>`
+    SELECT platform.complete_outbox(${lease.id}::bigint, ${lease.token}::uuid) AS ok
+  `.execute(opts.db);
+  return r.rows[0]?.ok === true;
 }
 
 async function failMessage(
   opts: LoopOptions,
-  id: string,
+  lease: Lease,
   error: string,
   maxAttempts: number,
   permanent: boolean,
-): Promise<string> {
-  const r = await sql<{ fail_outbox: string }>`
+  retryAfterSeconds: number | null,
+): Promise<"pending" | "dead" | "lost"> {
+  const r = await sql<{ status: string }>`
     SELECT platform.fail_outbox(
-      ${id}::bigint, ${error}::text, ${maxAttempts}::int, ${permanent}::boolean)
+      ${lease.id}::bigint, ${lease.token}::uuid, ${error}::text, ${maxAttempts}::int,
+      ${permanent}::boolean, ${retryAfterSeconds}::int) AS status
   `.execute(opts.db);
-  return r.rows[0]?.fail_outbox ?? "pending";
+  const status = r.rows[0]?.status;
+  if (status === "pending" || status === "dead" || status === "lost") return status;
+  throw new Error(`پاسخ نامعتبر fail_outbox: ${String(status)}`);
+}
+
+/**
+ * زمان دور بعد — محدود در هر سه حالت.
+ *
+ * - **دستهٔ پر** یعنی صف عقب است: دور بعد بی‌درنگ، ولی حداکثر
+ *   `MAX_BACKLOG_STREAK` بار پیاپی؛ بعد یک فاصلهٔ عادی تا دیتابیس و لاگ
+ *   نفس بکشند.
+ * - **دستهٔ ناقص یا خالی**: همان `intervalMs` (پیکربندی ۵۰۰ تا ۶۰۰٬۰۰۰).
+ * - **خطای دور** (قطعی دیتابیس): دو برابر شونده از `intervalMs` با سقف
+ *   `max(intervalMs, MAX_ERROR_BACKOFF_MS)`؛ اولین دور سالم صفرش می‌کند.
+ */
+export const MAX_BACKLOG_STREAK = 50;
+export const MAX_ERROR_BACKOFF_MS = 60_000;
+
+export interface PaceState {
+  backlog: number;
+  errors: number;
+}
+
+export function nextPace(
+  state: PaceState,
+  outcome: { ok: true; claimed: number } | { ok: false },
+  intervalMs: number,
+  batchSize: number,
+): { delayMs: number; state: PaceState } {
+  if (!outcome.ok) {
+    const errors = state.errors + 1;
+    const cap = Math.max(intervalMs, MAX_ERROR_BACKOFF_MS);
+    return { delayMs: Math.min(intervalMs * 2 ** Math.min(errors, 20), cap), state: { backlog: 0, errors } };
+  }
+  if (outcome.claimed >= batchSize && state.backlog < MAX_BACKLOG_STREAK) {
+    return { delayMs: 0, state: { backlog: state.backlog + 1, errors: 0 } };
+  }
+  return { delayMs: intervalMs, state: { backlog: 0, errors: 0 } };
 }
 
 /**
@@ -262,11 +409,16 @@ async function failMessage(
 export function runLoop(
   opts: LoopOptions & { intervalMs: number },
 ): { stop: () => Promise<void> } {
+  assertLease(opts.leaseSeconds);
   let running = true;
   let current: Promise<unknown> = Promise.resolve();
+  let pace: PaceState = { backlog: 0, errors: 0 };
 
   const sleep = (ms: number) =>
     new Promise<void>((resolve) => {
+      // صفر هم یک بار Event Loop را آزاد می‌کند؛ صف عقب‌افتاده خاموشی را
+      // گروگان نمی‌گیرد.
+      if (ms === 0) { setImmediate(resolve); return; }
       const t = setTimeout(resolve, ms);
       // تایمر نباید فرآیند را زنده نگه دارد وقتی همه‌چیز تمام شده.
       t.unref?.();
@@ -274,23 +426,28 @@ export function runLoop(
 
   const loop = async () => {
     while (running) {
+      let outcome: { ok: true; claimed: number } | { ok: false };
       try {
         current = tick(opts);
         const r = (await current) as TickResult;
+        outcome = { ok: true, claimed: r.claimed };
         // دور خالی لاگ نمی‌خورد: Workerی که هر پنج ثانیه «کاری نبود»
         // بنویسد، لاگ را طوری پر می‌کند که خطای واقعی گم شود.
         if (r.claimed > 0 || r.enqueuedCheques > 0) {
           opts.log(
             `دور: ${r.claimed} برداشته، ${r.sent} فرستاده، ${r.failed} ناموفق، ` +
-              `${r.dead} مرده، ${r.enqueuedCheques} هشدار چک تازه`,
+              `${r.dead} مرده، ${r.lost} اجارهٔ ازدست‌رفته، ${r.enqueuedCheques} هشدار چک تازه`,
           );
         }
       } catch (err) {
         // یک دور شکسته نباید Worker را بکشد: قطعی لحظه‌ای دیتابیس
         // عادی است و دور بعد معمولاً کار می‌کند.
+        outcome = { ok: false };
         opts.log(`✗ دور ناموفق: ${err instanceof Error ? err.message : String(err)}`);
       }
-      if (running) await sleep(opts.intervalMs);
+      const next = nextPace(pace, outcome, opts.intervalMs, opts.batchSize);
+      pace = next.state;
+      if (running) await sleep(next.delayMs);
     }
   };
 

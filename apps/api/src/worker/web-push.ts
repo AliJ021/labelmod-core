@@ -19,6 +19,7 @@ import { request as httpRequest, type ClientRequest, type IncomingMessage } from
 import { request as httpsRequest, type RequestOptions } from "node:https";
 import { isIP, type LookupFunction } from "node:net";
 import { SmsError } from "./sms.ts";
+import { retryAfterFor } from "./retry-after.ts";
 
 export interface WebPushConfig {
   enabled: boolean;
@@ -209,7 +210,13 @@ export interface PinnedPostInit {
 export type PinnedPost = (
   target: PinnedTarget,
   init: PinnedPostInit,
-) => Promise<{ status: number }>;
+) => Promise<PinnedPostResult>;
+
+export interface PinnedPostResult {
+  status: number;
+  /** هدر خام `Retry-After`؛ سنجشش با `parseRetryAfter` است، نه اینجا. */
+  retryAfter?: string | null;
+}
 
 /**
  * امضای `http.request`/`https.request` به شکلی که این ماژول استفاده
@@ -245,7 +252,7 @@ export function makePinnedPost(
   requestImpl?: HttpRequestFn,
 ): PinnedPost {
   return (target, init) =>
-    new Promise<{ status: number }>((resolve, reject) => {
+    new Promise<PinnedPostResult>((resolve, reject) => {
       const host = target.url.hostname.replace(/^\[|\]$/g, "");
       const secure = target.url.protocol === "https:";
       const send: HttpRequestFn = requestImpl
@@ -275,7 +282,11 @@ export function makePinnedPost(
         (res) => {
           // بدنه خوانده و دور انداخته می‌شود؛ بی این، Socket باز می‌ماند.
           res.resume();
-          res.on("end", () => finish(() => resolve({ status: res.statusCode ?? 0 })));
+          const header = res.headers?.["retry-after"];
+          res.on("end", () => finish(() => resolve({
+            status: res.statusCode ?? 0,
+            retryAfter: typeof header === "string" ? header : null,
+          })));
         },
       );
 
@@ -410,7 +421,8 @@ export function makeWebPushSender(
         // ۴xx یعنی امضا یا بدنه ایراد دارد و تلاش صدم هم درستش نمی‌کند.
         const permanent = res.status >= 400 && res.status < 500
           && res.status !== 408 && res.status !== 429;
-        throw new SmsError(`سایت پاسخ ${res.status} داد`, permanent);
+        throw new SmsError(`سایت پاسخ ${res.status} داد`, permanent,
+          retryAfterFor(res.status, res.retryAfter, now()));
       }
     },
   };

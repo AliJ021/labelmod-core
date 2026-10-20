@@ -63,9 +63,15 @@ const schema = z.object({
   // نه به کسب‌وکار. مالک هیچ‌وقت نمی‌خواهد اندازه دسته را عوض کند.
   WORKER_INTERVAL_MS: z.coerce.number().int().min(500).max(600_000).default(5_000),
   WORKER_BATCH: z.coerce.number().int().min(1).max(200).default(20),
-  // اجاره باید از بدترین زمان ارسال بلندتر باشد، وگرنه پیامی که هنوز
-  // در حال رفتن است دوباره برداشته می‌شود و مشتری دو پیامک می‌گیرد.
-  WORKER_LEASE_SECONDS: z.coerce.number().int().min(30).max(3_600).default(120),
+  // اجاره باید از بدترین زمان ارسال **یک پیام** بلندتر باشد، وگرنه پیامی
+  // که هنوز در حال رفتن است دوباره برداشته می‌شود و مشتری دو پیامک می‌گیرد.
+  // از مهاجرت ۱۰۰ پیش از هر پیام تمدید می‌شود؛ کف ۶۰ همان
+  // `MESSAGE_BUDGET_SECONDS` در `worker/loop.ts` است.
+  WORKER_LEASE_SECONDS: z.coerce.number().int().min(60).max(3_600).default(120),
+  // خطِ موضوع‌ها: `all` (یک Worker برای همه، پیش‌فرض) یا جفتِ `web` و
+  // `notify` برای Worker جدای Push سایت. دو خط با هم کامل و بی‌همپوشانی‌اند؛
+  // `web` تنها بالا یعنی پیامک و هشدار هیچ مصرف‌کننده‌ای ندارند.
+  WORKER_LANE: z.enum(["all", "web", "notify"]).default("all"),
 });
 
 export type Config = z.infer<typeof schema> & { isProduction: boolean };

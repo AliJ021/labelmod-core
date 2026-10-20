@@ -83,7 +83,8 @@ SELECT pg_temp.assert_txt(
   (SELECT DISTINCT claimed_by FROM platform.outbox_message),
   'w1');
 
-SELECT platform.complete_outbox(id) FROM platform.outbox_message WHERE topic = 't.a';
+-- از مهاجرت ۱۰۰ بستن با توکن همان برداشت است (outbox-lease.sql مالکیت را می‌سنجد).
+SELECT platform.complete_outbox(id, claim_token) FROM platform.outbox_message WHERE topic = 't.a';
 
 SELECT pg_temp.assert_txt(
   'پیام بسته‌شده sent است',
@@ -131,7 +132,7 @@ SELECT pg_temp.assert_eq(
 
 SELECT pg_temp.assert_txt(
   'شکست موقت → دوباره در صف',
-  (SELECT platform.fail_outbox(id, 'شبکه قطع بود')
+  (SELECT platform.fail_outbox(id, claim_token, 'شبکه قطع بود')
      FROM platform.outbox_message WHERE topic = 't.b'),
   'pending');
 
@@ -150,7 +151,7 @@ SELECT pg_temp.assert_eq(
 -- خطای دائمی: شماره غلط با تلاش صدم هم درست نمی‌شود.
 SELECT pg_temp.assert_txt(
   'شکست دائمی → مستقیم نامه مرده',
-  (SELECT platform.fail_outbox(id, 'شماره نامعتبر', 8, true)
+  (SELECT platform.fail_outbox(id, claim_token, 'شماره نامعتبر', 8, true)
      FROM platform.outbox_message WHERE topic = 't.c'),
   'dead');
 
@@ -160,16 +161,24 @@ SELECT pg_temp.assert_eq(
   1);
 
 -- سقف تلاش: پیامی که بارها شکسته، باید بایستد.
-UPDATE platform.outbox_message SET attempts = 8 WHERE topic = 't.b';
+-- پیام پس از شکست قبلی `pending` است؛ شکست بعدی فقط از برداشت بعدی
+-- می‌آید (۱۰۰: بستن بی اجاره «lost» است).
+UPDATE platform.outbox_message
+   SET attempts = 8, next_attempt_at = now() - interval '1 minute'
+ WHERE topic = 't.b';
+SELECT pg_temp.assert_eq(
+  'پیامِ روی سقف دوباره برداشته شد',
+  (SELECT count(*) FROM platform.claim_outbox(10, 'w4', 120) WHERE topic = 't.b'),
+  1);
 SELECT pg_temp.assert_txt(
   'پس از سقف تلاش، نامه مرده',
-  (SELECT platform.fail_outbox(id, 'باز هم نشد', 8)
+  (SELECT platform.fail_outbox(id, claim_token, 'باز هم نشد', 8)
      FROM platform.outbox_message WHERE topic = 't.b'),
   'dead');
 
 SELECT pg_temp.assert_raises(
   'بستن پیام ناموجود خطا می‌دهد',
-  $$SELECT platform.fail_outbox(999999999::bigint, 'x')$$);
+  $$SELECT platform.fail_outbox(999999999::bigint, gen_random_uuid(), 'x')$$);
 
 \echo '── نشانی عمومی فاکتور ────────────────────────────────────────'
 
