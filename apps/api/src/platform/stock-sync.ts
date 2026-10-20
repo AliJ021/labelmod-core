@@ -30,7 +30,7 @@ export interface CoreToWoo {
 export const SAMPLE_LIMIT = 5;
 
 export async function readCoreToWoo(db: Db): Promise<CoreToWoo> {
-  const c = await sql<Record<string, string | null>>`
+  const c = await sql<Record<string, string | null> & { last_sent?: Date | string | null }>`
     WITH s AS (SELECT platform.setting_int('notify.max_attempts', 8) AS max_attempts)
     SELECT
       count(*) FILTER (WHERE m.status = 'pending' AND m.attempts = 0 AND m.next_attempt_at <= now())::text AS due,
@@ -40,15 +40,14 @@ export async function readCoreToWoo(db: Db): Promise<CoreToWoo> {
       count(*) FILTER (WHERE m.status = 'sending' AND m.next_attempt_at <= now())::text                   AS lease_expired,
       count(*) FILTER (WHERE m.status = 'dead' AND m.attempts >= s.max_attempts)::text                    AS dead_exhausted,
       count(*) FILTER (WHERE m.status = 'dead' AND m.attempts < s.max_attempts)::text                     AS dead_rejected,
-      floor(extract(epoch FROM now() - min(m.created_at) FILTER (WHERE m.status IN ('pending', 'sending'))))::text AS oldest_open
+      floor(extract(epoch FROM now() - min(m.created_at) FILTER (WHERE m.status IN ('pending', 'sending'))))::text AS oldest_open,
+      -- آخرین ارسال موفق = بیشینهٔ زمان ارسال، نه پیامِ با بزرگ‌ترین شناسه: تلاش دوباره و Backoff ترتیب ارسال
+      -- را عوض می‌کنند و پیامِ قدیمی‌تر می‌تواند دیرتر برسد. در همان پیمایش شمارش (بی پرسش دوم).
+      max(m.sent_at) FILTER (WHERE m.status = 'sent') AS last_sent
       FROM platform.outbox_message m CROSS JOIN s
-     WHERE m.topic LIKE 'web.%' AND m.status IN ('pending', 'sending', 'dead')`.execute(db);
+     WHERE m.topic LIKE 'web.%' AND m.status IN ('pending', 'sending', 'dead', 'sent')`.execute(db);
   const r = c.rows[0]!;
   const n = (k: string) => Number(r[k] ?? 0);
-  // آخرین ارسال موفق: پیمایش معکوس کلید اصلی تا اولین پیام سایتِ فرستاده‌شده، نه پیمایش کل تاریخچه.
-  const last = await sql<{ sent_at: Date | null }>`
-    SELECT sent_at FROM platform.outbox_message
-     WHERE topic LIKE 'web.%' AND status = 'sent' ORDER BY id DESC LIMIT 1`.execute(db);
   const sample = await sql<{ id: string; topic: string; state: string; attempts: number; age: string; has_error: boolean }>`
     WITH s AS (SELECT platform.setting_int('notify.max_attempts', 8) AS max_attempts)
     SELECT m.id::text, m.topic, m.attempts,
@@ -69,7 +68,7 @@ export async function readCoreToWoo(db: Db): Promise<CoreToWoo> {
   return {
     counts,
     oldestOpenSeconds: r.oldest_open === null || r.oldest_open === undefined ? null : Number(r.oldest_open),
-    lastSentAt: last.rows[0]?.sent_at ? last.rows[0].sent_at.toISOString() : null,
+    lastSentAt: r.last_sent === null || r.last_sent === undefined ? null : new Date(r.last_sent).toISOString(),
     sample: {
       total: counts.retrying + counts.leaseExpired + counts.deadExhausted + counts.deadRejected,
       items: sample.rows.map(x => ({ id: x.id, topic: x.topic, state: x.state as CoreToWoo["sample"]["items"][number]["state"],
