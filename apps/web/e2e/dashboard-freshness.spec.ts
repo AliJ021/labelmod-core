@@ -3,7 +3,7 @@
  * دیده می‌شود و شبکه هست، Backoff پس از شکست، بی هم‌پوشانی، و هیچ پاسخ کهنه‌ای نتیجهٔ تازه‌تر را
  * بازنویسی نمی‌کند. ساعت با `page.clock` کنترل می‌شود — هیچ sleep دلخواهی نیست.
  */
-import { test, expect, type MockApi } from "./fixtures";
+import { test, expect, DEFAULT_HOURLY, type MockApi } from "./fixtures";
 import type { Page, Route } from "@playwright/test";
 import type { DailyBucket, DailyReport } from "../src/lib/pos";
 
@@ -193,4 +193,55 @@ test("leaving the dashboard mid-refresh stops the chain: no request after the sc
   expect(api.calls.filter(c => c.startsWith("GET /auth/can?operation=period.close")).length).toBe(canBefore);
   expect(hourlyCalls(api)).toBe(hourlyBefore);
   expect(dailyCalls(api), "بی زمان‌سنج پس از رفتن").toBe(2);
+});
+
+/** یک دورهٔ ثبت‌نشدهٔ دیروز — «۱ مورد نیازمند بررسی»؛ پاسخ تازه‌تر خالی است («همه ثبت شده‌اند»). */
+const staleRow = { branchId: "b1", batchId: "p-old", batchKind: "channel_day", channel: "web", businessDate: "2026-09-15",
+  invoiceCount: 3, payableAmount: "3000000", cogsAmount: "1200000" };
+const attention = (page: Page) => page.locator(".attention-disclosure > summary");
+
+test("the first load owns the chain: Refresh and the timer wait for it, and no older answer lands after a newer one", async ({ page, api }) => {
+  // ترتیب رویدادها: «شروع» هر خواندن و «پایان» هر پاسخ. زنجیرهٔ دوم فقط پس از پایان آخرین پاسخ اولی.
+  const events: string[] = [];
+  let daily = 0, unposted = 0, hourly = 0, open = 0, maxOpen = 0;
+  let release!: () => void;
+  const held = new Promise<void>(r => { release = r; });
+  const answer = async (route: Route, name: string, body: unknown, hold?: Promise<void>) => {
+    events.push(`${name}>`); open++; maxOpen = Math.max(maxOpen, open);
+    try { if (hold) await hold; await route.fulfill({ json: body }); } finally { open--; events.push(`<${name}`); }
+  };
+  api.handlers.set("GET /reports/daily", async route => {
+    const n = ++daily;
+    await answer(route, `daily${n}`, report(n === 1 ? {} : { salesAmount: "22340000" }));
+  });
+  api.handlers.set("GET /posting-batches/unposted", async route => {
+    const n = ++unposted;
+    await answer(route, `unposted${n}`, { rows: n === 1 ? [staleRow] : [] }, n === 1 ? held : undefined);
+  });
+  api.handlers.set("GET /reports/daily/hourly", async route => { const n = ++hourly; await answer(route, `hourly${n}`, DEFAULT_HOURLY); });
+  await page.clock.install({ time: T0 });
+  await page.goto("/");
+  // کارت‌ها رسیده‌اند ولی زنجیرهٔ بار اول هنوز در راه است: دستی و خودکار هر دو منتظرند.
+  await expect(salesKpi(page)).toContainText("1٬234٬000");
+  await expect.poll(() => unposted).toBe(1);
+  await expect(refreshButton(page)).toBeDisabled();
+  await expect(refreshButton(page)).toHaveAttribute("aria-busy", "true");
+  await page.clock.runFor(3 * 60_000);
+  expect(daily, "زمان‌سنج زنجیرهٔ دوم را هم‌زمان با بار اول شروع نمی‌کند").toBe(1);
+  release();
+  // موعد گذشته: پایان بار اول زمان‌سنج را مسلح می‌کند و به‌روزرسانی خودکار بلافاصله و پس از آن می‌رود.
+  await expect.poll(() => hourly).toBe(2);
+  await expect(salesKpi(page)).toContainText("2٬234٬000");
+  await expect(attention(page)).toContainText("همه ثبت شده‌اند");
+  await expect(freshness(page)).toHaveAttribute("data-state", "fresh");
+  await refreshButton(page).click();
+  await expect.poll(() => hourly).toBe(3);
+  await expect(freshness(page)).toHaveAttribute("data-state", "fresh");
+  await page.clock.runFor(50);
+  // پاسخ دیررسِ بار اول («۱ مورد») هرگز روی نتیجهٔ تازه‌تر نمی‌نشیند.
+  await expect(attention(page)).toContainText("همه ثبت شده‌اند");
+  expect(maxOpen, "دو زنجیرهٔ «امروز» هرگز هم‌زمان در راه نیستند").toBe(1);
+  expect(events.indexOf("daily2>"), "زنجیرهٔ دوم پس از پایان کامل اولی").toBeGreaterThan(events.indexOf("<hourly1"));
+  expect(events.indexOf("daily3>"), "زنجیرهٔ سوم پس از پایان کامل دومی").toBeGreaterThan(events.indexOf("<hourly2"));
+  expect([daily, unposted, hourly]).toEqual([3, 3, 3]);
 });

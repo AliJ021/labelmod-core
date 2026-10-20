@@ -171,8 +171,17 @@ export function Dashboard({ access }: { access: NavAccess }) {
   const [now, setNow] = useState(() => Date.now());
   const lastAttempt = useRef<number | null>(null);
   const failures = useRef(0);
-  /** تنها به‌روزرسانیِ در راه؛ دومی تا پایان اولی شروع نمی‌شود. */
+  /**
+   * تنها زنجیرهٔ «امروز» در راه — **بار اول هم**. تا پایان آن، نه دکمه و نه زمان‌سنج زنجیرهٔ دوم را
+   * شروع نمی‌کنند (`refreshing` در هر دو روشن است).
+   */
   const inflight = useRef<AbortController | null>(null);
+  /**
+   * نسل زنجیرهٔ «امروز». هر زنجیره (بار اول یا به‌روزرسانی) نسل تازه می‌گیرد و فقط وقتی هنوز تازه‌ترین
+   * است چیزی می‌نشاند یا `refreshing`/`inflight` را آزاد می‌کند؛ پاک‌سازی (Unmount، StrictMode در
+   * توسعه) نسل را جلو می‌برد، پس پاسخِ دیررسِ زنجیرهٔ رهاشده هرگز نتیجهٔ تازه‌تر را بازنویسی نمی‌کند.
+   */
+  const todayGen = useRef(0);
   // آخرین مقدارها برای زمان‌سنج و کال‌بک‌هایی که پیش از رندر بعدی اجرا می‌شوند.
   const latest = useRef({ branch, report, grain, access });
   latest.current = { branch, report, grain, access };
@@ -212,6 +221,7 @@ export function Dashboard({ access }: { access: NavAccess }) {
     // A persisted page keeps its requests so a bfcache restore can finish loading.
     const leaving = (event: PageTransitionEvent) => { if (!event.persisted) { controller.abort(); inflight.current?.abort(); } };
     window.addEventListener("pagehide", leaving);
+    let gen = 0;
     void (async () => {
       try {
         const { branches } = await pos.branches({ signal });
@@ -222,8 +232,14 @@ export function Dashboard({ access }: { access: NavAccess }) {
           return;
         }
         setBranch(first);
+        // بار اول صاحب زنجیره است، مثل هر به‌روزرسانی: تا تمام شود، دومی شروع نمی‌شود.
+        gen = ++todayGen.current;
+        inflight.current = controller;
+        setRefreshing(true);
+        const mine = gen;
         // بار اول تکه‌تکه نشانده می‌شود: کارت‌ها همان لحظه که رسیدند، بقیه پشت سرشان.
         await readToday(first.id, signal, part => {
+          if (signal.aborted || todayGen.current !== mine) return;
           applyToday(part);
           if (part.report) {
             const at = Date.now();
@@ -237,9 +253,21 @@ export function Dashboard({ access }: { access: NavAccess }) {
         setError(err instanceof ApiError
           ? { message: err.message, reference: err.correlationId }
           : { message: "ارتباط با سرور برقرار نشد.", reference: null });
+      } finally {
+        // فقط اگر هنوز همین زنجیره صاحب است؛ پاک‌سازی نسل را جلو برده و inflight را خودش آزاد کرده.
+        if (gen !== 0 && todayGen.current === gen) {
+          if (inflight.current === controller) inflight.current = null;
+          if (!signal.aborted) setRefreshing(false);
+        }
       }
     })();
-    return () => { window.removeEventListener("pagehide", leaving); controller.abort(); inflight.current?.abort(); };
+    return () => {
+      window.removeEventListener("pagehide", leaving);
+      todayGen.current += 1;
+      controller.abort();
+      inflight.current?.abort();
+      inflight.current = null;
+    };
   }, [applyToday]);
 
   /**
@@ -283,13 +311,15 @@ export function Dashboard({ access }: { access: NavAccess }) {
     if (!b || inflight.current) return;
     const controller = new AbortController();
     inflight.current = controller;
+    const gen = ++todayGen.current;
     const { signal } = controller;
+    const stale = () => signal.aborted || todayGen.current !== gen;
     lastAttempt.current = Date.now();
     setRefreshing(true);
     try {
       // همان خواندن ترتیبی بار اول، ولی **یک‌جا** نشانده می‌شود: نیمی تازه و نیمی کهنه دیده نمی‌شود.
       const today = await readToday(b.id, signal);
-      if (!today || signal.aborted) return;
+      if (!today || stale()) return;
       applyToday(today);
       const report = today.report;
       // روند روزانه/ماهانه هم کهنه است (و اگر روز کاری عوض شده، مرزهایش هم): نسل تازه، و دانه‌بندیِ
@@ -305,15 +335,17 @@ export function Dashboard({ access }: { access: NavAccess }) {
       setLastOk(at);
       setNow(at);
     } catch (err) {
-      if (signal.aborted) return;
+      if (stale()) return;
       failures.current += 1;
       setFailure({ reference: err instanceof ApiError ? err.correlationId : null });
       setNow(Date.now());
     } finally {
-      if (inflight.current === controller) inflight.current = null;
-      if (!signal.aborted) {
-        setRefreshing(false);
-        setAttempts(n => n + 1);
+      if (todayGen.current === gen) {
+        if (inflight.current === controller) inflight.current = null;
+        if (!signal.aborted) {
+          setRefreshing(false);
+          setAttempts(n => n + 1);
+        }
       }
     }
   }, [loadTrend, applyToday]);
@@ -321,11 +353,12 @@ export function Dashboard({ access }: { access: NavAccess }) {
   // خودکار: فقط دیده‌شده و برخط؛ موعد از آخرین تلاش (با Backoff). پنهان‌شدن زمان‌سنج را برمی‌دارد و
   // دیده‌شدنِ دوباره، اگر موعد گذشته، همان لحظه به‌روز می‌کند.
   const loaded = report !== null;
+  // تا زنجیره‌ای (بار اول یا به‌روزرسانی) در راه است زمان‌سنجی مسلح نمی‌شود؛ پایانش دوباره مسلحش می‌کند.
   useEffect(() => {
-    if (!loaded || !visible || !online) return;
+    if (!loaded || !visible || !online || refreshing) return;
     const timer = window.setTimeout(() => { void refresh(); }, dueIn(Date.now(), lastAttempt.current, failures.current));
     return () => window.clearTimeout(timer);
-  }, [loaded, visible, online, attempts, refresh]);
+  }, [loaded, visible, online, refreshing, attempts, refresh]);
 
   // سنِ داده («۳ دقیقه پیش») فقط وقتی دیده می‌شود جلو می‌رود.
   useEffect(() => {
