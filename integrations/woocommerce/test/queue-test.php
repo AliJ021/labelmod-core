@@ -83,6 +83,8 @@ function as_has_scheduled_action($hook, $args = null, $group = '') {
     return false;
 }
 function as_unschedule_all_actions($hook, $args = [], $group = '') {
+    // مرگ پردازه میان نوشتن‌ها (۱۲ب): پس از نوشتنِ پیشاپیشِ تصمیم و پیش از هر تغییر صف.
+    if (!empty($GLOBALS['crash_on_cancel'])) { throw new RuntimeException('process died'); }
     foreach ($GLOBALS['as'] as $id => $a) {
         if ($a['status'] === 'pending' && as_match($a, ['hook' => $hook, 'args' => $args, 'group' => $group])) { $GLOBALS['as'][$id]['status'] = 'canceled'; }
     }
@@ -282,7 +284,7 @@ function reset_queue() {
     $GLOBALS['wpdb']->rows = []; $GLOBALS['wpdb']->locks = []; $GLOBALS['wpdb']->me = 'p1'; $GLOBALS['wpdb']->log = []; $GLOBALS['wpdb']->denied = 0;
     $GLOBALS['wpdb']->fail_write = []; $GLOBALS['wpdb']->fail_read = []; $GLOBALS['wpdb']->lock_error = false;
     $GLOBALS['wpdb']->lock_error_re = null; $GLOBALS['wpdb']->on_lock = null;
-    $GLOBALS['as_fail'] = false; $GLOBALS['cron_fail'] = false; $GLOBALS['as_on_add'] = null;
+    $GLOBALS['as_fail'] = false; $GLOBALS['cron_fail'] = false; $GLOBALS['as_on_add'] = null; $GLOBALS['crash_on_cancel'] = false;
 }
 function pending_rows($hook, $args) {
     return array_values(array_filter($GLOBALS['as'], fn($a) => $a['hook'] === $hook && $a['args'] === $args && $a['status'] === 'pending'));
@@ -732,5 +734,104 @@ $aid = as_enqueue_async_action('lmc_send_refund', [91], LMC_Queue::GROUP);
 $denied = $GLOBALS['wpdb']->denied;
 ActionScheduler::runner()->process_action($aid, 'test');
 check($GLOBALS['as'][$aid]['status'] === 'complete' && $GLOBALS['wpdb']->denied === $denied && $GLOBALS['wpdb']->locks === [], 'درون اجرای AS: قفل بازگشتی، و همه آزاد شدند');
+
+// ── ۱۲. بازبینی چهارم ریشه: تصمیم تازه‌تر پیش از اثر ماندگار است؛ نشان کهنه با شکست پاک‌سازی یا مرگ پردازه برنمی‌گردد ──
+$r_delete = '/DELETE FROM wp_options WHERE option_name = .lmc_qp_r_/';
+function stale_r($arg, $delay) {
+    $GLOBALS['wpdb']->locks[qlock('e', LMC_ORDER_EVENT, [$arg])] = 'other-process';
+    LMC_Queue::reschedule(LMC_ORDER_EVENT, [$arg], $delay);
+    unset($GLOBALS['wpdb']->locks[qlock('e', LMC_ORDER_EVENT, [$arg])]);
+}
+
+// ۱۲الف. همان بازتولید ریشه: نشان کهنهٔ ۳۰، تصمیم مستقیم ۹۰۰، و فقط DELETE نشان «r» شکست می‌خورد.
+foreach ([false, true] as $fault) {
+    reset_queue();
+    stale_r(92, 30);
+    if ($fault) { $GLOBALS['wpdb']->fail_write = [$r_delete]; }
+    $ret = LMC_Queue::reschedule(LMC_ORDER_EVENT, [92], 900);
+    $GLOBALS['wpdb']->fail_write = [];
+    $p = one_pending(LMC_ORDER_EVENT, 92);
+    check($ret === true && $p !== null && $p['at'] >= time() + 899, ($fault ? 'خطا' : 'کنترل') . ': تصمیم مستقیم ۹۰۰ صف شد');
+    $left = array_values(marker_rows());
+    check($fault ? (count($left) === 1 && $left[0]['due'] >= time() + 899) : $left === [], ($fault ? 'خطا: نشانِ مانده خودِ تصمیم ۹۰۰ است، نه ۳۰' : 'کنترل: نشانی نمانده'));
+    LMC_Queue::drain();
+    $p = one_pending(LMC_ORDER_EVENT, 92);
+    check($p !== null && $p['at'] >= time() + 899 && marker_rows() === [], ($fault ? 'خطا' : 'کنترل') . ': پس از drain هنوز ۹۰۰، نه ۳۰');
+}
+
+// ۱۲ب. مرگ پردازه پس از نوشتن پیشاپیشِ تصمیم و پیش از تغییر صف: drain همان تصمیم تازه را اعمال می‌کند.
+reset_queue();
+stale_r(93, 30);
+$GLOBALS['crash_on_cancel'] = true;
+$died = false;
+try { LMC_Queue::reschedule(LMC_ORDER_EVENT, [93], 900); } catch (RuntimeException $e) { $died = true; }
+$GLOBALS['crash_on_cancel'] = false;
+check($died && $GLOBALS['wpdb']->locks === [] && array_values(marker_rows())[0]['due'] >= time() + 899, 'مرگ میان نوشتن‌ها: نشان همان تصمیم ۹۰۰ است و قفل آزاد شد');
+LMC_Queue::drain();
+$p = one_pending(LMC_ORDER_EVENT, 93);
+check($p !== null && $p['at'] >= time() + 899 && marker_rows() === [], 'پس از مرگ: drain ۹۰۰ را صف کرد، نه ۳۰');
+
+// ۱۲ج. خودِ نوشتن پیشاپیش شکست می‌خورد: صف دست نمی‌خورد، false، و تصمیم کهنه (نه هیچ) می‌ماند.
+reset_queue();
+stale_r(94, 30);
+$GLOBALS['wpdb']->fail_write = ['/lmc_qp_r_/'];
+$ret = LMC_Queue::reschedule(LMC_ORDER_EVENT, [94], 900);
+$GLOBALS['wpdb']->fail_write = [];
+check($ret === false && pending_rows(LMC_ORDER_EVENT, [94]) === [] && (bool) preg_grep('/تصمیم تازهٔ صف .* ماندگار نشد/u', $GLOBALS['log']), 'نوشتن پیشاپیش ناموفق: صف دست نخورد، false و لاگ');
+LMC_Queue::drain();
+$p = one_pending(LMC_ORDER_EVENT, 94);
+check($p !== null && $p['at'] <= time() + 31, 'تلاش دوباره گم نشد: تصمیم کهنهٔ ۳۰ اعمال شد');
+
+// ۱۲د. نشانِ مانده از تصمیم مصرف‌شده: پس از اجرای سالمِ تازه‌تر، بازپخش بی‌اثر است (ارسال تکراری نه).
+reset_queue();
+$runs = 0;
+$GLOBALS['hooks'][LMC_ORDER_EVENT] = [function () use (&$runs) { $runs++; }];
+stale_r(95, 30);
+$GLOBALS['wpdb']->fail_write = [$r_delete];
+LMC_Queue::reschedule(LMC_ORDER_EVENT, [95], 900);
+// گذشت ۹۰۰ ثانیه: هم سطر AS و هم موعدِ مطلقِ نشان رسیده‌اند (due_now فقط سطر را جابه‌جا می‌کند).
+due_now();
+foreach (array_keys(marker_rows()) as $k) { $d = json_decode($GLOBALS['wpdb']->rows[$k], true); $d['due'] = time(); $GLOBALS['wpdb']->rows[$k] = json_encode($d); }
+LMC_Queue::run(10, 'test');
+check($runs === 1 && count(marker_rows()) === 1, 'تصمیم ۹۰۰ اجرا شد؛ نشانش هنوز مانده (حذف ناموفق)');
+$GLOBALS['wpdb']->fail_write = [];
+LMC_Queue::drain();
+check(pending_rows(LMC_ORDER_EVENT, [95]) === [] && marker_rows() === [], 'پس از اجرای سالم: بازپخش بی‌اثر — بی کار تازه، نشان برداشته شد');
+
+// ۱۲ه. کنترل منفیِ کف: تصمیم معوقِ درون همان اجرای AS پس از پایان سالمِ همان اجرا هنوز اعمال می‌شود.
+reset_queue();
+$GLOBALS['hooks'][LMC_ORDER_EVENT] = [function ($id) {
+    $GLOBALS['wpdb']->locks[qlock('e', LMC_ORDER_EVENT, [$id])] = 'other-process';
+    LMC_Queue::reschedule(LMC_ORDER_EVENT, [$id], 900);
+}];
+$aid = as_enqueue_async_action(LMC_ORDER_EVENT, [96], LMC_Queue::GROUP);
+ActionScheduler::runner()->process_action($aid, 'test');
+unset($GLOBALS['wpdb']->locks[qlock('e', LMC_ORDER_EVENT, [96])]);
+$m = array_values(marker_rows());
+check($GLOBALS['as'][$aid]['status'] === 'complete' && count($m) === 1 && $m[0]['floor'] === $aid, 'تصمیم معوق کفِ همان اجرا را دارد');
+LMC_Queue::drain();
+$p = one_pending(LMC_ORDER_EVENT, 96);
+check($p !== null && $p['at'] >= time() + 899 && marker_rows() === [], 'اجرای سالمِ همان اجرا تصمیمش را بی‌اثر نکرد: ۹۰۰ صف شد');
+
+// ۱۲و. شکست قطعی (stop) جای تلاش دوبارهٔ معوقِ کهنه را می‌گیرد؛ cancel تنها نمی‌گرفت.
+reset_queue();
+stale_r(97, 30);
+LMC_Queue::stop(LMC_ORDER_EVENT, [97]);
+LMC_Queue::drain();
+check(pending_rows(LMC_ORDER_EVENT, [97]) === [] && marker_rows() === [], 'توقف قطعی: نشان کهنهٔ ۳۰ کار را برنگرداند');
+reset_queue();
+stale_r(98, 30);
+$GLOBALS['wpdb']->locks[qlock('e', LMC_ORDER_EVENT, [98])] = 'other-process';
+LMC_Queue::stop(LMC_ORDER_EVENT, [98]);
+unset($GLOBALS['wpdb']->locks[qlock('e', LMC_ORDER_EVENT, [98])]);
+LMC_Queue::drain();
+check(pending_rows(LMC_ORDER_EVENT, [98]) === [] && marker_rows() === [], 'توقف معوق (بی قفل) هم آخرین تصمیم است');
+
+// ۱۲ز. نشان «r» پیش از این نسخه (بی floor) مثل قبل اعمال می‌شود — ارتقا تصمیم معوقی را گم نمی‌کند.
+reset_queue();
+$GLOBALS['wpdb']->rows['lmc_qs_' . md5(LMC_ORDER_EVENT . '|[99]')] = '500';
+$GLOBALS['wpdb']->rows['lmc_qp_r_' . md5(LMC_ORDER_EVENT . '|[99]')] = json_encode(['op' => 'r', 'hook' => LMC_ORDER_EVENT, 'args' => [99], 'at' => time(), 'seq' => 'legacy', 'due' => time() + 60]);
+LMC_Queue::drain();
+check(one_pending(LMC_ORDER_EVENT, 99) !== null && marker_rows() === [], 'نشان قدیمی بی floor اعمال شد');
 
 echo "OK: $checks queue assertions\n";

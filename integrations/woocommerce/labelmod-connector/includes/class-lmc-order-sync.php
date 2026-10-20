@@ -596,7 +596,7 @@ class LMC_Order_Sync
         if ($retry) {
             LMC_Queue::reschedule(LMC_ORDER_EVENT, [$order->get_id()], $delay);
         } else {
-            LMC_Queue::cancel(LMC_ORDER_EVENT, [$order->get_id()]);
+            LMC_Queue::stop(LMC_ORDER_EVENT, [$order->get_id()]);
         }
         lmc_log(sprintf('سفارش %d ناموفق: %s', $order->get_id(), $err->get_error_message()));
     }

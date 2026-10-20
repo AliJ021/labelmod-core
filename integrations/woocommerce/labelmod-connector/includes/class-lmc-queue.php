@@ -186,19 +186,75 @@ class LMC_Queue
      */
     public static function reschedule(string $hook, array $args, int $delay): bool
     {
+        return self::supersede($hook, $args, max(0, $delay));
+    }
+
+    /**
+     * شکست قطعی: هیچ کار معلقی نمی‌ماند — و تصمیم تلاش‌دوبارهٔ معوقِ کهنه‌تر هم دیگر برنمی‌گرداندش.
+     */
+    public static function stop(string $hook, array $args): bool
+    {
+        return self::supersede($hook, $args, null);
+    }
+
+    /**
+     * تصمیم تازه‌ترِ اجرای جاری («دوباره در N ثانیه» یا «توقف») جای هر تصمیم کهنه‌تر را می‌گیرد — **پایدار**،
+     * پیش از اثر:
+     *
+     * - بی قفل صف: نشان «r» با همین تصمیم (آخرین برنده) و drain زیر قفل انجامش می‌دهد.
+     * - با قفل و نشان «r» کهنه‌تر: اول نشان با **همین تصمیم** بازنویسی می‌شود (یک UPSERT اتمیک)، بعد صف
+     *   عوض می‌شود، و حذف نشان فقط پاک‌سازی است. حذفِ ناموفق یا مرگ پردازه میان نوشتن‌ها نشانی جز همین
+     *   تصمیم به‌جا نمی‌گذارد، پس بازپخشش هم‌ارز است، نه بازگشت به تصمیم کهنه. اگر خودِ بازنویسی ممکن نشد،
+     *   صف دست نمی‌خورد و `false` (تصمیم کهنه می‌ماند و تلاش دوباره گم نمی‌شود).
+     * - `floor`: این تصمیم برای اجرایی تا این شناسه است. اجرای سالمِ تازه‌تر (واترمارک بزرگ‌تر) بازپخش آن را
+     *   بی‌اثر می‌کند — تصمیمِ مصرف‌شده ارسال تکراری نمی‌سازد.
+     *
+     * نوشتن‌های «r» یک کار با قفل اجرای همان کار سریال‌اند (فقط Handler زیر `exclusive`/اجرای AS صدا می‌زند).
+     */
+    private static function supersede(string $hook, array $args, ?int $delay): bool
+    {
+        $decision = ['due' => $delay === null ? null : time() + $delay, 'stop' => $delay === null, 'floor' => self::floor($hook, $args)];
         $lock = self::lock($hook, $args, self::ENQUEUE_LOCK_WAIT);
         if (!is_string($lock)) {
-            return self::defer('r', $hook, $args, ['due' => time() + max(0, $delay)]);
+            return self::defer('r', $hook, $args, $decision);
         }
         try {
+            $name = self::marker_name('r', $hook, $args, 0);
+            $older = self::read($name, $ok);
+            $mine = null;
+            if (!$ok || $older !== null) {
+                $mine = self::put_marker('r', $hook, $args, $decision, true);
+                if ($mine === null) {
+                    lmc_log(sprintf('⛔ تصمیم تازهٔ صف %s ماندگار نشد؛ صف دست نخورد و تصمیم قبلی می‌ماند.', $hook));
+                    return false;
+                }
+            }
             self::cancel($hook, $args);
-            $ok = self::schedule($hook, $args, $delay);
-            // تصمیم تازه‌تر زیر قفل: نشان کهنهٔ «r» (از اجرای قبلی) دیگر نباید آن را بازنویسی کند.
-            self::delete_option(self::DEFER_PREFIX . 'r_' . self::key($hook, $args));
-            return $ok;
+            $done = $delay === null || self::schedule($hook, $args, $delay);
+            if ($mine !== null && !self::forget_marker($name, $mine)) {
+                lmc_log(sprintf('پاک‌سازی نشان تصمیم %s ناموفق بود؛ بازپخشش همین تصمیم است.', $hook));
+            }
+            return $done;
         } finally {
             self::unlock($lock);
         }
+    }
+
+    /**
+     * کفِ تصمیم: شناسهٔ سطر AS در حال اجرای همین کار (تصمیم مالِ همین اجراست)، وگرنه واترمارک فعلی
+     * اجرای سالم. `0` اگر هیچ‌کدام نیست یا خوانده نشد (محافظه‌کارانه: تصمیم بی‌اثر نمی‌شود).
+     */
+    private static function floor(string $hook, array $args): int
+    {
+        global $wpdb;
+        $x = 'lmc_qx_' . md5((defined('DB_NAME') ? DB_NAME : '') . '|' . $wpdb->prefix . '|' . self::key($hook, $args));
+        foreach (self::$running as $action_id => $lock) {
+            if ($lock === $x) {
+                return (int) $action_id;
+            }
+        }
+        $mark = self::read(self::SUCCESS_PREFIX . self::key($hook, $args), $ok);
+        return $ok ? (int) $mark : 0;
     }
 
     /**
@@ -561,24 +617,32 @@ class LMC_Queue
      */
     private static function defer(string $op, string $hook, array $args, array $extra): bool
     {
-        global $wpdb;
-        // `seq` هر نوشتن را یکتا می‌کند: drain فقط نشانی را حذف می‌کند که هنوز همان است که خوانده بود.
-        $value = wp_json_encode(['op' => $op, 'hook' => $hook, 'args' => array_values($args), 'at' => time(),
-            'seq' => bin2hex(random_bytes(8))] + $extra);
-        $name = self::marker_name($op, $hook, $args, (int) ($extra['action'] ?? 0));
-        // «e»/«r»: آخرین تصمیم برنده است (تازه‌ترین Backoff/Retry-After). «c»: هویتِ یک شکست — نسخهٔ اول کافی است.
-        $done = $wpdb->query($op === 'c'
-            ? $wpdb->prepare("INSERT INTO {$wpdb->options} (option_name, option_value, autoload) VALUES (%s, %s, 'no')
-                 ON DUPLICATE KEY UPDATE option_name = option_name", $name, $value)
-            : $wpdb->prepare("INSERT INTO {$wpdb->options} (option_name, option_value, autoload) VALUES (%s, %s, 'no')
-                 ON DUPLICATE KEY UPDATE option_value = %s", $name, $value, $value));
-        if ($done === false) {
+        if (self::put_marker($op, $hook, $args, $extra, $op !== 'c') === null) {
             lmc_log(sprintf('⛔ تغییر صف %s انجام نشد و نشان معوقش هم ذخیره نشد؛ پایگاه داده را بررسی کنید.', $hook));
             return false;
         }
         lmc_log(sprintf('قفل صف %s گرفته نشد؛ کار معوق ذخیره شد و زیر قفل انجام می‌شود.', $hook));
         self::request_kick();
         return true;
+    }
+
+    /**
+     * نوشتن نشان؛ مقدار نوشته‌شده یا `null`. `seq` هر نوشتن را یکتا می‌کند: drain و پاک‌سازی فقط نشانی را
+     * حذف می‌کنند که هنوز همان است که نوشته/خوانده بودند. `$replace`: «e»/«r» آخرین تصمیم برنده است؛
+     * «c» هویتِ یک شکست است و نسخهٔ اول کافی است.
+     */
+    private static function put_marker(string $op, string $hook, array $args, array $extra, bool $replace): ?string
+    {
+        global $wpdb;
+        $value = wp_json_encode(['op' => $op, 'hook' => $hook, 'args' => array_values($args), 'at' => time(),
+            'seq' => bin2hex(random_bytes(8))] + $extra);
+        $name = self::marker_name($op, $hook, $args, (int) ($extra['action'] ?? 0));
+        $done = $wpdb->query($replace
+            ? $wpdb->prepare("INSERT INTO {$wpdb->options} (option_name, option_value, autoload) VALUES (%s, %s, 'no')
+                 ON DUPLICATE KEY UPDATE option_value = %s", $name, $value, $value)
+            : $wpdb->prepare("INSERT INTO {$wpdb->options} (option_name, option_value, autoload) VALUES (%s, %s, 'no')
+                 ON DUPLICATE KEY UPDATE option_name = option_name", $name, $value));
+        return $done === false ? null : (string) $value;
     }
 
     /**
@@ -628,8 +692,22 @@ class LMC_Queue
                 if ($op === 'e') {
                     $ok = self::pending($hook, $args) || self::schedule($hook, $args, $due);
                 } elseif ($op === 'r') {
+                    // تصمیمی که اجرای سالمِ تازه‌تری پس از آن مصرفش کرده، بی‌اثر است (نه ارسال تکراری).
+                    // نشان‌های پیش از این نسخه `floor` ندارند و مثل قبل اعمال می‌شوند.
+                    if (array_key_exists('floor', $d)) {
+                        $mark = self::read(self::SUCCESS_PREFIX . self::key($hook, $args), $mok);
+                        if (!$mok) {
+                            continue;
+                        }
+                        if ((int) $mark > (int) $d['floor']) {
+                            if (self::forget_marker($name, $raw)) {
+                                $settled++;
+                            }
+                            continue;
+                        }
+                    }
                     self::cancel($hook, $args);
-                    $ok = self::schedule($hook, $args, $due);
+                    $ok = !empty($d['stop']) || self::schedule($hook, $args, $due);
                 } else {
                     $ok = self::recover_locked($hook, $args, (string) ($d['why'] ?? 'deferred'), $action_id);
                 }
@@ -648,12 +726,6 @@ class LMC_Queue
     private static function marker_name(string $op, string $hook, array $args, int $action_id): string
     {
         return self::DEFER_PREFIX . $op . '_' . self::key($hook, $args) . ($op === 'c' ? '_' . $action_id : '');
-    }
-
-    private static function delete_option(string $name): bool
-    {
-        global $wpdb;
-        return $wpdb->query($wpdb->prepare("DELETE FROM {$wpdb->options} WHERE option_name = %s", $name)) !== false;
     }
 
     /** الگوی LIKE برای پیشوند (`_` و `%` و `\` لفظی). */
