@@ -38,6 +38,7 @@ $GLOBALS['options'] = [];
 function get_option($k, $d = false) { return $GLOBALS['options'][$k] ?? $d; }
 function update_option($k, $v, $autoload = null) { $GLOBALS['options'][$k] = $v; return true; }
 function wp_json_encode($v, $f = 0) { return json_encode($v, $f); }
+function __($s, $d = null) { return $s; } // فراخوان‌های واقعی (LMC_Order_Sync::fail) یادداشت ترجمه‌پذیر می‌سازند
 $GLOBALS['log'] = [];
 function lmc_log($m) { $GLOBALS['log'][] = $m; }
 function lmc_setting($k, $d = '') { return $k === 'currency_unit' ? 'toman' : $d; }
@@ -444,15 +445,23 @@ check(LMC_Queue::run(10, 'test') === 1, 'run فقط گروه بحرانی را �
 check($GLOBALS['as'][$foreign]['status'] === 'pending', 'کار گروه دیگر دست نخورد');
 check(count($GLOBALS['as']) === 2, 'Hook بیگانه در گروه دوباره صف نشد');
 
-// ۸. شکست ذخیرهٔ Action Scheduler → WP-Cron؛ شکست هر دو → مرده و لاگ، نه سکوت.
+// ۸. شکست ذخیرهٔ Action Scheduler → WP-Cron؛ شکست هر دو → نشان ماندگار (پس از بهبود صف می‌شود)؛
+//    و اگر نشان هم نوشته نشد → مرده و لاگ، نه سکوت.
 reset_queue();
 $GLOBALS['as_fail'] = true;
 check(LMC_Queue::enqueue(LMC_ORDER_EVENT, [11]) === true, 'جایگزین WP-Cron پذیرفت');
 $fallback = wp_next_scheduled(LMC_ORDER_EVENT, [11]);
 check($fallback !== false && $fallback <= time(), 'جایگزین هم بی تأخیر ثابت است');
 $GLOBALS['cron'] = []; $GLOBALS['cron_fail'] = true;
-check(LMC_Queue::enqueue(LMC_ORDER_EVENT, [12]) === false, 'هیچ صفی نگرفت');
+check(LMC_Queue::enqueue(LMC_ORDER_EVENT, [12]) === true && count(marker_rows()) === 1 && dead_rows() === [],
+    'هیچ صفی نگرفت: نشان ماندگار، نه مرده');
+$GLOBALS['wpdb']->fail_write = ['/lmc_qp_/'];
+check(LMC_Queue::enqueue(LMC_ORDER_EVENT, [13]) === false, 'هیچ صفی نگرفت و نشان هم نه: false');
+$GLOBALS['wpdb']->fail_write = [];
 check(array_values(dead_rows())[0]['reason'] === 'enqueue_failed', 'شکست صف ثبت شد');
+$GLOBALS['cron_fail'] = false; $GLOBALS['as_fail'] = false;
+LMC_Queue::drain();
+check(count(pending_rows(LMC_ORDER_EVENT, [12])) === 1 && marker_rows() === [], 'پس از بهبود: نشان صف شد');
 
 // ۹. مرجوعی: کار پس از ذخیرهٔ Payload صف می‌شود (اجراکنندهٔ فوری Payload را می‌بیند).
 reset_queue();
@@ -842,7 +851,158 @@ $GLOBALS['wpdb']->rows['lmc_qp_r_' . md5(LMC_ORDER_EVENT . '|[99]')] = json_enco
 LMC_Queue::drain();
 check(one_pending(LMC_ORDER_EVENT, 99) !== null && marker_rows() === [], 'نشان قدیمی بی floor اعمال شد');
 
-// ۱۳. صف زنده برای داشبورد Core: سررسیده، آینده و در حال اجرا جدا؛ کار دیگران و وضعیت‌های پایانی شمرده نمی‌شوند.
+// ── ۱۳. بازبینی پنجم ریشه: درج صفِ ناموفق درون Handler گم و نادیده نمی‌شود ─────────────────
+// همان بازتولید ریشه: Handler عادی reschedule(900) با as_fail و cron_fail؛ پیش از اصلاح، Handler عادی
+// تمام می‌شد و on_executed ثبت enqueue_failed را پاک می‌کرد: action complete، معلق ۰، نشان ۰، مرده ۰.
+function run_handler(string $hook, int $arg, callable $body): int {
+    $GLOBALS['hooks'][$hook] = [$body];
+    $aid = as_enqueue_async_action($hook, [$arg], LMC_Queue::GROUP);
+    ActionScheduler::runner()->process_action($aid, 'test');
+    return $aid;
+}
+function storage_down() { $GLOBALS['as_fail'] = true; $GLOBALS['cron_fail'] = true; }
+function storage_up() { $GLOBALS['as_fail'] = false; $GLOBALS['cron_fail'] = false; }
+$retryable = new WP_Error('http', 'سرور در دسترس نیست', ['kind' => LMC_Client::RETRYABLE]);
+
+// ۱۳الف. بازتولید ریشه و کنترل: تصمیم ۹۰۰ یا صف می‌شود یا نشان ماندگار است، و پس از بهبود همان ۹۰۰.
+foreach ([false, true] as $fault) {
+    reset_queue();
+    $ret = null; $inside = null;
+    $aid = run_handler(LMC_ORDER_EVENT, 130, function () use ($fault, &$ret, &$inside) {
+        if ($fault) { storage_down(); }
+        $ret = LMC_Queue::reschedule(LMC_ORDER_EVENT, [130], 900);
+        $inside = ['pending' => count(pending_rows(LMC_ORDER_EVENT, [130])), 'markers' => count(marker_rows())];
+        storage_up();
+    });
+    $label = $fault ? 'خطا' : 'کنترل';
+    check($GLOBALS['as'][$aid]['status'] === 'complete' && $ret === true, "$label: Handler تمام شد و تصمیم ماندگار است (true)");
+    check($fault ? $inside === ['pending' => 0, 'markers' => 1] : $inside === ['pending' => 1, 'markers' => 0],
+        "$label: درون Handler " . ($fault ? 'نشان ماندگار به‌جای صف' : 'صف مستقیم'));
+    check(dead_rows() === [], "$label: مرده ثبت نشد (تصمیم گم نشده است)");
+    LMC_Queue::drain();
+    $p = one_pending(LMC_ORDER_EVENT, 130);
+    check($p !== null && $p['at'] >= time() + 898 && marker_rows() === [], "$label: پس از بهبود و drain، همان تلاش ۹۰۰ صف است");
+}
+
+// ۱۳ب–د. فراخوان‌های واقعی: شکست قابل تکرار سفارش، رزرو و مرجوعی، هر سه درون اجرای AS با صفِ از کار افتاده.
+$callers = [
+    'سفارش' => [LMC_ORDER_EVENT, 131, function () use ($retryable) {
+        $o = new WC_Order(131); $o->save();
+        (new ReflectionMethod('LMC_Order_Sync', 'fail'))->invoke(null, $o, $retryable, true); }],
+    'رزرو' => [LMC_Order_Reservation::EVENT, 132, function () use ($retryable) {
+        $o = new WC_Order(132); $o->save();
+        (new ReflectionMethod('LMC_Order_Reservation', 'fail'))->invoke(null, $o, $retryable); }],
+    'مرجوعی' => ['lmc_send_refund', 133, function () {
+        (new ReflectionMethod('LMC_Refund_Sync', 'schedule'))->invoke(null, 133, 120); }],
+];
+foreach ($callers as $name => [$hook, $arg, $decide]) {
+    reset_queue();
+    $aid = run_handler($hook, $arg, function () use ($decide) { storage_down(); $decide(); storage_up(); });
+    check($GLOBALS['as'][$aid]['status'] === 'complete' && count(marker_rows()) === 1 && dead_rows() === [],
+        "$name: تلاش دوباره به نشان ماندگار رفت، نه به هیچ");
+    LMC_Queue::drain();
+    check(count(pending_rows($hook, [$arg])) === 1 && marker_rows() === [], "$name: پس از بهبود، تلاش دوباره صف شد");
+}
+
+// ۱۳ه. نشان «r» کهنه (۳۰) پیش از تصمیم ۹۰۰ درون Handler با صف از کار افتاده: بازپخش ۹۰۰ است، نه ۳۰.
+reset_queue();
+stale_r(134, 30);
+run_handler(LMC_ORDER_EVENT, 134, function () { storage_down(); LMC_Queue::reschedule(LMC_ORDER_EVENT, [134], 900); storage_up(); });
+$left = array_values(marker_rows());
+check(count($left) === 1 && $left[0]['due'] >= time() + 898, 'نشان کهنه با همین تصمیم ۹۰۰ جایگزین شد');
+LMC_Queue::drain();
+$p = one_pending(LMC_ORDER_EVENT, 134);
+check($p !== null && $p['at'] >= time() + 898 && marker_rows() === [], 'پس از drain: ۹۰۰، نه ۳۰');
+
+// ۱۳و. نشان هم نوشته نشد: ثبت مردهٔ enqueue_failed می‌ماند — on_executed همان اجرا پاکش نمی‌کند.
+reset_queue();
+run_handler(LMC_ORDER_EVENT, 135, function () {
+    storage_down(); $GLOBALS['wpdb']->fail_write = ['/lmc_qp_/'];
+    LMC_Queue::reschedule(LMC_ORDER_EVENT, [135], 900);
+    $GLOBALS['wpdb']->fail_write = []; storage_up();
+});
+$d = array_values(dead_rows());
+check(count($d) === 1 && $d[0]['reason'] === 'enqueue_failed' && LMC_Queue::health()['deadTasks'] === 1,
+    'مردهٔ enqueue_failed پس از اجرای سالم دیده می‌شود');
+// کنترل: مردهٔ کهنهٔ پیش از این اجرا با اجرای سالم پاک می‌شود (رفتار قبلی دست نخورد).
+reset_queue();
+$GLOBALS['wpdb']->rows['lmc_qd_' . md5(LMC_ORDER_EVENT . '|[136]')] = json_encode(['reason' => 'enqueue_failed']);
+run_handler(LMC_ORDER_EVENT, 136, function () {});
+check(dead_rows() === [], 'کنترل: مردهٔ پیش از اجرا با اجرای سالم پاک شد');
+
+// ۱۳ز. هیچ‌چیز ماندگار نشد (نه صف، نه نشان، نه مرده): Handler تمام‌شده وانمود نمی‌شود — failed، و بازیابی AS.
+reset_queue();
+$aid = run_handler(LMC_ORDER_EVENT, 137, function () {
+    storage_down(); $GLOBALS['wpdb']->fail_write = ['/lmc_q[pd]_/'];
+    try { LMC_Queue::reschedule(LMC_ORDER_EVENT, [137], 900); }
+    finally { $GLOBALS['wpdb']->fail_write = []; storage_up(); }
+});
+check($GLOBALS['as'][$aid]['status'] === 'failed', 'تصمیم گم‌شده: اجرای AS failed است، نه complete');
+check((bool) preg_grep('/⛔ تصمیم صف lmc_send_order برای ۱۳۷|⛔ تصمیم صف .* ماندگار نشد/u', $GLOBALS['log']), 'تصمیم گم‌شده: لاگ خطای صریح');
+
+// ۱۳ح. بیرون از Handler (Checkout): صف از کار افتاده → نشان «e»؛ همه‌چیز از کار افتاده → false بی استثنا.
+reset_queue();
+storage_down();
+check(LMC_Queue::enqueue(LMC_ORDER_EVENT, [138]) === true && count(marker_rows()) === 1, 'Checkout: نشان ماندگار، true');
+$GLOBALS['wpdb']->fail_write = ['/lmc_q[pd]_/'];
+$threw = false;
+try { $r = LMC_Queue::enqueue(LMC_ORDER_EVENT, [139]); } catch (Throwable $e) { $threw = true; }
+$GLOBALS['wpdb']->fail_write = [];
+storage_up();
+check(!$threw && $r === false, 'Checkout: همه‌چیز از کار افتاده — false، بی استثنا (Checkout نمی‌شکند)');
+LMC_Queue::drain();
+check(count(pending_rows(LMC_ORDER_EVENT, [138])) === 1, 'Checkout: پس از بهبود صف شد');
+
+// ۱۳ط. نشانِ تلاشِ دوبارهٔ مصرف‌شده: اجرای سالمِ تازه‌تر پیش از drain → بازپخش بی‌اثر (ارسال تکراری نه).
+reset_queue();
+run_handler(LMC_ORDER_EVENT, 140, function () { storage_down(); LMC_Queue::reschedule(LMC_ORDER_EVENT, [140], 900); storage_up(); });
+run_handler(LMC_ORDER_EVENT, 140, function () {});
+LMC_Queue::drain();
+check(pending_rows(LMC_ORDER_EVENT, [140]) === [] && marker_rows() === [], 'اجرای سالم تازه‌تر تصمیم را مصرف کرد؛ صف تکراری نه');
+
+// ۱۳ی. همان برای درج «e» (مرجوعی): اجرای سالم تازه‌تر پیش از drain → بی‌اثر؛ کنترل: بی اجرای تازه‌تر صف می‌شود.
+foreach ([true, false] as $newer) {
+    reset_queue();
+    run_handler('lmc_send_refund', 141, function () { storage_down(); (new ReflectionMethod('LMC_Refund_Sync', 'schedule'))->invoke(null, 141, 120); storage_up(); });
+    if ($newer) { run_handler('lmc_send_refund', 141, function () {}); }
+    LMC_Queue::drain();
+    check(count(pending_rows('lmc_send_refund', [141])) === ($newer ? 0 : 1) && marker_rows() === [],
+        $newer ? 'نشان «e» مصرف‌شده بی‌اثر شد' : 'کنترل: نشان «e» مصرف‌نشده صف شد');
+}
+
+// ۱۳ک. صف هنوز از کار افتاده هنگام drain: نشان با همان تصمیم و floor می‌ماند؛ drain بعدی پس از بهبود صف می‌کند.
+reset_queue();
+run_handler(LMC_ORDER_EVENT, 142, function () { storage_down(); LMC_Queue::reschedule(LMC_ORDER_EVENT, [142], 900); storage_up(); });
+$before = array_values(marker_rows())[0];
+storage_down();
+LMC_Queue::drain();
+storage_up();
+$after = array_values(marker_rows());
+check(count($after) === 1 && $after[0]['op'] === 'r' && $after[0]['due'] === $before['due'] && $after[0]['floor'] === $before['floor'],
+    'drain ناموفق: همان تصمیم «r»، due و floor ماند');
+LMC_Queue::drain();
+$p = one_pending(LMC_ORDER_EVENT, 142);
+check($p !== null && $p['at'] >= time() + 898 && marker_rows() === [], 'drain بعدی: ۹۰۰ صف شد');
+
+// ۱۳ل. تصمیم «r» ناموفق جای کار معلقِ بعدی را هم می‌گیرد: درخواست فوریِ پس از آن Backoff را دور نمی‌زند.
+reset_queue();
+run_handler(LMC_ORDER_EVENT, 143, function () { storage_down(); LMC_Queue::reschedule(LMC_ORDER_EVENT, [143], 900); storage_up(); });
+LMC_Queue::enqueue(LMC_ORDER_EVENT, [143]);
+LMC_Queue::drain();
+$p = one_pending(LMC_ORDER_EVENT, 143);
+check($p !== null && $p['at'] >= time() + 898 && marker_rows() === [], 'درخواست فوریِ بعدی جایگزین شد؛ Backoff ۹۰۰ ماند');
+
+// ۱۳م. نشان «e» با floor خودش: drain ناموفق همان floor را نگه می‌دارد، نه واترمارک فعلی.
+reset_queue();
+$GLOBALS['wpdb']->rows['lmc_qp_e_' . md5(LMC_ORDER_EVENT . '|[144]')] = json_encode(['op' => 'e', 'hook' => LMC_ORDER_EVENT, 'args' => [144],
+    'at' => time(), 'seq' => 'x', 'due' => time(), 'floor' => 999]);
+storage_down();
+LMC_Queue::drain();
+storage_up();
+$left = array_values(marker_rows());
+check(count($left) === 1 && $left[0]['op'] === 'e' && $left[0]['floor'] === 999, 'drain ناموفق «e»: floor خودش ماند');
+
+// ۱۴. صف زنده برای داشبورد Core: سررسیده، آینده و در حال اجرا جدا؛ کار دیگران و وضعیت‌های پایانی شمرده نمی‌شوند.
 reset_queue();
 LMC_Queue::enqueue('lmc_send_refund', [131]);
 LMC_Queue::enqueue('lmc_send_refund', [132]);
@@ -858,7 +1018,7 @@ check([$h['pendingDue'], $h['pendingFuture'], $h['running']] === [1, 1, 1], 'د�
 $GLOBALS['as'][$first]['status'] = 'complete';
 check(LMC_Queue::health()['running'] === 0 && LMC_Queue::health()['pendingDue'] === 1, 'کار تمام‌شده در هیچ‌کدام نیست');
 
-// ۱۳ب. شمارشی که شکست بخورد «نمی‌دانم» است، نه صفر — و شمارش‌های دیگر را نمی‌برد.
+// ۱۴ب. شمارشی که شکست بخورد «نمی‌دانم» است، نه صفر — و شمارش‌های دیگر را نمی‌برد.
 $GLOBALS['as_query_fail'] = ['in-progress'];
 $h = LMC_Queue::health();
 check($h['running'] === null && $h['pendingDue'] === 1 && $h['pendingFuture'] === 1, 'شکست شمارش در حال اجرا فقط همان را null می‌کند');
@@ -866,7 +1026,7 @@ $GLOBALS['as_query_fail'] = ['pending', 'failed'];
 $h = LMC_Queue::health();
 check($h['pendingDue'] === null && $h['pendingFuture'] === null && $h['failedActions'] === null && $h['running'] === 0, 'شکست شمارش معلق: null، هرگز ۰');
 
-// ۱۳ج. قرارداد با Core (`queueTelemetry` در apps/api/src/platform/woocommerce-diagnostics.ts): همین کلیدها، نه بیشتر.
+// ۱۴ج. قرارداد با Core (`queueTelemetry` در apps/api/src/platform/woocommerce-diagnostics.ts): همین کلیدها، نه بیشتر.
 $keys = array_keys(LMC_Queue::health()); sort($keys);
 check($keys === ['backend', 'busyTasks', 'deadScope', 'deadTasks', 'deferredTasks', 'failedActions', 'failedActionsScope', 'group', 'pendingDue', 'pendingFuture', 'running'],
     'کلیدهای گزارش صف همان قرارداد Core است');
