@@ -540,3 +540,16 @@
 .period-table { display: flex; flex-direction: column; gap: var(--s-2); min-inline-size: 0; }
 .period-subtitle { font-size: var(--text-md); margin: 0; }
 .period-delta { white-space: nowrap; }
+
+/* ── همگام‌سازی سایت در داشبورد (دستهٔ C) ───────────────────────────── */
+/* دو جهت کنار هم فقط در عرض دسکتاپ؛ زیر آن زیر هم. رنگ تنها نشانه نیست: حکم آیکون و متن دارد. */
+.sync { display: flex; flex-direction: column; gap: var(--s-4); min-inline-size: 0; }
+.sync-grid { display: grid; grid-template-columns: minmax(0, 1fr); gap: var(--s-5); min-inline-size: 0; }
+@media (min-width: 1100px) { .sync-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
+.sync-side { display: flex; flex-direction: column; gap: var(--s-2); min-inline-size: 0; }
+.sync-subtitle { font-size: var(--text-md); margin: 0; display: flex; flex-wrap: wrap; align-items: baseline; gap: var(--s-2); }
+.sync-verdict { display: flex; align-items: flex-start; gap: var(--s-2); margin: 0; font-weight: 600; }
+.sync-meta { margin: 0; }
+.sync-sample-title { margin: var(--s-2) 0 0; font-size: var(--text-sm); }
+.sync-count--warn, .sync-count--crit { font-weight: 700; }
+.sync-unknown { color: var(--ink-3); }
