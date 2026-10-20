@@ -26,10 +26,12 @@ test.describe("کارهای عملیاتی داشبورد", () => {
     api.defaults["GET /dashboard/operations"] = busy;
     await page.goto("/");
     await expect(section(page)).toBeVisible();
-    expect(opsCalls(api)).toEqual(["GET /dashboard/operations?branchId=b1"]);
 
     const shifts = tile(page, "شیفت صندوق");
     await expect(shifts).toContainText("۱ شیفت از روز کاری قبل باز مانده است");
+    // پوسته (با اسکلت) پیش از درخواست mount می‌شود و درخواست در effect بعدی می‌رود؛ پس «دیده شد» ثابت نمی‌کند
+    // درخواست ثبت شده (WebKit کند: [] دید). شمار دقیق پس از رسیدن خودِ داده سنجیده می‌شود: یک درخواست، همین شعبه.
+    expect(opsCalls(api)).toEqual(["GET /dashboard/operations?branchId=b1"]);
     await expect(shifts.locator('.ops-verdict [data-state="attention"]')).toHaveCount(1);
     await expect(shifts.getByRole("listitem")).toHaveCount(2);
     await expect(shifts.getByRole("listitem").first()).toContainText("از روز قبل");
@@ -106,6 +108,9 @@ test.describe("کارهای عملیاتی داشبورد", () => {
     });
     await page.goto("/");
     await expect(page.getByRole("tablist", { name: "شاخص‌های امروز" })).toBeVisible();
+    // کنترل منفیِ معنادار: کارت همگام‌سازی در همان رندرِ پس از دسترسی mount می‌شود که این کارت می‌شد. تا دادهٔ
+    // آن نرسیده، «هیچ درخواستی نیست» ممکن است فقط «هنوز نرفته» باشد.
+    await expect(page.getByRole("region", { name: "همگام‌سازی سایت" })).toContainText("صف خالی است");
     await expect(section(page)).toHaveCount(0);
     expect(opsCalls(api)).toEqual([]);
   });
