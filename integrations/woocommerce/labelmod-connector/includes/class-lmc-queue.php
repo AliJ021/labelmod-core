@@ -843,11 +843,19 @@ class LMC_Queue
         if (self::action_scheduler()) {
             $store = ActionScheduler::store();
             $count = static function (array $q) use ($store): ?int {
+                global $wpdb;
                 try {
-                    return (int) $store->query_actions(['group' => self::GROUP] + $q, 'count');
+                    $n = $store->query_actions(['group' => self::GROUP] + $q, 'count');
                 } catch (Throwable $e) {
                     return null;
                 }
+                // ActionScheduler_DBStore شمار را با `$wpdb->get_var` می‌گیرد (AS 4.0.0): خطای SQL استثنا نمی‌دهد،
+                // `null` برمی‌گرداند و `last_error` را پر می‌کند (`wpdb::query` آن را در شروع هر پرسش خالی می‌کند).
+                // هر چیزی جز عدد صحیح نامنفی، یا هر خطای پایگاه، «نمی‌دانم» است — `(int) null` صفر می‌ساخت.
+                if ((string) ($wpdb->last_error ?? '') !== '' || !(is_int($n) ? $n >= 0 : is_string($n) && ctype_digit($n))) {
+                    return null;
+                }
+                return (int) $n;
             };
             $failed = $count(['status' => 'failed']);
             $now = function_exists('as_get_datetime_object') ? as_get_datetime_object() : null;

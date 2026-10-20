@@ -121,12 +121,19 @@ class FakeStore {
     public function query_actions($q, $ret = 'ids') {
         // شکست شبیه‌سازی‌شدهٔ یک شمارش (۱۳ب): فقط وضعیت‌های نام‌برده.
         if (in_array($q['status'] ?? '', $GLOBALS['as_query_fail'] ?? [], true)) { throw new RuntimeException('store down'); }
+        // مسیر واقعی DBStore برای شمارش: `$wpdb->get_var` — رشتهٔ رقمی؛ خطای SQL = `null` با `last_error`، بی استثنا.
+        if ($ret === 'count' && array_key_exists($q['status'] ?? '', $GLOBALS['as_count_raw'] ?? [])) {
+            [$value, $error] = $GLOBALS['as_count_raw'][$q['status']];
+            $GLOBALS['wpdb']->last_error = $error;
+            return $value;
+        }
+        $GLOBALS['wpdb']->last_error = '';
         // `date`/`date_compare` مثل ActionScheduler_DBStore روی زمان سررسید؛ کار async (`at` تهی) سررسیده است.
         $when = fn($a) => $a['at'] ?? 0;
         $date = isset($q['date']) ? $q['date']->getTimestamp() : null;
         $ids = array_keys(array_filter($GLOBALS['as'], fn($a) => $a['group'] === ($q['group'] ?? $a['group']) && $a['status'] === ($q['status'] ?? $a['status'])
             && ($date === null || (($q['date_compare'] ?? '<=') === '<=' ? $when($a) <= $date : $when($a) > $date))));
-        return $ret === 'count' ? count($ids) : $ids;
+        return $ret === 'count' ? (string) count($ids) : $ids;
     }
 }
 class FakeRunner {
@@ -293,7 +300,7 @@ function reset_queue() {
     $GLOBALS['wpdb']->fail_write = []; $GLOBALS['wpdb']->fail_read = []; $GLOBALS['wpdb']->lock_error = false;
     $GLOBALS['wpdb']->lock_error_re = null; $GLOBALS['wpdb']->on_lock = null;
     $GLOBALS['as_fail'] = false; $GLOBALS['cron_fail'] = false; $GLOBALS['as_on_add'] = null; $GLOBALS['crash_on_cancel'] = false;
-    $GLOBALS['as_query_fail'] = [];
+    $GLOBALS['as_query_fail'] = []; $GLOBALS['as_count_raw'] = [];
 }
 function pending_rows($hook, $args) {
     return array_values(array_filter($GLOBALS['as'], fn($a) => $a['hook'] === $hook && $a['args'] === $args && $a['status'] === 'pending'));
@@ -1025,6 +1032,20 @@ check($h['running'] === null && $h['pendingDue'] === 1 && $h['pendingFuture'] ==
 $GLOBALS['as_query_fail'] = ['pending', 'failed'];
 $h = LMC_Queue::health();
 check($h['pendingDue'] === null && $h['pendingFuture'] === null && $h['failedActions'] === null && $h['running'] === 0, 'شکست شمارش معلق: null، هرگز ۰');
+
+// ۱۴ب۲. همان شکست از راه واقعی DBStore (get_var): `null` با last_error، `false`، و «۰» همراه خطا — هیچ‌کدام صفر نیست.
+$GLOBALS['as_query_fail'] = []; // جدا از ۱۴ب: اینجا استثنایی نیست، فقط مقدار برگشتی get_var
+check(LMC_Queue::health()['pendingDue'] === 1, 'کنترل پیش‌شرط: بی تزریق، شمارش عادی است');
+foreach ([[null, 'Deadlock found'], [false, ''], ['0', 'Lost connection'], ['-1', ''], ['3x', '']] as [$raw, $err]) {
+    $GLOBALS['as_count_raw'] = ['pending' => [$raw, $err]];
+    $h = LMC_Queue::health();
+    check($h['pendingDue'] === null && $h['pendingFuture'] === null && $h['running'] === 0,
+        'شمارش ' . var_export($raw, true) . ($err === '' ? '' : ' با خطای SQL') . ': نامعلوم، نه صفر؛ دیگری دست نخورد');
+}
+// کنترل: رشتهٔ رقمی بی خطا (همان خروجی عادی get_var) عدد است.
+$GLOBALS['as_count_raw'] = ['in-progress' => ['7', '']];
+check(LMC_Queue::health()['running'] === 7, 'کنترل: «7» بی خطا = ۷');
+$GLOBALS['as_count_raw'] = [];
 
 // ۱۴ج. قرارداد با Core (`queueTelemetry` در apps/api/src/platform/woocommerce-diagnostics.ts): همین کلیدها، نه بیشتر.
 $keys = array_keys(LMC_Queue::health()); sort($keys);
