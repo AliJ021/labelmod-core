@@ -553,3 +553,20 @@
 .sync-sample-title { margin: var(--s-2) 0 0; font-size: var(--text-sm); }
 .sync-count--warn, .sync-count--crit { font-weight: 700; }
 .sync-unknown { color: var(--ink-3); }
+
+/* ── کارهای عملیاتی داشبورد (دستهٔ D) ──────────────────────────────── */
+.ops { display: flex; flex-direction: column; gap: var(--s-4); min-inline-size: 0; }
+.ops-grid { display: grid; grid-template-columns: minmax(0, 1fr); gap: var(--s-5); min-inline-size: 0; }
+@media (min-width: 900px) { .ops-grid { grid-template-columns: repeat(auto-fit, minmax(16rem, 1fr)); } }
+.ops-tile { display: flex; flex-direction: column; gap: var(--s-2); min-inline-size: 0; }
+.ops-subtitle { font-size: var(--text-md); margin: 0; }
+.ops-verdict { display: flex; align-items: flex-start; gap: var(--s-2); margin: 0; font-weight: 600; }
+.ops-list { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: var(--s-1); }
+.ops-list li { display: flex; flex-wrap: wrap; align-items: baseline; gap: var(--s-1) var(--s-2); }
+.ops-flag { font-size: var(--text-xs); font-weight: 600; padding-inline: var(--s-1); border: var(--border-w) solid var(--rule-2); border-radius: var(--r-xs); }
+.ops-dl { margin: 0; display: flex; flex-direction: column; gap: var(--s-1); }
+.ops-row { display: flex; flex-wrap: wrap; justify-content: space-between; gap: var(--s-1) var(--s-3); }
+.ops-row dt { color: var(--ink-2); font-size: var(--text-sm); }
+.ops-row dd { margin: 0; }
+.ops-meta { margin: 0; }
+.ops-link { align-self: flex-start; min-block-size: 44px; display: inline-flex; align-items: center; }

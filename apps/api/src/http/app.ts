@@ -61,6 +61,7 @@ import { PurchaseReturnService } from "../purchasing/return.ts";
 import { PurchaseOrderService } from "../purchasing/order.ts";
 import { SettingService } from "../platform/settings.ts";
 import { WebOrderService } from "../sales/web-order.ts";
+import { registerDashboardOperationsRoutes } from "./dashboard-operations-routes.ts";
 import { safeEqual } from "../auth/password.ts";
 import { apiKeyFrom, resolveApiKey } from "../auth/api-key.ts";
 import {
@@ -467,6 +468,7 @@ export async function buildApp(deps: AppDeps): Promise<FastifyInstance> {
   });
   registerWebRefundRoutes(app, deps.db);
   registerWooDiagnosticsRoutes(app, deps.db, config.WEB_PUSH_SECRET);
+  registerDashboardOperationsRoutes(app, deps.db);
   registerWebRoutes(app, {
     db: deps.db,
     webOrders: new WebOrderService(invoices),

@@ -8,6 +8,7 @@ import type { Me } from "../src/lib/session";
 import type { Branch, DailyHour, DailyHourly, DailyReport, DashboardPeriod, PeriodPayments, PeriodSales } from "../src/lib/pos";
 import type { PermissionRule } from "../src/lib/admin";
 import type { StockSync } from "../src/lib/stock-sync";
+import type { DashboardOperations } from "../src/lib/dashboard-operations";
 import { ZONES } from "../src/lib/navigation";
 
 export const product: Product = { id: "11111111-1111-4111-8111-111111111111", code: "TR-1405", nameInternal: "شلوار پارچه‌ای رگولار با نام طولانی برای بررسی چیدمان", nameWeb: null, brandId: null, brandName: null, categoryId: null, categoryName: null, season: null, collection: null, fabric: null, fit: null, originCountry: null, taxRateCode: "standard", notes: null, status: "active", variationCount: 1, pricedCount: 1, sellableCount: 1, sellablePricedCount: 1, priceMin: "1234000", priceMax: "1234000" };
@@ -48,6 +49,20 @@ export function syncBody(o: { core?: Partial<StockSync["coreToWoo"]>; woo?: Stoc
       oldestOpenSeconds: null, lastSentAt: "2026-09-16T07:59:00.000Z", sample: { total: 0, items: [] }, ...o.core },
     wooToCore: o.woo ?? { state: "known", backend: "action-scheduler", fetchedAt: "2026-09-16T08:00:00.000Z",
       counts: { due: 0, scheduled: 0, running: 0, deferred: 0, busy: 0, stoppedTasks: 0, failedRows: 0 } },
+  };
+}
+/**
+ * کارهای عملیاتی (دستهٔ D): پیش‌فرض آرام و **دانسته** — یک شیفت باز امروز، چکی سررسیدگذشته نیست، یک طلب.
+ * آزمونی که حالت خاصی بخواهد، `opsBody` را با بخش دلخواه صدا می‌زند.
+ */
+export function opsBody(o: Partial<Pick<DashboardOperations, "shifts" | "cheques" | "receivables">> = {}): DashboardOperations {
+  const none = { count: 0, amount: "0", nextDue: null };
+  return {
+    businessDate: "2026-09-16", branchId: "b1",
+    shifts: o.shifts ?? { state: "ready", openCount: 1, carriedOverCount: 0, closedToday: 0, varianceToday: 0,
+      open: [{ id: "sh1", userName: "صندوق‌دار آزمون", openedAt: "2026-09-16T05:00:00.000Z", carriedOver: false }] },
+    cheques: o.cheques ?? { state: "ready", warningDays: 7, received: { overdue: none, dueSoon: none }, issued: { overdue: none, dueSoon: none } },
+    receivables: o.receivables ?? { state: "ready", owed: { count: 1, amount: "1500000" }, credit: { count: 0, amount: "0" } },
   };
 }
 export function periodBody(o: { profitVisible?: boolean; branchId?: string | null; from?: string; to?: string; prevFrom?: string; prevTo?: string } = {}): DashboardPeriod {
@@ -115,6 +130,7 @@ export class MockApi {
     "GET /auth/me": me, "GET /branches": { branches }, "GET /reports/daily": daily, "GET /reports/daily/hourly": DEFAULT_HOURLY,
     "GET /reports/dashboard/period": periodBody(),
     "GET /dashboard/stock-sync": syncBody(),
+    "GET /dashboard/operations": opsBody(),
     "GET /posting-batches/unposted": { rows: [] }, "GET /auth/can": { verdict: "allow", approver: null, reason: "" },
     "GET /settings": { groups: [] }, "GET /settlement-terms": { terms: [] }, "GET /customers": { customers: [] },
     "GET /products/ref-data": { brands: [], categories: [] }, "GET /seasons": { seasons: [] },
