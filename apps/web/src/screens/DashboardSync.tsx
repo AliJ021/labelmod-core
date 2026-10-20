@@ -132,7 +132,7 @@ function CoreSide({ data }: { data: CoreToWoo }) {
     <p className="sync-meta muted small">
       {data.oldestOpenSeconds === null ? "پیام بازی در صف نیست" : <>قدیمی‌ترین پیام باز: {formatAge(data.oldestOpenSeconds)}</>}
       {" · "}
-      {data.lastSentAt === null ? "ارسال موفقی ثبت نشده" : <>آخرین ارسال موفق (دست‌کم): <span className="nowrap">{formatJalaliMoment(data.lastSentAt)}</span></>}
+      {data.lastSentAt === null ? "ارسال موفقی ثبت نشده" : <>آخرین ارسال موفق: <span className="nowrap">{formatJalaliMoment(data.lastSentAt)}</span></>}
       {" · "}خوراک دوره‌ای هر {formatCount(data.reconcileMinutes)} دقیقه
     </p>
     {data.sample.total > 0

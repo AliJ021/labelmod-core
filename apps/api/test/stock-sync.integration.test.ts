@@ -64,7 +64,7 @@ describe("کارت همگام‌سازی سایت", { skip }, () => {
         ('web.instore_push','{}', 'sending', 1, now() - interval '30 seconds', now() - interval '30 minutes', NULL, NULL),
         ('web.stock_push',  '{}', 'dead',    8, now(), now() - interval '2 hours', 'HTTP 500', NULL),
         ('web.unknown',     '{}', 'dead',    1, now(), now() - interval '3 hours', 'موضوع ناشناخته', NULL),
-        ('web.stock_push',  '{}', 'sent',    1, now(), now() - interval '4 hours', NULL, now() - interval '3 hours'),
+        ('web.stock_push',  '{}', 'sent',    3, now(), now() - interval '4 hours', NULL, '2026-10-01T08:00:00Z'),
         ('web.price_push',  '{}', 'sent',    1, now(), now() - interval '50 minutes', NULL, '2026-09-16T08:00:00Z'),
         ('sms.invoice_link','{}', 'dead',    8, now(), now() - interval '5 hours', 'x', NULL),
         ('sms.invoice_link','{}', 'pending', 0, now() - interval '1 minute', now() - interval '6 hours', NULL, NULL)`.execute(owner.db);
@@ -86,7 +86,8 @@ describe("کارت همگام‌سازی سایت", { skip }, () => {
     const body = JSON.parse(r.body);
     assert.deepEqual(body.coreToWoo.counts, { due: 2, scheduled: 1, retrying: 1, running: 1, leaseExpired: 1, deadExhausted: 1, deadRejected: 1 });
     assert.equal(body.coreToWoo.enabled, false, "Push پیش‌فرض خاموش است و همان گفته می‌شود");
-    assert.equal(body.coreToWoo.lastSentAt, "2026-09-16T08:00:00.000Z", "آخرین پیام فرستاده‌شده به ترتیب شناسه");
+    // خارج از ترتیب: پیامِ شناسهٔ کوچک‌تر (با سه تلاش) دیرتر فرستاده شد. آخرین ارسال زمانِ آن است، نه پیامِ شناسهٔ بزرگ‌تر.
+    assert.equal(body.coreToWoo.lastSentAt, "2026-10-01T08:00:00.000Z", "آخرین ارسال موفق = بیشینهٔ sent_at");
     assert.ok(body.coreToWoo.oldestOpenSeconds >= 30 * 60 && body.coreToWoo.oldestOpenSeconds < 31 * 60, "قدیمی‌ترین پیام باز (sending با اجارهٔ گذشته)");
     assert.equal(body.coreToWoo.sample.total, 4);
     assert.deepEqual(body.coreToWoo.sample.items.map((i: { state: string }) => i.state), ["deadRejected", "deadExhausted", "leaseExpired", "retrying"]);
