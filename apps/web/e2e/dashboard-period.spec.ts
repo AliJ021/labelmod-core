@@ -119,6 +119,63 @@ test.describe("مرور دوره در داشبورد", () => {
     expect(query(periodCalls(api)[0]!).branchId).toBe("b1");
   });
 
+  test("same-day refresh re-reads the period with the same selection; the page is not fresh until it lands; a late older answer never wins", async ({ page, api }) => {
+    api.defaults["GET /branches"] = { allBranches: true, branches: [
+      { id: "b1", code: "A", name: "شعبه یک", warehouses: [] }, { id: "b2", code: "B", name: "شعبه دو", warehouses: [] }] };
+    const holds = new Map<number, () => void>();
+    let n = 0;
+    api.handlers.set("GET /reports/dashboard/period", async (route: Route, url: URL) => {
+      const mine = ++n;
+      const q = Object.fromEntries(url.searchParams);
+      const body = periodBody({ ...q, branchId: q.branchId ?? null });
+      if (mine >= 4) body.current.totals.salesAmount = "88800000";
+      // سومی (انتخاب شعبه) کهنه‌ای است که دیر می‌رسد؛ چهارمی (به‌روزرسانی) تا آزادسازی صریح در راه است.
+      if (mine === 3 || mine === 4) await new Promise<void>(r => holds.set(mine, r));
+      await route.fulfill({ json: body }).catch(() => {});
+    });
+    await page.goto("/");
+    const freshness = page.locator(".freshness");
+    await expect(freshness).toHaveAttribute("data-state", "fresh");
+    await section(page).getByRole("radio", { name: "۳۰ روز اخیر" }).check();
+    await expect.poll(() => n).toBe(2);
+    await expect(kpi(page, "فروش خالص")).toContainText("5٬950٬000٫1");
+    await section(page).getByLabel("شعبه").selectOption("b2");
+    await expect.poll(() => holds.has(3)).toBe(true);
+    // به‌روزرسانی هنگامی که پاسخ انتخاب شعبه هنوز نرسیده: همان انتخاب (۳۰ روز، b2) دوباره خوانده می‌شود.
+    await page.getByRole("button", { name: /به‌روزرسانی/ }).click();
+    await expect.poll(() => holds.has(4)).toBe(true);
+    expect(query(periodCalls(api)[3]!)).toEqual(query(periodCalls(api)[2]!));
+    expect(query(periodCalls(api)[3]!)).toMatchObject({ branchId: "b2", from: "2026-08-18", to: "2026-09-16" });
+    // «امروز» رسیده، ولی دوره نه: سرصفحه هنوز «تازه» نیست.
+    await expect(freshness).toHaveAttribute("data-state", "refreshing");
+    holds.get(4)!();
+    await expect(kpi(page, "فروش خالص")).toContainText("8٬880٬000");
+    await expect(freshness).toHaveAttribute("data-state", "fresh");
+    // پاسخ کهنهٔ انتخاب شعبه دیر می‌رسد و جای نتیجهٔ تازه‌تر را نمی‌گیرد.
+    holds.get(3)!();
+    await page.waitForLoadState("networkidle");
+    await expect(kpi(page, "فروش خالص")).toContainText("8٬880٬000");
+    await expect(section(page).getByLabel("شعبه")).toHaveValue("b2");
+    await expect(section(page).getByRole("radio", { name: "۳۰ روز اخیر" })).toBeChecked();
+    expect(api.unexpected).toEqual([]);
+  });
+
+  test("a failed period refresh keeps the last numbers and fails the page refresh (never fresh)", async ({ page, api }) => {
+    let n = 0;
+    api.handlers.set("GET /reports/dashboard/period", async (route: Route) => {
+      if (++n === 1) { await route.fulfill({ json: periodBody() }); return; }
+      await route.fulfill({ status: 500, json: { error: { code: "internal", message: "خطای سرور", correlationId: "req-p9" } } });
+    });
+    await page.goto("/");
+    await expect(kpi(page, "فروش خالص")).toContainText("5٬950٬000٫1");
+    await page.getByRole("button", { name: /به‌روزرسانی/ }).click();
+    const freshness = page.locator(".freshness");
+    await expect(freshness).toHaveAttribute("data-state", "failed");
+    await expect(freshness).toContainText("req-p9");
+    await expect(kpi(page, "فروش خالص")).toContainText("5٬950٬000٫1");
+    expect(n).toBe(2);
+  });
+
   test("no report.view: the section is not rendered and nothing is requested", async ({ page, api }) => {
     api.handlers.set("GET /auth/can", async (route, url) => {
       await route.fulfill({ json: { verdict: url.searchParams.get("operation") === "report.view" ? "deny" : "allow", approver: null, reason: "" } });

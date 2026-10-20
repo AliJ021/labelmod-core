@@ -54,7 +54,7 @@ import { LineChart, tickEvery } from "../components/ui/LineChart.tsx";
 import { Segmented } from "../components/ui/Controls.tsx";
 import { Ltr } from "../components/ui/Bidi.tsx";
 import { ResultState } from "../components/ResultState.tsx";
-import { DashboardPeriod } from "./DashboardPeriod.tsx";
+import { DashboardPeriod, type PeriodReload } from "./DashboardPeriod.tsx";
 import { Button } from "../components/ui/Controls.tsx";
 import { useOnline } from "../lib/use-online.ts";
 import { usePageVisible } from "../lib/use-page-visible.ts";
@@ -187,6 +187,9 @@ export function Dashboard({ access }: { access: NavAccess }) {
    * توسعه) نسل را جلو می‌برد، پس پاسخِ دیررسِ زنجیرهٔ رهاشده هرگز نتیجهٔ تازه‌تر را بازنویسی نمی‌کند.
    */
   const todayGen = useRef(0);
+  /** بازخوانی «مرور دوره» (اگر برای این نقش رندر شده): آخرین گام ترتیبی هر به‌روزرسانی. */
+  const periodReload = useRef<PeriodReload | null>(null);
+  const registerPeriod = useCallback((reload: PeriodReload | null) => { periodReload.current = reload; }, []);
   // آخرین مقدارها برای زمان‌سنج و کال‌بک‌هایی که پیش از رندر بعدی اجرا می‌شوند.
   const latest = useRef({ branch, report, grain, access });
   latest.current = { branch, report, grain, access };
@@ -335,6 +338,10 @@ export function Dashboard({ access }: { access: NavAccess }) {
       setTrends({});
       const g = latest.current.grain;
       if (g !== "hour") loadTrend(g, b.id, report);
+      // «مرور دوره» با همان انتخاب، آخرین گام ترتیبی همین زنجیره: سرصفحه تا رسیدن آن «تازه» نمی‌گوید و
+      // شکستش شکست همین به‌روزرسانی است (ارقام قبلی دوره می‌مانند).
+      await periodReload.current?.(signal);
+      if (stale()) return;
       const at = Date.now();
       failures.current = 0;
       setFailure(null);
@@ -470,7 +477,7 @@ export function Dashboard({ access }: { access: NavAccess }) {
 
       {/* مرور دوره (دستهٔ B): فقط برای نقش دارای گزارش؛ پیش از پاسخ دسترسی رندر نمی‌شود. */}
       {accessOf(["report.view"], access.verdicts) === "allow"
-        ? <DashboardPeriod today={report.businessDate} branches={scope.branches} allBranches={scope.allBranches} />
+        ? <DashboardPeriod today={report.businessDate} branches={scope.branches} allBranches={scope.allBranches} register={registerPeriod} />
         : null}
 
       {/*

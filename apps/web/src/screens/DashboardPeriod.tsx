@@ -9,9 +9,13 @@
  * - فقط برای نقشی با `report.view` دیده می‌شود (تا پاسخ دسترسی نیامده، اصلاً رندر نمی‌شود).
  * - شعبه: دامنهٔ سراسری «همهٔ شعبه‌ها» را هم دارد؛ تک‌شعبه انتخابی ندارد.
  * - هر تغییر انتخاب درخواست قبلی را لغو می‌کند و فقط پاسخِ آخرین انتخاب می‌نشیند.
+ * - **به‌روزرسانی داشبورد (دستی یا خودکار) همین بخش را هم با همان انتخاب دوباره می‌خواند** (`register`):
+ *   زنجیرهٔ «امروز» آن را آخرین گام ترتیبی خودش می‌کند و سرصفحه تا رسیدنش «تازه» نمی‌گوید. هر خواندن
+ *   (انتخاب یا به‌روزرسانی) نسل تازه می‌گیرد و قبلی را لغو می‌کند؛ پاسخِ دیررسِ کهنه هرگز نمی‌نشیند.
+ *   شکست به‌روزرسانی ارقام قبلی را نگه می‌دارد و زنجیره را ناموفق می‌کند (سرصفحه «داده‌ها از ساعت X»).
  * - بی فاکتور میانگین «—» است، بی `cost.view` سود «—» با دلیل — هیچ‌کدام صفر نیست.
  */
-import { useEffect, useId, useState } from "react";
+import { useCallback, useEffect, useId, useRef, useState } from "react";
 import { ApiError } from "../lib/api.ts";
 import { channelLabel, formatCount, formatJalali } from "../lib/format.ts";
 import { pos, type Branch, type DashboardPeriod as PeriodData, type PeriodPayments, type PeriodSales } from "../lib/pos.ts";
@@ -32,28 +36,67 @@ type Load = { state: "loading" } | { state: "ready"; data: PeriodData } | { stat
 /** «همهٔ شعبه‌ها» در انتخاب‌گر؛ به سرور `branchId` نمی‌رود و سرور دامنه را می‌سنجد. */
 const ALL = "all";
 
-export function DashboardPeriod({ today, branches, allBranches }: { today: string; branches: readonly Branch[]; allBranches: boolean }) {
+/** بازخوانی برای زنجیرهٔ به‌روزرسانی داشبورد: با شکست رد می‌شود؛ خواندنِ جایگزین‌شده بی‌صدا تمام می‌شود. */
+export type PeriodReload = (signal: AbortSignal) => Promise<void>;
+
+export function DashboardPeriod({ today, branches, allBranches, register }: {
+  today: string; branches: readonly Branch[]; allBranches: boolean;
+  /** داشبورد بازخوانی را می‌گیرد تا در زنجیرهٔ به‌روزرسانی‌اش صدا بزند؛ `null` هنگام Unmount. */
+  register?: (reload: PeriodReload | null) => void;
+}) {
   const [preset, setPreset] = useState<PeriodPreset>("7d");
   const [branch, setBranch] = useState<string>(allBranches && branches.length > 1 ? ALL : (branches[0]?.id ?? ALL));
   const [load, setLoad] = useState<Load>({ state: "loading" });
   const titleId = useId();
   const branchFieldId = useId();
   const range = periodRange(preset, today);
+  /** انتخاب جاری برای بازخوانی‌ای که پیش از رندر بعدی صدا زده می‌شود. */
+  const selection = useRef({ preset, branch, today });
+  selection.current = { preset, branch, today };
+  /** نسل و کنترلرِ خواندنِ در راه: هر خواندن تازه قبلی را لغو و بی‌اثر می‌کند. */
+  const gen = useRef(0);
+  const inflight = useRef<AbortController | null>(null);
+
+  /**
+   * یک خواندن با انتخاب جاری. `keep`: ارقام قبلی تا رسیدن پاسخ می‌مانند (به‌روزرسانی)، نه اسکلت (انتخاب تازه).
+   * `outer`: سیگنال زنجیرهٔ داشبورد (pagehide/Unmount). خواندن جایگزین‌شده resolve می‌شود، نه reject.
+   */
+  const read = useCallback(async (keep: boolean, outer?: AbortSignal): Promise<void> => {
+    inflight.current?.abort();
+    const controller = new AbortController();
+    inflight.current = controller;
+    const mine = ++gen.current;
+    const stop = () => controller.abort();
+    outer?.addEventListener("abort", stop);
+    const current = () => !controller.signal.aborted && gen.current === mine;
+    const { preset: p, branch: b, today: t } = selection.current;
+    if (!keep) setLoad({ state: "loading" });
+    try {
+      const data = await pos.dashboardPeriod({ branchId: b === ALL ? null : b, ...periodRange(p, t) }, { signal: controller.signal });
+      if (current()) setLoad({ state: "ready", data });
+    } catch (err) {
+      if (!current()) return;
+      // شکست به‌روزرسانی ارقام قبلی را نگه می‌دارد (سرصفحه شکست را می‌گوید)؛ بی ارقام، حالت خطای همین بخش.
+      setLoad(prev => keep && prev.state === "ready" ? prev : err instanceof ApiError
+        ? { state: "error", message: err.message, reference: err.correlationId }
+        : { state: "error", message: "ارتباط با سرور برقرار نشد.", reference: null });
+      if (keep) throw err;
+    } finally {
+      outer?.removeEventListener("abort", stop);
+      if (inflight.current === controller) inflight.current = null;
+    }
+  }, []);
 
   useEffect(() => {
-    const controller = new AbortController();
-    setLoad({ state: "loading" });
-    pos.dashboardPeriod({ branchId: branch === ALL ? null : branch, ...periodRange(preset, today) }, { signal: controller.signal }).then(
-      data => { if (!controller.signal.aborted) setLoad({ state: "ready", data }); },
-      (err: unknown) => {
-        if (controller.signal.aborted) return;
-        setLoad(err instanceof ApiError
-          ? { state: "error", message: err.message, reference: err.correlationId }
-          : { state: "error", message: "ارتباط با سرور برقرار نشد.", reference: null });
-      },
-    );
-    return () => controller.abort();
-  }, [preset, branch, today]);
+    void read(false);
+  }, [preset, branch, today, read]);
+  // Unmount: خواندنِ در راه لغو و هر پاسخ دیررس بی‌اثر.
+  useEffect(() => () => { gen.current++; inflight.current?.abort(); }, []);
+
+  useEffect(() => {
+    register?.(signal => read(true, signal));
+    return () => register?.(null);
+  }, [register, read]);
 
   const days = dayCount(range.from, range.to);
   const prevDays = dayCount(range.prevFrom, range.prevTo);
