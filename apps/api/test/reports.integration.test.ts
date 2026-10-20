@@ -53,6 +53,8 @@ describe("گزارش‌ها", { skip }, () => {
   const supervisor = `rsup_${suffix}`;
   const cashier = `rcash_${suffix}`;
   const marketing = `rmkt_${suffix}`;
+  // مدیرِ دامنهٔ «همهٔ شعبه‌ها» (branch_id تهی) — فقط برای دامنهٔ خلاصهٔ دوره.
+  const owner = `rown_${suffix}`;
   let adminId = "";
   let variationId = "";
   let today = "";
@@ -97,6 +99,7 @@ describe("گزارش‌ها", { skip }, () => {
       [supervisor, "سرپرست گزارش", "supervisor"],
       [cashier, "صندوق‌دار گزارش", "cashier"],
       [marketing, "بازاریاب گزارش", "marketing"],
+      [owner, "مالک گزارش", "admin"],
     ] as const) {
       const u = await handle.db
         .insertInto("identity.app_user")
@@ -113,9 +116,9 @@ describe("گزارش‌ها", { skip }, () => {
         .executeTakeFirstOrThrow();
       await handle.db
         .insertInto("identity.user_role")
-        .values({ user_id: u.id, role_code: role, branch_id: BRANCH })
+        .values({ user_id: u.id, role_code: role, branch_id: username === owner ? null : BRANCH })
         .execute();
-      if (role === "admin") adminId = u.id;
+      if (username === admin) adminId = u.id;
     }
 
     // یک فروش واقعی، تا گزارش‌ها چیزی برای نشان‌دادن داشته باشند.
@@ -688,6 +691,149 @@ describe("گزارش‌ها", { skip }, () => {
     ];
     for (const [label, bounds] of cases) {
       const r = await get(admin, `/reports/daily/trend?branchId=${BRANCH}&bounds=${bounds}`);
+      assert.equal(r.statusCode, 400, `${label}: ${r.body}`);
+      assert.equal((JSON.parse(r.body) as { error: { code: string } }).error.code, "invalid_input", label);
+    }
+  });
+
+  // ── خلاصهٔ دوره‌ای داشبورد (دستهٔ B؛ ۰۹۹) ─────────────────────────────
+
+  type PeriodSales = {
+    invoiceCount: number; grossAmount: string; returnCount: number; returnAmount: string;
+    salesAmount: string; profitAmount: string | null; averageInvoice: string | null;
+  };
+  type PeriodPay = { receivedAmount: string; refundedAmount: string; netAmount: string; paymentCount: number; refundCount: number };
+  type PeriodSide = {
+    totals: PeriodSales;
+    channels: (PeriodSales & { channel: string })[];
+    payments: { totals: PeriodPay; methods: (PeriodPay & { methodCode: string; methodName: string })[] };
+  };
+  type PeriodBody = {
+    businessDate: string; branchId: string | null; profitVisible: boolean;
+    current: PeriodSide & { from: string; to: string; partial: boolean };
+    previous: PeriodSide & { from: string; to: string };
+    delta: PeriodSide;
+  };
+  const periodUrl = (from: string, to: string, prevFrom: string, prevTo: string, extra = "") =>
+    `/reports/dashboard/period?from=${from}&to=${to}&prevFrom=${prevFrom}&prevTo=${prevTo}${extra}`;
+
+  test("خلاصهٔ دوره: جمع کانال‌ها و پرداخت‌ها دقیقاً خلاصه روز است؛ تفاضل از SQL و بی درصد", async () => {
+    const d = await trendDates(); // d[9] امروز
+    // دو سفارش سایتِ امروز با کارت: میانگین سایت با صندوق فرق می‌کند، پس «میانگینِ
+    // میانگین‌ها» با «جمع ناخالص ÷ جمع فاکتور» یکی نیست و آزمون فرقشان را می‌بیند.
+    await handle.db.transaction().execute(async (trx) => {
+      await sql`SELECT platform.set_actor(${adminId}::uuid)`.execute(trx);
+      for (const ref of ["W-1", "W-2"]) {
+        const inv = await sql<{ id: string }>`
+          INSERT INTO sales.invoice (branch_id, warehouse_id, channel, occurred_at, created_by)
+          VALUES (${BRANCH}::uuid, ${STORE_WH}::uuid, 'web', now(), ${adminId}::uuid) RETURNING id`.execute(trx);
+        const id = inv.rows[0]!.id;
+        await sql`INSERT INTO sales.invoice_line (invoice_id, line_no, variation_id, qty, unit_price, net_amount)
+                  VALUES (${id}::uuid, 1, ${variationId}::uuid, 1, 1000000, 1000000)`.execute(trx);
+        await sql`SELECT sales.refresh_invoice_totals(${id}::uuid)`.execute(trx);
+        await sql`INSERT INTO treasury.payment (invoice_id, method_code, direction, amount, status, ref_no, occurred_at)
+                  VALUES (${id}::uuid, 'card', 'in', 1000000, 'succeeded', ${`${ref}-${suffix}`}, now())`.execute(trx);
+        await sql`SELECT sales.finalize_invoice(${id}::uuid, ${adminId}::uuid)`.execute(trx);
+      }
+    });
+    const r = await get(admin, periodUrl(d[9]!, d[9]!, d[0]!, d[8]!));
+    assert.equal(r.statusCode, 200, r.body);
+    const body = JSON.parse(r.body) as PeriodBody;
+    assert.equal(body.branchId, BRANCH, "کاربر تک‌شعبه بی branchId همان شعبهٔ خودش را می‌گیرد");
+    assert.equal(body.current.partial, true, "امروز هنوز تمام نشده");
+    const day = await dailyOf(admin, `&date=${d[9]}`);
+    const t = body.current.totals;
+    assert.deepEqual([t.salesAmount, t.profitAmount, t.invoiceCount, t.returnCount],
+      [day.salesAmount, day.profitAmount, day.invoiceCount, day.returnCount], "جمع کل = /reports/daily");
+    assert.equal(body.current.payments.totals.netAmount, day.receivedAmount, "دریافت خالص = /reports/daily");
+    assert.ok(BigInt(t.salesAmount) > 0n, "آشتی روی صفر نیست");
+    // جمع کانال‌ها همان جمع کل است، و صندوق و سایت هر دو سطر دارند.
+    assert.deepEqual(body.current.channels.map((c) => c.channel).slice(0, 2), ["pos", "web"]);
+    const sum = (k: "grossAmount" | "salesAmount" | "returnAmount") =>
+      body.current.channels.reduce((a, c) => a + BigInt(c[k]), 0n).toString();
+    assert.deepEqual([sum("grossAmount"), sum("salesAmount"), sum("returnAmount")], [t.grossAmount, t.salesAmount, t.returnAmount]);
+    const web = body.current.channels.find((c) => c.channel === "web")!;
+    if (web.invoiceCount === 0) assert.equal(web.averageInvoice, null, "بی فاکتور میانگین تهی است، نه \"0\"");
+    const pos = body.current.channels.find((c) => c.channel === "pos")!;
+    assert.ok(web.invoiceCount >= 2 && pos.invoiceCount >= 1 && web.averageInvoice !== pos.averageInvoice,
+      "دو کانال با میانگین متفاوت — وگرنه آزمون میانگین کل چیزی را جدا نمی‌کند");
+    // میانگین کل از SQL: ناخالص ÷ شمار، گرد به ریال — نه میانگینِ میانگین‌ها.
+    const avg = await sql<{ a: string | null }>`SELECT CASE WHEN ${t.invoiceCount}::bigint = 0 THEN NULL
+      ELSE round(${t.grossAmount}::numeric / ${t.invoiceCount}::bigint)::text END AS a`.execute(handle.db);
+    assert.equal(t.averageInvoice, avg.rows[0]!.a);
+    // تفاضل = جاری − مبنا، دقیق؛ هیچ میدان درصدی در پاسخ نیست.
+    const p = body.previous.totals;
+    assert.equal(body.delta.totals.salesAmount, (BigInt(t.salesAmount) - BigInt(p.salesAmount)).toString());
+    assert.equal(body.delta.totals.invoiceCount, t.invoiceCount - p.invoiceCount);
+    assert.equal(body.delta.payments.totals.netAmount,
+      (BigInt(body.current.payments.totals.netAmount) - BigInt(body.previous.payments.totals.netAmount)).toString());
+    assert.ok(!/percent/i.test(r.body), "درصد ساخته نمی‌شود");
+    // مبنای ۹ روزه هم با جمع خلاصه روزِ همان روزها می‌خواند.
+    let prevSales = 0n;
+    for (let i = 0; i <= 8; i++) prevSales += BigInt((await dailyOf(admin, `&date=${d[i]}`)).salesAmount);
+    assert.equal(p.salesAmount, prevSales.toString());
+  });
+
+  test("خلاصهٔ دوره: نقد دریافتی در روش «نقدی»، و بازپرداخت جدا از مرجوعی می‌آید", async () => {
+    const d = await trendDates();
+    const body = JSON.parse((await get(admin, periodUrl(d[9]!, d[9]!, d[8]!, d[8]!))).body) as PeriodBody;
+    const cash = body.current.payments.methods.find((m) => m.methodCode === "cash");
+    assert.ok(cash, "فروش نقدی این فایل در روش نقدی است");
+    assert.ok(BigInt(cash.receivedAmount) >= 2000000n);
+    assert.equal(cash.methodName, "نقدی");
+    for (const m of body.current.payments.methods) {
+      assert.equal(BigInt(m.netAmount), BigInt(m.receivedAmount) - BigInt(m.refundedAmount), m.methodCode);
+    }
+    // مرجوعی (ارزش کالا) و بازپرداخت (پول) دو میدان جدا هستند، نه یکی.
+    assert.ok("returnAmount" in body.current.totals && "refundedAmount" in body.current.payments.totals);
+  });
+
+  test("خلاصهٔ دوره بی cost.view سود را همه‌جا null می‌دهد؛ صندوق‌دار و شعبهٔ بیرونی ۴۰۳", async () => {
+    const d = await trendDates();
+    const url = periodUrl(d[9]!, d[9]!, d[0]!, d[8]!);
+    const r = await get(supervisor, url);
+    assert.equal(r.statusCode, 200, r.body);
+    const body = JSON.parse(r.body) as PeriodBody;
+    assert.equal(body.profitVisible, false);
+    const all = [body.current, body.previous, body.delta].flatMap((x) => [x.totals, ...x.channels]);
+    assert.ok(all.length >= 9 && all.every((x) => x.profitAmount === null), "null، نه \"0\"");
+    assert.ok(!/cogs|cost/i.test(r.body), "هیچ ستون بها بیرون نمی‌رود");
+    for (const user of [cashier, marketing]) assert.equal((await get(user, url)).statusCode, 403, user);
+    const other = "00000000-0000-7000-8000-00000000dead";
+    assert.equal((await get(admin, `${url}&branchId=${other}`)).statusCode, 403);
+    assert.equal((await app.inject({ method: "GET", url })).statusCode, 401);
+  });
+
+  test("خلاصهٔ دوره: دامنهٔ «همه» بی branchId یعنی همهٔ شعبه‌ها؛ با branchId همان شعبه", async () => {
+    const d = await trendDates();
+    const url = periodUrl(d[9]!, d[9]!, d[8]!, d[8]!);
+    const all = JSON.parse((await get(owner, url)).body) as PeriodBody;
+    assert.equal(all.branchId, null);
+    const one = JSON.parse((await get(owner, `${url}&branchId=${BRANCH}`)).body) as PeriodBody;
+    assert.equal(one.branchId, BRANCH);
+    const db = await sql<{ s: string }>`SELECT coalesce(sum(sales_amount), 0)::text AS s
+      FROM sales.dashboard_period(NULL, ${d[9]}::date, ${d[9]}::date)`.execute(handle.db);
+    assert.equal(all.current.totals.salesAmount, db.rows[0]!.s, "همه = تابع با شعبهٔ NULL");
+    // کاربر تک‌شعبه هرگز «همه» نمی‌گیرد.
+    assert.equal((JSON.parse((await get(admin, url)).body) as PeriodBody).branchId, BRANCH);
+  });
+
+  test("خلاصهٔ دوره: بازه و مبنای نامعتبر ۴۰۰ می‌گیرد — آینده و هم‌پوشانی صفر جلوه داده نمی‌شوند", async () => {
+    const d = await trendDates();
+    const far = (await sql<{ a: string; b: string }>`
+      SELECT (platform.business_date() - 400)::text AS a, (platform.business_date() + 1)::text AS b`.execute(handle.db)).rows[0]!;
+    const cases: [string, string][] = [
+      ["وارونه", periodUrl(d[9]!, d[8]!, d[0]!, d[1]!)],
+      ["مبنای وارونه", periodUrl(d[9]!, d[9]!, d[5]!, d[1]!)],
+      ["هم‌پوشانی با دوره", periodUrl(d[5]!, d[9]!, d[0]!, d[5]!)],
+      ["مبنا پس از دوره", periodUrl(d[5]!, d[6]!, d[7]!, d[8]!)],
+      ["آینده", periodUrl(d[9]!, far.b, d[0]!, d[8]!)],
+      ["بیش از ۴۰۰ روز", periodUrl(far.a, d[9]!, "2024-01-01", "2024-01-02")],
+      ["بی مبنا", `/reports/dashboard/period?from=${d[9]}&to=${d[9]}`],
+      ["تاریخ ناممکن", periodUrl("2026-02-30", "2026-03-02", d[0]!, d[1]!)],
+    ];
+    for (const [label, url] of cases) {
+      const r = await get(admin, url);
       assert.equal(r.statusCode, 400, `${label}: ${r.body}`);
       assert.equal((JSON.parse(r.body) as { error: { code: string } }).error.code, "invalid_input", label);
     }

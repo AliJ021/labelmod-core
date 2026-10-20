@@ -7,6 +7,8 @@
  *   ۲. روند **فقط** شاخص انتخاب‌شده، ساعتی/روزانه/ماهانه؛ «مقایسهٔ هر سه» صریح است.
  *      ساعتی از `/reports/daily/hourly` (مهاجرت ۰۸۳، جمع ساعت‌ها همان سه کارت)؛ روزانه
  *      و ماهانه از `/reports/daily/trend` (مهاجرت ۰۹۳، جمع در SQL، ماه جلالی).
+ *   ۲٫۵. مرور دوره (`DashboardPeriod`): بازه و دورهٔ مبنا، صندوق/سایت، مرجوعی جدا از
+ *      بازپرداخت، ترکیب پرداخت — فقط با `report.view`.
  *   ۳. پیگیری ثبت حسابداری فروش — بازشوندهٔ بسته با شمار و وضعیت واقعی در خلاصه.
  *      این ثبت دورهٔ فروش و شیفت در دفتر است، نه وضعیت کلی سایت یا سامانه.
  *   ۴. کارهای پرتکرار.
@@ -52,6 +54,7 @@ import { LineChart, tickEvery } from "../components/ui/LineChart.tsx";
 import { Segmented } from "../components/ui/Controls.tsx";
 import { Ltr } from "../components/ui/Bidi.tsx";
 import { ResultState } from "../components/ResultState.tsx";
+import { DashboardPeriod, type PeriodReload } from "./DashboardPeriod.tsx";
 import { Button } from "../components/ui/Controls.tsx";
 import { useOnline } from "../lib/use-online.ts";
 import { usePageVisible } from "../lib/use-page-visible.ts";
@@ -128,6 +131,8 @@ async function readToday(branchId: string, signal: AbortSignal, step?: (part: Pa
 
 export function Dashboard({ access }: { access: NavAccess }) {
   const [branch, setBranch] = useState<Branch | null>(null);
+  /** همهٔ شعبه‌های در دامنه و اینکه دامنه سراسری است — برای انتخاب‌گر «مرور دوره». */
+  const [scope, setScope] = useState<{ branches: Branch[]; allBranches: boolean }>({ branches: [], allBranches: false });
   const [report, setReport] = useState<DailyReport | null>(null);
   const [error, setError] = useState<{ message: string; reference: string | null } | null>(null);
   const [unposted, setUnposted] = useState<Unposted>({ state: "loading" });
@@ -182,6 +187,9 @@ export function Dashboard({ access }: { access: NavAccess }) {
    * توسعه) نسل را جلو می‌برد، پس پاسخِ دیررسِ زنجیرهٔ رهاشده هرگز نتیجهٔ تازه‌تر را بازنویسی نمی‌کند.
    */
   const todayGen = useRef(0);
+  /** بازخوانی «مرور دوره» (اگر برای این نقش رندر شده): آخرین گام ترتیبی هر به‌روزرسانی. */
+  const periodReload = useRef<PeriodReload | null>(null);
+  const registerPeriod = useCallback((reload: PeriodReload | null) => { periodReload.current = reload; }, []);
   // آخرین مقدارها برای زمان‌سنج و کال‌بک‌هایی که پیش از رندر بعدی اجرا می‌شوند.
   const latest = useRef({ branch, report, grain, access });
   latest.current = { branch, report, grain, access };
@@ -224,8 +232,9 @@ export function Dashboard({ access }: { access: NavAccess }) {
     let gen = 0;
     void (async () => {
       try {
-        const { branches } = await pos.branches({ signal });
+        const { branches, allBranches } = await pos.branches({ signal });
         if (signal.aborted) return;
+        setScope({ branches, allBranches });
         const first = branches[0];
         if (!first) {
           setError({ message: "به هیچ شعبه‌ای دسترسی ندارید.", reference: null });
@@ -329,6 +338,10 @@ export function Dashboard({ access }: { access: NavAccess }) {
       setTrends({});
       const g = latest.current.grain;
       if (g !== "hour") loadTrend(g, b.id, report);
+      // «مرور دوره» با همان انتخاب، آخرین گام ترتیبی همین زنجیره: سرصفحه تا رسیدن آن «تازه» نمی‌گوید و
+      // شکستش شکست همین به‌روزرسانی است (ارقام قبلی دوره می‌مانند).
+      await periodReload.current?.(signal);
+      if (stale()) return;
       const at = Date.now();
       failures.current = 0;
       setFailure(null);
@@ -461,6 +474,11 @@ export function Dashboard({ access }: { access: NavAccess }) {
               hourly={hourly} trend={grain === "hour" ? undefined : trends[grain]} />
           </>}
       </Solid>
+
+      {/* مرور دوره (دستهٔ B): فقط برای نقش دارای گزارش؛ پیش از پاسخ دسترسی رندر نمی‌شود. */}
+      {accessOf(["report.view"], access.verdicts) === "allow"
+        ? <DashboardPeriod today={report.businessDate} branches={scope.branches} allBranches={scope.allBranches} register={registerPeriod} />
+        : null}
 
       {/*
         پیگیری ثبت حسابداری فروش — پس از شاخص‌ها و روند، بسته به‌طور پیش‌فرض. خلاصه

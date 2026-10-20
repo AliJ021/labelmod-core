@@ -49,6 +49,7 @@ import type {
   CompareRow,
 } from "../reports/service.ts";
 import { contentDisposition, rowsToCsv } from "../lib/csv.ts";
+import { serializeMoney } from "../lib/money.ts";
 import {
   BASKET_COLUMNS,
   COMPARE_COLUMNS,
@@ -264,6 +265,175 @@ export function registerReportRoutes(app: FastifyInstance, deps: ReportRouteDeps
         : raw.map((r) => ({ ...r, profitAmount: null, prevProfitAmount: null }));
 
     return respond(reply, format, { fa: "مقایسه دوره", ascii: "compare" }, COMPARE_COLUMNS, rows);
+  });
+
+  /**
+   * خلاصهٔ دوره‌ای داشبورد (دستهٔ B؛ مهاجرت ۰۹۹) — بازه و دورهٔ مبنا کنار هم.
+   *
+   * - **هر عدد از SQL:** کانال‌ها از `sales.dashboard_period`، روش‌های پرداخت از
+   *   `sales.dashboard_payment_mix`؛ جمع کل، میانگین کل و تفاضل دو دوره هم در
+   *   همین کوئری‌ها (bigint دقیق، رشته در JSON). **درصدی ساخته نمی‌شود**:
+   *   تفاضل مطلق است، و درصدِ مبنای صفر یا منفی ادعایی است که هیچ‌کس نکرده.
+   * - **مرجوعی ≠ بازپرداخت:** `returnAmount` ارزش کالای برگشتی است و
+   *   `refundedAmount` پولی که واقعاً پس داده شد؛ هر دو جدا می‌آیند.
+   * - **دامنه:** شعبه از `resolveBranch` — دامنهٔ «همه» بی `branchId` یعنی همهٔ
+   *   شعبه‌ها، تک‌شعبه همان شعبه، چندشعبه بی انتخاب ۴۲۲، شعبهٔ بیرونی ۴۰۳.
+   *   `report.view` لازم است؛ سود بی `cost.view` در **همهٔ** سطرها `null`.
+   * - **دورهٔ مبنا صریح از کلاینت** (همان دلیل `/reports/compare`: ماه جلالی را
+   *   مرورگر می‌فهمد) و باید **پیش از** دوره باشد؛ هم‌پوشانی دو بار شمردن است.
+   *   آینده داده نیست: پایانِ پس از امروز ۴۰۰ می‌گیرد، نه صفر.
+   */
+  app.get("/reports/dashboard/period", async (req) => {
+    const s = session(req);
+    await requireForSession(db, s, "report.view");
+    const q = compareQuery
+      .refine((v: { prevTo: string; from: string }) => v.prevTo < v.from, {
+        message: "دورهٔ مبنا باید پیش از دوره تمام شود",
+        path: ["prevTo"],
+      })
+      .parse(req.query);
+    const branchId = (await resolveBranch(s.userId, q.branchId)) ?? null;
+    const profitVisible = await seesCost(s);
+
+    const check = await sql<{ today: string; span: number; prev_span: number }>`
+      SELECT platform.business_date()::text AS today,
+             (${q.to}::date - ${q.from}::date) AS span,
+             (${q.prevTo}::date - ${q.prevFrom}::date) AS prev_span`.execute(db);
+    const { today, span, prev_span } = check.rows[0]!;
+    const invalid = (path: string, message: string) =>
+      new z.ZodError([{ code: "custom", path: [path], message, input: q }]);
+    if (span >= 400 || prev_span >= 400) throw invalid("from", "هر دوره حداکثر ۴۰۰ روز است");
+    if (q.to > today) throw invalid("to", "پایان دوره از امروز جلوتر است");
+
+    // یک سطر برای هر کانال و یک سطر جمع (`channel` تهی)؛ هر سطر دورهٔ جاری،
+    // دورهٔ مبنا و تفاضل را کنار هم دارد — همه در SQL و دقیق.
+    const channels = await sql<Record<string, string | null>>`
+      WITH ch AS (
+        SELECT 1 AS sign, c.* FROM sales.dashboard_period(${branchId}::uuid, ${q.from}::date, ${q.to}::date) c
+        UNION ALL
+        SELECT -1, p.* FROM sales.dashboard_period(${branchId}::uuid, ${q.prevFrom}::date, ${q.prevTo}::date) p
+      ),
+      g AS (
+        SELECT CASE WHEN GROUPING(channel) = 1 THEN NULL ELSE channel END AS channel,
+               GROUPING(channel) AS is_total,
+               min(CASE channel WHEN 'pos' THEN 0 WHEN 'web' THEN 1 ELSE 2 END) AS ord,
+               sum(invoice_count) FILTER (WHERE sign = 1)  AS c_n,  sum(invoice_count) FILTER (WHERE sign = -1)  AS p_n,
+               sum(gross_amount)  FILTER (WHERE sign = 1)  AS c_g,  sum(gross_amount)  FILTER (WHERE sign = -1)  AS p_g,
+               sum(return_count)  FILTER (WHERE sign = 1)  AS c_rn, sum(return_count)  FILTER (WHERE sign = -1)  AS p_rn,
+               sum(return_amount) FILTER (WHERE sign = 1)  AS c_r,  sum(return_amount) FILTER (WHERE sign = -1)  AS p_r,
+               sum(sales_amount)  FILTER (WHERE sign = 1)  AS c_s,  sum(sales_amount)  FILTER (WHERE sign = -1)  AS p_s,
+               sum(profit_amount) FILTER (WHERE sign = 1)  AS c_p,  sum(profit_amount) FILTER (WHERE sign = -1)  AS p_p
+          FROM ch
+         GROUP BY GROUPING SETS ((channel), ())
+      ),
+      a AS (
+        -- میانگین از جمع‌ها، نه میانگینِ میانگین‌ها؛ بی فاکتور تهی.
+        SELECT g.*,
+               CASE WHEN coalesce(c_n, 0) = 0 THEN NULL ELSE round(c_g / c_n) END AS c_avg,
+               CASE WHEN coalesce(p_n, 0) = 0 THEN NULL ELSE round(p_g / p_n) END AS p_avg
+          FROM g
+      )
+      SELECT channel,
+             coalesce(c_n, 0)::text  AS c_invoice_count,  coalesce(p_n, 0)::text  AS p_invoice_count,
+             coalesce(c_g, 0)::text  AS c_gross_amount,   coalesce(p_g, 0)::text  AS p_gross_amount,
+             coalesce(c_rn, 0)::text AS c_return_count,   coalesce(p_rn, 0)::text AS p_return_count,
+             coalesce(c_r, 0)::text  AS c_return_amount,  coalesce(p_r, 0)::text  AS p_return_amount,
+             coalesce(c_s, 0)::text  AS c_sales_amount,   coalesce(p_s, 0)::text  AS p_sales_amount,
+             coalesce(c_p, 0)::text  AS c_profit_amount,  coalesce(p_p, 0)::text  AS p_profit_amount,
+             c_avg::text AS c_average_invoice, p_avg::text AS p_average_invoice,
+             (coalesce(c_n, 0) - coalesce(p_n, 0))::text   AS d_invoice_count,
+             (coalesce(c_g, 0) - coalesce(p_g, 0))::text   AS d_gross_amount,
+             (coalesce(c_rn, 0) - coalesce(p_rn, 0))::text AS d_return_count,
+             (coalesce(c_r, 0) - coalesce(p_r, 0))::text   AS d_return_amount,
+             (coalesce(c_s, 0) - coalesce(p_s, 0))::text   AS d_sales_amount,
+             (coalesce(c_p, 0) - coalesce(p_p, 0))::text   AS d_profit_amount,
+             (c_avg - p_avg)::text AS d_average_invoice
+        FROM a
+       ORDER BY is_total, ord, channel`.execute(db);
+
+    // همان شکل برای روش‌های پرداخت. روشی که فقط در یکی از دو دوره پول داشته،
+    // در دیگری صفر است (پرداخت موفقی نبود)، نه «نامعلوم».
+    const payments = await sql<Record<string, string | null>>`
+      WITH pm AS (
+        SELECT 1 AS sign, c.* FROM sales.dashboard_payment_mix(${branchId}::uuid, ${q.from}::date, ${q.to}::date) c
+        UNION ALL
+        SELECT -1, p.* FROM sales.dashboard_payment_mix(${branchId}::uuid, ${q.prevFrom}::date, ${q.prevTo}::date) p
+      ),
+      g AS (
+        SELECT CASE WHEN GROUPING(method_code) = 1 THEN NULL ELSE method_code END AS method_code,
+               max(method_name) AS method_name,
+               GROUPING(method_code) AS is_total,
+               coalesce(sum(received_amount) FILTER (WHERE sign = 1), 0)  AS c_in,
+               coalesce(sum(received_amount) FILTER (WHERE sign = -1), 0) AS p_in,
+               coalesce(sum(refunded_amount) FILTER (WHERE sign = 1), 0)  AS c_out,
+               coalesce(sum(refunded_amount) FILTER (WHERE sign = -1), 0) AS p_out,
+               coalesce(sum(net_amount) FILTER (WHERE sign = 1), 0)       AS c_net,
+               coalesce(sum(net_amount) FILTER (WHERE sign = -1), 0)      AS p_net,
+               coalesce(sum(payment_count) FILTER (WHERE sign = 1), 0)    AS c_n,
+               coalesce(sum(payment_count) FILTER (WHERE sign = -1), 0)   AS p_n,
+               coalesce(sum(refund_count) FILTER (WHERE sign = 1), 0)     AS c_rn,
+               coalesce(sum(refund_count) FILTER (WHERE sign = -1), 0)    AS p_rn
+          FROM pm
+         GROUP BY GROUPING SETS ((method_code), ())
+      )
+      SELECT method_code, method_name,
+             c_in::text AS c_received_amount, p_in::text AS p_received_amount,
+             c_out::text AS c_refunded_amount, p_out::text AS p_refunded_amount,
+             c_net::text AS c_net_amount, p_net::text AS p_net_amount,
+             c_n::text AS c_payment_count, p_n::text AS p_payment_count,
+             c_rn::text AS c_refund_count, p_rn::text AS p_refund_count,
+             (c_in - p_in)::text AS d_received_amount, (c_out - p_out)::text AS d_refunded_amount,
+             (c_net - p_net)::text AS d_net_amount,
+             (c_n - p_n)::text AS d_payment_count, (c_rn - p_rn)::text AS d_refund_count
+        FROM g
+       ORDER BY is_total DESC, c_in DESC, method_code`.execute(db);
+
+    const money = (v: string | null | undefined) => serializeMoney(BigInt(v ?? "0"));
+    const optMoney = (v: string | null | undefined) => (v === null || v === undefined ? null : money(v));
+    type Side = "c" | "p" | "d";
+    const salesView = (r: Record<string, string | null>, x: Side) => ({
+      invoiceCount: Number(r[`${x}_invoice_count`]),
+      grossAmount: money(r[`${x}_gross_amount`]),
+      returnCount: Number(r[`${x}_return_count`]),
+      returnAmount: money(r[`${x}_return_amount`]),
+      salesAmount: money(r[`${x}_sales_amount`]),
+      profitAmount: profitVisible ? money(r[`${x}_profit_amount`]) : null,
+      averageInvoice: optMoney(r[`${x}_average_invoice`]),
+    });
+    const payView = (r: Record<string, string | null>, x: Side) => ({
+      receivedAmount: money(r[`${x}_received_amount`]),
+      refundedAmount: money(r[`${x}_refunded_amount`]),
+      netAmount: money(r[`${x}_net_amount`]),
+      paymentCount: Number(r[`${x}_payment_count`]),
+      refundCount: Number(r[`${x}_refund_count`]),
+    });
+    // جمع سطرِ تهی است و همیشه وجود دارد (GROUPING SETS با () حتی بی سطر، یک سطر می‌دهد).
+    const salesTotal = channels.rows.find((r) => r.channel === null);
+    const payTotal = payments.rows.find((r) => r.method_code === null);
+    if (!salesTotal || !payTotal) throw new Error("خلاصهٔ دوره سطر جمع برنگرداند");
+    const salesRows = channels.rows.filter((r) => r.channel !== null);
+    const payRows = payments.rows.filter((r) => r.method_code !== null);
+    const side = (x: Side) => ({
+      totals: salesView(salesTotal, x),
+      channels: salesRows.map((r) => ({ channel: r.channel as string, ...salesView(r, x) })),
+      payments: {
+        totals: payView(payTotal, x),
+        methods: payRows.map((r) => ({
+          methodCode: r.method_code as string,
+          methodName: r.method_name as string,
+          ...payView(r, x),
+        })),
+      },
+    });
+
+    return {
+      businessDate: today,
+      branchId,
+      profitVisible,
+      current: { from: q.from, to: q.to, partial: q.to === today, ...side("c") },
+      previous: { from: q.prevFrom, to: q.prevTo, ...side("p") },
+      delta: side("d"),
+    };
   });
 
   /**

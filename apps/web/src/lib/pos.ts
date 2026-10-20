@@ -257,6 +257,30 @@ export interface DailyBucket {
 }
 export interface DailyTrend { businessDate: string; profitVisible: boolean; buckets: DailyBucket[] }
 
+/**
+ * خلاصهٔ دوره‌ای داشبورد (`/reports/dashboard/period`، مهاجرت ۰۹۹). همهٔ پول رشتهٔ
+ * ریالی و همهٔ جمع و تفاضل از SQL؛ درصدی در پاسخ نیست. `profitAmount` بی
+ * `cost.view` تهی است و `averageInvoice` بی فاکتور تهی — هیچ‌کدام صفر نیست.
+ */
+export interface PeriodSales {
+  invoiceCount: number; grossAmount: string; returnCount: number; returnAmount: string;
+  salesAmount: string; profitAmount: string | null; averageInvoice: string | null;
+}
+export interface PeriodPayments {
+  receivedAmount: string; refundedAmount: string; netAmount: string; paymentCount: number; refundCount: number;
+}
+export interface PeriodSide {
+  totals: PeriodSales;
+  channels: (PeriodSales & { channel: string })[];
+  payments: { totals: PeriodPayments; methods: (PeriodPayments & { methodCode: string; methodName: string })[] };
+}
+export interface DashboardPeriod {
+  businessDate: string; branchId: string | null; profitVisible: boolean;
+  current: PeriodSide & { from: string; to: string; partial: boolean };
+  previous: PeriodSide & { from: string; to: string };
+  delta: PeriodSide;
+}
+
 /** درآمدی که هنوز به دفتر نرفته — زنگ خطر داشبورد. */
 export interface UnpostedRow {
   batchId: string;
@@ -520,6 +544,17 @@ export const pos = {
   dailyTrend: (branchId: string, bounds: readonly string[], opts?: RequestOptions) =>
     api.get<DailyTrend>(
       `/reports/daily/trend?branchId=${encodeURIComponent(branchId)}&bounds=${encodeURIComponent(bounds.join(","))}`,
+      opts,
+    ),
+
+  /**
+   * خلاصهٔ دوره و دورهٔ مبنا (`report.view`). `branchId` تهی یعنی «همهٔ شعبه‌ها» و
+   * فقط برای دامنهٔ سراسری معنا دارد؛ سرور خودش تصمیم می‌گیرد، نه این پارامتر.
+   */
+  dashboardPeriod: (q: { branchId: string | null; from: string; to: string; prevFrom: string; prevTo: string }, opts?: RequestOptions) =>
+    api.get<DashboardPeriod>(
+      `/reports/dashboard/period?from=${q.from}&to=${q.to}&prevFrom=${q.prevFrom}&prevTo=${q.prevTo}` +
+        (q.branchId === null ? "" : `&branchId=${encodeURIComponent(q.branchId)}`),
       opts,
     ),
 
