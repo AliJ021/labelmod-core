@@ -44,6 +44,7 @@ class LMC_Diagnostics
             'pricePolling' => lmc_setting('sync_price') === 'yes',
             'cronDisabled' => defined('DISABLE_WP_CRON') && DISABLE_WP_CRON,
             'stockScheduled' => (bool) wp_next_scheduled(LMC_STOCK_EVENT),
+            'queue' => LMC_Queue::health(),
             'mapping' => ['linkedProducts' => $linked === null ? null : (int) $linked, 'orderIdentity' => 'sku', 'stockIdentity' => 'variationId'],
             'order' => $order_id === null ? null : self::order_status($order_id),
         ];
@@ -63,7 +64,7 @@ class LMC_Diagnostics
         $out['eligible'] = $out['paymentConfirmed'] && $order->has_status(['processing', 'completed', 'refunded'])
             && (($order->get_payment_method() !== 'cod' && !is_array($order->get_meta('_lmc_reservation_payload'))) || $order->has_status(['completed']));
         $out['recorded'] = $order->get_meta(LMC_Order_Sync::META_INVOICE) !== '';
-        $out['scheduled'] = (bool) wp_next_scheduled(LMC_ORDER_EVENT, [$id]);
+        $out['scheduled'] = LMC_Queue::queued(LMC_ORDER_EVENT, [$id]);
         $out['attempts'] = max(0, (int) $order->get_meta(LMC_Order_Sync::META_ATTEMPTS));
         // متن خام خطای مقصد ممکن است داده حساس داشته باشد؛ فقط وجود خطا گزارش می‌شود.
         $out['hasError'] = $order->get_meta(LMC_Order_Sync::META_ERROR) !== '';
@@ -125,6 +126,30 @@ class LMC_Diagnostics
         echo '<p>محصولات دارای شناسهٔ اتصال: ' . esc_html($r['mapping']['linkedProducts'] === null ? 'خواندن شمارش ممکن نشد' : (string) $r['mapping']['linkedProducts']) . '</p>';
         echo '<p>' . esc_html($r['stockScheduled'] ? 'رویداد دوره‌ای موجودی ثبت شده است.' : 'رویداد دوره‌ای موجودی ثبت نشده است؛ فعال‌سازی افزونه را بررسی کنید.') . '</p>';
         if ($r['cronDisabled']) { echo '<p>WP-Cron خاموش است؛ اجرای cron سیستم باید جداگانه بررسی شود.</p>'; }
+        echo '<p>' . esc_html($r['queue']['backend'] === 'action-scheduler'
+            ? 'صف بحرانی: Action Scheduler، گروه ' . $r['queue']['group'] . '.'
+            : 'صف بحرانی: WP-Cron (Action Scheduler در دسترس نیست).') . '</p>';
+        if ($r['queue']['deadTasks'] === null) {
+            echo '<p>شمار کارهای بحرانی متوقف خوانده نشد.</p>';
+        } elseif ($r['queue']['deadTasks'] > 0) {
+            echo '<p role="alert">' . esc_html(sprintf('%d کار بحرانی پس از سه شکست غیرمنتظره متوقف شده است (توقف کسب‌وکاری سفارش جداست)؛ سفارش‌ها و Scheduled Actions را بررسی کنید.', $r['queue']['deadTasks'])) . '</p>';
+        }
+        $deferred = $r['queue']['deferredTasks'] ?? null;
+        if ($deferred === null) {
+            echo '<p>شمار کارهای معوق صف (منتظر قفل) خوانده نشد.</p>';
+        } elseif ($deferred > 0) {
+            echo '<p>' . esc_html(sprintf('%d تغییر صف منتظر قفل پایگاه داده است و در دور بعدی اجراکننده انجام می‌شود.', $deferred)) . '</p>';
+        }
+        $busy = $r['queue']['busyTasks'] ?? null;
+        if (is_int($busy) && $busy > 0) {
+            // اشغال قفل اجرا خطا نیست؛ اجرای دیگری از همان کار در جریان است (بیش از ۱۵ دقیقه: مرده).
+            echo '<p>' . esc_html(sprintf('%d کار پشت اجرای در جریانِ همان کار منتظر است.', $busy)) . '</p>';
+        }
+        $failed = $r['queue']['failedActions'] ?? null;
+        if (is_int($failed) && $failed > 0) {
+            // هر سطر failed، از جمله آن‌هایی که دوباره صف شده‌اند؛ شمار کار منطقی نیست.
+            echo '<p>' . esc_html(sprintf('%d سطر ناموفق گروه بحرانی در Scheduled Actions نگه داشته شده است (شامل تلاش‌هایی که دوباره صف شده‌اند).', $failed)) . '</p>';
+        }
         if ($r['order'] !== null) {
             $o = $r['order'];
             echo '<p>' . esc_html(!$o['found'] ? 'سفارش یافت نشد.' : ($o['recorded'] ? 'شناسهٔ فاکتور Core روی سفارش ثبت شده است.'

@@ -9,6 +9,10 @@
  *      و ماهانه از `/reports/daily/trend` (مهاجرت ۰۹۳، جمع در SQL، ماه جلالی).
  *   ۲٫۵. مرور دوره (`DashboardPeriod`): بازه و دورهٔ مبنا، صندوق/سایت، مرجوعی جدا از
  *      بازپرداخت، ترکیب پرداخت — فقط با `report.view`.
+ *   ۲٫۶. همگام‌سازی سایت (`DashboardSync`): Core → سایت و سایت → Core جدا، شمار دقیق هر حالت و
+ *      «نامعلوم» بی صفر — فقط با `settings.view`، فقط‌خواندنی، بی ارسال دوباره.
+ *   ۲٫۷. کارهای عملیاتی (`DashboardOperations`): شیفت‌های باز (و ماندهٔ دیروز)، سررسید چک و ماندهٔ خالص
+ *      مشتریان همین شعبه — هر بخش با مجوز خودش (`report.view` / `cheque.manage`)، فقط‌خواندنی.
  *   ۳. پیگیری ثبت حسابداری فروش — بازشوندهٔ بسته با شمار و وضعیت واقعی در خلاصه.
  *      این ثبت دورهٔ فروش و شیفت در دفتر است، نه وضعیت کلی سایت یا سامانه.
  *   ۴. کارهای پرتکرار.
@@ -55,6 +59,8 @@ import { Segmented } from "../components/ui/Controls.tsx";
 import { Ltr } from "../components/ui/Bidi.tsx";
 import { ResultState } from "../components/ResultState.tsx";
 import { DashboardPeriod, type PeriodReload } from "./DashboardPeriod.tsx";
+import { DashboardSync } from "./DashboardSync.tsx";
+import { DashboardOperations } from "./DashboardOperations.tsx";
 import { Button } from "../components/ui/Controls.tsx";
 import { useOnline } from "../lib/use-online.ts";
 import { usePageVisible } from "../lib/use-page-visible.ts";
@@ -187,9 +193,14 @@ export function Dashboard({ access }: { access: NavAccess }) {
    * توسعه) نسل را جلو می‌برد، پس پاسخِ دیررسِ زنجیرهٔ رهاشده هرگز نتیجهٔ تازه‌تر را بازنویسی نمی‌کند.
    */
   const todayGen = useRef(0);
-  /** بازخوانی «مرور دوره» (اگر برای این نقش رندر شده): آخرین گام ترتیبی هر به‌روزرسانی. */
-  const periodReload = useRef<PeriodReload | null>(null);
-  const registerPeriod = useCallback((reload: PeriodReload | null) => { periodReload.current = reload; }, []);
+  /**
+   * بازخوانی بخش‌های زیر «امروز» (هر کدام فقط اگر برای این نقش رندر شده): «مرور دوره» و بعد «همگام‌سازی
+   * سایت» — آخرین گام‌های ترتیبی هر به‌روزرسانی، به همین ترتیب.
+   */
+  const sectionReloads = useRef<{ period: PeriodReload | null; sync: PeriodReload | null; ops: PeriodReload | null }>({ period: null, sync: null, ops: null });
+  const registerPeriod = useCallback((reload: PeriodReload | null) => { sectionReloads.current.period = reload; }, []);
+  const registerSync = useCallback((reload: PeriodReload | null) => { sectionReloads.current.sync = reload; }, []);
+  const registerOps = useCallback((reload: PeriodReload | null) => { sectionReloads.current.ops = reload; }, []);
   // آخرین مقدارها برای زمان‌سنج و کال‌بک‌هایی که پیش از رندر بعدی اجرا می‌شوند.
   const latest = useRef({ branch, report, grain, access });
   latest.current = { branch, report, grain, access };
@@ -338,9 +349,13 @@ export function Dashboard({ access }: { access: NavAccess }) {
       setTrends({});
       const g = latest.current.grain;
       if (g !== "hour") loadTrend(g, b.id, report);
-      // «مرور دوره» با همان انتخاب، آخرین گام ترتیبی همین زنجیره: سرصفحه تا رسیدن آن «تازه» نمی‌گوید و
-      // شکستش شکست همین به‌روزرسانی است (ارقام قبلی دوره می‌مانند).
-      await periodReload.current?.(signal);
+      // «مرور دوره» (با همان انتخاب) و «همگام‌سازی سایت»، آخرین گام‌های ترتیبی همین زنجیره: سرصفحه تا رسیدن
+      // هر دو «تازه» نمی‌گوید و شکست هر کدام شکست همین به‌روزرسانی است (ارقام قبلی همان بخش می‌مانند).
+      await sectionReloads.current.period?.(signal);
+      if (stale()) return;
+      await sectionReloads.current.sync?.(signal);
+      if (stale()) return;
+      await sectionReloads.current.ops?.(signal);
       if (stale()) return;
       const at = Date.now();
       failures.current = 0;
@@ -478,6 +493,19 @@ export function Dashboard({ access }: { access: NavAccess }) {
       {/* مرور دوره (دستهٔ B): فقط برای نقش دارای گزارش؛ پیش از پاسخ دسترسی رندر نمی‌شود. */}
       {accessOf(["report.view"], access.verdicts) === "allow"
         ? <DashboardPeriod today={report.businessDate} branches={scope.branches} allBranches={scope.allBranches} register={registerPeriod} />
+        : null}
+
+      {/* همگام‌سازی سایت (دستهٔ C): فقط با allow صریح `settings.view` — مثل «سلامت سیستم». */}
+      {accessOf(["settings.view"], access.verdicts) === "allow" ? <DashboardSync register={registerSync} /> : null}
+
+      {/*
+        کارهای عملیاتی (دستهٔ D): شیفت، چک و دریافتنیِ همین شعبه. با allow صریح `report.view` رندر می‌شود؛ بخش
+        چک را سرور با `cheque.manage` خودش می‌دهد یا `denied` می‌کند.
+      */}
+      {branch && accessOf(["report.view"], access.verdicts) === "allow"
+        ? <DashboardOperations branchId={branch.id} register={registerOps} links={{
+            reports: accessOf(["report.view"], access.verdicts) === "allow",
+            treasury: accessOf(["treasury.manage"], access.verdicts) === "allow" }} />
         : null}
 
       {/*

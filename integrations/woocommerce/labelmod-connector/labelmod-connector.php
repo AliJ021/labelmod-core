@@ -2,7 +2,7 @@
 /**
  * Plugin Name: Label Mod Connector
  * Description: سفارش‌های ووکامرس را به سامانه «لیبل مد» می‌فرستد و موجودی سایت را از انبار همگام می‌کند.
- * Version: 1.4.0
+ * Version: 1.5.1
  * Requires PHP: 7.4
  * Requires at least: 6.0
  * License: proprietary
@@ -35,8 +35,9 @@
  *
  * **ارسال هرگز نباید Checkout را کند یا خراب کند.** اگر سرور لیبل مد
  * پایین باشد، مشتری باید بتواند خریدش را تمام کند. پس ارسال همیشه
- * ناهم‌زمان است (`wp_schedule_single_event`) و شکستش با Backoff دوباره
- * تلاش می‌شود — نه اینکه وسط پرداخت خطا نشان دهد.
+ * ناهم‌زمان است (`LMC_Queue`: سطر ماندگار Action Scheduler در گروه
+ * `labelmod-critical`، بی تأخیر ثابت) و شکستش با Backoff محدود و jitter
+ * دوباره تلاش می‌شود — نه اینکه وسط پرداخت خطا نشان دهد.
  *
  * پیامدش این است که «سفارش ثبت شد» در ووکامرس یعنی سفارش ثبت شد، نه
  * اینکه به لیبل مد رسید. برای همین وضعیت ارسال روی خودِ سفارش دیده
@@ -47,7 +48,7 @@ if (!defined('ABSPATH')) {
     exit;
 }
 
-define('LMC_VERSION', '1.4.0');
+define('LMC_VERSION', '1.5.1');
 define('LMC_PATH', plugin_dir_path(__FILE__));
 define('LMC_OPTION', 'labelmod_connector_settings');
 
@@ -59,6 +60,7 @@ define('LMC_STOCK_EVENT', 'lmc_sync_stock');
 define('LMC_INSTORE_EVENT', 'lmc_sync_instore');
 
 require_once LMC_PATH . 'includes/class-lmc-client.php';
+require_once LMC_PATH . 'includes/class-lmc-queue.php';
 require_once LMC_PATH . 'includes/class-lmc-push-secret.php';
 require_once LMC_PATH . 'includes/class-lmc-push-secret-settings.php';
 require_once LMC_PATH . 'includes/class-lmc-diagnostics.php';
@@ -116,6 +118,7 @@ add_action('plugins_loaded', function () {
     LMC_Settings::init();
     LMC_Push_Secret_Settings::init();
     LMC_Diagnostics::init();
+    LMC_Queue::init();
     LMC_Order_Sync::init();
     LMC_Order_Reservation::init();
     LMC_Refund_Sync::init();
@@ -159,6 +162,8 @@ register_activation_hook(__FILE__, function () {
 register_deactivation_hook(__FILE__, function () {
     wp_clear_scheduled_hook(LMC_STOCK_EVENT);
     wp_clear_scheduled_hook(LMC_INSTORE_EVENT);
+    // فقط شتاب‌دهنده؛ کارهای معلق Action Scheduler عمداً می‌مانند تا با فعال‌سازی دوباره گم نشوند.
+    wp_clear_scheduled_hook(LMC_Queue::KICK);
     flush_rewrite_rules();
 });
 
