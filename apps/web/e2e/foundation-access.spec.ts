@@ -12,7 +12,7 @@ import type { Locator, Page } from "@playwright/test";
 import { NAV_OPERATIONS } from "../src/lib/navigation";
 
 type Decision = "allow" | "deny" | "fail";
-const PROTECTED = ["صندوق", "فاکتورها", "مرجوعی", "کالا و قیمت", "انبار و خرید", "خزانه و چک", "مشتریان", "گزارش‌ها"];
+const PROTECTED = ["صندوق", "فاکتورها", "مرجوعی", "سفارش‌های سایت", "کالا و قیمت", "انبار و خرید", "خزانه و چک", "مشتریان", "گزارش‌ها"];
 const PERSONAL = ["نمایش و عملکرد", "PIN من — ساخت و تغییر", "ورود دومرحله‌ای"];
 const ADMIN = ["تنظیمات", "سلامت سیستم", "اتصال ووکامرس", "پشتیبان‌گیری و بازیابی", "کدینگ حساب", "نگاشت حساب", "اسنپ‌پی", "دیجی‌پی", "پایانه‌ها", "افتتاحیه و تفصیلی", "پرسنل", "مجوزها", "دستگاه‌ها"];
 
@@ -112,7 +112,7 @@ test.describe("F-110-01 — conservative permission loading", () => {
     await expect(dashboard).toBeVisible();
     const before = { tab: (await dashboard.boundingBox())!, nav: (await page.locator(".workspace-nav").boundingBox())! };
     auth.release();
-    await expect(mainList(page).getByRole("tab", { includeHidden: true })).toHaveCount(11);
+    await expect(mainList(page).getByRole("tab", { includeHidden: true })).toHaveCount(12);
     const after = { tab: (await dashboard.boundingBox())!, nav: (await page.locator(".workspace-nav").boundingBox())! };
     // زیر ۳۶۰ پیکسل برچسب «کالا و قیمت» پس از رسیدن دو خط می‌شود و نوار بلندتر؛
     // جای‌نگهدار طول برچسب را نمی‌داند و نباید بداند (برچسب در DOM یعنی همان افشا).

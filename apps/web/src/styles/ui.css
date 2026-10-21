@@ -540,3 +540,10 @@
 .period-table { display: flex; flex-direction: column; gap: var(--s-2); min-inline-size: 0; }
 .period-subtitle { font-size: var(--text-md); margin: 0; }
 .period-delta { white-space: nowrap; }
+
+/* سفارش‌های سایت — صفحه‌بندی و خلاصهٔ سفارش؛ فقط ویژگی‌های منطقی (RTL). */
+.site-orders-pager { display: flex; flex-wrap: wrap; align-items: center; justify-content: center; gap: 12px; margin-block-start: 14px; }
+.site-order-facts { display: grid; grid-template-columns: repeat(auto-fill, minmax(min(100%, 200px), 1fr)); gap: 12px 20px; margin: 0; }
+.site-order-facts > div { display: flex; flex-direction: column; gap: 4px; min-inline-size: 0; }
+.site-order-facts dt { color: var(--ink-2); font-size: var(--text-sm); }
+.site-order-facts dd { margin: 0; overflow-wrap: anywhere; }

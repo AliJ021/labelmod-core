@@ -45,6 +45,8 @@ import { registerBonusRoutes } from "./bonus-routes.ts";
 import { registerHealthRoutes } from "./health-routes.ts";
 import { registerWebRoutes } from "./web-routes.ts";
 import { registerWooDiagnosticsRoutes } from "./woocommerce-diagnostics-routes.ts";
+import { registerWebOrdersRoutes } from "./web-orders-routes.ts";
+import type { WooOrdersReader } from "../platform/woocommerce-orders.ts";
 import { registerWebRefundRoutes } from "./web-refund-routes.ts";
 import { registerPublicRoutes, PUBLIC_ROUTE_PATHS } from "./public-routes.ts";
 import { InvoiceService } from "../sales/invoice.ts";
@@ -153,6 +155,8 @@ export interface AppDeps {
   auth: AuthService;
   config: Config;
   paymentProviders?: PaymentProviderRuntime;
+  /** فقط آزمون: خوانندهٔ ساختگی سفارش‌های سایت؛ تولید همیشه دروازهٔ امضاشدهٔ واقعی را می‌سازد. */
+  wooOrders?: WooOrdersReader;
 }
 
 export async function buildApp(deps: AppDeps): Promise<FastifyInstance> {
@@ -467,6 +471,7 @@ export async function buildApp(deps: AppDeps): Promise<FastifyInstance> {
   });
   registerWebRefundRoutes(app, deps.db);
   registerWooDiagnosticsRoutes(app, deps.db, config.WEB_PUSH_SECRET);
+  registerWebOrdersRoutes(app, deps.db, config.WEB_PUSH_SECRET, deps.wooOrders);
   registerWebRoutes(app, {
     db: deps.db,
     webOrders: new WebOrderService(invoices),

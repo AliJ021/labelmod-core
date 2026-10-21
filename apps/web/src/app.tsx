@@ -14,6 +14,7 @@ const Reports = lazy(() => import("./screens/Reports.tsx").then(m => ({ default:
 const Treasury = lazy(() => import("./screens/Treasury.tsx").then(m => ({ default: m.Treasury })));
 const Warehouse = lazy(() => import("./screens/Warehouse.tsx").then(m => ({ default: m.Warehouse })));
 const Returns = lazy(() => import("./screens/Returns.tsx").then(m => ({ default: m.Returns })));
+const SiteOrders = lazy(() => import("./screens/SiteOrders.tsx").then(m => ({ default: m.SiteOrders })));
 const Settings = lazy(() => import("./screens/Settings.tsx").then(m => ({ default: m.Settings })));
 const Personnel = lazy(() => import("./screens/Personnel.tsx").then(m => ({ default: m.Personnel })));
 import { TwoFactor } from "./screens/TwoFactor.tsx";
@@ -292,6 +293,8 @@ export function App() {
             <Invoices />
           ) : zone === "returns" ? (
             <Returns />
+          ) : zone === "site-orders" ? (
+            <SiteOrders />
           ) : zone === "catalog" ? (
             <Catalog />
           ) : zone === "purchasing" ? (
