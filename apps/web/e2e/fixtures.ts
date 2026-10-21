@@ -7,6 +7,7 @@ import type { AppUser, Customer } from "../src/lib/people";
 import type { Me } from "../src/lib/session";
 import type { Branch, DailyHour, DailyHourly, DailyReport, DashboardPeriod, PeriodPayments, PeriodSales } from "../src/lib/pos";
 import type { PermissionRule } from "../src/lib/admin";
+import type { StockSync } from "../src/lib/stock-sync";
 import { ZONES } from "../src/lib/navigation";
 
 export const product: Product = { id: "11111111-1111-4111-8111-111111111111", code: "TR-1405", nameInternal: "شلوار پارچه‌ای رگولار با نام طولانی برای بررسی چیدمان", nameWeb: null, brandId: null, brandName: null, categoryId: null, categoryName: null, season: null, collection: null, fabric: null, fit: null, originCountry: null, taxRateCode: "standard", notes: null, status: "active", variationCount: 1, pricedCount: 1, sellableCount: 1, sellablePricedCount: 1, priceMin: "1234000", priceMax: "1234000" };
@@ -35,6 +36,20 @@ export const DEFAULT_HOURLY = hourlyDay({
  * خلاصهٔ دورهٔ پیش‌فرض داشبورد — **خودسازگار** مثل پاسخ سرور: جمع کانال‌ها = جمع، خالص =
  * دریافتی − بازپرداخت، و تفاضل = جاری − مبنا. هر آزمونی که عدد خاصی بخواهد، `periodBody` را صدا می‌زند.
  */
+/**
+ * کارت همگام‌سازی سایت (دستهٔ C): پیش‌فرض یک وضعیت آرامِ **دانسته** است — ارسال روشن، صف خالی در هر دو جهت.
+ * آزمونی که حالت خاصی بخواهد، `syncBody` را با بخش دلخواه صدا می‌زند.
+ */
+export function syncBody(o: { core?: Partial<StockSync["coreToWoo"]>; woo?: StockSync["wooToCore"] } = {}): StockSync {
+  return {
+    checkedAt: "2026-09-16T08:00:00.000Z",
+    coreToWoo: { enabled: true, misconfigured: false, reconcileMinutes: 15,
+      counts: { due: 0, scheduled: 0, retrying: 0, running: 0, leaseExpired: 0, deadExhausted: 0, deadRejected: 0 },
+      oldestOpenSeconds: null, lastSentAt: "2026-09-16T07:59:00.000Z", sample: { total: 0, items: [] }, ...o.core },
+    wooToCore: o.woo ?? { state: "known", backend: "action-scheduler", fetchedAt: "2026-09-16T08:00:00.000Z",
+      counts: { due: 0, scheduled: 0, running: 0, deferred: 0, busy: 0, stoppedTasks: 0, failedRows: 0 } },
+  };
+}
 export function periodBody(o: { profitVisible?: boolean; branchId?: string | null; from?: string; to?: string; prevFrom?: string; prevTo?: string } = {}): DashboardPeriod {
   const pv = o.profitVisible ?? true;
   const sales = (n: number, g: bigint, rn: number, r: bigint, p: bigint): PeriodSales => ({
@@ -99,6 +114,7 @@ export class MockApi {
     "GET /pos/policy": { requireCustomer: false },
     "GET /auth/me": me, "GET /branches": { branches }, "GET /reports/daily": daily, "GET /reports/daily/hourly": DEFAULT_HOURLY,
     "GET /reports/dashboard/period": periodBody(),
+    "GET /dashboard/stock-sync": syncBody(),
     "GET /posting-batches/unposted": { rows: [] }, "GET /auth/can": { verdict: "allow", approver: null, reason: "" },
     "GET /settings": { groups: [] }, "GET /settlement-terms": { terms: [] }, "GET /customers": { customers: [] },
     "GET /products/ref-data": { brands: [], categories: [] }, "GET /seasons": { seasons: [] },
