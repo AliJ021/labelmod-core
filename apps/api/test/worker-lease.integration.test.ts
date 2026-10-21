@@ -186,7 +186,18 @@ describe("اجارهٔ Outbox در حلقهٔ Worker", { skip }, () => {
     r = await tick(opts());
     assert.equal(r.failed, 1);
     w = await row(plain);
-    assert.ok(w.delay_s >= 55 && w.delay_s <= 60, `هدر نامعتبر نادیده، Backoff یک دقیقه (${w.delay_s}s)`);
+    // Backoff پایهٔ یک دقیقه با لرزش ۰ تا ۲۰٪ رو به بالا (مهاجرت ۱۰۰).
+    assert.ok(w.delay_s >= 55 && w.delay_s <= 72, `هدر نامعتبر نادیده، Backoff یک دقیقه با لرزش (${w.delay_s}s)`);
+  });
+
+  test("Retry-After بالای یک ساعت کامل رعایت می‌شود، نه بریده به ۳۶۰۰ (بازبینی ریشه روی 92dc61c)", async () => {
+    const id = await enqueue("web.stock_push");
+    onPost = async () => ({ status: 503, retryAfter: "7200" });
+    const r = await tick(opts());
+    assert.equal(r.failed, 1);
+    const w = await row(id);
+    assert.equal(w.status, "pending");
+    assert.ok(w.delay_s >= 7195 && w.delay_s <= 7200, `Retry-After ۷۲۰۰ (${w.delay_s}s)`);
   });
 
   test("خط web فقط پیام سایت را برمی‌دارد و خط notify هرگز", async () => {

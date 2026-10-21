@@ -1,0 +1,20 @@
+# claude/worker-lease-token پس از اصلاح بازبینی ریشه · PostgreSQL 16.13 · دیتابیس یک‌بارمصرف lmc_lease_new
+BEGIN
+INSERT 0 3
+ claimed 
+---------
+       3
+
+ requested_minimum_seconds | status  
+---------------------------+---------
+ 3601                      | pending
+ 7200                      | pending
+ 86400                     | pending
+
+ requested_minimum_seconds | actual_delay_seconds | honors_retry_after 
+---------------------------+----------------------+--------------------
+ 3601                      |                 3601 | t
+ 7200                      |                 7200 | t
+ 86400                     |                86400 | t
+
+ROLLBACK

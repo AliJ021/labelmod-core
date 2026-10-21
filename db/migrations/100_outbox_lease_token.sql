@@ -61,9 +61,22 @@
 --
 -- ── Retry-After ─────────────────────────────────────────────────────
 --
--- `p_retry_after_seconds` (اعتبارسنجی‌شده در Worker، ۰ تا ۸۶۴۰۰) کفِ
--- تأخیر بعدی است: `greatest(backoff, retry_after)`، با همان سقف یک ساعت.
--- عدد بیرون از بازه رد می‌شود (P0001)، نه اینکه بی‌صدا بریده شود.
+-- `p_retry_after_seconds` (اعتبارسنجی‌شده در Worker، ۰ تا ۸۶۴۰۰) **کفِ واقعی**
+-- تأخیر بعدی است و هرگز کوتاه نمی‌شود:
+--
+--   تأخیر = greatest(least(backoff، ۱ ساعت) × (1 + 0.2 × لرزش)، retry_after)
+--
+-- سقف یک ساعت فقط مال Backoff نمایی خودِ ماست. Retry-After حکم سرور است؛
+-- بریدن ۷۲۰۰ به ۳۶۰۰ یعنی زودتر از اجازهٔ سرور دوباره بزنیم (بازبینی ریشه
+-- روی 92dc61c، `core-worker-retry-after-probe-92dc61c.log`). عدد بیرون از بازه
+-- رد می‌شود (P0001)، نه اینکه بی‌صدا بریده شود.
+--
+-- ── لرزش ────────────────────────────────────────────────────────────
+--
+-- Backoff قطعی یعنی پس از هر قطعی، همهٔ پیام‌های شکسته در **یک لحظه** دوباره
+-- برداشته شوند. لرزش ۰ تا ۲۰٪ **فقط رو به بالا** است: هرگز کمتر از Backoff
+-- پایه و هرگز زیر Retry-After. در تولید `random()` است؛ آزمون `p_jitter` را
+-- صریح می‌دهد تا عدد دقیق سنجیده شود.
 --
 -- ⚠️ `ADD COLUMN` بی پیش‌فرض فقط فراداده است و جدول را بازنویسی نمی‌کند؛
 --    `lock_timeout` صریح است تا مهاجرت پشت یک تراکنش طولانی صف نکشد.
@@ -196,16 +209,21 @@ CREATE FUNCTION platform.fail_outbox(
   p_error               text,
   p_max_attempts        int     DEFAULT 8,
   p_permanent           boolean DEFAULT false,
-  p_retry_after_seconds int     DEFAULT NULL
+  p_retry_after_seconds int     DEFAULT NULL,
+  p_jitter              double precision DEFAULT NULL
 ) RETURNS text LANGUAGE plpgsql AS $$
 DECLARE
   v_row    platform.outbox_message;
   v_delay  interval;
   v_status text;
+  v_jitter double precision := coalesce(p_jitter, random());
 BEGIN
   IF p_retry_after_seconds IS NOT NULL
      AND (p_retry_after_seconds < 0 OR p_retry_after_seconds > 86400) THEN
     RAISE EXCEPTION 'Retry-After باید بین ۰ و ۸۶۴۰۰ ثانیه باشد: %', p_retry_after_seconds;
+  END IF;
+  IF v_jitter < 0 OR v_jitter > 1 THEN
+    RAISE EXCEPTION 'لرزش Backoff باید بین ۰ و ۱ باشد: %', v_jitter;
   END IF;
 
   SELECT * INTO v_row FROM platform.outbox_message WHERE id = p_id FOR UPDATE;
@@ -225,14 +243,13 @@ BEGIN
     v_delay  := interval '0';
   ELSE
     v_status := 'pending';
-    -- همان Backoff ۰۳۱: ۱، ۲، ۴ … دقیقه با سقف یک ساعت؛ Retry-After فقط
-    -- کفِ آن است و از همان سقف بالاتر نمی‌رود.
-    v_delay := least(
-      greatest(
-        make_interval(mins => (2 ^ least(v_row.attempts - 1, 10))::int),
-        make_interval(secs => coalesce(p_retry_after_seconds, 0))
-      ),
-      interval '1 hour'
+    -- همان Backoff ۰۳۱: ۱، ۲، ۴ … دقیقه با سقف یک ساعت، سپس لرزش رو به بالا.
+    -- Retry-After **بیرون** از سقف می‌نشیند: کفِ واقعی است، نه پیشنهادی که
+    -- سقف ما بتواند کوتاهش کند.
+    v_delay := greatest(
+      least(make_interval(mins => (2 ^ least(v_row.attempts - 1, 10))::int), interval '1 hour')
+        * (1 + 0.2 * v_jitter),
+      make_interval(secs => coalesce(p_retry_after_seconds, 0))
     );
   END IF;
 
@@ -246,7 +263,7 @@ BEGIN
   RETURN v_status;
 END $$;
 
-COMMENT ON FUNCTION platform.fail_outbox(bigint, uuid, text, int, boolean, int) IS
-  'شکست ارسال فقط برای دارندهٔ توکن: Backoff نمایی (کفِ Retry-After، سقف یک ساعت) تا سقف تلاش، سپس نامه مرده. «lost» یعنی اجاره از دست رفته و هیچ سطری تغییر نکرد.';
+COMMENT ON FUNCTION platform.fail_outbox(bigint, uuid, text, int, boolean, int, double precision) IS
+  'شکست ارسال فقط برای دارندهٔ توکن: Backoff نمایی با سقف یک ساعت و لرزش ۰ تا ۲۰٪ رو به بالا؛ Retry-After سنجیده کفِ واقعی است و کوتاه نمی‌شود. تا سقف تلاش، سپس نامه مرده. «lost» یعنی اجاره از دست رفته و هیچ سطری تغییر نکرد.';
 
 COMMIT;

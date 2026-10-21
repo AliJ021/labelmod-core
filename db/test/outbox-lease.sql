@@ -156,37 +156,76 @@ PERFORM pg_temp.assert_raises('Retry-After بیش از یک روز',
 PERFORM pg_temp.assert_raises('بستن پیام ناموجود',
   $$SELECT platform.fail_outbox(999999999::bigint, gen_random_uuid(), 'x')$$);
 
-RAISE NOTICE E'\n═══ ۶. Retry-After کفِ Backoff است، با همان سقف یک ساعت ═══';
+RAISE NOTICE E'\n═══ ۶. Retry-After کفِ واقعی است (بی بریدن به یک ساعت)؛ لرزش محدود و فقط رو به بالا ═══';
+-- قرارداد (بازبینی ریشه روی 92dc61c): Retry-After سنجیده‌شده **هرگز کوتاه نمی‌شود**. سقف یک ساعت فقط
+-- مال Backoff نمایی است. تأخیر = greatest(least(backoff، ۱ ساعت) × (1 + 0.2 × لرزش)، Retry-After).
+-- لرزش در تولید random() است و در آزمون صریح داده می‌شود (p_jitter) تا عدد دقیق سنجیده شود.
 
 DELETE FROM platform.outbox_message;
 INSERT INTO platform.outbox_message (topic, payload)
-SELECT 'probe.retry', jsonb_build_object('case', c)
-  FROM unnest(ARRAY['none','zero','ten_min','day','dead']) c;
-PERFORM count(*) FROM platform.claim_outbox(10, 'w', 120, ARRAY['probe.retry']);
+SELECT 'probe.retry', jsonb_build_object('case', c, 'ra', ra, 'j', j)
+  FROM (VALUES ('none', NULL::int, 0.0), ('zero', 0, 0.0), ('ten_min', 600, 0.0),
+               ('hour_plus', 3601, 0.0), ('two_hours', 7200, 0.0), ('day', 86400, 0.0),
+               ('j_half', NULL, 0.5), ('j_full', NULL, 1.0), ('ra_61_j0', 61, 0.0), ('ra_61_j1', 61, 1.0),
+               ('ra_600_j1', 600, 1.0), ('dead', 7200, 1.0)) v(c, ra, j);
+PERFORM count(*) FROM platform.claim_outbox(20, 'w', 120, ARRAY['probe.retry']);
 
--- تلاش اول: Backoff یک دقیقه.
+-- تلاش اول: Backoff پایه یک دقیقه.
 SELECT string_agg(payload->>'case' || '=' ||
   platform.fail_outbox(id, claim_token, 'x', 8, payload->>'case' = 'dead',
-    CASE payload->>'case' WHEN 'zero' THEN 0 WHEN 'ten_min' THEN 600
-                          WHEN 'day' THEN 86400 WHEN 'dead' THEN 600 END),
+    (payload->>'ra')::int, (payload->>'j')::float8),
   ',' ORDER BY id) INTO v_t
   FROM platform.outbox_message WHERE topic = 'probe.retry';
-PERFORM pg_temp.assert_txt('وضعیت‌ها', v_t, 'none=pending,zero=pending,ten_min=pending,day=pending,dead=dead');
+PERFORM pg_temp.assert_txt('وضعیت‌ها', v_t,
+  'none=pending,zero=pending,ten_min=pending,hour_plus=pending,two_hours=pending,day=pending,'
+  || 'j_half=pending,j_full=pending,ra_61_j0=pending,ra_61_j1=pending,ra_600_j1=pending,dead=dead');
 
 SELECT string_agg(payload->>'case' || '=' || (next_attempt_at - now())::text, ',' ORDER BY id) INTO v_t
   FROM platform.outbox_message WHERE topic = 'probe.retry';
-PERFORM pg_temp.assert_txt('تأخیرها: بی هدر و صفر = Backoff؛ ۶۰۰ = کف؛ یک روز = سقف یک ساعت؛ مرده = الان',
-  v_t, 'none=00:01:00,zero=00:01:00,ten_min=00:10:00,day=01:00:00,dead=00:00:00');
+PERFORM pg_temp.assert_txt(
+  'تأخیرها: Retry-After بالای یک ساعت کامل می‌ماند (۳۶۰۱، ۷۲۰۰، ۸۶۴۰۰)؛ لرزش ۰ تا ۲۰٪ رو به بالا؛ هرگز زیر Retry-After',
+  v_t, 'none=00:01:00,zero=00:01:00,ten_min=00:10:00,hour_plus=01:00:01,two_hours=02:00:00,day=1 day,'
+    || 'j_half=00:01:06,j_full=00:01:12,ra_61_j0=00:01:01,ra_61_j1=00:01:12,ra_600_j1=00:10:00,dead=00:00:00');
 
 -- کنترل حساسیت: کفِ کمتر از Backoff آن را پایین نمی‌آورد.
 UPDATE platform.outbox_message SET next_attempt_at = now() - interval '1 second', attempts = 4
  WHERE topic = 'probe.retry' AND payload->>'case' = 'none';
 PERFORM count(*) FROM platform.claim_outbox(10, 'w', 120, ARRAY['probe.retry']);
-PERFORM platform.fail_outbox(id, claim_token, 'x', 8, false, 30)
+PERFORM platform.fail_outbox(id, claim_token, 'x', 8, false, 30, 0)
    FROM platform.outbox_message WHERE topic = 'probe.retry' AND payload->>'case' = 'none';
 PERFORM pg_temp.assert_txt('تلاش پنجم: Backoff ۱۶ دقیقه بر کف ۳۰ ثانیه برنده است',
   (SELECT (next_attempt_at - now())::text FROM platform.outbox_message
     WHERE topic = 'probe.retry' AND payload->>'case' = 'none'), '00:16:00');
+
+-- سقف Backoff (نه Retry-After) یک ساعت است؛ لرزش روی خودِ سقف هم می‌نشیند تا Workerها پس از قطعی
+-- طولانی هم‌گام نشوند.
+UPDATE platform.outbox_message SET next_attempt_at = now() - interval '1 second', attempts = 11
+ WHERE topic = 'probe.retry' AND payload->>'case' IN ('zero', 'j_full');
+PERFORM count(*) FROM platform.claim_outbox(10, 'w', 120, ARRAY['probe.retry']);
+PERFORM platform.fail_outbox(id, claim_token, 'x', 20, false, NULL, CASE payload->>'case' WHEN 'zero' THEN 0 ELSE 1 END)
+   FROM platform.outbox_message WHERE topic = 'probe.retry' AND payload->>'case' IN ('zero', 'j_full');
+PERFORM pg_temp.assert_txt('تلاش دوازدهم: سقف Backoff یک ساعت، با لرزش تا ۷۲ دقیقه',
+  (SELECT string_agg(payload->>'case' || '=' || (next_attempt_at - now())::text, ',' ORDER BY id)
+     FROM platform.outbox_message WHERE topic = 'probe.retry' AND payload->>'case' IN ('zero', 'j_full')),
+  'zero=01:00:00,j_full=01:12:00');
+
+PERFORM pg_temp.assert_raises('لرزش منفی',
+  format($$SELECT platform.fail_outbox(%s, gen_random_uuid(), 'x', 8, false, NULL, -0.01)$$, v_id));
+PERFORM pg_temp.assert_raises('لرزش بیش از یک',
+  format($$SELECT platform.fail_outbox(%s, gen_random_uuid(), 'x', 8, false, NULL, 1.01)$$, v_id));
+
+-- لرزش پیش‌فرض (تولید) واقعاً تصادفی است و در همان بازه می‌ماند: سی پیام، یک شکست هم‌زمان.
+DELETE FROM platform.outbox_message;
+INSERT INTO platform.outbox_message (topic, payload)
+SELECT 'probe.jitter', '{}'::jsonb FROM generate_series(1, 30);
+PERFORM count(*) FROM platform.claim_outbox(50, 'w', 120, ARRAY['probe.jitter']);
+PERFORM platform.fail_outbox(id, claim_token, 'x', 8, false, 61)
+   FROM platform.outbox_message WHERE topic = 'probe.jitter';
+PERFORM pg_temp.assert_txt('لرزش پیش‌فرض: همه بین ۶۱ و ۷۲ ثانیه (هرگز زیر Retry-After ۶۱)، و نه همه یکسان',
+  (SELECT (min(next_attempt_at - now()) >= interval '61 seconds'
+       AND max(next_attempt_at - now()) <= interval '72 seconds'
+       AND count(DISTINCT next_attempt_at) > 1)::text
+     FROM platform.outbox_message WHERE topic = 'probe.jitter'), 'true');
 
 RAISE NOTICE E'\n═══ ۷. دو خط موضوع: بی‌همپوشانی و کامل ═══';
 

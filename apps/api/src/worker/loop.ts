@@ -363,6 +363,7 @@ async function failMessage(
 
 /**
  * زمان دور بعد — محدود در هر سه حالت.
+ * خطای دور لرزش ۰ تا ۲۰٪ رو به بالا دارد (`ERROR_JITTER`)؛ بی‌کاری و دستهٔ پر نه.
  *
  * - **دستهٔ پر** یعنی صف عقب است: دور بعد بی‌درنگ، ولی حداکثر
  *   `MAX_BACKLOG_STREAK` بار پیاپی؛ بعد یک فاصلهٔ عادی تا دیتابیس و لاگ
@@ -379,16 +380,24 @@ export interface PaceState {
   errors: number;
 }
 
+export const ERROR_JITTER = 0.2;
+
 export function nextPace(
   state: PaceState,
   outcome: { ok: true; claimed: number } | { ok: false },
   intervalMs: number,
   batchSize: number,
+  /** فقط آزمون مقدار ثابت می‌دهد؛ تولید `Math.random`. خروجی در [0, 1]. */
+  rand: () => number = Math.random,
 ): { delayMs: number; state: PaceState } {
   if (!outcome.ok) {
     const errors = state.errors + 1;
     const cap = Math.max(intervalMs, MAX_ERROR_BACKOFF_MS);
-    return { delayMs: Math.min(intervalMs * 2 ** Math.min(errors, 20), cap), state: { backlog: 0, errors } };
+    const base = Math.min(intervalMs * 2 ** Math.min(errors, 20), cap);
+    // ⚠️ لرزش محدود و رو به بالا (۰ تا ۲۰٪): چند Worker که با یک قطعی دیتابیس هم‌زمان شکستند،
+    //    نباید با هم برگردند. پایه هرگز کوتاه نمی‌شود.
+    const j = Math.min(1, Math.max(0, rand()));
+    return { delayMs: Math.round(base * (1 + ERROR_JITTER * j)), state: { backlog: 0, errors } };
   }
   if (outcome.claimed >= batchSize && state.backlog < MAX_BACKLOG_STREAK) {
     return { delayMs: 0, state: { backlog: state.backlog + 1, errors: 0 } };

@@ -15,7 +15,7 @@ import { describe, test } from "node:test";
 import assert from "node:assert/strict";
 import { parseRetryAfter, retryAfterFor, RETRY_AFTER_MAX_SECONDS } from "../src/worker/retry-after.ts";
 import {
-  assertLease, MAX_BACKLOG_STREAK, MAX_ERROR_BACKOFF_MS, MESSAGE_BUDGET_SECONDS, nextPace,
+  assertLease, ERROR_JITTER, MAX_BACKLOG_STREAK, MAX_ERROR_BACKOFF_MS, MESSAGE_BUDGET_SECONDS, nextPace,
   WEB_TOPICS, WORKER_LANES, type PaceState,
 } from "../src/worker/loop.ts";
 import { HANDLERS } from "../src/worker/handlers.ts";
@@ -92,10 +92,11 @@ describe("خط‌های موضوع", () => {
 });
 
 describe("سرعت حلقه — محدود در هر سه حالت", () => {
-  const run = (outcomes: ({ ok: true; claimed: number } | { ok: false })[], intervalMs = 5_000, batch = 20) => {
+  // بی لرزش (rand = 0) عددها دقیق‌اند؛ لرزش جدا در آزمون پایین سنجیده می‌شود.
+  const run = (outcomes: ({ ok: true; claimed: number } | { ok: false })[], intervalMs = 5_000, batch = 20, rand = () => 0) => {
     let state: PaceState = { backlog: 0, errors: 0 };
     return outcomes.map(o => {
-      const next = nextPace(state, o, intervalMs, batch);
+      const next = nextPace(state, o, intervalMs, batch, rand);
       state = next.state;
       return next.delayMs;
     });
@@ -123,6 +124,27 @@ describe("سرعت حلقه — محدود در هر سه حالت", () => {
 
   test("فاصلهٔ پیکربندی بلندتر از سقف خطا کوتاه نمی‌شود", () => {
     assert.deepEqual(run([{ ok: false }, { ok: false }], 120_000), [120_000, 120_000]);
+  });
+
+  test("خطا لرزش محدود و رو به بالا دارد؛ بی‌کاری و دستهٔ پر نه", () => {
+    // سقف لرزش دقیق: ۲۰٪ بالای پایه، هرگز زیر پایه.
+    assert.deepEqual(run([{ ok: false }, { ok: false }, { ok: false }, { ok: false }], 5_000, 20, () => 1),
+      [12_000, 24_000, 48_000, 72_000]);
+    assert.deepEqual(run([{ ok: false }], 5_000, 20, () => 0.5), [11_000]);
+    // rand بیرون از بازه بریده می‌شود، نه اینکه تأخیر منفی یا بی‌سقف بسازد.
+    assert.deepEqual(run([{ ok: false }], 5_000, 20, () => 7), [12_000]);
+    assert.deepEqual(run([{ ok: false }], 5_000, 20, () => -3), [10_000]);
+    assert.deepEqual(run([{ ok: true, claimed: 0 }, { ok: true, claimed: 20 }], 5_000, 20, () => 1), [5_000, 0]);
+    // پیش‌فرض تولید Math.random است: صد بار، همه در بازه، و نه همه یکسان.
+    let state: PaceState = { backlog: 0, errors: 2 };
+    const seen = new Set<number>();
+    for (let i = 0; i < 100; i++) {
+      const d = nextPace(state, { ok: false }, 5_000, 20).delayMs;
+      assert.ok(d >= 40_000 && d <= 40_000 * (1 + ERROR_JITTER), String(d));
+      seen.add(d);
+      state = { backlog: 0, errors: 2 };
+    }
+    assert.ok(seen.size > 1, "لرزش پیش‌فرض واقعاً تصادفی است");
   });
 });
 
