@@ -4,7 +4,9 @@
  */
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { coreState, isOrderStatus, ORDER_STATUS_LABEL, ORDER_STATUSES, orderStatusState, type OrderCore } from "../src/lib/site-orders.ts";
+import {
+  addressLines, coreState, isPaymentId, isStatusSlug, moneyView, orderPath, ordersPath, orderStatusState, type OrderCore,
+} from "../src/lib/site-orders.ts";
 import { STATUS } from "../src/lib/status.ts";
 import { ZONES } from "../src/lib/navigation.ts";
 
@@ -19,13 +21,44 @@ test("وضعیت ثبت در Core: ثبت > متوقف > خطا > در انتظ�
   assert.deepEqual(coreState(base), { state: "draft", label: "پرداخت تأیید نشده" });
 });
 
-test("هر وضعیت سایت برچسب و حالت معنایی دارد؛ ورودی نشانی فقط وضعیت شناخته‌شده را می‌پذیرد", () => {
-  for (const s of [...ORDER_STATUSES, "unknown"] as const) {
-    assert.ok(ORDER_STATUS_LABEL[s], s);
+test("وضعیت سایت: هسته‌ای حالت معنایی دارد؛ افزونه‌ای «نامعلوم» است ولی پذیرفته می‌شود", () => {
+  for (const s of ["pending", "processing", "on-hold", "completed", "cancelled", "refunded", "failed", "awaiting-shipment"]) {
     assert.ok(STATUS[orderStatusState(s)], s);
   }
-  assert.ok(isOrderStatus("on-hold"));
-  for (const bad of ["", "trash", "wc-processing", "unknown", "PROCESSING"]) assert.ok(!isOrderStatus(bad), bad);
+  assert.equal(orderStatusState("processing"), "active");
+  assert.equal(orderStatusState("awaiting-shipment"), "unknown", "معنای وضعیت سفارشی را این برنامه نمی‌داند");
+  // وضعیت ثبت‌شدهٔ افزونه‌ای (یافتهٔ ریشه) از نشانی پذیرفته است؛ فقط شکل اسلاگ سنجیده می‌شود.
+  for (const ok of ["on-hold", "awaiting-shipment", "wc_custom_1"]) assert.ok(isStatusSlug(ok), ok);
+  for (const bad of ["", "PROCESSING", "a b", "x".repeat(41), "<b>"]) assert.ok(!isStatusSlug(bad), bad);
+  assert.ok(isPaymentId("bacs") && isPaymentId("WC_Gateway-2"));
+  assert.ok(!isPaymentId("a b") && !isPaymentId(""));
+});
+
+test("مبلغ: ریال دقیق، یا مبلغ اصلی با کد ارز؛ دلار هرگز ریال نمایش داده نمی‌شود", () => {
+  assert.deepEqual(moneyView({ amount: "100", rial: "100" }, "IRR"), { kind: "rial", rial: "100" });
+  assert.deepEqual(moneyView({ amount: "100", rial: "1000" }, "IRT"), { kind: "rial", rial: "1000" });
+  assert.deepEqual(moneyView({ amount: "12.50", rial: null }, "USD"), { kind: "foreign", amount: "12.50", currency: "USD" });
+  assert.deepEqual(moneyView({ amount: "12.55", rial: null }, "IRT"), { kind: "foreign", amount: "12.55", currency: "IRT" },
+    "تومانِ با کسر ریال، با همان عدد و کد نشان داده می‌شود نه با گردکردن");
+  assert.deepEqual(moneyView({ amount: "5", rial: null }, ""), { kind: "foreign", amount: "5", currency: "ارز نامعلوم" });
+  assert.deepEqual(moneyView({ amount: null, rial: null }, "IRR"), { kind: "unknown" });
+});
+
+test("نشانی درخواست: فیلتر خالی نمی‌رود؛ صفحهٔ فراتر از ۲۰۰ و لنگر می‌روند", () => {
+  const q = { page: 1, status: null, search: null, from: null, to: null, payment: null, until: null };
+  assert.equal(ordersPath(q), "/web/orders?page=1");
+  assert.equal(ordersPath({ ...q, page: 201, status: "on-hold", search: "۰۹۱۲ 34", from: "2026-10-01", to: "2026-10-20",
+    payment: "bacs", until: 1792000000 }),
+  "/web/orders?page=201&status=on-hold&q=%DB%B0%DB%B9%DB%B1%DB%B2+34&from=2026-10-01&to=2026-10-20&payment=bacs&until=1792000000");
+  assert.equal(orderPath(41, 1, 1), "/web/orders/41");
+  assert.equal(orderPath(41, 3, 2), "/web/orders/41?items=3&notes=2");
+});
+
+test("نشانی پستی: میدان خالی حذف می‌شود", () => {
+  const empty = { firstName: "", lastName: "", company: "", address1: "", address2: "", city: "", state: "", postcode: "", country: "", phone: "" };
+  assert.deepEqual(addressLines(empty), []);
+  assert.deepEqual(addressLines({ ...empty, firstName: "سارا", lastName: "رضایی", city: "تهران", postcode: "123", country: "IR" }),
+    ["سارا رضایی", "تهران، 123", "IR"]);
 });
 
 test("منوی «سفارش‌های سایت» فقط با web.orders.view و در گروه کار روزانه", () => {
