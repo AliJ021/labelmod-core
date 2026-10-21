@@ -133,10 +133,31 @@ class LMC_Client
 
         lmc_log(sprintf('%s → HTTP %d', $method, $code));
 
-        return new WP_Error('lmc_' . $errCode, $message, [
+        $data = [
             'kind'   => $retryable ? self::RETRYABLE : self::PERMANENT,
             'status' => $code,
-        ]);
+        ];
+        // Retry-After کفِ تأخیر تلاش بعدی است (LMC_Queue::retry_delay)؛ سقف همان‌جاست.
+        $after = ($code === 429 || $code === 503)
+            ? self::retry_after((string) wp_remote_retrieve_header($res, 'retry-after')) : null;
+        if ($after !== null) {
+            $data['retry_after'] = $after;
+        }
+        return new WP_Error('lmc_' . $errCode, $message, $data);
+    }
+
+    /** ثانیه یا HTTP-date (RFC 9110)؛ بدشکل یعنی «نگفته». */
+    public static function retry_after(string $raw): ?int
+    {
+        $raw = trim($raw);
+        if ($raw === '') {
+            return null;
+        }
+        if (preg_match('/^[0-9]{1,9}$/D', $raw)) {
+            return min(86400, (int) $raw);
+        }
+        $at = strtotime($raw);
+        return $at === false ? null : max(0, min(86400, $at - time()));
     }
 
     /** آیا این خطا ارزش تلاش دوباره دارد؟ */
