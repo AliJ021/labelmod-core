@@ -126,6 +126,8 @@ export async function signedWooPost(config: { siteUrl: string; secret: string | 
       ? await (deps.read ?? readPinnedJson)(target, body, headers)
       : await (deps.read ?? readPinnedJson)(target, body, headers, undefined, maxBytes);
     if (response.status >= 300 && response.status < 400) return wooFailure("redirect", "سایت تغییر مسیر می‌دهد؛ نشانی HTTPS نهایی را وارد کنید. تغییر مسیر دنبال نشد.");
+    // ۴۰۰ یعنی افزونه امضا را پذیرفت ولی خودِ درخواست (فیلتر، صفحه، شناسه) را نه؛ «افزونه خاموش است» نیست.
+    if (response.status === 400) return wooFailure("bad_query", "افزونه این درخواست را نپذیرفت؛ فیلتر یا صفحه را تغییر دهید، یا نسخهٔ افزونه را بررسی کنید.");
     if ([401, 403].includes(response.status)) return wooFailure("authentication", "امضای اتصال پذیرفته نشد؛ یکسان‌بودن کلید امضا و ساعت دو سرور را بررسی کنید.");
     if (response.status !== 200 && response.status !== 404) return wooFailure("remote_unavailable", "افزونه پاسخ موفق نداد؛ فعال‌بودن افزونه، کلید امضا و جدول Nonce را بررسی کنید.");
     return { ok: true, status: response.status, body: response.body };
