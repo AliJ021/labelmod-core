@@ -18,7 +18,47 @@ export const wooReport = z.object({
     attempts: z.number().int().nonnegative(), hasError: z.boolean(),
     missingSku: z.number().int().nonnegative(), missingMapping: z.number().int().nonnegative(),
   }).nullable(),
+  // تله‌متری صف بحرانی افزونه (سفارش/مرجوعی/رزرو → Core). جدا سنجیده می‌شود (`wooQueueView`): نبود یا
+  // نامعتبر بودنش فقط همان بخش را «نامعلوم» می‌کند، نه کل تست اتصال را.
+  queue: z.unknown().optional(),
 });
+
+const count = z.number().int().nonnegative().nullable();
+/**
+ * قرارداد فقط‌خواندنی تله‌متری صف افزونه. `null` یعنی «افزونه نتوانست بشمارد»؛ میدانِ ناموجود (نسخهٔ
+ * قدیمی‌تر افزونه) هم نامعلوم است — هیچ‌کدام صفر نمی‌شود. `failedActions` **سطر** نگه‌داشتهٔ Action Scheduler
+ * است، نه کار منطقی؛ `deadTasks` فقط کارهای متوقف‌شده با شکست غیرمنتظره است، نه شکست قطعیِ تجاری.
+ */
+export const queueTelemetry = z.object({
+  backend: z.enum(["action-scheduler", "wp-cron"]),
+  group: z.string().max(64),
+  pendingDue: count.optional(), pendingFuture: count.optional(), running: count.optional(),
+  deadTasks: count, deadScope: z.literal("unexpected_failure_only"),
+  deferredTasks: count, busyTasks: count.optional(),
+  failedActions: count, failedActionsScope: z.literal("action_scheduler_retained_rows"),
+});
+
+export type WooQueueView =
+  | { state: "known"; backend: "action-scheduler" | "wp-cron"; counts: {
+      due: number | null; scheduled: number | null; running: number | null; deferred: number | null;
+      busy: number | null; stoppedTasks: number | null; failedRows: number | null; } }
+  | { state: "unknown"; code: "no_queue_telemetry" | "invalid_queue_telemetry"; message: string };
+
+/** گزارش صف افزونه → نمای داشبورد. میدانِ نبوده `null` (نامعلوم) می‌شود، نه صفر. */
+export function wooQueueView(raw: unknown): WooQueueView {
+  if (raw === undefined) {
+    return { state: "unknown", code: "no_queue_telemetry", message: "این نسخهٔ افزونه وضعیت صف را گزارش نمی‌کند؛ افزونه را به‌روز کنید." };
+  }
+  const q = queueTelemetry.safeParse(raw);
+  if (!q.success) {
+    return { state: "unknown", code: "invalid_queue_telemetry", message: "گزارش صف افزونه با قرارداد سازگار نیست؛ نسخهٔ افزونه را بررسی کنید." };
+  }
+  const v = q.data;
+  return { state: "known", backend: v.backend, counts: {
+    due: v.pendingDue ?? null, scheduled: v.pendingFuture ?? null, running: v.running ?? null,
+    deferred: v.deferredTasks, busy: v.busyTasks ?? null, stoppedTasks: v.deadTasks, failedRows: v.failedActions,
+  } };
+}
 
 /** بدنه محدود، اتصال پین‌شده، بدون دنبال‌کردن تغییر مسیر یا بازتاب خطای مقصد. */
 export function readPinnedJson(target: PinnedTarget, body: string, headers: Record<string, string>, send: HttpRequestFn = request,

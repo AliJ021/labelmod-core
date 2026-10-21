@@ -54,11 +54,12 @@ $order = new class {
     function save() { throw new Exception('تشخیص نباید سفارش را ذخیره کند'); }
 };
 $wpdb = new class {
-    public $posts = 'wp_posts'; public $postmeta = 'wp_postmeta';
+    public $posts = 'wp_posts'; public $postmeta = 'wp_postmeta'; public $options = 'wp_options';
     function prepare($query, ...$args) { return $query; }
     function get_var($query) { if (strpos($query, 'SELECT COUNT') !== 0) { throw new Exception('فقط خواندن'); } return 3; }
 };
 require_once __DIR__ . '/../labelmod-connector/includes/class-lmc-client.php';
+require_once __DIR__ . '/../labelmod-connector/includes/class-lmc-queue.php';
 require_once __DIR__ . '/../labelmod-connector/includes/class-lmc-order-sync.php';
 require_once __DIR__ . '/../labelmod-connector/includes/class-lmc-push-secret.php';
 require_once __DIR__ . '/../labelmod-connector/includes/class-lmc-push-receiver.php';

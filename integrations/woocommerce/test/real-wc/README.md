@@ -24,3 +24,18 @@ python3 run.py <work> <plugins> new bbae0d1 > result.jsonl
   - **کنترل منفی:** سفارش همگام‌نشدهٔ انبارهٔ دیگر نباید دیده شود. برای همین، انبارهٔ فعال مستقیم در جدول گزینه‌ها جابه‌جا می‌شود؛ ووکامرس جابه‌جایی با سفارش همگام‌نشده را عمداً رد می‌کند.
   - **نتیجهٔ ۲۰ اکتبر:** `results/2026-10-20-orders-view.jsonl`، چهار اجرای متناوب hpos/legacy/hpos/legacy، هر کدام ۲۳/۲۳.
   - **جهش:** جایگزینی `wc_get_orders` با `get_posts(post_type=shop_order)` روی HPOS در «هر سه، تازه‌ترین اول» و روی legacy در «فیلتر وضعیت» شکست خورد.
+- `run_queue.py` + `mu-queue.php` + `queue-actor.php`: صف بحرانی ۱٫۵٫۰ با اجراکنندهٔ واقعی WP-CLI
+  (`wp labelmod queue run`)، Core جعلی برای `POST /api/web/orders` (ok، ۵۰۳/۴۲۹ با Retry-After، hang):
+  تأخیر صف تا تلاش، دو اجراکنندهٔ هم‌زمان، تخلیهٔ انباشت، SIGKILL و بازیابی، کنترل منفی با Hook بازیابی
+  خاموش و با افزونهٔ main، و سقف شش تلاش. نتیجه در `results/2026-10-18-queue.jsonl`.
+
+  ```bash
+  python3 run_queue.py <wp-root> <plugin-new> <plugin-old> <wp-cli.phar> <lab-dir> [scenario...]
+  ```
+- `run_queue_race.py` + `mu-queue-probe.php`: رقابت‌های صف با مانع روی پرسش SQL واقعی (TOCTOU «صف کن»، گم‌شدن
+  شمارنده و ثبت مرده، اجرای هم‌زمان دو سطرِ یک سفارش)؛ با یک افزونهٔ داده‌شده اجرا می‌شود تا پیش/پس مقایسه شود.
+  نتیجه در `results/2026-10-19-queue-race.jsonl`.
+
+  ```bash
+  python3 run_queue_race.py <wp-root> <plugin-dir> <label> <wp-cli.phar> <lab-dir> [scenario...]
+  ```
