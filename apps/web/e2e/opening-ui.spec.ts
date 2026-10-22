@@ -93,9 +93,16 @@ test("opening unknown write stays blocked after read and reload, storing no amou
 
 test("opening known-success reload permits deliberate review without automatic replacement",async({page,api})=>{
   mockOpening(api);api.defaults["POST /opening-balance"]={entryId};
-  await start(page);await balanced(page);await review(page).click();await confirm(page).click();
+  await start(page);await balanced(page);await review(page).click();
+  // ثبت موفق بازخوانی تازه‌ای می‌سازد؛ Reload نباید درخواست‌های آن را وسط راه قطع کند.
+  const refetched = Promise.all(["/api/tafsili", "/api/branches", "/api/auth/can"].map(path =>
+    page.waitForResponse(r => r.request().method() === "GET" && new URL(r.url()).pathname === path)
+      .then(async response => { expect(response.ok()).toBe(true); expect(await response.finished()).toBeNull(); })));
+  await confirm(page).click();
   await expect(page.getByText("سند افتتاحیه ثبت شد",{exact:true})).toBeVisible();await expect(review(page)).toBeDisabled();
   expect(await page.evaluate(()=>sessionStorage.getItem("labelmod.opening.b1.1405"))).toBeNull();
+  await refetched;
+  await expect(page.getByText("در حال خواندن اطلاعات…",{exact:true})).toBeHidden();
   await page.reload();await balanced(page,"2400");await expect(review(page)).toBeEnabled();await review(page).click();
   await expect(page.getByRole("dialog",{name:"تأیید سند افتتاحیه"})).toBeVisible();
   await expect(confirm(page)).toBeEnabled();
