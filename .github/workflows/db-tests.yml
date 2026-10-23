@@ -425,7 +425,9 @@ jobs:
   browser-regression-shard:
     name: browser-regression (${{ matrix.shard }}/4)
     runs-on: ubuntu-24.04
-    timeout-minutes: 45
+    # The full browser matrix needs room beyond the former 45-minute job budget.
+    # Test timeouts, retries, assertions and shard coverage stay unchanged.
+    timeout-minutes: 60
     strategy:
       fail-fast: false
       matrix:
