@@ -85,7 +85,7 @@ export interface OrdersPage { page: number; perPage: number; total: number; page
 export interface ReceivingAccount { id: string; code: string; name: string; bankName: string | null; accountNo: string | null }
 
 /** کدام کار در کدام وضعیت — همان قاعده‌ای که سرور اجبار می‌کند؛ اینجا فقط برای پنهان‌کردن دکمهٔ بی‌اثر. */
-export function actionsFor(d: Pick<OrderDetail, "status" | "paymentState" | "lines" | "shippingState">): {
+export function actionsFor(d: Pick<OrderDetail, "status" | "paymentState" | "lines" | "shippingState"> & { invoice?: { status: string } }): {
   editCart: boolean; reserve: boolean; unreserve: boolean; cancel: boolean; markPayment: boolean; confirm: boolean; ship: boolean;
 } {
   const inReview = d.paymentState === "claimed" || d.paymentState === "review";
@@ -96,7 +96,9 @@ export function actionsFor(d: Pick<OrderDetail, "status" | "paymentState" | "lin
     cancel: (d.status === "draft" || d.status === "reserved" || d.status === "expired") && !inReview,
     markPayment: d.status === "draft" || d.status === "reserved" || d.status === "expired",
     confirm: d.status === "reserved" || d.status === "expired",
-    ship: d.status === "finalized" && d.shippingState !== "delivered",
+    // کالای کاملاً مرجوع‌شده ارسال نمی‌شود؛ بسته‌ای که رفته هنوز «تحویل شد» می‌گیرد (همان قاعدهٔ سرور).
+    ship: d.status === "finalized" && d.shippingState !== "delivered"
+      && (d.invoice?.status !== "returned" || d.shippingState === "shipped"),
   };
 }
 
@@ -114,11 +116,16 @@ export function normalizeUsername(raw: string): { ok: true; value: string | null
     : { ok: false, message: "فقط حروف انگلیسی، عدد، نقطه و زیرخط (حداکثر ۳۰)." };
 }
 
-/** ریال از ورودی تومانیِ کاربر (رقم فارسی و جداکننده پذیرفته)؛ تهی یعنی نامعتبر. */
+/**
+ * ریال از ورودی تومانیِ کاربر (رقم فارسی و جداکننده پذیرفته)؛ تهی یعنی نامعتبر.
+ * یک رقم اعشار (ممیز «.» یا «٫») یعنی ریال: مبلغ کاملی که مضرب ۱۰ ریال نیست (تخفیف درصدی گردشده)
+ * هم باید دقیقاً واردشدنی باشد، وگرنه سفارش هرگز از صفحه تأیید نمی‌شد.
+ */
 export function rialFromToman(input: string): string | null {
-  const d = normalizeDigits(input).replace(/[,\s٬]/g, "");
-  if (!/^\d{1,15}$/.test(d)) return null;
-  return (BigInt(d) * 10n).toString();
+  const d = normalizeDigits(input).replace(/[,\s٬]/g, "").replace("٫", ".");
+  const m = /^(\d{1,15})(?:\.(\d))?$/.exec(d);
+  if (!m) return null;
+  return (BigInt(m[1]!) * 10n + BigInt(m[2] ?? "0")).toString();
 }
 
 /** تعداد سطر: عدد صحیح ۱ تا ۹۹۹ با رقم فارسی یا لاتین؛ اعشار و صفر تهی‌اند (قاعدهٔ سرور: پوشاک تکه‌ای است). */

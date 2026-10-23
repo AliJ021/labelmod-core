@@ -198,11 +198,11 @@ BEGIN
   END IF;
   IF (NEW.status, NEW.payment_state, NEW.payment_note, NEW.shipping_state, NEW.tracking_code,
       NEW.reserved_until, NEW.cancel_reason, NEW.invoice_id, NEW.branch_id, NEW.warehouse_id,
-      NEW.customer_id, NEW.created_by, NEW.order_no)
+      NEW.customer_id, NEW.created_by, NEW.order_no, NEW.id, NEW.created_at)
      IS DISTINCT FROM
      (OLD.status, OLD.payment_state, OLD.payment_note, OLD.shipping_state, OLD.tracking_code,
       OLD.reserved_until, OLD.cancel_reason, OLD.invoice_id, OLD.branch_id, OLD.warehouse_id,
-      OLD.customer_id, OLD.created_by, OLD.order_no) THEN
+      OLD.customer_id, OLD.created_by, OLD.order_no, OLD.id, OLD.created_at) THEN
     RAISE EXCEPTION 'وضعیت سفارش اینستاگرام فقط از مسیر رسمی همان عملیات عوض می‌شود';
   END IF;
   IF NEW.version NOT IN (OLD.version, OLD.version + 1) THEN
@@ -212,6 +212,19 @@ BEGIN
 END $$;
 CREATE TRIGGER instagram_order_state_guard BEFORE INSERT OR UPDATE ON sales.instagram_order
   FOR EACH ROW EXECUTE FUNCTION sales.instagram_order_state_guard();
+
+-- «در حال تأیید» فقط درون تراکنش تأیید معنا دارد. اگر کسی begin_confirm را بی finish_confirm
+-- Commit کند، رزرو آزاد شده، فاکتور پیش‌نویس مانده و سفارش برای همیشه قفل است. قید معوق
+-- همان لحظهٔ COMMIT ردش می‌کند (پشتوانهٔ نقش برنامه؛ مسیر API همیشه هر دو را در یک تراکنش دارد).
+CREATE FUNCTION sales.instagram_no_confirming_commit() RETURNS trigger LANGUAGE plpgsql AS $$
+BEGIN
+  IF EXISTS (SELECT 1 FROM sales.instagram_order WHERE id = NEW.id AND status = 'confirming') THEN
+    RAISE EXCEPTION 'تأیید واریز سفارش % نیمه‌کاره ماند؛ پرداخت و نهایی‌سازی باید در همان تراکنش باشند', NEW.order_no;
+  END IF;
+  RETURN NULL;
+END $$;
+CREATE CONSTRAINT TRIGGER instagram_no_confirming_commit AFTER INSERT OR UPDATE ON sales.instagram_order
+  DEFERRABLE INITIALLY DEFERRED FOR EACH ROW EXECUTE FUNCTION sales.instagram_no_confirming_commit();
 
 -- ─────────────────────────────────────────────────────────────────────
 -- رزرو و آزادسازی — نویسندگان stock_balance، پس SECURITY DEFINER (write-gate.sql)
@@ -352,21 +365,28 @@ END $$;
 
 -- انقضای رزروهای سررسیده — فقط وقتی هیچ واریزی در جریان نیست. اجرا از Worker.
 -- SKIP LOCKED: سفارشی که همین لحظه در تأیید واریز قفل است، این دور منقضی نمی‌شود.
-CREATE FUNCTION sales.instagram_expire_due(p_actor uuid, p_now timestamptz DEFAULT clock_timestamp())
+-- «اکنون» از ساعت دیتابیس است، نه پارامتر: فراخوانی که «اکنون» را جلو بیندازد همهٔ رزروها را
+-- پیش از مهلت آزاد می‌کرد. هر سفارش در زیرتراکنش خودش: خطای یک سفارش (WARNING در لاگ) بقیه و
+-- دور Worker را از کار نمی‌اندازد و آن سفارش در دور بعد دوباره سنجیده می‌شود.
+CREATE FUNCTION sales.instagram_expire_due(p_actor uuid)
 RETURNS integer LANGUAGE plpgsql SECURITY DEFINER
 SET search_path = pg_catalog, public, sales, inventory, platform AS $$
 DECLARE o record; n integer := 0;
 BEGIN
   PERFORM platform.set_actor(p_actor);
   FOR o IN SELECT * FROM sales.instagram_order
-            WHERE status = 'reserved' AND reserved_until <= p_now AND payment_state = 'none'
+            WHERE status = 'reserved' AND reserved_until <= clock_timestamp() AND payment_state = 'none'
             ORDER BY reserved_until FOR UPDATE SKIP LOCKED LOOP
-    PERFORM sales.instagram_release_hold(o.id);
-    UPDATE sales.instagram_order SET status = 'expired', reserved_until = NULL, updated_at = now()
-      WHERE id = o.id;
-    PERFORM platform.audit('instagram_order.expire', 'instagram_order', o.id::text,
-      jsonb_build_object('orderNo', o.order_no, 'deadline', o.reserved_until), p_actor);
-    n := n + 1;
+    BEGIN
+      PERFORM sales.instagram_release_hold(o.id);
+      UPDATE sales.instagram_order SET status = 'expired', reserved_until = NULL, updated_at = now()
+        WHERE id = o.id;
+      PERFORM platform.audit('instagram_order.expire', 'instagram_order', o.id::text,
+        jsonb_build_object('orderNo', o.order_no, 'deadline', o.reserved_until), p_actor);
+      n := n + 1;
+    EXCEPTION WHEN OTHERS THEN
+      RAISE WARNING 'انقضای رزرو سفارش % انجام نشد: %', o.order_no, SQLERRM;
+    END;
   END LOOP;
   RETURN n;
 END $$;
@@ -422,17 +442,20 @@ BEGIN
       p_amount, inv.payable_amount;
   END IF;
 
-  -- مرجع بانکی در دامنهٔ (حساب، روز کاری واریز) یکتاست — میان همهٔ دریافت‌ها، نه فقط اینستاگرام.
+  -- مرجع بانکی در یک حساب، در بازهٔ ۷ روز کاری پیش و پس از روز واریز، یکتاست — میان همهٔ دریافت‌ها،
+  -- نه فقط اینستاگرام. بازه، نه همان روز: زمان واریز را اپراتور وارد می‌کند و با جابه‌جاکردن روز،
+  -- یک انتقال بانکی دو سفارش را تسویه می‌کرد. دریافت‌های دیگر با روز ثبتشان سنجیده می‌شوند.
   v_paid_date := platform.business_date(p_paid_at);
   PERFORM pg_advisory_xact_lock(hashtextextended('instagram-ref:' || p_account::text || ':' || v_ref_key, 0));
   IF EXISTS (SELECT 1 FROM sales.instagram_payment
-              WHERE account_id = p_account AND ref_key = v_ref_key AND paid_date = v_paid_date)
+              WHERE account_id = p_account AND ref_key = v_ref_key
+                AND paid_date BETWEEN v_paid_date - 7 AND v_paid_date + 7)
      OR EXISTS (SELECT 1 FROM treasury.payment p
                  WHERE p.account_id = p_account AND p.direction = 'in'
                    AND lower(btrim(p.ref_no)) = v_ref_key
                    AND p.status IN ('succeeded','settled','reconciled','pending','unknown')
-                   AND platform.business_date(p.occurred_at) = v_paid_date) THEN
-    RAISE EXCEPTION 'این شمارهٔ پیگیری در همان حساب و همان روز پیش‌تر ثبت شده است؛ واریز تکراری؟';
+                   AND platform.business_date(p.occurred_at) BETWEEN v_paid_date - 7 AND v_paid_date + 7) THEN
+    RAISE EXCEPTION 'این شمارهٔ پیگیری در همین حساب در یک هفتهٔ پیش یا پس از این واریز ثبت شده است؛ واریز تکراری؟';
   END IF;
 
   -- پرداخت دیررس پس از انقضا: موجودی دوباره و اتمیک سنجیده می‌شود، نه فروش کور.
@@ -447,6 +470,9 @@ BEGIN
                                       order_version, verified_by)
     VALUES (o.id, p_account, p_amount, btrim(p_ref), v_ref_key, p_paid_at, v_paid_date, o.version, p_actor);
   PERFORM set_config('lmc.instagram_order', o.id::text, true);
+  -- فروش در لحظهٔ تأیید واریز رخ می‌دهد، نه لحظهٔ ساخت پیش‌نویس. دورهٔ ثبت روزانه، سال مالی و تاریخ
+  -- حرکت انبار از occurred_at فاکتور می‌آیند؛ پیش‌نویس دیروز با دورهٔ بسته‌شدهٔ دیروز تأییدپذیر نبود.
+  UPDATE sales.invoice SET occurred_at = now() WHERE id = o.invoice_id;
   RETURN jsonb_build_object('invoiceId', o.invoice_id, 'replayed', false);
 END $$;
 
@@ -522,6 +548,12 @@ BEGIN
   IF o.status <> 'finalized' THEN
     RAISE EXCEPTION 'ارسال فقط پس از تأیید واریز و نهایی‌شدن فاکتور ممکن است';
   END IF;
+  -- مرجوعی کامل از مسیر رسمی وضعیت فاکتور را «returned» می‌کند؛ کالایی که برگشته ارسال نمی‌شود.
+  -- «تحویل شد» برای بسته‌ای که پیش‌تر رفته می‌ماند.
+  IF p_state IN ('packing','ready','shipped')
+     AND EXISTS (SELECT 1 FROM sales.invoice WHERE id = o.invoice_id AND status = 'returned') THEN
+    RAISE EXCEPTION 'فاکتور سفارش % کامل مرجوع شده است؛ ارسال ممکن نیست', o.order_no;
+  END IF;
   IF array_position(v_rank, p_state) < array_position(v_rank, o.shipping_state) THEN
     RAISE EXCEPTION 'وضعیت ارسال به عقب برنمی‌گردد (% → %)', o.shipping_state, p_state;
   END IF;
@@ -549,7 +581,7 @@ REVOKE ALL ON FUNCTION sales.instagram_release_hold(uuid) FROM PUBLIC;
 REVOKE ALL ON FUNCTION sales.instagram_take_hold(uuid, timestamptz) FROM PUBLIC;
 REVOKE ALL ON FUNCTION sales.instagram_reserve(uuid, uuid) FROM PUBLIC;
 REVOKE ALL ON FUNCTION sales.instagram_release(uuid, uuid, text, text) FROM PUBLIC;
-REVOKE ALL ON FUNCTION sales.instagram_expire_due(uuid, timestamptz) FROM PUBLIC;
+REVOKE ALL ON FUNCTION sales.instagram_expire_due(uuid) FROM PUBLIC;
 REVOKE ALL ON FUNCTION sales.instagram_begin_confirm(uuid, uuid, integer, uuid, platform.money, text, timestamptz) FROM PUBLIC;
 REVOKE ALL ON FUNCTION sales.instagram_finish_confirm(uuid, uuid, uuid) FROM PUBLIC;
 REVOKE ALL ON FUNCTION sales.instagram_mark_payment(uuid, uuid, text, text) FROM PUBLIC;

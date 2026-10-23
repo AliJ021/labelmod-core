@@ -201,6 +201,43 @@ describe("سفارش اینستاگرام: رزرو، تأیید واریز و �
     assert.ok((await detail(second)).similarOpen.some((o: { id: string }) => o.id === id), "سفارش باز همان مشتری هشدار شد");
   });
 
+  test("ویرایش‌ها کلید Idempotency می‌پذیرند؛ هشدار مشابه فقط در همان شعبه؛ بستن دستی دورهٔ کانال اینستاگرام", async () => {
+    const id = await newOrder(opA, []);
+    const qtyOf = async () => ((await detail(id)).lines as Array<{ variationId: string; qty: number }>)
+      .filter((l) => l.variationId === many).reduce((a, l) => a + Number(l.qty), 0);
+    // پاسخ گم‌شدهٔ «افزودن قلم» و تلاش دوباره با همان کلید: Replay، نه دو برابر شدن.
+    const k = `line-${id}`;
+    const a1 = await call("POST", `/instagram-orders/${id}/lines`, opA, { variationId: many, qty: 1 }, k);
+    assert.equal(a1.statusCode, 201, a1.body);
+    const a2 = await call("POST", `/instagram-orders/${id}/lines`, opA, { variationId: many, qty: 1 }, k);
+    assert.equal(a2.statusCode, 200, a2.body);
+    assert.equal(a2.json().replayed, true);
+    assert.equal(await qtyOf(), 1, "همان کلید قلم دوم نساخت");
+    // کنترل منفی: همان درخواست با کلید تازه واقعاً اضافه می‌کند (پس Replay بالا کار کلید بود).
+    const a3 = await call("POST", `/instagram-orders/${id}/lines`, opA, { variationId: many, qty: 1 }, `${k}-b`);
+    assert.equal(a3.statusCode, 201, a3.body);
+    assert.equal(await qtyOf(), 2);
+    // همان کلید با بدنهٔ دیگر خطاست، نه Replay بی‌صدای عمل دیگر.
+    const clash = await call("POST", `/instagram-orders/${id}/lines`, opA, { variationId: many, qty: 3 }, k);
+    assert.ok(clash.statusCode >= 400 && clash.statusCode < 500, clash.body);
+    assert.equal(await qtyOf(), 2);
+
+    // هشدار سفارش باز مشابه از شعبهٔ دیگر چیزی نشان نمی‌دهد.
+    const other = await newOrder(opA, []);
+    const seen = async () => ((await detail(id)).similarOpen as Array<{ id: string }>).some((o) => o.id === other);
+    assert.equal(await seen(), true, "کنترل مثبت: همان شعبه و همان مشتری دیده می‌شود");
+    await sql`UPDATE sales.instagram_order SET branch_id = ${otherBranch}::uuid WHERE id = ${other}::uuid`.execute(owner.db);
+    assert.equal(await seen(), false, "سفارش شعبهٔ دیگر در هشدار این شعبه نیست");
+
+    // بستن دستی دورهٔ کانال اینستاگرام از همان مسیر کانال‌های دیگر: کانال معتبر است (۴۰۴ «دوره نیست»، نه ۴۰۰).
+    const close = await call("POST", "/posting-batches/close-channel-day", opA,
+      { branchId: BRANCH, channel: "instagram", date: "2020-01-01" });
+    assert.equal(close.statusCode, 404, close.body);
+    const bad = await call("POST", "/posting-batches/close-channel-day", opA,
+      { branchId: BRANCH, channel: "telegram", date: "2020-01-01" });
+    assert.equal(bad.statusCode, 400, bad.body);
+  });
+
   test("دو اپراتور هم‌زمان: یک رزرو، نه دو؛ سبد تغییرکرده تأیید کهنه را باطل می‌کند؛ مبلغ و حساب سنجیده می‌شوند", async () => {
     const id = await newOrder(opA, [{ variationId: many, qty: 2 }]);
     const before = await balance(many);

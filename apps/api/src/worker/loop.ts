@@ -177,11 +177,17 @@ export async function tick(opts: LoopOptions): Promise<TickResult> {
      * انقضای رزرو سفارش اینستاگرام (docs/INSTAGRAM-ORDERS.md). تابع خودش
      * سفارشی را که واریزش «ادعاشده» یا «نیازمند رسیدگی» است آزاد نمی‌کند و
      * با SKIP LOCKED از سفارشِ در حال تأیید واریز می‌گذرد؛ تکرارش بی‌ضرر است.
+     * شکستش ثبت می‌شود ولی پیامک، Push و هشدار سلامت همین مسیر را نمی‌خواباند؛ تابع خودش هر سفارش
+     * را در زیرتراکنش جدا می‌زند و این catch فقط خطای کلی (اتصال، تابع ناموجود) را می‌گیرد.
      */
-    const expired = await sql<{ n: number }>`
-      SELECT sales.instagram_expire_due(${SYSTEM_USER}::uuid) AS n
-    `.execute(opts.db);
-    out.expiredInstagram = Number(expired.rows[0]?.n ?? 0);
+    try {
+      const expired = await sql<{ n: number }>`
+        SELECT sales.instagram_expire_due(${SYSTEM_USER}::uuid) AS n
+      `.execute(opts.db);
+      out.expiredInstagram = Number(expired.rows[0]?.n ?? 0);
+    } catch (err) {
+      opts.log(`✗ انقضای رزرو اینستاگرام: ${err instanceof Error ? err.message : String(err)}`);
+    }
   }
 
   const claimed = await sql<{

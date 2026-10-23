@@ -23,6 +23,11 @@ test("دکمه‌ها همان ماتریس وضعیت سرورند: سبد فق
   const fin = actionsFor({ ...base, status: "finalized", paymentState: "confirmed" });
   assert.deepEqual([fin.cancel, fin.confirm, fin.ship, fin.editCart], [false, false, true, false], "پس از نهایی فقط ارسال؛ لغو از مسیر مرجوعی");
   assert.equal(actionsFor({ ...base, status: "finalized", paymentState: "confirmed", shippingState: "delivered" }).ship, false);
+  // مرجوعی کامل: ارسال نه؛ بسته‌ای که پیش‌تر رفته هنوز «تحویل شد» می‌گیرد.
+  const returned = { ...base, status: "finalized" as const, paymentState: "confirmed" as const, invoice: { status: "returned" } };
+  assert.equal(actionsFor(returned).ship, false);
+  assert.equal(actionsFor({ ...returned, shippingState: "shipped" }).ship, true);
+  assert.equal(actionsFor({ ...returned, invoice: { status: "partially_returned" } }).ship, true, "مرجوعی جزئی باقی را می‌فرستد");
   for (const s of ["cancelled", "confirming"] as const) {
     assert.ok(Object.values(actionsFor({ ...base, status: s, paymentState: "none" })).every(v => v === false), s);
   }
@@ -61,7 +66,11 @@ test("تومان به ریال با رقم فارسی و جداکننده؛ ور
   assert.equal(rialFromToman("۱۰۵٬۰۰۰"), "1050000");
   assert.equal(rialFromToman("105,000"), "1050000");
   assert.equal(rialFromToman(""), null);
-  assert.equal(rialFromToman("12.5"), null);
+  // یک رقم اعشار ریال است: مبلغ کاملِ ۱۰۵٬۰۰۰٫۵ تومان = ۱٬۰۵۰٬۰۰۵ ریال باید واردشدنی باشد.
+  assert.equal(rialFromToman("12.5"), "125");
+  assert.equal(rialFromToman("۱۰۵٬۰۰۰٫۵"), "1050005");
+  assert.equal(rialFromToman("12.55"), null, "بیش از یک رقم اعشار ریال نیست");
+  assert.equal(rialFromToman("12."), null);
   assert.equal(rialFromToman("-5"), null);
 });
 

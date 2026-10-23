@@ -9,13 +9,14 @@
  *   Caddy بنشینند (همان درس «سفارش‌های سایت»).
  * - **تأیید واریز Idempotency-Key اجباری دارد** و پاسخ گم‌شده با همان کلید حل می‌شود.
  */
-import { sql } from "kysely";
+import { sql, type Transaction } from "kysely";
 import type { FastifyInstance } from "fastify";
 import { z } from "zod";
 import { AuthError, type ResolvedSession } from "../auth/service.ts";
 import { can, requireForSession } from "../auth/permission.ts";
 import { requireHumanSession } from "../auth/human-session.ts";
 import type { Db } from "../db/client.ts";
+import type { Database } from "../db/types.ts";
 import { parseMoney } from "../lib/money.ts";
 import { runOnce } from "../lib/idempotency.ts";
 import { hasControlChars, CONTROL_CHARS_MESSAGE } from "../lib/text.ts";
@@ -90,6 +91,23 @@ export function registerInstagramOrderRoutes(app: FastifyInstance, deps: { db: D
     const raw = req.headers["idempotency-key"];
     return typeof raw === "string" && raw.length > 0 && raw.length <= 200 ? raw : undefined;
   };
+
+  /**
+   * هر ویرایش Idempotency-Key می‌پذیرد (قاعدهٔ CLAUDE.md): پاسخ گم‌شدهٔ «افزودن قلم» با همان کلید
+   * Replay است، نه قلم دوم. بی کلید همان یک تراکنش است. `replayed` از Replay کلید یا از خودِ عملیات.
+   */
+  async function edit(req: { headers: Record<string, unknown> }, s: { userId: string }, op: string, orderId: string,
+    payload: unknown, run: (trx: Transaction<Database>) => Promise<boolean | void>): Promise<boolean> {
+    let inner = false;
+    const out = await runOnce<string>(db, {
+      key: idem(req),
+      source: `api.instagram_order.${op}`,
+      payload: { actorId: s.userId, orderId, body: payload ?? null },
+      run: async (trx) => { inner = (await run(trx)) === true; return { value: orderId, ref: orderId }; },
+      replay: async (ref) => ref,
+    });
+    return out.replayed || inner;
+  }
 
   /** خواندن: دارندهٔ هر یک از دو مجوز. */
   async function requireRead(s: { userId: string; pinUnlocked: boolean }) {
@@ -196,11 +214,11 @@ export function registerInstagramOrderRoutes(app: FastifyInstance, deps: { db: D
     const { id } = z.object({ id: uuid }).parse(req.params);
     const body = headerBody.parse(req.body ?? {});
     await scoped(s, id);
-    await orders.updateHeader(id, {
+    const replayed = await edit(req, s, "update", id, body, (trx) => orders.updateHeader(id, {
       ...body, actorId: s.userId,
       shippingAmount: body.shippingAmount === undefined ? undefined : parseMoney(body.shippingAmount),
-    });
-    return orderDetail(db, id);
+    }, trx));
+    return { ...(await orderDetail(db, id)), replayed };
   });
 
   app.post("/instagram-orders/:id/lines", async (req, reply) => {
@@ -210,14 +228,14 @@ export function registerInstagramOrderRoutes(app: FastifyInstance, deps: { db: D
     const body = lineBody.parse(req.body);
     await scoped(s, id);
     const discount = body.discountAmount ? parseMoney(body.discountAmount) : 0n;
-    await orders.addLine(id, {
+    const replayed = await edit(req, s, "line.add", id, body, (trx) => orders.addLine(id, {
       variationId: body.variationId, qty: body.qty, actorId: s.userId,
       ...(discount > 0n ? { discountAmount: discount, discountReason: body.discountReason } : {}),
-    }, (trx, line) => markdownGate(trx, invoices, s, {
+    }, (t, line) => markdownGate(t, invoices, s, {
       variationId: line.variationId, qty: line.qty, discount: line.discountAmount,
       settingPrice: line.unitPrice, listPrice: line.listPrice,
-    }));
-    return reply.code(201).send(await orderDetail(db, id));
+    }), trx));
+    return reply.code(replayed ? 200 : 201).send({ ...(await orderDetail(db, id)), replayed });
   });
 
   app.patch("/instagram-orders/:id/lines/:lineId", async (req) => {
@@ -226,8 +244,8 @@ export function registerInstagramOrderRoutes(app: FastifyInstance, deps: { db: D
     const { id, lineId } = z.object({ id: uuid, lineId: uuid }).parse(req.params);
     const { qty } = z.object({ qty: z.number().int().min(1).max(999) }).strict().parse(req.body);
     await scoped(s, id);
-    await orders.setLineQty(id, lineId, qty, s.userId);
-    return orderDetail(db, id);
+    const replayed = await edit(req, s, "line.qty", id, { lineId, qty }, (trx) => orders.setLineQty(id, lineId, qty, s.userId, trx));
+    return { ...(await orderDetail(db, id)), replayed };
   });
 
   app.delete("/instagram-orders/:id/lines/:lineId", async (req) => {
@@ -235,8 +253,8 @@ export function registerInstagramOrderRoutes(app: FastifyInstance, deps: { db: D
     await requireForSession(db, s, "instagram.order.manage");
     const { id, lineId } = z.object({ id: uuid, lineId: uuid }).parse(req.params);
     await scoped(s, id);
-    await orders.removeLine(id, lineId, s.userId);
-    return orderDetail(db, id);
+    const replayed = await edit(req, s, "line.remove", id, { lineId }, (trx) => orders.removeLine(id, lineId, s.userId, trx));
+    return { ...(await orderDetail(db, id)), replayed };
   });
 
   app.post("/instagram-orders/:id/reserve", async (req) => {
@@ -244,8 +262,8 @@ export function registerInstagramOrderRoutes(app: FastifyInstance, deps: { db: D
     await requireForSession(db, s, "instagram.order.manage");
     const { id } = z.object({ id: uuid }).parse(req.params);
     await scoped(s, id);
-    const r = await orders.reserve(id, s.userId);
-    return { ...(await orderDetail(db, id)), replayed: r.replayed };
+    const replayed = await edit(req, s, "reserve", id, null, async (trx) => (await orders.reserve(id, s.userId, trx)).replayed);
+    return { ...(await orderDetail(db, id)), replayed };
   });
 
   app.post("/instagram-orders/:id/unreserve", async (req) => {
@@ -253,8 +271,8 @@ export function registerInstagramOrderRoutes(app: FastifyInstance, deps: { db: D
     await requireForSession(db, s, "instagram.order.manage");
     const { id } = z.object({ id: uuid }).parse(req.params);
     await scoped(s, id);
-    const r = await orders.release(id, s.userId, "draft");
-    return { ...(await orderDetail(db, id)), replayed: r.replayed };
+    const replayed = await edit(req, s, "unreserve", id, null, async (trx) => (await orders.release(id, s.userId, "draft", undefined, trx)).replayed);
+    return { ...(await orderDetail(db, id)), replayed };
   });
 
   app.post("/instagram-orders/:id/cancel", async (req) => {
@@ -263,8 +281,8 @@ export function registerInstagramOrderRoutes(app: FastifyInstance, deps: { db: D
     const { id } = z.object({ id: uuid }).parse(req.params);
     const { reason } = z.object({ reason: text(300).refine((v) => v.trim().length > 0, "دلیل لغو لازم است") }).strict().parse(req.body);
     await scoped(s, id);
-    const r = await orders.release(id, s.userId, "cancelled", reason.trim());
-    return { ...(await orderDetail(db, id)), replayed: r.replayed };
+    const replayed = await edit(req, s, "cancel", id, { reason }, async (trx) => (await orders.release(id, s.userId, "cancelled", reason.trim(), trx)).replayed);
+    return { ...(await orderDetail(db, id)), replayed };
   });
 
   app.post("/instagram-orders/:id/payment-state", async (req) => {
@@ -273,8 +291,8 @@ export function registerInstagramOrderRoutes(app: FastifyInstance, deps: { db: D
     const { id } = z.object({ id: uuid }).parse(req.params);
     const body = z.object({ state: z.enum(["none", "claimed", "review"]), note: text(300).nullable().optional() }).strict().parse(req.body);
     await scoped(s, id);
-    await orders.markPayment(id, s.userId, body.state, body.note?.trim() || null);
-    return orderDetail(db, id);
+    const replayed = await edit(req, s, "payment_state", id, body, (trx) => orders.markPayment(id, s.userId, body.state, body.note?.trim() || null, trx));
+    return { ...(await orderDetail(db, id)), replayed };
   });
 
   app.post("/instagram-orders/:id/shipping", async (req) => {
@@ -283,8 +301,8 @@ export function registerInstagramOrderRoutes(app: FastifyInstance, deps: { db: D
     const { id } = z.object({ id: uuid }).parse(req.params);
     const body = z.object({ state: z.enum(SHIPPING_STATES), trackingCode: text(80).nullable().optional() }).strict().parse(req.body);
     await scoped(s, id);
-    await orders.setShipping(id, s.userId, body.state, body.trackingCode?.trim() || null);
-    return orderDetail(db, id);
+    const replayed = await edit(req, s, "shipping", id, body, (trx) => orders.setShipping(id, s.userId, body.state, body.trackingCode?.trim() || null, trx));
+    return { ...(await orderDetail(db, id)), replayed };
   });
 
   /**
@@ -446,6 +464,7 @@ export async function orderDetail(db: Db, id: string) {
   const similar = await sql<{ id: string; order_no: string; status: string; created_at: Date }>`
     SELECT id, order_no, status, created_at FROM sales.instagram_order
      WHERE id <> ${id}::uuid AND status IN ('draft','reserved','expired')
+       AND branch_id = ${o.branch_id}::uuid
        AND (customer_id = ${o.customer_id}::uuid
             OR (${o.instagram_username}::text IS NOT NULL AND instagram_username = ${o.instagram_username}))
      ORDER BY created_at DESC LIMIT 5`.execute(db);

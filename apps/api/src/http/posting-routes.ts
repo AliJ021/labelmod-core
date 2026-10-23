@@ -28,7 +28,7 @@ const isoDate = z.iso.date("تاریخ باید یک تاریخ معتبر YYYY-
 
 const closeChannelDayBody = z.object({
   branchId: uuid,
-  channel: z.enum(["web", "phone", "pos"]),
+  channel: z.enum(["web", "phone", "pos", "instagram"]),
   date: isoDate,
 });
 

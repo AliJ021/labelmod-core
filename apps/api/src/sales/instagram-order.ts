@@ -98,6 +98,11 @@ export class InstagramOrderService {
   }
 
   /** سطر سفارش را قفل می‌کند و زمینهٔ نوشتن روی فاکتورش را در همین تراکنش باز می‌کند. */
+  /** تراکنش فراخوان (runOnce مسیر HTTP) یا تراکنش تازه. */
+  #tx<T>(trx: Transaction<Database> | undefined, run: (trx: Transaction<Database>) => Promise<T>): Promise<T> {
+    return trx ? run(trx) : this.#db.transaction().execute(run);
+  }
+
   async lockIn(trx: Transaction<Database>, orderId: string): Promise<OrderRow> {
     const r = await sql<OrderRow>`SELECT * FROM sales.instagram_order WHERE id = ${orderId}::uuid FOR UPDATE`.execute(trx);
     const row = r.rows[0];
@@ -192,8 +197,8 @@ export class InstagramOrderService {
     shipAddress?: string | undefined; shipMethod?: string | undefined;
     instagramUsername?: string | null | undefined; receivingAccountId?: string | null | undefined;
     shippingAmount?: bigint | undefined; actorId: string;
-  }): Promise<void> {
-    await this.#db.transaction().execute(async (trx) => {
+  }, trx?: Transaction<Database>): Promise<void> {
+    await this.#tx(trx, async (trx) => {
       const o = await this.lockIn(trx, orderId);
       if (o.status === "finalized" || o.status === "cancelled" || o.status === "confirming") {
         throw orderError("order_closed", `سفارش ${o.order_no} بسته است؛ سرآیندش تغییر نمی‌کند`);
@@ -233,11 +238,11 @@ export class InstagramOrderService {
 
   async addLine(orderId: string, input: {
     variationId: string; qty: number; discountAmount?: bigint | undefined; discountReason?: string | undefined; actorId: string;
-  }, authorize?: LineAdditionAuthorizer): Promise<void> {
+  }, authorize?: LineAdditionAuthorizer, trx?: Transaction<Database>): Promise<void> {
     if (!Number.isInteger(input.qty) || input.qty < 1 || input.qty > 999) {
       throw orderError("bad_qty", "تعداد باید عدد صحیح مثبت باشد", 422);
     }
-    await this.#db.transaction().execute(async (trx) => {
+    await this.#tx(trx, async (trx) => {
       const o = await this.lockIn(trx, orderId);
       this.requireDraft(o);
       await this.#invoices.addLineIn(trx, {
@@ -247,9 +252,9 @@ export class InstagramOrderService {
     });
   }
 
-  async setLineQty(orderId: string, lineId: string, qty: number, actorId: string): Promise<void> {
+  async setLineQty(orderId: string, lineId: string, qty: number, actorId: string, trx?: Transaction<Database>): Promise<void> {
     if (!Number.isInteger(qty) || qty < 1 || qty > 999) throw orderError("bad_qty", "تعداد باید عدد صحیح مثبت باشد", 422);
-    await this.#db.transaction().execute(async (trx) => {
+    await this.#tx(trx, async (trx) => {
       const o = await this.lockIn(trx, orderId);
       this.requireDraft(o);
       await setActor(trx, actorId);
@@ -263,8 +268,8 @@ export class InstagramOrderService {
     });
   }
 
-  async removeLine(orderId: string, lineId: string, actorId: string): Promise<void> {
-    await this.#db.transaction().execute(async (trx) => {
+  async removeLine(orderId: string, lineId: string, actorId: string, trx?: Transaction<Database>): Promise<void> {
+    await this.#tx(trx, async (trx) => {
       const o = await this.lockIn(trx, orderId);
       this.requireDraft(o);
       await setActor(trx, actorId);
@@ -275,8 +280,8 @@ export class InstagramOrderService {
     });
   }
 
-  async reserve(orderId: string, actorId: string): Promise<{ replayed: boolean }> {
-    return this.#db.transaction().execute(async (trx) => {
+  async reserve(orderId: string, actorId: string, trx?: Transaction<Database>): Promise<{ replayed: boolean }> {
+    return this.#tx(trx, async (trx) => {
       const o = await this.lockIn(trx, orderId);
       if (o.status === "reserved") return { replayed: true };
       if (o.status !== "draft" && o.status !== "expired") {
@@ -287,8 +292,8 @@ export class InstagramOrderService {
     });
   }
 
-  async release(orderId: string, actorId: string, to: "draft" | "cancelled", reason?: string): Promise<{ replayed: boolean }> {
-    return this.#db.transaction().execute(async (trx) => {
+  async release(orderId: string, actorId: string, to: "draft" | "cancelled", reason?: string, trx?: Transaction<Database>): Promise<{ replayed: boolean }> {
+    return this.#tx(trx, async (trx) => {
       const o = await this.lockIn(trx, orderId);
       if (o.status === to) return { replayed: true };
       if (o.status === "finalized") {
@@ -303,15 +308,15 @@ export class InstagramOrderService {
     });
   }
 
-  async markPayment(orderId: string, actorId: string, state: "none" | "claimed" | "review", note: string | null): Promise<void> {
-    await this.#db.transaction().execute(async (trx) => {
+  async markPayment(orderId: string, actorId: string, state: "none" | "claimed" | "review", note: string | null, trx?: Transaction<Database>): Promise<void> {
+    await this.#tx(trx, async (trx) => {
       const o = await this.lockIn(trx, orderId);
       await sql`SELECT sales.instagram_mark_payment(${o.id}::uuid, ${actorId}::uuid, ${state}, ${note})`.execute(trx);
     });
   }
 
-  async setShipping(orderId: string, actorId: string, state: string, tracking: string | null): Promise<void> {
-    await this.#db.transaction().execute(async (trx) => {
+  async setShipping(orderId: string, actorId: string, state: string, tracking: string | null, trx?: Transaction<Database>): Promise<void> {
+    await this.#tx(trx, async (trx) => {
       const o = await this.lockIn(trx, orderId);
       await sql`SELECT sales.instagram_set_shipping(${o.id}::uuid, ${actorId}::uuid, ${state}, ${tracking})`.execute(trx);
     });

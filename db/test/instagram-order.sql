@@ -209,6 +209,12 @@ SELECT pg_temp.rejects('مرجع خالی',
   'شمارهٔ پیگیری');
 
 \echo '── ۶. واریز دیررس پس از انقضا: موجودی دوباره سنجیده می‌شود؛ یک کسر ──'
+-- پیش‌نویس سه روز پیش ساخته شده بود (فقط زمان فاکتور جابه‌جا می‌شود؛ نگهبان‌ها برای این
+-- ساخت دادهٔ آزمون خاموش‌اند). فروش باید به روز تأیید بنشیند، نه روز ساخت پیش‌نویس.
+SET LOCAL session_replication_role = replica;
+UPDATE sales.invoice SET occurred_at = now() - interval '3 days'
+ WHERE id = (SELECT invoice_id FROM sales.instagram_order WHERE id = (SELECT o FROM c));
+SET LOCAL session_replication_role = origin;
 SELECT pg_temp.eq('آغاز تأیید', (sales.instagram_begin_confirm((SELECT o FROM c), (SELECT u FROM c), (SELECT ver FROM c),
   (SELECT v FROM f WHERE k='bank'), (SELECT amt FROM c), ' R-100 ', now() - interval '1 hour'))->>'replayed', 'false');
 SELECT pg_temp.eq('وضعیت میانی', (SELECT status FROM sales.instagram_order WHERE id=(SELECT o FROM c)), 'confirming');
@@ -227,6 +233,18 @@ SELECT pg_temp.eq('هیچ رزرو بازی نماند', (SELECT count(*) FROM i
 SELECT pg_temp.eq('دورهٔ ثبت روزانهٔ کانال اینستاگرام، نه شیفت و نه وب',
   (SELECT pb.kind || '/' || pb.channel FROM ledger.posting_batch pb JOIN sales.invoice i ON i.posting_batch_id = pb.id
     JOIN sales.instagram_order io ON io.invoice_id = i.id WHERE io.id=(SELECT o FROM c)), 'channel_day/instagram');
+SELECT pg_temp.eq('فروش به روز تأیید نشست، نه روز ساخت پیش‌نویس',
+  (SELECT platform.business_date(i.occurred_at) FROM sales.invoice i JOIN sales.instagram_order io ON io.invoice_id = i.id
+    WHERE io.id=(SELECT o FROM c)), platform.business_date(now()));
+SELECT pg_temp.eq('دورهٔ ثبت روزانهٔ همان روز تأیید',
+  (SELECT pb.business_date FROM ledger.posting_batch pb JOIN sales.invoice i ON i.posting_batch_id = pb.id
+    JOIN sales.instagram_order io ON io.invoice_id = i.id WHERE io.id=(SELECT o FROM c)), platform.business_date(now()));
+SELECT pg_temp.eq('حرکت انبار فروش هم به روز تأیید', (SELECT platform.business_date(m.occurred_at) FROM inventory.stock_movement m
+  JOIN sales.instagram_order io ON m.ref_id = io.invoice_id WHERE io.id=(SELECT o FROM c) AND m.kind = 'sale'),
+  platform.business_date(now()));
+-- کنترل مثبت قید معوق: سفارشی «در حال تأیید» نمانده، پس اجرای فوری قید خطا نمی‌دهد.
+SET CONSTRAINTS sales.instagram_no_confirming_commit IMMEDIATE;
+SET CONSTRAINTS sales.instagram_no_confirming_commit DEFERRED;
 SELECT pg_temp.eq('حساب مقصد روی دریافت نشست', (SELECT p.account_id FROM treasury.payment p
   JOIN sales.instagram_order io ON io.invoice_id = p.invoice_id WHERE io.id=(SELECT o FROM c)), (SELECT v FROM f WHERE k='bank'));
 SELECT pg_temp.eq('تأیید تکراری همان واریز: همان فاکتور', (sales.instagram_begin_confirm((SELECT o FROM c), (SELECT u FROM c),
@@ -249,9 +267,31 @@ SELECT pg_temp.rejects('همان مرجع، همان حساب، همان روز'
     (SELECT version FROM sales.instagram_order WHERE id=(SELECT v FROM f WHERE k='o3')),
     (SELECT v FROM f WHERE k='bank'), 'R-100'),
   'واریز تکراری');
+-- زمان واریز را اپراتور وارد می‌کند: جابه‌جایی روز نباید همان انتقال را دوباره خرج کند.
+UPDATE sales.instagram_order SET created_at = now() - interval '10 days' WHERE id = (SELECT v FROM f WHERE k='o3');
+SELECT pg_temp.rejects('همان مرجع، همان حساب، سه روز پیش (روز دیگر، درون بازه)',
+  format('SELECT sales.instagram_begin_confirm(%L, %L, %s, %L, 500000, %L, now() - interval ''3 days'')',
+    (SELECT v FROM f WHERE k='o3'), (SELECT v FROM f WHERE k='user'),
+    (SELECT version FROM sales.instagram_order WHERE id=(SELECT v FROM f WHERE k='o3')),
+    (SELECT v FROM f WHERE k='bank'), 'R-100'),
+  'واریز تکراری');
+DO $far$
+BEGIN
+  PERFORM sales.instagram_begin_confirm((SELECT v FROM f WHERE k='o3'), (SELECT v FROM f WHERE k='user'),
+    (SELECT version FROM sales.instagram_order WHERE id=(SELECT v FROM f WHERE k='o3')),
+    (SELECT v FROM f WHERE k='bank'), 500000, 'R-100', now() - interval '9 days');
+  RAISE EXCEPTION 'accepted-ok';
+EXCEPTION WHEN raise_exception THEN
+  IF SQLERRM <> 'accepted-ok' THEN RAISE EXCEPTION E'\n  ✗ همان مرجع بیرون از بازه رد شد: %', SQLERRM; END IF;
+  RAISE NOTICE '  ✓ همان مرجع بیش از یک هفته دورتر پذیرفته می‌شود (کنترل مثبت بازه)';
+END $far$;
 SELECT pg_temp.eq('همان مرجع در حساب دیگر پذیرفته می‌شود', (sales.instagram_begin_confirm((SELECT v FROM f WHERE k='o3'),
   (SELECT v FROM f WHERE k='user'), (SELECT version FROM sales.instagram_order WHERE id=(SELECT v FROM f WHERE k='o3')),
   (SELECT v FROM f WHERE k='bank2'), 500000, 'R-100', now()))->>'replayed', 'false');
+
+-- o3 الان «در حال تأیید» است و پرداخت و نهایی‌سازی‌اش نیامده: Commit چنین تراکنشی رد می‌شود.
+SELECT pg_temp.rejects('Commit تأیید نیمه‌کاره',
+  'SET CONSTRAINTS sales.instagram_no_confirming_commit IMMEDIATE', 'نیمه‌کاره');
 
 \echo '── ۸. لغو پیش از پرداخت همان رزرو را آزاد می‌کند ──'
 INSERT INTO f SELECT 'o4', pg_temp.new_order('[{"v":"b","qty":2}]');
@@ -306,6 +346,49 @@ SELECT sales.instagram_set_shipping((SELECT o FROM c), (SELECT u FROM c), 'shipp
 SELECT pg_temp.rejects('برگشت به عقب',
   format($q$SELECT sales.instagram_set_shipping(%L, %L, 'packing', NULL)$q$, (SELECT o FROM c), (SELECT u FROM c)), 'به عقب');
 SELECT pg_temp.eq('ارسال هیچ حرکت انباری نساخت', (SELECT count(*) FROM inventory.stock_movement), (SELECT n FROM mv));
+
+\echo '── ۱۰ب. مرجوعی کامل از مسیر رسمی: کالای برگشته ارسال نمی‌شود ──'
+INSERT INTO f SELECT 'o7', pg_temp.new_order('[{"v":"b","qty":1}]');
+SELECT sales.instagram_reserve((SELECT v FROM f WHERE k='o7'), (SELECT v FROM f WHERE k='user'));
+SELECT sales.instagram_begin_confirm((SELECT v FROM f WHERE k='o7'), (SELECT v FROM f WHERE k='user'),
+  (SELECT version FROM sales.instagram_order WHERE id=(SELECT v FROM f WHERE k='o7')),
+  (SELECT v FROM f WHERE k='bank'), 500000, 'R-700', now());
+INSERT INTO treasury.payment (invoice_id, method_code, amount, ref_no, account_id, client_event_id)
+  SELECT io.invoice_id, 'transfer', 500000, 'R-700', (SELECT v FROM f WHERE k='bank'), 'ig:' || io.id
+    FROM sales.instagram_order io WHERE io.id = (SELECT v FROM f WHERE k='o7');
+SELECT sales.finalize_invoice((SELECT invoice_id FROM sales.instagram_order WHERE id=(SELECT v FROM f WHERE k='o7')),
+  (SELECT v FROM f WHERE k='user'));
+SELECT sales.instagram_finish_confirm((SELECT v FROM f WHERE k='o7'), (SELECT v FROM f WHERE k='user'),
+  (SELECT p.id FROM treasury.payment p JOIN sales.instagram_order io ON io.invoice_id = p.invoice_id
+    WHERE io.id=(SELECT v FROM f WHERE k='o7')));
+-- کنترل منفی: پیش از مرجوعی، «بسته‌بندی» پذیرفته است (در زیرتراکنشی که برمی‌گردد).
+DO $pre$
+BEGIN
+  PERFORM sales.instagram_set_shipping((SELECT v FROM f WHERE k='o7'), (SELECT v FROM f WHERE k='user'), 'packing', NULL);
+  RAISE EXCEPTION 'accepted-ok';
+EXCEPTION WHEN raise_exception THEN
+  IF SQLERRM <> 'accepted-ok' THEN RAISE EXCEPTION E'\n  ✗ ارسال پیش از مرجوعی رد شد: %', SQLERRM; END IF;
+  RAISE NOTICE '  ✓ پیش از مرجوعی ارسال ممکن است (کنترل منفی)';
+END $pre$;
+DO $ret$
+DECLARE v_ret uuid; o7 uuid := (SELECT v FROM f WHERE k='o7');
+  v_inv uuid := (SELECT invoice_id FROM sales.instagram_order WHERE id = (SELECT v FROM f WHERE k='o7'));
+BEGIN
+  INSERT INTO sales.sale_return (branch_id, invoice_id, warehouse_id, shift_id, reason_code, refund_amount, refund_method,
+                                 occurred_at, created_by)
+    VALUES ((SELECT v FROM f WHERE k='br'), v_inv, (SELECT v FROM f WHERE k='wh'),
+            (SELECT id FROM sales.cash_shift WHERE closed_at IS NULL AND branch_id = (SELECT v FROM f WHERE k='br') LIMIT 1),
+            'size_small', 500000, 'cash', now(), (SELECT v FROM f WHERE k='user'))
+    RETURNING id INTO v_ret;
+  INSERT INTO sales.sale_return_line (return_id, invoice_line_id, qty, unit_price, net_amount, unit_cost, cogs_amount)
+    SELECT v_ret, l.id, l.qty, 0, 0, 0, 0 FROM sales.invoice_line l WHERE l.invoice_id = v_inv;
+  PERFORM sales.post_return(v_ret, (SELECT v FROM f WHERE k='user'));
+END $ret$;
+SELECT pg_temp.eq('فاکتور کامل مرجوع شد', (SELECT i.status FROM sales.invoice i JOIN sales.instagram_order io ON io.invoice_id = i.id
+  WHERE io.id=(SELECT v FROM f WHERE k='o7')), 'returned');
+SELECT pg_temp.rejects('ارسال کالای کامل مرجوع‌شده',
+  format($q$SELECT sales.instagram_set_shipping(%L, %L, 'packing', NULL)$q$, (SELECT v FROM f WHERE k='o7'), (SELECT v FROM f WHERE k='user')),
+  'کامل مرجوع');
 
 \echo '── ۱۱. خرید اینستاگرام «خرید حضوری» سایت نمی‌شود ──'
 SELECT pg_temp.eq('هیچ اعلان web.instore_push برای فاکتور اینستاگرام', (SELECT count(*) FROM platform.outbox_message
