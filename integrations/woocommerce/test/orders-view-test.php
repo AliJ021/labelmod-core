@@ -2,7 +2,7 @@
 /**
  * قرارداد «سفارش‌های سایت» (۳) در افزونه.
  *
- * فقط‌خواندنی، CRUD و جست‌وجوی رسمی، صفحه‌بندی پایدار بی سقف تاریخچه، و ارز خود سفارش. این آزمون محلی است
+ * فقط‌خواندنی، CRUD و جست‌وجوی رسمی، صفحه‌بندی با لنگر تا صفحهٔ ۱۰۰٬۰۰۰، و ارز خود سفارش. این آزمون محلی است
  * و نصب واقعی نیست؛ HPOS و جدول پست روی ووکامرس واقعی در `test/real-wc/orders_view.php` سنجیده می‌شوند.
  *
  * ادعاها دربارهٔ خود کلاس:
@@ -196,7 +196,7 @@ LMC_Orders_View::init();
 check($routes['lmc/v1/orders']['permission_callback'] === [LMC_Push_Receiver::class, 'verify_request'], 'همان نگهبان امضا و nonce');
 check($routes['lmc/v1/orders']['methods'] === 'POST', 'بدنهٔ امضاشده، نه query بی‌امضا');
 
-// ── صفحه‌بندی: بی سقف تاریخچه، پایدار با لنگر ──
+// ── صفحه‌بندی: فراتر از ۲۰۰ تا ۱۰۰٬۰۰۰، با لنگر ──
 $r = LMC_Orders_View::handle(req(['page' => 201, 'perPage' => 20, 'until' => $until]));
 check($r instanceof WP_REST_Response && $r->status === 200, 'صفحهٔ ۲۰۱ رد نمی‌شود (بازبینی ریشه)');
 $d = $r->data;
@@ -343,7 +343,7 @@ check($o['notes']['rows'][0]['content'] === 'یادداشت 1' && $o['notes']['r
 check(array_values(array_filter($noteQueries, fn ($q) => $q['order_id'] === 2))[0] === ['order_id' => 2, 'limit' => 21, 'offset' => 0, 'orderby' => 'date_created', 'order' => 'DESC'], 'یادداشت با limit و offset رسمی');
 $o3 = LMC_Orders_View::handle(req(['orderId' => 2, 'notesPage' => 3]))->data['order'];
 check(count($o3['notes']['rows']) === 5 && !$o3['notes']['hasMore'] && end($noteQueries)['offset'] === 40, 'یادداشت‌ها صفحهٔ آخر');
-check($o['core']['scheduled'] === true && $o['core']['missingSku'] === 2 && $o['core']['missingMapping'] === 2 && $o['core']['recorded'] && $o['core']['hasError'], 'وضعیت صف و نگاشت Core');
+check($o['core']['queue'] === ['scheduler' => 'wp-cron', 'state' => 'scheduled', 'deferred' => null, 'dead' => null] && $o['core']['missingSku'] === 2 && $o['core']['missingMapping'] === 2 && $o['core']['recorded'] && $o['core']['hasError'], 'وضعیت صف و نگاشت Core');
 check($o['customerNote'] === 'لطفاً عصر', 'یادداشت مشتری');
 $json = json_encode($r->data, JSON_UNESCAPED_UNICODE);
 foreach (['203.0.113.9', 'SecretAgent', '_lmc_order_payload', '"secret"', 'خطا با', '<p>', '<b>', 'SENTINEL-TOKEN', 'integration_token', 'gift_note', 'javascript:'] as $leak) {
@@ -363,5 +363,16 @@ check(count($p1['items']['rows']) === 25 && $p1['items']['total'] === 120 && $p1
 check(count($p5['items']['rows']) === 20 && $p5['items']['rows'][0]['name'] === 'قلم 100' && $p6['items']['rows'] === [], 'صفحه‌های بعدی اقلام');
 check(count($p1['refunds']) === 50 && $p1['refundsTruncated'] === true, 'سقف استرداد صریح است');
 check(strlen(json_encode($p1)) < 262144 && strlen(json_encode(LMC_Orders_View::handle(req(['perPage' => 50]))->data)) < 131072, 'پاسخ زیر سقف بدنهٔ Core');
+
+// ── وضعیت صف از LMC_Queue::state، بی تغییر؛ بی آن کلاس، WP-Cron خالی «نمی‌دانم» است نه «نیست» ──
+unset($scheduled[LMC_ORDER_EVENT . '[2]']);
+check(LMC_Orders_View::handle(req(['orderId' => 2]))->data['order']['core']['queue']['state'] === 'unknown', 'بی LMC_Queue و بی رویداد: unknown');
+// eval: اعلان سطح بالای کلاس در PHP پیش از اجرا بالا کشیده می‌شود و ادعای «بی LMC_Queue» بالا را بی‌معنا می‌کرد.
+eval('class LMC_Queue { public static array $calls = []; public static function state($hook, $args) { self::$calls[] = [$hook, $args];
+    return ["scheduler" => "action-scheduler", "state" => "deferred", "deferred" => "send", "dead" => false]; } }');
+$q = LMC_Orders_View::handle(req(['orderId' => 2]))->data['order']['core']['queue'];
+check($q === ['scheduler' => 'action-scheduler', 'state' => 'deferred', 'deferred' => 'send', 'dead' => false] && LMC_Queue::$calls === [[LMC_ORDER_EVENT, [2]]],
+    'جزئیات همان LMC_Queue::state همان سفارش را برمی‌گرداند');
+check(!array_key_exists('scheduled', LMC_Orders_View::handle(req(['orderId' => 2]))->data['order']['core']), 'بولی scheduled حذف شد');
 
 echo "OK: {$checks} orders-view assertions\n";

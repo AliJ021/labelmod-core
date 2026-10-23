@@ -344,6 +344,77 @@ class LMC_Queue
     }
 
     /**
+     * وضعیت صفِ **یک** کار برای نمایش (منوی «سفارش‌های سایت» در Core) — فقط خواندن؛ هیچ نشانی drain یا اعمال
+     * نمی‌شود و معنای صف عوض نمی‌شود.
+     *
+     * `queued()` فقط Action Scheduler و WP-Cron را می‌بیند؛ وقتی هر دو درج را نپذیرند `schedule()` تصمیم را به
+     * **نشان معوق ماندگار** (`lmc_qp_…`) می‌سپارد و `enqueue()` هم `true` می‌دهد، ولی `queued()` همچنان `false`
+     * است و سفارشِ در انتظار ارسال «در صف نیست» دیده می‌شد (بازبینی ریشه روی 4b0046a). اینجا همان نشان‌ها
+     * و ثبت مرده هم خوانده می‌شوند.
+     *
+     * - `scheduler`: `action-scheduler` یا `wp-cron` (همان `backend` گزارش سلامت).
+     * - `state`: `running` (Action Scheduler در حال اجرا) › `scheduled` (معلق در صف) › `deferred` (تصمیم
+     *   ماندگار منتظر drain) › `dead` (متوقف؛ «ارسال دوباره» دستی لازم) › `idle`. اگر خواندنی که می‌توانست
+     *   حالت را تعیین کند شکست بخورد، `unknown` — هرگز «نیست».
+     * - `deferred`: نوع تصمیم معوق — `send` (درج «e»، یا «r» با زمان تازه)، `stop` (توقف قطعی)، `recover`
+     *   (بازیابی پس از شکست اجرا)، یا `null` اگر نیست/نامعلوم. `dead`: `true`/`false`، یا `null` اگر خوانده نشد.
+     */
+    public static function state(string $hook, array $args): array
+    {
+        global $wpdb;
+        $as = self::action_scheduler();
+        $key = self::key($hook, $args);
+        $pending = $running = null;
+        try {
+            $pending = (bool) wp_next_scheduled($hook, $args);
+            $running = false;
+            if ($as) {
+                $find = static function (string $status) use ($hook, $args): ?bool {
+                    global $wpdb;
+                    $ids = as_get_scheduled_actions(['hook' => $hook, 'args' => $args, 'group' => self::GROUP,
+                        'status' => $status, 'per_page' => 1], 'ids');
+                    return (string) ($wpdb->last_error ?? '') !== '' || !is_array($ids) ? null : $ids !== [];
+                };
+                $p = $find(ActionScheduler_Store::STATUS_PENDING);
+                $r = $find(defined('ActionScheduler_Store::STATUS_RUNNING') ? ActionScheduler_Store::STATUS_RUNNING : 'in-progress');
+                $pending = $p === null ? null : ($pending || $p);
+                $running = $r;
+            }
+        } catch (Throwable $e) {
+            $pending = $running = null;
+        }
+        // نشان‌های معوق همین کار: «e» و «r» نام ثابت دارند، «c» به‌ازای هر اجرای شکست‌خورده.
+        $e = self::read(self::DEFER_PREFIX . 'e_' . $key, $ok_e);
+        $r = self::read(self::DEFER_PREFIX . 'r_' . $key, $ok_r);
+        $c = $wpdb->get_var($wpdb->prepare("SELECT COUNT(*) FROM {$wpdb->options} WHERE option_name LIKE %s",
+            self::like_prefix(self::DEFER_PREFIX . 'c_' . $key . '_')));
+        $ok_c = (string) ($wpdb->last_error ?? '') === '' && $c !== null && ctype_digit((string) $c);
+        $dead = self::read(self::DEAD_PREFIX . $key, $ok_d);
+        $stop = $r !== null && !empty((json_decode($r, true) ?: [])['stop']);
+        $deferred = $e !== null || ($r !== null && !$stop) ? 'send' : ($ok_c && (int) $c > 0 ? 'recover' : ($stop ? 'stop' : null));
+        $markers_known = $ok_e && $ok_r && $ok_c;
+        if ($running === true) {
+            $state = 'running';
+        } elseif ($pending === true) {
+            $state = 'scheduled';
+        } elseif ($pending === null || $running === null) {
+            $state = 'unknown';
+        } elseif ($deferred !== null) {
+            $state = 'deferred';
+        } elseif (!$markers_known || !$ok_d) {
+            $state = 'unknown';
+        } else {
+            $state = $dead !== null ? 'dead' : 'idle';
+        }
+        return [
+            'scheduler' => $as ? 'action-scheduler' : 'wp-cron',
+            'state' => $state,
+            'deferred' => $deferred !== null || $markers_known ? $deferred : null,
+            'dead' => $ok_d ? $dead !== null : null,
+        ];
+    }
+
+    /**
      * درج در صف. اگر هیچ صفی (Action Scheduler و WP-Cron) کار را نگرفت، تصمیم گم نمی‌شود:
      *
      * 1. **نشان معوق ماندگار** با همان تصمیم (`$marker`: «r» با due/stop/floor یا پیش‌فرض «e» با due و floor)؛

@@ -1052,4 +1052,56 @@ $keys = array_keys(LMC_Queue::health()); sort($keys);
 check($keys === ['backend', 'busyTasks', 'deadScope', 'deadTasks', 'deferredTasks', 'failedActions', 'failedActionsScope', 'group', 'pendingDue', 'pendingFuture', 'running'],
     'کلیدهای گزارش صف همان قرارداد Core است');
 
+// ۱۵. وضعیت یک کار برای نمایش (LMC_Queue::state) — فقط خواندن (بازبینی ریشه روی 4b0046a).
+$snapshot = fn() => [$GLOBALS['wpdb']->rows, $GLOBALS['as'], $GLOBALS['cron']];
+$state = fn(int $id) => LMC_Queue::state(LMC_ORDER_EVENT, [$id]);
+// ۱۵الف. همان بازتولید ریشه: نه Action Scheduler و نه WP-Cron درج را می‌پذیرند؛ تصمیم نشان معوق ماندگار می‌شود.
+reset_queue();
+$GLOBALS['as_fail'] = true; $GLOBALS['cron_fail'] = true;
+check(LMC_Queue::enqueue(LMC_ORDER_EVENT, [734]) === true && count(marker_rows()) === 1 && array_values(marker_rows())[0]['op'] === 'e',
+    'پیش‌شرط: درج «موفق» با یک نشان معوق e');
+// کنترل منفی رفتار جاری: queued() همان کار را «در صف نیست» می‌داند — همان برچسب غلط «در صف ارسال: خیر».
+check(LMC_Queue::queued(LMC_ORDER_EVENT, [734]) === false, 'کنترل منفی: queued() نشان معوق را نمی‌بیند');
+$before = $snapshot();
+check($state(734) === ['scheduler' => 'action-scheduler', 'state' => 'deferred', 'deferred' => 'send', 'dead' => false],
+    'state(): ارسالِ معوقِ ماندگار «deferred/send» است، نه «در صف نیست»');
+check($snapshot() === $before, 'state() هیچ نشان، سطر صف یا رویداد WP-Cron را تغییر نمی‌دهد (drain نمی‌کند)');
+// ۱۵ب. صف سالم: معلق، سپس در حال اجرا.
+reset_queue();
+LMC_Queue::enqueue(LMC_ORDER_EVENT, [735]);
+check($state(735)['state'] === 'scheduled' && $state(735)['deferred'] === null && $state(735)['dead'] === false, 'معلق در Action Scheduler: scheduled');
+foreach ($GLOBALS['as'] as $id => $a) { if ($a['args'] === [735]) { $GLOBALS['as'][$id]['status'] = 'in-progress'; } }
+check($state(735)['state'] === 'running', 'در حال اجرا: running، نه scheduled');
+check($state(999)['state'] === 'idle' && $state(999)['deferred'] === null, 'کاری که هیچ ردی ندارد: idle');
+// ۱۵ج. رویداد WP-Cron مانده (پیش از ارتقا) هم معلق است.
+reset_queue();
+$GLOBALS['cron'][] = ['at' => time() + 60, 'hook' => LMC_ORDER_EVENT, 'args' => [736]];
+check($state(736)['state'] === 'scheduled', 'رویداد WP-Cron: scheduled');
+// ۱۵د. توقف قطعیِ معوق (قفل صف در دسترس نیست) — تصمیم «stop»، نه ارسال.
+reset_queue();
+LMC_Queue::enqueue(LMC_ORDER_EVENT, [737]);
+$GLOBALS['wpdb']->lock_error = true;
+LMC_Queue::stop(LMC_ORDER_EVENT, [737]);
+$GLOBALS['wpdb']->lock_error = false;
+$st = $state(737);
+check(array_values(marker_rows())[0]['op'] === 'r' && !empty(array_values(marker_rows())[0]['stop']), 'پیش‌شرط: نشان r با stop');
+check($st['deferred'] === 'stop' && $st['state'] === 'scheduled', 'توقف معوق: کار هنوز معلق است و تصمیم توقف منتظر drain (stop)');
+// ۱۵ه. ثبت مرده: نه صف، نه نشان؛ «ارسال دوباره» لازم است.
+reset_queue();
+$GLOBALS['as_fail'] = true; $GLOBALS['cron_fail'] = true; $GLOBALS['wpdb']->fail_write = ['/lmc_qp_/'];
+check(LMC_Queue::enqueue(LMC_ORDER_EVENT, [738]) === false && count(dead_rows()) === 1, 'پیش‌شرط: ثبت مردهٔ enqueue_failed');
+$GLOBALS['wpdb']->fail_write = [];
+check($state(738) === ['scheduler' => 'action-scheduler', 'state' => 'dead', 'deferred' => null, 'dead' => true], 'مرده: dead');
+// ۱۵و. خواندن ناموفق «نمی‌دانم» است، هرگز «نیست»؛ و حالتِ مثبتِ قطعی با شکست خواندنِ دیگر پنهان نمی‌شود.
+reset_queue();
+$GLOBALS['wpdb']->fail_read = ['/lmc_qp_|lmc_qd_/'];
+check($state(739) === ['scheduler' => 'action-scheduler', 'state' => 'unknown', 'deferred' => null, 'dead' => null], 'نشان و مرده خوانده نشدند: unknown، نه idle');
+LMC_Queue::enqueue(LMC_ORDER_EVENT, [739]);
+check($state(739)['state'] === 'scheduled', 'سطر معلق صف خودش قطعی است، حتی با شکست خواندن نشان‌ها');
+reset_queue();
+$GLOBALS['wpdb']->fail_read = ['/lmc_qd_/'];
+$GLOBALS['as_fail'] = true; $GLOBALS['cron_fail'] = true;
+LMC_Queue::enqueue(LMC_ORDER_EVENT, [740]);
+check($state(740)['state'] === 'deferred' && $state(740)['dead'] === null, 'نشان معوق دیده شد؛ ثبت مرده نامعلوم می‌ماند (null)');
+
 echo "OK: $checks queue assertions\n";

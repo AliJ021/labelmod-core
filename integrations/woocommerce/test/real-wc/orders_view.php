@@ -16,6 +16,7 @@
  * - **ویژگی قلم:** متای عمومی `integration_token` بیرون می‌ماند؛ ویژگی طبقه‌بندیِ تنوعِ حذف‌شده می‌ماند.
  * - **روش ارسال:** فیلتر روی جدول اقلام ووکامرس، شامل `method_id` قدیمی `flat_rate:7`؛ پرسش واقعی با EXPLAIN ثبت می‌شود.
  * - **زباله‌دان، تاریخ تکمیل و تغییر، رهگیری** (افزونهٔ رسمی Shipment Tracking).
+ * - **وضعیت صف:** نشان معوق ماندگار واقعی «deferred» است، با کنترل منفی `queued()`.
  * - **وضعیت سفارشی:** وضعیتی که افزونه‌ای ثبت کرده، با نامک و برچسب خودش دیده و فیلتر می‌شود.
  * - **جزئیات کامل:** ویژگی تنوع، کوپن، کارمزد، ارسال، استرداد، یادداشت‌های صفحه‌بندی‌شده و مدرک پرداخت.
  *   IP و user agent برنمی‌گردند.
@@ -270,6 +271,19 @@ check($goneRow !== null && array_column($goneRow['attributes'], 'value') === ['X
 check($d['tracking'] === [['provider' => 'iran-post', 'number' => "IR-{$tag}", 'shippedAt' => $d['tracking'][0]['shippedAt'], 'url' => "https://tracking.example.invalid/{$tag}"]]
     && $d['tracking'][0]['shippedAt'] !== null, "{$mode}: رهگیری افزونهٔ رسمی");
 check($d['modifiedAt'] !== null && $d['completedAt'] === null, "{$mode}: تاریخ تغییر؛ سفارش در حال انجام تاریخ تکمیل ندارد");
+// ── وضعیت صف روی پایگاه واقعی (بازبینی ریشه روی 4b0046a): نشان معوق ماندگار «در صف» است ──
+check($d['core']['queue']['scheduler'] === 'action-scheduler' && $d['core']['queue']['state'] !== 'unknown' && $d['core']['queue']['dead'] === false,
+    "{$mode}: وضعیت صف از SQL واقعی خوانده شد (" . $d['core']['queue']['state'] . ')');
+$qo = wc_create_order(['status' => 'pending']); $qo->save(); $qid = $qo->get_id();
+$put = new ReflectionMethod('LMC_Queue', 'put_marker'); $put->setAccessible(true);
+$forget = new ReflectionMethod('LMC_Queue', 'forget_marker'); $forget->setAccessible(true);
+$name = (new ReflectionMethod('LMC_Queue', 'marker_name'))->invoke(null, 'e', LMC_ORDER_EVENT, [$qid], 0);
+$raw = $put->invoke(null, 'e', LMC_ORDER_EVENT, [$qid], ['due' => time() + 86400, 'floor' => 0], true);
+$deferredView = signed(['orderId' => $qid])->get_data()['order']['core']['queue'];
+check(is_string($raw) && LMC_Queue::queued(LMC_ORDER_EVENT, [$qid]) === false, "{$mode}: کنترل منفی: queued() نشان معوق واقعی را نمی‌بیند");
+check($deferredView === ['scheduler' => 'action-scheduler', 'state' => 'deferred', 'deferred' => 'send', 'dead' => false], "{$mode}: نشان معوق واقعی: deferred/send");
+check($forget->invoke(null, $name, $raw) && get_option($name, null) === null, "{$mode}: نشان آزمون برداشته شد (drain نشد)");
+check(signed(['orderId' => $qid])->get_data()['order']['core']['queue']['state'] === 'idle', "{$mode}: بی نشان: idle");
 $done = signed(['orderId' => $created[1]])->get_data()['order'];
 check($done['status'] === 'completed' && $done['completedAt'] !== null, "{$mode}: تاریخ تکمیل سفارش تکمیل‌شده");
 check(count($n2['rows']) >= 5 && !$n2['hasMore'], "{$mode}: یادداشت صفحهٔ دوم (۲۵ یادداشت به‌علاوهٔ یادداشت‌های خود ووکامرس)");

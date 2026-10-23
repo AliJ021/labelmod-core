@@ -13,8 +13,9 @@
  *    روش ارسال است که به **همان** پرسش صفحه‌بندی‌شدهٔ ووکامرس افزوده می‌شود (HPOS:
  *    `woocommerce_orders_table_query_clauses`؛ legacy: `posts_where`) و فقط جدول اقلام سفارش را می‌خواند —
  *    جدولی که در هر دو انباره یکی است. پس هیچ سفارشی در PHP پیمایش نمی‌شود.
- * ⚠️ **هزینهٔ هر درخواست محدود است، نه تاریخچه.** صفحه حداکثر ۵۰ سفارش است و شمارهٔ صفحه تا ۱۰۰٬۰۰۰
- *    پذیرفته می‌شود. ترتیب: تاریخ نزولی، سپس شناسه نزولی.
+ * ⚠️ **هزینهٔ هر درخواست محدود است.** صفحه حداکثر ۵۰ سفارش و شمارهٔ صفحه حداکثر ۱۰۰٬۰۰۰ است (با ۲۰تایی Core،
+ *    ۲ میلیون سفارش تازه‌تر در دسترس صفحه‌بندی؛ قدیمی‌تر از آن با فیلتر تاریخ). ترتیب: تاریخ نزولی، سپس شناسه نزولی.
+ *    صفحه‌ها تصویر لحظه‌ای (snapshot) نیستند؛ لنگر فقط سفارش تازه را بیرون نگه می‌دارد (مرز صریح پایین).
  * ⚠️ **لنگر `until` ثانیهٔ جاری را بیرون می‌گذارد** (بازبینی ریشه روی 2a4e62e). لنگر پیش‌فرض `time() - 1`
  *    است و لنگرِ ثانیهٔ جاری یا آینده رد می‌شود؛ با `<=` و لنگر `time()`، سفارشی که در همان ثانیه ساخته
  *    می‌شد صفحه‌ها را جابه‌جا می‌کرد و یک سفارش در دو صفحه تکرار می‌شد.
@@ -304,7 +305,8 @@ class LMC_Orders_View
         }
         $summary = self::summary($order);
         $summary['core'] += [
-            'scheduled' => class_exists('LMC_Queue') ? LMC_Queue::queued(LMC_ORDER_EVENT, [(int) $order->get_id()]) : (bool) wp_next_scheduled(LMC_ORDER_EVENT, [(int) $order->get_id()]),
+            // وضعیت صف همان کار، شامل تصمیم معوق ماندگار و ثبت مرده؛ `queued()` نشان معوق را نمی‌دید (بازبینی ریشه روی 4b0046a).
+            'queue' => self::queue_state((int) $order->get_id()),
             'missingSku' => $missing_sku, 'missingMapping' => $missing_map,
         ];
         return $summary + [
@@ -336,6 +338,16 @@ class LMC_Orders_View
             'refunds' => $refunds, 'refundsTruncated' => count((array) $order->get_refunds()) > self::REFUNDS_MAX,
             'notes' => ['page' => $notes_page, 'perPage' => self::NOTES_PER_PAGE, 'hasMore' => count($note_rows) > self::NOTES_PER_PAGE, 'rows' => $notes],
         ];
+    }
+
+    /** فقط خواندن؛ بی LMC_Queue (نصب ناقص) فقط WP-Cron دیده می‌شود و بقیه «نمی‌دانم» است، نه «نیست». */
+    private static function queue_state(int $order_id): array
+    {
+        if (class_exists('LMC_Queue') && method_exists('LMC_Queue', 'state')) {
+            return LMC_Queue::state(LMC_ORDER_EVENT, [$order_id]);
+        }
+        return ['scheduler' => 'wp-cron', 'state' => wp_next_scheduled(LMC_ORDER_EVENT, [$order_id]) ? 'scheduled' : 'unknown',
+            'deferred' => null, 'dead' => null];
     }
 
     /**
