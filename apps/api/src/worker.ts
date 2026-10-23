@@ -31,7 +31,8 @@ async function main(): Promise<void> {
   const handle = createDb(config.DATABASE_URL, 3);
   await assertRuntimeDatabaseRole(handle, config.isProduction);
 
-  const workerName = `${hostname()}:${process.pid}`;
+  // نام برای ردیابی است، نه مالکیت: مالکیت هر پیام با توکن اجاره (۱۰۰) است.
+  const workerName = `${hostname()}:${process.pid}:${config.WORKER_LANE}`;
   const log = (line: string) => process.stdout.write(`${line}\n`);
 
   if (!config.SMS_API_KEY && !config.SMS_CREDENTIAL_KEY) {
@@ -50,6 +51,7 @@ async function main(): Promise<void> {
     webPushSecret: config.WEB_PUSH_SECRET,
     batchSize: config.WORKER_BATCH,
     leaseSeconds: config.WORKER_LEASE_SECONDS,
+    lane: config.WORKER_LANE,
     intervalMs: config.WORKER_INTERVAL_MS,
     log,
   });
@@ -69,7 +71,7 @@ async function main(): Promise<void> {
 
   process.on("SIGTERM", () => void shutdown("SIGTERM"));
   process.on("SIGINT", () => void shutdown("SIGINT"));
-  log(`Worker لیبل مد بالا آمد — ${workerName}`);
+  log(`Worker لیبل مد بالا آمد — ${workerName} (خط ${config.WORKER_LANE})`);
 }
 
 if (process.argv[1]?.endsWith("worker.ts")) {

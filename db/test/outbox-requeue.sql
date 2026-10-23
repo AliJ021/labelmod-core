@@ -69,7 +69,9 @@ FOR v_n IN 1..3 LOOP
   UPDATE platform.outbox_message SET next_attempt_at = now() - interval '1 second'
    WHERE id = v_id;
   PERFORM platform.claim_outbox(10, 'tester', 60);
-  PERFORM platform.fail_outbox(v_id, 'خطای ساختگی شماره '||v_n, 3, false);
+  PERFORM platform.fail_outbox(v_id,
+    (SELECT claim_token FROM platform.outbox_message WHERE id = v_id),
+    'خطای ساختگی شماره '||v_n, 3, false);
 END LOOP;
 
 SELECT status INTO v_status FROM platform.outbox_message WHERE id = v_id;
@@ -139,7 +141,9 @@ PERFORM pg_temp.assert_eq('Worker پیام زنده‌شده را برداشت',
 
 -- و یک شکستِ دیگر هم تحمل می‌کند: بی صفرکردن `attempts`، همین فراخوان
 -- پیام را **دوباره مرده** می‌کرد و «اجرای مجدد» یک بار هم تلاش نمی‌کرد.
-PERFORM platform.fail_outbox(v_id, 'یک شکست دیگر', 3, false);
+PERFORM platform.fail_outbox(v_id,
+  (SELECT claim_token FROM platform.outbox_message WHERE id = v_id),
+  'یک شکست دیگر', 3, false);
 PERFORM pg_temp.assert_eq('پس از یک شکست دیگر همچنان در صف است',
   (SELECT status FROM platform.outbox_message WHERE id = v_id), 'pending');
 
@@ -152,7 +156,9 @@ RAISE NOTICE E'\n═══ ۵. و می‌تواند موفق شود ═══';
 UPDATE platform.outbox_message SET next_attempt_at = now() - interval '1 second'
  WHERE id = v_id;
 PERFORM platform.claim_outbox(10, 'tester3', 60);
-PERFORM platform.complete_outbox(v_id);
+PERFORM pg_temp.assert_eq('بستن با توکن همان برداشت پذیرفته شد',
+  (SELECT platform.complete_outbox(v_id, claim_token)::text
+     FROM platform.outbox_message WHERE id = v_id), 'true');
 PERFORM pg_temp.assert_eq('پیام زنده‌شده به سرانجام رسید',
   (SELECT status FROM platform.outbox_message WHERE id = v_id), 'sent');
 

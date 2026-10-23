@@ -1,0 +1,38 @@
+# main 4cdde906c33c68873ce1f069e263d60ab00e84c8 · PostgreSQL 16.13 (Ubuntu 16.13-0ubuntu0.24.04.1) · دیتابیس یک‌بارمصرف lmc_lease_base، فقط مهاجرت (بی seed)
+BEGIN
+INSERT 0 1
+-- A برمی‌دارد، اجاره ۰ ثانیه (یعنی همین الان منقضی)
+ id | attempts 
+----+----------
+  1 |        1
+
+-- B دوباره برمی‌دارد، اجاره ۱۲۰
+ id | attempts 
+----+----------
+  1 |        2
+
+ status  | attempts | claimed_by 
+---------+----------+------------
+ sending |        2 | B
+
+SAVEPOINT
+-- A دیررس: complete_outbox(id)
+ complete_outbox 
+-----------------
+ 
+
+ status | attempts | claimed_by | has_sent_at 
+--------+----------+------------+-------------
+ sent   |        2 | B          | t
+
+ROLLBACK
+-- A دیررس (جدا): fail_outbox(id, ...)
+ fail_outbox 
+-------------
+ pending
+
+ status  | attempts | claimed_by |  last_error  
+---------+----------+------------+--------------
+ pending |        2 | B          | شکست دیررس A
+
+ROLLBACK

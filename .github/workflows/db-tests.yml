@@ -21,7 +21,8 @@ permissions:
 
 jobs:
   db-tests:
-    runs-on: ubuntu-latest
+    # نسخهٔ سیستم‌عامل ثابت؛ ubuntu-latest نباید ابزار بکاپ را از سرور ۱۶ جلو بیندازد.
+    runs-on: ubuntu-24.04
 
     # پستگرس عمداً services نیست: ایمیج سرویس پیش از هر step کشیده می‌شود و محدودیت دانلود
     # ECR («Data limit exceeded») کل job را پیش از checkout می‌کشت، بی هیچ راه جایگزین.
@@ -44,8 +45,21 @@ jobs:
       - name: راه‌اندازی پستگرس (آینهٔ ECR، fallback رسمی فقط برای محدودیت دانلود)
         run: .github/scripts/start-postgres.sh
 
-      - name: نصب کلاینت پستگرس
-        run: sudo apt-get update -qq && sudo apt-get install -y -qq postgresql-client
+      - name: نصب کلاینت پستگرس هم‌نسخه با سرور
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq postgresql-client-16
+          echo "/usr/lib/postgresql/16/bin" >> "$GITHUB_PATH"
+
+      - name: کنترل نسخهٔ ابزار بکاپ و سرور
+        run: |
+          for tool in psql pg_dump pg_restore; do
+            test "$(command -v "$tool")" = "/usr/lib/postgresql/16/bin/$tool"
+            "$tool" --version | grep -E ' 16[.]'
+          done
+          version_num="$(psql -X -v ON_ERROR_STOP=1 -Atc 'SHOW server_version_num')"
+          test "$version_num" -ge 160000
+          test "$version_num" -lt 170000
 
       - name: اجرای مهاجرت‌ها و بارگذاری داده مرجع
         run: ./ops/db.sh migrate && ./ops/db.sh seed
@@ -410,8 +424,10 @@ jobs:
   # چهار Shard موازی تقسیم می‌شود و Job تجمیعیِ همنام، نتیجهٔ همه را الزام می‌کند.
   browser-regression-shard:
     name: browser-regression (${{ matrix.shard }}/4)
-    runs-on: ubuntu-latest
-    timeout-minutes: 45
+    runs-on: ubuntu-24.04
+    # مجموعهٔ فعلی حدود ۲۰۰۰ آزمون در هر shard دارد؛ run 39701529510 در انتهای
+    # shard ۴ به سقف کل job رسید. مهلت خود آزمون‌ها، retries و ماتریس ثابت‌اند.
+    timeout-minutes: 60
     strategy:
       fail-fast: false
       matrix:

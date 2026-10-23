@@ -23,16 +23,23 @@
  * صف، Backoff، نامه مرده — و فقط عدم ارسال در لاگ ثبت می‌شود. اولین
  * پیامک واقعی آن‌وقت یک تغییر تنظیم است، نه یک استقرار.
  */
+import { retryAfterFor } from "./retry-after.ts";
 
 /** خطای ارسال، با تفکیکی که کل رفتار Retry رویش می‌ایستد. */
 export class SmsError extends Error {
   /** آیا تلاش دوباره معنا دارد؟ شماره غلط با تلاش صدم هم درست نمی‌شود. */
   readonly permanent: boolean;
+  /**
+   * کفِ تأخیر تلاش بعدی از هدر `Retry-After` سرور (ثانیه)، فقط پس از
+   * سنجش `parseRetryAfter`. `null` یعنی Backoff عادی صف.
+   */
+  readonly retryAfterSeconds: number | null;
 
-  constructor(message: string, permanent = false) {
+  constructor(message: string, permanent = false, retryAfterSeconds: number | null = null) {
     super(message);
     this.name = "SmsError";
     this.permanent = permanent;
+    this.retryAfterSeconds = retryAfterSeconds;
   }
 }
 
@@ -119,6 +126,7 @@ async function check(res: Response, provider: string): Promise<void> {
   throw new SmsError(
     `${provider} پاسخ ${res.status} داد: ${body.slice(0, 200)}`,
     permanent,
+    retryAfterFor(res.status, res.headers.get("retry-after"), Date.now()),
   );
 }
 
@@ -206,6 +214,7 @@ function meliPayamakSender(config: SmsConfig): SmsSender {
         throw new SmsError(
           `ملی‌پیامک پاسخ HTTP ${res.status} داد`,
           res.status >= 400 && res.status < 500 && res.status !== 429,
+          retryAfterFor(res.status, res.headers.get("retry-after"), Date.now()),
         );
       }
       let payload: unknown;

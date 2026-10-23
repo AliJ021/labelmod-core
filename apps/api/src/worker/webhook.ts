@@ -19,6 +19,7 @@
  * خطای واقعی همان‌جا گم می‌شد.
  */
 import { SmsError } from "./sms.ts";
+import { retryAfterFor } from "./retry-after.ts";
 
 export interface WebhookConfig {
   enabled: boolean;
@@ -107,10 +108,15 @@ export function makeWebhookSender(config: WebhookConfig): WebhookSender {
         // ۴xx یعنی نشانی یا بدنه ایراد دارد و تلاش صدم هم درستش
         // نمی‌کند: مستقیم نامه مرده. ۵xx یعنی سرویس بالا نبود:
         // Backoff بگیرد و دوباره تلاش شود.
-        const permanent = res.status >= 400 && res.status < 500;
+        //
+        // ⚠️ ۴۲۹ و ۴۰۸ استثنای ۴xxاند: «الان نه»، نه «هرگز». پیش‌تر ۴۲۹
+        //    مستقیم نامهٔ مرده می‌ساخت — برخلاف پیامک و Push سایت.
+        const permanent = res.status >= 400 && res.status < 500
+          && res.status !== 408 && res.status !== 429;
         throw new SmsError(
           `Webhook پاسخ ${res.status} داد`,
           permanent,
+          retryAfterFor(res.status, res.headers.get("retry-after"), Date.now()),
         );
       }
     },

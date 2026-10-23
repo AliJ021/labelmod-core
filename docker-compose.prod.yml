@@ -92,6 +92,7 @@ services:
       WORKER_INTERVAL_MS: ${WORKER_INTERVAL_MS:-5000}
       WORKER_BATCH: ${WORKER_BATCH:-20}
       WORKER_LEASE_SECONDS: ${WORKER_LEASE_SECONDS:-120}
+      WORKER_LANE: ${WORKER_LANE:-all}
     depends_on:
       db:
         condition: service_healthy
