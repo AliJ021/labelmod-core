@@ -69,7 +69,8 @@ test("split payment: an ambiguous 503 locks the method until a status check by i
   // ۵۰۳ «نامعلوم» است: روش و مبلغ قفل‌اند و هیچ ارسال کوری نیست.
   await expect(page.getByRole("alert").filter({hasText:"پاسخ قطعی"})).toBeVisible();
   await expect(card).toBeDisabled();
-  // قفل یعنی تراشهٔ نقد هم بسته است (بازطراحی مصوب مالک: همهٔ روش‌های فعال تراشه‌اند).
+  // قفل یعنی تراشهٔ نقد هم بسته است؛ نقد زیر «نمایش بیشتر» است (چیدمان مصوب مالک) و خود دکمهٔ بخش قفل نیست.
+  await page.getByRole("button",{name:/^نمایش بیشتر/}).click();
   await expect(page.getByRole("button",{name:"نقد",exact:true})).toBeDisabled();
   await expect(page.getByRole("button",{name:"دریافت وجه",exact:true})).toHaveCount(0);
   expect(attempts).toBe(1);
@@ -294,6 +295,8 @@ test("money grouping preserves caret, exact payment payload, and collapsed navig
     await expect(page.getByRole("button",{name:"باز کردن منوی کناری",exact:true})).toBeVisible();
     await expect(page.getByRole("tab",{name:"صندوق",exact:true})).toBeVisible();
   }
+  // نقد زیر «نمایش بیشتر» است (چیدمان مصوب مالک).
+  await page.getByRole("button",{name:/^نمایش بیشتر/}).click();
   await page.getByRole("button",{name:"نقد",exact:true}).click();
   const amount=page.getByRole("textbox",{name:"مبلغ (تومان)",exact:true});
   await amount.fill("۵۰۰۰۰۰۰");
