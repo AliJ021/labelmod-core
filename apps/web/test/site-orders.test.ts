@@ -5,7 +5,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import {
-  addressLines, coreState, isPaymentId, isStatusSlug, moneyView, orderPath, ordersPath, orderStatusState, type OrderCore,
+  addressLines, coreState, isPaymentId, isStatusSlug, moneyView, orderPath, ordersRequest, orderStatusState, type OrderCore,
 } from "../src/lib/site-orders.ts";
 import { STATUS } from "../src/lib/status.ts";
 import { ZONES } from "../src/lib/navigation.ts";
@@ -44,14 +44,20 @@ test("مبلغ: ریال دقیق، یا مبلغ اصلی با کد ارز؛ د
   assert.deepEqual(moneyView({ amount: null, rial: null }, "IRR"), { kind: "unknown" });
 });
 
-test("نشانی درخواست: فیلتر خالی نمی‌رود؛ صفحهٔ فراتر از ۲۰۰ و لنگر می‌روند", () => {
-  const q = { page: 1, status: null, search: null, from: null, to: null, payment: null, until: null };
-  assert.equal(ordersPath(q), "/web/orders?page=1");
-  assert.equal(ordersPath({ ...q, page: 201, status: "on-hold", search: "۰۹۱۲ 34", from: "2026-10-01", to: "2026-10-20",
-    payment: "bacs", until: 1792000000 }),
-  "/web/orders?page=201&status=on-hold&q=%DB%B0%DB%B9%DB%B1%DB%B2+34&from=2026-10-01&to=2026-10-20&payment=bacs&until=1792000000");
+test("درخواست فهرست: فیلتر خالی نمی‌رود؛ صفحهٔ فراتر از ۲۰۰ و لنگر می‌روند؛ جست‌وجو فقط در بدنهٔ POST", () => {
+  const q = { page: 1, status: null, search: null, from: null, to: null, payment: null, shipping: null, until: null };
+  assert.deepEqual(ordersRequest(q), { method: "GET", path: "/web/orders?page=1" });
+  assert.deepEqual(ordersRequest({ ...q, page: 201, status: "trash", from: "2026-10-01", to: "2026-10-20", payment: "bacs",
+    shipping: "local_pickup", until: 1792000000 }),
+  { method: "GET", path: "/web/orders?page=201&status=trash&from=2026-10-01&to=2026-10-20&payment=bacs&shipping=local_pickup&until=1792000000" });
+  // بازبینی ریشه روی 2a4e62e: تلفن یا ایمیل نباید در نشانی درخواست باشد، چون لاگ دسترسی Caddy نشانی کامل را نگه می‌دارد.
+  const searched = ordersRequest({ ...q, page: 3, search: "09121234567", shipping: "flat_rate", until: 1792000000 });
+  assert.deepEqual(searched, { method: "POST", path: "/web/orders/search",
+    body: { page: 3, shipping: "flat_rate", until: 1792000000, q: "09121234567" } });
+  assert.ok(!searched.path.includes("0912"));
   assert.equal(orderPath(41, 1, 1), "/web/orders/41");
   assert.equal(orderPath(41, 3, 2), "/web/orders/41?items=3&notes=2");
+  assert.equal(orderStatusState("trash"), "archived");
 });
 
 test("نشانی پستی: میدان خالی حذف می‌شود", () => {

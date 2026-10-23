@@ -6,8 +6,11 @@
  * - **صفحه‌بندی پایدار:** صفحهٔ اول یک لنگر زمانی (`until`) برمی‌گرداند و صفحه‌های بعد با همان لنگر خوانده
  *   می‌شوند، پس سفارش تازه ردیف‌ها را جابه‌جا نمی‌کند. «به‌روزرسانی» لنگر را برمی‌دارد. سقفی روی تعداد
  *   صفحه‌های تاریخچه نیست؛ هزینهٔ هر درخواست با ۲۰ سفارش در صفحه محدود است.
- * - وضعیت، تاریخ، روش پرداخت، صفحه، لنگر و سفارش انتخاب‌شده در نشانی صفحه‌اند (`useUrlState`).
- *   **عبارت جست‌وجو در نشانی نیست**: ممکن است تلفن یا ایمیل مشتری باشد و نشانی در تاریخچهٔ مرورگر می‌ماند.
+ * - وضعیت (شامل زباله‌دان)، تاریخ، روش پرداخت و ارسال، صفحه، لنگر و سفارش انتخاب‌شده در نشانی صفحه‌اند
+ *   (`useUrlState`). **عبارت جست‌وجو نه در نشانی صفحه است و نه در نشانی درخواست**: ممکن است تلفن یا ایمیل
+ *   مشتری باشد؛ نشانی صفحه در تاریخچهٔ مرورگر می‌ماند و نشانی درخواست در لاگ دسترسی Caddy.
+ * - لنگر ثانیهٔ جاری را ندارد؛ سفارشی که با تاریخ گذشته درج یا تاریخش ویرایش شود هنوز می‌تواند صفحه‌ها را
+ *   جابه‌جا کند (مرز صریح در README افزونه).
  * - جزئیات همهٔ میدان‌های عملیاتی سفارش را برای مدیر نشان می‌دهد (تماس و نشانی، ویژگی تنوع، تخفیف و مالیات
  *   سطر، هزینه، کوپن، استرداد، یادداشت) — نه متای خام، نه IP. اقلام و یادداشت‌ها صفحه‌بندی‌اند.
  * - هر خواندن قبلی لغو می‌شود و پاسخ دیررس بی‌اثر است (همان الگوی نسل داشبورد).
@@ -19,7 +22,7 @@ import { navigate, useUrlState } from "../lib/use-url-state.ts";
 import { normalizeDigits } from "../lib/settings-value.ts";
 import { parseJalaliDate, readOptionalJalaliPeriod } from "../lib/report-filters.ts";
 import {
-  addressLines, coreState, isPaymentId, isStatusSlug, moneyView, ORDERS_PAGE_MAX, orderStatusState, siteOrders,
+  addressLines, coreState, isPaymentId, isShippingId, isStatusSlug, moneyView, ORDERS_PAGE_MAX, orderStatusState, siteOrders,
   type Address, type OrderDetail, type OrderItem, type OrderSummary, type OrdersPage, type OrderView, type WooMoney,
 } from "../lib/site-orders.ts";
 import { Solid } from "../components/Glass.tsx";
@@ -73,7 +76,7 @@ function Amount({ m, currency }: { m: WooMoney; currency: string }) {
 }
 
 const PARAM = { status: "site-orders.status", page: "site-orders.page", from: "site-orders.from", to: "site-orders.to",
-  payment: "site-orders.payment", until: "site-orders.until", order: "site-orders.order" } as const;
+  payment: "site-orders.payment", shipping: "site-orders.shipping", until: "site-orders.until", order: "site-orders.order" } as const;
 const ISO_DAY = /^\d{4}-\d{2}-\d{2}$/;
 
 /** چند کلید نشانی در یک جابه‌جایی؛ مقدار خالی یعنی حذف. */
@@ -91,10 +94,12 @@ export function SiteOrders() {
   const [fromParam] = useUrlState(PARAM.from);
   const [toParam] = useUrlState(PARAM.to);
   const [paymentParam] = useUrlState(PARAM.payment);
+  const [shippingParam] = useUrlState(PARAM.shipping);
   const [untilParam] = useUrlState(PARAM.until);
   const [orderParam] = useUrlState(PARAM.order);
   const status = isStatusSlug(statusParam) ? statusParam : null;
   const payment = isPaymentId(paymentParam) ? paymentParam : null;
+  const shipping = isShippingId(shippingParam) ? shippingParam : null;
   const from = ISO_DAY.test(fromParam) ? fromParam : null;
   const to = ISO_DAY.test(toParam) ? toParam : null;
   const pageRaw = /^[1-9]\d{0,5}$/.test(pageParam) ? Number(pageParam) : 1;
@@ -106,8 +111,8 @@ export function SiteOrders() {
   const [searchDraft, setSearchDraft] = useState("");
   const [search, setSearch] = useState<string | null>(null);
 
-  const [list, reload] = useLatest<OrdersPage>(signal => siteOrders.list({ page, status, search, from, to, payment, until }, { signal }),
-    [page, status, search, from, to, payment, until]);
+  const [list, reload] = useLatest<OrdersPage>(signal => siteOrders.list({ page, status, search, from, to, payment, shipping, until }, { signal }),
+    [page, status, search, from, to, payment, shipping, until]);
   const ready = list.state === "done" && list.data.state === "ready" ? list.data : null;
   /** فیلتر تازه یعنی صفحهٔ اول، لنگر تازه و بستن جزئیات. */
   const refilter = (next: Partial<Record<keyof typeof PARAM, string>>) => setParams({ ...next, page: "", until: "", order: "" });
@@ -134,10 +139,10 @@ export function SiteOrders() {
     setSearch(v === "" ? null : v);
     refilter({});
   }
-  const filtered = !!(status || payment || from || to || search);
+  const filtered = !!(status || payment || shipping || from || to || search);
   function reset() {
     setSearchDraft(""); setSearch(null); setFromText(""); setToText("");
-    refilter({ status: "", payment: "", from: "", to: "" });
+    refilter({ status: "", payment: "", shipping: "", from: "", to: "" });
   }
 
   return <div className="stack">
@@ -164,6 +169,12 @@ export function SiteOrders() {
         <select value={payment ?? ""} onChange={e => refilter({ payment: e.target.value })}>
           <option value="">همهٔ روش‌ها</option>
           {(ready?.paymentMethods ?? (payment ? [{ id: payment, title: payment }] : [])).map(p => <option key={p.id} value={p.id}>{p.title}</option>)}
+        </select>
+      </Field>
+      <Field label="روش ارسال">
+        <select value={shipping ?? ""} onChange={e => refilter({ shipping: e.target.value })}>
+          <option value="">همهٔ روش‌ها</option>
+          {(ready?.shippingMethods ?? (shipping ? [{ id: shipping, title: shipping }] : [])).map(m => <option key={m.id} value={m.id}>{m.title}</option>)}
         </select>
       </Field>
       <Field label="از تاریخ" hint={<JalaliDateHint iso={range.from} example="مثلاً ۱۴۰۵/۰۷/۰۱" />} error={range.issue?.field === "from" ? range.issue.message : null}>
@@ -308,6 +319,8 @@ function OrderDetailView({ order, onItemsPage, onNotesPage }: {
       <Fact label="روش پرداخت">{orDash(order.payment.method)}</Fact>
       <Fact label="شناسهٔ تراکنش">{order.payment.transactionId ? <Ltr>{order.payment.transactionId}</Ltr> : <span className="muted">—</span>}</Fact>
       <Fact label="زمان پرداخت">{order.payment.paidAt ? formatJalaliMoment(order.payment.paidAt) : <span className="muted">پرداخت ثبت نشده</span>}</Fact>
+      <Fact label="زمان تکمیل">{order.completedAt ? formatJalaliMoment(order.completedAt) : <span className="muted">تکمیل نشده</span>}</Fact>
+      <Fact label="آخرین تغییر">{order.modifiedAt ? formatJalaliMoment(order.modifiedAt) : <span className="muted">—</span>}</Fact>
     </dl>
     <div className="site-order-columns">
       <AddressBlock title="نشانی صورت‌حساب" a={order.billing} email={order.billing.email} />
@@ -336,6 +349,9 @@ function OrderDetailView({ order, onItemsPage, onNotesPage }: {
       value: <><Amount m={s.total} currency={c} /> <span className="muted small">مالیات: </span><Amount m={s.tax} currency={c} /></> }))} /> : null}
     {order.fees.length > 0 ? <List title="هزینه‌های اضافه" rows={order.fees.map((f, i) => ({ key: String(i), label: f.name,
       value: <><Amount m={f.total} currency={c} /> <span className="muted small">مالیات: </span><Amount m={f.tax} currency={c} /></> }))} /> : null}
+    {order.tracking.length > 0 ? <List title="رهگیری ارسال" rows={order.tracking.map((t, i) => ({ key: String(i),
+      label: <>{t.provider || "ارسال"}{t.shippedAt ? ` · ${formatJalaliMoment(t.shippedAt)}` : ""}</>,
+      value: t.url ? <a href={t.url} target="_blank" rel="noopener noreferrer"><Ltr>{t.number}</Ltr></a> : <Ltr>{t.number}</Ltr> }))} /> : null}
     {order.coupons.length > 0 ? <List title="کوپن‌ها" rows={order.coupons.map(x => ({ key: x.code, label: <Ltr>{x.code}</Ltr>,
       value: <Amount m={x.discount} currency={c} /> }))} /> : null}
     {order.refunds.length > 0 ? <List title="استردادها" rows={order.refunds.map(r => ({ key: String(r.id),
