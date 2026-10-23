@@ -27,6 +27,9 @@ import { readNotifySettings } from "./settings.ts";
 import { makeWebhookSender } from "./webhook.ts";
 import { makeWebPushSender } from "./web-push.ts";
 
+/** کاربر «سیستم» (seed): نامِ کارهای خودکار بی آدم پشتشان؛ هرگز وارد نمی‌شود. */
+const SYSTEM_USER = "00000000-0000-7000-8000-0000000000f1";
+
 export interface LoopOptions {
   db: Db;
   /** نام این Worker — در `claimed_by` می‌نشیند، برای وقتی دوتا بالاست. */
@@ -111,6 +114,8 @@ export interface TickResult {
   lost: number;
   enqueuedCheques: number;
   enqueuedAlerts: number;
+  /** رزرو سفارش اینستاگرامِ سررسیده که بی واریزِ در جریان آزاد شد (مهاجرت ۱۰۲). */
+  expiredInstagram: number;
 }
 
 /**
@@ -139,6 +144,7 @@ export async function tick(opts: LoopOptions): Promise<TickResult> {
     lost: 0,
     enqueuedCheques: 0,
     enqueuedAlerts: 0,
+    expiredInstagram: 0,
   };
 
   assertLease(opts.leaseSeconds);
@@ -166,6 +172,16 @@ export async function tick(opts: LoopOptions): Promise<TickResult> {
       SELECT platform.enqueue_health_alerts() AS n
     `.execute(opts.db);
     out.enqueuedAlerts = Number(alerts.rows[0]?.n ?? 0);
+
+    /*
+     * انقضای رزرو سفارش اینستاگرام (docs/INSTAGRAM-ORDERS.md). تابع خودش
+     * سفارشی را که واریزش «ادعاشده» یا «نیازمند رسیدگی» است آزاد نمی‌کند و
+     * با SKIP LOCKED از سفارشِ در حال تأیید واریز می‌گذرد؛ تکرارش بی‌ضرر است.
+     */
+    const expired = await sql<{ n: number }>`
+      SELECT sales.instagram_expire_due(${SYSTEM_USER}::uuid) AS n
+    `.execute(opts.db);
+    out.expiredInstagram = Number(expired.rows[0]?.n ?? 0);
   }
 
   const claimed = await sql<{
@@ -442,10 +458,11 @@ export function runLoop(
         outcome = { ok: true, claimed: r.claimed };
         // دور خالی لاگ نمی‌خورد: Workerی که هر پنج ثانیه «کاری نبود»
         // بنویسد، لاگ را طوری پر می‌کند که خطای واقعی گم شود.
-        if (r.claimed > 0 || r.enqueuedCheques > 0) {
+        if (r.claimed > 0 || r.enqueuedCheques > 0 || r.expiredInstagram > 0) {
           opts.log(
             `دور: ${r.claimed} برداشته، ${r.sent} فرستاده، ${r.failed} ناموفق، ` +
-              `${r.dead} مرده، ${r.lost} اجارهٔ ازدست‌رفته، ${r.enqueuedCheques} هشدار چک تازه`,
+              `${r.dead} مرده، ${r.lost} اجارهٔ ازدست‌رفته، ${r.enqueuedCheques} هشدار چک تازه، ` +
+              `${r.expiredInstagram} رزرو اینستاگرام منقضی`,
           );
         }
       } catch (err) {

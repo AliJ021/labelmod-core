@@ -170,6 +170,15 @@ REVOKE CREATE ON SCHEMA public FROM $APP_ROLE;
 REVOKE EXECUTE ON FUNCTION platform.enqueue_web_push(text, jsonb) FROM $APP_ROLE;
 REVOKE EXECUTE ON FUNCTION inventory.push_web_stock(uuid, uuid)   FROM $APP_ROLE;
 REVOKE EXECUTE ON FUNCTION catalog.push_web_price(uuid)           FROM $APP_ROLE;
+
+-- ۶. سفارش اینستاگرام (مهاجرت ۱۰۲). دو کمکیِ درونی رزرو مستقیم روی «stock_balance»
+--    می‌نویسند؛ فقط توابع ورودیِ همان مهاجرت صدایشان می‌زنند، پس نقش برنامه نباید
+--    بتواند رزرو را بی سنجش سفارش بسازد یا آزاد کند. تطبیق واریز هم فقط از
+--    «instagram_begin_confirm» نوشته می‌شود: درج مستقیم یعنی «واریز تأییدشده» بی سنجش
+--    مبلغ، حساب و مرجع تکراری.
+REVOKE EXECUTE ON FUNCTION sales.instagram_release_hold(uuid)               FROM $APP_ROLE;
+REVOKE EXECUTE ON FUNCTION sales.instagram_take_hold(uuid, timestamptz)     FROM $APP_ROLE;
+REVOKE INSERT, UPDATE, DELETE, TRUNCATE ON sales.instagram_payment          FROM $APP_ROLE;
 SQL
 
 # ⚠️ اینجا عمداً `ALTER DEFAULT PRIVILEGES … REVOKE … IN SCHEMA inventory`

@@ -40,6 +40,7 @@ export const ZONES = [
   { key: "invoices", label: "فاکتورها", icon: "receipt", navGroup: "daily", mobilePrimary: true, anyOf: ["sale.create", "return.same_day", "return.late"] },
   { key: "returns", label: "مرجوعی", icon: "return", navGroup: "daily", mobilePrimary: false, anyOf: ["return.same_day", "return.late"] },
   { key: "site-orders", label: "سفارش‌های سایت", icon: "external", navGroup: "daily", mobilePrimary: false, anyOf: ["web.orders.view"] },
+  { key: "instagram-orders", label: "سفارش اینستاگرام", icon: "sparkle", navGroup: "daily", mobilePrimary: false, anyOf: ["instagram.order.manage", "instagram.payment.verify"] },
   { key: "catalog", label: "کالا و قیمت", icon: "tag", navGroup: "stock", mobilePrimary: true, anyOf: ["catalog.manage"] },
   { key: "purchasing", label: "انبار و خرید", icon: "box", navGroup: "stock", mobilePrimary: false, anyOf: ["stock.receive"] },
   { key: "treasury", label: "خزانه و چک", icon: "vault", navGroup: "money", mobilePrimary: false, anyOf: ["treasury.manage"] },
