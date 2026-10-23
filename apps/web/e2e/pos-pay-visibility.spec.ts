@@ -69,6 +69,8 @@ for (const size of [{ width: 1440, height: 960 }, { width: 1366, height: 768 }, 
     await expectUncovered(card, "مبلغ کارت‌خوان پس از انتخاب");
     await card.fill("25000");
     await row(page, "کارت‌خوان").getByLabel("شماره پیگیری", { exact: true }).fill("TR-1");
+    // نقدی زیر «نمایش بیشتر» است (چیدمان مصوب مالک).
+    await selector(page).getByRole("button", { name: /^نمایش بیشتر/ }).click();
     await chip(page, "نقدی").click();
     const cash = row(page, "نقدی").getByLabel("مبلغ (تومان)", { exact: true });
     await expect(cash).toBeFocused();
