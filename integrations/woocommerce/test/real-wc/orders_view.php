@@ -1,6 +1,6 @@
 <?php
 /**
- * «سفارش‌های سایت» (قرارداد ۲) روی ووکامرس واقعی، یک بار با HPOS و یک بار با جدول قدیمی پست.
+ * «سفارش‌های سایت» (قرارداد ۳) روی ووکامرس واقعی، یک بار با HPOS و یک بار با جدول قدیمی پست.
  *   php orders_view.php <wp-root> hpos|legacy
  * فقط محلی و مصنوعی (همان نصب setup.sh). سفارش‌ها با CRUD خود ووکامرس ساخته می‌شوند.
  *
@@ -11,6 +11,11 @@
  *   خود ووکامرس سنجیده می‌شوند.
  * - **ارز:** ارز هر سفارش (IRT، IRR، USD) و عدد دقیق ذخیره‌شده‌اش حفظ می‌شود.
  * - **صفحه‌بندی:** صفحهٔ ۲۰۱ و بالاتر خوانده می‌شود و لنگر `until` سفارش تازه را بیرون نگه می‌دارد.
+ * - **لنگر هم‌ثانیه (بازبینی ریشه روی 2a4e62e):** سفارشی که در همان ثانیهٔ صفحهٔ اول ساخته شود صفحه‌ها را تکرار
+ *   نمی‌کند؛ کنترل منفی همان داده با لنگرِ شامل ثانیهٔ جاری تکرار را نشان می‌دهد.
+ * - **ویژگی قلم:** متای عمومی `integration_token` بیرون می‌ماند؛ ویژگی طبقه‌بندیِ تنوعِ حذف‌شده می‌ماند.
+ * - **روش ارسال:** فیلتر روی جدول اقلام ووکامرس، شامل `method_id` قدیمی `flat_rate:7`؛ پرسش واقعی با EXPLAIN ثبت می‌شود.
+ * - **زباله‌دان، تاریخ تکمیل و تغییر، رهگیری** (افزونهٔ رسمی Shipment Tracking).
  * - **وضعیت سفارشی:** وضعیتی که افزونه‌ای ثبت کرده، با نامک و برچسب خودش دیده و فیلتر می‌شود.
  * - **جزئیات کامل:** ویژگی تنوع، کوپن، کارمزد، ارسال، استرداد، یادداشت‌های صفحه‌بندی‌شده و مدرک پرداخت.
  *   IP و user agent برنمی‌گردند.
@@ -47,9 +52,11 @@ if (!$wpdb->update($wpdb->options, ['option_value' => $flag], ['option_name' => 
 wp_cache_flush();
 check(OrderUtil::custom_orders_table_usage_is_enabled() === ($mode === 'hpos'), "{$mode}: انبارهٔ فعال همان است که خواسته شد");
 update_option('labelmod_connector_settings', array_merge((array) get_option('labelmod_connector_settings', []), ['currency_unit' => 'toman']));
-// سفارش‌های آزمون زمان ساخت آینده‌نزدیک دارند (ترتیب صریح)، پس لنگر پیش‌فرض این آزمون یک ساعت جلوتر است.
+// لنگر پیش‌فرض خود افزونه (ثانیهٔ پیش)؛ سفارش‌های آزمون در گذشتهٔ نزدیک ساخته می‌شوند.
 $view = fn (array $q) => LMC_Orders_View::page($q + ['page' => 1, 'perPage' => 50, 'status' => null, 'search' => null,
-    'dateFrom' => null, 'dateTo' => null, 'paymentMethod' => null, 'until' => time() + 3600], LMC_Orders_View::statuses());
+    'dateFrom' => null, 'dateTo' => null, 'paymentMethod' => null, 'shippingMethod' => null, 'until' => null],
+    LMC_Orders_View::filter_statuses(), LMC_Orders_View::shipping_methods());
+$fresh = function (): int { $t = time(); while (time() === $t) { usleep(20000); } return time(); };   // آغاز یک ثانیهٔ تازه
 
 // ── بیش از ۲۰۰ صفحه با perPage=1: سفارش‌های پرکنندهٔ کوچک، فقط تا وقتی کم است ──
 $filler = function () use ($view) {
@@ -64,6 +71,15 @@ $parent = new WC_Product_Variable(); $parent->set_name("پیراهن {$tag}"); $
 $var = new WC_Product_Variation(); $var->set_parent_id($parent->get_id()); $var->set_attributes(['رنگ' => 'سفید']);
 $var->set_sku('OV-' . $tag); $var->set_regular_price('1200000'); $var->save();
 update_post_meta($var->get_id(), '_lmc_variation_id', 'aaaaaaaa-0000-7000-8000-' . substr(bin2hex(random_bytes(6)), 0, 12));
+// ویژگی طبقه‌بندی (pa_) و ویژگی سفارشی روی تنوعی که بعداً حذف می‌شود.
+$attr_id = wc_attribute_taxonomy_id_by_name('ovsize') ?: wc_create_attribute(['name' => 'سایز آزمون', 'slug' => 'ovsize']);
+if (!taxonomy_exists('pa_ovsize')) { register_taxonomy('pa_ovsize', ['product'], ['hierarchical' => false]); }
+$xl = get_term_by('slug', 'ov-xl', 'pa_ovsize') ?: get_term((int) wp_insert_term('XL آزمون', 'pa_ovsize', ['slug' => 'ov-xl'])['term_id'], 'pa_ovsize');
+$tax = new WC_Product_Attribute(); $tax->set_id((int) $attr_id); $tax->set_name('pa_ovsize'); $tax->set_options([(int) $xl->term_id]); $tax->set_variation(true);
+$pat = new WC_Product_Attribute(); $pat->set_name('طرح'); $pat->set_options(['راه‌راه']); $pat->set_variation(true);
+$parent2 = new WC_Product_Variable(); $parent2->set_name("شلوار {$tag}"); $parent2->set_attributes([$tax, $pat]); $parent2->save();
+$gone = new WC_Product_Variation(); $gone->set_parent_id($parent2->get_id()); $gone->set_attributes(['pa_ovsize' => 'ov-xl', sanitize_title('طرح') => 'راه‌راه']);
+$gone->set_regular_price('900000'); $gone->save();
 $coupon = new WC_Coupon(); $coupon->set_code('ov' . substr($tag, -6)); $coupon->set_amount('100000'); $coupon->set_discount_type('fixed_cart'); $coupon->save();
 
 $ids = [];
@@ -71,15 +87,23 @@ foreach ([['processing', 'IRT', 'cod'], ['completed', 'IRR', 'bacs'], ['awaiting
     $o = wc_create_order(['status' => $status]);
     $o->set_currency($currency);
     $o->add_product($var, $i + 1);
+    if ($i === 0) {
+        // متای عمومی یک افزونهٔ دیگر روی همان قلم تنوع؛ نباید «ویژگی» شود.
+        $line = current($o->get_items()); $line->add_meta_data('integration_token', 'SENTINEL-' . $tag); $line->save();
+        $o->add_product($gone, 1);
+        $o->update_meta_data('_wc_shipment_tracking_items', [['tracking_provider' => 'iran-post', 'custom_tracking_provider' => '',
+            'tracking_number' => "IR-{$tag}", 'date_shipped' => (string) (time() - 60), 'custom_tracking_link' => "https://tracking.example.invalid/{$tag}"]]);
+    }
     $o->set_billing_first_name('مشتری'); $o->set_billing_last_name($tag);
     $o->set_billing_phone('0912000000' . $i); $o->set_billing_email("{$tag}-{$i}@example.invalid");
     $o->set_billing_address_1('نشانی صورت‌حساب مصنوعی'); $o->set_shipping_address_1('نشانی ارسال مصنوعی');
     $o->set_customer_ip_address('203.0.113.77'); $o->set_customer_user_agent('SecretAgent/9');
     $o->set_payment_method($gw); $o->set_payment_method_title($gw === 'cod' ? 'پرداخت در محل' : 'انتقال بانکی');
     $o->set_transaction_id("TX-{$tag}-{$i}");
-    $o->set_date_created(time() + 10 * $i);          // ترتیب زمانی صریح
+    $o->set_date_created(time() - 600 + 10 * $i);    // ترتیب زمانی صریح، در گذشتهٔ نزدیک
     $fee = new WC_Order_Item_Fee(); $fee->set_name('بسته‌بندی هدیه'); $fee->set_total('20000'); $o->add_item($fee);
-    $ship = new WC_Order_Item_Shipping(); $ship->set_method_title('پست پیشتاز'); $ship->set_total('50000'); $o->add_item($ship);
+    $ship = new WC_Order_Item_Shipping(); $ship->set_method_title('پست پیشتاز'); $ship->set_total('50000');
+    $ship->set_method_id(['flat_rate', 'local_pickup', 'flat_rate:7'][$i]); $o->add_item($ship);   // سومی شکل قدیمی method_id
     $o->calculate_totals();
     if ($i === 0) { $o->apply_coupon($coupon->get_code()); }
     $o->set_date_paid(time()); $o->save();
@@ -89,6 +113,14 @@ $usd = wc_get_order($ids[2]); $usd->set_total('12.50'); $usd->save();
 $main = wc_get_order($ids[0]);
 for ($n = 1; $n <= 25; $n++) { $main->add_order_note("یادداشت {$n} <b>{$tag}</b>", $n === 1 ? 1 : 0); }
 wc_create_refund(['order_id' => $ids[0], 'amount' => '25000', 'reason' => '<i>استرداد مصنوعی</i>', 'restock_items' => false]);
+$created = $ids;                                      // ترتیب ساخت: [flat_rate, local_pickup, flat_rate:7]
+// مرحلهٔ ۱: فقط تنوع حذف شد. ووکامرس اکنون کالای مادر را برمی‌گرداند؛ ویژگی‌ها از ویژگی‌های تنوع‌ساز مادر می‌آیند.
+$gone->delete(true); wp_cache_flush();
+$stage = array_values(array_filter(LMC_Orders_View::detail(wc_get_order($created[0]), 1, 1)['items']['rows'], fn ($r) => str_starts_with($r['name'], 'شلوار')))[0];
+check($stage['productExists'] === false && $stage['mapped'] === false && $stage['sku'] === ''
+    && array_column($stage['attributes'], 'value') === ['XL آزمون', 'راه‌راه'], "{$mode}: تنوع حذف‌شده، مادر موجود: هر دو ویژگی، کالا «حذف‌شده»");
+// مرحلهٔ ۲: مادر هم حذف شد؛ فقط ویژگی طبقه‌بندی منبع دارد.
+wc_get_product($parent2->get_id())->delete(true); wp_cache_flush();
 $ids = array_reverse($ids);                            // تازه‌ترین اول
 
 $in = implode(',', array_map('intval', $ids));
@@ -114,10 +146,35 @@ check(in_array('awaiting-pickup', array_column($page['statuses'], 'slug'), true)
 $deep = $view(['perPage' => 1, 'page' => 201]);
 check($deep['total'] >= 205 && count($deep['orders']) === 1 && $deep['pages'] >= 205, "{$mode}: صفحهٔ ۲۰۱ با perPage=1 خوانده شد (کل {$deep['total']})");
 $anchor = $deep['until'];
-$late = wc_create_order(['status' => 'completed']); $late->set_date_created($anchor + 3600); $late->save();
+check($anchor <= time() - 1, "{$mode}: لنگر پیش‌فرض ثانیهٔ جاری را ندارد");
+$late = wc_create_order(['status' => 'completed']); $late->save();
 $again = $view(['perPage' => 1, 'page' => 201, 'until' => $anchor]);
 check($again['orders'][0]['id'] === $deep['orders'][0]['id'] && $again['total'] === $deep['total'], "{$mode}: سفارش پس از لنگر صفحه‌ها را جابه‌جا نکرد");
-check(in_array($late->get_id(), array_column($view(['until' => $anchor + 7200])['orders'], 'id'), true), "{$mode}: کنترل: با لنگر تازه دیده می‌شود");
+$fresh();
+check(in_array($late->get_id(), array_column($view([])['orders'], 'id'), true), "{$mode}: کنترل: با لنگر تازه دیده می‌شود");
+
+// ── لنگر هم‌ثانیه (بازبینی ریشه روی 2a4e62e) ──
+// سه سفارش در ثانیهٔ s0؛ در ثانیهٔ تازهٔ s1 صفحهٔ اول، سپس سفارش چهارم هم در s1. همه باید در s1 بمانند، وگرنه تکرار.
+for ($try = 0; $try < 4; $try++) {
+    $fresh();
+    $trio = [];
+    for ($k = 0; $k < 3; $k++) { $t = wc_create_order(['status' => 'processing']); $t->save(); $trio[] = $t->get_id(); }
+    $s0 = wc_get_order($trio[0])->get_date_created()->getTimestamp();
+    $s1 = $fresh();
+    $p1 = $view(['perPage' => 2]);
+    $old1 = $view(['perPage' => 2, 'until' => $s1]);             // رفتار 2a4e62e: لنگر شامل ثانیهٔ جاری
+    $o4 = wc_create_order(['status' => 'processing']); $o4->save();
+    $p2 = $view(['perPage' => 2, 'page' => 2, 'until' => $p1['until']]);
+    $old2 = $view(['perPage' => 2, 'page' => 2, 'until' => $s1]);
+    $same = wc_get_order($trio[2])->get_date_created()->getTimestamp() === $s0 && $o4->get_date_created()->getTimestamp() === $s1 && time() === $s1;
+    if ($same) { break; }
+}
+check($same, "{$mode}: سه سفارش در یک ثانیه و سفارش چهارم در ثانیهٔ صفحهٔ اول ساخته شد");
+check($p1['until'] === $s0 && array_column($p1['orders'], 'id') === [$trio[2], $trio[1]], "{$mode}: صفحهٔ اول تا ثانیهٔ پیش");
+check(!array_intersect(array_column($p1['orders'], 'id'), array_column($p2['orders'], 'id')) && $p2['orders'][0]['id'] === $trio[0]
+    && !in_array($o4->get_id(), array_column($p2['orders'], 'id'), true), "{$mode}: سفارش هم‌ثانیه صفحه‌ها را تکرار نکرد");
+check(array_values(array_intersect(array_column($old1['orders'], 'id'), array_column($old2['orders'], 'id'))) === [$trio[1]],
+    "{$mode}: کنترل منفی: لنگر شامل ثانیهٔ جاری همان سفارش را در دو صفحه آورد");
 
 // ── فیلترها و جست‌وجو ──
 check(array_column($view(['status' => 'awaiting-pickup'])['orders'], 'id') === [$ids[0]] || in_array($ids[0], array_column($view(['status' => 'awaiting-pickup'])['orders'], 'id'), true)
@@ -125,7 +182,7 @@ check(array_column($view(['status' => 'awaiting-pickup'])['orders'], 'id') === [
 $cod = array_column($view(['paymentMethod' => 'cod'])['orders'], 'id');
 check(in_array($ids[2], $cod, true) && !in_array($ids[0], $cod, true), "{$mode}: فیلتر روش پرداخت");
 $today = wp_date('Y-m-d');
-$dated = array_column($view(['dateFrom' => $today, 'dateTo' => $today, 'until' => time() + 3600])['orders'], 'id');
+$dated = array_column($view(['dateFrom' => $today, 'dateTo' => $today])['orders'], 'id');
 check(!array_diff($ids, $dated), "{$mode}: بازهٔ تاریخ امروز (منطقهٔ زمانی سایت)");
 check(array_column($view(['dateFrom' => '2001-01-01', 'dateTo' => '2001-01-02'])['orders'], 'id') === [], "{$mode}: بازهٔ تاریخ دور خالی");
 foreach (["0912000000" . '1', "{$tag}-2@example.invalid", $tag] as $term) {
@@ -135,11 +192,49 @@ foreach (["0912000000" . '1', "{$tag}-2@example.invalid", $tag] as $term) {
 check(array_intersect($ids, array_column($view(['search' => 'هیچ-چیز-' . $tag])['orders'], 'id')) === [], "{$mode}: جست‌وجوی بی نتیجه");
 check(in_array($ids[1], array_column($view(['search' => (string) $ids[1]])['orders'], 'id'), true), "{$mode}: جست‌وجوی شناسه");
 
+// ── روش ارسال: شرط روی جدول اقلام، در همان پرسش صفحه‌بندی‌شده؛ پرسش اجراشده با EXPLAIN ثبت می‌شود ──
+$sql = null;
+$spy_hpos = function ($q) use (&$sql) { $sql = $q; return $q; };
+$spy_post = function ($q, $wpq) use (&$sql) { if (in_array('shop_order', (array) $wpq->get('post_type'), true)) { $sql = $q; } return $q; };
+add_filter('woocommerce_orders_table_query_sql', $spy_hpos); add_filter('posts_request', $spy_post, 10, 2);
+$flat = $view(['shippingMethod' => 'flat_rate']);
+remove_filter('woocommerce_orders_table_query_sql', $spy_hpos); remove_filter('posts_request', $spy_post, 10);
+$pickup = array_column($view(['shippingMethod' => 'local_pickup'])['orders'], 'id');
+$flatIds = array_column($flat['orders'], 'id');
+check(in_array($created[0], $flatIds, true) && in_array($created[2], $flatIds, true) && !in_array($created[1], $flatIds, true), "{$mode}: فیلتر flat_rate، شامل شکل قدیمی flat_rate:7");
+check(in_array($created[1], $pickup, true) && !array_intersect([$created[0], $created[2]], $pickup), "{$mode}: فیلتر local_pickup");
+// شمار کل در برابر یک منبع مستقل: همهٔ صفحه‌ها خوانده و روش ارسال هر سفارش از CRUD خود ووکامرس سنجیده می‌شود.
+$all = [];
+for ($pg = 1; $pg <= max(1, $flat['pages']); $pg++) {
+    foreach ($view(['shippingMethod' => 'flat_rate', 'page' => $pg, 'until' => $flat['until']])['orders'] as $o) { $all[] = $o['id']; }
+}
+$isFlat = fn ($id) => (bool) array_filter(wc_get_order($id)->get_shipping_methods(), fn ($m) => preg_match('/^flat_rate(:|$)/', $m->get_method_id()));
+check(count($all) === $flat['total'] && count(array_unique($all)) === count($all) && !array_filter($all, fn ($id) => !$isFlat($id)),
+    "{$mode}: شمار کل فیلترشده ({$flat['total']}) با همهٔ صفحه‌ها یکی است و هر سفارش واقعاً flat_rate دارد");
+check(is_string($sql) && str_contains($sql, 'lmc_si.order_item_type') && str_contains($sql, 'LIMIT'), "{$mode}: شرط در همان پرسش صفحه‌بندی‌شدهٔ ووکامرس");
+$plan = $wpdb->get_results('EXPLAIN ' . $sql, ARRAY_A);
+$keys = [];
+foreach ((array) $plan as $row) { if (in_array($row['table'], ['lmc_si', 'lmc_sm'], true)) { $keys[$row['table']] = $row['key']; } }
+check(!empty($keys['lmc_si']) && !empty($keys['lmc_sm']), "{$mode}: EXPLAIN: جدول اقلام با ایندکس خوانده می‌شود (" . wp_json_encode($keys) . ')');
+$combo = $view(['shippingMethod' => 'flat_rate', 'status' => 'awaiting-pickup'])['orders'];
+check(in_array($created[2], array_column($combo, 'id'), true) && !array_filter($combo, fn ($o) => $o['status'] !== 'awaiting-pickup'), "{$mode}: فیلتر ارسال با فیلتر وضعیت ترکیب می‌شود");
+$log[] = 'EXPLAIN ' . $mode . ': ' . wp_json_encode(array_map(fn ($r) => array_intersect_key($r, array_flip(['select_type', 'table', 'type', 'key', 'rows'])), (array) $plan), JSON_UNESCAPED_UNICODE);
+
+// ── زباله‌دان ──
+$bin = wc_create_order(['status' => 'processing']); $bin->set_date_created(time() - 300); $bin->save();
+$binId = $bin->get_id(); $bin->delete(false);         // delete() شناسهٔ شیء را صفر می‌کند، حتی وقتی فقط به زباله‌دان می‌برد
+wp_cache_flush();
+check(wc_get_order($binId)->get_status() === 'trash', "{$mode}: سفارش واقعاً به زباله‌دان رفت");
+check(!in_array($binId, array_column($view([])['orders'], 'id'), true), "{$mode}: زباله‌دان در «همه» نیست");
+$binList = $view(['status' => 'trash']);
+check(in_array($binId, array_column($binList['orders'], 'id'), true)
+    && array_values(array_filter($binList['orders'], fn ($o) => $o['id'] === $binId))[0]['statusLabel'] === 'زباله‌دان', "{$mode}: فیلتر زباله‌دان");
+
 // ── کنترل منفی: انبارهٔ دیگر ──
 $other = $mode === 'hpos' ? 'legacy' : 'hpos';
 $foreign = get_option("lmc_ov_last_{$other}", []);
 if ($foreign) {
-    $seen = array_intersect($foreign, array_column($view(['until' => time() + 3600])['orders'], 'id'));
+    $seen = array_intersect($foreign, array_column($view([])['orders'], 'id'));
     check($seen === [], "{$mode}: کنترل منفی — سفارش‌های همگام‌نشدهٔ انبارهٔ {$other} دیده نمی‌شوند");
 }
 update_option("lmc_ov_last_{$mode}", $ids);
@@ -155,7 +250,7 @@ function signed(array $body, ?string $nonce = null, string $secret = LMC_PUSH_SE
 }
 do_action('rest_api_init');
 $res = signed(['orderId' => $ids[2]]);
-check($res->get_status() === 200 && $res->get_data()['protocol'] === 2, "{$mode}: REST امضاشده ۲۰۰، قرارداد ۲");
+check($res->get_status() === 200 && $res->get_data()['protocol'] === 3, "{$mode}: REST امضاشده ۲۰۰، قرارداد ۳");
 $d = $res->get_data()['order'];
 check($d['id'] === $ids[2] && $d['currency'] === 'IRT' && $d['billing']['phone'] === '09120000000' && $d['shipping']['address1'] === 'نشانی ارسال مصنوعی', "{$mode}: جزئیات با تماس و نشانی");
 $row = $d['items']['rows'][0];
@@ -167,6 +262,16 @@ check(count($d['refunds']) === 1 && $d['refunds'][0]['reason'] === 'استردا
 check($d['payment']['transactionId'] === "TX-{$tag}-0" && $d['payment']['paidAt'] !== null && $d['payment']['methodId'] === 'cod', "{$mode}: مدرک پرداخت");
 check(count($d['notes']['rows']) === 20 && $d['notes']['hasMore'] && !str_contains($d['notes']['rows'][0]['content'], '<b>'), "{$mode}: یادداشت صفحهٔ اول بی HTML");
 $n2 = signed(['orderId' => $ids[2], 'notesPage' => 2])->get_data()['order']['notes'];
+$attrs = array_column($d['items']['rows'], 'attributes');
+check(!str_contains(wp_json_encode($d, JSON_UNESCAPED_UNICODE), 'SENTINEL') && !str_contains(wp_json_encode($attrs, JSON_UNESCAPED_UNICODE), 'integration_token'),
+    "{$mode}: متای عمومی integration_token ویژگی نشد");
+$goneRow = array_values(array_filter($d['items']['rows'], fn ($r) => $r['productExists'] === false))[0] ?? null;
+check($goneRow !== null && array_column($goneRow['attributes'], 'value') === ['XL آزمون'], "{$mode}: کالا و مادر حذف‌شده: ویژگی pa_ ماند، ویژگی سفارشی منبع ندارد");
+check($d['tracking'] === [['provider' => 'iran-post', 'number' => "IR-{$tag}", 'shippedAt' => $d['tracking'][0]['shippedAt'], 'url' => "https://tracking.example.invalid/{$tag}"]]
+    && $d['tracking'][0]['shippedAt'] !== null, "{$mode}: رهگیری افزونهٔ رسمی");
+check($d['modifiedAt'] !== null && $d['completedAt'] === null, "{$mode}: تاریخ تغییر؛ سفارش در حال انجام تاریخ تکمیل ندارد");
+$done = signed(['orderId' => $created[1]])->get_data()['order'];
+check($done['status'] === 'completed' && $done['completedAt'] !== null, "{$mode}: تاریخ تکمیل سفارش تکمیل‌شده");
 check(count($n2['rows']) >= 5 && !$n2['hasMore'], "{$mode}: یادداشت صفحهٔ دوم (۲۵ یادداشت به‌علاوهٔ یادداشت‌های خود ووکامرس)");
 $json = wp_json_encode($res->get_data(), JSON_UNESCAPED_UNICODE);
 foreach (['203.0.113.77', 'SecretAgent', '_lmc_variation_id', '_billing'] as $leak) { check(strpos($json, $leak) === false, "{$mode}: بی نشت «{$leak}»"); }
@@ -178,6 +283,9 @@ check(signed(['page' => 1], $n)->get_status() === 200, "{$mode}: Nonce تازه"
 check(signed(['page' => 1], $n)->get_status() !== 200, "{$mode}: Nonce تکراری رد شد");
 check(signed(['page' => 1, 'perPage' => -1])->get_status() === 400, "{$mode}: limit=-1 رد شد");
 check(signed(['status' => 'not-registered'])->get_status() === 400, "{$mode}: وضعیت ثبت‌نشده رد شد");
+check(signed(['status' => 'trash'])->get_status() === 200, "{$mode}: زباله‌دان از راه REST");
+check(signed(['page' => 2, 'until' => time()])->get_status() === 400, "{$mode}: لنگر ثانیهٔ جاری از راه REST رد شد");
+check(signed(['shippingMethod' => 'teleport'])->get_status() === 400, "{$mode}: روش ارسال ثبت‌نشده رد شد");
 check(signed(['orderId' => 999999999])->get_status() === 404, "{$mode}: ناموجود ۴۰۴");
 
 wp_cache_flush();

@@ -1,6 +1,6 @@
 <?php
 /**
- * سفارش‌های سایت برای منوی مدیر در Core — فقط‌خواندنی و امضاشده (قرارداد ۲).
+ * سفارش‌های سایت برای منوی مدیر در Core — فقط‌خواندنی و امضاشده (قرارداد ۳).
  *
  * همان نگهبان تشخیص (`LMC_Push_Receiver::verify_request`: HMAC، پنجرهٔ زمانی و Nonce یک‌بارمصرف).
  *
@@ -9,30 +9,51 @@
  *    - جست‌وجو: روی HPOS پارامتر `s` و روی legacy `wc_order_search()`؛ هر دو همان جست‌وجوی پیشخوان
  *      ووکامرس‌اند: شناسه، نام، ایمیل، تلفن، نشانی و نام قلم.
  *    - جزئیات: `wc_get_order` و `wc_get_order_notes`.
- *    هیچ SQL روی جدول‌ها و هیچ `limit => -1` نیست.
+ *    هیچ `limit => -1` نیست و افزونه خودش هیچ پرسشی اجرا نمی‌کند. تنها SQL، شرط آماده‌شده (`prepare`) فیلتر
+ *    روش ارسال است که به **همان** پرسش صفحه‌بندی‌شدهٔ ووکامرس افزوده می‌شود (HPOS:
+ *    `woocommerce_orders_table_query_clauses`؛ legacy: `posts_where`) و فقط جدول اقلام سفارش را می‌خواند —
+ *    جدولی که در هر دو انباره یکی است. پس هیچ سفارشی در PHP پیمایش نمی‌شود.
  * ⚠️ **هزینهٔ هر درخواست محدود است، نه تاریخچه.** صفحه حداکثر ۵۰ سفارش است و شمارهٔ صفحه تا ۱۰۰٬۰۰۰
- *    پذیرفته می‌شود. لنگر `until` (زمان صفحهٔ اول) صفحه‌ها را پایدار نگه می‌دارد تا سفارش تازه آن‌ها را
- *    جابه‌جا نکند. ترتیب: تاریخ نزولی، سپس شناسه نزولی.
+ *    پذیرفته می‌شود. ترتیب: تاریخ نزولی، سپس شناسه نزولی.
+ * ⚠️ **لنگر `until` ثانیهٔ جاری را بیرون می‌گذارد** (بازبینی ریشه روی 2a4e62e). لنگر پیش‌فرض `time() - 1`
+ *    است و لنگرِ ثانیهٔ جاری یا آینده رد می‌شود؛ با `<=` و لنگر `time()`، سفارشی که در همان ثانیه ساخته
+ *    می‌شد صفحه‌ها را جابه‌جا می‌کرد و یک سفارش در دو صفحه تکرار می‌شد.
+ *    **مرز صریح:** لنگر فقط در برابر سفارشی پایدار است که زمان ساختش زمان واقعی درج باشد. سفارشی که با
+ *    تاریخ گذشته درج شود (ثبت دستی، واردات، درج کُند پس از تعیین تاریخ)، سفارشی که تاریخ ساختش ویرایش
+ *    شود، یا سفارشی که میان دو صفحه وضعیتش با فیلتر وضعیت جور یا ناجور شود (از جمله رفتن به زباله‌دان)
+ *    می‌تواند صفحه‌های بعدی را جابه‌جا کند: یک ردیف ممکن است تکرار یا جا بیفتد. «به‌روزرسانی» لنگر تازه
+ *    می‌گیرد.
  * ⚠️ **مبلغ همان عدد ذخیره‌شدهٔ ووکامرس است، با ارز خودِ سفارش** (`get_currency()`)، رشتهٔ اعشاری دقیق.
  *    تبدیل به ریال اینجا انجام **نمی‌شود**؛ Core فقط برای کد ارز شناخته‌شده تبدیل می‌کند. تنظیم سراسری
  *    `currency_unit` ارز سفارش‌های تاریخی را نمی‌داند و برای این نمایش به کار نمی‌رود.
  * ⚠️ هیچ سفارش، متا، صف یا موجودی‌ای تغییر نمی‌کند؛ `save()` اینجا صدا زده نمی‌شود.
  * ⚠️ دادهٔ برگشتی همان است که مدیر در پیشخوان ووکامرس می‌بیند: تماس و نشانی، اقلام، کارمزد، ارسال،
- *    کوپن، استرداد، یادداشت و مدرک پرداخت. **متای خام، کلید، توکن، IP و user agent برنمی‌گردند**؛ متن
+ *    کوپن، استرداد، یادداشت، مدرک پرداخت، تاریخ تکمیل و آخرین تغییر، و کد رهگیری افزونهٔ رسمی
+ *    «WooCommerce Shipment Tracking». **متای خام، کلید، توکن، IP و user agent برنمی‌گردند**؛ متن
  *    خام خطای همگام‌سازی هم برنمی‌گردد (فقط «خطا هست»).
+ * ⚠️ **ویژگی قلم فقط از فهرست مجاز است، نه از هر متای عمومی** (بازبینی ریشه روی 2a4e62e).
+ *    `get_formatted_meta_data()` همهٔ متای عددی/متنی قلم را برمی‌گرداند و پیشوند «_» تنها فیلتر آن است؛
+ *    کلید عمومی افزونه‌ای مثل `integration_token` بی‌صدا «ویژگی» می‌شد. حالا فقط این کلیدها می‌آیند:
+ *    کلید طبقه‌بندی ویژگی (`pa_…`، فضای نام خود ووکامرس، که برای کالای حذف‌شده هم می‌ماند)، و ویژگی سفارشی
+ *    تنوعِ هنوز موجود یا — اگر فقط تنوع حذف شده — ویژگی‌های تنوع‌ساز کالای مادر. اگر مادر هم حذف شده باشد،
+ *    ویژگی سفارشی منبع قابل‌اعتمادی ندارد و فهرست نمی‌شود؛ نام قلم خلاصهٔ مقدارهای خود ووکامرس را نگه می‌دارد.
+ * ⚠️ پس از حذف تنوع، ووکامرس `get_variation_id()` را صفر و `get_product()` را **کالای مادر** برمی‌گرداند؛
+ *    قلم سفارش هرگز خودِ کالای متغیر نیست، پس این حالت «کالا حذف شده» است، نه «موجود».
  */
 if (!defined('ABSPATH')) { exit; }
 
 class LMC_Orders_View
 {
-    const PROTOCOL       = 2;
+    const PROTOCOL       = 3;
     const PER_PAGE_MAX   = 50;
     const PAGE_MAX       = 100000;
     const ITEMS_PER_PAGE = 25;
     const NOTES_PER_PAGE = 20;
     const REFUNDS_MAX    = 50;
     const ATTRS_MAX      = 20;
-    const LIST_KEYS      = ['page', 'perPage', 'status', 'search', 'dateFrom', 'dateTo', 'paymentMethod', 'until'];
+    const TRACKING_MAX   = 20;
+    const TRASH_LABEL    = 'زباله‌دان';
+    const LIST_KEYS      = ['page', 'perPage', 'status', 'search', 'dateFrom', 'dateTo', 'paymentMethod', 'shippingMethod', 'until'];
     const DETAIL_KEYS    = ['orderId', 'itemsPage', 'notesPage'];
 
     public static function init(): void
@@ -65,9 +86,11 @@ class LMC_Orders_View
         $q = [
             'page' => $d['page'] ?? 1, 'perPage' => $d['perPage'] ?? 20, 'status' => $d['status'] ?? null,
             'search' => $d['search'] ?? null, 'dateFrom' => $d['dateFrom'] ?? null, 'dateTo' => $d['dateTo'] ?? null,
-            'paymentMethod' => $d['paymentMethod'] ?? null, 'until' => $d['until'] ?? null,
+            'paymentMethod' => $d['paymentMethod'] ?? null, 'shippingMethod' => $d['shippingMethod'] ?? null,
+            'until' => $d['until'] ?? null,
         ];
-        $statuses = self::statuses();
+        $statuses = self::filter_statuses();
+        $shipping = self::shipping_methods();
         if (!self::int_in($q['page'], 1, self::PAGE_MAX) || !self::int_in($q['perPage'], 1, self::PER_PAGE_MAX)
             || ($q['status'] !== null && (!is_string($q['status']) || !isset($statuses[$q['status']])))
             || ($q['search'] !== null && (!is_string($q['search']) || self::clean_search($q['search']) === null))
@@ -75,10 +98,12 @@ class LMC_Orders_View
             || ($q['dateTo'] !== null && self::day($q['dateTo'], true) === null)
             || ($q['dateFrom'] !== null && $q['dateTo'] !== null && $q['dateFrom'] > $q['dateTo'])
             || ($q['paymentMethod'] !== null && (!is_string($q['paymentMethod']) || !preg_match('/^[A-Za-z0-9_-]{1,100}$/', $q['paymentMethod'])))
-            || ($q['until'] !== null && !self::int_in($q['until'], 1, 4102444800))) {
+            || ($q['shippingMethod'] !== null && (!is_string($q['shippingMethod']) || !isset($shipping[$q['shippingMethod']])))
+            // لنگر ثانیهٔ جاری یا آینده نمی‌پذیرد: سفارش همان ثانیه هنوز می‌تواند ساخته شود.
+            || ($q['until'] !== null && !self::int_in($q['until'], 1, time() - 1))) {
             return $bad;
         }
-        return new WP_REST_Response(self::envelope(self::page($q, $statuses)), 200);
+        return new WP_REST_Response(self::envelope(self::page($q, $statuses, $shipping)), 200);
     }
 
     /** هویت سایت و دامنه، تا Core پاسخ سایت دیگری را نپذیرد. */
@@ -99,6 +124,40 @@ class LMC_Orders_View
         return $out;
     }
 
+    /** وضعیت‌های فیلتر: وضعیت‌های سایت به‌علاوهٔ زباله‌دان. «همه» زباله‌دان را ندارد، مثل پیشخوان ووکامرس. */
+    public static function filter_statuses(): array
+    {
+        return self::statuses() + ['trash' => self::TRASH_LABEL];
+    }
+
+    /** روش‌های ارسال ثبت‌شده در سایت، با شناسهٔ نوع (`flat_rate`، `local_pickup`، …). */
+    public static function shipping_methods(): array
+    {
+        $out = [];
+        $methods = function_exists('WC') && WC()->shipping() ? WC()->shipping()->get_shipping_methods() : [];
+        foreach ((array) $methods as $id => $method) {
+            if (is_string($id) && preg_match('/^[A-Za-z0-9_-]{1,100}$/', $id)) {
+                $title = method_exists($method, 'get_method_title') ? $method->get_method_title() : ($method->method_title ?? $id);
+                $out[$id] = self::cut(self::text((string) $title), 100);
+            }
+        }
+        return $out;
+    }
+
+    /**
+     * شرط «این سفارش سطر ارسالی با این روش دارد»، آماده‌شده با `prepare` و فقط روی جدول اقلام سفارش (در HPOS و
+     * legacy یکی است). `method_id` قدیمی (پیش از ووکامرس ۳٫۴) شکل `flat_rate:3` داشت و هم‌ارز است.
+     */
+    public static function shipping_predicate(string $order_id_column, string $method): string
+    {
+        global $wpdb;
+        $items = $wpdb->prefix . 'woocommerce_order_items';
+        $meta = $wpdb->prefix . 'woocommerce_order_itemmeta';
+        return ' AND EXISTS (SELECT 1 FROM ' . $items . ' lmc_si INNER JOIN ' . $meta . ' lmc_sm ON lmc_sm.order_item_id = lmc_si.order_item_id'
+            . ' WHERE lmc_si.order_id = ' . $order_id_column . " AND lmc_si.order_item_type = 'shipping' AND lmc_sm.meta_key = 'method_id'"
+            . $wpdb->prepare(' AND (lmc_sm.meta_value = %s OR lmc_sm.meta_value LIKE %s))', $method, $wpdb->esc_like($method) . ':%');
+    }
+
     private static function payment_methods(): array
     {
         $out = [];
@@ -111,16 +170,18 @@ class LMC_Orders_View
         return $out;
     }
 
-    public static function page(array $q, array $statuses): array
+    public static function page(array $q, array $statuses, array $shipping = []): array
     {
-        $until = $q['until'] ?? time();
+        // ثانیهٔ جاری بیرون است؛ سفارشی که هنوز در این ثانیه ساخته می‌شود صفحه‌ها را جابه‌جا نمی‌کند.
+        $until = $q['until'] ?? (time() - 1);
         $from = $q['dateFrom'] !== null ? self::day($q['dateFrom'], false) : 1;
         $to = min($until, $q['dateTo'] !== null ? self::day($q['dateTo'], true) : $until);
         $base = ['page' => $q['page'], 'perPage' => $q['perPage'], 'until' => $until,
             'filters' => ['status' => $q['status'], 'search' => $q['search'] !== null, 'dateFrom' => $q['dateFrom'],
-                'dateTo' => $q['dateTo'], 'paymentMethod' => $q['paymentMethod']],
+                'dateTo' => $q['dateTo'], 'paymentMethod' => $q['paymentMethod'], 'shippingMethod' => $q['shippingMethod'] ?? null],
             'statuses' => array_map(fn ($slug, $label) => ['slug' => $slug, 'label' => $label], array_keys($statuses), $statuses),
-            'paymentMethods' => self::payment_methods()];
+            'paymentMethods' => self::payment_methods(),
+            'shippingMethods' => array_map(fn ($id, $title) => ['id' => $id, 'title' => $title], array_keys($shipping), $shipping)];
         $empty = $base + ['total' => 0, 'pages' => 0, 'orders' => []];
         if ($from > $to) { return $empty; }
 
@@ -139,7 +200,28 @@ class LMC_Orders_View
                 $args['post__in'] = $ids;
             }
         }
-        $result = wc_get_orders($args);
+        $method = $q['shippingMethod'] ?? null;
+        $hpos_clause = function ($clauses, $query) use ($method) {
+            $clauses['where'] = ($clauses['where'] ?? '') . self::shipping_predicate($query->get_table_name('orders') . '.id', $method);
+            return $clauses;
+        };
+        $post_where = function ($where, $query) use ($method) {
+            global $wpdb;
+            return in_array('shop_order', (array) $query->get('post_type'), true) ? $where . self::shipping_predicate($wpdb->posts . '.ID', $method) : $where;
+        };
+        if ($method !== null) {
+            add_filter('woocommerce_orders_table_query_clauses', $hpos_clause, 10, 2);
+            add_filter('posts_where', $post_where, 10, 2);
+        }
+        try {
+            $result = wc_get_orders($args);
+        } finally {
+            // فقط همین پرسش؛ پرسش‌های دیگر همان درخواست شرط را نمی‌گیرند.
+            if ($method !== null) {
+                remove_filter('woocommerce_orders_table_query_clauses', $hpos_clause, 10);
+                remove_filter('posts_where', $post_where, 10);
+            }
+        }
         $orders = [];
         foreach ((array) $result->orders as $order) {
             if ($order instanceof WC_Order && $order->get_type() === 'shop_order') { $orders[] = self::summary($order); }
@@ -160,7 +242,7 @@ class LMC_Orders_View
             'id' => (int) $order->get_id(),
             'number' => self::cut((string) $order->get_order_number(), 40),
             'status' => $slug,
-            'statusLabel' => self::cut((string) wc_get_order_status_name($status), 100),
+            'statusLabel' => self::cut($status === 'trash' ? self::TRASH_LABEL : (string) wc_get_order_status_name($status), 100),
             'createdAt' => self::iso($order->get_date_created()),
             'currency' => self::currency($order),
             'total' => self::dec($order->get_total()),
@@ -187,25 +269,22 @@ class LMC_Orders_View
         foreach ($order->get_items() as $item) {
             if (!$item instanceof WC_Order_Item_Product) { continue; }
             $product = $item->get_product();
-            $sku = $product ? (string) $product->get_sku() : '';
-            $mapped = $product ? (string) $product->get_meta('_lmc_variation_id') !== '' : false;
+            // مادرِ متغیر یعنی تنوع حذف شده؛ SKU و نگاشت مال تنوع‌اند، نه مادر.
+            $live = $product && !(method_exists($product, 'is_type') && $product->is_type('variable')) ? $product : null;
+            $sku = $live ? (string) $live->get_sku() : '';
+            $mapped = $live ? (string) $live->get_meta('_lmc_variation_id') !== '' : false;
             if ($sku === '') { $missing_sku++; }
             if (!$mapped) { $missing_map++; }
-            $all[] = [$item, $product, $sku, $mapped];
+            $all[] = [$item, $product, $live, $sku, $mapped];
         }
         $rows = [];
-        foreach (array_slice($all, ($items_page - 1) * self::ITEMS_PER_PAGE, self::ITEMS_PER_PAGE) as [$item, $product, $sku, $mapped]) {
-            $attrs = [];
-            // include_all: ووکامرس ویژگیِ آمده در نام قلم را پنهان می‌کند؛ اینجا صریح فهرست می‌شود. متای با «_» همچنان پنهان است.
-            foreach (array_slice((array) $item->get_formatted_meta_data('_', true), 0, self::ATTRS_MAX) as $meta) {
-                $attrs[] = ['key' => self::cut(self::text($meta->display_key ?? ''), 100), 'value' => self::cut(self::text($meta->display_value ?? ''), 200)];
-            }
+        foreach (array_slice($all, ($items_page - 1) * self::ITEMS_PER_PAGE, self::ITEMS_PER_PAGE) as [$item, $product, $live, $sku, $mapped]) {
             $rows[] = [
                 'id' => (int) $item->get_id(), 'name' => self::cut((string) $item->get_name(), 200),
-                'sku' => self::cut($sku, 64), 'quantity' => max(0, (int) $item->get_quantity()), 'attributes' => $attrs,
+                'sku' => self::cut($sku, 64), 'quantity' => max(0, (int) $item->get_quantity()), 'attributes' => self::attributes($item, $product),
                 'subtotal' => self::dec($item->get_subtotal()), 'subtotalTax' => self::dec($item->get_subtotal_tax()),
                 'total' => self::dec($item->get_total()), 'tax' => self::dec($item->get_total_tax()),
-                'productExists' => (bool) $product, 'mapped' => $mapped,
+                'productExists' => (bool) $live, 'mapped' => $mapped,
             ];
         }
         $refunds = [];
@@ -232,6 +311,9 @@ class LMC_Orders_View
             'billing' => self::address($order->get_address('billing'), true),
             'shipping' => self::address($order->get_address('shipping'), false),
             'customerNote' => self::cut(self::text((string) $order->get_customer_note()), 1000),
+            'completedAt' => self::iso($order->get_date_completed()),
+            'modifiedAt' => self::iso($order->get_date_modified()),
+            'tracking' => self::tracking($order),
             'payment' => [
                 'methodId' => self::cut((string) $order->get_payment_method(), 100),
                 'method' => self::cut((string) $order->get_payment_method_title(), 100),
@@ -254,6 +336,65 @@ class LMC_Orders_View
             'refunds' => $refunds, 'refundsTruncated' => count((array) $order->get_refunds()) > self::REFUNDS_MAX,
             'notes' => ['page' => $notes_page, 'perPage' => self::NOTES_PER_PAGE, 'hasMore' => count($note_rows) > self::NOTES_PER_PAGE, 'rows' => $notes],
         ];
+    }
+
+    /**
+     * ویژگی‌های تنوعِ قلم — فقط کلیدهای مجاز (بالای پرونده). نمایش (برچسب و نام term) از خود ووکامرس است؛
+     * include_all چون ووکامرس ویژگیِ آمده در نام قلم را پنهان می‌کند.
+     */
+    private static function attributes($item, $product): array
+    {
+        $allowed = [];
+        if ($product && method_exists($product, 'is_type') && $product->is_type('variation')) {
+            foreach (array_keys((array) $product->get_variation_attributes()) as $key) {
+                $allowed[self::attr_key((string) $key)] = true;
+            }
+        } elseif ($product && method_exists($product, 'is_type') && $product->is_type('variable')) {
+            // فقط تنوع حذف شده: ویژگی‌های تنوع‌ساز مادر همان کلیدهای قلم‌اند.
+            foreach ((array) $product->get_attributes() as $key => $attr) {
+                if (is_object($attr) && method_exists($attr, 'get_variation') && $attr->get_variation()) { $allowed[self::attr_key((string) $key)] = true; }
+            }
+        }
+        $out = [];
+        foreach ((array) $item->get_formatted_meta_data('_', true) as $meta) {
+            $key = self::attr_key((string) ($meta->key ?? ''));
+            if (!isset($allowed[$key]) && !preg_match('/^pa_[a-z0-9_-]{1,29}$/', $key)) { continue; }
+            $out[] = ['key' => self::cut(self::text((string) ($meta->display_key ?? '')), 100), 'value' => self::cut(self::text((string) ($meta->display_value ?? '')), 200)];
+            if (count($out) >= self::ATTRS_MAX) { break; }
+        }
+        return $out;
+    }
+
+    /**
+     * کلید ویژگی به همان شکلی که ووکامرس مقایسه می‌کند: بی `attribute_` و با `sanitize_title`. تنوع نام فارسی را
+     * رمزشده (`%d8%b1…`) نگه می‌دارد و متای قلم گاهی خام (`رنگ`)؛ مقایسهٔ خام این دو را دو کلید می‌دید.
+     */
+    private static function attr_key(string $key): string
+    {
+        $key = rawurldecode(preg_replace('/^attribute_/', '', $key) ?? '');
+        return function_exists('sanitize_title') ? sanitize_title($key) : strtolower($key);
+    }
+
+    /**
+     * کد رهگیری افزونهٔ رسمی «WooCommerce Shipment Tracking» (`_wc_shipment_tracking_items`). شکل‌های دیگر شناخته
+     * نمی‌شوند و فهرست خالی یعنی «این منبع رهگیری‌ای ندارد»، نه «ارسال نشده». پیوند فقط HTTPS.
+     */
+    private static function tracking(WC_Order $order): array
+    {
+        $raw = $order->get_meta('_wc_shipment_tracking_items');
+        $out = [];
+        foreach (is_array($raw) ? array_slice($raw, 0, self::TRACKING_MAX) : [] as $t) {
+            if (!is_array($t)) { continue; }
+            $number = self::cut(self::text((string) ($t['tracking_number'] ?? '')), 100);
+            if ($number === '') { continue; }
+            $provider = (string) ($t['custom_tracking_provider'] ?? '') !== '' ? $t['custom_tracking_provider'] : ($t['tracking_provider'] ?? '');
+            $url = (string) ($t['custom_tracking_link'] ?? '');
+            $shipped = $t['date_shipped'] ?? null;
+            $out[] = ['provider' => self::cut(self::text((string) $provider), 100), 'number' => $number,
+                'shippedAt' => is_numeric($shipped) && (int) $shipped > 0 ? gmdate('Y-m-d\TH:i:s\Z', (int) $shipped) : null,
+                'url' => preg_match('#^https://[^\s"<>]{1,490}$#', $url) ? $url : ''];
+        }
+        return $out;
     }
 
     private static function address($a, bool $with_email): array
