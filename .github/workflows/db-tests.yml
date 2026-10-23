@@ -427,8 +427,8 @@ jobs:
   browser-regression-shard:
     name: browser-regression (${{ matrix.shard }}/4)
     runs-on: ubuntu-24.04
-    # The full browser matrix needs room beyond the former 45-minute job budget.
-    # Test timeouts, retries, assertions and shard coverage stay unchanged.
+    # مجموعهٔ فعلی حدود ۲۰۰۰ آزمون در هر shard دارد؛ run 39701529510 در انتهای
+    # shard ۴ به سقف کل job رسید. مهلت خود آزمون‌ها، retries و ماتریس ثابت‌اند.
     timeout-minutes: 60
     strategy:
       fail-fast: false
