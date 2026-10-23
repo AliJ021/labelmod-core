@@ -1,0 +1,172 @@
+/**
+ * «سفارش‌های سایت» — قرارداد `GET /web/orders`، `POST /web/orders/search` و `GET /web/orders/:id` (فقط‌خواندنی،
+ * قرارداد ۳ افزونه).
+ *
+ * **عبارت جست‌وجو هرگز در نشانی درخواست نیست** (بازبینی ریشه روی 2a4e62e): ممکن است تلفن یا ایمیل مشتری باشد و
+ * لاگ دسترسی Caddy نشانی کامل را نگه می‌دارد؛ پس جست‌وجو با بدنهٔ POST می‌رود. بی جست‌وجو همان GET است.
+ *
+ * پاسخ یا `ready` است، یا `unavailable` با دلیل (هرگز «فهرست خالی» به‌جای «نامعلوم»)، یا برای جزئیات
+ * `not_found`.
+ *
+ * پول: هر مبلغ `{ amount, rial }` است. `amount` عدد دقیق ذخیره‌شده در ووکامرس با ارز خودِ سفارش است و
+ * `rial` فقط وقتی Core تبدیل دقیق داشته (IRR و IRT). دلار یا ارز ناشناخته با مبلغ و کد خودش نشان داده
+ * می‌شود و هرگز «ریال» خوانده نمی‌شود.
+ *
+ * وضعیت سفارش از خود سایت می‌آید (وضعیت‌های افزونه‌ای هم)؛ اینجا فقط اسلاگ سنجیده می‌شود و برچسب از پاسخ
+ * است. فهرست بسته‌ای از وضعیت‌ها در مرورگر نیست، وگرنه وضعیت ثبت‌شدهٔ سفارشی دیده نمی‌شد.
+ */
+import { api, type RequestOptions } from "./api.ts";
+import type { StatusState } from "./status.ts";
+
+/** همان الگوی Core و افزونه. */
+export const STATUS_SLUG = /^[a-z0-9_-]{1,40}$/;
+export const PAYMENT_ID = /^[A-Za-z0-9_-]{1,100}$/;
+export const ORDERS_PAGE_MAX = 100_000;
+export const isStatusSlug = (v: string) => STATUS_SLUG.test(v);
+export const isPaymentId = (v: string) => PAYMENT_ID.test(v);
+export const isShippingId = isPaymentId;
+
+/** حالت معنایی وضعیت‌های هسته‌ای ووکامرس؛ وضعیت افزونه‌ای معنایش را این برنامه نمی‌داند. */
+const CORE_STATUS_STATE: Record<string, StatusState> = {
+  pending: "pending", processing: "active", "on-hold": "warning", completed: "completed",
+  cancelled: "cancelled", refunded: "archived", failed: "failed", "checkout-draft": "draft", trash: "archived",
+};
+export const orderStatusState = (slug: string): StatusState => CORE_STATUS_STATE[slug] ?? "unknown";
+
+export interface WooMoney { amount: string | null; rial: string | null }
+export interface OrderCore {
+  paymentConfirmed: boolean; recorded: boolean; invoiceNumber: string | null;
+  attempts: number; hasError: boolean; stopped: boolean;
+}
+export interface OrderSummary {
+  id: number; number: string; status: string; statusLabel: string; createdAt: string | null;
+  currency: string; total: WooMoney; itemCount: number; customerName: string; customerType: "guest" | "registered";
+  paymentMethodId: string; paymentMethod: string; core: OrderCore;
+}
+export interface Address {
+  firstName: string; lastName: string; company: string; address1: string; address2: string;
+  city: string; state: string; postcode: string; country: string; phone: string;
+}
+export interface OrderItem {
+  id: number; name: string; sku: string; quantity: number; attributes: { key: string; value: string }[];
+  subtotal: WooMoney; subtotalTax: WooMoney; total: WooMoney; tax: WooMoney; discount: WooMoney;
+  productExists: boolean; mapped: boolean;
+}
+/** وضعیت صف ارسال همان سفارش در افزونه (LMC_Queue::state). */
+export interface QueueState {
+  scheduler: "action-scheduler" | "wp-cron";
+  state: "running" | "scheduled" | "deferred" | "dead" | "idle" | "unknown";
+  deferred: "send" | "stop" | "recover" | null; dead: boolean | null;
+}
+
+/**
+ * برچسب صف — تصمیم معوقِ ماندگار «در صف» است، نه «خیر» (بازبینی ریشه روی 4b0046a)؛ خواندن ناموفق «نامعلوم» است.
+ */
+export function queueView(q: QueueState): { state: StatusState; label: string } {
+  const where = q.scheduler === "action-scheduler" ? "Action Scheduler" : "WP-Cron";
+  switch (q.state) {
+    case "running": return { state: "active", label: `در حال اجرا (${where})` };
+    case "scheduled": return q.deferred === "stop"
+      ? { state: "warning", label: `در صف ${where}؛ تصمیم توقف منتظر اعمال است` }
+      : { state: "pending", label: `در صف ${where}` };
+    case "deferred": return q.deferred === "stop"
+      ? { state: "warning", label: "تصمیم توقف ثبت شده و منتظر اعمال است" }
+      : { state: "pending", label: q.deferred === "recover" ? "بازیابی پس از شکست، منتظر اعمال" : "در صف ماندگار؛ منتظر ثبت در زمان‌بند" };
+    case "dead": return { state: "attention", label: "متوقف؛ «ارسال دوباره» در ووکامرس لازم است" };
+    case "idle": return { state: "completed", label: "کاری در صف نیست" };
+    default: return { state: "unknown", label: "وضعیت صف خوانده نشد" };
+  }
+}
+
+export interface OrderNote { id: number; createdAt: string | null; content: string; customerNote: boolean; addedBy: string }
+export interface OrderDetail extends OrderSummary {
+  core: OrderCore & { queue: QueueState; missingSku: number; missingMapping: number };
+  billing: Address & { email: string }; shipping: Address; customerNote: string;
+  completedAt: string | null; modifiedAt: string | null;
+  tracking: { provider: string; number: string; shippedAt: string | null; url: string }[];
+  payment: { methodId: string; method: string; transactionId: string; paidAt: string | null };
+  totals: Record<"subtotal" | "discount" | "discountTax" | "shipping" | "shippingTax" | "tax" | "total" | "refunded", WooMoney>;
+  items: { page: number; perPage: number; total: number; rows: OrderItem[] };
+  fees: { name: string; total: WooMoney; tax: WooMoney }[];
+  shippingLines: { method: string; total: WooMoney; tax: WooMoney }[];
+  coupons: { code: string; discount: WooMoney; discountTax: WooMoney }[];
+  refunds: { id: number; createdAt: string | null; amount: WooMoney; reason: string }[];
+  refundsTruncated: boolean;
+  notes: { page: number; perPage: number; hasMore: boolean; rows: OrderNote[] };
+}
+type Unavailable = { state: "unavailable"; code: string; message: string; fetchedAt: string };
+export type OrdersPage =
+  | { state: "ready"; page: number; perPage: number; until: number; total: number; pages: number;
+      statuses: { slug: string; label: string }[]; paymentMethods: { id: string; title: string }[];
+      shippingMethods: { id: string; title: string }[]; orders: OrderSummary[]; fetchedAt: string }
+  | Unavailable;
+export type OrderView = { state: "ready"; order: OrderDetail; fetchedAt: string } | { state: "not_found"; fetchedAt: string } | Unavailable;
+
+export interface OrdersQuery {
+  page: number; status: string | null; search: string | null; from: string | null; to: string | null;
+  payment: string | null; shipping: string | null; until: number | null;
+}
+
+/** فیلترهای غیرحساس فهرست؛ مقدار خالی فرستاده نمی‌شود. عبارت جست‌وجو اینجا نیست. */
+function listFilters(q: OrdersQuery): Record<string, string | number> {
+  const out: Record<string, string | number> = { page: q.page };
+  if (q.status) out.status = q.status;
+  if (q.from) out.from = q.from;
+  if (q.to) out.to = q.to;
+  if (q.payment) out.payment = q.payment;
+  if (q.shipping) out.shipping = q.shipping;
+  if (q.until !== null) out.until = q.until;
+  return out;
+}
+
+/** درخواست فهرست: بی جست‌وجو GET با فیلترها؛ با جست‌وجو POST و همه‌چیز در بدنه. */
+export function ordersRequest(q: OrdersQuery): { method: "GET"; path: string } | { method: "POST"; path: string; body: Record<string, string | number> } {
+  const f = listFilters(q);
+  if (q.search) return { method: "POST", path: "/web/orders/search", body: { ...f, q: q.search } };
+  return { method: "GET", path: `/web/orders?${new URLSearchParams(Object.entries(f).map(([k, v]) => [k, String(v)])).toString()}` };
+}
+
+export function orderPath(id: number, itemsPage: number, notesPage: number): string {
+  const p = new URLSearchParams();
+  if (itemsPage !== 1) p.set("items", String(itemsPage));
+  if (notesPage !== 1) p.set("notes", String(notesPage));
+  const s = p.toString();
+  return `/web/orders/${id}${s ? `?${s}` : ""}`;
+}
+
+export const siteOrders = {
+  list: (q: OrdersQuery, opts?: RequestOptions) => {
+    const r = ordersRequest(q);
+    return r.method === "GET" ? api.get<OrdersPage>(r.path, opts) : api.post<OrdersPage>(r.path, r.body, opts);
+  },
+  get: (id: number, itemsPage: number, notesPage: number, opts?: RequestOptions) =>
+    api.get<OrderView>(orderPath(id, itemsPage, notesPage), opts),
+};
+
+/** مبلغ برای نمایش: ریالِ دقیق، یا مبلغ اصلی با کد ارزش، یا نامعلوم. هیچ‌وقت حدس تبدیل. */
+export function moneyView(m: WooMoney, currency: string):
+  | { kind: "rial"; rial: string } | { kind: "foreign"; amount: string; currency: string } | { kind: "unknown" } {
+  if (m.rial !== null) return { kind: "rial", rial: m.rial };
+  if (m.amount !== null) return { kind: "foreign", amount: m.amount, currency: currency || "ارز نامعلوم" };
+  return { kind: "unknown" };
+}
+
+/** نشانی چندسطری برای نمایش؛ میدان خالی حذف می‌شود و نشانی کاملاً خالی `[]` است. */
+export function addressLines(a: Address): string[] {
+  const name = [a.firstName, a.lastName].filter(Boolean).join(" ");
+  const place = [a.city, a.state, a.postcode].filter(Boolean).join("، ");
+  return [name, a.company, a.address1, a.address2, place, a.country].filter(v => v !== "");
+}
+
+/**
+ * وضعیت ثبت در Core از متای افزونه — یک برچسب، یک حالت.
+ * ترتیب مهم است: متوقف و خطا پیش از «در انتظار ثبت» می‌آیند، چون سفارش پرداخت‌شده‌ای که خطا دارد
+ * «در انتظار» نیست. سفارش پرداخت‌نشده هیچ‌وقت «ثبت‌نشده = مشکل» گفته نمی‌شود.
+ */
+export function coreState(core: OrderCore): { state: StatusState; label: string } {
+  if (core.recorded) return { state: "completed", label: core.invoiceNumber ? `ثبت در Core: ${core.invoiceNumber}` : "ثبت در Core" };
+  if (core.stopped) return { state: "attention", label: "ارسال به Core متوقف شده" };
+  if (core.hasError) return { state: "warning", label: `خطا در ارسال به Core (${core.attempts} تلاش)` };
+  if (core.paymentConfirmed) return { state: "pending", label: "در انتظار ثبت در Core" };
+  return { state: "draft", label: "پرداخت تأیید نشده" };
+}

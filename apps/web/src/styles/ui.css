@@ -541,6 +541,13 @@
 .period-subtitle { font-size: var(--text-md); margin: 0; }
 .period-delta { white-space: nowrap; }
 
+/* سفارش‌های سایت — صفحه‌بندی و خلاصهٔ سفارش؛ فقط ویژگی‌های منطقی (RTL). */
+.site-orders-pager { display: flex; flex-wrap: wrap; align-items: center; justify-content: center; gap: 12px; margin-block-start: 14px; }
+.site-order-facts { display: grid; grid-template-columns: repeat(auto-fill, minmax(min(100%, 200px), 1fr)); gap: 12px 20px; margin: 0; }
+.site-order-facts > div { display: flex; flex-direction: column; gap: 4px; min-inline-size: 0; }
+.site-order-facts dt { color: var(--ink-2); font-size: var(--text-sm); }
+.site-order-facts dd { margin: 0; overflow-wrap: anywhere; }
+
 /* ── همگام‌سازی سایت در داشبورد (دستهٔ C) ───────────────────────────── */
 /* دو جهت کنار هم فقط در عرض دسکتاپ؛ زیر آن زیر هم. رنگ تنها نشانه نیست: حکم آیکون و متن دارد. */
 .sync { display: flex; flex-direction: column; gap: var(--s-4); min-inline-size: 0; }
@@ -570,3 +577,11 @@
 .ops-row dd { margin: 0; }
 .ops-meta { margin: 0; }
 .ops-link { align-self: flex-start; min-block-size: 44px; display: inline-flex; align-items: center; }
+.site-orders-search, .site-orders-goto { display: flex; flex-wrap: wrap; align-items: flex-end; gap: 8px; min-inline-size: 0; }
+.site-orders-goto input { inline-size: 7ch; }
+.site-order-columns { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 260px), 1fr)); gap: 16px; }
+.site-order-h { font-size: var(--text-md); margin-block: 12px 8px; margin-inline: 0; }
+.site-order-address { display: flex; flex-direction: column; gap: 2px; font-style: normal; overflow-wrap: anywhere; }
+.site-order-attrs { display: block; }
+.site-order-notes { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 10px; }
+.site-order-notes > li { display: flex; flex-direction: column; gap: 2px; overflow-wrap: anywhere; }

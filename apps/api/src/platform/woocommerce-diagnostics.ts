@@ -61,7 +61,8 @@ export function wooQueueView(raw: unknown): WooQueueView {
 }
 
 /** بدنه محدود، اتصال پین‌شده، بدون دنبال‌کردن تغییر مسیر یا بازتاب خطای مقصد. */
-export function readPinnedJson(target: PinnedTarget, body: string, headers: Record<string, string>, send: HttpRequestFn = request): Promise<{ status: number; body: unknown }> {
+export function readPinnedJson(target: PinnedTarget, body: string, headers: Record<string, string>, send: HttpRequestFn = request,
+  maxBytes = 32768): Promise<{ status: number; body: unknown }> {
   return new Promise((resolve, reject) => {
     const host = target.url.hostname.replace(/^\[|\]$/g, "");
     const req = send({ protocol: "https:", hostname: host,
@@ -72,7 +73,7 @@ export function readPinnedJson(target: PinnedTarget, body: string, headers: Reco
       const chunks: Buffer[] = [];
       res.on("data", (chunk: Buffer) => {
         size += chunk.length;
-        if (size > 32768) {
+        if (size > maxBytes) {
           clearTimeout(timer);
           const error = new Error("پاسخ بیش از حد بزرگ است");
           reject(error); req.destroy(error); return;
@@ -95,35 +96,61 @@ export function readPinnedJson(target: PinnedTarget, body: string, headers: Reco
   });
 }
 
-export async function testWooConnection(config: { siteUrl: string; secret: string | undefined }, orderId?: number,
-  deps: { resolve?: typeof resolveSafeTarget; read?: typeof readPinnedJson } = {}) {
-  const failure = (code: string, message: string) => ({ ok: false as const, code, message, remote: null });
-  if (!config.secret) return failure("missing_secret", "کلید امضا در محیط API تنظیم نشده؛ WEB_PUSH_SECRET را با Worker و افزونه تطبیق دهید.");
+export type WooCallDeps = { resolve?: typeof resolveSafeTarget; read?: typeof readPinnedJson };
+export type WooFailure = { ok: false; code: string; message: string; remote: null };
+const wooFailure = (code: string, message: string): WooFailure => ({ ok: false, code, message, remote: null });
+
+/**
+ * یک درخواست امضاشده به مسیر افزونه — تنها تعریف، برای تست اتصال و «سفارش‌های سایت».
+ * سنجش نشانی، اتصال پین‌شده، HMAC با Nonce تازه، بی دنبال‌کردن تغییر مسیر، و خطای امضا یکسان.
+ * پاسخ ۲۰۰ یا ۴۰۴ به فراخوان برمی‌گردد تا معنای ۴۰۴ (مسیر نیست یا موضوع نیست) را خودش تعیین کند.
+ */
+export async function signedWooPost(config: { siteUrl: string; secret: string | undefined }, route: string, payload: unknown,
+  deps: WooCallDeps = {}, maxBytes?: number): Promise<WooFailure | { ok: true; status: number; body: unknown }> {
+  if (!config.secret) return wooFailure("missing_secret", "کلید امضا در محیط API تنظیم نشده؛ WEB_PUSH_SECRET را با Worker و افزونه تطبیق دهید.");
   let target: PinnedTarget;
   try {
     // ابتدا خود نشانی تنظیم‌شده سنجیده می‌شود تا query/fragment/اطلاعات ورود حذف و پنهان نشوند.
     target = await (deps.resolve ?? resolveSafeTarget)(config.siteUrl);
-    target.url.pathname = target.url.pathname.replace(/\/+$/, "") + "/wp-json/lmc/v1/diagnostics";
-  } catch { return failure("unsafe_target", "نشانی سایت یا DNS معتبر و عمومی نیست؛ HTTPS و دامنهٔ نهایی را در تنظیمات بررسی کنید."); }
-  const body = JSON.stringify(orderId === undefined ? {} : { orderId });
+    target.url.pathname = target.url.pathname.replace(/\/+$/, "") + "/wp-json/lmc/v1/" + route;
+  } catch { return wooFailure("unsafe_target", "نشانی سایت یا DNS معتبر و عمومی نیست؛ HTTPS و دامنهٔ نهایی را در تنظیمات بررسی کنید."); }
+  const body = JSON.stringify(payload);
   const timestamp = String(Math.floor(Date.now() / 1000));
   const nonce = randomBytes(16).toString("hex");
   try {
-    const response = await (deps.read ?? readPinnedJson)(target, body, {
+    const headers = {
       "content-type": "application/json", "x-lmc-timestamp": timestamp, "x-lmc-nonce": nonce,
       "x-lmc-signature": "sha256=" + signBody(config.secret, timestamp, nonce, body),
-    });
-    if (response.status >= 300 && response.status < 400) return failure("redirect", "سایت تغییر مسیر می‌دهد؛ نشانی HTTPS نهایی را وارد کنید. تغییر مسیر دنبال نشد.");
-    if ([401, 403].includes(response.status)) return failure("authentication", "امضای اتصال پذیرفته نشد؛ یکسان‌بودن کلید امضا و ساعت دو سرور را بررسی کنید.");
-    if (response.status === 404) return failure("plugin_route", "مسیر تست اتصال پیدا نشد؛ نسخهٔ تازهٔ افزونه و تنظیم پیوندهای یکتا را بررسی کنید.");
-    if (response.status !== 200) return failure("remote_unavailable", "افزونه پاسخ موفق نداد؛ فعال‌بودن افزونه، کلید امضا و جدول Nonce را بررسی کنید.");
-    const parsed = wooReport.safeParse(response.body);
-    if (!parsed.success) return failure("invalid_response", "پاسخ با قرارداد تست اتصال سازگار نیست؛ نسخهٔ افزونه را بررسی کنید.");
-    const expected = new URL(config.siteUrl);
-    const actual = new URL(parsed.data.siteUrl);
-    if (actual.username || actual.password || actual.search || actual.hash || actual.origin !== expected.origin || actual.pathname.replace(/\/+$/, "") !== expected.pathname.replace(/\/+$/, "")) {
-      return failure("site_mismatch", "هویت سایت پاسخ‌دهنده با نشانی تنظیم‌شده یکسان نیست؛ دامنه و مسیر نصب را بررسی کنید.");
-    }
-    return { ok: true as const, code: "connected", message: "امضا و هویت سایت تأیید شد؛ ثبت سفارش و اجرای Worker با این آزمون اثبات نمی‌شود.", remote: parsed.data };
-  } catch { return failure("network", "اتصال کامل نشد؛ دسترسی شبکه، گواهی TLS و زمان پاسخ سایت را بررسی کنید."); }
+    };
+    const response = maxBytes === undefined
+      ? await (deps.read ?? readPinnedJson)(target, body, headers)
+      : await (deps.read ?? readPinnedJson)(target, body, headers, undefined, maxBytes);
+    if (response.status >= 300 && response.status < 400) return wooFailure("redirect", "سایت تغییر مسیر می‌دهد؛ نشانی HTTPS نهایی را وارد کنید. تغییر مسیر دنبال نشد.");
+    // ۴۰۰ یعنی افزونه امضا را پذیرفت ولی خودِ درخواست (فیلتر، صفحه، شناسه) را نه؛ «افزونه خاموش است» نیست.
+    if (response.status === 400) return wooFailure("bad_query", "افزونه این درخواست را نپذیرفت؛ فیلتر یا صفحه را تغییر دهید، یا نسخهٔ افزونه را بررسی کنید.");
+    if ([401, 403].includes(response.status)) return wooFailure("authentication", "امضای اتصال پذیرفته نشد؛ یکسان‌بودن کلید امضا و ساعت دو سرور را بررسی کنید.");
+    if (response.status !== 200 && response.status !== 404) return wooFailure("remote_unavailable", "افزونه پاسخ موفق نداد؛ فعال‌بودن افزونه، کلید امضا و جدول Nonce را بررسی کنید.");
+    return { ok: true, status: response.status, body: response.body };
+  } catch { return wooFailure("network", "اتصال کامل نشد؛ دسترسی شبکه، گواهی TLS و زمان پاسخ سایت را بررسی کنید."); }
+}
+
+/** هویت سایت پاسخ‌دهنده باید دقیقاً همان نشانی تنظیم‌شده باشد (مبدأ و مسیر نصب). */
+export function sameWooSite(configured: string, reported: string): boolean {
+  const expected = new URL(configured);
+  const actual = new URL(reported);
+  return !(actual.username || actual.password || actual.search || actual.hash || actual.origin !== expected.origin
+    || actual.pathname.replace(/\/+$/, "") !== expected.pathname.replace(/\/+$/, ""));
+}
+
+export async function testWooConnection(config: { siteUrl: string; secret: string | undefined }, orderId?: number,
+  deps: WooCallDeps = {}) {
+  const response = await signedWooPost(config, "diagnostics", orderId === undefined ? {} : { orderId }, deps);
+  if (!response.ok) return response;
+  if (response.status === 404) return wooFailure("plugin_route", "مسیر تست اتصال پیدا نشد؛ نسخهٔ تازهٔ افزونه و تنظیم پیوندهای یکتا را بررسی کنید.");
+  const parsed = wooReport.safeParse(response.body);
+  if (!parsed.success) return wooFailure("invalid_response", "پاسخ با قرارداد تست اتصال سازگار نیست؛ نسخهٔ افزونه را بررسی کنید.");
+  if (!sameWooSite(config.siteUrl, parsed.data.siteUrl)) {
+    return wooFailure("site_mismatch", "هویت سایت پاسخ‌دهنده با نشانی تنظیم‌شده یکسان نیست؛ دامنه و مسیر نصب را بررسی کنید.");
+  }
+  return { ok: true as const, code: "connected", message: "امضا و هویت سایت تأیید شد؛ ثبت سفارش و اجرای Worker با این آزمون اثبات نمی‌شود.", remote: parsed.data };
 }

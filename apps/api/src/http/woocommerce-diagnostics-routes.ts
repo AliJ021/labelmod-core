@@ -6,6 +6,7 @@ import { AuthError } from "../auth/service.ts";
 import { requireForSession } from "../auth/permission.ts";
 import { assertBranch, assertWarehouseInBranch } from "../sales/scope.ts";
 import { testWooConnection } from "../platform/woocommerce-diagnostics.ts";
+import { readWooSite } from "../platform/woocommerce-site.ts";
 import { readCoreToWoo, readWooToCore, type WooToCore } from "../platform/stock-sync.ts";
 
 export function registerWooDiagnosticsRoutes(app: FastifyInstance, db: Db, secret: string | undefined,
@@ -30,20 +31,10 @@ export function registerWooDiagnosticsRoutes(app: FastifyInstance, db: Db, secre
     };
   });
 
+  // پاسخ صفحهٔ تنظیمات همان شکل قبلی است؛ شعبهٔ انبار فقط برای دامنه خوانده می‌شود.
   async function config() {
-    const rows = await db.selectFrom("platform.setting").select(["key", "value"])
-      .where("key", "in", ["web.site_url", "web.push_enabled", "web.stock_warehouse", "web.price_list"]).execute();
-    const values = Object.fromEntries(rows.map(r => [r.key, r.value]));
-    // web.stock_warehouse stores a code, as used by the stock-push worker.
-    const warehouseCode = typeof values["web.stock_warehouse"] === "string" ? values["web.stock_warehouse"] : "";
-    const warehouse = warehouseCode ? await db.selectFrom("inventory.warehouse").select("id")
-      .where("code", "=", warehouseCode).executeTakeFirst() : undefined;
-    return { siteUrl: typeof values["web.site_url"] === "string" ? values["web.site_url"] : "",
-      pushEnabled: values["web.push_enabled"] === true,
-      warehouseCode, warehouseId: warehouse?.id ?? "",
-      priceList: typeof values["web.price_list"] === "string" ? values["web.price_list"] : "",
-      signingConfigured: !!secret,
-    };
+    const { branchId: _branch, ...site } = await readWooSite(db, secret);
+    return site;
   }
   app.get("/settings/woocommerce", async (req, reply) => {
     if (!req.session) throw new AuthError("no_session", "وارد نشده‌اید");

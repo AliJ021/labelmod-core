@@ -323,6 +323,8 @@ jobs:
         run: php integrations/woocommerce/test/stock-ledger-test.php
       - name: تشخیص فقط‌خواندنی و کنترل ارتباط افزونه
         run: php integrations/woocommerce/test/diagnostics-test.php
+      - name: سفارش‌های سایت — فقط‌خواندنی، صفحه‌بندی محدود، دادهٔ شخصی حداقلی
+        run: php integrations/woocommerce/test/orders-view-test.php
 
       # ⚠️ گیرندهٔ Push تنها مسیری است که از بیرون **به داخل** سایت
       #    می‌نویسد: امضا، پنجرهٔ زمانی، Nonce و نگهبان ترتیب. هر چهار
