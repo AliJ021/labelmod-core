@@ -59,56 +59,120 @@ const noOverflow = async (page: Page, what: string) => {
   expect(size.scroll, `${what}: no page-level horizontal overflow`).toBeLessThanOrEqual(size.client);
 };
 
-test("active methods are compact chips in order (card reader first, configured providers, then the rest); none preselected; unavailable ones are not chips", async ({ page, api }) => {
+/** «نمایش بیشتر» — دکمهٔ بازشونده؛ نامش وقتی روشی از آن انتخاب شده آن روش را هم می‌گوید. */
+const moreToggle = (page: Page) => selector(page).getByRole("button", { name: /^نمایش (بیشتر|کمتر)/ });
+const morePanel = (page: Page) => selector(page).locator(".pay-more-panel");
+/** نمای بازبینی مالک؛ فقط با `LMC_REVIEW_SCREENSHOT`. */
+const shot = async (page: Page, name: string) => {
+  if (process.env.LMC_REVIEW_SCREENSHOT) await selector(page).screenshot({ path: test.info().outputPath(`pay-layout-${name}.png`) });
+};
+async function openMore(page: Page) {
+  if ((await moreToggle(page).getAttribute("aria-expanded")) !== "true") await moreToggle(page).click();
+  await expect(morePanel(page)).toBeVisible();
+}
+
+test("layout: card reader alone full width, then SnapPay | DigiPay side by side, then «نمایش بیشتر» with the rest; none preselected", async ({ page, api }) => {
   mock(api, [...METHODS, SNAPPAY]);
   await open(page);
-  const chips = selector(page).locator(".pay-chip");
-  // بازطراحی مصوب مالک: کارت‌خوان نخست، ارائه‌دهندهٔ تنظیم‌شده، بعد بقیه — امتیاز و کارت هدیه بی مشتری تراشه ندارند.
-  await expect(chips).toHaveText(["کارت‌خوان", "اسنپ‌پی", "نقدی", "کارت‌به‌کارت", "درگاه پرداخت"]);
-  await expect(selector(page).locator('.pay-chip[aria-pressed="true"]')).toHaveCount(0);
-  for (const name of ["دیجی‌پی", "امتیاز باشگاه", "کارت هدیه", "لینک پرداخت"]) await expect(method(page, name), `${name} تراشه نیست`).toHaveCount(0);
-  // کارت‌خوان در دسترس «غیرفعال» دیده نمی‌شود.
+  const tiles = selector(page).locator(".pay-tiles .pay-tile");
+  // ترتیب ثابت مصوب مالک؛ دیجی‌پیِ تنظیم‌نشده هم دیده می‌شود ولی غیرفعال و با دلیل.
+  await expect(tiles).toHaveCount(3);
+  await expect(tiles.nth(0)).toHaveAccessibleName("کارت‌خوان");
+  await expect(tiles.nth(1)).toHaveAccessibleName("اسنپ‌پی");
+  await expect(tiles.nth(2)).toHaveAccessibleName("دیجی‌پی");
+  await expect(selector(page).locator('[aria-pressed="true"]')).toHaveCount(0);
   await expect(method(page, "کارت‌خوان")).toBeEnabled();
   await expect(method(page, "کارت‌خوان")).not.toHaveAttribute("aria-disabled", "true");
-  const first = (await chips.first().boundingBox())!, last = (await chips.last().boundingBox())!;
-  expect(first.height, "تراشه هدف لمسی دارد").toBeGreaterThanOrEqual(44);
-  expect(last.y + last.height - first.y, "تراشه‌ها فشرده‌اند، نه ستون کارت‌های بلند").toBeLessThan(5 * 60);
-  await noOverflow(page, "chips");
+  await expect(method(page, "دیجی‌پی")).toHaveAttribute("aria-disabled", "true");
+  await expect(method(page, "دیجی‌پی")).toContainText("برای این شعبه تنظیم نشده");
+
+  const group = (await selector(page).locator(".pay-tiles").boundingBox())!;
+  const card = (await tiles.nth(0).boundingBox())!, snap = (await tiles.nth(1).boundingBox())!, digi = (await tiles.nth(2).boundingBox())!;
+  expect(Math.abs(card.width - group.width), "کارت‌خوان تمام‌عرض است").toBeLessThanOrEqual(1);
+  expect(snap.y, "ارائه‌دهنده‌ها زیر کارت‌خوان").toBeGreaterThanOrEqual(card.y + card.height - 1);
+  expect(Math.abs(snap.y - digi.y), "اسنپ‌پی و دیجی‌پی در یک ردیف").toBeLessThanOrEqual(1);
+  expect(snap.x, "راست‌چین: اسنپ‌پی سمت راست دیجی‌پی").toBeGreaterThan(digi.x);
+  expect(Math.abs(snap.width - digi.width), "دو ستون برابر").toBeLessThanOrEqual(1);
+  expect(snap.width + digi.width, "هیچ‌کدام تمام‌عرض نیست").toBeLessThanOrEqual(group.width);
+  for (const t of [card, snap, digi]) expect(t.height, "هدف لمسی").toBeGreaterThanOrEqual(44);
+  for (let i = 0; i < 3; i++) {
+    const clipped = await tiles.nth(i).evaluate((el) => [...el.querySelectorAll<HTMLElement>(".pay-tile-name, .pay-tile-caption")]
+      .some((n) => n.scrollWidth > n.clientWidth + 1));
+    expect(clipped, "نام و دلیل خانه بریده نمی‌شوند").toBe(false);
+  }
+
+  // بقیه زیر «نمایش بیشتر»، بسته و پس از ردیف ارائه‌دهنده‌ها.
+  await expect(moreToggle(page)).toHaveAttribute("aria-expanded", "false");
+  await expect(morePanel(page)).toBeHidden();
+  for (const name of ["نقدی", "کارت‌به‌کارت", "درگاه پرداخت"]) await expect(method(page, name)).toBeHidden();
+  expect((await moreToggle(page).boundingBox())!.y).toBeGreaterThanOrEqual(snap.y + snap.height - 1);
+  await shot(page, "collapsed");
+  await openMore(page);
+  await shot(page, "more-open");
+  await expect(moreToggle(page)).toHaveAttribute("aria-expanded", "true");
+  await expect(morePanel(page).locator(".pay-chip")).toHaveText(["نقدی", "کارت‌به‌کارت", "درگاه پرداخت"]);
+  for (const name of ["امتیاز باشگاه", "کارت هدیه", "لینک پرداخت"]) await expect(method(page, name), `${name} انتخاب‌شدنی نیست`).toHaveCount(0);
+  const overflow = await morePanel(page).evaluate((el) => getComputedStyle(el).overflowY);
+  expect(["visible", "clip"], "بخش بیشتر اسکرول تودرتو ندارد").toContain(overflow);
+  await noOverflow(page, "layout");
 });
 
-test("chips are multi-select: each selected method gets its own amount row in selection order; deselecting removes only that row; keyboard toggles too", async ({ page, api }) => {
+test("multi-select across rows: tile and More method each get their own amount row; collapsing More keeps the selected row visible and named; Escape closes More and returns focus", async ({ page, api }) => {
   const s = mock(api);
   await open(page);
   await method(page, "کارت‌خوان").click();
   await expect(row(page, "کارت‌خوان").getByLabel("مبلغ (تومان)", { exact: true })).toBeFocused();
   await row(page, "کارت‌خوان").getByLabel("مبلغ (تومان)", { exact: true }).fill("12000");
+  // صفحه‌کلید: دکمهٔ «نمایش بیشتر» با Enter باز می‌شود و تراشه با Enter انتخاب.
+  await moreToggle(page).focus();
+  await page.keyboard.press("Enter");
+  await expect(moreToggle(page)).toHaveAttribute("aria-expanded", "true");
   await method(page, "نقدی").focus();
   await page.keyboard.press("Enter");
   await expect(method(page, "نقدی")).toHaveAttribute("aria-pressed", "true");
   await expect(method(page, "کارت‌خوان")).toHaveAttribute("aria-pressed", "true");
   await expect(row(page, "نقدی").getByLabel("مبلغ (تومان)", { exact: true })).toBeFocused();
-  await expect(selector(page).getByRole("form")).toHaveCount(2);
   const forms = selector(page).getByRole("form");
+  await expect(forms).toHaveCount(2);
   await expect(forms.nth(0)).toHaveAccessibleName("دریافت با کارت‌خوان");
   await expect(forms.nth(1)).toHaveAccessibleName("دریافت با نقدی");
+  // Escape از درون بخش، آن را می‌بندد و تمرکز را به دکمه برمی‌گرداند.
+  await method(page, "نقدی").focus();
+  await page.keyboard.press("Escape");
+  await expect(moreToggle(page)).toHaveAttribute("aria-expanded", "false");
+  await expect(moreToggle(page)).toBeFocused();
+  await expect(morePanel(page)).toBeHidden();
+  // روش انتخاب‌شده از «بیشتر» با بستن گم نمی‌شود: ردیف مبلغش دیده می‌شود و دکمه نامش را می‌برد.
+  await expect(row(page, "نقدی")).toBeVisible();
+  await expect(row(page, "نقدی")).toContainText("دریافت با");
+  await expect(row(page, "نقدی").getByLabel("مبلغ (تومان)", { exact: true })).toBeVisible();
+  await expect(moreToggle(page).locator(".pay-more-current")).toHaveText(["نقدی"]);
+  await expect(row(page, "کارت‌خوان").getByLabel("مبلغ (تومان)", { exact: true }), "مبلغ قالب‌بندی‌شده دست نخورد").toHaveValue("12,000");
+  await shot(page, "mixed-more-collapsed");
+  // برداشتن از درون بخش، فقط همان ردیف را برمی‌دارد.
+  await openMore(page);
   await method(page, "نقدی").click();
   await expect(row(page, "نقدی")).toHaveCount(0);
+  await expect(moreToggle(page).locator(".pay-more-current")).toHaveCount(0);
   await expect(row(page, "کارت‌خوان").getByLabel("مبلغ (تومان)", { exact: true }), "ورودی ردیف دیگر دست نخورد").toHaveValue("12,000");
   expect(s.posted, "انتخاب و برداشتن هیچ درخواستی نمی‌سازد").toEqual([]);
   await noOverflow(page, "two rows");
 });
 
-test("unavailable methods sit in a collapsed secondary disclosure with their reasons; never selectable, never a request", async ({ page, api }) => {
+test("unavailable: DigiPay tile is disabled with its reason on the tile; the rest list their reasons under «نمایش بیشتر»; never selectable, never a request", async ({ page, api }) => {
   const s = mock(api, [...METHODS, SNAPPAY]);
   await open(page);
-  const off = selector(page).locator("details.pay-unavailable");
-  await expect(off).not.toHaveAttribute("open", "");
-  await expect(off.locator("summary")).toHaveText(/روش‌های ناموجود \(4\)/);
-  await expect(off.getByRole("listitem").first()).toBeHidden();
-  await off.locator("summary").focus();
-  await page.keyboard.press("Enter");
-  await expect(off).toHaveAttribute("open", "");
-  await expect(off.getByRole("listitem").filter({ hasText: "دیجی‌پی" })).toContainText("برای این شعبه تنظیم نشده");
+  const digi = method(page, "دیجی‌پی");
+  await expect(digi).toBeVisible();
+  await expect(digi).toHaveAttribute("aria-disabled", "true");
+  await expect(digi).toHaveAccessibleDescription(/برای این شعبه تنظیم نشده/);
+  await digi.click({ force: true });
+  await expect(digi).not.toHaveAttribute("aria-pressed", "true");
+  await expect(page.getByLabel("مبلغ (تومان)", { exact: true })).toHaveCount(0);
+  const off = selector(page).locator(".pay-unavailable");
+  await expect(off).toBeHidden();
+  await openMore(page);
+  await expect(off.locator(".pay-unavailable-head")).toHaveText("ناموجود (3)");
   await expect(off.getByRole("listitem").filter({ hasText: "لینک پرداخت" })).toContainText("ساخت لینک پرداخت هنوز در سرور پیاده نشده است");
   for (const name of ["امتیاز باشگاه", "کارت هدیه"]) await expect(off.getByRole("listitem").filter({ hasText: name })).toContainText("ابتدا مشتری را به فاکتور وصل کنید.");
   await expect(off.getByRole("button"), "در بخش ناموجود هیچ دکمه یا گزینهٔ انتخابی نیست").toHaveCount(0);
@@ -130,9 +194,11 @@ test("credit is a separate checkout action after the payment methods and before 
   const credit = page.getByRole("button", { name: "وصل کردن مشتری برای نسیه", exact: true });
   await expect(credit).toBeVisible();
   await expect(selector(page).getByRole("button", { name: /نسیه/ })).toHaveCount(0);
-  const chips = (await selector(page).locator(".pay-chips").boundingBox())!, c = (await credit.boundingBox())!;
+  // نوار اقدام پایین ستون پرداخت چسبان است؛ ترتیب طبیعی در انتهای صفحه سنجیده می‌شود، نه وسط اسکرول.
+  await page.evaluate(() => window.scrollTo(0, document.documentElement.scrollHeight));
+  const more = (await selector(page).locator(".pay-more").boundingBox())!, c = (await credit.boundingBox())!;
   const fin = (await page.getByRole("button", { name: "نهایی‌کردن فاکتور", exact: true }).boundingBox())!;
-  expect(c.y, "نسیه پس از روش‌های پرداخت").toBeGreaterThan(chips.y);
+  expect(c.y, "نسیه پس از روش‌های پرداخت").toBeGreaterThan(more.y);
   expect(fin.y, "نهایی‌کردن آخرین عمل").toBeGreaterThanOrEqual(c.y);
 });
 
@@ -197,6 +263,7 @@ test("unknown payment intent survives removing the last line: recovery stays rea
     await route.fulfill({ json: { state: "not_found", terminal: false } });
   });
   await open(page);
+  await openMore(page);
   await method(page, "نقدی").click();
   await page.getByRole("button", { name: "دریافت وجه", exact: true }).click();
   const check = page.getByRole("button", { name: "بررسی وضعیت", exact: true });

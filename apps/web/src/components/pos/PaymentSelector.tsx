@@ -5,18 +5,23 @@ import { Button, Field } from "../ui/Controls.tsx";
 import { StatusBadge } from "../ui/Status.tsx";
 import { Icon, type IconName } from "../Icon.tsx";
 import { rialFromTomanInput } from "../../lib/money.ts";
-import { allOptions, checkAmount, LINK_NOT_IMPLEMENTED, maxAmount, paymentLocked, usableChannel, type PaymentLayout, type PaymentOption,
-  type PaymentPhase } from "../../lib/pos-payments.ts";
+import { allOptions, CARD_READER_NOT_CONFIGURED, checkAmount, LINK_NOT_IMPLEMENTED, maxAmount, paymentLocked, usableChannel, type PaymentLayout,
+  type PaymentOption, type PaymentPhase } from "../../lib/pos-payments.ts";
 
 /**
  * انتخاب‌گر پرداخت صندوق — بازطراحی مصوب مالک (پس از بازبینی ریشه، ۲۰۲۶/۱۰/۱۸).
  *
- *   ۱. روش‌های **فعال** — تراشه‌های فشردهٔ چندانتخابی (`aria-pressed`)؛ هر روش انتخاب‌شده
- *      یک ردیف مبلغ کامل و دیدنی دارد. پرداخت ترکیبی یعنی چند ردیف؛ هر ردیف جدا و با
- *      همان قصد پرداخت تک‌روشی (F-115-01) ثبت می‌شود — منطق مبلغ و نهایی‌سازی تغییری نکرد.
- *   ۲. روش‌های **ناموجود** — در بخش بازشوندهٔ ثانوی، هر کدام با دلیلش (دیجی‌پیِ
- *      تنظیم‌نشده، «لینک پرداخت»، امتیاز/کارت هدیه بی مشتری). هیچ‌کدام انتخاب‌شدنی نیست.
- *   ۳. ستون اسکرول تودرتو ندارد: صفحه خودش اسکرول می‌شود و فقط پایان ستون (Pos.tsx) چسبان است.
+ *   چیدمان مصوب مالک (۲۰۲۶/۱۰/۲۳، سبک خانه‌های بزرگ پیشین):
+ *   ۱. ردیف اول: **کارت‌خوان** به‌تنهایی و تمام‌عرض.
+ *   ۲. ردیف دوم: **اسنپ‌پی | دیجی‌پی** کنار هم با ترتیب ثابت. این سه خانه همیشه دیده می‌شوند؛ خانهٔ
+ *      بی‌پشتوانه (روش تعریف‌نشده یا ارائه‌دهندهٔ تنظیم‌نشده برای این شعبه) `aria-disabled` است، دلیل
+ *      کاملش را روی خود خانه می‌گوید، و هرگز انتخاب یا فرستاده نمی‌شود.
+ *   ۳. **«نمایش بیشتر»**: همهٔ روش‌های دیگر (نقدی، کارت‌به‌کارت، درگاه، امتیاز، کارت هدیه) در بخش
+ *      بازشونده؛ ناموجودها همان‌جا با دلیل (و «لینک پرداخت»). روشی که از آنجا انتخاب شده، با بستن بخش
+ *      گم نمی‌شود: نامش روی دکمهٔ «نمایش بیشتر» و ردیف مبلغش بیرون از بخش می‌ماند.
+ *   هر روش انتخاب‌شده (`aria-pressed`) یک ردیف مبلغ کامل و دیدنی دارد. پرداخت ترکیبی یعنی چند ردیف؛
+ *   هر ردیف جدا و با همان قصد پرداخت تک‌روشی (F-115-01) ثبت می‌شود — منطق مبلغ و نهایی‌سازی تغییری نکرد.
+ *   ستون اسکرول تودرتو ندارد: صفحه خودش اسکرول می‌شود و فقط پایان ستون (Pos.tsx) چسبان است.
  * نسیه اینجا نیست (CreditCheckout).
  *
  * ⚠️ کارت‌خوان و اسنپ‌پی **ثبت دستی** پرداخت تأییدشده‌اند؛ این صفحه به هیچ
@@ -55,6 +60,28 @@ const CAPTION: Record<string, string> = {
   gift_card: "با شمارهٔ کارت هدیه",
 };
 const ICON: Record<string, IconName> = { card_reader: "card", cash: "vault", transfer: "refresh", gateway: "external", points: "sparkle", gift_card: "tag" };
+
+/** خانهٔ ثابت ردیف اصلی: روشِ قابل ثبت یا `null` با دلیل. */
+type Tile = { key: "card_reader" | "snappay" | "digipay"; label: string; option: PaymentOption | null; reason: string | null };
+
+/** یک خانهٔ ردیف اصلی — عادی، فوکوس، انتخاب، قفل موقت، ناموجود. */
+function MethodTile({ tile, pressed, locked, onPick }: { tile: Tile; pressed: boolean; locked: boolean; onPick: () => void }) {
+  const captionId = useId();
+  const unavailable = tile.reason !== null;
+  const caption = unavailable ? tile.reason! : CAPTION[tile.key] ?? CAPTION.snappay!;
+  return <button type="button" className="pay-tile" data-key={tile.key} data-state={unavailable ? "unavailable" : pressed ? "selected" : "default"}
+    aria-label={tile.label} aria-pressed={unavailable ? undefined : pressed} aria-disabled={unavailable ? true : undefined}
+    disabled={locked && !unavailable} aria-describedby={captionId}
+    onClick={() => { if (!unavailable && !locked) onPick(); }}>
+    <span className="pay-tile-top" aria-hidden="true">
+      <span className="pay-tile-icon"><Icon name={tile.key === "card_reader" ? "card" : "external"} size="sm" /></span>
+      <span className="pay-tile-mark">{!unavailable && pressed ? <Icon name="check" size="sm" /> : null}</span>
+    </span>
+    <span className="pay-tile-name" aria-hidden="true">{tile.label}</span>
+    <span className="pay-tile-caption" aria-hidden="true">{unavailable ? <span className="pay-tile-tag">ناموجود</span> : null}{caption}</span>
+    <span id={captionId} className="sr-only">{caption}</span>
+  </button>;
+}
 
 type RowInput = { amount: string; refNo: string; attempted: boolean };
 const EMPTY: RowInput = { amount: "", refNo: "", attempted: false };
@@ -127,7 +154,10 @@ export function PaymentSelector({ layout, remaining, received, phase, disabled, 
   /** روشی که آخرین بار از این صفحه فرستاده شد؛ با تغییر «دریافتی» ردیفش برداشته می‌شود. */
   const submitted = useRef<string | null>(null);
   const prev = useRef({ received, remaining });
-  const unavailableId = useId();
+  const headId = useId();
+  const moreId = useId();
+  const [moreOpen, setMoreOpen] = useState(false);
+  const moreToggle = useRef<HTMLButtonElement>(null);
   const locked = paymentLocked(phase);
   const options = allOptions(layout);
   // قصد قفل‌شده روش خودش را نشان می‌دهد، حتی پس از Reload که انتخاب صفحه از دست رفته.
@@ -182,36 +212,64 @@ export function PaymentSelector({ layout, remaining, received, phase, disabled, 
     setSelected((s) => [...s, o.code]);
   }
 
-  // فقط روش‌های قابل ثبت تراشه می‌شوند؛ ناموجودها با دلیل در بخش ثانوی.
-  const active = options.filter((o) => o.unavailableReason === null);
+  // ردیف ثابت: کارت‌خوان، اسنپ‌پی، دیجی‌پی — همیشه هر سه، حتی بی‌پشتوانه (درخواست مالک).
+  const card = layout.primary[0] ?? null;
+  const tiles: Tile[] = [
+    { key: "card_reader", label: card ? labelOf(card) : "کارت‌خوان", option: card, reason: card ? card.unavailableReason : CARD_READER_NOT_CONFIGURED },
+    ...layout.providers.map((p): Tile => ({ key: p.key, label: p.label, option: p.option,
+      reason: p.option ? p.option.unavailableReason : p.unavailableReason })),
+  ];
+  const tileCodes = new Set(tiles.flatMap((t) => (t.option ? [t.option.code] : [])));
+  const pressedOf = (code: string) => (activeCode !== null ? code === activeCode : selected.includes(code));
+  // بقیهٔ روش‌های قابل ثبت تراشه می‌شوند؛ ناموجودها با دلیل در بخش ثانوی.
+  const active = options.filter((o) => o.unavailableReason === null && !tileCodes.has(o.code));
+  // ناموجودهای «نمایش بیشتر»؛ سه خانهٔ اصلی دلیل خودشان را روی خود خانه دارند.
   const unavailable: Array<{ key: string; label: string; reason: string }> = [
-    ...options.filter((o) => o.unavailableReason !== null).map((o) => ({ key: o.code, label: labelOf(o), reason: o.unavailableReason! })),
-    ...layout.providers.filter((p) => p.option === null && p.unavailableReason).map((p) => ({ key: p.key, label: p.label, reason: p.unavailableReason! })),
+    ...options.filter((o) => o.unavailableReason !== null && !tileCodes.has(o.code)).map((o) => ({ key: o.code, label: labelOf(o), reason: o.unavailableReason! })),
     ...(layout.providers.length ? [{ key: "link", label: "لینک پرداخت", reason: LINK_NOT_IMPLEMENTED }] : []),
   ];
+  // روش‌های «بیشتر» که انتخاب شده‌اند (یا قصد قفل‌شده مال یکی از آن‌هاست) روی دکمه هم نام برده می‌شوند.
+  const moreChosen = active.filter((o) => pressedOf(o.code));
   const rows = selected.map((c) => options.find((o) => o.code === c)).filter((o): o is PaymentOption => o !== undefined);
 
   return <section className="pay-select" aria-label="روش پرداخت">
-    <h3 className="pay-step" id={`${unavailableId}-h`}>روش پرداخت</h3>
+    <h3 className="pay-step" id={`${headId}-h`}>روش پرداخت</h3>
     <p className="pay-step-note muted small">یک یا چند روش را بزنید؛ برای پرداخت ترکیبی هر روش مبلغ خودش را دارد.</p>
-    <div className="pay-chips" role="group" aria-labelledby={`${unavailableId}-h`}>
-      {active.map((o) => {
-        const pressed = activeCode !== null ? o.code === activeCode : selected.includes(o.code);
-        return <button key={o.code} type="button" className="pay-chip" aria-pressed={pressed} disabled={blocked}
-          aria-label={labelOf(o)} title={CAPTION[o.kind] ?? undefined} onClick={() => toggle(o)}>
-          <span className="pay-chip-icon" aria-hidden="true"><Icon name={ICON[o.kind] ?? "card"} size="sm" /></span>
-          <span className="pay-chip-name">{labelOf(o)}</span>
-          <span className="pay-chip-mark" aria-hidden="true">{pressed ? <Icon name="check" size="sm" /> : null}</span>
-        </button>;
-      })}
+    <div className="pay-tiles" role="group" aria-labelledby={`${headId}-h`}>
+      {tiles.map((t) => <MethodTile key={t.key} tile={t} pressed={t.option !== null && pressedOf(t.option.code)} locked={blocked}
+        onPick={() => { if (t.option) toggle(t.option); }} />)}
     </div>
 
-    {unavailable.length ? <details className="pay-unavailable">
-      <summary>روش‌های ناموجود ({unavailable.length}) — چرا؟</summary>
-      <ul className="pay-unavailable-list">
-        {unavailable.map((u) => <li key={u.key}><strong>{u.label}</strong><span>{u.reason}</span></li>)}
-      </ul>
-    </details> : null}
+    {active.length || unavailable.length ? <div className="pay-more" onKeyDown={(e) => {
+      if (e.key === "Escape" && moreOpen) { e.stopPropagation(); setMoreOpen(false); moreToggle.current?.focus(); }
+    }}>
+      <button ref={moreToggle} type="button" className="pay-more-toggle" aria-expanded={moreOpen} aria-controls={moreId}
+        onClick={() => setMoreOpen((v) => !v)}>
+        <Icon name="more" size="sm" />
+        <span>{moreOpen ? "نمایش کمتر" : "نمایش بیشتر"}</span>
+        {moreChosen.map((o) => <span key={o.code} className="pay-more-current"><Icon name="check" size="sm" />{labelOf(o)}</span>)}
+        <span className="pay-more-chevron" aria-hidden="true"><Icon name="chevron" size="sm" /></span>
+      </button>
+      <div id={moreId} className="pay-more-panel" hidden={!moreOpen}>
+        {active.length ? <div className="pay-chips" role="group" aria-label="روش‌های دیگر">
+          {active.map((o) => {
+            const pressed = pressedOf(o.code);
+            return <button key={o.code} type="button" className="pay-chip" aria-pressed={pressed} disabled={blocked}
+              aria-label={labelOf(o)} title={CAPTION[o.kind] ?? undefined} onClick={() => toggle(o)}>
+              <span className="pay-chip-icon" aria-hidden="true"><Icon name={ICON[o.kind] ?? "card"} size="sm" /></span>
+              <span className="pay-chip-name">{labelOf(o)}</span>
+              <span className="pay-chip-mark" aria-hidden="true">{pressed ? <Icon name="check" size="sm" /> : null}</span>
+            </button>;
+          })}
+        </div> : null}
+        {unavailable.length ? <div className="pay-unavailable">
+          <p className="pay-unavailable-head">ناموجود ({unavailable.length})</p>
+          <ul className="pay-unavailable-list">
+            {unavailable.map((u) => <li key={u.key}><strong>{u.label}</strong><span>{u.reason}</span></li>)}
+          </ul>
+        </div> : null}
+      </div>
+    </div> : null}
 
     {phase.kind !== "idle" ? <div className={`pay-intent pay-intent--${phase.kind}`} role={phase.kind === "unknown" ? "alert" : undefined}>
       <p className="pay-intent-head">

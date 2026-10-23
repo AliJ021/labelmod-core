@@ -69,6 +69,7 @@ export interface PaymentLayout {
 export const NEEDS_CUSTOMER_REASON = "ابتدا مشتری را به فاکتور وصل کنید.";
 export const SNAPPAY_NOT_CONFIGURED = "اسنپ‌پی برای این شعبه تنظیم نشده است.";
 export const DIGIPAY_NOT_CONFIGURED = "ثبت دستی دیجی‌پی برای این شعبه تنظیم نشده است؛ حساب تسویه را در تنظیمات معرفی کنید.";
+export const CARD_READER_NOT_CONFIGURED = "کارت‌خوانی برای این شعبه تعریف نشده است؛ پایانه را در تنظیمات معرفی کنید.";
 export const LINK_NOT_IMPLEMENTED = "ساخت لینک پرداخت هنوز در سرور پیاده نشده است؛ پرداخت را حضوری بگیرید.";
 
 function placement(m: PaymentMethod): { group: PaymentGroup; rank: number } | null {

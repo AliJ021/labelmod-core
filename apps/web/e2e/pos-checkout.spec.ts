@@ -100,18 +100,22 @@ async function open(page: Page, s?: ReturnType<typeof pos>) {
 }
 const payPanel = (page: Page) => page.getByRole("complementary", { name: "پرداخت", exact: true });
 const selector = (page: Page) => page.getByRole("region", { name: "روش پرداخت" });
-/** تراشهٔ روش فعال (بازطراحی مصوب مالک: تراشهٔ چندانتخابی؛ ناموجودها تراشه ندارند). */
+/** دکمهٔ روش: سه خانهٔ اصلی (کارت‌خوان، اسنپ‌پی، دیجی‌پی) همیشه دیده می‌شوند؛ بقیه تراشهٔ «نمایش بیشتر»اند. */
 const method = (page: Page, name: string) => selector(page).getByRole("button", { name, exact: true });
-async function pick(page: Page, name: string) { await method(page, name).click(); }
+const TILES = new Set(["کارت‌خوان", "اسنپ‌پی", "دیجی‌پی"]);
+const moreToggle = (page: Page) => selector(page).getByRole("button", { name: /^نمایش (بیشتر|کمتر)/ });
+async function openMore(page: Page) {
+  if ((await moreToggle(page).getAttribute("aria-expanded")) !== "true") await moreToggle(page).click();
+}
+async function pick(page: Page, name: string) { if (!TILES.has(name)) await openMore(page); await method(page, name).click(); }
 /** ردیف مبلغ یک روش انتخاب‌شده — پرداخت ترکیبی چند ردیف دارد، هر کدام «دریافت وجه» خودش. */
 const row = (page: Page, name: string) => page.getByRole("form", { name: `دریافت با ${name}` });
 const receive = (page: Page, name: string) => row(page, name).getByRole("button", { name: "دریافت وجه", exact: true });
-/** بخش ثانوی «روش‌های ناموجود» — بسته؛ باز می‌شود و دلیل هر کدام را می‌گوید. */
-const unavailable = (page: Page) => selector(page).locator("details.pay-unavailable");
+/** ناموجودهای غیرخانه‌ای — درون «نمایش بیشتر»، هر کدام با دلیلش. */
+const unavailable = (page: Page) => selector(page).locator(".pay-unavailable");
 async function openUnavailable(page: Page) {
-  const d = unavailable(page);
-  if ((await d.getAttribute("open")) === null) await d.locator("summary").click();
-  return d;
+  await openMore(page);
+  return unavailable(page);
 }
 
 test("required customer policy blocks new payment until a customer is linked", async ({page, api}) => {
@@ -553,9 +557,9 @@ test("card reader is primary; non-cash overpayment is blocked before any request
   const s = pos(api);
   await open(page);
   const card = method(page, "کارت‌خوان");
-  // کارت‌خوان نخستین تراشهٔ فعال است؛ هیچ تراشه‌ای پیش‌فرض انتخاب نشده.
-  await expect(selector(page).locator(".pay-chip").first()).toHaveAccessibleName("کارت‌خوان");
-  await expect(selector(page).locator('.pay-chip[aria-pressed="true"]')).toHaveCount(0);
+  // کارت‌خوان نخستین خانه است؛ هیچ روشی پیش‌فرض انتخاب نشده.
+  await expect(selector(page).locator(".pay-tile").first()).toHaveAccessibleName("کارت‌خوان");
+  await expect(selector(page).locator('[aria-pressed="true"]')).toHaveCount(0);
   await card.click();
   await expect(card).toHaveAttribute("aria-pressed", "true");
   const amount = page.getByLabel("مبلغ (تومان)", { exact: true });
@@ -575,6 +579,7 @@ test("card reader is primary; non-cash overpayment is blocked before any request
   await expect(page.getByRole("alert").filter({ hasText: "حداکثر مبلغ برای این روش" })).toBeVisible();
   await expect(amount).toHaveValue("20,000");
   await expect(card).toBeEnabled();
+  await openMore(page);
   await expect(method(page, "نقدی"), "فقط یک روش انتخاب‌شده").toHaveAttribute("aria-pressed", "false");
 });
 
@@ -631,6 +636,7 @@ test("same-amount collision: another payment of the same amount and method does 
   await expect(page.getByText("پیش‌تر ثبت شده بود")).toHaveCount(0);
   await expect(page.getByText("سرور تأیید کرد")).toHaveCount(0);
   await expect(method(page, "کارت‌خوان"), "قصد A باز است؛ روش و مبلغ قفل").toBeDisabled();
+  await openMore(page);
   await expect(method(page, "نقدی"), "همهٔ تراشه‌ها قفل").toBeDisabled();
   await expect(page.getByLabel("مبلغ (تومان)", { exact: true }), "بی ردیف مبلغ تا روشن‌شدن قصد").toHaveCount(0);
   await expect(page.getByRole("button",{name:"چاپ پیش‌فاکتور",exact:true})).toBeDisabled();
@@ -665,6 +671,9 @@ test("reload during unknown: the intent is restored locked with its key; status 
   await expect(page.getByRole("button", { name: "بررسی وضعیت", exact: true })).toBeVisible();
   await expect(page.locator(".pay-intent")).toContainText("20٬000");
   await expect(method(page, "کارت‌خوان")).toBeDisabled();
+  // نقدی زیر «نمایش بیشتر» است؛ بخش بسته هم روش قفل‌شده را نام می‌برد.
+  await expect(moreToggle(page).locator(".pay-more-current")).toHaveText(["نقدی"]);
+  await openMore(page);
   await expect(method(page, "نقدی"), "روش قفل‌شدهٔ قصد پس از Reload هم انتخاب‌شده دیده می‌شود").toBeDisabled();
   await expect(method(page, "نقدی")).toHaveAttribute("aria-pressed", "true");
   await expect(page.getByRole("button", { name: "نهایی‌کردن فاکتور", exact: true })).toBeDisabled();
@@ -743,6 +752,7 @@ test("credit is a checkout outcome: attached customer shown, no credit in the se
   await expect(who).toContainText("09121234567");
   const sel = selector(page);
   await expect(sel.getByRole("button", { name: /نسیه/ })).toHaveCount(0);
+  await openMore(page);
   await expect(sel.getByRole("button", { name: "درگاه پرداخت", exact: true })).toBeVisible();
   // انتخاب دیجی‌پی تنظیم‌شده فقط فرم دستی را باز می‌کند؛ پرداخت خودکار ندارد.
   const digi = method(page, "دیجی‌پی");
@@ -820,9 +830,11 @@ test("credit is hidden without sale.credit; SnapPay is selectable only when the 
   await expect(page.getByRole("button", { name: "ثبت نسیه", exact: true })).toHaveCount(0);
   await expect(page.getByRole("button", { name: "وصل کردن مشتری برای نسیه", exact: true })).toHaveCount(0);
   expect(api.calls).toContain("GET /payment-methods?branchId=b1");
-  // بی ردیف سرور برای این شعبه، اسنپ‌پی تراشه ندارد؛ در بخش ناموجودها با دلیلش است (بازطراحی مصوب مالک).
-  await expect(method(page, "اسنپ‌پی")).toHaveCount(0);
-  await expect((await openUnavailable(page)).getByRole("listitem").filter({ hasText: "اسنپ‌پی" })).toContainText("برای این شعبه تنظیم نشده");
+  // بی ردیف سرور برای این شعبه، خانهٔ اسنپ‌پی دیده می‌شود ولی غیرفعال و با دلیل روی خودش (چیدمان مصوب مالک).
+  await expect(method(page, "اسنپ‌پی")).toHaveAttribute("aria-disabled", "true");
+  await expect(method(page, "اسنپ‌پی")).toContainText("برای این شعبه تنظیم نشده");
+  await method(page, "اسنپ‌پی").click({ force: true });
+  await expect(method(page, "اسنپ‌پی")).not.toHaveAttribute("aria-pressed", "true");
   await expect(page.getByLabel("مبلغ (تومان)", { exact: true })).toHaveCount(0);
 
   api.defaults["GET /payment-methods"] = { methods: [...METHODS, { code: "snappay", name: "اسنپ‌پی — ثبت دستی تأییدشده", kind: "gateway", requiresRef: true }] };
