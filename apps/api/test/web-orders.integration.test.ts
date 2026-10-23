@@ -39,7 +39,7 @@ describe("سفارش‌های سایت — مسیر Core", { skip }, () => {
     async page(site, query) {
       calls.push({ kind: "page", site, arg: query });
       return { state: "ready", page: query.page, perPage: 20, until: query.until ?? 1792000000, total: 4500, pages: 225,
-        statuses: [{ slug: "processing", label: "در حال انجام" }], paymentMethods: [], orders: [{
+        statuses: [{ slug: "processing", label: "در حال انجام" }], paymentMethods: [], shippingMethods: [], orders: [{
           id: 41, number: "41", status: "processing", statusLabel: "در حال انجام", createdAt: "2026-10-20T08:00:00Z",
           currency: "IRR", total: { amount: "12000000", rial: "12000000" }, itemCount: 2, customerName: "مشتری",
           customerType: "guest", paymentMethodId: "zarinpal", paymentMethod: "زرین‌پال",
@@ -110,7 +110,7 @@ describe("سفارش‌های سایت — مسیر Core", { skip }, () => {
   });
 
   test("مدیر: فهرست از همان سایت و دامنهٔ انبار سایت؛ بی‌کش", async () => {
-    const r = await get(users.admin, "/web/orders?page=201&status=processing&q=%20%DB%B0%DB%B9%DB%B1%DB%B2%20&from=2026-10-01&to=2026-10-20&payment=zarinpal&until=1792000000");
+    const r = await get(users.admin, "/web/orders?page=201&status=processing&from=2026-10-01&to=2026-10-20&payment=zarinpal&shipping=local_pickup&until=1792000000");
     assert.equal(r.statusCode, 200, r.body);
     assert.equal(r.headers["cache-control"], "no-store");
     const body = r.json();
@@ -118,10 +118,36 @@ describe("سفارش‌های سایت — مسیر Core", { skip }, () => {
     assert.deepEqual(body.orders[0].total, { amount: "12000000", rial: "12000000" }, "پول رشته");
     assert.ok(Date.parse(body.fetchedAt) > 0);
     assert.equal(calls.length, 1);
-    // صفحهٔ ۲۰۱ (بیش از ۴۰۰۰ سفارش) پذیرفته است؛ عبارت جست‌وجو بریده‌شده می‌رود.
-    assert.deepEqual(calls[0], { kind: "page", arg: { page: 201, status: "processing", search: "۰۹۱۲", dateFrom: "2026-10-01",
-      dateTo: "2026-10-20", paymentMethod: "zarinpal", until: 1792000000 },
+    // صفحهٔ ۲۰۱ (بیش از ۴۰۰۰ سفارش) پذیرفته است.
+    assert.deepEqual(calls[0], { kind: "page", arg: { page: 201, status: "processing", search: null, dateFrom: "2026-10-01",
+      dateTo: "2026-10-20", paymentMethod: "zarinpal", shippingMethod: "local_pickup", until: 1792000000 },
       site: { siteUrl: SITE, secret: "synthetic-orders-secret", branchId: BRANCH, warehouseId: STORE_WH } });
+  });
+
+  test("جست‌وجو فقط در بدنهٔ POST است؛ GET با q رد می‌شود و هرگز به سایت نمی‌رسد", async () => {
+    // بازبینی ریشه روی 2a4e62e: لاگ دسترسی JSON در Caddy نشانی کامل را نگه می‌دارد، پس تلفن یا ایمیل نباید در آن باشد.
+    assert.equal((await get(users.admin, "/web/orders?q=09121234567")).statusCode, 400);
+    assert.equal(calls.length, 0);
+    const s = await loginAs(users.admin);
+    const post = (payload: unknown, headers: Record<string, string> = s.headers) =>
+      app.inject({ method: "POST", url: "/web/orders/search", cookies: s.cookies, headers, payload: payload as Record<string, unknown> });
+    const r = await post({ q: " ۰۹۱۲ ", page: 2, status: "processing", shipping: "flat_rate", until: 1792000000 });
+    assert.equal(r.statusCode, 200, r.body);
+    assert.equal(r.headers["cache-control"], "no-store");
+    assert.deepEqual(calls.at(-1)!.arg, { page: 2, status: "processing", search: "۰۹۱۲", dateFrom: null, dateTo: null,
+      paymentMethod: null, shippingMethod: "flat_rate", until: 1792000000 });
+    const n = calls.length;
+    assert.equal((await post({ q: "x" }, {})).statusCode, 403, "بی توکن CSRF");
+    for (const bad of [{}, { q: "" }, { q: "a".repeat(101) }, { q: "a\u0000b" }, { q: "x", limit: 5 }, { q: "x", from: "2026-10-20", to: "2026-10-01" }]) {
+      assert.equal((await post(bad)).statusCode, 400, JSON.stringify(bad));
+    }
+    assert.equal(calls.length, n, "رد پیش از سایت");
+    for (const user of [users.supervisor, users.outsider]) {
+      const o = await loginAs(user);
+      const res = await app.inject({ method: "POST", url: "/web/orders/search", cookies: o.cookies, headers: o.headers, payload: { q: "x" } });
+      assert.equal(res.statusCode, 403, user);
+    }
+    assert.equal(calls.length, n);
   });
 
   test("جزئیات: «پیدا نشد» و «نامعلوم» جدا می‌مانند", async () => {
@@ -152,7 +178,7 @@ describe("سفارش‌های سایت — مسیر Core", { skip }, () => {
   test("ورودی نامعتبر پیش از سایت رد می‌شود", async () => {
     for (const url of ["/web/orders?page=0", "/web/orders?page=100001", "/web/orders?status=wc%20x", "/web/orders?status=Processing",
       "/web/orders?perPage=-1", "/web/orders?limit=-1", "/web/orders/0", "/web/orders/abc", "/web/orders/-1",
-      "/web/orders?q=", `/web/orders?q=${"a".repeat(101)}`, "/web/orders?q=a%00b", "/web/orders?from=2026-13-01",
+      "/web/orders?q=x", "/web/orders?shipping=a%20b", "/web/orders?from=2026-13-01",
       "/web/orders?from=2026-10-20&to=2026-10-01", "/web/orders?payment=a%20b", "/web/orders?until=0", "/web/orders?until=abc",
       "/web/orders/1?items=0", "/web/orders/1?notes=10001", "/web/orders/1?page=2"]) {
       assert.equal((await get(users.admin, url)).statusCode, 400, url);

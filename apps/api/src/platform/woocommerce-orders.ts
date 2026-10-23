@@ -1,5 +1,5 @@
 /**
- * «سفارش‌های سایت» — خواندن فقط‌خواندنی و امضاشده از افزونه (`POST /wp-json/lmc/v1/orders`، قرارداد ۲).
+ * «سفارش‌های سایت» — خواندن فقط‌خواندنی و امضاشده از افزونه (`POST /wp-json/lmc/v1/orders`، قرارداد ۳).
  *
  * - **دروازه:** همان دروازهٔ تست اتصال (`signedWooPost`): نشانی سنجیده، اتصال پین‌شده، HMAC با Nonce تازه،
  *   بی تغییر مسیر.
@@ -22,6 +22,8 @@ export const WOO_ORDERS_PER_PAGE = 20;
 export const WOO_ORDERS_PAGE_MAX = 100_000;
 export const WOO_STATUS_SLUG = /^[a-z0-9_-]{1,40}$/;
 export const WOO_PAYMENT_ID = /^[A-Za-z0-9_-]{1,100}$/;
+/** شناسهٔ نوع روش ارسال ووکامرس (`flat_rate`، `local_pickup`، …). */
+export const WOO_SHIPPING_ID = WOO_PAYMENT_ID;
 
 /** ضریب ریالی هر ارز؛ هر کد دیگری تبدیل ندارد. تنها تعریف. */
 export const RIAL_FACTOR: Readonly<Record<string, bigint>> = { IRR: 1n, IRT: 10n };
@@ -63,6 +65,9 @@ const rawDetail = rawSummary.extend({
   billing: address.extend({ email: text(200) }),
   shipping: address,
   customerNote: text(1000),
+  completedAt: iso, modifiedAt: iso,
+  tracking: z.array(z.object({ provider: text(100), number: text(100), shippedAt: iso,
+    url: z.string().max(500).refine(v => v === "" || /^https:\/\//.test(v)) })).max(20),
   payment: z.object({ methodId: text(100), method: text(100), transactionId: text(100), paidAt: iso }),
   totals: z.object({ subtotal: dec, discount: dec, discountTax: dec, shipping: dec, shippingTax: dec, tax: dec, total: dec, refunded: dec }),
   items: z.object({
@@ -84,17 +89,18 @@ const rawDetail = rawSummary.extend({
   }),
 });
 const envelope = z.object({
-  protocol: z.literal(2), siteUrl: z.string().url().max(500),
+  protocol: z.literal(3), siteUrl: z.string().url().max(500),
   branchId: z.string().max(36), warehouseId: z.string().max(36),
 });
 const listResponse = envelope.extend({
   page: z.number().int().positive(), perPage: z.number().int().positive(), until: z.number().int().positive(),
   filters: z.object({
     status: z.string().nullable(), search: z.boolean(), dateFrom: z.string().nullable(), dateTo: z.string().nullable(),
-    paymentMethod: z.string().nullable(),
+    paymentMethod: z.string().nullable(), shippingMethod: z.string().nullable(),
   }),
   statuses: z.array(z.object({ slug: z.string().regex(WOO_STATUS_SLUG), label: text(100) })).max(100),
   paymentMethods: z.array(z.object({ id: z.string().regex(WOO_PAYMENT_ID), title: text(100) })).max(100),
+  shippingMethods: z.array(z.object({ id: z.string().regex(WOO_SHIPPING_ID), title: text(100) })).max(100),
   total: z.number().int().nonnegative(), pages: z.number().int().nonnegative(), orders: z.array(rawSummary).max(50),
 });
 const detailResponse = envelope.extend({ order: rawDetail });
@@ -156,11 +162,12 @@ function mapDetail(o: RawDetail): WooOrderDetail {
 type Unavailable = { state: "unavailable"; code: string; message: string };
 export interface WooOrdersQuery {
   page: number; status: string | null; search: string | null; dateFrom: string | null; dateTo: string | null;
-  paymentMethod: string | null; until: number | null;
+  paymentMethod: string | null; shippingMethod: string | null; until: number | null;
 }
 export type WooOrdersPage = {
   state: "ready"; page: number; perPage: number; until: number; total: number; pages: number;
-  statuses: { slug: string; label: string }[]; paymentMethods: { id: string; title: string }[]; orders: WooOrderSummary[];
+  statuses: { slug: string; label: string }[]; paymentMethods: { id: string; title: string }[];
+  shippingMethods: { id: string; title: string }[]; orders: WooOrderSummary[];
 } | Unavailable;
 export type WooOrderView = { state: "ready"; order: WooOrderDetail } | { state: "not_found" } | Unavailable;
 
@@ -187,7 +194,7 @@ function checkEnvelope(site: WooOrdersSite, body: z.infer<typeof envelope>): Una
   return null;
 }
 
-const ROUTE_MISSING = "مسیر سفارش‌های سایت (قرارداد ۲) در افزونه پیدا نشد؛ نسخهٔ تازهٔ افزونه را نصب کنید.";
+const ROUTE_MISSING = "مسیر سفارش‌های سایت (قرارداد ۳) در افزونه پیدا نشد؛ نسخهٔ تازهٔ افزونه را نصب کنید.";
 const BAD_CONTRACT = "پاسخ سفارش‌ها با قرارداد سازگار نیست؛ نسخهٔ افزونه را بررسی کنید.";
 
 export function makeWooOrdersReader(deps: WooCallDeps = {}): WooOrdersReader {
@@ -197,7 +204,8 @@ export function makeWooOrdersReader(deps: WooCallDeps = {}): WooOrdersReader {
         page: q.page, perPage: WOO_ORDERS_PER_PAGE,
         ...(q.status === null ? {} : { status: q.status }), ...(q.search === null ? {} : { search: q.search }),
         ...(q.dateFrom === null ? {} : { dateFrom: q.dateFrom }), ...(q.dateTo === null ? {} : { dateTo: q.dateTo }),
-        ...(q.paymentMethod === null ? {} : { paymentMethod: q.paymentMethod }), ...(q.until === null ? {} : { until: q.until }),
+        ...(q.paymentMethod === null ? {} : { paymentMethod: q.paymentMethod }),
+        ...(q.shippingMethod === null ? {} : { shippingMethod: q.shippingMethod }), ...(q.until === null ? {} : { until: q.until }),
       };
       const r = await signedWooPost(site, "orders", body, deps, LIST_BYTES);
       if (!r.ok) return unavailable(r.code, r.message);
@@ -209,13 +217,13 @@ export function makeWooOrdersReader(deps: WooCallDeps = {}): WooOrdersReader {
       const f = d.filters;
       if (d.page !== q.page || d.perPage !== WOO_ORDERS_PER_PAGE || (q.until !== null && d.until !== q.until)
         || f.status !== q.status || f.search !== (q.search !== null) || f.dateFrom !== q.dateFrom || f.dateTo !== q.dateTo
-        || f.paymentMethod !== q.paymentMethod) {
+        || f.paymentMethod !== q.paymentMethod || f.shippingMethod !== q.shippingMethod) {
         return unavailable("invalid_response", BAD_CONTRACT);
       }
       const bad = checkEnvelope(site, d);
       if (bad) return bad;
       return { state: "ready", page: d.page, perPage: d.perPage, until: d.until, total: d.total, pages: d.pages,
-        statuses: d.statuses, paymentMethods: d.paymentMethods, orders: d.orders.map(mapSummary) };
+        statuses: d.statuses, paymentMethods: d.paymentMethods, shippingMethods: d.shippingMethods, orders: d.orders.map(mapSummary) };
     },
     async order(site, orderId, itemsPage, notesPage) {
       const r = await signedWooPost(site, "orders", {

@@ -1,5 +1,5 @@
 /**
- * قرارداد «سفارش‌های سایت» سمت Core (قرارداد ۲): امضا، مسیر، سقف بدنه، سنجش سخت پاسخ، هویت سایت، دامنه،
+ * قرارداد «سفارش‌های سایت» سمت Core (قرارداد ۳): امضا، مسیر، سقف بدنه، سنجش سخت پاسخ، هویت سایت، دامنه،
  * بازتاب صفحه/لنگر/فیلتر، و تبدیل پول فقط با ارز خودِ سفارش.
  * شبکه‌ای لمس نمی‌شود؛ `read` ساختگی همان امضایی را می‌سنجد که افزونه می‌سنجد.
  */
@@ -13,7 +13,7 @@ import type { readPinnedJson } from "../src/platform/woocommerce-diagnostics.ts"
 const site = { siteUrl: "https://shop.example.test/store", secret: randomBytes(32).toString("hex"),
   branchId: "00000000-0000-7000-8000-000000000001", warehouseId: "00000000-0000-7000-8000-000000000101" };
 const resolve = async (url: string) => resolveSafeTarget(url, async () => ["203.0.113.4"]);
-const env = { protocol: 2, siteUrl: site.siteUrl, branchId: site.branchId, warehouseId: site.warehouseId };
+const env = { protocol: 3, siteUrl: site.siteUrl, branchId: site.branchId, warehouseId: site.warehouseId };
 const core = { paymentConfirmed: true, recorded: true, invoiceNumber: "۱۴۰۵-۱", attempts: 1, hasError: false, stopped: false };
 const order = {
   id: 41, number: "41", status: "processing", statusLabel: "در حال انجام", createdAt: "2026-10-20T08:00:00Z",
@@ -21,17 +21,20 @@ const order = {
   paymentMethodId: "zarinpal", paymentMethod: "زرین‌پال", core,
 };
 const UNTIL = 1792000000;
-const filters = { status: null, search: false, dateFrom: null, dateTo: null, paymentMethod: null };
+const filters = { status: null, search: false, dateFrom: null, dateTo: null, paymentMethod: null, shippingMethod: null };
 const list = (over: Record<string, unknown> = {}) => ({ ...env, page: 1, perPage: 20, until: UNTIL, filters,
   statuses: [{ slug: "processing", label: "در حال انجام" }, { slug: "awaiting-shipment", label: "منتظر ارسال" }],
-  paymentMethods: [{ id: "zarinpal", title: "زرین‌پال" }], total: 1, pages: 1, orders: [order], ...over });
+  paymentMethods: [{ id: "zarinpal", title: "زرین‌پال" }], shippingMethods: [{ id: "local_pickup", title: "تحویل حضوری" }],
+  total: 1, pages: 1, orders: [order], ...over });
 const q = (over: Partial<WooOrdersQuery> = {}): WooOrdersQuery => ({ page: 1, status: null, search: null, dateFrom: null,
-  dateTo: null, paymentMethod: null, until: null, ...over });
+  dateTo: null, paymentMethod: null, shippingMethod: null, until: null, ...over });
 const addr = { firstName: "سارا", lastName: "رضایی", company: "", address1: "خیابان ۱", address2: "", city: "تهران",
   state: "THR", postcode: "1234567890", country: "IR", phone: "09121234567" };
 const detail = (over: Record<string, unknown> = {}) => ({
   ...order, core: { ...core, scheduled: false, missingSku: 0, missingMapping: 1 },
   billing: { ...addr, email: "sara@example.test" }, shipping: addr, customerNote: "زنگ نزنید",
+  completedAt: null, modifiedAt: "2026-10-20T09:00:00Z",
+  tracking: [{ provider: "iran-post", number: "IR123", shippedAt: "2026-10-20T10:00:00Z", url: "https://tracking.post.ir/?id=IR123" }],
   payment: { methodId: "zarinpal", method: "زرین‌پال", transactionId: "A1B2", paidAt: "2026-10-20T08:01:00Z" },
   totals: { subtotal: "12500000", discount: "1000000", discountTax: "0", shipping: "500000", shippingTax: "0", tax: "0",
     total: "12000000", refunded: "0" },
@@ -89,17 +92,18 @@ test("lineDiscount: تفاوت دقیق اعشاری، بی float", () => {
 test("فهرست: صفحه، ۲۰تایی، لنگر و فیلترها امضاشده می‌روند؛ میدان اضافه به مرورگر نمی‌رسد", async () => {
   const seen: unknown[] = [];
   const query = q({ page: 3, status: "on-hold", search: "09121234567", dateFrom: "2026-10-01", dateTo: "2026-10-20",
-    paymentMethod: "zarinpal", until: UNTIL });
+    paymentMethod: "zarinpal", shippingMethod: "local_pickup", until: UNTIL });
   const r = await reader(() => ({ status: 200, body: list({ page: 3, filters: { status: "on-hold", search: true,
-    dateFrom: "2026-10-01", dateTo: "2026-10-20", paymentMethod: "zarinpal" },
+    dateFrom: "2026-10-01", dateTo: "2026-10-20", paymentMethod: "zarinpal", shippingMethod: "local_pickup" },
   orders: [{ ...order, billingPhone: "09129999999", email: "x@example.test", ip: "198.51.100.7" }], extra: "secret" }) }), seen)
     .page(site, query);
   assert.deepEqual(seen, [{ page: 3, perPage: 20, status: "on-hold", search: "09121234567", dateFrom: "2026-10-01",
-    dateTo: "2026-10-20", paymentMethod: "zarinpal", until: UNTIL }]);
+    dateTo: "2026-10-20", paymentMethod: "zarinpal", shippingMethod: "local_pickup", until: UNTIL }]);
   assert.equal(r.state, "ready");
   const json = JSON.stringify(r);
   for (const leak of ["09129999999", "x@example.test", "198.51.100.7", "secret", "siteUrl"]) assert.ok(!json.includes(leak), leak);
-  assert.ok(r.state === "ready" && r.until === UNTIL && r.statuses.length === 2 && r.paymentMethods[0]!.id === "zarinpal");
+  assert.ok(r.state === "ready" && r.until === UNTIL && r.statuses.length === 2 && r.paymentMethods[0]!.id === "zarinpal"
+    && r.shippingMethods[0]!.id === "local_pickup");
   // بی فیلتر، فقط صفحه و اندازه می‌رود؛ لنگر از پاسخ می‌آید.
   seen.length = 0;
   const first = await reader(() => ({ status: 200, body: list() }), seen).page(site, q());
@@ -165,6 +169,9 @@ test("پاسخ خارج از قرارداد یا بازتاب نادرست «ن�
     ok({ filters: { ...okFilters, search: true } }),               // جست‌وجویی که نخواسته بودیم
     ok({ filters: { ...okFilters, dateFrom: "2026-01-01" } }),
     ok({ filters: { ...okFilters, paymentMethod: "cod" } }),
+    ok({ filters: { ...okFilters, shippingMethod: "flat_rate" } }),   // فیلتر ارسالی که نخواسته بودیم
+    ok({ shippingMethods: [{ id: "bad id!", title: "x" }] }),
+    { ...ok(), protocol: 2 },                                      // ساخت قرارداد ۲ (پیش از اصلاح لنگر و ویژگی)
     { ...ok(), protocol: 1 },
     null,
   ].entries()) {
@@ -188,6 +195,7 @@ test("جزئیات: آدرس، اقلام، کوپن، یادداشت و پول 
   assert.deepEqual(o.coupons[0]!.discount, { amount: "1000000", rial: "1000000" });
   assert.equal(o.notes.rows[0]!.content, "پرداخت تأیید شد");
   assert.equal(o.core.missingMapping, 1);
+  assert.deepEqual([o.completedAt, o.modifiedAt, o.tracking[0]!.number], [null, "2026-10-20T09:00:00Z", "IR123"]);
   assert.ok(!JSON.stringify(ok).includes("_lmc_hidden"), "میدان اضافه دور ریخته می‌شود");
 
   const usd = await detailReader(() => ({ status: 200, body: { ...env, order: detail({ currency: "USD",
@@ -220,6 +228,11 @@ test("جزئیات: شناسهٔ دیگر یا اقلام بدشکل پذیرف�
   const other = await detailReader(() => ({ status: 200, body: { ...env, order: detail({ id: 42 }) } })).order(site, 41, 1, 1);
   assert.equal(other.state === "unavailable" && other.code, "invalid_response");
   const rows = detail().items.rows;
+  for (const bad of [{ tracking: [{ provider: "x", number: "1", shippedAt: null, url: "javascript:alert(1)" }] },
+    { tracking: [{ provider: "x", number: "1", shippedAt: null, url: "http://plain.example" }] }, { completedAt: "دیروز" }]) {
+    const r = await detailReader(() => ({ status: 200, body: { ...env, order: detail(bad) } })).order(site, 41, 1, 1);
+    assert.equal(r.state === "unavailable" && r.code, "invalid_response", JSON.stringify(bad));
+  }
   for (const row of [{ ...rows[0], quantity: -1 }, { ...rows[0], total: 11500000 }, { ...rows[0], attributes: "رنگ" }]) {
     const bad = await detailReader(() => ({ status: 200, body: { ...env, order: detail({ items: { ...detail().items, rows: [row] } }) } }))
       .order(site, 41, 1, 1);
