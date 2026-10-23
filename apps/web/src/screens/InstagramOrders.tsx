@@ -33,6 +33,7 @@ import { Skeleton } from "../components/ui/Skeleton.tsx";
 import { ResultState } from "../components/ResultState.tsx";
 import { Ltr } from "../components/ui/Bidi.tsx";
 import { PosProductPicker } from "../components/PosProductPicker.tsx";
+import { SafeAction } from "../components/ui/SafeAction.tsx";
 
 type Load<T> = { state: "loading" } | { state: "done"; data: T } | { state: "error"; message: string; reference: string | null };
 
@@ -286,11 +287,13 @@ function OrderPanel({ id, onClose, onChanged }: { id: string; onClose: () => voi
       ? <div aria-busy="true"><Skeleton variant="text" lines={4} label="در حال خواندن سفارش…" /></div>
       : load.state === "error"
         ? <ResultState kind="error" title="سفارش خوانده نشد" reference={load.reference} description={load.message} actionLabel="تلاش دوباره" onAction={reload} />
-        : <OrderView d={load.data} busy={busy} act={act} />}
+        : <OrderView d={load.data} busy={busy} act={act} apply={next => { replace(next); onChanged(); }} />}
   </Solid>;
 }
 
-function OrderView({ d, busy, act }: { d: OrderDetail; busy: string | null; act: (name: string, run: () => Promise<OrderDetail>) => Promise<void> }) {
+type Act = (name: string, run: () => Promise<OrderDetail>) => Promise<void>;
+
+function OrderView({ d, busy, act, apply }: { d: OrderDetail; busy: string | null; act: Act; apply: (next: OrderDetail) => void }) {
   const a = actionsFor(d);
   const [qty, setQty] = useState("1");
   const [cancelReason, setCancelReason] = useState("");
@@ -370,7 +373,7 @@ function OrderView({ d, busy, act }: { d: OrderDetail; busy: string | null; act:
       </div>
     </section> : null}
 
-    {a.confirm ? <ConfirmPayment d={d} busy={busy} act={act} /> : null}
+    {a.confirm ? <ConfirmPayment d={d} busy={busy} apply={apply} /> : null}
 
     {d.payment ? <section aria-label="واریز تطبیق‌شده">
       <h3 className="site-order-h">واریز تطبیق‌شده</h3>
@@ -399,38 +402,52 @@ function OrderView({ d, busy, act }: { d: OrderDetail; busy: string | null; act:
 
     {a.cancel ? <section aria-label="لغو سفارش" className="stack">
       <Field label="دلیل لغو"><input type="text" maxLength={300} value={cancelReason} onChange={e => setCancelReason(e.target.value)} /></Field>
-      <Button variant="danger" disabled={busy !== null || cancelReason.trim() === ""}
-        onClick={() => void act("cancel", () => instagramOrders.cancel(d.id, cancelReason.trim()))}>لغو سفارش و آزادسازی رزرو</Button>
+      <div className="row">
+        <SafeAction trigger="لغو سفارش و آزادسازی رزرو" title={`لغو سفارش ${d.orderNo}`} tone="destructive" triggerVariant="button"
+          disabled={busy !== null || cancelReason.trim() === ""}
+          summary={<><p>سفارش <Ltr>{d.orderNo}</Ltr> · {d.customer.name || "بی‌نام"}</p><p>دلیل: {cancelReason.trim()}</p></>}
+          consequence="رزرو موجودی همین سفارش آزاد و پیش‌نویس فاکتورش لغو می‌شود. اثر مالی ندارد و برنمی‌گردد؛ خرید دوباره سفارش تازه است."
+          confirmLabel="لغو سفارش" pendingLabel="در حال لغو…"
+          run={async () => { apply(await instagramOrders.cancel(d.id, cancelReason.trim())); }}
+          verify={async () => { const fresh = await instagramOrders.get(d.id); apply(fresh); return fresh.status === "cancelled"; }}
+          onDone={() => undefined} />
+      </div>
     </section> : null}
   </div>;
 }
 
-function ConfirmPayment({ d, busy, act }: { d: OrderDetail; busy: string | null; act: (name: string, run: () => Promise<OrderDetail>) => Promise<void> }) {
+function ConfirmPayment({ d, busy, apply }: { d: OrderDetail; busy: string | null; apply: (next: OrderDetail) => void }) {
   const [accounts, setAccounts] = useState<ReceivingAccount[] | null>(null);
   const [accountId, setAccountId] = useState(d.receivingAccount?.id ?? "");
   const [amount, setAmount] = useState("");
   const [refNo, setRefNo] = useState("");
   const [paidAt, setPaidAt] = useState("");
-  const [issue, setIssue] = useState<{ field: string; message: string } | null>(null);
   const keys = useMemo(() => new ActionKeys(), []);
   useEffect(() => { instagramOrders.accounts(d.branch.id).then(r => setAccounts(r.accounts), () => setAccounts([])); }, [d.branch.id]);
 
-  async function submit(e: FormEvent) {
-    e.preventDefault();
-    const when = paidAt ? new Date(paidAt) : null;
-    const amountRial = rialFromToman(amount);
-    const c = checkConfirm({ payable: d.invoice.payable, amountRial, refNo, accountId, paidAt: when, now: new Date() });
-    if (!c.ok) { setIssue({ field: c.field, message: c.message }); return; }
-    setIssue(null);
-    const body = { version: d.version, accountId, amount: amountRial!, refNo: refNo.trim(), paidAt: when!.toISOString() };
-    // همان بدنه، همان کلید: «دوباره» پس از پاسخ گم‌شده همان عملیات را حل می‌کند.
-    await act("confirm", () => instagramOrders.confirm(d.id, body, keys.keyFor(actionFor(`ig-confirm:${d.id}`, body))));
+  const amountRial = rialFromToman(amount);
+  const when = paidAt ? new Date(paidAt) : null;
+  const check = checkConfirm({ payable: d.invoice.payable, amountRial, refNo, accountId, paidAt: when, now: new Date() });
+  // پیام فقط پس از شروع پرکردن؛ دکمه تا معتبرشدن همه‌چیز بسته است و هیچ درخواستی نمی‌رود.
+  const issue = !check.ok && (amount !== "" || refNo !== "" || paidAt !== "") ? check : null;
+  const body = check.ok ? { version: d.version, accountId, amount: amountRial!, refNo: refNo.trim(), paidAt: when!.toISOString() } : null;
+  const account = accounts?.find(a => a.id === accountId);
+
+  // همان بدنه، همان کلید: تأیید دوباره پس از «انجام نشد»ِ بررسی وضعیت همان عمل است.
+  async function run() {
+    if (!body) throw new Error("فرم تأیید واریز کامل نیست.");
+    apply(await instagramOrders.confirm(d.id, body, keys.keyFor(actionFor(`ig-confirm:${d.id}`, body))));
+  }
+  async function verify() {
+    const fresh = await instagramOrders.get(d.id);
+    if (fresh.status === "finalized") { apply(fresh); return true; }
+    return false;
   }
 
   return <section aria-label="تأیید واریز" className="stack">
     <h3 className="site-order-h">تأیید واریز کارت‌به‌کارت</h3>
     <p className="muted small">پس از دیدن واریز در صورت‌حساب بانک: مبلغ دقیق، حساب مقصد، شمارهٔ پیگیری و زمان واریز را ثبت کنید. با تأیید، فروش نهایی و کالا از انبار کسر می‌شود.</p>
-    <form className="stack" onSubmit={submit} aria-label="فرم تأیید واریز">
+    <form className="stack" onSubmit={e => e.preventDefault()} aria-label="فرم تأیید واریز">
       <Field label="حساب مقصد" error={issue?.field === "account" ? issue.message : null}>
         <select value={accountId} onChange={e => setAccountId(e.target.value)}>
           <option value="">انتخاب کنید</option>
@@ -438,7 +455,7 @@ function ConfirmPayment({ d, busy, act }: { d: OrderDetail; busy: string | null;
         </select>
       </Field>
       <Field label="مبلغ واریز (تومان)" hint={<>باید دقیقاً برابر <Money rial={d.invoice.payable} exact size="sm" /> باشد.</>} error={issue?.field === "amount" ? issue.message : null}>
-        <input type="text" inputMode="numeric" className="num" autoComplete="off" value={amount} onChange={e => setAmount(e.target.value)} />
+        <input type="text" inputMode="decimal" className="num" autoComplete="off" value={amount} onChange={e => setAmount(e.target.value)} />
       </Field>
       <Field label="شمارهٔ پیگیری بانک" error={issue?.field === "ref" ? issue.message : null}>
         <input type="text" dir="auto" maxLength={64} autoComplete="off" value={refNo} onChange={e => setRefNo(e.target.value)} />
@@ -447,7 +464,13 @@ function ConfirmPayment({ d, busy, act }: { d: OrderDetail; busy: string | null;
         <input type="datetime-local" value={paidAt} onChange={e => setPaidAt(e.target.value)} />
       </Field>
       <div className="row">
-        <Button type="submit" variant="primary" busy={busy === "confirm"} busyLabel="در حال تأیید…" disabled={busy !== null}>تأیید واریز و نهایی‌سازی</Button>
+        <SafeAction trigger="تأیید واریز و نهایی‌سازی" title={`تأیید واریز سفارش ${d.orderNo}`} triggerVariant="primary"
+          disabled={busy !== null || body === null}
+          summary={<><p>مبلغ کامل <Money rial={d.invoice.payable} exact /> به {account?.name ?? "—"}</p>
+            <p>شمارهٔ پیگیری <Ltr>{refNo.trim()}</Ltr>{when && !Number.isNaN(when.getTime()) ? <> · {formatJalaliMoment(when.toISOString())}</> : null}</p></>}
+          consequence="فروش نهایی می‌شود و کالا همین حالا از انبار کسر می‌شود. پس از این، برگشت کالا یا پول فقط از مرجوعی رسمی فاکتور است."
+          confirmLabel="تأیید واریز و نهایی‌سازی" pendingLabel="در حال تأیید…"
+          run={run} verify={verify} onDone={() => undefined} />
       </div>
     </form>
   </section>;

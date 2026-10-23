@@ -1,8 +1,8 @@
 /**
  * «سفارش اینستاگرام» در مرورگر — API ماک.
  * - مبلغ ناقص یا اضافه پیش از هر درخواست رد می‌شود (کنترل منفی: هیچ POST تأیید نمی‌رود).
- * - پاسخ گم‌شدهٔ تأیید واریز با **همان** کلید و **همان** بدنه دوباره فرستاده می‌شود؛ فرم پر و نمای سفارش
- *   با «به‌روزرسانی» پس از خطا از دست نمی‌رود.
+ * - تأیید واریز از «عمل مالی ایمن» می‌گذرد: نتیجهٔ نامعلوم فقط «بررسی وضعیت» دارد؛ اگر سرور بگوید
+ *   ثبت نشده، تأیید دوباره **همان** کلید و **همان** بدنه را می‌برد.
  * - نسخهٔ دیده‌شدهٔ سفارش در بدنه است، تا سرور تأیید سبدِ عوض‌شده را رد کند.
  * - پس از نهایی: سابقهٔ واریز، گام ارسال، مسیر مرجوعی؛ لغو و تأیید دوباره دیده نمی‌شوند.
  * - جست‌وجو فقط در بدنهٔ POST است، نه در نشانی.
@@ -45,7 +45,7 @@ const page1 = { page: 1, perPage: 20, total: 1, pages: 1, orders: [summary] };
 const calls = (api: MockApi) => api.calls.filter(c => / \/instagram-orders/.test(c));
 
 test.describe("سفارش اینستاگرام", () => {
-  test("exact full amount before any request; lost confirm response retried with the same key and body; finalized view", async ({ page, api }) => {
+  test("exact full amount before any request; unknown result offers only a status check, which shows the recorded sale", async ({ page, api }) => {
     const confirms: { key: string | undefined; body: unknown }[] = [];
     let detail: object = reserved;
     api.handlers.set("GET /instagram-orders", async route => { await route.fulfill({ json: page1 }); });
@@ -53,9 +53,8 @@ test.describe("سفارش اینستاگرام", () => {
     api.handlers.set("GET /instagram-orders/accounts", async route => { await route.fulfill({ json: accounts }); });
     api.handlers.set(`POST /instagram-orders/${ID}/confirm`, async route => {
       confirms.push({ key: route.request().headers()["idempotency-key"], body: route.request().postDataJSON() });
-      // بار اول: سرور اثر را ثبت کرد ولی پاسخ نرسید.
-      if (confirms.length === 1) { detail = finalized; await route.abort("connectionreset"); return; }
-      await route.fulfill({ json: { ...finalized, replayed: true } });
+      // سرور اثر را ثبت کرد ولی پاسخ نرسید.
+      detail = finalized; await route.abort("connectionreset");
     });
 
     await page.goto("/?page=instagram-orders");
@@ -68,25 +67,32 @@ test.describe("سفارش اینستاگرام", () => {
     await expect(panel).toContainText("در صف ارسال به سایت");
 
     const form = panel.getByRole("form", { name: "فرم تأیید واریز" });
+    const trigger = form.getByRole("button", { name: "تأیید واریز و نهایی‌سازی" });
     await form.getByLabel("حساب مقصد").selectOption(ACCOUNT);
     await form.getByLabel("مبلغ واریز (تومان)").fill("۱۰۰٬۰۰۰");
     await form.getByLabel("شمارهٔ پیگیری بانک").fill("778899");
     await form.getByLabel("زمان واریز").fill("2026-09-01T10:00");
-    await form.getByRole("button", { name: "تأیید واریز و نهایی‌سازی" }).click();
     await expect(form).toContainText("دقیقاً برابر مبلغ کامل سفارش");
+    await expect(trigger).toBeDisabled();
     expect(confirms).toEqual([]);
 
     await form.getByLabel("مبلغ واریز (تومان)").fill("۱۰۵٬۰۰۰");
-    await form.getByRole("button", { name: "تأیید واریز و نهایی‌سازی" }).click();
-    await expect(panel.getByRole("alert")).toContainText("ارتباط با سرور برقرار نشد");
-    // پاسخ گم شد ولی اثر ثبت شده بود: خواندن دوباره همان سفارش را «نهایی» نشان می‌دهد و دکمهٔ تأیید
-    // دیگر نیست — اپراتور برای اطمینان دوباره نمی‌فرستد.
+    await expect(trigger).toBeEnabled();
+    await trigger.click();
+    const dialog = page.getByRole("dialog", { name: "تأیید واریز سفارش IG-000123" });
+    await expect(dialog).toContainText("105٬000");
+    await expect(dialog).toContainText("778899");
+    await dialog.getByRole("button", { name: "تأیید واریز و نهایی‌سازی" }).click();
+    await expect(dialog).toContainText("نتیجه نامعلوم");
+    // نامعلوم «ارسال دوباره» ندارد؛ فقط بررسی وضعیت، که فروش ثبت‌شده را نشان می‌دهد.
+    await expect(dialog.getByRole("button", { name: "تأیید واریز و نهایی‌سازی" })).toHaveCount(0);
+    await dialog.getByRole("button", { name: "بررسی وضعیت" }).click();
     await expect(panel).toContainText("واریز تطبیق و تأیید شد");
     await expect(panel.getByRole("region", { name: "تأیید واریز" })).toHaveCount(0);
     expect(confirms).toHaveLength(1);
   });
 
-  test("retry after a lost response reuses the key while the order still reads as reserved", async ({ page, api }) => {
+  test("status check says not recorded: confirming again sends the same key and body; finalized view", async ({ page, api }) => {
     const confirms: { key: string | undefined; body: Record<string, unknown> }[] = [];
     api.handlers.set("GET /instagram-orders", async route => { await route.fulfill({ json: page1 }); });
     let detail: object = reserved;
@@ -106,16 +112,17 @@ test.describe("سفارش اینستاگرام", () => {
     await form.getByLabel("مبلغ واریز (تومان)").fill("105000");
     await form.getByLabel("شمارهٔ پیگیری بانک").fill("778899");
     await form.getByLabel("زمان واریز").fill("2026-09-01T10:00");
-    const submit = form.getByRole("button", { name: "تأیید واریز و نهایی‌سازی" });
-    await submit.click();
-    await expect(panel.getByRole("alert")).toContainText("ارتباط با سرور برقرار نشد");
-    await expect.poll(() => calls(api).filter(c => c === `GET /instagram-orders/${ID}`).length).toBe(2);
-    await submit.click();
+    await form.getByRole("button", { name: "تأیید واریز و نهایی‌سازی" }).click();
+    const dialog = page.getByRole("dialog", { name: "تأیید واریز سفارش IG-000123" });
+    await dialog.getByRole("button", { name: "تأیید واریز و نهایی‌سازی" }).click();
+    await dialog.getByRole("button", { name: "بررسی وضعیت" }).click();
+    await expect(dialog).toContainText("عملیات انجام نشده است");
+    await dialog.getByRole("button", { name: "تأیید واریز و نهایی‌سازی" }).click();
 
     await expect(panel).toContainText("واریز تطبیق و تأیید شد");
     expect(confirms).toHaveLength(2);
     expect(confirms[1]!.key).toMatch(/^[0-9a-f-]{36}$/);
-    expect(confirms[1]!.key, "تلاش دوباره همان عمل است").toBe(confirms[0]!.key);
+    expect(confirms[1]!.key, "تأیید دوباره همان عمل است").toBe(confirms[0]!.key);
     expect(confirms[1]!.body).toEqual(confirms[0]!.body);
     expect(confirms[0]!.body).toEqual({ version: 7, accountId: ACCOUNT, amount: "1050000", refNo: "778899",
       paidAt: new Date("2026-09-01T10:00").toISOString() });
