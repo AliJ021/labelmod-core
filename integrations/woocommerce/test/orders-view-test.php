@@ -277,7 +277,11 @@ check(str_contains($w, "meta_value = 'x\\' OR 1=1 -- %_'") && str_contains($w, "
 
 // ── لنگر: ثانیهٔ جاری بیرون است (بازبینی ریشه روی 2a4e62e) ──
 // سه سفارش در ثانیهٔ پیش، صفحهٔ اول، بعد سفارش چهارم در ثانیهٔ جاری (همان ثانیهٔ لنگرگیری)؛ صفحهٔ دوم نباید تکرار داشته باشد.
-for ($try = 0; $try < 5; $try++) {
+// هر تکرار از صفر شروع می‌شود: سفارش ۵۰۰۴ تکرار قبلی (ثانیهٔ قبل) نباید در صفحهٔ اول تکرار بعدی بنشیند — همین
+// باقی‌مانده بود که وقتی تکرار اول از مرز ثانیه رد می‌شد (CI کند)، بند پایین را بی‌دلیل قرمز می‌کرد.
+$sameSecond = false;
+for ($try = 0; $try < 20; $try++) {
+    unset($store[5004]);
     $now = time();
     foreach ([5001, 5002, 5003] as $id) { $store[$id] = new WC_Order($id, 'processing', '1'); $store[$id]->created = $now - 1; }
     $p1 = LMC_Orders_View::handle(req(['perPage' => 2]))->data;
@@ -292,8 +296,9 @@ for ($try = 0; $try < 5; $try++) {
     $store[5004] = new WC_Order(5004, 'processing', '1'); $store[5004]->created = $now;
     $old2 = LMC_Orders_View::page(['page' => 2, 'perPage' => 2, 'status' => null, 'search' => null, 'dateFrom' => null, 'dateTo' => null,
         'paymentMethod' => null, 'until' => $now], []);
-    if (time() === $now) { break; }
+    if (time() === $now) { $sameSecond = true; break; }
 }
+check($sameSecond, 'سناریوی لنگر در یک ثانیه جا نشد؛ نتیجهٔ بندهای پایین معنا ندارد');
 check($p1['until'] === $now - 1 && array_column($p1['orders'], 'id') === [5003, 5002], 'لنگر پیش‌فرض ثانیهٔ پیش است');
 check(array_column($p2['orders'], 'id') === [5001, 4100] && !array_intersect(array_column($p1['orders'], 'id'), array_column($p2['orders'], 'id')), 'سفارش هم‌ثانیه با لنگر صفحه‌ها را تکرار نکرد');
 check(array_values(array_intersect(array_column($old1['orders'], 'id'), array_column($old2['orders'], 'id'))) === [5002], 'کنترل منفی: لنگر شامل ثانیهٔ جاری سفارش ۵۰۰۲ را در دو صفحه می‌آورد');
