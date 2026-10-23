@@ -3,9 +3,9 @@
  *
  * - داده هر بار مستقیم از سایت خوانده می‌شود (امضاشده، بی‌کش). «نامعلوم» با دلیل نشان داده می‌شود، نه
  *   فهرست خالی. هیچ دکمه‌ای سفارش را تغییر نمی‌دهد؛ ویرایش جایش پیشخوان ووکامرس است.
- * - **صفحه‌بندی پایدار:** صفحهٔ اول یک لنگر زمانی (`until`) برمی‌گرداند و صفحه‌های بعد با همان لنگر خوانده
- *   می‌شوند، پس سفارش تازه ردیف‌ها را جابه‌جا نمی‌کند. «به‌روزرسانی» لنگر را برمی‌دارد. سقفی روی تعداد
- *   صفحه‌های تاریخچه نیست؛ هزینهٔ هر درخواست با ۲۰ سفارش در صفحه محدود است.
+ * - **صفحه‌بندی با لنگر:** صفحهٔ اول یک لنگر زمانی (`until`) برمی‌گرداند و صفحه‌های بعد با همان لنگر خوانده
+ *   می‌شوند، پس سفارش **تازه** ردیف‌ها را جابه‌جا نمی‌کند. «به‌روزرسانی» لنگر را برمی‌دارد. هر درخواست ۲۰ سفارش
+ *   است و شمارهٔ صفحه حداکثر ۱۰۰٬۰۰۰ (قرارداد افزونه)؛ صفحه‌ها تصویر لحظه‌ای نیستند.
  * - وضعیت (شامل زباله‌دان)، تاریخ، روش پرداخت و ارسال، صفحه، لنگر و سفارش انتخاب‌شده در نشانی صفحه‌اند
  *   (`useUrlState`). **عبارت جست‌وجو نه در نشانی صفحه است و نه در نشانی درخواست**: ممکن است تلفن یا ایمیل
  *   مشتری باشد؛ نشانی صفحه در تاریخچهٔ مرورگر می‌ماند و نشانی درخواست در لاگ دسترسی Caddy.
@@ -22,7 +22,7 @@ import { navigate, useUrlState } from "../lib/use-url-state.ts";
 import { normalizeDigits } from "../lib/settings-value.ts";
 import { parseJalaliDate, readOptionalJalaliPeriod } from "../lib/report-filters.ts";
 import {
-  addressLines, coreState, isPaymentId, isShippingId, isStatusSlug, moneyView, ORDERS_PAGE_MAX, orderStatusState, siteOrders,
+  addressLines, coreState, isPaymentId, queueView, isShippingId, isStatusSlug, moneyView, ORDERS_PAGE_MAX, orderStatusState, siteOrders,
   type Address, type OrderDetail, type OrderItem, type OrderSummary, type OrdersPage, type OrderView, type WooMoney,
 } from "../lib/site-orders.ts";
 import { Solid } from "../components/Glass.tsx";
@@ -362,7 +362,7 @@ function OrderDetailView({ order, onItemsPage, onNotesPage }: {
       <h3 className="site-order-h">ثبت در Core</h3>
       <dl className="site-order-facts">
         <Fact label="پرداخت تأییدشده">{order.core.paymentConfirmed ? "بله" : "خیر"}</Fact>
-        <Fact label="در صف ارسال">{order.core.scheduled ? "بله" : "خیر"}</Fact>
+        <Fact label="صف ارسال">{(() => { const q = queueView(order.core.queue); return <StatusBadge state={q.state} label={q.label} quiet />; })()}</Fact>
         <Fact label="تلاش‌ها"><span className="num">{formatCount(order.core.attempts)}</span></Fact>
         <Fact label="قلم بی SKU"><span className="num">{formatCount(order.core.missingSku)}</span></Fact>
         <Fact label="قلم بی اتصال"><span className="num">{formatCount(order.core.missingMapping)}</span></Fact>

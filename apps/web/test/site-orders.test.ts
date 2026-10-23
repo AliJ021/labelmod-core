@@ -5,7 +5,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import {
-  addressLines, coreState, isPaymentId, isStatusSlug, moneyView, orderPath, ordersRequest, orderStatusState, type OrderCore,
+  addressLines, coreState, isPaymentId, isStatusSlug, moneyView, orderPath, ordersRequest, orderStatusState, queueView, type OrderCore, type QueueState,
 } from "../src/lib/site-orders.ts";
 import { STATUS } from "../src/lib/status.ts";
 import { ZONES } from "../src/lib/navigation.ts";
@@ -58,6 +58,24 @@ test("درخواست فهرست: فیلتر خالی نمی‌رود؛ صفحه�
   assert.equal(orderPath(41, 1, 1), "/web/orders/41");
   assert.equal(orderPath(41, 3, 2), "/web/orders/41?items=3&notes=2");
   assert.equal(orderStatusState("trash"), "archived");
+});
+
+test("صف ارسال: تصمیم معوق ماندگار «در صف» است، نه «خیر»؛ خواندن ناموفق «نامعلوم» است", () => {
+  const q = (over: Partial<QueueState>): QueueState => ({ scheduler: "action-scheduler", state: "idle", deferred: null, dead: false, ...over });
+  // بازبینی ریشه روی 4b0046a: enqueue با شکست هر دو صف true می‌داد و نشان ماندگار می‌ساخت، ولی صفحه «در صف ارسال: خیر» می‌نوشت.
+  const deferred = queueView(q({ state: "deferred", deferred: "send" }));
+  assert.deepEqual(deferred, { state: "pending", label: "در صف ماندگار؛ منتظر ثبت در زمان‌بند" });
+  assert.ok(!/خیر|نیست/.test(deferred.label));
+  assert.equal(queueView(q({ state: "scheduled" })).label, "در صف Action Scheduler");
+  assert.equal(queueView(q({ state: "scheduled", scheduler: "wp-cron" })).label, "در صف WP-Cron");
+  assert.equal(queueView(q({ state: "scheduled", deferred: "stop" })).state, "warning");
+  assert.equal(queueView(q({ state: "deferred", deferred: "stop" })).state, "warning");
+  assert.equal(queueView(q({ state: "deferred", deferred: "recover" })).state, "pending");
+  assert.equal(queueView(q({ state: "running" })).state, "active");
+  assert.equal(queueView(q({ state: "dead", dead: true })).state, "attention");
+  assert.deepEqual(queueView(q({ state: "unknown", deferred: null, dead: null })), { state: "unknown", label: "وضعیت صف خوانده نشد" });
+  assert.equal(queueView(q({})).label, "کاری در صف نیست");
+  for (const state of ["running", "scheduled", "deferred", "dead", "idle", "unknown"] as const) assert.ok(STATUS[queueView(q({ state })).state], state);
 });
 
 test("نشانی پستی: میدان خالی حذف می‌شود", () => {

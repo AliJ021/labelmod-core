@@ -61,7 +61,15 @@ const address = z.object({
   city: text(200), state: text(200), postcode: text(200), country: text(200), phone: text(200),
 });
 const rawDetail = rawSummary.extend({
-  core: coreState.extend({ scheduled: z.boolean(), missingSku: z.number().int().nonnegative(), missingMapping: z.number().int().nonnegative() }),
+  core: coreState.extend({
+    // وضعیت صف همان سفارش از LMC_Queue::state: نشان معوق ماندگار و ثبت مرده هم دیده می‌شوند؛ شکست خواندن `unknown`/`null` است.
+    queue: z.object({
+      scheduler: z.enum(["action-scheduler", "wp-cron"]),
+      state: z.enum(["running", "scheduled", "deferred", "dead", "idle", "unknown"]),
+      deferred: z.enum(["send", "stop", "recover"]).nullable(), dead: z.boolean().nullable(),
+    }).strict(),
+    missingSku: z.number().int().nonnegative(), missingMapping: z.number().int().nonnegative(),
+  }),
   billing: address.extend({ email: text(200) }),
   shipping: address,
   customerNote: text(1000),

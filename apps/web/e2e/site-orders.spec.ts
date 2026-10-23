@@ -30,7 +30,7 @@ const addr = { firstName: "سارا", lastName: "رضایی", company: "", addre
 const item = (id: number, name: string) => ({ id, name, sku: `SH-${id}`, quantity: 1, attributes: [{ key: "رنگ", value: "سفید" }],
   subtotal: m("5000000"), subtotalTax: m("0"), total: m("4000000"), tax: m("0"), discount: m("1000000"), productExists: true, mapped: id !== 2 });
 const detail = (itemsPage: number, notesPage: number) => ({ state: "ready", fetchedAt: "2026-09-16T09:00:00.000Z", order: { ...order,
-  core: { ...core, scheduled: true, missingSku: 0, missingMapping: 1 },
+  core: { ...core, queue: { scheduler: "action-scheduler", state: "deferred", deferred: "send", dead: false }, missingSku: 0, missingMapping: 1 },
   billing: { ...addr, email: "sara@example.test" }, shipping: addr, customerNote: "زنگ نزنید",
   completedAt: null, modifiedAt: "2026-09-16T08:30:00.000Z",
   tracking: [{ provider: "iran-post", number: "IR123456789", shippedAt: "2026-09-16T10:00:00.000Z", url: "https://tracking.example.invalid/IR123456789" }],
@@ -72,6 +72,10 @@ test.describe("سفارش‌های سایت", () => {
     await expect(panel.getByRole("region", { name: "نشانی صورت‌حساب" })).toContainText("sara@example.test");
     await expect(panel.getByRole("region", { name: "نشانی ارسال" })).toContainText("خیابان ولیعصر ۱۰");
     await expect(panel).toContainText("A1B2C3");
+    // تصمیم معوق ماندگار (بازبینی ریشه روی 4b0046a): «در صف»، نه «خیر».
+    const queue = panel.getByRole("region", { name: "ثبت در Core" }).locator(".site-order-facts div").filter({ hasText: "صف ارسال" });
+    await expect(queue).toContainText("در صف ماندگار؛ منتظر ثبت در زمان‌بند");
+    await expect(queue).not.toContainText("خیر");
     await expect(panel.getByRole("region", { name: "کوپن‌ها" })).toContainText("off10");
     await expect(panel.getByRole("link", { name: "IR123456789" })).toHaveAttribute("href", "https://tracking.example.invalid/IR123456789");
     await expect(panel.locator(".site-order-facts div").filter({ hasText: "زمان تکمیل" })).toContainText("تکمیل نشده");

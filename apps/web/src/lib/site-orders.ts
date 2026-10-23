@@ -52,9 +52,35 @@ export interface OrderItem {
   subtotal: WooMoney; subtotalTax: WooMoney; total: WooMoney; tax: WooMoney; discount: WooMoney;
   productExists: boolean; mapped: boolean;
 }
+/** وضعیت صف ارسال همان سفارش در افزونه (LMC_Queue::state). */
+export interface QueueState {
+  scheduler: "action-scheduler" | "wp-cron";
+  state: "running" | "scheduled" | "deferred" | "dead" | "idle" | "unknown";
+  deferred: "send" | "stop" | "recover" | null; dead: boolean | null;
+}
+
+/**
+ * برچسب صف — تصمیم معوقِ ماندگار «در صف» است، نه «خیر» (بازبینی ریشه روی 4b0046a)؛ خواندن ناموفق «نامعلوم» است.
+ */
+export function queueView(q: QueueState): { state: StatusState; label: string } {
+  const where = q.scheduler === "action-scheduler" ? "Action Scheduler" : "WP-Cron";
+  switch (q.state) {
+    case "running": return { state: "active", label: `در حال اجرا (${where})` };
+    case "scheduled": return q.deferred === "stop"
+      ? { state: "warning", label: `در صف ${where}؛ تصمیم توقف منتظر اعمال است` }
+      : { state: "pending", label: `در صف ${where}` };
+    case "deferred": return q.deferred === "stop"
+      ? { state: "warning", label: "تصمیم توقف ثبت شده و منتظر اعمال است" }
+      : { state: "pending", label: q.deferred === "recover" ? "بازیابی پس از شکست، منتظر اعمال" : "در صف ماندگار؛ منتظر ثبت در زمان‌بند" };
+    case "dead": return { state: "attention", label: "متوقف؛ «ارسال دوباره» در ووکامرس لازم است" };
+    case "idle": return { state: "completed", label: "کاری در صف نیست" };
+    default: return { state: "unknown", label: "وضعیت صف خوانده نشد" };
+  }
+}
+
 export interface OrderNote { id: number; createdAt: string | null; content: string; customerNote: boolean; addedBy: string }
 export interface OrderDetail extends OrderSummary {
-  core: OrderCore & { scheduled: boolean; missingSku: number; missingMapping: number };
+  core: OrderCore & { queue: QueueState; missingSku: number; missingMapping: number };
   billing: Address & { email: string }; shipping: Address; customerNote: string;
   completedAt: string | null; modifiedAt: string | null;
   tracking: { provider: string; number: string; shippedAt: string | null; url: string }[];

@@ -31,7 +31,7 @@ const q = (over: Partial<WooOrdersQuery> = {}): WooOrdersQuery => ({ page: 1, st
 const addr = { firstName: "سارا", lastName: "رضایی", company: "", address1: "خیابان ۱", address2: "", city: "تهران",
   state: "THR", postcode: "1234567890", country: "IR", phone: "09121234567" };
 const detail = (over: Record<string, unknown> = {}) => ({
-  ...order, core: { ...core, scheduled: false, missingSku: 0, missingMapping: 1 },
+  ...order, core: { ...core, queue: { scheduler: "action-scheduler", state: "deferred", deferred: "send", dead: false }, missingSku: 0, missingMapping: 1 },
   billing: { ...addr, email: "sara@example.test" }, shipping: addr, customerNote: "زنگ نزنید",
   completedAt: null, modifiedAt: "2026-10-20T09:00:00Z",
   tracking: [{ provider: "iran-post", number: "IR123", shippedAt: "2026-10-20T10:00:00Z", url: "https://tracking.post.ir/?id=IR123" }],
@@ -195,6 +195,7 @@ test("جزئیات: آدرس، اقلام، کوپن، یادداشت و پول 
   assert.deepEqual(o.coupons[0]!.discount, { amount: "1000000", rial: "1000000" });
   assert.equal(o.notes.rows[0]!.content, "پرداخت تأیید شد");
   assert.equal(o.core.missingMapping, 1);
+  assert.deepEqual(o.core.queue, { scheduler: "action-scheduler", state: "deferred", deferred: "send", dead: false }, "تصمیم معوق ماندگار گم نمی‌شود");
   assert.deepEqual([o.completedAt, o.modifiedAt, o.tracking[0]!.number], [null, "2026-10-20T09:00:00Z", "IR123"]);
   assert.ok(!JSON.stringify(ok).includes("_lmc_hidden"), "میدان اضافه دور ریخته می‌شود");
 
@@ -228,6 +229,14 @@ test("جزئیات: شناسهٔ دیگر یا اقلام بدشکل پذیرف�
   const other = await detailReader(() => ({ status: 200, body: { ...env, order: detail({ id: 42 }) } })).order(site, 41, 1, 1);
   assert.equal(other.state === "unavailable" && other.code, "invalid_response");
   const rows = detail().items.rows;
+  for (const queue of [true, { scheduler: "action-scheduler", state: "queued", deferred: null, dead: false },
+    { scheduler: "cron", state: "idle", deferred: null, dead: false }, { scheduler: "wp-cron", state: "idle", deferred: "maybe", dead: false },
+    { scheduler: "wp-cron", state: "idle", deferred: null, dead: false, raw: "lmc_qp_e_x" }]) {
+    // نسخهٔ پیشینِ بولی `scheduled` یا وضعیت ناشناخته پذیرفته نمی‌شود: «بله/خیر» همان برچسب غلط بود.
+    const base = detail();
+    const r = await detailReader(() => ({ status: 200, body: { ...env, order: { ...base, core: { ...base.core, queue } } } })).order(site, 41, 1, 1);
+    assert.equal(r.state === "unavailable" && r.code, "invalid_response", JSON.stringify(queue));
+  }
   for (const bad of [{ tracking: [{ provider: "x", number: "1", shippedAt: null, url: "javascript:alert(1)" }] },
     { tracking: [{ provider: "x", number: "1", shippedAt: null, url: "http://plain.example" }] }, { completedAt: "دیروز" }]) {
     const r = await detailReader(() => ({ status: 200, body: { ...env, order: detail(bad) } })).order(site, 41, 1, 1);
