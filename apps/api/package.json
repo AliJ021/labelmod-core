@@ -13,7 +13,7 @@
     "@fastify/rate-limit": "11.2.0",
     "@simplewebauthn/server": "14.0.3",
     "argon2": "0.45.1",
-    "fastify": "5.12.6",
+    "fastify": "5.12.7",
     "kysely": "0.29.6",
     "pg": "8.23.1",
     "zod": "4.6.5"
