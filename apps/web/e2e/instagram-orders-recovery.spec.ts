@@ -115,6 +115,55 @@ test.describe("سفارش اینستاگرام: عملیات ماندگار، م
     await second.close();
   });
 
+  test("a retry refused by permission or rate limit keeps the original key pending; another order stays editable; access restored replays once", async ({ page, api }) => {
+    const s = server(api, {});
+    const OTHER = "99999999-9999-4999-8999-999999999999";
+    api.handlers.set(`GET /instagram-orders/${OTHER}`, async route => { await route.fulfill({ json: { ...detail({ id: OTHER, orderNo: "IG-000300" }), lines: [] } }); });
+    await page.goto(`/?page=instagram-orders&ig.order=${ID}`);
+    await expect(page.getByRole("region", { name: "سفارش IG-000200" })).toContainText("هنوز قلمی ندارد");
+    s.failNextPost = true; s.failNextGet = 1;
+    await addOne(page);
+    await expect(banner(page)).toBeVisible();
+    const first = s.requests[0]!;
+    expect(s.qty).toBe(1);
+
+    // تلاش دوباره به دروازهٔ پیش از کلید می‌خورد: مجوز گرفته شد، بعد محدودیت نرخ.
+    const denials = [{ status: 403, code: "forbidden", message: "اجازه ندارید" }, { status: 429, code: "rate_limited", message: "درخواست زیاد" }];
+    for (const d of denials) {
+      api.handlers.set(`POST /instagram-orders/${ID}/lines`, async route => {
+        s.requests.push({ path: "lines", key: route.request().headers()["idempotency-key"], body: route.request().postDataJSON() });
+        await route.fulfill({ status: d.status, json: { error: { code: d.code, message: d.message } } });
+      });
+      await page.getByRole("button", { name: "بررسی و تلاش دوبارهٔ همان عملیات" }).click();
+      await expect(page.getByRole("alert")).toContainText("هنوز قطعی نیست");
+      await expect(banner(page), `${d.status}: عملیات معلق با کلید اصلی می‌ماند`).toBeVisible();
+      expect(s.requests.at(-1)!.key).toBe(first.key);
+    }
+    // بارگذاری دوباره: هنوز همان.
+    await page.reload();
+    await expect(banner(page)).toBeVisible();
+    // سفارش دیگر قفل نیست: قفل به‌ازای هر سفارش است.
+    await page.goto(`/?page=instagram-orders&ig.order=${OTHER}`);
+    const other = page.getByRole("region", { name: "سفارش IG-000300" });
+    await expect(other).toContainText("هنوز قلمی ندارد");
+    await expect(banner(page)).toHaveCount(0);
+    await expect(other.getByLabel("تعداد قلم تازه")).toBeEnabled();
+
+    // دسترسی برگشت: همان کلید Replay می‌گیرد و اثر یک بار است.
+    api.handlers.set(`POST /instagram-orders/${ID}/lines`, async route => {
+      const key = route.request().headers()["idempotency-key"];
+      s.requests.push({ path: "lines", key, body: route.request().postDataJSON() });
+      if (!key || !s.seen.has(key)) { s.qty += 1; s.applied++; }
+      await route.fulfill({ json: { ...s.order, lines: [line(s.qty)] } });
+    });
+    await page.goto(`/?page=instagram-orders&ig.order=${ID}`);
+    await page.getByRole("button", { name: "بررسی و تلاش دوبارهٔ همان عملیات" }).click();
+    await expect(banner(page)).toHaveCount(0);
+    expect(s.requests.at(-1)!.key).toBe(first.key);
+    expect(s.qty, "یک بار").toBe(1);
+    expect(s.applied).toBe(1);
+  });
+
   test("lost create response: after reload the same create is retried with the same key and opens the one created order", async ({ page, api }) => {
     const s = server(api, {});
     const created: string[] = [];

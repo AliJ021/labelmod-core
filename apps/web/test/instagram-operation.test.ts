@@ -57,6 +57,13 @@ test("فقط ۴xx قطعی رکورد را پاک می‌کند؛ شبکه، ۵x
   assert.equal(isDefinitiveRejection(new ApiError(409, "idempotency_in_flight", "x", null)), false);
   assert.equal(isDefinitiveRejection(new ApiError(502, "bad_gateway", "x", null)), false);
   assert.equal(isDefinitiveRejection(new TypeError("Failed to fetch")), false);
+  // اولین ارسال: رد دروازه (نشست، مجوز، CSRF، نرخ) پیش از هر اثری است → قطعی.
+  for (const st of [401, 403, 408, 429]) assert.equal(isDefinitiveRejection(new ApiError(st, "x", "x", null)), true, `first ${st}`);
+  // تلاش دوباره پس از نتیجهٔ نامعلوم: همان ردها چیزی دربارهٔ تلاش اول نمی‌گویند → نامعلوم می‌ماند.
+  for (const st of [401, 403, 408, 429]) assert.equal(isDefinitiveRejection(new ApiError(st, "x", "x", null), true), false, `retry ${st}`);
+  // ولی رد کسب‌وکاری پس از جست‌وجوی همان کلید می‌آید → در تلاش دوباره هم قطعی.
+  for (const st of [400, 404, 409, 422]) assert.equal(isDefinitiveRejection(new ApiError(st, "x", "x", null), true), true, `retry ${st}`);
+  assert.equal(isDefinitiveRejection(new ApiError(409, "idempotency_in_flight", "x", null), true), false);
 });
 
 test("مجوز محافظه‌کار: در حال بررسی و نامعلوم هرگز «مجاز» نیستند", () => {

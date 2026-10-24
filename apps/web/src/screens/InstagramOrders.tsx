@@ -128,6 +128,7 @@ function useIgOperation(actorId: string, scope: string) {
         let op = readIgOperation(actorId, scope);
         if (op && spec) throw new Error(`نتیجهٔ «${op.label}» هنوز قطعی نیست؛ ابتدا همان را بررسی کنید.`);
         if (!op && !spec) throw new Error("عملیات معلق پیش‌تر تعیین تکلیف شده است؛ سفارش را به‌روزرسانی کنید.");
+        const retry = op !== null; // ذخیره‌شده یعنی پیش‌تر فرستاده شده و نتیجه‌اش نامعلوم است.
         if (!op) {
           op = { version: 1, actorId, scope, key: crypto.randomUUID(), ...spec! };
           writeIgOperation(op); // باید پیش از ارسال بنشیند.
@@ -139,7 +140,10 @@ function useIgOperation(actorId: string, scope: string) {
           return out;
         } catch (err) {
           // فقط رد قطعی همین عملیات رکوردش را پاک می‌کند؛ شبکه و ۵xx نامعلوم می‌مانند.
-          if (isDefinitiveRejection(err)) clearIgOperation(actorId, scope, op.key);
+          if (isDefinitiveRejection(err, retry)) clearIgOperation(actorId, scope, op.key);
+          else if (retry && err instanceof ApiError && err.status < 500) {
+            throw new ApiError(err.status, err.code, `${err.message} — تلاش دوباره به سرور نرسید و نتیجهٔ «${op.label}» هنوز قطعی نیست. پس از ورود دوباره یا دریافت دسترسی، همان عملیات را بررسی کنید.`, err.correlationId);
+          }
           throw err;
         }
       });
