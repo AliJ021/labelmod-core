@@ -172,11 +172,23 @@ describe("سفارش اینستاگرام: رزرو، تأیید واریز و �
     const found = await call("POST", "/instagram-orders/search", opA, { q: "0912 111 2233" });
     assert.equal(found.statusCode, 200, found.body);
     assert.ok((found.json().orders as Array<{ id: string }>).some((o) => o.id === id));
-    const badAcct = await call("PATCH", `/instagram-orders/${id}`, opA, { receivingAccountId: otherBank });
+    const v0 = (await detail(id)).version as number;
+    const badAcct = await call("PATCH", `/instagram-orders/${id}`, opA, { version: v0, receivingAccountId: otherBank });
     assert.equal(badAcct.statusCode, 422, "حساب بانکی شعبهٔ دیگر مجاز نیست");
-    const okAcct = await call("PATCH", `/instagram-orders/${id}`, opA, { receivingAccountId: bank1, instagramUsername: "@Shop.Buyer" });
+    const noVersion = await call("PATCH", `/instagram-orders/${id}`, opA, { receivingAccountId: bank1 });
+    assert.equal(noVersion.statusCode, 400, "ویرایش سرآیند بی نسخهٔ دیده‌شده پذیرفته نمی‌شود");
+    const okAcct = await call("PATCH", `/instagram-orders/${id}`, opA, { version: v0, receivingAccountId: bank1, instagramUsername: "@Shop.Buyer" });
     assert.equal(okAcct.statusCode, 200, okAcct.body);
     assert.equal(okAcct.json().customer.instagramUsername, "shop.buyer");
+    assert.equal(okAcct.json().version, v0 + 1, "تغییر واقعی سرآیند نسخه را بالا می‌برد");
+    // همان نسخهٔ کهنه از اپراتور دوم: ۴۰۹، نه بازنویسی بی‌صدای ویرایش اول.
+    const stale = await call("PATCH", `/instagram-orders/${id}`, opB, { version: v0, shipAddress: "نشانی دیگر" });
+    assert.equal(stale.statusCode, 409, stale.body);
+    assert.equal(stale.json().error.code, "stale_version");
+    // تکرار همان مقدارها بی‌اثر است و نسخه را جلو نمی‌برد.
+    const same = await call("PATCH", `/instagram-orders/${id}`, opA, { version: v0 + 1, receivingAccountId: bank1 });
+    assert.equal(same.statusCode, 200, same.body);
+    assert.equal(same.json().version, v0 + 1);
   });
 
   test("پیش‌نویس هیچ اثری ندارد؛ مسیر عمومی /invoices پرداخت یا نهایی‌سازی را دور نمی‌زند؛ تعداد صحیح است", async () => {

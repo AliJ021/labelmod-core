@@ -12,6 +12,7 @@
 import { api, type RequestOptions } from "./api.ts";
 import type { StatusState } from "./status.ts";
 import { normalizeDigits } from "./settings-value.ts";
+import type { IgOperation } from "./instagram-operation.ts";
 
 export type OrderStatus = "draft" | "reserved" | "expired" | "confirming" | "finalized" | "cancelled";
 export type PaymentState = "none" | "claimed" | "review" | "confirmed";
@@ -134,6 +135,24 @@ export function parseQty(input: string): number | null {
   return /^[1-9]\d{0,2}$/.test(d) ? Number(d) : null;
 }
 
+/** ریال به ورودی تومانی برای پیش‌پرکردن فرم؛ وارون دقیق `rialFromToman` (یک رقم اعشار = ریال). */
+export function tomanFromRial(rial: string): string {
+  const v = BigInt(rial);
+  const q = v / 10n, r = v % 10n;
+  return r === 0n ? q.toString() : `${q}.${r}`;
+}
+
+/**
+ * مجوز هر کار صفحه از پاسخ `/auth/can` (همان پاسخ ناوبری) — محافظه‌کار: «در حال بررسی» و «نامعلوم»
+ * هرگز «مجاز» نیستند. دروازهٔ واقعی سرور است؛ این فقط دکمه و فرمی را که سرور رد می‌کند نشان نمی‌دهد.
+ */
+export type Perm = "allow" | "deny" | "loading" | "unknown";
+export function permOf(access: { state: "loading" | "ready" | "degraded"; verdicts: ReadonlyMap<string, string> }, operation: string): Perm {
+  const v = access.verdicts.get(operation);
+  if (v === "allow" || v === "deny") return v;
+  return access.state === "loading" ? "loading" : "unknown";
+}
+
 /**
  * سنجش فرم تأیید واریز پیش از ارسال — همان قواعد سرور برای پیام فوری:
  * مبلغ دقیقاً برابر مبلغ کامل سفارش، مرجع لازم، زمان واریز نه در آینده.
@@ -164,19 +183,26 @@ export const instagramOrders = {
   get: (id: string, opts?: RequestOptions) => api.get<OrderDetail>(`/instagram-orders/${id}`, opts),
   accounts: (branchId: string, opts?: RequestOptions) =>
     api.get<{ accounts: ReceivingAccount[] }>(`/instagram-orders/accounts?branchId=${branchId}`, opts),
-  create: (body: Record<string, unknown>, key: string) => api.post<OrderDetail>("/instagram-orders", body, { idempotencyKey: key }),
-  update: (id: string, body: Record<string, unknown>) => api.patch<OrderDetail>(`/instagram-orders/${id}`, body),
-  addLine: (id: string, body: { variationId: string; qty: number; discountAmount?: string; discountReason?: string }) =>
-    api.post<OrderDetail>(`/instagram-orders/${id}/lines`, body),
-  setQty: (id: string, lineId: string, qty: number) => api.patch<OrderDetail>(`/instagram-orders/${id}/lines/${lineId}`, { qty }),
-  removeLine: (id: string, lineId: string) => api.del<OrderDetail>(`/instagram-orders/${id}/lines/${lineId}`),
-  reserve: (id: string) => api.post<OrderDetail>(`/instagram-orders/${id}/reserve`, {}),
-  unreserve: (id: string) => api.post<OrderDetail>(`/instagram-orders/${id}/unreserve`, {}),
-  cancel: (id: string, reason: string) => api.post<OrderDetail>(`/instagram-orders/${id}/cancel`, { reason }),
-  markPayment: (id: string, state: "none" | "claimed" | "review", note: string | null) =>
-    api.post<OrderDetail>(`/instagram-orders/${id}/payment-state`, { state, note }),
-  shipping: (id: string, state: ShippingState, trackingCode: string | null) =>
-    api.post<OrderDetail>(`/instagram-orders/${id}/shipping`, { state, trackingCode }),
+  /**
+   * همهٔ تغییرها از همین یک مسیر و **همیشه** با کلید عملیاتِ ماندگار (`instagram-operation.ts`):
+   * تلاش دوباره پس از پاسخ گم‌شده همان عمل است، نه قلم یا سفارش دوم.
+   */
+  send: (op: IgOperation): Promise<OrderDetail> => {
+    const k = { idempotencyKey: op.key };
+    const base = `/instagram-orders/${op.scope}`;
+    switch (op.kind) {
+      case "create": return api.post<OrderDetail>("/instagram-orders", op.body, k);
+      case "update": return api.patch<OrderDetail>(base, op.body, k);
+      case "line.add": return api.post<OrderDetail>(`${base}/lines`, op.body, k);
+      case "line.qty": return api.patch<OrderDetail>(`${base}/lines/${op.lineId}`, op.body, k);
+      case "line.remove": return api.del<OrderDetail>(`${base}/lines/${op.lineId}`, k);
+      case "reserve": return api.post<OrderDetail>(`${base}/reserve`, {}, k);
+      case "unreserve": return api.post<OrderDetail>(`${base}/unreserve`, {}, k);
+      case "payment_state": return api.post<OrderDetail>(`${base}/payment-state`, op.body, k);
+      case "shipping": return api.post<OrderDetail>(`${base}/shipping`, op.body, k);
+    }
+  },
+  cancel: (id: string, reason: string, key: string) => api.post<OrderDetail>(`/instagram-orders/${id}/cancel`, { reason }, { idempotencyKey: key }),
   confirm: (id: string, body: { version: number; accountId: string; amount: string; refNo: string; paidAt: string }, key: string) =>
     api.post<OrderDetail>(`/instagram-orders/${id}/confirm`, body, { idempotencyKey: key }),
 };

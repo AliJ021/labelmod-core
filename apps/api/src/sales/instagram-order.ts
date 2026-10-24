@@ -191,9 +191,11 @@ export class InstagramOrderService {
 
   /**
    * سرآیند: نشانی، روش ارسال، حساب پیش‌فرض و نام کاربری هر زمانی پیش از نهایی‌سازی؛
-   * کرایه فقط در پیش‌نویس (مبلغ قابل پرداخت را عوض می‌کند، پس نسخه هم بالا می‌رود).
+   * کرایه فقط در پیش‌نویس. نسخهٔ دیده‌شده لازم است: ویرایش روی سرآیند کهنه ۴۰۹ می‌گیرد، و هر تغییر واقعی
+   * نسخه را بالا می‌برد تا فرم تأیید واریزی که پیش از آن باز شده هم کهنه شود.
    */
   async updateHeader(orderId: string, patch: {
+    version: number;
     shipAddress?: string | undefined; shipMethod?: string | undefined;
     instagramUsername?: string | null | undefined; receivingAccountId?: string | null | undefined;
     shippingAmount?: bigint | undefined; actorId: string;
@@ -202,6 +204,9 @@ export class InstagramOrderService {
       const o = await this.lockIn(trx, orderId);
       if (o.status === "finalized" || o.status === "cancelled" || o.status === "confirming") {
         throw orderError("order_closed", `سفارش ${o.order_no} بسته است؛ سرآیندش تغییر نمی‌کند`);
+      }
+      if (o.version !== patch.version) {
+        throw orderError("stale_version", `سفارش ${o.order_no} پس از دیدن شما تغییر کرده است؛ صفحه را تازه کنید و دوباره ویرایش کنید.`);
       }
       await setActor(trx, patch.actorId);
       const username = patch.instagramUsername === undefined ? undefined : normalizeInstagramUsername(patch.instagramUsername);
@@ -218,14 +223,19 @@ export class InstagramOrderService {
           bump = true;
         }
       }
+      const address = patch.shipAddress?.trim(), method = patch.shipMethod?.trim();
+      if ((address !== undefined && address !== o.ship_address) || (method !== undefined && method !== o.ship_method)
+          || (username !== undefined && username !== o.instagram_username)
+          || (patch.receivingAccountId !== undefined && patch.receivingAccountId !== o.receiving_account_id)) bump = true;
+      if (!bump) return; // تکرار همان مقدارها: بی‌اثر و بی ردّ حسابرسی تازه.
       await sql`
         UPDATE sales.instagram_order SET
-          ship_address = coalesce(${patch.shipAddress?.trim() ?? null}, ship_address),
-          ship_method = coalesce(${patch.shipMethod?.trim() ?? null}, ship_method),
+          ship_address = coalesce(${address ?? null}, ship_address),
+          ship_method = coalesce(${method ?? null}, ship_method),
           instagram_username = CASE WHEN ${username !== undefined} THEN ${username ?? null} ELSE instagram_username END,
           receiving_account_id = CASE WHEN ${patch.receivingAccountId !== undefined}
                                       THEN ${patch.receivingAccountId ?? null}::uuid ELSE receiving_account_id END,
-          version = version + ${bump ? 1 : 0}, updated_at = now()
+          version = version + 1, updated_at = now()
         WHERE id = ${o.id}::uuid`.execute(trx);
       await sql`SELECT platform.audit('instagram_order.update', 'instagram_order', ${o.id}::text,
         ${JSON.stringify({

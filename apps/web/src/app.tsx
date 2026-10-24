@@ -297,7 +297,7 @@ export function App() {
           ) : zone === "site-orders" ? (
             <SiteOrders />
           ) : zone === "instagram-orders" ? (
-            <InstagramOrders />
+            <InstagramOrders key={me?.id} actorId={me?.id ?? ""} access={access} />
           ) : zone === "catalog" ? (
             <Catalog />
           ) : zone === "purchasing" ? (

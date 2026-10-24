@@ -10,15 +10,23 @@
  *   تطبیق با صورت‌حساب بانک.
  * - **جست‌وجو** (موبایل، نام کاربری) نه در نشانی صفحه است و نه در نشانی درخواست.
  * - سفارش انتخاب‌شده و فیلتر وضعیت در نشانی صفحه‌اند (`useUrlState`)؛ داده منبعش سرور است.
+ * - **هر تغییر عملیات ماندگار است** (`lib/instagram-operation.ts`): بدنه و کلید پیش از ارسال ذخیره می‌شوند؛
+ *   پاسخ گم‌شده ویرایش‌های همان سفارش را تا «بررسی و تلاش دوبارهٔ همان عملیات» قفل می‌کند، پس از
+ *   بارگذاری دوباره و در تب دیگر هم. سرور با همان کلید Replay می‌دهد؛ قلم یا سفارش دوم ساخته نمی‌شود.
+ * - **هر کار مجوز خودش را دارد:** مدیریت سفارش و تأیید واریز جدا از `/auth/can`؛ در حال بررسی یا
+ *   نامعلوم یعنی پنهان، نه مجاز.
  */
 import { useCallback, useEffect, useMemo, useRef, useState, type FormEvent, type ReactNode } from "react";
 import { ApiError } from "../lib/api.ts";
 import { ActionKeys, actionFor } from "../lib/action-key.ts";
 import { formatCount, formatJalaliMoment } from "../lib/format.ts";
 import { navigate, useUrlState } from "../lib/use-url-state.ts";
+import type { NavAccess } from "../lib/navigation.ts";
+import { clearIgOperation, igOperationSlot, isDefinitiveRejection, readIgOperation, writeIgOperation, type IgOperation } from "../lib/instagram-operation.ts";
 import { pos, type Branch } from "../lib/pos.ts";
 import {
-  actionsFor, checkConfirm, instagramOrders, nextShipping, normalizeUsername, parseQty, ORDER_STATUS, PAYMENT_STATE, rialFromToman, statusView,
+  actionsFor, checkConfirm, instagramOrders, nextShipping, normalizeUsername, parseQty, permOf, ORDER_STATUS, PAYMENT_STATE, rialFromToman, statusView,
+  tomanFromRial, type Perm,
   SHIPPING_STATE, syncView, type OrderDetail, type OrderLine, type OrderStatus, type OrderSummary, type OrdersPage,
   type ReceivingAccount,
 } from "../lib/instagram-orders.ts";
@@ -85,7 +93,70 @@ function errorText(err: unknown): string {
   return err instanceof ApiError ? err.message : "ارتباط با سرور برقرار نشد؛ نتیجه را با «به‌روزرسانی» ببینید.";
 }
 
-export function InstagramOrders() {
+type OpSpec = Omit<IgOperation, "version" | "actorId" | "scope" | "key">;
+
+/**
+ * عملیات ماندگار یک سفارش (یا ساخت سفارش، `scope = "new"`) — همان مراحل اسکن معلق صندوق:
+ * قفل مرورگر (یک تب)، ذخیرهٔ بدنه و کلید **پیش از** ارسال، پاک‌کردن فقط با پاسخ موفق یا رد قطعی.
+ * `run(null)` همان عملیات ذخیره‌شده را با همان کلید دوباره می‌فرستد؛ عملیات تازه تا روشن‌شدن قبلی بسته است.
+ */
+function useIgOperation(actorId: string, scope: string) {
+  const read = useCallback((): { pending: IgOperation | null; storageError: string | null } => {
+    if (!actorId) return { pending: null, storageError: null };
+    try { return { pending: readIgOperation(actorId, scope), storageError: null }; }
+    catch (e) { return { pending: null, storageError: e instanceof Error ? e.message : "ذخیرهٔ عملیات در دسترس نیست." }; }
+  }, [actorId, scope]);
+  const [state, setState] = useState(read);
+  const [busy, setBusy] = useState<string | null>(null);
+  const running = useRef(false);
+  useEffect(() => {
+    setState(read());
+    const slot = actorId ? igOperationSlot(actorId, scope) : null;
+    const sync = (e: StorageEvent) => { if (e.key === null || e.key === slot) setState(read()); };
+    window.addEventListener("storage", sync);
+    return () => window.removeEventListener("storage", sync);
+  }, [read, actorId, scope]);
+
+  const run = useCallback(async (spec: OpSpec | null): Promise<OrderDetail> => {
+    if (running.current) throw new Error("عملیات قبلی هنوز در جریان است.");
+    if (!actorId) throw new Error("هویت کاربر هنوز مشخص نیست.");
+    running.current = true; setBusy(spec ? spec.kind : "retry");
+    try {
+      if (!navigator.locks) throw new Error("برای ثبت ایمن، مرورگر به‌روز و اتصال امن لازم است.");
+      return await navigator.locks.request(`labelmod-ig:${actorId}:${scope}`, { ifAvailable: true }, async lock => {
+        if (!lock) throw new Error("همین سفارش در تب دیگری در حال تغییر است؛ پس از پایان آن دوباره تلاش کنید.");
+        let op = readIgOperation(actorId, scope);
+        if (op && spec) throw new Error(`نتیجهٔ «${op.label}» هنوز قطعی نیست؛ ابتدا همان را بررسی کنید.`);
+        if (!op && !spec) throw new Error("عملیات معلق پیش‌تر تعیین تکلیف شده است؛ سفارش را به‌روزرسانی کنید.");
+        if (!op) {
+          op = { version: 1, actorId, scope, key: crypto.randomUUID(), ...spec! };
+          writeIgOperation(op); // باید پیش از ارسال بنشیند.
+          setState({ pending: op, storageError: null });
+        }
+        try {
+          const out = await instagramOrders.send(op);
+          clearIgOperation(actorId, scope, op.key);
+          return out;
+        } catch (err) {
+          // فقط رد قطعی همین عملیات رکوردش را پاک می‌کند؛ شبکه و ۵xx نامعلوم می‌مانند.
+          if (isDefinitiveRejection(err)) clearIgOperation(actorId, scope, op.key);
+          throw err;
+        }
+      });
+    } finally { running.current = false; setBusy(null); setState(read()); }
+  }, [actorId, scope, read]);
+
+  return { ...state, busy, run };
+}
+
+/** «مجوز بررسی نشد» با تلاش دوباره؛ «در حال بررسی» بی دکمه. هر دو یعنی کار پنهان است. */
+function PermNote({ perm, what, onRetry }: { perm: Perm; what: string; onRetry: () => void }) {
+  if (perm === "loading") return <p className="muted small" role="status">در حال بررسی دسترسی {what}…</p>;
+  if (perm === "unknown") return <p className="muted small" role="status">دسترسی {what} بررسی نشد. <Button variant="quiet" onClick={onRetry}>بررسی دوباره</Button></p>;
+  return null;
+}
+
+export function InstagramOrders({ actorId, access }: { actorId: string; access: NavAccess }) {
   const [statusParam] = useUrlState(P.status);
   const [attentionParam] = useUrlState(P.attention);
   const [orderParam] = useUrlState(P.order);
@@ -108,13 +179,16 @@ export function InstagramOrders() {
     setSearch(v.length >= 2 ? v : null);
   }
   const filtered = !!(status || attention || search);
+  const manage = permOf(access, "instagram.order.manage");
+  const verify = permOf(access, "instagram.payment.verify");
+  const createOp = useIgOperation(actorId, "new");
 
   return <div className="stack">
     <PageHeader title="سفارش اینستاگرام"
       context="سفارش دایرکت را ثبت، موجودی را رزرو و پس از تطبیق واریز کامل کارت‌به‌کارت نهایی کنید. پیش از تأیید واریز چیزی ارسال نمی‌شود."
       actions={<>
         <Button onClick={reload} disabled={list.state === "loading"}>به‌روزرسانی</Button>
-        <Button variant="primary" onClick={() => setParams({ create: "1", order: "" })}>سفارش تازه</Button>
+        {manage === "allow" ? <Button variant="primary" onClick={() => setParams({ create: "1", order: "" })}>سفارش تازه</Button> : null}
       </>} />
     <FilterBar label="فیلتر سفارش‌ها" onReset={filtered ? () => { setSearch(null); setSearchDraft(""); setParams({ status: "", attention: "", page: "" }); } : undefined}>
       <form className="site-orders-search" role="search" aria-label="جست‌وجوی سفارش اینستاگرام" onSubmit={submitSearch}>
@@ -136,11 +210,14 @@ export function InstagramOrders() {
         </select>
       </Field>
     </FilterBar>
-    {createParam === "1" ? <CreateOrder onCancel={() => setParams({ create: "" })}
+    <PermNote perm={manage} what="ثبت و ویرایش سفارش" onRetry={access.retry} />
+    {manage === "allow" && (createParam === "1" || createOp.pending || createOp.storageError) ? <CreateOrder op={createOp}
+      onCancel={() => setParams({ create: "" })}
       onCreated={id => { setParams({ create: "", order: id }); reload(); }} /> : null}
     <OrdersList load={list} page={page} selected={orderId} searching={search !== null}
       onSelect={id => setParams({ order: id ?? "", create: "" })} onPage={p => setParams({ page: p === 1 ? "" : String(p) })} onRetry={reload} />
-    {orderId ? <OrderPanel key={orderId} id={orderId} onClose={() => setParams({ order: "" })} onChanged={reload} /> : null}
+    {orderId ? <OrderPanel key={orderId} id={orderId} actorId={actorId} manage={manage} verify={verify} onRetryAccess={access.retry}
+      onClose={() => setParams({ order: "" })} onChanged={reload} /> : null}
   </div>;
 }
 
@@ -181,15 +258,13 @@ function OrdersList({ load, page, selected, searching, onSelect, onPage, onRetry
   </Solid>;
 }
 
-function CreateOrder({ onCancel, onCreated }: { onCancel: () => void; onCreated: (id: string) => void }) {
+function CreateOrder({ op, onCancel, onCreated }: { op: ReturnType<typeof useIgOperation>; onCancel: () => void; onCreated: (id: string) => void }) {
   const [branches, setBranches] = useState<Branch[] | null>(null);
   const [branchId, setBranchId] = useState("");
   const [warehouseId, setWarehouseId] = useState("");
   const [accounts, setAccounts] = useState<ReceivingAccount[]>([]);
   const [form, setForm] = useState({ mobile: "", name: "", username: "", address: "", method: "", shipping: "", account: "" });
   const [error, setError] = useState<string | null>(null);
-  const [busy, setBusy] = useState(false);
-  const keys = useRef(new ActionKeys());
 
   useEffect(() => {
     pos.branches().then(r => {
@@ -211,24 +286,33 @@ function CreateOrder({ onCancel, onCreated }: { onCancel: () => void; onCreated:
     if (!user.ok) { setError(user.message); return; }
     if (shipping === null) { setError("کرایه را به تومان و فقط با رقم وارد کنید."); return; }
     const body = {
-      branchId, warehouseId, customerMobile: form.mobile.trim(), customerName: form.name.trim() || undefined,
+      branchId, warehouseId, customerMobile: form.mobile.trim(),
+      ...(form.name.trim() ? { customerName: form.name.trim() } : {}),
       instagramUsername: user.value, shipAddress: form.address.trim(), shipMethod: form.method.trim(),
       shippingAmount: shipping, receivingAccountId: form.account || null,
     };
-    setBusy(true); setError(null);
-    try {
-      const d = await instagramOrders.create(body, keys.current.keyFor(actionFor("ig-create", body)));
-      keys.current.clear(actionFor("ig-create", body));
-      onCreated(d.id);
-    } catch (err) { setError(errorText(err)); } finally { setBusy(false); }
+    await finish({ kind: "create", label: `ثبت سفارش تازه برای ${form.mobile.trim()}`, body });
   }
+  async function finish(spec: OpSpec | null) {
+    setError(null);
+    try { onCreated((await op.run(spec)).id); }
+    catch (err) { setError(errorText(err)); }
+  }
+  const locked = op.pending !== null || op.storageError !== null || op.busy !== null;
   const set = (k: keyof typeof form) => (e: { target: { value: string } }) => setForm(f => ({ ...f, [k]: e.target.value }));
 
   return <Solid as="section" className="pad" aria-labelledby="ig-create">
     <SectionHeader id="ig-create" title="سفارش تازهٔ اینستاگرام" description="فقط پیش‌نویس ساخته می‌شود؛ تا «رزرو» هیچ موجودی‌ای نگه داشته نمی‌شود."
       actions={<Button variant="quiet" onClick={onCancel}>انصراف</Button>} />
+    {op.storageError ? <p role="alert" className="field-error">{op.storageError}</p> : null}
+    {op.pending ? <div role="status" className="solid pad stack">
+      <p>نتیجهٔ «{op.pending.label}» هنوز قطعی نیست. برای جلوگیری از ثبت دوبارهٔ سفارش، ابتدا همین را تعیین تکلیف کنید.</p>
+      <div className="row"><Button busy={op.busy === "retry"} busyLabel="در حال بررسی…" disabled={op.busy !== null}
+        onClick={() => void finish(null)}>بررسی و تلاش دوبارهٔ همان ثبت</Button></div>
+    </div> : null}
     {branches === null && !error ? <Skeleton variant="text" lines={2} label="در حال خواندن شعبه‌ها…" /> : null}
     <form className="stack" onSubmit={submit} aria-label="سفارش تازه">
+      <fieldset className="stack lines-wrap" disabled={locked}>
       <Field label="شعبه">
         <select value={branchId} onChange={e => { setBranchId(e.target.value); setWarehouseId(branches?.find(b => b.id === e.target.value)?.warehouses[0]?.id ?? ""); }}>
           {(branches ?? []).map(b => <option key={b.id} value={b.id}>{b.name}</option>)}
@@ -257,8 +341,9 @@ function CreateOrder({ onCancel, onCreated }: { onCancel: () => void; onCreated:
           {accounts.map(a => <option key={a.id} value={a.id}>{a.name}{a.bankName ? ` — ${a.bankName}` : ""}</option>)}
         </select>
       </Field>
+      </fieldset>
       {error ? <p role="alert" className="field-error">{error}</p> : null}
-      <div className="row"><Button type="submit" variant="primary" busy={busy} busyLabel="در حال ثبت…" disabled={!branchId || !warehouseId}>ثبت پیش‌نویس</Button></div>
+      <div className="row"><Button type="submit" variant="primary" busy={op.busy === "create"} busyLabel="در حال ثبت…" disabled={!branchId || !warehouseId || locked}>ثبت پیش‌نویس</Button></div>
     </form>
   </Solid>;
 }
@@ -267,36 +352,54 @@ function Fact({ label, children }: { label: string; children: ReactNode }) {
   return <div><dt>{label}</dt><dd>{children}</dd></div>;
 }
 
-function OrderPanel({ id, onClose, onChanged }: { id: string; onClose: () => void; onChanged: () => void }) {
+function OrderPanel({ id, actorId, manage, verify, onRetryAccess, onClose, onChanged }: {
+  id: string; actorId: string; manage: Perm; verify: Perm; onRetryAccess: () => void; onClose: () => void; onChanged: () => void;
+}) {
   const [load, reload, replace] = useLatest<OrderDetail>(signal => instagramOrders.get(id, { signal }), [id]);
-  const [busy, setBusy] = useState<string | null>(null);
+  const op = useIgOperation(actorId, id);
   const [error, setError] = useState<string | null>(null);
 
-  async function act(name: string, run: () => Promise<OrderDetail>) {
-    setBusy(name); setError(null);
-    try { replace(await run()); onChanged(); }
+  async function act(spec: OpSpec | null) {
+    setError(null);
+    try { replace(await op.run(spec)); onChanged(); }
     catch (err) { setError(errorText(err)); reload(); }
-    finally { setBusy(null); }
   }
+  // عملیات معلق یا ذخیرهٔ ناخوانا: هیچ تغییر دیگری روی همین سفارش تا روشن‌شدن.
+  const locked = op.pending !== null || op.storageError !== null || op.busy !== null;
 
   return <Solid as="section" className="pad" aria-labelledby="ig-detail">
     <SectionHeader id="ig-detail" title={load.state === "done" ? `سفارش ${load.data.orderNo}` : "سفارش"}
       actions={<><Button variant="quiet" onClick={reload}>به‌روزرسانی</Button><Button variant="quiet" onClick={onClose}>بستن</Button></>} />
     {error ? <p role="alert" className="field-error">{error}</p> : null}
+    {op.storageError ? <p role="alert" className="field-error">{op.storageError}</p> : null}
+    {op.pending ? <div role="status" className="solid pad stack">
+      <p>نتیجهٔ «{op.pending.label}» هنوز قطعی نیست. برای جلوگیری از ثبت دوباره، ابتدا همین را تعیین تکلیف کنید؛ تا آن وقت ویرایش این سفارش بسته است.</p>
+      <div className="row"><Button busy={op.busy === "retry"} busyLabel="در حال بررسی…" disabled={op.busy !== null}
+        onClick={() => void act(null)}>بررسی و تلاش دوبارهٔ همان عملیات</Button></div>
+    </div> : null}
     {load.state === "loading"
       ? <div aria-busy="true"><Skeleton variant="text" lines={4} label="در حال خواندن سفارش…" /></div>
       : load.state === "error"
         ? <ResultState kind="error" title="سفارش خوانده نشد" reference={load.reference} description={load.message} actionLabel="تلاش دوباره" onAction={reload} />
-        : <OrderView d={load.data} busy={busy} act={act} apply={next => { replace(next); onChanged(); }} />}
+        : <OrderView d={load.data} busy={op.busy} locked={locked} act={act} manage={manage} verify={verify} onRetryAccess={onRetryAccess}
+            apply={next => { replace(next); onChanged(); }} />}
   </Solid>;
 }
 
-type Act = (name: string, run: () => Promise<OrderDetail>) => Promise<void>;
+type Act = (spec: OpSpec | null) => Promise<void>;
 
-function OrderView({ d, busy, act, apply }: { d: OrderDetail; busy: string | null; act: Act; apply: (next: OrderDetail) => void }) {
-  const a = actionsFor(d);
+function OrderView({ d, busy, locked, act, manage, verify, onRetryAccess, apply }: {
+  d: OrderDetail; busy: string | null; locked: boolean; act: Act; manage: Perm; verify: Perm; onRetryAccess: () => void;
+  apply: (next: OrderDetail) => void;
+}) {
+  // ماتریس وضعیت سرور و مجوز هر کار، هر دو؛ «در حال بررسی» یا «نامعلوم» یعنی پنهان.
+  const s = actionsFor(d), m = manage === "allow";
+  const a = { editCart: s.editCart && m, reserve: s.reserve && m, unreserve: s.unreserve && m, cancel: s.cancel && m,
+    markPayment: s.markPayment && m, ship: s.ship && m, confirm: s.confirm && verify === "allow",
+    editHeader: m && (d.status === "draft" || d.status === "reserved" || d.status === "expired") };
   const [qty, setQty] = useState("1");
   const [cancelReason, setCancelReason] = useState("");
+  const cancelKeys = useMemo(() => new ActionKeys(), []);
   const [note, setNote] = useState(d.paymentNote ?? "");
   const [tracking, setTracking] = useState(d.trackingCode ?? "");
   const lineColumns: Column<OrderLine>[] = [
@@ -304,7 +407,8 @@ function OrderView({ d, busy, act, apply }: { d: OrderDetail; busy: string | nul
     { key: "sku", header: "SKU", cell: r => <Ltr>{r.sku}</Ltr> },
     { key: "qty", header: "تعداد", numeric: true, cell: r => a.editCart
       ? <input type="text" inputMode="numeric" className="num" autoComplete="off" aria-label={`تعداد ${r.product}`} defaultValue={r.qty}
-          onBlur={e => { const n = parseQty(e.target.value); if (n !== null && n !== r.qty) void act("qty", () => instagramOrders.setQty(d.id, r.id, n)); }} />
+          disabled={locked}
+          onBlur={e => { const n = parseQty(e.target.value); if (n !== null && n !== r.qty) void act({ kind: "line.qty", lineId: r.id, label: `تغییر تعداد ${r.product} به ${n}`, body: { qty: n } }); }} />
       : <span className="num">{formatCount(r.qty)}</span> },
     { key: "price", header: "فی", numeric: true, cell: r => <Money rial={r.unitPrice} exact size="sm" /> },
     { key: "discount", header: "تخفیف", numeric: true, cell: r => <Money rial={r.discountAmount} exact size="sm" /> },
@@ -330,19 +434,24 @@ function OrderView({ d, busy, act, apply }: { d: OrderDetail; busy: string | nul
       این مشتری سفارش باز دیگری هم دارد: {d.similarOpen.map(s => s.orderNo).join("، ")}. اگر همان سفارش است، دوباره ثبت نکنید؛ خرید تازهٔ واقعی منعی ندارد.
     </p> : null}
     {d.status === "cancelled" && d.cancelReason ? <p role="note">دلیل لغو: {d.cancelReason}</p> : null}
+    {d.status !== "finalized" && d.status !== "cancelled" ? <>
+      <PermNote perm={manage} what="ویرایش سفارش" onRetry={onRetryAccess} />
+      {d.status !== "draft" ? <PermNote perm={verify} what="تأیید واریز" onRetry={onRetryAccess} /> : null}
+    </> : null}
+    {a.editHeader ? <HeaderEditor d={d} locked={locked} busy={busy} act={act} /> : null}
 
     <DataTable caption={`اقلام ${d.orderNo}`} columns={lineColumns} rows={d.lines} rowKey={r => r.id} density="compact" stack
-      {...(a.editCart ? { rowActions: (r: OrderLine) => <Button variant="quiet" aria-label={`حذف ${r.product}`} disabled={busy !== null}
-        onClick={() => void act("remove", () => instagramOrders.removeLine(d.id, r.id))}>حذف</Button> } : {})}
+      {...(a.editCart ? { rowActions: (r: OrderLine) => <Button variant="quiet" aria-label={`حذف ${r.product}`} disabled={locked}
+        onClick={() => void act({ kind: "line.remove", lineId: r.id, label: `حذف ${r.product}`, body: {} })}>حذف</Button> } : {})}
       empty={a.editCart ? { title: "هنوز قلمی ندارد.", description: "کالا را از جست‌وجوی پایین اضافه کنید." } : { title: "قلمی ندارد." }} />
     {a.editCart ? <section aria-label="افزودن کالا" className="stack">
       <Field label="تعداد قلم تازه" error={parseQty(qty) === null ? "تعداد باید عدد صحیح ۱ تا ۹۹۹ باشد." : null}>
-        <input type="text" inputMode="numeric" className="num" autoComplete="off" value={qty} onChange={e => setQty(e.target.value)} />
+        <input type="text" inputMode="numeric" className="num" autoComplete="off" value={qty} disabled={locked} onChange={e => setQty(e.target.value)} />
       </Field>
-      <PosProductPicker warehouseId={d.warehouse.id} busy={busy !== null} onPick={async variationId => {
+      <PosProductPicker warehouseId={d.warehouse.id} busy={locked} onPick={async variationId => {
         const n = parseQty(qty);
         if (n === null) return;
-        await act("add", () => instagramOrders.addLine(d.id, { variationId, qty: n }));
+        await act({ kind: "line.add", label: `افزودن کالا (تعداد ${n})`, body: { variationId, qty: n } });
       }} />
     </section> : null}
 
@@ -354,9 +463,9 @@ function OrderView({ d, busy, act, apply }: { d: OrderDetail; busy: string | nul
     </dl>
 
     <div className="row" role="group" aria-label="کارهای سفارش">
-      {a.reserve ? <Button variant="primary" busy={busy === "reserve"} disabled={busy !== null}
-        onClick={() => void act("reserve", () => instagramOrders.reserve(d.id))}>{d.status === "expired" ? "رزرو دوباره" : "رزرو موجودی"}</Button> : null}
-      {a.unreserve ? <Button disabled={busy !== null} onClick={() => void act("unreserve", () => instagramOrders.unreserve(d.id))}>برگشت به پیش‌نویس (ویرایش سبد)</Button> : null}
+      {a.reserve ? <Button variant="primary" busy={busy === "reserve"} disabled={locked}
+        onClick={() => void act({ kind: "reserve", label: "رزرو موجودی", body: {} })}>{d.status === "expired" ? "رزرو دوباره" : "رزرو موجودی"}</Button> : null}
+      {a.unreserve ? <Button disabled={locked} onClick={() => void act({ kind: "unreserve", label: "برگشت به پیش‌نویس", body: {} })}>برگشت به پیش‌نویس (ویرایش سبد)</Button> : null}
     </div>
     {d.status === "reserved" || d.status === "expired" ? <p className="muted small" role="note">
       موجودی رزرو شده فقط از «قابل‌فروش» کم شده؛ کالا تنها با تأیید واریز از انبار خارج و فروش ثبت می‌شود. رزرو منقضی، موجودی را آزاد کرده است و رزرو دوباره آن را از نو می‌سنجد.
@@ -367,13 +476,13 @@ function OrderView({ d, busy, act, apply }: { d: OrderDetail; busy: string | nul
       <p className="muted small">عکس رسید یا گفتهٔ مشتری پرداخت نیست. علامت «ادعاشده» یا «نیازمند رسیدگی» فقط جلوی آزادشدن خودکار رزرو را می‌گیرد.</p>
       <Field label="توضیح"><input type="text" maxLength={300} value={note} onChange={e => setNote(e.target.value)} /></Field>
       <div className="row">
-        <Button disabled={busy !== null || d.paymentState === "claimed"} onClick={() => void act("claim", () => instagramOrders.markPayment(d.id, "claimed", note))}>مشتری می‌گوید واریز کرده</Button>
-        <Button disabled={busy !== null || d.paymentState === "review"} onClick={() => void act("review", () => instagramOrders.markPayment(d.id, "review", note))}>نیازمند رسیدگی</Button>
-        <Button variant="quiet" disabled={busy !== null || d.paymentState === "none"} onClick={() => void act("none", () => instagramOrders.markPayment(d.id, "none", null))}>پاک‌کردن علامت</Button>
+        <Button disabled={locked || d.paymentState === "claimed"} onClick={() => void act({ kind: "payment_state", label: "علامت «مشتری می‌گوید واریز کرده»", body: { state: "claimed", note } })}>مشتری می‌گوید واریز کرده</Button>
+        <Button disabled={locked || d.paymentState === "review"} onClick={() => void act({ kind: "payment_state", label: "علامت «نیازمند رسیدگی»", body: { state: "review", note } })}>نیازمند رسیدگی</Button>
+        <Button variant="quiet" disabled={locked || d.paymentState === "none"} onClick={() => void act({ kind: "payment_state", label: "پاک‌کردن علامت واریز", body: { state: "none", note: null } })}>پاک‌کردن علامت</Button>
       </div>
     </section> : null}
 
-    {a.confirm ? <ConfirmPayment d={d} busy={busy} apply={apply} /> : null}
+    {a.confirm ? <ConfirmPayment d={d} locked={locked} apply={apply} /> : null}
 
     {d.payment ? <section aria-label="واریز تطبیق‌شده">
       <h3 className="site-order-h">واریز تطبیق‌شده</h3>
@@ -389,9 +498,9 @@ function OrderView({ d, busy, act, apply }: { d: OrderDetail; busy: string | nul
     {a.ship ? <section aria-label="ارسال" className="stack">
       <h3 className="site-order-h">ارسال</h3>
       <p className="muted small">کالا هنگام تأیید واریز از موجودی کسر شد؛ تغییر وضعیت ارسال هیچ کسر دیگری نمی‌سازد.</p>
-      <Field label="کد رهگیری" optional><input type="text" dir="auto" maxLength={80} value={tracking} onChange={e => setTracking(e.target.value)} /></Field>
-      {(() => { const next = nextShipping(d.shippingState); return next ? <Button variant="primary" disabled={busy !== null}
-        onClick={() => void act("ship", () => instagramOrders.shipping(d.id, next, tracking.trim() || null))}>{SHIPPING_STATE[next]}</Button> : null; })()}
+      <Field label="کد رهگیری" optional><input type="text" dir="auto" maxLength={80} value={tracking} disabled={locked} onChange={e => setTracking(e.target.value)} /></Field>
+      {(() => { const next = nextShipping(d.shippingState); return next ? <Button variant="primary" disabled={locked}
+        onClick={() => void act({ kind: "shipping", label: `ارسال: ${SHIPPING_STATE[next]}`, body: { state: next, trackingCode: tracking.trim() || null } })}>{SHIPPING_STATE[next]}</Button> : null; })()}
     </section> : null}
 
     {d.status === "finalized" ? <section aria-label="مرجوعی">
@@ -401,14 +510,14 @@ function OrderView({ d, busy, act, apply }: { d: OrderDetail; busy: string | nul
     </section> : null}
 
     {a.cancel ? <section aria-label="لغو سفارش" className="stack">
-      <Field label="دلیل لغو"><input type="text" maxLength={300} value={cancelReason} onChange={e => setCancelReason(e.target.value)} /></Field>
+      <Field label="دلیل لغو"><input type="text" maxLength={300} value={cancelReason} disabled={locked} onChange={e => setCancelReason(e.target.value)} /></Field>
       <div className="row">
         <SafeAction trigger="لغو سفارش و آزادسازی رزرو" title={`لغو سفارش ${d.orderNo}`} tone="destructive" triggerVariant="button"
-          disabled={busy !== null || cancelReason.trim() === ""}
+          disabled={locked || cancelReason.trim() === ""}
           summary={<><p>سفارش <Ltr>{d.orderNo}</Ltr> · {d.customer.name || "بی‌نام"}</p><p>دلیل: {cancelReason.trim()}</p></>}
           consequence="رزرو موجودی همین سفارش آزاد و پیش‌نویس فاکتورش لغو می‌شود. اثر مالی ندارد و برنمی‌گردد؛ خرید دوباره سفارش تازه است."
           confirmLabel="لغو سفارش" pendingLabel="در حال لغو…"
-          run={async () => { apply(await instagramOrders.cancel(d.id, cancelReason.trim())); }}
+          run={async () => { apply(await instagramOrders.cancel(d.id, cancelReason.trim(), cancelKeys.keyFor(actionFor(`ig-cancel:${d.id}`, cancelReason.trim())))); }}
           verify={async () => { const fresh = await instagramOrders.get(d.id); apply(fresh); return fresh.status === "cancelled"; }}
           onDone={() => undefined} />
       </div>
@@ -416,7 +525,7 @@ function OrderView({ d, busy, act, apply }: { d: OrderDetail; busy: string | nul
   </div>;
 }
 
-function ConfirmPayment({ d, busy, apply }: { d: OrderDetail; busy: string | null; apply: (next: OrderDetail) => void }) {
+function ConfirmPayment({ d, locked, apply }: { d: OrderDetail; locked: boolean; apply: (next: OrderDetail) => void }) {
   const [accounts, setAccounts] = useState<ReceivingAccount[] | null>(null);
   const [accountId, setAccountId] = useState(d.receivingAccount?.id ?? "");
   const [amount, setAmount] = useState("");
@@ -465,12 +574,74 @@ function ConfirmPayment({ d, busy, apply }: { d: OrderDetail; busy: string | nul
       </Field>
       <div className="row">
         <SafeAction trigger="تأیید واریز و نهایی‌سازی" title={`تأیید واریز سفارش ${d.orderNo}`} triggerVariant="primary"
-          disabled={busy !== null || body === null}
+          disabled={locked || body === null}
           summary={<><p>مبلغ کامل <Money rial={d.invoice.payable} exact /> به {account?.name ?? "—"}</p>
             <p>شمارهٔ پیگیری <Ltr>{refNo.trim()}</Ltr>{when && !Number.isNaN(when.getTime()) ? <> · {formatJalaliMoment(when.toISOString())}</> : null}</p></>}
           consequence="فروش نهایی می‌شود و کالا همین حالا از انبار کسر می‌شود. پس از این، برگشت کالا یا پول فقط از مرجوعی رسمی فاکتور است."
           confirmLabel="تأیید واریز و نهایی‌سازی" pendingLabel="در حال تأیید…"
           run={run} verify={verify} onDone={() => undefined} />
+      </div>
+    </form>
+  </section>;
+}
+
+/**
+ * ویرایش سرآیند پیش‌نویس یا رزرو: نشانی، روش ارسال، نام کاربری، حساب مقصد؛ کرایه فقط در پیش‌نویس (مبلغ کامل را
+ * عوض می‌کند). نسخهٔ دیده‌شده می‌رود؛ ویرایش روی نسخهٔ کهنه ۴۰۹ می‌گیرد و هر تغییر واقعی نسخه را جلو می‌برد.
+ */
+function HeaderEditor({ d, locked, busy, act }: { d: OrderDetail; locked: boolean; busy: string | null; act: Act }) {
+  const [open, setOpen] = useState(false);
+  const [accounts, setAccounts] = useState<ReceivingAccount[] | null>(null);
+  const initial = () => ({ address: d.shipping.address, method: d.shipping.method, username: d.customer.instagramUsername ?? "",
+    account: d.receivingAccount?.id ?? "", shipping: tomanFromRial(d.invoice.shipping) });
+  const [form, setForm] = useState(initial);
+  const [error, setError] = useState<string | null>(null);
+  useEffect(() => {
+    if (!open) return;
+    const c = new AbortController();
+    instagramOrders.accounts(d.branch.id, { signal: c.signal }).then(r => setAccounts(r.accounts), () => { if (!c.signal.aborted) setAccounts([]); });
+    return () => c.abort();
+  }, [open, d.branch.id]);
+  const draft = d.status === "draft";
+  const set = (k: keyof ReturnType<typeof initial>) => (e: { target: { value: string } }) => setForm(f => ({ ...f, [k]: e.target.value }));
+
+  async function submit(e: FormEvent) {
+    e.preventDefault();
+    const user = normalizeUsername(form.username);
+    if (!user.ok) { setError(user.message); return; }
+    const shipping = form.shipping.trim() === "" ? "0" : rialFromToman(form.shipping);
+    if (draft && shipping === null) { setError("کرایه را به تومان و فقط با رقم وارد کنید."); return; }
+    setError(null);
+    await act({ kind: "update", label: "ویرایش سرآیند سفارش", body: {
+      version: d.version, shipAddress: form.address.trim(), shipMethod: form.method.trim(), instagramUsername: user.value,
+      receivingAccountId: form.account || null, ...(draft ? { shippingAmount: shipping } : {}),
+    } });
+    setOpen(false);
+  }
+
+  if (!open) return <div className="row"><Button disabled={locked} onClick={() => { setForm(initial()); setError(null); setOpen(true); }}>ویرایش سرآیند (نشانی، ارسال، حساب)</Button></div>;
+  return <section aria-label="ویرایش سرآیند سفارش" className="stack">
+    <h3 className="site-order-h">ویرایش سرآیند</h3>
+    <form className="stack" onSubmit={submit} aria-label="فرم ویرایش سرآیند">
+      <fieldset className="stack lines-wrap" disabled={locked}>
+        <Field label="نشانی ارسال"><textarea rows={2} maxLength={500} value={form.address} onChange={set("address")} /></Field>
+        <Field label="روش ارسال" optional><input type="text" maxLength={80} value={form.method} onChange={set("method")} /></Field>
+        <Field label="نام کاربری اینستاگرام" optional><input type="text" dir="auto" autoComplete="off" maxLength={40} value={form.username} onChange={set("username")} /></Field>
+        <Field label="حساب مقصد واریز" optional hint="فقط حساب‌های بانکی مجاز همین شعبه.">
+          <select value={form.account} onChange={set("account")}>
+            <option value="">بعداً انتخاب می‌شود</option>
+            {form.account && !(accounts ?? []).some(a => a.id === form.account) ? <option value={form.account}>{d.receivingAccount?.name ?? "حساب فعلی"}</option> : null}
+            {(accounts ?? []).map(a => <option key={a.id} value={a.id}>{a.name}{a.bankName ? ` — ${a.bankName}` : ""}</option>)}
+          </select>
+        </Field>
+        <Field label="کرایهٔ دریافتی (تومان)" hint={draft ? "مبلغ کامل قابل واریز را عوض می‌کند." : "پس از رزرو عوض نمی‌شود؛ برای تغییر، اول به پیش‌نویس برگردانید."}>
+          <input type="text" inputMode="decimal" className="num" autoComplete="off" value={form.shipping} disabled={!draft} onChange={set("shipping")} />
+        </Field>
+      </fieldset>
+      {error ? <p role="alert" className="field-error">{error}</p> : null}
+      <div className="row">
+        <Button type="submit" variant="primary" busy={busy === "update"} busyLabel="در حال ثبت…" disabled={locked}>ثبت سرآیند</Button>
+        <Button variant="quiet" disabled={busy === "update"} onClick={() => setOpen(false)}>انصراف</Button>
       </div>
     </form>
   </section>;

@@ -230,16 +230,21 @@ test("پیامک: در بارگذاری و خطای وضعیت «شماره‌ا
   api.defaults["GET /auth/2fa/webauthn"] = { credentials: [] };
   let release!: () => void;
   const held = new Promise<void>(r => { release = r; });
-  let phase: "hold" | "fail" | "ok" = "hold";
+  // مانع ورود: آزمون تا خودِ درخواست به Handler نرسیده «نگه‌داشته» را رها نمی‌کند. بی آن، درخواستی که دیرتر از
+  // تغییر phase برسد شاخهٔ موفق را می‌گرفت و خطای مورد انتظار هرگز دیده نمی‌شد (PR197، webkit-light-320).
+  let entered!: () => void;
+  const inFlight = new Promise<void>(r => { entered = r; });
+  let phase: "fail" | "ok" = "fail";
   api.handlers.set("GET /auth/2fa/sms/status", async route => {
-    if (phase === "hold") { await held; await route.fulfill({ status: 503, json: { error: { code: "test", message: "خطای پیامک" } } }); return; }
+    if (phase === "fail") { entered(); await held; await route.fulfill({ status: 503, json: { error: { code: "test", message: "خطای پیامک" } } }); return; }
     await route.fulfill({ json: { enabled: false, maskedMobile: null } });
   });
   await page.goto("/"); await settings(page, "twofactor", "ورود دومرحله‌ای");
   const panel = page.getByRole("region", { name: "ورود دومرحله‌ای پیامکی" });
   await expect(panel).toBeVisible();
+  await inFlight;
   await expect(panel.getByText("هنوز شماره‌ای تأیید نشده است.")).toHaveCount(0);
-  phase = "fail"; release();
+  release();
   await expect(panel.getByRole("alert").filter({ hasText: "خطای پیامک" })).toBeVisible();
   await expect(panel.getByText("هنوز شماره‌ای تأیید نشده است.")).toHaveCount(0);
   await expect(panel.getByRole("button", { name: "ارسال کد تأیید شماره" })).toBeDisabled();

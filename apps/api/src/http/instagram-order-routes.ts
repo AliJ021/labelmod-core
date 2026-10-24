@@ -42,6 +42,7 @@ const createBody = z.object({
 }).strict();
 
 const headerBody = z.object({
+  version: z.number().int().min(1),
   shipAddress: text(500).optional(),
   shipMethod: text(80).optional(),
   instagramUsername: text(40).nullable().optional(),
