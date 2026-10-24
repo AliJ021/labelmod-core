@@ -170,15 +170,37 @@ REVOKE CREATE ON SCHEMA public FROM $APP_ROLE;
 REVOKE EXECUTE ON FUNCTION platform.enqueue_web_push(text, jsonb) FROM $APP_ROLE;
 REVOKE EXECUTE ON FUNCTION inventory.push_web_stock(uuid, uuid)   FROM $APP_ROLE;
 REVOKE EXECUTE ON FUNCTION catalog.push_web_price(uuid)           FROM $APP_ROLE;
+SQL
 
--- ۶. سفارش اینستاگرام (مهاجرت ۱۰۲). دو کمکیِ درونی رزرو مستقیم روی «stock_balance»
---    می‌نویسند؛ فقط توابع ورودیِ همان مهاجرت صدایشان می‌زنند، پس نقش برنامه نباید
---    بتواند رزرو را بی سنجش سفارش بسازد یا آزاد کند. تطبیق واریز هم فقط از
---    «instagram_begin_confirm» نوشته می‌شود: درج مستقیم یعنی «واریز تأییدشده» بی سنجش
---    مبلغ، حساب و مرجع تکراری.
-REVOKE EXECUTE ON FUNCTION sales.instagram_release_hold(uuid)               FROM $APP_ROLE;
-REVOKE EXECUTE ON FUNCTION sales.instagram_take_hold(uuid, timestamptz)     FROM $APP_ROLE;
-REVOKE INSERT, UPDATE, DELETE, TRUNCATE ON sales.instagram_payment          FROM $APP_ROLE;
+# ۶. سفارش اینستاگرام (مهاجرت ۱۰۲). دو کمکیِ درونی رزرو مستقیم روی «stock_balance»
+#    می‌نویسند؛ فقط توابع ورودیِ همان مهاجرت صدایشان می‌زنند، پس نقش برنامه نباید
+#    بتواند رزرو را بی سنجش سفارش بسازد یا آزاد کند. تطبیق واریز هم فقط از
+#    «instagram_begin_confirm» نوشته می‌شود: درج مستقیم یعنی «واریز تأییدشده» بی سنجش
+#    مبلغ، حساب و مرجع تکراری.
+#
+#    ⚠️ این اسکریپت روی دیتابیس پیش از ۱۰۲ هم اجرا می‌شود (آزمون‌های ارتقای تاریخی مثل
+#    ۰۹۴→۰۹۵، و هر نصبی که هنوز به ۱۰۲ نرسیده). پس REVOKE فقط وقتی شیء هست ساخته
+#    می‌شود (\gexec) — ولی «نبودن» بی‌صدا پذیرفته نمی‌شود: اگر ۱۰۲ اجرا شده
+#    (sales.instagram_order هست) و یکی از سه شیء با این امضا نیست، اسکریپت می‌ایستد،
+#    وگرنه تغییر نام یا امضا در مهاجرت بعدی REVOKE را بی‌صدا حذف می‌کرد.
+#    heredoc نقل‌قول‌دار است؛ نام نقش با متغیر psql و %I می‌رود.
+$PSQL -v app_role="$APP_ROLE" <<'SQL'
+DO $guard$
+BEGIN
+  IF to_regclass('sales.instagram_order') IS NOT NULL AND (
+       to_regprocedure('sales.instagram_release_hold(uuid)') IS NULL
+    OR to_regprocedure('sales.instagram_take_hold(uuid, timestamptz)') IS NULL
+    OR to_regclass('sales.instagram_payment') IS NULL) THEN
+    RAISE EXCEPTION 'مهاجرت ۱۰۲ اجرا شده ولی کمکی‌های رزرو یا sales.instagram_payment با امضای مورد انتظار نیستند؛ ops/db-roles.sh را با مهاجرت هم‌خوان کنید';
+  END IF;
+END $guard$;
+SELECT format('REVOKE EXECUTE ON FUNCTION %s FROM %I', fn, :'app_role')
+  FROM unnest(ARRAY['sales.instagram_release_hold(uuid)', 'sales.instagram_take_hold(uuid, timestamptz)']) AS fn
+ WHERE to_regprocedure(fn) IS NOT NULL
+UNION ALL
+SELECT format('REVOKE INSERT, UPDATE, DELETE, TRUNCATE ON sales.instagram_payment FROM %I', :'app_role')
+ WHERE to_regclass('sales.instagram_payment') IS NOT NULL
+\gexec
 SQL
 
 # ⚠️ اینجا عمداً `ALTER DEFAULT PRIVILEGES … REVOKE … IN SCHEMA inventory`

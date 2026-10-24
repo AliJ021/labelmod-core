@@ -12,7 +12,10 @@ import type { Locator, Page } from "@playwright/test";
 import { NAV_OPERATIONS } from "../src/lib/navigation";
 
 type Decision = "allow" | "deny" | "fail";
-const PROTECTED = ["صندوق", "فاکتورها", "مرجوعی", "سفارش‌های سایت", "کالا و قیمت", "انبار و خرید", "خزانه و چک", "مشتریان", "گزارش‌ها"];
+const PROTECTED = ["صندوق", "فاکتورها", "مرجوعی", "سفارش‌های سایت", "سفارش اینستاگرام", "کالا و قیمت", "انبار و خرید", "خزانه و چک", "مشتریان", "گزارش‌ها"];
+/** همهٔ مقصدها وقتی هر مجوزی «بله» است — به ترتیب گروه‌های ناوبری (روزانه، انبار، مالی، اشخاص، سامانه)، نه فقط شمارشان. */
+const ALL_TABS = ["داشبورد", "صندوق", "فاکتورها", "مرجوعی", "سفارش‌های سایت", "سفارش اینستاگرام", "کالا و قیمت", "انبار و خرید",
+  "خزانه و چک", "گزارش‌ها", "مشتریان", "برداشت و پاداش", "تنظیمات"];
 const PERSONAL = ["نمایش و عملکرد", "PIN من — ساخت و تغییر", "ورود دومرحله‌ای"];
 const ADMIN = ["تنظیمات", "سلامت سیستم", "اتصال ووکامرس", "پشتیبان‌گیری و بازیابی", "کدینگ حساب", "نگاشت حساب", "اسنپ‌پی", "دیجی‌پی", "پایانه‌ها", "افتتاحیه و تفصیلی", "پرسنل", "مجوزها", "دستگاه‌ها"];
 
@@ -112,7 +115,9 @@ test.describe("F-110-01 — conservative permission loading", () => {
     await expect(dashboard).toBeVisible();
     const before = { tab: (await dashboard.boundingBox())!, nav: (await page.locator(".workspace-nav").boundingBox())! };
     auth.release();
-    await expect(mainList(page).getByRole("tab", { includeHidden: true })).toHaveCount(12);
+    await expect(mainList(page).getByRole("tab", { includeHidden: true })).toHaveCount(ALL_TABS.length);
+    expect(await mainList(page).getByRole("tab", { includeHidden: true }).evaluateAll(nodes => nodes.map(n => n.textContent?.trim())),
+      "every destination, in navigation order").toEqual(ALL_TABS);
     const after = { tab: (await dashboard.boundingBox())!, nav: (await page.locator(".workspace-nav").boundingBox())! };
     // زیر ۳۶۰ پیکسل برچسب «کالا و قیمت» پس از رسیدن دو خط می‌شود و نوار بلندتر؛
     // جای‌نگهدار طول برچسب را نمی‌داند و نباید بداند (برچسب در DOM یعنی همان افشا).
@@ -151,6 +156,31 @@ test.describe("F-110-01 — conservative permission loading", () => {
     const asked = api.calls.slice(before).filter(c => c.startsWith("GET /auth/can"))
       .map(c => new URLSearchParams(c.split("?")[1]).get("operation")!).filter(op => NAV_OPERATIONS.includes(op));
     expect(asked, "retry re-asks only the operation that failed").toEqual(["treasury.manage"]);
+  });
+
+  test("Instagram orders: hidden while checking, shown for either of its two permissions, never rendered when both are denied", async ({ page, api }) => {
+    const seen = await recordNavigation(page);
+    const tab = mainList(page).getByRole("tab", { name: "سفارش اینستاگرام", includeHidden: true });
+    // فقط «تأیید واریز» (بی «مدیریت سفارش»): anyOf یعنی یکی کافی است.
+    const auth = authorize(api, op => op === "instagram.payment.verify" ? "allow" : "deny", true);
+    await page.goto("/");
+    await expect(page.getByRole("heading", { name: "امروز", exact: true })).toBeVisible();
+    await expect(mainList(page).locator(".tab-pending")).toHaveCount(PROTECTED.length);
+    await expect(tab, "no label while the verdict is pending").toHaveCount(0);
+    auth.release();
+    await expect(mainList(page).locator(".tab-pending")).toHaveCount(0);
+    await expect(tab).toHaveCount(1);
+    expect(await tabLabels(page)).toEqual(["داشبورد", "سفارش اینستاگرام", "برداشت و پاداش", "تنظیمات"]);
+    expect(await seen(), "the label appeared only after its allow verdict").toEqual(["برداشت و پاداش", "تنظیمات", "داشبورد", "سفارش اینستاگرام"].sort());
+
+    // هر دو رد: هرگز ساخته نمی‌شود و هیچ درخواستی به /instagram-orders نمی‌رود (seen پس از reload از نو).
+    authorize(api, op => op.startsWith("instagram.") ? "deny" : "allow");
+    await page.reload();
+    await expect(mainList(page).getByRole("tab", { name: "سفارش‌های سایت", includeHidden: true }), "positive control: the same render allows the rest").toHaveCount(1);
+    await expect(mainList(page).locator(".tab-pending")).toHaveCount(0);
+    await expect(tab).toHaveCount(0);
+    expect(await seen()).not.toContain("سفارش اینستاگرام");
+    expect(api.calls.filter(c => c.includes("/instagram-orders"))).toEqual([]);
   });
 
   test("a deep link to a protected section while loading shows that section only, not the taxonomy", async ({ page, api }) => {
