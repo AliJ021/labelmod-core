@@ -8,7 +8,7 @@
 import { test, expect, fontsReady, hourlyDay } from "./fixtures";
 import type { Page, Route } from "@playwright/test";
 
-const ZONE_LABELS = ["داشبورد", "صندوق", "فاکتورها", "مرجوعی", "سفارش‌های سایت", "کالا و قیمت", "انبار و خرید", "خزانه و چک", "مشتریان", "برداشت و پاداش", "گزارش‌ها", "تنظیمات"];
+const ZONE_LABELS = ["داشبورد", "صندوق", "فاکتورها", "مرجوعی", "سفارش‌های سایت", "سفارش اینستاگرام", "کالا و قیمت", "انبار و خرید", "خزانه و چک", "مشتریان", "برداشت و پاداش", "گزارش‌ها", "تنظیمات"];
 const GROUPS = ["کار روزانه", "کالا و انبار", "مالی و گزارش", "اشخاص", "سامانه"];
 
 async function noOverflow(page: Page, what: string) {
@@ -219,10 +219,15 @@ test("navigation hides server-denied destinations but keeps the open section and
   await expect(list.getByRole("tab", { name: "تنظیمات", includeHidden: true })).toHaveCount(1);
   await expect(list.getByRole("tab", { name: "داشبورد", includeHidden: true })).toHaveCount(1);
   // سرور دروازه است: نشانی مستقیم هنوز بخش را باز می‌کند و زبانه‌اش دیده می‌شود.
+  const beforeTreasury = api.calls.length;
   await page.goto("/?page=treasury");
   await expect(list.getByRole("tab", { name: "خزانه و چک", includeHidden: true })).toHaveAttribute("aria-selected", "true");
   // بخش خزانه خودش داده می‌خواند؛ WebKit درخواستی را که ناوبری بعدی وسط راه قطع کند
   // «خطای مرورگر» گزارش می‌دهد. پیش از ترک صفحه، بارگذاری خزانه تمام می‌شود.
+  // زنجیرهٔ خزانه پس از پاسخ همهٔ پرسش‌های مجوز ناوبری شروع می‌شود و ترتیبی است؛ «networkidle» به‌تنهایی
+  // می‌تواند در فاصلهٔ میان آخرین پاسخ مجوز و شروع زنجیره برقرار شود (WebKit زیر بار CI، PR198). پس حلقهٔ
+  // آخر زنجیره (تأمین‌کنندگان) دیده می‌شود و بعد آرامش شبکه.
+  await expect.poll(() => api.calls.slice(beforeTreasury).includes("GET /suppliers"), { message: "treasury load chain reached its last request" }).toBe(true);
   await page.waitForLoadState("networkidle");
   // سرور روند ساعتی را نداد (۴۰۳): نمودار ساخته نمی‌شود — نه صفر، نه خطا — و کارت‌ها
   // زبانه نمی‌شوند، چون پنلی برای نشان‌دادن نیست.

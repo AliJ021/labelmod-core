@@ -131,7 +131,7 @@ describe("حرکت", () => {
 
 describe("رجیستری ناوبری", () => {
   test("هیچ مسیری حذف نشده و هر مقصد گروه، آیکون و فهرست مجوز دارد", () => {
-    assert.deepEqual(ZONES.map(z => z.key), ["dashboard", "pos", "invoices", "returns", "site-orders", "catalog", "purchasing", "treasury", "customers", "personnel", "reports", "settings"]);
+    assert.deepEqual(ZONES.map(z => z.key), ["dashboard", "pos", "invoices", "returns", "site-orders", "instagram-orders", "catalog", "purchasing", "treasury", "customers", "personnel", "reports", "settings"]);
     const icons = read("components/Icon.tsx");
     for (const z of ZONES) {
       assert.ok(NAV_GROUPS.some(g => g.key === z.navGroup), z.key);

@@ -161,6 +161,7 @@ export const CHANNEL_LABEL: Record<string, string> = {
   pos: "صندوق",
   web: "سایت",
   phone: "تلفنی",
+  instagram: "اینستاگرام",
 };
 
 export const PARTY_LABEL: Record<string, string> = {

@@ -423,8 +423,10 @@ export function registerWebRoutes(app: FastifyInstance, deps: WebRouteDeps): voi
       // «فاکتور واقعی» چهار وضعیت دارد، نه دو تا: فاکتوری که مرجوعی
       // خورده هم یک خرید واقعی بوده و باید در حساب مشتری بماند.
       .where("i.status", "in", ["finalized", "paid", "partially_returned", "returned"])
-      // نگهبان حلقه — سفارشی که از سایت آمده به سایت برنمی‌گردد.
-      .where("i.channel", "<>", "web")
+      // نگهبان حلقه — سفارشی که از سایت آمده به سایت برنمی‌گردد. و خرید
+      // اینستاگرام «خرید حضوری» نیست؛ برچسب نادرست در حساب مشتری سایت نمی‌سازد
+      // (همان قاعدهٔ Trigger اعلان در مهاجرت ۱۰۲).
+      .where("i.channel", "not in", ["web", "instagram"])
       .where("i.finalized_at", "is not", null)
       .where("c.mobile_normalized", "is not", null)
       .orderBy("i.finalized_at", "asc")

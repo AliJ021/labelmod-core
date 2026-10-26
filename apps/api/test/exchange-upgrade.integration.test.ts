@@ -25,7 +25,8 @@ function baselineSeed(name: string): string {
     assert.ok(at > 0);
     text = text.slice(0, at) + "\nCOMMIT;\n";
   } else if (name === "030_settings.sql") {
-    text = text.replace(',"exchange.policy"', "").replace(/^ {3}\{"value":"exchange.policy"[^\n]+\n/m, "");
+    text = text.replace(',"exchange.policy"', "").replace(/^ {3}\{"value":"exchange.policy"[^\n]+\n/m, "")
+      .replace(',"instagram.payment.verify"', "").replace(/^ {3}\{"value":"instagram.payment.verify"[^\n]+\n/m, "");
   } else if (name === "040_reference.sql") {
     text = text.replace("INSERT INTO identity.permission_rule(role_code,operation,allowed)\nSELECT code,'exchange.policy',code='admin' FROM identity.role ON CONFLICT(role_code,operation) DO NOTHING;\n", "");
   }
@@ -76,8 +77,10 @@ test("existing 083 seeded database upgrades through 084/085/086 without bypassin
     const applied084 = (await sql<{ checksum: string }>`SELECT checksum FROM public.schema_migration WHERE filename='084_staff_withdrawal_register.sql'`.execute(owner.db)).rows[0]!.checksum;
     run(root, "migrate");
     const result = (await sql<{ value: string[]; options: { value: string }[] }>`SELECT value,options FROM platform.setting WHERE key='auth.pin_forbidden_operations'`.execute(owner.db)).rows[0]!;
-    assert.deepEqual(result.value, [...before, "exchange.policy"]);
+    // ۰۸۴ تکمیلی سیاست تعویض را می‌افزاید و ۱۰۲ تأیید واریز اینستاگرام را — هر دو یک بار و از دروازهٔ تنظیمات.
+    assert.deepEqual(result.value, [...before, "exchange.policy", "instagram.payment.verify"]);
     assert.equal(result.options.filter(o => o.value === "exchange.policy").length, 1);
+    assert.equal(result.options.filter(o => o.value === "instagram.payment.verify").length, 1);
     assert.equal((await sql<{ value: string }>`SELECT value FROM platform.setting WHERE key='exchange.debt_policy'`.execute(owner.db)).rows[0]!.value, "unset");
     assert.equal((await sql<{ n: number }>`SELECT count(*)::int n FROM identity.app_user WHERE id=${sentinel}::uuid AND full_name='دادهٔ موجود'`.execute(owner.db)).rows[0]!.n, 1);
     assert.equal(await footprint(), oldFootprint);

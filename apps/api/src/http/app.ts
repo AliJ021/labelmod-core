@@ -46,6 +46,7 @@ import { registerHealthRoutes } from "./health-routes.ts";
 import { registerWebRoutes } from "./web-routes.ts";
 import { registerWooDiagnosticsRoutes } from "./woocommerce-diagnostics-routes.ts";
 import { registerWebOrdersRoutes } from "./web-orders-routes.ts";
+import { registerInstagramOrderRoutes } from "./instagram-order-routes.ts";
 import type { WooOrdersReader } from "../platform/woocommerce-orders.ts";
 import { registerWebRefundRoutes } from "./web-refund-routes.ts";
 import { registerPublicRoutes, PUBLIC_ROUTE_PATHS } from "./public-routes.ts";
@@ -473,6 +474,7 @@ export async function buildApp(deps: AppDeps): Promise<FastifyInstance> {
   registerWebRefundRoutes(app, deps.db);
   registerWooDiagnosticsRoutes(app, deps.db, config.WEB_PUSH_SECRET);
   registerWebOrdersRoutes(app, deps.db, config.WEB_PUSH_SECRET, deps.wooOrders);
+  registerInstagramOrderRoutes(app, { db: deps.db, invoices });
   registerDashboardOperationsRoutes(app, deps.db);
   registerWebRoutes(app, {
     db: deps.db,
