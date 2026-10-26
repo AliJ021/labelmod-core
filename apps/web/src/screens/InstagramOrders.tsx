@@ -363,10 +363,11 @@ function OrderPanel({ id, actorId, manage, verify, onRetryAccess, onClose, onCha
   const op = useIgOperation(actorId, id);
   const [error, setError] = useState<string | null>(null);
 
-  async function act(spec: OpSpec | null) {
+  /** `true` فقط وقتی سرور پذیرفت؛ فرم‌ها با `false` باز می‌مانند تا ورودی کاربر گم نشود. */
+  async function act(spec: OpSpec | null): Promise<boolean> {
     setError(null);
-    try { replace(await op.run(spec)); onChanged(); }
-    catch (err) { setError(errorText(err)); reload(); }
+    try { replace(await op.run(spec)); onChanged(); return true; }
+    catch (err) { setError(errorText(err)); reload(); return false; }
   }
   // عملیات معلق یا ذخیرهٔ ناخوانا: هیچ تغییر دیگری روی همین سفارش تا روشن‌شدن.
   const locked = op.pending !== null || op.storageError !== null || op.busy !== null;
@@ -390,7 +391,7 @@ function OrderPanel({ id, actorId, manage, verify, onRetryAccess, onClose, onCha
   </Solid>;
 }
 
-type Act = (spec: OpSpec | null) => Promise<void>;
+type Act = (spec: OpSpec | null) => Promise<boolean>;
 
 function OrderView({ d, busy, locked, act, manage, verify, onRetryAccess, apply }: {
   d: OrderDetail; busy: string | null; locked: boolean; act: Act; manage: Perm; verify: Perm; onRetryAccess: () => void;
@@ -591,15 +592,24 @@ function ConfirmPayment({ d, locked, apply }: { d: OrderDetail; locked: boolean;
 
 /**
  * ویرایش سرآیند پیش‌نویس یا رزرو: نشانی، روش ارسال، نام کاربری، حساب مقصد؛ کرایه فقط در پیش‌نویس (مبلغ کامل را
- * عوض می‌کند). نسخهٔ دیده‌شده می‌رود؛ ویرایش روی نسخهٔ کهنه ۴۰۹ می‌گیرد و هر تغییر واقعی نسخه را جلو می‌برد.
+ * عوض می‌کند). ویرایش روی نسخهٔ کهنه ۴۰۹ می‌گیرد و هر تغییر واقعی نسخه را جلو می‌برد.
+ *
+ * نسخهٔ پایه **همراه مقادیر اولیهٔ فرم** در لحظهٔ بازکردن گرفته می‌شود و همان می‌رود، نه `d.version` جاری: اگر
+ * سفارش زیر فرمِ باز به‌روزرسانی شود (اپراتور دیگر نشانی را اصلاح کرده)، فرستادن مقادیر کهنه با نسخهٔ تازه همان
+ * اصلاح را بی‌صدا بازنویسی می‌کرد. با نسخهٔ متفاوت، فرم ثبت نمی‌کند، ورودی کاربر دست نمی‌خورد، مقادیر تازهٔ سرور
+ * کنار هر میدان دیده می‌شوند و فقط «شروع دوباره از نسخهٔ تازه» فرم را جایگزین می‌کند.
  */
 function HeaderEditor({ d, locked, busy, act }: { d: OrderDetail; locked: boolean; busy: string | null; act: Act }) {
   const [open, setOpen] = useState(false);
   const [accounts, setAccounts] = useState<ReceivingAccount[] | null>(null);
   const initial = () => ({ address: d.shipping.address, method: d.shipping.method, username: d.customer.instagramUsername ?? "",
     account: d.receivingAccount?.id ?? "", shipping: tomanFromRial(d.invoice.shipping) });
-  const [form, setForm] = useState(initial);
+  type Values = ReturnType<typeof initial>;
+  const snapshot = () => ({ version: d.version, values: initial() });
+  const [base, setBase] = useState(snapshot);
+  const [form, setForm] = useState<Values>(base.values);
   const [error, setError] = useState<string | null>(null);
+  const conflict = d.version !== base.version;
   useEffect(() => {
     if (!open) return;
     const c = new AbortController();
@@ -607,44 +617,60 @@ function HeaderEditor({ d, locked, busy, act }: { d: OrderDetail; locked: boolea
     return () => c.abort();
   }, [open, d.branch.id]);
   const draft = d.status === "draft";
-  const set = (k: keyof ReturnType<typeof initial>) => (e: { target: { value: string } }) => setForm(f => ({ ...f, [k]: e.target.value }));
+  const set = (k: keyof Values) => (e: { target: { value: string } }) => setForm(f => ({ ...f, [k]: e.target.value }));
 
   async function submit(e: FormEvent) {
     e.preventDefault();
+    if (conflict) { setError("سفارش پس از بازکردن این فرم تغییر کرده است؛ چیزی ثبت نشد."); return; }
     const user = normalizeUsername(form.username);
     if (!user.ok) { setError(user.message); return; }
     const shipping = form.shipping.trim() === "" ? "0" : rialFromToman(form.shipping);
     if (draft && shipping === null) { setError("کرایه را به تومان و فقط با رقم وارد کنید."); return; }
     setError(null);
-    await act({ kind: "update", label: "ویرایش سرآیند سفارش", body: {
-      version: d.version, shipAddress: form.address.trim(), shipMethod: form.method.trim(), instagramUsername: user.value,
+    const ok = await act({ kind: "update", label: "ویرایش سرآیند سفارش", body: {
+      version: base.version, shipAddress: form.address.trim(), shipMethod: form.method.trim(), instagramUsername: user.value,
       receivingAccountId: form.account || null, ...(draft ? { shippingAmount: shipping } : {}),
     } });
-    setOpen(false);
+    // رد یا نتیجهٔ نامعلوم: فرم و ورودی می‌مانند.
+    if (ok) setOpen(false);
   }
+  function restart() { const s = snapshot(); setBase(s); setForm(s.values); setError(null); }
 
-  if (!open) return <div className="row"><Button disabled={locked} onClick={() => { setForm(initial()); setError(null); setOpen(true); }}>ویرایش سرآیند (نشانی، ارسال، حساب)</Button></div>;
+  // مقدار تازهٔ سرور برای هر میدانی که پس از بازکردن فرم در سرور عوض شده است.
+  const now = initial();
+  const changed = (k: keyof Values): ReactNode => conflict && now[k] !== base.values[k]
+    ? <>در سرور تغییر کرد به: <bdi>{now[k] || "خالی"}</bdi></> : null;
+  const account = (id: string) => id ? (d.receivingAccount?.id === id ? d.receivingAccount.name : null) ?? accounts?.find(a => a.id === id)?.name ?? "حساب دیگر" : "";
+
+  if (!open) return <div className="row"><Button disabled={locked} onClick={() => { restart(); setOpen(true); }}>ویرایش سرآیند (نشانی، ارسال، حساب)</Button></div>;
   return <section aria-label="ویرایش سرآیند سفارش" className="stack">
     <h3 className="site-order-h">ویرایش سرآیند</h3>
+    {conflict ? <div role="alert" className="stack">
+      <p><StatusBadge state="warning" label="تعارض ویرایش" quiet />{" "}
+        سفارش پس از بازکردن این فرم تغییر کرده است (نسخهٔ <span className="num">{base.version}</span> → <span className="num">{d.version}</span>).
+        ورودی شما دست نخورده ولی روی نسخهٔ تازه ثبت نمی‌شود، تا اصلاحِ دیگری بی‌صدا بازنویسی نشود. مقدار تازهٔ سرور کنار هر میدان آمده است.</p>
+      <div className="row"><Button disabled={locked} onClick={restart}>شروع دوباره از نسخهٔ تازه</Button></div>
+    </div> : null}
     <form className="stack" onSubmit={submit} aria-label="فرم ویرایش سرآیند">
       <fieldset className="stack lines-wrap" disabled={locked}>
-        <Field label="نشانی ارسال"><textarea rows={2} maxLength={500} value={form.address} onChange={set("address")} /></Field>
-        <Field label="روش ارسال" optional><input type="text" maxLength={80} value={form.method} onChange={set("method")} /></Field>
-        <Field label="نام کاربری اینستاگرام" optional><input type="text" dir="auto" autoComplete="off" maxLength={40} value={form.username} onChange={set("username")} /></Field>
-        <Field label="حساب مقصد واریز" optional hint="فقط حساب‌های بانکی مجاز همین شعبه.">
+        <Field label="نشانی ارسال" hint={changed("address")}><textarea rows={2} maxLength={500} value={form.address} onChange={set("address")} /></Field>
+        <Field label="روش ارسال" optional hint={changed("method")}><input type="text" maxLength={80} value={form.method} onChange={set("method")} /></Field>
+        <Field label="نام کاربری اینستاگرام" optional hint={changed("username")}><input type="text" dir="auto" autoComplete="off" maxLength={40} value={form.username} onChange={set("username")} /></Field>
+        <Field label="حساب مقصد واریز" optional hint={conflict && now.account !== base.values.account
+          ? <>در سرور تغییر کرد به: <bdi>{account(now.account) || "بعداً انتخاب می‌شود"}</bdi></> : "فقط حساب‌های بانکی مجاز همین شعبه."}>
           <select value={form.account} onChange={set("account")}>
             <option value="">بعداً انتخاب می‌شود</option>
             {form.account && !(accounts ?? []).some(a => a.id === form.account) ? <option value={form.account}>{d.receivingAccount?.name ?? "حساب فعلی"}</option> : null}
             {(accounts ?? []).map(a => <option key={a.id} value={a.id}>{a.name}{a.bankName ? ` — ${a.bankName}` : ""}</option>)}
           </select>
         </Field>
-        <Field label="کرایهٔ دریافتی (تومان)" hint={draft ? "مبلغ کامل قابل واریز را عوض می‌کند." : "پس از رزرو عوض نمی‌شود؛ برای تغییر، اول به پیش‌نویس برگردانید."}>
+        <Field label="کرایهٔ دریافتی (تومان)" hint={changed("shipping") ?? (draft ? "مبلغ کامل قابل واریز را عوض می‌کند." : "پس از رزرو عوض نمی‌شود؛ برای تغییر، اول به پیش‌نویس برگردانید.")}>
           <input type="text" inputMode="decimal" className="num" autoComplete="off" value={form.shipping} disabled={!draft} onChange={set("shipping")} />
         </Field>
       </fieldset>
       {error ? <p role="alert" className="field-error">{error}</p> : null}
       <div className="row">
-        <Button type="submit" variant="primary" busy={busy === "update"} busyLabel="در حال ثبت…" disabled={locked}>ثبت سرآیند</Button>
+        <Button type="submit" variant="primary" busy={busy === "update"} busyLabel="در حال ثبت…" disabled={locked || conflict}>ثبت سرآیند</Button>
         <Button variant="quiet" disabled={busy === "update"} onClick={() => setOpen(false)}>انصراف</Button>
       </div>
     </form>

@@ -288,5 +288,87 @@ test.describe("سفارش اینستاگرام: عملیات ماندگار، م
     expect(s.requests).toHaveLength(2);
     expect(s.requests[1]!.body).toMatchObject({ version: 4 });
     await expect(banner(page), "رد قطعی عملیات معلق نمی‌سازد").toHaveCount(0);
+    // رد، فرم را نمی‌بندد و ورودی را نگه می‌دارد.
+    await expect(form.getByLabel("روش ارسال")).toHaveValue("پیک");
+  });
+
+  test("header form keeps its own base version: a refresh under an open form exposes the conflict and never sends stale values with the newer version", async ({ page, api }) => {
+    const s = server(api, { version: 7 });
+    api.handlers.set(`PATCH /instagram-orders/${ID}`, async route => {
+      const body = route.request().postDataJSON() as Record<string, unknown>;
+      s.requests.push({ path: "patch", key: route.request().headers()["idempotency-key"], body });
+      // مثل سرور واقعی: نسخهٔ کهنه ۴۰۹.
+      if (body.version !== s.order.version) { await route.fulfill({ status: 409, json: { error: { code: "stale_version", message: "سفارش پس از دیدن شما تغییر کرده است." } } }); return; }
+      s.order = { ...s.order, version: s.order.version + 1, shipping: { address: String(body.shipAddress), method: String(body.shipMethod) } };
+      await route.fulfill({ json: { ...s.order, lines: [] } });
+    });
+    await page.goto(`/?page=instagram-orders&ig.order=${ID}`);
+    const panel = page.getByRole("region", { name: "سفارش IG-000200" });
+    await panel.getByRole("button", { name: /ویرایش سرآیند/ }).click();
+    const form = panel.getByRole("form", { name: "فرم ویرایش سرآیند" });
+    await form.getByLabel("روش ارسال").fill("پیک");
+
+    // اپراتور دیگر نشانی را اصلاح می‌کند (نسخهٔ ۸) و این اپراتور «به‌روزرسانی» می‌زند؛ فرم باز می‌ماند.
+    s.order = { ...s.order, version: 8, shipping: { address: "مشهد، نشانی اصلاح‌شده", method: "پست پیشتاز" } };
+    await panel.getByRole("button", { name: "به‌روزرسانی" }).click();
+    await expect(panel.getByRole("definition").filter({ hasText: "مشهد، نشانی اصلاح‌شده" })).toHaveCount(1);
+    const conflict = panel.getByRole("alert").filter({ hasText: "تعارض ویرایش" });
+    await expect(conflict).toContainText("7");
+    await expect(conflict).toContainText("8");
+    // ورودی کاربر و مقدار پایه دست نخورده؛ مقدار تازهٔ سرور کنار میدان.
+    await expect(form.getByLabel("روش ارسال")).toHaveValue("پیک");
+    await expect(form.getByLabel("نشانی ارسال")).toHaveValue("تهران، خیابان آزمایشی ۱");
+    await expect(form).toContainText("در سرور تغییر کرد به: مشهد، نشانی اصلاح‌شده");
+    await expect(form.getByRole("button", { name: "ثبت سرآیند" })).toBeDisabled();
+    // ارسال با Enter هم چیزی نمی‌فرستد (دکمهٔ پیش‌فرضِ بسته، ارسال ضمنی را می‌بندد؛ submit خودش هم می‌سنجد).
+    await form.getByLabel("روش ارسال").press("Enter");
+    await expect(form.getByLabel("روش ارسال")).toHaveValue("پیک");
+    expect(s.requests.filter(r => r.path === "patch"), "هیچ PATCH با مقادیر کهنه").toEqual([]);
+
+    // فقط شروع دوبارهٔ صریح، فرم را با نسخهٔ تازه جایگزین می‌کند؛ ثبت بعدی نسخه و نشانی تازه را می‌برد.
+    await panel.getByRole("button", { name: "شروع دوباره از نسخهٔ تازه" }).click();
+    await expect(conflict).toHaveCount(0);
+    await expect(form.getByLabel("نشانی ارسال")).toHaveValue("مشهد، نشانی اصلاح‌شده");
+    await form.getByLabel("روش ارسال").fill("پیک");
+    await form.getByRole("button", { name: "ثبت سرآیند" }).click();
+    await expect(form).toHaveCount(0);
+    const patches = s.requests.filter(r => r.path === "patch");
+    expect(patches).toHaveLength(1);
+    expect(patches[0]!.body).toMatchObject({ version: 8, shipAddress: "مشهد، نشانی اصلاح‌شده", shipMethod: "پیک" });
+    await expect(panel.getByRole("definition").filter({ hasText: "مشهد، نشانی اصلاح‌شده" })).toHaveCount(1);
+  });
+
+  test("confirm form validates against the order it sends: a payable change under the open form blocks the old amount; the sent version matches the validated payable", async ({ page, api }) => {
+    const s = server(api, { status: "reserved", reservedUntil: "2026-10-24T10:00:00.000Z", version: 7 });
+    const confirms: Record<string, unknown>[] = [];
+    api.handlers.set(`POST /instagram-orders/${ID}/confirm`, async route => {
+      confirms.push(route.request().postDataJSON() as Record<string, unknown>);
+      await route.fulfill({ json: { ...s.order, status: "finalized", paymentState: "confirmed", version: 9, lines: [] } });
+    });
+    await page.goto(`/?page=instagram-orders&ig.order=${ID}`);
+    const panel = page.getByRole("region", { name: "سفارش IG-000200" });
+    const form = panel.getByRole("form", { name: "فرم تأیید واریز" });
+    const trigger = form.getByRole("button", { name: "تأیید واریز و نهایی‌سازی" });
+    await form.getByLabel("حساب مقصد").selectOption(ACCOUNT);
+    await form.getByLabel("مبلغ واریز (تومان)").fill("۱۰۵٬۰۰۰");
+    await form.getByLabel("شمارهٔ پیگیری بانک").fill("778899");
+    await form.getByLabel("زمان واریز").fill("2026-10-23T09:00");
+    await expect(trigger).toBeEnabled();
+
+    // کرایه زیر فرم باز عوض می‌شود (مبلغ کامل ۱۱۰٬۰۰۰ تومان، نسخهٔ ۸).
+    s.order = { ...s.order, version: 8, invoice: { ...s.order.invoice, shipping: "100000", payable: "1100000" } };
+    await panel.getByRole("button", { name: "به‌روزرسانی" }).click();
+    await expect(form).toContainText("110٬000");
+    await expect(form).toContainText("دقیقاً برابر مبلغ کامل سفارش");
+    await expect(trigger, "مبلغ کهنه با نسخهٔ تازه نمی‌رود").toBeDisabled();
+    expect(confirms).toEqual([]);
+
+    await form.getByLabel("مبلغ واریز (تومان)").fill("۱۱۰٬۰۰۰");
+    await trigger.click();
+    const dialog = page.getByRole("dialog", { name: "تأیید واریز سفارش IG-000200" });
+    await expect(dialog).toContainText("110٬000");
+    await dialog.getByRole("button", { name: "تأیید واریز و نهایی‌سازی" }).click();
+    await expect.poll(() => confirms.length).toBe(1);
+    expect(confirms[0]).toMatchObject({ version: 8, accountId: ACCOUNT, amount: "1100000", refNo: "778899" });
   });
 });
