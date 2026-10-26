@@ -37,6 +37,7 @@ export function validateSaleRequest(r: QueuedRequest): NonNullable<QueuedRequest
   const c = r.saleContext;
   const uuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
   if (!c || ![c.actorId, c.invoiceId, c.branchId, c.shiftId].every(v => typeof v === "string" && uuid.test(v)) ||
+      (c.channel !== undefined && (c.channel !== "instagram" || c.shiftId !== c.branchId)) ||
       r.method !== "POST" || r.path !== `/invoices/${c.invoiceId}/finalize` ||
       !r.body || typeof r.body !== "object" || Array.isArray(r.body) || Object.keys(r.body).length !== 0) {
     throw new Error("زمینهٔ معتبر فروش در صف نیست؛ ردیف حفظ شد و نیازمند رسیدگی است.");
@@ -56,9 +57,16 @@ export async function replay(r: QueuedRequest): Promise<void> {
   const who = await session.me();
   if (who?.id !== c.actorId) throw new Error("این فروش متعلق به کاربر فعلی نیست؛ ردیف صف حفظ شد.");
   const invoice = await pos.invoice(c.invoiceId);
-  if (invoice.createdBy !== c.actorId || invoice.branchId !== c.branchId || invoice.shiftId !== c.shiftId)
+  /*
+   * فروش اینستاگرام شیفت ندارد و کانالش پایدار است (مهاجرت ۱۰۵): زمینه با کانال و
+   * نبودِ شیفت سنجیده می‌شود. کشویی نیست که باز بودنش پرسیده شود؛ قاعدهٔ «فقط پرداخت
+   * کامل» را خودِ سرور در نهایی‌سازی اجبار می‌کند.
+   */
+  const instagram = c.channel === "instagram";
+  if (invoice.createdBy !== c.actorId || invoice.branchId !== c.branchId ||
+      (instagram ? invoice.channel !== "instagram" || invoice.shiftId !== null : invoice.shiftId !== c.shiftId))
     throw new Error("زمینهٔ فاکتور با صف یکسان نیست؛ ردیف صف حفظ شد.");
-  if (invoice.status === "draft") {
+  if (invoice.status === "draft" && !instagram) {
     const shift = await pos.currentShift(c.branchId);
     if (shift?.id !== c.shiftId || shift.userId !== c.actorId || shift.status !== "open")
       throw new Error("شیفت این فروش باز نیست؛ ردیف صف حفظ شد.");

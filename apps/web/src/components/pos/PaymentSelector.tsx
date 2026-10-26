@@ -5,7 +5,7 @@ import { Button, Field } from "../ui/Controls.tsx";
 import { StatusBadge } from "../ui/Status.tsx";
 import { Icon, type IconName } from "../Icon.tsx";
 import { rialFromTomanInput } from "../../lib/money.ts";
-import { allOptions, CARD_READER_NOT_CONFIGURED, checkAmount, LINK_NOT_IMPLEMENTED, maxAmount, paymentLocked, usableChannel, type PaymentLayout,
+import { allOptions, CARD_READER_NOT_CONFIGURED, TRANSFER_NOT_CONFIGURED, checkAmount, LINK_NOT_IMPLEMENTED, maxAmount, paymentLocked, usableChannel, type PaymentLayout,
   type PaymentOption, type PaymentPhase } from "../../lib/pos-payments.ts";
 
 /**
@@ -62,7 +62,7 @@ const CAPTION: Record<string, string> = {
 const ICON: Record<string, IconName> = { card_reader: "card", cash: "vault", transfer: "refresh", gateway: "external", points: "sparkle", gift_card: "tag" };
 
 /** خانهٔ ثابت ردیف اصلی: روشِ قابل ثبت یا `null` با دلیل. */
-type Tile = { key: "card_reader" | "snappay" | "digipay"; label: string; option: PaymentOption | null; reason: string | null };
+type Tile = { key: "card_reader" | "transfer" | "snappay" | "digipay"; label: string; option: PaymentOption | null; reason: string | null };
 
 /** یک خانهٔ ردیف اصلی — عادی، فوکوس، انتخاب، قفل موقت، ناموجود. */
 function MethodTile({ tile, pressed, locked, onPick }: { tile: Tile; pressed: boolean; locked: boolean; onPick: () => void }) {
@@ -74,7 +74,7 @@ function MethodTile({ tile, pressed, locked, onPick }: { tile: Tile; pressed: bo
     disabled={locked && !unavailable} aria-describedby={captionId}
     onClick={() => { if (!unavailable && !locked) onPick(); }}>
     <span className="pay-tile-top" aria-hidden="true">
-      <span className="pay-tile-icon"><Icon name={tile.key === "card_reader" ? "card" : "external"} size="sm" /></span>
+      <span className="pay-tile-icon"><Icon name={tile.key === "card_reader" ? "card" : tile.key === "transfer" ? "refresh" : "external"} size="sm" /></span>
       <span className="pay-tile-mark">{!unavailable && pressed ? <Icon name="check" size="sm" /> : null}</span>
     </span>
     <span className="pay-tile-name" aria-hidden="true">{tile.label}</span>
@@ -212,10 +212,13 @@ export function PaymentSelector({ layout, remaining, received, phase, disabled, 
     setSelected((s) => [...s, o.code]);
   }
 
-  // ردیف ثابت: کارت‌خوان، اسنپ‌پی، دیجی‌پی — همیشه هر سه، حتی بی‌پشتوانه (درخواست مالک).
+  // ردیف ثابت: کارت‌خوان (یا در حالت اینستاگرام کارت‌به‌کارت)، اسنپ‌پی، دیجی‌پی — همیشه هر سه،
+  // حتی بی‌پشتوانه (درخواست مالک).
   const card = layout.primary[0] ?? null;
+  const transfer = layout.primaryKind === "transfer";
   const tiles: Tile[] = [
-    { key: "card_reader", label: card ? labelOf(card) : "کارت‌خوان", option: card, reason: card ? card.unavailableReason : CARD_READER_NOT_CONFIGURED },
+    { key: layout.primaryKind, label: card ? labelOf(card) : transfer ? "کارت‌به‌کارت" : "کارت‌خوان", option: card,
+      reason: card ? card.unavailableReason : transfer ? TRANSFER_NOT_CONFIGURED : CARD_READER_NOT_CONFIGURED },
     ...layout.providers.map((p): Tile => ({ key: p.key, label: p.label, option: p.option,
       reason: p.option ? p.option.unavailableReason : p.unavailableReason })),
   ];

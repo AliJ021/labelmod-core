@@ -368,8 +368,12 @@ async function listOrders(db: Db, o: ListOpts) {
      ORDER BY io.created_at DESC, io.id DESC
      LIMIT ${PAGE} OFFSET ${offset}`.execute(db);
   const total = Number(r.rows[0]?.total ?? 0);
+  // ساخت سفارش چندمرحله‌ای پس از مهاجرت ۱۰۵ پیش‌فرض بسته است؛ صفحه دکمه‌اش را از همین می‌خواند.
+  // فقط نمایش است — دروازهٔ واقعی `legacy_create_closed` در `createIn` است.
+  const legacy = await sql<{ on: boolean }>`SELECT platform.setting_bool('instagram.legacy_order_create', false) AS on`.execute(db);
   return {
     page: o.page, perPage: PAGE, total, pages: Math.max(1, Math.ceil(total / PAGE)),
+    legacyCreate: legacy.rows[0]?.on === true,
     orders: r.rows.map((x) => ({
       id: x.id, orderNo: x.order_no, status: x.status, paymentState: x.payment_state, shippingState: x.shipping_state,
       instagramUsername: x.instagram_username, customerName: x.customer_name, mobile: x.mobile,

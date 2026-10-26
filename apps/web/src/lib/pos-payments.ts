@@ -61,6 +61,11 @@ export interface ProviderSlot {
 }
 
 export interface PaymentLayout {
+  /**
+   * خانهٔ تمام‌عرض ردیف اول: «کارت‌خوان» در صندوق فروشگاه، «کارت‌به‌کارت» در حالت
+   * اینستاگرام (بازنگری مالک ۲۶ اکتبر) — همان چیدمان مصوب، فقط روش این خانه عوض می‌شود.
+   */
+  primaryKind: "card_reader" | "transfer";
   primary: PaymentOption[];
   providers: ProviderSlot[];
   more: PaymentOption[];
@@ -70,12 +75,25 @@ export const NEEDS_CUSTOMER_REASON = "ابتدا مشتری را به فاکتو
 export const SNAPPAY_NOT_CONFIGURED = "اسنپ‌پی برای این شعبه تنظیم نشده است.";
 export const DIGIPAY_NOT_CONFIGURED = "ثبت دستی دیجی‌پی برای این شعبه تنظیم نشده است؛ حساب تسویه را در تنظیمات معرفی کنید.";
 export const CARD_READER_NOT_CONFIGURED = "کارت‌خوانی برای این شعبه تعریف نشده است؛ پایانه را در تنظیمات معرفی کنید.";
+export const TRANSFER_NOT_CONFIGURED = "کارت‌به‌کارت برای این شعبه تعریف نشده است؛ روش پرداخت را در تنظیمات معرفی کنید.";
 export const LINK_NOT_IMPLEMENTED = "ساخت لینک پرداخت هنوز در سرور پیاده نشده است؛ پرداخت را حضوری بگیرید.";
 
-function placement(m: PaymentMethod): { group: PaymentGroup; rank: number } | null {
+/**
+ * جای هر روش در چیدمان.
+ *
+ * در حالت اینستاگرام مشتری حضور ندارد: نه کارت‌خوان، نه نقد (کشویی نیست)، نه نسیه
+ * (فقط پرداخت کامل). کارت‌به‌کارت جای کارت‌خوان را می‌گیرد. دروازهٔ واقعی
+ * `sales.instagram_payment_guard` (مهاجرت ۱۰۵) است؛ اینجا فقط آنچه سرور رد می‌کند
+ * پیشنهاد نمی‌شود.
+ */
+function placement(m: PaymentMethod, instagram: boolean): { group: PaymentGroup; rank: number } | null {
   const code = m.code.toLowerCase();
   if (code === "snappay") return { group: "provider", rank: 1 };
   if (code === "digipay") return { group: "provider", rank: 2 };
+  if (instagram) {
+    if (m.kind === "card_reader" || m.kind === "cash") return null;
+    if (m.kind === "transfer") return { group: "primary", rank: 1 };
+  }
   switch (m.kind) {
     case "card_reader": return { group: "primary", rank: 1 };
     case "cash": return { group: "more", rank: 1 };
@@ -91,9 +109,10 @@ export function needsCustomer(kind: string): boolean {
   return kind === "points" || kind === "gift_card";
 }
 
-export function paymentLayout(methods: readonly PaymentMethod[], ctx: { hasCustomer: boolean }): PaymentLayout {
+export function paymentLayout(methods: readonly PaymentMethod[], ctx: { hasCustomer: boolean; instagram?: boolean }): PaymentLayout {
+  const instagram = ctx.instagram === true;
   const placed = methods.flatMap((m) => {
-    const p = placement(m);
+    const p = placement(m, instagram);
     if (!p) return [];
     const option: PaymentOption = {
       code: m.code, name: m.name, kind: m.kind, requiresRef: m.requiresRef, group: p.group,
@@ -107,6 +126,7 @@ export function paymentLayout(methods: readonly PaymentMethod[], ctx: { hasCusto
   const digipay = of("provider").find((o) => o.code.toLowerCase() === "digipay") ?? null;
   const link: PaymentChannel = { key: "link", label: "لینک پرداخت", unavailableReason: LINK_NOT_IMPLEMENTED };
   return {
+    primaryKind: instagram ? "transfer" : "card_reader",
     primary: of("primary"),
     providers: [
       { key: "snappay", label: "اسنپ‌پی", option: snappay, unavailableReason: snappay ? null : SNAPPAY_NOT_CONFIGURED,

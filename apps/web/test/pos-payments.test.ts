@@ -11,7 +11,7 @@ import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import { ApiError } from "../src/lib/api.ts";
 import { allOptions, cartCounts, checkAmount, checkoutErrorMessage, checkoutTotals, DIGIPAY_NOT_CONFIGURED, LINK_NOT_IMPLEMENTED,
-  maxAmount, NEEDS_CUSTOMER_REASON, SNAPPAY_NOT_CONFIGURED, usableChannel,
+  maxAmount, NEEDS_CUSTOMER_REASON, SNAPPAY_NOT_CONFIGURED, TRANSFER_NOT_CONFIGURED, usableChannel,
   finalAmounts, intentFromPending, intentToPending, paymentBody, paymentFailureKind, paymentLayout, paymentLocked,
   resolveIntentStatus, type PaymentIntent, type PaymentPhase } from "../src/lib/pos-payments.ts";
 import { clearPendingPayment, readPendingPayment, writePendingPayment } from "../src/lib/pending-payment.ts";
@@ -310,5 +310,34 @@ describe("صندوق — ساختار", () => {
     assert.match(src, /<SafeAction trigger="نهایی‌کردن فاکتور"[\s\S]*?run=\{finalize\} verify=\{verifyFinalize\}/);
     assert.match(src, /<CreditCheckout[\s\S]*?run=\{finalize\} verify=\{verifyFinalize\}/);
     assert.ok(!/methodCode: "credit"/.test(src), "صندوق هرگز ردیف پرداخت نسیه نمی‌فرستد");
+  });
+});
+
+describe("حالت اینستاگرامِ صندوق — کارت‌به‌کارت جای کارت‌خوان (بازنگری مالک ۲۶ اکتبر، مهاجرت ۱۰۵)", () => {
+  test("همان چیدمان: خانهٔ اول کارت‌به‌کارت، سپس اسنپ‌پی و دیجی‌پی؛ نه نقد، نه کارت‌خوان، نه نسیه", () => {
+    const l = paymentLayout([...SEED, m("snappay", "gateway", true), m("digipay", "gateway", true)], { hasCustomer: true, instagram: true });
+    assert.equal(l.primaryKind, "transfer");
+    assert.deepEqual(codes(l.primary), ["transfer"]);
+    assert.deepEqual(l.providers.map((p) => p.option?.code), ["snappay", "digipay"]);
+    const all = codes(allOptions(l));
+    for (const banned of ["cash", "card", "credit"]) assert.ok(!all.includes(banned), `${banned} در حالت اینستاگرام پیشنهاد شد`);
+    // پرداخت ترکیبی با بقیهٔ روش‌های مجاز می‌ماند.
+    assert.deepEqual(codes(l.more), ["gateway", "points", "giftcard"]);
+    assert.ok(l.primary.every((o) => !o.allowsChange), "بدون نقد، باقی پولی هم نیست");
+  });
+
+  test("کنترل منفی: همان روش‌ها در صندوق فروشگاه چیدمان پیشین را دارند", () => {
+    const l = paymentLayout(SEED, { hasCustomer: true });
+    assert.equal(l.primaryKind, "card_reader");
+    assert.deepEqual(codes(l.primary), ["card"]);
+    assert.ok(codes(l.more).includes("cash") && codes(l.more).includes("transfer"));
+  });
+
+  test("کارت‌به‌کارتِ تعریف‌نشده خانه را پنهان نمی‌کند؛ دلیلش روی خانه است", () => {
+    const l = paymentLayout(SEED.filter((x) => x.kind !== "transfer"), { hasCustomer: true, instagram: true });
+    assert.deepEqual(codes(l.primary), []);
+    const src = readFileSync(new URL("../src/components/pos/PaymentSelector.tsx", import.meta.url), "utf8");
+    assert.match(src, /transfer \? TRANSFER_NOT_CONFIGURED : CARD_READER_NOT_CONFIGURED/);
+    assert.match(TRANSFER_NOT_CONFIGURED, /کارت‌به‌کارت/);
   });
 });

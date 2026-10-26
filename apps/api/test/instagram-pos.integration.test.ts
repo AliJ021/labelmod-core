@@ -213,6 +213,29 @@ describe("فروش اینستاگرام از صندوق: قرارداد و رق�
     assert.equal(pos.statusCode, 403, pos.body);
   });
 
+  test("خواندن: اپراتور فقط فاکتور اینستاگرامِ خودش را می‌خواند و چاپ می‌کند؛ فهرست و فاکتور دیگران بسته", async () => {
+    const v = await variation(4);
+    const mine = await cart(u.op, v.id, 1, [{ methodCode: "transfer", amount: "1000000", refNo: `C2C-${suffix}-read` }]);
+    assert.equal((await call("POST", `/invoices/${mine}/finalize`, u.op, {}, key())).statusCode, 200);
+    const own = await call("GET", `/invoices/${mine}`, u.op);
+    assert.equal(own.statusCode, 200, own.body);
+    assert.equal(own.json().channel, "instagram");
+    assert.equal((await call("GET", `/invoices/${mine}/print`, u.op)).statusCode, 200, "رسید فروش خودش چاپ می‌شود");
+    // اپراتور دیگرِ همان شعبه: همان پاسخ ۴۰۳ برای «مال دیگری» و «ناموجود» — وجود شناسه لو نمی‌رود.
+    const peer = await call("GET", `/invoices/${mine}`, u.op2);
+    const ghost = await call("GET", `/invoices/${crypto.randomUUID()}`, u.op2);
+    assert.equal(peer.statusCode, 403, peer.body);
+    assert.equal(ghost.statusCode, 403, ghost.body);
+    assert.equal(peer.json().error.code, ghost.json().error.code);
+    assert.equal((await call("GET", `/invoices/${mine}/print`, u.op2)).statusCode, 403);
+    // فاکتور حضوری و فهرست فاکتورها برای نقش محدود باز نمی‌شوند.
+    const store = await cart(u.c1, v.id, 1, [{ methodCode: "cash", amount: "1000000" }]);
+    assert.equal((await call("GET", `/invoices/${store}`, u.op)).statusCode, 403);
+    assert.equal((await call("GET", `/invoices?branchId=${BRANCH}`, u.op)).statusCode, 403);
+    // کنترل مثبت: دروازهٔ عمومی دست‌نخورده است — صندوق‌دار فاکتور اینستاگرام را هم می‌خواند (مرجوعی، بازیابی).
+    assert.equal((await call("GET", `/invoices/${mine}`, u.c1)).statusCode, 200);
+  });
+
   test("تغییر نقش، کانال فاکتور نهایی را عوض نمی‌کند؛ گزارش و مرجوعی به تفکیک منبع", async () => {
     const v = await variation(4);
     const ig = await cart(u.op, v.id, 1, [{ methodCode: "transfer", amount: "1000000", refNo: `R-${suffix}-ig` }]);

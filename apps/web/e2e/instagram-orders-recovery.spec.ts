@@ -39,7 +39,8 @@ const line = (qty: number) => ({ id: "ffffffff-6666-4666-8666-ffffffffffff", var
   color: "سرمه‌ای", size: "XL", qty, unitPrice: "1000000", discountAmount: "0", netAmount: String(1000000 * qty), available: "5",
   sync: { state: "none", at: null, error: null } });
 const accounts = { accounts: [{ id: ACCOUNT, code: "1102", name: "بانک آزمایشی", bankName: "بانک", accountNo: "6037-0000" }] };
-const emptyPage = { page: 1, perPage: 20, total: 0, pages: 1, orders: [] };
+// این پرونده روال قبلیِ ساخت سفارش را می‌سنجد؛ پس از مهاجرت ۱۰۵ آن روال فقط با تنظیم صریح باز است.
+const emptyPage = { page: 1, perPage: 20, total: 0, pages: 1, orders: [], legacyCreate: true };
 
 /** سرور ماک حالت‌دار با Idempotency واقعی: کلید دیده‌شده Replay است، بی کلید هر بار اثر. */
 function server(api: MockApi, start: Record<string, unknown>) {

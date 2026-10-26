@@ -161,6 +161,7 @@ a[role="tab"] { display: inline-flex; align-items: center; text-decoration: none
 .pos-bar { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 0 var(--s-3); min-block-size: var(--touch); padding-inline: var(--s-1); }
 .pos-context { display: flex; align-items: center; gap: var(--s-2); flex: 0 0 auto; min-inline-size: 0; white-space: nowrap; }
 .pos-shift { display: inline-flex; align-items: center; gap: var(--s-1); padding: 2px var(--s-3); border-radius: var(--r-pill); background: var(--good-soft); color: var(--ink); font-size: var(--text-xs); font-weight: var(--weight-semibold); }
+.pos-shift--instagram { background: var(--accent-soft); }
 .pos-branch { color: var(--ink-2); font-size: var(--text-sm); }
 .pos-bar .pill { flex: 0 0 auto; white-space: nowrap; font-size: var(--text-xs); }
 .pos-tools { display: flex; flex-wrap: wrap; align-items: center; justify-content: flex-end; gap: var(--s-1); flex: 1 0 auto; margin-inline-start: auto; }
