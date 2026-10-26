@@ -80,10 +80,11 @@ export function lineGross(line: { netAmount: string; discountAmount: string }): 
  * تغییر تعداد. سرور هم همین را می‌گوید (`bad_qty`) و دلیلش این است
  * که حذف یک عمل دیگر با ردّ حسابرسی متفاوت است.
  */
+import { quantityText, quantityUnits } from "./sale-quantity.ts";
+
 export function steppedQty(current: string, delta: number): string | null {
-  // تعداد در صندوق عدد صحیح است — همان محدودیتی که Endpoint دارد.
-  const n = Number(current);
-  if (!Number.isFinite(n)) return null;
-  const next = Math.trunc(n) + delta;
-  return next > 0 ? String(next) : null;
+  const n = quantityUnits(current);
+  if (n === null || !Number.isSafeInteger(delta)) return null;
+  const next = n + BigInt(delta) * 1000n;
+  return next > 0n && next < 100_000_000_000_000n ? quantityText(next) : null;
 }

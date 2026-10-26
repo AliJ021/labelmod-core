@@ -598,6 +598,9 @@ export class InvoiceService {
     }
 
     // خواندن‌ها روی همان اتصال و پس از قفل فاکتور انجام می‌شوند.
+    // A fractional scan delta must not bypass policy by making an old fractional
+    // line whole. Lock and validate the delta as well as the resulting line.
+    await sql`SELECT sales.assert_sale_quantity(${input.qty}::numeric)`.execute(trx);
     await this.requireDraft(input.invoiceId, trx);
     const variationId = await this.resolveVariation(input, trx);
     await this.assertStock(trx, input.invoiceId, variationId, input.qty);

@@ -4,6 +4,8 @@ import { pos, type Invoice, type PaymentMethod, type Warehouse } from "../lib/po
 import { PosProductPicker } from "./PosProductPicker.tsx";
 import { Money } from "./ui/Money.tsx";
 import { SafeAction } from "./ui/SafeAction.tsx";
+import { saleQuantity } from "../lib/sale-quantity.ts";
+import { onSettingSaved } from "../lib/settings-events.ts";
 
 interface Quote { token: string; returnedValue: string; replacementValue: string; debt: string; funds: string;
   debtApplied: string; transferAmount: string; fundedTransfer: string; collectAmount: string; refundAmount: string; policy: string }
@@ -23,16 +25,23 @@ export function ExchangePanel({ invoice, lines, reasonCode, reasonNote, returnWa
   const [sources, setSources] = useState<Array<{ id: string; methodCode?: string; reference: string }>>([]);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
+  const [fractional, setFractional] = useState(false);
   const [collectionMethods, setCollectionMethods] = useState<PaymentMethod[]>([]);
   useEffect(() => {
     let active = true;
+    const refreshPolicy = () => {
+      void pos.policy(invoice.branchId).then(p => { if (active) setFractional(p.allowFractionalQty === true); })
+        .catch(() => { if (active) { setFractional(false); setError("سیاست تعداد خوانده نشد؛ تعداد صحیح وارد کنید و دوباره بررسی کنید."); } });
+    };
+    refreshPolicy(); window.addEventListener("focus", refreshPolicy);
+    const unsubscribe = onSettingSaved(key => { if (key === "sales.allow_fractional_qty") refreshPolicy(); });
     void pos.paymentMethods(invoice.branchId).then(r => {
       if (active) setCollectionMethods(r.methods.filter(m => ["cash", "card_reader", "gateway", "transfer"].includes(m.kind)));
     }).catch(() => { if (active) setError("روش‌های دریافت این شعبه خوانده نشد"); });
-    return () => { active = false; };
+    return () => { active = false; window.removeEventListener("focus", refreshPolicy); unsubscribe(); };
   }, [invoice.branchId]);
   const body = { invoiceId: invoice.id, warehouseId, returnWarehouseId, lines,
-    replacements: items.map(i => ({ variationId: i.id, qty: i.qty })), reasonCode,
+    replacements: items.map(i => ({ variationId: i.id, qty: saleQuantity(i.qty, fractional) ?? i.qty })), reasonCode,
     ...(reasonNote.trim() ? { reasonNote: reasonNote.trim() } : {}) };
   const currentQuote = quote?.body === JSON.stringify(body) ? quote.value : null;
   async function pick(id: string) {
@@ -62,11 +71,12 @@ export function ExchangePanel({ invoice, lines, reasonCode, reasonNote, returnWa
       </button>)}</div>
     {items.map((item, index) => <div className="row" key={`${item.id}-${index}`}>
       <span>{item.name} · {item.sku}</span>
-      <label>تعداد<input aria-label={`تعداد جایگزین ${index + 1}`} inputMode="decimal" value={item.qty} disabled={locked || busy}
+      <label>تعداد<input aria-label={`تعداد جایگزین ${index + 1}`} inputMode={fractional ? "decimal" : "numeric"} value={item.qty} disabled={locked || busy}
         onChange={e => setItems(current => current.map((v, i) => i === index ? { ...v, qty: e.target.value } : v))} /></label>
       <button className="btn" type="button" disabled={locked || busy} onClick={() => setItems(current => current.filter((_, i) => i !== index))}>حذف</button>
     </div>)}
-    <button className="btn" type="button" disabled={locked || busy || !lines.length || !items.length || !reasonCode} onClick={() => void preview()}>۱. محاسبه و بررسی تسویه</button>
+    {items.some(i => saleQuantity(i.qty, fractional) === null) ? <p role="alert">{fractional ? "تعداد مثبت با حداکثر سه رقم اعشار وارد کنید." : "تعداد کالای جایگزین باید عدد صحیح باشد؛ فروش اعشاری غیرفعال است."}</p> : null}
+    <button className="btn" type="button" disabled={locked || busy || !lines.length || !items.length || !reasonCode || items.some(i => saleQuantity(i.qty, fractional) === null)} onClick={() => void preview()}>۱. محاسبه و بررسی تسویه</button>
     {error ? <p role="alert">{error}</p> : null}
     {currentQuote ? <>
       <dl>

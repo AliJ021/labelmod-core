@@ -308,7 +308,14 @@ describe("برگشت از فروش و دوره ثبت", { skip }, () => {
     await policy("unset");
   });
 
-  test("تعویض ارزان‌ترِ پرداخت‌نشده اعتبار یا پول ساختگی نمی‌سازد", async () => {
+  test("تعویض ارزان‌ترِ پرداخت‌نشده اعتبار یا پول ساختگی نمی‌سازد", async (t) => {
+    const quantityAdmin = await loginAs(admin);
+    const quantityToggle = await app.inject({ method: 'PATCH', url: '/settings/sales.allow_fractional_qty', ...quantityAdmin, payload: { value: true } });
+    assert.equal(quantityToggle.statusCode, 200, quantityToggle.body);
+    t.after(async () => {
+      const reset = await app.inject({ method: 'PATCH', url: '/settings/sales.allow_fractional_qty', ...quantityAdmin, payload: { value: false } });
+      assert.equal(reset.statusCode, 200, reset.body);
+    });
     await policy("carry_debt");
     const sold = await soldInvoice({ who: supervisor, qty: "1", paid: "0", withCustomer: true });
     const quote = await exchangeQuote(exchangeBody(sold.invoiceId, sold.lineId, "1", "0.5"));
@@ -343,7 +350,14 @@ describe("برگشت از فروش و دوره ثبت", { skip }, () => {
     assert.equal(after.json().status, "abandoned");
   });
 
-  test("تعویض ارزان‌ترِ تسویه‌شده فقط اختلاف واقعی را پس می‌دهد", async () => {
+  test("تعویض ارزان‌ترِ تسویه‌شده فقط اختلاف واقعی را پس می‌دهد", async (t) => {
+    const quantityAdmin = await loginAs(admin);
+    const quantityToggle = await app.inject({ method: 'PATCH', url: '/settings/sales.allow_fractional_qty', ...quantityAdmin, payload: { value: true } });
+    assert.equal(quantityToggle.statusCode, 200, quantityToggle.body);
+    t.after(async () => {
+      const reset = await app.inject({ method: 'PATCH', url: '/settings/sales.allow_fractional_qty', ...quantityAdmin, payload: { value: false } });
+      assert.equal(reset.statusCode, 200, reset.body);
+    });
     const s = await loginAs(supervisor);
     const sold = await soldInvoice({ who: supervisor, qty: "1", paid: "1000000" });
     const body = exchangeBody(sold.invoiceId, sold.lineId, "1", "0.5");
@@ -354,6 +368,9 @@ describe("برگشت از فروش و دوره ثبت", { skip }, () => {
       payload: { ...body, token: q.json().token, confirmed: true, refundMethod: "cash" } });
     assert.equal(post.statusCode, 200, post.body);
     const replacement = await app.inject({ method: "GET", url: `/invoices/${post.json().replacementInvoiceId}`, ...s });
+    const disableFractions = await app.inject({ method: "PATCH", url: "/settings/sales.allow_fractional_qty", ...quantityAdmin, payload: { value: false } });
+    assert.equal(disableFractions.statusCode, 200, disableFractions.body);
+    // Returning a previously sold fraction remains valid with new fractional sales disabled.
     const returned = await app.inject({ method: "POST", url: "/returns/commit", ...s,
       headers: { ...s.headers, "idempotency-key": randomUUID() }, payload: {
         invoiceId: post.json().replacementInvoiceId, reasonCode: "changed_mind", refundAmount: "500000", shiftId: supervisorShift,

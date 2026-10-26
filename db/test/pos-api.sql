@@ -170,11 +170,13 @@ PERFORM pg_temp.assert_eq('مبلغ از همان Snapshot ساخته شد',
 
 PERFORM catalog.set_price(v_var, 1000001);
 
-PERFORM pg_temp.assert_eq('تعداد اعشاری هم پذیرفته می‌شود (دیتابیس واحد فروش را محدود نمی‌کند)',
+PERFORM platform.set_setting('sales.allow_fractional_qty', 'true', 'آزمون محاسبهٔ دقیق تعداد اعشاری', v_user);
+PERFORM pg_temp.assert_eq('تعداد اعشاری با فعال‌کردن صریح سیاست پذیرفته می‌شود',
   (SELECT 1 FROM (SELECT sales.set_line_qty(v_inv, v_line2, 2.5)) x), 1);
 PERFORM pg_temp.assert_eq('مبلغ سطر اعشاری',
   (SELECT net_amount FROM sales.invoice_line WHERE id = v_line2), 1250000);
 PERFORM sales.set_line_qty(v_inv, v_line2, 2);
+PERFORM platform.set_setting('sales.allow_fractional_qty', 'false', 'بازگشت به سیاست پیش‌فرض', v_user);
 
 -- ═══════════════════════════════════════════════════════════════════
 RAISE NOTICE E'\n═══ ۳. ورودی نامعتبر و دامنه ═══';

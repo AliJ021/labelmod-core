@@ -1189,8 +1189,9 @@ describe("آمادگی API صندوق", { skip }, () => {
       ...s,
       payload: { qty: "1.5" },
     });
-    assert.equal(r.statusCode, 400);
-    assert.equal(r.json().error.code, "invalid_input");
+    assert.equal(r.statusCode, 409);
+    assert.equal(r.json().error.code, "rule_violation");
+    assert.match(r.json().error.message, /عدد صحیح/);
   });
 
   test("سطر ناموجود ۴۰۴ می‌دهد", async () => {

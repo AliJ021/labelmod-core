@@ -97,6 +97,27 @@ test("exchange separately quotes settlement before explicit final confirmation",
   expect(posts).toBe(1);
 });
 
+for (const enabled of [false, true]) test(`exchange replacement fractional policy=${enabled}, Persian exact input`, async ({ page, api }) => {
+  fixture(api);
+  api.defaults["GET /pos/policy"] = { requireCustomer: false, allowFractionalQty: enabled };
+  const requests: unknown[] = [];
+  api.handlers.set("POST /exchanges/quote", async route => {
+    requests.push(route.request().postDataJSON());
+    await route.fulfill({ json: api.defaults["POST /exchanges/quote"] });
+  });
+  await choose(page);
+  await page.getByRole("button", { name: "تعویض", exact: true }).click();
+  await page.getByRole("button", { name: /جایگزین با همان تنوع/ }).click();
+  await page.getByLabel("تعداد جایگزین 1").fill("۰٫۱۲۵");
+  const button = page.getByRole("button", { name: "۱. محاسبه و بررسی تسویه", exact: true });
+  if (!enabled) { await expect(button).toBeDisabled(); expect(requests).toEqual([]); }
+  else {
+    await button.click();
+    await expect.poll(() => requests.length).toBe(1);
+    expect(requests[0]).toMatchObject({ replacements: [{ variationId: "v1", qty: "0.125" }] });
+  }
+});
+
 test("phone results are explicit choices with pagination; not-found recovery never reposts", async ({ page, api }) => {
   fixture(api);
   api.handlers.set("GET /invoices/by-phone", async (route, url) => {
