@@ -155,6 +155,12 @@ export class InstagramOrderService {
   }
 
   async createIn(trx: Transaction<Database>, input: CreateOrderInput): Promise<string> {
+    // بازنگری ۲۶ اکتبر (۱۰۵): فروش تازهٔ اینستاگرام از صندوق ثبت می‌شود، بی رزرو و ارسال. ساخت سفارش v1
+    // فقط با کلید صریح `instagram.legacy_order_create` باز است؛ سفارش‌های موجود همان چرخهٔ قبلی را دارند.
+    const open = await sql<{ on: boolean }>`SELECT platform.setting_bool('instagram.legacy_order_create', false) AS on`.execute(trx);
+    if (!open.rows[0]?.on) {
+      throw orderError("legacy_create_closed", "سفارش تازهٔ اینستاگرام از صندوق در حالت اینستاگرام ثبت می‌شود؛ ساخت سفارش چندمرحله‌ای بسته است.", 409);
+    }
     const username = normalizeInstagramUsername(input.instagramUsername);
     if (input.receivingAccountId) await this.assertReceivingAccount(trx, input.receivingAccountId, input.branchId);
     if (input.shippingAmount !== undefined && input.shippingAmount < 0n) {

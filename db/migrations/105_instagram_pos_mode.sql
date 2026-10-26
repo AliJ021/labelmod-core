@@ -157,4 +157,16 @@ BEGIN
   RETURN NEW;
 END $$;
 
+-- ساخت سفارش چندمرحله‌ای v1 بسته است، مگر با تصمیم صریح. سفارش‌های موجود دست نمی‌خورند:
+-- خواندن، تأیید واریز، لغو، آزادسازی و انقضای همان قاعدهٔ ۱۰۲ باز می‌مانند.
+INSERT INTO platform.setting AS t
+  (key, value, description, requires_approval, kind, label, group_key, options,
+   min_value, max_value, unit, help, sort_order, permission, is_editable)
+VALUES ('instagram.legacy_order_create', 'false'::jsonb,
+  'ساخت سفارش چندمرحله‌ای اینستاگرام (v1) با رزرو و ارسال.', false,
+  'bool', 'ساخت سفارش اینستاگرام چندمرحله‌ای (قدیمی)', 'sales', NULL, NULL, NULL, NULL,
+  'فروش تازهٔ اینستاگرام از صندوق در حالت اینستاگرام و فقط با پرداخت کامل ثبت می‌شود. این کلید فقط ساخت سفارش قدیمی را باز می‌کند؛ سفارش‌های موجود در هر حال قابل پیگیری و بستن‌اند.',
+  61, 'settings.security', true)
+ON CONFLICT (key) DO NOTHING;
+
 COMMIT;

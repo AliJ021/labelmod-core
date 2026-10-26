@@ -13,7 +13,7 @@ import { latinDigits } from "../sales/invoice-page.ts";
 import type { FastifyInstance } from "fastify";
 import { z } from "zod";
 import { AuthError } from "../auth/service.ts";
-import { can, requireForSession } from "../auth/permission.ts";
+import { can, requireForSession, requireSellerForSession, saleOperationFor } from "../auth/permission.ts";
 import type { Db } from "../db/client.ts";
 import { parseMoney, serializeMoney } from "../lib/money.ts";
 import { runOnce } from "../lib/idempotency.ts";
@@ -46,7 +46,8 @@ const createInvoiceBody = z.object({
   branchId: uuid,
   warehouseId: uuid,
   customerId: uuid.optional(),
-  channel: z.enum(["pos", "web", "phone"]).default("pos"),
+  /** نبودن = حضوری؛ مگر کاربر فقط فروش اینستاگرام داشته باشد (سرور تعیین می‌کند). */
+  channel: z.enum(["pos", "web", "phone", "instagram"]).optional(),
 });
 
 const addLineBody = z
@@ -136,12 +137,18 @@ export function registerSalesRoutes(app: FastifyInstance, deps: SalesRouteDeps):
     return s;
   };
 
+  /** مجوز فروش از کانال خودِ فاکتور (مهاجرت ۱۰۵): `instagram` → `instagram.pos.sell`، بقیه → `sale.create`. */
+  const requireSaleFor = async (s: { userId: string; pinUnlocked: boolean }, invoiceId: string) => {
+    const inv = await invoices.byId(invoiceId);
+    return requireForSession(db, s, saleOperationFor(inv?.channel ?? "pos"));
+  };
+
   // صندوق‌دار فقط سیاست لازم برای فروش را می‌خواند؛ تنظیمات مدیریتی افشا نمی‌شود.
   app.get("/pos/policy", async (req) => {
     const s = session(req);
     const { branchId } = z.object({ branchId: uuid }).parse(req.query);
     await assertBranch(db, s.userId, branchId);
-    await requireForSession(db, s, "sale.create");
+    await requireSellerForSession(db, s);
     // نبودِ ردیف `sales.credit_enabled` (نصبِ پیش از ۰۹۶) یعنی روشن، همان رفتار قبلی.
     // این فقط نمایش است؛ دروازهٔ واقعی نسیه در `sales.finalize_invoice` است.
     const result = await sql<{ require_customer: boolean; credit_enabled: boolean }>`
@@ -256,12 +263,21 @@ export function registerSalesRoutes(app: FastifyInstance, deps: SalesRouteDeps):
     // اصلاً به آن شعبه دسترسی ندارد.
     await assertBranch(db, s.userId, body.branchId);
     await assertWarehouseInBranch(db, body.warehouseId, body.branchId);
-    await requireForSession(db, s, "sale.create");
+
+    // کانال را سرور تعیین می‌کند (مهاجرت ۱۰۵): کاربری که فقط فروش اینستاگرام دارد همیشه
+    // `instagram` می‌گیرد، هرچه فرستاده باشد؛ و `instagram` فقط با `instagram.pos.sell`.
+    // کانال در لحظهٔ درج ثابت می‌شود و تغییر بعدی نقش رویش اثر ندارد (نگهبان ۱۰۲).
+    const allowed = async (operation: string) =>
+      (await can(db, { userId: s.userId, operation, viaPin: s.pinUnlocked })).verdict === "allow";
+    const [instore, instagram] = await Promise.all([allowed("sale.create"), allowed("instagram.pos.sell")]);
+    const channel = !instore && instagram ? "instagram" : (body.channel ?? "pos");
+    await requireForSession(db, s, saleOperationFor(channel));
 
     // فاکتور صندوق به شیفت باز کاربر می‌چسبد. بدون شیفت، درآمدش به
-    // هیچ دوره ثبتی وصل نمی‌شود — همان الگوی C1.
+    // هیچ دوره ثبتی وصل نمی‌شود — همان الگوی C1. فروش اینستاگرام کشو ندارد و
+    // به دورهٔ روزانهٔ کانال خودش می‌رود.
     let shiftId: string | undefined;
-    if (body.channel === "pos") {
+    if (channel === "pos") {
       const shift = await shifts.current(s.userId, body.branchId);
       if (!shift) {
         throw new ShiftError(
@@ -288,18 +304,21 @@ export function registerSalesRoutes(app: FastifyInstance, deps: SalesRouteDeps):
         actorId: s.userId,
         branchId: body.branchId,
         warehouseId: body.warehouseId,
-        channel: body.channel,
+        channel,
         customerId: body.customerId ?? null,
       },
       run: async (trx) => {
+        // زمینهٔ «حالت صندوق» فقط برای همین درج؛ دیتابیس مجوز و شعبهٔ سازنده را خودش می‌سنجد.
+        if (channel === "instagram") await sql`SELECT set_config('lmc.instagram_order', 'pos', true)`.execute(trx);
         const id = await invoices.createDraftIn(trx, {
           branchId: body.branchId,
           warehouseId: body.warehouseId,
-          channel: body.channel,
+          channel,
           actorId: s.userId,
           ...(shiftId === undefined ? {} : { shiftId }),
           ...(body.customerId === undefined ? {} : { customerId: body.customerId }),
         });
+        if (channel === "instagram") await sql`SELECT set_config('lmc.instagram_order', '', true)`.execute(trx);
         return { value: id, ref: id };
       },
       replay: async (ref) => ref,
@@ -418,7 +437,7 @@ export function registerSalesRoutes(app: FastifyInstance, deps: SalesRouteDeps):
     // Explicit supervisory price approval remains possible without taking over a cart.
     if (body.unitPrice !== undefined) await requireForSession(db, s, "sale.price_override");
     await assertInvoiceInScope(db, s.userId, id, invoices, body.unitPrice === undefined);
-    await requireForSession(db, s, "sale.create");
+    await requireSaleFor(s, id);
 
     const discount = body.discountAmount ? parseMoney(body.discountAmount) : 0n;
     const manualPrice = body.unitPrice === undefined ? undefined : parseMoney(body.unitPrice);
@@ -457,7 +476,7 @@ export function registerSalesRoutes(app: FastifyInstance, deps: SalesRouteDeps):
     const { id, lineId } = z.object({ id: uuid, lineId: uuid }).parse(req.params);
     const body = setLineQtyBody.parse(req.body);
     await assertInvoiceInScope(db, s.userId, id, invoices);
-    await requireForSession(db, s, "sale.create");
+    await requireSaleFor(s, id);
 
     // سنجش مقدار **پس از** دامنه و مجوز: کاربری که به این فاکتور
     // دسترسی ندارد باید ۴۰۳ بگیرد، نه ۴۰۰ — وگرنه پاسخ خطا به ترتیبِ
@@ -490,7 +509,7 @@ export function registerSalesRoutes(app: FastifyInstance, deps: SalesRouteDeps):
     const { id, lineId } = z.object({ id: uuid, lineId: uuid }).parse(req.params);
     const body = setLineDiscountBody.parse(req.body);
     await assertInvoiceInScope(db, s.userId, id, invoices);
-    await requireForSession(db, s, "sale.create");
+    await requireSaleFor(s, id);
 
     return invoiceToJson(
       await invoices.setLineDiscount({
@@ -530,7 +549,7 @@ export function registerSalesRoutes(app: FastifyInstance, deps: SalesRouteDeps):
     const body = setLinePriceBody.parse(req.body);
     await requireForSession(db, s, "sale.price_override");
     await assertInvoiceInScope(db, s.userId, id, invoices, false);
-    await requireForSession(db, s, "sale.create");
+    await requireSaleFor(s, id);
 
     return invoiceToJson(
       await invoices.setLinePrice({
@@ -580,7 +599,7 @@ export function registerSalesRoutes(app: FastifyInstance, deps: SalesRouteDeps):
     const s = session(req);
     const { id } = z.object({ id: uuid }).parse(req.params);
     await assertInvoiceInScope(db, s.userId, id, invoices);
-    await requireForSession(db, s, "sale.create");
+    await requireSaleFor(s, id);
 
     const body = z
       .object({
@@ -622,7 +641,7 @@ export function registerSalesRoutes(app: FastifyInstance, deps: SalesRouteDeps):
     const s = session(req);
     const { id } = z.object({ id: uuid }).parse(req.params);
     await assertInvoiceInScope(db, s.userId, id, invoices);
-    await requireForSession(db, s, "sale.create");
+    await requireSaleFor(s, id);
 
     const body = z
       .object({
@@ -653,7 +672,7 @@ export function registerSalesRoutes(app: FastifyInstance, deps: SalesRouteDeps):
   app.get("/invoices/:id/customer", async (req) => {
     const s = session(req);
     const { id } = z.object({ id: uuid }).parse(req.params);
-    await requireForSession(db, s, "sale.create");
+    await requireSaleFor(s, id);
     await assertInvoiceInScope(db, s.userId, id, invoices);
     const row = await db
       .selectFrom("sales.invoice as i")
@@ -704,7 +723,7 @@ export function registerSalesRoutes(app: FastifyInstance, deps: SalesRouteDeps):
     const s = session(req);
     const { id } = z.object({ id: uuid }).parse(req.params);
     await assertInvoiceInScope(db, s.userId, id, invoices);
-    await requireForSession(db, s, "sale.create");
+    await requireSaleFor(s, id);
 
     const body = z
       .object({
@@ -745,7 +764,7 @@ export function registerSalesRoutes(app: FastifyInstance, deps: SalesRouteDeps):
     const { id } = z.object({ id: uuid }).parse(req.params);
     const body = scanBody.parse(req.body ?? {});
     await assertInvoiceInScope(db, s.userId, id, invoices);
-    await requireForSession(db, s, "sale.create");
+    await requireSaleFor(s, id);
 
     // مثل مسیر تغییر تعداد: اول «اجازه داری؟»، بعد «ورودی درست است؟».
     if (Number(body.qty) <= 0) {
@@ -787,7 +806,7 @@ export function registerSalesRoutes(app: FastifyInstance, deps: SalesRouteDeps):
     const s = session(req);
     const { id, lineId } = z.object({ id: uuid, lineId: uuid }).parse(req.params);
     await assertInvoiceInScope(db, s.userId, id, invoices);
-    await requireForSession(db, s, "sale.create");
+    await requireSaleFor(s, id);
     return invoiceToJson(await invoices.removeLine(id, lineId, s.userId));
   });
 
@@ -808,7 +827,7 @@ export function registerSalesRoutes(app: FastifyInstance, deps: SalesRouteDeps):
       if (!(error instanceof InvoiceError) || !["draft_owner_mismatch", "draft_shift_closed"].includes(error.code)) throw error;
       await requireForSession(db, s, "invoice.cancel");
     }
-    await requireForSession(db, s, "sale.create");
+    await requireSaleFor(s, id);
     const inv = await invoices.cancelDraft(id, s.userId, body.reason);
     return invoiceToJson(inv);
   });
@@ -824,7 +843,7 @@ export function registerSalesRoutes(app: FastifyInstance, deps: SalesRouteDeps):
   });
   app.get("/invoices/:id/payments", async (req) => {
     const s=session(req), {id}=z.object({id:uuid}).parse(req.params);
-    await requireForSession(db,s,"sale.create");
+    await requireSaleFor(s, id);
     await assertInvoiceInScope(db,s.userId,id,invoices);
     const own=await db.selectFrom("sales.invoice").select("created_by").where("id","=",id).executeTakeFirst();
     if(own?.created_by!==s.userId) throw new InvoiceError("payment_forbidden","فقط پرداخت‌های فاکتور خودتان را می‌بینید.",403);
@@ -866,7 +885,7 @@ export function registerSalesRoutes(app: FastifyInstance, deps: SalesRouteDeps):
     const { id } = z.object({ id: uuid }).parse(req.params);
     const body = paymentBody.parse(req.body);
     await assertInvoiceInScope(db, s.userId, id, invoices);
-    await requireForSession(db, s, "sale.create");
+    await requireSaleFor(s, id);
 
     // Replay واقعی، نه فقط جلوگیری از درج دوم.
     //
@@ -955,7 +974,7 @@ export function registerSalesRoutes(app: FastifyInstance, deps: SalesRouteDeps):
     const s = session(req);
     const { id, key } = intentParams.parse(req.params);
     await assertInvoiceInScope(db, s.userId, id, invoices);
-    await requireForSession(db, s, "sale.create");
+    await requireSaleFor(s, id);
     return paymentIntentToJson(await invoices.paymentIntent(id, key));
   });
 
@@ -968,7 +987,7 @@ export function registerSalesRoutes(app: FastifyInstance, deps: SalesRouteDeps):
     const s = session(req);
     const { id, key } = intentParams.parse(req.params);
     await assertInvoiceInScope(db, s.userId, id, invoices);
-    await requireForSession(db, s, "sale.create");
+    await requireSaleFor(s, id);
     return paymentIntentToJson(await invoices.abandonPaymentIntent(id, key, s.userId));
   });
 
@@ -982,7 +1001,7 @@ export function registerSalesRoutes(app: FastifyInstance, deps: SalesRouteDeps):
     const s = session(req);
     const { id } = z.object({ id: uuid }).parse(req.params);
     await assertInvoiceInScope(db, s.userId, id, invoices);
-    await requireForSession(db, s, "sale.create");
+    await requireSaleFor(s, id);
 
     const out = await runOnce<{ number: string }>(db, {
       key: idempotencyKey(req),
@@ -1009,6 +1028,14 @@ export function registerSalesRoutes(app: FastifyInstance, deps: SalesRouteDeps):
           const payable = inv.netAmount + inv.taxAmount + inv.shippingAmount;
           const paid = await invoices.paidSoFar(id, trx);
           if (paid < payable) {
+            // فروش اینستاگرام هرگز نسیه نیست (۱۰۵)؛ دیتابیس هم همین را در گذار نهایی‌سازی رد می‌کند.
+            if (inv.channel === "instagram") {
+              throw new InvoiceError(
+                "instagram_requires_full_payment",
+                "فروش اینستاگرام فقط با دریافت کامل مبلغ نهایی می‌شود؛ مانده را با کارت‌به‌کارت یا روش دیگر ثبت کنید.",
+                422,
+              );
+            }
             if (!inv.customerId) {
               throw new InvoiceError(
                 "credit_needs_customer",
@@ -1082,6 +1109,12 @@ async function assertInvoiceInScope(
   const inv = await invoices.byId(invoiceId);
   if (!inv) throw new InvoiceError("invoice_not_found", "فاکتور یافت نشد", 404);
   await assertBranch(db, userId, inv.branchId);
+  // پیش‌نویس فروش اینستاگرام (۱۰۵) شیفت ندارد؛ مالکش همان سازنده است — صندوق دیگری آن را ادامه نمی‌دهد.
+  if (requireOwnership && inv.channel === "instagram" && inv.status === "draft") {
+    const row = (await sql<{ created_by: string | null }>`SELECT created_by FROM sales.invoice WHERE id=${invoiceId}::uuid`.execute(db)).rows[0];
+    if (!row || row.created_by !== userId)
+      throw new InvoiceError("draft_owner_mismatch", "این فاکتور متعلق به صندوق شما نیست.", 403);
+  }
   if (requireOwnership && inv.channel === "pos") {
     const context = await sql<{ created_by: string | null; user_id: string | null; status: string | null; branch_id: string | null }>`
       SELECT i.created_by, s.user_id, s.status, s.branch_id
