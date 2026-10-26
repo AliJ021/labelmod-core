@@ -104,6 +104,35 @@ export interface ProfitRow {
   marginPercent: number | null;
 }
 
+export interface LowStockRow {
+  warehouseId: string;
+  warehouseName: string;
+  variationId: string;
+  productId: string;
+  sku: string;
+  productName: string;
+  color: string;
+  size: string;
+  /** تعداد رشته است، مثل گزارش ارزش موجودی (`platform.qty` اعشار سه‌رقمی دارد). */
+  onHand: string;
+  reserved: string;
+  available: string;
+}
+
+export interface LowStockResult {
+  /** `null` یعنی آستانه تعریف نشده — نامعلوم، نه «کمبودی نیست». */
+  threshold: string | null;
+  total: number | null;
+  /** صفحهٔ ۱-پایه؛ در خروجی کامل (CSV) همیشه ۱. */
+  page: number;
+  /** اندازهٔ صفحه؛ `null` یعنی همهٔ سطرها در همین پاسخ (خروجی کامل). */
+  pageSize: number | null;
+  pages: number;
+  /** سطرهای این صفحه کمتر از کل‌اند — صفحهٔ دیگری هست یا این صفحه بیرون از بازه است. */
+  truncated: boolean;
+  rows: LowStockRow[];
+}
+
 export interface ValuationRow {
   warehouseId: string;
   warehouseName: string;
@@ -379,6 +408,56 @@ export class ReportService {
       // نمودار و مرتب‌سازی رویش کار می‌کند.
       marginPercent: x.margin_percent === null ? null : Number(x.margin_percent),
     }));
+  }
+
+  /** کمبود موجودی (۱۰۴): همان تعریف داشبورد؛ `threshold = null` یعنی نامعلوم، نه «کمبودی نیست». */
+  /**
+   * آستانه، شمار کل و سطرها در **یک دستور SQL**، یعنی یک snapshot حتی در READ COMMITTED
+   * (بازبینی root). سه دستور جدا یعنی تغییر موجودی میان شمارش و خواندن سطرها «کل ۰ با سطر» یا
+   * برعکس می‌ساخت و صفحه سطرهای واقعی را پنهان می‌کرد.
+   *
+   * `pageSize = null` خروجی کامل همان دامنه است (CSV)، نه سقف: کمبودِ بیش از یک صفحه در **یک** انبار
+   * هم باید دسترس‌پذیر باشد. صفحه‌ها ترتیب پایدار دارند ولی هر صفحه snapshot خودش است.
+   */
+  async lowStock(q: { branchId: string | undefined; warehouseId: string | undefined; page: number; pageSize: number | null }): Promise<LowStockResult> {
+    const offset = q.pageSize === null ? 0 : (q.page - 1) * q.pageSize;
+    const r = await sql<{ threshold: string | null; total: string; rows: Array<{
+      warehouseId: string; warehouseName: string; variationId: string; productId: string; sku: string;
+      productName: string; color: string | null; size: string | null; onHand: string; reserved: string; available: string;
+    }> }>`
+      WITH t AS (SELECT platform.setting_num('inventory.low_stock_threshold') AS th),
+      l AS (
+        SELECT l.*, w.name AS warehouse_name, v.sku, v.color, v.size, p.id AS product_id, p.name_internal AS product_name
+          FROM t CROSS JOIN LATERAL inventory.low_stock(t.th) l
+          JOIN inventory.warehouse w ON w.id = l.warehouse_id
+          JOIN catalog.variation v ON v.id = l.variation_id
+          JOIN catalog.product p ON p.id = v.product_id
+         WHERE (${q.branchId ?? null}::uuid IS NULL OR l.branch_id = ${q.branchId ?? null}::uuid)
+           AND (${q.warehouseId ?? null}::uuid IS NULL OR l.warehouse_id = ${q.warehouseId ?? null}::uuid)),
+      pg AS (
+        SELECT * FROM l
+         ORDER BY available, product_name, color, size, warehouse_name, variation_id, warehouse_id
+         LIMIT ${q.pageSize}::bigint OFFSET ${offset}::bigint)
+      SELECT (SELECT th::text FROM t) AS threshold,
+             (SELECT count(*) FROM l)::text AS total,
+             coalesce((SELECT jsonb_agg(jsonb_build_object(
+                 'warehouseId', warehouse_id::text, 'warehouseName', warehouse_name, 'variationId', variation_id::text,
+                 'productId', product_id::text, 'sku', sku, 'productName', product_name, 'color', color, 'size', size,
+                 'onHand', on_hand::text, 'reserved', reserved::text, 'available', available::text)
+                 ORDER BY available, product_name, color, size, warehouse_name, variation_id, warehouse_id) FROM pg), '[]'::jsonb) AS rows
+    `.execute(this.#db);
+    const x = r.rows[0]!;
+    if (x.threshold === null) return { threshold: null, total: null, page: q.page, pageSize: q.pageSize, pages: 0, truncated: false, rows: [] };
+    const total = Number(x.total);
+    return {
+      threshold: x.threshold,
+      total,
+      page: q.pageSize === null ? 1 : q.page,
+      pageSize: q.pageSize,
+      pages: q.pageSize === null ? 1 : Math.max(1, Math.ceil(total / q.pageSize)),
+      truncated: total > x.rows.length,
+      rows: x.rows.map(y => ({ ...y, color: y.color ?? "", size: y.size ?? "" })),
+    };
   }
 
   async valuation(warehouseId?: string | undefined): Promise<ValuationRow[]> {

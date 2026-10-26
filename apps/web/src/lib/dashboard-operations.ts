@@ -21,12 +21,20 @@ export interface ChequesReady {
   issued: { overdue: ChequeCell; dueSoon: ChequeCell };
 }
 export interface ReceivablesReady { state: "ready"; owed: CountAmount; credit: CountAmount }
+/** کمبود موجودی (۱۰۴): شمار دقیق سطرهای (تنوع، انبار) در هر انبار فروش فعال شعبه؛ آستانه رشته است. */
+export interface LowStockReady {
+  state: "ready"; threshold: string; total: number;
+  warehouses: { id: string; name: string; count: number }[];
+}
+/** آستانه تعریف نشده: شماری خوانده نشده — نه صفر. */
+export interface LowStockUnknown { state: "unknown"; reason: string }
 
 export interface DashboardOperations {
   businessDate: string; branchId: string;
   shifts: ShiftsReady | Denied;
   cheques: ChequesReady | Denied;
   receivables: ReceivablesReady | Denied;
+  lowStock: LowStockReady | LowStockUnknown | Denied;
 }
 
 export const dashboardOperations = {
@@ -40,6 +48,10 @@ export const DRILL = {
   cheques: "/?page=treasury&treasury.tab=due",
   receivables: "/?page=reports&reports.tab=parties",
 } as const;
+
+/** فهرست همان کمبود، برای همان شعبه — شمار کارت و فهرست از یک تعریف می‌آیند. */
+export const lowStockLink = (branchId: string) =>
+  `/?page=reports&reports.tab=lowstock&reports.branch=${encodeURIComponent(branchId)}`;
 
 /** چکِ سررسیدگذشته (هر جهت) رسیدگی می‌خواهد؛ نزدیک‌به‌سررسید فقط اطلاع است. */
 export function chequesNeedAttention(c: ChequesReady): boolean {
