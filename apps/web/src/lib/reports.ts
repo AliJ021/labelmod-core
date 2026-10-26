@@ -75,6 +75,28 @@ export interface ValuationRow {
   unitCost: string | null;
 }
 
+/** کمبود موجودی (۱۰۴): یک سطر = (تنوع، انبار). تعداد رشته است. */
+export interface LowStockRow {
+  warehouseId: string;
+  warehouseName: string;
+  variationId: string;
+  productId: string;
+  sku: string;
+  productName: string;
+  color: string;
+  size: string;
+  onHand: string;
+  reserved: string;
+  available: string;
+}
+/** `threshold = null` یعنی آستانه تعریف نشده — نامعلوم، نه «کمبودی نیست». */
+export interface LowStockResult {
+  threshold: string | null;
+  total: number | null;
+  truncated: boolean;
+  rows: LowStockRow[];
+}
+
 export interface MovementRow {
   occurredAt: string;
   warehouseName: string;
@@ -246,6 +268,14 @@ export const reports = {
     api.get<{ rows: ValuationRow[] }>(
       `/reports/inventory-valuation${warehouseId ? `?warehouseId=${encodeURIComponent(warehouseId)}` : ""}`, opts,
     ),
+
+  lowStock: (scope: { branchId?: string | undefined; warehouseId?: string | undefined }, opts?: RequestOptions) => {
+    const q = new URLSearchParams();
+    if (scope.branchId) q.set("branchId", scope.branchId);
+    if (scope.warehouseId) q.set("warehouseId", scope.warehouseId);
+    const s = q.toString();
+    return api.get<LowStockResult>(`/reports/low-stock${s === "" ? "" : `?${s}`}`, opts);
+  },
 
   movements: (p: Period, variationId: string, warehouseId?: string, opts?: RequestOptions) =>
     api.get<{ rows: MovementRow[] }>(

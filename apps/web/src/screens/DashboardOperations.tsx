@@ -1,5 +1,5 @@
 /**
- * کارهای عملیاتی داشبورد (دستهٔ D، مصوب مالک) — شیفت، چک و دریافتنیِ همین شعبه، فقط‌خواندنی.
+ * کارهای عملیاتی داشبورد (دستهٔ D، مصوب مالک) — شیفت، چک، دریافتنی و کمبود موجودیِ همین شعبه، فقط‌خواندنی.
  *
  * - هر بخش با مجوز خودش از سرور می‌آید؛ بخش `denied` اصلاً رندر نمی‌شود (نه صفر). اگر هیچ بخشی دیده نشود،
  *   کل کارت پنهان است. داشبورد فقط با allow صریح `report.view` رندرش می‌کند؛ بخش چک را سرور با
@@ -10,10 +10,11 @@
  */
 import { useCallback, useEffect, useId, useRef, useState } from "react";
 import { ApiError } from "../lib/api.ts";
-import { formatCount, formatJalali, formatJalaliMoment } from "../lib/format.ts";
+import { formatCount, formatJalali, formatJalaliMoment, formatQty } from "../lib/format.ts";
 import {
-  chequesNeedAttention, dashboardOperations, DRILL,
-  type ChequeCell, type ChequesReady, type DashboardOperations as Data, type ReceivablesReady, type ShiftsReady,
+  chequesNeedAttention, dashboardOperations, DRILL, lowStockLink,
+  type ChequeCell, type ChequesReady, type DashboardOperations as Data, type LowStockReady, type LowStockUnknown,
+  type ReceivablesReady, type ShiftsReady,
 } from "../lib/dashboard-operations.ts";
 import { Solid } from "../components/Glass.tsx";
 import { SectionHeader } from "../components/ui/PageHeader.tsx";
@@ -76,11 +77,12 @@ export function DashboardOperations({ branchId, links, register }: {
 
   if (load.state === "ready") {
     const d = load.data;
-    if (d.shifts.state === "denied" && d.cheques.state === "denied" && d.receivables.state === "denied") return null;
+    if (d.shifts.state === "denied" && d.cheques.state === "denied" && d.receivables.state === "denied"
+      && d.lowStock.state === "denied") return null;
   }
 
   return <Solid as="section" className="pad ops" aria-labelledby={titleId}>
-    <SectionHeader id={titleId} title="کارهای عملیاتی" description="شیفت، چک و دریافتنیِ همین شعبه؛ فقط خواندنی." />
+    <SectionHeader id={titleId} title="کارهای عملیاتی" description="شیفت، چک، دریافتنی و کمبود موجودیِ همین شعبه؛ فقط خواندنی." />
     {load.state === "loading"
       ? <div aria-busy="true"><Skeleton variant="text" lines={3} label="در حال خواندن کارهای عملیاتی…" /></div>
       : load.state === "error"
@@ -90,6 +92,7 @@ export function DashboardOperations({ branchId, links, register }: {
             {load.data.shifts.state === "ready" ? <Shifts data={load.data.shifts} link={links.reports ? DRILL.shifts : null} /> : null}
             {load.data.cheques.state === "ready" ? <Cheques data={load.data.cheques} link={links.treasury ? DRILL.cheques : null} /> : null}
             {load.data.receivables.state === "ready" ? <Receivables data={load.data.receivables} link={links.reports ? DRILL.receivables : null} /> : null}
+            {load.data.lowStock.state !== "denied" ? <LowStock data={load.data.lowStock} link={links.reports ? lowStockLink(branchId) : null} /> : null}
           </div>}
   </Solid>;
 }
@@ -173,5 +176,29 @@ function Receivables({ data, link }: { data: ReceivablesReady; link: string | nu
       </div>
     </dl>
     <p className="muted small">ماندهٔ خالص هر مشتری در این شعبه از سند ثبت‌شده؛ چکِ وصول‌نشده هنوز جزو طلب است. این سن طلب یا سررسید نیست.</p>
+  </Tile>;
+}
+
+/** کمبود موجودی: شمار دقیق، تفکیک انبار فروش، و همان فهرست با پیوند. آستانهٔ نامعلوم «نامعلوم» است، نه صفر. */
+function LowStock({ data, link }: { data: LowStockReady | LowStockUnknown; link: string | null }) {
+  if (data.state === "unknown") {
+    return <Tile title="کمبود موجودی" verdict={{ state: "unknown", label: "شمار کمبود معلوم نیست" }} link={null} linkLabel="">
+      <p className="muted small">{data.reason} این به معنای «کمبودی نیست» نیست.</p>
+    </Tile>;
+  }
+  const threshold = formatQty(data.threshold);
+  const verdict = data.total > 0
+    ? { state: "warning" as const, label: `${formatCount(data.total)} مورد به آستانهٔ ${threshold} یا کمتر رسیده` }
+    : { state: "completed" as const, label: `موردی به آستانهٔ ${threshold} نرسیده` };
+  return <Tile title="کمبود موجودی" verdict={verdict} link={data.total > 0 ? link : null} linkLabel="فهرست کمبود موجودی">
+    {data.warehouses.length > 0
+      ? <dl className="ops-dl">
+          {data.warehouses.map(w => <div className="ops-row" key={w.id}>
+            <dt>{w.name}</dt>
+            <dd><span className="num">{formatCount(w.count)}</span> مورد</dd>
+          </div>)}
+        </dl>
+      : <p className="muted small">این شعبه انبار فروش فعالی ندارد.</p>}
+    <p className="muted small">هر مورد یک تنوع در یک انبار فروش است: قابل‌فروش (موجودی منهای رزرو) به آستانه یا کمتر، ناموجود هم. تنوعی که هرگز به آن انبار نیامده شمرده نمی‌شود. آستانه در تنظیمات انبار عوض می‌شود.</p>
   </Tile>;
 }

@@ -49,7 +49,7 @@ import { useLatestQuery } from "../lib/use-latest-query.ts";
 import { ApiError } from "../lib/api.ts";
 import { parseRial } from "../lib/money.ts";
 import { normalizeDigits } from "../lib/settings-value.ts";
-import { channelLabel, formatCount, formatHour, formatJalali, formatJalaliMoment, formatMoney } from "../lib/format.ts";
+import { channelLabel, formatCount, formatHour, formatJalali, formatJalaliMoment, formatMoney, formatQty } from "../lib/format.ts";
 import { jalaliInputOf, parseJalaliDate, periodLabel, readJalaliPeriod } from "../lib/report-filters.ts";
 import { pos, type Branch, type Warehouse } from "../lib/pos.ts";
 import {
@@ -65,6 +65,8 @@ import {
   type CustomerBasketRow,
   type HourlyRow,
   type LedgerRow,
+  type LowStockResult,
+  type LowStockRow,
   type MovementRow,
   type PartyRow,
   type Period,
@@ -83,6 +85,7 @@ const TABS = [
   { key: "snappay", label: "اسنپ‌پی" },
   { key: "profit", label: "سود کالا" },
   { key: "stock", label: "موجودی" },
+  { key: "lowstock", label: "کمبود موجودی" },
   { key: "ledger", label: "دفتر حساب" },
   { key: "trial", label: "تراز آزمایشی" },
   { key: "parties", label: "دریافتنی و پرداختنی" },
@@ -94,6 +97,7 @@ type TabKey = (typeof TABS)[number]["key"];
 const PERIODLESS: Partial<Record<TabKey, string>> = {
   parties: "مانده تا همین لحظه است؛ بازهٔ تاریخ روی این گزارش اثری ندارد.",
   stock: "موجودی و ارزش تا همین لحظه است؛ بازهٔ تاریخ فقط روی کاردکس اثر دارد.",
+  lowstock: "کمبود موجودی تا همین لحظه است؛ بازهٔ تاریخ روی این گزارش اثری ندارد.",
 };
 
 type LoadError = { message: string; reference: string | null; status: number | null };
@@ -213,7 +217,7 @@ export function Reports() {
   // بازهٔ نیمه‌تایپ به سرور نمی‌رود؛ گزارش‌های بی‌بازه (مانده اشخاص) منتظرش نمی‌مانند.
   // موجودی هم لحظه‌ای است و فقط کاردکسِ زیرش بازه دارد، پس جدول ارزش می‌ماند و
   // تنها کاردکس منتظر بازهٔ کامل می‌ماند (B1-03).
-  const blocked = issue !== null && tab !== "parties" && tab !== "stock";
+  const blocked = issue !== null && tab !== "parties" && tab !== "stock" && tab !== "lowstock";
 
   return (
     <div className="report-page">
@@ -235,6 +239,8 @@ export function Reports() {
           <><ReportFilters filters={filters} /><ProfitReport period={p} /></>
         ) : tab === "stock" ? (
           <StockReport period={p} periodIssue={issue?.message ?? null} branches={branches} allBranches={allBranches} filters={filters} />
+        ) : tab === "lowstock" ? (
+          <LowStockReport branches={branches} branchId={branchId} filters={filters} />
         ) : tab === "ledger" ? (
           <LedgerReport period={p} filters={filters} />
         ) : tab === "trial" ? (
@@ -585,6 +591,57 @@ function StockReport({ period, periodIssue, branches, allBranches, filters }: {
       : <Kardex period={period} variationId={picked.variationId}
         title={`${picked.productName} · ${picked.color} ${picked.size}`}
         {...(warehouseId === "" ? {} : { warehouseId })} />}
+  </>;
+}
+
+// ── کمبود موجودی (۱۰۴) ────────────────────────────────────────────
+
+/**
+ * فهرست همان کمبودی که کارت داشبورد می‌شمارد (`inventory.low_stock`). شمار کل دقیق از سرور است و
+ * فهرست سقف دارد؛ «بیش از نمایش» صریح گفته می‌شود. آستانهٔ نامعلوم حالت خودش را دارد، نه «کمبودی نیست».
+ */
+function LowStockReport({ branches, branchId, filters }: { branches: Branch[]; branchId: string; filters: PeriodFilters }) {
+  const sellable = (branchId === "" ? branches : branches.filter(b => b.id === branchId))
+    .flatMap(b => b.warehouses.filter(w => w.kind === "store" || w.kind === "stock" || w.kind === "outlet"));
+  const [warehouseRaw, setWarehouse] = useUrlState("reports.warehouse");
+  const warehouseId = sellable.some(w => w.id === warehouseRaw) ? warehouseRaw : "";
+  const query = useReport<LowStockResult>([branchId, warehouseId], async signal =>
+    [await reports.lowStock({ branchId: branchId === "" ? undefined : branchId, warehouseId: warehouseId === "" ? undefined : warehouseId }, { signal })]);
+  const result = query.rows?.[0] ?? null;
+  const columns: Column<LowStockRow>[] = [
+    { key: "warehouse", header: "انبار", cell: r => r.warehouseName },
+    { key: "product", header: "کالا", cell: r => <>{r.productName}<span className="cell-sub">{r.color} · {r.size}</span></> },
+    { key: "sku", header: "SKU", cell: r => <Ltr>{r.sku}</Ltr> },
+    { key: "onHand", header: "موجودی فیزیکی", numeric: true, cell: r => <Qty value={r.onHand} /> },
+    { key: "reserved", header: "رزروشده", numeric: true, cell: r => <Qty value={r.reserved} /> },
+    { key: "available", header: "قابل‌فروش", numeric: true, cell: r => <Qty value={r.available} /> },
+  ];
+  const scopeQuery = [branchId === "" ? "" : `branchId=${encodeURIComponent(branchId)}`,
+    warehouseId === "" ? "" : `warehouseId=${encodeURIComponent(warehouseId)}`].filter(Boolean).join("&");
+  const extra = sellable.length > 0 ? <Field label="انبار فروش">
+    <select value={warehouseId} onChange={e => setWarehouse(e.target.value)}>
+      <option value="">همه انبارهای فروش</option>
+      {sellable.map(w => <option key={w.id} value={w.id}>{w.name}</option>)}
+    </select>
+  </Field> : null;
+  return <>
+    <ReportFilters filters={filters} extra={extra} />
+    <ReportSection title="کمبود موجودی" query={query} empty="کمبود موجودی خوانده نشد."
+      description={result?.threshold == null ? undefined
+        : `هر سطر یک تنوع در یک انبار فروش است که موجودی قابل‌فروشش (موجودی منهای رزرو) به آستانهٔ ${formatQty(result.threshold)} یا کمتر رسیده؛ ناموجود هم. تنوعی که هرگز به آن انبار نیامده، کالای بایگانی و تنوع متوقف شمرده نمی‌شوند. آستانه در تنظیمات انبار عوض می‌شود.`}
+      {...(result && result.threshold !== null && (result.total ?? 0) > 0 ? { csv: csvUrl("/reports/low-stock", scopeQuery) } : {})}>
+      {([r]) => r!.threshold === null
+        ? <ResultState kind="error" title="آستانهٔ کمبود موجودی تعریف نشده است."
+            description="شمار کمبود معلوم نیست؛ این به معنای «کمبودی نیست» نیست. آستانه را در تنظیمات انبار تعیین کنید." />
+        : r!.total === 0
+          ? <ResultState title={`موردی به آستانهٔ ${formatQty(r!.threshold)} یا کمتر نرسیده.`} />
+          : <>
+              <p className="muted small" role="status">
+                {formatCount(r!.total ?? 0)} مورد{r!.truncated ? ` — ${formatCount(r!.rows.length)} مورد نخست (کمترین قابل‌فروش اول) نمایش داده شده؛ CSV هم همین سقف را دارد. برای دیدن بقیه، انبار را محدود کنید.` : ""}
+              </p>
+              <DataTable caption="کمبود موجودی" columns={columns} rows={r!.rows} stack bounded rowKey={x => `${x.warehouseId}-${x.variationId}`} />
+            </>}
+    </ReportSection>
   </>;
 }
 

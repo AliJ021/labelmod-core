@@ -1,0 +1,53 @@
+/**
+ * گزارش «کمبود موجودی» (R04، مهاجرت ۱۰۴): همان فهرستی که کارت داشبورد می‌شمارد. شمار کل از سرور است و سقف
+ * فهرست صریح گفته می‌شود؛ آستانهٔ نامعلوم «نامعلوم» است، نه «کمبودی نیست»، و CSV نمی‌گیرد.
+ */
+import { test, expect, type MockApi } from "./fixtures";
+
+const calls = (api: MockApi) => api.calls.filter(c => c.startsWith("GET /reports/low-stock"));
+const row = (sku: string, available: string, warehouse = "انبار آزمایشی") => ({
+  warehouseId: "w1", warehouseName: warehouse, variationId: `v-${sku}`, productId: "p1", sku,
+  productName: "شلوار جین", color: "آبی", size: "M", onHand: available, reserved: "0.000", available,
+});
+
+test.describe("گزارش کمبود موجودی", () => {
+  test("the dashboard link opens the same list for the branch: exact total, lowest first, CSV with the same scope", async ({ page, api }) => {
+    api.defaults["GET /reports/low-stock"] = { threshold: "2", total: 2, truncated: false, rows: [row("LM-0", "0.000"), row("LM-1", "1.000")] };
+    await page.goto("/?page=reports&reports.tab=lowstock&reports.branch=b1");
+    const table = page.getByRole("table", { name: "کمبود موجودی" });
+    await expect(table).toContainText("LM-0");
+    expect(calls(api)).toEqual(["GET /reports/low-stock?branchId=b1"]);
+    await expect(page.getByRole("tab", { name: "کمبود موجودی" })).toHaveAttribute("aria-selected", "true");
+    await expect(page.getByRole("status").filter({ hasText: "۲ مورد" })).toBeVisible();
+    await expect(page.getByText(/به آستانهٔ 2 یا کمتر رسیده؛ ناموجود هم/)).toBeVisible();
+    for (const header of ["موجودی فیزیکی", "رزروشده", "قابل‌فروش"]) {
+      await expect(table.getByRole("columnheader", { name: header, exact: true })).toBeAttached();
+    }
+    await expect(table.getByRole("columnheader", { name: /بها|ارزش/ })).toHaveCount(0);
+    await expect(page.getByRole("link", { name: "دانلود CSV" })).toHaveAttribute("href", "/api/reports/low-stock?branchId=b1&format=csv");
+
+    await page.getByLabel("انبار فروش", { exact: true }).selectOption("w1");
+    await expect.poll(() => calls(api).at(-1)).toBe("GET /reports/low-stock?branchId=b1&warehouseId=w1");
+    await expect(page.getByRole("link", { name: "دانلود CSV" })).toHaveAttribute("href", "/api/reports/low-stock?branchId=b1&warehouseId=w1&format=csv");
+  });
+
+  test("a capped list says how many are shown out of the exact total", async ({ page, api }) => {
+    api.defaults["GET /reports/low-stock"] = { threshold: "2", total: 2500, truncated: true, rows: [row("LM-0", "0.000")] };
+    await page.goto("/?page=reports&reports.tab=lowstock&reports.branch=b1");
+    await expect(page.getByRole("status").filter({ hasText: "۲٬۵۰۰ مورد" })).toContainText("۱ مورد نخست");
+    await expect(page.getByRole("status").filter({ hasText: "۲٬۵۰۰ مورد" })).toContainText("CSV هم همین سقف را دارد");
+  });
+
+  test("no threshold is unknown — not “nothing low” — and offers no CSV; zero is a calm empty state", async ({ page, api }) => {
+    api.defaults["GET /reports/low-stock"] = { threshold: null, total: null, truncated: false, rows: [] };
+    await page.goto("/?page=reports&reports.tab=lowstock&reports.branch=b1");
+    await expect(page.getByText("آستانهٔ کمبود موجودی تعریف نشده است.")).toBeVisible();
+    await expect(page.getByText(/این به معنای «کمبودی نیست» نیست/)).toBeVisible();
+    await expect(page.getByRole("link", { name: "دانلود CSV" })).toHaveCount(0);
+
+    api.defaults["GET /reports/low-stock"] = { threshold: "2", total: 0, truncated: false, rows: [] };
+    await page.reload();
+    await expect(page.getByText("موردی به آستانهٔ 2 یا کمتر نرسیده.")).toBeVisible();
+    await expect(page.getByRole("link", { name: "دانلود CSV" })).toHaveCount(0);
+  });
+});

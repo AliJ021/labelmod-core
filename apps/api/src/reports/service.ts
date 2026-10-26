@@ -104,6 +104,29 @@ export interface ProfitRow {
   marginPercent: number | null;
 }
 
+export interface LowStockRow {
+  warehouseId: string;
+  warehouseName: string;
+  variationId: string;
+  productId: string;
+  sku: string;
+  productName: string;
+  color: string;
+  size: string;
+  /** تعداد رشته است، مثل گزارش ارزش موجودی (`platform.qty` اعشار سه‌رقمی دارد). */
+  onHand: string;
+  reserved: string;
+  available: string;
+}
+
+export interface LowStockResult {
+  /** `null` یعنی آستانه تعریف نشده — نامعلوم، نه «کمبودی نیست». */
+  threshold: string | null;
+  total: number | null;
+  truncated: boolean;
+  rows: LowStockRow[];
+}
+
 export interface ValuationRow {
   warehouseId: string;
   warehouseName: string;
@@ -379,6 +402,41 @@ export class ReportService {
       // نمودار و مرتب‌سازی رویش کار می‌کند.
       marginPercent: x.margin_percent === null ? null : Number(x.margin_percent),
     }));
+  }
+
+  /** کمبود موجودی (۱۰۴): همان تعریف داشبورد؛ `threshold = null` یعنی نامعلوم، نه «کمبودی نیست». */
+  async lowStock(q: { branchId: string | undefined; warehouseId: string | undefined; limit: number }): Promise<LowStockResult> {
+    const t = await sql<{ v: string | null }>`SELECT platform.setting_num('inventory.low_stock_threshold')::text AS v`.execute(this.#db);
+    const threshold = t.rows[0]?.v ?? null;
+    if (threshold === null) return { threshold: null, total: null, truncated: false, rows: [] };
+    const scope = sql`(${q.branchId ?? null}::uuid IS NULL OR l.branch_id = ${q.branchId ?? null}::uuid)
+      AND (${q.warehouseId ?? null}::uuid IS NULL OR l.warehouse_id = ${q.warehouseId ?? null}::uuid)`;
+    const n = await sql<{ n: string }>`SELECT count(*)::text AS n FROM inventory.low_stock(${threshold}::numeric) l WHERE ${scope}`
+      .execute(this.#db);
+    const r = await sql<{
+      warehouse_id: string; warehouse_name: string; variation_id: string; product_id: string; sku: string;
+      product_name: string; color: string | null; size: string | null; on_hand: string; reserved: string; available: string;
+    }>`SELECT l.warehouse_id::text, w.name AS warehouse_name, l.variation_id::text, p.id::text AS product_id, v.sku,
+              p.name_internal AS product_name, v.color, v.size,
+              l.on_hand::text, l.reserved::text, l.available::text
+         FROM inventory.low_stock(${threshold}::numeric) l
+         JOIN inventory.warehouse w ON w.id = l.warehouse_id
+         JOIN catalog.variation v ON v.id = l.variation_id
+         JOIN catalog.product p ON p.id = v.product_id
+        WHERE ${scope}
+        ORDER BY l.available, p.name_internal, v.color, v.size, w.name, l.variation_id
+        LIMIT ${q.limit}`.execute(this.#db);
+    const total = Number(n.rows[0]!.n);
+    return {
+      threshold,
+      total,
+      truncated: total > r.rows.length,
+      rows: r.rows.map(x => ({
+        warehouseId: x.warehouse_id, warehouseName: x.warehouse_name, variationId: x.variation_id, productId: x.product_id,
+        sku: x.sku, productName: x.product_name, color: x.color ?? "", size: x.size ?? "",
+        onHand: x.on_hand, reserved: x.reserved, available: x.available,
+      })),
+    };
   }
 
   async valuation(warehouseId?: string | undefined): Promise<ValuationRow[]> {

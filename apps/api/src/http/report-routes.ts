@@ -56,6 +56,7 @@ import {
   CUSTOMER_BASKET_COLUMNS,
   HOURLY_COLUMNS,
   LEDGER_COLUMNS,
+  LOW_STOCK_COLUMNS,
   MOVEMENT_COLUMNS,
   PARTY_COLUMNS,
   PROFIT_COLUMNS,
@@ -67,6 +68,8 @@ import {
 } from "../reports/columns.ts";
 
 const uuid = z.string().uuid("شناسه نامعتبر");
+/** سقف فهرست کمبود موجودی؛ شمار کل جدا می‌آید. */
+export const LOW_STOCK_LIMIT = 2000;
 const isoDate = z.iso.date("تاریخ باید یک تاریخ معتبر YYYY-MM-DD باشد");
 
 /**
@@ -573,6 +576,40 @@ export function registerReportRoutes(app: FastifyInstance, deps: ReportRouteDeps
       VALUATION_COLUMNS,
       rows,
     );
+  });
+
+  // ── کمبود موجودی ────────────────────────────────────────────────
+
+  /**
+   * فهرست (تنوع، انبار)های کمبود — همان تعریفِ شمار داشبورد (`inventory.low_stock`، ۱۰۴).
+   *
+   * بها ندارد، پس فقط `report.view`. دامنه مثل بقیه: انبار انتخابی باید در دامنهٔ کاربر باشد و بی آن،
+   * `resolveBranch` شعبه را تعیین می‌کند (دامنهٔ سراسری = همه). شمار کل جدا و دقیق است؛ فهرست سقف دارد
+   * و `truncated` آن را صریح می‌گوید. آستانهٔ نامعلوم `null` است و CSV نمی‌گیرد — فایل خالی شبیه «کمبودی نیست» بود.
+   */
+  app.get("/reports/low-stock", async (req, reply) => {
+    const s = session(req);
+    await requireForSession(db, s, "report.view");
+    const q = z.object({ branchId: uuid.optional(), warehouseId: uuid.optional() }).parse(req.query);
+    const { format } = formatQuery.parse(req.query);
+    let branchId: string | undefined;
+    if (q.warehouseId !== undefined) {
+      const w = await db.selectFrom("inventory.warehouse").select("branch_id").where("id", "=", q.warehouseId).executeTakeFirst();
+      if (!w) throw new ScopeError("انبار یافت نشد");
+      await assertBranch(db, s.userId, w.branch_id);
+      if (q.branchId !== undefined && q.branchId !== w.branch_id) throw new ScopeError("انبار در این شعبه نیست");
+      branchId = w.branch_id;
+    } else {
+      branchId = await resolveBranch(s.userId, q.branchId);
+    }
+    const out = await reports.lowStock({ branchId, warehouseId: q.warehouseId, limit: LOW_STOCK_LIMIT });
+    reply.header("cache-control", "no-store");
+    if (out.threshold === null) {
+      if (format === "csv") return reply.code(409).send({ error: { code: "threshold_unknown", message: "آستانهٔ کمبود موجودی تعریف نشده است." } });
+      return out;
+    }
+    if (format === "csv") return respond(reply, format, { fa: "کمبود موجودی", ascii: "low-stock" }, LOW_STOCK_COLUMNS, out.rows);
+    return out;
   });
 
   // ── کاردکس یک کالا ──────────────────────────────────────────────
