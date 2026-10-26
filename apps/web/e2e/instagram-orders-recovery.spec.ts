@@ -139,15 +139,25 @@ test.describe("سفارش اینستاگرام: عملیات ماندگار، م
       await expect(banner(page), `${d.status}: عملیات معلق با کلید اصلی می‌ماند`).toBeVisible();
       expect(s.requests.at(-1)!.key).toBe(first.key);
     }
-    // بارگذاری دوباره: هنوز همان.
+    // بارگذاری دوباره: هنوز همان. بنر از ذخیرهٔ محلی است و پیش از پاسخ فهرست و جزئیات دیده می‌شود؛
+    // goto زودتر همان درخواست‌های در راه را قطع می‌کند و WebKit قطعشان را «خطای صفحه» گزارش می‌کند
+    // («due to access control checks»، webkit-dark-1024، run 40291975215). پس منتظر **پاسخ** هر دو.
+    const settled = (orderId: string) => Promise.all([
+      page.waitForResponse(r => r.request().method() === "GET" && new URL(r.url()).pathname === "/api/instagram-orders"),
+      page.waitForResponse(r => r.request().method() === "GET" && new URL(r.url()).pathname === `/api/instagram-orders/${orderId}`),
+    ]);
+    const afterReload = settled(ID);
     await page.reload();
     await expect(banner(page)).toBeVisible();
+    await afterReload;
     // سفارش دیگر قفل نیست: قفل به‌ازای هر سفارش است.
+    const afterOther = settled(OTHER);
     await page.goto(`/?page=instagram-orders&ig.order=${OTHER}`);
     const other = page.getByRole("region", { name: "سفارش IG-000300" });
     await expect(other).toContainText("هنوز قلمی ندارد");
     await expect(banner(page)).toHaveCount(0);
     await expect(other.getByLabel("تعداد قلم تازه")).toBeEnabled();
+    await afterOther;
 
     // دسترسی برگشت: همان کلید Replay می‌گیرد و اثر یک بار است.
     api.handlers.set(`POST /instagram-orders/${ID}/lines`, async route => {
