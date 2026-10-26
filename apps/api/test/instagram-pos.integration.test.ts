@@ -394,6 +394,44 @@ describe("فروش اینستاگرام از صندوق: قرارداد و رق�
     assert.equal(replay.json().replayed, true);
   });
 
+  test("نیمه‌شب و دورهٔ بسته: سبد دیروز با زمان نهایی‌سازی ثبت می‌شود؛ Replay پاسخ گم‌شده اثر دوم ندارد", async () => {
+    const v = await variation(3);
+    const id = await cart(u.op, v.id, 1, [{ methodCode: "transfer", amount: "1000000", refNo: `C2C-${suffix}-midnight` }]);
+    // گذر نیمه‌شب: پیش‌نویس و پرداختش «دیروز» ساخته شده‌اند و دورهٔ اینستاگرامِ دیروز شبانه بسته شده است.
+    await sql`UPDATE sales.invoice SET occurred_at = now() - interval '1 day' WHERE id = ${id}::uuid`.execute(owner.db);
+    await sql`UPDATE treasury.payment SET occurred_at = now() - interval '1 day' WHERE invoice_id = ${id}::uuid`.execute(owner.db);
+    await sql`INSERT INTO ledger.posting_batch (branch_id, kind, channel, business_date, status, posted_at)
+      VALUES (${BRANCH}::uuid, 'channel_day', 'instagram', platform.business_date(now()) - 1, 'posted', now())
+      ON CONFLICT DO NOTHING`.execute(owner.db);
+    const k = key();
+    const first = await call("POST", `/invoices/${id}/finalize`, u.op, {}, k);
+    assert.equal(first.statusCode, 200, first.body);
+    const row = (await sql<{ d: string; today: string; paid_day: string; y_status: string; y_count: string }>`
+      SELECT b.business_date::text AS d, platform.business_date(now())::text AS today,
+             (SELECT platform.business_date(occurred_at)::text FROM treasury.payment WHERE invoice_id = i.id LIMIT 1) AS paid_day,
+             y.status AS y_status, (SELECT count(*) FROM sales.invoice WHERE posting_batch_id = y.id)::text AS y_count
+        FROM sales.invoice i JOIN ledger.posting_batch b ON b.id = i.posting_batch_id
+        JOIN ledger.posting_batch y ON y.kind = 'channel_day' AND y.channel = 'instagram' AND y.branch_id = i.branch_id
+                                   AND y.business_date = platform.business_date(now()) - 1
+       WHERE i.id = ${id}::uuid`.execute(handle.db)).rows[0]!;
+    assert.equal(row.d, row.today, "دورهٔ ثبت = روز نهایی‌سازی، نه روز ساخت سبد");
+    assert.deepEqual({ status: row.y_status, invoices: row.y_count }, { status: "posted", invoices: "0" }, "دورهٔ بستهٔ دیروز باز نشد");
+    assert.notEqual(row.paid_day, row.today, "زمان پرداخت بازنویسی نشد");
+    const moves = async () => (await sql<{ n: string }>`SELECT count(*)::text AS n FROM inventory.stock_movement
+      WHERE ref_type = 'invoice' AND ref_id = ${id}::uuid`.execute(handle.db)).rows[0]!.n;
+    const before = await moves();
+    // پاسخ اول گم شد؛ صف آفلاین با همان کلید دوباره می‌فرستد.
+    const replay = await call("POST", `/invoices/${id}/finalize`, u.op, {}, k);
+    assert.equal(replay.statusCode, 200, replay.body);
+    assert.equal(replay.json().number, first.json().number, "همان شماره");
+    assert.equal(await moves(), before, "خروج کالای دوم نیست");
+    // کنترل منفی در همین مسیر: سبد «دیروزِ» دیگری که از راه SQL بی تازه‌سازی نهایی شود، رد می‌شود.
+    const other = await cart(u.op, v.id, 1, [{ methodCode: "transfer", amount: "1000000", refNo: `C2C-${suffix}-midnight-2` }]);
+    await sql`UPDATE sales.invoice SET occurred_at = now() - interval '1 day' WHERE id = ${other}::uuid`.execute(owner.db);
+    await assert.rejects(sql`SELECT sales.finalize_invoice(${other}::uuid, ${ids[u.op]}::uuid)`.execute(owner.db),
+      /دوره ثبت این فاکتور قبلاً بسته شده است|زمان فروش اینستاگرام/);
+  });
+
   test("برگشت کامل چندسطری: یک سطر بی‌موجودی کل نهایی‌سازی را برمی‌گرداند", async () => {
     const ok = await variation(5);
     const none = await variation(1);

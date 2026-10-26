@@ -17,7 +17,14 @@
 --     می‌بیند. بی این نگهبان، کشو با نقد سبد اینستاگرامِ هنوز باز بسته می‌شد و برگشت بعدی آن
 --     نقد از کشوی دیگری بیرون می‌رفت.
 -- کارت‌خوان (مشتری حاضر نیست) و نسیه (فقط پرداخت کامل، ۱۰۵) همچنان رد می‌شوند.
--- جدول تازه یا تغییر داده ندارد؛ فقط دو تابع نگهبان.
+--
+-- و زمان فروش (بازبینی root): فاکتور اینستاگرامِ بی‌شیفت دورهٔ ثبتش را از روز کاریِ occurred_at
+-- می‌گیرد (۰۸۲). occurred_at پیش‌نویس لحظهٔ ساخت سبد بود؛ پیش‌نویس پیش از نیمه‌شب یا Replay دیررس
+-- صف آفلاین یا به روز دیروز می‌خورد یا به دورهٔ بسته‌شدهٔ دیروز گیر می‌کرد. حالا مثل تأیید v1
+-- (۱۰۲) فروش در لحظهٔ نهایی‌سازی رخ می‌دهد: مسیر صندوق زمان را زیر قفل فاکتور تازه می‌کند و نگهبان
+-- فاکتور نهایی‌سازیِ با روز کاری کهنه را رد می‌کند. زمان پرداخت‌ها دست نمی‌خورد، فاکتور نهایی
+-- بازنویسی نمی‌شود و هیچ دورهٔ بسته‌ای باز نمی‌شود.
+-- جدول تازه یا تغییر داده ندارد؛ فقط سه تابع نگهبان.
 
 BEGIN;
 
@@ -88,5 +95,73 @@ END $$;
 DROP TRIGGER IF EXISTS cash_shift_open_draft_cash_guard ON sales.cash_shift;
 CREATE TRIGGER cash_shift_open_draft_cash_guard BEFORE UPDATE OF status ON sales.cash_shift
   FOR EACH ROW EXECUTE FUNCTION sales.cash_shift_open_draft_cash_guard();
+
+CREATE OR REPLACE FUNCTION sales.instagram_invoice_guard() RETURNS trigger LANGUAGE plpgsql AS $$
+DECLARE
+  o sales.instagram_order%ROWTYPE;
+  v_ctx text := coalesce(current_setting('lmc.instagram_order', true), '');
+  v_due numeric;
+BEGIN
+  IF TG_OP = 'INSERT' THEN
+    IF NEW.channel = 'instagram' THEN
+      IF v_ctx = 'new' THEN RETURN NEW; END IF;                      -- سفارش v1 (۱۰۲)
+      IF v_ctx <> 'pos' THEN
+        RAISE EXCEPTION 'فاکتور اینستاگرام فقط از مسیر سفارش اینستاگرام یا صندوق در حالت اینستاگرام ساخته می‌شود';
+      END IF;
+      IF NEW.created_by IS NULL OR NOT EXISTS (
+           SELECT 1 FROM identity.can(NEW.created_by, 'instagram.pos.sell') c WHERE c.verdict = 'allow') THEN
+        RAISE EXCEPTION 'این کاربر مجوز فروش اینستاگرام ندارد';
+      END IF;
+      IF NOT EXISTS (SELECT 1 FROM identity.user_role ur
+                      WHERE ur.user_id = NEW.created_by AND (ur.branch_id IS NULL OR ur.branch_id = NEW.branch_id)) THEN
+        RAISE EXCEPTION 'فروش اینستاگرام بیرون از شعبهٔ کاربر مجاز نیست';
+      END IF;
+      IF NEW.shift_id IS NOT NULL THEN
+        RAISE EXCEPTION 'فروش اینستاگرام به شیفت کشو نمی‌چسبد';
+      END IF;
+    END IF;
+    RETURN NEW;
+  END IF;
+  IF (OLD.channel = 'instagram') <> (NEW.channel = 'instagram') THEN
+    RAISE EXCEPTION 'کانال اینستاگرام فاکتور قابل تغییر نیست';
+  END IF;
+  IF NEW.channel <> 'instagram' OR OLD.status <> 'draft' THEN RETURN NEW; END IF;
+
+  SELECT * INTO o FROM sales.instagram_order WHERE invoice_id = NEW.id;
+  IF NOT FOUND THEN
+    -- حالت صندوق (یا لحظهٔ ساخت سفارش v1 پیش از درج سطر سفارش، که فقط پیش‌نویس است).
+    IF NEW.shift_id IS NOT NULL THEN
+      RAISE EXCEPTION 'فروش اینستاگرام به شیفت کشو نمی‌چسبد';
+    END IF;
+    IF NEW.status IN ('finalized', 'paid') THEN
+      -- فروش در لحظهٔ نهایی‌سازی رخ می‌دهد، نه لحظهٔ ساخت پیش‌نویس (همان قاعدهٔ تأیید v1 در ۱۰۲).
+      -- دورهٔ ثبت روزانه، سال مالی و تاریخ خروج کالا از occurred_at می‌آیند؛ پیش‌نویسِ پیش از نیمه‌شب
+      -- یا Replay دیررسِ صف یا به روز دیروز می‌خورد یا به دورهٔ بسته‌شدهٔ دیروز گیر می‌کرد. مسیر صندوق
+      -- پیش از `finalize_invoice` زمان را تازه می‌کند؛ اینجا فقط اجبار می‌شود که تازه شده باشد.
+      IF platform.business_date(NEW.occurred_at) <> platform.business_date(now()) THEN
+        RAISE EXCEPTION 'زمان فروش اینستاگرام باید لحظهٔ نهایی‌سازی باشد (روز کاری %، نه %)',
+          platform.business_date(now()), platform.business_date(NEW.occurred_at);
+      END IF;
+      v_due := NEW.payable_amount - NEW.paid_amount - sales.exchange_in(NEW.id);
+      IF v_due > 0 THEN
+        RAISE EXCEPTION 'فروش اینستاگرام فقط با پرداخت کامل نهایی می‌شود؛ مانده % ریال است', v_due;
+      END IF;
+    END IF;
+    RETURN NEW;
+  END IF;
+  IF v_ctx <> o.id::text THEN
+    RAISE EXCEPTION 'پیش‌نویس سفارش اینستاگرام فقط از صفحهٔ همان سفارش تغییر می‌کند (%)', o.order_no;
+  END IF;
+  IF NEW.status = 'draft' THEN
+    IF o.status NOT IN ('draft','confirming') THEN
+      RAISE EXCEPTION 'سفارش % رزرو یا بسته است؛ برای تغییر ابتدا رزرو را برگردانید', o.order_no;
+    END IF;
+  ELSIF NEW.status = 'cancelled' THEN
+    IF o.status <> 'cancelled' THEN RAISE EXCEPTION 'لغو فاکتور فقط با لغو سفارش %', o.order_no; END IF;
+  ELSIF o.status <> 'confirming' THEN
+    RAISE EXCEPTION 'فاکتور سفارش % فقط در تراکنش تأیید واریز نهایی می‌شود', o.order_no;
+  END IF;
+  RETURN NEW;
+END $$;
 
 COMMIT;

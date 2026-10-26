@@ -1073,6 +1073,18 @@ export function registerSalesRoutes(app: FastifyInstance, deps: SalesRouteDeps):
             }
             await requireForSession(trx, s, "sale.credit", { amount: payable - paid });
           }
+          /*
+           * فروش اینستاگرامِ بی‌شیفت در لحظهٔ نهایی‌سازی رخ می‌دهد (مهاجرت ۱۰۶، همان قاعدهٔ تأیید v1):
+           * دورهٔ ثبت روزانه، سال مالی و تاریخ خروج کالا از occurred_at می‌آیند. سبدِ پیش از نیمه‌شب یا
+           * Replay دیررس صف آفلاین وگرنه به روز دیروز می‌خورد یا به دورهٔ بسته‌شدهٔ دیروز گیر می‌کرد.
+           * زیر همان قفل فاکتور و فقط روی پیش‌نویس؛ زمان پرداخت‌ها و فاکتور نهایی دست نمی‌خورند. Replay
+           * همان کلید به اینجا نمی‌رسد (پاسخ ذخیره‌شده برمی‌گردد).
+           */
+          if (inv.channel === "instagram" && inv.shiftId === null) {
+            // سفارش v1 زمانش را در تأیید واریز خودش می‌گیرد (۱۰۲) و از این مسیر نهایی نمی‌شود.
+            await sql`UPDATE sales.invoice SET occurred_at = now() WHERE id = ${id}::uuid AND status = 'draft'
+              AND NOT EXISTS (SELECT 1 FROM sales.instagram_order o WHERE o.invoice_id = ${id}::uuid)`.execute(trx);
+          }
         }
         const number = await invoices.finalizeIn(trx, id, s.userId);
         return { value: { number }, ref: id };
