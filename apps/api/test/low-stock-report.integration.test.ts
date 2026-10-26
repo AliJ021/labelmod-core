@@ -135,4 +135,34 @@ describe("گزارش کمبود موجودی: یک snapshot و صفحه‌بند
     // دامنه دست نخورد: صفحه پارامتر نامعتبر نمی‌پذیرد.
     assert.equal((await get("&page=0")).statusCode, 400);
   });
+
+  test("same-name warehouses: tied variations retain a unique order across pages and full export", async () => {
+    // Warehouse names are not unique. The row identity includes BOTH warehouse and variation.
+    // Duplicate this fixture in another same-name warehouse, plus a singleton before the pairs,
+    // so a 2,000-row page boundary cuts through one pair of otherwise identical sort keys.
+    const second = (await sql<{ id: string }>`INSERT INTO inventory.warehouse (branch_id, code, name, kind)
+      VALUES (${BRANCH}::uuid, ${"LS-TIE-" + suffix}, 'انبار کمبود', 'stock') RETURNING id::text`.execute(owner.db)).rows[0]!.id;
+    await sql`SELECT platform.set_actor(${adminId}::uuid)`.execute(owner.db);
+    await sql`SELECT inventory.apply_movement(variation_id, ${second}::uuid, 1, 'opening',
+        p_user => ${adminId}::uuid, p_unit_cost => 1000)
+      FROM inventory.stock_balance WHERE warehouse_id = ${wh}::uuid AND variation_id <> ${flip}::uuid`.execute(owner.db);
+    await move(-10);
+    const reports = new ReportService(handle.db);
+    const full = await reports.lowStock({ branchId: BRANCH, warehouseId: undefined, page: 1, pageSize: null });
+    assert.equal(full.total, MANY * 2 + 1);
+    const key = (r: { variationId: string; warehouseId: string }) => `${r.variationId}/${r.warehouseId}`;
+    const pages = [];
+    for (let page = 1; page <= 3; page++) {
+      pages.push(...(await reports.lowStock({ branchId: BRANCH, warehouseId: undefined, page, pageSize: 2000 })).rows);
+    }
+    assert.equal(new Set(pages.map(key)).size, full.total, "no duplicated/omitted warehouse-variation across pages");
+    assert.equal(pages.length, full.rows.length, "pagination and full export have the same length");
+    assert.equal(pages.findIndex((row, i) => key(row) !== key(full.rows[i]!)), -1,
+      "pagination and full export have the same complete order");
+    const grouped = new Map<string, string[]>();
+    for (const row of full.rows) grouped.set(row.variationId, [...(grouped.get(row.variationId) ?? []), row.warehouseId]);
+    for (const ids of grouped.values()) {
+      assert.deepEqual(ids, [...ids].sort(), "warehouse identity breaks identical name/variation ties");
+    }
+  });
 });

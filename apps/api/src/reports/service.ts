@@ -436,7 +436,7 @@ export class ReportService {
            AND (${q.warehouseId ?? null}::uuid IS NULL OR l.warehouse_id = ${q.warehouseId ?? null}::uuid)),
       pg AS (
         SELECT * FROM l
-         ORDER BY available, product_name, color, size, warehouse_name, variation_id
+         ORDER BY available, product_name, color, size, warehouse_name, variation_id, warehouse_id
          LIMIT ${q.pageSize}::bigint OFFSET ${offset}::bigint)
       SELECT (SELECT th::text FROM t) AS threshold,
              (SELECT count(*) FROM l)::text AS total,
@@ -444,7 +444,7 @@ export class ReportService {
                  'warehouseId', warehouse_id::text, 'warehouseName', warehouse_name, 'variationId', variation_id::text,
                  'productId', product_id::text, 'sku', sku, 'productName', product_name, 'color', color, 'size', size,
                  'onHand', on_hand::text, 'reserved', reserved::text, 'available', available::text)
-                 ORDER BY available, product_name, color, size, warehouse_name, variation_id) FROM pg), '[]'::jsonb) AS rows
+                 ORDER BY available, product_name, color, size, warehouse_name, variation_id, warehouse_id) FROM pg), '[]'::jsonb) AS rows
     `.execute(this.#db);
     const x = r.rows[0]!;
     if (x.threshold === null) return { threshold: null, total: null, page: q.page, pageSize: q.pageSize, pages: 0, truncated: false, rows: [] };
