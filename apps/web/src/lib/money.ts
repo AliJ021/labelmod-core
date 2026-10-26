@@ -72,7 +72,7 @@ export function exactTomanInput(rial: string): string {
   return `${value / 10n}${value % 10n === 0n ? "" : `.${value % 10n}`}`;
 }
 
-/** Opt-in one-decimal Toman input; the POS integer-only parser remains unchanged. */
+/** Opt-in one-decimal Toman input; callers using rialFromTomanInput remain integer-only. */
 export function rialFromExactTomanInput(raw: string): bigint | null {
   const parts = raw.trim().split(/[.٫]/);
   if (parts.length === 1) return rialFromTomanInput(raw);

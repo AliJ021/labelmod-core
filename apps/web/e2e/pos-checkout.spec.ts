@@ -238,6 +238,63 @@ test("clicking the unit price opens the existing unit-price editor in Toman", as
   await expect(page.getByLabel(/قیمت واحد/)).toHaveCount(0);
 });
 
+for (const kind of ["price", "discount"] as const) {
+  test(`exact Rial ${kind}: unchanged edits preserve every remainder and large values`, async ({ page, api }) => {
+    const s = pos(api);
+    const bodies: unknown[] = [];
+    api.handlers.set(`PATCH /invoices/${INV}/lines/l1/${kind}`, async route => {
+      bodies.push(route.request().postDataJSON());
+      await route.fulfill({ json: s.invoice });
+    });
+    await open(page);
+    for (const value of ["1", "2", "3", "4", "5", "6", "7", "8", "9", "90071992547409939"]) {
+      s.invoice = { ...s.invoice, lines: [{ ...s.invoice.lines[0]!, qty: "1",
+        unitPrice: kind === "price" ? value : "999999999999999999",
+        netAmount: "999999999999999999", discountAmount: kind === "discount" ? value : "0" }] };
+      await page.reload();
+      await page.getByRole("button", { name: kind === "price" ? "ویرایش قیمت شلوار کتان" : "تخفیف شلوار کتان", exact: true }).click();
+      const input = page.getByLabel(kind === "price" ? /قیمت واحد/ : /^تخفیف \(تومان\)/);
+      const amount = BigInt(value);
+      await expect(input).toHaveValue(`${(amount / 10n).toString().replace(/\B(?=(\d{3})+(?!\d))/g, ",")}.${amount % 10n}`);
+      await page.getByRole("button", { name: kind === "price" ? "ثبت قیمت" : "اعمال تخفیف", exact: true }).click();
+      await expect.poll(() => bodies.at(-1)).toEqual(kind === "price" ? { unitPrice: value } : { discountAmount: value });
+    }
+    expect(bodies).toHaveLength(10);
+  });
+
+  test(`exact Rial ${kind}: decimal Persian input, reasons and server rejection stay intact`, async ({ page, api }) => {
+    const s = pos(api);
+    const bodies: unknown[] = [];
+    let reject = true;
+    api.handlers.set(`PATCH /invoices/${INV}/lines/l1/${kind}`, async route => {
+      bodies.push(route.request().postDataJSON());
+      await route.fulfill(reject ? { status: 403, json: { error: { code: "forbidden", message: "مجوز تغییر مبلغ ندارید" } } } : { json: s.invoice });
+    });
+    await open(page);
+    await page.getByRole("button", { name: kind === "price" ? "ویرایش قیمت شلوار کتان" : "تخفیف شلوار کتان", exact: true }).click();
+    const input = page.getByLabel(kind === "price" ? /قیمت واحد/ : /^تخفیف \(تومان\)/);
+    const submit = page.getByRole("button", { name: kind === "price" ? "ثبت قیمت" : "اعمال تخفیف", exact: true });
+    for (const invalid of ["۱۲٫۳۴", "1.2.3", "-1.2"]) {
+      await input.fill(invalid);
+      await expect(submit).toBeDisabled();
+    }
+    expect(bodies).toEqual([]);
+    await input.fill("۱٬۲۳۴٫۵");
+    await page.getByLabel("دلیل — بالای آستانه اجباری است").fill("  اصلاح قیمت با تأیید مدیر  ");
+    await submit.click();
+    await expect(page.getByRole("alert")).toContainText("مجوز تغییر مبلغ ندارید");
+    await expect(input).toBeVisible();
+    const expected = kind === "price"
+      ? { unitPrice: "12345", priceOverrideReason: "اصلاح قیمت با تأیید مدیر" }
+      : { discountAmount: "12345", discountReason: "اصلاح قیمت با تأیید مدیر" };
+    expect(bodies).toEqual([expected]);
+    reject = false;
+    await submit.click();
+    await expect(input).toHaveCount(0);
+    expect(bodies).toEqual([expected, expected]);
+  });
+}
+
 for (const required of [false, true]) test(`customer entry (${required ? "required and always visible first" : "optional after search"}) requires a fresh phone's name before linking`, async ({page, api}) => {
   const s=pos(api); s.invoice={...s.invoice,lines:[]};
   api.defaults["GET /pos/policy"] = { requireCustomer: required };
