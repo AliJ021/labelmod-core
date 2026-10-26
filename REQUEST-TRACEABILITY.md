@@ -24,7 +24,7 @@
 | شناسه | موضوع | وضعیت | مدرک | معیار بستن |
 |---|---|---|---|---|
 | SEC-15 | Dependabot #15 — zod، high، GHSA-mrhx-c7xc-m3w5 | **بسته** | ادغام PR199 (`0a5b359`)؛ root گزارش داد هشدار Fixed شد | — |
-| SEC-13 | Dependabot #13 — ip-address، moderate، GHSA-rxp7-6hxx-x8q5 / CVE-2026-111997 | **منتظر بازبینی** | [PR200](https://github.com/AliJ021/labelmod-core/pull/200). مسیر وابستگی: `@fastify/rate-limit@11.2.0` ← `ip-address ^10.2.0`. نسخهٔ 10.7.4 (2026-10-11) در registry هست. lock دقیقاً روی 10.7.4 است و override نمانده. `pnpm audit` کامل: هیچ آسیب‌پذیری. | ادغام PR200 به‌دست root و Fixed شدن هشدار #13 روی GitHub. علت پیام «cannot update» در Dependabot اثبات نشد، چون API هشدار از نشست ۴۰۳ می‌دهد. هیچ هشداری dismiss نشد. |
+| SEC-13 | Dependabot #13 — ip-address، moderate، GHSA-rxp7-6hxx-x8q5 / CVE-2026-111997 | **ادغام‌شده؛ منتظر Fixed روی GitHub** | [PR200](https://github.com/AliJ021/labelmod-core/pull/200) به‌دست root ادغام شد (۲۰۲۶/۱۰/۲۶). مسیر وابستگی: `@fastify/rate-limit@11.2.0` ← `ip-address ^10.2.0`. نسخهٔ 10.7.4 (2026-10-11) در registry هست. lock دقیقاً روی 10.7.4 است و override نمانده. `pnpm audit` کامل: هیچ آسیب‌پذیری. | ادغام PR200 به‌دست root و Fixed شدن هشدار #13 روی GitHub. علت پیام «cannot update» در Dependabot اثبات نشد، چون API هشدار از نشست ۴۰۳ می‌دهد. هیچ هشداری dismiss نشد. |
 
 ## موارد جاافتادهٔ مصوب
 
