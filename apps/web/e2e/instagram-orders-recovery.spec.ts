@@ -270,7 +270,8 @@ test.describe("سفارش اینستاگرام: عملیات ماندگار، م
     const panel = page.getByRole("region", { name: "سفارش IG-000200" });
     await panel.getByRole("button", { name: /ویرایش سرآیند/ }).click();
     const form = panel.getByRole("form", { name: "فرم ویرایش سرآیند" });
-    await expect(form.getByLabel("کرایهٔ دریافتی (تومان)")).toHaveValue("5000");
+    // نمایش گروه‌بندی‌شده (AmountInput)؛ بدنه همان ریال بی‌جداکننده است (پایین‌تر).
+    await expect(form.getByLabel("کرایهٔ دریافتی (تومان)")).toHaveValue("5,000");
     await form.getByLabel("نشانی ارسال").fill("اصفهان، خیابان تازه");
     await form.getByRole("button", { name: "ثبت سرآیند" }).click();
     // نه متن خودِ کادر: فرم بسته شده و واقعیت «نشانی ارسال» از پاسخ سرور است.
@@ -290,6 +291,26 @@ test.describe("سفارش اینستاگرام: عملیات ماندگار، م
     await expect(banner(page), "رد قطعی عملیات معلق نمی‌سازد").toHaveCount(0);
     // رد، فرم را نمی‌بندد و ورودی را نگه می‌دارد.
     await expect(form.getByLabel("روش ارسال")).toHaveValue("پیک");
+  });
+
+  test("money fields group thousands, accept Persian digits and keep the exact rial in the request", async ({ page, api }) => {
+    const s = server(api, { version: 7 });
+    api.handlers.set(`PATCH /instagram-orders/${ID}`, async route => {
+      const body = route.request().postDataJSON() as Record<string, unknown>;
+      s.requests.push({ path: "patch", key: route.request().headers()["idempotency-key"], body });
+      await route.fulfill({ json: { ...s.order, version: 8, lines: [] } });
+    });
+    await page.goto(`/?page=instagram-orders&ig.order=${ID}`);
+    const panel = page.getByRole("region", { name: "سفارش IG-000200" });
+    await panel.getByRole("button", { name: /ویرایش سرآیند/ }).click();
+    const form = panel.getByRole("form", { name: "فرم ویرایش سرآیند" });
+    const shipping = form.getByLabel("کرایهٔ دریافتی (تومان)");
+    await shipping.fill("۱۲۳۴۵٫۶");
+    await expect(shipping, "رقم فارسی لاتین و هزارگان جدا می‌شود؛ ممیز فارسی می‌ماند و رقم اعشار همان ریال است").toHaveValue("12,345٫6");
+    await form.getByRole("button", { name: "ثبت سرآیند" }).click();
+    await expect(form).toHaveCount(0);
+    const patch = s.requests.find(r => r.path === "patch")!;
+    expect(patch.body).toMatchObject({ shippingAmount: "123456" });
   });
 
   test("header form keeps its own base version: a refresh under an open form exposes the conflict and never sends stale values with the newer version", async ({ page, api }) => {
