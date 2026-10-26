@@ -24,6 +24,7 @@ import { ShiftError, shiftToJson, type ShiftService } from "../sales/shift.ts";
 import { assertBranch, assertWarehouseInBranch } from "../sales/scope.ts";
 import { assertMarkdownAllowed as markdownGate } from "../sales/markdown-gate.ts";
 import { requireInvoiceRead, requireInvoiceReadOf } from "../sales/invoice-access.ts";
+import { resolveCashDrawer } from "../treasury/cash-drawer.ts";
 
 /** پول در JSON رشته است — رقم صحیح، بدون اعشار و بدون جداکننده. */
 const moneyString = z
@@ -118,6 +119,8 @@ const paymentBody = z.object({
   amount: moneyString,
   refNo: z.string().max(64).optional(),
   accountId: uuid.optional(),
+  /** کشوی نقد فروش اینستاگرام (۱۰۶) — فقط وقتی دو کشو باز است لازم می‌شود. */
+  shiftId: uuid.optional(),
 });
 
 export interface SalesRouteDeps {
@@ -922,8 +925,32 @@ export function registerSalesRoutes(app: FastifyInstance, deps: SalesRouteDeps):
         amount: body.amount,
         refNo: body.refNo ?? null,
         accountId: body.accountId ?? null,
+        shiftId: body.shiftId ?? null,
       },
       run: async (trx) => {
+        /*
+         * نقد فروش اینستاگرام (مهاجرت ۱۰۶): فاکتور شیفت ندارد، پس پول به **کشوی باز همان شعبه**
+         * می‌نشیند — همان تعریف بازپرداخت مرجوعی و حرکت نقد غیرفروشی (`treasury/cash-drawer.ts`).
+         * بی کشو یا با دو کشوی نام‌نبرده ۴۲۲ است، نه حدس. داخل `run` است تا Replay همان کلید
+         * (پاسخ گم‌شده) با تغییر کشوها رد نشود. باز بودن کشو را نگهبان ۱۰۶ زیر قفل دوباره می‌سنجد.
+         */
+        let drawerShiftId: string | undefined;
+        if (method?.kind === "cash") {
+          const target = await invoices.byId(id, trx);
+          if (target?.channel === "instagram" && target.shiftId === null) {
+            const drawer = await resolveCashDrawer(shifts, target.branchId, body.shiftId);
+            if (!drawer.ok) {
+              // پیام «پول از کدام کشو رفته» برای نقدِ ورودی گمراه‌کننده است؛ همان کد، متن خودِ این مسیر.
+              const why = drawer.code === "no_open_shift" ? "الان کشوی بازی در این شعبه نیست"
+                : drawer.code === "ambiguous_shift" ? "چند کشو در این شعبه باز است و حدس زده نمی‌شود کدام"
+                  : "کشوی نام‌برده در این شعبه باز نیست";
+              throw new InvoiceError(drawer.code,
+                `نقد فروش اینستاگرام به کشوی باز همین شعبه می‌نشیند؛ ${why}. کشو را مشخص کنید یا روش دیگری انتخاب کنید.`,
+                drawer.status);
+            }
+            drawerShiftId = drawer.shiftId;
+          }
+        }
         const paymentId = await invoices.addPaymentIn(trx, {
           invoiceId: id,
           methodCode: body.methodCode,
@@ -932,6 +959,7 @@ export function registerSalesRoutes(app: FastifyInstance, deps: SalesRouteDeps):
           ...(body.refNo === undefined ? {} : { refNo: body.refNo }),
           ...(body.accountId === undefined ? {} : { accountId: body.accountId }),
           ...(key === undefined ? {} : { clientEventId: key }),
+          ...(drawerShiftId === undefined ? {} : { drawerShiftId }),
           rejectNonCashOverpay: true,
         });
         return { value: paymentId, ref: paymentId };

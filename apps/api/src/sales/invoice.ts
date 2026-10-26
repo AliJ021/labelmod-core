@@ -1026,6 +1026,11 @@ export class InvoiceService {
        * خطایش رفتار افزونه را عوض می‌کرد.
        */
       rejectNonCashOverpay?: boolean | undefined;
+      /**
+       * کشوی نقد فاکتورِ بی‌شیفت (فروش اینستاگرام، ۱۰۶). فاکتور شیفت‌دار کشوی خودش را دارد و
+       * این میدان را نمی‌پذیرد — وگرنه نقد صندوق به کشوی دیگری می‌رفت.
+       */
+      drawerShiftId?: string | undefined;
     },
   ): Promise<string> {
     // ⚠️ خواندن‌ها روی **همان تراکنش**، نه روی Pool.
@@ -1087,6 +1092,9 @@ export class InvoiceService {
         );
       }
     }
+    if (input.drawerShiftId !== undefined && (inv.shiftId !== null || method.kind !== "cash")) {
+      throw new InvoiceError("drawer_not_applicable", "کشوی جدا فقط برای نقدِ فاکتور بی‌شیفت معنا دارد.", 422);
+    }
     {
       await setActor(trx, input.actorId);
       const row = await trx
@@ -1094,7 +1102,7 @@ export class InvoiceService {
         .values({
           invoice_id: input.invoiceId,
           return_id: null,
-          shift_id: inv.shiftId,
+          shift_id: input.drawerShiftId ?? inv.shiftId,
           method_code: input.methodCode,
           direction: "in",
           amount: serializeMoney(input.amount),

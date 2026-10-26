@@ -42,7 +42,7 @@ describe("فروش اینستاگرام از صندوق: قرارداد و رق�
   const PASSWORD = "رمز-فروش-اینستاگرام-از-صندوق-بلند";
   const u = {
     op: `igpo_${suffix}`, op2: `igpp_${suffix}`, far: `igpf_${suffix}`, admin: `igpa_${suffix}`,
-    c1: `igc1_${suffix}`, c2: `igc2_${suffix}`,
+    c1: `igc1_${suffix}`, c2: `igc2_${suffix}`, c3: `igc3_${suffix}`,
   };
   const ids: Record<string, string> = {};
   const siteKey = newApiKey();
@@ -93,7 +93,7 @@ describe("فروش اینستاگرام از صندوق: قرارداد و رق�
   }
 
   /** سبد کامل و پرداخت‌شده؛ هنوز نهایی نشده. */
-  async function cart(who: string, variationId: string, qty: number, pay: Array<{ methodCode: string; amount: string; refNo?: string }>,
+  async function cart(who: string, variationId: string, qty: number, pay: Array<{ methodCode: string; amount: string; refNo?: string; shiftId?: string }>,
     channel?: string): Promise<string> {
     const inv = await call("POST", "/invoices", who, { branchId: BRANCH, warehouseId: STORE_WH, ...(channel ? { channel } : {}) }, key());
     assert.equal(inv.statusCode, 201, inv.body);
@@ -106,6 +106,9 @@ describe("فروش اینستاگرام از صندوق: قرارداد و رق�
     }
     return id;
   }
+  /** کشوی باز یک کاربر در شعبهٔ اصلی. */
+  const drawerOf = async (who: string) => (await sql<{ id: string }>`SELECT id FROM sales.cash_shift
+    WHERE user_id = ${ids[who]}::uuid AND branch_id = ${BRANCH}::uuid AND status = 'open'`.execute(handle.db)).rows[0]!.id;
   const invoice = async (id: string) => (await sql<{ status: string; channel: string; shift_id: string | null; paid: string; payable: string; batch: string | null }>`
     SELECT i.status, i.channel, i.shift_id::text, i.paid_amount::text AS paid, i.payable_amount::text AS payable,
            (SELECT b.kind || '/' || coalesce(b.channel, '-') FROM ledger.posting_batch b WHERE b.id = i.posting_batch_id) AS batch
@@ -121,7 +124,7 @@ describe("فروش اینستاگرام از صندوق: قرارداد و رق�
     const hash = await hashSecret(PASSWORD);
     for (const [username, role, branch] of [
       [u.op, "instagram_operator", BRANCH], [u.op2, "instagram_operator", BRANCH], [u.far, "instagram_operator", otherBranch],
-      [u.admin, "admin", BRANCH], [u.c1, "cashier", BRANCH], [u.c2, "cashier", BRANCH],
+      [u.admin, "admin", BRANCH], [u.c1, "cashier", BRANCH], [u.c2, "cashier", BRANCH], [u.c3, "cashier", BRANCH],
     ] as const) {
       const row = await db.insertInto("identity.app_user").values({
         username, full_name: username, password_hash: hash, is_active: true, mobile: null, pin_hash: null, totp_secret: null,
@@ -164,9 +167,10 @@ describe("فروش اینستاگرام از صندوق: قرارداد و رق�
     assert.equal(inv.json().shiftId, null, "فروش اینستاگرام کشو ندارد");
     const id = inv.json().id as string;
     assert.equal((await call("POST", `/invoices/${id}/scan`, u.op, { variationId: v.id, qty: "2" }, key())).statusCode, 200);
+    // نقد می‌ماند ولی باید به یک کشو برسد (۱۰۶): سه کشوی باز در شعبه و هیچ‌کدام نام برده نشده → ۴۲۲، نه حدس.
     const cash = await call("POST", `/invoices/${id}/payments`, u.op, { methodCode: "cash", amount: "500000" }, key());
-    assert.equal(cash.statusCode, 409, cash.body);
-    assert.match(cash.json().error.message, /برای فروش اینستاگرام مجاز نیست/);
+    assert.equal(cash.statusCode, 422, cash.body);
+    assert.equal(cash.json().error.code, "ambiguous_shift");
     const card = await call("POST", `/invoices/${id}/payments`, u.op, { methodCode: "card", amount: "500000", refNo: "T-1" }, key());
     assert.equal(card.statusCode, 409, card.body);
     const p1 = await call("POST", `/invoices/${id}/payments`, u.op, { methodCode: "transfer", amount: "1500000", refNo: `C2C-${suffix}-1` }, key());
@@ -288,8 +292,10 @@ describe("فروش اینستاگرام از صندوق: قرارداد و رق�
       // هر بازیگر سبد مستقل خودش را دارد و کامل پرداخت کرده است؛ هنوز هیچ‌کس نهایی نکرده.
       const c1 = await cart(u.c1, v.id, 1, [{ methodCode: "cash", amount: "1000000" }]);
       const c2 = await cart(u.c2, v.id, 1, [{ methodCode: "card", amount: "1000000", refNo: `CARD-${suffix}-${round}` }]);
+      // اپراتور ترکیبی می‌گیرد؛ در دورهای فرد بخشی نقد است و به کشوی صندوق‌دار اول می‌نشیند (۱۰۶).
       const ig = await cart(u.op, v.id, 1, [{ methodCode: "transfer", amount: "600000", refNo: `C2C-${suffix}-${round}-a` },
-        { methodCode: "transfer", amount: "400000", refNo: `C2C-${suffix}-${round}-b` }]);
+        round % 2 === 1 ? { methodCode: "cash", amount: "400000", shiftId: await drawerOf(u.c1) }
+          : { methodCode: "transfer", amount: "400000", refNo: `C2C-${suffix}-${round}-b` }]);
       const paymentsBefore = await sql<{ n: string }>`SELECT count(*)::text AS n FROM treasury.payment
         WHERE invoice_id IN (${c1}::uuid, ${c2}::uuid, ${ig}::uuid)`.execute(handle.db);
       const woo = () => app.inject({ method: "POST", url: "/web/orders", headers: { authorization: `Bearer ${siteKey}` }, payload: {
@@ -348,6 +354,44 @@ describe("فروش اینستاگرام از صندوق: قرارداد و رق�
       assert.deepEqual(await webCount(), beforeReplay, `دور ${round}: Replay سفارش سایت اثر دوم نداشت`);
     }
     assert.ok(winnersTotal > 0);
+  });
+
+  test("نقد اینستاگرام: کشوی نام‌برده، نگهبان بستن، شمارش بی مغایرت و Replay پس از بستن", async () => {
+    const opened = await call("POST", "/shifts", u.c3, { branchId: BRANCH, openingCash: "0" }, key());
+    assert.ok([200, 201].includes(opened.statusCode), opened.body);
+    const drawer = await drawerOf(u.c3);
+    const v = await variation(2);
+    const id = await cart(u.op, v.id, 1, []);
+    const pay = (body: object, k = key()) => call("POST", `/invoices/${id}/payments`, u.op, body, k);
+    const ambiguous = await pay({ methodCode: "cash", amount: "600000" });
+    assert.equal(ambiguous.statusCode, 422, ambiguous.body);
+    assert.equal(ambiguous.json().error.code, "ambiguous_shift");
+    const cashKey = key();
+    const cash = await pay({ methodCode: "cash", amount: "600000", shiftId: drawer }, cashKey);
+    assert.equal(cash.statusCode, 201, cash.body);
+    const row = (await sql<{ shift_id: string }>`SELECT shift_id::text FROM treasury.payment WHERE id = ${cash.json().paymentId}::uuid`
+      .execute(handle.db)).rows[0]!;
+    assert.equal(row.shift_id, drawer, "نقد به کشوی نام‌برده نشست");
+    assert.equal((await invoice(id)).shift_id, null, "فاکتور بی شیفت ماند");
+    const over = await pay({ methodCode: "cash", amount: "400001", shiftId: drawer });
+    assert.equal(over.statusCode, 409, over.body);
+    assert.match(over.json().error.message, /باقی پول ندارد/);
+    // کشو با نقدِ پیش‌نویس اینستاگرام بسته نمی‌شود (بستن کشو `shift.close` است: مدیر، نه صندوق‌دار).
+    const early = await call("POST", `/shifts/${drawer}/close`, u.admin, { countedCash: "600000" }, key());
+    assert.equal(early.statusCode, 409, early.body);
+    assert.match(early.json().error.message, /نقدِ فاکتور نهایی‌نشده/);
+    assert.equal((await pay({ methodCode: "transfer", amount: "400000", refNo: `C2C-${suffix}-drawer` })).statusCode, 201);
+    assert.equal((await call("POST", `/invoices/${id}/finalize`, u.op, {}, key())).statusCode, 200);
+    const done = await invoice(id);
+    assert.deepEqual({ status: done.status, shift: done.shift_id, batch: done.batch, paid: done.paid },
+      { status: "finalized", shift: null, batch: "channel_day/instagram", paid: "1000000" });
+    const closed = await call("POST", `/shifts/${drawer}/close`, u.admin, { countedCash: "600000" }, key());
+    assert.equal(closed.statusCode, 200, closed.body);
+    assert.equal(closed.json().variance, "0", "نقد اینستاگرام در شمارش همان کشو آمد");
+    // پاسخ گم‌شدهٔ همان پرداخت نقد پس از بستن کشو: Replay، نه ۴۲۲ و نه ردیف دوم.
+    const replay = await pay({ methodCode: "cash", amount: "600000", shiftId: drawer }, cashKey);
+    assert.equal(replay.statusCode, 200, replay.body);
+    assert.equal(replay.json().replayed, true);
   });
 
   test("برگشت کامل چندسطری: یک سطر بی‌موجودی کل نهایی‌سازی را برمی‌گرداند", async () => {

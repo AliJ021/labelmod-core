@@ -81,17 +81,17 @@ export const LINK_NOT_IMPLEMENTED = "ساخت لینک پرداخت هنوز د�
 /**
  * جای هر روش در چیدمان.
  *
- * در حالت اینستاگرام مشتری حضور ندارد: نه کارت‌خوان، نه نقد (کشویی نیست)، نه نسیه
- * (فقط پرداخت کامل). کارت‌به‌کارت جای کارت‌خوان را می‌گیرد. دروازهٔ واقعی
- * `sales.instagram_payment_guard` (مهاجرت ۱۰۵) است؛ اینجا فقط آنچه سرور رد می‌کند
- * پیشنهاد نمی‌شود.
+ * در حالت اینستاگرام کارت‌به‌کارت جای کارت‌خوان را می‌گیرد (مشتری پای دستگاه نیست) و
+ * نسیه نیست (فقط پرداخت کامل). بقیهٔ روش‌های صندوق — از جمله **نقد** — می‌مانند (بازنگری
+ * root، مهاجرت ۱۰۶): نقد به کشوی باز همان شعبه می‌نشیند و **باقی پول ندارد**، چون فاکتور
+ * شیفتی ندارد که باقی پول از آن داده شود. دروازهٔ واقعی `sales.instagram_payment_guard` است.
  */
 function placement(m: PaymentMethod, instagram: boolean): { group: PaymentGroup; rank: number } | null {
   const code = m.code.toLowerCase();
   if (code === "snappay") return { group: "provider", rank: 1 };
   if (code === "digipay") return { group: "provider", rank: 2 };
   if (instagram) {
-    if (m.kind === "card_reader" || m.kind === "cash") return null;
+    if (m.kind === "card_reader") return null;
     if (m.kind === "transfer") return { group: "primary", rank: 1 };
   }
   switch (m.kind) {
@@ -116,7 +116,7 @@ export function paymentLayout(methods: readonly PaymentMethod[], ctx: { hasCusto
     if (!p) return [];
     const option: PaymentOption = {
       code: m.code, name: m.name, kind: m.kind, requiresRef: m.requiresRef, group: p.group,
-      allowsChange: m.kind === "cash",
+      allowsChange: m.kind === "cash" && !instagram,
       unavailableReason: needsCustomer(m.kind) && !ctx.hasCustomer ? NEEDS_CUSTOMER_REASON : null,
     };
     return [{ option, rank: p.rank }];

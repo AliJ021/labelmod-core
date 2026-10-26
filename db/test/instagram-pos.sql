@@ -103,13 +103,13 @@ INSERT INTO sales.invoice_line (invoice_id, line_no, variation_id, qty, unit_pri
 SELECT sales.refresh_invoice_totals((SELECT v FROM f WHERE k='inv'));
 SELECT pg_temp.eq('سطر صحیح بی زمینهٔ سفارش پذیرفته شد (کنترل)', (SELECT count(*) FROM sales.invoice_line WHERE invoice_id=(SELECT v FROM f WHERE k='inv')), 1::bigint);
 
-\echo '── ۳. روش پرداخت: کارت‌خوان، نقد و نسیه نه؛ کارت‌به‌کارت بله ──'
+\echo '── ۳. روش پرداخت: کارت‌خوان و نسیه نه؛ نقدِ بی کشو نه (نقد با کشو: instagram-pos-cash.sql)؛ کارت‌به‌کارت بله ──'
 SELECT pg_temp.rejects('کارت‌خوان',
   format($q$INSERT INTO treasury.payment (invoice_id, method_code, amount, ref_no) VALUES (%L, 'card', 1000000, 'T1')$q$,
     (SELECT v FROM f WHERE k='inv')), 'برای فروش اینستاگرام مجاز نیست');
-SELECT pg_temp.rejects('نقد',
+SELECT pg_temp.rejects('نقد بی کشو (مهاجرت ۱۰۶)',
   format($q$INSERT INTO treasury.payment (invoice_id, method_code, amount) VALUES (%L, 'cash', 1000000)$q$,
-    (SELECT v FROM f WHERE k='inv')), 'برای فروش اینستاگرام مجاز نیست');
+    (SELECT v FROM f WHERE k='inv')), 'باید به کشوی باز همین شعبه ثبت شود');
 SELECT pg_temp.rejects('نسیه',
   format($q$INSERT INTO treasury.payment (invoice_id, method_code, amount) VALUES (%L, 'credit', 1000000)$q$,
     (SELECT v FROM f WHERE k='inv')), 'برای فروش اینستاگرام مجاز نیست');
@@ -164,7 +164,7 @@ SELECT set_config('lmc.instagram_order', '', true);
 SELECT pg_temp.eq('درج با زمینهٔ v1 ماند (مجوز آن در مسیر سفارش سنجیده می‌شود)',
   (SELECT count(*) FROM sales.invoice WHERE channel='instagram' AND created_by=(SELECT v FROM f WHERE k='cash')), 1::bigint);
 
-\echo '── ۸. کنترل منفی: با نگهبان خاموش، پرداخت ناقص و نقد می‌گذشتند ──'
+\echo '── ۸. کنترل منفی: با نگهبان خاموش، پرداخت ناقص و نقدِ بی کشو می‌گذشتند ──'
 DO $neg$
 DECLARE v_inv uuid; v_user uuid := (SELECT v FROM f WHERE k='op2');
 BEGIN
@@ -188,7 +188,7 @@ BEGIN
   IF (SELECT status FROM sales.invoice WHERE id = v_inv) <> 'finalized' THEN
     RAISE EXCEPTION '  ✗ کنترل منفی: بی نگهبان هم رد شد؛ پس رد بالا از نگهبان نبود';
   END IF;
-  RAISE NOTICE '  ✓ کنترل منفی: بی دو نگهبان، نقد و مانده می‌گذشت — رد بالا کار همین نگهبان‌هاست';
+  RAISE NOTICE '  ✓ کنترل منفی: بی دو نگهبان، نقدِ بی کشو و مانده می‌گذشت — رد بالا کار همین نگهبان‌هاست';
 END $neg$;
 
 \echo '✓ فروش اینستاگرام از صندوق — همه ادعاها پاس شدند'

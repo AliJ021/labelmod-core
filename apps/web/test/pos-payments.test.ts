@@ -314,16 +314,19 @@ describe("صندوق — ساختار", () => {
 });
 
 describe("حالت اینستاگرامِ صندوق — کارت‌به‌کارت جای کارت‌خوان (بازنگری مالک ۲۶ اکتبر، مهاجرت ۱۰۵)", () => {
-  test("همان چیدمان: خانهٔ اول کارت‌به‌کارت، سپس اسنپ‌پی و دیجی‌پی؛ نه نقد، نه کارت‌خوان، نه نسیه", () => {
+  test("همان چیدمان: خانهٔ اول کارت‌به‌کارت، سپس اسنپ‌پی و دیجی‌پی؛ نقد می‌ماند بی باقی پول؛ نه کارت‌خوان، نه نسیه", () => {
     const l = paymentLayout([...SEED, m("snappay", "gateway", true), m("digipay", "gateway", true)], { hasCustomer: true, instagram: true });
     assert.equal(l.primaryKind, "transfer");
     assert.deepEqual(codes(l.primary), ["transfer"]);
     assert.deepEqual(l.providers.map((p) => p.option?.code), ["snappay", "digipay"]);
     const all = codes(allOptions(l));
-    for (const banned of ["cash", "card", "credit"]) assert.ok(!all.includes(banned), `${banned} در حالت اینستاگرام پیشنهاد شد`);
-    // پرداخت ترکیبی با بقیهٔ روش‌های مجاز می‌ماند.
-    assert.deepEqual(codes(l.more), ["gateway", "points", "giftcard"]);
-    assert.ok(l.primary.every((o) => !o.allowsChange), "بدون نقد، باقی پولی هم نیست");
+    for (const banned of ["card", "credit"]) assert.ok(!all.includes(banned), `${banned} در حالت اینستاگرام پیشنهاد شد`);
+    // بقیهٔ روش‌های صندوق، از جمله نقد، برای پرداخت ترکیبی می‌مانند (بازنگری root، ۱۰۶).
+    assert.deepEqual(codes(l.more), ["cash", "gateway", "points", "giftcard"]);
+    const cash = l.more.find((o) => o.code === "cash")!;
+    assert.equal(cash.allowsChange, false, "نقد اینستاگرام باقی پول ندارد");
+    assert.equal(maxAmount(cash, 400000n), 400000n, "حداکثر همان مانده");
+    assert.deepEqual(checkAmount(cash, 400010n, 400000n), { ok: false, reason: "over_max", max: 400000n });
   });
 
   test("کنترل منفی: همان روش‌ها در صندوق فروشگاه چیدمان پیشین را دارند", () => {
@@ -331,6 +334,7 @@ describe("حالت اینستاگرامِ صندوق — کارت‌به‌کا�
     assert.equal(l.primaryKind, "card_reader");
     assert.deepEqual(codes(l.primary), ["card"]);
     assert.ok(codes(l.more).includes("cash") && codes(l.more).includes("transfer"));
+    assert.equal(l.more.find((o) => o.code === "cash")!.allowsChange, true, "نقد صندوق فروشگاه باقی پول دارد");
   });
 
   test("کارت‌به‌کارتِ تعریف‌نشده خانه را پنهان نمی‌کند؛ دلیلش روی خانه است", () => {

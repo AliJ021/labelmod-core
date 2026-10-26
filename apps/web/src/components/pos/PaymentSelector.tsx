@@ -49,6 +49,9 @@ const HINT: Record<string, string> = {
   transfer: "پس از دیدن واریز، شمارهٔ پیگیری انتقال را وارد کنید.",
 };
 
+/** نقدِ بی باقی پول فقط در حالت اینستاگرام است (مهاجرت ۱۰۶). */
+const INSTAGRAM_CASH_HINT = "نقد فروش اینستاگرام به کشوی باز همین شعبه می‌نشیند و باقی پول ندارد؛ حداکثر همان مانده.";
+
 /** زیرنویس کوتاه هر خانه — دلیل کامل ناموجودی جدا و کامل خوانده می‌شود. */
 const CAPTION: Record<string, string> = {
   card_reader: "ثبت دستی پس از تأیید روی دستگاه",
@@ -118,6 +121,7 @@ function PayRow({ option, label, viaProvider, channelBlocked, remaining, input, 
     <p className="pay-form-head"><span className="muted">دریافت با</span> <strong>{label}</strong>
       {viaProvider ? <span className="muted"> · حضوری</span> : null}</p>
     {unavailable ? <p className="field-hint pay-form-note" role="status"><Icon name="info" size="sm" /> {unavailable}</p>
+      : option.kind === "cash" && !option.allowsChange ? <p className="field-hint pay-form-note">{INSTAGRAM_CASH_HINT}</p>
       : HINT[option.code] ?? HINT[option.kind] ? <p className="field-hint pay-form-note">{HINT[option.code] ?? HINT[option.kind]}</p> : null}
     <div className="pay-form-fields">
       <Field label="مبلغ (تومان)" error={amountError}

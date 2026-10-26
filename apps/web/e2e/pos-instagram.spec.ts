@@ -3,7 +3,8 @@
  *
  * - اپراتور اینستاگرام (فقط `instagram.pos.sell`) مستقیم در حالت اینستاگرام است: شیفتی پرسیده و باز
  *   نمی‌شود، «بستن شیفت»، پیش‌فاکتور و تغییر حالت ندارد.
- * - همان چیدمان مصوب پرداخت، با **کارت‌به‌کارت** به‌جای کارت‌خوان؛ نقد و نسیه پیشنهاد نمی‌شوند.
+ * - همان چیدمان مصوب پرداخت، با **کارت‌به‌کارت** به‌جای کارت‌خوان؛ نسیه نیست. نقد می‌ماند (۱۰۶) ولی
+ *   باقی پول ندارد و کشویش را سرور از شعبه تعیین می‌کند؛ دو کشوی باز ۴۲۲ است و پولی شمرده نمی‌شود.
  * - پرداخت کامل کارت‌به‌کارت و نهایی‌سازی — بدنه‌ها دقیق شمرده می‌شوند.
  * - مدیر (هر دو مجوز) پیش‌فرض صندوق فروشگاه است و با یک دکمه به حالت اینستاگرام می‌رود؛ سبد تازه با
  *   `channel: "instagram"` ساخته می‌شود. کنترل منفی: همان مدیر در حالت فروشگاه `channel: "pos"` می‌فرستد.
@@ -74,7 +75,7 @@ const selector = (page: Page) => page.getByRole("region", { name: "روش پرد
 const method = (page: Page, name: string) => selector(page).getByRole("button", { name, exact: true });
 const bar = (page: Page) => page.locator(".pos-bar");
 
-test("اپراتور اینستاگرام: بی شیفت، کارت‌به‌کارت به‌جای کارت‌خوان، بی نقد و نسیه؛ پرداخت کامل و نهایی", async ({ page, api }) => {
+test("اپراتور اینستاگرام: بی شیفت، کارت‌به‌کارت به‌جای کارت‌خوان، بی نسیه؛ پرداخت کامل و نهایی", async ({ page, api }) => {
   const s = server(api);
   allow(api, ["instagram.pos.sell"]);
   await page.addInitScript(([inv, ctx]) => localStorage.setItem("labelmod_open_cart", JSON.stringify({ invoiceId: inv, shiftId: ctx })), [INV, BR]);
@@ -100,7 +101,7 @@ test("اپراتور اینستاگرام: بی شیفت، کارت‌به‌ک�
   await expect(method(page, "اسنپ‌پی")).toBeVisible();
   await expect(method(page, "دیجی‌پی")).toBeVisible();
   await selector(page).getByRole("button", { name: /^نمایش (بیشتر|کمتر)/ }).click();
-  await expect(method(page, "نقدی")).toHaveCount(0);
+  await expect(method(page, "نقدی"), "نقد از روش‌های صندوق می‌ماند").toBeVisible();
   await expect(method(page, "نسیه")).toHaveCount(0);
   await expect(method(page, "درگاه پرداخت"), "روش‌های مجاز دیگر برای پرداخت ترکیبی می‌مانند").toBeVisible();
   await expect(page.getByRole("button", { name: "ثبت نسیه", exact: true })).toHaveCount(0);
@@ -172,4 +173,42 @@ test("صفحهٔ قدیمی سفارش اینستاگرام بی تنظیم صر
   await expect(page.getByRole("button", { name: "سفارش تازه" })).toHaveCount(0);
   await expect(page.getByRole("form", { name: "سفارش تازه" }), "نشانی کهنه فرم بسته را باز نمی‌کند").toHaveCount(0);
   await expect(link).toHaveAttribute("href", "/?page=pos&pos.mode=instagram");
+});
+
+test("نقد اینستاگرام: بی باقی پول، و دو کشوی باز یعنی پیام روشن و هیچ دریافتی شمرده نمی‌شود", async ({ page, api }) => {
+  const s = server(api);
+  allow(api, ["instagram.pos.sell"]);
+  let refuse = true;
+  const sent: Array<Record<string, unknown>> = [];
+  api.handlers.set(`POST /invoices/${INV}/payments`, async (route) => {
+    const body = route.request().postDataJSON() as Record<string, unknown>;
+    sent.push(body);
+    if (refuse) {
+      refuse = false;
+      await route.fulfill({ status: 422, json: { error: { code: "ambiguous_shift",
+        message: "نقد فروش اینستاگرام به کشوی باز همین شعبه می‌نشیند؛ چند کشو در این شعبه باز است و حدس زده نمی‌شود کدام. کشو را مشخص کنید یا روش دیگری انتخاب کنید." } } });
+      return;
+    }
+    s.posted.push(body);
+    await route.fulfill({ status: 201, json: { paymentId: "p1", replayed: false, receivedAmount: String(body.amount),
+      invoice: { ...s.invoice, receivedAmount: String(body.amount) } } });
+  });
+  await page.addInitScript(([inv, ctx]) => localStorage.setItem("labelmod_open_cart", JSON.stringify({ invoiceId: inv, shiftId: ctx })), [INV, BR]);
+  await page.goto(`/?page=pos&pos.branch=${BR}&pos.warehouse=w1`);
+  await expect(page.locator(".lines li").first()).toContainText("شلوار کتان");
+  await selector(page).getByRole("button", { name: /^نمایش (بیشتر|کمتر)/ }).click();
+  await method(page, "نقدی").click();
+  const form = page.getByRole("form", { name: "دریافت با نقدی" });
+  await expect(form).toContainText("باقی پول ندارد");
+  // بیش از مانده پیش از هر درخواست رد می‌شود: باقی پولی در کار نیست.
+  await form.getByLabel("مبلغ (تومان)").fill("25000");
+  await form.getByRole("button", { name: "دریافت وجه", exact: true }).click();
+  await expect(form).toContainText("مبلغ از مانده بیشتر است");
+  expect(sent).toHaveLength(0);
+  await form.getByLabel("مبلغ (تومان)").fill("");
+  await form.getByRole("button", { name: "دریافت وجه", exact: true }).click();
+  await expect(page.getByRole("alert").filter({ hasText: "چند کشو در این شعبه باز است" })).toBeVisible();
+  expect(sent).toEqual([{ methodCode: "cash", amount: "200000" }]);
+  expect(s.posted, "ردِ قطعی چیزی ثبت نکرد").toHaveLength(0);
+  await expect(page.getByRole("button", { name: "نهایی‌کردن فاکتور", exact: true })).toBeDisabled();
 });
