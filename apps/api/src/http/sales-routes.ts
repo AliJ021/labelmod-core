@@ -175,7 +175,8 @@ export function registerSalesRoutes(app: FastifyInstance, deps: SalesRouteDeps):
     const { branchId } = z.object({ branchId: uuid }).parse(req.query);
     await assertBranch(db, s.userId, branchId);
     const sameDay = await can(db, { userId: s.userId, operation: "return.same_day", viaPin: s.pinUnlocked });
-    if (sameDay.verdict !== "allow") await requireForSession(db, s, "return.late");
+    const instagram = await can(db, { userId: s.userId, operation: "instagram.pos.sell", viaPin: s.pinUnlocked });
+    if (sameDay.verdict !== "allow" && instagram.verdict !== "allow") await requireForSession(db, s, "return.late");
     const open = await shifts.openInBranch(branchId);
     const users = open.length === 0 ? [] : await db.selectFrom("identity.app_user")
       .select(["id", "full_name"]).where("id", "in", open.map((x) => x.userId)).execute();

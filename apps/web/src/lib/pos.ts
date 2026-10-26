@@ -139,7 +139,7 @@ export interface InvoiceSettlement {
  */
 export type PaymentIntentStatus =
   | { state: "recorded"; terminal: true;
-      payment: { id: string; methodCode: string; amount: string; refNo: string | null; status: string } }
+      payment: { id: string; methodCode: string; amount: string; refNo: string | null; status: string; shiftId?: string | null } }
   | { state: "abandoned" | "key_conflict"; terminal: true }
   | { state: "invoice_closed"; terminal: true; invoiceStatus: string }
   | { state: "not_found"; terminal: false };
@@ -507,7 +507,7 @@ export const pos = {
 
   pay: (
     invoiceId: string,
-    input: { methodCode: string; amount: string; refNo?: string; accountId?: string },
+    input: { methodCode: string; amount: string; refNo?: string; accountId?: string; shiftId?: string },
     opts?: RequestOptions,
   ) => api.post<PaymentResult>(`/invoices/${invoiceId}/payments`, input, opts),
 

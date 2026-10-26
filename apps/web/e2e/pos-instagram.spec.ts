@@ -178,6 +178,7 @@ test("صفحهٔ قدیمی سفارش اینستاگرام بی تنظیم صر
 test("نقد اینستاگرام: بی باقی پول، و دو کشوی باز یعنی پیام روشن و هیچ دریافتی شمرده نمی‌شود", async ({ page, api }) => {
   const s = server(api);
   allow(api, ["instagram.pos.sell"]);
+  api.defaults["GET /shifts/open"] = [{ id: SHIFT, userName: "صندوق اول", openedAt: "2026-10-27T08:00:00Z" }];
   let refuse = true;
   const sent: Array<Record<string, unknown>> = [];
   api.handlers.set(`POST /invoices/${INV}/payments`, async (route) => {
@@ -199,6 +200,7 @@ test("نقد اینستاگرام: بی باقی پول، و دو کشوی با�
   await selector(page).getByRole("button", { name: /^نمایش (بیشتر|کمتر)/ }).click();
   await method(page, "نقدی").click();
   const form = page.getByRole("form", { name: "دریافت با نقدی" });
+  await form.getByLabel("کشوی دریافت نقد").selectOption(SHIFT);
   await expect(form).toContainText("باقی پول ندارد");
   // بیش از مانده پیش از هر درخواست رد می‌شود: باقی پولی در کار نیست.
   await form.getByLabel("مبلغ (تومان)").fill("25000");
@@ -208,7 +210,44 @@ test("نقد اینستاگرام: بی باقی پول، و دو کشوی با�
   await form.getByLabel("مبلغ (تومان)").fill("");
   await form.getByRole("button", { name: "دریافت وجه", exact: true }).click();
   await expect(page.getByRole("alert").filter({ hasText: "چند کشو در این شعبه باز است" })).toBeVisible();
-  expect(sent).toEqual([{ methodCode: "cash", amount: "200000" }]);
+  expect(sent).toEqual([{ methodCode: "cash", amount: "200000", shiftId: SHIFT }]);
   expect(s.posted, "ردِ قطعی چیزی ثبت نکرد").toHaveLength(0);
   await expect(page.getByRole("button", { name: "نهایی‌کردن فاکتور", exact: true })).toBeDisabled();
+});
+
+test("Instagram cash drawer: choose among two; lost response and reload replay the exact drawer/key", async ({ page, api }, testInfo) => {
+  server(api);
+  allow(api, ["instagram.pos.sell"]);
+  const other = "77777777-7777-4777-8777-777777777777";
+  api.defaults["GET /shifts/open"] = [SHIFT, other].map((id, i) => ({ id, userName: `صندوق ${i + 1}`, openedAt: "2026-10-27T08:00:00Z" }));
+  const sent: Array<{ key: string; body: unknown }> = [];
+  api.handlers.set(`POST /invoices/${INV}/payments`, async (route) => {
+    sent.push({ key: route.request().headers()["idempotency-key"]!, body: route.request().postDataJSON() });
+    api.handlers.set(`GET /invoices/${INV}/payment-intents/${sent[0]!.key}`, async (lookup) => {
+      await lookup.fulfill({ json: { state: "not_found", terminal: false } });
+    });
+    if (sent.length === 1) { await route.abort("failed"); return; }
+    await route.fulfill({ status: 200, json: { paymentId: "p1", replayed: true, receivedAmount: "200000", invoice: { ...draft, receivedAmount: "200000" } } });
+  });
+  await page.addInitScript(([inv, ctx]) => localStorage.setItem("labelmod_open_cart", JSON.stringify({ invoiceId: inv, shiftId: ctx })), [INV, BR]);
+  await page.goto(`/?page=pos&pos.branch=${BR}&pos.warehouse=w1`);
+  await expect(page.locator(".lines li").first()).toContainText("شلوار کتان");
+  await selector(page).getByRole("button", { name: /^نمایش (بیشتر|کمتر)/ }).click();
+  await method(page, "نقدی").click();
+  const form = page.getByRole("form", { name: "دریافت با نقدی" });
+  await expect(form.getByRole("button", { name: "دریافت وجه", exact: true })).toBeDisabled();
+  await form.getByLabel("کشوی دریافت نقد").selectOption(other);
+  await form.screenshot({ path: testInfo.outputPath("instagram-cash-drawers.png") });
+  await form.getByRole("button", { name: "دریافت وجه", exact: true }).click();
+  await expect(page.getByText("نتیجه نامعلوم", { exact: true })).toBeVisible();
+  await expect(page.getByLabel("کشوی دریافت نقد")).toHaveCount(0);
+  await page.reload();
+  await page.getByRole("button", { name: "بررسی وضعیت", exact: true }).click();
+  // The server's lookup does not see the first request yet; only the same intent may be retried.
+  await expect(page.getByRole("button", { name: "ارسال دوبارهٔ همین پرداخت", exact: true })).toBeVisible();
+  await page.getByRole("button", { name: "ارسال دوبارهٔ همین پرداخت", exact: true }).click();
+  await expect.poll(() => sent.length).toBe(2);
+  expect(sent[1]).toEqual(sent[0]);
+  expect(sent[0]!.body).toEqual({ methodCode: "cash", amount: "200000", shiftId: other });
+  await expect(page.getByRole("button", { name: "نهایی‌کردن فاکتور", exact: true })).toBeEnabled();
 });

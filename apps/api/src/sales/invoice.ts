@@ -1253,12 +1253,12 @@ export class InvoiceService {
     const inv = await ex.selectFrom("sales.invoice").select("status").where("id", "=", invoiceId).executeTakeFirst();
     if (!inv) throw new InvoiceError("invoice_not_found", "فاکتور یافت نشد", 404);
     const payment = await ex.selectFrom("treasury.payment")
-      .select(["id", "method_code", "amount", "ref_no", "status"])
+      .select(["id", "method_code", "amount", "ref_no", "status", "shift_id"])
       .where("invoice_id", "=", invoiceId).where("client_event_id", "=", key).where("direction", "=", "in")
       .executeTakeFirst();
     if (payment) {
       return { state: "recorded", terminal: true, payment: { id: payment.id, methodCode: payment.method_code,
-        amount: parseMoney(payment.amount), refNo: payment.ref_no, status: payment.status } };
+        amount: parseMoney(payment.amount), refNo: payment.ref_no, status: payment.status, shiftId: payment.shift_id } };
     }
     const inbox = await ex.selectFrom("platform.inbox_message").select("payload")
       .where("source", "=", PAYMENT_INBOX_SOURCE).where("event_id", "=", key).executeTakeFirst();
@@ -1420,7 +1420,7 @@ export const PAYMENT_INBOX_SOURCE = "api.invoice.payment";
 
 export type PaymentIntentStatus =
   | { state: "recorded"; terminal: true;
-      payment: { id: string; methodCode: string; amount: bigint; refNo: string | null; status: string } }
+      payment: { id: string; methodCode: string; amount: bigint; refNo: string | null; status: string; shiftId: string | null } }
   | { state: "abandoned" | "key_conflict"; terminal: true }
   | { state: "invoice_closed"; terminal: true; invoiceStatus: string }
   | { state: "not_found"; terminal: false };

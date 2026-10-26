@@ -357,6 +357,14 @@ describe("فروش اینستاگرام از صندوق: قرارداد و رق�
   });
 
   test("نقد اینستاگرام: کشوی نام‌برده، نگهبان بستن، شمارش بی مغایرت و Replay پس از بستن", async () => {
+    const listed = await call("GET", `/shifts/open?branchId=${BRANCH}`, u.op);
+    assert.equal(listed.statusCode, 200, listed.body);
+    assert.ok(listed.json().length >= 2, "multiple concurrent cashiers are selectable");
+    for (const row of listed.json()) assert.deepEqual(Object.keys(row).sort(), ["id", "openedAt", "userName"]);
+    assert.equal((await call("GET", `/shifts/open?branchId=${otherBranch}`, u.op)).statusCode, 403);
+    assert.equal((await call("GET", `/shifts/open?branchId=${BRANCH}`, u.far)).statusCode, 403);
+    const foreignDrawer = (await sql<{ id: string }>`INSERT INTO sales.cash_shift (user_id, branch_id, opening_cash)
+      VALUES (${ids[u.far]}::uuid, ${otherBranch}::uuid, 0) RETURNING id`.execute(owner.db)).rows[0]!.id;
     const opened = await call("POST", "/shifts", u.c3, { branchId: BRANCH, openingCash: "0" }, key());
     assert.ok([200, 201].includes(opened.statusCode), opened.body);
     const drawer = await drawerOf(u.c3);
@@ -367,11 +375,16 @@ describe("فروش اینستاگرام از صندوق: قرارداد و رق�
     assert.equal(ambiguous.statusCode, 422, ambiguous.body);
     assert.equal(ambiguous.json().error.code, "ambiguous_shift");
     const cashKey = key();
+    const wrongDrawer = await pay({ methodCode: "cash", amount: "600000", shiftId: foreignDrawer });
+    assert.equal(wrongDrawer.statusCode, 422, wrongDrawer.body);
+    assert.equal(wrongDrawer.json().error.code, "wrong_shift");
     const cash = await pay({ methodCode: "cash", amount: "600000", shiftId: drawer }, cashKey);
     assert.equal(cash.statusCode, 201, cash.body);
     const row = (await sql<{ shift_id: string }>`SELECT shift_id::text FROM treasury.payment WHERE id = ${cash.json().paymentId}::uuid`
       .execute(handle.db)).rows[0]!;
     assert.equal(row.shift_id, drawer, "نقد به کشوی نام‌برده نشست");
+    const proof = await call("GET", `/invoices/${id}/payment-intents/${cashKey}`, u.op);
+    assert.equal(proof.json().payment.shiftId, drawer, "status identifies the same drawer after a lost response");
     assert.equal((await invoice(id)).shift_id, null, "فاکتور بی شیفت ماند");
     const over = await pay({ methodCode: "cash", amount: "400001", shiftId: drawer });
     assert.equal(over.statusCode, 409, over.body);

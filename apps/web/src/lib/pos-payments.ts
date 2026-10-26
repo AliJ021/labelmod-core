@@ -185,6 +185,7 @@ export interface PaymentIntent {
   methodName: string;
   amount: bigint;
   refNo: string;
+  drawerShiftId?: string;
 }
 
 /**
@@ -239,11 +240,12 @@ export type IntentVerdict = "recorded" | "not_recorded_final" | "unresolved" | "
  *   unresolved            هنوز پیدا نشد؛ فقط همان قصد با همان کلید.
  *   mismatch              ردیف هست ولی بدنه‌اش این قصد نیست.
  */
-export function resolveIntentStatus(intent: Pick<PaymentIntent, "methodCode" | "amount" | "refNo">, status: PaymentIntentStatus): IntentVerdict {
+export function resolveIntentStatus(intent: Pick<PaymentIntent, "methodCode" | "amount" | "refNo" | "drawerShiftId">, status: PaymentIntentStatus): IntentVerdict {
   switch (status.state) {
     case "recorded": {
       const p = status.payment;
       return p.methodCode === intent.methodCode && BigInt(p.amount) === intent.amount && (p.refNo ?? "") === intent.refNo
+        && (intent.drawerShiftId === undefined || p.shiftId === intent.drawerShiftId)
         && p.status === "succeeded" ? "recorded" : "mismatch";
     }
     case "abandoned": case "key_conflict": case "invoice_closed": return "not_recorded_final";
@@ -254,16 +256,19 @@ export function resolveIntentStatus(intent: Pick<PaymentIntent, "methodCode" | "
 /** شکل پایدار قصد (`pending-payment.ts`) — مبلغ رشتهٔ ریالی، هرگز `number`. */
 export function intentToPending(intent: PaymentIntent, ctx: { actorId: string; shiftId: string }, state: PendingPayment["state"]): PendingPayment {
   return { actorId: ctx.actorId, invoiceId: intent.invoiceId, shiftId: ctx.shiftId, key: intent.key,
-    methodCode: intent.methodCode, methodName: intent.methodName, amount: intent.amount.toString(), refNo: intent.refNo, state };
+    methodCode: intent.methodCode, methodName: intent.methodName, amount: intent.amount.toString(), refNo: intent.refNo, state,
+    ...(intent.drawerShiftId === undefined ? {} : { drawerShiftId: intent.drawerShiftId }) };
 }
 
 export function intentFromPending(p: PendingPayment): PaymentIntent {
-  return { key: p.key, invoiceId: p.invoiceId, methodCode: p.methodCode, methodName: p.methodName, amount: BigInt(p.amount), refNo: p.refNo };
+  return { key: p.key, invoiceId: p.invoiceId, methodCode: p.methodCode, methodName: p.methodName, amount: BigInt(p.amount), refNo: p.refNo,
+    ...(p.drawerShiftId === undefined ? {} : { drawerShiftId: p.drawerShiftId }) };
 }
 
 /** بدنهٔ ارسال — یک تعریف، تا تکرار همان قصد دقیقاً همان بدنه را ببرد. */
-export function paymentBody(intent: PaymentIntent): { methodCode: string; amount: string; refNo?: string } {
-  return { methodCode: intent.methodCode, amount: intent.amount.toString(), ...(intent.refNo === "" ? {} : { refNo: intent.refNo }) };
+export function paymentBody(intent: PaymentIntent): { methodCode: string; amount: string; refNo?: string; shiftId?: string } {
+  return { methodCode: intent.methodCode, amount: intent.amount.toString(), ...(intent.refNo === "" ? {} : { refNo: intent.refNo }),
+    ...(intent.drawerShiftId === undefined ? {} : { shiftId: intent.drawerShiftId }) };
 }
 
 // ── «ثبت شد» از تسویهٔ قطعی سرور (F-115-02) ────────────────────────────

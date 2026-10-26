@@ -1010,10 +1010,10 @@ function PosScreen({ actorId, mode, onMode, browseInvoices }: {
     }
   }
 
-  const takePayment = (option: PaymentOption, amountRial: bigint, refNo: string) => {
+  const takePayment = (option: PaymentOption, amountRial: bigint, refNo: string, drawerShiftId?: string) => {
     if (!invoice || payPhase.kind !== "idle") return;
     void submitPayment({ key: crypto.randomUUID(), invoiceId: invoice.id, methodCode: option.code, methodName: option.name,
-      amount: amountRial, refNo }, false);
+      amount: amountRial, refNo, ...(drawerShiftId === undefined ? {} : { drawerShiftId }) }, false);
   };
 
   /** «بررسی وضعیت» — فقط خواندنِ همان شناسه؛ هیچ پرداختی دوباره فرستاده نمی‌شود. */
@@ -1510,6 +1510,7 @@ function PosScreen({ actorId, mode, onMode, browseInvoices }: {
           <div className="pay-body">
           {invoice && received > 0n ? <PaymentBreakdown invoiceId={invoice.id} received={received} /> : null}
           <PaymentSelector layout={layout} remaining={totals.remaining} received={received} phase={payPhase}
+            {...(instagram && branchId ? { cashBranchId: branchId } : {})}
             disabled={!hasCart || busy || customerGate} onPay={takePayment} onCheck={() => void checkPayment()}
             onRetry={retryPayment} onAbandon={() => void abandonPayment()} />
           </div>

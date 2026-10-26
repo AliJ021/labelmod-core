@@ -5,6 +5,7 @@ import { Button, Field } from "../ui/Controls.tsx";
 import { StatusBadge } from "../ui/Status.tsx";
 import { Icon, type IconName } from "../Icon.tsx";
 import { rialFromTomanInput } from "../../lib/money.ts";
+import { pos } from "../../lib/pos.ts";
 import { allOptions, CARD_READER_NOT_CONFIGURED, TRANSFER_NOT_CONFIGURED, checkAmount, LINK_NOT_IMPLEMENTED, maxAmount, paymentLocked, usableChannel, type PaymentLayout,
   type PaymentOption, type PaymentPhase } from "../../lib/pos-payments.ts";
 
@@ -90,11 +91,25 @@ type RowInput = { amount: string; refNo: string; attempted: boolean };
 const EMPTY: RowInput = { amount: "", refNo: "", attempted: false };
 
 /** یک ردیف مبلغ برای یک روش انتخاب‌شده — همان سنجش و همان بدنهٔ ارسال تک‌روشی قبلی. */
-function PayRow({ option, label, viaProvider, channelBlocked, remaining, input, disabled, onInput, onPay, amountRef }: {
+function PayRow({ option, label, viaProvider, channelBlocked, remaining, input, disabled, onInput, onPay, amountRef, cashBranchId }: {
   option: PaymentOption; label: string; viaProvider: boolean; channelBlocked: boolean; remaining: bigint; input: RowInput; disabled: boolean;
-  onInput: (next: RowInput) => void; onPay: (option: PaymentOption, amount: bigint, refNo: string) => void;
+  onInput: (next: RowInput) => void; onPay: (option: PaymentOption, amount: bigint, refNo: string, drawerShiftId?: string) => void;
+  cashBranchId?: string;
   amountRef: (el: HTMLInputElement | null) => void;
 }) {
+  const [drawers, setDrawers] = useState<Awaited<ReturnType<typeof pos.openShifts>> | null>(null);
+  const [drawer, setDrawer] = useState("");
+  const [drawerError, setDrawerError] = useState("");
+  const [refresh, setRefresh] = useState(0);
+  useEffect(() => {
+    let active = true;
+    setDrawers(null); setDrawer(""); setDrawerError("");
+    if (cashBranchId) void pos.openShifts(cashBranchId).then((items) => {
+      if (active) setDrawers(items);
+    }).catch(() => { if (active) setDrawerError("فهرست کشوها خوانده نشد؛ دوباره بررسی کنید."); });
+    return () => { active = false; };
+  }, [cashBranchId, refresh]);
+  const drawerMissing = !!cashBranchId && !drawers?.some((d) => d.id === drawer);
   const typed = input.amount.trim() === "" ? null : rialFromTomanInput(input.amount) ?? "invalid" as const;
   const check = checkAmount(option, typed, remaining);
   const max = maxAmount(option, remaining);
@@ -107,9 +122,9 @@ function PayRow({ option, label, viaProvider, channelBlocked, remaining, input, 
   function submit(e: FormEvent) {
     e.preventDefault();
     onInput({ ...input, attempted: true });
-    if (disabled || unavailable || !check.ok || refMissing || channelBlocked) return;
+    if (disabled || unavailable || !check.ok || refMissing || channelBlocked || drawerMissing) return;
     // شمارهٔ پیگیری فقط برای روشی که می‌خواهدش؛ بخشی از بدنهٔ قصد روش دیگر نیست.
-    onPay(option, check.amount, option.requiresRef ? input.refNo.trim() : "");
+    onPay(option, check.amount, option.requiresRef ? input.refNo.trim() : "", cashBranchId ? drawer : undefined);
   }
   // بازگشت فوکوس به ردیفی که نیمه‌اش بیرون پنجره است: Chromium آن را کامل می‌آورد ولی WebKit (Safari/iPad)
   // فیلدِ نیمه‌دیدنی را همان‌جا می‌گذارد (CI، ۷۶۸×۶۰۰). `nearest` همان scroll-margin و scroll-padding پایان چسبان را
@@ -124,6 +139,15 @@ function PayRow({ option, label, viaProvider, channelBlocked, remaining, input, 
       : option.kind === "cash" && !option.allowsChange ? <p className="field-hint pay-form-note">{INSTAGRAM_CASH_HINT}</p>
       : HINT[option.code] ?? HINT[option.kind] ? <p className="field-hint pay-form-note">{HINT[option.code] ?? HINT[option.kind]}</p> : null}
     <div className="pay-form-fields">
+      {cashBranchId ? <div><Field label="کشوی دریافت نقد" error={drawerError || null}
+        hint={drawers?.length === 0 ? "کشوی بازی در این شعبه نیست؛ ابتدا صندوق‌دار شیفت را باز کند." : "کشویی را انتخاب کنید که وجه نقد را دریافت می‌کند."}>
+        <select value={drawer} disabled={disabled || drawers === null} onChange={(e) => setDrawer(e.target.value)}>
+          <option value="">{drawers === null && !drawerError ? "در حال خواندن کشوها…" : "انتخاب کشو"}</option>
+          {drawers?.map((d) => <option key={d.id} value={d.id}>{d.userName} · {new Date(d.openedAt).toLocaleString("fa-IR")}</option>)}
+        </select>
+      </Field>
+        <Button type="button" variant="quiet" disabled={disabled} onClick={() => setRefresh((v) => v + 1)}>به‌روزرسانی کشوها</Button>
+      </div> : null}
       <Field label="مبلغ (تومان)" error={amountError}
         hint={max === null ? <>خالی یعنی همهٔ مانده؛ اضافه، باقی پول می‌شود.</> : <>خالی یعنی همهٔ مانده؛ حداکثر <Money rial={max} size="sm" /></>}>
         <AmountInput ref={amountRef} type="text" inputMode="numeric" autoComplete="off" value={input.amount} disabled={disabled}
@@ -133,11 +157,11 @@ function PayRow({ option, label, viaProvider, channelBlocked, remaining, input, 
         <input type="text" autoComplete="off" value={input.refNo} maxLength={64} disabled={disabled} onChange={(e) => onInput({ ...input, refNo: e.target.value })} />
       </Field> : null}
     </div>
-    <Button type="submit" variant="primary" disabled={disabled || unavailable !== null || channelBlocked || (!check.ok && check.reason === "nothing_due")}>دریافت وجه</Button>
+    <Button type="submit" variant="primary" disabled={disabled || unavailable !== null || channelBlocked || drawerMissing || (!check.ok && check.reason === "nothing_due")}>دریافت وجه</Button>
   </form>;
 }
 
-export function PaymentSelector({ layout, remaining, received, phase, disabled, onPay, onCheck, onRetry, onAbandon }: {
+export function PaymentSelector({ layout, remaining, received, phase, disabled, onPay, onCheck, onRetry, onAbandon, cashBranchId }: {
   layout: PaymentLayout;
   remaining: bigint;
   /** آخرین «دریافتی» سرور — با تغییرش ردیف پرداخت‌شده برداشته می‌شود. */
@@ -145,7 +169,8 @@ export function PaymentSelector({ layout, remaining, received, phase, disabled, 
   phase: PaymentPhase;
   /** سبد خالی یا عمل دیگری در جریان. */
   disabled: boolean;
-  onPay: (option: PaymentOption, amount: bigint, refNo: string) => void;
+  onPay: (option: PaymentOption, amount: bigint, refNo: string, drawerShiftId?: string) => void;
+  cashBranchId?: string;
   onCheck: () => void;
   onRetry: () => void;
   onAbandon: () => void;
@@ -300,11 +325,12 @@ export function PaymentSelector({ layout, remaining, received, phase, disabled, 
     {phase.kind === "idle" && rows.length ? <div className="pay-rows">
       {rows.map((o) => {
         const provider = providerOf(o.code);
-        return <PayRow key={o.code} option={o} label={labelOf(o)} viaProvider={provider !== null}
+        return <PayRow key={`${o.code}:${cashBranchId ?? ""}`} option={o} label={labelOf(o)} viaProvider={provider !== null}
+          {...(o.kind === "cash" && cashBranchId ? { cashBranchId } : {})}
           channelBlocked={provider !== null && !usableChannel(provider, "in_person")} remaining={remaining}
           input={inputs[o.code] ?? EMPTY} disabled={disabled}
           onInput={(next) => setInputs((i) => ({ ...i, [o.code]: next }))}
-          onPay={(option, amount, refNo) => { submitted.current = option.code; onPay(option, amount, refNo); }}
+          onPay={(option, amount, refNo, drawerShiftId) => { submitted.current = option.code; onPay(option, amount, refNo, drawerShiftId); }}
           amountRef={(el) => { if (el) amountRefs.current.set(o.code, el); else amountRefs.current.delete(o.code); }} />;
       })}
     </div> : null}

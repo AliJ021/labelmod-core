@@ -200,6 +200,23 @@ describe("پرداخت معلق پایدار", () => {
   const A: PaymentIntent = { key: "11111111-1111-4111-8111-111111111111", invoiceId: "22222222-2222-4222-8222-222222222222",
     methodCode: "card", methodName: "کارت‌خوان", amount: 100_000n, refNo: "REF-A" };
 
+  test("cash drawer survives reload and cannot change under an unresolved payment key", () => {
+    const st = memStore();
+    const cash = { ...A, methodCode: "cash", refNo: "", drawerShiftId: "55555555-5555-4555-8555-555555555555" };
+    const pending = intentToPending(cash, { actorId: actor, shiftId }, "unresolved");
+    writePendingPayment(pending, st);
+    const restored = intentFromPending(readPendingPayment(actor, st)!);
+    assert.deepEqual(restored, cash);
+    assert.deepEqual(paymentBody(restored), { methodCode: "cash", amount: "100000", shiftId: cash.drawerShiftId });
+    const recorded = { state: "recorded", terminal: true, payment: { id: "p", methodCode: "cash", amount: "100000", refNo: null, status: "succeeded", shiftId: cash.drawerShiftId } } as const;
+    assert.equal(resolveIntentStatus(restored, recorded), "recorded");
+    assert.equal(resolveIntentStatus(restored, { ...recorded, payment: { ...recorded.payment, shiftId } }), "mismatch");
+    assert.equal(resolveIntentStatus(restored, { ...recorded, payment: { ...recorded.payment, shiftId: null } }), "mismatch");
+    assert.throws(() => writePendingPayment({ ...pending, drawerShiftId: shiftId }, st), /عوض نمی‌شود/);
+    st.setItem(`labelmod_pending_payment_v1:${actor}`, JSON.stringify({ ...pending, drawerShiftId: "bad" }));
+    assert.throws(() => readPendingPayment(actor, st), /حفظ شد/);
+  });
+
   test("قصد پس از Reload با همان کلید، مبلغ و بدنه برمی‌گردد — کلید تازه ساخته نمی‌شود", () => {
     const st = memStore();
     writePendingPayment(intentToPending(A, { actorId: actor, shiftId }, "sending"), st);
