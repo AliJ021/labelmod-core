@@ -123,6 +123,12 @@ export interface LowStockResult {
   /** `null` یعنی آستانه تعریف نشده — نامعلوم، نه «کمبودی نیست». */
   threshold: string | null;
   total: number | null;
+  /** صفحهٔ ۱-پایه؛ در خروجی کامل (CSV) همیشه ۱. */
+  page: number;
+  /** اندازهٔ صفحه؛ `null` یعنی همهٔ سطرها در همین پاسخ (خروجی کامل). */
+  pageSize: number | null;
+  pages: number;
+  /** سطرهای این صفحه کمتر از کل‌اند — صفحهٔ دیگری هست یا این صفحه بیرون از بازه است. */
   truncated: boolean;
   rows: LowStockRow[];
 }
@@ -405,37 +411,52 @@ export class ReportService {
   }
 
   /** کمبود موجودی (۱۰۴): همان تعریف داشبورد؛ `threshold = null` یعنی نامعلوم، نه «کمبودی نیست». */
-  async lowStock(q: { branchId: string | undefined; warehouseId: string | undefined; limit: number }): Promise<LowStockResult> {
-    const t = await sql<{ v: string | null }>`SELECT platform.setting_num('inventory.low_stock_threshold')::text AS v`.execute(this.#db);
-    const threshold = t.rows[0]?.v ?? null;
-    if (threshold === null) return { threshold: null, total: null, truncated: false, rows: [] };
-    const scope = sql`(${q.branchId ?? null}::uuid IS NULL OR l.branch_id = ${q.branchId ?? null}::uuid)
-      AND (${q.warehouseId ?? null}::uuid IS NULL OR l.warehouse_id = ${q.warehouseId ?? null}::uuid)`;
-    const n = await sql<{ n: string }>`SELECT count(*)::text AS n FROM inventory.low_stock(${threshold}::numeric) l WHERE ${scope}`
-      .execute(this.#db);
-    const r = await sql<{
-      warehouse_id: string; warehouse_name: string; variation_id: string; product_id: string; sku: string;
-      product_name: string; color: string | null; size: string | null; on_hand: string; reserved: string; available: string;
-    }>`SELECT l.warehouse_id::text, w.name AS warehouse_name, l.variation_id::text, p.id::text AS product_id, v.sku,
-              p.name_internal AS product_name, v.color, v.size,
-              l.on_hand::text, l.reserved::text, l.available::text
-         FROM inventory.low_stock(${threshold}::numeric) l
-         JOIN inventory.warehouse w ON w.id = l.warehouse_id
-         JOIN catalog.variation v ON v.id = l.variation_id
-         JOIN catalog.product p ON p.id = v.product_id
-        WHERE ${scope}
-        ORDER BY l.available, p.name_internal, v.color, v.size, w.name, l.variation_id
-        LIMIT ${q.limit}`.execute(this.#db);
-    const total = Number(n.rows[0]!.n);
+  /**
+   * آستانه، شمار کل و سطرها در **یک دستور SQL**، یعنی یک snapshot حتی در READ COMMITTED
+   * (بازبینی root). سه دستور جدا یعنی تغییر موجودی میان شمارش و خواندن سطرها «کل ۰ با سطر» یا
+   * برعکس می‌ساخت و صفحه سطرهای واقعی را پنهان می‌کرد.
+   *
+   * `pageSize = null` خروجی کامل همان دامنه است (CSV)، نه سقف: کمبودِ بیش از یک صفحه در **یک** انبار
+   * هم باید دسترس‌پذیر باشد. صفحه‌ها ترتیب پایدار دارند ولی هر صفحه snapshot خودش است.
+   */
+  async lowStock(q: { branchId: string | undefined; warehouseId: string | undefined; page: number; pageSize: number | null }): Promise<LowStockResult> {
+    const offset = q.pageSize === null ? 0 : (q.page - 1) * q.pageSize;
+    const r = await sql<{ threshold: string | null; total: string; rows: Array<{
+      warehouseId: string; warehouseName: string; variationId: string; productId: string; sku: string;
+      productName: string; color: string | null; size: string | null; onHand: string; reserved: string; available: string;
+    }> }>`
+      WITH t AS (SELECT platform.setting_num('inventory.low_stock_threshold') AS th),
+      l AS (
+        SELECT l.*, w.name AS warehouse_name, v.sku, v.color, v.size, p.id AS product_id, p.name_internal AS product_name
+          FROM t CROSS JOIN LATERAL inventory.low_stock(t.th) l
+          JOIN inventory.warehouse w ON w.id = l.warehouse_id
+          JOIN catalog.variation v ON v.id = l.variation_id
+          JOIN catalog.product p ON p.id = v.product_id
+         WHERE (${q.branchId ?? null}::uuid IS NULL OR l.branch_id = ${q.branchId ?? null}::uuid)
+           AND (${q.warehouseId ?? null}::uuid IS NULL OR l.warehouse_id = ${q.warehouseId ?? null}::uuid)),
+      pg AS (
+        SELECT * FROM l
+         ORDER BY available, product_name, color, size, warehouse_name, variation_id
+         LIMIT ${q.pageSize}::bigint OFFSET ${offset}::bigint)
+      SELECT (SELECT th::text FROM t) AS threshold,
+             (SELECT count(*) FROM l)::text AS total,
+             coalesce((SELECT jsonb_agg(jsonb_build_object(
+                 'warehouseId', warehouse_id::text, 'warehouseName', warehouse_name, 'variationId', variation_id::text,
+                 'productId', product_id::text, 'sku', sku, 'productName', product_name, 'color', color, 'size', size,
+                 'onHand', on_hand::text, 'reserved', reserved::text, 'available', available::text)
+                 ORDER BY available, product_name, color, size, warehouse_name, variation_id) FROM pg), '[]'::jsonb) AS rows
+    `.execute(this.#db);
+    const x = r.rows[0]!;
+    if (x.threshold === null) return { threshold: null, total: null, page: q.page, pageSize: q.pageSize, pages: 0, truncated: false, rows: [] };
+    const total = Number(x.total);
     return {
-      threshold,
+      threshold: x.threshold,
       total,
-      truncated: total > r.rows.length,
-      rows: r.rows.map(x => ({
-        warehouseId: x.warehouse_id, warehouseName: x.warehouse_name, variationId: x.variation_id, productId: x.product_id,
-        sku: x.sku, productName: x.product_name, color: x.color ?? "", size: x.size ?? "",
-        onHand: x.on_hand, reserved: x.reserved, available: x.available,
-      })),
+      page: q.pageSize === null ? 1 : q.page,
+      pageSize: q.pageSize,
+      pages: q.pageSize === null ? 1 : Math.max(1, Math.ceil(total / q.pageSize)),
+      truncated: total > x.rows.length,
+      rows: x.rows.map(y => ({ ...y, color: y.color ?? "", size: y.size ?? "" })),
     };
   }
 

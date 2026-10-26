@@ -605,8 +605,10 @@ function LowStockReport({ branches, branchId, filters }: { branches: Branch[]; b
     .flatMap(b => b.warehouses.filter(w => w.kind === "store" || w.kind === "stock" || w.kind === "outlet"));
   const [warehouseRaw, setWarehouse] = useUrlState("reports.warehouse");
   const warehouseId = sellable.some(w => w.id === warehouseRaw) ? warehouseRaw : "";
-  const query = useReport<LowStockResult>([branchId, warehouseId], async signal =>
-    [await reports.lowStock({ branchId: branchId === "" ? undefined : branchId, warehouseId: warehouseId === "" ? undefined : warehouseId }, { signal })]);
+  const [pageRaw, setPage] = useUrlState("reports.page");
+  const page = /^[1-9]\d{0,5}$/.test(pageRaw) ? Number(pageRaw) : 1;
+  const query = useReport<LowStockResult>([branchId, warehouseId, page], async signal =>
+    [await reports.lowStock({ branchId: branchId === "" ? undefined : branchId, warehouseId: warehouseId === "" ? undefined : warehouseId, page }, { signal })]);
   const result = query.rows?.[0] ?? null;
   const columns: Column<LowStockRow>[] = [
     { key: "warehouse", header: "انبار", cell: r => r.warehouseName },
@@ -619,7 +621,7 @@ function LowStockReport({ branches, branchId, filters }: { branches: Branch[]; b
   const scopeQuery = [branchId === "" ? "" : `branchId=${encodeURIComponent(branchId)}`,
     warehouseId === "" ? "" : `warehouseId=${encodeURIComponent(warehouseId)}`].filter(Boolean).join("&");
   const extra = sellable.length > 0 ? <Field label="انبار فروش">
-    <select value={warehouseId} onChange={e => setWarehouse(e.target.value)}>
+    <select value={warehouseId} onChange={e => { setWarehouse(e.target.value); setPage(""); }}>
       <option value="">همه انبارهای فروش</option>
       {sellable.map(w => <option key={w.id} value={w.id}>{w.name}</option>)}
     </select>
@@ -629,17 +631,24 @@ function LowStockReport({ branches, branchId, filters }: { branches: Branch[]; b
     <ReportSection title="کمبود موجودی" query={query} empty="کمبود موجودی خوانده نشد."
       description={result?.threshold == null ? undefined
         : `هر سطر یک تنوع در یک انبار فروش است که موجودی قابل‌فروشش (موجودی منهای رزرو) به آستانهٔ ${formatQty(result.threshold)} یا کمتر رسیده؛ ناموجود هم. تنوعی که هرگز به آن انبار نیامده، کالای بایگانی و تنوع متوقف شمرده نمی‌شوند. آستانه در تنظیمات انبار عوض می‌شود.`}
-      {...(result && result.threshold !== null && (result.total ?? 0) > 0 ? { csv: csvUrl("/reports/low-stock", scopeQuery) } : {})}>
+      {...(result && result.threshold !== null && ((result.total ?? 0) > 0 || result.rows.length > 0) ? { csv: csvUrl("/reports/low-stock", scopeQuery) } : {})}>
       {([r]) => r!.threshold === null
         ? <ResultState kind="error" title="آستانهٔ کمبود موجودی تعریف نشده است."
             description="شمار کمبود معلوم نیست؛ این به معنای «کمبودی نیست» نیست. آستانه را در تنظیمات انبار تعیین کنید." />
-        : r!.total === 0
+        // «صفر» فقط وقتی هیچ سطری هم نیامده؛ شمار و سطرها از یک snapshot سرورند، ولی سطرِ دیده‌شده هرگز پنهان نمی‌شود.
+        : r!.total === 0 && r!.rows.length === 0 && r!.page === 1
           ? <ResultState title={`موردی به آستانهٔ ${formatQty(r!.threshold)} یا کمتر نرسیده.`} />
           : <>
               <p className="muted small" role="status">
-                {formatCount(r!.total ?? 0)} مورد{r!.truncated ? ` — ${formatCount(r!.rows.length)} مورد نخست (کمترین قابل‌فروش اول) نمایش داده شده؛ CSV هم همین سقف را دارد. برای دیدن بقیه، انبار را محدود کنید.` : ""}
+                {formatCount(r!.total ?? 0)} مورد{r!.pages > 1 ? ` — صفحهٔ ${formatCount(r!.page)} از ${formatCount(r!.pages)} (کمترین قابل‌فروش اول)؛ CSV همهٔ موارد همین دامنه را دارد.` : ""}
               </p>
-              <DataTable caption="کمبود موجودی" columns={columns} rows={r!.rows} stack bounded rowKey={x => `${x.warehouseId}-${x.variationId}`} />
+              {r!.rows.length > 0
+                ? <DataTable caption="کمبود موجودی" columns={columns} rows={r!.rows} stack bounded rowKey={x => `${x.warehouseId}-${x.variationId}`} />
+                : <ResultState title="این صفحه سطری ندارد." description="فهرست کوتاه‌تر شده است؛ به صفحهٔ نخست برگردید." />}
+              {r!.pages > 1 || r!.page > 1 ? <nav className="row" aria-label="صفحه‌های کمبود موجودی">
+                <button type="button" className="btn" disabled={r!.page <= 1} onClick={() => setPage(r!.page - 1 <= 1 ? "" : String(r!.page - 1))}>صفحهٔ قبل</button>
+                <button type="button" className="btn" disabled={r!.page >= r!.pages} onClick={() => setPage(String(r!.page + 1))}>صفحهٔ بعد</button>
+              </nav> : null}
             </>}
     </ReportSection>
   </>;

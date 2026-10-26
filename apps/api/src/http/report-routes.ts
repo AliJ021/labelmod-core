@@ -68,7 +68,7 @@ import {
 } from "../reports/columns.ts";
 
 const uuid = z.string().uuid("شناسه نامعتبر");
-/** سقف فهرست کمبود موجودی؛ شمار کل جدا می‌آید. */
+/** اندازهٔ صفحهٔ JSON فهرست کمبود موجودی؛ شمار کل در همان snapshot می‌آید و CSV کامل است. */
 export const LOW_STOCK_LIMIT = 2000;
 const isoDate = z.iso.date("تاریخ باید یک تاریخ معتبر YYYY-MM-DD باشد");
 
@@ -590,7 +590,8 @@ export function registerReportRoutes(app: FastifyInstance, deps: ReportRouteDeps
   app.get("/reports/low-stock", async (req, reply) => {
     const s = session(req);
     await requireForSession(db, s, "report.view");
-    const q = z.object({ branchId: uuid.optional(), warehouseId: uuid.optional() }).parse(req.query);
+    const q = z.object({ branchId: uuid.optional(), warehouseId: uuid.optional(),
+      page: z.coerce.number().int().min(1).max(100000).default(1) }).parse(req.query);
     const { format } = formatQuery.parse(req.query);
     let branchId: string | undefined;
     if (q.warehouseId !== undefined) {
@@ -602,7 +603,9 @@ export function registerReportRoutes(app: FastifyInstance, deps: ReportRouteDeps
     } else {
       branchId = await resolveBranch(s.userId, q.branchId);
     }
-    const out = await reports.lowStock({ branchId, warehouseId: q.warehouseId, limit: LOW_STOCK_LIMIT });
+    // JSON صفحه‌به‌صفحه؛ CSV خروجی کامل همان دامنه در یک snapshot (کمبودِ بیش از یک صفحه در یک انبار هم).
+    const out = await reports.lowStock({ branchId, warehouseId: q.warehouseId,
+      page: q.page, pageSize: format === "csv" ? null : LOW_STOCK_LIMIT });
     reply.header("cache-control", "no-store");
     if (out.threshold === null) {
       if (format === "csv") return reply.code(409).send({ error: { code: "threshold_unknown", message: "آستانهٔ کمبود موجودی تعریف نشده است." } });

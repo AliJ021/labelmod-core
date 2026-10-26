@@ -93,6 +93,10 @@ export interface LowStockRow {
 export interface LowStockResult {
   threshold: string | null;
   total: number | null;
+  /** صفحهٔ ۱-پایه؛ شمار کل و سطرهای همین صفحه از یک snapshot سرورند. */
+  page: number;
+  pageSize: number | null;
+  pages: number;
   truncated: boolean;
   rows: LowStockRow[];
 }
@@ -269,10 +273,11 @@ export const reports = {
       `/reports/inventory-valuation${warehouseId ? `?warehouseId=${encodeURIComponent(warehouseId)}` : ""}`, opts,
     ),
 
-  lowStock: (scope: { branchId?: string | undefined; warehouseId?: string | undefined }, opts?: RequestOptions) => {
+  lowStock: (scope: { branchId?: string | undefined; warehouseId?: string | undefined; page?: number | undefined }, opts?: RequestOptions) => {
     const q = new URLSearchParams();
     if (scope.branchId) q.set("branchId", scope.branchId);
     if (scope.warehouseId) q.set("warehouseId", scope.warehouseId);
+    if (scope.page && scope.page > 1) q.set("page", String(scope.page));
     const s = q.toString();
     return api.get<LowStockResult>(`/reports/low-stock${s === "" ? "" : `?${s}`}`, opts);
   },
