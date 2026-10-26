@@ -40,6 +40,7 @@ import { Money } from "../components/ui/Money.tsx";
 import { Skeleton } from "../components/ui/Skeleton.tsx";
 import { ResultState } from "../components/ResultState.tsx";
 import { Ltr } from "../components/ui/Bidi.tsx";
+import { AmountInput } from "../components/ui/AmountInput.tsx";
 import { PosProductPicker } from "../components/PosProductPicker.tsx";
 import { SafeAction } from "../components/ui/SafeAction.tsx";
 
@@ -337,7 +338,7 @@ function CreateOrder({ op, onCancel, onCreated }: { op: ReturnType<typeof useIgO
       <Field label="نشانی ارسال"><textarea rows={2} maxLength={500} value={form.address} onChange={set("address")} /></Field>
       <Field label="روش ارسال" optional><input type="text" maxLength={80} placeholder="پست پیشتاز، پیک…" value={form.method} onChange={set("method")} /></Field>
       <Field label="کرایهٔ دریافتی (تومان)" optional hint="بخشی از مبلغ کاملی که مشتری واریز می‌کند.">
-        <input type="text" inputMode="numeric" className="num" autoComplete="off" value={form.shipping} onChange={set("shipping")} />
+        <AmountInput inputMode="decimal" className="num" autoComplete="off" value={form.shipping} onChange={set("shipping")} />
       </Field>
       <Field label="حساب مقصد واریز" optional hint="فقط حساب‌های بانکی مجاز همین شعبه.">
         <select value={form.account} onChange={set("account")}>
@@ -569,7 +570,7 @@ function ConfirmPayment({ d, locked, apply }: { d: OrderDetail; locked: boolean;
         </select>
       </Field>
       <Field label="مبلغ واریز (تومان)" hint={<>باید دقیقاً برابر <Money rial={d.invoice.payable} exact size="sm" /> باشد.</>} error={issue?.field === "amount" ? issue.message : null}>
-        <input type="text" inputMode="decimal" className="num" autoComplete="off" value={amount} onChange={e => setAmount(e.target.value)} />
+        <AmountInput inputMode="decimal" className="num" autoComplete="off" value={amount} onChange={e => setAmount(e.target.value)} />
       </Field>
       <Field label="شمارهٔ پیگیری بانک" error={issue?.field === "ref" ? issue.message : null}>
         <input type="text" dir="auto" maxLength={64} autoComplete="off" value={refNo} onChange={e => setRefNo(e.target.value)} />
@@ -665,7 +666,7 @@ function HeaderEditor({ d, locked, busy, act }: { d: OrderDetail; locked: boolea
           </select>
         </Field>
         <Field label="کرایهٔ دریافتی (تومان)" hint={changed("shipping") ?? (draft ? "مبلغ کامل قابل واریز را عوض می‌کند." : "پس از رزرو عوض نمی‌شود؛ برای تغییر، اول به پیش‌نویس برگردانید.")}>
-          <input type="text" inputMode="decimal" className="num" autoComplete="off" value={form.shipping} disabled={!draft} onChange={set("shipping")} />
+          <AmountInput inputMode="decimal" className="num" autoComplete="off" value={form.shipping} disabled={!draft} onChange={set("shipping")} />
         </Field>
       </fieldset>
       {error ? <p role="alert" className="field-error">{error}</p> : null}
