@@ -441,6 +441,12 @@ jobs:
           node-version: '22'
       - run: corepack enable
       - run: pnpm install --frozen-lockfile
+      # Azure's Ubuntu package mirror consumed 40+ minutes of the browser job.
+      # Keep APT signature checks and all suites; replace only that known URI.
+      - name: Prepare Ubuntu archive for browser dependencies
+        run: |
+          python3 .github/scripts/test-prepare-browser-apt.py
+          sudo python3 .github/scripts/prepare-browser-apt.py
       - run: pnpm --filter @labelmod/web exec playwright install --with-deps chromium webkit
       # همان Build تولیدی به‌علاوهٔ chunk تنبل UI Kit، تا سطح تأیید بصری هم آزموده شود.
       - run: pnpm --filter @labelmod/web build
