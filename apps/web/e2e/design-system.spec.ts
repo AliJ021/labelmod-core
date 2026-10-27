@@ -391,6 +391,8 @@ test("reference screens: login, settings and reports keep the new shell without 
   ] as const) {
     await page.goto(url);
     await expect(page.locator(".settings-nav, [role=tablist][aria-label='" + heading + "']").first()).toBeVisible();
+    // Capture the loaded report, not just its shell, before navigating to login.
+    if (name === "reports") await expect(page.getByText("در این بازه فروشی ثبت نشده است.", { exact: true })).toBeVisible();
     await noOverflow(page, name);
     await reference(page, name);
   }

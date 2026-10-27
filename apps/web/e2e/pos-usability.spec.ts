@@ -291,6 +291,8 @@ test("money grouping preserves caret, exact payment payload, and collapsed navig
   if ((page.viewportSize()?.width ?? 0)>=900) {
     await page.getByRole("button",{name:"جمع کردن منوی کناری",exact:true}).click();
     await expect(page.getByRole("button",{name:"باز کردن منوی کناری",exact:true})).toHaveAttribute("aria-expanded","false");
+    // The sidebar can be ready before the persisted cart's invoice read settles.
+    await expect(page.getByRole("region",{name:"سبد خرید",exact:true}).getByText("شلوار کتان",{exact:true})).toBeVisible();
     await page.reload();
     await expect(page.getByRole("button",{name:"باز کردن منوی کناری",exact:true})).toBeVisible();
     await expect(page.getByRole("tab",{name:"صندوق",exact:true})).toBeVisible();
