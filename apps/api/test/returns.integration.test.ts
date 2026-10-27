@@ -279,33 +279,50 @@ describe("برگشت از فروش و دوره ثبت", { skip }, () => {
     const denied = await app.inject({ method: "PATCH", url: "/settings/exchange.debt_policy", ...s,
       payload: { value: "carry_debt", reason: "تغییر غیرمجاز" } });
     assert.equal(denied.statusCode, 403, denied.body);
-    const sold = await soldInvoice({ who: supervisor, qty: "1", paid: "400000", withCustomer: true });
-    const body = exchangeBody(sold.invoiceId, sold.lineId, "1", "1.2");
-    const unset = await exchangeQuote(body); assert.equal(unset.statusCode, 409, unset.body);
-    await policy("debt_first");
-    const first = await exchangeQuote(body);
-    assert.equal(first.statusCode, 200, first.body);
-    assert.equal(first.json().debtApplied, "600000"); assert.equal(first.json().collectAmount, "800000");
-    await policy("carry_debt");
-    const carry = await exchangeQuote(body);
-    assert.equal(carry.statusCode, 200, carry.body);
-    assert.equal(carry.json().debtApplied, "0"); assert.equal(carry.json().collectAmount, "200000");
-    assert.equal(carry.json().fundedTransfer, "400000");
-    const post = await app.inject({ method: "POST", url: "/exchanges", ...s, headers: { ...s.headers, "idempotency-key": randomUUID() },
-      payload: { ...body, token: carry.json().token, confirmed: true, collectMethod: "cash" } });
-    assert.equal(post.statusCode, 200, post.body);
-    const amounts = await sql<{ amount: string }>`SELECT sum(amount)::text amount FROM treasury.payment
-      WHERE invoice_id=${post.json().replacementInvoiceId}::uuid AND direction='in'`.execute(handle.db);
-    assert.equal(amounts.rows[0]!.amount, "200000", "فقط وجه واقعی اختلاف، بدون پرداخت ناخالص ساختگی");
-    const replacementReceipt = await publicInvoice(post.json().replacementInvoiceId);
-    assert.doesNotMatch(replacementReceipt, /تسویه از تعویض|class="due"|class="paid"/);
-    // بدهی واقعی شصت هزار تومان حفظ شده است — از تسویهٔ سرور، چون رسید چاپی مانده را دیگر نشان نمی‌دهد.
-    const original = await app.inject({ method: "GET", url: `/invoices/${sold.invoiceId}`, ...s });
-    assert.equal(original.statusCode, 200, original.body);
-    assert.equal(original.json().settlement.dueAmount, "600000", "بدهی واقعی شصت هزار تومان حفظ شده است");
-    const originalReceipt = await publicInvoice(sold.invoiceId);
-    assert.doesNotMatch(originalReceipt, /class="due"|مانده/);
-    await policy("unset");
+    // This case exercises debt arithmetic with a 1.2 replacement, not the
+    // default whole-item policy. Scope the explicit opt-in to this case only.
+    const quantityAdmin = await loginAs(admin);
+    const prior = await sql<{ fractional: boolean }>`SELECT
+      platform.setting_bool('sales.allow_fractional_qty', false) fractional`.execute(handle.db);
+    const setFractional = async (value: boolean) => {
+      const response = await app.inject({ method: "PATCH", url: "/settings/sales.allow_fractional_qty",
+        ...quantityAdmin, payload: { value } });
+      assert.equal(response.statusCode, 200, response.body);
+    };
+    try {
+      await setFractional(true);
+      const sold = await soldInvoice({ who: supervisor, qty: "1", paid: "400000", withCustomer: true });
+      const body = exchangeBody(sold.invoiceId, sold.lineId, "1", "1.2");
+      const unset = await exchangeQuote(body); assert.equal(unset.statusCode, 409, unset.body);
+      assert.match(unset.json().error.message, /مدیر باید سیاست بدهی تعویض/,
+        "unset must fail for debt policy, not the fractional-quantity guard");
+      await policy("debt_first");
+      const first = await exchangeQuote(body);
+      assert.equal(first.statusCode, 200, first.body);
+      assert.equal(first.json().debtApplied, "600000"); assert.equal(first.json().collectAmount, "800000");
+      await policy("carry_debt");
+      const carry = await exchangeQuote(body);
+      assert.equal(carry.statusCode, 200, carry.body);
+      assert.equal(carry.json().debtApplied, "0"); assert.equal(carry.json().collectAmount, "200000");
+      assert.equal(carry.json().fundedTransfer, "400000");
+      const post = await app.inject({ method: "POST", url: "/exchanges", ...s, headers: { ...s.headers, "idempotency-key": randomUUID() },
+        payload: { ...body, token: carry.json().token, confirmed: true, collectMethod: "cash" } });
+      assert.equal(post.statusCode, 200, post.body);
+      const amounts = await sql<{ amount: string }>`SELECT sum(amount)::text amount FROM treasury.payment
+        WHERE invoice_id=${post.json().replacementInvoiceId}::uuid AND direction='in'`.execute(handle.db);
+      assert.equal(amounts.rows[0]!.amount, "200000", "فقط وجه واقعی اختلاف، بدون پرداخت ناخالص ساختگی");
+      const replacementReceipt = await publicInvoice(post.json().replacementInvoiceId);
+      assert.doesNotMatch(replacementReceipt, /تسویه از تعویض|class="due"|class="paid"/);
+      // بدهی واقعی شصت هزار تومان حفظ شده است — از تسویهٔ سرور، چون رسید چاپی مانده را دیگر نشان نمی‌دهد.
+      const original = await app.inject({ method: "GET", url: `/invoices/${sold.invoiceId}`, ...s });
+      assert.equal(original.statusCode, 200, original.body);
+      assert.equal(original.json().settlement.dueAmount, "600000", "بدهی واقعی شصت هزار تومان حفظ شده است");
+      const originalReceipt = await publicInvoice(sold.invoiceId);
+      assert.doesNotMatch(originalReceipt, /class="due"|مانده/);
+    } finally {
+      try { await policy("unset"); }
+      finally { await setFractional(prior.rows[0]!.fractional); }
+    }
   });
 
   test("تعویض ارزان‌ترِ پرداخت‌نشده اعتبار یا پول ساختگی نمی‌سازد", async (t) => {

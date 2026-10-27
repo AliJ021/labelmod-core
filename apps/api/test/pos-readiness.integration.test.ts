@@ -2543,7 +2543,7 @@ describe("آمادگی API صندوق", { skip }, () => {
       await setRequired(true);
       const required = await policy();
       assert.equal(required.statusCode, 200, required.body);
-      assert.deepEqual(required.json(), { requireCustomer: true, creditEnabled: true });
+      assert.deepEqual(required.json(), { requireCustomer: true, creditEnabled: true, allowFractionalQty: false });
       const denied = await pay(unpaid.invoiceId);
       assert.equal(denied.statusCode, 409, denied.body);
       assert.match(denied.body, /شماره مشتری/);
