@@ -179,7 +179,7 @@ test.describe("زبانه‌های شاخص داشبورد", () => {
   // یک آزمون برای هر عرض، با همان ادعاها: هشت بارگذاری داشبورد در یک آزمون روی WebKit تیره به
   // ۳۰–۳۶ ثانیه از سقف ۴۵ ثانیه رسیده بود و هر بخش تازهٔ داشبورد آن را از سقف رد می‌کرد.
   for (const width of [320, 375, 390, 412, 768, 1024, 1440, 1920]) {
-    test(`layout at ${width}: three selectors side by side or stacked, never overlapping, no page overflow, panel below them`, async ({ page }) => {
+    test(`layout at ${width}: three selectors side by side or stacked, never overlapping, no page overflow, panel below them`, { tag: "@self-viewport" }, async ({ page }) => {
       await page.setViewportSize({ width, height: 900 });
       await page.goto("/");
       await expect(panel(page).getByRole("figure")).toBeVisible();

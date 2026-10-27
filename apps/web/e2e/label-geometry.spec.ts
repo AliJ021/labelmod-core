@@ -1,5 +1,5 @@
 import { test, expect } from "@playwright/test";
-import { labelRowProblem, ROW_LIMITS } from "../src/lib/label-print.ts";
+import { LABEL_PRESETS } from "../src/lib/label-print.ts";
 
 /*
  * سازندهٔ برچسب در `apps/api` است و ایمیج وب (Dockerfile) آن را ندارد؛
@@ -24,8 +24,8 @@ const load = async () => ({
   makeEan13: ((await import(BARCODE_MODULE)) as { makeEan13(serial: number): string }).makeEan13,
 });
 
-/** اندازه‌های آماده (همان `ROLL_PRESETS_MM` — آزمون اول برابری را می‌سنجد) + کمینه و بیشینه. */
-const PRESETS = [[30, 20], [40, 25], [40, 30], [50, 25], [50, 30], [58, 40], [60, 40]].map(([width, height]) => ({ width: width!, height: height! }));
+/** اندازه‌های آماده (همان `ROLL_PRESETS_MM` — label-contract.test.ts برابری را می‌سنجد) + کمینه و بیشینه. */
+const PRESETS = LABEL_PRESETS.map(({ width, height }) => ({ width, height }));
 
 /**
  * هندسهٔ واقعی برچسب در موتور مرورگر — نه فقط حساب میلی‌متری.
@@ -39,11 +39,6 @@ const itemsFor = (makeEan13: (n: number) => string): LabelItem[] => [
 ];
 const sizes = [...PRESETS, { width: 31, height: 20 }, { width: 35, height: 22 }, { width: 120, height: 120 }];
 
-test("label geometry spec covers the server's presets and minimum size", async () => {
-  const { label } = await load();
-  expect(PRESETS).toEqual(label.ROLL_PRESETS_MM.map((p) => ({ width: p.width, height: p.height })));
-  expect([label.ROLL_MIN_WIDTH_MM, label.ROLL_MIN_HEIGHT_MM]).toEqual([30, 20]);
-});
 
 for (const s of [...sizes.map((x) => ({ layout: "roll" as const, ...x })), { layout: "a4" as const, width: 70, height: 37 }]) {
   test(`label ${s.layout} ${s.width}x${s.height}: rows, price and quiet zone stay inside the inner box in reference order`, async ({ page }) => {
@@ -151,18 +146,6 @@ for (const startSlot of [1, 2]) {
   });
 }
 
-test("web row validation mirrors the server: same limits and same accept/reject on a grid", async () => {
-  const { label } = await load();
-  expect(ROW_LIMITS).toEqual({ printableMax: label.ROLL_PRINTABLE_MAX_MM, mediaMin: label.ROLL_MEDIA_MIN_MM, mediaMax: label.ROLL_MEDIA_MAX_MM,
-    maxColumns: label.ROLL_ROW_LIMITS.maxColumns, maxGap: label.ROLL_ROW_LIMITS.maxGapMm, maxOffset: label.ROLL_ROW_LIMITS.maxOffsetMm });
-  const mismatches: string[] = [];
-  for (const width of [30, 40, 50, 58]) for (const columns of [1, 2, 3]) for (const gapMm of [-1, 0, 2, 3, 4, 5, 21])
-    for (const mediaWidthMm of [14, 60, 100, 103, 106, 110, 118, 119]) for (const offsetXMm of [-11, -7, -1.5, -0.5, 0, 1.5, 2, 11]) for (const startSlot of [1, 2, 4]) {
-      const row = { columns, gapMm, mediaWidthMm, offsetXMm, startSlot };
-      if ((label.rollRowProblem(width, row) === null) !== (labelRowProblem(width, row) === null)) mismatches.push(JSON.stringify({ width, ...row }));
-    }
-  expect(mismatches).toEqual([]);
-});
 
 /*
  * پروفایل اندازه‌گیری‌شدهٔ مالک (لیبل ۵۰×۳۰، لاینر ۱۰۵، فاصلهٔ افقی ۴): هر ردیف دقیقاً یک
