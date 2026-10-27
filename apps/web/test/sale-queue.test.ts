@@ -132,3 +132,32 @@ test("changed user cannot replay even manually; no POST is sent", async () => {
   try { await assert.rejects(replay(row())); assert.deepEqual(calls, ["/api/auth/me"]); }
   finally { globalThis.fetch = original; }
 });
+
+test("فروش اینستاگرامِ صف‌شده بی شیفت بازفرست می‌شود — فقط با کانال و زمینهٔ همان شعبه", async () => {
+  const ig = (over: Partial<NonNullable<QueuedRequest["saleContext"]>> = {}) =>
+    row({ saleContext: { actorId: actor, invoiceId: invoice, branchId: branch, shiftId: branch, channel: "instagram", ...over } });
+  const original = globalThis.fetch;
+  const run = async (r: QueuedRequest, inv: Record<string, unknown>) => {
+    const calls: string[] = [];
+    globalThis.fetch = (async (url: string) => {
+      calls.push(url);
+      if (url === "/api/auth/me") return new Response(JSON.stringify({ id: actor }), { status: 200 });
+      if (url === `/api/invoices/${invoice}`) return new Response(JSON.stringify({ id: invoice, createdBy: actor, branchId: branch, status: "draft", ...inv }), { status: 200 });
+      return new Response(JSON.stringify({ id: invoice, status: "paid", number: "IG-1" }), { status: 200 });
+    }) as unknown as typeof fetch;
+    try { await replay(r); return calls; } finally { globalThis.fetch = original; }
+  };
+  // مسیر درست: شیفت پرسیده نمی‌شود و finalize با همان کلید می‌رود.
+  const ok = await run(ig(), { channel: "instagram", shiftId: null });
+  assert.deepEqual(ok, ["/api/auth/me", `/api/invoices/${invoice}`, `/api/invoices/${invoice}/finalize`]);
+  // کنترل منفی: فاکتور صندوقِ شیفت‌دار با زمینهٔ اینستاگرام بازفرست نمی‌شود، و برعکس.
+  await assert.rejects(run(ig(), { channel: "pos", shiftId: shift }), /زمینهٔ فاکتور/);
+  await assert.rejects(run(ig(), { channel: "instagram", shiftId: shift }), /زمینهٔ فاکتور/);
+  await assert.rejects(run(row(), { channel: "instagram", shiftId: null }), /زمینهٔ فاکتور/);
+  // کانال ناشناخته یا کلید زمینه‌ای جز شعبه، پیش از هر تماس شبکه رد می‌شود.
+  for (const bad of [ig({ shiftId: shift }), ig({ channel: "web" as "instagram" })]) {
+    let calls = 0;
+    globalThis.fetch = (async () => { calls++; throw new Error("unexpected network"); }) as typeof fetch;
+    try { await assert.rejects(replay(bad)); assert.equal(calls, 0); } finally { globalThis.fetch = original; }
+  }
+});

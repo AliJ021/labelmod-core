@@ -842,7 +842,7 @@ describe("آمادگی API صندوق", { skip }, () => {
     const found = await app.inject({ method: "GET", url: intentUrl(id, keyA), ...a });
     assert.equal(found.statusCode, 200, found.body);
     assert.deepEqual(found.json(), { state: "recorded", terminal: true,
-      payment: { id: lost.json().paymentId, methodCode: "card", amount: "100000", refNo: "REF-A", status: "succeeded" } });
+      payment: { id: lost.json().paymentId, methodCode: "card", amount: "100000", refNo: "REF-A", status: "succeeded", shiftId: lost.json().invoice.shiftId } });
     assert.notEqual(found.json().payment.id, b.json().paymentId);
     assert.equal((await app.inject({ method: "GET", url: intentUrl(id, keyB), ...a })).json().payment.id, b.json().paymentId);
 
@@ -1189,8 +1189,9 @@ describe("آمادگی API صندوق", { skip }, () => {
       ...s,
       payload: { qty: "1.5" },
     });
-    assert.equal(r.statusCode, 400);
-    assert.equal(r.json().error.code, "invalid_input");
+    assert.equal(r.statusCode, 409);
+    assert.equal(r.json().error.code, "rule_violation");
+    assert.match(r.json().error.message, /عدد صحیح/);
   });
 
   test("سطر ناموجود ۴۰۴ می‌دهد", async () => {
@@ -2542,7 +2543,7 @@ describe("آمادگی API صندوق", { skip }, () => {
       await setRequired(true);
       const required = await policy();
       assert.equal(required.statusCode, 200, required.body);
-      assert.deepEqual(required.json(), { requireCustomer: true, creditEnabled: true });
+      assert.deepEqual(required.json(), { requireCustomer: true, creditEnabled: true, allowFractionalQty: false });
       const denied = await pay(unpaid.invoiceId);
       assert.equal(denied.statusCode, 409, denied.body);
       assert.match(denied.body, /شماره مشتری/);

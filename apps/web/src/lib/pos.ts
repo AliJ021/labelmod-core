@@ -139,7 +139,7 @@ export interface InvoiceSettlement {
  */
 export type PaymentIntentStatus =
   | { state: "recorded"; terminal: true;
-      payment: { id: string; methodCode: string; amount: string; refNo: string | null; status: string } }
+      payment: { id: string; methodCode: string; amount: string; refNo: string | null; status: string; shiftId?: string | null } }
   | { state: "abandoned" | "key_conflict"; terminal: true }
   | { state: "invoice_closed"; terminal: true; invoiceStatus: string }
   | { state: "not_found"; terminal: false };
@@ -352,7 +352,7 @@ export const pos = {
   branches: (opts?: RequestOptions) => api.get<{ branches: Branch[]; allBranches: boolean }>("/branches", opts),
 
   /** `creditEnabled` نبود (API پیش از ۰۹۶) یعنی روشن — همان رفتار قبلی. */
-  policy: (branchId: string, opts?: RequestOptions) => api.get<{ requireCustomer: boolean; creditEnabled?: boolean }>(
+  policy: (branchId: string, opts?: RequestOptions) => api.get<{ requireCustomer: boolean; creditEnabled?: boolean; allowFractionalQty?: boolean }>(
     `/pos/policy?branchId=${encodeURIComponent(branchId)}`, opts),
 
   /**
@@ -507,7 +507,7 @@ export const pos = {
 
   pay: (
     invoiceId: string,
-    input: { methodCode: string; amount: string; refNo?: string; accountId?: string },
+    input: { methodCode: string; amount: string; refNo?: string; accountId?: string; shiftId?: string },
     opts?: RequestOptions,
   ) => api.post<PaymentResult>(`/invoices/${invoiceId}/payments`, input, opts),
 

@@ -143,6 +143,28 @@ describe("کارهای عملیاتی داشبورد", { skip }, () => {
       INSERT INTO sales.cash_shift (branch_id, user_id, opened_at, closed_at, status, counted_cash, expected_cash, variance)
         VALUES (br, u, platform.business_day_start(today) - interval '6 hours', platform.business_day_start(today) - interval '5 hours', 'closed', 50, 100, -50);
       INSERT INTO sales.cash_shift (branch_id, user_id, opened_at) VALUES (b2, u, now());
+
+      -- کمبود موجودی (۱۰۴، آستانهٔ پیش‌فرض ۲): قفسه: LS-A ۱ و LS-B ۲ داخل، LS-C ۳ بیرون؛ پشتیبان: LS-A ۰؛
+      -- معیوب: LS-D ۰ بیرون؛ شعبهٔ دیگر: LS-E ۰ بیرون. یعنی همین شعبه = ۳.
+      DECLARE p uuid; va uuid; vb uuid; vc uuid; vd uuid; ve uuid; w2 uuid;
+      BEGIN
+        INSERT INTO inventory.warehouse (branch_id, code, name, kind) VALUES (b2, 'OPS-W2-${suffix}', 'انبار شعبهٔ دوم', 'store') RETURNING id INTO w2;
+        INSERT INTO catalog.product (code, name_internal) VALUES ('P-OPS-LS', 'کالای کمبود') RETURNING id INTO p;
+        INSERT INTO catalog.variation (product_id, color, size, sku) VALUES (p, 'آبی', 'S', 'OPS-LS-A') RETURNING id INTO va;
+        INSERT INTO catalog.variation (product_id, color, size, sku) VALUES (p, 'آبی', 'M', 'OPS-LS-B') RETURNING id INTO vb;
+        INSERT INTO catalog.variation (product_id, color, size, sku) VALUES (p, 'آبی', 'L', 'OPS-LS-C') RETURNING id INTO vc;
+        INSERT INTO catalog.variation (product_id, color, size, sku) VALUES (p, 'آبی', 'XL', 'OPS-LS-D') RETURNING id INTO vd;
+        INSERT INTO catalog.variation (product_id, color, size, sku) VALUES (p, 'سبز', 'S', 'OPS-LS-E') RETURNING id INTO ve;
+        PERFORM inventory.apply_movement(va, '00000000-0000-7000-8000-000000000101', 1, 'opening', p_user => u, p_unit_cost => 1000);
+        PERFORM inventory.apply_movement(vb, '00000000-0000-7000-8000-000000000101', 2, 'opening', p_user => u, p_unit_cost => 1000);
+        PERFORM inventory.apply_movement(vc, '00000000-0000-7000-8000-000000000101', 3, 'opening', p_user => u, p_unit_cost => 1000);
+        PERFORM inventory.apply_movement(va, '00000000-0000-7000-8000-000000000102', 1, 'opening', p_user => u, p_unit_cost => 1000);
+        PERFORM inventory.apply_movement(va, '00000000-0000-7000-8000-000000000102', -1, 'opening', p_user => u, p_unit_cost => 1000);
+        PERFORM inventory.apply_movement(vd, '00000000-0000-7000-8000-000000000103', 1, 'opening', p_user => u, p_unit_cost => 1000);
+        PERFORM inventory.apply_movement(vd, '00000000-0000-7000-8000-000000000103', -1, 'opening', p_user => u, p_unit_cost => 1000);
+        PERFORM inventory.apply_movement(ve, w2, 1, 'opening', p_user => u, p_unit_cost => 1000);
+        PERFORM inventory.apply_movement(ve, w2, -1, 'opening', p_user => u, p_unit_cost => 1000);
+      END;
     END $fx$`).execute(owner.db);
     app = await buildApp({ db: handle.db, auth: new AuthService(handle.db),
       config: loadConfig({ ...process.env, NODE_ENV: "test", LOG_LEVEL: "fatal" }) });
@@ -179,6 +201,68 @@ describe("کارهای عملیاتی داشبورد", { skip }, () => {
     assert.deepEqual(body.shifts.open.map((s: { userName: string }) => s.userName), ["کاربر cashier", "کاربر supervisor"]);
   });
 
+  test("کمبود موجودی: شمار دقیق انبارهای فروش همین شعبه و برابر با فهرست گزارش؛ معیوب و شعبهٔ دیگر بیرون", async () => {
+    const body = JSON.parse((await get(users.admin)).body);
+    assert.equal(body.lowStock.state, "ready");
+    assert.equal(body.lowStock.threshold, "2");
+    assert.equal(body.lowStock.total, 3);
+    // هر انبار فروش فعال یک ردیف، حتی با صفرِ واقعی (آوتلتِ Seed)؛ معیوب ردیف ندارد.
+    assert.deepEqual(body.lowStock.warehouses.map((w: { name: string; count: number }) => `${w.name}:${w.count}`),
+      ["آوتلت — تک‌سایز حراجی:0", "انبار پشتیبان:1", "قفسه فروشگاه:2"]);
+    const auth = await loginAs(users.admin);
+    const list = await app.inject({ method: "GET", url: `/reports/low-stock?branchId=${BRANCH}`, ...auth });
+    assert.equal(list.statusCode, 200, list.body);
+    const l = JSON.parse(list.body);
+    assert.equal(l.total, body.lowStock.total, "شمار داشبورد = شمار گزارشی که پیوندش باز می‌کند");
+    assert.equal(l.truncated, false);
+    assert.equal(l.threshold, "2");
+    assert.deepEqual(l.rows.map((r: { sku: string; available: string; warehouseName: string }) => `${r.sku}@${r.available}@${r.warehouseName}`),
+      ["OPS-LS-A@0.000@انبار پشتیبان", "OPS-LS-A@1.000@قفسه فروشگاه", "OPS-LS-B@2.000@قفسه فروشگاه"], "کمترین قابل‌فروش اول");
+    const one = await app.inject({ method: "GET", url: `/reports/low-stock?warehouseId=00000000-0000-7000-8000-000000000101`, ...auth });
+    assert.equal(JSON.parse(one.body).total, 2, "فیلتر انبار");
+    const csv = await app.inject({ method: "GET", url: `/reports/low-stock?branchId=${BRANCH}&format=csv`, ...auth });
+    assert.equal(csv.statusCode, 200);
+    assert.match(csv.headers["content-type"] as string, /text\/csv/);
+    assert.ok(csv.body.startsWith("\uFEFF"), "BOM برای اکسل");
+    assert.equal(csv.body.trim().split(/\r?\n/).length, 4, "سرستون + سه سطر");
+    assert.ok(!/unitCost|بها/.test(csv.body), "بی ستون بها");
+  });
+
+  test("کمبود موجودی: دامنه و مجوز — شعبه/انبار بیرون از دامنه ۴۰۳، بی report.view ۴۰۳ و denied", async () => {
+    const sup = await loginAs(users.supervisor);
+    assert.equal((await app.inject({ method: "GET", url: `/reports/low-stock?branchId=${other}`, ...sup })).statusCode, 403);
+    const w2 = (await sql<{ id: string }>`SELECT id::text FROM inventory.warehouse WHERE branch_id = ${other}::uuid`.execute(owner.db)).rows[0]!.id;
+    assert.equal((await app.inject({ method: "GET", url: `/reports/low-stock?warehouseId=${w2}`, ...sup })).statusCode, 403);
+    const own = JSON.parse((await app.inject({ method: "GET", url: `/reports/low-stock`, ...sup })).body);
+    assert.equal(own.total, 3, "دامنهٔ تک‌شعبه بی پارامتر همان شعبه است، نه همه");
+    const cash = await loginAs(users.cashier);
+    assert.equal((await app.inject({ method: "GET", url: `/reports/low-stock?branchId=${BRANCH}`, ...cash })).statusCode, 403);
+    assert.deepEqual(JSON.parse((await get(users.cashier)).body).lowStock, { state: "denied" });
+  });
+
+  test("کمبود موجودی: آستانهٔ تازه از تنظیم خوانده می‌شود؛ نبودِ آستانه «unknown» است، نه صفر", async () => {
+    await sql`SELECT platform.set_setting('inventory.low_stock_threshold', '3'::jsonb, 'آزمون آستانه', ${ids.admin}::uuid)`.execute(owner.db);
+    const three = JSON.parse((await get(users.admin)).body).lowStock;
+    assert.equal(three.threshold, "3");
+    assert.equal(three.total, 4, "LS-C با موجودی ۳ حالا داخل است");
+    const saved = (await sql<{ r: unknown }>`SELECT to_jsonb(s) AS r FROM platform.setting s WHERE key = 'inventory.low_stock_threshold'`.execute(owner.db)).rows[0]!.r;
+    // نصبی که ۱۰۴ را ندارد یا کلیدش گم شده: داده‌ساز آزمون؛ کلید از هیچ مسیر برنامه حذف نمی‌شود.
+    await sql`DELETE FROM platform.setting WHERE key = 'inventory.low_stock_threshold'`.execute(owner.db);
+    try {
+      const body = JSON.parse((await get(users.admin)).body);
+      assert.equal(body.lowStock.state, "unknown");
+      assert.ok(!("total" in body.lowStock), "شماری که خوانده نشده صفر گزارش نمی‌شود");
+      const auth = await loginAs(users.admin);
+      const l = JSON.parse((await app.inject({ method: "GET", url: `/reports/low-stock?branchId=${BRANCH}`, ...auth })).body);
+      assert.deepEqual({ threshold: l.threshold, total: l.total }, { threshold: null, total: null });
+      assert.equal((await app.inject({ method: "GET", url: `/reports/low-stock?branchId=${BRANCH}&format=csv`, ...auth })).statusCode, 409,
+        "CSV خالی شبیه «کمبودی نیست» بود");
+    } finally {
+      await sql`INSERT INTO platform.setting SELECT * FROM jsonb_populate_record(NULL::platform.setting, ${JSON.stringify(saved)}::jsonb)`.execute(owner.db);
+      await sql`SELECT platform.set_setting('inventory.low_stock_threshold', '2'::jsonb, 'برگشت آزمون', ${ids.admin}::uuid)`.execute(owner.db);
+    }
+  });
+
   test("سرپرست: شیفت و دریافتنی بله، چک «denied» — نه صفر و نه خواندن", async () => {
     const body = JSON.parse((await get(users.supervisor)).body);
     assert.deepEqual(body.cheques, { state: "denied" });
@@ -188,7 +272,7 @@ describe("کارهای عملیاتی داشبورد", { skip }, () => {
 
   test("صندوق‌دار: هر سه «denied»؛ ناشناس ۴۰۱؛ شعبهٔ بیرون از دامنه ۴۰۳ پیش از هر خواندن", async () => {
     const body = JSON.parse((await get(users.cashier)).body);
-    assert.deepEqual([body.shifts, body.cheques, body.receivables], [{ state: "denied" }, { state: "denied" }, { state: "denied" }]);
+    assert.deepEqual([body.shifts, body.cheques, body.receivables, body.lowStock], [{ state: "denied" }, { state: "denied" }, { state: "denied" }, { state: "denied" }]);
     assert.ok(!/300000|3000001|کاربر/.test(JSON.stringify(body)), "هیچ عددی از بخش بسته نمی‌رسد");
     assert.equal((await app.inject({ method: "GET", url: `/dashboard/operations?branchId=${BRANCH}` })).statusCode, 401);
     assert.equal((await get(users.admin, other)).statusCode, 403);
@@ -198,6 +282,7 @@ describe("کارهای عملیاتی داشبورد", { skip }, () => {
   test("فقط‌خواندنی: دفتر، چک و شیفت دست نمی‌خورند", async () => {
     const snap = async () => (await sql<{ s: string }>`SELECT
       (SELECT count(*) FROM ledger.journal_line)::text || ':' || (SELECT count(*) FROM treasury.cheque_event)::text || ':' ||
+      (SELECT count(*) FROM inventory.stock_movement)::text || ':' || (SELECT string_agg(on_hand::text || '/' || reserved::text, ',' ORDER BY variation_id, warehouse_id) FROM inventory.stock_balance) || ':' ||
       (SELECT string_agg(id::text || status, ',' ORDER BY id) FROM sales.cash_shift) AS s`.execute(owner.db)).rows[0]!.s;
     const before = await snap();
     await get(users.admin);

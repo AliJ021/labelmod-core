@@ -11,7 +11,7 @@ import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import { ApiError } from "../src/lib/api.ts";
 import { allOptions, cartCounts, checkAmount, checkoutErrorMessage, checkoutTotals, DIGIPAY_NOT_CONFIGURED, LINK_NOT_IMPLEMENTED,
-  maxAmount, NEEDS_CUSTOMER_REASON, SNAPPAY_NOT_CONFIGURED, usableChannel,
+  maxAmount, NEEDS_CUSTOMER_REASON, SNAPPAY_NOT_CONFIGURED, TRANSFER_NOT_CONFIGURED, usableChannel,
   finalAmounts, intentFromPending, intentToPending, paymentBody, paymentFailureKind, paymentLayout, paymentLocked,
   resolveIntentStatus, type PaymentIntent, type PaymentPhase } from "../src/lib/pos-payments.ts";
 import { clearPendingPayment, readPendingPayment, writePendingPayment } from "../src/lib/pending-payment.ts";
@@ -200,6 +200,23 @@ describe("پرداخت معلق پایدار", () => {
   const A: PaymentIntent = { key: "11111111-1111-4111-8111-111111111111", invoiceId: "22222222-2222-4222-8222-222222222222",
     methodCode: "card", methodName: "کارت‌خوان", amount: 100_000n, refNo: "REF-A" };
 
+  test("cash drawer survives reload and cannot change under an unresolved payment key", () => {
+    const st = memStore();
+    const cash = { ...A, methodCode: "cash", refNo: "", drawerShiftId: "55555555-5555-4555-8555-555555555555" };
+    const pending = intentToPending(cash, { actorId: actor, shiftId }, "unresolved");
+    writePendingPayment(pending, st);
+    const restored = intentFromPending(readPendingPayment(actor, st)!);
+    assert.deepEqual(restored, cash);
+    assert.deepEqual(paymentBody(restored), { methodCode: "cash", amount: "100000", shiftId: cash.drawerShiftId });
+    const recorded = { state: "recorded", terminal: true, payment: { id: "p", methodCode: "cash", amount: "100000", refNo: null, status: "succeeded", shiftId: cash.drawerShiftId } } as const;
+    assert.equal(resolveIntentStatus(restored, recorded), "recorded");
+    assert.equal(resolveIntentStatus(restored, { ...recorded, payment: { ...recorded.payment, shiftId } }), "mismatch");
+    assert.equal(resolveIntentStatus(restored, { ...recorded, payment: { ...recorded.payment, shiftId: null } }), "mismatch");
+    assert.throws(() => writePendingPayment({ ...pending, drawerShiftId: shiftId }, st), /عوض نمی‌شود/);
+    st.setItem(`labelmod_pending_payment_v1:${actor}`, JSON.stringify({ ...pending, drawerShiftId: "bad" }));
+    assert.throws(() => readPendingPayment(actor, st), /حفظ شد/);
+  });
+
   test("قصد پس از Reload با همان کلید، مبلغ و بدنه برمی‌گردد — کلید تازه ساخته نمی‌شود", () => {
     const st = memStore();
     writePendingPayment(intentToPending(A, { actorId: actor, shiftId }, "sending"), st);
@@ -310,5 +327,38 @@ describe("صندوق — ساختار", () => {
     assert.match(src, /<SafeAction trigger="نهایی‌کردن فاکتور"[\s\S]*?run=\{finalize\} verify=\{verifyFinalize\}/);
     assert.match(src, /<CreditCheckout[\s\S]*?run=\{finalize\} verify=\{verifyFinalize\}/);
     assert.ok(!/methodCode: "credit"/.test(src), "صندوق هرگز ردیف پرداخت نسیه نمی‌فرستد");
+  });
+});
+
+describe("حالت اینستاگرامِ صندوق — کارت‌به‌کارت جای کارت‌خوان (بازنگری مالک ۲۶ اکتبر، مهاجرت ۱۰۵)", () => {
+  test("همان چیدمان: خانهٔ اول کارت‌به‌کارت، سپس اسنپ‌پی و دیجی‌پی؛ نقد می‌ماند بی باقی پول؛ نه کارت‌خوان، نه نسیه", () => {
+    const l = paymentLayout([...SEED, m("snappay", "gateway", true), m("digipay", "gateway", true)], { hasCustomer: true, instagram: true });
+    assert.equal(l.primaryKind, "transfer");
+    assert.deepEqual(codes(l.primary), ["transfer"]);
+    assert.deepEqual(l.providers.map((p) => p.option?.code), ["snappay", "digipay"]);
+    const all = codes(allOptions(l));
+    for (const banned of ["card", "credit"]) assert.ok(!all.includes(banned), `${banned} در حالت اینستاگرام پیشنهاد شد`);
+    // بقیهٔ روش‌های صندوق، از جمله نقد، برای پرداخت ترکیبی می‌مانند (بازنگری root، ۱۰۶).
+    assert.deepEqual(codes(l.more), ["cash", "gateway", "points", "giftcard"]);
+    const cash = l.more.find((o) => o.code === "cash")!;
+    assert.equal(cash.allowsChange, false, "نقد اینستاگرام باقی پول ندارد");
+    assert.equal(maxAmount(cash, 400000n), 400000n, "حداکثر همان مانده");
+    assert.deepEqual(checkAmount(cash, 400010n, 400000n), { ok: false, reason: "over_max", max: 400000n });
+  });
+
+  test("کنترل منفی: همان روش‌ها در صندوق فروشگاه چیدمان پیشین را دارند", () => {
+    const l = paymentLayout(SEED, { hasCustomer: true });
+    assert.equal(l.primaryKind, "card_reader");
+    assert.deepEqual(codes(l.primary), ["card"]);
+    assert.ok(codes(l.more).includes("cash") && codes(l.more).includes("transfer"));
+    assert.equal(l.more.find((o) => o.code === "cash")!.allowsChange, true, "نقد صندوق فروشگاه باقی پول دارد");
+  });
+
+  test("کارت‌به‌کارتِ تعریف‌نشده خانه را پنهان نمی‌کند؛ دلیلش روی خانه است", () => {
+    const l = paymentLayout(SEED.filter((x) => x.kind !== "transfer"), { hasCustomer: true, instagram: true });
+    assert.deepEqual(codes(l.primary), []);
+    const src = readFileSync(new URL("../src/components/pos/PaymentSelector.tsx", import.meta.url), "utf8");
+    assert.match(src, /transfer \? TRANSFER_NOT_CONFIGURED : CARD_READER_NOT_CONFIGURED/);
+    assert.match(TRANSFER_NOT_CONFIGURED, /کارت‌به‌کارت/);
   });
 });

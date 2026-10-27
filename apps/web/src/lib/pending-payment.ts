@@ -35,13 +35,15 @@ export interface PendingPayment {
   /** ریال، رقم خالص — پول هرگز `number` نیست. */
   amount: string;
   refNo: string;
+  /** Cash drawer is distinct from the cart context (Instagram uses its branch). */
+  drawerShiftId?: string;
   /** `sending` پیش از ارسال؛ `unresolved` پس از پاسخ نامعلوم. */
   state: "sending" | "unresolved";
 }
 
 const storageKey = (actorId: string) => `labelmod_pending_payment_v1:${actorId}`;
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
-const FIELDS = ["actorId", "invoiceId", "shiftId", "key", "methodCode", "methodName", "amount", "refNo", "state"];
+const FIELDS = ["actorId", "invoiceId", "shiftId", "key", "methodCode", "methodName", "amount", "refNo", "state", "drawerShiftId"];
 const BROKEN = "پرداخت معلق خوانده نشد؛ داده حفظ شد. پیش از پرداخت تازه با پشتیبانی تماس بگیرید.";
 
 export function readPendingPayment(actorId: string, store: KeyValueStorage = localStorage): PendingPayment | null {
@@ -54,6 +56,7 @@ export function readPendingPayment(actorId: string, store: KeyValueStorage = loc
       r.actorId !== actorId || ![r.actorId, r.invoiceId, r.shiftId, r.key].every((v) => typeof v === "string" && UUID.test(v)) ||
       !str(r.methodCode, 64) || r.methodCode === "" || !str(r.methodName, 200) ||
       typeof r.amount !== "string" || !/^[1-9][0-9]{0,17}$/.test(r.amount) || !str(r.refNo, 64) ||
+      (r.drawerShiftId !== undefined && (typeof r.drawerShiftId !== "string" || !UUID.test(r.drawerShiftId))) ||
       (r.state !== "sending" && r.state !== "unresolved"))
     throw new Error(BROKEN);
   return r as PendingPayment;

@@ -218,6 +218,97 @@ test("unavailable customer policy has an explicit recovery action and never enab
   expect(s.posted).toEqual([]);
 });
 
+test("quantity policy defaults to whole items and preserves historical fractional display", async ({ page, api }) => {
+  const s = pos(api);
+  s.invoice = { ...s.invoice, lines: s.invoice.lines.map((l, i) => i === 0 ? { ...l, qty: "1.125" } : l) };
+  await open(page);
+  const row = page.locator(".lines li").first();
+  await expect(row).toContainText("1٫125");
+  await expect(page.getByLabel("تعداد شلوار کتان", { exact: true })).toHaveCount(0);
+  await expect(page.getByRole("button", { name: "اضافه کردن شلوار کتان", exact: true })).toBeDisabled();
+  await expect(page.getByRole("button", { name: "کم کردن شلوار کتان", exact: true })).toBeDisabled();
+  expect(api.calls.some(c => c.startsWith("PATCH "))).toBe(false);
+});
+
+test("enabled quantity editor sends exact Persian thousandths and keeps stale-policy rejection visible", async ({ page, api }) => {
+  const s = pos(api); const requests: unknown[] = [];
+  api.defaults["GET /pos/policy"] = { requireCustomer: false, allowFractionalQty: true };
+  let reject = false;
+  api.handlers.set(`PATCH /invoices/${INV}/lines/l1`, async route => {
+    const body = route.request().postDataJSON(); requests.push(body);
+    if (reject) { await route.fulfill({ status: 409, json: { error: { code: "rule_violation", message: "فروش اعشاری در تنظیمات غیرفعال است" } } }); return; }
+    s.invoice = { ...s.invoice, lines: s.invoice.lines.map(l => l.id === "l1" ? { ...l, qty: body.qty } : l) };
+    await route.fulfill({ json: s.invoice });
+  });
+  await open(page);
+  const input = page.getByLabel("تعداد شلوار کتان", { exact: true });
+  await input.fill("۱٫۱۲۵");
+  await page.getByRole("button", { name: "ثبت تعداد", exact: true }).click();
+  await expect.poll(() => requests).toEqual([{ qty: "1.125" }]);
+  await expect(input).toHaveValue("1.125");
+  await page.getByRole("button", { name: "اضافه کردن شلوار کتان", exact: true }).click();
+  await expect(input).toHaveValue("2.125");
+  reject = true;
+  await input.fill("۱٫۵");
+  await page.getByRole("button", { name: "ثبت تعداد", exact: true }).click();
+  await expect(page.locator(".line-error")).toContainText("فروش اعشاری در تنظیمات غیرفعال است");
+  expect(s.invoice.lines[0]!.qty).toBe("2.125");
+  await input.fill("1.1255");
+  await expect(page.getByRole("button", { name: "ثبت تعداد", exact: true })).toBeDisabled();
+  expect(requests).toEqual([{ qty: "1.125" }, { qty: "2.125" }, { qty: "1.5" }]);
+});
+
+for (const allowFractionalQty of [false, true]) {
+  test(`combined amount and quantity policy (${allowFractionalQty ? "on" : "off"}): exact Rial edits preserve the fractional line`, async ({ page, api }) => {
+    const s = pos(api); const requests: Array<{ field: string; body: unknown }> = [];
+    api.defaults["GET /pos/policy"] = { requireCustomer: false, allowFractionalQty };
+    // A pre-existing absolute discount deliberately locks quantity edits. Change
+    // quantity first, then add/reopen a one-Rial discount through the actual UI.
+    s.invoice = { ...s.invoice, lines: [{ ...s.invoice.lines[0]!, qty: "1.125", unitPrice: "10001", discountAmount: "0" }] };
+    for (const field of ["price", "discount", "qty"]) {
+      api.handlers.set(`PATCH /invoices/${INV}/lines/l1${field === "qty" ? "" : `/${field}`}`, async route => {
+        const body = route.request().postDataJSON(); requests.push({ field, body });
+        s.invoice = { ...s.invoice, lines: s.invoice.lines.map(l => ({ ...l, ...body })) };
+        await route.fulfill({ json: s.invoice });
+      });
+    }
+    await open(page);
+    const quantity = page.getByLabel("تعداد شلوار کتان", { exact: true });
+    if (allowFractionalQty) {
+      await expect(quantity).toHaveValue("1.125");
+      await quantity.fill("۱٫۵");
+      await page.getByRole("button", { name: "ثبت تعداد", exact: true }).click();
+      await expect(quantity).toHaveValue("1.5");
+    } else {
+      await expect(page.locator(".lines li").first()).toContainText("1٫125");
+      await expect(quantity).toHaveCount(0);
+      await expect(page.getByRole("button", { name: "اضافه کردن شلوار کتان", exact: true })).toBeDisabled();
+      await expect(page.getByRole("button", { name: "کم کردن شلوار کتان", exact: true })).toBeDisabled();
+    }
+    await page.getByRole("button", { name: "ویرایش قیمت شلوار کتان", exact: true }).click();
+    await expect(page.getByLabel(/قیمت واحد/)).toHaveValue("1,000.1");
+    await page.getByRole("button", { name: "ثبت قیمت", exact: true }).click();
+    await expect(page.getByLabel(/قیمت واحد/)).toHaveCount(0);
+    await page.getByRole("button", { name: "تخفیف شلوار کتان", exact: true }).click();
+    await page.getByLabel(/^تخفیف \(تومان\)/).fill("۰٫۱");
+    await page.getByRole("button", { name: "اعمال تخفیف", exact: true }).click();
+    await expect(page.getByLabel(/^تخفیف \(تومان\)/)).toHaveCount(0);
+    if (allowFractionalQty) await expect(quantity).toBeDisabled();
+    await page.getByRole("button", { name: "تخفیف شلوار کتان", exact: true }).click();
+    await expect(page.getByLabel(/^تخفیف \(تومان\)/)).toHaveValue("0.1");
+    await page.getByRole("button", { name: "اعمال تخفیف", exact: true }).click();
+    await expect(page.getByLabel(/^تخفیف \(تومان\)/)).toHaveCount(0);
+    expect(requests).toEqual([
+      ...(allowFractionalQty ? [{ field: "qty", body: { qty: "1.5" } }] : []),
+      { field: "price", body: { unitPrice: "10001" } },
+      { field: "discount", body: { discountAmount: "1" } },
+      { field: "discount", body: { discountAmount: "1" } },
+    ]);
+    expect(s.invoice.lines[0]!.qty).toBe(allowFractionalQty ? "1.5" : "1.125");
+    expect(s.posted).toEqual([]); expect(s.finalized).toBe(0);
+  });
+}
+
 test("clicking the unit price opens the existing unit-price editor in Toman", async ({page, api}) => {
   const s=pos(api); const prices:unknown[]=[];
   api.handlers.set(`PATCH /invoices/${INV}/lines/l1/price`,async route=>{

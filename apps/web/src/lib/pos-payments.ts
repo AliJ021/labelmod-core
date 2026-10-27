@@ -61,6 +61,11 @@ export interface ProviderSlot {
 }
 
 export interface PaymentLayout {
+  /**
+   * خانهٔ تمام‌عرض ردیف اول: «کارت‌خوان» در صندوق فروشگاه، «کارت‌به‌کارت» در حالت
+   * اینستاگرام (بازنگری مالک ۲۶ اکتبر) — همان چیدمان مصوب، فقط روش این خانه عوض می‌شود.
+   */
+  primaryKind: "card_reader" | "transfer";
   primary: PaymentOption[];
   providers: ProviderSlot[];
   more: PaymentOption[];
@@ -70,12 +75,25 @@ export const NEEDS_CUSTOMER_REASON = "ابتدا مشتری را به فاکتو
 export const SNAPPAY_NOT_CONFIGURED = "اسنپ‌پی برای این شعبه تنظیم نشده است.";
 export const DIGIPAY_NOT_CONFIGURED = "ثبت دستی دیجی‌پی برای این شعبه تنظیم نشده است؛ حساب تسویه را در تنظیمات معرفی کنید.";
 export const CARD_READER_NOT_CONFIGURED = "کارت‌خوانی برای این شعبه تعریف نشده است؛ پایانه را در تنظیمات معرفی کنید.";
+export const TRANSFER_NOT_CONFIGURED = "کارت‌به‌کارت برای این شعبه تعریف نشده است؛ روش پرداخت را در تنظیمات معرفی کنید.";
 export const LINK_NOT_IMPLEMENTED = "ساخت لینک پرداخت هنوز در سرور پیاده نشده است؛ پرداخت را حضوری بگیرید.";
 
-function placement(m: PaymentMethod): { group: PaymentGroup; rank: number } | null {
+/**
+ * جای هر روش در چیدمان.
+ *
+ * در حالت اینستاگرام کارت‌به‌کارت جای کارت‌خوان را می‌گیرد (مشتری پای دستگاه نیست) و
+ * نسیه نیست (فقط پرداخت کامل). بقیهٔ روش‌های صندوق — از جمله **نقد** — می‌مانند (بازنگری
+ * root، مهاجرت ۱۰۶): نقد به کشوی باز همان شعبه می‌نشیند و **باقی پول ندارد**، چون فاکتور
+ * شیفتی ندارد که باقی پول از آن داده شود. دروازهٔ واقعی `sales.instagram_payment_guard` است.
+ */
+function placement(m: PaymentMethod, instagram: boolean): { group: PaymentGroup; rank: number } | null {
   const code = m.code.toLowerCase();
   if (code === "snappay") return { group: "provider", rank: 1 };
   if (code === "digipay") return { group: "provider", rank: 2 };
+  if (instagram) {
+    if (m.kind === "card_reader") return null;
+    if (m.kind === "transfer") return { group: "primary", rank: 1 };
+  }
   switch (m.kind) {
     case "card_reader": return { group: "primary", rank: 1 };
     case "cash": return { group: "more", rank: 1 };
@@ -91,13 +109,14 @@ export function needsCustomer(kind: string): boolean {
   return kind === "points" || kind === "gift_card";
 }
 
-export function paymentLayout(methods: readonly PaymentMethod[], ctx: { hasCustomer: boolean }): PaymentLayout {
+export function paymentLayout(methods: readonly PaymentMethod[], ctx: { hasCustomer: boolean; instagram?: boolean }): PaymentLayout {
+  const instagram = ctx.instagram === true;
   const placed = methods.flatMap((m) => {
-    const p = placement(m);
+    const p = placement(m, instagram);
     if (!p) return [];
     const option: PaymentOption = {
       code: m.code, name: m.name, kind: m.kind, requiresRef: m.requiresRef, group: p.group,
-      allowsChange: m.kind === "cash",
+      allowsChange: m.kind === "cash" && !instagram,
       unavailableReason: needsCustomer(m.kind) && !ctx.hasCustomer ? NEEDS_CUSTOMER_REASON : null,
     };
     return [{ option, rank: p.rank }];
@@ -107,6 +126,7 @@ export function paymentLayout(methods: readonly PaymentMethod[], ctx: { hasCusto
   const digipay = of("provider").find((o) => o.code.toLowerCase() === "digipay") ?? null;
   const link: PaymentChannel = { key: "link", label: "لینک پرداخت", unavailableReason: LINK_NOT_IMPLEMENTED };
   return {
+    primaryKind: instagram ? "transfer" : "card_reader",
     primary: of("primary"),
     providers: [
       { key: "snappay", label: "اسنپ‌پی", option: snappay, unavailableReason: snappay ? null : SNAPPAY_NOT_CONFIGURED,
@@ -165,6 +185,7 @@ export interface PaymentIntent {
   methodName: string;
   amount: bigint;
   refNo: string;
+  drawerShiftId?: string;
 }
 
 /**
@@ -219,11 +240,12 @@ export type IntentVerdict = "recorded" | "not_recorded_final" | "unresolved" | "
  *   unresolved            هنوز پیدا نشد؛ فقط همان قصد با همان کلید.
  *   mismatch              ردیف هست ولی بدنه‌اش این قصد نیست.
  */
-export function resolveIntentStatus(intent: Pick<PaymentIntent, "methodCode" | "amount" | "refNo">, status: PaymentIntentStatus): IntentVerdict {
+export function resolveIntentStatus(intent: Pick<PaymentIntent, "methodCode" | "amount" | "refNo" | "drawerShiftId">, status: PaymentIntentStatus): IntentVerdict {
   switch (status.state) {
     case "recorded": {
       const p = status.payment;
       return p.methodCode === intent.methodCode && BigInt(p.amount) === intent.amount && (p.refNo ?? "") === intent.refNo
+        && (intent.drawerShiftId === undefined || p.shiftId === intent.drawerShiftId)
         && p.status === "succeeded" ? "recorded" : "mismatch";
     }
     case "abandoned": case "key_conflict": case "invoice_closed": return "not_recorded_final";
@@ -234,16 +256,19 @@ export function resolveIntentStatus(intent: Pick<PaymentIntent, "methodCode" | "
 /** شکل پایدار قصد (`pending-payment.ts`) — مبلغ رشتهٔ ریالی، هرگز `number`. */
 export function intentToPending(intent: PaymentIntent, ctx: { actorId: string; shiftId: string }, state: PendingPayment["state"]): PendingPayment {
   return { actorId: ctx.actorId, invoiceId: intent.invoiceId, shiftId: ctx.shiftId, key: intent.key,
-    methodCode: intent.methodCode, methodName: intent.methodName, amount: intent.amount.toString(), refNo: intent.refNo, state };
+    methodCode: intent.methodCode, methodName: intent.methodName, amount: intent.amount.toString(), refNo: intent.refNo, state,
+    ...(intent.drawerShiftId === undefined ? {} : { drawerShiftId: intent.drawerShiftId }) };
 }
 
 export function intentFromPending(p: PendingPayment): PaymentIntent {
-  return { key: p.key, invoiceId: p.invoiceId, methodCode: p.methodCode, methodName: p.methodName, amount: BigInt(p.amount), refNo: p.refNo };
+  return { key: p.key, invoiceId: p.invoiceId, methodCode: p.methodCode, methodName: p.methodName, amount: BigInt(p.amount), refNo: p.refNo,
+    ...(p.drawerShiftId === undefined ? {} : { drawerShiftId: p.drawerShiftId }) };
 }
 
 /** بدنهٔ ارسال — یک تعریف، تا تکرار همان قصد دقیقاً همان بدنه را ببرد. */
-export function paymentBody(intent: PaymentIntent): { methodCode: string; amount: string; refNo?: string } {
-  return { methodCode: intent.methodCode, amount: intent.amount.toString(), ...(intent.refNo === "" ? {} : { refNo: intent.refNo }) };
+export function paymentBody(intent: PaymentIntent): { methodCode: string; amount: string; refNo?: string; shiftId?: string } {
+  return { methodCode: intent.methodCode, amount: intent.amount.toString(), ...(intent.refNo === "" ? {} : { refNo: intent.refNo }),
+    ...(intent.drawerShiftId === undefined ? {} : { shiftId: intent.drawerShiftId }) };
 }
 
 // ── «ثبت شد» از تسویهٔ قطعی سرور (F-115-02) ────────────────────────────

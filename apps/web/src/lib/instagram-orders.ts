@@ -82,7 +82,11 @@ export interface OrderDetail {
   similarOpen: { id: string; orderNo: string; status: OrderStatus; createdAt: string }[];
   replayed?: boolean;
 }
-export interface OrdersPage { page: number; perPage: number; total: number; pages: number; orders: OrderSummary[] }
+export interface OrdersPage {
+  page: number; perPage: number; total: number; pages: number; orders: OrderSummary[];
+  /** ساخت سفارش چندمرحله‌ای (v1) روشن است؟ نبودنش «خاموش» است (مهاجرت ۱۰۵). */
+  legacyCreate?: boolean;
+}
 export interface ReceivingAccount { id: string; code: string; name: string; bankName: string | null; accountNo: string | null }
 
 /** کدام کار در کدام وضعیت — همان قاعده‌ای که سرور اجبار می‌کند؛ اینجا فقط برای پنهان‌کردن دکمهٔ بی‌اثر. */

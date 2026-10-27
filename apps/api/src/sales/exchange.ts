@@ -27,6 +27,11 @@ export class ExchangeService {
   constructor(db: Db) { this.db = db; }
 
   async quote(input: ExchangeInput, ex: Executor = this.db): Promise<ExchangeQuote> {
+    // Preview only; the shared write guard rechecks under lock when posting.
+    const policy = await sql<{ allowed: boolean }>`SELECT platform.setting_bool('sales.allow_fractional_qty', false)
+      OR NOT EXISTS (SELECT 1 FROM jsonb_to_recordset(${JSON.stringify(input.replacements)}::jsonb) x(qty numeric)
+        WHERE qty <> trunc(qty)) AS allowed`.execute(ex);
+    if (!policy.rows[0]?.allowed) throw new ReturnError("fractional_qty_disabled", "تعداد کالای جایگزین باید عدد صحیح باشد؛ فروش اعشاری غیرفعال است", 409);
     // تعداد، مالیات و باقی‌مانده گردکردن همگی در SQL محاسبه می‌شوند.
     const result = await sql<Omit<ExchangeQuote, "token">>`
       WITH selected AS (

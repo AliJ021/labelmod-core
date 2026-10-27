@@ -52,6 +52,7 @@ import { cartCounts, checkoutErrorMessage, checkoutTotals, finalAmounts, intentF
   type UnresolvedReason } from "../lib/pos-payments.ts";
 import { clearPendingPayment, readPendingPayment, writePendingPayment, type PendingPayment } from "../lib/pending-payment.ts";
 import { formatCount, formatQty } from "../lib/format.ts";
+import { quantityUnits, saleQuantity } from "../lib/sale-quantity.ts";
 import { session } from "../lib/session.ts";
 import { people } from "../lib/people.ts";
 import { isNetworkFailure } from "../lib/offline-queue.ts";
@@ -103,6 +104,7 @@ function adjusted(line: { discountAmount: string; listPrice: string | null }): b
  *    `JSON.stringify`.
  */
 export interface RowActions {
+  setQty: (lineId: string, qty: string) => void;
   changeQty: (lineId: string, current: string, delta: number) => void;
   remove: (lineId: string) => void;
   applyPrice: (lineId: string, priceRial: bigint, why: string) => void;
@@ -113,7 +115,7 @@ export interface RowActions {
 }
 
 function sameLine(a: Readonly<CartLineProps>, b: Readonly<CartLineProps>): boolean {
-  if (a.panel !== b.panel || a.on !== b.on || a.error !== b.error) return false;
+  if (a.panel !== b.panel || a.on !== b.on || a.error !== b.error || a.allowFractional !== b.allowFractional) return false;
   const x = a.line;
   const y = b.line;
   return (
@@ -129,6 +131,7 @@ function sameLine(a: Readonly<CartLineProps>, b: Readonly<CartLineProps>): boole
 }
 
 interface CartLineProps {
+  allowFractional: boolean;
   line: InvoiceLine;
   error?: string | undefined;
   /** پنل بازِ همین سطر — یا هیچ. */
@@ -137,8 +140,23 @@ interface CartLineProps {
   on: RowActions;
 }
 
-const CartLine = memo(function CartLine({ line: l, panel, on, error }: CartLineProps) {
+function QuantityInput({ qty, name, disabled, apply }: { qty: string; name: string; disabled: boolean; apply: (qty: string) => void }) {
+  const [value, setValue] = useState(qty);
+  useEffect(() => { setValue(qty); }, [qty]);
+  const parsed = saleQuantity(value, true);
+  const changed = parsed !== saleQuantity(qty, true);
+  return <label>تعداد
+    <input aria-label={`تعداد ${name}`} dir="ltr" inputMode="decimal" value={value} disabled={disabled}
+      onChange={e => setValue(e.target.value)} style={{ width: "6rem" }} />
+    {value !== qty ? <button type="button" disabled={disabled || parsed === null || !changed}
+      onClick={() => { if (parsed !== null) apply(parsed); }}>ثبت تعداد</button> : null}
+    {parsed === null ? <span role="alert">تعداد مثبت با حداکثر سه رقم اعشار وارد کنید.</span> : null}
+  </label>;
+}
+
+const CartLine = memo(function CartLine({ line: l, panel, on, error, allowFractional }: CartLineProps) {
   const locked = adjusted(l);
+  const legacyFraction = !allowFractional && (quantityUnits(l.qty) ?? 0n) % 1000n !== 0n;
   return (
     <li>
       <div className="line-name">
@@ -186,24 +204,26 @@ const CartLine = memo(function CartLine({ line: l, panel, on, error }: CartLineP
           type="button"
           onClick={() => on.changeQty(l.id, l.qty, -1)}
           aria-label={`کم کردن ${l.productName}`}
-          disabled={locked}
+          disabled={locked || legacyFraction}
           title={locked ? QTY_LOCKED : undefined}
         >
           −
         </button>
         {/* بی aria-live: اعلام زندهٔ هر سطر صفحه‌خوان را پرحرف می‌کرد. یک ناحیهٔ
             زنده برای کل صندوق هست (قابل پرداخت، مانده، وضعیت). */}
-        <span className="num">{formatQty(l.qty)}</span>
+        {allowFractional ? <QuantityInput qty={l.qty} name={l.productName} disabled={locked} apply={qty => on.setQty(l.id, qty)} />
+          : <span className="num">{formatQty(l.qty)}</span>}
         <button
           type="button"
           onClick={() => on.changeQty(l.id, l.qty, 1)}
           aria-label={`اضافه کردن ${l.productName}`}
-          disabled={locked}
+          disabled={locked || legacyFraction}
           title={locked ? QTY_LOCKED : undefined}
         >
           +
         </button>
       </div>
+      {legacyFraction ? <p className="field-hint">تعداد اعشاری قبلی حفظ شده است؛ تغییر آن نیازمند فعال‌کردن فروش اعشاری در تنظیمات است.</p> : null}
       <div className="line-total"><span className="line-total-label">جمع ردیف</span><Money rial={l.netAmount} /></div>
       <button
         type="button"
@@ -253,10 +273,66 @@ function defaultWarehouse(b: Branch) {
   return b.warehouses.find((w) => w.kind === "store") ?? b.warehouses[0];
 }
 
+/** حالت صندوق: فروش حضوری با شیفت، یا فروش اینستاگرام بی شیفت (مهاجرت ۱۰۵). */
+export type PosMode = "store" | "instagram";
+
+/**
+ * زمینهٔ فروش اینستاگرام — به‌جای شیفت.
+ *
+ * فروش اینستاگرام کشوی نقد ندارد و روی هیچ شیفتی نمی‌نشیند (`shift_id` تهی؛ دوره ثبتش
+ * channel_day/instagram است). ولی صندوق هر سبد، اسکن معلق و پرداخت معلق را به یک «زمینه»
+ * گره می‌زند تا سبد زمینهٔ دیگری به آن نچسبد. این زمینه **شناسهٔ شعبه** است: یک UUID پایدار
+ * که هرگز با شناسهٔ یک شیفت برابر نمی‌شود. هیچ‌جا به سرور فرستاده نمی‌شود.
+ */
+function instagramContext(branchId: string, actorId: string): Shift {
+  return { id: branchId, branchId, userId: actorId, openedAt: "", openingCash: "0", closedAt: null,
+    countedCash: null, expectedCash: null, variance: null, status: "open" };
+}
+
+/** کلید زمینهٔ یک فاکتور: شیفتش، یا برای فروش اینستاگرام شعبه‌اش؛ هیچ‌کدام یعنی ناشناخته. */
+function contextKey(inv: Invoice): string | null {
+  return inv.shiftId ?? (inv.channel === "instagram" ? inv.branchId : null);
+}
+
+/**
+ * صندوق — حالت را از مجوز سرور می‌خواند، نه از نقش.
+ *
+ * `sale.create` صندوق فروشگاه است و `instagram.pos.sell` حالت اینستاگرام. کسی که فقط دومی
+ * را دارد (اپراتور اینستاگرام) مستقیم به حالت اینستاگرام می‌رود و دکمهٔ تغییر حالت نمی‌بیند؛
+ * کسی که هر دو را دارد (مدیر) پیش‌فرض صندوق فروشگاه است و با `pos.mode=instagram` عوض می‌کند.
+ * هر حالت یک نمونهٔ جدا (`key`) است، پس سبد، کلیدها و قصدهای یک حالت به دیگری نمی‌رسند.
+ * دروازهٔ واقعی همچنان سرور است: کانال در `POST /invoices` و Trigger مهاجرت ۱۰۵ تعیین می‌شود.
+ */
 export function Pos({ actorId }: { actorId: string }) {
+  const [access, setAccess] = useState<{ store: boolean; instagram: boolean } | null>(null);
+  const [accessError, setAccessError] = useState<string | null>(null);
+  const [attempt, setAttempt] = useState(0);
+  const [modeParam, setModeParam] = useUrlState("pos.mode");
+  useEffect(() => {
+    let alive = true;
+    setAccessError(null);
+    void Promise.all([session.can("sale.create"), session.can("instagram.pos.sell")])
+      .then(([store, ig]) => { if (alive) setAccess({ store: store.verdict === "allow", instagram: ig.verdict === "allow" }); })
+      .catch((err: unknown) => { if (alive) setAccessError(message(err)); });
+    return () => { alive = false; };
+  }, [attempt]);
+  if (accessError) return <Solid className="pad"><p role="alert">دسترسی صندوق خوانده نشد: {accessError}</p>
+    <button type="button" className="btn" onClick={() => setAttempt((n) => n + 1)}>بررسی دوباره</button></Solid>;
+  if (!access) return <Solid className="pad">در حال بارگذاری…</Solid>;
+  // «نامعلوم» حالت نمی‌سازد: فقط allow صریح. بی هیچ‌کدام، صفحهٔ صندوق فروشگاه با رد سرور می‌ماند.
+  const mode: PosMode = access.instagram && (!access.store || modeParam === "instagram") ? "instagram" : "store";
+  const onMode = access.store && access.instagram ? (next: PosMode) => setModeParam(next === "instagram" ? "instagram" : "") : null;
+  // فهرست فاکتورها (`requireInvoiceRead`) برای نقش محدود اینستاگرام بسته است؛ پیوندش هم نشان داده نمی‌شود.
+  return <PosScreen key={mode} actorId={actorId} mode={mode} onMode={onMode} browseInvoices={access.store} />;
+}
+
+function PosScreen({ actorId, mode, onMode, browseInvoices }: {
+  actorId: string; mode: PosMode; onMode: ((next: PosMode) => void) | null; browseInvoices: boolean;
+}) {
+  const instagram = mode === "instagram";
   const [branches, setBranches] = useState<Branch[]>([]);
   const [methods, setMethods] = useState<PaymentMethod[]>([]);
-  const [policy, setPolicy] = useState<{ branchId: string; requireCustomer: boolean; creditEnabled?: boolean } | null>(null);
+  const [policy, setPolicy] = useState<{ branchId: string; requireCustomer: boolean; creditEnabled?: boolean; allowFractionalQty?: boolean } | null>(null);
   const [policyError, setPolicyError] = useState<string | null>(null);
   const [policyRetry, setPolicyRetry] = useState(0);
   const [branchId, setBranchId] = useUrlState("pos.branch");
@@ -386,7 +462,7 @@ export function Pos({ actorId }: { actorId: string }) {
     refresh();
     window.addEventListener("focus", refresh);
     // ذخیرهٔ همین تنظیم در تب دیگر؛ تبِ دیده‌شده‌ای که focus نمی‌گیرد هم تازه می‌شود.
-    const unsubscribe = onSettingSaved((key) => { if (key === "pos.require_customer" || key === "sales.credit_enabled") refresh(); });
+    const unsubscribe = onSettingSaved((key) => { if (key === "pos.require_customer" || key === "sales.credit_enabled" || key === "sales.allow_fractional_qty") refresh(); });
     return () => { controller.abort(); window.removeEventListener("focus", refresh); unsubscribe(); };
   }, [branchId, policyRetry]);
 
@@ -414,9 +490,10 @@ export function Pos({ actorId }: { actorId: string }) {
     return () => c.abort();
   }, [invoiceIdForCustomer, customerId]);
 
-  // شیفت جاری همین کاربر در همین شعبه.
+  // شیفت جاری همین کاربر در همین شعبه — یا در حالت اینستاگرام، زمینهٔ بی‌شیفت همان شعبه.
   useEffect(() => {
     if (branchId === "") return;
+    if (instagram) { setShift(instagramContext(branchId, actorId)); return; }
     void (async () => {
       try {
         setShift(await pos.currentShift(branchId));
@@ -424,7 +501,15 @@ export function Pos({ actorId }: { actorId: string }) {
         setError(message(err));
       }
     })();
-  }, [branchId]);
+  }, [branchId, instagram, actorId]);
+
+  /**
+   * سبدی که به همین زمینه تعلق دارد: در صندوق فروشگاه همان شیفت؛ در حالت اینستاگرام
+   * فاکتور کانال اینستاگرامِ بی‌شیفتِ همین شعبه. یک تعریف، برای بازیابی و اسکن.
+   */
+  const belongs = useCallback((inv: Invoice, ctx: Shift) => instagram
+    ? inv.channel === "instagram" && inv.shiftId === null && inv.branchId === ctx.id
+    : inv.channel !== "instagram" && inv.shiftId === ctx.id, [instagram]);
 
   /**
    * سبدی که با Reload یتیم شده بود، برمی‌گردد.
@@ -450,7 +535,7 @@ export function Pos({ actorId }: { actorId: string }) {
     void (async () => {
       try {
         const inv = await pos.invoice(target);
-        if (inv.status === "draft" && inv.createdBy === actorId && inv.shiftId === shift.id && inv.branchId === shift.branchId && shift.userId === actorId && shift.status === "open") {
+        if (inv.status === "draft" && inv.createdBy === actorId && belongs(inv, shift) && inv.branchId === shift.branchId && shift.userId === actorId && shift.status === "open") {
           setInvoice(inv);
           setReceived(parseRial(inv.receivedAmount));
           if (held) {
@@ -458,6 +543,9 @@ export function Pos({ actorId }: { actorId: string }) {
             setPayPhase({ kind: "unknown", intent: intentFromPending(held), reason: "ambiguous" });
             setNote("پرداختی که نتیجه‌اش روشن نبود با همان شناسه برگردانده شد؛ پیش از هر کاری وضعیتش را بررسی کنید.");
           } else setNote("سبد نیمه‌تمام قبلی برگردانده شد.");
+        } else if (held && inv.status === "draft" && inv.createdBy === actorId && (inv.channel === "instagram") !== instagram) {
+          // پرداخت نامعلومِ سبدی در حالت دیگر صندوق: نه فراموش، نه حدس — همان حالت باید بررسی‌اش کند.
+          setError(`پرداختی که نتیجه‌اش روشن نیست به سبدی در ${instagram ? "صندوق فروشگاه" : "حالت اینستاگرام"} تعلق دارد؛ به همان حالت برگردید و وضعیتش را بررسی کنید.`);
         } else {
           forgetCart();
           // فاکتوری که دیگر پیش‌نویس نیست، اثبات نهایی سرور را دارد؛ همان را می‌پرسیم.
@@ -483,7 +571,7 @@ export function Pos({ actorId }: { actorId: string }) {
   const ensureInvoice = useCallback(async (): Promise<Invoice> => {
     if (openDraft) return openDraft;
     const created = await keys.current.run(`create:${shift?.id ?? branchId}`, (key) =>
-      pos.createInvoice({ branchId, warehouseId, channel: "pos" }, { idempotencyKey: key }),
+      pos.createInvoice({ branchId, warehouseId, channel: instagram ? "instagram" : "pos" }, { idempotencyKey: key }),
     );
     setInvoice(created);
     setReceived(0n);
@@ -491,7 +579,7 @@ export function Pos({ actorId }: { actorId: string }) {
     // شناسه در حافظه مرورگر می‌نشیند تا Reload آن را یتیم نکند.
     if (shift) rememberCart({ invoiceId: created.id, shiftId: shift.id });
     return created;
-  }, [openDraft, shift, branchId, warehouseId]);
+  }, [openDraft, shift, branchId, warehouseId, instagram]);
 
   const addByBarcode = useCallback(async (barcode: string, variationId?: string, retry = false) => {
     // روی صفحهٔ «ثبت شد»، اسکن فروش بعدی را بی‌صدا شروع نمی‌کند: باقی پول هنوز
@@ -512,7 +600,7 @@ export function Pos({ actorId }: { actorId: string }) {
       if (!intent && retry) throw new Error("اسکن معلق قبلاً تعیین تکلیف شده است؛ فاکتور را تازه‌سازی کنید.");
       if (!intent) {
         const inv = openDraft ?? await ensureInvoice();
-        if (!shift || inv.shiftId !== shift.id) throw new Error("شیفت فاکتور معتبر نیست.");
+        if (!shift || !belongs(inv, shift)) throw new Error(instagram ? "فاکتور به فروش اینستاگرام همین شعبه تعلق ندارد." : "شیفت فاکتور معتبر نیست.");
         intent = { actorId, invoiceId: inv.id, shiftId: shift.id, key: crypto.randomUUID(),
           body: { ...(variationId ? { variationId } : { barcode }), qty: "1" } };
         // Persistence must succeed before sending an increment.
@@ -537,7 +625,7 @@ export function Pos({ actorId }: { actorId: string }) {
     } catch (err) {
       setError(message(err));
     } finally { scanRunning.current = false; setBusy(false); }
-  }, [actorId, openDraft, ensureInvoice, shift, scanStorageError]);
+  }, [actorId, openDraft, ensureInvoice, shift, scanStorageError, belongs, instagram]);
 
   // ── ستون پرداخت ──────────────────────────────────────────────────
   //
@@ -744,6 +832,7 @@ export function Pos({ actorId }: { actorId: string }) {
     guarded(async () => {
       if (!invoice) return;
       const next = steppedQty(current, delta);
+      if (next === null && (quantityUnits(current) === null || delta > 0)) throw new Error("تعداد نامعتبر است");
       // رسیدن به صفر یعنی حذف — یک عمل دیگر با ردّ حسابرسی متفاوت.
       try {
         const updated = next === null ? await pos.removeLine(invoice.id, lineId) : await pos.setLineQty(invoice.id, lineId, next);
@@ -803,13 +892,21 @@ export function Pos({ actorId }: { actorId: string }) {
    * **یک بار** ساخته می‌شود. پس سطر یک Prop ثابت می‌بیند و همیشه
    * تازه‌ترین تابع را صدا می‌زند — نه یک Closure کهنه.
    */
-  const live = useRef({ changeQty, removeLine, applyPrice, applyDiscount,
+  const setQty = (lineId: string, qty: string) => guarded(async () => {
+    if (!invoice) return;
+    try {
+      setInvoice(await pos.setLineQty(invoice.id, lineId, qty));
+      setLineErrors(errors => { const next = { ...errors }; delete next[lineId]; return next; });
+    } catch (e) { setLineErrors(errors => ({ ...errors, [lineId]: message(e) })); throw e; }
+  });
+  const live = useRef({ setQty, changeQty, removeLine, applyPrice, applyDiscount,
                         setPricing, setDiscounting });
-  live.current = { changeQty, removeLine, applyPrice, applyDiscount,
+  live.current = { setQty, changeQty, removeLine, applyPrice, applyDiscount,
                    setPricing, setDiscounting };
 
   const rowActions = useMemo<RowActions>(
     () => ({
+      setQty: (id, qty) => void live.current.setQty(id, qty),
       changeQty: (id, qty, d) => void live.current.changeQty(id, qty, d),
       remove: (id) => void live.current.removeLine(id),
       applyPrice: (id, p, why) => void live.current.applyPrice(id, p, why),
@@ -881,7 +978,8 @@ export function Pos({ actorId }: { actorId: string }) {
    */
   const submitPayment = (intent: PaymentIntent, retry: boolean) =>
     guarded(async () => {
-      if (!invoice || invoice.id !== intent.invoiceId || !invoice.shiftId) return;
+      const ctxKey = invoice ? contextKey(invoice) : null;
+      if (!invoice || invoice.id !== intent.invoiceId || !ctxKey) return;
       if (!retry) {
         if (customerGate) throw new Error(customerMissing ? "پیش از دریافت وجه، شماره مشتری را ثبت کنید." : "ابتدا سیاست صندوق را دوباره بررسی کنید.");
         const other = readPendingPayment(actorId);
@@ -890,7 +988,7 @@ export function Pos({ actorId }: { actorId: string }) {
           throw new Error("پرداخت دیگری هنوز تعیین تکلیف نشده است؛ ابتدا وضعیت همان را بررسی کنید.");
         }
         // نوشتن پایدار شرط ارسال است؛ اگر نشد، چیزی فرستاده نمی‌شود.
-        writePendingPayment(intentToPending(intent, { actorId, shiftId: invoice.shiftId }, "sending"));
+        writePendingPayment(intentToPending(intent, { actorId, shiftId: ctxKey }, "sending"));
       }
       setPayPhase({ kind: "submitting", intent });
       try {
@@ -902,8 +1000,8 @@ export function Pos({ actorId }: { actorId: string }) {
         setPayPhase({ kind: "idle" });
         if (retry) setNote(`پرداخت ${intent.methodName} با همان شناسه ثبت شد.`);
       } catch (err) {
-        if (paymentFailureKind(err) === "unknown") { holdIntent(intent, "ambiguous", invoice.shiftId); return; }
-        if (retry) { holdIntent(intent, "retry_rejected", invoice.shiftId, checkoutErrorMessage(err)); return; }
+        if (paymentFailureKind(err) === "unknown") { holdIntent(intent, "ambiguous", ctxKey); return; }
+        if (retry) { holdIntent(intent, "retry_rejected", ctxKey, checkoutErrorMessage(err)); return; }
         clearPendingPayment(actorId, intent.key);
         setPayPhase({ kind: "idle" });
         setError(checkoutErrorMessage(err));
@@ -941,10 +1039,10 @@ export function Pos({ actorId }: { actorId: string }) {
     }
   }
 
-  const takePayment = (option: PaymentOption, amountRial: bigint, refNo: string) => {
+  const takePayment = (option: PaymentOption, amountRial: bigint, refNo: string, drawerShiftId?: string) => {
     if (!invoice || payPhase.kind !== "idle") return;
     void submitPayment({ key: crypto.randomUUID(), invoiceId: invoice.id, methodCode: option.code, methodName: option.name,
-      amount: amountRial, refNo }, false);
+      amount: amountRial, refNo, ...(drawerShiftId === undefined ? {} : { drawerShiftId }) }, false);
   };
 
   /** «بررسی وضعیت» — فقط خواندنِ همان شناسه؛ هیچ پرداختی دوباره فرستاده نمی‌شود. */
@@ -1041,7 +1139,9 @@ export function Pos({ actorId }: { actorId: string }) {
          */
         await saleQueue().enqueue({
           id: action,
-          saleContext: { actorId, invoiceId: invoice.id, branchId: invoice.branchId, shiftId: invoice.shiftId ?? "" },
+          saleContext: invoice.channel === "instagram"
+            ? { actorId, invoiceId: invoice.id, branchId: invoice.branchId, shiftId: invoice.branchId, channel: "instagram" }
+            : { actorId, invoiceId: invoice.id, branchId: invoice.branchId, shiftId: invoice.shiftId ?? "" },
           method: "POST",
           path: `/invoices/${invoice.id}/finalize`,
           body: {},
@@ -1162,6 +1262,8 @@ export function Pos({ actorId }: { actorId: string }) {
   }
 
   if (!shift) {
+    // حالت اینستاگرام شیفت باز نمی‌کند؛ زمینه‌اش در همان رندر بعدی ساخته می‌شود.
+    if (instagram) return <Solid className="pad">در حال آماده‌سازی فروش اینستاگرام…</Solid>;
     return <OpenShiftPanel busy={busy} error={error} onOpen={openShift} branch={branch} />;
   }
 
@@ -1169,10 +1271,11 @@ export function Pos({ actorId }: { actorId: string }) {
   const counts = cartCounts(lines);
   const countLabel = `${formatCount(counts.lines)} ردیف · ${formatCount(counts.units)} عدد`;
   const totals = checkoutTotals(invoice, received);
-  const layout = paymentLayout(methods, { hasCustomer: (invoice?.customerId ?? null) !== null });
+  const layout = paymentLayout(methods, { hasCustomer: (invoice?.customerId ?? null) !== null, instagram });
   const hasCart = invoice !== null && lines.length > 0;
   const payIdle = payPhase.kind === "idle";
-  const canPrintProforma = hasCart && invoice.status === "draft" && !busy && payIdle && completed === null;
+  // پیش‌فاکتور فقط برای سبد حضوری است (سرور `channel = pos` می‌خواهد).
+  const canPrintProforma = !instagram && hasCart && invoice.status === "draft" && !busy && payIdle && completed === null;
   async function printProforma() {
     if (!canPrintProforma || !invoice || proformaJob.current || mutationRunning.current || scanRunning.current || pendingScanRef.current) return;
     const job = new AbortController();
@@ -1238,14 +1341,21 @@ export function Pos({ actorId }: { actorId: string }) {
       */}
       <header className="pos-bar">
         <div className="pos-context">
-          <span className="pos-shift"><span className="dot dot--good" aria-hidden="true">●</span> شیفت باز</span>
+          {instagram
+            ? <span className="pos-shift pos-shift--instagram"><Icon name="sparkle" size="sm" /> فروش اینستاگرام</span>
+            : <span className="pos-shift"><span className="dot dot--good" aria-hidden="true">●</span> شیفت باز</span>}
           {branch ? <span className="pos-branch">{branch.name}</span> : null}
           <span className="pill">{countLabel}</span>
         </div>
         <div className="pos-tools">
-          <button type="button" className="tool" disabled={!canPrintProforma} onClick={() => void printProforma()}>
+          {onMode ? <button type="button" className="tool" disabled={busy || !payIdle || draftActive || completed !== null}
+            title={draftActive ? "پیش از تغییر حالت، سبد جاری را نهایی، ذخیره یا رها کنید." : undefined}
+            onClick={() => onMode(instagram ? "store" : "instagram")}>
+            {instagram ? "صندوق فروشگاه" : "فروش اینستاگرام"}
+          </button> : null}
+          {instagram ? null : <button type="button" className="tool" disabled={!canPrintProforma} onClick={() => void printProforma()}>
             {proformaPrinting ? "در حال آماده‌سازی پیش‌فاکتور…" : "چاپ پیش‌فاکتور"}
-          </button>
+          </button>}
           <details className="pos-more" onKeyDown={e => {
             if (e.key === "Escape") { e.currentTarget.open = false; e.currentTarget.querySelector("summary")?.focus(); }
           }}>
@@ -1256,12 +1366,15 @@ export function Pos({ actorId }: { actorId: string }) {
             const details = e.currentTarget.closest("details");
             if (details) { details.open = false; details.querySelector("summary")?.focus(); }
           }}>
+          {/* بی دسترسی به فهرست فاکتور، پیش‌نویس کنارگذاشته راه برگشتی ندارد؛ پس فقط «رها کردن». */}
+          {browseInvoices ? <>
           <a className="tool" href="/?page=invoices&invoices.status=draft" onClick={e => { if (e.metaKey || e.ctrlKey || e.shiftKey) return; e.preventDefault(); navigate(e.currentTarget.href); }}>پیش‌نویس‌ها</a>
           <button type="button" className="tool" disabled={busy || !invoice || completed !== null || !payIdle} onClick={() => {
             if (!invoice || busy) return;
             forgetCart(); setInvoice(null); setReceived(0n); scans.current.reset();
             setNote("پیش‌نویس در سرور ذخیره است و از بخش فاکتورها قابل ادامه است.");
           }}>ذخیره و فروش جدید</button>
+          </> : null}
           <button type="button" className="tool" disabled={!hasCart || busy || !payIdle || completed !== null} onClick={() => void abandon()}>
             رها کردن سبد
           </button>
@@ -1270,9 +1383,9 @@ export function Pos({ actorId }: { actorId: string }) {
           <button type="button" className="tool" disabled={completed !== null} onClick={() => setCamera((v) => !v)}>
             {camera ? "بستن دوربین" : "دوربین"}
           </button>
-          <button type="button" className="tool" onClick={() => setClosing((v) => !v)}>
+          {instagram ? null : <button type="button" className="tool" onClick={() => setClosing((v) => !v)}>
             بستن شیفت
-          </button>
+          </button>}
           </div>
           </details>
         </div>
@@ -1391,6 +1504,7 @@ export function Pos({ actorId }: { actorId: string }) {
             <ul className="lines">
               {lines.map((l) => (
                 <CartLine
+                  allowFractional={policyReady && policy.allowFractionalQty === true}
                   key={l.id}
                   line={l}
                   error={lineErrors[l.id]}
@@ -1426,6 +1540,7 @@ export function Pos({ actorId }: { actorId: string }) {
           <div className="pay-body">
           {invoice && received > 0n ? <PaymentBreakdown invoiceId={invoice.id} received={received} /> : null}
           <PaymentSelector layout={layout} remaining={totals.remaining} received={received} phase={payPhase}
+            {...(instagram && branchId ? { cashBranchId: branchId } : {})}
             disabled={!hasCart || busy || customerGate} onPay={takePayment} onCheck={() => void checkPayment()}
             onRetry={retryPayment} onAbandon={() => void abandonPayment()} />
           </div>
@@ -1433,7 +1548,8 @@ export function Pos({ actorId }: { actorId: string }) {
             onChange={e => setPrintOnComplete(e.target.checked)} /> چاپ رسید بلافاصله پس از ثبت</label> : null}
           {/* فقط همین پایان فشرده چسبان است (≥۹۰۰ و ارتفاع کافی)؛ scroll-padding همان ارتفاع، پس کادرِ فوکوس‌شده زیرش نمی‌رود. */}
           <div className="pay-finish">
-            {hasCart ? <CreditCheckout allowed={canCredit} creditOff={policyReady && policy.creditEnabled === false} customer={linkedCustomer} remaining={totals.remaining} received={received}
+            {/* فروش اینستاگرام فقط با پرداخت کامل نهایی می‌شود (مهاجرت ۱۰۵)؛ نسیه پیشنهاد نمی‌شود. */}
+            {hasCart && !instagram ? <CreditCheckout allowed={canCredit} creditOff={policyReady && policy.creditEnabled === false} customer={linkedCustomer} remaining={totals.remaining} received={received}
               payable={totals.payable} disabled={busy || !payIdle || !policyReady || (invoice?.customerId != null && (linkedCustomer === null || customerMissing))}
               onAttachCustomer={focusCustomer} run={finalize} verify={verifyFinalize} onDone={() => undefined} /> : null}
             <SafeAction trigger="نهایی‌کردن فاکتور" triggerVariant="primary" title="نهایی‌کردن فاکتور"

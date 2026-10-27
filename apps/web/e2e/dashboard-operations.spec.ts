@@ -94,8 +94,41 @@ test.describe("کارهای عملیاتی داشبورد", () => {
     await expect(tile(page, "ماندهٔ مشتریان").getByRole("link", { name: "دریافتنی و پرداختنی" })).toBeVisible();
   });
 
+  test("low stock: exact count per selling warehouse and a link to the same list for this branch; zero is calm and has no link", async ({ page, api }) => {
+    api.defaults["GET /dashboard/operations"] = opsBody({ lowStock: { state: "ready", threshold: "2", total: 7, warehouses: [
+      { id: "w2", name: "انبار پشتیبان", count: 2 }, { id: "w1", name: "قفسه فروشگاه", count: 5 }] } });
+    await page.goto("/");
+    const low = tile(page, "کمبود موجودی");
+    await expect(low).toContainText("۷ مورد به آستانهٔ 2 یا کمتر رسیده");
+    await expect(low.locator('.ops-verdict [data-state="warning"]')).toHaveCount(1);
+    await expect(low.locator(".ops-row").filter({ hasText: "قفسه فروشگاه" })).toContainText("۵ مورد");
+    await expect(low.locator(".ops-row").filter({ hasText: "انبار پشتیبان" })).toContainText("۲ مورد");
+    await expect(low.getByRole("link", { name: "فهرست کمبود موجودی" }))
+      .toHaveAttribute("href", "/?page=reports&reports.tab=lowstock&reports.branch=b1");
+
+    api.defaults["GET /dashboard/operations"] = opsBody();
+    await page.reload();
+    await expect(tile(page, "کمبود موجودی")).toContainText("موردی به آستانهٔ 2 نرسیده");
+    await expect(tile(page, "کمبود موجودی").getByRole("link")).toHaveCount(0);
+  });
+
+  test("low stock with no threshold is “unknown”, never zero; denied low stock is hidden", async ({ page, api }) => {
+    api.defaults["GET /dashboard/operations"] = opsBody({ lowStock: { state: "unknown", reason: "آستانهٔ کمبود موجودی تعریف نشده است." } });
+    await page.goto("/");
+    const low = tile(page, "کمبود موجودی");
+    await expect(low).toContainText("شمار کمبود معلوم نیست");
+    await expect(low).toContainText("این به معنای «کمبودی نیست» نیست");
+    await expect(low).not.toContainText("موردی به آستانه");
+    await expect(low.getByRole("link")).toHaveCount(0);
+
+    api.defaults["GET /dashboard/operations"] = opsBody({ lowStock: { state: "denied" } });
+    await page.reload();
+    await expect(tile(page, "ماندهٔ مشتریان")).toBeVisible();
+    await expect(tile(page, "کمبود موجودی")).toHaveCount(0);
+  });
+
   test("everything denied hides the card; no report.view sends nothing", async ({ page, api }) => {
-    api.defaults["GET /dashboard/operations"] = opsBody({ shifts: { state: "denied" }, cheques: { state: "denied" }, receivables: { state: "denied" } });
+    api.defaults["GET /dashboard/operations"] = opsBody({ shifts: { state: "denied" }, cheques: { state: "denied" }, receivables: { state: "denied" }, lowStock: { state: "denied" } });
     await page.goto("/");
     await expect.poll(() => opsCalls(api).length).toBe(1);
     await expect(page.getByRole("tablist", { name: "شاخص‌های امروز" })).toBeVisible();

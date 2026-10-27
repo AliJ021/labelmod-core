@@ -55,7 +55,7 @@ export function syncBody(o: { core?: Partial<StockSync["coreToWoo"]>; woo?: Stoc
  * کارهای عملیاتی (دستهٔ D): پیش‌فرض آرام و **دانسته** — یک شیفت باز امروز، چکی سررسیدگذشته نیست، یک طلب.
  * آزمونی که حالت خاصی بخواهد، `opsBody` را با بخش دلخواه صدا می‌زند.
  */
-export function opsBody(o: Partial<Pick<DashboardOperations, "shifts" | "cheques" | "receivables">> = {}): DashboardOperations {
+export function opsBody(o: Partial<Pick<DashboardOperations, "shifts" | "cheques" | "receivables" | "lowStock">> = {}): DashboardOperations {
   const none = { count: 0, amount: "0", nextDue: null };
   return {
     businessDate: "2026-09-16", branchId: "b1",
@@ -63,6 +63,7 @@ export function opsBody(o: Partial<Pick<DashboardOperations, "shifts" | "cheques
       open: [{ id: "sh1", userName: "صندوق‌دار آزمون", openedAt: "2026-09-16T05:00:00.000Z", carriedOver: false }] },
     cheques: o.cheques ?? { state: "ready", warningDays: 7, received: { overdue: none, dueSoon: none }, issued: { overdue: none, dueSoon: none } },
     receivables: o.receivables ?? { state: "ready", owed: { count: 1, amount: "1500000" }, credit: { count: 0, amount: "0" } },
+    lowStock: o.lowStock ?? { state: "ready", threshold: "2", total: 0, warehouses: [{ id: "w1", name: "قفسه فروشگاه", count: 0 }] },
   };
 }
 export function periodBody(o: { profitVisible?: boolean; branchId?: string | null; from?: string; to?: string; prevFrom?: string; prevTo?: string } = {}): DashboardPeriod {

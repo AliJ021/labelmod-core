@@ -39,7 +39,8 @@ const line = (qty: number) => ({ id: "ffffffff-6666-4666-8666-ffffffffffff", var
   color: "سرمه‌ای", size: "XL", qty, unitPrice: "1000000", discountAmount: "0", netAmount: String(1000000 * qty), available: "5",
   sync: { state: "none", at: null, error: null } });
 const accounts = { accounts: [{ id: ACCOUNT, code: "1102", name: "بانک آزمایشی", bankName: "بانک", accountNo: "6037-0000" }] };
-const emptyPage = { page: 1, perPage: 20, total: 0, pages: 1, orders: [] };
+// این پرونده روال قبلیِ ساخت سفارش را می‌سنجد؛ پس از مهاجرت ۱۰۵ آن روال فقط با تنظیم صریح باز است.
+const emptyPage = { page: 1, perPage: 20, total: 0, pages: 1, orders: [], legacyCreate: true };
 
 /** سرور ماک حالت‌دار با Idempotency واقعی: کلید دیده‌شده Replay است، بی کلید هر بار اثر. */
 function server(api: MockApi, start: Record<string, unknown>) {
@@ -140,20 +141,30 @@ test.describe("سفارش اینستاگرام: عملیات ماندگار، م
       await expect(banner(page), `${d.status}: عملیات معلق با کلید اصلی می‌ماند`).toBeVisible();
       expect(s.requests.at(-1)!.key).toBe(first.key);
     }
-    // بارگذاری دوباره: هنوز همان.
+    // بارگذاری دوباره: هنوز همان. بنر از ذخیرهٔ محلی است و پیش از پاسخ فهرست و جزئیات دیده می‌شود؛
+    // goto زودتر همان درخواست‌های در راه را قطع می‌کند و WebKit قطعشان را «خطای صفحه» گزارش می‌کند
+    // («due to access control checks»، webkit-dark-1024، run 40291975215). پس منتظر **پاسخ** هر دو.
+    const settled = (orderId: string) => Promise.all([
+      page.waitForResponse(r => r.request().method() === "GET" && new URL(r.url()).pathname === "/api/instagram-orders"),
+      page.waitForResponse(r => r.request().method() === "GET" && new URL(r.url()).pathname === `/api/instagram-orders/${orderId}`),
+    ]);
+    const afterReload = settled(ID);
     await page.reload();
     await expect(banner(page)).toBeVisible();
+    await afterReload;
     // The pending banner comes from storage, before either reload GET has finished.
     // Wait for both server-backed views before destroying this document; WebKit can
     // report routed fetches cancelled by the next goto as access-control pageerrors.
     await expect(page.getByRole("region", { name: "سفارش IG-000200" })).toContainText("شلوار پارچه‌ای");
     await expect(page.getByRole("region", { name: "سفارش‌های اینستاگرام" })).toContainText("سفارشی نیست.");
     // سفارش دیگر قفل نیست: قفل به‌ازای هر سفارش است.
+    const afterOther = settled(OTHER);
     await page.goto(`/?page=instagram-orders&ig.order=${OTHER}`);
     const other = page.getByRole("region", { name: "سفارش IG-000300" });
     await expect(other).toContainText("هنوز قلمی ندارد");
     await expect(banner(page)).toHaveCount(0);
     await expect(other.getByLabel("تعداد قلم تازه")).toBeEnabled();
+    await afterOther;
     await expect(page.getByRole("region", { name: "سفارش‌های اینستاگرام" })).toContainText("سفارشی نیست.");
 
     // دسترسی برگشت: همان کلید Replay می‌گیرد و اثر یک بار است.
