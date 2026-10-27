@@ -145,6 +145,11 @@ describe("سفارش اینستاگرام: رزرو، تأیید واریز و �
       if (tag === "many") many = id; else if (tag === "last") { last = id; lastSku = code; } else spare = id;
     }
 
+    // ۱۰۵: ساخت سفارش چندمرحله‌ای پیش‌فرض بسته است؛ این مجموعه چرخهٔ همان سفارش‌ها را می‌سنجد (سفارش‌های
+    // موجود پس از ارتقا) و آن را با مسیر رسمی تنظیم باز می‌کند. بسته‌بودن پیش‌فرض در instagram-pos آزموده می‌شود.
+    const admin = (await sql<{ id: string }>`SELECT id FROM identity.app_user WHERE username = ${opA}`.execute(db)).rows[0]!.id;
+    await sql`SELECT platform.set_setting('instagram.legacy_order_create', 'true'::jsonb, 'آزمون چرخهٔ سفارش‌های موجود', ${admin}::uuid)`.execute(db);
+
     app = await buildApp({
       db, auth: new AuthService(db),
       config: loadConfig({ ...process.env, NODE_ENV: "test", LOG_LEVEL: "fatal", WEB_PUSH_SECRET: undefined }),

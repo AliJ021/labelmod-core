@@ -5,7 +5,7 @@ import type { Db } from "../db/client.ts";
 import { AuthError, type ResolvedSession } from "../auth/service.ts";
 import { can, requireForSession } from "../auth/permission.ts";
 import { assertBranch, branchesOf } from "../sales/scope.ts";
-import { requireInvoiceRead } from "../sales/invoice-access.ts";
+import { requireInvoiceRead, requireInvoiceReadOf } from "../sales/invoice-access.ts";
 import { InvoiceError, InvoiceService, invoiceToJson } from "../sales/invoice.ts";
 import { invoicePage, INVOICE_PAGE_CSP, receiptFooterFromSettings, latinDigits } from "../sales/invoice-page.ts";
 import { parseMoney } from "../lib/money.ts";
@@ -76,9 +76,9 @@ export function registerInvoiceWorkspaceRoutes(app: FastifyInstance, db: Db): vo
 
   for (const documentKind of ["sale", "proforma"] as const) app.get(`/invoices/:id/${documentKind === "sale" ? "print" : "proforma-print"}`, async (req, reply) => {
     const s = session(req.session);
-    if (documentKind === "proforma") await requireForSession(db, s, "sale.create");
-    else await requireInvoiceRead(db, s);
     const { id } = z.object({ id: z.string().uuid() }).parse(req.params);
+    if (documentKind === "proforma") await requireForSession(db, s, "sale.create");
+    else await requireInvoiceReadOf(db, s, () => invoices.byId(id));
     const html = await db.transaction().setIsolationLevel("repeatable read").execute(async trx => {
       // Totals and draft lines must describe the same snapshot even if another till edits them.
       await sql`SET TRANSACTION READ ONLY`.execute(trx);

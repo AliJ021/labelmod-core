@@ -10,7 +10,11 @@
 /** یک درخواست منتظر. */
 export interface QueuedRequest {
   /** Older records are retained, but cannot be replayed without provenance. */
-  saleContext?: { actorId: string; invoiceId: string; branchId: string; shiftId: string };
+  /**
+   * زمینهٔ فروش صف‌شده. در حالت اینستاگرامِ صندوق (مهاجرت ۱۰۵) شیفتی نیست:
+   * `channel: "instagram"` و `shiftId` همان شناسهٔ شعبه است (کلید زمینه، نه شیفت).
+   */
+  saleContext?: { actorId: string; invoiceId: string; branchId: string; shiftId: string; channel?: "instagram" };
   /** شناسه محلی صف — برای حذف پس از موفقیت. */
   id: string;
   method: string;

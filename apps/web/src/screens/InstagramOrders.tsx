@@ -31,6 +31,7 @@ import {
   type ReceivingAccount,
 } from "../lib/instagram-orders.ts";
 import { Solid } from "../components/Glass.tsx";
+import { Icon } from "../components/Icon.tsx";
 import { PageHeader, SectionHeader } from "../components/ui/PageHeader.tsx";
 import { StatusBadge } from "../components/ui/Status.tsx";
 import { DataTable, type Column } from "../components/ui/DataTable.tsx";
@@ -187,14 +188,26 @@ export function InstagramOrders({ actorId, access }: { actorId: string; access: 
   const manage = permOf(access, "instagram.order.manage");
   const verify = permOf(access, "instagram.payment.verify");
   const createOp = useIgOperation(actorId, "new");
+  /*
+   * فروش تازهٔ اینستاگرام از صندوق است (بازنگری مالک ۲۶ اکتبر، مهاجرت ۱۰۵): همان صندوق، فقط
+   * پرداخت کامل، بی نشانی و ارسال و رزرو. این صفحه برای سفارش‌های قدیمی می‌ماند (تأیید واریز،
+   * ارسال، لغو و آزادسازی رزرو). «سفارش تازه» فقط وقتی سرور صریحاً `legacyCreate` را روشن بگوید؛
+   * نامعلوم یعنی خاموش. ثبتِ معلقی که پاسخش گم شده همیشه دیده می‌شود تا تعیین تکلیف شود.
+   */
+  const legacyCreate = list.state === "done" && list.data.legacyCreate === true;
+  const posLink = "/?page=pos&pos.mode=instagram";
 
   return <div className="stack">
     <PageHeader title="سفارش اینستاگرام"
-      context="سفارش دایرکت را ثبت، موجودی را رزرو و پس از تطبیق واریز کامل کارت‌به‌کارت نهایی کنید. پیش از تأیید واریز چیزی ارسال نمی‌شود."
+      context="سفارش‌های ثبت‌شده با روال قبلی: تطبیق واریز، ارسال، لغو و آزادسازی رزرو. فروش تازهٔ اینستاگرام از صندوق در حالت اینستاگرام ثبت می‌شود."
       actions={<>
         <Button onClick={reload} disabled={list.state === "loading"}>به‌روزرسانی</Button>
-        {manage === "allow" ? <Button variant="primary" onClick={() => setParams({ create: "1", order: "" })}>سفارش تازه</Button> : null}
+        {manage === "allow" && legacyCreate ? <Button variant="primary" onClick={() => setParams({ create: "1", order: "" })}>سفارش تازه</Button> : null}
       </>} />
+    {list.state === "done" && !legacyCreate ? <p className="field-hint" role="note">
+      <Icon name="info" size="sm" /> ثبت سفارش چندمرحله‌ای بسته است. فروش تازه با پرداخت کامل:{" "}
+      <a href={posLink} onClick={e => { if (e.metaKey || e.ctrlKey || e.shiftKey) return; e.preventDefault(); navigate(e.currentTarget.href); }}>صندوق — فروش اینستاگرام</a>
+    </p> : null}
     <FilterBar label="فیلتر سفارش‌ها" onReset={filtered ? () => { setSearch(null); setSearchDraft(""); setParams({ status: "", attention: "", page: "" }); } : undefined}>
       <form className="site-orders-search" role="search" aria-label="جست‌وجوی سفارش اینستاگرام" onSubmit={submitSearch}>
         <Field label="جست‌وجو" hint="شمارهٔ سفارش، موبایل، نام کاربری یا نام مشتری؛ در نشانی صفحه نگه داشته نمی‌شود.">
@@ -216,7 +229,7 @@ export function InstagramOrders({ actorId, access }: { actorId: string; access: 
       </Field>
     </FilterBar>
     <PermNote perm={manage} what="ثبت و ویرایش سفارش" onRetry={access.retry} />
-    {manage === "allow" && (createParam === "1" || createOp.pending || createOp.storageError) ? <CreateOrder op={createOp}
+    {manage === "allow" && ((createParam === "1" && legacyCreate) || createOp.pending || createOp.storageError) ? <CreateOrder op={createOp}
       onCancel={() => setParams({ create: "" })}
       onCreated={id => { setParams({ create: "", order: id }); reload(); }} /> : null}
     <OrdersList load={list} page={page} selected={orderId} searching={search !== null}
@@ -253,7 +266,7 @@ function OrdersList({ load, page, selected, searching, onSelect, onPage, onRetry
             <DataTable caption="سفارش‌های اینستاگرام" columns={columns} rows={load.data.orders} rowKey={r => r.id} stack
               rowActions={r => <Button variant="quiet" aria-pressed={r.id === selected} aria-label={`جزئیات ${r.orderNo}`}
                 onClick={() => onSelect(r.id === selected ? null : r.id)}>جزئیات</Button>}
-              empty={{ title: "سفارشی نیست.", description: searching ? "عبارت دیگری را جست‌وجو کنید." : "با «سفارش تازه» اولین سفارش دایرکت را ثبت کنید." }} />
+              empty={{ title: "سفارشی نیست.", description: searching ? "عبارت دیگری را جست‌وجو کنید." : "سفارش قدیمی‌ای در این فهرست نیست؛ فروش تازه از صندوق ثبت می‌شود." }} />
             {load.data.pages > 1 ? <nav className="site-orders-pager" aria-label="صفحه‌های سفارش">
               <Button disabled={page <= 1} onClick={() => onPage(page - 1)}>صفحهٔ قبل</Button>
               <span className="num">صفحهٔ {formatCount(page)} از {formatCount(load.data.pages)}</span>

@@ -842,7 +842,7 @@ describe("آمادگی API صندوق", { skip }, () => {
     const found = await app.inject({ method: "GET", url: intentUrl(id, keyA), ...a });
     assert.equal(found.statusCode, 200, found.body);
     assert.deepEqual(found.json(), { state: "recorded", terminal: true,
-      payment: { id: lost.json().paymentId, methodCode: "card", amount: "100000", refNo: "REF-A", status: "succeeded" } });
+      payment: { id: lost.json().paymentId, methodCode: "card", amount: "100000", refNo: "REF-A", status: "succeeded", shiftId: lost.json().invoice.shiftId } });
     assert.notEqual(found.json().payment.id, b.json().paymentId);
     assert.equal((await app.inject({ method: "GET", url: intentUrl(id, keyB), ...a })).json().payment.id, b.json().paymentId);
 

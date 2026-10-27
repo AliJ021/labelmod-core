@@ -3,7 +3,7 @@ import { sql } from "kysely";
 import { z } from "zod";
 import type { Db } from "../db/client.ts";
 import { AuthError, type ResolvedSession } from "../auth/service.ts";
-import { requireForSession } from "../auth/permission.ts";
+import { requireSellerForSession } from "../auth/permission.ts";
 import { assertBranch, ScopeError } from "../sales/scope.ts";
 import { normalizeSearchTerm, searchActiveProducts } from "../catalog/search.ts";
 
@@ -12,7 +12,7 @@ export function registerPosCatalogRoutes(app: FastifyInstance, db: Db): void {
   async function scope(raw: unknown, warehouseId: string) {
     const s = raw as ResolvedSession | null;
     if (!s) throw new AuthError("no_session", "وارد نشده‌اید");
-    await requireForSession(db, s, "sale.create");
+    await requireSellerForSession(db, s);
     const wh = await db.selectFrom("inventory.warehouse").select(["branch_id"])
       .where("id", "=", warehouseId).where("is_active", "=", true).executeTakeFirst();
     if (!wh) throw new ScopeError("انبار یافت نشد");

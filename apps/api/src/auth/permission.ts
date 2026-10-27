@@ -95,3 +95,24 @@ export async function requireForSession(
     viaPin: session.pinUnlocked,
   });
 }
+
+/**
+ * فروش اینستاگرام از همان صندوق (مهاجرت ۱۰۵): مجوز فروش از **کانال فاکتور** می‌آید، نه از
+ * فرم یا نقش فعلیِ کاربر. فاکتور `instagram` با `instagram.pos.sell`، بقیه با `sale.create`.
+ * یک تعریف، تا هیچ مسیری یکی را به دیگری نپذیرد.
+ */
+export const saleOperationFor = (channel: string): string =>
+  channel === "instagram" ? "instagram.pos.sell" : "sale.create";
+
+/**
+ * خواندنی‌های مشترک صندوق (جست‌وجوی کالا، سیاست، موجودی): هر کسی که **یکی** از دو
+ * حالت فروش را دارد. خطای بی‌مجوز همان پیام `sale.create` را می‌دهد.
+ */
+export async function requireSellerForSession(
+  db: PermissionExecutor,
+  session: { userId: string; pinUnlocked: boolean },
+): Promise<Decision> {
+  const ig = await can(db, { userId: session.userId, operation: "instagram.pos.sell", viaPin: session.pinUnlocked });
+  if (ig.verdict === "allow") return ig;
+  return requireForSession(db, session, "sale.create");
+}

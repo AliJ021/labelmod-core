@@ -36,7 +36,7 @@ export type NavGroup = (typeof NAV_GROUPS)[number]["key"];
 /** Bookmarkable application state; financial drafts remain on the server. */
 export const ZONES = [
   { key: "dashboard", label: "داشبورد", icon: "dashboard", navGroup: "daily", mobilePrimary: true, anyOf: [] },
-  { key: "pos", label: "صندوق", icon: "register", navGroup: "daily", mobilePrimary: true, anyOf: ["sale.create"] },
+  { key: "pos", label: "صندوق", icon: "register", navGroup: "daily", mobilePrimary: true, anyOf: ["sale.create", "instagram.pos.sell"] },
   { key: "invoices", label: "فاکتورها", icon: "receipt", navGroup: "daily", mobilePrimary: true, anyOf: ["sale.create", "return.same_day", "return.late"] },
   { key: "returns", label: "مرجوعی", icon: "return", navGroup: "daily", mobilePrimary: false, anyOf: ["return.same_day", "return.late"] },
   { key: "site-orders", label: "سفارش‌های سایت", icon: "external", navGroup: "daily", mobilePrimary: false, anyOf: ["web.orders.view"] },

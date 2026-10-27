@@ -15,7 +15,7 @@ import type { FastifyInstance } from "fastify";
 import { AuthError } from "../auth/service.ts";
 import type { Db } from "../db/client.ts";
 import { assertBranch, branchesOf } from "../sales/scope.ts";
-import { can, ForbiddenError, requireForSession } from "../auth/permission.ts";
+import { can, ForbiddenError, requireForSession, requireSellerForSession } from "../auth/permission.ts";
 import { serializeMoney } from "../lib/money.ts";
 import { sql } from "kysely";
 import { z } from "zod";
@@ -175,7 +175,7 @@ export function registerScopeRoutes(app: FastifyInstance, deps: ScopeRouteDeps):
     const reports = await can(db, { userId: s.userId, operation: "report.view", viaPin: s.pinUnlocked });
     if (reports.verdict !== "allow") {
       if (date !== today) throw new ForbiddenError(reports, "report.view");
-      await requireForSession(db, s, "sale.create");
+      await requireSellerForSession(db, s);
     }
 
     const costs = await can(db, {
