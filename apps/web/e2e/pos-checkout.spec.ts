@@ -239,28 +239,28 @@ test("clicking the unit price opens the existing unit-price editor in Toman", as
 });
 
 for (const kind of ["price", "discount"] as const) {
-  test(`exact Rial ${kind}: unchanged edits preserve every remainder and large values`, async ({ page, api }) => {
-    const s = pos(api);
-    const bodies: unknown[] = [];
-    api.handlers.set(`PATCH /invoices/${INV}/lines/l1/${kind}`, async route => {
-      bodies.push(route.request().postDataJSON());
-      await route.fulfill({ json: s.invoice });
-    });
-    await open(page);
-    for (const value of ["1", "2", "3", "4", "5", "6", "7", "8", "9", "90071992547409939"]) {
+  // Independent saved-invoice cases: ten reload/edit cycles shared one 45s budget
+  // and timed out on slow WebKit runners even while every value was progressing.
+  for (const value of ["1", "2", "3", "4", "5", "6", "7", "8", "9", "90071992547409939"]) {
+    test(`exact Rial ${kind}: unchanged edit preserves ${value} Rial`, async ({ page, api }) => {
+      const s = pos(api);
+      const bodies: unknown[] = [];
+      api.handlers.set(`PATCH /invoices/${INV}/lines/l1/${kind}`, async route => {
+        bodies.push(route.request().postDataJSON());
+        await route.fulfill({ json: s.invoice });
+      });
       s.invoice = { ...s.invoice, lines: [{ ...s.invoice.lines[0]!, qty: "1",
         unitPrice: kind === "price" ? value : "999999999999999999",
         netAmount: "999999999999999999", discountAmount: kind === "discount" ? value : "0" }] };
-      await page.reload();
+      await open(page);
       await page.getByRole("button", { name: kind === "price" ? "ویرایش قیمت شلوار کتان" : "تخفیف شلوار کتان", exact: true }).click();
       const input = page.getByLabel(kind === "price" ? /قیمت واحد/ : /^تخفیف \(تومان\)/);
       const amount = BigInt(value);
       await expect(input).toHaveValue(`${(amount / 10n).toString().replace(/\B(?=(\d{3})+(?!\d))/g, ",")}.${amount % 10n}`);
       await page.getByRole("button", { name: kind === "price" ? "ثبت قیمت" : "اعمال تخفیف", exact: true }).click();
-      await expect.poll(() => bodies.at(-1)).toEqual(kind === "price" ? { unitPrice: value } : { discountAmount: value });
-    }
-    expect(bodies).toHaveLength(10);
-  });
+      await expect.poll(() => bodies).toEqual([kind === "price" ? { unitPrice: value } : { discountAmount: value }]);
+    });
+  }
 
   test(`exact Rial ${kind}: decimal Persian input, reasons and server rejection stay intact`, async ({ page, api }) => {
     const s = pos(api);
