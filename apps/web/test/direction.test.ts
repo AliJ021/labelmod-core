@@ -18,7 +18,7 @@
  *      می‌زد.
  *
  * ⚠️ این تست **جای مرورگر را نمی‌گیرد** و ادعا نمی‌کند که می‌گیرد.
- *    Playwright عمداً وابستگی این پروژه نیست. آنچه اینجا قفل می‌شود
+ *    آنچه اینجا قفل می‌شود
  *    دو چیزِ **ایستا** است: نبودِ خاصیت فیزیکیِ جهت‌دار، و نبودِ شکاف
  *    میان Breakpointها. سنجش واقعیِ چیدمان کار مرورگر است.
  */
@@ -27,6 +27,7 @@ import assert from "node:assert/strict";
 import { readFileSync, readdirSync, statSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import path from "node:path";
+import { parser } from "typescript-eslint";
 
 const SRC = fileURLToPath(new URL("../src", import.meta.url));
 
@@ -42,6 +43,69 @@ function walk(dir: string, out: string[] = []): string[] {
 const FILES = walk(SRC);
 const rel = (p: string) => path.relative(SRC, p).split(path.sep).join("/");
 
+/** Static JSX boundary, independent of filename, formatting and attribute quotes.
+ * A text leaf can interpolate text, but cannot contain JSX elements/fragments.
+ * Dynamic direction is deliberately rejected: its runtime value is not proved here.
+ */
+interface AstNode { type: string; [key: string]: unknown }
+const astNode = (value: unknown): value is AstNode => value !== null && typeof value === "object" && "type" in value;
+const fieldNode = (node: AstNode, field: string): AstNode | undefined => astNode(node[field]) ? node[field] : undefined;
+const childNodes = (node: AstNode): AstNode[] => Object.values(node).flatMap(value =>
+  Array.isArray(value) ? value.filter(astNode) : astNode(value) ? [value] : []);
+
+function invalidLtrLeaves(source: string, filename = "fixture.tsx"): string[] {
+  // typescript-eslint's compatibility type hides parser options; its actual
+  // parseForESLint API accepts these. Reuse the pinned ESLint TSX parser, not the
+  // removed pre-v7 TypeScript compiler API or a new parser dependency.
+  const parse = parser.parseForESLint as (text: string, options: object) => { ast: AstNode };
+  const { ast } = parse(source, { filePath: filename, ecmaFeatures: { jsx: true }, loc: true });
+  const invalid: string[] = [];
+  const leaves = new Set(["input", "bdi", "span", "strong", "code", "output", "td"]);
+  const literal = (node: AstNode | undefined): string | undefined => {
+    if (!node) return undefined;
+    if (node.type === "Literal" && typeof node.value === "string") return node.value;
+    if (node.type === "JSXExpressionContainer") return literal(fieldNode(node, "expression"));
+    return undefined;
+  };
+  const name = (node: AstNode | undefined): string | undefined =>
+    node && typeof node.name === "string" ? node.name : literal(node);
+  const hasElement = (node: AstNode): boolean => node.type === "JSXElement" || node.type === "JSXFragment" || childNodes(node).some(hasElement);
+  function visit(node: AstNode): void {
+    if (node.type === "JSXElement") {
+      const opening = fieldNode(node, "openingElement")!;
+      let ltr = false, unknown = false;
+      const attributes = Array.isArray(opening.attributes) ? opening.attributes.filter(astNode) : [];
+      for (const attr of attributes) {
+        if (attr.type !== "JSXAttribute") continue;
+        const attrName = name(fieldNode(attr, "name"));
+        const valueNode = fieldNode(attr, "value");
+        if (attrName === "dir") {
+          const value = literal(valueNode);
+          ltr ||= value === "ltr";
+          unknown ||= value === undefined || !["ltr", "rtl", "auto"].includes(value);
+        }
+        const style = valueNode && fieldNode(valueNode, "expression");
+        if (attrName === "style" && style?.type === "ObjectExpression") {
+          const properties = Array.isArray(style.properties) ? style.properties.filter(astNode) : [];
+          for (const prop of properties) {
+            if (prop.type !== "Property" || name(fieldNode(prop, "key")) !== "direction") continue;
+            const value = literal(fieldNode(prop, "value"));
+            ltr ||= value === "ltr";
+            unknown ||= value === undefined || !["ltr", "rtl", "inherit", "initial", "unset", "revert"].includes(value);
+          }
+        }
+      }
+      if (ltr || unknown) {
+        const tag = name(fieldNode(opening, "name")) ?? "component";
+        const children = Array.isArray(node.children) ? node.children.filter(astNode) : [];
+        if (unknown || !leaves.has(tag) || children.some(hasElement)) invalid.push(`${filename} <${tag}>`);
+      }
+    }
+    childNodes(node).forEach(visit);
+  }
+  visit(ast);
+  return invalid;
+}
 describe("جهت رابط", () => {
   /**
    * خاصیت فیزیکیِ جهت‌دار در RTL می‌شکند؛ خاصیت منطقی نمی‌شکند.
@@ -75,39 +139,38 @@ describe("جهت رابط", () => {
   /**
    * `dir="ltr"` و `direction: ltr` **مجازند**، ولی فقط روی برگ: یک
    * عدد، یک شناسه، یک نشانی. اگر روی ظرف بنشینند، یک بلوک کامل
-   * چپ‌چین می‌شود. این ادعا فهرست را قفل می‌کند تا افزودنش دیده شود.
+   * چپ‌چین می‌شود. این ادعا خودِ عنصر را می‌سنجد، نه نام پرونده را.
    */
-  test("دامنهٔ چپ‌چینی فقط برگ است و فهرستش قفل است", () => {
+  test("دامنهٔ چپ‌چینی JSX فقط برگ است؛ مستقل از نام پرونده", () => {
     const found: string[] = [];
-    for (const f of FILES) {
-      if (/dir="ltr"|direction:\s*ltr/.test(readFileSync(f, "utf8"))) found.push(rel(f));
+    for (const f of FILES.filter(f => f.endsWith(".tsx"))) {
+      found.push(...invalidLtrLeaves(readFileSync(f, "utf8"), rel(f)));
     }
-    // هر ورودی باید توجیه داشته باشد. عدد و شناسه و نشانی — نه ظرف.
-    const allowed = new Set([
-      "styles/base.css",      // .num — ستون عدد
-      "styles/app.css",       // .set-key — کلید تنظیم
-      "screens/TwoFactor.tsx", // کد بازیابی و راز TOTP
-      "components/PasswordDialog.tsx", // فقط ورودی و نمایش رمز، نه ظرف
-      "screens/Staff.tsx",     // نام کاربری
-      "screens/Terminals.tsx", // نشانی و کد دستگاه
-      "screens/Customers.tsx", // شماره موبایل
-      // کد حساب، نام مؤلفه (`leg`) و کد رویداد — سه شناسهٔ لاتین، و هر
-      // سه روی یک `<span>`، نه روی سطر یا ظرف.
-      "screens/PostingRules.tsx",
-      // کد زنگ و موضوع پیام (`topic`) — دو شناسهٔ لاتین، روی `<span>` و
-      // `<strong>`، نه روی سطر.
-      "screens/Health.tsx",
-      // برگ LTR مشترک نظام طراحی — `<bdi dir="ltr">` برای SKU، موبایل،
-      // نشانی و شناسه؛ مصرف‌کننده‌ها دیگر `dir` نمی‌نویسند.
-      "components/ui/Bidi.tsx",
-      "components/ui/AmountInput.tsx", // فقط input مبلغ؛ ظرف و برچسب‌ها RTL می‌مانند.
-    ]);
-    const unexpected = [...new Set(found)].filter((f) => !allowed.has(f));
-    assert.deepEqual(unexpected, [],
-      `چپ‌چینی در جای تازه — باید برگ باشد، نه ظرف:\n${unexpected.join("\n")}`);
-    const amount = readFileSync(path.join(SRC, "components/ui/AmountInput.tsx"), "utf8");
-    const amountLtr = [...amount.matchAll(/<([A-Za-z][\w.]*)\b[^>]*\bdir="ltr"/g)];
-    assert.deepEqual(amountLtr.map(m => m[1]), ["input"], "LTR مبلغ فقط روی خود ورودی مجاز است");
+    assert.deepEqual(found, [], `چپ‌چینی باید روی برگِ صریح باشد، نه ظرف یا جهت پویا:\n${found.join("\n")}`);
+  });
+
+  test("نگهبان برگ، ورودی را می‌پذیرد و ظرف، فرزند JSX و جهت پویا را رد می‌کند", () => {
+    assert.deepEqual(invalidLtrLeaves(`<label>تعداد<input dir={'ltr'} inputMode="decimal" /></label>`), []);
+    assert.deepEqual(invalidLtrLeaves(`<span dir='ltr'>{sku}</span>`), []);
+    assert.deepEqual(invalidLtrLeaves(`<input style={{ direction: 'ltr' }} />`), []);
+    assert.deepEqual(invalidLtrLeaves(`<section dir="rtl"><input dir="auto" /></section>`), []);
+    for (const source of [
+      `<section\n dir='ltr'><input /></section>`,
+      `<label dir={"ltr"}>تعداد<input /></label>`,
+      `<div style={{ direction: "ltr" }}>سبد</div>`,
+      `<span dir="ltr"><div>سبد</div></span>`,
+      `<bdi dir="ltr">{rows.map(row => <div>{row}</div>)}</bdi>`,
+      `<span dir="ltr"><>سبد</></span>`,
+      `<Cart dir="ltr" />`, `<input dir={direction} />`, `<input style={{ direction }} />`,
+    ]) {
+      assert.notDeepEqual(invalidLtrLeaves(source), [], `نگهبان باید رد کند: ${source}`);
+    }
+    assert.deepEqual(invalidLtrLeaves(`// <div dir="ltr" />\nconst text = '<div dir="ltr" />';`), []);
+  });
+
+  test("جهت LTR بیرون JSX فقط در دو فایل CSS بازبینی‌شده است", () => {
+    const found = FILES.filter(f => !f.endsWith(".tsx") && /dir="ltr"|direction:\s*ltr/.test(readFileSync(f, "utf8"))).map(rel);
+    assert.deepEqual(found.filter(f => !["styles/base.css", "styles/app.css"].includes(f)), []);
   });
 
   /**
