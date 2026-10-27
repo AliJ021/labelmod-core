@@ -147,6 +147,11 @@ describe("جهت رابط", () => {
       found.push(...invalidLtrLeaves(readFileSync(f, "utf8"), rel(f)));
     }
     assert.deepEqual(found, [], `چپ‌چینی باید روی برگِ صریح باشد، نه ظرف یا جهت پویا:\n${found.join("\n")}`);
+    // AmountInput has a narrower contract than other text leaves: only its
+    // editable input is LTR; surrounding amount labels must stay RTL.
+    const amount = readFileSync(path.join(SRC, "components/ui/AmountInput.tsx"), "utf8");
+    const amountLtr = [...amount.matchAll(/<([A-Za-z][\w.]*)\b[^>]*\bdir="ltr"/g)];
+    assert.deepEqual(amountLtr.map(m => m[1]), ["input"], "LTR مبلغ فقط روی خود ورودی مجاز است");
   });
 
   test("نگهبان برگ، ورودی را می‌پذیرد و ظرف، فرزند JSX و جهت پویا را رد می‌کند", () => {
