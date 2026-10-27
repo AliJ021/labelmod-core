@@ -13,6 +13,9 @@
  *              ثبت‌شده (`confirmed`/`final`)، مثل تراز آزمایشی؛ پیش‌نویس هنوز در دفتر نیست. مثبت
  *              = طلب ما، منفی = اعتبار مشتری؛ دو عدد جدا، هیچ‌کدام از دیگری کم نمی‌شود. «مانده» است، نه
  *              «سررسید گذشته» — سن طلب در این PR ساخته نمی‌شود.
+ *   کمبود      `report.view`: شمار دقیق سطرهای (تنوع، انبار) کمبود در انبارهای فروشِ همین شعبه، از همان تعریفی که
+ *              گزارش «کمبود موجودی» فهرستش را می‌دهد (`inventory.low_stock`، مهاجرت ۱۰۴). آستانه از
+ *              `inventory.low_stock_threshold` می‌آید؛ نبودنش `unknown` است، نه صفر.
  *
  * دامنهٔ شعبه پیش از هر خواندن سنجیده می‌شود (`assertBranch`). پول رشته است.
  */
@@ -50,6 +53,7 @@ export function registerDashboardOperationsRoutes(app: FastifyInstance, db: Db):
       shifts: reportView ? await readShifts(db, branchId) : ({ state: "denied" } satisfies Denied),
       cheques: chequeManage ? await readCheques(db, branchId) : ({ state: "denied" } satisfies Denied),
       receivables: reportView ? await readReceivables(db, branchId) : ({ state: "denied" } satisfies Denied),
+      lowStock: reportView ? await readLowStock(db, branchId) : ({ state: "denied" } satisfies Denied),
     };
   });
 }
@@ -129,5 +133,26 @@ async function readReceivables(db: Db, branchId: string) {
     state: "ready" as const,
     owed: { count: Number(x.owed_n), amount: x.owed } satisfies CountAmount,
     credit: { count: Number(x.credit_n), amount: x.credit } satisfies CountAmount,
+  };
+}
+
+async function readLowStock(db: Db, branchId: string) {
+  const t = await sql<{ v: string | null }>`SELECT platform.setting_num('inventory.low_stock_threshold')::text AS v`.execute(db);
+  const threshold = t.rows[0]?.v ?? null;
+  if (threshold === null) return { state: "unknown" as const, reason: "آستانهٔ کمبود موجودی تعریف نشده است." };
+  // هر انبار فروشِ فعال این شعبه یک ردیف دارد، حتی با شمار صفر؛ صفرِ واقعی از «نخوانده» جداست.
+  const r = await sql<{ id: string; name: string; n: string }>`
+    SELECT w.id::text, w.name, count(l.variation_id)::text AS n
+      FROM inventory.warehouse w
+      LEFT JOIN inventory.low_stock(${threshold}::numeric) l ON l.warehouse_id = w.id
+     WHERE w.branch_id = ${branchId}::uuid AND w.is_active AND w.kind IN ('store', 'stock', 'outlet')
+     GROUP BY w.id, w.name
+     ORDER BY w.name, w.id`.execute(db);
+  const warehouses = r.rows.map(x => ({ id: x.id, name: x.name, count: Number(x.n) }));
+  return {
+    state: "ready" as const,
+    threshold,
+    total: warehouses.reduce((a, w) => a + w.count, 0),
+    warehouses,
   };
 }

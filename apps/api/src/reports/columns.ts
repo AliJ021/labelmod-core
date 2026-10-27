@@ -60,6 +60,18 @@ export const VALUATION_COLUMNS: Columns = [
   ["totalValue", "ارزش کل (ریال)"],
 ];
 
+/** کمبود موجودی (۱۰۴) — بی ستون بها، پس پشت `cost.view` نیست. */
+export const LOW_STOCK_COLUMNS: Columns = [
+  ["warehouseName", "انبار"],
+  ["sku", "SKU"],
+  ["productName", "کالا"],
+  ["color", "رنگ"],
+  ["size", "سایز"],
+  ["onHand", "موجودی فیزیکی"],
+  ["reserved", "رزروشده"],
+  ["available", "قابل‌فروش"],
+];
+
 export const MOVEMENT_COLUMNS: Columns = [
   ["occurredAt", "زمان"],
   ["warehouseName", "انبار"],
