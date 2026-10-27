@@ -136,6 +136,7 @@ test.describe("سفارش اینستاگرام: عملیات ماندگار، م
         await route.fulfill({ status: d.status, json: { error: { code: d.code, message: d.message } } });
       });
       await page.getByRole("button", { name: "بررسی و تلاش دوبارهٔ همان عملیات" }).click();
+      await expect(page.getByRole("alert")).toContainText(d.message);
       await expect(page.getByRole("alert")).toContainText("هنوز قطعی نیست");
       await expect(banner(page), `${d.status}: عملیات معلق با کلید اصلی می‌ماند`).toBeVisible();
       expect(s.requests.at(-1)!.key).toBe(first.key);
@@ -151,6 +152,11 @@ test.describe("سفارش اینستاگرام: عملیات ماندگار، م
     await page.reload();
     await expect(banner(page)).toBeVisible();
     await afterReload;
+    // The pending banner comes from storage, before either reload GET has finished.
+    // Wait for both server-backed views before destroying this document; WebKit can
+    // report routed fetches cancelled by the next goto as access-control pageerrors.
+    await expect(page.getByRole("region", { name: "سفارش IG-000200" })).toContainText("شلوار پارچه‌ای");
+    await expect(page.getByRole("region", { name: "سفارش‌های اینستاگرام" })).toContainText("سفارشی نیست.");
     // سفارش دیگر قفل نیست: قفل به‌ازای هر سفارش است.
     const afterOther = settled(OTHER);
     await page.goto(`/?page=instagram-orders&ig.order=${OTHER}`);
@@ -159,6 +165,7 @@ test.describe("سفارش اینستاگرام: عملیات ماندگار، م
     await expect(banner(page)).toHaveCount(0);
     await expect(other.getByLabel("تعداد قلم تازه")).toBeEnabled();
     await afterOther;
+    await expect(page.getByRole("region", { name: "سفارش‌های اینستاگرام" })).toContainText("سفارشی نیست.");
 
     // دسترسی برگشت: همان کلید Replay می‌گیرد و اثر یک بار است.
     api.handlers.set(`POST /instagram-orders/${ID}/lines`, async route => {
@@ -168,6 +175,7 @@ test.describe("سفارش اینستاگرام: عملیات ماندگار، م
       await route.fulfill({ json: { ...s.order, lines: [line(s.qty)] } });
     });
     await page.goto(`/?page=instagram-orders&ig.order=${ID}`);
+    await expect(page.getByRole("region", { name: "سفارش IG-000200" })).toContainText("شلوار پارچه‌ای");
     await page.getByRole("button", { name: "بررسی و تلاش دوبارهٔ همان عملیات" }).click();
     await expect(banner(page)).toHaveCount(0);
     expect(s.requests.at(-1)!.key).toBe(first.key);
