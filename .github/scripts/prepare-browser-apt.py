@@ -12,9 +12,14 @@ import re
 
 AZURE_URI = re.compile(r"https?://azure\.archive\.ubuntu\.com/ubuntu/?\Z")
 OFFICIAL_URI = "https://archive.ubuntu.com/ubuntu"
+# GitHub runner images route Ubuntu through this priority-ordered list.
+# Match the URI itself, never follow an arbitrary mirror+file path.
+RUNNER_MIRROR_URI = "mirror+file:/etc/apt/apt-mirrors.txt"
 
 
 def replace_uri(token):
+    if token == RUNNER_MIRROR_URI:
+        return OFFICIAL_URI
     return OFFICIAL_URI + ("/" if token.endswith("/") else "") if AZURE_URI.fullmatch(token) else token
 
 
