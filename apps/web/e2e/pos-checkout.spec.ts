@@ -258,6 +258,57 @@ test("enabled quantity editor sends exact Persian thousandths and keeps stale-po
   expect(requests).toEqual([{ qty: "1.125" }, { qty: "2.125" }, { qty: "1.5" }]);
 });
 
+for (const allowFractionalQty of [false, true]) {
+  test(`combined amount and quantity policy (${allowFractionalQty ? "on" : "off"}): exact Rial edits preserve the fractional line`, async ({ page, api }) => {
+    const s = pos(api); const requests: Array<{ field: string; body: unknown }> = [];
+    api.defaults["GET /pos/policy"] = { requireCustomer: false, allowFractionalQty };
+    // A pre-existing absolute discount deliberately locks quantity edits. Change
+    // quantity first, then add/reopen a one-Rial discount through the actual UI.
+    s.invoice = { ...s.invoice, lines: [{ ...s.invoice.lines[0]!, qty: "1.125", unitPrice: "10001", discountAmount: "0" }] };
+    for (const field of ["price", "discount", "qty"]) {
+      api.handlers.set(`PATCH /invoices/${INV}/lines/l1${field === "qty" ? "" : `/${field}`}`, async route => {
+        const body = route.request().postDataJSON(); requests.push({ field, body });
+        s.invoice = { ...s.invoice, lines: s.invoice.lines.map(l => ({ ...l, ...body })) };
+        await route.fulfill({ json: s.invoice });
+      });
+    }
+    await open(page);
+    const quantity = page.getByLabel("تعداد شلوار کتان", { exact: true });
+    if (allowFractionalQty) {
+      await expect(quantity).toHaveValue("1.125");
+      await quantity.fill("۱٫۵");
+      await page.getByRole("button", { name: "ثبت تعداد", exact: true }).click();
+      await expect(quantity).toHaveValue("1.5");
+    } else {
+      await expect(page.locator(".lines li").first()).toContainText("1٫125");
+      await expect(quantity).toHaveCount(0);
+      await expect(page.getByRole("button", { name: "اضافه کردن شلوار کتان", exact: true })).toBeDisabled();
+      await expect(page.getByRole("button", { name: "کم کردن شلوار کتان", exact: true })).toBeDisabled();
+    }
+    await page.getByRole("button", { name: "ویرایش قیمت شلوار کتان", exact: true }).click();
+    await expect(page.getByLabel(/قیمت واحد/)).toHaveValue("1,000.1");
+    await page.getByRole("button", { name: "ثبت قیمت", exact: true }).click();
+    await expect(page.getByLabel(/قیمت واحد/)).toHaveCount(0);
+    await page.getByRole("button", { name: "تخفیف شلوار کتان", exact: true }).click();
+    await page.getByLabel(/^تخفیف \(تومان\)/).fill("۰٫۱");
+    await page.getByRole("button", { name: "اعمال تخفیف", exact: true }).click();
+    await expect(page.getByLabel(/^تخفیف \(تومان\)/)).toHaveCount(0);
+    if (allowFractionalQty) await expect(quantity).toBeDisabled();
+    await page.getByRole("button", { name: "تخفیف شلوار کتان", exact: true }).click();
+    await expect(page.getByLabel(/^تخفیف \(تومان\)/)).toHaveValue("0.1");
+    await page.getByRole("button", { name: "اعمال تخفیف", exact: true }).click();
+    await expect(page.getByLabel(/^تخفیف \(تومان\)/)).toHaveCount(0);
+    expect(requests).toEqual([
+      ...(allowFractionalQty ? [{ field: "qty", body: { qty: "1.5" } }] : []),
+      { field: "price", body: { unitPrice: "10001" } },
+      { field: "discount", body: { discountAmount: "1" } },
+      { field: "discount", body: { discountAmount: "1" } },
+    ]);
+    expect(s.invoice.lines[0]!.qty).toBe(allowFractionalQty ? "1.5" : "1.125");
+    expect(s.posted).toEqual([]); expect(s.finalized).toBe(0);
+  });
+}
+
 test("clicking the unit price opens the existing unit-price editor in Toman", async ({page, api}) => {
   const s=pos(api); const prices:unknown[]=[];
   api.handlers.set(`PATCH /invoices/${INV}/lines/l1/price`,async route=>{
@@ -277,6 +328,63 @@ test("clicking the unit price opens the existing unit-price editor in Toman", as
   await page.keyboard.press("Escape");
   await expect(page.getByLabel(/قیمت واحد/)).toHaveCount(0);
 });
+
+for (const kind of ["price", "discount"] as const) {
+  // Independent saved-invoice cases: ten reload/edit cycles shared one 45s budget
+  // and timed out on slow WebKit runners even while every value was progressing.
+  for (const value of ["1", "2", "3", "4", "5", "6", "7", "8", "9", "90071992547409939"]) {
+    test(`exact Rial ${kind}: unchanged edit preserves ${value} Rial`, async ({ page, api }) => {
+      const s = pos(api);
+      const bodies: unknown[] = [];
+      api.handlers.set(`PATCH /invoices/${INV}/lines/l1/${kind}`, async route => {
+        bodies.push(route.request().postDataJSON());
+        await route.fulfill({ json: s.invoice });
+      });
+      s.invoice = { ...s.invoice, lines: [{ ...s.invoice.lines[0]!, qty: "1",
+        unitPrice: kind === "price" ? value : "999999999999999999",
+        netAmount: "999999999999999999", discountAmount: kind === "discount" ? value : "0" }] };
+      await open(page);
+      await page.getByRole("button", { name: kind === "price" ? "ویرایش قیمت شلوار کتان" : "تخفیف شلوار کتان", exact: true }).click();
+      const input = page.getByLabel(kind === "price" ? /قیمت واحد/ : /^تخفیف \(تومان\)/);
+      const amount = BigInt(value);
+      await expect(input).toHaveValue(`${(amount / 10n).toString().replace(/\B(?=(\d{3})+(?!\d))/g, ",")}.${amount % 10n}`);
+      await page.getByRole("button", { name: kind === "price" ? "ثبت قیمت" : "اعمال تخفیف", exact: true }).click();
+      await expect.poll(() => bodies).toEqual([kind === "price" ? { unitPrice: value } : { discountAmount: value }]);
+    });
+  }
+
+  test(`exact Rial ${kind}: decimal Persian input, reasons and server rejection stay intact`, async ({ page, api }) => {
+    const s = pos(api);
+    const bodies: unknown[] = [];
+    let reject = true;
+    api.handlers.set(`PATCH /invoices/${INV}/lines/l1/${kind}`, async route => {
+      bodies.push(route.request().postDataJSON());
+      await route.fulfill(reject ? { status: 403, json: { error: { code: "forbidden", message: "مجوز تغییر مبلغ ندارید" } } } : { json: s.invoice });
+    });
+    await open(page);
+    await page.getByRole("button", { name: kind === "price" ? "ویرایش قیمت شلوار کتان" : "تخفیف شلوار کتان", exact: true }).click();
+    const input = page.getByLabel(kind === "price" ? /قیمت واحد/ : /^تخفیف \(تومان\)/);
+    const submit = page.getByRole("button", { name: kind === "price" ? "ثبت قیمت" : "اعمال تخفیف", exact: true });
+    for (const invalid of ["۱۲٫۳۴", "1.2.3", "-1.2"]) {
+      await input.fill(invalid);
+      await expect(submit).toBeDisabled();
+    }
+    expect(bodies).toEqual([]);
+    await input.fill("۱٬۲۳۴٫۵");
+    await page.getByLabel("دلیل — بالای آستانه اجباری است").fill("  اصلاح قیمت با تأیید مدیر  ");
+    await submit.click();
+    await expect(page.getByRole("alert")).toContainText("مجوز تغییر مبلغ ندارید");
+    await expect(input).toBeVisible();
+    const expected = kind === "price"
+      ? { unitPrice: "12345", priceOverrideReason: "اصلاح قیمت با تأیید مدیر" }
+      : { discountAmount: "12345", discountReason: "اصلاح قیمت با تأیید مدیر" };
+    expect(bodies).toEqual([expected]);
+    reject = false;
+    await submit.click();
+    await expect(input).toHaveCount(0);
+    expect(bodies).toEqual([expected, expected]);
+  });
+}
 
 for (const required of [false, true]) test(`customer entry (${required ? "required and always visible first" : "optional after search"}) requires a fresh phone's name before linking`, async ({page, api}) => {
   const s=pos(api); s.invoice={...s.invoice,lines:[]};

@@ -38,7 +38,7 @@ import { Icon } from "../components/Icon.tsx";
 import { ApiError } from "../lib/api.ts";
 import { ActionKeys, ScanCounter } from "../lib/action-key.ts";
 import { canFinalize, lineGross, steppedQty } from "../lib/cart.ts";
-import { parseRial, rialFromTomanInput, toman } from "../lib/money.ts";
+import { exactTomanInput, parseRial, rialFromExactTomanInput, rialFromTomanInput, toman } from "../lib/money.ts";
 import { Money } from "../components/ui/Money.tsx";
 import { SafeAction } from "../components/ui/SafeAction.tsx";
 import { PaymentSelector } from "../components/pos/PaymentSelector.tsx";
@@ -2004,9 +2004,9 @@ function PricePanel({
   onApply: (price: bigint, why: string) => void;
   onCancel: () => void;
 }) {
-  const [amount, setAmount] = useState(toman(unitPrice).replace(/٬/g, ""));
+  const [amount, setAmount] = useState(exactTomanInput(unitPrice.toString()));
   const [why, setWhy] = useState("");
-  const rial = amount.trim() === "" ? null : rialFromTomanInput(amount);
+  const rial = amount.trim() === "" ? null : rialFromExactTomanInput(amount);
   const bad = rial === null || rial <= 0n;
 
   return (
@@ -2019,7 +2019,7 @@ function PricePanel({
         </span>
         <AmountInput
           type="text"
-          inputMode="numeric"
+          inputMode="decimal"
           value={amount}
           onChange={(e) => setAmount(e.target.value)}
           autoFocus
@@ -2079,9 +2079,9 @@ function DiscountPanel({
   onApply: (amount: bigint, why: string) => void;
   onCancel: () => void;
 }) {
-  const [amount, setAmount] = useState(current > 0n ? toman(current).replace(/٬/g, "") : "");
+  const [amount, setAmount] = useState(current > 0n ? exactTomanInput(current.toString()) : "");
   const [why, setWhy] = useState("");
-  const rial = amount.trim() === "" ? 0n : rialFromTomanInput(amount);
+  const rial = amount.trim() === "" ? 0n : rialFromExactTomanInput(amount);
   const tooBig = rial !== null && rial > gross;
 
   return (
@@ -2091,7 +2091,7 @@ function DiscountPanel({
         <span>تخفیف (تومان) — حداکثر <Money rial={gross} size="sm" /></span>
         <AmountInput
           type="text"
-          inputMode="numeric"
+          inputMode="decimal"
           value={amount}
           onChange={(e) => setAmount(e.target.value)}
           autoFocus
