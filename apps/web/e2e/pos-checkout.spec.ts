@@ -218,6 +218,46 @@ test("unavailable customer policy has an explicit recovery action and never enab
   expect(s.posted).toEqual([]);
 });
 
+test("quantity policy defaults to whole items and preserves historical fractional display", async ({ page, api }) => {
+  const s = pos(api);
+  s.invoice = { ...s.invoice, lines: s.invoice.lines.map((l, i) => i === 0 ? { ...l, qty: "1.125" } : l) };
+  await open(page);
+  const row = page.locator(".lines li").first();
+  await expect(row).toContainText("1٫125");
+  await expect(page.getByLabel("تعداد شلوار کتان", { exact: true })).toHaveCount(0);
+  await expect(page.getByRole("button", { name: "اضافه کردن شلوار کتان", exact: true })).toBeDisabled();
+  await expect(page.getByRole("button", { name: "کم کردن شلوار کتان", exact: true })).toBeDisabled();
+  expect(api.calls.some(c => c.startsWith("PATCH "))).toBe(false);
+});
+
+test("enabled quantity editor sends exact Persian thousandths and keeps stale-policy rejection visible", async ({ page, api }) => {
+  const s = pos(api); const requests: unknown[] = [];
+  api.defaults["GET /pos/policy"] = { requireCustomer: false, allowFractionalQty: true };
+  let reject = false;
+  api.handlers.set(`PATCH /invoices/${INV}/lines/l1`, async route => {
+    const body = route.request().postDataJSON(); requests.push(body);
+    if (reject) { await route.fulfill({ status: 409, json: { error: { code: "rule_violation", message: "فروش اعشاری در تنظیمات غیرفعال است" } } }); return; }
+    s.invoice = { ...s.invoice, lines: s.invoice.lines.map(l => l.id === "l1" ? { ...l, qty: body.qty } : l) };
+    await route.fulfill({ json: s.invoice });
+  });
+  await open(page);
+  const input = page.getByLabel("تعداد شلوار کتان", { exact: true });
+  await input.fill("۱٫۱۲۵");
+  await page.getByRole("button", { name: "ثبت تعداد", exact: true }).click();
+  await expect.poll(() => requests).toEqual([{ qty: "1.125" }]);
+  await expect(input).toHaveValue("1.125");
+  await page.getByRole("button", { name: "اضافه کردن شلوار کتان", exact: true }).click();
+  await expect(input).toHaveValue("2.125");
+  reject = true;
+  await input.fill("۱٫۵");
+  await page.getByRole("button", { name: "ثبت تعداد", exact: true }).click();
+  await expect(page.locator(".line-error")).toContainText("فروش اعشاری در تنظیمات غیرفعال است");
+  expect(s.invoice.lines[0]!.qty).toBe("2.125");
+  await input.fill("1.1255");
+  await expect(page.getByRole("button", { name: "ثبت تعداد", exact: true })).toBeDisabled();
+  expect(requests).toEqual([{ qty: "1.125" }, { qty: "2.125" }, { qty: "1.5" }]);
+});
+
 test("clicking the unit price opens the existing unit-price editor in Toman", async ({page, api}) => {
   const s=pos(api); const prices:unknown[]=[];
   api.handlers.set(`PATCH /invoices/${INV}/lines/l1/price`,async route=>{

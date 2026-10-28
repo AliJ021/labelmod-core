@@ -52,6 +52,7 @@ import { cartCounts, checkoutErrorMessage, checkoutTotals, finalAmounts, intentF
   type UnresolvedReason } from "../lib/pos-payments.ts";
 import { clearPendingPayment, readPendingPayment, writePendingPayment, type PendingPayment } from "../lib/pending-payment.ts";
 import { formatCount, formatQty } from "../lib/format.ts";
+import { quantityUnits, saleQuantity } from "../lib/sale-quantity.ts";
 import { session } from "../lib/session.ts";
 import { people } from "../lib/people.ts";
 import { isNetworkFailure } from "../lib/offline-queue.ts";
@@ -103,6 +104,7 @@ function adjusted(line: { discountAmount: string; listPrice: string | null }): b
  *    `JSON.stringify`.
  */
 export interface RowActions {
+  setQty: (lineId: string, qty: string) => void;
   changeQty: (lineId: string, current: string, delta: number) => void;
   remove: (lineId: string) => void;
   applyPrice: (lineId: string, priceRial: bigint, why: string) => void;
@@ -113,7 +115,7 @@ export interface RowActions {
 }
 
 function sameLine(a: Readonly<CartLineProps>, b: Readonly<CartLineProps>): boolean {
-  if (a.panel !== b.panel || a.on !== b.on || a.error !== b.error) return false;
+  if (a.panel !== b.panel || a.on !== b.on || a.error !== b.error || a.allowFractional !== b.allowFractional) return false;
   const x = a.line;
   const y = b.line;
   return (
@@ -129,6 +131,7 @@ function sameLine(a: Readonly<CartLineProps>, b: Readonly<CartLineProps>): boole
 }
 
 interface CartLineProps {
+  allowFractional: boolean;
   line: InvoiceLine;
   error?: string | undefined;
   /** پنل بازِ همین سطر — یا هیچ. */
@@ -137,8 +140,23 @@ interface CartLineProps {
   on: RowActions;
 }
 
-const CartLine = memo(function CartLine({ line: l, panel, on, error }: CartLineProps) {
+function QuantityInput({ qty, name, disabled, apply }: { qty: string; name: string; disabled: boolean; apply: (qty: string) => void }) {
+  const [value, setValue] = useState(qty);
+  useEffect(() => { setValue(qty); }, [qty]);
+  const parsed = saleQuantity(value, true);
+  const changed = parsed !== saleQuantity(qty, true);
+  return <label>تعداد
+    <input aria-label={`تعداد ${name}`} dir="ltr" inputMode="decimal" value={value} disabled={disabled}
+      onChange={e => setValue(e.target.value)} style={{ width: "6rem" }} />
+    {value !== qty ? <button type="button" disabled={disabled || parsed === null || !changed}
+      onClick={() => { if (parsed !== null) apply(parsed); }}>ثبت تعداد</button> : null}
+    {parsed === null ? <span role="alert">تعداد مثبت با حداکثر سه رقم اعشار وارد کنید.</span> : null}
+  </label>;
+}
+
+const CartLine = memo(function CartLine({ line: l, panel, on, error, allowFractional }: CartLineProps) {
   const locked = adjusted(l);
+  const legacyFraction = !allowFractional && (quantityUnits(l.qty) ?? 0n) % 1000n !== 0n;
   return (
     <li>
       <div className="line-name">
@@ -186,24 +204,26 @@ const CartLine = memo(function CartLine({ line: l, panel, on, error }: CartLineP
           type="button"
           onClick={() => on.changeQty(l.id, l.qty, -1)}
           aria-label={`کم کردن ${l.productName}`}
-          disabled={locked}
+          disabled={locked || legacyFraction}
           title={locked ? QTY_LOCKED : undefined}
         >
           −
         </button>
         {/* بی aria-live: اعلام زندهٔ هر سطر صفحه‌خوان را پرحرف می‌کرد. یک ناحیهٔ
             زنده برای کل صندوق هست (قابل پرداخت، مانده، وضعیت). */}
-        <span className="num">{formatQty(l.qty)}</span>
+        {allowFractional ? <QuantityInput qty={l.qty} name={l.productName} disabled={locked} apply={qty => on.setQty(l.id, qty)} />
+          : <span className="num">{formatQty(l.qty)}</span>}
         <button
           type="button"
           onClick={() => on.changeQty(l.id, l.qty, 1)}
           aria-label={`اضافه کردن ${l.productName}`}
-          disabled={locked}
+          disabled={locked || legacyFraction}
           title={locked ? QTY_LOCKED : undefined}
         >
           +
         </button>
       </div>
+      {legacyFraction ? <p className="field-hint">تعداد اعشاری قبلی حفظ شده است؛ تغییر آن نیازمند فعال‌کردن فروش اعشاری در تنظیمات است.</p> : null}
       <div className="line-total"><span className="line-total-label">جمع ردیف</span><Money rial={l.netAmount} /></div>
       <button
         type="button"
@@ -312,7 +332,7 @@ function PosScreen({ actorId, mode, onMode, browseInvoices }: {
   const instagram = mode === "instagram";
   const [branches, setBranches] = useState<Branch[]>([]);
   const [methods, setMethods] = useState<PaymentMethod[]>([]);
-  const [policy, setPolicy] = useState<{ branchId: string; requireCustomer: boolean; creditEnabled?: boolean } | null>(null);
+  const [policy, setPolicy] = useState<{ branchId: string; requireCustomer: boolean; creditEnabled?: boolean; allowFractionalQty?: boolean } | null>(null);
   const [policyError, setPolicyError] = useState<string | null>(null);
   const [policyRetry, setPolicyRetry] = useState(0);
   const [branchId, setBranchId] = useUrlState("pos.branch");
@@ -442,7 +462,7 @@ function PosScreen({ actorId, mode, onMode, browseInvoices }: {
     refresh();
     window.addEventListener("focus", refresh);
     // ذخیرهٔ همین تنظیم در تب دیگر؛ تبِ دیده‌شده‌ای که focus نمی‌گیرد هم تازه می‌شود.
-    const unsubscribe = onSettingSaved((key) => { if (key === "pos.require_customer" || key === "sales.credit_enabled") refresh(); });
+    const unsubscribe = onSettingSaved((key) => { if (key === "pos.require_customer" || key === "sales.credit_enabled" || key === "sales.allow_fractional_qty") refresh(); });
     return () => { controller.abort(); window.removeEventListener("focus", refresh); unsubscribe(); };
   }, [branchId, policyRetry]);
 
@@ -812,6 +832,7 @@ function PosScreen({ actorId, mode, onMode, browseInvoices }: {
     guarded(async () => {
       if (!invoice) return;
       const next = steppedQty(current, delta);
+      if (next === null && (quantityUnits(current) === null || delta > 0)) throw new Error("تعداد نامعتبر است");
       // رسیدن به صفر یعنی حذف — یک عمل دیگر با ردّ حسابرسی متفاوت.
       try {
         const updated = next === null ? await pos.removeLine(invoice.id, lineId) : await pos.setLineQty(invoice.id, lineId, next);
@@ -871,13 +892,21 @@ function PosScreen({ actorId, mode, onMode, browseInvoices }: {
    * **یک بار** ساخته می‌شود. پس سطر یک Prop ثابت می‌بیند و همیشه
    * تازه‌ترین تابع را صدا می‌زند — نه یک Closure کهنه.
    */
-  const live = useRef({ changeQty, removeLine, applyPrice, applyDiscount,
+  const setQty = (lineId: string, qty: string) => guarded(async () => {
+    if (!invoice) return;
+    try {
+      setInvoice(await pos.setLineQty(invoice.id, lineId, qty));
+      setLineErrors(errors => { const next = { ...errors }; delete next[lineId]; return next; });
+    } catch (e) { setLineErrors(errors => ({ ...errors, [lineId]: message(e) })); throw e; }
+  });
+  const live = useRef({ setQty, changeQty, removeLine, applyPrice, applyDiscount,
                         setPricing, setDiscounting });
-  live.current = { changeQty, removeLine, applyPrice, applyDiscount,
+  live.current = { setQty, changeQty, removeLine, applyPrice, applyDiscount,
                    setPricing, setDiscounting };
 
   const rowActions = useMemo<RowActions>(
     () => ({
+      setQty: (id, qty) => void live.current.setQty(id, qty),
       changeQty: (id, qty, d) => void live.current.changeQty(id, qty, d),
       remove: (id) => void live.current.removeLine(id),
       applyPrice: (id, p, why) => void live.current.applyPrice(id, p, why),
@@ -1475,6 +1504,7 @@ function PosScreen({ actorId, mode, onMode, browseInvoices }: {
             <ul className="lines">
               {lines.map((l) => (
                 <CartLine
+                  allowFractional={policyReady && policy.allowFractionalQty === true}
                   key={l.id}
                   line={l}
                   error={lineErrors[l.id]}

@@ -71,14 +71,11 @@ const addLineBody = z
   });
 
 /**
- * تعداد در صندوق عدد صحیح است — عمداً سخت‌گیرتر از `addLine`.
- *
- * دیتابیس `platform.qty` اعشاری می‌پذیرد و باید بپذیرد (متر پارچه
- * روزی می‌آید). ولی صندوق پوشاک امروز کالای تعدادی می‌فروشد و «۱٫۵
- * پیراهن» یک اشتباه تایپی است، نه یک فروش.
+ * Shape only: the shared database guard enforces the current sales quantity
+ * policy in the write transaction (including stale clients and direct writers).
  */
 const setLineQtyBody = z.object({
-  qty: z.string().regex(/^\d+$/, "تعداد باید عدد صحیح باشد"),
+  qty: z.string().regex(/^\d+(\.\d{1,3})?$/, "تعداد نامعتبر؛ حداکثر سه رقم اعشار"),
 });
 
 /**
@@ -90,7 +87,7 @@ const scanBody = z
   .object({
     variationId: uuid.optional(),
     barcode: z.string().min(1).max(64).optional(),
-    qty: z.string().regex(/^\d+$/, "تعداد باید عدد صحیح باشد").default("1"),
+    qty: z.string().regex(/^\d+(\.\d{1,3})?$/, "تعداد نامعتبر؛ حداکثر سه رقم اعشار").default("1"),
   })
   .refine((v) => v.variationId ?? v.barcode, {
     message: "کالا باید با شناسه یا بارکد مشخص شود",
@@ -154,11 +151,13 @@ export function registerSalesRoutes(app: FastifyInstance, deps: SalesRouteDeps):
     await requireSellerForSession(db, s);
     // نبودِ ردیف `sales.credit_enabled` (نصبِ پیش از ۰۹۶) یعنی روشن، همان رفتار قبلی.
     // این فقط نمایش است؛ دروازهٔ واقعی نسیه در `sales.finalize_invoice` است.
-    const result = await sql<{ require_customer: boolean; credit_enabled: boolean }>`
+    const result = await sql<{ require_customer: boolean; credit_enabled: boolean; fractional_qty: boolean }>`
       SELECT platform.setting_bool('pos.require_customer', false) AS require_customer,
-             platform.setting_bool('sales.credit_enabled', true) AS credit_enabled
+             platform.setting_bool('sales.credit_enabled', true) AS credit_enabled,
+             platform.setting_bool('sales.allow_fractional_qty', false) AS fractional_qty
     `.execute(db);
-    return { requireCustomer: result.rows[0]!.require_customer, creditEnabled: result.rows[0]!.credit_enabled };
+    return { requireCustomer: result.rows[0]!.require_customer, creditEnabled: result.rows[0]!.credit_enabled,
+      allowFractionalQty: result.rows[0]!.fractional_qty };
   });
 
   /**

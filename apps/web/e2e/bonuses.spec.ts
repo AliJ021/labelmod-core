@@ -45,6 +45,7 @@ async function openLog(page: Page) {
 
 test.describe("ناحیهٔ برداشت و پاداش", () => {
   test("در منوی اصلی است، نه در تنظیمات؛ پیوند قدیمی با فیلترها منتقل می‌شود", async ({ page, api }) => {
+    api.defaults["GET /withdrawals/owners"] = { owners: [CASHIER] };
     await page.goto("/?page=settings&settings.tab=withdrawal-log&settings.wdlStatus=open&settings.wdlOwner=" + CASHIER.id);
     await expect(page).toHaveURL(/page=personnel/);
     const url = new URL(page.url());
@@ -52,14 +53,20 @@ test.describe("ناحیهٔ برداشت و پاداش", () => {
       .toEqual(["withdrawal-log", "open", CASHIER.id, null]);
     await expect(page.getByRole("heading", { name: "دفتر برداشت پرسنل", level: 1 })).toBeVisible();
     await expect.poll(() => api.calls.some(c => c.startsWith("GET /withdrawals?") && c.includes("status=open"))).toBe(true);
+    // A heading/request start is not a loaded page. Validate both list and
+    // owner data before full-document navigation can cancel their reads.
+    await expect(page.getByText("هنوز هیچ برداشتی ثبت نشده است.", { exact: true })).toBeVisible();
+    await expect(page.getByLabel("کاربر برداشت").locator("option:checked")).toHaveText(CASHIER.name);
     await page.goto("/?page=settings&settings.tab=withdrawals");
     await expect(page).toHaveURL(/personnel\.tab=withdrawals/);
     await expect(page.getByRole("heading", { name: "برداشت‌های من", level: 1 })).toBeVisible();
+    await expect(page.getByText("هنوز برداشتی ثبت نکرده‌اید.", { exact: true })).toBeVisible();
     await page.goto("/?page=settings");
     await expect(page.getByRole("heading", { name: "تنظیمات", level: 1 })).toBeVisible();
     await expect(page.locator(".settings-nav")).not.toContainText("برداشت");
     await personnel(page, "bonuses", "پاداش‌های من");
     await expect(page.getByRole("heading", { name: "پاداش‌های من", level: 1 })).toBeVisible();
+    await expect(page.getByText("هنوز پاداشی ندارید.", { exact: true })).toBeVisible();
   });
 
   test("بی‌مجوز مدیر: فقط «من»ها؛ دفترهای مدیر mount نمی‌شوند و درخواستی نمی‌رود", async ({ page, api }) => {

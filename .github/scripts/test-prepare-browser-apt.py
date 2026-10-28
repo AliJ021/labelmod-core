@@ -15,6 +15,32 @@ NEW = "https://archive.ubuntu.com/ubuntu"
 
 
 class BrowserAptPreparation(unittest.TestCase):
+    def test_github_runner_mirror_indirection_in_both_formats(self):
+        mirror = "mirror+file:/etc/apt/apt-mirrors.txt"
+        for deb822, source in [
+            (True, f"Types: deb\nURIs: {mirror}\nSuites: noble noble-updates noble-backports noble-security\nComponents: main restricted universe multiverse\nSigned-By: /usr/share/keyrings/ubuntu-archive-keyring.gpg\n"),
+            (False, f"deb [signed-by=/keys/ubuntu.gpg] {mirror} noble-security main\n"),
+        ]:
+            self.assertEqual(module.rewrite_sources(source, deb822), source.replace(mirror, NEW))
+
+    def test_mirror_file_is_not_followed_or_modified(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            apt = Path(temporary)
+            mirror = apt / "apt-mirrors.txt"
+            original = f"{OLD}/\tpriority:1\n{NEW}/\tpriority:2\nhttps://security.ubuntu.com/ubuntu/\tpriority:3\n".encode()
+            mirror.write_bytes(original)
+            source = apt / "sources.list"
+            source.write_text("deb mirror+file:/etc/apt/apt-mirrors.txt noble main\n", encoding="utf-8")
+            self.assertEqual(module.prepare(apt), 1)
+            self.assertEqual(source.read_text(), f"deb {NEW} noble main\n")
+            self.assertEqual(mirror.read_bytes(), original)
+            self.assertEqual(module.prepare(apt), 0)
+
+    def test_unknown_mirror_indirections_unchanged(self):
+        for uri in ["mirror+file:/tmp/apt-mirrors.txt", "mirror+file:/etc/apt/apt-mirrors.txt.other", "mirror+https://example.test/list"]:
+            source = f"URIs: {uri}\nSigned-By: mirror+file:/etc/apt/apt-mirrors.txt\n"
+            self.assertEqual(module.rewrite_sources(source, True), source)
+
     def test_deb822_preserves_suites_components_and_signing(self):
         source = f"Types: deb deb-src\nURIs: {OLD}/\nSuites: noble noble-updates noble-backports noble-security\nComponents: main restricted universe multiverse\nSigned-By: /usr/share/keyrings/ubuntu-archive-keyring.gpg\n"
         self.assertEqual(module.rewrite_sources(source, True), source.replace(OLD, NEW))

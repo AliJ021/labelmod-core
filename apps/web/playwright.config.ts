@@ -1,6 +1,12 @@
 import { defineConfig } from "@playwright/test";
 
 const widths = [320, 375, 768, 1024, 1440, 1920];
+// Read/state/replay contracts retain both engines, themes and mobile/desktop.
+// Every unlisted/new spec keeps the full responsive matrix by default.
+const stateContracts = [
+  "dashboard-freshness", "dashboard-period", "dashboard-sync",
+  "instagram-orders-recovery", "settings-admin-actions", "site-orders",
+].map(name => `**/${name}.spec.ts`);
 export default defineConfig({
   testDir: "./e2e",
   fullyParallel: true,
@@ -19,6 +25,10 @@ export default defineConfig({
     widths.flatMap(width =>
       (["chromium", "webkit"] as const).map(browserName => ({
         name: browserName + "-" + colorScheme + "-" + width,
+        testIgnore: [375, 1440].includes(width) ? [] : stateContracts,
+        // These cases set their own viewport before loading the application.
+        // Repeating them at six nominal widths exercises identical geometry.
+        ...(width === 1440 ? {} : { grepInvert: /@self-viewport/ }),
         use: { browserName, colorScheme, viewport: { width, height: 960 },
           ...(browserName === "chromium" && process.env.PLAYWRIGHT_EDGE === "1" ? { channel: "msedge" } : {}) },
       })))),

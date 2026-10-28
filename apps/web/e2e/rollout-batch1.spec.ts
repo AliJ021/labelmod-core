@@ -22,7 +22,21 @@ test.describe("گزارش‌ها", () => {
   test.beforeEach(({ api }) => { Object.assign(api.defaults, REPORT_DATA); });
 
   test("filters are Jalali-first: typed Jalali becomes ISO in the URL and request; half-typed, missing or reversed dates are never sent", async ({ page, api }) => {
-    await page.goto("/?page=reports&reports.tab=sales");
+    const salesLoaded = async (action: () => Promise<unknown>, isoFrom: string) => {
+      // URL/request-start readiness can abandon a routed fetch on reload in WebKit.
+      // Match the new range before the action: a previous table is not its response.
+      const received = page.waitForResponse(response => {
+        const url = new URL(response.url());
+        return response.request().method() === "GET" && url.pathname === "/api/reports/sales"
+          && url.searchParams.get("from") === isoFrom && url.searchParams.get("to") === "2026-09-16";
+      });
+      await action();
+      const response = await received;
+      expect(response.ok()).toBe(true);
+      expect(await response.finished()).toBeNull();
+      await expect(page.getByRole("table", { name: "فروش به تفکیک روز و کانال" })).toBeVisible();
+    };
+    await salesLoaded(() => page.goto("/?page=reports&reports.tab=sales"), "2026-09-01");
     await expect(page.getByRole("heading", { name: "گزارش‌ها", level: 1 })).toBeVisible();
     const filters = page.getByRole("region", { name: "فیلتر گزارش" });
     const from = page.getByLabel("از تاریخ", { exact: true });
@@ -54,7 +68,7 @@ test.describe("گزارش‌ها", () => {
     expect(sent(), "no request while the date is incomplete or does not exist").toBe(before);
 
     // جلالی با رقم فارسی ← ISO در نشانی و درخواست.
-    await from.fill("۱۴۰۵/۰۶/۱۹");
+    await salesLoaded(() => from.fill("۱۴۰۵/۰۶/۱۹"), "2026-09-10");
     await expect(page).toHaveURL(/reports\.from=2026-09-10/);
     await expect(filters).toContainText("۱۹ شهریور ۱۴۰۵ تا ۲۵ شهریور ۱۴۰۵");
     await expect.poll(() => reportCalls(api, "/reports/sales").some(c => c.includes("from=2026-09-10&to=2026-09-16"))).toBe(true);
@@ -66,11 +80,11 @@ test.describe("گزارش‌ها", () => {
     await expect(to).toHaveAttribute("aria-invalid", "true");
     expect(reportCalls(api, "/reports/sales").some(c => c.includes("to=2026-08-23")), "reversed range never reaches the server").toBe(false);
     expect(sent()).toBe(beforeReversed);
-    await to.fill("1405/06/25");
+    await salesLoaded(() => to.fill("1405/06/25"), "2026-09-10");
     await expect(page).toHaveURL(/reports\.to=2026-09-16/);
 
     // بارگذاری دوباره و بازگشت مرورگر: متن جلالی از همان ISO نشانی بازسازی می‌شود.
-    await page.reload();
+    await salesLoaded(() => page.reload(), "2026-09-10");
     await expect(page.getByLabel("از تاریخ", { exact: true })).toHaveValue("۱۴۰۵/۰۶/۱۹");
     await expect(page.getByLabel("تا تاریخ", { exact: true })).toHaveValue("۱۴۰۵/۰۶/۲۵");
     await page.evaluate(() => { history.back(); });
@@ -78,7 +92,7 @@ test.describe("گزارش‌ها", () => {
     await expect(page.getByLabel("تا تاریخ", { exact: true })).toHaveValue("۱۴۰۵/۰۶/۰۱");
     await expect(filters.getByText("«تا تاریخ» نباید پیش از «از تاریخ» باشد.")).toBeVisible();
 
-    await page.getByRole("button", { name: "بازنشانی فیلترها" }).click();
+    await salesLoaded(() => page.getByRole("button", { name: "بازنشانی فیلترها" }).click(), "2026-09-01");
     await expect(page).not.toHaveURL(/reports\.(from|to)=/);
     await expect(page.getByLabel("از تاریخ", { exact: true })).toHaveValue("۱۴۰۵/۰۶/۱۰");
     await expect(page.getByLabel("تا تاریخ", { exact: true })).toHaveValue("۱۴۰۵/۰۶/۲۵");
@@ -168,9 +182,17 @@ test.describe("گزارش‌ها", () => {
     api.defaults["GET /reports/inventory-valuation"] = { rows: [] };
     api.defaults["GET /reports/account-ledger"] = { rows: [] };
     await page.goto("/?page=reports&reports.tab=parties");
+    await expect(page.getByText("مانده‌ای برای نمایش نیست.", { exact: true })).toBeVisible();
+    const supplierRead = page.waitForResponse(response => response.request().method() === "GET"
+      && new URL(response.url()).pathname === "/api/reports/party-balances"
+      && new URL(response.url()).searchParams.get("partyType") === "supplier");
     await page.getByLabel("نوع شخص", { exact: true }).selectOption("supplier");
     await expect(page).toHaveURL(/reports\.partyType=supplier/);
     await expect.poll(() => api.calls.some(c => c === "GET /reports/party-balances?partyType=supplier")).toBe(true);
+    const supplierResponse = await supplierRead;
+    expect(supplierResponse.ok()).toBe(true);
+    expect(await supplierResponse.finished()).toBeNull();
+    await expect(page.getByText("مانده‌ای برای نمایش نیست.", { exact: true })).toBeVisible();
     await page.goto("/?page=reports&reports.tab=ledger");
     await expect(page.getByText("کد حساب را وارد کنید تا گردش آن در این بازه نمایش داده شود.")).toBeVisible();
     expect(reportCalls(api, "/reports/account-ledger"), "no code, no query").toHaveLength(0);
@@ -180,6 +202,7 @@ test.describe("گزارش‌ها", () => {
     await expect(page.getByText("این حساب در این بازه گردشی نداشته است.")).toBeVisible();
     await page.reload();
     await expect(page.getByLabel("کد حساب", { exact: true })).toHaveValue("1301");
+    await expect(page.getByText("این حساب در این بازه گردشی نداشته است.")).toBeVisible();
   });
 });
 
