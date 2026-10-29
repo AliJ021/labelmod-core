@@ -284,7 +284,8 @@ export function App() {
         <SectionBoundary key={`${me?.id}:${zone}`}>
         {/* Suspense داخل پنل است، نه دور همهٔ پنل‌ها: هنگام بارگذاری یک بخش،
             هر tabpanel باید بماند تا aria-controls هیچ زبانه‌ای به شناسهٔ ناموجود اشاره نکند. */}
-        <TabPanels id={tabsId} items={ZONES} value={uiKit ? null : zone} className="zone-panel">
+        <TabPanels id={tabsId} items={ZONES} value={uiKit ? null : zone} className="zone-panel"
+          accessibleNameFor={item => item.key === "instagram-orders" ? "سوابق سفارش‌های قدیمی اینستاگرام" : undefined}>
         <Suspense fallback={<p className="solid pad" role="status">در حال بارگذاری بخش…</p>}>
           {zone === "dashboard" ? (
             <Dashboard access={access} />

@@ -10,7 +10,7 @@ import assert from "node:assert/strict";
 import { readFileSync, readdirSync, statSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import path from "node:path";
-import { FEATURES, NAV_GROUPS, NAV_ITEMS, NAV_OPERATIONS, ZONES, accessOf, pendingZones, visibleZones, type Verdict } from "../src/lib/navigation.ts";
+import { FEATURES, NAV_GROUPS, NAV_ITEMS, NAV_OPERATIONS, ZONES, accessOf, isNavigationZone, pendingZones, visibleZones, type Verdict } from "../src/lib/navigation.ts";
 import { SETTINGS_OPERATIONS, SETTINGS_SECTIONS, settingsView } from "../src/lib/settings-registry.ts";
 import { PERSONNEL_OPERATIONS, PERSONNEL_SECTIONS, legacyPersonnelUrl, personnelView, personnelWriteAccess } from "../src/lib/personnel-registry.ts";
 import { channelLabel, formatCount, formatGregorian, formatJalali, formatMoney, formatPercent, formatQty, moneyParts } from "../src/lib/format.ts";
@@ -137,7 +137,9 @@ describe("رجیستری ناوبری", () => {
       assert.ok(NAV_GROUPS.some(g => g.key === z.navGroup), z.key);
       assert.match(icons, new RegExp(`\\n  ${z.icon}: <`), `آیکون ${z.icon} در خانوادهٔ Icon نیست`);
     }
-    assert.equal(NAV_ITEMS.length, ZONES.length);
+    assert.equal(NAV_ITEMS.length, ZONES.filter(isNavigationZone).length);
+    assert.ok(ZONES.some(z => z.key === "instagram-orders"), "legacy records keep their direct route");
+    assert.ok(!NAV_ITEMS.some(z => z.key === "instagram-orders"), "legacy Instagram orders are not a normal navigation destination");
     for (const g of NAV_GROUPS) assert.ok(NAV_ITEMS.some(i => i.group === g.label), `گروه خالی: ${g.label}`);
     // ترتیب نمایش گروه‌به‌گروه است، پس سرعنوان گروه یک بار کشیده می‌شود.
     const seen = NAV_ITEMS.map(i => i.group).filter((g, i, a) => a[i - 1] !== g);
@@ -157,7 +159,7 @@ describe("رجیستری ناوبری", () => {
     assert.deepEqual(keys(visibleZones(new Map(), "dashboard")), ["dashboard", "personnel", "settings"], "نامعلوم هرگز مجاز نیست");
     assert.deepEqual(keys(visibleZones(all("unknown"), "dashboard")), ["dashboard", "personnel", "settings"]);
     assert.deepEqual(keys(visibleZones(all("deny"), "dashboard")), ["dashboard", "personnel", "settings"], "داشبورد امروز، برداشت/پاداش من و تنظیمات شخصی برای همه");
-    assert.equal(visibleZones(all("allow"), "dashboard").length, ZONES.length);
+    assert.equal(visibleZones(all("allow"), "dashboard").length, NAV_ITEMS.length);
     // بخشی که کاربر خودش باز کرده ناپدید نمی‌شود؛ بقیهٔ طبقه‌بندی هم باز نمی‌شود.
     assert.deepEqual(keys(visibleZones(new Map(), "treasury")), ["dashboard", "personnel", "settings", "treasury"]);
     assert.deepEqual(keys(visibleZones(all("deny"), "treasury")), ["dashboard", "personnel", "settings", "treasury"]);
@@ -174,7 +176,7 @@ describe("رجیستری ناوبری", () => {
   });
 
   test("جای‌نگهدار فقط در loading و فقط برای مقصد بی‌پاسخ؛ پس از پاسخ یا خطا هیچ", () => {
-    const protectedZones = ZONES.filter(z => z.anyOf.length > 0).map(z => z.key).sort();
+    const protectedZones = NAV_ITEMS.filter(z => z.anyOf.length > 0).map(z => z.key).sort();
     assert.deepEqual(pendingZones({ state: "loading", verdicts: new Map() }, "dashboard").map(z => z.key).sort(), protectedZones);
     assert.deepEqual(pendingZones({ state: "loading", verdicts: new Map() }, "treasury").map(z => z.key).includes("treasury"), false, "بخش باز جای‌نگهدار نمی‌شود");
     assert.deepEqual(pendingZones({ state: "degraded", verdicts: new Map() }, "dashboard"), [], "خطا جای‌نگهدار دائمی نمی‌سازد");
@@ -184,7 +186,8 @@ describe("رجیستری ناوبری", () => {
   });
 
   test("جست‌وجوی بخش‌ها از همان رجیستری ساخته می‌شود", () => {
-    for (const z of ZONES) assert.ok(FEATURES.some(f => f.label === z.label && f.anyOf === z.anyOf), z.key);
+    for (const z of ZONES.filter(isNavigationZone)) assert.ok(FEATURES.some(f => f.label === z.label && f.anyOf === z.anyOf), z.key);
+    assert.ok(!FEATURES.some(f => f.label === "سفارش اینستاگرام"), "legacy route is not suggested by global feature search");
     // پیوند مستقیم تنظیمات همان عملیات رجیستری تنظیمات را دارد، نه حدس جدا.
     for (const f of FEATURES) {
       const tab = new URL(f.href, "http://x").searchParams.get("settings.tab");

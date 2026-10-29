@@ -162,12 +162,14 @@ test("مدیر: پیش‌فرض صندوق فروشگاه؛ دکمهٔ «فرو�
   await expect(selector(page).locator(".pay-tile").nth(0)).toHaveAttribute("data-key", "transfer");
 });
 
-test("صفحهٔ قدیمی سفارش اینستاگرام بی تنظیم صریح «سفارش تازه» ندارد و به حالت اینستاگرام صندوق می‌برد", async ({ page, api }) => {
+test("صفحهٔ legacy فقط برای سابقه است؛ فروش تازه از لینک صندوق به حالت اینستاگرام می‌رود", async ({ page, api }) => {
   allow(api, ["instagram.order.manage", "instagram.payment.verify"]);
   api.handlers.set("GET /instagram-orders", async (route) => {
     await route.fulfill({ json: { page: 1, perPage: 20, total: 0, pages: 1, orders: [], legacyCreate: false } });
   });
   await page.goto("/?page=instagram-orders&ig.new=1");
+  await expect(page.getByRole("navigation", { name: "ناوبری اصلی" }).getByRole("tab", { name: "سفارش اینستاگرام", exact: true })).toHaveCount(0);
+  await expect(page.getByRole("tabpanel", { name: "سوابق سفارش‌های قدیمی اینستاگرام", exact: true })).toBeVisible();
   const link = page.getByRole("link", { name: "صندوق — فروش اینستاگرام" });
   await expect(link).toBeVisible();
   await expect(page.getByRole("button", { name: "سفارش تازه" })).toHaveCount(0);
