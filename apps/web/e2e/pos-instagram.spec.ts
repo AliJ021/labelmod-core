@@ -169,6 +169,7 @@ test("صفحهٔ legacy فقط برای سابقه است؛ فروش تازه ا
   });
   await page.goto("/?page=instagram-orders&ig.new=1");
   await expect(page.getByRole("navigation", { name: "ناوبری اصلی" }).getByRole("tab", { name: "سفارش اینستاگرام", exact: true })).toHaveCount(0);
+  await expect(page.getByRole("tabpanel", { name: "سوابق سفارش‌های قدیمی اینستاگرام", exact: true })).toBeVisible();
   const link = page.getByRole("link", { name: "صندوق — فروش اینستاگرام" });
   await expect(link).toBeVisible();
   await expect(page.getByRole("button", { name: "سفارش تازه" })).toHaveCount(0);

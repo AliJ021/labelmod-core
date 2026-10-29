@@ -109,13 +109,20 @@ export function TabList<K extends string>({ id, items, value, onChange, label, c
 }
 
 /** پنل غیرفعال خالی می‌ماند؛ شناسه‌های ARIA معتبرند و صفحه پنهان بارگذاری نمی‌شود. */
-export function TabPanels<K extends string>({ id, items, value, children, className, style, mobileLabel = false }: {
+export function TabPanels<K extends string>({ id, items, value, children, className, style, mobileLabel = false, accessibleNameFor }: {
   id: string; items: readonly TabItem<K>[]; value: K | null; children: ReactNode;
   className?: string; style?: CSSProperties; mobileLabel?: boolean;
+  /** برچسب مستقل برای پنل مسیرهایی که زبانهٔ ناوبری ندارند. */
+  accessibleNameFor?: (item: TabItem<K>) => string | undefined;
 }) {
-  return <>{items.map(item => <div key={item.key} id={`${id}-panel-${item.key}`} role="tabpanel" aria-labelledby={mobileLabel ? undefined : `${id}-tab-${item.key}`} aria-label={mobileLabel ? item.label : undefined} tabIndex={0} hidden={value !== item.key} className={className} style={style}>
-    {value === item.key ? children : null}
-  </div>)}</>;
+  return <>{items.map(item => {
+    const accessibleName = accessibleNameFor?.(item);
+    return <div key={item.key} id={`${id}-panel-${item.key}`} role="tabpanel"
+      aria-labelledby={mobileLabel || accessibleName ? undefined : `${id}-tab-${item.key}`}
+      aria-label={accessibleName ?? (mobileLabel ? item.label : undefined)} tabIndex={0} hidden={value !== item.key} className={className} style={style}>
+      {value === item.key ? children : null}
+    </div>;
+  })}</>;
 }
 
 export function useTabsId() { return useId(); }
