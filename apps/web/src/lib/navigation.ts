@@ -2,8 +2,9 @@
  * رجیستری واحد ناوبری — یک طبقه‌بندی، چند نمایش (docs/UI_PATTERNS.md، «ناوبری»).
  *
  * نوار کناری دسکتاپ، نوار پایین موبایل، برگهٔ «بیشتر» و جست‌وجوی بخش‌ها
- * همه از همین فهرست ساخته می‌شوند. مقصد تازه یعنی یک سطر اینجا، نه
- * سه ویرایش در سه کامپوننت.
+ * از همین فهرست ساخته می‌شوند. مسیرهای legacy می‌توانند در ZONES بمانند، اما
+ * با `showInNavigation: false` از گزینه‌های روزمره و جست‌وجو کنار می‌روند.
+ * مقصد تازه یعنی یک سطر اینجا، نه سه ویرایش در سه کامپوننت.
  *
  * `anyOf` فقط برای **نمایش** است: مقصدی که کاربر هیچ‌کدام از
  * عملیاتش را ندارد پنهان می‌شود تا رد سرور تجربهٔ عادی نباشد. دروازهٔ
@@ -40,7 +41,10 @@ export const ZONES = [
   { key: "invoices", label: "فاکتورها", icon: "receipt", navGroup: "daily", mobilePrimary: true, anyOf: ["sale.create", "return.same_day", "return.late"] },
   { key: "returns", label: "مرجوعی", icon: "return", navGroup: "daily", mobilePrimary: false, anyOf: ["return.same_day", "return.late"] },
   { key: "site-orders", label: "سفارش‌های سایت", icon: "external", navGroup: "daily", mobilePrimary: false, anyOf: ["web.orders.view"] },
-  { key: "instagram-orders", label: "سفارش اینستاگرام", icon: "sparkle", navGroup: "daily", mobilePrimary: false, anyOf: ["instagram.order.manage", "instagram.payment.verify"] },
+  // فقط برای بازکردن سابقه‌های قدیمی با نشانی مستقیم؛ فروش جدید از صندوق انجام می‌شود.
+  // در ناوبری، جست‌وجوی سراسری و «بیشتر» نشان داده نمی‌شود.
+  { key: "instagram-orders", label: "سفارش اینستاگرام", icon: "sparkle", navGroup: "daily", mobilePrimary: false,
+    showInNavigation: false, anyOf: ["instagram.order.manage", "instagram.payment.verify"] },
   { key: "catalog", label: "کالا و قیمت", icon: "tag", navGroup: "stock", mobilePrimary: true, anyOf: ["catalog.manage"] },
   { key: "purchasing", label: "انبار و خرید", icon: "box", navGroup: "stock", mobilePrimary: false, anyOf: ["stock.receive"] },
   { key: "treasury", label: "خزانه و چک", icon: "vault", navGroup: "money", mobilePrimary: false, anyOf: ["treasury.manage"] },
@@ -49,10 +53,14 @@ export const ZONES = [
   { key: "reports", label: "گزارش‌ها", icon: "chart", navGroup: "money", mobilePrimary: false, anyOf: ["report.view"] },
   { key: "settings", label: "تنظیمات", icon: "settings", navGroup: "system", mobilePrimary: false, anyOf: [] },
 ] as const satisfies readonly {
-  key: string; label: string; icon: IconName; navGroup: NavGroup; mobilePrimary: boolean; anyOf: readonly string[];
+  key: string; label: string; icon: IconName; navGroup: NavGroup; mobilePrimary: boolean;
+  showInNavigation?: boolean; anyOf: readonly string[];
 }[];
 export type Zone = (typeof ZONES)[number]["key"];
 export type ZoneEntry = (typeof ZONES)[number];
+export function isNavigationZone(zone: ZoneEntry): boolean {
+  return !("showInNavigation" in zone && zone.showInNavigation === false);
+}
 
 /**
  * ترتیب نمایش ناوبری: گروه به گروه، و داخل گروه همان ترتیب ZONES.
@@ -60,9 +68,9 @@ export type ZoneEntry = (typeof ZONES)[number];
  */
 export type NavItem = ZoneEntry & { group: string };
 export const NAV_ITEMS: readonly NavItem[] = NAV_GROUPS.flatMap(g =>
-  ZONES.filter(z => z.navGroup === g.key).map(z => ({ ...z, group: g.label })));
+  ZONES.filter(z => z.navGroup === g.key && isNavigationZone(z)).map(z => ({ ...z, group: g.label })));
 
-/** همهٔ عملیاتی که نمایش ناوبری به آن‌ها وابسته است — مقصدها، بخش‌های تنظیمات و برداشت و پاداش. */
+/** عملیات ناوبری و مسیرهای legacy نگه‌داشته‌شده، به‌علاوهٔ تنظیمات و برداشت/پاداش. */
 export const NAV_OPERATIONS: readonly string[] = [...new Set([...ZONES.flatMap(z => z.anyOf), ...SETTINGS_OPERATIONS, ...PERSONNEL_OPERATIONS])];
 
 export type Verdict = "allow" | "deny" | "unknown";
@@ -92,10 +100,10 @@ export function accessOf(anyOf: readonly string[], verdicts: ReadonlyMap<string,
 }
 
 /**
- * کدام مقصدها دیده شوند؟ فقط «allow» — با یک استثنا: بخشی که همین حالا
- * باز است دیده می‌شود، وگرنه زبانهٔ انتخاب‌شده و پنل نشانی‌اش ناپدید
- * می‌شدند. آن بخش را کاربر خودش باز کرده؛ برچسبش افشای تازه‌ای نیست و
- * سرور همچنان دادهٔ پشتش را می‌سنجد.
+ * کدام مقصدهای ناوبری دیده شوند؟ فقط «allow» — با یک استثنا: بخش ناوبری
+ * که همین حالا باز است دیده می‌شود تا زبانهٔ انتخاب‌شده ناپدید نشود.
+ * مسیرهای `showInNavigation: false` حتی اگر مستقیم باز شوند در ناوبری نمی‌آیند.
+ * سرور همچنان دسترسی دادهٔ پشت صفحه را می‌سنجد.
  */
 export function visibleZones(verdicts: ReadonlyMap<string, Verdict>, current: Zone): NavItem[] {
   return NAV_ITEMS.filter(z => z.key === current || accessOf(z.anyOf, verdicts) === "allow");
@@ -128,7 +136,7 @@ function zoneOps(zone: Zone): readonly string[] {
 }
 export interface Feature {label: string; words: string; href: string; anyOf: readonly string[]}
 export const FEATURES: readonly Feature[] = [
-  ...ZONES.map(z => ({ label: z.label, words: z.label, href: routeUrl(z.key), anyOf: z.anyOf })),
+  ...ZONES.filter(isNavigationZone).map(z => ({ label: z.label, words: z.label, href: routeUrl(z.key), anyOf: z.anyOf })),
   { label: "چاپ فاکتور و پیش‌نویس‌ها", words: "رسید چاپ پیش نویس رهاشده", href: routeUrl("invoices"), anyOf: zoneOps("invoices") },
   { label: "فروش هر کاربر", words: "صندوق دار فروشنده ثبت کننده نهایی کننده", href: routeUrl("reports", "staff"), anyOf: ["report.view"] },
   { label: "ساخت و تغییر PIN", words: "پین رمز قفل PIN", href: routeUrl("settings", "pin"), anyOf: settingsAnyOf("pin") },
