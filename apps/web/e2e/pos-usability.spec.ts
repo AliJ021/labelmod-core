@@ -312,7 +312,7 @@ test("money grouping preserves caret, exact payment payload, and collapsed navig
   await expect(amount).toHaveValue("12,000");
   const cart=page.getByRole("region",{name:"سبد خرید",exact:true});
   await expect(cart.getByRole("searchbox")).toHaveCount(0);
-  await expect(page.locator(".pos-customer-details")).not.toHaveAttribute("open","");
+  await expect(page.locator(".pos-customer-panel summary")).toHaveCount(0);
   // دیدنی و بی‌پوشش از دید کاربر (جایگزین آزمون هندسهٔ «.pay-scroll»؛ e2e/uncovered.ts).
   await expectUncovered(amount,"کادر مبلغ");
   await expectUncovered(page.getByRole("button",{name:"دریافت وجه",exact:true}),"دریافت وجه");

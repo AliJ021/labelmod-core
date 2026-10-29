@@ -351,7 +351,6 @@ function PosScreen({ actorId, mode, onMode, browseInvoices }: {
   const [customerLoading, setCustomerLoading] = useState(false);
   const [customerError, setCustomerError] = useState<string | null>(null);
   const customerInput = useRef<HTMLInputElement>(null);
-  const customerDetails = useRef<HTMLDetailsElement>(null);
   /** فقط نمایش؛ دروازهٔ `sale.credit` سرور است. «نامعلوم» مجاز نیست. */
   const [canCredit, setCanCredit] = useState(false);
   const [canManageCustomer, setCanManageCustomer] = useState(false);
@@ -469,9 +468,6 @@ function PosScreen({ actorId, mode, onMode, browseInvoices }: {
   const policyReady = policy?.branchId === branchId;
   const linkedCustomer = customer?.id === invoice?.customerId ? customer : null;
   const customerMissing = policyReady && policy.requireCustomer && (!invoice?.customerId || !linkedCustomer?.mobile?.trim());
-  useEffect(() => {
-    if ((customerMissing || customerError || nameForMobile) && customerDetails.current) customerDetails.current.open = true;
-  }, [customerMissing, customerError, nameForMobile, ready]);
   const customerGate = !policyReady || customerMissing;
 
   // مشتری وصل‌شده — با هر تغییر `customerId` از سرور خوانده می‌شود.
@@ -1311,7 +1307,6 @@ function PosScreen({ actorId, mode, onMode, browseInvoices }: {
     canManage={canManageCustomer} onSaveName={(name) => void saveCustomerName(name)}
     busy={busy} inputRef={customerInput} />;
   const focusCustomer = () => {
-    if (customerDetails.current) customerDetails.current.open = true;
     customerInput.current?.scrollIntoView({ block: "center", behavior: "instant" });
     customerInput.current?.focus();
   };
@@ -1321,8 +1316,6 @@ function PosScreen({ actorId, mode, onMode, browseInvoices }: {
     </p> : customerMissing ? <p className="field-hint">شماره مشتری برای این صندوق الزامی است؛ پیش از دریافت وجه آن را ثبت کنید.</p> : null}
     {customerBlock}
   </>;
-  // Required identity stays visible even after linking; optional identity can fold away.
-  const customerAlwaysVisible = !policyReady || policy.requireCustomer;
 
   return (
     <div ref={rootRef} className={`pos${draftActive && !completed ? " pos--has-items" : ""}${!draftActive && !completed ? " pos--empty" : ""}`}>
@@ -1466,17 +1459,14 @@ function PosScreen({ actorId, mode, onMode, browseInvoices }: {
 
       {completed ? <SaleComplete sale={completed} onNext={nextSale} /> : <div className="pos-body">
         <div className="pos-workspace">
-          {customerAlwaysVisible ? <Solid as="section" className="pos-customer-required" aria-label="مشتری فاکتور">
+          {/* مشتری همیشه باز و پیش از جست‌وجوست؛ اختیاری/الزامی فقط سیاست فروش (`pos.require_customer`) است، نه چیدمان. */}
+          <Solid as="section" className="pos-customer-panel" aria-label="مشتری فاکتور">
             <h2 className="cart-title">مشتری فاکتور</h2>
             {customerEntry}
-          </Solid> : null}
+          </Solid>
           <Solid as="section" className="pos-search-card" aria-label="جست‌وجوی کالا">
             <PosProductPicker key={warehouseId} warehouseId={warehouseId} busy={busy} onPick={(id) => addByBarcode("", id)} />
           </Solid>
-          {!customerAlwaysVisible ? <details ref={customerDetails} className="solid pos-customer-details">
-            <summary>مشتری فاکتور <span className="muted small">{linkedCustomer?.fullName || (customerMissing ? "ثبت شماره لازم است" : "انتخاب یا افزودن مشتری")}</span></summary>
-          {customerEntry}
-          </details> : null}
         <Solid as="section" className="cart" aria-label="سبد خرید">
           <div className="cart-head">
             <h2 className="cart-title">سبد خرید</h2>

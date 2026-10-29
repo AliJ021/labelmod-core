@@ -23,17 +23,18 @@ async function open(page: Page, api: MockApi) {
   await expect(page.locator(".lines li")).toContainText("شلوار کتان");
 }
 
-test("cashier workspace keeps search above independent collapsible customer and cart without overflow", async ({page, api}, info) => {
+test("cashier workspace keeps an always-open customer panel above search and an independent cart without overflow", async ({page, api}, info) => {
   await open(page, api);
-  const customer = (await page.locator(".pos-customer-details").boundingBox())!;
-  const product = (await page.getByRole("region", {name: "افزودن کالا"}).boundingBox())!;
-  expect(product.y + product.height).toBeLessThanOrEqual(customer.y);
-  await expect(page.getByRole("region", {name:"سبد خرید", exact:true}).getByRole("region",{name:"مشتری",exact:true})).toHaveCount(0);
-  const details=page.locator(".pos-customer-details");
-  await expect(details).not.toHaveAttribute("open", "");
-  await details.locator("summary").focus();
-  await page.keyboard.press("Enter");
+  // مشتری اختیاری هم جمع‌شونده نیست: بی هیچ کلیکی دیده می‌شود و پیش از جست‌وجو می‌نشیند.
+  const panel = page.locator(".pos-customer-panel");
+  await expect(panel).toHaveCount(1);
+  await expect(panel.locator("summary, details")).toHaveCount(0);
   await expect(page.getByRole("region", {name:"مشتری",exact:true})).toBeVisible();
+  await expect(panel.getByRole("textbox", {name: /^موبایل مشتری/})).toBeVisible();
+  const customer = (await panel.boundingBox())!;
+  const product = (await page.getByRole("region", {name: "افزودن کالا"}).boundingBox())!;
+  expect(customer.y + customer.height).toBeLessThanOrEqual(product.y);
+  await expect(page.getByRole("region", {name:"سبد خرید", exact:true}).getByRole("region",{name:"مشتری",exact:true})).toHaveCount(0);
   expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
   if (process.env.POS_FLOW_EVIDENCE) await page.screenshot({path: `${process.env.POS_FLOW_EVIDENCE}-${info.project.name}.png`, fullPage: true});
 });

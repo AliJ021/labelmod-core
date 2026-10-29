@@ -194,16 +194,11 @@ a[role="tab"] { display: inline-flex; align-items: center; text-decoration: none
   html:has(.pos .pay-finish) { scroll-padding-block-end: var(--pay-finish-h, 9rem); }
 }
 
-/* هر کار یک سطح مستقل؛ کنترل اسکن از باز و بسته شدن جزئیات جدا می‌ماند. */
+/* هر کار یک سطح مستقل؛ مشتری همیشه باز و پیش از جست‌وجو، و هیچ‌کدام جمع‌شونده نیست. */
 .pos-workspace { display: grid; align-content: start; min-inline-size: 0; gap: var(--s-3); }
-.pos-search-card, .pos-customer-details, .pos-customer-required { padding: var(--s-3) var(--s-4); }
-.pos-customer-required { display: grid; gap: var(--s-3); }
+.pos-search-card, .pos-customer-panel { padding: var(--s-3) var(--s-4); }
+.pos-customer-panel { display: grid; gap: var(--s-3); }
 .pos-search-card .product-entry { border: 0; padding: 0; }
-.pos-customer-details > summary { display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: var(--s-2); cursor: pointer; min-block-size: var(--touch); font-weight: var(--weight-semibold); }
-.pos-customer-details > summary::after { content: "+"; }
-.pos-customer-details[open] > summary::after { content: "−"; }
-.pos-customer-details[open] > summary { margin-block-end: var(--s-3); }
-.pos-customer-details > summary:focus-visible { outline: 2px solid var(--accent); outline-offset: 3px; }
 .pos-gift-card { padding-inline: var(--s-2); }
 .pay-summary-fixed, .pay-body { display: grid; align-content: start; gap: var(--s-3); }
 .cart { display: grid; gap: var(--s-3); padding: var(--s-4); align-content: start; }
