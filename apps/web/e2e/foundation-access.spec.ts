@@ -130,6 +130,26 @@ test.describe("F-110-01 — conservative permission loading", () => {
     if (compact(page) && !wraps) expect(Math.abs(after.nav.height - before.nav.height), "bottom bar height stable").toBeLessThanOrEqual(1);
   });
 
+  test("the branch card holds its place: a late /branches never pushes the navigation down", async ({ page, api }) => {
+    let release!: () => void;
+    const gate = new Promise<void>(resolve => { release = resolve; });
+    api.handlers.set("GET /branches", async route => { await gate; await route.fulfill({ json: api.defaults["GET /branches"] }); });
+    await page.goto("/");
+    const dashboard = mainList(page).getByRole("tab", { name: "داشبورد", exact: true });
+    await expect(dashboard).toBeVisible();
+    await expect(mainList(page).getByRole("tab", { includeHidden: true })).toHaveCount(ALL_TABS.length);
+    // تا پاسخ نرسیده هیچ نام شعبه‌ای ادعا نمی‌شود.
+    await expect(page.getByText("شعبه آزمایشی", { exact: true })).toHaveCount(0);
+    const before = (await dashboard.boundingBox())!;
+    release();
+    if (!compact(page)) await expect(page.locator(".shell-branch:not([data-pending])").getByText("شعبه آزمایشی", { exact: true })).toBeVisible();
+    else await expect(page.locator(".shell-branch")).toHaveCount(0);
+    const after = (await dashboard.boundingBox())!;
+    for (const k of ["x", "y", "width", "height"] as const) {
+      expect(Math.abs(after[k] - before[k]), `dashboard tab ${k} stays put`).toBeLessThanOrEqual(1);
+    }
+  });
+
   test("a failed check stays hidden and offers a calm retry that asks only what failed", async ({ page, api }) => {
     const seen = await recordNavigation(page);
     const auth = authorize(api, op => op === "treasury.manage" ? "fail" : "allow");

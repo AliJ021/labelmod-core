@@ -2,7 +2,7 @@
  * کارت شعبه بالای منو و نام کاربر پایین آن (طرح ۱۰). هر دو فقط نمایش‌اند:
  * انتخاب شعبه کار صفحه‌هاست (صندوق، گزارش)، و منوی حساب همان دکمهٔ نوار بالاست.
  * شعبه از همان پاسخ `/branches` دامنهٔ خود کاربر است که صفحه‌ها می‌خوانند (`knownBranches`)؛
- * تا نرسیده یا با خطا، کارت چیزی ادعا نمی‌کند و پنهان می‌ماند.
+ * تا نرسیده یا با خطا، کارت چیزی ادعا نمی‌کند: قابش جا نگه می‌دارد و پنهان می‌ماند.
  */
 import { useEffect, useState } from "react";
 import { knownBranches, onBranches, pos, type Branch } from "../../lib/pos.ts";
@@ -20,7 +20,12 @@ export function ShellBranch() {
     }, 2500);
     return () => { off(); window.clearTimeout(timer); controller.abort(); };
   }, []);
-  if (branches.length === 0) return null;
+  // جای کارت از اول نگه داشته می‌شود: کارتی که دیر برسد کل منو را پایین می‌راند (جابه‌جایی چیدمان).
+  // تا شعبه نرسیده، همان قاب پنهان و بی‌متن است — نه نامی، نه ادعایی.
+  if (branches.length === 0) return <div className="shell-branch" data-pending="" aria-hidden="true">
+    <span className="shell-branch-icon" />
+    <span className="shell-branch-text"><strong>{"\u00a0"}</strong><small>{"\u00a0"}</small></span>
+  </div>;
   return <div className="shell-branch">
     <span className="shell-branch-icon" aria-hidden="true"><Icon name="register" size="sm" /></span>
     <span className="shell-branch-text">
