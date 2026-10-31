@@ -70,7 +70,7 @@ export function DashboardChannels({ branchId, date, salesAmount, register }: {
 
   if (load.state === "denied") return null;
   return <Solid as="section" className="pad dashboard-channels" aria-labelledby={titleId} aria-busy={load.state === "loading" || undefined}>
-    <SectionHeader id={titleId} title="فروش به تفکیک کانال" description="سهم هر کانال از فروش خالص امروز؛ جمع کانال‌ها همان کارت «فروش» است." />
+    <SectionHeader id={titleId} title="فروش به تفکیک کانال" description="سهم هر کانال از فروش خالص امروز · جمع کانال‌ها = کارت «فروش»" />
     {load.state === "loading" ? <Skeleton variant="chart" />
       : load.state === "error" ? <ResultState kind="error" title="فروش کانال‌ها خوانده نشد" description={load.message}
           actionLabel="تلاش دوباره" onAction={() => { void read(false); }} />

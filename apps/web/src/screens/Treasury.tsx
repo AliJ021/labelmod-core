@@ -1,6 +1,8 @@
 import { AmountInput } from "../components/ui/AmountInput.tsx";
 import { routeUrl } from "../lib/navigation.ts";
-import { useUrlTab } from "../lib/use-url-state.ts";
+import { useUrlState, useUrlTab } from "../lib/use-url-state.ts";
+
+const PURPOSES = ["supplier_payment", "customer_receipt", "expense", "capital", "transfer"] as const;
 import { TabList, TabPanels, useTabsId } from "../components/Tabs.tsx";
 /**
  * خزانه و چک.
@@ -120,7 +122,11 @@ function CashMoves() {
   const [error, setError] = useState<string | null>(null);
   const [note, setNote] = useState<string | null>(null);
 
-  const [purpose, setPurpose] = useState<Purpose>("expense");
+  // نوع حرکت در نشانی هم می‌نشیند تا «دریافت از مشتری» داشبورد مستقیم همین فرم را با همین نوع باز کند.
+  // مقدار ناشناختهٔ نشانی «هزینه» خوانده می‌شود، نه یک نوع ساختگی.
+  const [purposeParam, setPurposeParam] = useUrlState("treasury.purpose", "expense", true);
+  const purpose: Purpose = (PURPOSES as readonly string[]).includes(purposeParam) ? purposeParam as Purpose : "expense";
+  const setPurpose = (next: Purpose) => setPurposeParam(next);
   const [raw, setRaw] = useState("");
   const [from, setFrom] = useState("");
   const [to, setTo] = useState("");

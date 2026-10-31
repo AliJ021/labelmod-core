@@ -167,9 +167,11 @@ export const FEATURES: readonly Feature[] = [
 export interface QuickAction { key: string; href: string; name: string; icon: IconName; anyOf: readonly string[] }
 export const QUICK_ACTIONS: readonly QuickAction[] = [
   { key: "new-sale", href: routeUrl("pos"), name: "فروش جدید", icon: "register", anyOf: zoneOps("pos") },
-  { key: "drafts", href: "/?page=invoices&invoices.status=draft", name: "رسیدگی به پیش‌نویس‌ها", icon: "receipt", anyOf: zoneOps("invoices") },
-  { key: "labels", href: "/?page=catalog&catalog.labels=1", name: "چاپ لیبل بارکد", icon: "print", anyOf: FEATURES.find(f => f.href === "/?page=catalog&catalog.labels=1")?.anyOf ?? zoneOps("catalog") },
-  { key: "invoices", href: routeUrl("invoices"), name: "فاکتورها و چاپ رسید", icon: "receipt", anyOf: zoneOps("invoices") },
+  { key: "customer-receipt", href: "/?page=treasury&treasury.purpose=customer_receipt", name: "دریافت از مشتری", icon: "card", anyOf: zoneOps("treasury") },
+  { key: "cash-move", href: routeUrl("treasury"), name: "حرکت نقد صندوق", icon: "vault", anyOf: zoneOps("treasury") },
+  { key: "receipt", href: routeUrl("purchasing", "receipts"), name: "رسید خرید", icon: "box", anyOf: FEATURES.find(f => f.href === routeUrl("purchasing", "receipts"))?.anyOf ?? zoneOps("purchasing") },
+  { key: "return", href: routeUrl("returns"), name: "مرجوعی", icon: "return", anyOf: zoneOps("returns") },
+  { key: "day-report", href: routeUrl("reports"), name: "گزارش روز", icon: "chart", anyOf: zoneOps("reports") },
 ];
 
 /**

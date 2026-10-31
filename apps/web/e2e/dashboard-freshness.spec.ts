@@ -199,7 +199,8 @@ test("leaving the dashboard mid-refresh stops the chain: no request after the sc
   await expect.poll(() => unposted).toBe(2);
   const canBefore = api.calls.filter(c => c.startsWith("GET /auth/can?operation=period.close")).length;
   const hourlyBefore = hourlyCalls(api);
-  await page.getByRole("link", { name: "فاکتورها" }).first().click();
+  // رفتن از داشبورد با زبانهٔ ناوبری (کار پرتکرار «فاکتورها» در طرح ۱۰ دیگر نیست).
+  await page.getByRole("tablist", { name: "بخش‌ها", exact: true }).getByRole("tab", { name: "فاکتورها", exact: true }).click();
   await expect(page).not.toHaveURL(/\/$/);
   release();
   await page.clock.runFor(2 * 60_000);

@@ -8,6 +8,8 @@ import { useEffect, useState } from "react";
 import { knownBranches, onBranches, pos, type Branch } from "../../lib/pos.ts";
 import { formatCount } from "../../lib/format.ts";
 import { Icon } from "../Icon.tsx";
+import { AccountMenu } from "../HeaderTools.tsx";
+import type { Me } from "../../lib/session.ts";
 
 /** نشان و نام بالای نوار کناری (طرح ۱۰)؛ در گوشی همان نشان سربرگ می‌ماند. */
 export function ShellBrand() {
@@ -42,11 +44,18 @@ export function ShellBranch() {
   </div>;
 }
 
-export function ShellUser({ name, scope }: { name: string; scope: string }) {
-  const initial = name.trim().charAt(0);
+/**
+ * پای نوار کناری (طرح ۱۰): کاربر با نوع نشست — خودش دکمهٔ حساب است — و خروج کنارش.
+ * همان کنترل‌های نوار بالای گوشی‌اند؛ در دسکتاپ نوار بالا فقط قفل و تم دارد.
+ */
+export function ShellUser({ me, onPassword, onReauth, onLogout }: { me: Me; onPassword: () => void; onReauth: () => void; onLogout: () => void }) {
+  const initial = me.fullName.trim().charAt(0);
   return <div className="shell-user">
-    <span className="shell-user-avatar" aria-hidden="true">{initial}</span>
-    <span className="shell-user-text"><strong>{name}</strong><small>{scope}</small></span>
+    <AccountMenu me={me} onPassword={onPassword} onReauth={onReauth} variant="footer">
+      <span className="shell-user-avatar" aria-hidden="true">{initial}{!me.elevated ? <span className="account-pin" /> : null}</span>
+      <span className="shell-user-text" aria-hidden="true"><strong>{me.fullName}</strong><small>{me.elevated ? "نشست کامل" : "نشست PIN"}</small></span>
+    </AccountMenu>
+    <button type="button" className="icon-button shell-logout" aria-label="خروج" title="خروج" onClick={onLogout}><Icon name="logout" /></button>
   </div>;
 }
 

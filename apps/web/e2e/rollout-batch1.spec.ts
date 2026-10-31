@@ -308,7 +308,8 @@ test.describe("تنظیمات", () => {
 });
 
 test.describe("کارهای پرتکرار داشبورد", () => {
-  const ACTIONS = ["فروش جدید", "رسیدگی به پیش‌نویس‌ها", "چاپ لیبل بارکد", "فاکتورها و چاپ رسید"];
+  // طرح ۱۰ (تصمیم مالک ۲۰۲۶/۱۰/۳۱): همان شش کار پیش‌نمایش؛ مجوز هر کار از مقصدش.
+  const ACTIONS = ["فروش جدید", "دریافت از مشتری", "حرکت نقد صندوق", "رسید خرید", "مرجوعی", "گزارش روز"];
   const quick = (page: Page) => page.getByRole("navigation", { name: "کارهای پرتکرار" });
 
   test("allowed: every action; low privilege: only what the role can open", async ({ page, api }) => {
@@ -320,8 +321,9 @@ test.describe("کارهای پرتکرار داشبورد", () => {
     const allowed = new Set(["sale.create", "return.same_day"]);
     api.handlers.set("GET /auth/can", async (route, url) => { await route.fulfill({ json: { verdict: allowed.has(url.searchParams.get("operation") ?? "") ? "allow" : "deny", approver: null, reason: "" } }); });
     await page.reload();
-    await expect(quick(page).getByRole("link")).toHaveText(["فروش جدید", "رسیدگی به پیش‌نویس‌ها", "فاکتورها و چاپ رسید"]);
-    await expect(page.getByText("چاپ لیبل بارکد", { exact: true })).toHaveCount(0);
+    await expect(quick(page).getByRole("link")).toHaveText(["فروش جدید", "مرجوعی"]);
+    await expect(quick(page).getByText("رسید خرید", { exact: true })).toHaveCount(0);
+    await expect(quick(page).getByText("دریافت از مشتری", { exact: true })).toHaveCount(0);
   });
 
   test("no permission at all: no quick-action row", async ({ page, api }) => {
@@ -340,25 +342,26 @@ test.describe("کارهای پرتکرار داشبورد", () => {
     });
     let release!: () => void;
     const gate = new Promise<void>(r => { release = r; });
-    let failCatalog = true;
+    let failTreasury = true;
     api.handlers.set("GET /auth/can", async (route, url) => {
       const op = url.searchParams.get("operation") ?? "";
       if (op !== "period.close") await gate;
-      if (op === "catalog.manage" && failCatalog) { await route.fulfill({ status: 503, json: { error: { code: "unavailable", message: "سرور در دسترس نیست" } } }); return; }
+      if (op === "treasury.manage" && failTreasury) { await route.fulfill({ status: 503, json: { error: { code: "unavailable", message: "سرور در دسترس نیست" } } }); return; }
       await route.fulfill({ json: { verdict: "allow", approver: null, reason: "" } });
     });
     await page.goto("/");
     await expect(page.getByText("پیگیری ثبت حسابداری فروش", { exact: true })).toBeVisible();
-    await expect(quick(page).locator(".quick-action--pending")).toHaveCount(4);
+    await expect(quick(page).locator(".quick-action--pending")).toHaveCount(ACTIONS.length);
     await expect(quick(page).getByRole("link")).toHaveCount(0);
     release();
-    await expect(quick(page).getByRole("link")).toHaveText(["فروش جدید", "رسیدگی به پیش‌نویس‌ها", "فاکتورها و چاپ رسید"]);
+    await expect(quick(page).getByRole("link")).toHaveText(["فروش جدید", "رسید خرید", "مرجوعی", "گزارش روز"]);
     await expect(quick(page).locator(".quick-action--pending"), "no permanent placeholder after failure").toHaveCount(0);
     const note = quick(page).getByRole("status");
     await expect(note).toContainText("دسترسی بعضی کارها بررسی نشد.");
     const seen = await page.evaluate(() => [...(window as unknown as { __quickSeen: Set<string> }).__quickSeen]);
-    expect(seen, "the unchecked action was never rendered").not.toContain("چاپ لیبل بارکد");
-    failCatalog = false;
+    expect(seen, "the unchecked action was never rendered").not.toContain("دریافت از مشتری");
+    expect(seen).not.toContain("حرکت نقد صندوق");
+    failTreasury = false;
     await quick(page).getByRole("button", { name: "بررسی دوباره" }).click();
     await expect(quick(page).getByRole("link")).toHaveText(ACTIONS);
     await expect(note).toHaveCount(0);

@@ -3,6 +3,7 @@ import { Glass } from "../Glass.tsx";
 import { Icon } from "../Icon.tsx";
 import { FeatureSearch } from "../FeatureSearch.tsx";
 import { useOnline } from "../../lib/use-online.ts";
+import { ServerFreshness } from "../HeaderTools.tsx";
 
 /**
  * نوار بالای پوسته: نشان، جست‌وجوی سراسری، وضعیت اتصال و حساب.
@@ -21,6 +22,7 @@ export function ShellHeader({ searchKey, tools, trail }: { searchKey: string; to
       </strong>
       {trail}
       <FeatureSearch key={searchKey} />
+      <ServerFreshness online={online} />
       {tools}
     </Glass>
     {online ? null : <p className="shell-offline" role="alert">

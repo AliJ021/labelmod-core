@@ -99,11 +99,28 @@ async function request<T>(
       e?.correlationId ?? null,
     );
   }
+  noteServerResponse();
   if (responseType === "html") {
     if (!res.headers.get("content-type")?.includes("text/html")) throw new ApiError(502, "invalid_response", "پاسخ چاپ معتبر نیست", null);
     return text as T;
   }
   return parsed as T;
+}
+
+/**
+ * زمان آخرین پاسخ موفق سرور — همان چیزی که نشان «به‌روزشده» نوار بالا می‌گوید (طرح ۱۰).
+ * فقط پاسخِ واقعاً رسیده و موفق شمرده می‌شود؛ خطا، قطع شبکه یا لغو، آن را جلو نمی‌برد.
+ */
+let lastServerAt: number | null = null;
+const serverListeners = new Set<() => void>();
+function noteServerResponse(): void {
+  lastServerAt = Date.now();
+  for (const l of serverListeners) l();
+}
+export function lastServerResponse(): number | null { return lastServerAt; }
+export function onServerResponse(listener: () => void): () => void {
+  serverListeners.add(listener);
+  return () => { serverListeners.delete(listener); };
 }
 
 function safeParse(text: string): unknown {
