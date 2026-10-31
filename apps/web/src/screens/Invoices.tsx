@@ -153,7 +153,7 @@ export function Invoices() {
         description={tab === "drafts" ? "پیش‌نویس فروش نیست و در هیچ جمعی شمرده نمی‌شود." : "پیش‌نویس در این فهرست و در هیچ جمعی نیست؛ برای اقلام و پرداخت‌ها «جزئیات» را باز کنید."} />
       {issue ? <ResultState title="بازهٔ تاریخ کامل نیست." description={issue.message} /> : query.loading ? <ResultState kind="loading" title="در حال دریافت فاکتورها…" /> : query.error ? <ResultState kind="error" title={errorMessage(query.error)} actionLabel="تلاش دوباره" onAction={() => setRevision(v => v + 1)} /> : !query.data?.rows.length ? <ResultState title="فاکتوری با این فیلترها پیدا نشد." /> : <>
         <div className="scroll-x"><table className="grid invoice-table"><caption className="sr-only">فهرست فاکتورها؛ مبلغ‌ها به تومان</caption>
-          <thead><tr><th>شمارهٔ فاکتور</th><th>مشتری</th><th>شعبه</th><th>روش دریافت</th><th className="num">مبلغ (تومان)</th><th className="num">دریافتی</th><th>وضعیت</th><th><span className="sr-only">عملیات</span></th></tr></thead>
+          <thead><tr><th>شمارهٔ فاکتور</th><th>مشتری</th><th>شعبه</th><th>روش دریافت</th><th className="num">مبلغ (تومان)</th><th className="num">دریافتی</th><th>وضعیت</th><th>عملیات</th></tr></thead>
           <tbody>{query.data.rows.map(row => <tr key={row.id}>
             <td data-label="شمارهٔ فاکتور"><span className="num">{row.number ?? "بدون شماره"}</span><small>{date(row.occurredAt)} · {row.creatorName ?? "ثبت‌کنندهٔ نامعلوم"}</small></td>
             <td data-label="مشتری">{row.customerName ?? "مشتری عمومی"}</td>

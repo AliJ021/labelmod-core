@@ -132,16 +132,16 @@ a[role="tab"] { display: inline-flex; align-items: center; text-decoration: none
 .invoice-center { gap: 16px; }
 /* فاکتورها، طرح ۱۰: یک ردیف فیلتر بی‌قاب — جست‌وجو، تراشهٔ وضعیت و تراشهٔ «شعبه و تاریخ» که باز می‌شود. */
 .invoice-filters { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
-.invoice-search { display: flex; flex-direction: row; flex-wrap: nowrap; align-items: center; gap: 8px; flex: 1 1 260px; max-inline-size: 360px; min-block-size: 40px; padding-inline: 12px; border: var(--border-w) solid var(--rule-2); border-radius: 12px; background: var(--surface-solid); color: var(--ink-3); }
+.invoice-search { display: flex; flex-direction: row; flex-wrap: nowrap; align-items: center; gap: 8px; flex: 1 1 260px; max-inline-size: 360px; min-block-size: var(--touch); padding-inline: 12px; border: var(--border-w) solid var(--rule-2); border-radius: 12px; background: var(--surface-solid); color: var(--ink-3); }
 .invoice-search:focus-within { outline: 2px solid var(--accent); outline-offset: 2px; }
-.invoice-search input { flex: 1; inline-size: auto; min-inline-size: 0; min-block-size: 38px; margin: 0; padding: 0; border: 0; background: transparent; box-shadow: none; color: var(--ink); font: inherit; font-size: var(--text-sm); }
+.invoice-search input { flex: 1; inline-size: auto; min-inline-size: 0; min-block-size: 42px; margin: 0; padding: 0; border: 0; background: transparent; box-shadow: none; color: var(--ink); font: inherit; font-size: var(--text-sm); }
 .invoice-search input:focus-visible { outline: none; }
 .invoice-filters .segmented { padding: 0; border: 0; background: transparent; gap: 6px; }
-.invoice-filters .segmented-option span { min-block-size: 34px; padding-inline: 12px; border-radius: var(--r-pill); border: var(--border-w) solid var(--rule); background: var(--surface-solid); font-size: var(--text-xs); }
+.invoice-filters .segmented-option span { min-block-size: var(--touch); padding-inline: 12px; border-radius: var(--r-pill); border: var(--border-w) solid var(--rule); background: var(--surface-solid); font-size: var(--text-xs); }
 .invoice-filters .segmented-option input:checked + span { border-color: color-mix(in srgb, var(--brand) 60%, var(--rule)); background: color-mix(in srgb, var(--brand) 14%, var(--surface-solid)); box-shadow: none; }
 .invoice-extra-filters { min-inline-size: 0; }
 .invoice-extra-filters[open] { flex-basis: 100%; }
-.invoice-extra-filters summary { display: inline-flex; align-items: center; gap: 6px; cursor: pointer; min-block-size: 34px; padding: 4px 12px; border-radius: var(--r-pill); border: var(--border-w) solid var(--rule); background: var(--surface-solid); font-size: var(--text-xs); list-style: none; }
+.invoice-extra-filters summary { display: inline-flex; align-items: center; gap: 6px; cursor: pointer; min-block-size: var(--touch); padding: 4px 12px; border-radius: var(--r-pill); border: var(--border-w) solid var(--rule); background: var(--surface-solid); font-size: var(--text-xs); list-style: none; }
 .invoice-extra-filters summary::-webkit-details-marker { display: none; }
 .invoice-filter-fields { display: grid; grid-template-columns: repeat(3,minmax(0,1fr)); gap: 12px; margin-block-start: 12px; }
 .invoice-clear-dates { margin-block-start: 12px; }

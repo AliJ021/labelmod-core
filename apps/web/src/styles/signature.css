@@ -235,11 +235,10 @@
   .workspace > .workspace-header { position: sticky; inset-block-start: 0; gap: 12px; padding: 12px 32px; border-radius: 0 !important; border-block-end: var(--border-w) solid var(--rule); box-shadow: none; }
   .workspace-header .brand { display: none; }
   .workspace-header .feature-search { flex: 0 1 300px; min-inline-size: 260px; margin-inline-start: auto; }
-  .workspace-header .feature-search input { min-block-size: 38px; }
   .workspace-header .tools { margin-inline-start: 0; }
   .workspace > .pos-alert, .workspace > .shell-offline { margin: 16px 32px 0; }
   .workspace > main { inline-size: 100%; max-inline-size: 1500px; margin-inline: auto; padding: 30px 32px 40px; box-sizing: border-box; }
-  .workspace .workspace-zones [role="tab"] { min-block-size: 40px; border-radius: 12px; font-size: var(--text-sm); }
+  .workspace .workspace-zones [role="tab"] { min-block-size: var(--touch); border-radius: 12px; font-size: var(--text-sm); }
   .workspace .workspace-zones [role="tab"].on { background: linear-gradient(270deg, var(--accent-soft), transparent 90%), var(--surface-solid); box-shadow: var(--elev-1), inset 0 0 0 var(--border-w) var(--rule); }
   .workspace .workspace-zones [role="tab"].on::before { inset-inline-start: -16px; background: var(--brand); box-shadow: 0 0 16px color-mix(in srgb, var(--brand) 70%, transparent); }
   .workspace--collapsed .shell-brand-text, .workspace--collapsed .nav-collapse-label { position: absolute; inline-size: 1px; block-size: 1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }
@@ -327,8 +326,8 @@
 .page-eyebrow { font-size: var(--text-2xs); font-weight: var(--weight-semibold); color: var(--accent); }
 
 .dashboard .quick-actions { gap: var(--s-2); padding: 0; border: 0; }
-.dashboard .quick-action { min-block-size: 36px; padding: 6px 14px; border-radius: var(--r-pill); background: color-mix(in srgb, var(--surface-solid) 86%, transparent); box-shadow: var(--elev-1), inset 0 0 0 var(--border-w) var(--rule); font-size: var(--text-sm); }
-.dashboard .quick-action--pending { block-size: 36px; border-radius: var(--r-pill); }
+.dashboard .quick-action { min-block-size: var(--touch); padding: 6px 14px; border-radius: var(--r-pill); background: color-mix(in srgb, var(--surface-solid) 86%, transparent); box-shadow: var(--elev-1), inset 0 0 0 var(--border-w) var(--rule); font-size: var(--text-sm); }
+.dashboard .quick-action--pending { block-size: var(--touch); border-radius: var(--r-pill); }
 
 .kpi--tab .kpi-head { justify-content: flex-start; }
 .kpi--tab .kpi-icon { display: grid; place-items: center; flex: none; inline-size: 32px; block-size: 32px; border-radius: 10px; color: var(--ink-2); background: var(--surface-solid-2); box-shadow: inset 0 0 0 var(--border-w) var(--rule); }
@@ -416,7 +415,7 @@
   .pos-context { display: inline-flex; flex-wrap: wrap; align-items: center; gap: 6px; }
   .pos-context > * { display: inline-flex; align-items: center; gap: 6px; min-block-size: 30px; padding: 2px 12px; border-radius: var(--r-pill); font-size: var(--text-xs); }
   .pos-context .pos-branch, .pos-context .pill { background: var(--surface-solid); color: var(--ink-2); box-shadow: inset 0 0 0 var(--border-w) var(--rule); }
-  .pos-tools .tool { display: inline-flex; align-items: center; gap: 6px; min-block-size: 40px; padding: 6px 14px; border-radius: 12px; background: var(--surface-solid); color: var(--ink-2); box-shadow: var(--elev-1), inset 0 0 0 var(--border-w) var(--rule); font-size: var(--text-sm); text-decoration: none; }
+  .pos-tools .tool { display: inline-flex; align-items: center; gap: 6px; min-block-size: var(--touch); padding: 6px 14px; border-radius: 12px; background: var(--surface-solid); color: var(--ink-2); box-shadow: var(--elev-1), inset 0 0 0 var(--border-w) var(--rule); font-size: var(--text-sm); text-decoration: none; }
   .pos-tools .tool:hover:not(:disabled) { color: var(--ink); }
 }
 
@@ -429,3 +428,7 @@
   font-feature-settings: "ss01" 1, "tnum" 1;
   font-variant-numeric: tabular-nums;
 }
+/* رقم فارسیِ هم‌عرض حدود ۱۰٪ پهن‌تر از رقم مونوی لاتین است و جدول تنگ (۷۶۸) را از صفحه بیرون
+   می‌زد (اندازه‌گیری: جدول مغایرت نقد ۹۴۳ در برابر ۸۸۳ پیکسل). ۰٫۹۲ همان عرض پیشین را برمی‌گرداند؛
+   فقط یک بار اعمال می‌شود، نه روی سلولی که خودش مبلغ دارد (ضرب تودرتو نه). */
+.money-digits, .num:not(input):not(textarea):not(:has(.money-digits)) { font-size: 0.92em; }
