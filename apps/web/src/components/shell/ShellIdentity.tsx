@@ -1,19 +1,25 @@
 /**
  * کارت شعبه بالای منو و نام کاربر پایین آن (طرح ۱۰). هر دو فقط نمایش‌اند:
  * انتخاب شعبه کار صفحه‌هاست (صندوق، گزارش)، و منوی حساب همان دکمهٔ نوار بالاست.
- * شعبه از `/branches` دامنهٔ خود کاربر می‌آید؛ تا نرسیده یا با خطا، کارت چیزی
- * ادعا نمی‌کند و پنهان می‌ماند.
+ * شعبه از همان پاسخ `/branches` دامنهٔ خود کاربر است که صفحه‌ها می‌خوانند (`knownBranches`)؛
+ * تا نرسیده یا با خطا، کارت چیزی ادعا نمی‌کند و پنهان می‌ماند.
  */
-import { useCallback } from "react";
-import { useLatestQuery } from "../../lib/use-latest-query.ts";
-import { pos } from "../../lib/pos.ts";
+import { useEffect, useState } from "react";
+import { knownBranches, onBranches, pos, type Branch } from "../../lib/pos.ts";
 import { formatCount } from "../../lib/format.ts";
 import { Icon } from "../Icon.tsx";
 
 export function ShellBranch() {
-  const load = useCallback((signal: AbortSignal) => pos.branches({ signal }), []);
-  const q = useLatestQuery({ key: "shell-branch", load });
-  const branches = q.error ? [] : q.data?.branches ?? [];
+  const [branches, setBranches] = useState<Branch[]>(() => knownBranches() ?? []);
+  useEffect(() => {
+    const off = onBranches(setBranches);
+    // هیچ صفحه‌ای شعبه نخواند (مثلاً بارشدن مستقیم «کالا»): یک بار، پس از آرام‌شدن صفحه.
+    const controller = new AbortController();
+    const timer = window.setTimeout(() => {
+      if (knownBranches() === null) void pos.branches({ signal: controller.signal }).catch(() => {});
+    }, 2500);
+    return () => { off(); window.clearTimeout(timer); controller.abort(); };
+  }, []);
   if (branches.length === 0) return null;
   return <div className="shell-branch">
     <span className="shell-branch-icon" aria-hidden="true"><Icon name="register" size="sm" /></span>

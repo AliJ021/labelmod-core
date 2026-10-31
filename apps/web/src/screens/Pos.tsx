@@ -1479,7 +1479,7 @@ function PosScreen({ actorId, mode, onMode, browseInvoices }: {
               <small>شماره پس از ثبت نهایی اختصاص می‌یابد.</small>
             </div>
             <dl className="pos-doc-meta">
-              <div><dt>تاریخ فاکتور</dt><dd>{invoice ? formatJalaliMoment(invoice.occurredAt) : "—"}</dd></div>
+              <div><dt>تاریخ فاکتور</dt><dd>{invoice?.occurredAt ? formatJalaliMoment(invoice.occurredAt) : "—"}</dd></div>
               <div><dt>نوع فروش</dt><dd>{instagram ? "اینستاگرام" : "حضوری"}</dd></div>
             </dl>
           </div>

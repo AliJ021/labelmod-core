@@ -353,7 +353,8 @@ export interface CreatedInvoice extends Invoice {
 
 /** فقط شعبه‌های مجاز همین کاربر، با انبارهای فعالشان. */
 export const pos = {
-  branches: (opts?: RequestOptions) => api.get<{ branches: Branch[]; allBranches: boolean }>("/branches", opts),
+  branches: (opts?: RequestOptions) => api.get<{ branches: Branch[]; allBranches: boolean }>("/branches", opts)
+    .then(r => { lastBranches = r.branches; for (const l of branchListeners) l(r.branches); return r; }),
 
   /** `creditEnabled` نبود (API پیش از ۰۹۶) یعنی روشن — همان رفتار قبلی. */
   policy: (branchId: string, opts?: RequestOptions) => api.get<{ requireCustomer: boolean; creditEnabled?: boolean; allowFractionalQty?: boolean }>(
@@ -658,4 +659,17 @@ export const pos = {
 export interface DraftPayment {
   id: string; amount: string; status: string; direction: string; kind: string; name: string;
   settlement_id: string | null; settled_at: string | null; fee_amount: string;
+}
+
+/**
+ * آخرین پاسخ `/branches` همین نشست، برای کارت شعبهٔ منو (طرح ۱۰). کارت درخواست خودش را
+ * نمی‌زند: صفحه‌ها همین مسیر را می‌خوانند و کارت از همان پاسخ پر می‌شود. یک درخواستِ
+ * اضافه‌ی هم‌زمان با بارشدن صفحه، در جابه‌جایی سریع (WebKit) خطای صفحه گزارش می‌شد.
+ */
+let lastBranches: Branch[] | null = null;
+const branchListeners = new Set<(b: Branch[]) => void>();
+export function knownBranches(): Branch[] | null { return lastBranches; }
+export function onBranches(listener: (b: Branch[]) => void): () => void {
+  branchListeners.add(listener);
+  return () => { branchListeners.delete(listener); };
 }
