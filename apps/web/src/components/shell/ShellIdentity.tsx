@@ -21,12 +21,11 @@ export function ShellBranch() {
   const [branches, setBranches] = useState<Branch[]>(() => knownBranches() ?? []);
   useEffect(() => {
     const off = onBranches(setBranches);
-    // هیچ صفحه‌ای شعبه نخواند (مثلاً بارشدن مستقیم «کالا»): یک بار، پس از آرام‌شدن صفحه.
+    // اگر هنوز کسی شعبه را نخوانده، همان لحظهٔ بار شدن و هم‌زمان با درخواست‌های خود صفحه خوانده می‌شود.
+    // درخواستِ تأخیری (۲٫۵ ثانیه) وسط جابه‌جایی صفحه می‌ماند و WebKit قطعش را خطای صفحه گزارش می‌کرد.
     const controller = new AbortController();
-    const timer = window.setTimeout(() => {
-      if (knownBranches() === null) void pos.branches({ signal: controller.signal }).catch(() => {});
-    }, 2500);
-    return () => { off(); window.clearTimeout(timer); controller.abort(); };
+    if (knownBranches() === null) void pos.branches({ signal: controller.signal }).catch(() => {});
+    return () => { off(); controller.abort(); };
   }, []);
   // جای کارت از اول نگه داشته می‌شود: کارتی که دیر برسد کل منو را پایین می‌راند (جابه‌جایی چیدمان).
   // تا شعبه نرسیده، همان قاب پنهان و بی‌متن است — نه نامی، نه ادعایی.
