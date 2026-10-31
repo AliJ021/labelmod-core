@@ -169,6 +169,12 @@
    تزئینی است و با «/ ""» از صفحه‌خوان پنهان: فهرست خودش «۱ از ۳» را می‌گوید. */
 .pos-bar { flex-wrap: wrap; }
 .pos-title { margin: 0; flex-basis: 100%; font-size: clamp(var(--text-xl), 1.2rem + 0.8vw, var(--text-2xl)); font-weight: var(--weight-heavy); line-height: var(--leading-tight); }
+/* زیر ۹۰۰ (تبلت و موبایل) عنوان دیدنی نیست ولی h1 برای صفحه‌خوان می‌ماند. ۴۰ پیکسل ارتفاعش در
+   ۷۶۸×۶۰۰ «نهایی‌کردن» را نیمه زیر نوار پایین می‌برد و WebKit عنصر نیمه‌دیدنی را با focus() اسکرول
+   نمی‌کند (CI، pos-pay-visibility). نوار صندوق تبلت جای عنوان ندارد؛ شیفت و شعبه همان‌جاست. */
+@media (max-width: 899.98px) {
+  .pos-title { position: absolute; inline-size: 1px; block-size: 1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }
+}
 .cart .lines { counter-reset: pos-line; }
 .cart .lines > li { counter-increment: pos-line; position: relative; padding-inline: var(--s-2); border-radius: var(--r-sm); }
 .cart .lines > li::before { content: counter(pos-line, persian) / ""; flex: 0 0 auto; min-inline-size: 1.5rem; color: var(--ink-3); font-size: var(--text-sm); font-variant-numeric: tabular-nums; text-align: center; }
