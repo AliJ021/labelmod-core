@@ -247,3 +247,22 @@ test("sales by channel: amounts from the server, total equals the sales card, do
   await expect(page.getByRole("heading", { name: "امروز", exact: true })).toBeVisible();
   await expect(card).toHaveCount(0);
 });
+
+test("dashboard sections are tabs: overview first, each tab in the URL, and only one section mounted at a time", async ({ page, api }) => {
+  await page.goto("/");
+  const tabs = page.getByRole("tablist", { name: "بخش‌های داشبورد" });
+  await expect(tabs.getByRole("tab")).toHaveText(["نمای کلی", "فروش و پرداخت", "عملیات روزانه", "همگام‌سازی سایت"]);
+  await expect(tabs.getByRole("tab", { name: "نمای کلی" })).toHaveAttribute("aria-selected", "true");
+  await expect(page.getByRole("tablist", { name: "شاخص‌های امروز" })).toBeVisible();
+  // بخش‌های دیگر در «نمای کلی» درخواستی نمی‌زنند.
+  expect(api.calls.some(c => c.startsWith("GET /dashboard/stock-sync"))).toBe(false);
+  await tabs.getByRole("tab", { name: "همگام‌سازی سایت" }).click();
+  await expect(page).toHaveURL(/dashboard\.tab=sync/);
+  await expect(page.getByRole("region", { name: "همگام‌سازی سایت" })).toBeVisible();
+  await expect(page.getByRole("tablist", { name: "شاخص‌های امروز" })).toHaveCount(0);
+  await page.goBack();
+  await expect(page.getByRole("tablist", { name: "شاخص‌های امروز" })).toBeVisible();
+  // زبانهٔ ناشناخته به «نمای کلی» برمی‌گردد.
+  await page.goto("/?page=dashboard&dashboard.tab=nope");
+  await expect(tabs.getByRole("tab", { name: "نمای کلی" })).toHaveAttribute("aria-selected", "true");
+});

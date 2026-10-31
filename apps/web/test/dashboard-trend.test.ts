@@ -231,5 +231,7 @@ describe("زبانه‌های شاخص — ساختار", () => {
     assert.doesNotMatch(dash, /new Date\(/, "داشبورد ساعت مرورگر را نمی‌خواند");
     assert.doesNotMatch(dash, /reports\.hourly\(/, "روند قدیمی (بی مرجوعی) دیگر منبع داشبورد نیست");
     assert.doesNotMatch(dash, /useUrlState|useUrlTab/, "انتخاب زبانه محلی است، نه در نشانی");
+    // زبانه‌های **بخش** (طرح ۱۰) مقصد ناوبری‌اند: تعریفشان در رجیستری و خواندنشان از نشانی بیرون از این فایل.
+    assert.match(dash, /useDashboardTab\(access\)/);
   });
 });

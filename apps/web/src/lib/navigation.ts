@@ -190,6 +190,22 @@ export function zoneHeader(key: string): { eyebrow: string; title: string; conte
   return context && zone ? { eyebrow: zone.group, title: zone.label, context } : null;
 }
 
+/**
+ * زبانه‌های داشبورد (طرح ۱۰) — مقصد ناوبری‌اند، پس همین‌جا. «نمای کلی» همیشه هست؛
+ * بقیه فقط با allow صریح همان مجوزی که بخش خودش می‌خواست. انتخاب **شاخص** درون
+ * «نمای کلی» (فروش، دریافتی، سود) محلی می‌ماند و در نشانی نیست.
+ */
+export const DASHBOARD_TABS = [
+  { key: "overview", label: "نمای کلی", anyOf: [] },
+  { key: "sales", label: "فروش و پرداخت", anyOf: ["report.view"] },
+  { key: "ops", label: "عملیات روزانه", anyOf: ["report.view"] },
+  { key: "sync", label: "همگام‌سازی سایت", anyOf: ["settings.view"] },
+] as const;
+export type DashboardTab = (typeof DASHBOARD_TABS)[number]["key"];
+export function dashboardTabs(verdicts: NavAccess["verdicts"]): (typeof DASHBOARD_TABS)[number][] {
+  return DASHBOARD_TABS.filter(t => t.anyOf.length === 0 || accessOf(t.anyOf, verdicts) === "allow");
+}
+
 export interface QuickActionView {
   /** فقط کارهای صریحاً مجاز. */
   visible: QuickAction[];

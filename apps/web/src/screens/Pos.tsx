@@ -51,7 +51,7 @@ import { cartCounts, checkoutErrorMessage, checkoutTotals, finalAmounts, intentF
   paymentFailureKind, paymentLayout, resolveIntentStatus, type PaymentIntent, type PaymentOption, type PaymentPhase,
   type UnresolvedReason } from "../lib/pos-payments.ts";
 import { clearPendingPayment, readPendingPayment, writePendingPayment, type PendingPayment } from "../lib/pending-payment.ts";
-import { formatCount, formatQty } from "../lib/format.ts";
+import { formatCount, formatJalaliMoment, formatQty } from "../lib/format.ts";
 import { quantityUnits, saleQuantity } from "../lib/sale-quantity.ts";
 import { session } from "../lib/session.ts";
 import { people } from "../lib/people.ts";
@@ -1470,6 +1470,19 @@ function PosScreen({ actorId, mode, onMode, browseInvoices }: {
             <PosProductPicker key={warehouseId} warehouseId={warehouseId} busy={busy} onPick={(id) => addByBarcode("", id)} />
           </Solid>
         <Solid as="section" className="cart" aria-label="سبد خرید">
+          {/* طرح ۱۰: سربرگ سند. شماره فقط در ثبت نهایی تخصیص می‌یابد (قاعدهٔ شماره‌گذاری)؛
+              تاریخ همان زمان فاکتور پیش‌نویس در سرور است و پیش از اولین قلم «—». */}
+          <div className="pos-doc-head">
+            <span className="pos-doc-icon" aria-hidden="true"><Icon name="receipt" /></span>
+            <div className="pos-doc-title">
+              <strong>{instagram ? "فاکتور فروش اینستاگرام" : "فاکتور فروش جدید"}</strong>
+              <small>شماره پس از ثبت نهایی اختصاص می‌یابد.</small>
+            </div>
+            <dl className="pos-doc-meta">
+              <div><dt>تاریخ فاکتور</dt><dd>{invoice ? formatJalaliMoment(invoice.occurredAt) : "—"}</dd></div>
+              <div><dt>نوع فروش</dt><dd>{instagram ? "اینستاگرام" : "حضوری"}</dd></div>
+            </dl>
+          </div>
           <div className="cart-head">
             <h2 className="cart-title">سبد خرید</h2>
             {lines.length ? <span className="cart-count">{countLabel}</span> : null}

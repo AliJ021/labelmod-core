@@ -14,7 +14,7 @@ const kpi = (page: Page, label: string) => section(page).getByRole("region", { n
 
 test.describe("مرور دوره در داشبورد", () => {
   test("7 days by default, bounds from the server's business day; channels, returns ≠ refunds, payment mix, exact deltas", async ({ page, api }) => {
-    await page.goto("/");
+    await page.goto("/?page=dashboard&dashboard.tab=sales");
     await expect(section(page)).toBeVisible();
     await expect.poll(() => periodCalls(api).length).toBe(1);
     expect(query(periodCalls(api)[0]!)).toEqual({ from: "2026-09-10", to: "2026-09-16", prevFrom: "2026-09-03", prevTo: "2026-09-09", branchId: "b1" });
@@ -61,7 +61,7 @@ test.describe("مرور دوره در داشبورد", () => {
       body.current.totals.salesAmount = "77700000";
       await route.fulfill({ json: body });
     });
-    await page.goto("/");
+    await page.goto("/?page=dashboard&dashboard.tab=sales");
     await expect.poll(() => n).toBe(1);
     await section(page).getByRole("radio", { name: "ماه قبل" }).check();
     await expect.poll(() => n).toBe(2);
@@ -77,7 +77,7 @@ test.describe("مرور دوره در داشبورد", () => {
     const body = periodBody({ profitVisible: false });
     body.current.channels[1] = { ...body.current.channels[1]!, invoiceCount: 0, averageInvoice: null };
     api.defaults["GET /reports/dashboard/period"] = body;
-    await page.goto("/");
+    await page.goto("/?page=dashboard&dashboard.tab=sales");
     await expect(kpi(page, "سود")).toContainText("دسترسی بهای تمام‌شده لازم است");
     await expect(kpi(page, "سود").locator(".money--unknown")).toHaveCount(1);
     await expect(kpi(page, "سود")).not.toContainText(/\b0\b|۰ تومان/);
@@ -89,7 +89,7 @@ test.describe("مرور دوره در داشبورد", () => {
     api.handlers.set("GET /reports/dashboard/period", async route => {
       await route.fulfill({ status: 500, json: { error: { code: "internal", message: "خطای سرور", correlationId: "req-p1" } } });
     });
-    await page.goto("/");
+    await page.goto("/?page=dashboard&dashboard.tab=sales");
     await expect(section(page)).toContainText("مرور دوره خوانده نشد");
     await expect(section(page)).toContainText("req-p1");
     await expect(section(page)).toContainText("به معنای «فروشی نبود» نیست");
@@ -99,7 +99,7 @@ test.describe("مرور دوره در داشبورد", () => {
   test("all-branch scope: “all branches” by default (no branchId), and a branch can be picked", async ({ page, api }) => {
     api.defaults["GET /branches"] = { allBranches: true, branches: [
       { id: "b1", code: "A", name: "شعبه یک", warehouses: [] }, { id: "b2", code: "B", name: "شعبه دو", warehouses: [] }] };
-    await page.goto("/");
+    await page.goto("/?page=dashboard&dashboard.tab=sales");
     const select = section(page).getByLabel("شعبه");
     await expect(select).toHaveValue("all");
     await expect.poll(() => periodCalls(api).length).toBe(1);
@@ -112,7 +112,7 @@ test.describe("مرور دوره در داشبورد", () => {
   test("multi-branch without all-branch scope: no “all” option; single branch: no selector", async ({ page, api }) => {
     api.defaults["GET /branches"] = { allBranches: false, branches: [
       { id: "b1", code: "A", name: "شعبه یک", warehouses: [] }, { id: "b2", code: "B", name: "شعبه دو", warehouses: [] }] };
-    await page.goto("/");
+    await page.goto("/?page=dashboard&dashboard.tab=sales");
     const select = section(page).getByLabel("شعبه");
     await expect(select.locator("option")).toHaveText(["شعبه یک", "شعبه دو"]);
     await expect.poll(() => periodCalls(api).length).toBe(1);
@@ -133,7 +133,7 @@ test.describe("مرور دوره در داشبورد", () => {
       if (mine === 3 || mine === 4) await new Promise<void>(r => holds.set(mine, r));
       await route.fulfill({ json: body }).catch(() => {});
     });
-    await page.goto("/");
+    await page.goto("/?page=dashboard&dashboard.tab=sales");
     const freshness = page.locator(".freshness");
     await expect(freshness).toHaveAttribute("data-state", "fresh");
     await section(page).getByRole("radio", { name: "۳۰ روز اخیر" }).check();
@@ -166,7 +166,7 @@ test.describe("مرور دوره در داشبورد", () => {
       if (++n === 1) { await route.fulfill({ json: periodBody() }); return; }
       await route.fulfill({ status: 500, json: { error: { code: "internal", message: "خطای سرور", correlationId: "req-p9" } } });
     });
-    await page.goto("/");
+    await page.goto("/?page=dashboard&dashboard.tab=sales");
     await expect(kpi(page, "فروش خالص")).toContainText("5٬950٬000٫1");
     await page.getByRole("button", { name: /به‌روزرسانی/ }).click();
     const freshness = page.locator(".freshness");
@@ -180,7 +180,7 @@ test.describe("مرور دوره در داشبورد", () => {
     api.handlers.set("GET /auth/can", async (route, url) => {
       await route.fulfill({ json: { verdict: url.searchParams.get("operation") === "report.view" ? "deny" : "allow", approver: null, reason: "" } });
     });
-    await page.goto("/");
+    await page.goto("/?page=dashboard&dashboard.tab=sales");
     await expect(page.getByRole("tablist", { name: "شاخص‌های امروز" })).toBeVisible();
     await expect(section(page)).toHaveCount(0);
     expect(periodCalls(api)).toEqual([]);

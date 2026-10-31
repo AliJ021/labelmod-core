@@ -26,11 +26,13 @@
  * کهنه‌ای (خواندن روند پیش از به‌روزرسانی) نتیجهٔ تازه‌تر را بازنویسی نمی‌کند. شکست داده‌های
  * قبلی را نگه می‌دارد و صریح می‌گوید از کی‌اند — نه صفحهٔ خطا، نه سبز.
  */
-import { useCallback, useEffect, useId, useLayoutEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useId, useLayoutEffect, useRef, useState, type ReactNode } from "react";
 import { navigate } from "../lib/use-url-state.ts";
+import { useDashboardTab } from "./dashboard-tab.ts";
+import { TabList, TabPanels, useTabsId } from "../components/Tabs.tsx";
 import { Solid } from "../components/Glass.tsx";
 import { Icon } from "../components/Icon.tsx";
-import { accessOf, quickActionView, routeUrl, type NavAccess } from "../lib/navigation.ts";
+import { accessOf, quickActionView, routeUrl, type DashboardTab, type NavAccess } from "../lib/navigation.ts";
 import { ApiError } from "../lib/api.ts";
 import { parseRial } from "../lib/money.ts";
 import { channelLabel, formatCount, formatGregorian, formatJalali } from "../lib/format.ts";
@@ -137,7 +139,11 @@ async function readToday(branchId: string, signal: AbortSignal, step?: (part: Pa
   return { report, unposted, mayClose, hourly };
 }
 
+type DashTab = DashboardTab;
+
 export function Dashboard({ access }: { access: NavAccess }) {
+  const dashTabsId = useTabsId();
+  const { tabs: dashTabs, tab: dashTab, setTab: setDashTab } = useDashboardTab(access);
   const [branch, setBranch] = useState<Branch | null>(null);
   /** همهٔ شعبه‌های در دامنه و اینکه دامنه سراسری است — برای انتخاب‌گر «مرور دوره». */
   const [scope, setScope] = useState<{ branches: Branch[]; allBranches: boolean }>({ branches: [], allBranches: false });
@@ -483,6 +489,11 @@ export function Dashboard({ access }: { access: NavAccess }) {
           disabled={!online} onClick={() => { void refresh(); }}>به‌روزرسانی</Button>}
       />
 
+      {/* طرح ۱۰: بخش‌های داشبورد زبانه‌اند؛ هر زبانه همان دروازهٔ مجوز بخش خودش را دارد. */}
+      {dashTabs.length > 1 ? <TabList id={dashTabsId} items={dashTabs} value={dashTab} onChange={setDashTab}
+        label="بخش‌های داشبورد" hrefFor={key => routeUrl("dashboard", key)} /> : null}
+      <DashPanels id={dashTabsId} tabs={dashTabs} value={dashTab}>
+      {dashTab === "overview" ? <>
       {/* طرح ۱۰: کارهای پرتکرار پیش از شاخص‌ها — اولین کاری که صبح انجام می‌شود. */}
       <QuickActions access={access} />
 
@@ -504,24 +515,6 @@ export function Dashboard({ access }: { access: NavAccess }) {
       {/* طرح ۱۰: سهم کانال‌ها کنار روند — همان روز و همان دروازهٔ خلاصه روز. */}
       {branch ? <DashboardChannels branchId={branch.id} date={report.businessDate} salesAmount={report.salesAmount} register={registerChannels} /> : null}
       </Solid>
-
-      {/* مرور دوره (دستهٔ B): فقط برای نقش دارای گزارش؛ پیش از پاسخ دسترسی رندر نمی‌شود. */}
-      {accessOf(["report.view"], access.verdicts) === "allow"
-        ? <DashboardPeriod today={report.businessDate} branches={scope.branches} allBranches={scope.allBranches} register={registerPeriod} />
-        : null}
-
-      {/* همگام‌سازی سایت (دستهٔ C): فقط با allow صریح `settings.view` — مثل «سلامت سیستم». */}
-      {accessOf(["settings.view"], access.verdicts) === "allow" ? <DashboardSync register={registerSync} /> : null}
-
-      {/*
-        کارهای عملیاتی (دستهٔ D): شیفت، چک و دریافتنیِ همین شعبه. با allow صریح `report.view` رندر می‌شود؛ بخش
-        چک را سرور با `cheque.manage` خودش می‌دهد یا `denied` می‌کند.
-      */}
-      {branch && accessOf(["report.view"], access.verdicts) === "allow"
-        ? <DashboardOperations branchId={branch.id} register={registerOps} links={{
-            reports: accessOf(["report.view"], access.verdicts) === "allow",
-            treasury: accessOf(["treasury.manage"], access.verdicts) === "allow" }} />
-        : null}
 
       {/*
         پیگیری ثبت حسابداری فروش — پس از شاخص‌ها و روند، بسته به‌طور پیش‌فرض. خلاصه
@@ -566,8 +559,29 @@ export function Dashboard({ access }: { access: NavAccess }) {
         </details>
       </Solid>
 
+      </> : dashTab === "sales" ? <>
+      {accessOf(["report.view"], access.verdicts) === "allow"
+        ? <DashboardPeriod today={report.businessDate} branches={scope.branches} allBranches={scope.allBranches} register={registerPeriod} />
+        : null}
+      </> : dashTab === "ops" ? <>
+      {branch && accessOf(["report.view"], access.verdicts) === "allow"
+        ? <DashboardOperations branchId={branch.id} register={registerOps} links={{
+            reports: accessOf(["report.view"], access.verdicts) === "allow",
+            treasury: accessOf(["treasury.manage"], access.verdicts) === "allow" }} />
+        : null}
+      </> : <>
+      {accessOf(["settings.view"], access.verdicts) === "allow" ? <DashboardSync register={registerSync} /> : null}
+      </>}
+      </DashPanels>
     </div>
   );
+}
+
+/** پنل زبانه‌ها فقط وقتی بیش از یک زبانه هست؛ وگرنه tablist نیست و aria-labelledby نباید به زبانهٔ ناموجود اشاره کند. */
+function DashPanels({ id, tabs, value, children }: { id: string; tabs: readonly { key: DashTab; label: string }[]; value: DashTab; children: ReactNode }) {
+  return tabs.length > 1
+    ? <TabPanels id={id} items={tabs} value={value} className="stack section-stack dashboard-panel">{children}</TabPanels>
+    : <div className="stack section-stack dashboard-panel">{children}</div>;
 }
 
 /**

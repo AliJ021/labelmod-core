@@ -30,7 +30,7 @@ const busy = syncBody({
 test.describe("همگام‌سازی سایت در داشبورد", () => {
   test("two directions, each state counted on its own; unreported counts are “—” not 0; sample is labelled N of total; no replay control", async ({ page, api }) => {
     api.defaults["GET /dashboard/stock-sync"] = busy;
-    await page.goto("/");
+    await page.goto("/?page=dashboard&dashboard.tab=sync");
     await expect(section(page)).toBeVisible();
     await expect(core(page)).toContainText("۲ پیام متوقف شده و خودکار دوباره فرستاده نمی‌شود");
     await expect(row(core(page), "در صف")).toContainText("۳");
@@ -63,7 +63,7 @@ test.describe("همگام‌سازی سایت در داشبورد", () => {
     api.defaults["GET /dashboard/stock-sync"] = syncBody({
       woo: { state: "unknown", code: "timeout", message: "سایت در مهلت پاسخ نداد.", fetchedAt: "2026-09-16T08:00:00.000Z" },
     });
-    await page.goto("/");
+    await page.goto("/?page=dashboard&dashboard.tab=sync");
     await expect(woo(page)).toContainText("نامعلوم — سایت در مهلت پاسخ نداد.");
     await expect(woo(page)).toContainText("نبودِ گزارش به معنای «صف خالی» نیست");
     await expect(woo(page).getByRole("table")).toHaveCount(0);
@@ -76,7 +76,7 @@ test.describe("همگام‌سازی سایت در داشبورد", () => {
     api.handlers.set("GET /dashboard/stock-sync", async route => {
       await route.fulfill({ status: 500, json: { error: { code: "internal", message: "خطای سرور", correlationId: "req-s1" } } });
     });
-    await page.goto("/");
+    await page.goto("/?page=dashboard&dashboard.tab=sync");
     await expect(section(page)).toContainText("وضعیت همگام‌سازی خوانده نشد");
     await expect(section(page)).toContainText("req-s1");
     await expect(section(page)).toContainText("به معنای «صف خالی» نیست");
@@ -98,7 +98,7 @@ test.describe("همگام‌سازی سایت در داشبورد", () => {
       if (mine === 2) { await route.fulfill({ json: busy }); return; }
       await route.fulfill({ status: 500, json: { error: { code: "internal", message: "خطای سرور", correlationId: "req-s9" } } });
     });
-    await page.goto("/");
+    await page.goto("/?page=dashboard&dashboard.tab=sync");
     const refresh = page.getByRole("button", { name: /به‌روزرسانی/ });
     await expect(refresh).toBeEnabled();
     await expect.poll(() => n).toBe(1);
@@ -123,7 +123,7 @@ test.describe("همگام‌سازی سایت در داشبورد", () => {
     api.handlers.set("GET /auth/can", async (route, url) => {
       await route.fulfill({ json: { verdict: url.searchParams.get("operation") === "settings.view" ? "deny" : "allow", approver: null, reason: "" } });
     });
-    await page.goto("/");
+    await page.goto("/?page=dashboard&dashboard.tab=sync");
     await expect(page.getByRole("tablist", { name: "شاخص‌های امروز" })).toBeVisible();
     await expect(page.getByRole("region", { name: "مرور دوره" })).toBeVisible();
     await expect(section(page)).toHaveCount(0);
@@ -136,7 +136,7 @@ test.describe("همگام‌سازی سایت در داشبورد", () => {
       n += 1;
       await route.fulfill({ status: 403, json: { error: { code: "forbidden", message: "دسترسی ندارید", correlationId: "req-s4" } } });
     });
-    await page.goto("/");
+    await page.goto("/?page=dashboard&dashboard.tab=sync");
     await expect.poll(() => n).toBe(1);
     await expect(page.getByRole("region", { name: "مرور دوره" })).toBeVisible();
     await expect(section(page)).toHaveCount(0);

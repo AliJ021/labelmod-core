@@ -24,7 +24,7 @@ const busy = opsBody({
 test.describe("کارهای عملیاتی داشبورد", () => {
   test("shifts, cheques and customer balances of the dashboard branch; exact amounts; only overdue and carried-over shifts ask for attention", async ({ page, api }) => {
     api.defaults["GET /dashboard/operations"] = busy;
-    await page.goto("/");
+    await page.goto("/?page=dashboard&dashboard.tab=ops");
     await expect(section(page)).toBeVisible();
 
     const shifts = tile(page, "شیفت صندوق");
@@ -60,7 +60,7 @@ test.describe("کارهای عملیاتی داشبورد", () => {
   });
 
   test("a calm day stays calm: no attention without overdue cheques or carried-over shifts", async ({ page }) => {
-    await page.goto("/");
+    await page.goto("/?page=dashboard&dashboard.tab=ops");
     await expect(tile(page, "شیفت صندوق")).toContainText("۱ شیفت باز");
     await expect(tile(page, "سررسید چک")).toContainText("چک سررسیدگذشته یا نزدیکی نیست");
     await expect(section(page).locator('[data-state="attention"]')).toHaveCount(0);
@@ -70,14 +70,14 @@ test.describe("کارهای عملیاتی داشبورد", () => {
     const soon = { count: 1, amount: "5000000", nextDue: "2026-09-18" }, none = { count: 0, amount: "0", nextDue: null };
     api.defaults["GET /dashboard/operations"] = opsBody({ cheques: { state: "ready", warningDays: 7,
       received: { overdue: none, dueSoon: soon }, issued: { overdue: none, dueSoon: none } } });
-    await page.goto("/");
+    await page.goto("/?page=dashboard&dashboard.tab=ops");
     await expect(tile(page, "سررسید چک")).toContainText("چک نزدیک به سررسید");
     await expect(tile(page, "سررسید چک").locator('[data-state="attention"]')).toHaveCount(0);
   });
 
   test("a denied section is not rendered — never zeros", async ({ page, api }) => {
     api.defaults["GET /dashboard/operations"] = opsBody({ cheques: { state: "denied" } });
-    await page.goto("/");
+    await page.goto("/?page=dashboard&dashboard.tab=ops");
     await expect(tile(page, "شیفت صندوق")).toBeVisible();
     await expect(tile(page, "ماندهٔ مشتریان")).toBeVisible();
     await expect(tile(page, "سررسید چک")).toHaveCount(0);
@@ -88,7 +88,7 @@ test.describe("کارهای عملیاتی داشبورد", () => {
     api.handlers.set("GET /auth/can", async (route, url) => {
       await route.fulfill({ json: { verdict: url.searchParams.get("operation") === "treasury.manage" ? "deny" : "allow", approver: null, reason: "" } });
     });
-    await page.goto("/");
+    await page.goto("/?page=dashboard&dashboard.tab=ops");
     await expect(tile(page, "سررسید چک")).toBeVisible();
     await expect(tile(page, "سررسید چک").getByRole("link")).toHaveCount(0);
     await expect(tile(page, "ماندهٔ مشتریان").getByRole("link", { name: "دریافتنی و پرداختنی" })).toBeVisible();
@@ -97,7 +97,7 @@ test.describe("کارهای عملیاتی داشبورد", () => {
   test("low stock: exact count per selling warehouse and a link to the same list for this branch; zero is calm and has no link", async ({ page, api }) => {
     api.defaults["GET /dashboard/operations"] = opsBody({ lowStock: { state: "ready", threshold: "2", total: 7, warehouses: [
       { id: "w2", name: "انبار پشتیبان", count: 2 }, { id: "w1", name: "قفسه فروشگاه", count: 5 }] } });
-    await page.goto("/");
+    await page.goto("/?page=dashboard&dashboard.tab=ops");
     const low = tile(page, "کمبود موجودی");
     await expect(low).toContainText("۷ مورد به آستانهٔ 2 یا کمتر رسیده");
     await expect(low.locator('.ops-verdict [data-state="warning"]')).toHaveCount(1);
@@ -114,7 +114,7 @@ test.describe("کارهای عملیاتی داشبورد", () => {
 
   test("low stock with no threshold is “unknown”, never zero; denied low stock is hidden", async ({ page, api }) => {
     api.defaults["GET /dashboard/operations"] = opsBody({ lowStock: { state: "unknown", reason: "آستانهٔ کمبود موجودی تعریف نشده است." } });
-    await page.goto("/");
+    await page.goto("/?page=dashboard&dashboard.tab=ops");
     const low = tile(page, "کمبود موجودی");
     await expect(low).toContainText("شمار کمبود معلوم نیست");
     await expect(low).toContainText("این به معنای «کمبودی نیست» نیست");
@@ -129,7 +129,7 @@ test.describe("کارهای عملیاتی داشبورد", () => {
 
   test("everything denied hides the card; no report.view sends nothing", async ({ page, api }) => {
     api.defaults["GET /dashboard/operations"] = opsBody({ shifts: { state: "denied" }, cheques: { state: "denied" }, receivables: { state: "denied" }, lowStock: { state: "denied" } });
-    await page.goto("/");
+    await page.goto("/?page=dashboard&dashboard.tab=ops");
     await expect.poll(() => opsCalls(api).length).toBe(1);
     await expect(page.getByRole("tablist", { name: "شاخص‌های امروز" })).toBeVisible();
     await expect(section(page)).toHaveCount(0);
@@ -139,7 +139,7 @@ test.describe("کارهای عملیاتی داشبورد", () => {
     api.handlers.set("GET /auth/can", async (route, url) => {
       await route.fulfill({ json: { verdict: url.searchParams.get("operation") === "report.view" ? "deny" : "allow", approver: null, reason: "" } });
     });
-    await page.goto("/");
+    await page.goto("/?page=dashboard&dashboard.tab=ops");
     await expect(page.getByRole("tablist", { name: "شاخص‌های امروز" })).toBeVisible();
     // کنترل منفیِ معنادار: کارت همگام‌سازی در همان رندرِ پس از دسترسی mount می‌شود که این کارت می‌شد. تا دادهٔ
     // آن نرسیده، «هیچ درخواستی نیست» ممکن است فقط «هنوز نرفته» باشد.
@@ -152,7 +152,7 @@ test.describe("کارهای عملیاتی داشبورد", () => {
     api.handlers.set("GET /dashboard/operations", async route => {
       await route.fulfill({ status: 500, json: { error: { code: "internal", message: "خطای سرور", correlationId: "req-o1" } } });
     });
-    await page.goto("/");
+    await page.goto("/?page=dashboard&dashboard.tab=ops");
     await expect(section(page)).toContainText("کارهای عملیاتی خوانده نشد");
     await expect(section(page)).toContainText("req-o1");
     await expect(section(page)).toContainText("این به معنای «کاری نیست» نیست");
@@ -172,7 +172,7 @@ test.describe("کارهای عملیاتی داشبورد", () => {
       if (mine === 2) { await route.fulfill({ json: busy }); return; }
       await route.fulfill({ status: 500, json: { error: { code: "internal", message: "خطای سرور", correlationId: "req-o9" } } });
     });
-    await page.goto("/");
+    await page.goto("/?page=dashboard&dashboard.tab=ops");
     const refresh = page.getByRole("button", { name: /به‌روزرسانی/ });
     await expect(refresh).toBeEnabled();
     await expect.poll(() => n).toBe(1);

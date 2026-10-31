@@ -11,7 +11,7 @@ import { useOnline } from "../../lib/use-online.ts";
  * زنگوله‌ای که چیزی نمی‌شمارد، یک ادعای ساختگی است
  * (docs/UI_PATTERNS.md، «اعلان‌ها» و «سلامت عملیاتی»).
  */
-export function ShellHeader({ searchKey, tools }: { searchKey: string; tools: ReactNode }) {
+export function ShellHeader({ searchKey, tools, trail }: { searchKey: string; tools: ReactNode; trail?: ReactNode }) {
   const online = useOnline();
   return <>
     <Glass as="header" radius="md" className="workspace-header" refract={false}>
@@ -19,6 +19,7 @@ export function ShellHeader({ searchKey, tools }: { searchKey: string; tools: Re
         <span className="brand-mark" aria-hidden="true" />
         <span className="brand-name">لیبل مد</span>
       </strong>
+      {trail}
       <FeatureSearch key={searchKey} />
       {tools}
     </Glass>
