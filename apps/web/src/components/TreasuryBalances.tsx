@@ -24,7 +24,7 @@ export function TreasuryBalances() {
   return <section className="solid kpis kpis--band treasury-balances" aria-label="ماندهٔ دفتری حساب‌های خزانه">
     {q.data.balances.map(b => <Kpi key={b.code}
       label={b.kinds.map(k => ACCOUNT_KIND[k] ?? k).join(" و ") + " — " + b.accountName}
-      value={<Money rial={BigInt(b.balance)} size="xl" />}
+      value={<Money rial={BigInt(b.balance)} size="lg" />}
       note={<><Ltr>{b.code}</Ltr> · {b.treasuryAccounts} · ماندهٔ دفتر{b.lastEntry ? ` تا ${formatJalali(b.lastEntry)}` : ""}</>} />)}
   </section>;
 }

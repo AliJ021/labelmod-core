@@ -127,9 +127,9 @@ export function Invoices() {
     {error && <p role="alert">{error}</p>}
     {summary && !issue ? <section className="solid kpis kpis--band invoice-summary" aria-label="جمع فاکتورهای این فیلتر">
       <Kpi label="فاکتورهای قطعی این فیلتر" value={<span className="kpi-count">{formatCount(summary.count)}</span>} note="پیش‌نویس و لغوشده شمرده نمی‌شوند" />
-      <Kpi label="جمع قابل پرداخت" value={<Money rial={BigInt(summary.payableAmount)} size="xl" />} note="مبلغ فاکتورهای قطعی" />
-      <Kpi label="دریافت‌شده بابت همین فاکتورها" value={<Money rial={BigInt(summary.receivedAmount)} size="xl" />} note="فقط دریافت موفق" />
-      <Kpi label="مانده" value={<Money rial={BigInt(summary.remainingAmount)} size="xl" />} note="قابل پرداخت منهای دریافتی هر فاکتور" />
+      <Kpi label="جمع قابل پرداخت" value={<Money rial={BigInt(summary.payableAmount)} size="lg" />} note="مبلغ فاکتورهای قطعی" />
+      <Kpi label="دریافت‌شده بابت همین فاکتورها" value={<Money rial={BigInt(summary.receivedAmount)} size="lg" />} note="فقط دریافت موفق" />
+      <Kpi label="مانده" value={<Money rial={BigInt(summary.remainingAmount)} size="lg" />} note="قابل پرداخت منهای دریافتی هر فاکتور" />
     </section> : null}
     <div className="solid pad" aria-busy={query.loading}>
       {issue ? <ResultState title="بازهٔ تاریخ کامل نیست." description={issue.message} /> : query.loading ? <ResultState kind="loading" title="در حال دریافت فاکتورها…" /> : query.error ? <ResultState kind="error" title={errorMessage(query.error)} actionLabel="تلاش دوباره" onAction={() => setRevision(v => v + 1)} /> : !query.data?.rows.length ? <ResultState title="فاکتوری با این فیلترها پیدا نشد." /> : <>

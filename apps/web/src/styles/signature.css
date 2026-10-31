@@ -178,6 +178,21 @@
 .cart .qty button:hover:not(:disabled) { background: var(--surface-solid); box-shadow: var(--elev-1); }
 .cart .qty > span, .cart .qty input { min-inline-size: 2.75ch; }
 
+/* ── مرجوعی طرح ۱۰: دو گام کنار هم — «فاکتور و اقلام» و «علت و مبلغ» ───────
+   شمارهٔ گام تزئینی و پنهان از صفحه‌خوان است؛ متن عنوان‌ها دست نخورده. هشدار مهلت
+   تمام‌عرض بالای هر دو می‌ماند. */
+.returns-steps { counter-reset: return-step; }
+.returns-steps > section > h3::before { counter-increment: return-step; content: counter(return-step, persian) ". " / ""; color: var(--accent); }
+@media (min-width: 1100px) {
+  .returns-steps { display: grid; grid-template-columns: minmax(0, 1.4fr) minmax(0, 1fr); align-items: start; }
+  .returns-steps > :not(section) { grid-column: 1 / -1; }
+}
+
+/* ── ردیف شاخص صفحه‌ها (فاکتورها، کالا، خزانه، مشتریان): شمارش هم‌وزن مبلغ ─── */
+.kpi-count { font-size: var(--text-xl); font-weight: var(--weight-heavy); font-variant-numeric: tabular-nums; }
+/* سرصفحهٔ ناحیه (zoneHeader) تا نخستین سطح صفحه نفس دارد. */
+.zone-panel > .page-header { margin-block-end: var(--s-4); }
+
 /* ── فشار: بازخورد لمسی کوتاه ─────────────────────────────────────── */
 .subtabs [role="tab"], .pay-tile, .pay-chip, .pick-chip { transition: transform var(--dur-instant) var(--ease-standard), background-color var(--dur-fast) var(--ease-standard), border-color var(--dur-fast) var(--ease-standard); }
 .subtabs [role="tab"]:active, .pay-tile:active:not(:disabled), .pay-chip:active:not(:disabled), .pick-chip:active:not(:disabled) { transform: scale(0.97); }

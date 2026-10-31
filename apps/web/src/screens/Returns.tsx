@@ -260,7 +260,7 @@ export function Returns() {
       {mode === "returns" ? <WebRefundRequests key={branchId} branchId={branchId} /> : null}
 
       {view && invoice ? (
-        <fieldset className="stack" disabled={!!operation.pending} style={{ border: 0, padding: 0, minWidth: 0 }}>
+        <fieldset className="stack returns-steps" disabled={!!operation.pending} style={{ border: 0, padding: 0, minWidth: 0 }}>
           {view.late ? (
             <p className="solid pos-alert" role="status">
               <span className="dot dot--warn" aria-hidden="true">●</span> این فروش{" "}

@@ -22,7 +22,7 @@ export function CatalogSummaryRow() {
   return <section className="solid kpis kpis--band catalog-summary" aria-label="خلاصهٔ کالا و قیمت">
     <Kpi label="کالای فعال" value={<span className="kpi-count">{formatCount(d.activeProducts)}</span>}
       note={`${formatCount(d.activeVariations)} تنوع فعال`} />
-    <Kpi label="ارزش موجودی به بها" value={<Money rial={d.inventoryValue === null ? null : BigInt(d.inventoryValue)} size="xl" />}
+    <Kpi label="ارزش موجودی به بها" value={<Money rial={d.inventoryValue === null ? null : BigInt(d.inventoryValue)} size="lg" />}
       note={d.inventoryValue === null ? "دیدن بها دسترسی بهای تمام‌شده می‌خواهد" : "انبارهای شعبه‌های شما"} />
     {low && low.state !== "denied" ? <Kpi label="زیر آستانه"
       value={low.state === "ready" ? <span className="kpi-count">{formatCount(low.total)}</span> : <span className="kpi-unknown" aria-label="نامعلوم">—</span>}
