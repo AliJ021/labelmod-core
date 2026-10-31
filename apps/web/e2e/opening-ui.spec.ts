@@ -82,7 +82,11 @@ test("opening unknown write stays blocked after read and reload, storing no amou
   api.handlers.set("POST /opening-balance",async route=>{await route.abort();});
   await review(page).click();await confirm(page).click();
   await expect(page.getByText("نتیجهٔ ثبت نیازمند بررسی است",{exact:true})).toBeVisible();
+  // بازخوانی سه درخواست می‌فرستد؛ Reload نباید وسط راه قطعشان کند (WebKit قطع را خطای صفحه می‌داند).
+  const reread = Promise.all(["/api/tafsili", "/api/branches", "/api/auth/can"].map(path =>
+    page.waitForResponse(r => r.request().method() === "GET" && new URL(r.url()).pathname === path).then(r => r.finished())));
   await page.getByRole("button",{name:"بازخوانی اطلاعات",exact:true}).click();
+  await reread;
   await expect(review(page)).toBeDisabled();
   page.on("dialog",dialog=>dialog.accept());await page.reload();
   await expect(page.getByText("نتیجهٔ ثبت نیازمند بررسی است",{exact:true})).toBeVisible();
