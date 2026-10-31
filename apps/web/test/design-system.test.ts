@@ -89,7 +89,7 @@ describe("توکن‌ها", () => {
 });
 
 describe("حرکت", () => {
-  const sheets = ["styles/ui.css", "styles/workspace.css", "styles/glass.css", "styles/base.css"];
+  const sheets = ["styles/ui.css", "styles/workspace.css", "styles/glass.css", "styles/base.css", "styles/signature.css"];
   test("هر keyframe فقط transform و opacity را حرکت می‌دهد", () => {
     const bad: string[] = [];
     for (const f of sheets) {
@@ -103,7 +103,7 @@ describe("حرکت", () => {
   });
 
   test("انیمیشن لایهٔ کامپوننت فقط زیر «حرکت مجاز» و بیرون از حالت عملکرد تعریف می‌شود", () => {
-    for (const f of ["styles/ui.css", "styles/workspace.css"]) {
+    for (const f of ["styles/ui.css", "styles/workspace.css", "styles/signature.css"]) {
       const css = read(f);
       const allowed = [...css.matchAll(/@media \(prefers-reduced-motion: no-preference\)/g)].map(m => {
         const b = block(css.slice(m.index), "@media (prefers-reduced-motion: no-preference)");

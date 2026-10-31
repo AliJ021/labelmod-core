@@ -1,0 +1,127 @@
+/* ═══════════════════════════════════════════════════════════════════
+   امضای بصری طرح ۱۰ — لایهٔ مشترک روی primitiveها (تأیید مالک ۲۰۲۶/۱۰/۳۱)
+
+   هر صفحه از همین primitiveها ساخته می‌شود، پس این فایل طرح را یک‌جا به
+   همهٔ ماژول‌ها می‌رساند بی آنکه ساختار، نقش یا قرارداد صفحه‌ای عوض شود.
+
+   قواعد این لایه همان قواعد نظام طراحی است و آزمون‌ها همین فایل را هم
+   می‌خوانند (design-system.test.ts):
+     - فقط توکن؛ هیچ Hex.
+     - حرکت فقط transform و opacity، فقط زیر «حرکت مجاز» و بیرون از حالت عملکرد.
+     - خردلی برند فقط پر می‌کند یا هاله می‌دهد؛ متن و خط نازک با --accent.
+     - فاصلهٔ حروف فارسی دست نمی‌خورد.
+     - صندوق: هیچ افکتی روی مسیر افزودن قلم (بودجهٔ ۱۰۰ms)؛ فقط سایه و رنگ ایستا.
+   ═══════════════════════════════════════════════════════════════════ */
+
+::selection { background: color-mix(in srgb, var(--brand) 42%, transparent); color: var(--ink); }
+
+/* ── سرصفحهٔ سرمقاله‌ای ─────────────────────────────────────────── */
+.page-title { font-size: clamp(var(--text-2xl), 1.4rem + 1vw, var(--text-3xl)); font-weight: var(--weight-heavy); }
+.page-eyebrow {
+  align-self: flex-start; padding: 2px var(--s-3); border-radius: var(--r-pill);
+  background: color-mix(in srgb, var(--brand) 14%, var(--surface-solid));
+  box-shadow: inset 0 0 0 var(--border-w) color-mix(in srgb, var(--accent) 35%, transparent);
+  color: var(--ink);
+}
+/* عنوان بخش: نشانهٔ کوچک خردلی؛ تزئینی و بی‌نام برای صفحه‌خوان. */
+.section-title::before {
+  content: ""; display: inline-block; vertical-align: middle;
+  inline-size: 6px; block-size: 6px; margin-inline-end: var(--s-2); border-radius: 2px;
+  background: var(--brand);
+  box-shadow: 0 0 0 var(--border-w) color-mix(in srgb, var(--brand-ink) 18%, transparent);
+}
+
+/* ── دکمهٔ اصلی: خردلی با برجستگی ظریف ─────────────────────────── */
+.btn--primary, .auth-submit {
+  background: linear-gradient(180deg, var(--brand-2), var(--brand));
+}
+.btn--primary:hover:not(:disabled), .auth-submit:hover:not([disabled]) {
+  box-shadow: inset 0 0 0 var(--border-w) color-mix(in srgb, var(--brand-ink) 16%, transparent),
+    0 12px 28px -14px color-mix(in srgb, var(--brand) 85%, transparent);
+}
+
+/* ── کارت شاخص انتخاب‌شده = «قهرمان» داشبورد ──────────────────────
+   نور خردلی ملایم درون کارت و نوار بالای خردلی؛ متن همان --ink روی
+   سطحی که حداکثر ۱۴٪ خردلی دارد، پس تضاد عملاً همان سطح مات است. */
+.kpi--tab::before, .kpi--emphasis::before { background: var(--brand); }
+.kpi--tab[aria-selected="true"] {
+  background:
+    radial-gradient(120% 120% at 100% 0%, color-mix(in srgb, var(--brand) 14%, transparent), transparent 62%);
+}
+.kpi--tab[aria-selected="true"] .kpi-icon { color: var(--accent); }
+.kpi--tab[aria-selected="true"]::before { box-shadow: 0 2px 12px color-mix(in srgb, var(--brand) 55%, transparent); }
+
+/* ── ناوبری: مورد فعال با هالهٔ برند ─────────────────────────────── */
+.workspace .workspace-zones [role="tab"].on::before {
+  box-shadow: 0 0 12px color-mix(in srgb, var(--brand) 55%, transparent);
+}
+.brand-mark { box-shadow: inset 0 1px 0 color-mix(in srgb, var(--surface-solid) 60%, transparent),
+  0 8px 22px -10px color-mix(in srgb, var(--brand) 85%, transparent); }
+
+/* ── زبانه‌های بخش: فعال با پرکردن ملایم برند و جوهر کامل ─────────
+   جوهر روی ۱۲٪ خردلی خواناتر از متن --accent است و رنگ تنها نشانه
+   نیست: حاشیه و وزن هم عوض می‌شوند. */
+.subtabs [role="tab"].on {
+  border-color: var(--accent); color: var(--ink);
+  background: color-mix(in srgb, var(--brand) 12%, var(--surface-solid));
+  box-shadow: inset 0 calc(var(--border-w) * -2) 0 var(--accent);
+}
+
+/* ── جدول: نوار تأکید سطر زیر نشانگر ───────────────────────────────
+   سایهٔ داخلی با x منفی لبهٔ راست را می‌گیرد، یعنی ابتدای سطر در جدول
+   راست‌چین. جدول LTR در برنامه نیست و direction.test.ts هر جهت صریح بیرون
+   از دو فایل بازبینی‌شده را رد می‌کند. */
+.ui-table tbody tr:hover > :first-child { box-shadow: inset calc(var(--border-w) * -3) 0 0 var(--accent); }
+
+/* ── لایه‌ها ─────────────────────────────────────────────────────── */
+.ui-dialog { box-shadow: var(--elev-3), inset 0 1px 0 color-mix(in srgb, var(--brand) 22%, transparent); }
+.toast { box-shadow: var(--elev-2), 0 0 0 var(--border-w) color-mix(in srgb, var(--brand) 30%, transparent); }
+.skeleton { background: linear-gradient(90deg, var(--neutral-soft), color-mix(in srgb, var(--brand) 9%, var(--neutral-soft)), var(--neutral-soft)); }
+
+/* ── صندوق: همان زبان، بی هزینه روی مسیر اسکن ───────────────────── */
+.pay-tile[data-state="selected"] {
+  background: color-mix(in srgb, var(--brand) 9%, var(--surface-solid));
+  box-shadow: inset 0 0 0 var(--border-w) var(--accent), 0 0 0 3px color-mix(in srgb, var(--brand) 18%, transparent);
+}
+.pay-chip[aria-pressed="true"] { background: color-mix(in srgb, var(--brand) 9%, var(--surface-solid)); }
+.product-search-input:focus-within { box-shadow: 0 0 0 4px color-mix(in srgb, var(--brand) 20%, transparent); }
+.pay-finish .btn--primary:not(:disabled) {
+  box-shadow: inset 0 0 0 var(--border-w) color-mix(in srgb, var(--brand-ink) 16%, transparent),
+    0 14px 30px -16px color-mix(in srgb, var(--brand) 90%, transparent);
+}
+.checkout-payable .money--xl { font-weight: var(--weight-heavy); }
+
+/* ── اتصال ووکامرس: راه‌اندازی مرحله‌ای (R05) ─────────────────────
+   سنجهٔ پیشرفت با scaleX پر می‌شود (نه width)؛ وضعیت هر مرحله با آیکون
+   و برچسب متنی است، رنگ تنها نشانه نیست. */
+.woo-setup { display: grid; gap: var(--s-3); margin-block: var(--s-4); padding: var(--s-4); border-radius: var(--r-md);
+  background: var(--surface-solid-2); box-shadow: inset 0 0 0 var(--border-w) var(--rule); }
+.woo-setup-head { display: flex; flex-wrap: wrap; align-items: center; gap: var(--s-2) var(--s-4); }
+.woo-setup-head h3 { margin: 0; font-size: var(--text-lg); }
+.woo-setup-count { margin: 0; color: var(--ink-2); font-size: var(--text-sm); }
+.woo-meter { flex: 1 1 160px; min-inline-size: 120px; block-size: 8px; border-radius: var(--r-pill); background: var(--neutral-soft); overflow: hidden; }
+/* پرشدن از ابتدای خط: در راست‌چین ابتدا راست است؛ :dir() جهت را از خود سند می‌گیرد. */
+.woo-meter > i { display: block; block-size: 100%; border-radius: inherit; transform: scaleX(var(--progress, 0)); transform-origin: 100% 50%; background: linear-gradient(90deg, var(--brand-2), var(--brand)); }
+.woo-meter:dir(ltr) > i { transform-origin: 0 50%; }
+.woo-steps { display: grid; gap: 0; margin: 0; padding: 0; list-style: none; }
+.woo-step { position: relative; display: grid; grid-template-columns: auto minmax(0, 1fr); gap: var(--s-3); padding-block: var(--s-2); }
+.woo-step .status-icon { display: grid; place-items: center; inline-size: 32px; block-size: 32px; border-radius: var(--r-pill);
+  background: var(--surface-solid); box-shadow: inset 0 0 0 var(--border-w) var(--rule-2); }
+.woo-step[data-state="done"] .status-icon { background: var(--brand); color: var(--brand-ink); box-shadow: none; }
+.woo-step-text p { margin: 2px 0 0; color: var(--ink-2); font-size: var(--text-sm); }
+.woo-step-state { font-size: var(--text-xs); color: var(--ink-2); }
+
+/* ── فشار: بازخورد لمسی کوتاه ─────────────────────────────────────── */
+.subtabs [role="tab"], .pay-tile, .pay-chip, .pick-chip { transition: transform var(--dur-instant) var(--ease-standard), background-color var(--dur-fast) var(--ease-standard), border-color var(--dur-fast) var(--ease-standard); }
+.subtabs [role="tab"]:active, .pay-tile:active:not(:disabled), .pay-chip:active:not(:disabled), .pick-chip:active:not(:disabled) { transform: scale(0.97); }
+
+/* ── حرکت: فنری و کوتاه، فقط با حرکت مجاز و بیرون از حالت عملکرد ─── */
+@keyframes lm-spring-in { from { opacity: 0; transform: translateY(var(--move-md)) scale(0.97); } }
+@keyframes lm-pop { from { opacity: 0; transform: scale(0.6); } 70% { transform: scale(1.08); } }
+@media (prefers-reduced-motion: no-preference) {
+  :root:not([data-perf="on"]) .ui-dialog:not(.ui-dialog--sheet)[open] { animation: lm-spring-in var(--dur-slow) cubic-bezier(0.2, 0.9, 0.25, 1.15); }
+  :root:not([data-perf="on"]) .sale-complete-mark { animation: lm-pop 450ms cubic-bezier(0.2, 0.9, 0.3, 1.35) both; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .subtabs [role="tab"]:active, .pay-tile:active, .pay-chip:active, .pick-chip:active { transform: none; }
+}

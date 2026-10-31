@@ -18,3 +18,4 @@ createRoot(root).render(
 );
 
 import "./styles/workspace.css";
+import "./styles/signature.css";
