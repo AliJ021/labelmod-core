@@ -28,6 +28,8 @@ import { TabList, TabPanels, useTabsId } from "../components/Tabs.tsx";
  */
 import { useCallback, useEffect, useState } from "react";
 import { Solid } from "../components/Glass.tsx";
+import { TreasuryBalances } from "../components/TreasuryBalances.tsx";
+import { TreasuryDesk } from "../components/TreasuryDesk.tsx";
 import { ApiError } from "../lib/api.ts";
 import { ActionKeys, actionFor } from "../lib/action-key.ts";
 import { rialFromTomanInput, toman } from "../lib/money.ts";
@@ -97,6 +99,7 @@ export function Treasury() {
 
   return (
     <div className="stack" style={{ gap: "var(--s-4)" }}>
+      <TreasuryBalances />
       <TabList hrefFor={key => routeUrl("treasury", key)} id={tabsId} items={TABS} value={tab} onChange={setTab} label="بخش‌های خزانه" />
       <TabPanels id={tabsId} items={TABS} value={tab} className="stack section-stack">
 
@@ -220,6 +223,7 @@ function CashMoves() {
           <span className="dot dot--crit" aria-hidden="true">●</span> {error}
         </p>
       ) : null}
+      <TreasuryDesk accounts={accounts} />
       {note !== null ? (
         <p className="solid pos-alert" role="status">
           <span className="dot dot--good" aria-hidden="true">●</span> {note}

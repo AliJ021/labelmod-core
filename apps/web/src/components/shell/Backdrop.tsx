@@ -1,3 +1,5 @@
+import { Fabric } from "./Fabric.tsx";
+
 /**
  * زمینهٔ امضای لیبل مد (docs/DESIGN_SYSTEM.md، «جلوهٔ امضا»).
  *
@@ -5,13 +7,15 @@
  *   workspace  صفحه‌های داده: همان نور، **ساکن**. هیچ انیمیشن بی‌پایانی
  *              پشت عدد مالی نیست.
  *
- * بدون WebGL: جلوه با گرادیان و transform ساخته می‌شود؛ حالت عملکرد،
- * کاهش شفافیت و کاهش حرکت آن را کامل برمی‌دارند (glass.css).
+ * ورود و قفل پارچهٔ خردلی WebGL هم دارند (Fabric.tsx)؛ بدون WebGL همان
+ * گرادیان و transform می‌ماند. حالت عملکرد، کاهش شفافیت و کاهش حرکت
+ * جلوه را کامل برمی‌دارند (glass.css).
  */
 export function Backdrop({ variant }: { variant: "auth" | "workspace" }) {
   return <div className={`mesh mesh--${variant}`} aria-hidden="true">
     <i />
     <i />
     <i />
+    {variant === "auth" ? <Fabric /> : null}
   </div>;
 }

@@ -828,4 +828,25 @@ describe("خزانه و چک", { skip }, () => {
       WHERE id = ${foreign.rows[0]!.id}::uuid`.execute(handle.db),
       { code: "23514", constraint: "used_transaction_account_branch" });
   });
+
+  test("ماندهٔ دفتری خزانه: همان تعریف تراز آزمایشی، به‌ازای سرفصل، در دامنهٔ شعبه؛ بی report.view بسته", async () => {
+    const a = await loginAs(admin);
+    const r = await app.inject({ method: "GET", url: "/treasury/balances", ...a });
+    assert.equal(r.statusCode, 200, r.body);
+    const balances = r.json().balances as { code: string; accountName: string; kinds: string[]; treasuryAccounts: string; balance: string; lastEntry: string | null }[];
+    const cashCode = (await sql<{ c: string }>`SELECT ledger_account_code c FROM treasury.account WHERE id=${cashBox.id}::uuid`.execute(handle.db)).rows[0]!.c;
+    assert.ok(balances.some(b => b.code === cashCode), "سرفصل صندوق در فهرست است");
+    for (const b of balances) {
+      assert.match(b.balance, /^-?\d+$/, "پول رشتهٔ ریال صحیح است");
+      // مستقل از مسیر: جمع خطوط اسناد ثبت‌شدهٔ همین شعبه، مستقیم از جدول.
+      const direct = (await sql<{ v: string }>`SELECT coalesce(sum(l.debit-l.credit),0)::text v FROM ledger.journal_line l
+        JOIN ledger.journal_entry e ON e.id=l.entry_id WHERE l.account_code=${b.code}
+          AND e.status IN ('confirmed','final') AND e.branch_id=${BRANCH}::uuid`.execute(handle.db)).rows[0]!.v;
+      assert.equal(b.balance, direct, `${b.code}: مانده با دفتر برابر است`);
+    }
+    // صندوق‌دار treasury.manage یا report.view ندارد: عدد دفتر برایش بسته است.
+    const c = await app.inject({ method: "GET", url: "/treasury/balances", ...await loginAs(cashier) });
+    assert.equal(c.statusCode, 403, c.body);
+    assert.equal((await app.inject({ method: "GET", url: "/treasury/balances" })).statusCode, 401);
+  });
 });

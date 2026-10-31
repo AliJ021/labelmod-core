@@ -26,14 +26,16 @@
  * کهنه‌ای (خواندن روند پیش از به‌روزرسانی) نتیجهٔ تازه‌تر را بازنویسی نمی‌کند. شکست داده‌های
  * قبلی را نگه می‌دارد و صریح می‌گوید از کی‌اند — نه صفحهٔ خطا، نه سبز.
  */
-import { useCallback, useEffect, useId, useLayoutEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useId, useLayoutEffect, useRef, useState, type ReactNode } from "react";
 import { navigate } from "../lib/use-url-state.ts";
+import { useDashboardTab } from "./dashboard-tab.ts";
+import { TabList, TabPanels, useTabsId } from "../components/Tabs.tsx";
 import { Solid } from "../components/Glass.tsx";
 import { Icon } from "../components/Icon.tsx";
-import { accessOf, quickActionView, routeUrl, type NavAccess } from "../lib/navigation.ts";
+import { accessOf, quickActionView, routeUrl, type DashboardTab, type NavAccess } from "../lib/navigation.ts";
 import { ApiError } from "../lib/api.ts";
 import { parseRial } from "../lib/money.ts";
-import { channelLabel, formatCount, formatGregorian, formatJalali } from "../lib/format.ts";
+import { channelLabel, formatCount, formatJalali } from "../lib/format.ts";
 import {
   pos,
   type Branch,
@@ -50,6 +52,8 @@ import { attentionItems, type AttentionItem } from "../lib/dashboard-attention.t
 import { session } from "../lib/session.ts";
 import { Money } from "../components/ui/Money.tsx";
 import { Kpi, KpiTabs, type KpiTab } from "../components/ui/Kpi.tsx";
+import { sparkPath } from "../lib/sparkline.ts";
+import { DashboardChannels } from "./DashboardChannels.tsx";
 import { PageHeader, SectionHeader } from "../components/ui/PageHeader.tsx";
 import { StatusBadge, StatusIcon } from "../components/ui/Status.tsx";
 import { Skeleton } from "../components/ui/Skeleton.tsx";
@@ -135,7 +139,11 @@ async function readToday(branchId: string, signal: AbortSignal, step?: (part: Pa
   return { report, unposted, mayClose, hourly };
 }
 
+type DashTab = DashboardTab;
+
 export function Dashboard({ access }: { access: NavAccess }) {
+  const dashTabsId = useTabsId();
+  const { tabs: dashTabs, tab: dashTab, setTab: setDashTab } = useDashboardTab(access);
   const [branch, setBranch] = useState<Branch | null>(null);
   /** همهٔ شعبه‌های در دامنه و اینکه دامنه سراسری است — برای انتخاب‌گر «مرور دوره». */
   const [scope, setScope] = useState<{ branches: Branch[]; allBranches: boolean }>({ branches: [], allBranches: false });
@@ -197,10 +205,11 @@ export function Dashboard({ access }: { access: NavAccess }) {
    * بازخوانی بخش‌های زیر «امروز» (هر کدام فقط اگر برای این نقش رندر شده): «مرور دوره» و بعد «همگام‌سازی
    * سایت» — آخرین گام‌های ترتیبی هر به‌روزرسانی، به همین ترتیب.
    */
-  const sectionReloads = useRef<{ period: PeriodReload | null; sync: PeriodReload | null; ops: PeriodReload | null }>({ period: null, sync: null, ops: null });
+  const sectionReloads = useRef<{ period: PeriodReload | null; sync: PeriodReload | null; ops: PeriodReload | null; channels: PeriodReload | null }>({ period: null, sync: null, ops: null, channels: null });
   const registerPeriod = useCallback((reload: PeriodReload | null) => { sectionReloads.current.period = reload; }, []);
   const registerSync = useCallback((reload: PeriodReload | null) => { sectionReloads.current.sync = reload; }, []);
   const registerOps = useCallback((reload: PeriodReload | null) => { sectionReloads.current.ops = reload; }, []);
+  const registerChannels = useCallback((reload: PeriodReload | null) => { sectionReloads.current.channels = reload; }, []);
   // آخرین مقدارها برای زمان‌سنج و کال‌بک‌هایی که پیش از رندر بعدی اجرا می‌شوند.
   const latest = useRef({ branch, report, grain, access });
   latest.current = { branch, report, grain, access };
@@ -357,6 +366,8 @@ export function Dashboard({ access }: { access: NavAccess }) {
       if (stale()) return;
       await sectionReloads.current.ops?.(signal);
       if (stale()) return;
+      await sectionReloads.current.channels?.(signal);
+      if (stale()) return;
       const at = Date.now();
       failures.current = 0;
       setFailure(null);
@@ -459,19 +470,36 @@ export function Dashboard({ access }: { access: NavAccess }) {
       note: report.profitAmount === null ? "برای دیدن سود، دسترسی بهای تمام‌شده لازم است" : "پس از بهای تمام‌شده" },
   ];
 
+  // نمودار کوچک هر کارت از همان دادهٔ ساعتی روند (طرح ۱۰). سودِ پنهان نمودار ندارد.
+  const hours = hourly.state === "ready" ? hourPoints(hourly.data.hours, hourly.data.currentHour) : [];
+  const sparked = kpis.map(k => ({ ...k,
+    spark: hours.length && !(k.key === "profit" && !profitKnown) ? sparkPath(hours.map(h => h.values[k.key]), 120, 32) : null }));
+
   return (
     <div className="dashboard">
       <PageHeader
-        title="امروز"
+        eyebrow="فضای کار فروشگاه"
+        title="نمای کلی امروز"
         context={<>
-          {branch?.name} · <span className="nowrap">{formatJalali(report.businessDate, true)}</span>
-          {/* میلادی فقط زمینهٔ ثانوی است: کوچک‌تر و کم‌رنگ‌تر، در برگ LTR. */}
-          <span className="page-context-secondary"><Ltr mono={false}>{formatGregorian(report.businessDate)}</Ltr></span>
+          <span className="nowrap">{formatJalali(report.businessDate, true)}</span> · {branch?.name}
         </>}
         meta={<FreshnessLine state={freshness({ now, lastOk, online, refreshing, failure })} now={now} />}
-        actions={<Button icon={<Icon name="refresh" size="sm" />} busy={refreshing} busyLabel="در حال به‌روزرسانی…"
-          disabled={!online} onClick={() => { void refresh(); }}>به‌روزرسانی</Button>}
+        actions={<>
+          <Button icon={<Icon name="refresh" size="sm" />} busy={refreshing} busyLabel="در حال به‌روزرسانی…"
+            disabled={!online} onClick={() => { void refresh(); }}>به‌روزرسانی</Button>
+          {/* طرح ۱۰: کنش اصلی صفحه؛ فقط با مجوز صریح فروش. */}
+          {posHref ? <a className="btn btn--primary" href={posHref} onClick={e => { if (e.metaKey || e.ctrlKey || e.shiftKey) return; e.preventDefault(); navigate(posHref); }}>
+            <Icon name="plus" size="sm" />فروش جدید</a> : null}
+        </>}
       />
+
+      {/* طرح ۱۰: بخش‌های داشبورد زبانه‌اند؛ هر زبانه همان دروازهٔ مجوز بخش خودش را دارد. */}
+      {dashTabs.length > 1 ? <TabList id={dashTabsId} items={dashTabs.map(t => ({ ...t, icon: <Icon name={t.icon} size="sm" /> }))} value={dashTab} onChange={setDashTab} className="subtabs dash-tabs"
+        label="بخش‌های داشبورد" hrefFor={key => routeUrl("dashboard", key)} /> : null}
+      <DashPanels id={dashTabsId} tabs={dashTabs} value={dashTab}>
+      {dashTab === "overview" ? <>
+      {/* طرح ۱۰: کارهای پرتکرار پیش از شاخص‌ها — اولین کاری که صبح انجام می‌شود. */}
+      <QuickActions access={access} />
 
       {/*
         یک سطح مات برای «امروز»: سه شاخص در یک نوار با خط جداکننده و روند
@@ -483,30 +511,14 @@ export function Dashboard({ access }: { access: NavAccess }) {
             {kpis.map(k => <Kpi key={k.key} label={k.label} icon={k.icon} emphasis={k.primary ?? false} value={k.value} state={k.state} note={k.note} />)}
           </section>
         : <>
-            <KpiTabs items={kpis} value={selected} onChange={setMetric} label="شاخص‌های امروز" panelId={`${tabsId}-panel`} idPrefix={`${tabsId}-tab`} />
+            <KpiTabs items={sparked} value={selected} onChange={setMetric} label="شاخص‌های امروز" panelId={`${tabsId}-panel`} idPrefix={`${tabsId}-tab`} />
             <TrendPanel id={`${tabsId}-panel`} metric={selected} grain={grain} onGrain={chooseGrain}
               compare={compare} onCompare={setCompare} today={report.businessDate}
               hourly={hourly} trend={grain === "hour" ? undefined : trends[grain]} />
           </>}
+      {/* طرح ۱۰: سهم کانال‌ها کنار روند — همان روز و همان دروازهٔ خلاصه روز. */}
+      {branch ? <DashboardChannels branchId={branch.id} date={report.businessDate} salesAmount={report.salesAmount} register={registerChannels} /> : null}
       </Solid>
-
-      {/* مرور دوره (دستهٔ B): فقط برای نقش دارای گزارش؛ پیش از پاسخ دسترسی رندر نمی‌شود. */}
-      {accessOf(["report.view"], access.verdicts) === "allow"
-        ? <DashboardPeriod today={report.businessDate} branches={scope.branches} allBranches={scope.allBranches} register={registerPeriod} />
-        : null}
-
-      {/* همگام‌سازی سایت (دستهٔ C): فقط با allow صریح `settings.view` — مثل «سلامت سیستم». */}
-      {accessOf(["settings.view"], access.verdicts) === "allow" ? <DashboardSync register={registerSync} /> : null}
-
-      {/*
-        کارهای عملیاتی (دستهٔ D): شیفت، چک و دریافتنیِ همین شعبه. با allow صریح `report.view` رندر می‌شود؛ بخش
-        چک را سرور با `cheque.manage` خودش می‌دهد یا `denied` می‌کند.
-      */}
-      {branch && accessOf(["report.view"], access.verdicts) === "allow"
-        ? <DashboardOperations branchId={branch.id} register={registerOps} links={{
-            reports: accessOf(["report.view"], access.verdicts) === "allow",
-            treasury: accessOf(["treasury.manage"], access.verdicts) === "allow" }} />
-        : null}
 
       {/*
         پیگیری ثبت حسابداری فروش — پس از شاخص‌ها و روند، بسته به‌طور پیش‌فرض. خلاصه
@@ -551,9 +563,29 @@ export function Dashboard({ access }: { access: NavAccess }) {
         </details>
       </Solid>
 
-      <QuickActions access={access} />
+      </> : dashTab === "sales" ? <>
+      {accessOf(["report.view"], access.verdicts) === "allow"
+        ? <DashboardPeriod today={report.businessDate} branches={scope.branches} allBranches={scope.allBranches} register={registerPeriod} />
+        : null}
+      </> : dashTab === "ops" ? <>
+      {branch && accessOf(["report.view"], access.verdicts) === "allow"
+        ? <DashboardOperations branchId={branch.id} register={registerOps} links={{
+            reports: accessOf(["report.view"], access.verdicts) === "allow",
+            treasury: accessOf(["treasury.manage"], access.verdicts) === "allow" }} />
+        : null}
+      </> : <>
+      {accessOf(["settings.view"], access.verdicts) === "allow" ? <DashboardSync register={registerSync} /> : null}
+      </>}
+      </DashPanels>
     </div>
   );
+}
+
+/** پنل زبانه‌ها فقط وقتی بیش از یک زبانه هست؛ وگرنه tablist نیست و aria-labelledby نباید به زبانهٔ ناموجود اشاره کند. */
+function DashPanels({ id, tabs, value, children }: { id: string; tabs: readonly { key: DashTab; label: string }[]; value: DashTab; children: ReactNode }) {
+  return tabs.length > 1
+    ? <TabPanels id={id} items={tabs} value={value} className="stack section-stack dashboard-panel">{children}</TabPanels>
+    : <div className="stack section-stack dashboard-panel">{children}</div>;
 }
 
 /**

@@ -220,3 +220,49 @@ test.describe("زبانه‌های شاخص داشبورد", () => {
     await expect(t.locator(".status-icon"), "بی رنگ وضعیت: تفاوت طلب نیست").toHaveCount(0);
   });
 });
+
+test("sales by channel: amounts from the server, total equals the sales card, donut hidden from readers; 403 hides it; a negative channel drops the donut", async ({ page, api }) => {
+  await page.goto("/");
+  const card = page.getByRole("region", { name: "فروش به تفکیک کانال" });
+  await expect(card).toBeVisible();
+  await expect(card.getByRole("term").filter({ hasText: /^صندوق/ })).toContainText("۹ فاکتور");
+  // ۹٬۸۷۰٬۰۰۰ ریال = ۹۸۷٬۰۰۰ تومان؛ جمع همان کارت فروش (۱٬۲۳۴٬۰۰۰ تومان).
+  await expect(card).toContainText("987٬000");
+  await expect(card).toContainText("1٬234٬000");
+  await expect(card.locator(".channels-donut")).toHaveAttribute("aria-hidden", "true");
+  await expect(card.locator(".channels-donut circle:not(.channels-track)")).toHaveCount(2);
+  expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth + 1)).toBe(true);
+
+  api.defaults["GET /reports/daily/channels"] = { businessDate: "2026-09-16", profitVisible: true, channels: [
+    { channel: "pos", salesAmount: "13340000", receivedAmount: "11000000", profitAmount: "2340000", invoiceCount: 12, returnCount: 0 },
+    { channel: "web", salesAmount: "-1000000", receivedAmount: "0", profitAmount: "0", invoiceCount: 0, returnCount: 1 },
+  ] };
+  await page.reload();
+  await expect(card).toBeVisible();
+  await expect(card.locator(".channels-donut")).toHaveCount(0);
+  await expect(card).toContainText("1٬334٬000");
+
+  api.handlers.set("GET /reports/daily/channels", async route => { await route.fulfill({ status: 403, json: { error: "forbidden", message: "دسترسی ندارید" } }); });
+  await page.reload();
+  await expect(page.getByRole("heading", { name: "نمای کلی امروز", exact: true })).toBeVisible();
+  await expect(card).toHaveCount(0);
+});
+
+test("dashboard sections are tabs: overview first, each tab in the URL, and only one section mounted at a time", async ({ page, api }) => {
+  await page.goto("/");
+  const tabs = page.getByRole("tablist", { name: "بخش‌های داشبورد" });
+  await expect(tabs.getByRole("tab")).toHaveText(["نمای کلی", "فروش و پرداخت", "عملیات روزانه", "همگام‌سازی سایت"]);
+  await expect(tabs.getByRole("tab", { name: "نمای کلی" })).toHaveAttribute("aria-selected", "true");
+  await expect(page.getByRole("tablist", { name: "شاخص‌های امروز" })).toBeVisible();
+  // بخش‌های دیگر در «نمای کلی» درخواستی نمی‌زنند.
+  expect(api.calls.some(c => c.startsWith("GET /dashboard/stock-sync"))).toBe(false);
+  await tabs.getByRole("tab", { name: "همگام‌سازی سایت" }).click();
+  await expect(page).toHaveURL(/dashboard\.tab=sync/);
+  await expect(page.getByRole("region", { name: "همگام‌سازی سایت" })).toBeVisible();
+  await expect(page.getByRole("tablist", { name: "شاخص‌های امروز" })).toHaveCount(0);
+  await page.goBack();
+  await expect(page.getByRole("tablist", { name: "شاخص‌های امروز" })).toBeVisible();
+  // زبانهٔ ناشناخته به «نمای کلی» برمی‌گردد.
+  await page.goto("/?page=dashboard&dashboard.tab=nope");
+  await expect(tabs.getByRole("tab", { name: "نمای کلی" })).toHaveAttribute("aria-selected", "true");
+});

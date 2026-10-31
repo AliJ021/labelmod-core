@@ -199,7 +199,7 @@ export function Staff({ currentUserId, onOwnPassword }: { currentUserId: string;
     },
   ];
 
-  const header = <PageHeader title="پرسنل"
+  const header = <PageHeader eyebrow="سامانه" title="پرسنل"
     context="ساخت کاربر، نقش و شعبه، رمز تازه و PIN. کاربر حذف نمی‌شود؛ غیرفعال می‌شود تا ردّ حسابرسی‌اش بماند."
     {...(users ? { meta: <span className="muted small">{formatCount(users.length)} کاربر{includeInactive ? " (با غیرفعال‌ها)" : ""}</span> } : {})}
     actions={<>

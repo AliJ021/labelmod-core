@@ -105,6 +105,23 @@ for (const theme of ["light", "dark"] as const) {
       assert.ok(ratio >= 4.5, `تضاد ${ratio.toFixed(2)} کمتر از ۴٫۵ است`);
     });
 
+    test("متن روی رنگ سازمانی (پرکردن دکمهٔ اصلی) ≥ ۴٫۵:۱", () => {
+      const ratio = contrast(hex("brand-ink", theme), hex("brand", theme));
+      assert.ok(ratio >= 4.5, `تضاد ${ratio.toFixed(2)} کمتر از ۴٫۵ است`);
+    });
+
+    test("رنگ دوم نمودار روی سطح مات ≥ ۳:۱", () => {
+      const ratio = contrast(hex("chart-2", theme), hex("surface-solid", theme));
+      assert.ok(ratio >= 3, `روی سطح مات ${ratio.toFixed(2)}`);
+    });
+
+    test("هشدار با رنگ سازمانی اشتباه نمی‌شود — ΔE ≥ ۱۵", () => {
+      // طرح ۱۰: خردلی برند همه‌جا هست؛ هشدار زرد کنارش «دکمهٔ اصلی» خوانده
+      // می‌شد. هشدار به نارنجی رفت و این فاصله را نگه می‌دارد.
+      const d = deltaE(hex("warn", theme), hex("brand", theme));
+      assert.ok(d >= 15, `ΔE برابر ${d.toFixed(1)} است`);
+    });
+
     test("هشدار و خطا از هم جدا دیده می‌شوند — دید عادی ΔE ≥ ۱۵", () => {
       // پالت اول ADR-002 دقیقاً همین‌جا رد شد: ΔE ۸٫۴ بود و هشدار
       // موجودی با خطای پرداخت اشتباه گرفته می‌شد.
@@ -141,6 +158,13 @@ describe("قواعد ساختاری توکن‌ها", () => {
         `در تم ${theme} دو سطح یکی شده‌اند`,
       );
     }
+  });
+
+  test("رنگ سازمانی در هر دو تم یکی است", () => {
+    // برندبوک: طیف خردلی تغییر نمی‌کند. تم فقط --accent (متن و خط) را عوض
+    // می‌کند، نه رنگ سازمانی را.
+    assert.equal(token("brand", "light").toLowerCase(), "#f6c444");
+    assert.equal(token("brand", "dark").toLowerCase(), "#f6c444");
   });
 
   test("حالت عملکرد، بلور را صفر و شیشه را مات می‌کند", () => {

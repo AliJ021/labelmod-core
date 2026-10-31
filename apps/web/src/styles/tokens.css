@@ -24,44 +24,54 @@
    ═══════════════════════════════════════════════════════════════════ */
 
 :root {
-  /* ── زمینه: سنگ گرم و روشنایی کنترل‌شده، نه ایندیگوی پررنگ ─────── */
-  --bg-deep: #efeeea;
-  --mesh-1: #c8ceda;
-  --mesh-2: #e3d5bd;
-  --mesh-3: #c5d5d0;
+  /* ── زمینه: کاغذ گرم و روشنایی کنترل‌شده؛ مِش از خانوادهٔ برند ─── */
+  --bg-deep: #f5f4ef;
+  --mesh-1: #d6d1c4;
+  --mesh-2: #f1dca0;
+  --mesh-3: #cde3de;
 
   /* ── دو سطح ──────────────────────────────────────────────────── */
   --surface-solid: #ffffff;
-  --surface-solid-2: #f5f4f1;
+  --surface-solid-2: #f7f6f2;
   --surface-glass: rgba(255, 255, 255, 0.55);
   /* تینت داخل شیشه — عمداً بدون backdrop-filter. شیشه روی شیشه ممنوع. */
   --surface-glass-2: rgba(255, 255, 255, 0.38);
   /* سطح وارونه: یادداشت شناور و Toast. متن رویش --surface-solid است. */
-  --surface-inverse: #1d1c21;
+  --surface-inverse: #1a1813;
 
   --glass-blur: 22px;
   --glass-sat: 160%;
   --glass-rim: rgba(255, 255, 255, 0.85);
-  --glass-rim-2: rgba(23, 22, 27, 0.12);
-  --glass-shadow: 0 8px 32px -12px rgba(20, 18, 24, 0.24);
+  --glass-rim-2: rgba(22, 18, 8, 0.12);
+  --glass-shadow: 0 8px 32px -12px rgba(42, 33, 12, 0.24);
 
   /* ── جوهر ────────────────────────────────────────────────────── */
-  --ink: #17161b;
-  --ink-2: #4a4852;
-  --ink-3: #65636d;
-  --rule: rgba(23, 22, 27, 0.1);
-  --rule-2: rgba(23, 22, 27, 0.18);
-  --control-border: #85838c;
+  --ink: #14120e;
+  --ink-2: #46423a;
+  --ink-3: #5f5a50;
+  --rule: rgba(22, 18, 8, 0.1);
+  --rule-2: rgba(22, 18, 8, 0.18);
+  --control-border: #857f72;
 
-  /* ── برنج: دنیای دکمه و پلاک پوشاک — فقط برای عمل اصلی و فوکوس ── */
-  --accent: #8a6214;
+  /* ── خردلی برند (برندبوک لیبل مد، آوریل ۲۰۲۵) ────────────────────
+     --brand رنگ سازمانی است و در هر دو تم یکی است؛ فقط **پرکردن**
+     (دکمهٔ اصلی، نشان برند) با جوهر تیرهٔ --brand-ink. روی سطح روشن
+     تضادش ۱٫۶:۱ است، پس هرگز متن یا خط نازک نمی‌شود — آن کار --accent
+     است: خردلی تیره در تم روشن، خود خردلی در تم تیره. */
+  --brand: #f6c444;
+  /* خردلی بسته‌بندی برندبوک؛ فقط لایهٔ دوم پارچهٔ ورود (Fabric.tsx). */
+  --brand-2: #fdc21e;
+  --brand-ink: #16130c;
+  --accent: #7d5a10;
   --accent-ink: #ffffff;
-  --chart-1: #b0801f;
-  --chart-2: #5d6b85;
-  --good: #2e8b63;
-  --warn: #b08a1e;
-  --crit: #c0392f;
-  --info: #3f5f8f;
+  --chart-1: #a8780f;
+  --chart-2: #0e766d;
+  --good: #1b7550;
+  /* هشدار نارنجی است، نه زرد: زرد با رنگ سازمانی اشتباه می‌شد. */
+  --warn: #b04a14;
+  /* خطا به سرخابی متمایل است تا در کوررنگی قرمز-سبز از نارنجی جدا بماند. */
+  --crit: #b8205a;
+  --info: #2848b0;
 
   /* ════ لایهٔ مستقل از تم ════════════════════════════════════════ */
 
@@ -194,35 +204,38 @@
    ─────────────────────────────────────────────────────────────── */
 @media (prefers-color-scheme: dark) {
   :root:not([data-theme="light"]) {
-    --bg-deep: #0e0e10;
-    --mesh-1: #1e2433;
-    --mesh-2: #3a2e1c;
-    --mesh-3: #12302e;
+    --bg-deep: #0a0a0b;
+    --mesh-1: #1c1d22;
+    --mesh-2: #3a2e14;
+    --mesh-3: #10302c;
 
-    --surface-solid: #17171a;
-    --surface-solid-2: #202024;
+    --surface-solid: #151516;
+    --surface-solid-2: #1c1c1e;
     --surface-glass: rgba(255, 255, 255, 0.08);
     --surface-glass-2: rgba(255, 255, 255, 0.05);
-    --surface-inverse: #f2f1ee;
+    --surface-inverse: #f5f3ee;
     --glass-rim: rgba(255, 255, 255, 0.24);
     --glass-rim-2: rgba(0, 0, 0, 0.4);
     --glass-shadow: 0 8px 36px -14px rgba(0, 0, 0, 0.75);
 
-    --ink: #f2f1ee;
-    --ink-2: #b7b5ae;
-    --ink-3: #95938d;
+    --ink: #f5f3ee;
+    --ink-2: #c4c0b7;
+    --ink-3: #a6a298;
     --rule: rgba(255, 255, 255, 0.09);
     --rule-2: rgba(255, 255, 255, 0.17);
-    --control-border: #7b7982;
+    --control-border: #7d7a72;
 
-    --accent: #c9973f;
-    --accent-ink: #1a1408;
-    --chart-1: #c9973f;
-    --chart-2: #8d9bb8;
-    --good: #43b083;
-    --warn: #e8c24a;
-    --crit: #d4405f;
-    --info: #7f9fd3;
+    --brand: #f6c444;
+    --brand-2: #fdc21e;
+    --brand-ink: #16130c;
+    --accent: #f6c444;
+    --accent-ink: #16130c;
+    --chart-1: #f6c444;
+    --chart-2: #4fd6c8;
+    --good: #5fcf9a;
+    --warn: #ff9a62;
+    --crit: #ff6f9c;
+    --info: #93abff;
 
     --elev-1: 0 1px 2px rgba(0, 0, 0, 0.4);
     --elev-2: 0 8px 24px -10px rgba(0, 0, 0, 0.7);
@@ -232,35 +245,38 @@
 }
 
 :root[data-theme="dark"] {
-  --bg-deep: #0e0e10;
-  --mesh-1: #1e2433;
-  --mesh-2: #3a2e1c;
-  --mesh-3: #12302e;
+  --bg-deep: #0a0a0b;
+  --mesh-1: #1c1d22;
+  --mesh-2: #3a2e14;
+  --mesh-3: #10302c;
 
-  --surface-solid: #17171a;
-  --surface-solid-2: #202024;
+  --surface-solid: #151516;
+  --surface-solid-2: #1c1c1e;
   --surface-glass: rgba(255, 255, 255, 0.08);
   --surface-glass-2: rgba(255, 255, 255, 0.05);
-  --surface-inverse: #f2f1ee;
+  --surface-inverse: #f5f3ee;
   --glass-rim: rgba(255, 255, 255, 0.24);
   --glass-rim-2: rgba(0, 0, 0, 0.4);
   --glass-shadow: 0 8px 36px -14px rgba(0, 0, 0, 0.75);
 
-  --ink: #f2f1ee;
-  --ink-2: #b7b5ae;
-  --ink-3: #95938d;
+  --ink: #f5f3ee;
+  --ink-2: #c4c0b7;
+  --ink-3: #a6a298;
   --rule: rgba(255, 255, 255, 0.09);
   --rule-2: rgba(255, 255, 255, 0.17);
-  --control-border: #7b7982;
+  --control-border: #7d7a72;
 
-  --accent: #c9973f;
-  --accent-ink: #1a1408;
-  --chart-1: #c9973f;
-  --chart-2: #8d9bb8;
-  --good: #43b083;
-  --warn: #e8c24a;
-  --crit: #d4405f;
-  --info: #7f9fd3;
+  --brand: #f6c444;
+  --brand-2: #fdc21e;
+  --brand-ink: #16130c;
+  --accent: #f6c444;
+  --accent-ink: #16130c;
+  --chart-1: #f6c444;
+  --chart-2: #4fd6c8;
+  --good: #5fcf9a;
+  --warn: #ff9a62;
+  --crit: #ff6f9c;
+  --info: #93abff;
 
   --elev-1: 0 1px 2px rgba(0, 0, 0, 0.4);
   --elev-2: 0 8px 24px -10px rgba(0, 0, 0, 0.7);

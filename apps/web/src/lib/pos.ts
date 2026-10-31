@@ -240,6 +240,10 @@ export interface DailyHour {
  */
 export interface DailyHourly { businessDate: string; currentHour: number | null; profitVisible: boolean; hours: DailyHour[] }
 
+/** خلاصه روز به تفکیک کانال فاکتور (مهاجرت ۱۰۸). جمع کانال‌ها همان خلاصه روز است؛ روز خالی آرایهٔ خالی. */
+export interface DailyChannel { channel: string; salesAmount: string; receivedAmount: string; profitAmount: string | null; invoiceCount: number; returnCount: number }
+export interface DailyChannels { businessDate: string; profitVisible: boolean; channels: DailyChannel[] }
+
 /**
  * یک سطل روند روزانه/ماهانه (مهاجرت ۰۹۳): جمع خلاصه روزِ روزهای `from` تا `to`
  * (هر دو شامل)، حساب‌شده در SQL. `partial` یعنی امروز در این سطل است و هنوز تمام نشده.
@@ -349,7 +353,8 @@ export interface CreatedInvoice extends Invoice {
 
 /** فقط شعبه‌های مجاز همین کاربر، با انبارهای فعالشان. */
 export const pos = {
-  branches: (opts?: RequestOptions) => api.get<{ branches: Branch[]; allBranches: boolean }>("/branches", opts),
+  branches: (opts?: RequestOptions) => api.get<{ branches: Branch[]; allBranches: boolean }>("/branches", opts)
+    .then(r => { lastBranches = r.branches; for (const l of branchListeners) l(r.branches); return r; }),
 
   /** `creditEnabled` نبود (API پیش از ۰۹۶) یعنی روشن — همان رفتار قبلی. */
   policy: (branchId: string, opts?: RequestOptions) => api.get<{ requireCustomer: boolean; creditEnabled?: boolean; allowFractionalQty?: boolean }>(
@@ -529,6 +534,14 @@ export const pos = {
    * **نه صفر**. صفر یک ادعای مالی است؛ «اجازه دیدنش را نداری» ادعای
    * دیگری. یکی‌کردنشان یعنی صندوق‌دار فکر کند فروشگاه ضرر کرده.
    */
+  /** همان دروازهٔ `dailyReport`؛ کارت «فروش به تفکیک کانال». */
+  dailyChannels: (branchId: string, date?: string, opts?: RequestOptions) =>
+    api.get<DailyChannels>(
+      `/reports/daily/channels?branchId=${encodeURIComponent(branchId)}` +
+        (date === undefined ? "" : `&date=${encodeURIComponent(date)}`),
+      opts,
+    ),
+
   /** همان دروازهٔ `dailyReport`؛ یک درخواست برای هر سه روند ساعتی. */
   dailyHourly: (branchId: string, date?: string, opts?: RequestOptions) =>
     api.get<DailyHourly>(
@@ -646,4 +659,17 @@ export const pos = {
 export interface DraftPayment {
   id: string; amount: string; status: string; direction: string; kind: string; name: string;
   settlement_id: string | null; settled_at: string | null; fee_amount: string;
+}
+
+/**
+ * آخرین پاسخ `/branches` همین نشست، برای کارت شعبهٔ منو (طرح ۱۰). کارت درخواست خودش را
+ * نمی‌زند: صفحه‌ها همین مسیر را می‌خوانند و کارت از همان پاسخ پر می‌شود. یک درخواستِ
+ * اضافه‌ی هم‌زمان با بارشدن صفحه، در جابه‌جایی سریع (WebKit) خطای صفحه گزارش می‌شد.
+ */
+let lastBranches: Branch[] | null = null;
+const branchListeners = new Set<(b: Branch[]) => void>();
+export function knownBranches(): Branch[] | null { return lastBranches; }
+export function onBranches(listener: (b: Branch[]) => void): () => void {
+  branchListeners.add(listener);
+  return () => { branchListeners.delete(listener); };
 }

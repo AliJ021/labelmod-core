@@ -6,8 +6,8 @@ a[role="tab"] { display: inline-flex; align-items: center; text-decoration: none
 .workspace-header, .workspace > .pos-alert, .shell-offline { grid-column: 1 / -1; }
 .workspace-header { display: flex; align-items: center; flex-wrap: wrap; gap: 18px; padding: 10px 14px; z-index: var(--z-header); }
 .workspace-header .brand { display: inline-flex; align-items: center; gap: 10px; font-size: var(--text-lg); font-weight: var(--weight-heavy); padding-inline-end: var(--s-2); }
-.brand-mark { position: relative; inline-size: 28px; block-size: 28px; border-radius: 9px; background: linear-gradient(145deg, color-mix(in srgb, var(--accent) 70%, var(--surface-solid)), var(--accent) 55%, color-mix(in srgb, var(--accent) 70%, var(--ink))); box-shadow: inset 0 1px 0 color-mix(in srgb, var(--surface-solid) 55%, transparent), var(--elev-1); }
-.brand-mark::after { content: ""; position: absolute; inset: 8px; border-radius: 50%; border: 2px solid var(--accent-ink); opacity: 0.85; }
+.brand-mark { position: relative; inline-size: 28px; block-size: 28px; border-radius: 9px; background: linear-gradient(145deg, color-mix(in srgb, var(--brand) 78%, var(--surface-solid)), var(--brand) 55%, var(--brand-2)); box-shadow: inset 0 1px 0 color-mix(in srgb, var(--surface-solid) 55%, transparent), var(--elev-1); }
+.brand-mark::after { content: ""; position: absolute; inset: 8px; border-radius: 50%; border: 2px solid var(--brand-ink); opacity: 0.85; }
 .workspace-header .feature-search { flex: 1; max-inline-size: 560px; }
 .workspace-header .header-tools, .workspace-header .tools { margin-inline-start: auto; }
 .workspace > main { min-inline-size: 0; }
@@ -130,16 +130,33 @@ a[role="tab"] { display: inline-flex; align-items: center; text-decoration: none
 @media print { .workspace-header, .workspace-nav, .more-sheet, .shell-offline, .toast-region { display: none !important; } .workspace { display: block; padding: 0; } }
 
 .invoice-center { gap: 16px; }
-.invoice-filters { display: grid; grid-template-columns: minmax(140px, 2fr) minmax(120px, 1fr); gap: 12px; }
-.invoice-filters .auth-field { margin: 0; padding: 0; gap: 6px; }
-.invoice-extra-filters { grid-column: 1 / -1; }
-.invoice-extra-filters summary { cursor: pointer; min-block-size: 44px; padding-block: 10px; }
-.invoice-filter-fields { display: grid; grid-template-columns: repeat(3,minmax(0,1fr)); gap: 12px; }
+/* فاکتورها، طرح ۱۰: یک ردیف فیلتر بی‌قاب — جست‌وجو، تراشهٔ وضعیت و تراشهٔ «شعبه و تاریخ» که باز می‌شود. */
+.invoice-filters { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
+.invoice-search { display: flex; flex-direction: row; flex-wrap: nowrap; align-items: center; gap: 8px; flex: 1 1 260px; max-inline-size: 360px; min-block-size: var(--touch); padding-inline: 12px; border: var(--border-w) solid var(--rule-2); border-radius: 12px; background: var(--surface-solid); color: var(--ink-3); }
+.invoice-search:focus-within { outline: 2px solid var(--accent); outline-offset: 2px; }
+.invoice-search input { flex: 1; inline-size: auto; min-inline-size: 0; min-block-size: 42px; margin: 0; padding: 0; border: 0; background: transparent; box-shadow: none; color: var(--ink); font: inherit; font-size: var(--text-sm); }
+.invoice-search input:focus-visible { outline: none; }
+.invoice-filters .segmented { padding: 0; border: 0; background: transparent; gap: 6px; }
+.invoice-filters .segmented-option span { min-block-size: var(--touch); padding-inline: 12px; border-radius: var(--r-pill); border: var(--border-w) solid var(--rule); background: var(--surface-solid); font-size: var(--text-xs); }
+.invoice-filters .segmented-option input:checked + span { border-color: color-mix(in srgb, var(--brand) 60%, var(--rule)); background: color-mix(in srgb, var(--brand) 14%, var(--surface-solid)); box-shadow: none; }
+.invoice-extra-filters { min-inline-size: 0; }
+.invoice-extra-filters[open] { flex-basis: 100%; }
+.invoice-extra-filters summary { display: inline-flex; align-items: center; gap: 6px; cursor: pointer; min-block-size: var(--touch); padding: 4px 12px; border-radius: var(--r-pill); border: var(--border-w) solid var(--rule); background: var(--surface-solid); font-size: var(--text-xs); list-style: none; }
+.invoice-extra-filters summary::-webkit-details-marker { display: none; }
+.invoice-filter-fields { display: grid; grid-template-columns: repeat(3,minmax(0,1fr)); gap: 12px; margin-block-start: 12px; }
 .invoice-clear-dates { margin-block-start: 12px; }
+.invoice-summary { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: var(--s-4); }
+.invoice-summary .kpi--card { padding: 18px 20px; }
+.invoice-summary .kpi--card:last-child .kpi-value { color: var(--accent); }
+.invoice-list .section-header { margin-block-end: var(--s-3); }
 .invoice-table { min-inline-size: 850px; }
-.invoice-table small { display: block; color: var(--ink-2); }
+.invoice-table small { display: block; color: var(--ink-2); font-size: var(--text-xs); }
+.invoice-table td { vertical-align: middle; }
+.invoice-table .status { margin-inline-end: 4px; }
 .invoice-table .btn { margin: 3px; }
-@media (max-width: 600px) { .invoice-filters, .invoice-filter-fields { grid-template-columns: 1fr; } }
+.invoice-actions { white-space: nowrap; }
+@media (max-width: 1100px) { .invoice-summary { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
+@media (max-width: 600px) { .invoice-filter-fields, .invoice-summary { grid-template-columns: 1fr; } .invoice-search { max-inline-size: none; } }
 
 .dashboard-actions { flex-wrap: wrap; }
 
@@ -194,16 +211,11 @@ a[role="tab"] { display: inline-flex; align-items: center; text-decoration: none
   html:has(.pos .pay-finish) { scroll-padding-block-end: var(--pay-finish-h, 9rem); }
 }
 
-/* هر کار یک سطح مستقل؛ کنترل اسکن از باز و بسته شدن جزئیات جدا می‌ماند. */
+/* هر کار یک سطح مستقل؛ مشتری همیشه باز و پیش از جست‌وجو، و هیچ‌کدام جمع‌شونده نیست. */
 .pos-workspace { display: grid; align-content: start; min-inline-size: 0; gap: var(--s-3); }
-.pos-search-card, .pos-customer-details, .pos-customer-required { padding: var(--s-3) var(--s-4); }
-.pos-customer-required { display: grid; gap: var(--s-3); }
+.pos-search-card, .pos-customer-panel { padding: var(--s-3) var(--s-4); }
+.pos-customer-panel { display: grid; gap: var(--s-3); }
 .pos-search-card .product-entry { border: 0; padding: 0; }
-.pos-customer-details > summary { display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: var(--s-2); cursor: pointer; min-block-size: var(--touch); font-weight: var(--weight-semibold); }
-.pos-customer-details > summary::after { content: "+"; }
-.pos-customer-details[open] > summary::after { content: "−"; }
-.pos-customer-details[open] > summary { margin-block-end: var(--s-3); }
-.pos-customer-details > summary:focus-visible { outline: 2px solid var(--accent); outline-offset: 3px; }
 .pos-gift-card { padding-inline: var(--s-2); }
 .pay-summary-fixed, .pay-body { display: grid; align-content: start; gap: var(--s-3); }
 .cart { display: grid; gap: var(--s-3); padding: var(--s-4); align-content: start; }
@@ -493,7 +505,7 @@ a[role="tab"] { display: inline-flex; align-items: center; text-decoration: none
 }
 
 /* Saved desktop preference; mobile bottom navigation remains unchanged. */
-.nav-collapse { inline-size: 100%; justify-content: center; gap: 8px; margin-block-end: 8px; }
+/* دکمهٔ جمع‌کردن منو در پای نوار کناری است (signature.css، قاب طرح ۱۰). */
 @media (min-width: 900px) {
   .workspace.workspace--collapsed { --sidebar-w: 76px; }
   .workspace--collapsed .workspace-zones [role="tab"] { justify-content: center; padding-inline: 10px; }

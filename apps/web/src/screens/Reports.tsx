@@ -30,6 +30,7 @@ import { useCallback, useEffect, useId, useState, type FormEvent, type ReactNode
 import { SnappayReport } from "../components/SnappayReport.tsx";
 import { StaffSales } from "../components/StaffSales.tsx";
 import { TabList, TabPanels, useTabsId } from "../components/Tabs.tsx";
+import { Icon } from "../components/Icon.tsx";
 import { Solid } from "../components/Glass.tsx";
 import { ResultState } from "../components/ResultState.tsx";
 import { PageHeader, SectionHeader } from "../components/ui/PageHeader.tsx";
@@ -79,19 +80,21 @@ import {
 import { previousPeriod } from "../lib/jalali-period.ts";
 
 const TABS = [
-  { key: "manager", label: "پنل مدیریتی" },
-  { key: "sales", label: "فروش" },
-  { key: "staff", label: "فروش کاربران" },
-  { key: "snappay", label: "اسنپ‌پی" },
-  { key: "profit", label: "سود کالا" },
-  { key: "stock", label: "موجودی" },
-  { key: "lowstock", label: "کمبود موجودی" },
-  { key: "ledger", label: "دفتر حساب" },
-  { key: "trial", label: "تراز آزمایشی" },
-  { key: "parties", label: "دریافتنی و پرداختنی" },
-  { key: "cash", label: "مغایرت نقد" },
+  { key: "manager", icon: "dashboard", label: "پنل مدیریتی" },
+  { key: "sales", icon: "register", label: "فروش" },
+  { key: "staff", icon: "people", label: "فروش کاربران" },
+  { key: "snappay", icon: "card", label: "اسنپ‌پی" },
+  { key: "profit", icon: "chart", label: "سود کالا" },
+  { key: "stock", icon: "box", label: "موجودی" },
+  { key: "lowstock", icon: "alert", label: "کمبود موجودی" },
+  { key: "ledger", icon: "receipt", label: "دفتر حساب" },
+  { key: "trial", icon: "layers", label: "تراز آزمایشی" },
+  { key: "parties", icon: "return", label: "دریافتنی و پرداختنی" },
+  { key: "cash", icon: "vault", label: "مغایرت نقد" },
 ] as const;
 type TabKey = (typeof TABS)[number]["key"];
+/** طرح ۱۰: هر زبانهٔ گزارش آیکون خودش را دارد. */
+const TAB_ITEMS = TABS.map(t => ({ key: t.key, label: t.label, icon: <Icon name={t.icon} size="sm" /> }));
 
 /** زبانه‌هایی که بازهٔ تاریخ در پرس‌وجویشان نیست — نوار فیلتر همین را صریح می‌گوید. */
 const PERIODLESS: Partial<Record<TabKey, string>> = {
@@ -149,7 +152,7 @@ export function Reports() {
     return () => controller.abort();
   }, [attempt]);
 
-  const header = <PageHeader title="گزارش‌ها"
+  const header = <PageHeader eyebrow="مالی و گزارش" title="گزارش‌ها"
     context="همهٔ اعداد از دفتر و انبار سرور می‌آیند؛ «امروز» را سرور تعیین می‌کند، نه ساعت این دستگاه." />;
 
   if (error) {
@@ -222,7 +225,7 @@ export function Reports() {
   return (
     <div className="report-page">
       {header}
-      <TabList hrefFor={key => routeUrl("reports", key)} id={tabsId} items={TABS} value={tab} onChange={setTab} label="گزارش‌ها" />
+      <TabList hrefFor={key => routeUrl("reports", key)} id={tabsId} items={TAB_ITEMS} value={tab} onChange={setTab} label="گزارش‌ها" />
       <TabPanels id={tabsId} items={TABS} value={tab} className="report-panel">
         {blocked ? <>
           <ReportFilters filters={filters} />

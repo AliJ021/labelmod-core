@@ -8,8 +8,11 @@ export function PageHeader({ title, context, meta, actions, eyebrow }: {
     <div className="page-header-text">
       {eyebrow ? <p className="page-eyebrow">{eyebrow}</p> : null}
       <h1 className="page-title">{title}</h1>
-      {context ? <p className="page-context">{context}</p> : null}
-      {meta ? <div className="page-meta">{meta}</div> : null}
+      {/* طرح ۱۰: زمینه و تازگی در یک سطر زیر عنوان؛ در عرض تنگ می‌شکند. */}
+      {context || meta ? <div className="page-sub">
+        {context ? <p className="page-context">{context}</p> : null}
+        {meta ? <div className="page-meta">{meta}</div> : null}
+      </div> : null}
     </div>
     {actions ? <div className="page-actions">{actions}</div> : null}
   </header>;

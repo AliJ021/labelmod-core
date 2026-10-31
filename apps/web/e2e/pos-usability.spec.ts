@@ -289,10 +289,15 @@ test("money grouping preserves caret, exact payment payload, and collapsed navig
   await page.addInitScript(()=>localStorage.setItem("labelmod_open_cart",JSON.stringify({invoiceId:"33333333-3333-4333-8333-333333333333",shiftId:"44444444-4444-4444-8444-444444444444"})));
   await page.goto("/?page=pos");
   if ((page.viewportSize()?.width ?? 0)>=900) {
-    await page.getByRole("button",{name:"جمع کردن منوی کناری",exact:true}).click();
+    // طرح ۱۰: صندوق پیش‌فرض منوی باریک دارد؛ باز/بستن آن جدا ذخیره می‌شود و پس از بارگذاری می‌ماند.
     await expect(page.getByRole("button",{name:"باز کردن منوی کناری",exact:true})).toHaveAttribute("aria-expanded","false");
+    await page.getByRole("button",{name:"باز کردن منوی کناری",exact:true}).click();
+    await expect(page.getByRole("button",{name:"جمع کردن منوی کناری",exact:true})).toHaveAttribute("aria-expanded","true");
     // The sidebar can be ready before the persisted cart's invoice read settles.
     await expect(page.getByRole("region",{name:"سبد خرید",exact:true}).getByText("شلوار کتان",{exact:true})).toBeVisible();
+    await page.reload();
+    await expect(page.getByRole("button",{name:"جمع کردن منوی کناری",exact:true})).toBeVisible();
+    await page.getByRole("button",{name:"جمع کردن منوی کناری",exact:true}).click();
     await page.reload();
     await expect(page.getByRole("button",{name:"باز کردن منوی کناری",exact:true})).toBeVisible();
     await expect(page.getByRole("tab",{name:"صندوق",exact:true})).toBeVisible();
@@ -312,7 +317,7 @@ test("money grouping preserves caret, exact payment payload, and collapsed navig
   await expect(amount).toHaveValue("12,000");
   const cart=page.getByRole("region",{name:"سبد خرید",exact:true});
   await expect(cart.getByRole("searchbox")).toHaveCount(0);
-  await expect(page.locator(".pos-customer-details")).not.toHaveAttribute("open","");
+  await expect(page.locator(".pos-customer-panel summary")).toHaveCount(0);
   // دیدنی و بی‌پوشش از دید کاربر (جایگزین آزمون هندسهٔ «.pay-scroll»؛ e2e/uncovered.ts).
   await expectUncovered(amount,"کادر مبلغ");
   await expectUncovered(page.getByRole("button",{name:"دریافت وجه",exact:true}),"دریافت وجه");

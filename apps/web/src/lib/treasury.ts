@@ -194,7 +194,11 @@ export function needsAccount(action: ChequeAction): boolean {
   return action === "deposit" || action === "clear" || action === "pay";
 }
 
+/** ماندهٔ دفتری هر سرفصل خزانه (`GET /treasury/balances`): اسناد ثبت‌شده، در دامنهٔ شعبه. */
+export interface TreasuryBalance { code: string; accountName: string; kinds: string[]; treasuryAccounts: string; balance: string; lastEntry: string | null }
+
 export const treasury = {
+  balances: (opts?: { signal?: AbortSignal }) => api.get<{ balances: TreasuryBalance[] }>("/treasury/balances", opts),
   accounts: (kind?: string) =>
     api.get<{ accounts: TreasuryAccount[] }>(
       `/treasury/accounts${kind ? `?kind=${encodeURIComponent(kind)}` : ""}`,

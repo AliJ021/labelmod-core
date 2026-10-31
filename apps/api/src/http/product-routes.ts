@@ -22,7 +22,10 @@
  *   • تاریخچه تغییرناپذیر است — Trigger روی `catalog.price`
  */
 import type { FastifyInstance } from "fastify";
+import { sql } from "kysely";
 import { z } from "zod";
+import { can } from "../auth/permission.ts";
+import { branchesOf } from "../sales/scope.ts";
 import { AuthError } from "../auth/service.ts";
 import { requireForSession } from "../auth/permission.ts";
 import type { Db } from "../db/client.ts";
@@ -128,9 +131,37 @@ export function registerProductRoutes(
         search: z.string().trim().max(80).optional(),
         status: z.enum(["active", "archived", "all"]).default("active"),
         limit: z.coerce.number().int().min(1).max(500).default(100),
+        categoryId: z.string().uuid().optional(),
       })
       .parse(req.query ?? {});
     return { products: await products.list(q) };
+  });
+
+  /**
+   * ردیف شاخص‌های «کالا و قیمت» (طرح ۱۰). همه در SQL:
+   * - کالا و تنوع فعال (همان `status = 'active'` فهرست).
+   * - ارزش موجودی به بها: جمع `stock_balance.total_value` در انبارهای شعبه‌های مجاز.
+   *   بها دادهٔ مدیریتی است؛ بی `cost.view` همان `null` است، نه صفر.
+   * - قیمت ثبت‌شده در ۳۰ روز: هر `catalog.set_price` یک سطر تازه است، پس این شمار
+   *   «ثبت یا تغییر قیمت» است و صفحه هم همین را می‌نویسد.
+   * «زیر آستانه» عمداً نیست: آستانهٔ موجودی کم تصمیم باز مالک است (README).
+   */
+  app.get("/products/summary", async (req) => {
+    const s = session(req);
+    await requireForSession(db, s, "catalog.manage");
+    const seesCost = (await can(db, { userId: s.userId, operation: "cost.view", viaPin: s.pinUnlocked })).verdict === "allow";
+    const scope = await branchesOf(db, s.userId);
+    const all = scope === "all";
+    const r = await sql<{ products: string; variations: string; value: string; prices30: string }>`
+      SELECT (SELECT count(*) FROM catalog.product WHERE status = 'active')::text AS products,
+             (SELECT count(*) FROM catalog.variation WHERE status = 'active')::text AS variations,
+             (SELECT coalesce(sum(b.total_value), 0) FROM inventory.stock_balance b
+                JOIN inventory.warehouse w ON w.id = b.warehouse_id
+               WHERE ${all} OR w.branch_id = ANY(${all ? [] : scope}::uuid[]))::text AS value,
+             (SELECT count(*) FROM catalog.price WHERE valid_from >= now() - interval '30 days')::text AS prices30`.execute(db);
+    const row = r.rows[0]!;
+    return { activeProducts: Number(row.products), activeVariations: Number(row.variations),
+      inventoryValue: seesCost ? row.value : null, pricesLast30Days: Number(row.prices30) };
   });
 
   app.get("/products/ref-data", async (req) => {

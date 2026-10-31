@@ -28,6 +28,11 @@ export function hourlyDay(over: Record<number, Partial<DailyHour>> = {}, profitV
  * روند پیش‌فرض، **آشتی‌شده با `daily`**: جمع ساعت‌ها دقیقاً همان سه کارت است (همان ثابتی که
  * سرور تضمین می‌کند)، با یک ساعت مرجوعیِ منفی.
  */
+/** کانال‌های همان روز پیش‌فرض؛ جمعشان دقیقاً `daily` است (همان ثابت مهاجرت ۱۰۸). */
+export const DEFAULT_CHANNELS = { businessDate: "2026-09-16", profitVisible: true, channels: [
+  { channel: "pos", salesAmount: "9870000", receivedAmount: "8800000", profitAmount: "1900000", invoiceCount: 9, returnCount: 1 },
+  { channel: "web", salesAmount: "2470000", receivedAmount: "2200000", profitAmount: "440000", invoiceCount: 3, returnCount: 0 },
+] };
 export const DEFAULT_HOURLY = hourlyDay({
   11: { salesAmount: "4340000", receivedAmount: "4000000", profitAmount: "840000", invoiceCount: 5, paymentCount: 5 },
   18: { salesAmount: "9000000", receivedAmount: "7500000", profitAmount: "2000000", invoiceCount: 7, paymentCount: 6 },
@@ -128,7 +133,7 @@ export class MockApi {
   permissionRows = [rule];
   defaults: Record<string, unknown> = {
     "GET /pos/policy": { requireCustomer: false },
-    "GET /auth/me": me, "GET /branches": { branches }, "GET /reports/daily": daily, "GET /reports/daily/hourly": DEFAULT_HOURLY,
+    "GET /auth/me": me, "GET /branches": { branches }, "GET /reports/daily": daily, "GET /reports/daily/hourly": DEFAULT_HOURLY, "GET /reports/daily/channels": DEFAULT_CHANNELS,
     "GET /reports/dashboard/period": periodBody(),
     "GET /dashboard/stock-sync": syncBody(),
     "GET /dashboard/operations": opsBody(),
@@ -140,7 +145,7 @@ export class MockApi {
     "GET /auth/2fa/sms/status": { enabled:false, maskedMobile:null },
     "GET /variations/v1/price-history": { history: [] },
     "GET /reports/sales": { rows: [] }, "GET /reports/hourly": { rows: [] }, "GET /reports/cash-reconciliation": { rows: [] },
-    "GET /treasury/accounts": { accounts: [] }, "GET /treasury/transactions": { transactions: [] },
+    "GET /treasury/accounts": { accounts: [] }, "GET /treasury/balances": { balances: [] }, "GET /products/summary": { activeProducts: 8, activeVariations: 28, inventoryValue: "1220800000", pricesLast30Days: 0 }, "GET /treasury/transactions": { transactions: [] },
     "GET /purchasing/expense-accounts": [], "GET /purchasing/pay-accounts": [], "GET /suppliers": [],
     "GET /receipts": [], "GET /stock-counts": [], "GET /cheques/due": { due: [] },
     "GET /users": { users: [staff, { ...staff, id: me.id, username: "synthetic_admin", fullName: me.fullName }] }, "GET /roles": { roles: [{ code: "cashier", name: "صندوق‌دار" }] },

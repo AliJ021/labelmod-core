@@ -356,6 +356,52 @@ describe("فروش اینستاگرام از صندوق: قرارداد و رق�
     assert.ok(winnersTotal > 0);
   });
 
+  /**
+   * R06 (محلی): همان رقابت چهاربازیگره، این بار برای **اندازه‌گیری**. زمان هر نهایی‌سازی و سفارش سایت از شروع تا پایان
+   * درخواست ثبت و صدک‌ها گزارش می‌شوند. ادعا فقط درستی است (بی فروش بیش از موجودی، بی پرداخت تکراری، دفتر انبار
+   * سازگار)؛ عدد تأخیر به ماشین آزمون وابسته است، پس آستانه نمی‌گیرد و SLA نیست. inject درون‌فرایندی است:
+   * شبکه، TLS، Caddy و Woo واقعی در این عدد نیستند.
+   */
+  test("اندازه‌گیری زیر رقابت (R06 محلی): صدک‌های تأخیر نهایی‌سازی چهار بازیگر هم‌زمان، با تطبیق انبار", async (t) => {
+    const rounds = 30;
+    const lat: Record<string, number[]> = { pos: [], ig: [], web: [] };
+    let sold = 0, offered = 0;
+    const timed = async <T,>(bucket: string, run: () => Promise<T>) => { const t0 = performance.now(); const r = await run(); lat[bucket]!.push(performance.now() - t0); return r; };
+    for (let round = 0; round < rounds; round++) {
+      const stock = 1 + (round % 3);
+      offered += stock;
+      const v = await variation(stock);
+      const c1 = await cart(u.c1, v.id, 1, [{ methodCode: "cash", amount: "1000000" }]);
+      const c2 = await cart(u.c2, v.id, 1, [{ methodCode: "card", amount: "1000000", refNo: `LAT-${suffix}-${round}` }]);
+      const ig = await cart(u.op, v.id, 1, [{ methodCode: "transfer", amount: "1000000", refNo: `LAT-C2C-${suffix}-${round}` }]);
+      const results = await Promise.all([
+        timed("pos", () => call("POST", `/invoices/${c1}/finalize`, u.c1, {}, key())),
+        timed("pos", () => call("POST", `/invoices/${c2}/finalize`, u.c2, {}, key())),
+        timed("ig", () => call("POST", `/invoices/${ig}/finalize`, u.op, {}, key())),
+        timed("web", () => app.inject({ method: "POST", url: "/web/orders", headers: { authorization: `Bearer ${siteKey}` }, payload: {
+          branchId: BRANCH, warehouseId: STORE_WH, externalId: `lat-${suffix}-${round}`,
+          lines: [{ sku: v.sku, qty: "1", unitPrice: "1000000" }], paymentMethod: "gateway",
+          paymentRef: `lat-gw-${suffix}-${round}`, paidAmount: "1000000" } })),
+      ]);
+      const won = results.filter((r) => r.statusCode === 200 || r.statusCode === 201).length;
+      for (const r of results) if (r.statusCode !== 200 && r.statusCode !== 201) assert.equal(r.statusCode, 409, r.body);
+      assert.ok(won >= 1 && won <= stock, `دور ${round}: ${won} برنده با موجودی ${stock}`);
+      assert.equal(Number((await balance(v.id)).on_hand), stock - won, `دور ${round}: موجودی = موجودی اول − برنده‌ها`);
+      sold += won;
+    }
+    // دفتر انبار با جمع حرکت‌ها می‌خواند (همان نمای ثابت CI)؛ هیچ تنوعی منفی نشده است.
+    const drift = await sql<{ n: string }>`SELECT count(*)::text AS n FROM inventory.balance_check WHERE qty_diff <> 0 OR value_diff <> 0`.execute(handle.db);
+    assert.equal(drift.rows[0]!.n, "0", "stock_balance با جمع stock_movement می‌خواند");
+    const negative = await sql<{ n: string }>`SELECT count(*)::text AS n FROM inventory.stock_balance WHERE on_hand < 0`.execute(handle.db);
+    assert.equal(negative.rows[0]!.n, "0");
+    const pct = (xs: number[], q: number) => { const a = [...xs].sort((x, y) => x - y); return a[Math.min(a.length - 1, Math.ceil(q * a.length) - 1)]!; };
+    const all = [...lat.pos!, ...lat.ig!, ...lat.web!];
+    const report = Object.fromEntries(Object.entries({ ...lat, all }).map(([k, xs]) => [k, {
+      n: xs.length, p50: +pct(xs, 0.5).toFixed(1), p95: +pct(xs, 0.95).toFixed(1), p99: +pct(xs, 0.99).toFixed(1), max: +Math.max(...xs).toFixed(1) }]));
+    t.diagnostic(`R06-local ms ${JSON.stringify({ rounds, offered, sold, ...report })}`);
+    assert.ok(sold <= offered);
+  });
+
   test("نقد اینستاگرام: کشوی نام‌برده، نگهبان بستن، شمارش بی مغایرت و Replay پس از بستن", async () => {
     const listed = await call("GET", `/shifts/open?branchId=${BRANCH}`, u.op);
     assert.equal(listed.statusCode, 200, listed.body);

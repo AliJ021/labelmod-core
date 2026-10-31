@@ -1,4 +1,5 @@
 import { AmountInput } from "../components/ui/AmountInput.tsx";
+import { CatalogSummaryRow } from "../components/CatalogSummaryRow.tsx";
 import { useUrlState, useUrlFlag } from "../lib/use-url-state.ts";
 /**
  * کالا و قیمت — تعریف مدل، ساخت تنوع‌ها، و تغییر قیمت.
@@ -96,8 +97,12 @@ export function Catalog() {
   const [creating, setCreating] = useState(false);
   const [revision, setRevision] = useState(0);
   const [delay, setDelay] = useState(0);
-  const load = useCallback(async (signal: AbortSignal) => (await catalog.products({ search, status: showArchived ? "all" : "active" }, { signal })).products, [search, showArchived]);
-  const query = useLatestQuery({ key: JSON.stringify([search, showArchived]), version: revision, load, delay, enabled: selected === null });
+  // طرح ۱۰: تراشهٔ دسته. فیلتر سمت سرور است تا سقف فهرست کالای دستهٔ دیگری را جای آن نگذارد.
+  const [category, setCategory] = useUrlState("catalog.category");
+  const categoriesLoad = useCallback((signal: AbortSignal) => catalog.refData({ signal }).then(r => r.categories), []);
+  const categories = useLatestQuery({ key: "catalog-categories", load: categoriesLoad }).data ?? [];
+  const load = useCallback(async (signal: AbortSignal) => (await catalog.products({ search, status: showArchived ? "all" : "active", ...(category ? { categoryId: category } : {}) }, { signal })).products, [search, showArchived, category]);
+  const query = useLatestQuery({ key: JSON.stringify([search, showArchived, category]), version: revision, load, delay, enabled: selected === null });
   const products = query.data ?? [];
   function reload() { setDelay(0); setRevision(v => v + 1); }
   // چاپ گروهی از همین فهرست: چند کالا را تیک بزنید، «از هر تنوع N لیبل»، و همه یک‌جا به
@@ -157,6 +162,7 @@ export function Catalog() {
 
   return (
     <div className="stack catalog-page">
+      {labels === "1" ? null : <CatalogSummaryRow />}
       <Glass as="section" className="pad">
         <div className="row" style={{ justifyContent: "space-between", alignItems: "center" }}>
           <h2 style={{ fontSize: "1rem", margin: 0 }}>{labels === "1" ? "چاپ لیبل بارکد" : "کالا و قیمت"}</h2>
@@ -177,6 +183,11 @@ export function Catalog() {
             <span>بایگانی‌شده‌ها هم</span>
           </label>
         </div>
+        {categories.length > 0 ? <div className="catalog-categories" role="group" aria-label="دستهٔ کالا">
+          <button type="button" className="pick-chip" aria-pressed={category === ""} onClick={() => { setCategory(""); setDelay(0); }}>همه</button>
+          {categories.map(c => <button key={c.id} type="button" className="pick-chip" aria-pressed={category === c.id}
+            onClick={() => { setCategory(c.id); setDelay(0); }}>{c.name}</button>)}
+        </div> : null}
       </Glass>
       {labels === "1" ? <LabelPrintQueue /> : null}
 

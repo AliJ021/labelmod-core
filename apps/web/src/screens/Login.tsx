@@ -14,13 +14,38 @@
  * قفل نشست موجود است، نه برای ساختن نشست جدید.» اگر نشست رفته باشد،
  * سرور `no_session` می‌دهد و همین‌جا به فرم ورود برمی‌گردیم.
  */
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useRef, useState, type ReactNode } from "react";
+import { Icon } from "../components/Icon.tsx";
 import { Glass, Solid } from "../components/Glass.tsx";
 import { ApiError } from "../lib/api.ts";
 import { deviceFingerprint } from "../lib/device.ts";
 import { isNoSession, session } from "../lib/session.ts";
 import { getAssertion, webauthnAvailable } from "../lib/webauthn.ts";
 import { normalizeDigits } from "../lib/settings-value.ts";
+
+/**
+ * صحنهٔ ورود و قفل (طرح ۱۰): نشان بالا، شعار و کارت‌های تزئینی کنار کارت فرم، و سطر پایین.
+ * شعار متن است ولی کارت‌ها تزئینی‌اند (aria-hidden). عددی روی این صفحه نیست که خوانده شود.
+ */
+function AuthStage({ children }: { children: ReactNode }) {
+  return <div className="auth-stage">
+    <div className="auth-top"><span className="shell-brand-mark" aria-hidden="true"><Icon name="layers" /></span>
+      <span className="shell-brand-text"><strong>لیبل مد</strong><small lang="en">Label.mod</small></span></div>
+    <div className="auth-wrap">
+      <div className="auth-hero">
+        <p className="auth-hero-eyebrow">حسابداری · انبار · فروش</p>
+        <p className="auth-hero-title">یک دفتر.<br />یک عدد درست.</p>
+        <div className="auth-art" aria-hidden="true">
+          <div className="auth-art-card auth-art-bars">{[62, 84, 50, 72, 40, 56].map((h, i) => <i key={i} style={{ blockSize: `${h}%` }} />)}<b /></div>
+          <div className="auth-art-card auth-art-lines"><b /><b /><b /><i /></div>
+          <div className="auth-art-card auth-art-ledger"><span>بدهکار</span><span>بستانکار</span><i /><i /><em><Icon name="check" size="sm" />سند متوازن</em></div>
+        </div>
+      </div>
+      {children}
+    </div>
+    <p className="auth-foot"><Icon name="lock" size="sm" />نشست مات · کوکی HttpOnly</p>
+  </div>;
+}
 
 /** پیام خطای کاربرپسند از هر چیزی که پرتاب شده. */
 function message(err: unknown): string {
@@ -30,6 +55,7 @@ function message(err: unknown): string {
 
 export function Login({ onDone }: { onDone: () => void }) {
   const [username, setUsername] = useState("");
+  const [showPassword, setShowPassword] = useState(false);
   const [password, setPassword] = useState("");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -137,7 +163,7 @@ export function Login({ onDone }: { onDone: () => void }) {
     const codeMethod = useRecovery || useSms || second.methods.includes("totp");
     const showKey = !useRecovery && !useSms && second.methods.includes("webauthn") && webauthnAvailable();
     return (
-      <div className="auth-wrap">
+      <AuthStage>
         <Glass as="section" radius="lg" className="pad auth-card" live>
           <h1 className="auth-title">مرحله دوم</h1>
           <p className="muted" style={{ marginTop: 0 }}>
@@ -244,15 +270,16 @@ export function Login({ onDone }: { onDone: () => void }) {
             </button>
           ) : null}
         </Glass>
-      </div>
+      </AuthStage>
     );
   }
 
   return (
-    <div className="auth-wrap">
+    <AuthStage>
       <Glass as="section" radius="lg" className="pad auth-card" live>
-        <h1 className="auth-title">لیبل مد</h1>
-        <p className="muted" style={{ marginTop: 0 }}>برای ادامه وارد شوید.</p>
+        <p className="auth-eyebrow"><Icon name="shield" size="sm" />ورود پرسنل</p>
+        <h1 className="auth-title">به لیبل مد خوش آمدید</h1>
+        <p className="muted" style={{ marginTop: 0 }}>برای ادامه با حساب کاری خود وارد شوید.</p>
 
         <form onSubmit={submit} className="stack" style={{ gap: "var(--s-3)" }}>
           <Solid className="auth-field">
@@ -271,14 +298,18 @@ export function Login({ onDone }: { onDone: () => void }) {
 
           <Solid className="auth-field">
             <label htmlFor="lm-pass">رمز عبور</label>
-            <input
-              id="lm-pass"
-              type="password"
-              value={password}
-              onChange={(e) => setPassword(e.target.value)}
-              autoComplete="current-password"
-              required
-            />
+            <span className="auth-secret">
+              <input
+                id="lm-pass"
+                type={showPassword ? "text" : "password"}
+                value={password}
+                onChange={(e) => setPassword(e.target.value)}
+                autoComplete="current-password"
+                required
+              />
+              <button type="button" className="auth-reveal" aria-pressed={showPassword} aria-controls="lm-pass"
+                aria-label={showPassword ? "پنهان‌کردن رمز" : "نمایش رمز"} onClick={() => setShowPassword(v => !v)}><Icon name="eye" size="sm" /></button>
+            </span>
           </Solid>
 
           {error ? (
@@ -290,9 +321,10 @@ export function Login({ onDone }: { onDone: () => void }) {
           <button type="submit" className="auth-submit" disabled={busy}>
             {busy ? "در حال ورود…" : "ورود"}
           </button>
+          <p className="auth-note"><Icon name="info" size="sm" />رمز را فراموش کرده‌اید؟ مدیر فروشگاه رمز تازه می‌سازد؛ بازیابی خودکار با ایمیل نداریم.</p>
         </form>
       </Glass>
-    </div>
+    </AuthStage>
   );
 }
 
@@ -342,19 +374,21 @@ export function LockScreen({
   }
 
   return (
-    <div className="auth-wrap">
+    <AuthStage>
       <Glass as="section" radius="lg" className="pad auth-card" live>
-        <h1 className="auth-title">صفحه قفل است</h1>
-        <p className="muted" style={{ marginTop: 0 }}>{fullName}</p>
+        <div className="lock-avatar" aria-hidden="true">{fullName.trim().charAt(0)}<span><Icon name="lock" size="sm" /></span></div>
+        <h1 className="auth-title lock-title">صفحه قفل است</h1>
+        <p className="muted lock-name">{fullName}</p>
 
-        <form onSubmit={submit} className="stack" style={{ gap: "var(--s-3)" }}>
-          <Solid className="auth-field">
-            <label htmlFor="lm-pin">PIN</label>
+        <form onSubmit={submit} className="stack lock-form" style={{ gap: "var(--s-3)" }}>
+          <div className="lock-pin">
+            <label htmlFor="lm-pin" className="sr-only">PIN</label>
             {/*
               `type="text"` با `inputMode="numeric"`، نه `type="number"`:
               همان دلیلی که در فرم تنظیمات هست — ورودی عددی مرورگر با
               صفحه‌کلید فارسی بدرفتاری می‌کند. اینجا `pattern` هم فقط
               رقم لاتین می‌پذیرد چون PIN را سرور با `^\d{4,8}$` می‌سنجد.
+              ورودی واقعی همین است (صفحه‌کلید سخت‌افزاری)؛ نقطه‌ها و صفحه‌کلید عددی فقط نمایش و میان‌بُرند.
             */}
             <input
               id="lm-pin"
@@ -362,12 +396,14 @@ export function LockScreen({
               type="password"
               inputMode="numeric"
               pattern="[0-9]{4,8}"
+              maxLength={8}
               value={pin}
-              onChange={(e) => setPin(e.target.value)}
+              onChange={(e) => setPin(normalizeDigits(e.target.value).replace(/\D/g, "").slice(0, 8))}
               autoComplete="off"
               required
             />
-          </Solid>
+            <span className="lock-dots" aria-hidden="true">{Array.from({ length: Math.max(4, pin.length) }, (_, i) => <i key={i} data-on={i < pin.length || undefined} />)}</span>
+          </div>
 
           {error ? (
             <p className="auth-error" role="alert">
@@ -375,15 +411,21 @@ export function LockScreen({
             </p>
           ) : null}
 
-          <button type="submit" className="auth-submit" disabled={busy}>
-            {busy ? "در حال باز کردن…" : "باز کردن"}
-          </button>
+          <div className="lock-keys" role="group" aria-label="صفحه‌کلید PIN">
+            {["1", "2", "3", "4", "5", "6", "7", "8", "9"].map(d => <button key={d} type="button" className="lock-key" disabled={busy}
+              onClick={() => { setPin(p => (p + d).slice(0, 8)); box.current?.focus(); }}>{Number(d).toLocaleString("fa-IR")}</button>)}
+            <button type="button" className="lock-key" aria-label="پاک‌کردن آخرین رقم" disabled={busy || pin === ""}
+              onClick={() => { setPin(p => p.slice(0, -1)); box.current?.focus(); }}><Icon name="return" /></button>
+            <button type="button" className="lock-key" disabled={busy} onClick={() => { setPin(p => (p + "0").slice(0, 8)); box.current?.focus(); }}>{(0).toLocaleString("fa-IR")}</button>
+            <button type="submit" className="lock-key lock-key--go" disabled={busy} aria-label={busy ? "در حال باز کردن…" : "باز کردن"}><Icon name="check" /></button>
+          </div>
+          <p className="auth-note"><Icon name="info" size="sm" />نشست بازشده با PIN، بازپرداخت، تغییر قیمت و تأیید دستگاه را باز نمی‌کند؛ آن‌ها رمز کامل می‌خواهند.</p>
           <button type="button" className="auth-alt" onClick={onSwitchUser}>
-            ورود با کاربر دیگر
+            <Icon name="people" size="sm" />ورود با کاربر دیگر
           </button>
         </form>
       </Glass>
-    </div>
+    </AuthStage>
   );
 }
 
@@ -432,7 +474,7 @@ export function ReauthPanel({
   }
 
   return (
-    <div className="auth-wrap">
+    <AuthStage>
       <Glass as="section" radius="lg" className="pad auth-card" live>
         <h1 className="auth-title">ارتقای نشست</h1>
         <p className="muted" style={{ marginTop: 0 }}>
@@ -468,6 +510,6 @@ export function ReauthPanel({
           </button>
         </form>
       </Glass>
-    </div>
+    </AuthStage>
   );
 }

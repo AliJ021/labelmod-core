@@ -260,7 +260,7 @@ export function Returns() {
       {mode === "returns" ? <WebRefundRequests key={branchId} branchId={branchId} /> : null}
 
       {view && invoice ? (
-        <fieldset className="stack" disabled={!!operation.pending} style={{ border: 0, padding: 0, minWidth: 0 }}>
+        <fieldset className="stack returns-steps" disabled={!!operation.pending} style={{ border: 0, padding: 0, minWidth: 0 }}>
           {view.late ? (
             <p className="solid pos-alert" role="status">
               <span className="dot dot--warn" aria-hidden="true">●</span> این فروش{" "}
@@ -326,6 +326,15 @@ export function Returns() {
 
           <Solid as="section" className="pad stack" style={{ gap: "var(--s-3)" }}>
             <h3 style={{ margin: 0 }}>علت و مبلغ</h3>
+            {/* طرح ۱۰: «حساب مرجوعی» — فقط اعداد معلوم، بی محاسبهٔ پولی در مرورگر. اثر واقعی
+                (صفرکردن بدهی همین فاکتور و مازاد به اعتبار مشتری) را `post_return` در تراکنش ثبت تعیین می‌کند. */}
+            <dl className="return-account">
+              <div><dt>ارزش کالای برگشتی (بهای همان فروش)</dt><dd><Money rial={suggestion} /></dd></div>
+              {/* میدانِ نیامده «—» است، نه صفر و نه فروپاشی صفحهٔ مرجوعی. */}
+              <div><dt>قابل پرداخت همین فاکتور</dt><dd><Money rial={typeof invoice.payableAmount === "string" ? parseRial(invoice.payableAmount) : null} /></dd></div>
+              <div><dt>دریافت‌شده بابت این فاکتور</dt><dd><Money rial={typeof invoice.paidAmount === "string" ? parseRial(invoice.paidAmount) : null} /></dd></div>
+            </dl>
+            <p className="muted small return-account-rule">بازپرداخت از دریافت‌شده بیشتر نمی‌شود؛ مازادِ ارزش کالا اول بدهی همین فاکتور را صفر می‌کند و بعد اعتبار مشتری می‌شود. پیش از ثبت، هیچ اثری ثبت نمی‌شود.</p>
 
             <label className="auth-field">
               <span>علت مرجوعی</span>
