@@ -483,7 +483,7 @@
    شکل فارسی کارت‌ها را می‌گیرند. متن DOM لاتین می‌ماند. شناسه‌ها (برگ LTR: کد کالا، موبایل، مرجع)،
    ورودی‌ها و کد عمداً لاتین‌اند: آنچه تایپ یا اسکن می‌شود باید همان شکلی باشد که دیده می‌شود. */
 body { font-feature-settings: "ss01" 1; }
-[dir="ltr"], .ltr, input, textarea, select, code, kbd, pre, .feature-search-kbd { font-feature-settings: normal; }
+.ltr, input, textarea, select, code, kbd, pre, .feature-search-kbd { font-feature-settings: normal; }
 /* عنوان روند و انتخاب بازه در یک ردیف (پیش‌نمایش)؛ توضیح زیر عنوان می‌شکند، نه دکمه‌ها. */
 .dashboard .today-trend .section-header { flex-wrap: nowrap; }
 .dashboard .today-trend .section-header > div:first-child { flex: 1 1 auto; min-inline-size: 0; }
