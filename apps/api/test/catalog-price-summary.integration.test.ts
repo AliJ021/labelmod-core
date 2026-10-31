@@ -324,4 +324,23 @@ describe("قیمت کالا در فهرست کالا و قیمت", { skip }, () 
     assert.equal(d.json().product.priceMin, "12500000");
     assert.equal(d.json().product.sellablePricedCount, 3);
   });
+
+  test("خلاصهٔ کالا و قیمت از SQL: شمار فعال‌ها، ارزش موجودی به بها و قیمت‌های ۳۰ روز؛ پول رشته", async () => {
+    const before = await app.inject({ method: "GET", url: "/products/summary", ...s });
+    assert.equal(before.statusCode, 200, before.body);
+    const b = before.json() as { activeProducts: number; activeVariations: number; inventoryValue: string | null; pricesLast30Days: number };
+    const code = `SM-${suffix}`.slice(0, 24);
+    const { vars } = await product(code, ["S", "M"]);
+    for (const v of vars) await price(v.id, "1000000");
+    const after = (await app.inject({ method: "GET", url: "/products/summary", ...s })).json() as typeof b;
+    assert.equal(after.activeProducts, b.activeProducts + 1);
+    assert.equal(after.activeVariations, b.activeVariations + 2);
+    assert.equal(after.pricesLast30Days, b.pricesLast30Days + 2, "هر ثبت قیمت یک سطر");
+    // مدیر cost.view دارد: ارزش رشتهٔ ریال صحیح و برابر جمع مستقیم ارزش موجودی شعبه است.
+    assert.equal(typeof after.inventoryValue, "string");
+    const direct = (await sql<{ v: string }>`SELECT coalesce(sum(b.total_value),0)::text v FROM inventory.stock_balance b
+      JOIN inventory.warehouse w ON w.id=b.warehouse_id WHERE w.branch_id=${BRANCH}::uuid`.execute(handle.db)).rows[0]!.v;
+    assert.equal(after.inventoryValue, direct);
+    assert.equal((await app.inject({ method: "GET", url: "/products/summary" })).statusCode, 401);
+  });
 });

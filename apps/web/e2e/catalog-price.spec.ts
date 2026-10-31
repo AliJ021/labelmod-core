@@ -56,3 +56,43 @@ test("قیمت فروش: برابر، بازه، بی‌قیمت، بخشی بی
   await expect(table.getByRole("button", { name: "باز کردن", exact: true })).toHaveCount(ROWS.length);
   expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth + 1)).toBe(true);
 });
+
+test("catalog summary row: counts and value at cost from the server; without cost.view the value is a dash with a reason, never zero", async ({ page, api }) => {
+  await page.goto("/?page=catalog");
+  const row = page.getByRole("region", { name: "خلاصهٔ کالا و قیمت" });
+  await expect(row).toBeVisible();
+  await expect(row.getByRole("region", { name: "کالای فعال" })).toContainText("۲۸ تنوع فعال");
+  await expect(row.getByRole("region", { name: "ارزش موجودی به بها" })).toContainText("122٬080٬000");
+  api.defaults["GET /products/summary"] = { activeProducts: 8, activeVariations: 28, inventoryValue: null, pricesLast30Days: 3 };
+  await page.reload();
+  const value = row.getByRole("region", { name: "ارزش موجودی به بها" });
+  await expect(value).toContainText("دسترسی بهای تمام‌شده");
+  await expect(value).not.toContainText("0 تومان");
+  expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth + 1)).toBe(true);
+});
+
+test("low-stock card on the catalog row comes from the dashboard's own count; an undefined threshold is unknown with its reason, never zero", async ({ page, api }) => {
+  const { opsBody } = await import("./fixtures");
+  api.defaults["GET /dashboard/operations"] = opsBody({ lowStock: { state: "ready", threshold: "2", total: 5, warehouses: [{ id: "w1", name: "قفسه فروشگاه", count: 5 }] } });
+  await page.goto("/?page=catalog");
+  const low = page.getByRole("region", { name: "خلاصهٔ کالا و قیمت" }).getByRole("region", { name: "زیر آستانه" });
+  await expect(low).toContainText("۵");
+  await expect(low).toContainText("آستانه 2");
+  api.defaults["GET /dashboard/operations"] = opsBody({ lowStock: { state: "unknown", reason: "آستانهٔ موجودی کم هنوز تعیین نشده است." } });
+  await page.reload();
+  await expect(low).toContainText("آستانهٔ موجودی کم هنوز تعیین نشده است.");
+  await expect(low.getByLabel("نامعلوم")).toBeVisible();
+});
+
+test("customers row shows receivables and customer credit from posted documents, apart, and disappears when the role cannot see them", async ({ page, api }) => {
+  const { opsBody } = await import("./fixtures");
+  api.defaults["GET /dashboard/operations"] = opsBody({ receivables: { state: "ready", owed: { count: 4, amount: "55500000" }, credit: { count: 1, amount: "3200000" } } });
+  await page.goto("/?page=customers");
+  const row = page.getByRole("region", { name: "طلب و اعتبار مشتریان" });
+  await expect(row.getByRole("region", { name: "طلب از مشتریان" })).toContainText("5٬550٬000");
+  await expect(row.getByRole("region", { name: "اعتبار مشتریان نزد ما" })).toContainText("320٬000");
+  api.defaults["GET /dashboard/operations"] = opsBody({ receivables: { state: "denied" } });
+  await page.reload();
+  await expect(page.getByRole("heading", { name: "مشتریان", level: 1 })).toBeVisible();
+  await expect(row).toHaveCount(0);
+});

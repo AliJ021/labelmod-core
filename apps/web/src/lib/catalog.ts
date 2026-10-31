@@ -158,7 +158,11 @@ export function splitList(raw: string): string[] {
   return out;
 }
 
+/** ردیف شاخص‌های «کالا و قیمت» (`GET /products/summary`). بی `cost.view` ارزش `null` است، نه صفر. */
+export interface CatalogSummary { activeProducts: number; activeVariations: number; inventoryValue: string | null; pricesLast30Days: number }
+
 export const catalog = {
+  summary: (request?: RequestOptions) => api.get<CatalogSummary>("/products/summary", request),
   products: (opts: { search?: string; status?: string } = {}, request?: RequestOptions) => {
     const q = new URLSearchParams();
     if (opts.search) q.set("search", opts.search);

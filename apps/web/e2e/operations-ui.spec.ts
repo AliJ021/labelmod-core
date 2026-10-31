@@ -65,3 +65,24 @@ test("backup confirmation receives focus and cancelled credentials are cleared; 
   await expect(page.getByRole("button",{name:"ساخت بکاپ تازه",exact:true})).toBeDisabled();
   expect(api.calls.filter(c=>c.startsWith("POST /backups"))).toEqual([]);
 });
+
+test("treasury ledger balances: server figures per ledger account, labelled as ledger not drawer count; 403 hides the row", async ({ page, api }) => {
+  api.defaults["GET /treasury/balances"] = { balances: [
+    { code: "1101", accountName: "صندوق", kinds: ["cash_box"], treasuryAccounts: "کشوی ۱، کشوی ۲", balance: "84650000", lastEntry: "2026-09-15" },
+    { code: "1102", accountName: "بانک — حساب جاری", kinds: ["bank"], treasuryAccounts: "بانک ملت", balance: "-1000000", lastEntry: null },
+  ] };
+  await page.goto("/?page=treasury");
+  const row = page.getByRole("region", { name: "ماندهٔ دفتری حساب‌های خزانه" });
+  await expect(row).toBeVisible();
+  const cash = row.getByRole("region", { name: "صندوق — صندوق" });
+  await expect(cash).toContainText("8٬465٬000");
+  await expect(cash).toContainText("کشوی ۱، کشوی ۲");
+  await expect(cash).toContainText("ماندهٔ دفتر تا");
+  // مانده منفی با علامت منفی، نه پنهان و نه صفر.
+  await expect(row.getByRole("region", { name: "بانک — بانک — حساب جاری" })).toContainText("−");
+  expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth + 1)).toBe(true);
+  api.handlers.set("GET /treasury/balances", async route => { await route.fulfill({ status: 403, json: { error: "forbidden", message: "دسترسی ندارید" } }); });
+  await page.reload();
+  await expect(page.getByRole("heading", { name: "خزانه و چک", level: 1 })).toBeVisible();
+  await expect(row).toHaveCount(0);
+});

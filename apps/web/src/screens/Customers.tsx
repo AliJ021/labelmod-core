@@ -1,3 +1,4 @@
+import { CustomersSummaryRow } from "../components/CustomersSummaryRow.tsx";
 import { AmountInput } from "../components/ui/AmountInput.tsx";
 import { useUrlState } from "../lib/use-url-state.ts";
 /**
@@ -122,6 +123,7 @@ export function Customers() {
 
   return (
     <div className="stack" style={{ gap: "var(--s-3)" }}>
+      <CustomersSummaryRow />
       {error ? (
         <p className="solid pos-alert" role="alert">
           <span className="dot dot--crit" aria-hidden="true">●</span> {error}

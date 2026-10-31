@@ -145,7 +145,7 @@ export class MockApi {
     "GET /auth/2fa/sms/status": { enabled:false, maskedMobile:null },
     "GET /variations/v1/price-history": { history: [] },
     "GET /reports/sales": { rows: [] }, "GET /reports/hourly": { rows: [] }, "GET /reports/cash-reconciliation": { rows: [] },
-    "GET /treasury/accounts": { accounts: [] }, "GET /treasury/transactions": { transactions: [] },
+    "GET /treasury/accounts": { accounts: [] }, "GET /treasury/balances": { balances: [] }, "GET /products/summary": { activeProducts: 8, activeVariations: 28, inventoryValue: "1220800000", pricesLast30Days: 0 }, "GET /treasury/transactions": { transactions: [] },
     "GET /purchasing/expense-accounts": [], "GET /purchasing/pay-accounts": [], "GET /suppliers": [],
     "GET /receipts": [], "GET /stock-counts": [], "GET /cheques/due": { due: [] },
     "GET /users": { users: [staff, { ...staff, id: me.id, username: "synthetic_admin", fullName: me.fullName }] }, "GET /roles": { roles: [{ code: "cashier", name: "صندوق‌دار" }] },

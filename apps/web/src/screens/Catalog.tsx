@@ -1,4 +1,5 @@
 import { AmountInput } from "../components/ui/AmountInput.tsx";
+import { CatalogSummaryRow } from "../components/CatalogSummaryRow.tsx";
 import { useUrlState, useUrlFlag } from "../lib/use-url-state.ts";
 /**
  * کالا و قیمت — تعریف مدل، ساخت تنوع‌ها، و تغییر قیمت.
@@ -157,6 +158,7 @@ export function Catalog() {
 
   return (
     <div className="stack catalog-page">
+      {labels === "1" ? null : <CatalogSummaryRow />}
       <Glass as="section" className="pad">
         <div className="row" style={{ justifyContent: "space-between", alignItems: "center" }}>
           <h2 style={{ fontSize: "1rem", margin: 0 }}>{labels === "1" ? "چاپ لیبل بارکد" : "کالا و قیمت"}</h2>
