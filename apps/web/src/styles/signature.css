@@ -46,10 +46,31 @@
 .kpi--tab::before, .kpi--emphasis::before { background: var(--brand); }
 .kpi--tab[aria-selected="true"] {
   background:
-    radial-gradient(120% 120% at 100% 0%, color-mix(in srgb, var(--brand) 14%, transparent), transparent 62%);
+    radial-gradient(120% 120% at 100% 0%, color-mix(in srgb, var(--brand) 14%, transparent), transparent 62%),
+    var(--surface-solid);
 }
 .kpi--tab[aria-selected="true"] .kpi-icon { color: var(--accent); }
 .kpi--tab[aria-selected="true"]::before { box-shadow: 0 2px 12px color-mix(in srgb, var(--brand) 55%, transparent); }
+
+/* ── داشبورد طرح ۱۰: سه کارت شاخص جدا، کارت انتخاب‌شده پهن‌تر، روند در کارت خودش ──
+   معنا همان است: یک tablist که یک پنل روند را عوض می‌کند. فقط سطح‌ها جدا شدند. */
+.dashboard .today { display: grid; gap: var(--s-4); padding: 0; overflow: visible; background: transparent; box-shadow: none; border-radius: 0; }
+.dashboard .today > .kpis { gap: var(--s-4); }
+.dashboard .today .kpi--band { border-radius: var(--r-lg); background: var(--surface-solid); box-shadow: var(--elev-1), inset 0 0 0 var(--border-w) var(--rule); }
+.dashboard .today .kpis--band > .kpi--band + .kpi--band { border-inline-start: 0; }
+.dashboard .today .kpi--tab::before { inset-inline: var(--s-6); }
+.dashboard .today .kpi--tab[aria-selected="true"] { box-shadow: var(--elev-2), inset 0 0 0 var(--border-w) color-mix(in srgb, var(--accent) 45%, var(--rule)); }
+.dashboard .today-trend { border-block-start: 0; border-radius: var(--r-lg); background: var(--surface-solid); box-shadow: var(--elev-1), inset 0 0 0 var(--border-w) var(--rule); }
+@media (min-width: 1280px) {
+  .dashboard .kpis--tabs { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+  .dashboard .kpis--tabs:has(> .kpi--tab:nth-child(1)[aria-selected="true"]) { grid-template-columns: 1.35fr 1fr 1fr; }
+  .dashboard .kpis--tabs:has(> .kpi--tab:nth-child(2)[aria-selected="true"]) { grid-template-columns: 1fr 1.35fr 1fr; }
+  .dashboard .kpis--tabs:has(> .kpi--tab:nth-child(3)[aria-selected="true"]) { grid-template-columns: 1fr 1fr 1.35fr; }
+}
+/* نمودار کوچک: خط تجمعی؛ کارت انتخاب‌نشده کم‌رنگ. روی سطح مات است، نه شیشه (palette.test). */
+.kpi-spark { display: block; flex: 0 1 120px; min-inline-size: 48px; block-size: 28px; margin-inline-start: auto; overflow: visible; }
+.kpi-spark path { fill: none; stroke: var(--ink-3); stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; }
+.kpi--tab[aria-selected="true"] .kpi-spark path { stroke: var(--chart-1); }
 
 /* ── ناوبری: مورد فعال با هالهٔ برند ─────────────────────────────── */
 .workspace .workspace-zones [role="tab"].on::before {
@@ -90,6 +111,13 @@
     0 14px 30px -16px color-mix(in srgb, var(--brand) 90%, transparent);
 }
 .checkout-payable .money--xl { font-weight: var(--weight-heavy); }
+/* «قابل پرداخت» = کارت قهرمان تسویه (طرح ۱۰): برچسب بالا، رقم بزرگ زیرش، نور ملایم برند.
+   فقط سطح و چیدمان عوض شد؛ همان عنصر، همان نقش و همان متن. حالت بی‌سبد همان سطح خنثی را دارد. */
+.checkout-payable { flex-direction: column; align-items: flex-start; gap: var(--s-1); padding: var(--s-4); border-radius: var(--r-md);
+  background: radial-gradient(120% 140% at 100% 0%, color-mix(in srgb, var(--brand) 12%, transparent), transparent 60%), var(--surface-solid-2);
+  box-shadow: inset 0 0 0 var(--border-w) color-mix(in srgb, var(--accent) 35%, var(--rule)); }
+.checkout-payable .money--xl { font-size: clamp(2rem, 1.4rem + 1.4vw, 2.75rem); }
+.checkout-summary--idle .checkout-payable { background: var(--neutral-soft); box-shadow: inset 0 0 0 var(--border-w) var(--rule); }
 
 /* ── اتصال ووکامرس: راه‌اندازی مرحله‌ای (R05) ─────────────────────
    سنجهٔ پیشرفت با scaleX پر می‌شود (نه width)؛ وضعیت هر مرحله با آیکون

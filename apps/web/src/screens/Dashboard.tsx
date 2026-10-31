@@ -50,6 +50,7 @@ import { attentionItems, type AttentionItem } from "../lib/dashboard-attention.t
 import { session } from "../lib/session.ts";
 import { Money } from "../components/ui/Money.tsx";
 import { Kpi, KpiTabs, type KpiTab } from "../components/ui/Kpi.tsx";
+import { sparkPath } from "../lib/sparkline.ts";
 import { PageHeader, SectionHeader } from "../components/ui/PageHeader.tsx";
 import { StatusBadge, StatusIcon } from "../components/ui/Status.tsx";
 import { Skeleton } from "../components/ui/Skeleton.tsx";
@@ -459,6 +460,11 @@ export function Dashboard({ access }: { access: NavAccess }) {
       note: report.profitAmount === null ? "برای دیدن سود، دسترسی بهای تمام‌شده لازم است" : "پس از بهای تمام‌شده" },
   ];
 
+  // نمودار کوچک هر کارت از همان دادهٔ ساعتی روند (طرح ۱۰). سودِ پنهان نمودار ندارد.
+  const hours = hourly.state === "ready" ? hourPoints(hourly.data.hours, hourly.data.currentHour) : [];
+  const sparked = kpis.map(k => ({ ...k,
+    spark: hours.length && !(k.key === "profit" && !profitKnown) ? sparkPath(hours.map(h => h.values[k.key]), 120, 32) : null }));
+
   return (
     <div className="dashboard">
       <PageHeader
@@ -473,6 +479,9 @@ export function Dashboard({ access }: { access: NavAccess }) {
           disabled={!online} onClick={() => { void refresh(); }}>به‌روزرسانی</Button>}
       />
 
+      {/* طرح ۱۰: کارهای پرتکرار پیش از شاخص‌ها — اولین کاری که صبح انجام می‌شود. */}
+      <QuickActions access={access} />
+
       {/*
         یک سطح مات برای «امروز»: سه شاخص در یک نوار با خط جداکننده و روند
         ساعتی زیرش — یک فضای کار، نه چند ویجت (بازبینی بصری ۱).
@@ -483,7 +492,7 @@ export function Dashboard({ access }: { access: NavAccess }) {
             {kpis.map(k => <Kpi key={k.key} label={k.label} icon={k.icon} emphasis={k.primary ?? false} value={k.value} state={k.state} note={k.note} />)}
           </section>
         : <>
-            <KpiTabs items={kpis} value={selected} onChange={setMetric} label="شاخص‌های امروز" panelId={`${tabsId}-panel`} idPrefix={`${tabsId}-tab`} />
+            <KpiTabs items={sparked} value={selected} onChange={setMetric} label="شاخص‌های امروز" panelId={`${tabsId}-panel`} idPrefix={`${tabsId}-tab`} />
             <TrendPanel id={`${tabsId}-panel`} metric={selected} grain={grain} onGrain={chooseGrain}
               compare={compare} onCompare={setCompare} today={report.businessDate}
               hourly={hourly} trend={grain === "hour" ? undefined : trends[grain]} />
@@ -551,7 +560,6 @@ export function Dashboard({ access }: { access: NavAccess }) {
         </details>
       </Solid>
 
-      <QuickActions access={access} />
     </div>
   );
 }
