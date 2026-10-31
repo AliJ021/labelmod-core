@@ -162,7 +162,7 @@ const CartLine = memo(function CartLine({ line: l, panel, on, error, allowFracti
       <div className="line-name">
         <strong>{l.productName}</strong>
         <span className="muted small">
-          <bdi className="line-sku">{l.sku}</bdi>
+          {/* کد کالا عمداً در سبد نیست (تصمیم مالک، pos-usability) — شرح و رنگ و سایز کافی است. */}
           {/*
             قیمت فهرست فقط وقتی نوشته می‌شود که سطر واقعاً دستکاری شده
             باشد. صندوق‌دار باید ببیند از چه عددی پایین آمده — وگرنه
@@ -1515,7 +1515,7 @@ function PosScreen({ actorId, mode, onMode, browseInvoices }: {
           <fieldset className="lines-wrap" disabled={busy}>
             {/* سرستون‌ها فقط نمایشی‌اند (هر سطر برچسب‌های دسترس‌پذیر خودش را دارد) و فقط در چیدمان ستونی دیده می‌شوند. */}
             {lines.length ? <div className="lines-head" aria-hidden="true">
-              <span>#</span><span>شرح کالا / کد</span><span>رنگ و سایز</span><span>تعداد</span><span>فی واحد</span><span>مبلغ کل</span><span /><span />
+              <span>#</span><span>شرح کالا</span><span>رنگ و سایز</span><span>تعداد</span><span>فی واحد</span><span>مبلغ کل</span><span /><span />
             </div> : null}
             <ul className="lines">
               {lines.map((l) => (
