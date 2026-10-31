@@ -261,9 +261,59 @@ test("live reduced motion, transparency and persisted performance mode", async (
   // جلوهٔ امضای سطح ورود/قفل: با حرکت مجاز حرکت می‌کند و با کاهش حرکت، زنده، می‌ایستد.
   await page.getByRole("button", { name: "قفل صفحه", exact: true }).click();
   await expect(page.getByRole("heading", { name: "صفحه قفل است" })).toBeVisible();
+  // حامل حرکت دو تاست: پارچهٔ WebGL (طرح ۱۰) یا، بی WebGL، لکه‌های CSS. هر کدام فعال است همان سنجیده می‌شود.
+  const fabric = page.locator(".mesh--auth .fabric.is-live[data-drawn]");
+  if (await fabric.count()) {
+    await expect(fabric).toHaveAttribute("data-motion", "moving");
+    await expect(fabric).toHaveCSS("opacity", "1");
+    await expectFramesAdvance(page, true);
+    await page.emulateMedia({ reducedMotion: "reduce" });
+    await expect(fabric).toHaveAttribute("data-motion", "still");
+    await expectFramesAdvance(page, false);
+  } else {
+    await expect(page.locator(".mesh--auth i").first()).not.toHaveCSS("animation-name", "none");
+    await page.emulateMedia({ reducedMotion: "reduce" });
+    await expect(page.locator(".mesh--auth i").first()).toHaveCSS("animation-name", "none");
+  }
+});
+
+/** آیا پارچه فریم تازه‌ای می‌کشد؟ با کاهش حرکت نباید بکشد. */
+async function expectFramesAdvance(page: Page, moving: boolean) {
+  const frames = () => page.locator(".mesh--auth .fabric").evaluate(c => (c as HTMLCanvasElement & { lmcFrames?: number }).lmcFrames ?? 0);
+  const before = await frames();
+  if (moving) {
+    await expect.poll(frames).toBeGreaterThan(before + 2);
+  } else {
+    // «نکشید» را فقط در گذر فریم‌ها می‌شود دید: ۲۰ فریم مرورگر، که با سقف ۳۰ فریم
+    // پارچهٔ متحرک دست‌کم چند بار در آن می‌کشید. وابسته به فریم است نه ساعت دیواری.
+    await page.evaluate(() => new Promise<void>(done => {
+      let n = 0;
+      const tick = () => (++n >= 20 ? done() : requestAnimationFrame(tick));
+      requestAnimationFrame(tick);
+    }));
+    expect(await frames()).toBe(before);
+  }
+}
+
+test("بی WebGL، ورود همان زمینهٔ CSS را دارد و پارچه‌ای دیده نمی‌شود", async ({ page }) => {
+  await page.addInitScript(() => {
+    const original = HTMLCanvasElement.prototype.getContext;
+    HTMLCanvasElement.prototype.getContext = function (this: HTMLCanvasElement, type: string, ...rest: unknown[]) {
+      if (type === "webgl" || type === "webgl2" || type === "experimental-webgl") return null;
+      return (original as (...a: unknown[]) => unknown).call(this, type, ...rest);
+    } as typeof original;
+  });
+  const errors: string[] = [];
+  page.on("pageerror", e => errors.push(String(e)));
+  await page.goto("/");
+  await page.getByRole("button", { name: "قفل صفحه", exact: true }).click();
+  await expect(page.getByRole("heading", { name: "صفحه قفل است" })).toBeVisible();
+  const canvas = page.locator(".mesh--auth .fabric");
+  await expect(canvas).toHaveCount(1);
+  await expect(canvas).not.toHaveClass(/is-live/);
+  await expect(canvas).toHaveCSS("opacity", "0");
   await expect(page.locator(".mesh--auth i").first()).not.toHaveCSS("animation-name", "none");
-  await page.emulateMedia({ reducedMotion: "reduce" });
-  await expect(page.locator(".mesh--auth i").first()).toHaveCSS("animation-name", "none");
+  expect(errors).toEqual([]);
 });
 
 test("password suggestion, cancellation, server error, duplicate submit and success", async ({ page, api }) => {

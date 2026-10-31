@@ -54,8 +54,10 @@
 }
 .btn:hover:not(:disabled) { background: var(--neutral-soft); border-color: var(--control-border); }
 .btn:active:not(:disabled) { transform: scale(0.98); }
-.btn--primary { background: var(--accent); color: var(--accent-ink); border-color: transparent; }
-.btn--primary:hover:not(:disabled) { background: var(--accent); border-color: transparent; filter: brightness(1.06); }
+/* دکمهٔ اصلی رنگ سازمانی را پر می‌کند (طرح ۱۰)؛ لبهٔ داخلی کم‌رنگ شکلش را روی سطح روشن نگه می‌دارد،
+   چون خردلی روی سفید فقط ۱٫۶:۱ است و نام دکمه نباید تنها نشانهٔ مرزش باشد. */
+.btn--primary { background: var(--brand); color: var(--brand-ink); border-color: transparent; box-shadow: inset 0 0 0 var(--border-w) color-mix(in srgb, var(--brand-ink) 16%, transparent), inset 0 1px 0 color-mix(in srgb, var(--surface-solid) 45%, transparent), var(--elev-1); }
+.btn--primary:hover:not(:disabled) { background: var(--brand); border-color: transparent; filter: brightness(1.05); }
 .btn--quiet { background: transparent; color: var(--ink-2); border-color: transparent; box-shadow: none; font-weight: var(--weight-medium); }
 .btn--quiet:hover:not(:disabled) { color: var(--ink); background: var(--neutral-soft); border-color: transparent; }
 .btn--danger { background: var(--crit-soft); color: var(--ink); border-color: var(--crit); }

@@ -280,8 +280,8 @@
 }
 
 .btn--primary {
-  background: var(--accent);
-  color: var(--accent-ink);
+  background: var(--brand);
+  color: var(--brand-ink);
   border-color: transparent;
 }
 
@@ -558,11 +558,15 @@ select.set-input {
 .auth-submit {
   padding: 0 var(--s-4);
   font-weight: 700;
-  color: var(--accent-ink);
-  background: var(--accent);
-  border: 1px solid transparent;
+  color: var(--brand-ink);
+  background: var(--brand);
+  border: 1px solid color-mix(in srgb, var(--brand-ink) 16%, transparent);
   cursor: pointer;
+  transition: transform var(--dur-instant) var(--ease-standard), filter var(--dur-fast) var(--ease-standard);
 }
+
+.auth-submit:hover:not([disabled]) { filter: brightness(1.05); }
+.auth-submit:active:not([disabled]) { transform: scale(0.98); }
 
 .auth-submit[disabled] {
   opacity: 0.6;
