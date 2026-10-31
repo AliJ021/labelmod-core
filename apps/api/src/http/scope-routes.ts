@@ -306,6 +306,41 @@ export function registerScopeRoutes(app: FastifyInstance, deps: ScopeRouteDeps):
   });
 
   /**
+   * همان خلاصه روز، به تفکیک کانال فاکتور (مهاجرت ۱۰۸،
+   * `sales.daily_summary_by_channel`) — کارت «فروش به تفکیک کانال» داشبورد.
+   *
+   * - **همان دروازه** (`dailyScope`) و همان معنای سه عدد؛ جمع کانال‌ها دقیقاً
+   *   همان `/reports/daily` است (`db/test/daily-summary-channels.sql`).
+   * - مرجوعی و بازپرداخت به کانال فاکتور اصلی می‌خورند.
+   * - فقط کانال‌های دارای اثر؛ روز خالی آرایهٔ خالی است، نه سطرهای صفر.
+   * - سود بی `cost.view` همان `null` است، نه صفر.
+   */
+  app.get("/reports/daily/channels", async (req) => {
+    const { branchId, date, seesCost } = await dailyScope(req);
+    const rows = await sql<{
+      channel: string;
+      sales_amount: string;
+      received_amount: string;
+      profit_amount: string;
+      invoice_count: string;
+      return_count: string;
+    }>`SELECT channel, sales_amount, received_amount, profit_amount, invoice_count, return_count
+         FROM sales.daily_summary_by_channel(${branchId}::uuid, ${date}::date)`.execute(db);
+    return {
+      businessDate: date,
+      profitVisible: seesCost,
+      channels: rows.rows.map((r) => ({
+        channel: r.channel,
+        salesAmount: serializeMoney(BigInt(r.sales_amount)),
+        receivedAmount: serializeMoney(BigInt(r.received_amount)),
+        profitAmount: seesCost ? serializeMoney(BigInt(r.profit_amount)) : null,
+        invoiceCount: Number(r.invoice_count),
+        returnCount: Number(r.return_count),
+      })),
+    };
+  });
+
+  /**
    * روند روزانه و ماهانهٔ داشبورد — همان سه عدد خلاصه روز، جمع‌شده در
    * بازه‌هایی که **کلاینت** مرزشان را می‌دهد (مهاجرت ۰۹۳،
    * `sales.daily_summary_range`).

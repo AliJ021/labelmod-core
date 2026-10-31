@@ -51,6 +51,7 @@ import { session } from "../lib/session.ts";
 import { Money } from "../components/ui/Money.tsx";
 import { Kpi, KpiTabs, type KpiTab } from "../components/ui/Kpi.tsx";
 import { sparkPath } from "../lib/sparkline.ts";
+import { DashboardChannels } from "./DashboardChannels.tsx";
 import { PageHeader, SectionHeader } from "../components/ui/PageHeader.tsx";
 import { StatusBadge, StatusIcon } from "../components/ui/Status.tsx";
 import { Skeleton } from "../components/ui/Skeleton.tsx";
@@ -198,10 +199,11 @@ export function Dashboard({ access }: { access: NavAccess }) {
    * بازخوانی بخش‌های زیر «امروز» (هر کدام فقط اگر برای این نقش رندر شده): «مرور دوره» و بعد «همگام‌سازی
    * سایت» — آخرین گام‌های ترتیبی هر به‌روزرسانی، به همین ترتیب.
    */
-  const sectionReloads = useRef<{ period: PeriodReload | null; sync: PeriodReload | null; ops: PeriodReload | null }>({ period: null, sync: null, ops: null });
+  const sectionReloads = useRef<{ period: PeriodReload | null; sync: PeriodReload | null; ops: PeriodReload | null; channels: PeriodReload | null }>({ period: null, sync: null, ops: null, channels: null });
   const registerPeriod = useCallback((reload: PeriodReload | null) => { sectionReloads.current.period = reload; }, []);
   const registerSync = useCallback((reload: PeriodReload | null) => { sectionReloads.current.sync = reload; }, []);
   const registerOps = useCallback((reload: PeriodReload | null) => { sectionReloads.current.ops = reload; }, []);
+  const registerChannels = useCallback((reload: PeriodReload | null) => { sectionReloads.current.channels = reload; }, []);
   // آخرین مقدارها برای زمان‌سنج و کال‌بک‌هایی که پیش از رندر بعدی اجرا می‌شوند.
   const latest = useRef({ branch, report, grain, access });
   latest.current = { branch, report, grain, access };
@@ -358,6 +360,8 @@ export function Dashboard({ access }: { access: NavAccess }) {
       if (stale()) return;
       await sectionReloads.current.ops?.(signal);
       if (stale()) return;
+      await sectionReloads.current.channels?.(signal);
+      if (stale()) return;
       const at = Date.now();
       failures.current = 0;
       setFailure(null);
@@ -497,6 +501,8 @@ export function Dashboard({ access }: { access: NavAccess }) {
               compare={compare} onCompare={setCompare} today={report.businessDate}
               hourly={hourly} trend={grain === "hour" ? undefined : trends[grain]} />
           </>}
+      {/* طرح ۱۰: سهم کانال‌ها کنار روند — همان روز و همان دروازهٔ خلاصه روز. */}
+      {branch ? <DashboardChannels branchId={branch.id} date={report.businessDate} salesAmount={report.salesAmount} register={registerChannels} /> : null}
       </Solid>
 
       {/* مرور دوره (دستهٔ B): فقط برای نقش دارای گزارش؛ پیش از پاسخ دسترسی رندر نمی‌شود. */}

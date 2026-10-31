@@ -240,6 +240,10 @@ export interface DailyHour {
  */
 export interface DailyHourly { businessDate: string; currentHour: number | null; profitVisible: boolean; hours: DailyHour[] }
 
+/** خلاصه روز به تفکیک کانال فاکتور (مهاجرت ۱۰۸). جمع کانال‌ها همان خلاصه روز است؛ روز خالی آرایهٔ خالی. */
+export interface DailyChannel { channel: string; salesAmount: string; receivedAmount: string; profitAmount: string | null; invoiceCount: number; returnCount: number }
+export interface DailyChannels { businessDate: string; profitVisible: boolean; channels: DailyChannel[] }
+
 /**
  * یک سطل روند روزانه/ماهانه (مهاجرت ۰۹۳): جمع خلاصه روزِ روزهای `from` تا `to`
  * (هر دو شامل)، حساب‌شده در SQL. `partial` یعنی امروز در این سطل است و هنوز تمام نشده.
@@ -529,6 +533,14 @@ export const pos = {
    * **نه صفر**. صفر یک ادعای مالی است؛ «اجازه دیدنش را نداری» ادعای
    * دیگری. یکی‌کردنشان یعنی صندوق‌دار فکر کند فروشگاه ضرر کرده.
    */
+  /** همان دروازهٔ `dailyReport`؛ کارت «فروش به تفکیک کانال». */
+  dailyChannels: (branchId: string, date?: string, opts?: RequestOptions) =>
+    api.get<DailyChannels>(
+      `/reports/daily/channels?branchId=${encodeURIComponent(branchId)}` +
+        (date === undefined ? "" : `&date=${encodeURIComponent(date)}`),
+      opts,
+    ),
+
   /** همان دروازهٔ `dailyReport`؛ یک درخواست برای هر سه روند ساعتی. */
   dailyHourly: (branchId: string, date?: string, opts?: RequestOptions) =>
     api.get<DailyHourly>(

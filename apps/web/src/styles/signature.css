@@ -67,6 +67,31 @@
   .dashboard .kpis--tabs:has(> .kpi--tab:nth-child(2)[aria-selected="true"]) { grid-template-columns: 1fr 1.35fr 1fr; }
   .dashboard .kpis--tabs:has(> .kpi--tab:nth-child(3)[aria-selected="true"]) { grid-template-columns: 1fr 1fr 1.35fr; }
 }
+/* روند و «فروش به تفکیک کانال» کنار هم در دسکتاپ؛ شاخص‌ها تمام‌عرض بالای هر دو. */
+@media (min-width: 1280px) {
+  .dashboard .today { grid-template-columns: minmax(0, 1.75fr) minmax(0, 1fr); align-items: start; }
+  .dashboard .today > .kpis { grid-column: 1 / -1; }
+}
+.dashboard-channels { border-radius: var(--r-lg); box-shadow: var(--elev-1), inset 0 0 0 var(--border-w) var(--rule); }
+.channels-body { display: grid; grid-template-columns: auto minmax(0, 1fr); gap: var(--s-4); align-items: center; }
+@container (max-width: 22rem) { .channels-body { grid-template-columns: minmax(0, 1fr); } }
+.dashboard-channels { container-type: inline-size; }
+.channels-donut { position: relative; margin: 0; inline-size: 132px; block-size: 132px; }
+.channels-donut svg { display: block; inline-size: 100%; block-size: 100%; transform: rotate(-90deg); }
+.channels-donut circle { fill: none; stroke-width: 12; }
+.channels-donut .channels-track { stroke: var(--neutral-soft); }
+.channels-donut figcaption { position: absolute; inset: 0; display: grid; place-content: center; text-align: center; gap: 0; }
+.channels-donut figcaption strong { font-size: var(--text-2xl); font-weight: var(--weight-heavy); line-height: 1.1; }
+.channels-donut figcaption span { font-size: var(--text-xs); color: var(--ink-2); }
+.channels-list { display: grid; gap: 0; margin: 0; min-inline-size: 0; }
+.channels-list > div { display: flex; align-items: center; justify-content: space-between; gap: var(--s-3); padding-block: var(--s-2); border-block-end: var(--border-w) solid var(--rule); }
+.channels-list > div:last-child { border-block-end: 0; }
+.channels-list dt { display: flex; flex-wrap: wrap; align-items: center; gap: 2px var(--s-2); font-weight: var(--weight-semibold); min-inline-size: 0; }
+.channels-list dt small { flex-basis: 100%; padding-inline-start: calc(10px + var(--s-2)); color: var(--ink-2); font-weight: var(--weight-regular); font-size: var(--text-xs); }
+.channels-list dd { margin: 0; }
+.channels-swatch { inline-size: 10px; block-size: 10px; border-radius: 3px; flex: none; }
+.channels-total dt { color: var(--ink-2); }
+
 /* نمودار کوچک: خط تجمعی؛ کارت انتخاب‌نشده کم‌رنگ. روی سطح مات است، نه شیشه (palette.test). */
 .kpi-spark { display: block; flex: 0 1 120px; min-inline-size: 48px; block-size: 28px; margin-inline-start: auto; overflow: visible; }
 .kpi-spark path { fill: none; stroke: var(--ink-3); stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; }

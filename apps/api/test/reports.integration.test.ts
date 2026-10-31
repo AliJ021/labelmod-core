@@ -570,6 +570,44 @@ describe("گزارش‌ها", { skip }, () => {
     assert.ok(BigInt(daily.salesAmount) > 0n, "فروش واقعی این فایل دیده می‌شود — آشتی روی صفر نیست");
   });
 
+  // ── خلاصه روز به تفکیک کانال (مهاجرت ۱۰۸) ─────────────────────────
+
+  type ChannelRow = { channel: string; salesAmount: string; receivedAmount: string; profitAmount: string | null; invoiceCount: number; returnCount: number };
+  const channelsOf = async (username: string, query = "") => {
+    const r = await get(username, `/reports/daily/channels?branchId=${BRANCH}${query}`);
+    assert.equal(r.statusCode, 200, r.body);
+    return JSON.parse(r.body) as { businessDate: string; profitVisible: boolean; channels: ChannelRow[] };
+  };
+
+  test("کانالی: جمع کانال‌ها دقیقاً همان خلاصه روز است؛ بی cost.view سود null؛ همان دروازه", async () => {
+    const [daily, ch] = [await dailyOf(admin), await channelsOf(admin)];
+    assert.equal(ch.businessDate, daily.businessDate);
+    assert.equal(ch.profitVisible, true);
+    const total = (k: "salesAmount" | "receivedAmount" | "profitAmount") => ch.channels.reduce((t, c) => t + BigInt(c[k] as string), 0n);
+    assert.equal(total("salesAmount"), BigInt(daily.salesAmount));
+    assert.equal(total("receivedAmount"), BigInt(daily.receivedAmount));
+    assert.equal(total("profitAmount"), BigInt(daily.profitAmount as string));
+    assert.equal(ch.channels.reduce((t, c) => t + c.invoiceCount, 0), daily.invoiceCount);
+    assert.equal(ch.channels.reduce((t, c) => t + c.returnCount, 0), daily.returnCount);
+    assert.ok(ch.channels.length > 0 && BigInt(daily.salesAmount) > 0n, "آشتی روی روز خالی نیست");
+    for (const c of ch.channels) for (const k of ["salesAmount", "receivedAmount"] as const) assert.match(c[k], /^-?\d+$/);
+    for (const user of [supervisor, cashier]) {
+      const own = await channelsOf(user);
+      assert.equal(own.profitVisible, false);
+      assert.ok(own.channels.every(c => c.profitAmount === null), "null، نه \"0\"");
+      for (const c of own.channels) assert.deepEqual(Object.keys(c).sort(),
+        ["channel", "invoiceCount", "profitAmount", "receivedAmount", "returnCount", "salesAmount"]);
+    }
+    const yesterday = (await sql<{ y: string }>`SELECT (platform.business_date()-1)::text AS y`.execute(handle.db)).rows[0]!.y;
+    for (const user of [admin, supervisor, cashier, marketing]) for (const v of ["", `&date=${yesterday}`, "&date=2026-02-30"]) {
+      const d = await get(user, `/reports/daily?branchId=${BRANCH}${v}`);
+      const c = await get(user, `/reports/daily/channels?branchId=${BRANCH}${v}`);
+      assert.equal(c.statusCode, d.statusCode, `${user} ${v}: کانالی ${c.statusCode} ≠ روزانه ${d.statusCode}`);
+    }
+    assert.equal((await get(cashier, `/reports/daily/channels?branchId=00000000-0000-7000-8000-00000000dead`)).statusCode, 403);
+    assert.equal((await app.inject({ method: "GET", url: `/reports/daily/channels?branchId=${BRANCH}` })).statusCode, 401);
+  });
+
   test("ساعتی بی cost.view: سود همه ساعت‌ها null و هیچ ستون بها بیرون نمی‌رود", async () => {
     for (const user of [supervisor, cashier]) {
       const [daily, hourly] = [await dailyOf(user), await hourlyOf(user)];
