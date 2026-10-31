@@ -33,11 +33,14 @@ export function Fabric() {
   useEffect(() => {
     const canvas = ref.current;
     const root = document.documentElement;
-    if (!canvas || root.dataset.perf === "on") return;
+    if (!canvas) return;
+    // نتیجه همیشه اعلام می‌شود — live یا off — تا آزمون و CSS هرگز بین دو حالت حدس نزنند.
+    const off = () => { canvas.dataset.fabric = "off"; };
+    if (root.dataset.perf === "on") return off();
     // کاهش شفافیت زمینهٔ CSS را می‌خواهد (glass.css پنهانش می‌کند)؛ پس بوم حتی ساخته نمی‌شود.
-    if (root.dataset.perf !== "off" && matchMedia("(prefers-reduced-transparency: reduce)").matches) return;
+    if (root.dataset.perf !== "off" && matchMedia("(prefers-reduced-transparency: reduce)").matches) return off();
     const gl = canvas.getContext("webgl", { antialias: false, alpha: false, powerPreference: "low-power" });
-    if (!gl) return;
+    if (!gl) return off();
     const shader = (type: number, src: string) => {
       const s = gl.createShader(type);
       if (!s) return null;
@@ -48,11 +51,11 @@ export function Fabric() {
     const vs = shader(gl.VERTEX_SHADER, VS);
     const fs = shader(gl.FRAGMENT_SHADER, FS);
     const program = gl.createProgram();
-    if (!vs || !fs || !program) return;
+    if (!vs || !fs || !program) return off();
     gl.attachShader(program, vs);
     gl.attachShader(program, fs);
     gl.linkProgram(program);
-    if (!gl.getProgramParameter(program, gl.LINK_STATUS)) return;
+    if (!gl.getProgramParameter(program, gl.LINK_STATUS)) return off();
     gl.useProgram(program);
     gl.bindBuffer(gl.ARRAY_BUFFER, gl.createBuffer());
     gl.bufferData(gl.ARRAY_BUFFER, new Float32Array([-1, -1, 3, -1, -1, 3]), gl.STATIC_DRAW);
@@ -119,9 +122,16 @@ export function Fabric() {
     const scheme = matchMedia("(prefers-color-scheme: dark)");
 
     readColors();
+    if (!ready) {
+      gl.getExtension("WEBGL_lose_context")?.loseContext();
+      return off();
+    }
     size();
+    // فریم اول همین‌جا و هم‌زمان کشیده می‌شود: «live» یعنی بوم واقعاً تصویر دارد، نه «به‌زودی».
+    draw(performance.now());
     start();
     canvas.classList.add("is-live");
+    canvas.dataset.fabric = "live";
     addEventListener("resize", size);
     document.addEventListener("visibilitychange", start);
     reduce.addEventListener("change", start);

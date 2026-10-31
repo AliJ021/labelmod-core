@@ -262,8 +262,12 @@ test("live reduced motion, transparency and persisted performance mode", async (
   await page.getByRole("button", { name: "قفل صفحه", exact: true }).click();
   await expect(page.getByRole("heading", { name: "صفحه قفل است" })).toBeVisible();
   // حامل حرکت دو تاست: پارچهٔ WebGL (طرح ۱۰) یا، بی WebGL، لکه‌های CSS. هر کدام فعال است همان سنجیده می‌شود.
-  const fabric = page.locator(".mesh--auth .fabric.is-live[data-drawn]");
+  // پارچه نتیجه‌اش را قطعی اعلام می‌کند (live یا off)؛ پیش از انتخاب مسیر منتظر همان می‌مانیم،
+  // وگرنه روی موتور کندتر مسیر «بی WebGL» انتخاب می‌شد و پارچه بعداً می‌کشید.
+  await expect(page.locator(".mesh--auth .fabric")).toHaveAttribute("data-fabric", /^(live|off)$/);
+  const fabric = page.locator('.mesh--auth .fabric[data-fabric="live"]');
   if (await fabric.count()) {
+    await expect(fabric).toHaveAttribute("data-drawn", "1");
     await expect(fabric).toHaveAttribute("data-motion", "moving");
     await expect(fabric).toHaveCSS("opacity", "1");
     await expectFramesAdvance(page, true);
@@ -310,6 +314,7 @@ test("بی WebGL، ورود همان زمینهٔ CSS را دارد و پارچ�
   await expect(page.getByRole("heading", { name: "صفحه قفل است" })).toBeVisible();
   const canvas = page.locator(".mesh--auth .fabric");
   await expect(canvas).toHaveCount(1);
+  await expect(canvas).toHaveAttribute("data-fabric", "off");
   await expect(canvas).not.toHaveClass(/is-live/);
   await expect(canvas).toHaveCSS("opacity", "0");
   await expect(page.locator(".mesh--auth i").first()).not.toHaveCSS("animation-name", "none");

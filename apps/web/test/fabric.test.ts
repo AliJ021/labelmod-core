@@ -53,6 +53,10 @@ describe("پارچهٔ ورود", () => {
     assert.match(src, /prefers-reduced-transparency: reduce/);
     assert.match(src, /dataset\.perf === "on"/);
     assert.match(src, /loseContext\(\)/, "پاک‌سازی Context هنگام خروج");
+    // هر خروج زودهنگام «off» اعلام می‌کند و حالت live فقط پس از فریم اول؛ آزمون مرورگر به همین تکیه دارد.
+    const exits = src.match(/return off\(\);/g) ?? [];
+    assert.ok(exits.length >= 6, `خروج‌های اعلام‌شده: ${exits.length}`);
+    assert.ok(src.indexOf("draw(performance.now());") < src.indexOf('canvas.dataset.fabric = "live"'));
   });
 
   test("فقط زمینهٔ ورود و قفل پارچه دارد", () => {
