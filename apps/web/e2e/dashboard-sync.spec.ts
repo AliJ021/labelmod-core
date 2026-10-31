@@ -126,7 +126,10 @@ test.describe("همگام‌سازی سایت در داشبورد", () => {
     await page.goto("/?page=dashboard&dashboard.tab=sync");
     // طرح ۱۰: شاخص‌ها در «نمای کلی»‌اند؛ لنگر بارشدن صفحه سرعنوان داشبورد است که در هر زبانه هست.
     await expect(page.getByRole("heading", { name: "امروز", level: 1 })).toBeVisible();
-    await expect(page.getByRole("region", { name: "مرور دوره" })).toBeVisible();
+    // کنترل منفی (طرح ۱۰): زبانه‌ها از پاسخ دسترسی‌اند؛ «فروش و پرداخت» (allow) هست و «همگام‌سازی سایت» (deny) نه.
+    const dashTabs = page.getByRole("tablist", { name: "بخش‌های داشبورد" });
+    await expect(dashTabs.getByRole("tab", { name: "فروش و پرداخت" })).toBeVisible();
+    await expect(dashTabs.getByRole("tab", { name: "همگام‌سازی سایت" })).toHaveCount(0);
     await expect(section(page)).toHaveCount(0);
     expect(syncCalls(api)).toEqual([]);
   });
@@ -139,7 +142,9 @@ test.describe("همگام‌سازی سایت در داشبورد", () => {
     });
     await page.goto("/?page=dashboard&dashboard.tab=sync");
     await expect.poll(() => n).toBe(1);
-    await expect(page.getByRole("region", { name: "مرور دوره" })).toBeVisible();
+    // زبانه همان «همگام‌سازی سایت» است؛ پاسخ ۴۰۳ کارت را پنهان می‌کند، نه صفر و نه خطا.
+    await expect(page.getByRole("tab", { name: "همگام‌سازی سایت" })).toHaveAttribute("aria-selected", "true");
     await expect(section(page)).toHaveCount(0);
+    await expect(page.getByRole("alert")).toHaveCount(0);
   });
 });

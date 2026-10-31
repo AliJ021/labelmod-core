@@ -143,9 +143,13 @@ test.describe("کارهای عملیاتی داشبورد", () => {
     await page.goto("/?page=dashboard&dashboard.tab=ops");
     // طرح ۱۰: شاخص‌ها در «نمای کلی»‌اند؛ لنگر بارشدن صفحه سرعنوان داشبورد است که در هر زبانه هست.
     await expect(page.getByRole("heading", { name: "امروز", level: 1 })).toBeVisible();
-    // کنترل منفیِ معنادار: کارت همگام‌سازی در همان رندرِ پس از دسترسی mount می‌شود که این کارت می‌شد. تا دادهٔ
-    // آن نرسیده، «هیچ درخواستی نیست» ممکن است فقط «هنوز نرفته» باشد.
-    await expect(page.getByRole("region", { name: "همگام‌سازی سایت" })).toContainText("صف خالی است");
+    // کنترل منفیِ معنادار (طرح ۱۰): نوار زبانه‌های داشبورد از همان پاسخ دسترسی ساخته می‌شود. وقتی زبانهٔ
+    // «همگام‌سازی سایت» (allow) هست و «عملیات روزانه» (deny) نیست، دسترسی رسیده و این بخش هرگز mount نمی‌شود.
+    const dashTabs = page.getByRole("tablist", { name: "بخش‌های داشبورد" });
+    await expect(dashTabs.getByRole("tab", { name: "همگام‌سازی سایت" })).toBeVisible();
+    await expect(dashTabs.getByRole("tab", { name: "عملیات روزانه" })).toHaveCount(0);
+    // نشانیِ زبانهٔ ممنوع به «نمای کلی» برمی‌گردد.
+    await expect(dashTabs.getByRole("tab", { name: "نمای کلی" })).toHaveAttribute("aria-selected", "true");
     await expect(section(page)).toHaveCount(0);
     expect(opsCalls(api)).toEqual([]);
   });

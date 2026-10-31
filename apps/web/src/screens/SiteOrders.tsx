@@ -146,7 +146,7 @@ export function SiteOrders() {
   }
 
   return <div className="stack">
-    <PageHeader title="سفارش‌های سایت"
+    <PageHeader eyebrow="کار روزانه" title="سفارش‌های سایت"
       context="مستقیم از سایت و فقط خواندنی؛ ویرایش، لغو و استرداد از پیشخوان ووکامرس انجام می‌شود."
       meta={list.state === "done" ? <span className="nowrap">خوانده‌شده {formatJalaliMoment(list.data.fetchedAt)}</span> : undefined}
       actions={<Button onClick={() => { if (until === null) reload(); else setParams({ until: "" }); }}

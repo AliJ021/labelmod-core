@@ -149,7 +149,7 @@ export function Reports() {
     return () => controller.abort();
   }, [attempt]);
 
-  const header = <PageHeader title="گزارش‌ها"
+  const header = <PageHeader eyebrow="مالی و گزارش" title="گزارش‌ها"
     context="همهٔ اعداد از دفتر و انبار سرور می‌آیند؛ «امروز» را سرور تعیین می‌کند، نه ساعت این دستگاه." />;
 
   if (error) {
