@@ -1333,6 +1333,8 @@ function PosScreen({ actorId, mode, onMode, browseInvoices }: {
         چیزند: چهار سطر با تعداد دو، «۴ ردیف · ۸ عدد» است، نه «۸ قلم».
       */}
       <header className="pos-bar">
+        {/* طرح ۱۰: عنوان صفحه — تنها h1 صندوق؛ پیش از این صفحه h1 نداشت. */}
+        <h1 className="pos-title">صندوق فروش</h1>
         <div className="pos-context">
           {instagram
             ? <span className="pos-shift pos-shift--instagram"><Icon name="sparkle" size="sm" /> فروش اینستاگرام</span>

@@ -33,7 +33,8 @@ import {
   type Theme,
 } from "./lib/theme.ts";
 
-import { ZONES, pendingZones, routeUrl, type Zone, visibleZones } from "./lib/navigation.ts";
+import { ZONES, pendingZones, routeUrl, type Zone, visibleZones, zoneHeader } from "./lib/navigation.ts";
+import { PageHeader } from "./components/ui/PageHeader.tsx";
 import { navigate, usePathname, useUrlTab } from "./lib/use-url-state.ts";
 import { useMediaQuery } from "./lib/use-media-query.ts";
 import { useNavAccess } from "./lib/use-nav-access.ts";
@@ -267,6 +268,7 @@ export function App() {
   const navItems = visibleZones(access.verdicts, zone);
   const pendingItems = pendingZones(access, zone);
   const uiKit = UiKit !== null && pathname === "/dev/ui-kit";
+  const zoneHead = uiKit ? null : zoneHeader(zone);
 
   return (
     <ToastProvider>
@@ -286,6 +288,7 @@ export function App() {
             هر tabpanel باید بماند تا aria-controls هیچ زبانه‌ای به شناسهٔ ناموجود اشاره نکند. */}
         <TabPanels id={tabsId} items={ZONES} value={uiKit ? null : zone} className="zone-panel"
           accessibleNameFor={item => item.key === "instagram-orders" ? "سوابق سفارش‌های قدیمی اینستاگرام" : undefined}>
+        {zoneHead ? <PageHeader eyebrow={zoneHead.eyebrow} title={zoneHead.title} context={zoneHead.context} /> : null}
         <Suspense fallback={<p className="solid pad" role="status">در حال بارگذاری بخش…</p>}>
           {zone === "dashboard" ? (
             <Dashboard access={access} />

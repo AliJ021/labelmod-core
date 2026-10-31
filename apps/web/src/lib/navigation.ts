@@ -172,6 +172,24 @@ export const QUICK_ACTIONS: readonly QuickAction[] = [
   { key: "invoices", href: routeUrl("invoices"), name: "فاکتورها و چاپ رسید", icon: "receipt", anyOf: zoneOps("invoices") },
 ];
 
+/**
+ * سرصفحهٔ ناحیه‌هایی که صفحه‌شان h1 ندارد (طرح ۱۰): ابروی گروه ناوبری، عنوان همان
+ * نام ناحیه، و یک جملهٔ زمینه. ناحیه‌هایی که خودشان `PageHeader` دارند (داشبورد،
+ * فاکتورها، گزارش‌ها، سفارش‌های سایت، پرسنل، تنظیمات) اینجا نیستند تا دو h1 نسازند.
+ */
+const ZONE_CONTEXT: Partial<Record<string, string>> = {
+  returns: "مرجوعی و تعویض با بهای همان فروش؛ بازپرداخت از کشوی شعبه.",
+  catalog: "کالا، تنوع، قیمت و چاپ لیبل بارکد.",
+  purchasing: "رسید خرید، برگشت از خرید، انتقال بین انبار و انبارگردانی.",
+  treasury: "حرکت نقد، چک‌ها و سررسیدها؛ مانده‌ها از سند ثبت‌شده.",
+  customers: "مشتریان، مانده و اعتبار، و رضایت پیامک.",
+};
+export function zoneHeader(key: string): { eyebrow: string; title: string; context: string } | null {
+  const context = ZONE_CONTEXT[key];
+  const zone = NAV_ITEMS.find(z => z.key === key);
+  return context && zone ? { eyebrow: zone.group, title: zone.label, context } : null;
+}
+
 export interface QuickActionView {
   /** فقط کارهای صریحاً مجاز. */
   visible: QuickAction[];

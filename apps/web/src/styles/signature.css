@@ -164,6 +164,20 @@
 .woo-step-text p { margin: 2px 0 0; color: var(--ink-2); font-size: var(--text-sm); }
 .woo-step-state { font-size: var(--text-xs); color: var(--ink-2); }
 
+/* ── صندوق طرح ۱۰: عنوان، شمارهٔ ردیف و گام‌شمار یکپارچه ──────────────
+   همه ایستا؛ هیچ انیمیشنی روی مسیر افزودن قلم (بودجهٔ ۱۰۰ms). شمارهٔ ردیف
+   تزئینی است و با «/ ""» از صفحه‌خوان پنهان: فهرست خودش «۱ از ۳» را می‌گوید. */
+.pos-bar { flex-wrap: wrap; }
+.pos-title { margin: 0; flex-basis: 100%; font-size: clamp(var(--text-xl), 1.2rem + 0.8vw, var(--text-2xl)); font-weight: var(--weight-heavy); line-height: var(--leading-tight); }
+.cart .lines { counter-reset: pos-line; }
+.cart .lines > li { counter-increment: pos-line; position: relative; padding-inline: var(--s-2); border-radius: var(--r-sm); }
+.cart .lines > li::before { content: counter(pos-line, persian) / ""; flex: 0 0 auto; min-inline-size: 1.5rem; color: var(--ink-3); font-size: var(--text-sm); font-variant-numeric: tabular-nums; text-align: center; }
+.cart .lines > li:hover { background: var(--neutral-soft); }
+.cart .qty { gap: 0; padding: 2px; border-radius: var(--r-sm); background: var(--surface-solid-2); box-shadow: inset 0 0 0 var(--border-w) var(--rule-2); }
+.cart .qty button { border: 0; background: transparent; border-radius: calc(var(--r-sm) - 2px); }
+.cart .qty button:hover:not(:disabled) { background: var(--surface-solid); box-shadow: var(--elev-1); }
+.cart .qty > span, .cart .qty input { min-inline-size: 2.75ch; }
+
 /* ── فشار: بازخورد لمسی کوتاه ─────────────────────────────────────── */
 .subtabs [role="tab"], .pay-tile, .pay-chip, .pick-chip { transition: transform var(--dur-instant) var(--ease-standard), background-color var(--dur-fast) var(--ease-standard), border-color var(--dur-fast) var(--ease-standard); }
 .subtabs [role="tab"]:active, .pay-tile:active:not(:disabled), .pay-chip:active:not(:disabled), .pick-chip:active:not(:disabled) { transform: scale(0.97); }
