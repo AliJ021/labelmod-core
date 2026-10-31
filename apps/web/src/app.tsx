@@ -42,7 +42,7 @@ import { SectionBoundary } from "./components/SectionBoundary.tsx";
 import { Backdrop } from "./components/shell/Backdrop.tsx";
 import { ShellHeader } from "./components/shell/ShellHeader.tsx";
 import { ShellNav } from "./components/shell/ShellNav.tsx";
-import { ShellBranch, ShellTrail, ShellUser } from "./components/shell/ShellIdentity.tsx";
+import { ShellBrand, ShellBranch, ShellTrail, ShellUser } from "./components/shell/ShellIdentity.tsx";
 import { ToastProvider } from "./components/ui/Toast.tsx";
 
 /**
@@ -59,12 +59,21 @@ export function App() {
   const [navCollapsed, setNavCollapsed] = useState(() => {
     try { return localStorage.getItem("labelmod.nav-collapsed") === "1"; } catch { return false; }
   });
-  const toggleNav = () => setNavCollapsed(previous => {
-    const next = !previous;
-    try { localStorage.setItem("labelmod.nav-collapsed", next ? "1" : "0"); } catch { /* session still usable */ }
-    return next;
+  // طرح ۱۰: صندوق جای سبد و تسویه را لازم دارد، پس آنجا منو پیش‌فرض باریک (فقط آیکون) است؛
+  // ترجیح صندوق جدا ذخیره می‌شود تا باز/بستن منو در صندوق بقیهٔ صفحه‌ها را عوض نکند.
+  const [posRail, setPosRail] = useState(() => {
+    try { return localStorage.getItem("labelmod.nav-collapsed.pos") !== "0"; } catch { return true; }
   });
   const [zone, setZone] = useUrlTab("page", ZONES, "dashboard");
+  const railed = zone === "pos" ? posRail : navCollapsed;
+  const toggleNav = () => {
+    const [set, key] = zone === "pos" ? [setPosRail, "labelmod.nav-collapsed.pos"] as const : [setNavCollapsed, "labelmod.nav-collapsed"] as const;
+    set(previous => {
+      const next = !previous;
+      try { localStorage.setItem(key, next ? "1" : "0"); } catch { /* session still usable */ }
+      return next;
+    });
+  };
   const pathname = usePathname();
   const [more, setMore] = useState(false);
   const [keyboard, setKeyboard] = useState(false);
@@ -277,12 +286,12 @@ export function App() {
       <GlassFilters />
       <Backdrop variant="workspace" />
 
-      <div className={`app workspace${navCollapsed ? " workspace--collapsed" : ""}${more ? " workspace--more" : ""}${keyboard ? " workspace--keyboard" : ""}`}>
+      <div className={`app workspace${railed ? " workspace--collapsed" : ""}${more ? " workspace--more" : ""}${keyboard ? " workspace--keyboard" : ""}`}>
         <a className="skip-content" href="#workspace-content">رفتن به محتوا</a>
         {sessionError && <p className="solid pos-alert" role="alert">{sessionError}</p>}
         <ShellHeader searchKey={`${me?.id}:${me?.elevated}`} trail={trailItem ? <ShellTrail group={trailItem.group} label={trailItem.label} /> : null} tools={me ? <HeaderTools me={me} theme={theme} onTheme={cycleTheme} onLock={() => void lockScreen()} onLogout={() => void signOut()} onPassword={() => setPasswordOpen(true)} onReauth={() => setUpgrading(true)} /> : null} />
 
-        <ShellNav top={me ? <ShellBranch key={me.id} /> : null} bottom={me ? <ShellUser name={me.fullName} /> : null} collapsed={navCollapsed} onToggle={toggleNav} id={tabsId} items={navItems} pending={pendingItems} access={access.state} onRetry={access.retry} zone={zone} onZone={switchZone} compact={compact} more={more} onMore={setMore} />
+        <ShellNav top={<><ShellBrand />{me ? <ShellBranch key={me.id} /> : null}</>} bottom={me ? <ShellUser name={me.fullName} scope={me.elevated ? "نشست کامل" : "نشست PIN"} /> : null} collapsed={railed} onToggle={toggleNav} id={tabsId} items={navItems} pending={pendingItems} access={access.state} onRetry={access.retry} zone={zone} onZone={switchZone} compact={compact} more={more} onMore={setMore} />
         <main id="workspace-content" tabIndex={-1}>
         {uiKit && UiKit ? <SectionBoundary key="ui-kit"><Suspense fallback={<p className="solid pad" role="status">در حال بارگذاری UI Kit…</p>}><UiKit /></Suspense></SectionBoundary> : null}
         <SectionBoundary key={`${me?.id}:${zone}`}>

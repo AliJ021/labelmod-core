@@ -35,7 +35,7 @@ import { Icon } from "../components/Icon.tsx";
 import { accessOf, quickActionView, routeUrl, type DashboardTab, type NavAccess } from "../lib/navigation.ts";
 import { ApiError } from "../lib/api.ts";
 import { parseRial } from "../lib/money.ts";
-import { channelLabel, formatCount, formatGregorian, formatJalali } from "../lib/format.ts";
+import { channelLabel, formatCount, formatJalali } from "../lib/format.ts";
 import {
   pos,
   type Branch,
@@ -478,19 +478,23 @@ export function Dashboard({ access }: { access: NavAccess }) {
   return (
     <div className="dashboard">
       <PageHeader
-        title="امروز"
+        eyebrow="فضای کار فروشگاه"
+        title="نمای کلی امروز"
         context={<>
-          {branch?.name} · <span className="nowrap">{formatJalali(report.businessDate, true)}</span>
-          {/* میلادی فقط زمینهٔ ثانوی است: کوچک‌تر و کم‌رنگ‌تر، در برگ LTR. */}
-          <span className="page-context-secondary"><Ltr mono={false}>{formatGregorian(report.businessDate)}</Ltr></span>
+          <span className="nowrap">{formatJalali(report.businessDate, true)}</span> · {branch?.name}
         </>}
         meta={<FreshnessLine state={freshness({ now, lastOk, online, refreshing, failure })} now={now} />}
-        actions={<Button icon={<Icon name="refresh" size="sm" />} busy={refreshing} busyLabel="در حال به‌روزرسانی…"
-          disabled={!online} onClick={() => { void refresh(); }}>به‌روزرسانی</Button>}
+        actions={<>
+          <Button icon={<Icon name="refresh" size="sm" />} busy={refreshing} busyLabel="در حال به‌روزرسانی…"
+            disabled={!online} onClick={() => { void refresh(); }}>به‌روزرسانی</Button>
+          {/* طرح ۱۰: کنش اصلی صفحه؛ فقط با مجوز صریح فروش. */}
+          {posHref ? <a className="btn btn--primary" href={posHref} onClick={e => { if (e.metaKey || e.ctrlKey || e.shiftKey) return; e.preventDefault(); navigate(posHref); }}>
+            <Icon name="plus" size="sm" />فروش جدید</a> : null}
+        </>}
       />
 
       {/* طرح ۱۰: بخش‌های داشبورد زبانه‌اند؛ هر زبانه همان دروازهٔ مجوز بخش خودش را دارد. */}
-      {dashTabs.length > 1 ? <TabList id={dashTabsId} items={dashTabs} value={dashTab} onChange={setDashTab}
+      {dashTabs.length > 1 ? <TabList id={dashTabsId} items={dashTabs.map(t => ({ ...t, icon: <Icon name={t.icon} size="sm" /> }))} value={dashTab} onChange={setDashTab} className="subtabs dash-tabs"
         label="بخش‌های داشبورد" hrefFor={key => routeUrl("dashboard", key)} /> : null}
       <DashPanels id={dashTabsId} tabs={dashTabs} value={dashTab}>
       {dashTab === "overview" ? <>

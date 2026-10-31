@@ -104,12 +104,21 @@ export function LineChart({ title, summary, note, xHeader, points, series, unit 
           {at ? <path className="line-chart-cursor" d={`M${X(active)} 0 V${H}`} /> : null}
           {series.map(s => {
             let d = "", open = false;
+            // سطح زیر خط برجسته (طرح ۱۰): تزئینی، هر تکهٔ پیوسته تا خط صفر بسته می‌شود.
+            const base = Math.min(H, Math.max(0, Number(Y(0n)))).toFixed(1);
+            let area = "", run: string[] = [], first = "", last = "";
+            const flush = () => { if (run.length > 1) area += `M${first} ${base} L${run.join(" L")} L${last} ${base} Z `; run = []; };
             s.values.forEach((v, i) => {
-              if (v === null) { open = false; return; }
+              if (v === null) { open = false; flush(); return; }
               d += `${open ? "L" : "M"}${X(i)} ${Y(v)} `;
+              if (!open) first = X(i);
+              last = X(i);
+              run.push(`${X(i)} ${Y(v)}`);
               open = true;
             });
+            flush();
             return <g key={s.key} data-series={s.key} data-emphasis={s.emphasis || undefined}>
+              {s.emphasis && area ? <path className="line-chart-area" d={area.trim()} /> : null}
               <path className="line-chart-line" d={d.trim()} />
               {s.values.map((v, i) => {
                 if (v === null) return null;

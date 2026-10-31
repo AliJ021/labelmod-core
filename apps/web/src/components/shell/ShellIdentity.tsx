@@ -9,6 +9,14 @@ import { knownBranches, onBranches, pos, type Branch } from "../../lib/pos.ts";
 import { formatCount } from "../../lib/format.ts";
 import { Icon } from "../Icon.tsx";
 
+/** نشان و نام بالای نوار کناری (طرح ۱۰)؛ در گوشی همان نشان سربرگ می‌ماند. */
+export function ShellBrand() {
+  return <div className="shell-brand">
+    <span className="shell-brand-mark" aria-hidden="true"><Icon name="layers" /></span>
+    <span className="shell-brand-text"><strong>لیبل مد</strong><small lang="en">Label.mod</small></span>
+  </div>;
+}
+
 export function ShellBranch() {
   const [branches, setBranches] = useState<Branch[]>(() => knownBranches() ?? []);
   useEffect(() => {
@@ -27,7 +35,7 @@ export function ShellBranch() {
     <span className="shell-branch-text"><strong>{"\u00a0"}</strong><small>{"\u00a0"}</small></span>
   </div>;
   return <div className="shell-branch">
-    <span className="shell-branch-icon" aria-hidden="true"><Icon name="register" size="sm" /></span>
+    <span className="shell-branch-icon" aria-hidden="true"><Icon name="store" size="sm" /></span>
     <span className="shell-branch-text">
       <strong>{branches[0]!.name}</strong>
       <small>{branches.length > 1 ? `${formatCount(branches.length)} شعبه در دامنهٔ شما` : "فروشگاه پوشاک"}</small>
@@ -35,11 +43,11 @@ export function ShellBranch() {
   </div>;
 }
 
-export function ShellUser({ name }: { name: string }) {
+export function ShellUser({ name, scope }: { name: string; scope: string }) {
   const initial = name.trim().charAt(0);
   return <div className="shell-user">
     <span className="shell-user-avatar" aria-hidden="true">{initial}</span>
-    <span className="shell-user-text"><strong>{name}</strong><small>کاربر واردشده</small></span>
+    <span className="shell-user-text"><strong>{name}</strong><small>{scope}</small></span>
   </div>;
 }
 

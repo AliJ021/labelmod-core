@@ -244,7 +244,7 @@ test("sales by channel: amounts from the server, total equals the sales card, do
 
   api.handlers.set("GET /reports/daily/channels", async route => { await route.fulfill({ status: 403, json: { error: "forbidden", message: "دسترسی ندارید" } }); });
   await page.reload();
-  await expect(page.getByRole("heading", { name: "امروز", exact: true })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "نمای کلی امروز", exact: true })).toBeVisible();
   await expect(card).toHaveCount(0);
 });
 

@@ -84,11 +84,11 @@ export function KpiTabs<K extends string>({ items, value, onChange, label, panel
         onClick={() => { if (!item.unavailable) onChange(item.key); }}
         onKeyDown={onKeyDown}>
         <span className="kpi-head">
+          {item.icon ? <span className="kpi-icon"><Icon name={item.icon} size="sm" /></span> : null}
           <span className="kpi-label" id={`${base}-l`}>{item.label}</span>
           {item.spark ? <svg className="kpi-spark" viewBox="0 0 120 32" preserveAspectRatio="none" aria-hidden="true" focusable="false">
             <path d={item.spark} vectorEffect="non-scaling-stroke" />
           </svg> : null}
-          {item.icon ? <span className="kpi-icon"><Icon name={item.icon} size="sm" /></span> : null}
         </span>
         <span className="kpi-value" id={`${base}-v`}>{item.value}</span>
         <span className="kpi-note" id={`${base}-n`}>{item.state ? <StatusIcon state={item.state} /> : null}<span>{item.note}</span></span>

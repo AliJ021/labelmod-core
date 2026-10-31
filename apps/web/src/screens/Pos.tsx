@@ -162,7 +162,7 @@ const CartLine = memo(function CartLine({ line: l, panel, on, error, allowFracti
       <div className="line-name">
         <strong>{l.productName}</strong>
         <span className="muted small">
-          {[l.color, l.size].filter(Boolean).join(" · ")}
+          <bdi className="line-sku">{l.sku}</bdi>
           {/*
             قیمت فهرست فقط وقتی نوشته می‌شود که سطر واقعاً دستکاری شده
             باشد. صندوق‌دار باید ببیند از چه عددی پایین آمده — وگرنه
@@ -180,9 +180,16 @@ const CartLine = memo(function CartLine({ line: l, panel, on, error, allowFracti
             </>
           )}
         </span>
+      </div>
+      {/* طرح ۱۰: رنگ و سایز تراشه‌اند، در ستون خودشان. */}
+      <div className="line-variant">
+        {l.color ? <span className="line-chip">{l.color}</span> : null}
+        {l.size ? <span className="line-chip line-chip--size">{l.size}</span> : null}
+      </div>
+      <div className="line-unit">
         <button type="button" className="line-unit-edit" aria-label={`ویرایش قیمت ${l.productName}`}
           aria-expanded={panel === "price"} onClick={() => on.openPrice(l.id)}>
-          <span>قیمت واحد</span> <Money rial={l.unitPrice} size="sm" /> <span className="line-unit-action">ویرایش</span>
+          <span className="line-unit-label">قیمت واحد</span> <Money rial={l.unitPrice} size="sm" /> <span className="line-unit-action">ویرایش</span>
         </button>
       </div>
       {/*
@@ -1506,6 +1513,10 @@ function PosScreen({ actorId, mode, onMode, browseInvoices }: {
             به `busy` وابسته نمی‌ماند.
           */}
           <fieldset className="lines-wrap" disabled={busy}>
+            {/* سرستون‌ها فقط نمایشی‌اند (هر سطر برچسب‌های دسترس‌پذیر خودش را دارد) و فقط در چیدمان ستونی دیده می‌شوند. */}
+            {lines.length ? <div className="lines-head" aria-hidden="true">
+              <span>#</span><span>شرح کالا / کد</span><span>رنگ و سایز</span><span>تعداد</span><span>فی واحد</span><span>مبلغ کل</span><span /><span />
+            </div> : null}
             <ul className="lines">
               {lines.map((l) => (
                 <CartLine
@@ -1539,7 +1550,7 @@ function PosScreen({ actorId, mode, onMode, browseInvoices }: {
         */}
         <Solid as="aside" className="pay" aria-label="پرداخت">
           <div className="pay-summary-fixed">
-          <h2 className="cart-title">پرداخت و ثبت فاکتور</h2>
+          <h2 className="cart-title">تسویه</h2>
           <CheckoutSummary totals={draftActive ? totals : null} />
           </div>
           <div className="pay-body">

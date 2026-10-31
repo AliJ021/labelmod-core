@@ -196,10 +196,10 @@ export function zoneHeader(key: string): { eyebrow: string; title: string; conte
  * «نمای کلی» (فروش، دریافتی، سود) محلی می‌ماند و در نشانی نیست.
  */
 export const DASHBOARD_TABS = [
-  { key: "overview", label: "نمای کلی", anyOf: [] },
-  { key: "sales", label: "فروش و پرداخت", anyOf: ["report.view"] },
-  { key: "ops", label: "عملیات روزانه", anyOf: ["report.view"] },
-  { key: "sync", label: "همگام‌سازی سایت", anyOf: ["settings.view"] },
+  { key: "overview", label: "نمای کلی", icon: "dashboard", anyOf: [] },
+  { key: "sales", label: "فروش و پرداخت", icon: "chart", anyOf: ["report.view"] },
+  { key: "ops", label: "عملیات روزانه", icon: "clock", anyOf: ["report.view"] },
+  { key: "sync", label: "همگام‌سازی سایت", icon: "link", anyOf: ["settings.view"] },
 ] as const;
 export type DashboardTab = (typeof DASHBOARD_TABS)[number]["key"];
 export function dashboardTabs(verdicts: NavAccess["verdicts"]): (typeof DASHBOARD_TABS)[number][] {

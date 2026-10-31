@@ -95,7 +95,7 @@ test.describe("F-110-01 — conservative permission loading", () => {
     const allowed = new Set(["sale.create", "return.same_day"]);
     const auth = authorize(api, op => allowed.has(op) ? "allow" : "deny", true);
     await page.goto("/");
-    await expect(page.getByRole("heading", { name: "امروز", exact: true })).toBeVisible();
+    await expect(page.getByRole("heading", { name: "نمای کلی امروز", exact: true })).toBeVisible();
     // در حال بررسی: فقط داشبورد، برداشت و پاداش (من) و تنظیمات (شخصی) — به‌علاوهٔ جای‌نگهدارِ بی‌برچسب.
     expect((await tabLabels(page)).sort()).toEqual(["برداشت و پاداش", "تنظیمات", "داشبورد"].sort());
     await expect(mainList(page).locator(".tab-pending")).toHaveCount(PROTECTED.length);
@@ -183,7 +183,7 @@ test.describe("F-110-01 — conservative permission loading", () => {
     const legacyTab = mainList(page).getByRole("tab", { name: "سفارش اینستاگرام", includeHidden: true });
     const auth = authorize(api, op => op === "instagram.order.manage" ? "allow" : "deny", true);
     await page.goto("/");
-    await expect(page.getByRole("heading", { name: "امروز", exact: true })).toBeVisible();
+    await expect(page.getByRole("heading", { name: "نمای کلی امروز", exact: true })).toBeVisible();
     await expect(mainList(page).locator(".tab-pending")).toHaveCount(PROTECTED.length);
     await expect(legacyTab, "the legacy workflow is not a navigation destination").toHaveCount(0);
     auth.release();

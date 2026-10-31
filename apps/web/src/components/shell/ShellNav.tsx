@@ -60,12 +60,6 @@ export function ShellNav({ id, items, pending, access, onRetry, zone, onZone, co
     : pending.includes(z) ? [{ key: z.key, label: "", primary: z.mobilePrimary, pending: true }] : []);
   return <>
     <Glass as="nav" className="workspace-nav" refract={false} aria-label="ناوبری اصلی">
-      {!compact ? <button type="button" className="btn nav-collapse" onClick={onToggle}
-        aria-expanded={!collapsed} aria-controls={`${id}-list`}
-        aria-label={collapsed ? "باز کردن منوی کناری" : "جمع کردن منوی کناری"}
-        title={collapsed ? "باز کردن منو" : "جمع کردن منو"}>
-        <Icon name="menu" /><span className="nav-collapse-label">جمع کردن منو</span>
-      </button> : null}
       {!compact ? top : null}
       {waiting ? <p className="sr-only" role="status">در حال بررسی دسترسی بخش‌ها…</p> : null}
       <TabList id={id} items={tabs} value={zone} onChange={onZone} label="بخش‌ها" className="zones workspace-zones" vertical={!compact} hrefFor={key => routeUrl(key)} />
@@ -79,7 +73,15 @@ export function ShellNav({ id, items, pending, access, onRetry, zone, onZone, co
         <Icon name="more" />
         <span className="tab-label">بیشتر</span>
       </button>
-      {!compact ? bottom : null}
+      {!compact ? <div className="shell-foot">
+        <button type="button" className="nav-collapse" onClick={onToggle}
+          aria-expanded={!collapsed} aria-controls={`${id}-list`}
+          aria-label={collapsed ? "باز کردن منوی کناری" : "جمع کردن منوی کناری"}
+          title={collapsed ? "باز کردن منو" : "جمع کردن منو"}>
+          <Icon name="chevron" mirror={!collapsed} /><span className="nav-collapse-label">جمع‌کردن منو برای جای بیشتر</span>
+        </button>
+        {bottom}
+      </div> : null}
     </Glass>
     {compact ? <MoreSheet open={more} items={items} pending={pending.length} access={access} zone={zone}
       onNavigate={onZone} onDismiss={() => onMore(false)} onRetry={onRetry} trigger={() => toggle.current} /> : null}

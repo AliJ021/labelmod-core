@@ -260,6 +260,7 @@
 .line-chart-grid { stroke: var(--rule); stroke-width: 1; fill: none; vector-effect: non-scaling-stroke; }
 .line-chart-zero { stroke: var(--rule-2); stroke-width: 1.5; fill: none; vector-effect: non-scaling-stroke; }
 .line-chart-line, .line-chart-swatch path { fill: none; stroke: var(--series); stroke-width: 2; stroke-linejoin: round; stroke-linecap: round; stroke-dasharray: var(--dash, none); vector-effect: non-scaling-stroke; }
+.line-chart-area { fill: color-mix(in srgb, var(--series) 16%, transparent); stroke: none; }
 .line-chart-dot { fill: none; stroke: var(--series); stroke-width: 6; stroke-linecap: round; vector-effect: non-scaling-stroke; }
 .line-chart-dot.is-partial { stroke-width: 10; }
 .line-chart-dot-hole { fill: none; stroke: var(--surface-solid); stroke-width: 4; stroke-linecap: round; vector-effect: non-scaling-stroke; }
