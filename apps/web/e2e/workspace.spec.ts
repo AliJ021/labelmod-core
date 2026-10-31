@@ -18,7 +18,7 @@ test("invoice center restores URL filters and browser navigation and prints only
   api.defaults["GET /invoices/i1/overview"]={invoice:{...row,lines:[]},payments:[]};
   await page.goto("/?page=invoices&invoices.status=draft&invoices.search=نمونه");
   await expect(page.getByRole("heading",{name:"فاکتورها",exact:true})).toBeVisible();
-  await expect(page.getByRole("combobox",{name:"وضعیت",exact:true})).toHaveValue("draft");
+  await expect(page.getByRole("group",{name:"وضعیت",exact:true}).getByRole("radio",{name:/^پیش‌نویس/})).toBeChecked();
   await expect(page.locator("main").getByRole("searchbox")).toHaveValue("نمونه");
   await expect(page.getByText("نیازمند رسیدگی",{exact:false})).toBeVisible();
   await expect(page.getByRole("link",{name:"چاپ فاکتور",exact:true})).toHaveCount(0);
@@ -40,6 +40,31 @@ test("invoice center restores URL filters and browser navigation and prints only
   await fontsReady(page);await page.screenshot({path:test.info().outputPath("invoice-center.png"),fullPage:true});
 });
 
+test("invoice totals come from the server for the same filter; drafts are not sales; chips switch status and count without a total", async ({page,api}) => {
+  const row={id:"i1",number:"MAIN-1",status:"finalized",branchId:"b1",branchName:"شعبه آزمون",shiftId:"s1",creatorName:"صندوق‌دار آزمون",finalizerName:"صندوق‌دار آزمون",customerName:null,occurredAt:"2026-09-26T08:00:00Z",payableAmount:"29570000",receivedAmount:"27800000",paymentMethods:"نقد",canResume:false,needsReview:false};
+  api.defaults["GET /invoices"]={rows:[row],total:1,pageSize:50,
+    summary:{count:18,payableAmount:"295700000",receivedAmount:"278000000",remainingAmount:"17700000"},
+    statusCounts:{all:22,draft:3,finalized:18,cancelled:0,returned:1}};
+  await page.goto("/?page=invoices");
+  const totals=page.getByRole("region",{name:"جمع فاکتورهای این فیلتر"});
+  await expect(totals).toBeVisible();
+  // پول از سرور است و تومان نشان داده می‌شود: ۲۹۵٬۷۰۰٬۰۰۰ ریال = ۲۹٬۵۷۰٬۰۰۰ تومان.
+  await expect(totals.getByRole("region",{name:"جمع قابل پرداخت"})).toContainText("29٬570٬000");
+  await expect(totals.getByRole("region",{name:"مانده"})).toContainText("1٬770٬000");
+  await expect(totals.getByRole("region",{name:"فاکتورهای قطعی این فیلتر"})).toContainText("۱۸");
+  const chips=page.getByRole("group",{name:"وضعیت",exact:true});
+  await expect(chips.getByRole("radio",{name:"همه (۲۲)"})).toBeChecked();
+  await chips.getByText("پیش‌نویس (۳)",{exact:true}).click();
+  await expect.poll(()=>api.calls.filter(c=>c.startsWith("GET /invoices?")).at(-1)).toBe("GET /invoices?status=draft&search=&page=1");
+  await expect(page).toHaveURL(/invoices.status=draft/);
+  // سروری که جمع نمی‌دهد: هیچ عدد ساختگی، نه صفر.
+  api.defaults["GET /invoices"]={rows:[row],total:1,pageSize:50};
+  await page.getByRole("button",{name:"تازه‌سازی",exact:true}).click();
+  await expect(totals).toHaveCount(0);
+  await expect(chips.getByRole("radio",{name:"پیش‌نویس",exact:true})).toBeChecked();
+  expect(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth+1)).toBe(true);
+});
+
 test("invoice date filters are Jalali-first: ISO stays in the URL and request, incomplete/missing/reversed dates are never sent", async ({page,api}) => {
   const row={id:"i1",number:"MAIN-1",status:"finalized",branchId:"b1",branchName:"شعبه آزمون",shiftId:"s1",creatorName:"صندوق‌دار آزمون",finalizerName:"صندوق‌دار آزمون",customerName:null,occurredAt:"2026-09-26T08:00:00Z",payableAmount:"1000000",receivedAmount:"1000000",paymentMethods:"نقد",canResume:false,needsReview:false};
   api.defaults["GET /invoices"]={rows:[row],total:1,pageSize:50};
@@ -59,7 +84,7 @@ test("invoice date filters are Jalali-first: ISO stays in the URL and request, i
   await expect(filters).toContainText(/23 Sept? 2026/);
   // درخواست همان ISO و بقیهٔ فیلترها دست‌نخورده.
   await expect.poll(()=>invoiceCalls().at(-1)).toBe("GET /invoices?status=finalized&search=&page=2&from=2026-09-23&to=2026-09-30");
-  await expect(page.getByRole("combobox",{name:"وضعیت",exact:true})).toHaveValue("finalized");
+  await expect(page.getByRole("group",{name:"وضعیت",exact:true}).getByRole("radio",{name:/^قطعی/})).toBeChecked();
 
   const before=invoiceCalls().length;
   // نیمه‌تایپ: خطای کنار فیلد، پیام به‌جای فهرست، نشانی و درخواست بی‌تغییر.

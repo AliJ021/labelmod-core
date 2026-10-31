@@ -6,7 +6,11 @@ import { pos, type Branch, type DraftPayment, type Invoice } from "../lib/pos.ts
 import { rememberCart } from "../lib/open-cart.ts";
 import { toman } from "../lib/money.ts";
 import { ResultState } from "../components/ResultState.tsx";
-import { Field } from "../components/ui/Controls.tsx";
+import { Field, Segmented } from "../components/ui/Controls.tsx";
+import { Kpi } from "../components/ui/Kpi.tsx";
+import { Money } from "../components/ui/Money.tsx";
+import { PageHeader } from "../components/ui/PageHeader.tsx";
+import { formatCount } from "../lib/format.ts";
 import { JalaliDateHint, useJalaliDraft } from "../components/ui/JalaliDate.tsx";
 import { parseJalaliDate, readOptionalJalaliPeriod } from "../lib/report-filters.ts";
 
@@ -16,6 +20,11 @@ interface Row {
   occurredAt: string; payableAmount: string; receivedAmount: string; paymentMethods: string;
   canResume: boolean; needsReview: boolean | null;
 }
+type StatusKey = "all" | "draft" | "finalized" | "cancelled" | "returned";
+/** جمع‌های همین فیلتر، از SQL (GET /invoices). پول رشته است؛ نبودنش یعنی نشان‌ندادن، نه صفر. */
+interface Summary { count: number; payableAmount: string; receivedAmount: string; remainingAmount: string }
+interface ListResponse { rows: Row[]; total: number; pageSize: number; summary?: Summary; statusCounts?: Record<StatusKey, number> }
+const STATUS_KEYS: readonly StatusKey[] = ["all", "draft", "finalized", "cancelled", "returned"];
 const statusNames: Record<string, string> = { draft: "پیش‌نویس", finalized: "قطعی", paid: "پرداخت‌شده", cancelled: "لغوشده", returned: "مرجوع‌شده", partially_returned: "مرجوعی جزئی" };
 const errorMessage = (e: unknown) => e instanceof ApiError ? e.message : "ارتباط با سرور برقرار نشد.";
 const date = (value: string) => new Intl.DateTimeFormat("fa-IR", { dateStyle: "short", timeStyle: "short", timeZone: "Asia/Tehran" }).format(new Date(value));
@@ -69,7 +78,7 @@ export function Invoices() {
     if (branch) q.set("branchId", branch);
     if (from) q.set("from", from);
     if (to) q.set("to", to);
-    return api.get<{ rows: Row[]; total: number; pageSize: number }>(`/invoices?${q}`, { signal });
+    return api.get<ListResponse>(`/invoices?${q}`, { signal });
   }, [status, search, branch, page, from, to]);
   const query = useLatestQuery({ key, version: revision, load, delay: search ? 250 : 0, enabled: !selected && issue === null });
   async function resume(row: Row) {
@@ -82,14 +91,22 @@ export function Invoices() {
       navigate(`/?page=pos&pos.branch=${encodeURIComponent(row.branchId)}&pos.warehouse=${encodeURIComponent(invoice.warehouseId)}`);
     } catch (e) { setError(errorMessage(e)); }
   }
+  // آخرین شمارش و جمع رسیده می‌ماند تا هنگام بارگذاری صفحه نپرد؛ با خطا پنهان می‌شود.
+  const counts = query.data?.statusCounts;
+  const summary = query.error ? undefined : query.data?.summary;
   if (selected) return <InvoiceDetail id={selected} onBack={() => setSelected("")} />;
   return <section className="stack invoice-center">
-    <header className="row between"><div><h1>فاکتورها</h1><p className="muted">فروش‌ها و پیش‌نویس‌های ذخیره‌شده در سرور</p></div>
-      <button className="btn" type="button" onClick={() => setRevision(v => v + 1)}>تازه‌سازی</button></header>
+    <PageHeader eyebrow="فروش" title="فاکتورها" context="فروش‌ها و پیش‌نویس‌های ذخیره‌شده در سرور"
+      actions={<button className="btn" type="button" onClick={() => setRevision(v => v + 1)}>تازه‌سازی</button>} />
     <div className="solid pad invoice-filters">
       <label className="auth-field">شماره یا نام مشتری<input type="search" value={search} maxLength={80} onChange={e => { setSearch(e.target.value); setPage("1"); }} /></label>
-      <label className="auth-field">وضعیت<select value={status} onChange={e => { setStatus(e.target.value); setPage("1"); }}><option value="all">همه</option>
-        {["draft", "finalized", "cancelled", "returned"].map(s => <option key={s} value={s}>{statusNames[s]}</option>)}</select></label>
+      {/* طرح ۱۰: تراشهٔ وضعیت با شمارش. شمارش از همان فیلتر بی‌وضعیت سرور است؛ تا نیامده عددی نشان داده نمی‌شود. */}
+      <Segmented<StatusKey> label="وضعیت" value={(STATUS_KEYS as readonly string[]).includes(status) ? status as StatusKey : "all"}
+        onChange={next => { setStatus(next); setPage("1"); }}
+        options={STATUS_KEYS.map(k => {
+          const n = counts?.[k];
+          return { key: k, label: `${k === "all" ? "همه" : statusNames[k]}${n === undefined ? "" : ` (${formatCount(n)})`}` };
+        })} />
       <details className="invoice-extra-filters" open={extraOpen || !!(branch || datesActive || issue)} onToggle={e => setExtraOpen(e.currentTarget.open)}>
       <summary>فیلتر شعبه و تاریخ{branch || from || to ? " · فعال" : ""}</summary>
       <div className="invoice-filter-fields">
@@ -108,6 +125,12 @@ export function Invoices() {
       </details>
     </div>
     {error && <p role="alert">{error}</p>}
+    {summary && !issue ? <section className="solid kpis kpis--band invoice-summary" aria-label="جمع فاکتورهای این فیلتر">
+      <Kpi label="فاکتورهای قطعی این فیلتر" value={<span className="kpi-count">{formatCount(summary.count)}</span>} note="پیش‌نویس و لغوشده شمرده نمی‌شوند" />
+      <Kpi label="جمع قابل پرداخت" value={<Money rial={BigInt(summary.payableAmount)} size="xl" />} note="مبلغ فاکتورهای قطعی" />
+      <Kpi label="دریافت‌شده بابت همین فاکتورها" value={<Money rial={BigInt(summary.receivedAmount)} size="xl" />} note="فقط دریافت موفق" />
+      <Kpi label="مانده" value={<Money rial={BigInt(summary.remainingAmount)} size="xl" />} note="قابل پرداخت منهای دریافتی هر فاکتور" />
+    </section> : null}
     <div className="solid pad" aria-busy={query.loading}>
       {issue ? <ResultState title="بازهٔ تاریخ کامل نیست." description={issue.message} /> : query.loading ? <ResultState kind="loading" title="در حال دریافت فاکتورها…" /> : query.error ? <ResultState kind="error" title={errorMessage(query.error)} actionLabel="تلاش دوباره" onAction={() => setRevision(v => v + 1)} /> : !query.data?.rows.length ? <ResultState title="فاکتوری با این فیلترها پیدا نشد." /> : <>
         <div className="scroll-x"><table className="grid invoice-table"><caption className="sr-only">فهرست فاکتورها؛ مبلغ‌ها به تومان</caption>

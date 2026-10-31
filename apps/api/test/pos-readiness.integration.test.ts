@@ -508,6 +508,40 @@ describe("آمادگی API صندوق", { skip }, () => {
     assert.equal(inv.json().paidAmount,"1000001");assert.equal(inv.json().status,"finalized");
   });
 
+  test("جمع‌های فهرست فاکتور از SQL می‌آید: پیش‌نویس فروش نیست، شمارش تراشه‌ها بی‌وضعیت است و دامنهٔ نقش رعایت می‌شود", async () => {
+    const s = await loginAs(cashier);
+    const read = async () => {
+      const r = await app.inject({ method: "GET", url: `/invoices?status=all&branchId=${BRANCH}`, ...s });
+      assert.equal(r.statusCode, 200, r.body);
+      return r.json() as { total: number; summary: { count: number; payableAmount: string; receivedAmount: string; remainingAmount: string };
+        statusCounts: Record<"all" | "draft" | "finalized" | "cancelled" | "returned", number> };
+    };
+    const before = await read();
+    // مستقل از مسیر: همان دامنهٔ صندوق‌دار (فقط فاکتورهای خودش، چون report.view ندارد) مستقیم از جدول.
+    const own = (await sql<{ n: string; payable: string }>`SELECT count(*)::text n, coalesce(sum(payable_amount),0)::text payable
+      FROM sales.invoice i JOIN identity.app_user u ON u.id=i.created_by
+      WHERE u.username=${cashier} AND i.branch_id=${BRANCH}::uuid AND i.status IN ('finalized','paid','partially_returned','returned')`.execute(handle.db)).rows[0]!;
+    assert.equal(before.summary.count, Number(own.n));
+    assert.equal(before.summary.payableAmount, own.payable);
+    assert.ok(before.summary.count > 0, "آزمون قبلی دست‌کم یک فاکتور قطعی ساخته است");
+    // پول رشته است و مانده هرگز منفی نیست؛ دریافتی + مانده دست‌کم قابل پرداخت است.
+    for (const v of [before.summary.payableAmount, before.summary.receivedAmount, before.summary.remainingAmount]) assert.match(v, /^\d+$/);
+    assert.ok(BigInt(before.summary.receivedAmount) + BigInt(before.summary.remainingAmount) >= BigInt(before.summary.payableAmount));
+    assert.equal(before.statusCounts.all, before.statusCounts.draft + before.statusCounts.finalized + before.statusCounts.cancelled + before.statusCounts.returned);
+
+    // پیش‌نویس با کالا و مبلغ: شمارش «پیش‌نویس» یکی بالا می‌رود ولی جمع فروش دست نمی‌خورد.
+    await cartAs(s);
+    const after = await read();
+    assert.equal(after.statusCounts.draft, before.statusCounts.draft + 1);
+    assert.deepEqual(after.summary, before.summary);
+
+    // فیلتر وضعیت جمع را محدود می‌کند ولی شمارش تراشه‌ها همان می‌ماند.
+    const drafts = await app.inject({ method: "GET", url: `/invoices?status=draft&branchId=${BRANCH}`, ...s });
+    assert.equal(drafts.statusCode, 200, drafts.body);
+    assert.equal(drafts.json().summary.count, 0, "پیش‌نویس هرگز در جمع فروش نیست");
+    assert.deepEqual(drafts.json().statusCounts, after.statusCounts);
+  });
+
   // ── Batch 2.1: صندوق — اسنپ‌پی شعبه‌ای، سقف غیرنقدی، نسیهٔ صریح ──────────
 
   /** مدیر جدا با IP جدا: شیفت و پول نقدش به شیفت سرپرست (که با واریانس صفر بسته می‌شود) نمی‌خورد. */

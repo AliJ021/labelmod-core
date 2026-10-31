@@ -30,13 +30,15 @@ export function registerInvoiceWorkspaceRoutes(app: FastifyInstance, db: Db): vo
     const scope = await branchesOf(db, s.userId);
     if (q.branchId) await assertBranch(db, s.userId, q.branchId);
     const all = (await can(db, { userId: s.userId, operation: "report.view", viaPin: s.pinUnlocked })).verdict === "allow";
-    const filter = sql`(${scope === "all"} OR i.branch_id=ANY(${scope === "all" ? [] : scope}::uuid[]))
+    // پایه بدون وضعیت: شمارش تراشه‌های وضعیت از همین پایه است تا هر تراشه بگوید «اگر مرا بزنی چند تا می‌بینی».
+    const base = sql`(${scope === "all"} OR i.branch_id=ANY(${scope === "all" ? [] : scope}::uuid[]))
       AND (${q.branchId ?? null}::uuid IS NULL OR i.branch_id=${q.branchId ?? null}::uuid)
       AND (${q.from ?? null}::date IS NULL OR platform.business_date(i.occurred_at)>=${q.from ?? null}::date)
       AND (${q.to ?? null}::date IS NULL OR platform.business_date(i.occurred_at)<=${q.to ?? null}::date)
       AND (${all} OR i.created_by=${s.userId}::uuid)
-      AND (${q.status}='all' OR i.status=${q.status} OR (${q.status}='finalized' AND i.status IN ('paid','partially_returned')))
       AND (${q.search}='' OR strpos(coalesce(sales.invoice_display_number(i.id),''),${numberSearch})>0 OR strpos(coalesce(i.number,''),${numberSearch})>0 OR strpos(coalesce(c.full_name,''),${q.search})>0)`;
+    const filter = sql`${base}
+      AND (${q.status}='all' OR i.status=${q.status} OR (${q.status}='finalized' AND i.status IN ('paid','partially_returned')))`;
     const result = await sql`SELECT i.id,sales.invoice_display_number(i.id) AS number,i.status,i.channel,i.branch_id AS "branchId",b.name AS "branchName",
       i.shift_id AS "shiftId",i.created_by AS "createdBy",creator.full_name AS "creatorName",
       i.finalized_by AS "finalizedBy",finisher.full_name AS "finalizerName",c.full_name AS "customerName",
@@ -54,7 +56,26 @@ export function registerInvoiceWorkspaceRoutes(app: FastifyInstance, db: Db): vo
       WHERE ${filter} ORDER BY i.occurred_at DESC,i.id DESC LIMIT 50 OFFSET ${(q.page-1)*50}`.execute(db);
     const count = await sql<{ total: string }>`SELECT count(*)::text AS total FROM sales.invoice i
       LEFT JOIN sales.customer c ON c.id=i.customer_id WHERE ${filter}`.execute(db);
-    return { rows: result.rows, total: Number(count.rows[0]?.total ?? 0), page: q.page, pageSize: 50 };
+    // جمع‌های همین فیلتر (طرح ۱۰). پول در SQL جمع می‌شود، نه در مرورگر. فقط «فاکتور واقعی»
+    // (finalized، paid، partially_returned، returned) شمرده می‌شود: پیش‌نویس و لغوشده فروش نیستند.
+    // دریافتی همان تعریف ستون ردیف است (ورود موفق)؛ مانده = قابل پرداخت منهای دریافتی، هرگز منفی.
+    const summary = await sql<{ count: string; payable: string; received: string; remaining: string }>`
+      SELECT count(*)::text AS count, coalesce(sum(i.payable_amount),0)::text AS payable,
+        coalesce(sum(coalesce(pay.amount,0)),0)::text AS received,
+        coalesce(sum(greatest(i.payable_amount-coalesce(pay.amount,0),0)),0)::text AS remaining
+      FROM sales.invoice i LEFT JOIN sales.customer c ON c.id=i.customer_id
+      LEFT JOIN LATERAL (SELECT sum(p.amount) AS amount FROM treasury.payment p
+        WHERE p.invoice_id=i.id AND p.direction='in' AND p.status IN ('succeeded','settled','reconciled')) pay ON true
+      WHERE ${filter} AND i.status IN ('finalized','paid','partially_returned','returned')`.execute(db);
+    const buckets = await sql<{ bucket: string; n: string }>`
+      SELECT CASE WHEN i.status IN ('paid','partially_returned') THEN 'finalized' ELSE i.status END AS bucket, count(*)::text AS n
+      FROM sales.invoice i LEFT JOIN sales.customer c ON c.id=i.customer_id WHERE ${base} GROUP BY 1`.execute(db);
+    const statusCounts: Record<string, number> = { all: 0, draft: 0, finalized: 0, cancelled: 0, returned: 0 };
+    for (const b of buckets.rows) { statusCounts[b.bucket] = Number(b.n); statusCounts.all = (statusCounts.all ?? 0) + Number(b.n); }
+    const sum = summary.rows[0]!;
+    return { rows: result.rows, total: Number(count.rows[0]?.total ?? 0), page: q.page, pageSize: 50,
+      summary: { count: Number(sum.count), payableAmount: sum.payable, receivedAmount: sum.received, remainingAmount: sum.remaining },
+      statusCounts };
   });
 
   app.get("/invoices/:id/refund-sources", async req => {
