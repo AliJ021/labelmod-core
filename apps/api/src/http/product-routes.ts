@@ -131,6 +131,7 @@ export function registerProductRoutes(
         search: z.string().trim().max(80).optional(),
         status: z.enum(["active", "archived", "all"]).default("active"),
         limit: z.coerce.number().int().min(1).max(500).default(100),
+        categoryId: z.string().uuid().optional(),
       })
       .parse(req.query ?? {});
     return { products: await products.list(q) };

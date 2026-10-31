@@ -131,6 +131,8 @@ export class ProductService {
     search?: string | undefined;
     status?: "active" | "archived" | "all" | undefined;
     limit?: number | undefined;
+    /** فیلتر دسته (طرح ۱۰) سمت سرور، تا سقف فهرست کالای دستهٔ دیگری را جای آن نگذارد. */
+    categoryId?: string | undefined;
   } = {}): Promise<ProductRow[]> {
     const limit = Math.min(opts.limit ?? 100, 500);
     const search = opts.search?.trim();
@@ -202,6 +204,7 @@ export class ProductService {
       .limit(limit);
 
     if (status !== "all") q = q.where("p.status", "=", status);
+    if (opts.categoryId !== undefined) q = q.where("p.category_id", "=", opts.categoryId);
     if (search !== undefined && search !== "") {
       const like = `%${search}%`;
       q = q.where((eb) =>

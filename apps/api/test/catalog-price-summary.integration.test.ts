@@ -343,4 +343,17 @@ describe("قیمت کالا در فهرست کالا و قیمت", { skip }, () 
     assert.equal(after.inventoryValue, direct);
     assert.equal((await app.inject({ method: "GET", url: "/products/summary" })).statusCode, 401);
   });
+
+  test("فهرست کالا با فیلتر دسته سمت سرور: فقط همان دسته، و شناسهٔ نامعتبر ۴۰۰", async () => {
+    const cat = (await sql<{ id: string }>`INSERT INTO catalog.category (name, path) VALUES (${"دستهٔ آزمون " + suffix}, ${"test-" + suffix}) RETURNING id`.execute(handle.db)).rows[0]!.id;
+    const code = `CT-${suffix}`.slice(0, 24);
+    const p = await product(code, ["S"]);
+    await sql`UPDATE catalog.product SET category_id=${cat}::uuid WHERE id=${p.id}::uuid`.execute(handle.db);
+    const r = await app.inject({ method: "GET", url: `/products?categoryId=${cat}&status=all`, ...s });
+    assert.equal(r.statusCode, 200, r.body);
+    const rows = r.json().products as { code: string; categoryId: string | null }[];
+    assert.deepEqual(rows.map(x => x.code), [code]);
+    assert.ok(rows.every(x => x.categoryId === cat));
+    assert.equal((await app.inject({ method: "GET", url: "/products?categoryId=nope", ...s })).statusCode, 400);
+  });
 });

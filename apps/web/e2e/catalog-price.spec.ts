@@ -96,3 +96,19 @@ test("customers row shows receivables and customer credit from posted documents,
   await expect(page.getByRole("heading", { name: "مشتریان", level: 1 })).toBeVisible();
   await expect(row).toHaveCount(0);
 });
+
+test("category chips filter the product list on the server and keep the choice in the URL", async ({ page, api }) => {
+  api.defaults["GET /products/ref-data"] = { brands: [], categories: [
+    { id: "11111111-1111-4111-8111-111111111111", name: "تیشرت", path: "tshirt" },
+    { id: "22222222-2222-4222-8222-222222222222", name: "شلوار", path: "pants" },
+  ] };
+  await page.goto("/?page=catalog");
+  const chips = page.getByRole("group", { name: "دستهٔ کالا" });
+  await expect(chips.getByRole("button", { name: "همه" })).toHaveAttribute("aria-pressed", "true");
+  await chips.getByRole("button", { name: "شلوار" }).click();
+  await expect.poll(() => api.calls.filter(c => c.startsWith("GET /products?")).at(-1)).toContain("categoryId=22222222-2222-4222-8222-222222222222");
+  await expect(page).toHaveURL(/catalog\.category=22222222/);
+  await expect(chips.getByRole("button", { name: "شلوار" })).toHaveAttribute("aria-pressed", "true");
+  await chips.getByRole("button", { name: "همه" }).click();
+  await expect.poll(() => api.calls.filter(c => c.startsWith("GET /products")).at(-1)).not.toContain("categoryId");
+});

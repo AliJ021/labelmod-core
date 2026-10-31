@@ -19,7 +19,8 @@ const dailyCalls = (api: MockApi) => api.calls.filter(c => /^GET \/reports\/dail
 const hourlyCalls = (api: MockApi) => api.calls.filter(c => c.startsWith("GET /reports/daily/hourly")).length;
 const freshness = (page: Page) => page.locator(".freshness");
 const refreshButton = (page: Page) => page.getByRole("button", { name: /به‌روزرسانی|در حال به‌روزرسانی/ });
-const salesKpi = (page: Page) => page.getByRole("tab", { name: /فروش/ }).first();
+// زبانهٔ شاخص «فروش» درون نوار شاخص‌ها؛ زبانهٔ بخش «فروش و پرداخت» (طرح ۱۰) جداست.
+const salesKpi = (page: Page) => page.getByRole("tablist", { name: "شاخص‌های امروز" }).getByRole("tab", { name: /فروش/ }).first();
 
 async function open(page: Page) {
   await page.clock.install({ time: T0 });

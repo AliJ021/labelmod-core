@@ -1,3 +1,5 @@
+import { StatusBadge } from "../components/ui/Status.tsx";
+import { formatJalaliMoment } from "../lib/format.ts";
 import { CustomersSummaryRow } from "../components/CustomersSummaryRow.tsx";
 import { AmountInput } from "../components/ui/AmountInput.tsx";
 import { useUrlState } from "../lib/use-url-state.ts";
@@ -216,6 +218,8 @@ export function Customers() {
                   <th scope="col">جمع خرید</th>
                   <th scope="col">مانده</th>
                   <th scope="col">وضعیت</th>
+                  <th scope="col">مشتری از</th>
+                  <th scope="col">پیامک بازاریابی</th>
                   <th scope="col"> </th>
                 </tr>
               </thead>
@@ -228,6 +232,8 @@ export function Customers() {
                     <td className="num">{toman(parseRial(c.totalPurchased))}</td>
                     <td className="num">{toman(parseRial(c.balance))}</td>
                     <td>{CUSTOMER_STATUS[c.status] ?? c.status}</td>
+                    <td className="num">{formatJalaliMoment(c.createdAt).split("،")[0]}</td>
+                    <td>{c.consentMarketing ? <StatusBadge state="completed" label="رضایت دارد" quiet /> : <StatusBadge state="cancelled" label="بدون رضایت" quiet />}</td>
                     <td>
                       <button
                         type="button"

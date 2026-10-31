@@ -11,6 +11,7 @@ import { Kpi } from "../components/ui/Kpi.tsx";
 import { Money } from "../components/ui/Money.tsx";
 import { PageHeader } from "../components/ui/PageHeader.tsx";
 import { formatCount } from "../lib/format.ts";
+import { TabList, TabPanels, useTabsId } from "../components/Tabs.tsx";
 import { JalaliDateHint, useJalaliDraft } from "../components/ui/JalaliDate.tsx";
 import { parseJalaliDate, readOptionalJalaliPeriod } from "../lib/report-filters.ts";
 
@@ -24,12 +25,14 @@ type StatusKey = "all" | "draft" | "finalized" | "cancelled" | "returned";
 /** جمع‌های همین فیلتر، از SQL (GET /invoices). پول رشته است؛ نبودنش یعنی نشان‌ندادن، نه صفر. */
 interface Summary { count: number; payableAmount: string; receivedAmount: string; remainingAmount: string }
 interface ListResponse { rows: Row[]; total: number; pageSize: number; summary?: Summary; statusCounts?: Record<StatusKey, number> }
-const STATUS_KEYS: readonly StatusKey[] = ["all", "draft", "finalized", "cancelled", "returned"];
+/** طرح ۱۰: پیش‌نویس زبانهٔ خودش را دارد؛ تراشه‌های فهرست فقط وضعیت‌های دیگرند. */
+const STATUS_KEYS: readonly StatusKey[] = ["all", "finalized", "cancelled", "returned"];
 const statusNames: Record<string, string> = { draft: "پیش‌نویس", finalized: "قطعی", paid: "پرداخت‌شده", cancelled: "لغوشده", returned: "مرجوع‌شده", partially_returned: "مرجوعی جزئی" };
 const errorMessage = (e: unknown) => e instanceof ApiError ? e.message : "ارتباط با سرور برقرار نشد.";
 const date = (value: string) => new Intl.DateTimeFormat("fa-IR", { dateStyle: "short", timeStyle: "short", timeZone: "Asia/Tehran" }).format(new Date(value));
 
 export function Invoices() {
+  const tabsId = useTabsId();
   const [status, setStatus] = useUrlState("invoices.status", "all");
   const [search, setSearch] = useUrlState("invoices.search", "", true);
   const [branch, setBranch] = useUrlState("invoices.branch");
@@ -91,6 +94,12 @@ export function Invoices() {
       navigate(`/?page=pos&pos.branch=${encodeURIComponent(row.branchId)}&pos.warehouse=${encodeURIComponent(invoice.warehouseId)}`);
     } catch (e) { setError(errorMessage(e)); }
   }
+  const tab: "list" | "drafts" = status === "draft" ? "drafts" : "list";
+  const drafts = query.data?.statusCounts?.draft;
+  const tabItems = [
+    { key: "list" as const, label: "فهرست فاکتورها" },
+    { key: "drafts" as const, label: `پیش‌نویس‌ها${drafts === undefined ? "" : ` (${formatCount(drafts)})`}` },
+  ];
   // آخرین شمارش و جمع رسیده می‌ماند تا هنگام بارگذاری صفحه نپرد؛ با خطا پنهان می‌شود.
   const counts = query.data?.statusCounts;
   const summary = query.error ? undefined : query.data?.summary;
@@ -98,15 +107,18 @@ export function Invoices() {
   return <section className="stack invoice-center">
     <PageHeader eyebrow="فروش" title="فاکتورها" context="فروش‌ها و پیش‌نویس‌های ذخیره‌شده در سرور"
       actions={<button className="btn" type="button" onClick={() => setRevision(v => v + 1)}>تازه‌سازی</button>} />
+    <TabList id={tabsId} items={tabItems} value={tab} label="فهرست فاکتورها و پیش‌نویس‌ها"
+      onChange={next => { setStatus(next === "drafts" ? "draft" : "all"); setPage("1"); }} />
+    <TabPanels id={tabsId} items={tabItems} value={tab} className="stack">
     <div className="solid pad invoice-filters">
       <label className="auth-field">شماره یا نام مشتری<input type="search" value={search} maxLength={80} onChange={e => { setSearch(e.target.value); setPage("1"); }} /></label>
       {/* طرح ۱۰: تراشهٔ وضعیت با شمارش. شمارش از همان فیلتر بی‌وضعیت سرور است؛ تا نیامده عددی نشان داده نمی‌شود. */}
-      <Segmented<StatusKey> label="وضعیت" value={(STATUS_KEYS as readonly string[]).includes(status) ? status as StatusKey : "all"}
+      {tab === "drafts" ? null : <Segmented<StatusKey> label="وضعیت" value={(STATUS_KEYS as readonly string[]).includes(status) ? status as StatusKey : "all"}
         onChange={next => { setStatus(next); setPage("1"); }}
         options={STATUS_KEYS.map(k => {
           const n = counts?.[k];
           return { key: k, label: `${k === "all" ? "همه" : statusNames[k]}${n === undefined ? "" : ` (${formatCount(n)})`}` };
-        })} />
+        })} />}
       <details className="invoice-extra-filters" open={extraOpen || !!(branch || datesActive || issue)} onToggle={e => setExtraOpen(e.currentTarget.open)}>
       <summary>فیلتر شعبه و تاریخ{branch || from || to ? " · فعال" : ""}</summary>
       <div className="invoice-filter-fields">
@@ -148,6 +160,7 @@ export function Invoices() {
           <span>صفحه {page} · {query.data.total} فاکتور</span><button type="button" className="btn" disabled={Number(page)*50 >= query.data.total} onClick={() => setPage(String(Number(page)+1))}>بعدی</button></nav>
       </>}
     </div>
+    </TabPanels>
   </section>;
 }
 

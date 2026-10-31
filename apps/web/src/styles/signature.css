@@ -232,6 +232,25 @@
   .cart .lines > li > :not(.line-name):not(.qty):not(.line-total):not(.line-tool):not(.line-drop) { grid-column: 1 / -1; }
 }
 
+/* تراشه‌های دستهٔ کالا (طرح ۱۰): یک ردیف که می‌شکند، نه اسکرول افقی صفحه. */
+.catalog-categories { display: flex; flex-wrap: wrap; gap: var(--s-2); margin-block-start: var(--s-3); }
+
+/* «حساب مرجوعی» (طرح ۱۰): سطرهای برچسب و مبلغ، هم‌تراز انتها. */
+.return-account { display: grid; gap: 0; margin: 0; }
+.return-account > div { display: flex; justify-content: space-between; align-items: baseline; gap: var(--s-3); padding-block: var(--s-2); border-block-end: var(--border-w) solid var(--rule); }
+.return-account dt { color: var(--ink-2); font-size: var(--text-sm); }
+.return-account dd { margin: 0; }
+.return-account-rule { margin: 0; }
+
+/* خزانه: کشوهای باز و پایانه‌ها کنار هم در دسکتاپ. */
+.treasury-desk { display: grid; gap: var(--s-4); }
+@media (min-width: 1100px) { .treasury-desk { grid-template-columns: repeat(auto-fit, minmax(20rem, 1fr)); align-items: start; } }
+.desk-list { list-style: none; margin: 0; padding: 0; display: grid; }
+.desk-list > li { display: flex; align-items: center; justify-content: space-between; gap: var(--s-3); padding-block: var(--s-2); border-block-end: var(--border-w) solid var(--rule); }
+.desk-list > li:last-child { border-block-end: 0; }
+.desk-list span { display: grid; min-inline-size: 0; }
+.desk-list small { color: var(--ink-2); font-size: var(--text-xs); }
+
 /* ── فشار: بازخورد لمسی کوتاه ─────────────────────────────────────── */
 .subtabs [role="tab"], .pay-tile, .pay-chip, .pick-chip { transition: transform var(--dur-instant) var(--ease-standard), background-color var(--dur-fast) var(--ease-standard), border-color var(--dur-fast) var(--ease-standard); }
 .subtabs [role="tab"]:active, .pay-tile:active:not(:disabled), .pay-chip:active:not(:disabled), .pick-chip:active:not(:disabled) { transform: scale(0.97); }

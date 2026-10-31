@@ -131,7 +131,8 @@ test.describe("کارهای عملیاتی داشبورد", () => {
     api.defaults["GET /dashboard/operations"] = opsBody({ shifts: { state: "denied" }, cheques: { state: "denied" }, receivables: { state: "denied" }, lowStock: { state: "denied" } });
     await page.goto("/?page=dashboard&dashboard.tab=ops");
     await expect.poll(() => opsCalls(api).length).toBe(1);
-    await expect(page.getByRole("tablist", { name: "شاخص‌های امروز" })).toBeVisible();
+    // طرح ۱۰: شاخص‌ها در «نمای کلی»‌اند؛ لنگر بارشدن صفحه سرعنوان داشبورد است که در هر زبانه هست.
+    await expect(page.getByRole("heading", { name: "امروز", level: 1 })).toBeVisible();
     await expect(section(page)).toHaveCount(0);
   });
 
@@ -140,7 +141,8 @@ test.describe("کارهای عملیاتی داشبورد", () => {
       await route.fulfill({ json: { verdict: url.searchParams.get("operation") === "report.view" ? "deny" : "allow", approver: null, reason: "" } });
     });
     await page.goto("/?page=dashboard&dashboard.tab=ops");
-    await expect(page.getByRole("tablist", { name: "شاخص‌های امروز" })).toBeVisible();
+    // طرح ۱۰: شاخص‌ها در «نمای کلی»‌اند؛ لنگر بارشدن صفحه سرعنوان داشبورد است که در هر زبانه هست.
+    await expect(page.getByRole("heading", { name: "امروز", level: 1 })).toBeVisible();
     // کنترل منفیِ معنادار: کارت همگام‌سازی در همان رندرِ پس از دسترسی mount می‌شود که این کارت می‌شد. تا دادهٔ
     // آن نرسیده، «هیچ درخواستی نیست» ممکن است فقط «هنوز نرفته» باشد.
     await expect(page.getByRole("region", { name: "همگام‌سازی سایت" })).toContainText("صف خالی است");

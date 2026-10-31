@@ -181,7 +181,8 @@ test.describe("مرور دوره در داشبورد", () => {
       await route.fulfill({ json: { verdict: url.searchParams.get("operation") === "report.view" ? "deny" : "allow", approver: null, reason: "" } });
     });
     await page.goto("/?page=dashboard&dashboard.tab=sales");
-    await expect(page.getByRole("tablist", { name: "شاخص‌های امروز" })).toBeVisible();
+    // طرح ۱۰: شاخص‌ها در «نمای کلی»‌اند؛ لنگر بارشدن صفحه سرعنوان داشبورد است که در هر زبانه هست.
+    await expect(page.getByRole("heading", { name: "امروز", level: 1 })).toBeVisible();
     await expect(section(page)).toHaveCount(0);
     expect(periodCalls(api)).toEqual([]);
   });

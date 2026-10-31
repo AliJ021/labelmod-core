@@ -163,9 +163,10 @@ export interface CatalogSummary { activeProducts: number; activeVariations: numb
 
 export const catalog = {
   summary: (request?: RequestOptions) => api.get<CatalogSummary>("/products/summary", request),
-  products: (opts: { search?: string; status?: string } = {}, request?: RequestOptions) => {
+  products: (opts: { search?: string; status?: string; categoryId?: string } = {}, request?: RequestOptions) => {
     const q = new URLSearchParams();
     if (opts.search) q.set("search", opts.search);
+    if (opts.categoryId) q.set("categoryId", opts.categoryId);
     if (opts.status) q.set("status", opts.status);
     const qs = q.toString();
     return api.get<{ products: Product[] }>(`/products${qs ? `?${qs}` : ""}`, request);
@@ -174,11 +175,11 @@ export const catalog = {
   product: (id: string) =>
     api.get<{ product: Product; variations: Variation[] }>(`/products/${id}`),
 
-  refData: () =>
+  refData: (request?: RequestOptions) =>
     api.get<{
       brands: Array<{ id: string; name: string }>;
       categories: Array<{ id: string; name: string; path: string }>;
-    }>("/products/ref-data"),
+    }>("/products/ref-data", request),
 
   /** `code` نبود = کد خودکار یکتا سمت سرور (مهاجرت ۰۹۴)؛ پاسخ کد نهایی را دارد. */
   createProduct: (input: ProductInput & { code?: string }, opts?: RequestOptions) =>

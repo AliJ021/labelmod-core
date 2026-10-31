@@ -18,7 +18,8 @@ test("invoice center restores URL filters and browser navigation and prints only
   api.defaults["GET /invoices/i1/overview"]={invoice:{...row,lines:[]},payments:[]};
   await page.goto("/?page=invoices&invoices.status=draft&invoices.search=نمونه");
   await expect(page.getByRole("heading",{name:"فاکتورها",exact:true})).toBeVisible();
-  await expect(page.getByRole("group",{name:"وضعیت",exact:true}).getByRole("radio",{name:/^پیش‌نویس/})).toBeChecked();
+  // طرح ۱۰: پیش‌نویس زبانهٔ خودش است، نه یک تراشهٔ وضعیت.
+  await expect(page.getByRole("tab",{name:/^پیش‌نویس‌ها/})).toHaveAttribute("aria-selected","true");
   await expect(page.locator("main").getByRole("searchbox")).toHaveValue("نمونه");
   await expect(page.getByText("نیازمند رسیدگی",{exact:false})).toBeVisible();
   await expect(page.getByRole("link",{name:"چاپ فاکتور",exact:true})).toHaveCount(0);
@@ -54,14 +55,15 @@ test("invoice totals come from the server for the same filter; drafts are not sa
   await expect(totals.getByRole("region",{name:"فاکتورهای قطعی این فیلتر"})).toContainText("۱۸");
   const chips=page.getByRole("group",{name:"وضعیت",exact:true});
   await expect(chips.getByRole("radio",{name:"همه (۲۲)"})).toBeChecked();
-  await chips.getByText("پیش‌نویس (۳)",{exact:true}).click();
+  await expect(chips.getByRole("radio",{name:/پیش‌نویس/})).toHaveCount(0);
+  await page.getByRole("tab",{name:"پیش‌نویس‌ها (۳)"}).click();
   await expect.poll(()=>api.calls.filter(c=>c.startsWith("GET /invoices?")).at(-1)).toBe("GET /invoices?status=draft&search=&page=1");
   await expect(page).toHaveURL(/invoices.status=draft/);
   // سروری که جمع نمی‌دهد: هیچ عدد ساختگی، نه صفر.
   api.defaults["GET /invoices"]={rows:[row],total:1,pageSize:50};
   await page.getByRole("button",{name:"تازه‌سازی",exact:true}).click();
   await expect(totals).toHaveCount(0);
-  await expect(chips.getByRole("radio",{name:"پیش‌نویس",exact:true})).toBeChecked();
+  await expect(page.getByRole("tab",{name:"پیش‌نویس‌ها",exact:true})).toHaveAttribute("aria-selected","true");
   expect(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth+1)).toBe(true);
 });
 
