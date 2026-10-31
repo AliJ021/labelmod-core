@@ -330,8 +330,9 @@ export function Returns() {
                 (صفرکردن بدهی همین فاکتور و مازاد به اعتبار مشتری) را `post_return` در تراکنش ثبت تعیین می‌کند. */}
             <dl className="return-account">
               <div><dt>ارزش کالای برگشتی (بهای همان فروش)</dt><dd><Money rial={suggestion} /></dd></div>
-              <div><dt>قابل پرداخت همین فاکتور</dt><dd><Money rial={parseRial(invoice.payableAmount)} /></dd></div>
-              <div><dt>دریافت‌شده بابت این فاکتور</dt><dd><Money rial={parseRial(invoice.paidAmount)} /></dd></div>
+              {/* میدانِ نیامده «—» است، نه صفر و نه فروپاشی صفحهٔ مرجوعی. */}
+              <div><dt>قابل پرداخت همین فاکتور</dt><dd><Money rial={typeof invoice.payableAmount === "string" ? parseRial(invoice.payableAmount) : null} /></dd></div>
+              <div><dt>دریافت‌شده بابت این فاکتور</dt><dd><Money rial={typeof invoice.paidAmount === "string" ? parseRial(invoice.paidAmount) : null} /></dd></div>
             </dl>
             <p className="muted small return-account-rule">بازپرداخت از دریافت‌شده بیشتر نمی‌شود؛ مازادِ ارزش کالا اول بدهی همین فاکتور را صفر می‌کند و بعد اعتبار مشتری می‌شود. پیش از ثبت، هیچ اثری ثبت نمی‌شود.</p>
 

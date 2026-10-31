@@ -232,7 +232,7 @@ export function Customers() {
                     <td className="num">{toman(parseRial(c.totalPurchased))}</td>
                     <td className="num">{toman(parseRial(c.balance))}</td>
                     <td>{CUSTOMER_STATUS[c.status] ?? c.status}</td>
-                    <td className="num">{formatJalaliMoment(c.createdAt).split("،")[0]}</td>
+                    <td className="num">{c.createdAt ? formatJalaliMoment(c.createdAt).split("،")[0] : "—"}</td>
                     <td>{c.consentMarketing ? <StatusBadge state="completed" label="رضایت دارد" quiet /> : <StatusBadge state="cancelled" label="بدون رضایت" quiet />}</td>
                     <td>
                       <button

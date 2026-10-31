@@ -22,7 +22,7 @@ export function TreasuryDesk({ accounts }: { accounts: readonly TreasuryAccount[
       <SectionHeader id="treasury-drawers" title="کشوهای باز" description="کشو از شعبه پیدا می‌شود، نه از کاربر عامل؛ با دو کشوی باز، انتخاب کشو اجباری است." />
       {shifts.open.length === 0 ? <p className="muted">کشوی بازی نیست.</p> : <ul className="desk-list">
         {shifts.open.map(sh => <li key={sh.id}>
-          <span><strong>{sh.userName}</strong><small>باز از {formatJalaliMoment(sh.openedAt)}</small></span>
+          <span><strong>{sh.userName}</strong><small>{sh.openedAt ? `باز از ${formatJalaliMoment(sh.openedAt)}` : "باز"}</small></span>
           {sh.carriedOver ? <StatusBadge state="warning" label="ماندهٔ دیروز" /> : <StatusBadge state="active" label="باز" quiet />}
         </li>)}
       </ul>}
