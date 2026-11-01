@@ -132,7 +132,7 @@ test("clear, filter and unmount cancel pending searches; error retry and empty s
   await search.fill("pending"); await search.press("Enter");
   await expect.poll(() => held.length).toBeGreaterThan(firstCount);
   const nextCount = held.length;
-  await page.getByRole("checkbox", { name: "بایگانی‌شده‌ها هم" }).check();
+  await page.locator("main").getByRole("tab", { name: "بایگانی", exact: true }).click();
   await expect.poll(() => held.length).toBeGreaterThan(nextCount);
   await page.getByRole("tab", { name: "داشبورد", exact: true }).click();
   for (const route of held) await route.fulfill({ json: { products: [{ ...product, nameInternal: "OLD" }] } }).catch(() => {});

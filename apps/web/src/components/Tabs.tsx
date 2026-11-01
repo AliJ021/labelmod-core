@@ -127,8 +127,10 @@ export function TabPanels<K extends string>({ id, items, value, children, classN
 
 export function useTabsId() { return useId(); }
 
-export function SettingsNavigation<K extends string>({ id, items, value, onChange, mobile, hrefFor, label = "تنظیمات" }: {
+export function SettingsNavigation<K extends string>({ id, items, value, onChange, mobile, hrefFor, label = "تنظیمات", horizontal = false }: {
   id: string; items: readonly TabItem<K>[]; value: K | null; onChange: (value: K) => void; mobile: boolean; hrefFor?: (value: K) => string;
+  /** طرح ۱۰: ناحیهٔ کم‌بخش (برداشت و پاداش) زبانهٔ افقی دارد، نه ستون کناری. */
+  horizontal?: boolean;
   /** نام ناحیه برای برچسب دسترس‌پذیر («بخش تنظیمات»، «بخش برداشت و پاداش»). */
   label?: string;
 }) {
@@ -143,6 +145,6 @@ export function SettingsNavigation<K extends string>({ id, items, value, onChang
     {mobile ? <label className="settings-picker"><span>بخش {label}</span><select value={value ?? ""} aria-controls={value === null ? undefined : `${id}-panel-${value}`} onChange={e => onChange(e.target.value as K)}>
       {value === null ? <option value="" disabled>بخشی را انتخاب کنید</option> : null}
       {groups.map(group => <optgroup label={group} key={group}>{real.filter(item => (item.group ?? "بخش‌ها") === group).map(item => <option key={item.key} value={item.key}>{item.label}</option>)}</optgroup>)}
-    </select></label> : <TabList id={id} items={items} value={value} onChange={onChange} label={`بخش‌های ${label}`} className="subtabs settings-tabs" vertical {...(hrefFor ? { hrefFor } : {})} />}
+    </select></label> : <TabList id={id} items={items} value={value} onChange={onChange} label={`بخش‌های ${label}`} className={horizontal ? "subtabs" : "subtabs settings-tabs"} vertical={!horizontal} {...(hrefFor ? { hrefFor } : {})} />}
   </div>;
 }

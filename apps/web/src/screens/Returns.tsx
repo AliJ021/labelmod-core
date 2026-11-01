@@ -4,7 +4,11 @@ import { AmountInput } from "../components/ui/AmountInput.tsx";
  * اثر مالی از endpoint اتمیک می‌آید؛ نتیجه نامعلوم فقط بررسی می‌شود.
  */
 import { useEffect, useState } from "react";
-import { Glass, Solid } from "../components/Glass.tsx";
+import { Solid } from "../components/Glass.tsx";
+import { TabList, TabPanels, useTabsId } from "../components/Tabs.tsx";
+import { Icon } from "../components/Icon.tsx";
+import { SectionHeader } from "../components/ui/PageHeader.tsx";
+import { useUrlTab } from "../lib/use-url-state.ts";
 import { WebRefundRequests } from "./WebRefundRequests.tsx";
 import { api, ApiError } from "../lib/api.ts";
 import { SafeAction } from "../components/ui/SafeAction.tsx";
@@ -36,6 +40,13 @@ function message(err: unknown): string {
   return "ارتباط با سرور برقرار نشد.";
 }
 
+const RETURN_TABS = [
+  { key: "returns", label: "مرجوعی" },
+  { key: "exchanges", label: "تعویض" },
+  { key: "web", label: "درخواست‌های سایت" },
+] as const;
+const RETURN_TAB_ITEMS = RETURN_TABS.map(t => ({ ...t, icon: <Icon name={t.key === "returns" ? "return" : t.key === "exchanges" ? "swap" : "external"} size="sm" /> }));
+
 export function Returns() {
   const [branches, setBranches] = useState<Branch[]>([]);
   const [branchId, setBranchId] = useState("");
@@ -44,7 +55,11 @@ export function Returns() {
 
   const [number, setNumber] = useState("");
   const [lookupKind, setLookupKind] = useState<"number" | "phone">("number");
-  const [mode, setMode] = useState<"returns" | "exchanges">("returns");
+  // طرح ۱۰: سه زبانه؛ «مرجوعی» و «تعویض» همان فرم فاکتور را با دو حالت دارند و «درخواست‌های سایت» صف بررسی است.
+  // تا عملیاتی در راه است زبانه عوض نمی‌شود (همان قفل دکمه‌های پیشین).
+  const [tab, setTabRaw] = useUrlTab("returns.tab", RETURN_TABS, "returns");
+  const mode: "returns" | "exchanges" = tab === "exchanges" ? "exchanges" : "returns";
+  const tabsId = useTabsId();
   const [matches, setMatches] = useState<Array<{ id: string; number: string; payableAmount: string }>>([]);
   const [nextPage, setNextPage] = useState<string | null>(null);
   const [invoice, setInvoice] = useState<Invoice | null>(null);
@@ -181,16 +196,14 @@ export function Returns() {
 
   return (
     <div className="stack" style={{ gap: "var(--s-4)" }}>
-      <Glass as="section" className="pad" live>
-        <h2 style={{ marginTop: 0 }}>مرجوعی و تعویض</h2>
-        <div className="row" role="group" aria-label="نوع عملیات">
-          <button className="btn" type="button" disabled={!!operation.pending} aria-pressed={mode === "returns"} onClick={() => setMode("returns")}>مرجوعی</button>
-          <button className="btn" type="button" disabled={!!operation.pending} aria-pressed={mode === "exchanges"} onClick={() => setMode("exchanges")}>تعویض</button>
-        </div>
+      <TabList id={tabsId} items={RETURN_TAB_ITEMS} value={tab} onChange={k => { if (!operation.pending) setTabRaw(k); }} label="مرجوعی و تعویض" />
+      <TabPanels id={tabsId} items={RETURN_TAB_ITEMS} value={tab} className="stack returns-panel">
+      {tab === "web" ? <WebRefundRequests key={branchId} branchId={branchId} /> : <>
+      <Solid as="section" className="list-card" aria-labelledby="ret-find">
+        <SectionHeader id="ret-find" title={mode === "exchanges" ? "۱. فاکتور تعویض" : "۱. فاکتور و اقلام برگشتی"}
+          description="شماره دقیق فاکتور یا شماره همراه ثبت‌شده مشتری را وارد کنید." />
+        <div className="list-card-body stack">
         <ReturnRecovery operation={operation} />
-        <p className="muted" style={{ marginTop: 0 }}>
-          شماره دقیق فاکتور یا شماره همراه ثبت‌شده مشتری را وارد کنید.
-        </p>
 
         {branches.length > 1 ? (
           <div className="stack" style={{ gap: "var(--s-2)", marginBottom: "var(--s-3)" }}>
@@ -209,18 +222,20 @@ export function Returns() {
         ) : null}
 
         <form
-          className="stack"
+          className="stack returns-lookup"
           style={{ gap: "var(--s-3)" }}
           onSubmit={(e) => {
             e.preventDefault();
             void lookup();
           }}
         >
-          <Solid className="auth-field">
+          <div className="auth-field returns-lookup-kind">
             <label htmlFor="ret-lookup-kind">جست‌وجو با</label>
             <select id="ret-lookup-kind" value={lookupKind} disabled={!!operation.pending} onChange={e => { setLookupKind(e.target.value as "number" | "phone"); setNumber(""); setMatches([]); setNextPage(null); }}>
               <option value="number">شماره فاکتور</option><option value="phone">شماره همراه مشتری</option>
             </select>
+          </div>
+          <div className="auth-field returns-lookup-no">
             <label htmlFor="ret-no">{lookupKind === "number" ? "شماره فاکتور" : "شماره همراه"}</label>
             <input
               id="ret-no"
@@ -230,7 +245,7 @@ export function Returns() {
               disabled={!!operation.pending}
               autoComplete="off"
             />
-          </Solid>
+          </div>
           <button
             type="submit"
             className="btn btn--primary"
@@ -244,7 +259,8 @@ export function Returns() {
           {row.number} · <Money rial={row.payableAmount} />
         </button>)}</div>
         {nextPage ? <button className="btn" disabled={busy || !!operation.pending} onClick={() => void lookup(nextPage)}>صفحه بعد</button> : null}
-      </Glass>
+        </div>
+      </Solid>
 
       {error ? (
         <p className="solid pos-alert" role="alert">
@@ -257,7 +273,6 @@ export function Returns() {
         </p>
       ) : null}
 
-      {mode === "returns" ? <WebRefundRequests key={branchId} branchId={branchId} /> : null}
 
       {view && invoice ? (
         <fieldset className="stack returns-steps" disabled={!!operation.pending} style={{ border: 0, padding: 0, minWidth: 0 }}>
@@ -446,6 +461,8 @@ export function Returns() {
             run={body => operation.run("exchanges", body)} verify={operation.verify} /> : null}
         </fieldset>
       ) : null}
+      </>}
+      </TabPanels>
     </div>
   );
 }

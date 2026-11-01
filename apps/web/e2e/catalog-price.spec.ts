@@ -30,7 +30,8 @@ test("قیمت فروش: برابر، بازه، بی‌قیمت، بخشی بی
   const table = page.locator("main table.grid");
   await expect(table.getByRole("columnheader", { name: "قیمت فروش", exact: true })).toBeVisible();
   await expect(table.getByRole("columnheader", { name: "قیمت‌دار", exact: true })).toHaveCount(0);
-  const cell = (code: string) => table.getByRole("row").filter({ hasText: code }).getByRole("cell").nth(4);
+  // ستون‌ها (طرح ۱۰): کد، کالا، تنوع، قیمت فروش، وضعیت، عملیات.
+  const cell = (code: string) => table.getByRole("row").filter({ hasText: code }).getByRole("cell").nth(3);
 
   await expect(cell("EQ-1")).toContainText("1٬250٬000");
   await expect(cell("EQ-1")).toContainText("تومان");

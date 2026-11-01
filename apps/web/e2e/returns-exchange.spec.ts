@@ -85,7 +85,7 @@ test("exchange separately quotes settlement before explicit final confirmation",
     await route.fulfill({ json: { status: "posted", number: "E-TEST-1" } });
   });
   await choose(page);
-  await page.getByRole("button", { name: "تعویض", exact: true }).click();
+  await page.getByRole("tab", { name: "تعویض", exact: true }).click();
   await expect(page.getByRole("button", { name: "۱. بررسی مرجوعی", exact: true })).toHaveCount(0);
   await page.getByRole("button", { name: /جایگزین با همان تنوع/ }).click();
   await page.getByRole("button", { name: "۱. محاسبه و بررسی تسویه", exact: true }).click();
@@ -106,7 +106,7 @@ for (const enabled of [false, true]) test(`exchange replacement fractional polic
     await route.fulfill({ json: api.defaults["POST /exchanges/quote"] });
   });
   await choose(page);
-  await page.getByRole("button", { name: "تعویض", exact: true }).click();
+  await page.getByRole("tab", { name: "تعویض", exact: true }).click();
   await page.getByRole("button", { name: /جایگزین با همان تنوع/ }).click();
   await page.getByLabel("تعداد جایگزین 1").fill("۰٫۱۲۵");
   const button = page.getByRole("button", { name: "۱. محاسبه و بررسی تسویه", exact: true });
@@ -157,7 +157,7 @@ for (const kind of ["returns", "exchanges"] as const) {
       await page.getByRole("button", { name: "۱. بررسی مرجوعی", exact: true }).click();
       await page.getByRole("button", { name: "اقلام و مبلغ را تأیید می‌کنم؛ ثبت مرجوعی", exact: true }).click();
     } else {
-      await page.getByRole("button", { name: "تعویض", exact: true }).click();
+      await page.getByRole("tab", { name: "تعویض", exact: true }).click();
       await page.getByRole("button", { name: /جایگزین با همان تنوع/ }).click();
       await page.getByRole("button", { name: "۱. محاسبه و بررسی تسویه", exact: true }).click();
       await page.getByRole("button", { name: "۲. بررسی نهایی تعویض", exact: true }).click();

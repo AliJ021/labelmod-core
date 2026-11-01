@@ -114,7 +114,7 @@ test("bulk label list keeps per-variant counts across reload and sends the chose
   let body:Record<string,unknown>|undefined;
   api.handlers.set("POST /labels",async route=>{body=route.request().postDataJSON();await route.fulfill({contentType:"text/html",body:'<!doctype html><html lang="fa"><body><p>BULK LABEL</p></body></html>'});});
   await openCatalog(page);
-  await page.locator("main").getByRole("button",{name:"چاپ لیبل بارکد",exact:true}).click();
+  await page.locator("main").getByRole("tab",{name:"چاپ لیبل بارکد",exact:true}).click();
   await expect(page.getByRole("region",{name:"فهرست چاپ گروهی"})).toContainText("خالی است");
   await page.getByRole("button",{name:"انتخاب تنوع و چاپ لیبل",exact:true}).click();
   const panel=page.getByRole("region",{name:"موجودی و چاپ بارکد"});

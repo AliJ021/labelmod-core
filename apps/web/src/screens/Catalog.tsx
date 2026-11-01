@@ -29,7 +29,11 @@ import { useUrlState, useUrlFlag } from "../lib/use-url-state.ts";
  * و ورودی عددی مرورگر آن را دور می‌اندازد. `rialFromTomanInput` رقم
  * فارسی و عربی و جداکننده هزارگان را می‌فهمد.
  */
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState, type ReactNode } from "react";
+import { TabList, TabPanels, useTabsId } from "../components/Tabs.tsx";
+import { Icon } from "../components/Icon.tsx";
+import { SectionHeader } from "../components/ui/PageHeader.tsx";
+import { Ltr } from "../components/ui/Bidi.tsx";
 import { Glass, Solid } from "../components/Glass.tsx";
 import { SearchField } from "../components/SearchField.tsx";
 import { ProductStockLabels } from "../components/ProductStockLabels.tsx";
@@ -85,7 +89,16 @@ function shortDate(iso: string): string {
   }
 }
 
+/** طرح ۱۰: سه زبانهٔ کالا؛ حالت هر زبانه همان پرچم‌های نشانی قبلی است تا پیوندهای موجود بشکنند. */
+type CatalogTab = "products" | "labels" | "archive";
+const CATALOG_TABS = [
+  { key: "products", label: "کالاها", icon: <Icon name="tag" size="sm" /> },
+  { key: "labels", label: "چاپ لیبل بارکد", icon: <Icon name="barcode" size="sm" /> },
+  { key: "archive", label: "بایگانی", icon: <Icon name="archive" size="sm" /> },
+] as const satisfies readonly { key: CatalogTab; label: string; icon: ReactNode }[];
+
 export function Catalog() {
+  const tabsId = useTabsId();
   const [search, setSearch] = useUrlState("catalog.search", "", true);
   const [showArchived, setShowArchived] = useUrlFlag("catalog.archived");
   const [selectedId, setSelectedId] = useUrlState("catalog.product");
@@ -101,7 +114,7 @@ export function Catalog() {
   const [category, setCategory] = useUrlState("catalog.category");
   const categoriesLoad = useCallback((signal: AbortSignal) => catalog.refData({ signal }).then(r => r.categories), []);
   const categories = useLatestQuery({ key: "catalog-categories", load: categoriesLoad }).data ?? [];
-  const load = useCallback(async (signal: AbortSignal) => (await catalog.products({ search, status: showArchived ? "all" : "active", ...(category ? { categoryId: category } : {}) }, { signal })).products, [search, showArchived, category]);
+  const load = useCallback(async (signal: AbortSignal) => (await catalog.products({ search, status: showArchived ? "archived" : "active", ...(category ? { categoryId: category } : {}) }, { signal })).products, [search, showArchived, category]);
   const query = useLatestQuery({ key: JSON.stringify([search, showArchived, category]), version: revision, load, delay, enabled: selected === null });
   const products = query.data ?? [];
   function reload() { setDelay(0); setRevision(v => v + 1); }
@@ -160,35 +173,26 @@ export function Catalog() {
     );
   }
 
+  const tab: CatalogTab = labels === "1" ? "labels" : showArchived ? "archive" : "products";
+  function changeTab(next: CatalogTab) {
+    setLabels(next === "labels" ? "1" : "");
+    setShowArchived(next === "archive");
+    setDelay(0);
+  }
+
   return (
     <div className="stack catalog-page">
-      {labels === "1" ? null : <CatalogSummaryRow />}
-      <Glass as="section" className="pad">
-        <div className="row" style={{ justifyContent: "space-between", alignItems: "center" }}>
-          <h2 style={{ fontSize: "1rem", margin: 0 }}>{labels === "1" ? "چاپ لیبل بارکد" : "کالا و قیمت"}</h2>
-          <button className="btn" type="button" onClick={() => setLabels(labels === "1" ? "" : "1")}>{labels === "1" ? "فهرست کالا و قیمت" : "چاپ لیبل بارکد"}</button>
-          <button type="button" className="btn" onClick={() => setCreating((v) => !v)}>
-            {creating ? "انصراف" : "کالای تازه"}
-          </button>
-        </div>
-
-        <div className="catalog-toolbar">
-          <SearchField label="جست‌وجوی کد یا نام کالا" value={search} onChange={changeSearch} onSearch={reload} onClear={reload} />
-          <label className="filter-check">
-            <input
-              type="checkbox"
-              checked={showArchived}
-              onChange={(e) => { setShowArchived(e.target.checked); setDelay(0); }}
-            />
-            <span>بایگانی‌شده‌ها هم</span>
-          </label>
-        </div>
+      <TabList id={tabsId} items={CATALOG_TABS} value={tab} onChange={changeTab} label="کالا و قیمت" />
+      <TabPanels id={tabsId} items={CATALOG_TABS} value={tab} className="stack catalog-panel">
+      <div className="catalog-toolbar">
+        <SearchField label="جست‌وجوی کد یا نام کالا" value={search} onChange={changeSearch} onSearch={reload} onClear={reload} />
         {categories.length > 0 ? <div className="catalog-categories" role="group" aria-label="دستهٔ کالا">
           <button type="button" className="pick-chip" aria-pressed={category === ""} onClick={() => { setCategory(""); setDelay(0); }}>همه</button>
           {categories.map(c => <button key={c.id} type="button" className="pick-chip" aria-pressed={category === c.id}
             onClick={() => { setCategory(c.id); setDelay(0); }}>{c.name}</button>)}
         </div> : null}
-      </Glass>
+      </div>
+      {tab === "products" ? <CatalogSummaryRow /> : null}
       {labels === "1" ? <LabelPrintQueue /> : null}
 
       {creating ? (
@@ -214,7 +218,11 @@ export function Catalog() {
       ) : null}
 
       <div aria-busy={query.loading}>
-      <Solid className="pad">
+      <Solid as="section" className="list-card catalog-list" aria-labelledby="catalog-list-title">
+        <SectionHeader id="catalog-list-title" title={tab === "labels" ? "انتخاب کالا برای چاپ لیبل" : tab === "archive" ? "کالاهای بایگانی‌شده" : "فهرست کالا"}
+          description={tab === "archive" ? "کالا حذف نمی‌شود، بایگانی می‌شود؛ فاکتورهای قدیمی به همان سطر ارجاع می‌دهند." : "قیمت فروش همان قیمتی است که صندوق برای تنوع فعال می‌خواند؛ بی‌قیمت هرگز صفر نوشته نمی‌شود."}
+          actions={<button type="button" className={creating ? "btn" : "btn btn--primary"} onClick={() => setCreating((v) => !v)}>
+            <Icon name={creating ? "close" : "plus"} size="sm" />{creating ? "انصراف" : "کالای تازه"}</button>} />
         {query.loading ? (
           <ResultState kind="loading" title="در حال جست‌وجوی کالاها…" />
         ) : query.error ? (
@@ -229,17 +237,18 @@ export function Catalog() {
               onClick={() => void addPickedToQueue()}>{adding ? "در حال افزودن به فهرست چاپ…" : `افزودن ${picked.size.toLocaleString("fa-IR")} کالای انتخاب‌شده به فهرست چاپ`}</button>
             {picked.size > 0 ? <button type="button" className="btn" disabled={adding} onClick={() => setPicked(new Map())}>پاک‌کردن انتخاب</button> : null}
           </div> : null}
-          <table className="grid">
+          <div className="scroll-x"><table className="grid">
+            <caption className="sr-only">فهرست کالا؛ قیمت‌ها به تومان</caption>
             <thead>
               <tr>
                 {labels === "1" ? <th><input type="checkbox" aria-label="انتخاب همهٔ کالاهای این فهرست" checked={products.length > 0 && products.every((p) => picked.has(p.id))}
                   onChange={(e) => togglePicked(products, e.target.checked)} /></th> : null}
                 <th>کد</th>
-                <th>نام</th>
-                <th>برند</th>
-                <th>تنوع</th>
+                <th>کالا</th>
+                <th className="num">تنوع</th>
                 <th>قیمت فروش</th>
-                <th />
+                <th>وضعیت</th>
+                <th>عملیات</th>
               </tr>
             </thead>
             <tbody>
@@ -247,32 +256,30 @@ export function Catalog() {
                 <tr key={p.id}>
                   {labels === "1" ? <td><input type="checkbox" aria-label={`انتخاب ${p.nameInternal} برای چاپ گروهی`} checked={picked.has(p.id)}
                     onChange={(e) => togglePicked([p], e.target.checked)} /></td> : null}
-                  <td>{p.code}</td>
+                  <td><Ltr>{p.code}</Ltr></td>
                   <td>
-                    {p.nameInternal}
-                    {p.status === "archived" ? (
-                      <span className="muted"> — بایگانی</span>
-                    ) : null}
+                    <strong className="cell-title">{p.nameInternal}</strong>
+                    {p.categoryName || p.brandName ? <small>{[p.categoryName, p.brandName].filter(Boolean).join(" · ")}</small> : null}
                   </td>
-                  <td>{p.brandName ?? "—"}</td>
                   <td className="num">{p.variationCount}</td>
                   <td>
                     <ProductPrice product={p} />
                   </td>
+                  <td>{p.status === "archived" ? <StatusBadge state="archived" label="بایگانی" /> : <StatusBadge state="active" label="فعال" quiet />}</td>
                   <td>
                     {/* تا پایان افزودن گروهی، صفحهٔ کالا باز نمی‌شود؛ وگرنه نتیجه بی‌پیام در پس‌زمینه ثبت می‌شد. */}
-                    <button type="button" className="btn" disabled={adding} onClick={() => setSelected(p.id)}>
-                      {labels === "1" ? "انتخاب تنوع و چاپ لیبل" : "باز کردن"}
-                    </button>
+                    {labels === "1" ? <button type="button" className="btn" disabled={adding} onClick={() => setSelected(p.id)}>انتخاب تنوع و چاپ لیبل</button>
+                      : <button type="button" className="icon-button invoice-icon" aria-label="باز کردن" title="باز کردن" disabled={adding} onClick={() => setSelected(p.id)}><Icon name="chevron" size="sm" /></button>}
                   </td>
                 </tr>
               ))}
             </tbody>
-          </table>
+          </table></div>
           </>
         )}
       </Solid>
       </div>
+      </TabPanels>
     </div>
   );
 }

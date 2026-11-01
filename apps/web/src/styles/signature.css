@@ -286,7 +286,7 @@
 
 /* خزانه: کشوهای باز و پایانه‌ها کنار هم در دسکتاپ. */
 .treasury-desk { display: grid; gap: var(--s-4); }
-@media (min-width: 1100px) { .treasury-desk { grid-template-columns: repeat(auto-fit, minmax(20rem, 1fr)); align-items: start; } }
+/* طرح ۱۰: کشوها و پایانه‌ها هر کدام یک ردیف تمام‌عرض‌اند، نه دو ستون. */
 .desk-list { list-style: none; margin: 0; padding: 0; display: grid; }
 .desk-list > li { display: flex; align-items: center; justify-content: space-between; gap: var(--s-3); padding-block: var(--s-2); border-block-end: var(--border-w) solid var(--rule); }
 .desk-list > li:last-child { border-block-end: 0; }
@@ -569,3 +569,63 @@ body { font-feature-settings: "ss01" 1; }
   .pos-workspace > .pos-doc-block, .pos-workspace > .pos-customer-panel, .pos-workspace > .pos-search-card { padding: var(--s-3); }
   .pos-workspace > .cart { padding: 0 var(--s-3) var(--s-3); }
 }
+
+/* ── گذر سوم: یادداشت راهنما، کارت فهرست با کنش سرعنوان (طرح ۱۰) ───────────── */
+.page-note {
+  display: flex; align-items: flex-start; gap: var(--s-2); margin: 0;
+  padding: 12px 16px; border-radius: var(--r-sm);
+  background: var(--surface-solid); box-shadow: inset 0 0 0 var(--border-w) var(--rule);
+  color: var(--ink-2); font-size: var(--text-sm); line-height: var(--leading-snug);
+}
+.page-note > .icon { flex: none; margin-block-start: 3px; color: var(--info); }
+.page-note[data-tone="warn"] { background: var(--warn-soft); box-shadow: inset 0 0 0 var(--border-w) color-mix(in srgb, var(--warn) 35%, transparent); color: var(--ink); }
+.page-note[data-tone="warn"] > .icon { color: var(--warn); }
+.list-card { padding: var(--s-4) 0 0; overflow: hidden; }
+.list-card > .section-header { padding-inline: var(--s-4); }
+.list-card > .scroll-x, .list-card > .table-scroll { margin: 0; }
+.list-card table.grid th:first-child, .list-card table.grid td:first-child { padding-inline-start: var(--s-4); }
+.list-card table.grid th:last-child, .list-card table.grid td:last-child { padding-inline-end: var(--s-4); }
+.list-card > .empty, .list-card > .result-state, .list-card > p, .list-card > form, .list-card > .list-card-body { margin-inline: var(--s-4); }
+.list-card > :last-child:not(.scroll-x):not(.table-scroll) { margin-block-end: var(--s-4); }
+.list-card td small, .list-card td .cell-sub { display: block; color: var(--ink-3); font-size: var(--text-2xs); margin-block-start: 2px; }
+.kpis.kpi-cards { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 200px), 1fr)); gap: var(--s-3); }
+.filter-chips { display: flex; flex-wrap: wrap; gap: var(--s-2); align-items: center; }
+.filter-chips [aria-pressed] { min-block-size: 36px; padding-inline: 14px; border-radius: var(--r-pill); background: var(--surface-solid); box-shadow: inset 0 0 0 var(--border-w) var(--rule); color: var(--ink-2); font-size: var(--text-sm); font-weight: var(--weight-medium); border: 0; cursor: pointer; }
+.filter-chips [aria-pressed="true"] { background: var(--accent-soft); color: var(--ink); box-shadow: inset 0 0 0 var(--border-w) color-mix(in srgb, var(--accent) 55%, transparent); font-weight: var(--weight-semibold); }
+.progress-cell { display: grid; gap: 4px; min-inline-size: 120px; }
+.progress-cell .bar { block-size: 6px; border-radius: var(--r-pill); background: var(--rule); overflow: hidden; }
+.progress-cell .bar > i { display: block; block-size: 100%; background: var(--brand); border-radius: inherit; }
+.list-card-body { margin-block-end: var(--s-4); }
+.list-card-form { padding: var(--s-4); border-radius: var(--r-sm); background: color-mix(in srgb, var(--ink) 3%, transparent); box-shadow: inset 0 0 0 var(--border-w) var(--rule); }
+form.list-card-form, div.list-card-form { margin-inline: var(--s-4); margin-block-end: var(--s-4); }
+.list-card-body.list-card-form, .list-card-body .list-card-form { margin-inline: var(--s-4); }
+.list-card-body > .list-card-form { margin-inline: 0; }
+.list-card-form > .btn--primary, .list-card-form > button[type="submit"] { align-self: flex-start; min-inline-size: 160px; }
+@media (max-width: 559.98px) { .list-card-form > .btn--primary, .list-card-form > button[type="submit"] { align-self: stretch; } }
+.kpi--card .kpi-head { justify-content: flex-start; }
+.kpi--card .kpi-icon { order: -1; display: grid; place-items: center; flex: none; inline-size: 32px; block-size: 32px; border-radius: 10px; color: var(--accent); background: var(--accent-soft); box-shadow: inset 0 0 0 var(--border-w) color-mix(in srgb, var(--accent) 30%, transparent); }
+.customer-search { display: flex; flex-wrap: wrap; align-items: center; gap: var(--s-2) var(--s-3); margin: 0; }
+.customer-search .search-field { flex: 0 1 360px; min-inline-size: min(100%, 240px); }
+.customer-search p { margin: 0; flex: 1 1 220px; }
+.cell-title { font-weight: var(--weight-semibold); color: var(--ink); }
+.catalog-toolbar { margin-block-start: 0; }
+.catalog-toolbar .catalog-categories { margin-block-start: 0; }
+.personnel-layout > .settings-nav { padding: 0; background: none; border: 0; border-radius: 0; }
+.settings-tabs [role="tab"] { display: flex; align-items: center; gap: 10px; }
+.settings-tabs [role="tab"] .icon { flex: none; color: var(--ink-3); }
+.settings-tabs [role="tab"].on .icon { color: var(--accent); }
+.page-header--nested { margin-block-end: var(--s-3); }
+.page-header--nested .page-title { font-size: var(--text-xl); }
+.list-card table.ui-table th:first-child, .list-card table.ui-table td:first-child { padding-inline-start: var(--s-4); }
+.list-card table.ui-table th:last-child, .list-card table.ui-table td:last-child { padding-inline-end: var(--s-4); }
+.list-card > .result-state, .list-card > div[aria-busy] { margin: 0 var(--s-4) var(--s-4); }
+.list-card > .site-orders-pager { margin: var(--s-3) var(--s-4) var(--s-4); }
+.settings-tabs [role="tab"] { flex-direction: row; justify-content: flex-start; white-space: nowrap; }
+.settings-tabs [role="tab"] .icon { order: 0; margin: 0; }
+.personnel-layout .tab-group { display: none; }
+@media (min-width: 768px) { .settings-layout { grid-template-columns: 236px minmax(0, 1fr); } }
+.returns-lookup { display: flex; flex-flow: row wrap; align-items: flex-end; gap: var(--s-3); }
+.returns-lookup > .returns-lookup-kind { flex: 0 1 200px; }
+.returns-lookup > .returns-lookup-no { flex: 1 1 240px; }
+.returns-lookup > button[type="submit"] { flex: 0 0 auto; min-inline-size: 140px; }
+@media (max-width: 559.98px) { .returns-lookup > * { flex-basis: 100%; } }

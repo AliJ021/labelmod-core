@@ -19,15 +19,15 @@ export function CatalogSummaryRow() {
   const low = ops?.ops.lowStock;
   if (q.error || !q.data) return null;
   const d = q.data;
-  return <section className="solid kpis kpis--band catalog-summary" aria-label="خلاصهٔ کالا و قیمت">
-    <Kpi label="کالای فعال" value={<span className="kpi-count">{formatCount(d.activeProducts)}</span>}
+  return <section className="kpis kpi-cards catalog-summary" aria-label="خلاصهٔ کالا و قیمت">
+    <Kpi variant="card" label="کالای فعال" value={<span className="kpi-count">{formatCount(d.activeProducts)}</span>}
       note={`${formatCount(d.activeVariations)} تنوع فعال`} />
-    <Kpi label="ارزش موجودی به بها" value={<Money rial={d.inventoryValue === null ? null : BigInt(d.inventoryValue)} size="lg" />}
+    <Kpi variant="card" label="ارزش موجودی به بها" value={<Money rial={d.inventoryValue === null ? null : BigInt(d.inventoryValue)} size="lg" />}
       note={d.inventoryValue === null ? "دیدن بها دسترسی بهای تمام‌شده می‌خواهد" : "انبارهای شعبه‌های شما"} />
-    {low && low.state !== "denied" ? <Kpi label="زیر آستانه"
+    {low && low.state !== "denied" ? <Kpi variant="card" label="زیر آستانه"
       value={low.state === "ready" ? <span className="kpi-count">{formatCount(low.total)}</span> : <span className="kpi-unknown" aria-label="نامعلوم">—</span>}
       note={low.state === "ready" ? `ردیف تنوع و انبار · آستانه ${low.threshold}` : low.reason} /> : null}
-    <Kpi label="ثبت یا تغییر قیمت" value={<span className="kpi-count">{formatCount(d.pricesLast30Days)}</span>}
+    <Kpi variant="card" label="ثبت یا تغییر قیمت" value={<span className="kpi-count">{formatCount(d.pricesLast30Days)}</span>}
       note="در ۳۰ روز گذشته" />
   </section>;
 }

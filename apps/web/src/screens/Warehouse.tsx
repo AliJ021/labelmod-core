@@ -1,6 +1,7 @@
 import { routeUrl } from "../lib/navigation.ts";
 import { useUrlTab } from "../lib/use-url-state.ts";
 import { TabList, TabPanels, useTabsId } from "../components/Tabs.tsx";
+import { Icon } from "../components/Icon.tsx";
 /**
  * ناحیه انبار و خرید — چهار کار، یک ناحیه.
  *
@@ -33,13 +34,17 @@ const TABS = [
   { key: "count", label: "انبارگردانی" },
 ] as const;
 
+/** آیکون تزئینی هر زبانه (طرح ۱۰)؛ نام دسترس‌پذیر همان برچسب است. */
+const TAB_ICONS = { orders: "doc", receipts: "box", returns: "return", transfer: "swap", count: "check" } as const;
+const TAB_ITEMS = TABS.map(t => ({ ...t, icon: <Icon name={TAB_ICONS[t.key]} size="sm" /> }));
+
 export function Warehouse() {
   const tabsId = useTabsId();
   const [tab, setTab] = useUrlTab("purchasing.tab", TABS, "receipts");
 
   return (
     <div className="stack" style={{ gap: "var(--s-3)" }}>
-      <TabList hrefFor={key => routeUrl("purchasing", key)} id={tabsId} items={TABS} value={tab} onChange={setTab} label="انبار و خرید" className="zones wh-tabs" />
+      <TabList hrefFor={key => routeUrl("purchasing", key)} id={tabsId} items={TAB_ITEMS} value={tab} onChange={setTab} label="انبار و خرید" />
       <TabPanels id={tabsId} items={TABS} value={tab}>
 
       {tab === "orders" ? (

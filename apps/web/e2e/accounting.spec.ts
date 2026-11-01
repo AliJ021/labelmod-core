@@ -49,6 +49,8 @@ test("purchase screen creates and selects a supplier without leaving the receipt
   });
   await page.goto("/");
   await openZone(page, "انبار و خرید");
+  // طرح ۱۰: فهرست رسیدها اول است و فرم با «رسید تازه» باز می‌شود.
+  await page.getByRole("button", { name: "رسید تازه", exact: true }).click();
   await page.getByRole("button", { name: "تأمین‌کننده جدید", exact: true }).click();
   await page.getByLabel("کد تأمین‌کننده", { exact: true }).fill("AUDIT");
   await page.getByLabel("نام تأمین‌کننده", { exact: true }).fill("تأمین‌کننده آزمون");

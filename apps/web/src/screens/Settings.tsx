@@ -1,6 +1,7 @@
 import { routeUrl, type NavAccess } from "../lib/navigation.ts";
 import { SETTINGS_SECTIONS, settingsView, settingsWriteAccess, type SettingsKey } from "../lib/settings-registry.ts";
-import { Icon } from "../components/Icon.tsx";
+import { Icon, type IconName } from "../components/Icon.tsx";
+import { NestedPageHeaders } from "../components/ui/PageHeader.tsx";
 import { DigipaySettings } from "./DigipaySettings.tsx";
 import { SnappaySettings } from "./SnappaySettings.tsx";
 import { WooCommerceSettings } from "./WooCommerceSettings.tsx";
@@ -53,6 +54,13 @@ import { useEffect } from "react";
  * ناوبری نشان نمی‌دهد و فقط پیام «دسترسی ندارید» می‌گیرد؛ تا پاسخ نیامده
  * «در حال بررسی» است و اگر نرسید، «بررسی دوباره». سرور همچنان دروازه است.
  */
+/** آیکون تزئینی هر بخش در ناوبری کناری (طرح ۱۰)؛ نام همان برچسب است. */
+const SETTINGS_ICONS: Record<SettingsKey, IconName> = {
+  appearance: "sun", pin: "key", twofactor: "shield", keys: "settings", health: "bell", woocommerce: "external",
+  backups: "database", accounts: "layers", mapping: "swap", snappay: "card", digipay: "card", terminals: "card",
+  opening: "doc", staff: "people", permissions: "lock", devices: "monitor",
+};
+
 export function Settings({ access, currentUserId, onOwnPassword }: { access: NavAccess; currentUserId: string; onOwnPassword: () => void }) {
   const [requested, setRequested] = useUrlState("settings.tab");
   // پیوند قدیمی برداشت (پیش از انتقال به منوی اصلی) نمی‌شکند: همان نشانی با
@@ -65,7 +73,7 @@ export function Settings({ access, currentUserId, onOwnPassword }: { access: Nav
   const view = settingsView(requested === "" ? null : requested, access);
   const tab = legacy ? null : view.selected;
   const navItems = SETTINGS_SECTIONS.flatMap((s): TabItem<SettingsKey>[] => view.visible.includes(s)
-    ? [{ key: s.key, label: s.label, group: s.group }]
+    ? [{ key: s.key, label: s.label, group: s.group, icon: <Icon name={SETTINGS_ICONS[s.key]} size="sm" /> }]
     : view.pending.includes(s) ? [{ key: s.key, label: "", pending: true }] : []);
   const panels = view.visible.map(s => ({ key: s.key, label: s.label }));
 
@@ -74,6 +82,7 @@ export function Settings({ access, currentUserId, onOwnPassword }: { access: Nav
       <SettingsNavigation hrefFor={key => routeUrl("settings", key)} id={tabsId} items={navItems} value={tab} onChange={setTab} mobile={mobile} />
       {legacy ? <p className="muted pad" role="status">در حال انتقال به «برداشت و پاداش»…</p>
         : view.blocked ? <SettingsBlocked reason={view.blocked} onRetry={access.retry} /> : null}
+      <NestedPageHeaders>
       <TabPanels id={tabsId} items={panels} value={tab} className="settings-content" mobileLabel={mobile}>
 
       {tab === "keys" ? (
@@ -110,6 +119,7 @@ export function Settings({ access, currentUserId, onOwnPassword }: { access: Nav
         <Opening />
       ) : null}
       </TabPanels>
+      </NestedPageHeaders>
     </div>
   );
 }

@@ -11,10 +11,10 @@ export function CustomersSummaryRow() {
   const data = useBranchOperations();
   if (!data || data.ops.receivables.state !== "ready") return null;
   const r = data.ops.receivables;
-  return <section className="solid kpis kpis--band customers-summary" aria-label="طلب و اعتبار مشتریان">
-    <Kpi label="طلب از مشتریان" value={<Money rial={BigInt(r.owed.amount)} size="lg" />}
+  return <section className="kpis kpi-cards customers-summary" aria-label="طلب و اعتبار مشتریان">
+    <Kpi variant="card" label="طلب از مشتریان" value={<Money rial={BigInt(r.owed.amount)} size="lg" />}
       note={`${formatCount(r.owed.count)} مشتری · از سند ثبت‌شده · ${data.branch.name}`} />
-    <Kpi label="اعتبار مشتریان نزد ما" value={<Money rial={BigInt(r.credit.amount)} size="lg" />}
+    <Kpi variant="card" label="اعتبار مشتریان نزد ما" value={<Money rial={BigInt(r.credit.amount)} size="lg" />}
       note={`${formatCount(r.credit.count)} مشتری · بدهی ما؛ با طلب جمع نمی‌شود`} />
   </section>;
 }

@@ -168,7 +168,7 @@ export interface QuickAction { key: string; href: string; name: string; icon: Ic
 export const QUICK_ACTIONS: readonly QuickAction[] = [
   { key: "new-sale", href: routeUrl("pos"), name: "فروش جدید", icon: "register", anyOf: zoneOps("pos") },
   { key: "customer-receipt", href: "/?page=treasury&treasury.purpose=customer_receipt", name: "دریافت از مشتری", icon: "card", anyOf: zoneOps("treasury") },
-  { key: "cash-move", href: routeUrl("treasury"), name: "حرکت نقد صندوق", icon: "vault", anyOf: zoneOps("treasury") },
+  { key: "cash-move", href: "/?page=treasury&treasury.purpose=expense", name: "حرکت نقد صندوق", icon: "vault", anyOf: zoneOps("treasury") },
   { key: "receipt", href: routeUrl("purchasing", "receipts"), name: "رسید خرید", icon: "box", anyOf: FEATURES.find(f => f.href === routeUrl("purchasing", "receipts"))?.anyOf ?? zoneOps("purchasing") },
   { key: "return", href: routeUrl("returns"), name: "مرجوعی", icon: "return", anyOf: zoneOps("returns") },
   { key: "day-report", href: routeUrl("reports"), name: "گزارش روز", icon: "chart", anyOf: zoneOps("reports") },
@@ -185,6 +185,8 @@ const ZONE_CONTEXT: Partial<Record<string, string>> = {
   purchasing: "رسید خرید، برگشت از خرید، انتقال بین انبار و انبارگردانی.",
   treasury: "حرکت نقد، چک‌ها و سررسیدها؛ مانده‌ها از سند ثبت‌شده.",
   customers: "مشتریان، مانده و اعتبار، و رضایت پیامک.",
+  personnel: "دفتر عملیاتی پرسنل؛ ثبت است، نه پرداخت.",
+  settings: "تنظیمات شخصی، دسترسی‌ها، اتصال‌ها و دفتر حساب.",
 };
 export function zoneHeader(key: string): { eyebrow: string; title: string; context: string } | null {
   const context = ZONE_CONTEXT[key];

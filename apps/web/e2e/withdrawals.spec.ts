@@ -41,7 +41,7 @@ function denyWithdrawalOps(api: MockApi) {
 
 async function openMine(page: Page) {
   await page.goto("/?page=personnel&personnel.tab=withdrawals");
-  await expect(page.getByRole("heading", { name: "برداشت‌های من", level: 1 })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "برداشت‌های من", level: 2 })).toBeVisible();
 }
 
 test("bulk settlement selects all filtered versions across pages, reviews exact total and keeps a lost-response key", async ({ page, api }) => {
@@ -288,7 +288,7 @@ test.describe("دفتر برداشت پرسنل (مدیر کل)", () => {
       await json(route, { appliedVersion: 2, withdrawal: current.value, replayed: false });
     });
     await page.goto("/?page=personnel&personnel.tab=withdrawal-log");
-    await expect(page.getByRole("heading", { name: "دفتر برداشت پرسنل", level: 1 })).toBeVisible();
+    await expect(page.getByRole("heading", { name: "دفتر برداشت پرسنل", level: 2 })).toBeVisible();
     await page.getByRole("button", { name: new RegExp(`^تاریخچه و اصلاح برداشت ${CASHIER.name}`) }).click();
     await expect(page.getByRole("heading", { name: `برداشت ${CASHIER.name}` })).toBeFocused();
     const amount = page.getByLabel("مبلغ درست (تومان)");
@@ -341,7 +341,7 @@ test.describe("دفتر برداشت پرسنل (مدیر کل)", () => {
     await expect(page.getByRole("heading", { name: "دسترسی ندارید" })).toBeVisible();
     expect(api.calls.some(c => c.startsWith("GET /withdrawals?") || c.startsWith("GET /withdrawals/5"))).toBe(false);
     await personnel(page, "withdrawals", "برداشت‌های من");
-    await expect(page.getByRole("heading", { name: "برداشت‌های من", level: 1 })).toBeVisible();
+    await expect(page.getByRole("heading", { name: "برداشت‌های من", level: 2 })).toBeVisible();
     expect(api.calls.some(c => c.startsWith("GET /withdrawals?"))).toBe(false);
   });
 
@@ -399,7 +399,7 @@ test.describe("شواهد بصری دفتر برداشت (mock API)", () => {
     api.handlers.set("GET /withdrawals", route => json(route, { items: rows, total: 47, page: 1, pageSize: 20 }));
     api.handlers.set(`GET /withdrawals/${W1}`, route => json(route, detail(rows[0]!, true)));
     await page.goto("/?page=personnel&personnel.tab=withdrawal-log");
-    await expect(page.getByRole("heading", { name: "دفتر برداشت پرسنل", level: 1 })).toBeVisible();
+    await expect(page.getByRole("heading", { name: "دفتر برداشت پرسنل", level: 2 })).toBeVisible();
     await shot("gm-log");
     await page.getByRole("button", { name: new RegExp(`^تاریخچه و اصلاح برداشت ${CASHIER.name}`) }).click();
     await page.getByLabel("مبلغ درست (تومان)").fill("0");

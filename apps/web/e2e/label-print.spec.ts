@@ -95,7 +95,7 @@ async function openLabels(page: Page, api: { defaults: Record<string, unknown> }
   api.defaults["GET /products/" + product.id + "/stock-matrix"] = { totalOnHand: "5", cells: {
     navy: { S: { variationId: "v1", onHand: "3", reserved: "0" } }, cream: { XL: { variationId: "v2", onHand: "2", reserved: "0" } } } };
   await openCatalog(page);
-  await page.locator("main").getByRole("button", { name: "چاپ لیبل بارکد", exact: true }).click();
+  await page.locator("main").getByRole("tab", { name: "چاپ لیبل بارکد", exact: true }).click();
   await page.getByRole("button", { name: "انتخاب تنوع و چاپ لیبل", exact: true }).click();
   const panel = page.getByRole("region", { name: "موجودی و چاپ بارکد" });
   await expect(panel.getByText(/جمع موجودی/)).toContainText("5");
@@ -182,7 +182,7 @@ test("an impossible custom size is flagged at the size fields with Persian digit
 test("bulk from the product list: tick products, N labels per active variation, into the same bulk queue without opening each product", async ({ page, api }) => {
   api.defaults["GET /products/" + product.id] = { product, variations: [...variations, { ...variations[0]!, id: "v3", sku: "TR-1405-OLD", status: "archived" }] };
   await openCatalog(page);
-  await page.locator("main").getByRole("button", { name: "چاپ لیبل بارکد", exact: true }).click();
+  await page.locator("main").getByRole("tab", { name: "چاپ لیبل بارکد", exact: true }).click();
   await page.getByRole("checkbox", { name: `انتخاب ${product.nameInternal} برای چاپ گروهی` }).check();
   await page.getByRole("textbox", { name: "از هر تنوع (لیبل)" }).fill("۲");
   await page.getByRole("button", { name: /افزودن .* کالای انتخاب‌شده به فهرست چاپ/ }).click();
@@ -203,7 +203,7 @@ test("bulk selection survives search, a failed read leaves the queue untouched, 
     await route.fulfill({ json: api.defaults["GET /products/" + other.id] });
   });
   await openCatalog(page);
-  await page.locator("main").getByRole("button", { name: "چاپ لیبل بارکد", exact: true }).click();
+  await page.locator("main").getByRole("tab", { name: "چاپ لیبل بارکد", exact: true }).click();
   await page.getByRole("checkbox", { name: `انتخاب ${product.nameInternal} برای چاپ گروهی` }).check();
   // (۱) جست‌وجوی کالای دوم انتخاب اول را نمی‌خورد؛ شمارهٔ دکمه همان چیزی است که افزوده می‌شود.
   api.productRows = [other];
@@ -249,7 +249,7 @@ test("a product ticked while the bulk add is still reading stays selected; only 
   const gate = new Promise<void>((r) => { release = r; });
   api.handlers.set("GET /products/" + product.id, async (route) => { await gate; await route.fulfill({ json: api.defaults["GET /products/" + product.id] }); });
   await openCatalog(page);
-  await page.locator("main").getByRole("button", { name: "چاپ لیبل بارکد", exact: true }).click();
+  await page.locator("main").getByRole("tab", { name: "چاپ لیبل بارکد", exact: true }).click();
   await page.getByRole("checkbox", { name: `انتخاب ${product.nameInternal} برای چاپ گروهی` }).check();
   await page.getByRole("button", { name: "افزودن ۱ کالای انتخاب‌شده به فهرست چاپ" }).click();
   await expect(page.getByRole("button", { name: "در حال افزودن به فهرست چاپ…" })).toBeVisible();

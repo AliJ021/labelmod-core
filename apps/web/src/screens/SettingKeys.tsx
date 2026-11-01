@@ -110,7 +110,7 @@ export function SettingKeys({ onOpenTerminals }: { onOpenTerminals: () => void }
     setGroups(gs => gs?.map(g => ({ ...g, settings: g.settings.map(s => (s.key === next.key ? next : s)) })) ?? null);
   }
 
-  const header = <PageHeader title="تنظیمات"
+  const header = <PageHeader title="تنظیمات عمومی"
     context="هر چیزی که اینجا عوض می‌شود بلافاصله روی کل سیستم اثر می‌گذارد و با نام شما در سابقه ثبت می‌شود."
     {...(dirty.size > 0 ? { meta: <StatusBadge state="draft" label={`${formatCount(dirty.size)} تغییر ذخیره‌نشده`} /> } : {})} />;
 
