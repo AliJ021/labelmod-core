@@ -564,3 +564,8 @@ body { font-feature-settings: "ss01" 1; }
   .workspace-header .shell-trail [aria-current="page"] { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--ink); font-size: var(--text-md); }
   .workspace-header .brand-name { position: absolute; inline-size: 1px; block-size: 1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }
 }
+/* گوشی: حاشیهٔ درونی سند همان «s-3» پیشین؛ «s-5» دسکتاپ متن حالت خالی را در ۳۲۰ چندخطی می‌کرد. */
+@media (max-width: 559.98px) {
+  .pos-workspace > .pos-doc-block, .pos-workspace > .pos-customer-panel, .pos-workspace > .pos-search-card { padding: var(--s-3); }
+  .pos-workspace > .cart { padding: 0 var(--s-3) var(--s-3); }
+}
