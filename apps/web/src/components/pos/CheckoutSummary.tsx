@@ -13,6 +13,13 @@ import type { CheckoutTotals } from "../../lib/pos-payments.ts";
  * `totals === null` یعنی هنوز فاکتوری نیست: «—» نشان داده می‌شود، نه «۰ تومان»؛
  * صفر یک ادعای مالی است و سبدِ نساخته مبلغی ندارد.
  */
+/** درصد دریافت برای نوار — صفر تا صد، بی ادعای مالی (عددها خودشان کنار نوارند). */
+function progress(t: CheckoutTotals | null): number {
+  if (!t || t.payable <= 0n) return 0;
+  const paid = t.received >= t.payable ? t.payable : t.received < 0n ? 0n : t.received;
+  return Number((paid * 100n) / t.payable);
+}
+
 export function CheckoutSummary({ totals }: { totals: CheckoutTotals | null }) {
   const none = "هنوز کالایی در سبد نیست";
   const m = (v: bigint | undefined, size: "sm" | "md" | "lg" | "xl" = "sm") =>
@@ -24,6 +31,8 @@ export function CheckoutSummary({ totals }: { totals: CheckoutTotals | null }) {
       <span className="checkout-payable-label">قابل پرداخت</span>
       {m(totals?.payable, "xl")}
     </div>
+    {/* نوار پیشرفت دریافت — فقط نمایش نسبت همان دو عدد سرور؛ تزئینی و پنهان از صفحه‌خوان. */}
+    <div className="checkout-progress" aria-hidden="true"><i style={{ inlineSize: `${progress(totals)}%` }} /></div>
     <dl className="checkout-lines checkout-lines--state">
       <div><dt>دریافت‌شده</dt><dd>{m(totals?.received, "md")}</dd></div>
       {totals && totals.change > 0n
@@ -31,14 +40,11 @@ export function CheckoutSummary({ totals }: { totals: CheckoutTotals | null }) {
         : <div className={totals && totals.remaining > 0n ? "checkout-due" : undefined}><dt>مانده</dt><dd>{m(totals?.remaining, "md")}</dd></div>}
     </dl>
     </div>
-    <details className="checkout-detail">
-    <summary>ریز مبلغ فاکتور</summary>
-    <dl className="checkout-lines">
-      <div><dt>جمع کالا</dt><dd>{m(totals?.gross)}</dd></div>
-      <div><dt>تخفیف</dt><dd>{m(totals ? (totals.discount === 0n ? 0n : -totals.discount) : undefined)}</dd></div>
-      <div><dt>مالیات</dt><dd>{m(totals?.tax)}</dd></div>
+    <dl className="checkout-lines checkout-lines--detail">
+      <div><dt>جمع اقلام</dt><dd>{m(totals?.gross)}</dd></div>
+      <div><dt>تخفیف ردیف‌ها</dt><dd>{m(totals ? (totals.discount === 0n ? 0n : -totals.discount) : undefined)}</dd></div>
+      {totals && totals.tax !== 0n ? <div><dt>مالیات</dt><dd>{m(totals.tax)}</dd></div> : null}
       {totals && totals.shipping !== 0n ? <div><dt>هزینهٔ ارسال</dt><dd>{m(totals.shipping)}</dd></div> : null}
     </dl>
-    </details>
   </section>;
 }

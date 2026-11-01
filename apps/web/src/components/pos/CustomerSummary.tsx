@@ -66,10 +66,11 @@ export function CustomerSummary({ customer, loading, error, mobile, onMobile, on
     {editing && nameForMobile === null ? <form className="pos-customer-form" onSubmit={(e) => { e.preventDefault(); if (!empty && !busy) { setFullName(""); onAttach(); setChanging(false); } }}>
       <Field label={customer ? "شمارهٔ مشتری تازه" : required ? "موبایل مشتری (الزامی)" : "موبایل مشتری"} optional={customer === null && !required}>
         <input ref={inputRef} type="tel" inputMode="tel" autoComplete="off" value={mobile} disabled={busy} required={required}
-          onChange={(e) => onMobile(e.target.value)} />
+          placeholder="۰۹XXXXXXXXX" onChange={(e) => onMobile(e.target.value)} />
       </Field>
       <Button type="submit" disabled={busy || empty || nameForMobile !== null}>{customer ? "تغییر مشتری" : "افزودن مشتری"}</Button>
       {changing ? <Button variant="quiet" onClick={() => setChanging(false)}>انصراف</Button> : null}
+      {!required && customer === null ? <p className="muted small pos-customer-hint">فروش بی‌نام ممکن است؛ شمارهٔ تکراری مشتری دوم نمی‌سازد.</p> : null}
     </form> : null}
   </section>;
 }
