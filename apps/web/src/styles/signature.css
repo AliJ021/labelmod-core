@@ -552,3 +552,15 @@ body { font-feature-settings: "ss01" 1; }
 .invoice-summary .kpi-value .money-digits { font-size: var(--text-2xl); font-weight: var(--weight-heavy); }
 .invoice-summary .kpi-value .money-unit { font-size: var(--text-xs); color: var(--ink-2); font-weight: var(--weight-regular); }
 .invoice-summary .kpi-note { font-size: var(--text-2xs); color: var(--ink-3); }
+
+/* گزارش‌ها (پیش‌نمایش): همهٔ زبانه‌ها دیده می‌شوند و در دسکتاپ به ردیف دوم می‌شکنند، نه اسکرول افقی. */
+@media (min-width: 1024px) {
+  .report-page > .subtabs { flex-wrap: wrap; overflow: visible; -webkit-mask-image: none; mask-image: none; }
+}
+/* سربرگ گوشی (پیش‌نمایش): به‌جای نام برند، عنوان همین صفحه کنار نشان؛ گروه و پیکان پنهان. */
+@media (min-width: 420px) and (max-width: 899.98px) {
+  .workspace-header .shell-trail { display: inline-flex; min-inline-size: 0; overflow: hidden; font-weight: var(--weight-bold); }
+  .workspace-header .shell-trail > span:first-child, .workspace-header .shell-trail > .icon { display: none; }
+  .workspace-header .shell-trail [aria-current="page"] { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--ink); font-size: var(--text-md); }
+  .workspace-header .brand-name { position: absolute; inline-size: 1px; block-size: 1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }
+}
