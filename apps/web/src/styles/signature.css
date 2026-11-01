@@ -544,3 +544,11 @@ body { font-feature-settings: "ss01" 1; }
 .pos-customer-form .pos-customer-hint { flex-basis: 100%; margin: 0; font-size: var(--text-2xs); }
 /* خانهٔ نیم‌عرض (اسنپ‌پی | دیجی‌پی): نشان، نام و دایره در یک ردیف، زیرنویس تمام‌عرض زیرش تا دلیل بریده نشود. */
 .pay-tiles > .pay-tile:not(:first-child) { grid-template-areas: "icon name mark" "caption caption caption"; row-gap: var(--s-1); align-content: center; }
+/* فاکتورها (گذر دوم): مانده با رنگ تأکید، عمل ردیف نمادین (جزئیات ‹، چاپ)، کارت جمع با رقم درشت و واحد کوچک. */
+.invoice-due { color: var(--accent); font-weight: var(--weight-semibold); }
+.invoice-table .invoice-no { font-weight: var(--weight-semibold); }
+.invoice-actions { display: flex; align-items: center; justify-content: flex-end; gap: 4px; }
+.invoice-table .invoice-icon { margin: 0; border-color: var(--rule); background: var(--surface-solid-2); }
+.invoice-summary .kpi-value .money-digits { font-size: var(--text-2xl); font-weight: var(--weight-heavy); }
+.invoice-summary .kpi-value .money-unit { font-size: var(--text-xs); color: var(--ink-2); font-weight: var(--weight-regular); }
+.invoice-summary .kpi-note { font-size: var(--text-2xs); color: var(--ink-3); }

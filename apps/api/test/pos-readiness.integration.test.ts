@@ -514,9 +514,18 @@ describe("آمادگی API صندوق", { skip }, () => {
       const r = await app.inject({ method: "GET", url: `/invoices?status=all&branchId=${BRANCH}`, ...s });
       assert.equal(r.statusCode, 200, r.body);
       return r.json() as { total: number; summary: { count: number; payableAmount: string; receivedAmount: string; remainingAmount: string };
-        statusCounts: Record<"all" | "draft" | "finalized" | "cancelled" | "returned", number> };
+        statusCounts: Record<"all" | "draft" | "finalized" | "cancelled" | "returned", number>;
+        rows: Array<{ channel: string; payableAmount: string; receivedAmount: string; remainingAmount: string }> };
     };
     const before = await read();
+    // مانده و کانال هر ردیف از SQL (طرح ۱۰): مانده = قابل پرداخت منهای دریافتی، هرگز منفی؛ پول رشته است.
+    assert.ok(before.rows.length > 0);
+    for (const row of before.rows) {
+      assert.match(row.remainingAmount, /^\d+$/);
+      const due = BigInt(row.payableAmount) - BigInt(row.receivedAmount);
+      assert.equal(BigInt(row.remainingAmount), due > 0n ? due : 0n);
+      assert.ok(["pos", "web", "phone", "instagram"].includes(row.channel), row.channel);
+    }
     // مستقل از مسیر: همان دامنهٔ صندوق‌دار (فقط فاکتورهای خودش، چون report.view ندارد) مستقیم از جدول.
     const own = (await sql<{ n: string; payable: string }>`SELECT count(*)::text n, coalesce(sum(payable_amount),0)::text payable
       FROM sales.invoice i JOIN identity.app_user u ON u.id=i.created_by

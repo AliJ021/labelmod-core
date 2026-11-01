@@ -44,6 +44,8 @@ export function registerInvoiceWorkspaceRoutes(app: FastifyInstance, db: Db): vo
       i.finalized_by AS "finalizedBy",finisher.full_name AS "finalizerName",c.full_name AS "customerName",
       i.occurred_at AS "occurredAt",i.last_activity_at AS "lastActivityAt",i.payable_amount::text AS "payableAmount",
       coalesce(pay.amount,0)::text AS "receivedAmount",coalesce(pay.methods,'') AS "paymentMethods",
+      -- مانده هر ردیف همان تعریف جمع پایین است (قابل پرداخت منهای دریافتی موفق، هرگز منفی) — در SQL، نه مرورگر.
+      greatest(i.payable_amount-coalesce(pay.amount,0),0)::text AS "remainingAmount",
       (i.status='draft' AND i.created_by=${s.userId}::uuid AND sh.user_id=${s.userId}::uuid AND sh.status='open') AS "canResume",
       (i.status='draft' AND i.last_activity_at < now()-make_interval(hours=>
         (SELECT value::text::int FROM platform.setting WHERE key='sale.draft_attention_hours'))) AS "needsReview"
