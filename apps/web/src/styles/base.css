@@ -16,7 +16,7 @@ body {
   background: var(--bg-deep);
   color: var(--ink);
   font-family: Vazirmatn, "Segoe UI", system-ui, sans-serif;
-  font-size: 16px;
+  font-size: var(--text-md);
   line-height: 1.75;
   -webkit-font-smoothing: antialiased;
   text-rendering: optimizeLegibility;
@@ -87,4 +87,10 @@ button {
   :root:not([data-perf="on"]) .zone-panel:not([hidden]) {
     animation: zone-enter var(--t-base) var(--ease-out);
   }
+}
+
+/* کادر ورودی روی صفحهٔ لمسی زیر ۱۶px نمی‌رود: Safari آیفون/آیپد با فوکوس روی قلم کوچک‌تر کل صفحه را
+   بزرگ می‌کند و صندوق از قاب بیرون می‌زند. روی موس همان مقیاس پیش‌نمایش (۱۳px) می‌ماند. */
+@media (pointer: coarse) {
+  input:not([type="checkbox"]):not([type="radio"]), select, textarea { font-size: max(16px, 1em); }
 }

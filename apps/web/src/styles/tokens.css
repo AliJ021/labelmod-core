@@ -81,11 +81,13 @@
   --font-num: "IBM Plex Mono", Vazirmatn, ui-monospace, monospace;
 
   /* ── مقیاس نوشتار (rem؛ پایه ۱۶px و بزرگ‌نمایی مرورگر محترم است) ── */
-  --text-2xs: 0.75rem;
-  --text-xs: 0.8125rem;
-  --text-sm: 0.875rem;
-  --text-md: 1rem;
-  --text-lg: 1.125rem;
+  /* طرح ۱۰ (تأیید مالک): پله‌ها همان اندازه‌های اندازه‌گیری‌شدهٔ پیش‌نمایش‌اند —
+     ۱۰٫۵ · ۱۱٫۵ · ۱۲٫۵ · ۱۳ · ۱۵٫۵px با ریشهٔ ۱۶px؛ بزرگ‌نمایی و قلم انتخابی مرورگر همچنان محترم‌اند. */
+  --text-2xs: 0.65625rem;
+  --text-xs: 0.71875rem;
+  --text-sm: 0.78125rem;
+  --text-md: 0.8125rem;
+  --text-lg: 0.96875rem;
   --text-xl: 1.375rem;
   --text-2xl: 1.75rem;
   --text-3xl: 2.25rem;
