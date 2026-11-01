@@ -148,6 +148,7 @@ export class MockApi {
     "GET /treasury/accounts": { accounts: [] }, "GET /treasury/balances": { balances: [] }, "GET /products/summary": { activeProducts: 8, activeVariations: 28, inventoryValue: "1220800000", pricesLast30Days: 0 }, "GET /treasury/transactions": { transactions: [] },
     "GET /purchasing/expense-accounts": [], "GET /purchasing/pay-accounts": [], "GET /suppliers": [],
     "GET /receipts": [], "GET /stock-counts": [], "GET /cheques/due": { due: [] },
+    "GET /invoices": { rows: [], total: 0, pageSize: 50 },
     "GET /users": { users: [staff, { ...staff, id: me.id, username: "synthetic_admin", fullName: me.fullName }] }, "GET /roles": { roles: [{ code: "cashier", name: "صندوق‌دار" }] },
     "POST /auth/change-password": { ok: true }, "POST /auth/lock": { locked: true }, "POST /auth/logout": { ok: true },
     "GET /auth/pin": { hasPin:false, length:4 },

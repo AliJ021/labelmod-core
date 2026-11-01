@@ -32,7 +32,8 @@ import { useDashboardTab } from "./dashboard-tab.ts";
 import { TabList, TabPanels, useTabsId } from "../components/Tabs.tsx";
 import { Solid } from "../components/Glass.tsx";
 import { Icon } from "../components/Icon.tsx";
-import { accessOf, quickActionView, routeUrl, type DashboardTab, type NavAccess } from "../lib/navigation.ts";
+import { accessOf, quickActionView, routeUrl, zoneOps, type DashboardTab, type NavAccess } from "../lib/navigation.ts";
+import { OverviewCards, RecentSales } from "./DashboardOverviewExtras.tsx";
 import { ApiError } from "../lib/api.ts";
 import { parseRial } from "../lib/money.ts";
 import { channelLabel, formatCount, formatJalali } from "../lib/format.ts";
@@ -519,6 +520,12 @@ export function Dashboard({ access }: { access: NavAccess }) {
       {/* طرح ۱۰: سهم کانال‌ها کنار روند — همان روز و همان دروازهٔ خلاصه روز. */}
       {branch ? <DashboardChannels branchId={branch.id} date={report.businessDate} salesAmount={report.salesAmount} register={registerChannels} /> : null}
       </Solid>
+
+      {/* طرح ۱۰: کارت‌های رسیدگی و آخرین فروش‌ها، هر کدام با همان دروازهٔ مجوز مقصدش. */}
+      {branch && accessOf(["report.view"], access.verdicts) === "allow"
+        ? <OverviewCards branchId={branch.id} links={{ reports: true, treasury: accessOf(["treasury.manage"], access.verdicts) === "allow" }} /> : null}
+      {branch && accessOf(zoneOps("invoices"), access.verdicts) === "allow"
+        ? <RecentSales branchId={branch.id} today={report.businessDate} invoicesHref={routeUrl("invoices")} /> : null}
 
       {/*
         پیگیری ثبت حسابداری فروش — پس از شاخص‌ها و روند، بسته به‌طور پیش‌فرض. خلاصه

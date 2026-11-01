@@ -672,3 +672,16 @@ table.grid td small, table.ui-table td small { font-size: 0.6875rem; color: var(
   .dashboard .quick-action { min-block-size: 36px; font-size: 0.75rem; }
   .workspace-header .feature-search-field { min-block-size: 38px; font-size: 0.75rem; }
 }
+/* طرح ۱۰: کارت‌های رسیدگی نمای کلی — چهار ستون در دسکتاپ، پیوند تمام‌کارت با نشانهٔ ادامه. */
+.overview-cards { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 210px), 1fr)); gap: var(--s-3); }
+.overview-card { padding: 0; border-radius: var(--r-lg); }
+.overview-card-link { display: flex; align-items: flex-start; gap: var(--s-3); padding: 16px 18px; min-block-size: var(--touch); color: inherit; text-decoration: none; border-radius: inherit; }
+.overview-card-link:hover { background: color-mix(in srgb, var(--ink) 3%, transparent); }
+.overview-card-link > .icon:last-child { margin-inline-start: auto; color: var(--ink-3); align-self: center; }
+.overview-card-text { display: grid; gap: 2px; min-inline-size: 0; }
+.overview-card-text strong { font-size: var(--text-md); font-weight: var(--weight-semibold); }
+.overview-card-text small { font-size: var(--text-xs); color: var(--ink-3); line-height: var(--leading-snug); }
+.overview-card-icon { display: grid; place-items: center; flex: none; inline-size: 32px; block-size: 32px; border-radius: 10px; background: var(--surface-solid-2); box-shadow: inset 0 0 0 var(--border-w) var(--rule); }
+.overview-card-icon.tone-good { color: var(--good); } .overview-card-icon.tone-warn { color: var(--warn); }
+.overview-card-icon.tone-crit { color: var(--crit); } .overview-card-icon.tone-info { color: var(--info); }
+.recent-sales .section-actions a { text-decoration: none; }

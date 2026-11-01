@@ -131,7 +131,7 @@ export function routeUrl(zone: Zone, section?: string): string {
   return `/?${params}`;
 }
 
-function zoneOps(zone: Zone): readonly string[] {
+export function zoneOps(zone: Zone): readonly string[] {
   return ZONES.find(z => z.key === zone)?.anyOf ?? [];
 }
 export interface Feature {label: string; words: string; href: string; anyOf: readonly string[]}
