@@ -124,6 +124,14 @@ export function formatJalaliMoment(iso: string): string {
   return Number.isNaN(d.getTime()) ? iso.slice(0, 16).replace("T", " ") : JALALI_MOMENT.format(d);
 }
 
+const JALALI_DAY = new Intl.DateTimeFormat("fa-IR-u-ca-persian", { dateStyle: "short" });
+
+/** «۱۴۰۵/۶/۲۵» — روزِ یک لحظه (timestamptz) در منطقهٔ زمانی مرورگر؛ ورودی نامعتبر «—». */
+export function formatJalaliDay(iso: string): string {
+  const d = new Date(iso);
+  return Number.isNaN(d.getTime()) ? "—" : JALALI_DAY.format(d);
+}
+
 /** ساعت کاری ۰ تا ۲۳ با رقم فارسی: «۱۸». */
 export function formatHour(hour: number): string {
   return FA_DIGITS.format(hour);

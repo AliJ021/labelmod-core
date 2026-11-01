@@ -629,3 +629,5 @@ form.list-card-form, div.list-card-form { margin-inline: var(--s-4); margin-bloc
 .returns-lookup > .returns-lookup-no { flex: 1 1 240px; }
 .returns-lookup > button[type="submit"] { flex: 0 0 auto; min-inline-size: 140px; }
 @media (max-width: 559.98px) { .returns-lookup > * { flex-basis: 100%; } }
+/* نوار بالای چسبان دسکتاپ نباید مقصد پیمایش یا فوکوس را بپوشاند (کنترلی که زیرش برود، کلیک را به ابزارهای نوار می‌داد). */
+@media (min-width: 900px) { html:has(.workspace) { scroll-padding-block-start: calc(var(--touch) + 24px + var(--s-3)); } }

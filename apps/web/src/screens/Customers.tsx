@@ -1,5 +1,5 @@
 import { StatusBadge } from "../components/ui/Status.tsx";
-import { formatJalali } from "../lib/format.ts";
+import { formatJalaliDay } from "../lib/format.ts";
 import { CustomersSummaryRow } from "../components/CustomersSummaryRow.tsx";
 import { AmountInput } from "../components/ui/AmountInput.tsx";
 import { useUrlState } from "../lib/use-url-state.ts";
@@ -222,7 +222,7 @@ export function Customers() {
                   <tr key={c.id}>
                     <td>{c.fullName ? <strong className="cell-title">{c.fullName}</strong> : <span className="muted">بی‌نام</span>}</td>
                     <td><Ltr>{c.mobile}</Ltr></td>
-                    <td className="num">{c.createdAt ? formatJalali(c.createdAt) : "—"}</td>
+                    <td className="num">{c.createdAt ? formatJalaliDay(c.createdAt) : "—"}</td>
                     <td className="num">{c.invoiceCount}</td>
                     <td className="num">{toman(parseRial(c.totalPurchased))}</td>
                     <td className="num">{parseRial(c.balance) > 0n ? <span className="invoice-due">{toman(parseRial(c.balance))}</span> : toman(parseRial(c.balance))}</td>
