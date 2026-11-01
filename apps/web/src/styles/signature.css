@@ -659,8 +659,12 @@ body { line-height: var(--leading-body); }
 .shell-user strong { font-size: 0.75rem; }
 /* جدول داده: سرستون کوچک و کم‌رنگ روی سطح دوم، خانه‌ها ۱۲٫۵px با فاصلهٔ ۱۳/۱۴. */
 table.grid, table.ui-table { font-size: var(--text-sm); }
-table.grid th, table.ui-table th { font-size: var(--text-xs); font-weight: var(--weight-semibold); color: var(--ink-3); letter-spacing: 0.2px; padding: 11px 14px; background: var(--surface-solid-2); white-space: nowrap; }
-table.grid td, table.ui-table td { padding: 13px 14px; }
+table.grid th, table.ui-table th { font-size: var(--text-xs); font-weight: var(--weight-semibold); color: var(--ink-3); letter-spacing: 0.2px; background: var(--surface-solid-2); }
+/* فاصلهٔ خانه‌های پیش‌نمایش فقط از عرض تبلت؛ در گوشی جدول فشرده می‌ماند تا ستون کنترل (مثل «تعداد لیبل») در دید بماند. */
+@media (min-width: 560px) {
+  table.grid th, table.ui-table th { padding: 11px 14px; white-space: nowrap; }
+  table.grid td, table.ui-table td { padding: 13px 14px; }
+}
 table.grid td small, table.ui-table td small { font-size: 0.6875rem; color: var(--ink-3); }
 .filter-chips [aria-pressed], .pick-chip { font-size: 0.75rem; }
 .page-note { font-size: 0.75rem; line-height: 1.9; }
