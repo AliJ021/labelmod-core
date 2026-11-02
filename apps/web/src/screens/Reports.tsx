@@ -26,6 +26,7 @@
  * نداشتی»؛ «—» یعنی «اجازه دیدنش را نداری». یکی‌کردنشان یعنی سرپرست
  * فکر کند فروشگاه ضرر کرده.
  */
+import { ManagerOverview } from "../components/ManagerOverview.tsx";
 import { useCallback, useEffect, useId, useState, type FormEvent, type ReactNode } from "react";
 import { SnappayReport } from "../components/SnappayReport.tsx";
 import { StaffSales } from "../components/StaffSales.tsx";
@@ -359,6 +360,7 @@ function indexed<T>(rows: readonly T[]): (T & { index: number })[] {
 function ManagerPanel({ period }: { period: Period }) {
   const prev = previousPeriod({ from: period.from, to: period.to });
   return <>
+    <ManagerOverview branchId={period.branchId} />
     <CompareSection period={period} prev={prev} />
     <HourlyReport period={period} />
     <BasketReport period={period} />

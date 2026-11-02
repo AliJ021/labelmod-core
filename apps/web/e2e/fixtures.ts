@@ -149,6 +149,7 @@ export class MockApi {
     "GET /purchasing/expense-accounts": [], "GET /purchasing/pay-accounts": [], "GET /suppliers": [],
     "GET /receipts": [], "GET /stock-counts": [], "GET /cheques/due": { due: [] },
     "GET /invoices": { rows: [], total: 0, pageSize: 50 },
+    "GET /reports/daily/trend": { businessDate: "2026-09-16", profitVisible: true, buckets: [] },
     "GET /users": { users: [staff, { ...staff, id: me.id, username: "synthetic_admin", fullName: me.fullName }] }, "GET /roles": { roles: [{ code: "cashier", name: "صندوق‌دار" }] },
     "POST /auth/change-password": { ok: true }, "POST /auth/lock": { locked: true }, "POST /auth/logout": { ok: true },
     "GET /auth/pin": { hasPin:false, length:4 },
