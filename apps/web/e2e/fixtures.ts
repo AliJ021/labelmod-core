@@ -18,11 +18,16 @@ const branches: Branch[] = [{ id: "b1", code: "TEST", name: "شعبه آزمای
 const daily: DailyReport = { businessDate: "2026-09-16", salesAmount: "12340000", receivedAmount: "11000000", profitAmount: "2340000", invoiceCount: 12, returnCount: 1 };
 /** ۲۴ ساعت خلاصه روز (مثل پاسخ سرور)؛ ساعت‌های نام‌برده جایگزین صفر می‌شوند. */
 export function hourlyDay(over: Record<number, Partial<DailyHour>> = {}, profitVisible = true, businessDate = daily.businessDate, currentHour: number | null = null): DailyHourly {
+  // فقط ساخت پاسخ ساختگی آزمون؛ برنامه جمع را از SQL دریافت می‌کند.
+  let sales = 0n, received = 0n, profit = 0n;
   return { businessDate, currentHour, profitVisible, hours: Array.from({ length: 24 }, (_, hour) => ({
     hour, salesAmount: "0", receivedAmount: "0", profitAmount: profitVisible ? "0" : null,
     invoiceCount: 0, returnCount: 0, paymentCount: 0, ...over[hour],
     ...(profitVisible ? {} : { profitAmount: null }),
-  })) };
+  })).map(h => {
+    sales += BigInt(h.salesAmount); received += BigInt(h.receivedAmount); profit += BigInt(h.profitAmount ?? "0");
+    return { ...h, cumulative: { sales: String(sales), received: String(received), profit: profitVisible ? String(profit) : null } };
+  }) };
 }
 /**
  * روند پیش‌فرض، **آشتی‌شده با `daily`**: جمع ساعت‌ها دقیقاً همان سه کارت است (همان ثابتی که
@@ -30,8 +35,8 @@ export function hourlyDay(over: Record<number, Partial<DailyHour>> = {}, profitV
  */
 /** کانال‌های همان روز پیش‌فرض؛ جمعشان دقیقاً `daily` است (همان ثابت مهاجرت ۱۰۸). */
 export const DEFAULT_CHANNELS = { businessDate: "2026-09-16", profitVisible: true, channels: [
-  { channel: "pos", salesAmount: "9870000", receivedAmount: "8800000", profitAmount: "1900000", invoiceCount: 9, returnCount: 1 },
-  { channel: "web", salesAmount: "2470000", receivedAmount: "2200000", profitAmount: "440000", invoiceCount: 3, returnCount: 0 },
+  { channel: "pos", salesShare: "0.7998", salesAmount: "9870000", receivedAmount: "8800000", profitAmount: "1900000", invoiceCount: 9, returnCount: 1 },
+  { channel: "web", salesShare: "0.2001", salesAmount: "2470000", receivedAmount: "2200000", profitAmount: "440000", invoiceCount: 3, returnCount: 0 },
 ] };
 export const DEFAULT_HOURLY = hourlyDay({
   11: { salesAmount: "4340000", receivedAmount: "4000000", profitAmount: "840000", invoiceCount: 5, paymentCount: 5 },

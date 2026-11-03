@@ -226,6 +226,8 @@ export interface DailyReport {
  * `cost.view` در همهٔ ساعت‌ها `null` و `profitVisible` برابر `false` است.
  */
 export interface DailyHour {
+  /** جمع تجمعی فقط از SQL؛ سود نامعلوم همچنان null است. */
+  cumulative: { sales: string; received: string; profit: string | null };
   hour: number;
   salesAmount: string;
   receivedAmount: string;
@@ -241,7 +243,7 @@ export interface DailyHour {
 export interface DailyHourly { businessDate: string; currentHour: number | null; profitVisible: boolean; hours: DailyHour[] }
 
 /** خلاصه روز به تفکیک کانال فاکتور (مهاجرت ۱۰۸). جمع کانال‌ها همان خلاصه روز است؛ روز خالی آرایهٔ خالی. */
-export interface DailyChannel { channel: string; salesAmount: string; receivedAmount: string; profitAmount: string | null; invoiceCount: number; returnCount: number }
+export interface DailyChannel { channel: string; salesShare: string | null; salesAmount: string; receivedAmount: string; profitAmount: string | null; invoiceCount: number; returnCount: number }
 export interface DailyChannels { businessDate: string; profitVisible: boolean; channels: DailyChannel[] }
 
 /**

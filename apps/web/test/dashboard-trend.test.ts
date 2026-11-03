@@ -31,6 +31,7 @@ const barsOf = (hours: DailyHour[], metric: Metric) => {
 
 const day = (over: Record<number, Partial<DailyHour>> = {}, profitVisible = true): DailyHour[] =>
   Array.from({ length: 24 }, (_, hour) => ({
+    cumulative: { sales: "0", received: "0", profit: profitVisible ? "0" : null },
     hour, salesAmount: "0", receivedAmount: "0", profitAmount: profitVisible ? "0" : null,
     invoiceCount: 0, returnCount: 0, paymentCount: 0, ...over[hour],
   }));

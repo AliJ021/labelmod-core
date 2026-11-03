@@ -1,7 +1,7 @@
 /**
  * نمودار کوچک کارت شاخص (طرح ۱۰): مسیر SVG «تجمعی تا این لحظه».
  *
- * - جمع ساعت‌ها همان عدد کارت است (مهاجرت ۰۸۳)، پس خط تجمعی به همان عدد ختم می‌شود.
+ * - ورودی جمع‌های تجمعی SQL است؛ هیچ ساعت یا مبلغی اینجا جمع نمی‌شود.
  * - ساعتِ نرسیده (`null`) صفر نیست: خط همان‌جا تمام می‌شود.
  * - زمان مثل نمودار روند راست‌به‌چپ است: ساعت زودتر سمت راست.
  * - هندسه فقط نسبت است؛ هیچ مبلغی از اینجا نمایش داده یا حساب نمی‌شود، پس
@@ -9,11 +9,9 @@
  */
 export function sparkPath(values: readonly (bigint | null)[], width: number, height: number, pad = 2): string | null {
   const running: bigint[] = [];
-  let sum = 0n;
   for (const v of values) {
     if (v === null) break;
-    sum += v;
-    running.push(sum);
+    running.push(v);
   }
   if (running.length < 2) return null;
   let min = 0n, max = 0n;

@@ -527,6 +527,7 @@ describe("گزارش‌ها", { skip }, () => {
   // ── خلاصه روز ساعتی (مهاجرت ۰۸۳) ─────────────────────────────────
 
   type HourRow = {
+    cumulative: { sales: string; received: string; profit: string | null };
     hour: number; salesAmount: string; receivedAmount: string; profitAmount: string | null;
     invoiceCount: number; returnCount: number; paymentCount: number;
   };
@@ -568,11 +569,17 @@ describe("گزارش‌ها", { skip }, () => {
     assert.equal(hourly.hours.reduce((t, h) => t + h.invoiceCount, 0), daily.invoiceCount);
     assert.equal(hourly.hours.reduce((t, h) => t + h.returnCount, 0), daily.returnCount);
     assert.ok(BigInt(daily.salesAmount) > 0n, "فروش واقعی این فایل دیده می‌شود — آشتی روی صفر نیست");
+    for (const [field, metric] of [["salesAmount", "sales"], ["receivedAmount", "received"], ["profitAmount", "profit"]] as const) {
+      for (let i = 0; i < hourly.hours.length; i++) {
+        assert.equal(hourly.hours[i]!.cumulative[metric], String(sum(hourly.hours.slice(0, i + 1), field)), `${metric}: جمع SQL تا ساعت ${i}`);
+      }
+      assert.equal(hourly.hours.at(-1)!.cumulative[metric], daily[field], "آخرین نقطه دقیقاً کارت روز است");
+    }
   });
 
   // ── خلاصه روز به تفکیک کانال (مهاجرت ۱۰۸) ─────────────────────────
 
-  type ChannelRow = { channel: string; salesAmount: string; receivedAmount: string; profitAmount: string | null; invoiceCount: number; returnCount: number };
+  type ChannelRow = { channel: string; salesShare: string | null; salesAmount: string; receivedAmount: string; profitAmount: string | null; invoiceCount: number; returnCount: number };
   const channelsOf = async (username: string, query = "") => {
     const r = await get(username, `/reports/daily/channels?branchId=${BRANCH}${query}`);
     assert.equal(r.statusCode, 200, r.body);
@@ -590,13 +597,18 @@ describe("گزارش‌ها", { skip }, () => {
     assert.equal(ch.channels.reduce((t, c) => t + c.invoiceCount, 0), daily.invoiceCount);
     assert.equal(ch.channels.reduce((t, c) => t + c.returnCount, 0), daily.returnCount);
     assert.ok(ch.channels.length > 0 && BigInt(daily.salesAmount) > 0n, "آشتی روی روز خالی نیست");
+    const canDraw = ch.channels.every(c => BigInt(c.salesAmount) >= 0n) && total("salesAmount") > 0n;
+    for (const c of ch.channels) {
+      if (!canDraw) assert.equal(c.salesShare, null, "سهم منفی یا جمع نامعتبر دونات ندارد");
+      else assert.equal(Number(c.salesShare), Number(BigInt(c.salesAmount) * 10000n / total("salesAmount")) / 10000);
+    }
     for (const c of ch.channels) for (const k of ["salesAmount", "receivedAmount"] as const) assert.match(c[k], /^-?\d+$/);
     for (const user of [supervisor, cashier]) {
       const own = await channelsOf(user);
       assert.equal(own.profitVisible, false);
       assert.ok(own.channels.every(c => c.profitAmount === null), "null، نه \"0\"");
       for (const c of own.channels) assert.deepEqual(Object.keys(c).sort(),
-        ["channel", "invoiceCount", "profitAmount", "receivedAmount", "returnCount", "salesAmount"]);
+        ["channel", "invoiceCount", "profitAmount", "receivedAmount", "returnCount", "salesAmount", "salesShare"]);
     }
     const yesterday = (await sql<{ y: string }>`SELECT (platform.business_date()-1)::text AS y`.execute(handle.db)).rows[0]!.y;
     for (const user of [admin, supervisor, cashier, marketing]) for (const v of ["", `&date=${yesterday}`, "&date=2026-02-30"]) {
@@ -614,12 +626,14 @@ describe("گزارش‌ها", { skip }, () => {
       assert.equal(daily.profitAmount, null);
       assert.equal(hourly.profitVisible, false);
       assert.ok(hourly.hours.every((h) => h.profitAmount === null), "null، نه \"0\"");
+      assert.ok(hourly.hours.every((h) => h.cumulative.profit === null), "سود تجمعی هم بدون مجوز آشکار نمی‌شود");
       assert.equal(sum(hourly.hours, "salesAmount"), BigInt(daily.salesAmount), "فروش مستقل از بها می‌ماند");
       assert.equal(sum(hourly.hours, "receivedAmount"), BigInt(daily.receivedAmount));
       for (const h of hourly.hours) {
         assert.deepEqual(Object.keys(h).sort(),
-          ["hour", "invoiceCount", "paymentCount", "profitAmount", "receivedAmount", "returnCount", "salesAmount"],
+          ["cumulative", "hour", "invoiceCount", "paymentCount", "profitAmount", "receivedAmount", "returnCount", "salesAmount"],
           "فقط همین کلیدها؛ نه cogs، نه حاشیه");
+        assert.deepEqual(Object.keys(h.cumulative).sort(), ["profit", "received", "sales"]);
       }
     }
   });

@@ -11,8 +11,8 @@ describe("نمودار کوچک شاخص", () => {
     assert.equal(sparkPath([5n, null, null], 100, 30), null);
   });
 
-  test("تجمعی است و ساعت زودتر سمت راست می‌نشیند", () => {
-    const p = points(sparkPath([10n, 10n, 10n], 100, 30)!);
+  test("تجمعی سرور حفظ می‌شود و ساعت زودتر سمت راست می‌نشیند", () => {
+    const p = points(sparkPath([10n, 20n, 30n], 100, 30)!);
     assert.equal(p.length, 3);
     assert.deepEqual(p.map(q => q[0]), [100, 50, 0]);
     // تجمعی رو به بالا: y کوچک‌تر یعنی بالاتر.
@@ -26,10 +26,15 @@ describe("نمودار کوچک شاخص", () => {
   });
 
   test("منفی (مرجوعی) حفظ می‌شود و خط ثابت وسط می‌نشیند", () => {
-    const neg = points(sparkPath([-30n, 10n], 100, 30)!);
+    const neg = points(sparkPath([-30n, -20n], 100, 30)!);
     assert.ok(neg[0]![1] > neg[1]![1], "تجمعی از −۳۰ به −۲۰ بالا می‌رود");
     const flat = points(sparkPath([0n, 0n], 100, 30)!);
     assert.deepEqual(flat.map(q => q[1]), [15, 15]);
+  });
+
+  test("مقادیر تجمعی دوباره جمع نمی‌شوند؛ ساعت بدون تغییر خط افقی دارد", () => {
+    const p = points(sparkPath([10n, 10n, 10n], 100, 30)!);
+    assert.deepEqual(p.map(q => q[1]), [2, 2, 2]);
   });
 
   test("مبلغ بزرگ‌تر از دقت number هندسه را نمی‌شکند", () => {

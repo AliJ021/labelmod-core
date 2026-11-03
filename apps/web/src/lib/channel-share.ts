@@ -8,15 +8,14 @@
  */
 export interface Arc { channel: string; start: number; length: number }
 
-export function channelArcs(rows: readonly { channel: string; salesAmount: string }[]): Arc[] | null {
-  const values = rows.map(r => BigInt(r.salesAmount));
-  if (values.some(v => v < 0n)) return null;
-  const total = values.reduce((t, v) => t + v, 0n);
-  if (total <= 0n) return null;
+export function channelArcs(rows: readonly { channel: string; salesAmount: string; salesShare: string | null }[]): Arc[] | null {
+  // سهم در SQL حساب می‌شود؛ تبدیل سهمِ بی‌واحد به مختصات هندسی محاسبهٔ پول نیست.
+  if (!rows.length || rows.some(r => r.salesShare == null || BigInt(r.salesAmount) < 0n)) return null;
+  const shares = rows.map(r => Number(r.salesShare));
+  if (shares.some(v => !Number.isFinite(v) || v < 0 || v > 1) || !shares.some(v => v > 0)) return null;
   let start = 0;
   return rows.map((r, i) => {
-    // نسبت به‌صورت عدد صحیح ده‌هزارم محاسبه می‌شود تا تبدیل bigint بزرگ به number دقت را نبرد.
-    const length = Number((values[i]! * 10000n) / total) / 10000;
+    const length = shares[i]!;
     const arc = { channel: r.channel, start, length };
     start += length;
     return arc;

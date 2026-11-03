@@ -278,9 +278,16 @@ export function registerScopeRoutes(app: FastifyInstance, deps: ScopeRouteDeps):
       invoice_count: string;
       return_count: string;
       payment_count: string;
+      cumulative_sales: string;
+      cumulative_received: string;
+      cumulative_profit: string;
     }>`SELECT business_date::text, hour_of_day, sales_amount, received_amount,
-              profit_amount, invoice_count, return_count, payment_count
+              profit_amount, invoice_count, return_count, payment_count,
+              sum(sales_amount) OVER hours_so_far AS cumulative_sales,
+              sum(received_amount) OVER hours_so_far AS cumulative_received,
+              sum(profit_amount) OVER hours_so_far AS cumulative_profit
          FROM sales.daily_summary_hourly(${branchId}::uuid, ${date}::date)
+       WINDOW hours_so_far AS (ORDER BY hour_of_day ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW)
         ORDER BY hour_of_day`.execute(db);
     if (rows.rows.length !== 24) throw new Error("sales.daily_summary_hourly باید ۲۴ سطر بدهد");
     // ساعت جاری کسب‌وکار، فقط برای «امروز»: ساعت‌های پس از آن هنوز نیامده‌اند
@@ -301,6 +308,11 @@ export function registerScopeRoutes(app: FastifyInstance, deps: ScopeRouteDeps):
         invoiceCount: Number(r.invoice_count),
         returnCount: Number(r.return_count),
         paymentCount: Number(r.payment_count),
+        cumulative: {
+          sales: serializeMoney(BigInt(r.cumulative_sales)),
+          received: serializeMoney(BigInt(r.cumulative_received)),
+          profit: seesCost ? serializeMoney(BigInt(r.cumulative_profit)) : null,
+        },
       })),
     };
   });
@@ -324,13 +336,18 @@ export function registerScopeRoutes(app: FastifyInstance, deps: ScopeRouteDeps):
       profit_amount: string;
       invoice_count: string;
       return_count: string;
+      sales_share: string | null;
     }>`SELECT channel, sales_amount, received_amount, profit_amount, invoice_count, return_count
+              , CASE WHEN min(sales_amount) OVER () >= 0 AND sum(sales_amount) OVER () > 0
+                     THEN trunc(sales_amount / nullif(sum(sales_amount) OVER (), 0), 4)::text
+                     ELSE NULL END AS sales_share
          FROM sales.daily_summary_by_channel(${branchId}::uuid, ${date}::date)`.execute(db);
     return {
       businessDate: date,
       profitVisible: seesCost,
       channels: rows.rows.map((r) => ({
         channel: r.channel,
+        salesShare: r.sales_share,
         salesAmount: serializeMoney(BigInt(r.sales_amount)),
         receivedAmount: serializeMoney(BigInt(r.received_amount)),
         profitAmount: seesCost ? serializeMoney(BigInt(r.profit_amount)) : null,

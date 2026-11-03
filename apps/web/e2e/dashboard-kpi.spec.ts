@@ -234,8 +234,8 @@ test("sales by channel: amounts from the server, total equals the sales card, do
   expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth + 1)).toBe(true);
 
   api.defaults["GET /reports/daily/channels"] = { businessDate: "2026-09-16", profitVisible: true, channels: [
-    { channel: "pos", salesAmount: "13340000", receivedAmount: "11000000", profitAmount: "2340000", invoiceCount: 12, returnCount: 0 },
-    { channel: "web", salesAmount: "-1000000", receivedAmount: "0", profitAmount: "0", invoiceCount: 0, returnCount: 1 },
+    { channel: "pos", salesAmount: "13340000", salesShare: null, receivedAmount: "11000000", profitAmount: "2340000", invoiceCount: 12, returnCount: 0 },
+    { channel: "web", salesAmount: "-1000000", salesShare: null, receivedAmount: "0", profitAmount: "0", invoiceCount: 0, returnCount: 1 },
   ] };
   await page.reload();
   await expect(card).toBeVisible();

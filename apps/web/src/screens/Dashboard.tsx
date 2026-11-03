@@ -472,9 +472,11 @@ export function Dashboard({ access }: { access: NavAccess }) {
   ];
 
   // نمودار کوچک هر کارت از همان دادهٔ ساعتی روند (طرح ۱۰). سودِ پنهان نمودار ندارد.
-  const hours = hourly.state === "ready" ? hourPoints(hourly.data.hours, hourly.data.currentHour) : [];
+  const hours = hourly.state === "ready" ? hourly.data.hours.map(h =>
+    hourly.data.currentHour !== null && h.hour > hourly.data.currentHour ? null : h.cumulative) : [];
   const sparked = kpis.map(k => ({ ...k,
-    spark: hours.length && !(k.key === "profit" && !profitKnown) ? sparkPath(hours.map(h => h.values[k.key]), 120, 32) : null }));
+    spark: hours.length && !(k.key === "profit" && !profitKnown)
+      ? sparkPath(hours.map(h => h?.[k.key] == null ? null : BigInt(h[k.key]!)), 120, 32) : null }));
 
   return (
     <div className="dashboard">
