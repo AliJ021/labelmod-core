@@ -249,9 +249,12 @@ test.describe("F-110-02 — personal settings apart from administrative settings
 
   test("partial administrative permission shows exactly the sections that permission reads", async ({ page, api }) => {
     authorize(api, op => op === "settings.view" ? "allow" : "deny");
+    // این بخش پس از تنظیمات، پایانه‌ها را می‌خواند؛ ناوبری کامل نباید پاسخ در راه را در WebKit قطع کند.
+    const termsResponse = page.waitForResponse(response => response.url().endsWith("/api/settlement-terms"));
     await page.goto("/?page=settings");
     await expect(page.getByRole("heading", { name: "تنظیمات", level: 1 })).toBeVisible();
     await expect.poll(() => settingsLabels(page)).toEqual([...PERSONAL, "تنظیمات", "سلامت سیستم", "اتصال ووکامرس", "کدینگ حساب", "نگاشت حساب", "اسنپ‌پی", "دیجی‌پی", "پایانه‌ها", "افتتاحیه و تفصیلی"]);
+    expect(await (await termsResponse).finished()).toBeNull();
     await page.goto("/?page=settings&settings.tab=devices");
     await expect(page.getByRole("heading", { name: "دسترسی ندارید" })).toBeVisible();
     expect(api.calls.some(c => c.startsWith("GET /devices") || c.startsWith("GET /sessions"))).toBe(false);

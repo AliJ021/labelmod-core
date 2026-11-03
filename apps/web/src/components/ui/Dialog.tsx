@@ -13,7 +13,7 @@ import { useModalDialog } from "./use-modal.ts";
  * `variant="sheet"` روی موبایل از پایین و روی دسکتاپ از کنار (inline-end)
  * می‌آید. انیمیشن فقط transform و opacity است.
  */
-export function Dialog({ open, onClose, title, description, children, footer, variant = "dialog", dismissible = true, size = "md", tone }: {
+export function Dialog({ open, onClose, title, description, children, footer, variant = "dialog", dismissible = true, size = "md", tone, returnFocus }: {
   open: boolean;
   onClose: () => void;
   title: string;
@@ -24,8 +24,9 @@ export function Dialog({ open, onClose, title, description, children, footer, va
   dismissible?: boolean;
   size?: "sm" | "md" | "lg";
   tone?: "final" | "destructive";
+  returnFocus?: () => HTMLElement | null;
 }) {
-  const { ref, props } = useModalDialog(open, { onDismiss: onClose, dismissible });
+  const { ref, props } = useModalDialog(open, { onDismiss: onClose, dismissible, ...(returnFocus ? { returnFocus } : {}) });
   const titleId = useId();
   const descId = useId();
   return <dialog ref={ref} className={`ui-dialog ui-dialog--${variant} ui-dialog--${size}${tone ? ` ui-dialog--${tone}` : ""}`}

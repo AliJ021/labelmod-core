@@ -369,6 +369,12 @@ test("UI kit shows every primitive section in both themes without overflow and h
   await expect(page.getByRole("dialog", { name: "تغییر شعبهٔ پیش‌فرض" })).toBeVisible();
   await page.keyboard.press("Escape");
   await expect(opener, "dialog returns focus to its opener").toBeFocused();
+  const sheetOpener = page.getByRole("button", { name: "باز کردن Sheet", exact: true });
+  await sheetOpener.click();
+  const sampleSheet = page.getByRole("dialog", { name: "فیلترهای فاکتور" });
+  await expect(sampleSheet).toBeVisible();
+  await sampleSheet.getByRole("button", { name: "بستن", exact: true }).click();
+  await expect(sheetOpener, "sheet returns focus to its opener").toBeFocused();
   await page.emulateMedia({ reducedMotion: "reduce" });
   await sections.getByRole("tab", { name: "حرکت و جلوه", exact: true }).click();
   await expect(page.locator(".kit-motion.m-rise").first()).toHaveCSS("animation-name", "none");

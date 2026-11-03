@@ -8,7 +8,7 @@
 import { describe, test } from "node:test";
 import assert from "node:assert/strict";
 import { readFileSync, readdirSync, statSync } from "node:fs";
-import { join } from "node:path";
+import { join, sep } from "node:path";
 import { fileURLToPath } from "node:url";
 import { tokenRgb } from "../src/lib/fabric.ts";
 
@@ -63,7 +63,7 @@ describe("پارچهٔ ورود", () => {
     const users = walk(SRC)
       .filter(f => /\.tsx?$/.test(f) && !f.endsWith("Fabric.tsx"))
       .filter(f => /<Fabric\b/.test(readFileSync(f, "utf8")));
-    assert.deepEqual(users.map(f => f.slice(SRC.length)), ["components/shell/Backdrop.tsx"]);
+    assert.deepEqual(users.map(f => f.slice(SRC.length).split(sep).join("/")), ["components/shell/Backdrop.tsx"]);
     assert.match(read("components/shell/Backdrop.tsx"), /variant === "auth" \? <Fabric \/>/);
   });
 });
