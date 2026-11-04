@@ -1,4 +1,4 @@
-import { useEffect, useLayoutEffect, useRef } from "react";
+import { useEffect, useLayoutEffect, useRef, type ReactNode } from "react";
 import { Glass } from "../Glass.tsx";
 import { Icon } from "../Icon.tsx";
 import { TabList, type TabItem } from "../Tabs.tsx";
@@ -16,7 +16,10 @@ import { NAV_ITEMS, routeUrl, type AccessState, type NavItem, type Zone } from "
  * نمی‌شود و فقط جای‌نگهدارِ بی‌برچسب جایش را نگه می‌دارد. اگر پرسش نرسید،
  * پیامی آرام با «بررسی دوباره» می‌آید؛ مقصدِ نامعلوم هرگز نشان داده نمی‌شود.
  */
-export function ShellNav({ id, items, pending, access, onRetry, zone, onZone, compact, more, onMore, collapsed, onToggle }: {
+export function ShellNav({ id, items, pending, access, onRetry, zone, onZone, compact, more, onMore, collapsed, onToggle, top, bottom }: {
+  /** طرح ۱۰: کارت شعبه بالای منو و نام کاربر پایین آن — فقط نوار کناری دسکتاپ. */
+  top?: ReactNode;
+  bottom?: ReactNode;
   collapsed: boolean;
   onToggle: () => void;
   id: string;
@@ -57,12 +60,7 @@ export function ShellNav({ id, items, pending, access, onRetry, zone, onZone, co
     : pending.includes(z) ? [{ key: z.key, label: "", primary: z.mobilePrimary, pending: true }] : []);
   return <>
     <Glass as="nav" className="workspace-nav" refract={false} aria-label="ناوبری اصلی">
-      {!compact ? <button type="button" className="btn nav-collapse" onClick={onToggle}
-        aria-expanded={!collapsed} aria-controls={`${id}-list`}
-        aria-label={collapsed ? "باز کردن منوی کناری" : "جمع کردن منوی کناری"}
-        title={collapsed ? "باز کردن منو" : "جمع کردن منو"}>
-        <Icon name="menu" /><span className="nav-collapse-label">جمع کردن منو</span>
-      </button> : null}
+      {!compact ? top : null}
       {waiting ? <p className="sr-only" role="status">در حال بررسی دسترسی بخش‌ها…</p> : null}
       <TabList id={id} items={tabs} value={zone} onChange={onZone} label="بخش‌ها" className="zones workspace-zones" vertical={!compact} hrefFor={key => routeUrl(key)} />
       {!compact && access === "degraded" ? <div className="nav-access-note" role="status">
@@ -75,6 +73,15 @@ export function ShellNav({ id, items, pending, access, onRetry, zone, onZone, co
         <Icon name="more" />
         <span className="tab-label">بیشتر</span>
       </button>
+      {!compact ? <div className="shell-foot">
+        <button type="button" className="nav-collapse" onClick={onToggle}
+          aria-expanded={!collapsed} aria-controls={`${id}-list`}
+          aria-label={collapsed ? "باز کردن منوی کناری" : "جمع کردن منوی کناری"}
+          title={collapsed ? "باز کردن منو" : "جمع کردن منو"}>
+          <Icon name="chevron" mirror={!collapsed} /><span className="nav-collapse-label">جمع‌کردن منو برای جای بیشتر</span>
+        </button>
+        {bottom}
+      </div> : null}
     </Glass>
     {compact ? <MoreSheet open={more} items={items} pending={pending.length} access={access} zone={zone}
       onNavigate={onZone} onDismiss={() => onMore(false)} onRetry={onRetry} trigger={() => toggle.current} /> : null}

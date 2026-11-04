@@ -192,6 +192,24 @@
   .mesh--auth::before { animation: sheen 28s var(--ease-in-out) infinite alternate; }
 }
 
+/* پارچهٔ خردلی (Fabric.tsx): Canvas مات روی همان مِش. تا اولین فریم پنهان
+   است تا بوم سیاهِ خالی هرگز دیده نشود؛ پس از آن لکه‌های زیرش بی‌فایده‌اند و
+   حرکتشان خاموش می‌شود. بی WebGL کلاس is-live نمی‌آید و مِش CSS می‌ماند. */
+.mesh > .fabric {
+  position: absolute;
+  inset: 0;
+  inline-size: 100%;
+  block-size: 100%;
+  opacity: 0;
+  transition: opacity var(--dur-slow) var(--ease-out);
+}
+.mesh > .fabric.is-live[data-drawn] { opacity: 1; }
+.mesh--auth:has(> .fabric.is-live[data-drawn]) > i,
+.mesh--auth:has(> .fabric.is-live[data-drawn])::before { animation: none; will-change: auto; }
+@media (prefers-reduced-transparency: reduce) {
+  :root:not([data-perf="off"]) .mesh > .fabric { display: none; }
+}
+
 @keyframes sheen {
   from { transform: translate3d(-6%, 0, 0); }
   to { transform: translate3d(6%, 0, 0); }

@@ -22,3 +22,54 @@ export async function pluginPackage(signal: AbortSignal): Promise<PluginPackage>
   }
   return value;
 }
+
+/**
+ * راه‌اندازی هفت‌مرحله‌ای اتصال (طرح ۱۰، R05). هر مرحله منبع حقیقت خودش را دارد:
+ * تنظیمات سرور از GET، وضعیت افزونه فقط از آخرین «تست اتصال». پیش از تست، آنچه
+ * فقط وردپرس می‌داند «نامعلوم» است — هرگز «انجام‌شده».
+ */
+export type SetupState = "done" | "todo" | "unknown";
+export interface SetupStep { key: string; title: string; state: SetupState; detail: string }
+
+export function setupSteps(config: WooConfig, result: WooResult | null): SetupStep[] {
+  const remote = result?.remote ?? null;
+  const untested = "تا «تست اتصال» نامعلوم است.";
+  const linked = remote?.mapping.linkedProducts;
+  return [
+    { key: "site", title: "نشانی سایت", ...(config.siteUrl
+      ? { state: "done", detail: "در تنظیمات اتصال لیبل مد ثبت شده است." }
+      : { state: "todo", detail: "نشانی HTTPS سایت هنوز ثبت نشده است." }) },
+    { key: "plugin", title: "افزونهٔ لیبل مد در وردپرس", ...(remote
+      ? { state: "done", detail: `نسخهٔ ${remote.pluginVersion} پاسخ داد.` }
+      : { state: "unknown", detail: untested }) },
+    { key: "api-key", title: "کلید API سایت در افزونه", ...(!remote
+      ? { state: "unknown", detail: untested }
+      : remote.apiKeyConfigured
+        ? { state: "done", detail: "افزونه کلید را دارد؛ اعتبارش با تست داخل وردپرس سنجیده می‌شود." }
+        : { state: "todo", detail: "کلید API شعبه را در صفحهٔ اتصال لیبل مد وردپرس ذخیره کنید." }) },
+    { key: "push", title: "کلید امضای همگام‌سازی لحظه‌ای", ...(!config.pushEnabled
+      ? { state: "todo", detail: "ارسال لحظه‌ای خاموش است؛ موجودی فقط با دریافت دوره‌ای همگام می‌شود." }
+      : !config.signingConfigured
+        ? { state: "todo", detail: "کلید امضا در API و Worker تنظیم نشده است." }
+        : remote?.pushConfigured === true
+          ? { state: "done", detail: "سرور و افزونه هر دو کلید را دارند." }
+          : remote?.pushConfigured === false
+            ? { state: "todo", detail: "سرور کلید دارد ولی افزونه ندارد." }
+            : { state: "unknown", detail: remote ? "این نسخهٔ افزونه وضعیت کلید را گزارش نمی‌کند." : untested }) },
+    { key: "warehouse", title: "انبار سایت", ...(config.warehouseId
+      ? { state: "done", detail: "موجودی سایت از همین انبار خوانده می‌شود." }
+      : { state: "todo", detail: "انبار سایت تعیین نشده؛ هیچ پیام موجودی ساخته نمی‌شود." }) },
+    { key: "mapping", title: "نگاشت کالا", ...(!remote
+      ? { state: "unknown", detail: untested }
+      : linked === null || linked === undefined
+        ? { state: "unknown", detail: "شمارش محصولات متصل خوانده نشد." }
+        : linked > 0
+          ? { state: "done", detail: `${linked.toLocaleString("fa-IR")} محصول شناسهٔ اتصال دارد.` }
+          : { state: "todo", detail: "هیچ محصولی شناسهٔ اتصال ندارد." }) },
+    { key: "test", title: "آزمون اتصال", ...(!result
+      ? { state: "todo", detail: "هنوز در این صفحه اجرا نشده است." }
+      : result.ok
+        ? { state: "done", detail: "آخرین تست کامل شد؛ نتیجهٔ کامل پایین‌تر آمده است." }
+        : { state: "todo", detail: "آخرین تست کامل نشد." }) },
+  ];
+}

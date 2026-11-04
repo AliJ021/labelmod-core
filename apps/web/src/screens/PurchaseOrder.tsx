@@ -20,7 +20,11 @@ import { AmountInput } from "../components/ui/AmountInput.tsx";
  * سفارشی که کالایش پس رفته «کامل» بماند و کسی دنبال بقیه‌اش نرود.
  */
 import { useEffect, useState } from "react";
-import { Glass, Solid } from "../components/Glass.tsx";
+import { Solid } from "../components/Glass.tsx";
+import { Icon } from "../components/Icon.tsx";
+import { Note } from "../components/ui/Note.tsx";
+import { SectionHeader } from "../components/ui/PageHeader.tsx";
+import { StatusBadge } from "../components/ui/Status.tsx";
 import { ApiError } from "../lib/api.ts";
 import { ActionKeys, actionFor } from "../lib/action-key.ts";
 import { parseRial, rialFromTomanInput, toman } from "../lib/money.ts";
@@ -63,6 +67,8 @@ export function PurchaseOrder() {
   const [closeReason, setCloseReason] = useState("");
 
   const [busy, setBusy] = useState(false);
+  /** طرح ۱۰: فرم سفارش تازه زیر سرعنوان فهرست و با دکمهٔ «سفارش تازه» باز می‌شود. */
+  const [formOpen, setFormOpen] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [done, setDone] = useState<string | null>(null);
   const [keys] = useState(() => new ActionKeys());
@@ -113,6 +119,7 @@ export function PurchaseOrder() {
         purchaseOrders.create(body, { idempotencyKey: key }),
       );
       setOrder(fresh);
+      setFormOpen(false);
       await refreshList();
     });
 
@@ -181,14 +188,13 @@ export function PurchaseOrder() {
 
   return (
     <div className="stack" style={{ gap: "var(--s-4)" }}>
-      <Glass as="section" className="pad" live>
-        <h2 style={{ marginTop: 0 }}>سفارش خرید</h2>
-        <p className="muted" style={{ marginTop: 0 }}>
-          سفارش یک <strong>تعهد</strong> است، نه یک رویداد مالی: نه سندی می‌زند، نه بدهی‌ای،
-          نه موجودی‌ای. تا وقتی کالا نیامده، هیچ‌چیز در دفتر عوض نمی‌شود.
-        </p>
+      <Note>سفارش خرید یک <strong>تعهد</strong> است، نه یک رویداد مالی: نه سندی می‌زند، نه بدهی‌ای، نه موجودی‌ای. تا وقتی کالا نیامده، هیچ‌چیز در دفتر عوض نمی‌شود؛ «چقدرش رسیده» از نمای پیشرفت سفارش می‌آید.</Note>
+      <Solid as="section" className="list-card" aria-labelledby="orders-title">
+        <SectionHeader id="orders-title" title="سفارش‌های خرید"
+          actions={<button type="button" className="btn btn--primary" aria-expanded={formOpen} aria-controls="order-new-form" onClick={() => setFormOpen(v => !v)}>
+            <Icon name={formOpen ? "close" : "plus"} size="sm" />{formOpen ? "بستن فرم" : "سفارش تازه"}</button>} />
+        {formOpen ? <div id="order-new-form" className="list-card-body stack list-card-form" role="group" aria-label="سفارش تازه" style={{ gap: "var(--s-3)" }}>
 
-        <div className="stack" style={{ gap: "var(--s-3)" }}>
           {branches.length > 1 ? (
             <label className="auth-field">
               <span>شعبه</span>
@@ -238,10 +244,44 @@ export function PurchaseOrder() {
             disabled={busy || supplierId === "" || warehouseId === ""}
             onClick={() => void start()}
           >
-            {busy ? "…" : "سفارش تازه"}
+            {busy ? "…" : "ساخت پیش‌نویس سفارش"}
           </button>
-        </div>
-      </Glass>
+        </div> : null}
+        {list.length === 0 ? (
+          <p className="empty">هنوز سفارشی ثبت نشده.</p>
+        ) : (
+          <div className="scroll-x"><table className="grid">
+            <caption className="sr-only">سفارش‌های خرید</caption>
+            <thead><tr><th>سفارش</th><th>تأمین‌کننده</th><th>پیشرفت</th><th>وضعیت</th><th>عملیات</th></tr></thead>
+            <tbody>
+            {list.map((o) => {
+              const arrived = o.lineCount - o.pendingLines;
+              return (
+              <tr key={o.id}>
+                <td><span className="num">{o.number ?? "پیش‌نویس"}</span><small>{shortDate(o.createdAt)}</small></td>
+                <td>{o.supplierName}<small>{o.lineCount} قلم</small></td>
+                <td>{o.status === "sent" && o.lineCount > 0 ? <span className="progress-cell">
+                  <span className="bar" aria-hidden="true"><i style={{ inlineSize: `${Math.round((arrived / o.lineCount) * 100)}%` }} /></span>
+                  <small>{o.pendingLines === 0 ? "کامل رسید" : `${o.pendingLines} قلم مانده`}</small>
+                </span> : "—"}</td>
+                <td><StatusBadge state={o.status === "sent" ? "pending" : o.status === "closed" ? "completed" : o.status === "draft" ? "draft" : "cancelled"} label={ORDER_STATUS[o.status] ?? o.status} /></td>
+                <td>
+                  <button
+                    type="button"
+                    className="btn btn--quiet"
+                    onClick={() => void load(o.id)}
+                    disabled={busy}
+                  >
+                    باز کن
+                  </button>
+                </td>
+              </tr>
+              );
+            })}
+            </tbody>
+          </table></div>
+        )}
+      </Solid>
 
       {error ? (
         <p className="solid pos-alert" role="alert">
@@ -429,41 +469,6 @@ export function PurchaseOrder() {
         </Solid>
       ) : null}
 
-      <Solid as="section" className="pad">
-        <h3 style={{ marginTop: 0 }}>سفارش‌های اخیر</h3>
-        {list.length === 0 ? (
-          <p className="empty">هنوز سفارشی ثبت نشده.</p>
-        ) : (
-          <ul className="lines">
-            {list.map((o) => (
-              <li key={o.id}>
-                <div className="line-name">
-                  <strong>{o.number ?? "پیش‌نویس"}</strong>
-                  <span className="muted small">
-                    {o.supplierName} · {shortDate(o.createdAt)} · {o.lineCount} قلم
-                  </span>
-                </div>
-                <span className="chip">{ORDER_STATUS[o.status] ?? o.status}</span>
-                <span className="num line-total">
-                  {o.status === "sent"
-                    ? o.pendingLines === 0
-                      ? "کامل رسید"
-                      : `${o.pendingLines} قلم مانده`
-                    : ""}
-                </span>
-                <button
-                  type="button"
-                  className="btn btn--quiet"
-                  onClick={() => void load(o.id)}
-                  disabled={busy}
-                >
-                  باز کن
-                </button>
-              </li>
-            ))}
-          </ul>
-        )}
-      </Solid>
     </div>
   );
 }

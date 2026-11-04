@@ -46,6 +46,8 @@ test("treasury retries use the normalized full payment body as their identity", 
   });
   await page.goto("/");
   await openZone(page, "خزانه و چک");
+  // طرح ۱۰: فهرست اول است و فرم با «حرکت پول تازه» باز می‌شود.
+  await page.getByRole("button", { name: "حرکت پول تازه", exact: true }).click();
   await page.getByRole("combobox", { name: "نوع", exact: true }).selectOption("capital");
   await page.getByRole("combobox", { name: "به حساب", exact: true }).selectOption("a1");
   const amount = page.getByRole("textbox", { name: "مبلغ (تومان)", exact: true });

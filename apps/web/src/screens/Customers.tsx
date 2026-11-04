@@ -1,3 +1,6 @@
+import { StatusBadge } from "../components/ui/Status.tsx";
+import { formatJalaliDay } from "../lib/format.ts";
+import { CustomersSummaryRow } from "../components/CustomersSummaryRow.tsx";
 import { AmountInput } from "../components/ui/AmountInput.tsx";
 import { useUrlState } from "../lib/use-url-state.ts";
 /**
@@ -20,6 +23,9 @@ import { useUrlState } from "../lib/use-url-state.ts";
 import { useCallback, useEffect, useState } from "react";
 import { Solid } from "../components/Glass.tsx";
 import { SearchField } from "../components/SearchField.tsx";
+import { Icon } from "../components/Icon.tsx";
+import { SectionHeader } from "../components/ui/PageHeader.tsx";
+import { Ltr } from "../components/ui/Bidi.tsx";
 import { ResultState } from "../components/ResultState.tsx";
 import { useLatestQuery } from "../lib/use-latest-query.ts";
 import { ApiError } from "../lib/api.ts";
@@ -122,6 +128,7 @@ export function Customers() {
 
   return (
     <div className="stack" style={{ gap: "var(--s-3)" }}>
+      <CustomersSummaryRow />
       {error ? (
         <p className="solid pos-alert" role="alert">
           <span className="dot dot--crit" aria-hidden="true">●</span> {error}
@@ -133,36 +140,24 @@ export function Customers() {
         </p>
       ) : null}
 
-      <Solid className="pad">
-        <form
-          className="filters"
-          onSubmit={(e) => {
-            e.preventDefault();
-            void search();
-          }}
-        >
-          <div className="auth-field">
-            <span>جست‌وجو — شماره یا نام</span>
-            <SearchField label="جست‌وجوی شماره یا نام مشتری" value={q} onChange={setQ} onClear={() => reload("")} />
-          </div>
-          <button type="submit" className="btn btn--primary" disabled={busy}>
-            جست‌وجو
-          </button>
-          <button
-            type="button"
-            className="btn btn--quiet"
-            onClick={() => setCreating((v) => !v)}
-          >
-            {creating ? "انصراف" : "مشتری تازه"}
-          </button>
-        </form>
-        <p className="muted small" style={{ margin: 0 }}>
-          نام یا شمارهٔ مشتری را برای پیدا کردن پرونده‌اش وارد کنید.
-        </p>
-      </Solid>
+      <form
+        className="customer-search"
+        role="search"
+        aria-label="جست‌وجوی مشتری"
+        onSubmit={(e) => {
+          e.preventDefault();
+          void search();
+        }}
+      >
+        <SearchField label="جست‌وجوی شماره یا نام مشتری" value={q} onChange={setQ} onClear={() => reload("")} />
+        <button type="submit" className="btn" disabled={busy}>
+          جست‌وجو
+        </button>
+        <p className="muted small">شماره در دیتابیس نرمال می‌شود؛ شمارهٔ تکراری مشتری دوم نمی‌سازد.</p>
+      </form>
 
       {creating ? (
-        <Solid className="pad">
+        <Solid as="section" className="pad" aria-label="مشتری تازه">
           <form
             className="filters"
             onSubmit={(e) => {
@@ -199,41 +194,50 @@ export function Customers() {
       ) : null}
 
       <div aria-busy={query.loading}>
-      <Solid className="pad">
+      <Solid as="section" className="list-card" aria-labelledby="customers-title">
+        <SectionHeader id="customers-title" title="مشتریان" description="موبایل یکتاست و مانده از فاکتورهای همین مشتری می‌آید."
+          actions={<button type="button" className={creating ? "btn" : "btn btn--primary"} onClick={() => setCreating((v) => !v)}>
+            <Icon name={creating ? "close" : "plus"} size="sm" />{creating ? "انصراف" : "مشتری تازه"}</button>} />
         {query.loading ? <ResultState kind="loading" title="در حال بارگذاری مشتریان…" /> : query.error ? <ResultState kind="error" title={message(query.error)} actionLabel="تلاش دوباره" onAction={() => reload(submitted)} /> : rows.length === 0 ? (
           <ResultState title={submitted ? "برای این جست‌وجو مشتری‌ای پیدا نشد." : "فهرست مشتریان خالی است."} actionLabel={submitted ? "پاک‌کردن جست‌وجو" : "افزودن مشتری"} onAction={() => { if (submitted) { setQ(""); reload(""); } else setCreating(true); }} />
         ) : (
-          <div className="grid-wrap">
+          <div className="scroll-x">
             <table className="grid">
-              <caption className="sr-only">فهرست مشتریان</caption>
+              <caption className="sr-only">فهرست مشتریان؛ مبلغ‌ها به تومان</caption>
               <thead>
                 <tr>
+                  <th scope="col">مشتری</th>
                   <th scope="col">موبایل</th>
-                  <th scope="col">نام</th>
-                  <th scope="col">فاکتور</th>
-                  <th scope="col">جمع خرید</th>
-                  <th scope="col">مانده</th>
+                  <th scope="col">مشتری از</th>
+                  <th scope="col" className="num">فاکتور</th>
+                  <th scope="col" className="num">جمع خرید</th>
+                  <th scope="col" className="num">مانده</th>
                   <th scope="col">وضعیت</th>
-                  <th scope="col"> </th>
+                  <th scope="col">پیامک بازاریابی</th>
+                  <th scope="col">عملیات</th>
                 </tr>
               </thead>
               <tbody>
                 {rows.map((c) => (
                   <tr key={c.id}>
-                    <td className="num" dir="ltr">{c.mobile}</td>
-                    <td>{c.fullName ?? <span className="muted">بی‌نام</span>}</td>
+                    <td>{c.fullName ? <strong className="cell-title">{c.fullName}</strong> : <span className="muted">بی‌نام</span>}</td>
+                    <td><Ltr>{c.mobile}</Ltr></td>
+                    <td className="num">{c.createdAt ? formatJalaliDay(c.createdAt) : "—"}</td>
                     <td className="num">{c.invoiceCount}</td>
                     <td className="num">{toman(parseRial(c.totalPurchased))}</td>
-                    <td className="num">{toman(parseRial(c.balance))}</td>
-                    <td>{CUSTOMER_STATUS[c.status] ?? c.status}</td>
+                    <td className="num">{parseRial(c.balance) > 0n ? <span className="invoice-due">{toman(parseRial(c.balance))}</span> : toman(parseRial(c.balance))}</td>
+                    <td>{c.status === "active" ? <StatusBadge state="active" label={CUSTOMER_STATUS[c.status] ?? c.status} quiet /> : <StatusBadge state={c.status === "blocked" ? "attention" : "archived"} label={CUSTOMER_STATUS[c.status] ?? c.status} />}</td>
+                    <td>{c.consentMarketing ? <StatusBadge state="completed" label="رضایت دارد" quiet /> : <StatusBadge state="cancelled" label="بدون رضایت" quiet />}</td>
                     <td>
                       <button
                         type="button"
-                        className="link"
+                        className="icon-button invoice-icon"
+                        aria-label="پرونده"
+                        title="پرونده"
                         onClick={() => void openFile(c.id)}
                         disabled={busy}
                       >
-                        پرونده
+                        <Icon name="chevron" size="sm" />
                       </button>
                     </td>
                   </tr>

@@ -23,7 +23,8 @@
  * یعنی دو تعریف از یک عدد — و آنکه در مرورگر است، کهنه می‌شود.
  */
 import { useEffect, useState } from "react";
-import { Glass, Solid } from "../components/Glass.tsx";
+import { Solid } from "../components/Glass.tsx";
+import { SectionHeader } from "../components/ui/PageHeader.tsx";
 import { ApiError } from "../lib/api.ts";
 import { ActionKeys, actionFor } from "../lib/action-key.ts";
 import { parseRial, toman } from "../lib/money.ts";
@@ -155,12 +156,10 @@ export function PurchaseReturn() {
 
   return (
     <div className="stack" style={{ gap: "var(--s-4)" }}>
-      <Glass as="section" className="pad" live>
-        <h2 style={{ marginTop: 0 }}>برگشت از خرید</h2>
-        <p className="muted" style={{ marginTop: 0 }}>
-          شماره رسید خرید را وارد کنید. کالا با بهای <strong>همان رسید</strong> خارج
-          می‌شود، نه میانگین جاری انبار.
-        </p>
+      <Solid as="section" className="list-card" aria-labelledby="pret-title">
+        <SectionHeader id="pret-title" title="برگشت از خرید"
+          description={<>بدهی تأمین‌کننده با بهای فاکتور کم می‌شود و کالا با بهای <strong>همان رسید</strong> خارج می‌شود، نه میانگین جاری انبار.</>} />
+        <div className="list-card-body">
 
         {branches.length > 1 ? (
           <div className="stack" style={{ gap: "var(--s-2)", marginBottom: "var(--s-3)" }}>
@@ -178,7 +177,7 @@ export function PurchaseReturn() {
         ) : null}
 
         <form
-          className="stack"
+          className="stack list-card-form"
           style={{ gap: "var(--s-3)" }}
           onSubmit={(e) => {
             e.preventDefault();
@@ -203,7 +202,8 @@ export function PurchaseReturn() {
             {busy ? "…" : "پیدا کن"}
           </button>
         </form>
-      </Glass>
+        </div>
+      </Solid>
 
       {error ? (
         <p className="solid pos-alert" role="alert">

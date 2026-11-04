@@ -51,7 +51,9 @@ import { cartCounts, checkoutErrorMessage, checkoutTotals, finalAmounts, intentF
   paymentFailureKind, paymentLayout, resolveIntentStatus, type PaymentIntent, type PaymentOption, type PaymentPhase,
   type UnresolvedReason } from "../lib/pos-payments.ts";
 import { clearPendingPayment, readPendingPayment, writePendingPayment, type PendingPayment } from "../lib/pending-payment.ts";
-import { formatCount, formatQty } from "../lib/format.ts";
+import { formatCount, formatJalaliMoment, formatQty } from "../lib/format.ts";
+import { formatClock } from "../lib/dashboard-freshness.ts";
+import { StatusBadge } from "../components/ui/Status.tsx";
 import { quantityUnits, saleQuantity } from "../lib/sale-quantity.ts";
 import { session } from "../lib/session.ts";
 import { people } from "../lib/people.ts";
@@ -162,7 +164,7 @@ const CartLine = memo(function CartLine({ line: l, panel, on, error, allowFracti
       <div className="line-name">
         <strong>{l.productName}</strong>
         <span className="muted small">
-          {[l.color, l.size].filter(Boolean).join(" · ")}
+          {/* کد کالا عمداً در سبد نیست (تصمیم مالک، pos-usability) — شرح و رنگ و سایز کافی است. */}
           {/*
             قیمت فهرست فقط وقتی نوشته می‌شود که سطر واقعاً دستکاری شده
             باشد. صندوق‌دار باید ببیند از چه عددی پایین آمده — وگرنه
@@ -180,9 +182,16 @@ const CartLine = memo(function CartLine({ line: l, panel, on, error, allowFracti
             </>
           )}
         </span>
+      </div>
+      {/* طرح ۱۰: رنگ و سایز تراشه‌اند، در ستون خودشان. */}
+      <div className="line-variant">
+        {l.color ? <span className="line-chip">{l.color}</span> : null}
+        {l.size ? <span className="line-chip line-chip--size">{l.size}</span> : null}
+      </div>
+      <div className="line-unit">
         <button type="button" className="line-unit-edit" aria-label={`ویرایش قیمت ${l.productName}`}
           aria-expanded={panel === "price"} onClick={() => on.openPrice(l.id)}>
-          <span>قیمت واحد</span> <Money rial={l.unitPrice} size="sm" /> <span className="line-unit-action">ویرایش</span>
+          <span className="line-unit-label">قیمت واحد</span> <Money rial={l.unitPrice} size="sm" /> <span className="line-unit-action">ویرایش</span>
         </button>
       </div>
       {/*
@@ -351,7 +360,6 @@ function PosScreen({ actorId, mode, onMode, browseInvoices }: {
   const [customerLoading, setCustomerLoading] = useState(false);
   const [customerError, setCustomerError] = useState<string | null>(null);
   const customerInput = useRef<HTMLInputElement>(null);
-  const customerDetails = useRef<HTMLDetailsElement>(null);
   /** فقط نمایش؛ دروازهٔ `sale.credit` سرور است. «نامعلوم» مجاز نیست. */
   const [canCredit, setCanCredit] = useState(false);
   const [canManageCustomer, setCanManageCustomer] = useState(false);
@@ -469,9 +477,6 @@ function PosScreen({ actorId, mode, onMode, browseInvoices }: {
   const policyReady = policy?.branchId === branchId;
   const linkedCustomer = customer?.id === invoice?.customerId ? customer : null;
   const customerMissing = policyReady && policy.requireCustomer && (!invoice?.customerId || !linkedCustomer?.mobile?.trim());
-  useEffect(() => {
-    if ((customerMissing || customerError || nameForMobile) && customerDetails.current) customerDetails.current.open = true;
-  }, [customerMissing, customerError, nameForMobile, ready]);
   const customerGate = !policyReady || customerMissing;
 
   // مشتری وصل‌شده — با هر تغییر `customerId` از سرور خوانده می‌شود.
@@ -1311,7 +1316,6 @@ function PosScreen({ actorId, mode, onMode, browseInvoices }: {
     canManage={canManageCustomer} onSaveName={(name) => void saveCustomerName(name)}
     busy={busy} inputRef={customerInput} />;
   const focusCustomer = () => {
-    if (customerDetails.current) customerDetails.current.open = true;
     customerInput.current?.scrollIntoView({ block: "center", behavior: "instant" });
     customerInput.current?.focus();
   };
@@ -1321,8 +1325,6 @@ function PosScreen({ actorId, mode, onMode, browseInvoices }: {
     </p> : customerMissing ? <p className="field-hint">شماره مشتری برای این صندوق الزامی است؛ پیش از دریافت وجه آن را ثبت کنید.</p> : null}
     {customerBlock}
   </>;
-  // Required identity stays visible even after linking; optional identity can fold away.
-  const customerAlwaysVisible = !policyReady || policy.requireCustomer;
 
   return (
     <div ref={rootRef} className={`pos${draftActive && !completed ? " pos--has-items" : ""}${!draftActive && !completed ? " pos--empty" : ""}`}>
@@ -1340,11 +1342,13 @@ function PosScreen({ actorId, mode, onMode, browseInvoices }: {
         چیزند: چهار سطر با تعداد دو، «۴ ردیف · ۸ عدد» است، نه «۸ قلم».
       */}
       <header className="pos-bar">
+        {/* طرح ۱۰: عنوان صفحه — تنها h1 صندوق؛ پیش از این صفحه h1 نداشت. */}
+        <h1 className="pos-title">صندوق فروش</h1>
         <div className="pos-context">
           {instagram
             ? <span className="pos-shift pos-shift--instagram"><Icon name="sparkle" size="sm" /> فروش اینستاگرام</span>
-            : <span className="pos-shift"><span className="dot dot--good" aria-hidden="true">●</span> شیفت باز</span>}
-          {branch ? <span className="pos-branch">{branch.name}</span> : null}
+            : <span className="pos-shift"><span className="dot dot--good" aria-hidden="true">●</span> شیفت باز{shift?.openedAt ? <> · از <span className="nowrap">{formatClock(Date.parse(shift.openedAt))}</span></> : null}</span>}
+          {branch ? <span className="pos-branch"><Icon name="store" size="sm" />{branch.name}{(() => { const w = branch.warehouses.find(x => x.id === warehouseId); return w ? ` · ${w.name}` : ""; })()}</span> : null}
           <span className="pill">{countLabel}</span>
         </div>
         <div className="pos-tools">
@@ -1466,18 +1470,35 @@ function PosScreen({ actorId, mode, onMode, browseInvoices }: {
 
       {completed ? <SaleComplete sale={completed} onNext={nextSale} /> : <div className="pos-body">
         <div className="pos-workspace">
-          {customerAlwaysVisible ? <Solid as="section" className="pos-customer-required" aria-label="مشتری فاکتور">
+          {/* طرح ۱۰: یک سند — سربرگ فاکتور، مشتری، اقلام (جست‌وجو و جدول) در یک کارت. شماره فقط در ثبت
+              نهایی تخصیص می‌یابد؛ تاریخ همان زمان پیش‌نویس در سرور است و پیش از اولین قلم «—». */}
+          <div className="pos-doc-head pos-doc-block">
+            <span className="pos-doc-icon" aria-hidden="true"><Icon name="receipt" /></span>
+            <div className="pos-doc-title">
+              <strong>{instagram ? "فاکتور فروش اینستاگرام" : "فاکتور فروش جدید"}</strong>
+              <small>شماره پس از ثبت نهایی اختصاص می‌یابد.</small>
+            </div>
+            <dl className="pos-doc-meta">
+              <div><dt>تاریخ فاکتور</dt><dd>{invoice?.occurredAt ? formatJalaliMoment(invoice.occurredAt) : "—"}</dd></div>
+              <div><dt>نوع فروش</dt><dd>{instagram ? "اینستاگرام" : "حضوری"}</dd></div>
+            </dl>
+          </div>
+          {/* مشتری همیشه باز و پیش از جست‌وجوست؛ اختیاری/الزامی فقط سیاست فروش (`pos.require_customer`) است، نه چیدمان. */}
+          <Solid as="section" className="pos-customer-panel" aria-label="مشتری فاکتور">
             <h2 className="cart-title">مشتری فاکتور</h2>
             {customerEntry}
-          </Solid> : null}
+          </Solid>
           <Solid as="section" className="pos-search-card" aria-label="جست‌وجوی کالا">
+            <div className="pos-items-head">
+              <strong className="pos-items-title">اقلام فاکتور</strong>
+              {lines.length ? <span className="cart-count">{countLabel}</span> : null}
+              <small className="pos-items-hint"><Icon name="info" size="sm" />اسکن بارکد بی‌نیاز به کلیک روی کادر</small>
+            </div>
             <PosProductPicker key={warehouseId} warehouseId={warehouseId} busy={busy} onPick={(id) => addByBarcode("", id)} />
           </Solid>
-          {!customerAlwaysVisible ? <details ref={customerDetails} className="solid pos-customer-details">
-            <summary>مشتری فاکتور <span className="muted small">{linkedCustomer?.fullName || (customerMissing ? "ثبت شماره لازم است" : "انتخاب یا افزودن مشتری")}</span></summary>
-          {customerEntry}
-          </details> : null}
         <Solid as="section" className="cart" aria-label="سبد خرید">
+          {/* طرح ۱۰: سربرگ سند. شماره فقط در ثبت نهایی تخصیص می‌یابد (قاعدهٔ شماره‌گذاری)؛
+              تاریخ همان زمان فاکتور پیش‌نویس در سرور است و پیش از اولین قلم «—». */}
           <div className="cart-head">
             <h2 className="cart-title">سبد خرید</h2>
             {lines.length ? <span className="cart-count">{countLabel}</span> : null}
@@ -1501,6 +1522,10 @@ function PosScreen({ actorId, mode, onMode, browseInvoices }: {
             به `busy` وابسته نمی‌ماند.
           */}
           <fieldset className="lines-wrap" disabled={busy}>
+            {/* سرستون‌ها فقط نمایشی‌اند (هر سطر برچسب‌های دسترس‌پذیر خودش را دارد) و فقط در چیدمان ستونی دیده می‌شوند. */}
+            {lines.length ? <div className="lines-head" aria-hidden="true">
+              <span>#</span><span>شرح کالا</span><span>رنگ و سایز</span><span>تعداد</span><span>فی واحد</span><span>مبلغ کل</span><span /><span />
+            </div> : null}
             <ul className="lines">
               {lines.map((l) => (
                 <CartLine
@@ -1513,6 +1538,7 @@ function PosScreen({ actorId, mode, onMode, browseInvoices }: {
                 />
               ))}
             </ul>
+            {lines.length ? <p className="lines-foot"><span>{countLabel}</span><span><Icon name="info" size="sm" /> مبالغ به تومان</span></p> : null}
           </fieldset>
           {lines.length === 0 ? <div className="cart-empty">
             <span className="cart-empty-icon" aria-hidden="true"><Icon name="register" /></span>
@@ -1534,7 +1560,13 @@ function PosScreen({ actorId, mode, onMode, browseInvoices }: {
         */}
         <Solid as="aside" className="pay" aria-label="پرداخت">
           <div className="pay-summary-fixed">
-          <h2 className="cart-title">پرداخت و ثبت فاکتور</h2>
+          <div className="pay-head">
+            <h2 className="cart-title">تسویه</h2>
+            {/* وضعیت دریافت از همان جمع‌های سرور (`totals`)؛ بی سبد هیچ ادعایی نیست. */}
+            {draftActive ? totals.received === 0n ? <StatusBadge state="pending" label="پرداخت‌نشده" />
+              : totals.remaining > 0n ? <StatusBadge state="active" label="بخشی دریافت شده" />
+              : <StatusBadge state="completed" label="دریافت کامل" /> : null}
+          </div>
           <CheckoutSummary totals={draftActive ? totals : null} />
           </div>
           <div className="pay-body">
@@ -1567,7 +1599,7 @@ function PosScreen({ actorId, mode, onMode, browseInvoices }: {
               : customerMissing ? "برای ادامه، شماره مشتری را ثبت کنید."
               : !hasCart ? "برای نهایی‌کردن، ابتدا کالا به سبد اضافه کنید."
               : !payIdle ? "تا نتیجهٔ پرداخت روشن نشود، نهایی‌کردن بسته است."
-                : !settled ? "نهایی‌کردن پس از دریافت کامل مانده باز می‌شود." : "همهٔ مبلغ دریافت شده است؛ فاکتور را نهایی کنید."}</p>
+                : !settled ? <><Money rial={totals.remaining} size="sm" /> هنوز دریافت نشده است؛ نهایی‌کردن پس از دریافت کامل باز می‌شود.</> : "همهٔ مبلغ دریافت شده است؛ فاکتور را نهایی کنید."}</p>
           </div>
         </Solid>
       </div>}

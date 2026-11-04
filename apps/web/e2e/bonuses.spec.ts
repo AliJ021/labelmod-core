@@ -40,7 +40,7 @@ test.beforeEach(async ({ api }) => {
 
 async function openLog(page: Page) {
   await page.goto("/?page=personnel&personnel.tab=bonus-log");
-  await expect(page.getByRole("heading", { name: "دفتر پاداش پرسنل", level: 1 })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "دفتر پاداش پرسنل", level: 2 })).toBeVisible();
 }
 
 test.describe("ناحیهٔ برداشت و پاداش", () => {
@@ -51,7 +51,7 @@ test.describe("ناحیهٔ برداشت و پاداش", () => {
     const url = new URL(page.url());
     expect([url.searchParams.get("personnel.tab"), url.searchParams.get("personnel.wdlStatus"), url.searchParams.get("personnel.wdlOwner"), url.searchParams.get("settings.tab")])
       .toEqual(["withdrawal-log", "open", CASHIER.id, null]);
-    await expect(page.getByRole("heading", { name: "دفتر برداشت پرسنل", level: 1 })).toBeVisible();
+    await expect(page.getByRole("heading", { name: "دفتر برداشت پرسنل", level: 2 })).toBeVisible();
     await expect.poll(() => api.calls.some(c => c.startsWith("GET /withdrawals?") && c.includes("status=open"))).toBe(true);
     // A heading/request start is not a loaded page. Validate both list and
     // owner data before full-document navigation can cancel their reads.
@@ -59,13 +59,13 @@ test.describe("ناحیهٔ برداشت و پاداش", () => {
     await expect(page.getByLabel("کاربر برداشت").locator("option:checked")).toHaveText(CASHIER.name);
     await page.goto("/?page=settings&settings.tab=withdrawals");
     await expect(page).toHaveURL(/personnel\.tab=withdrawals/);
-    await expect(page.getByRole("heading", { name: "برداشت‌های من", level: 1 })).toBeVisible();
+    await expect(page.getByRole("heading", { name: "برداشت‌های من", level: 2 })).toBeVisible();
     await expect(page.getByText("هنوز برداشتی ثبت نکرده‌اید.", { exact: true })).toBeVisible();
     await page.goto("/?page=settings");
     await expect(page.getByRole("heading", { name: "تنظیمات", level: 1 })).toBeVisible();
     await expect(page.locator(".settings-nav")).not.toContainText("برداشت");
     await personnel(page, "bonuses", "پاداش‌های من");
-    await expect(page.getByRole("heading", { name: "پاداش‌های من", level: 1 })).toBeVisible();
+    await expect(page.getByRole("heading", { name: "پاداش‌های من", level: 2 })).toBeVisible();
     await expect(page.getByText("هنوز پاداشی ندارید.", { exact: true })).toBeVisible();
   });
 
@@ -80,7 +80,7 @@ test.describe("ناحیهٔ برداشت و پاداش", () => {
     }
     expect(api.calls.some(c => /^GET \/(bonuses|withdrawals)(\?|\/owners|\/beneficiaries|\/selection)/.test(c))).toBe(false);
     await personnel(page, "bonuses", "پاداش‌های من");
-    await expect(page.getByRole("heading", { name: "پاداش‌های من", level: 1 })).toBeVisible();
+    await expect(page.getByRole("heading", { name: "پاداش‌های من", level: 2 })).toBeVisible();
     await expect(page.locator(".settings-nav")).not.toContainText("دفتر پاداش");
   });
 });

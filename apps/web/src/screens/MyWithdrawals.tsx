@@ -89,7 +89,21 @@ export function MyWithdrawals({ currentUserId }: { currentUserId: string }) {
 
   return <div className="settings-page">
     <PageHeader title="برداشت‌های من"
-      context="مبلغ و دلیل هر برداشت خود را ثبت کنید. این دفتر فقط ثبت است: هیچ اثری بر صندوق، حساب‌ها یا حقوق ندارد. پس از ثبت، فقط مدیر کل می‌تواند مبلغ یا دلیل را اصلاح کند." />
+      context="پس از ثبت، فقط مدیر کل می‌تواند مبلغ یا دلیل را اصلاح کند؛ تاریخچهٔ هر اصلاح می‌ماند." />
+
+    <Solid as="section" className="settings-section" aria-labelledby={listId}>
+      <SectionHeader id={listId} title="برداشت‌های ثبت‌شده" description="تازه‌ترین بالا. مبالغ به تومان‌اند." />
+      {list.loading ? <Skeleton variant="row" lines={4} label="در حال دریافت برداشت‌ها…" />
+        : list.error ? <ResultState kind="error" title={list.error instanceof ApiError ? list.error.message : "دریافت برداشت‌ها ممکن نشد."}
+            reference={list.error instanceof ApiError ? list.error.correlationId : null} actionLabel="تلاش دوباره" onAction={() => setReload(v => v + 1)} />
+        : list.data ? <>
+          <DataTable caption="برداشت‌های من" columns={columns} rows={list.data.items} rowKey={r => r.id} stack
+            empty={page > 1 ? { title: "این صفحه خالی است." } : { title: "هنوز برداشتی ثبت نکرده‌اید.", description: "نخستین برداشت را از فرم «ثبت برداشت تازه» ثبت کنید." }}
+            rowActions={r => <button type="button" className="link" aria-pressed={selected === r.id}
+              aria-label={`تاریخچهٔ برداشت ${formatJalaliMoment(r.createdAt)}`} onClick={() => setSelected(selected === r.id ? "" : r.id)}>تاریخچه</button>} />
+          <Pager page={page} total={list.data.total} label="صفحه‌بندی برداشت‌های من" onPage={p => setPage(String(p))} />
+        </> : null}
+    </Solid>
 
     <Solid as="section" className="settings-section" aria-labelledby={formId}>
       <SectionHeader id={formId} title="ثبت برداشت تازه" description="زمان و نام شما را سرور ثبت می‌کند." />
@@ -118,20 +132,6 @@ export function MyWithdrawals({ currentUserId }: { currentUserId: string }) {
         </div>
         {done ? <p className="set-msg set-msg--good" role="status">{done}</p> : null}
       </div>
-    </Solid>
-
-    <Solid as="section" className="settings-section" aria-labelledby={listId}>
-      <SectionHeader id={listId} title="برداشت‌های ثبت‌شده" description="تازه‌ترین بالا. مبالغ به تومان‌اند." />
-      {list.loading ? <Skeleton variant="row" lines={4} label="در حال دریافت برداشت‌ها…" />
-        : list.error ? <ResultState kind="error" title={list.error instanceof ApiError ? list.error.message : "دریافت برداشت‌ها ممکن نشد."}
-            reference={list.error instanceof ApiError ? list.error.correlationId : null} actionLabel="تلاش دوباره" onAction={() => setReload(v => v + 1)} />
-        : list.data ? <>
-          <DataTable caption="برداشت‌های من" columns={columns} rows={list.data.items} rowKey={r => r.id} stack
-            empty={page > 1 ? { title: "این صفحه خالی است." } : { title: "هنوز برداشتی ثبت نکرده‌اید.", description: "نخستین برداشت را از فرم بالا ثبت کنید." }}
-            rowActions={r => <button type="button" className="link" aria-pressed={selected === r.id}
-              aria-label={`تاریخچهٔ برداشت ${formatJalaliMoment(r.createdAt)}`} onClick={() => setSelected(selected === r.id ? "" : r.id)}>تاریخچه</button>} />
-          <Pager page={page} total={list.data.total} label="صفحه‌بندی برداشت‌های من" onPage={p => setPage(String(p))} />
-        </> : null}
     </Solid>
 
     {selected ? <MyWithdrawalDetail id={selected} version={reload} onClose={() => setSelected("")} /> : null}

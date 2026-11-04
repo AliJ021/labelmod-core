@@ -95,7 +95,7 @@ test.describe("F-110-01 — conservative permission loading", () => {
     const allowed = new Set(["sale.create", "return.same_day"]);
     const auth = authorize(api, op => allowed.has(op) ? "allow" : "deny", true);
     await page.goto("/");
-    await expect(page.getByRole("heading", { name: "امروز", exact: true })).toBeVisible();
+    await expect(page.getByRole("heading", { name: "نمای کلی امروز", exact: true })).toBeVisible();
     // در حال بررسی: فقط داشبورد، برداشت و پاداش (من) و تنظیمات (شخصی) — به‌علاوهٔ جای‌نگهدارِ بی‌برچسب.
     expect((await tabLabels(page)).sort()).toEqual(["برداشت و پاداش", "تنظیمات", "داشبورد"].sort());
     await expect(mainList(page).locator(".tab-pending")).toHaveCount(PROTECTED.length);
@@ -128,6 +128,26 @@ test.describe("F-110-01 — conservative permission loading", () => {
     }
     // نوار پایین همان چهار خانه را پیش و پس از پاسخ دارد؛ نوار کناری فقط سرعنوان گروه می‌گیرد.
     if (compact(page) && !wraps) expect(Math.abs(after.nav.height - before.nav.height), "bottom bar height stable").toBeLessThanOrEqual(1);
+  });
+
+  test("the branch card holds its place: a late /branches never pushes the navigation down", async ({ page, api }) => {
+    let release!: () => void;
+    const gate = new Promise<void>(resolve => { release = resolve; });
+    api.handlers.set("GET /branches", async route => { await gate; await route.fulfill({ json: api.defaults["GET /branches"] }); });
+    await page.goto("/");
+    const dashboard = mainList(page).getByRole("tab", { name: "داشبورد", exact: true });
+    await expect(dashboard).toBeVisible();
+    await expect(mainList(page).getByRole("tab", { includeHidden: true })).toHaveCount(ALL_TABS.length);
+    // تا پاسخ نرسیده هیچ نام شعبه‌ای ادعا نمی‌شود.
+    await expect(page.getByText("شعبه آزمایشی", { exact: true })).toHaveCount(0);
+    const before = (await dashboard.boundingBox())!;
+    release();
+    if (!compact(page)) await expect(page.locator(".shell-branch:not([data-pending])").getByText("شعبه آزمایشی", { exact: true })).toBeVisible();
+    else await expect(page.locator(".shell-branch")).toHaveCount(0);
+    const after = (await dashboard.boundingBox())!;
+    for (const k of ["x", "y", "width", "height"] as const) {
+      expect(Math.abs(after[k] - before[k]), `dashboard tab ${k} stays put`).toBeLessThanOrEqual(1);
+    }
   });
 
   test("a failed check stays hidden and offers a calm retry that asks only what failed", async ({ page, api }) => {
@@ -163,7 +183,7 @@ test.describe("F-110-01 — conservative permission loading", () => {
     const legacyTab = mainList(page).getByRole("tab", { name: "سفارش اینستاگرام", includeHidden: true });
     const auth = authorize(api, op => op === "instagram.order.manage" ? "allow" : "deny", true);
     await page.goto("/");
-    await expect(page.getByRole("heading", { name: "امروز", exact: true })).toBeVisible();
+    await expect(page.getByRole("heading", { name: "نمای کلی امروز", exact: true })).toBeVisible();
     await expect(mainList(page).locator(".tab-pending")).toHaveCount(PROTECTED.length);
     await expect(legacyTab, "the legacy workflow is not a navigation destination").toHaveCount(0);
     auth.release();
@@ -229,9 +249,12 @@ test.describe("F-110-02 — personal settings apart from administrative settings
 
   test("partial administrative permission shows exactly the sections that permission reads", async ({ page, api }) => {
     authorize(api, op => op === "settings.view" ? "allow" : "deny");
+    // این بخش پس از تنظیمات، پایانه‌ها را می‌خواند؛ ناوبری کامل نباید پاسخ در راه را در WebKit قطع کند.
+    const termsResponse = page.waitForResponse(response => response.url().endsWith("/api/settlement-terms"));
     await page.goto("/?page=settings");
     await expect(page.getByRole("heading", { name: "تنظیمات", level: 1 })).toBeVisible();
     await expect.poll(() => settingsLabels(page)).toEqual([...PERSONAL, "تنظیمات", "سلامت سیستم", "اتصال ووکامرس", "کدینگ حساب", "نگاشت حساب", "اسنپ‌پی", "دیجی‌پی", "پایانه‌ها", "افتتاحیه و تفصیلی"]);
+    expect(await (await termsResponse).finished()).toBeNull();
     await page.goto("/?page=settings&settings.tab=devices");
     await expect(page.getByRole("heading", { name: "دسترسی ندارید" })).toBeVisible();
     expect(api.calls.some(c => c.startsWith("GET /devices") || c.startsWith("GET /sessions"))).toBe(false);

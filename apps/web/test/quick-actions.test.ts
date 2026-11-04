@@ -22,12 +22,12 @@ describe("کارهای پرتکرار داشبورد", () => {
       assert.deepEqual([...a.anyOf], [...(feature?.anyOf ?? z.anyOf)], `${a.name}: همان مجوز مقصد/ویژگی`);
     }
   });
-  test("مدیر کامل: هر چهار کار", () => {
+  test("مدیر کامل: هر شش کار", () => {
     assert.equal(quickActionView({ state: "ready", verdicts: every("allow") }).visible.length, QUICK_ACTIONS.length);
   });
-  test("صندوق‌دار: بدون چاپ لیبل (catalog.manage ندارد)", () => {
+  test("صندوق‌دار: فقط فروش و مرجوعی — بی خزانه، رسید خرید و گزارش", () => {
     const v = quickActionView({ state: "ready", verdicts: map({ ...Object.fromEntries(NAV_OPERATIONS.map(op => [op, "deny" as Verdict])), "sale.create": "allow", "return.same_day": "allow" }) });
-    assert.deepEqual(names(v), ["فروش جدید", "رسیدگی به پیش‌نویس‌ها", "فاکتورها و چاپ رسید"]);
+    assert.deepEqual(names(v), ["فروش جدید", "مرجوعی"]);
     assert.equal(v.pending, 0); assert.equal(v.degraded, false);
   });
   test("بی هیچ مجوز: هیچ کاری، هیچ جای‌نگهداری", () => {
@@ -41,7 +41,7 @@ describe("کارهای پرتکرار داشبورد", () => {
   });
   test("پاسخ نرسیده «مجاز» نیست؛ پیام بررسی دوباره", () => {
     const v = quickActionView({ state: "degraded", verdicts: map({ "sale.create": "allow", "return.same_day": "deny", "return.late": "deny" }) });
-    assert.deepEqual(names(v), ["فروش جدید", "رسیدگی به پیش‌نویس‌ها", "فاکتورها و چاپ رسید"]);
+    assert.deepEqual(names(v), ["فروش جدید"]);
     assert.equal(v.pending, 0, "پس از خطا جای‌نگهدار دائمی نمی‌ماند");
     assert.equal(v.degraded, true);
   });

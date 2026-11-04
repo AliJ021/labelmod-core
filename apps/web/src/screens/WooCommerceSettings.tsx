@@ -4,7 +4,11 @@ import { Ltr } from "../components/ui/Bidi.tsx";
 import { Button, Field } from "../components/ui/Controls.tsx";
 import { ApiError } from "../lib/api.ts";
 import { normalizeDigits } from "../lib/settings-value.ts";
-import { woo, pluginPackage, type PluginPackage, type WooConfig, type WooResult } from "../lib/woocommerce.ts";
+import { StatusIcon } from "../components/ui/Status.tsx";
+import { woo, pluginPackage, setupSteps, type PluginPackage, type SetupState, type WooConfig, type WooResult } from "../lib/woocommerce.ts";
+
+const STEP_STATUS = { done: "completed", todo: "pending", unknown: "unknown" } as const satisfies Record<SetupState, "completed" | "pending" | "unknown">;
+const STEP_LABEL: Record<SetupState, string> = { done: "انجام‌شده", todo: "مانده", unknown: "نامعلوم" };
 
 export function WooCommerceSettings() {
   const [config, setConfig] = useState<WooConfig | null>(null);
@@ -47,6 +51,7 @@ export function WooCommerceSettings() {
     <p className="muted">سفارش پرداخت‌شده از سایت به لیبل مد می‌آید؛ موجودی مطلق و قیمت از لیبل مد به سایت می‌روند.</p>
     {error && <p role="alert" className="pos-alert">{error}</p>}
     {!config && !error && <p role="status">در حال خواندن تنظیمات…</p>}
+    {config && <WooSetup config={config} result={result} />}
     {config && <>
       <p>نشانی سایت: <Ltr>{config.siteUrl || "—"}</Ltr></p>
       <p>ارسال لحظه‌ای فعال: {yes(config.pushEnabled)}؛ کلید امضای API تنظیم شده: {yes(config.signingConfigured)}</p>
@@ -93,4 +98,26 @@ export function WooCommerceSettings() {
       <li>پس از تأیید دسترسی TEST، یک سفارش کنترل‌شده و تکرار همان درخواست باید فقط یک فاکتور و یک خروج موجودی بسازند؛ این پذیرش زنده هنوز انجام نشده است.</li>
     </ol>
   </Solid>;
+}
+
+/** راه‌اندازی هفت‌مرحله‌ای (طرح ۱۰): شمارش فقط «انجام‌شده»ها را می‌شمارد؛ نامعلوم هرگز پیشرفت حساب نمی‌شود. */
+function WooSetup({ config, result }: { config: WooConfig; result: WooResult | null }) {
+  const steps = setupSteps(config, result);
+  const done = steps.filter(s => s.state === "done").length;
+  return <section className="woo-setup" aria-labelledby="woo-setup-title">
+    <div className="woo-setup-head">
+      <h3 id="woo-setup-title">راه‌اندازی اتصال</h3>
+      <p className="woo-setup-count">{done.toLocaleString("fa-IR")} از {steps.length.toLocaleString("fa-IR")} مرحله انجام‌شده</p>
+      <span className="woo-meter" aria-hidden="true"><i style={{ "--progress": done / steps.length } as React.CSSProperties} /></span>
+    </div>
+    <ol className="woo-steps">
+      {steps.map(step => <li key={step.key} className="woo-step" data-state={step.state}>
+        <StatusIcon state={STEP_STATUS[step.state]} />
+        <div className="woo-step-text">
+          <strong>{step.title}</strong> <span className="woo-step-state">{STEP_LABEL[step.state]}</span>
+          <p>{step.detail}</p>
+        </div>
+      </li>)}
+    </ol>
+  </section>;
 }

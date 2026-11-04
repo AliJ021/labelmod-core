@@ -95,8 +95,7 @@ async function open(page: Page, s?: ReturnType<typeof pos>) {
   await page.addInitScript(([inv, sh]) => localStorage.setItem("labelmod_open_cart", JSON.stringify({ invoiceId: inv, shiftId: sh })), [INV, SHIFT]);
   await page.goto("/?page=pos&pos.branch=b1&pos.warehouse=w1");
   await expect(page.locator(".lines li").first()).toContainText("شلوار کتان");
-  const details=page.locator(".pos-customer-details");
-  if(await details.count() && await details.getAttribute("open")===null) await details.locator("summary").click();
+  await expect(page.locator(".pos-customer-panel")).toBeVisible();
 }
 const payPanel = (page: Page) => page.getByRole("complementary", { name: "پرداخت", exact: true });
 const selector = (page: Page) => page.getByRole("region", { name: "روش پرداخت" });
@@ -126,9 +125,9 @@ test("required customer policy blocks new payment until a customer is linked", a
   });
   await open(page);
   const mobile = page.getByLabel("موبایل مشتری (الزامی)", { exact: true });
-  await expect(page.locator(".pos-customer-details")).toHaveCount(0);
+  await expect(page.locator(".pos-customer-panel summary")).toHaveCount(0);
   await expect(mobile).toBeVisible();
-  const customerCard = page.locator(".pos-customer-required");
+  const customerCard = page.locator(".pos-customer-panel");
   const searchCard = page.locator(".pos-search-card");
   expect(await customerCard.evaluate(el => !!(el.compareDocumentPosition(document.querySelector('.pos-search-card')!) & Node.DOCUMENT_POSITION_FOLLOWING))).toBe(true);
   expect((await customerCard.boundingBox())!.y).toBeLessThan((await searchCard.boundingBox())!.y);
@@ -386,7 +385,7 @@ for (const kind of ["price", "discount"] as const) {
   });
 }
 
-for (const required of [false, true]) test(`customer entry (${required ? "required and always visible first" : "optional after search"}) requires a fresh phone's name before linking`, async ({page, api}) => {
+for (const required of [false, true]) test(`customer entry (${required ? "required" : "optional"}, always open before search) requires a fresh phone's name before linking`, async ({page, api}) => {
   const s=pos(api); s.invoice={...s.invoice,lines:[]};
   api.defaults["GET /pos/policy"] = { requireCustomer: required };
   let creates=0; const attached: unknown[]=[];
@@ -397,12 +396,12 @@ for (const required of [false, true]) test(`customer entry (${required ? "requir
     s.invoice={...s.invoice,customerId:"c1"};await route.fulfill({json:s.invoice});
   });
   await page.goto("/?page=pos&pos.branch=b1&pos.warehouse=w1");
-  if (!required) await page.locator(".pos-customer-details:not([open]) > summary").click();
-  else await expect(page.locator(".pos-customer-details")).toHaveCount(0);
+  await expect(page.locator(".pos-customer-panel summary")).toHaveCount(0);
   const mobile=page.getByLabel("موبایل مشتری",{exact:false});
   const picker=page.getByRole("region",{name:"افزودن کالا"}).getByRole("searchbox");
-  if (required) expect((await mobile.boundingBox())!.y).toBeLessThan((await picker.boundingBox())!.y);
-  else expect((await picker.boundingBox())!.y).toBeLessThan((await mobile.boundingBox())!.y);
+  await expect(mobile).toBeVisible();
+  if (required) await expect(mobile).toHaveAttribute("required", ""); else await expect(mobile).not.toHaveAttribute("required", "");
+  expect((await mobile.boundingBox())!.y).toBeLessThan((await picker.boundingBox())!.y);
   await mobile.fill("۰۹۱۲۱۲۳۴۵۶۷");await page.getByRole("button",{name:"افزودن مشتری",exact:true}).click();
   await expect(page.getByLabel("نام و نام خانوادگی مشتری")).toBeVisible();
   await expect(page.getByRole("button",{name:"ثبت نام و افزودن مشتری",exact:true})).toBeDisabled();
@@ -420,7 +419,7 @@ test("known customer attaches without asking for a replacement name",async({page
   api.handlers.set(`PATCH /invoices/${INV}/customer`,async route=>{s.invoice={...s.invoice,customerId:"c1"};await route.fulfill({json:s.invoice})});
   await open(page);await page.getByLabel("موبایل مشتری",{exact:false}).fill("09121234567");
   await page.getByRole("button",{name:"افزودن مشتری",exact:true}).click();
-  await expect(page.getByRole("region",{name:"مشتری"})).toContainText("مریم آزمون");
+  await expect(page.getByRole("region",{name:"مشتری",exact:true})).toContainText("مریم آزمون");
   await expect(page.getByLabel("نام و نام خانوادگی مشتری")).toHaveCount(0);
 });
 
@@ -429,7 +428,7 @@ test("unnamed existing customer offers correction only with customer.manage",asy
   api.handlers.set(`GET /invoices/${INV}/customer`,async route=>{await route.fulfill({json:{customer:{...customer,fullName:null}}})});
   api.handlers.set("GET /auth/can",async(route,url)=>{await route.fulfill({json:{verdict:url.searchParams.get("operation")==="customer.manage"?"deny":"allow",reason:"",approver:null}})});
   await open(page);
-  await expect(page.getByRole("region",{name:"مشتری"})).toContainText("مجوز مدیریت مشتری");
+  await expect(page.getByRole("region",{name:"مشتری",exact:true})).toContainText("مجوز مدیریت مشتری");
   await expect(page.getByRole("button",{name:"تکمیل نام مشتری",exact:true})).toHaveCount(0);
 });
 
@@ -440,7 +439,7 @@ test("manager can complete an existing unnamed customer through the audited cust
   await open(page);await page.getByRole("button",{name:"تکمیل نام مشتری",exact:true}).click();
   await page.getByLabel("نام و نام خانوادگی مشتری").fill("نام تکمیل‌شده");
   await page.getByRole("button",{name:"ذخیره نام مشتری",exact:true}).click();
-  await expect(page.getByRole("region",{name:"مشتری"})).toContainText("نام تکمیل‌شده");
+  await expect(page.getByRole("region",{name:"مشتری",exact:true})).toContainText("نام تکمیل‌شده");
   expect(writes).toEqual([{fullName:"نام تکمیل‌شده"}]);
 });
 
@@ -895,7 +894,7 @@ test("credit is a checkout outcome: attached customer shown, no credit in the se
     await route.fulfill({ json: { ...s.invoice, status: "finalized", number: "MAIN-78", paidAmount: s.settlement().paidAmount, replayed: false, settlement: s.settlement() } });
   });
   await open(page, s);
-  const who = page.getByRole("region", { name: "مشتری" });
+  const who = page.getByRole("region", { name: "مشتری", exact: true });
   await expect(who).toContainText("مریم آزمون");
   await expect(who).toContainText("09121234567");
   const sel = selector(page);
@@ -962,7 +961,7 @@ test("credit without a customer guides to attaching one; points and gift card st
   await expect(mobile).toBeFocused();
   await mobile.fill("۰۹۱۲۱۲۳۴۵۶۷");
   await page.getByRole("button", { name: "افزودن مشتری", exact: true }).click();
-  await expect(page.getByRole("region", { name: "مشتری" })).toContainText("مریم آزمون");
+  await expect(page.getByRole("region", { name: "مشتری", exact: true })).toContainText("مریم آزمون");
   for (const name of ["امتیاز باشگاه", "کارت هدیه"]) await expect(sel.getByRole("button", { name, exact: true })).toBeEnabled();
   await expect(unavailable(page)).not.toContainText("امتیاز باشگاه");
   await expect(page.getByRole("button", { name: "ثبت نسیه", exact: true })).toBeVisible();
@@ -974,7 +973,7 @@ test("credit is hidden without sale.credit; SnapPay is selectable only when the 
     await route.fulfill({ json: { verdict: url.searchParams.get("operation") === "sale.credit" ? "deny" : "allow", approver: null, reason: "" } });
   });
   await open(page);
-  await expect(page.getByRole("region", { name: "مشتری" })).toContainText("مریم آزمون");
+  await expect(page.getByRole("region", { name: "مشتری", exact: true })).toContainText("مریم آزمون");
   await expect(page.getByRole("button", { name: "ثبت نسیه", exact: true })).toHaveCount(0);
   await expect(page.getByRole("button", { name: "وصل کردن مشتری برای نسیه", exact: true })).toHaveCount(0);
   expect(api.calls).toContain("GET /payment-methods?branchId=b1");

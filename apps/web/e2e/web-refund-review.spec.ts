@@ -18,6 +18,8 @@ for (const decision of ["approved", "rejected"] as const) {
     });
     await page.goto("/");
     await openZone(page, "مرجوعی");
+    // طرح ۱۰: صف بررسی مرجوعی سایت زبانهٔ خودش را دارد.
+    await page.locator("main").getByRole("tab", { name: "درخواست‌های سایت", exact: true }).click();
     const panel = page.getByRole("region", { name: "بررسی مرجوعی سایت" });
     await panel.getByRole("button", { name: "دریافت درخواست‌های منتظر تأیید" }).click();
     await panel.getByRole("button", { name: "بررسی فاکتور F-1 · مرجوعی سایت 101" }).click();

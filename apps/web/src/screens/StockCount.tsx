@@ -22,7 +22,10 @@
  * می‌شد، هر بازبینی عدد را دو برابر می‌کرد.
  */
 import { useEffect, useState } from "react";
-import { Glass, Solid } from "../components/Glass.tsx";
+import { Solid } from "../components/Glass.tsx";
+import { SectionHeader } from "../components/ui/PageHeader.tsx";
+import { Note } from "../components/ui/Note.tsx";
+import { StatusBadge } from "../components/ui/Status.tsx";
 import { ApiError } from "../lib/api.ts";
 import { ActionKeys, actionFor } from "../lib/action-key.ts";
 import { parseRial, toman } from "../lib/money.ts";
@@ -165,14 +168,12 @@ export function StockCount() {
 
   return (
     <div className="stack" style={{ gap: "var(--s-4)" }}>
-      <Glass as="section" className="pad" live>
-        <h2 style={{ marginTop: 0 }}>انبارگردانی</h2>
-        <p className="muted" style={{ marginTop: 0 }}>
-          قفسه را بشمارید و عدد را وارد کنید. موجودی سیستم عمداً نشان داده نمی‌شود —
-          انبارگردانی برای پیدا کردن جایی است که سیستم اشتباه می‌گوید.
-        </p>
+      <Note tone="warn">موجودی سیستم پیش از ثبت نشان داده نمی‌شود — اگر انباردار جواب را ببیند، نمی‌شمارد، تأیید می‌کند. موجودی سیستم در لحظهٔ ثبت خوانده می‌شود؛ کالای شمرده‌نشده صفر نمی‌شود.</Note>
+      <Solid as="section" className="list-card" aria-labelledby="count-title">
+        <SectionHeader id="count-title" title="انبارگردانی"
+          description="قفسه را بشمارید و عدد را وارد کنید؛ انبارگردانی برای پیدا کردن جایی است که سیستم اشتباه می‌گوید." />
 
-        <div className="stack" style={{ gap: "var(--s-3)" }}>
+        <div className="stack list-card-body list-card-form" style={{ gap: "var(--s-3)" }}>
           {branches.length > 1 ? (
             <label className="auth-field">
               <span>شعبه</span>
@@ -213,7 +214,7 @@ export function StockCount() {
             {busy ? "…" : "برگه شمارش تازه"}
           </button>
         </div>
-      </Glass>
+      </Solid>
 
       {error ? (
         <p className="solid pos-alert" role="alert">
@@ -368,39 +369,36 @@ export function StockCount() {
         </Solid>
       ) : null}
 
-      <Solid as="section" className="pad">
-        <h3 style={{ marginTop: 0 }}>برگه‌های اخیر</h3>
+      <Solid as="section" className="list-card" aria-labelledby="count-recent">
+        <SectionHeader id="count-recent" title="برگه‌های اخیر" />
         {list.length === 0 ? (
           <p className="empty">هنوز انبارگردانی‌ای ثبت نشده.</p>
         ) : (
-          <ul className="lines">
+          <div className="scroll-x"><table className="grid">
+            <caption className="sr-only">برگه‌های انبارگردانی</caption>
+            <thead><tr><th>برگه</th><th>انبار</th><th>اقلام</th><th>نتیجه</th><th>وضعیت</th><th>عملیات</th></tr></thead>
+            <tbody>
             {list.map((c) => (
-              <li key={c.id}>
-                <div className="line-name">
-                  <strong>{c.number ?? "پیش‌نویس"}</strong>
-                  <span className="muted small">
-                    {c.warehouseName} · {shortDate(c.startedAt)} · {c.lineCount} قلم
-                  </span>
-                </div>
-                <span className="chip">{RECEIPT_STATUS[c.status] ?? c.status}</span>
-                <span className="num line-total">
-                  {c.status === "posted"
-                    ? c.diffCount === 0
-                      ? "بدون تفاوت"
-                      : `${c.diffCount} تفاوت`
-                    : ""}
-                </span>
-                <button
-                  type="button"
-                  className="btn btn--quiet"
-                  onClick={() => void open(c.id)}
-                  disabled={busy}
-                >
-                  باز کن
-                </button>
-              </li>
+              <tr key={c.id}>
+                <td><span className="num">{c.number ?? "پیش‌نویس"}</span><small>{shortDate(c.startedAt)}</small></td>
+                <td>{c.warehouseName}</td>
+                <td>{c.lineCount} قلم</td>
+                <td>{c.status === "posted" ? (c.diffCount === 0 ? "بدون تفاوت" : `${c.diffCount} تفاوت`) : "—"}</td>
+                <td><StatusBadge state={c.status === "posted" ? "completed" : c.status === "draft" ? "draft" : "cancelled"} label={RECEIPT_STATUS[c.status] ?? c.status} /></td>
+                <td>
+                  <button
+                    type="button"
+                    className="btn btn--quiet"
+                    onClick={() => void open(c.id)}
+                    disabled={busy}
+                  >
+                    باز کن
+                  </button>
+                </td>
+              </tr>
             ))}
-          </ul>
+            </tbody>
+          </table></div>
         )}
       </Solid>
     </div>

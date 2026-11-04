@@ -50,6 +50,8 @@ export interface KpiTab<K extends string> {
   /** اندازهٔ شاخص اصلی (فروش) — مستقل از انتخاب، تا جابه‌جایی زبانه چیدمان را نپراند. */
   primary?: boolean;
   unavailable?: boolean;
+  /** مسیر نمودار کوچک تجمعی (`sparkPath`)؛ تزئینی و پنهان از صفحه‌خوان — عدد خودش در مقدار است. */
+  spark?: string | null;
 }
 
 export function KpiTabs<K extends string>({ items, value, onChange, label, panelId, idPrefix }: {
@@ -82,8 +84,11 @@ export function KpiTabs<K extends string>({ items, value, onChange, label, panel
         onClick={() => { if (!item.unavailable) onChange(item.key); }}
         onKeyDown={onKeyDown}>
         <span className="kpi-head">
-          <span className="kpi-label" id={`${base}-l`}>{item.label}</span>
           {item.icon ? <span className="kpi-icon"><Icon name={item.icon} size="sm" /></span> : null}
+          <span className="kpi-label" id={`${base}-l`}>{item.label}</span>
+          {item.spark ? <svg className="kpi-spark" viewBox="0 0 120 32" preserveAspectRatio="none" aria-hidden="true" focusable="false">
+            <path d={item.spark} vectorEffect="non-scaling-stroke" />
+          </svg> : null}
         </span>
         <span className="kpi-value" id={`${base}-v`}>{item.value}</span>
         <span className="kpi-note" id={`${base}-n`}>{item.state ? <StatusIcon state={item.state} /> : null}<span>{item.note}</span></span>

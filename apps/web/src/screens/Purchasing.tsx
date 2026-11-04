@@ -31,7 +31,10 @@ import { AmountInput } from "../components/ui/AmountInput.tsx";
  * تأمین‌کننده است. توضیح کامل در `lib/purchasing.ts`.
  */
 import { useEffect, useRef, useState } from "react";
-import { Glass, Solid } from "../components/Glass.tsx";
+import { Solid } from "../components/Glass.tsx";
+import { Icon } from "../components/Icon.tsx";
+import { SectionHeader } from "../components/ui/PageHeader.tsx";
+import { StatusBadge } from "../components/ui/Status.tsx";
 import { ApiError } from "../lib/api.ts";
 import { ActionKeys, actionFor } from "../lib/action-key.ts";
 import { parseRial, rialFromTomanInput, toman } from "../lib/money.ts";
@@ -95,6 +98,8 @@ export function Purchasing() {
   const [expenseCode, setExpenseCode] = useState("");
 
   const [busy, setBusy] = useState(false);
+  /** طرح ۱۰: فرم رسید تازه زیر سرعنوان فهرست و با دکمهٔ «رسید تازه» باز می‌شود. */
+  const [formOpen, setFormOpen] = useState(false);
   /**
    * افزودن گروهی در راه. مشترک با والد: تا پاسخ نیامده، تعویض رسید، ثبت قطعی،
    * ابطال و ویرایش سطر/هزینه بسته‌اند — وگرنه پاسخ دیررس رسیدِ کهنه را برمی‌گرداند.
@@ -215,6 +220,7 @@ export function Purchasing() {
       );
       showReceipt(draft);
       setInvoiceNo("");
+      setFormOpen(false);
       await refreshList();
     });
 
@@ -313,14 +319,14 @@ export function Purchasing() {
 
   return (
     <div className="stack" style={{ gap: "var(--s-4)" }}>
-      {/* ── رسید تازه ─────────────────────────────────────────────── */}
-      <Glass as="section" className="pad" live>
-        <h2 style={{ marginTop: 0 }}>انبار و خرید</h2>
-        <p className="muted" style={{ marginTop: 0 }}>
-          رسید خرید تا لحظه ثبت هیچ اثری بر انبار و دفتر ندارد — و شماره هم نمی‌گیرد.
-        </p>
+      {/* ── رسیدهای خرید (طرح ۱۰: فهرست اول، رسید تازه با دکمهٔ سرعنوان) ── */}
+      <Solid as="section" className="list-card" aria-labelledby="receipts-title">
+        <SectionHeader id="receipts-title" title="رسیدهای خرید"
+          description="رسید تا لحظهٔ ثبت هیچ اثری بر انبار و دفتر ندارد و شماره هم نمی‌گیرد؛ پیش‌نویس رهاشده شماره نمی‌سوزاند."
+          actions={<button type="button" className="btn btn--primary" aria-expanded={formOpen} aria-controls="receipt-new-form" onClick={() => setFormOpen(v => !v)}>
+            <Icon name={formOpen ? "close" : "plus"} size="sm" />{formOpen ? "بستن فرم" : "رسید تازه"}</button>} />
+        {formOpen ? <div id="receipt-new-form" className="list-card-body stack list-card-form" role="group" aria-label="رسید تازه" style={{ gap: "var(--s-3)" }}>
 
-        <div className="stack" style={{ gap: "var(--s-3)" }}>
           {branches.length > 1 ? (
             <label className="auth-field">
               <span>شعبه</span>
@@ -389,8 +395,38 @@ export function Purchasing() {
           >
             {busy ? "…" : "رسید خرید تازه"}
           </button>
-        </div>
-      </Glass>
+        </div> : null}
+        {list.length === 0 ? (
+          <p className="empty">هنوز رسیدی ثبت نشده.</p>
+        ) : (
+          <div className="scroll-x"><table className="grid">
+            <caption className="sr-only">رسیدهای خرید؛ مبلغ‌ها به تومان</caption>
+            <thead><tr><th>رسید</th><th>تاریخ</th><th>تأمین‌کننده</th><th>اقلام</th><th className="num">کالا (تومان)</th><th>وضعیت</th><th>عملیات</th></tr></thead>
+            <tbody>
+            {list.map((r) => (
+              <tr key={r.id}>
+                <td><span className="num">{r.number ?? "پس از ثبت"}</span><small>{r.warehouseName}</small></td>
+                <td>{shortDate(r.occurredAt)}</td>
+                <td>{r.supplierName}{r.supplierInvoiceNo ? <small>فاکتور {r.supplierInvoiceNo}</small> : null}</td>
+                <td>{r.lineCount} قلم</td>
+                <td className="num">{toman(parseRial(r.goodsAmount))}</td>
+                <td><StatusBadge state={r.status === "posted" ? "completed" : r.status === "draft" ? "draft" : "cancelled"} label={RECEIPT_STATUS[r.status] ?? r.status} /></td>
+                <td>
+                  <button
+                    type="button"
+                    className="btn btn--quiet"
+                    onClick={() => void open(r.id)}
+                    disabled={busyAll}
+                  >
+                    باز کن
+                  </button>
+                </td>
+              </tr>
+            ))}
+            </tbody>
+          </table></div>
+        )}
+      </Solid>
 
       {error ? (
         <p className="solid pos-alert" role="alert">
@@ -725,37 +761,6 @@ export function Purchasing() {
         </Solid>
       ) : null}
 
-      {/* ── رسیدهای اخیر ─────────────────────────────────────────── */}
-      <Solid as="section" className="pad">
-        <h3 style={{ marginTop: 0 }}>رسیدهای اخیر</h3>
-        {list.length === 0 ? (
-          <p className="empty">هنوز رسیدی ثبت نشده.</p>
-        ) : (
-          <ul className="lines">
-            {list.map((r) => (
-              <li key={r.id}>
-                <div className="line-name">
-                  <strong>{r.number ?? "پیش‌نویس"}</strong>
-                  <span className="muted small">
-                    {r.supplierName} · {r.warehouseName} · {shortDate(r.occurredAt)} ·{" "}
-                    {r.lineCount} قلم
-                  </span>
-                </div>
-                <span className="chip">{RECEIPT_STATUS[r.status] ?? r.status}</span>
-                <span className="num line-total">{toman(parseRial(r.goodsAmount))}</span>
-                <button
-                  type="button"
-                  className="btn btn--quiet"
-                  onClick={() => void open(r.id)}
-                  disabled={busyAll}
-                >
-                  باز کن
-                </button>
-              </li>
-            ))}
-          </ul>
-        )}
-      </Solid>
     </div>
   );
 }

@@ -6,7 +6,7 @@
  * نمی‌زند: همهٔ داده‌ها **نمونهٔ ساختگی** و با همین برچسب‌اند، و «عمل
  * مالی ایمن» با شبیه‌ساز محلی اجرا می‌شود.
  */
-import { useEffect, useState, type ReactNode } from "react";
+import { useEffect, useRef, useState, type ReactNode } from "react";
 import "../../styles/ui-kit.css";
 import { Solid } from "../../components/Glass.tsx";
 import { Icon, ICON_NAMES } from "../../components/Icon.tsx";
@@ -254,6 +254,8 @@ function Data({ density }: { density: "comfortable" | "compact" }) {
 }
 
 function Layers() {
+  const dialogTrigger = useRef<HTMLButtonElement | null>(null);
+  const sheetTrigger = useRef<HTMLButtonElement | null>(null);
   const [dialog, setDialog] = useState(false);
   const [sheet, setSheet] = useState(false);
   const [outcome, setOutcome] = useState<"success" | "failed" | "unknown">("success");
@@ -262,16 +264,16 @@ function Layers() {
   return <div className="kit-stack">
     <Section id="dialogs" title="Dialog، Sheet و Toast" description="Dialog بومی با برگشت فوکوس؛ Sheet روی موبایل از پایین و روی دسکتاپ از کنار. Toast فقط بازخورد گذرا.">
       <div className="kit-row">
-        <Button onClick={() => setDialog(true)}>باز کردن Dialog</Button>
-        <Button onClick={() => setSheet(true)}>باز کردن Sheet</Button>
+        <Button onClick={e => { dialogTrigger.current = e.currentTarget; setDialog(true); }}>باز کردن Dialog</Button>
+        <Button onClick={e => { sheetTrigger.current = e.currentTarget; setSheet(true); }}>باز کردن Sheet</Button>
         <Button onClick={() => toast("تنظیم ذخیره شد.")}>Toast موفق</Button>
         <Button onClick={() => toast("در صف ارسال به سایت است.", "pending")}>Toast در انتظار</Button>
       </div>
-      <Dialog open={dialog} onClose={() => setDialog(false)} title="تغییر شعبهٔ پیش‌فرض" description="این تغییر فقط روی همین دستگاه اثر دارد."
+      <Dialog open={dialog} onClose={() => setDialog(false)} returnFocus={() => dialogTrigger.current} title="تغییر شعبهٔ پیش‌فرض" description="این تغییر فقط روی همین دستگاه اثر دارد."
         footer={<><Button variant="primary" onClick={() => setDialog(false)}>ذخیره</Button><Button variant="quiet" onClick={() => setDialog(false)}>انصراف</Button></>}>
         <Field label="شعبه"><select defaultValue="b1"><option value="b1">شعبه آزمایشی</option></select></Field>
       </Dialog>
-      <Dialog open={sheet} onClose={() => setSheet(false)} variant="sheet" title="فیلترهای فاکتور">
+      <Dialog open={sheet} onClose={() => setSheet(false)} returnFocus={() => sheetTrigger.current} variant="sheet" title="فیلترهای فاکتور">
         <Field label="وضعیت"><select defaultValue="all"><option value="all">همه</option><option value="draft">پیش‌نویس</option></select></Field>
         <Field label="از تاریخ"><input defaultValue="۱ شهریور ۱۴۰۵" /></Field>
       </Dialog>

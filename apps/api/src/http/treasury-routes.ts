@@ -27,6 +27,7 @@
  * هنوز نه دریافت شده نه صادر، هیچ اثر مالی ندارد.
  */
 import type { FastifyInstance } from "fastify";
+import { sql } from "kysely";
 import { z } from "zod";
 import { AuthError } from "../auth/service.ts";
 import { requireForSession } from "../auth/permission.ts";
@@ -214,6 +215,46 @@ export function registerTreasuryRoutes(
         ...(branchIds === undefined ? {} : { branchIds }),
       }),
     };
+  });
+
+  /**
+   * ماندهٔ دفتری حساب‌های خزانه (طرح ۱۰، ردیف بالای «خزانه و چک»).
+   *
+   * - تعریف «ثبت‌شده» همان تراز آزمایشی است (`ledger.report_trial_balance`):
+   *   فقط سند `confirmed` و `final`. فروش امروز تا بستن دوره در این عدد نیست و
+   *   صفحه همین را می‌نویسد؛ عدد دفتر است، نه شمارش کشو.
+   * - مانده به‌ازای **سرفصل دفتر** است، نه حساب خزانه: چند کشو یا پایانه می‌توانند
+   *   یک سرفصل داشته باشند و مانده‌شان در دفتر از هم جدا نیست. نامشان کنار هم می‌آید.
+   * - دامنهٔ شعبه روی سند است: کاربر شعبه‌ای فقط اسناد شعبه‌های خودش را می‌بیند،
+   *   حتی برای حساب سراسری.
+   * - عدد دفتر است، پس `report.view` هم لازم است، نه فقط `treasury.manage`.
+   */
+  app.get("/treasury/balances", async (req) => {
+    const s = session(req);
+    await requireForSession(db, s, "treasury.manage");
+    await requireForSession(db, s, "report.view");
+    const branchIds = await scopeOf(s.userId);
+    const all = branchIds === undefined;
+    const scope = branchIds ?? [];
+    const rows = await sql<{ code: string; accountName: string; kinds: string[]; treasuryAccounts: string; balance: string; lastEntry: string | null }>`
+      WITH acc AS (
+        SELECT ledger_account_code AS code, array_agg(DISTINCT kind ORDER BY kind) AS kinds,
+               string_agg(name, '، ' ORDER BY code) AS names
+          FROM treasury.account
+         WHERE is_active AND (${all} OR branch_id IS NULL OR branch_id = ANY(${scope}::uuid[]))
+         GROUP BY 1
+      )
+      SELECT acc.code, la.name AS "accountName", acc.kinds, acc.names AS "treasuryAccounts",
+             coalesce(b.balance, 0)::text AS balance, b.last_entry::text AS "lastEntry"
+        FROM acc JOIN ledger.account la ON la.code = acc.code
+        LEFT JOIN LATERAL (
+          SELECT sum(l.debit - l.credit) AS balance, max(e.entry_date) AS last_entry
+            FROM ledger.journal_line l JOIN ledger.journal_entry e ON e.id = l.entry_id
+           WHERE l.account_code = acc.code AND e.status IN ('confirmed', 'final')
+             AND (${all} OR e.branch_id = ANY(${scope}::uuid[]))
+        ) b ON true
+       ORDER BY acc.code`.execute(db);
+    return { balances: rows.rows };
   });
 
   // ── حرکت نقد ───────────────────────────────────────────────────────

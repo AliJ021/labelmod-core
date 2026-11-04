@@ -1,7 +1,13 @@
 import { AmountInput } from "../components/ui/AmountInput.tsx";
 import { routeUrl } from "../lib/navigation.ts";
-import { useUrlTab } from "../lib/use-url-state.ts";
+import { useUrlState, useUrlTab } from "../lib/use-url-state.ts";
+
+const PURPOSES = ["supplier_payment", "customer_receipt", "expense", "capital", "transfer"] as const;
 import { TabList, TabPanels, useTabsId } from "../components/Tabs.tsx";
+import { Icon } from "../components/Icon.tsx";
+import { Note } from "../components/ui/Note.tsx";
+import { SectionHeader } from "../components/ui/PageHeader.tsx";
+import { StatusBadge, type StatusState } from "../components/ui/Status.tsx";
 /**
  * خزانه و چک.
  *
@@ -28,6 +34,8 @@ import { TabList, TabPanels, useTabsId } from "../components/Tabs.tsx";
  */
 import { useCallback, useEffect, useState } from "react";
 import { Solid } from "../components/Glass.tsx";
+import { TreasuryBalances } from "../components/TreasuryBalances.tsx";
+import { TreasuryDesk } from "../components/TreasuryDesk.tsx";
 import { ApiError } from "../lib/api.ts";
 import { ActionKeys, actionFor } from "../lib/action-key.ts";
 import { rialFromTomanInput, toman } from "../lib/money.ts";
@@ -49,11 +57,19 @@ import {
   type TreasuryTransaction,
 } from "../lib/treasury.ts";
 
+/** نگاشت وضعیت چک به زبان واحد وضعیت؛ برچسب کسب‌وکاری همان `CHEQUE_STATUS` است. */
+const CHEQUE_TONE: Record<string, StatusState> = {
+  draft: "draft", in_hand: "pending", deposited: "active", endorsed: "completed", issued: "pending",
+  cleared: "completed", bounced: "attention", settled: "warning", cancelled: "cancelled",
+};
+
 const TABS = [
   { key: "cash", label: "حرکت پول" },
   { key: "cheques", label: "چک‌ها" },
   { key: "due", label: "سررسیدها" },
 ] as const;
+/** آیکون تزئینی زبانه‌ها (طرح ۱۰). */
+const TAB_ITEMS = TABS.map(t => ({ ...t, icon: <Icon name={t.key === "cash" ? "wallet" : t.key === "cheques" ? "doc" : "calendar"} size="sm" /> }));
 
 
 function message(err: unknown): string {
@@ -97,7 +113,7 @@ export function Treasury() {
 
   return (
     <div className="stack" style={{ gap: "var(--s-4)" }}>
-      <TabList hrefFor={key => routeUrl("treasury", key)} id={tabsId} items={TABS} value={tab} onChange={setTab} label="بخش‌های خزانه" />
+      <TabList hrefFor={key => routeUrl("treasury", key)} id={tabsId} items={TAB_ITEMS} value={tab} onChange={setTab} label="بخش‌های خزانه" />
       <TabPanels id={tabsId} items={TABS} value={tab} className="stack section-stack">
 
       {tab === "cash" ? <CashMoves /> : tab === "cheques" ? <Cheques /> : <DueList />}
@@ -117,7 +133,11 @@ function CashMoves() {
   const [error, setError] = useState<string | null>(null);
   const [note, setNote] = useState<string | null>(null);
 
-  const [purpose, setPurpose] = useState<Purpose>("expense");
+  // نوع حرکت در نشانی هم می‌نشیند تا «دریافت از مشتری» داشبورد مستقیم همین فرم را با همین نوع باز کند.
+  // مقدار ناشناختهٔ نشانی «هزینه» خوانده می‌شود، نه یک نوع ساختگی.
+  const [purposeParam, setPurposeParam] = useUrlState("treasury.purpose", "expense", true);
+  const purpose: Purpose = (PURPOSES as readonly string[]).includes(purposeParam) ? purposeParam as Purpose : "expense";
+  const setPurpose = (next: Purpose) => setPurposeParam(next);
   const [raw, setRaw] = useState("");
   const [from, setFrom] = useState("");
   const [to, setTo] = useState("");
@@ -127,6 +147,9 @@ function CashMoves() {
   const [memo, setMemo] = useState("");
   const [busy, setBusy] = useState(false);
   const [keys] = useState(() => new ActionKeys());
+  // طرح ۱۰: فهرست اول است و فرم با «حرکت پول تازه» باز می‌شود؛ پیوندی که نوع را در نشانی دارد
+  // (کار پرتکرار «دریافت از مشتری») فرم را باز می‌آورد.
+  const [formOpen, setFormOpen] = useState(() => new URLSearchParams(window.location.search).has("treasury.purpose"));
 
   const load = useCallback(async () => {
     try {
@@ -220,21 +243,21 @@ function CashMoves() {
           <span className="dot dot--crit" aria-hidden="true">●</span> {error}
         </p>
       ) : null}
+      <TreasuryBalances />
+      <TreasuryDesk accounts={accounts} />
       {note !== null ? (
         <p className="solid pos-alert" role="status">
           <span className="dot dot--good" aria-hidden="true">●</span> {note}
         </p>
       ) : null}
 
-      <Solid as="section" className="pad stack">
-        <h3 style={{ fontSize: ".95rem", margin: 0 }}>ثبت حرکت پول</h3>
-        <p className="muted small" style={{ margin: 0 }}>
-          هر حرکتی که از کشوی صندوق رد شود، به شیفت باز همان شعبه می‌چسبد —
-          وگرنه شمارش پایان شیفت مغایرت کاذب می‌دهد. شیفت را سرور پیدا
-          می‌کند، نه این صفحه.
-        </p>
+      <Solid as="section" className="list-card" aria-labelledby="treasury-moves">
+        <SectionHeader id="treasury-moves" title="آخرین حرکت‌های پول"
+          description="هر حرکتی که از کشوی صندوق رد شود به شیفت باز همان شعبه می‌چسبد؛ وگرنه شمارش پایان شیفت مغایرت کاذب می‌دهد. شیفت را سرور پیدا می‌کند، نه این صفحه."
+          actions={<button type="button" className="btn btn--primary" aria-expanded={formOpen} aria-controls="treasury-move-form" onClick={() => setFormOpen(v => !v)}>
+            <Icon name={formOpen ? "close" : "plus"} size="sm" />{formOpen ? "بستن فرم" : "حرکت پول تازه"}</button>} />
 
-        <form onSubmit={submit} className="stack">
+        {formOpen ? <form id="treasury-move-form" onSubmit={submit} className="stack list-card-form" aria-label="ثبت حرکت پول">
           <label>
             <span>نوع</span>
             <select
@@ -371,19 +394,14 @@ function CashMoves() {
           <button type="submit" className="btn btn--primary" disabled={!ready || busy}>
             {busy ? "در حال ثبت…" : "ثبت و ارسال به دفتر"}
           </button>
-        </form>
-      </Solid>
+        </form> : null}
 
-      <Solid as="section" className="pad">
-        <h3 style={{ fontSize: ".95rem", marginTop: 0 }}>آخرین حرکت‌ها</h3>
         {rows === null ? (
-          <p className="muted" style={{ margin: 0 }}>
-            در حال بارگذاری…
-          </p>
+          <p className="muted">در حال بارگذاری…</p>
         ) : rows.length === 0 ? (
           <p className="empty">هنوز حرکتی ثبت نشده.</p>
         ) : (
-          <div style={{ overflowX: "auto" }}>
+          <div className="scroll-x">
             <table className="grid">
               <thead>
                 <tr>
@@ -391,7 +409,7 @@ function CashMoves() {
                   <th>نوع</th>
                   <th>از / به</th>
                   <th>طرف</th>
-                  <th>مبلغ (تومان)</th>
+                  <th className="num">مبلغ (تومان)</th>
                   <th>شرح</th>
                 </tr>
               </thead>
@@ -428,6 +446,9 @@ function Cheques() {
   const [busy, setBusy] = useState<string | null>(null);
   const [acting, setActing] = useState<{ id: string; action: ChequeAction } | null>(null);
   const [account, setAccount] = useState("");
+  // فیلتر جهت فقط نمایش است؛ همان فهرستی که سرور داده، نه درخواست تازه.
+  const [direction, setDirection] = useState<"all" | "received" | "issued">("all");
+  const shown = (rows ?? []).filter(c => direction === "all" || (direction === "received" ? c.direction === "received" : c.direction !== "received"));
 
   const load = useCallback(async () => {
     try {
@@ -479,40 +500,34 @@ function Cheques() {
         </p>
       ) : null}
 
-      <Solid as="section" className="pad">
-        <h3 style={{ fontSize: ".95rem", marginTop: 0 }}>چک‌ها</h3>
-        <p className="muted small" style={{ marginTop: 0 }}>
-          چک تا وصول نشود پول نیست: دریافتش فقط بدهی مشتری را به «اسناد
-          دریافتنی» منتقل می‌کند. پول واقعی هنگام وصول و به حساب بانکی
-          می‌آید، نه به کشو.
-        </p>
+      <Note>چک تا وصول نشود پول نیست: دریافتش فقط بدهی مشتری را به «اسناد دریافتنی» منتقل می‌کند. پول واقعی هنگام وصول و به حساب بانکی می‌آید، نه به کشو. وضعیت فقط با ثبت رویداد عوض می‌شود.</Note>
+      <div className="filter-chips" role="group" aria-label="جهت چک">
+        {(["all", "received", "issued"] as const).map(d => <button key={d} type="button" aria-pressed={direction === d} onClick={() => setDirection(d)}>
+          {d === "all" ? "همه" : d === "received" ? "دریافتی" : "پرداختی"}</button>)}
+      </div>
 
+      <Solid as="section" className="list-card" aria-labelledby="treasury-cheques">
+        <SectionHeader id="treasury-cheques" title="چک‌ها" description="سررسید و وضعیت از سرور می‌آیند؛ هر دکمه فقط یک رویداد می‌فرستد." />
         {rows === null ? (
-          <p className="muted" style={{ margin: 0 }}>
-            در حال بارگذاری…
-          </p>
-        ) : rows.length === 0 ? (
-          <p className="empty">هنوز چکی ثبت نشده.</p>
+          <p className="muted">در حال بارگذاری…</p>
+        ) : shown.length === 0 ? (
+          <p className="empty">{rows.length === 0 ? "هنوز چکی ثبت نشده." : "چکی با این جهت نیست."}</p>
         ) : (
-          <ul className="lines">
-            {rows.map((c) => {
+          <div className="scroll-x"><table className="grid cheque-table">
+            <caption className="sr-only">چک‌ها؛ مبلغ‌ها به تومان</caption>
+            <thead><tr><th>شمارهٔ چک</th><th>جهت</th><th>طرف</th><th>سررسید</th><th className="num">مبلغ (تومان)</th><th>وضعیت</th><th>عملیات</th></tr></thead>
+            <tbody>
+            {shown.map((c) => {
               const actions = actionsFor(c);
               return (
-                <li key={c.id}>
-                  <div className="line-name">
-                    <strong>
-                      {c.direction === "received" ? "دریافتی" : "پرداختی"} ·{" "}
-                      <span className="num">{c.chequeNo}</span> · {c.bankName}
-                    </strong>
-                    <span className="muted small">
-                      {c.partyName ?? "—"} · سررسید {when(c.dueOn)} ·{" "}
-                      {CHEQUE_STATUS[c.status] ?? c.status}
-                      {c.depositAccountName !== null ? ` · ${c.depositAccountName}` : ""}
-                    </span>
-                  </div>
-
-                  <span className="num line-total">{toman(BigInt(c.amount))}</span>
-
+                <tr key={c.id}>
+                  <td><span className="num">{c.chequeNo}</span><small>{c.bankName}</small></td>
+                  <td>{c.direction === "received" ? "دریافتی" : "پرداختی"}</td>
+                  <td>{c.partyName ?? "—"}{c.depositAccountName !== null ? <small>{c.depositAccountName}</small> : null}</td>
+                  <td>{when(c.dueOn)}</td>
+                  <td className="num">{toman(BigInt(c.amount))}</td>
+                  <td><StatusBadge state={CHEQUE_TONE[c.status] ?? "unknown"} label={CHEQUE_STATUS[c.status] ?? c.status} /></td>
+                  <td>
                   {acting !== null && acting.id === c.id ? (
                     <form
                       className="row"
@@ -580,10 +595,12 @@ function Cheques() {
                       )}
                     </div>
                   )}
-                </li>
+                  </td>
+                </tr>
               );
             })}
-          </ul>
+            </tbody>
+          </table></div>
         )}
       </Solid>
     </div>
@@ -615,25 +632,21 @@ function DueList() {
   }, []);
 
   return (
-    <Solid as="section" className="pad">
-      <h3 style={{ fontSize: ".95rem", marginTop: 0 }}>سررسیدها</h3>
-      <p className="muted small" style={{ marginTop: 0 }}>
-        ⚠️ هشدار یعنی «برو بانک»، نه اینکه کاری انجام شده باشد. هیچ چیزی
-        خودکار چک را وصول نمی‌کند؛ پس از وصول، از زبانه «چک‌ها» ثبتش کنید.
-      </p>
+    <div className="stack" style={{ gap: "var(--s-4)" }}>
+    <Note tone="warn">هشدار یعنی «برو بانک»، نه اینکه کاری انجام شده باشد. هیچ چیزی خودکار چک را وصول نمی‌کند؛ پس از وصول، از زبانه «چک‌ها» ثبتش کنید.</Note>
+    <Solid as="section" className="list-card" aria-labelledby="treasury-due">
+      <SectionHeader id="treasury-due" title="سررسیدها" description="«امروز» و «گذشته» را سرور با تاریخ کاری فروشگاه تعیین می‌کند." />
 
       {error !== null ? (
         <p className="pos-alert" role="alert">
           <span className="dot dot--crit" aria-hidden="true">●</span> {error}
         </p>
       ) : rows === null ? (
-        <p className="muted" style={{ margin: 0 }}>
-          در حال بارگذاری…
-        </p>
+        <p className="muted">در حال بارگذاری…</p>
       ) : rows.length === 0 ? (
         <p className="empty">چکی در راه نیست.</p>
       ) : (
-        <div style={{ overflowX: "auto" }}>
+        <div className="scroll-x">
           <table className="grid">
             <thead>
               <tr>
@@ -642,7 +655,7 @@ function DueList() {
                 <th>چک</th>
                 <th>بانک</th>
                 <th>طرف</th>
-                <th>مبلغ (تومان)</th>
+                <th className="num">مبلغ (تومان)</th>
               </tr>
             </thead>
             <tbody>
@@ -663,5 +676,6 @@ function DueList() {
         </div>
       )}
     </Solid>
+    </div>
   );
 }

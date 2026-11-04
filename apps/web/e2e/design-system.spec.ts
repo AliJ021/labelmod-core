@@ -23,7 +23,7 @@ const compact = (page: Page) => page.viewportSize()!.width < 900;
 
 test("app shell renders one taxonomy: grouped sidebar or bottom bar plus grouped sheet", async ({ page }) => {
   await page.goto("/");
-  await expect(page.getByRole("heading", { name: "امروز", exact: true })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "نمای کلی امروز", exact: true })).toBeVisible();
   const nav = page.getByRole("navigation", { name: "ناوبری اصلی" });
   const list = nav.getByRole("tablist", { name: "بخش‌ها", exact: true });
   // مقصد مجوزدار فقط پس از پاسخ «allow» ساخته می‌شود؛ مدیر آزمایشی همه را دارد.
@@ -123,7 +123,7 @@ test("phone header is one compact row; search is a trigger that expands in place
   // سربرگ فشرده فقط زیر ۵۶۰ پیکسل است؛ پروژهٔ پهن‌تر همین را در نمایشگر گوشی می‌سنجد.
   if (page.viewportSize()!.width >= 560) await page.setViewportSize({ width: 375, height: 812 });
   await page.goto("/");
-  await expect(page.getByRole("heading", { name: "امروز", exact: true })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "نمای کلی امروز", exact: true })).toBeVisible();
   const header = page.locator(".workspace-header");
   expect((await header.boundingBox())!.height, "shell chrome stays one touch-row tall").toBeLessThanOrEqual(64);
   const search = page.getByRole("searchbox", { name: "پیداکردن بخش یا ابزار" });
@@ -241,7 +241,7 @@ test("navigation hides server-denied destinations but keeps the open section and
 
 test("slash and Ctrl+K focus global search, never while typing", async ({ page }) => {
   await page.goto("/");
-  await expect(page.getByRole("heading", { name: "امروز", exact: true })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "نمای کلی امروز", exact: true })).toBeVisible();
   const search = page.getByRole("searchbox", { name: "پیداکردن بخش یا ابزار" });
   await page.locator("main#workspace-content").focus();
   await page.keyboard.press("/");
@@ -268,7 +268,7 @@ test("dashboard reference: Jalali date, human channel labels, three labelled KPI
     18: { salesAmount: "6500000", receivedAmount: "6500000", profitAmount: "2600000", invoiceCount: 5, paymentCount: 5 },
   });
   await page.goto("/");
-  await expect(page.getByRole("heading", { name: "امروز", exact: true, level: 1 })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "نمای کلی امروز", exact: true, level: 1 })).toBeVisible();
   await expect(page.getByText("۲۵ شهریور ۱۴۰۵", { exact: false }).first()).toBeVisible();
   for (const label of ["فروش", "وجه دریافتی", "سود"]) await expect(page.getByRole("tab", { name: label, exact: true })).toBeVisible();
   await expect(page.getByRole("tab", { name: "فروش", exact: true })).toContainText("1٬234٬000");
@@ -369,6 +369,12 @@ test("UI kit shows every primitive section in both themes without overflow and h
   await expect(page.getByRole("dialog", { name: "تغییر شعبهٔ پیش‌فرض" })).toBeVisible();
   await page.keyboard.press("Escape");
   await expect(opener, "dialog returns focus to its opener").toBeFocused();
+  const sheetOpener = page.getByRole("button", { name: "باز کردن Sheet", exact: true });
+  await sheetOpener.click();
+  const sampleSheet = page.getByRole("dialog", { name: "فیلترهای فاکتور" });
+  await expect(sampleSheet).toBeVisible();
+  await sampleSheet.getByRole("button", { name: "بستن", exact: true }).click();
+  await expect(sheetOpener, "sheet returns focus to its opener").toBeFocused();
   await page.emulateMedia({ reducedMotion: "reduce" });
   await sections.getByRole("tab", { name: "حرکت و جلوه", exact: true }).click();
   await expect(page.locator(".kit-motion.m-rise").first()).toHaveCSS("animation-name", "none");

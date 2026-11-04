@@ -131,7 +131,7 @@ export function routeUrl(zone: Zone, section?: string): string {
   return `/?${params}`;
 }
 
-function zoneOps(zone: Zone): readonly string[] {
+export function zoneOps(zone: Zone): readonly string[] {
   return ZONES.find(z => z.key === zone)?.anyOf ?? [];
 }
 export interface Feature {label: string; words: string; href: string; anyOf: readonly string[]}
@@ -167,10 +167,48 @@ export const FEATURES: readonly Feature[] = [
 export interface QuickAction { key: string; href: string; name: string; icon: IconName; anyOf: readonly string[] }
 export const QUICK_ACTIONS: readonly QuickAction[] = [
   { key: "new-sale", href: routeUrl("pos"), name: "فروش جدید", icon: "register", anyOf: zoneOps("pos") },
-  { key: "drafts", href: "/?page=invoices&invoices.status=draft", name: "رسیدگی به پیش‌نویس‌ها", icon: "receipt", anyOf: zoneOps("invoices") },
-  { key: "labels", href: "/?page=catalog&catalog.labels=1", name: "چاپ لیبل بارکد", icon: "print", anyOf: FEATURES.find(f => f.href === "/?page=catalog&catalog.labels=1")?.anyOf ?? zoneOps("catalog") },
-  { key: "invoices", href: routeUrl("invoices"), name: "فاکتورها و چاپ رسید", icon: "receipt", anyOf: zoneOps("invoices") },
+  { key: "customer-receipt", href: "/?page=treasury&treasury.purpose=customer_receipt", name: "دریافت از مشتری", icon: "card", anyOf: zoneOps("treasury") },
+  { key: "cash-move", href: "/?page=treasury&treasury.purpose=expense", name: "حرکت نقد صندوق", icon: "vault", anyOf: zoneOps("treasury") },
+  { key: "receipt", href: routeUrl("purchasing", "receipts"), name: "رسید خرید", icon: "box", anyOf: FEATURES.find(f => f.href === routeUrl("purchasing", "receipts"))?.anyOf ?? zoneOps("purchasing") },
+  { key: "return", href: routeUrl("returns"), name: "مرجوعی", icon: "return", anyOf: zoneOps("returns") },
+  { key: "day-report", href: routeUrl("reports"), name: "گزارش روز", icon: "chart", anyOf: zoneOps("reports") },
 ];
+
+/**
+ * سرصفحهٔ ناحیه‌هایی که صفحه‌شان h1 ندارد (طرح ۱۰): ابروی گروه ناوبری، عنوان همان
+ * نام ناحیه، و یک جملهٔ زمینه. ناحیه‌هایی که خودشان `PageHeader` دارند (داشبورد،
+ * فاکتورها، گزارش‌ها، سفارش‌های سایت، پرسنل، تنظیمات) اینجا نیستند تا دو h1 نسازند.
+ */
+const ZONE_CONTEXT: Partial<Record<string, string>> = {
+  returns: "مرجوعی و تعویض با بهای همان فروش؛ بازپرداخت از کشوی شعبه.",
+  catalog: "کالا، تنوع، قیمت و چاپ لیبل بارکد.",
+  purchasing: "رسید خرید، برگشت از خرید، انتقال بین انبار و انبارگردانی.",
+  treasury: "حرکت نقد، چک‌ها و سررسیدها؛ مانده‌ها از سند ثبت‌شده.",
+  customers: "مشتریان، مانده و اعتبار، و رضایت پیامک.",
+  personnel: "دفتر عملیاتی پرسنل؛ ثبت است، نه پرداخت.",
+  settings: "تنظیمات شخصی، دسترسی‌ها، اتصال‌ها و دفتر حساب.",
+};
+export function zoneHeader(key: string): { eyebrow: string; title: string; context: string } | null {
+  const context = ZONE_CONTEXT[key];
+  const zone = NAV_ITEMS.find(z => z.key === key);
+  return context && zone ? { eyebrow: zone.group, title: zone.label, context } : null;
+}
+
+/**
+ * زبانه‌های داشبورد (طرح ۱۰) — مقصد ناوبری‌اند، پس همین‌جا. «نمای کلی» همیشه هست؛
+ * بقیه فقط با allow صریح همان مجوزی که بخش خودش می‌خواست. انتخاب **شاخص** درون
+ * «نمای کلی» (فروش، دریافتی، سود) محلی می‌ماند و در نشانی نیست.
+ */
+export const DASHBOARD_TABS = [
+  { key: "overview", label: "نمای کلی", icon: "dashboard", anyOf: [] },
+  { key: "sales", label: "فروش و پرداخت", icon: "chart", anyOf: ["report.view"] },
+  { key: "ops", label: "عملیات روزانه", icon: "clock", anyOf: ["report.view"] },
+  { key: "sync", label: "همگام‌سازی سایت", icon: "link", anyOf: ["settings.view"] },
+] as const;
+export type DashboardTab = (typeof DASHBOARD_TABS)[number]["key"];
+export function dashboardTabs(verdicts: NavAccess["verdicts"]): (typeof DASHBOARD_TABS)[number][] {
+  return DASHBOARD_TABS.filter(t => t.anyOf.length === 0 || accessOf(t.anyOf, verdicts) === "allow");
+}
 
 export interface QuickActionView {
   /** فقط کارهای صریحاً مجاز. */

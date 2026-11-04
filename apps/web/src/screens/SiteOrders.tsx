@@ -15,6 +15,7 @@
  *   سطر، هزینه، کوپن، استرداد، یادداشت) — نه متای خام، نه IP. اقلام و یادداشت‌ها صفحه‌بندی‌اند.
  * - هر خواندن قبلی لغو می‌شود و پاسخ دیررس بی‌اثر است (همان الگوی نسل داشبورد).
  */
+import { Note } from "../components/ui/Note.tsx";
 import { useCallback, useEffect, useRef, useState, type FormEvent, type ReactNode } from "react";
 import { ApiError } from "../lib/api.ts";
 import { formatCount, formatJalaliMoment } from "../lib/format.ts";
@@ -146,11 +147,12 @@ export function SiteOrders() {
   }
 
   return <div className="stack">
-    <PageHeader title="سفارش‌های سایت"
-      context="مستقیم از سایت و فقط خواندنی؛ ویرایش، لغو و استرداد از پیشخوان ووکامرس انجام می‌شود."
+    <PageHeader eyebrow="کار روزانه" title="سفارش‌های سایت"
+      context="ووکامرس · فقط خواندنی"
       meta={list.state === "done" ? <span className="nowrap">خوانده‌شده {formatJalaliMoment(list.data.fetchedAt)}</span> : undefined}
       actions={<Button onClick={() => { if (until === null) reload(); else setParams({ until: "" }); }}
         disabled={list.state === "loading"}>به‌روزرسانی</Button>} />
+    <Note>سفارش‌ها مستقیم از سایت خوانده می‌شوند و این صفحه فقط خواندنی است؛ ویرایش، لغو و استرداد از پیشخوان ووکامرس انجام می‌شود. جست‌وجو در بدنهٔ درخواست فرستاده می‌شود، نه در نشانی صفحه.</Note>
     <FilterBar label="فیلتر سفارش‌ها" onReset={filtered ? reset : undefined}>
       <form className="site-orders-search" role="search" aria-label="جست‌وجوی سفارش" onSubmit={submitSearch}>
         <Field label="جست‌وجو" hint="شماره سفارش، نام، تلفن یا ایمیل مشتری؛ در نشانی صفحه نگه داشته نمی‌شود.">
@@ -231,7 +233,7 @@ function OrdersList({ load, page, selected, anchored, onPage, onSelect, onRetry 
     { key: "total", header: "مبلغ", numeric: true, cell: r => <Amount m={r.total} currency={r.currency} /> },
   ];
   const data = load.state === "done" && load.data.state === "ready" ? load.data : null;
-  return <Solid as="section" className="pad" aria-labelledby="site-orders-list">
+  return <Solid as="section" className="list-card site-orders-list" aria-labelledby="site-orders-list">
     <SectionHeader id="site-orders-list" title="فهرست سفارش‌ها"
       description={data
         ? `${formatCount(data.total)} سفارش؛ تازه‌ترین اول، تا ${formatJalaliMoment(new Date(data.until * 1000).toISOString())}`

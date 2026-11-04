@@ -3,11 +3,18 @@ import { PERSONNEL_SECTIONS, personnelView, personnelWriteAccess, type Personnel
 import { useUrlState } from "../lib/use-url-state.ts";
 import { SettingsNavigation, TabPanels, useTabsId, type TabItem } from "../components/Tabs.tsx";
 import { useMediaQuery } from "../lib/use-media-query.ts";
+import { Icon, type IconName } from "../components/Icon.tsx";
+import { Note } from "../components/ui/Note.tsx";
+import { NestedPageHeaders } from "../components/ui/PageHeader.tsx";
+
 import { SettingsBlocked } from "./Settings.tsx";
 import { MyWithdrawals } from "./MyWithdrawals.tsx";
 import { WithdrawalLog } from "./WithdrawalLog.tsx";
 import { MyBonuses } from "./MyBonuses.tsx";
 import { BonusLog } from "./BonusLog.tsx";
+
+/** آیکون تزئینی زبانه‌ها (طرح ۱۰). */
+const PERSONNEL_ICONS: Record<PersonnelKey, IconName> = { withdrawals: "wallet", bonuses: "gift", "withdrawal-log": "doc", "bonus-log": "doc" };
 
 /**
  * برداشت و پاداش — ناحیهٔ منوی اصلی (خواستهٔ مالک: بیرون از تنظیمات).
@@ -26,14 +33,16 @@ export function Personnel({ access, currentUserId }: { access: NavAccess; curren
   const view = personnelView(requested === "" ? null : requested, access);
   const tab = view.selected;
   const navItems = PERSONNEL_SECTIONS.flatMap((s): TabItem<PersonnelKey>[] => view.visible.includes(s)
-    ? [{ key: s.key, label: s.label, group: s.group }]
+    ? [{ key: s.key, label: s.label, group: s.group, icon: <Icon name={PERSONNEL_ICONS[s.key]} size="sm" /> }]
     : view.pending.includes(s) ? [{ key: s.key, label: "", pending: true }] : []);
   const panels = view.visible.map(s => ({ key: s.key, label: s.label }));
 
   return (
-    <div className="settings-layout">
-      <SettingsNavigation hrefFor={key => routeUrl("personnel", key)} id={tabsId} items={navItems} value={tab} onChange={setTab} mobile={mobile} label="برداشت و پاداش" />
+    <div className="stack personnel-layout">
+      <Note tone="warn">این دفتر خودکار هیچ اثری بر دفتر کل، صندوق، انبار یا حقوق ندارد. پرداخت واقعی هر مورد با سند یا حرکت نقد جداگانه ثبت می‌شود.</Note>
+      <SettingsNavigation hrefFor={key => routeUrl("personnel", key)} id={tabsId} items={navItems} value={tab} onChange={setTab} mobile={mobile} label="برداشت و پاداش" horizontal />
       {view.blocked ? <SettingsBlocked reason={view.blocked} onRetry={access.retry} title="برداشت و پاداش" /> : null}
+      <NestedPageHeaders>
       <TabPanels id={tabsId} items={panels} value={tab} className="settings-content" mobileLabel={mobile}>
       {tab === "withdrawals" ? (
         <MyWithdrawals key={currentUserId} currentUserId={currentUserId} />
@@ -45,6 +54,7 @@ export function Personnel({ access, currentUserId }: { access: NavAccess; curren
         <BonusLog key={currentUserId} currentUserId={currentUserId} write={personnelWriteAccess("bonus-log", access.verdicts)} writeState={access.state} />
       ) : null}
       </TabPanels>
+      </NestedPageHeaders>
     </div>
   );
 }

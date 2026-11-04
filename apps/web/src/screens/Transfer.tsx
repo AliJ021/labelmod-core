@@ -19,6 +19,8 @@
  * برگه رهاشده شماره‌ای نمی‌سوزاند. صفحه هم همین را می‌نویسد.
  */
 import { useCallback, useEffect, useState } from "react";
+import { SectionHeader } from "../components/ui/PageHeader.tsx";
+import { StatusBadge } from "../components/ui/Status.tsx";
 import { Solid } from "../components/Glass.tsx";
 import { ApiError } from "../lib/api.ts";
 import { ActionKeys } from "../lib/action-key.ts";
@@ -183,9 +185,10 @@ export function Transfer() {
 
       {sheet === null ? (
         <>
-          <Solid className="pad stack" style={{ gap: "var(--s-3)" }}>
-            <h2 style={{ margin: 0, fontSize: "1rem" }}>برگه انتقال تازه</h2>
-            <div className="filters">
+          <Solid as="section" className="list-card" aria-labelledby="transfer-new">
+            <SectionHeader id="transfer-new" title="برگه انتقال تازه"
+              description="برگه تا لحظه ثبت هیچ کالایی را جابه‌جا نمی‌کند و شماره‌ای هم نمی‌گیرد؛ انتقال سند حسابداری ندارد و ارزش خروج و ورود دقیقاً برابر است." />
+            <div className="filters list-card-body">
               {branches.length > 1 ? (
                 <label className="auth-field">
                   <span>شعبه</span>
@@ -238,17 +241,14 @@ export function Transfer() {
                 ساخت برگه
               </button>
             </div>
-            <p className="muted small" style={{ margin: 0 }}>
-              برگه تا لحظه ثبت هیچ کالایی را جابه‌جا نمی‌کند و شماره‌ای هم نمی‌گیرد.
-            </p>
           </Solid>
 
-          <Solid className="pad">
-            <h2 style={{ marginTop: 0, fontSize: "1rem" }}>برگه‌های اخیر</h2>
+          <Solid as="section" className="list-card" aria-labelledby="transfer-recent">
+            <SectionHeader id="transfer-recent" title="برگه‌های اخیر" />
             {list.length === 0 ? (
-              <p className="muted" style={{ margin: 0 }}>هنوز برگه‌ای ثبت نشده است.</p>
+              <p className="empty">هنوز برگه‌ای ثبت نشده است.</p>
             ) : (
-              <div className="grid-wrap">
+              <div className="scroll-x">
                 <table className="grid">
                   <thead>
                     <tr>
@@ -259,7 +259,7 @@ export function Transfer() {
                       <th scope="col">اقلام</th>
                       <th scope="col">تعداد</th>
                       <th scope="col">وضعیت</th>
-                      <th scope="col"> </th>
+                      <th scope="col">عملیات</th>
                     </tr>
                   </thead>
                   <tbody>
@@ -273,11 +273,11 @@ export function Transfer() {
                         <td>{t.toWarehouseName}</td>
                         <td className="num">{t.lineCount}</td>
                         <td className="num">{Number(t.totalQty)}</td>
-                        <td>{TRANSFER_STATUS[t.status] ?? t.status}</td>
+                        <td><StatusBadge state={t.status === "posted" ? "completed" : t.status === "draft" ? "draft" : "cancelled"} label={TRANSFER_STATUS[t.status] ?? t.status} /></td>
                         <td>
                           <button
                             type="button"
-                            className="link"
+                            className="btn btn--quiet"
                             onClick={() => void openSheet(t.id)}
                             disabled={busy}
                           >

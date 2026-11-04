@@ -265,8 +265,10 @@ export function PaymentSelector({ layout, remaining, received, phase, disabled, 
   const rows = selected.map((c) => options.find((o) => o.code === c)).filter((o): o is PaymentOption => o !== undefined);
 
   return <section className="pay-select" aria-label="روش پرداخت">
-    <h3 className="pay-step" id={`${headId}-h`}>روش پرداخت</h3>
-    <p className="pay-step-note muted small">یک یا چند روش را بزنید؛ برای پرداخت ترکیبی هر روش مبلغ خودش را دارد.</p>
+    <div className="pay-step-row">
+      <h3 className="pay-step" id={`${headId}-h`}>روش دریافت</h3>
+      <p className="pay-step-note muted small">چند روش = پرداخت ترکیبی</p>
+    </div>
     <div className="pay-tiles" role="group" aria-labelledby={`${headId}-h`}>
       {tiles.map((t) => <MethodTile key={t.key} tile={t} pressed={t.option !== null && pressedOf(t.option.code)} locked={blocked}
         onPick={() => { if (t.option) toggle(t.option); }} />)}

@@ -1,16 +1,23 @@
-import { useEffect, useId, useRef, useState } from "react";
+import { useEffect, useId, useRef, useState, useSyncExternalStore, type ReactNode } from "react";
 import type { Me } from "../lib/session.ts";
 import type { Theme } from "../lib/theme.ts";
+import { lastServerResponse, onServerResponse } from "../lib/api.ts";
+import { formatClock } from "../lib/dashboard-freshness.ts";
 import { Icon } from "./Icon.tsx";
 
-export function HeaderTools({ me, theme, onTheme, onLock, onLogout, onPassword, onReauth }: {
+/**
+ * حساب کاربر: دکمهٔ بازکنندهٔ برگهٔ «ارتقای نشست PIN / تغییر رمز من».
+ *
+ * طرح ۱۰: در دسکتاپ پای نوار کناری (نام و نوع نشست کنار نشان)، در گوشی نماد در نوار بالا.
+ * نام دسترس‌پذیر در هر دو یکی است («حساب …») تا هر دو یک کنترل باشند، نه دو کنترل متفاوت.
+ */
+export function AccountMenu({ me, onPassword, onReauth, variant, children }: {
   me: Me;
-  theme: Theme;
-  onTheme: () => void;
-  onLock: () => void;
-  onLogout: () => void;
   onPassword: () => void;
   onReauth: () => void;
+  variant: "icon" | "footer";
+  /** محتوای دیداری دکمه در پای منو (نشان و نام). */
+  children?: ReactNode;
 }) {
   const [open, setOpen] = useState(false);
   const area = useRef<HTMLDivElement>(null);
@@ -24,22 +31,50 @@ export function HeaderTools({ me, theme, onTheme, onLock, onLogout, onPassword, 
     document.addEventListener("keydown", escape);
     return () => { document.removeEventListener("pointerdown", outside); document.removeEventListener("keydown", escape); };
   }, [open]);
+  return <div className={`account-area account-area--${variant}`} ref={area} onBlur={(e) => { if (!e.currentTarget.contains(e.relatedTarget)) setOpen(false); }}>
+    <button ref={trigger} type="button" className={variant === "icon" ? "icon-button" : "account-trigger"} aria-label={`حساب ${me.fullName}`} title={`حساب ${me.fullName}`}
+      aria-expanded={open} aria-controls={id} onClick={() => setOpen((v) => !v)}>
+      {variant === "icon" ? <><Icon name="user" />{!me.elevated ? <span className="account-pin" aria-label="نشست PIN" /> : null}</> : children}
+    </button>
+    {open ? <div id={id} className="account-panel">
+      <strong>{me.fullName}</strong>
+      <span className="muted small">حساب کاربری شما</span>
+      {!me.elevated ? <button type="button" className="btn btn--quiet" onClick={() => { setOpen(false); onReauth(); }}><Icon name="lock" />ارتقای نشست PIN</button> : null}
+      <button type="button" className="btn btn--quiet" onClick={() => { trigger.current?.focus(); setOpen(false); onPassword(); }}><Icon name="key" />تغییر رمز من</button>
+    </div> : null}
+  </div>;
+}
+
+/**
+ * «به‌روزشده ساعت …» (طرح ۱۰) — زمان آخرین پاسخ **موفق** سرور به همین صفحه، نه ساعت دستگاه.
+ * تا پاسخی نرسیده چیزی ادعا نمی‌شود؛ قطع اتصال نقطه را از سبز به هشدار می‌برد.
+ */
+export function ServerFreshness({ online }: { online: boolean }) {
+  const at = useSyncExternalStore(onServerResponse, lastServerResponse, () => null);
+  if (at === null) return null;
+  return <span className="server-fresh" data-state={online ? "ok" : "offline"} title="زمان آخرین پاسخ موفق سرور">
+    <i className="server-fresh-dot" aria-hidden="true" />
+    <span className="server-fresh-text">{online ? "به‌روزشده ساعت" : "قطع اتصال؛ آخرین پاسخ"} <span className="nowrap">{formatClock(at)}</span></span>
+  </span>;
+}
+
+export function HeaderTools({ me, theme, onTheme, onLock, onLogout, onPassword, onReauth, compact }: {
+  me: Me;
+  theme: Theme;
+  onTheme: () => void;
+  onLock: () => void;
+  onLogout: () => void;
+  onPassword: () => void;
+  onReauth: () => void;
+  /** گوشی: حساب و خروج در نوار بالا می‌مانند؛ دسکتاپ آن‌ها را در پای نوار کناری دارد. */
+  compact: boolean;
+}) {
   const themeLabel = theme === "system" ? "تم: سیستم؛ تغییر به روشن" : theme === "light" ? "تم: روشن؛ تغییر به تیره" : "تم: تیره؛ تغییر به سیستم";
   return (
     <div className="tools" aria-label="ابزارهای حساب">
-      <div className="account-area" ref={area} onBlur={(e) => { if (!e.currentTarget.contains(e.relatedTarget)) setOpen(false); }}>
-        <button ref={trigger} type="button" className="icon-button" aria-label={`حساب ${me.fullName}`} title={`حساب ${me.fullName}`} aria-expanded={open} aria-controls={id} onClick={() => setOpen((v) => !v)}>
-          <Icon name="user" />{!me.elevated ? <span className="account-pin" aria-label="نشست PIN" /> : null}
-        </button>
-        {open ? <div id={id} className="account-panel">
-          <strong>{me.fullName}</strong>
-          <span className="muted small">حساب کاربری شما</span>
-          {!me.elevated ? <button type="button" className="btn btn--quiet" onClick={() => { setOpen(false); onReauth(); }}><Icon name="lock" />ارتقای نشست PIN</button> : null}
-          <button type="button" className="btn btn--quiet" onClick={() => { trigger.current?.focus(); setOpen(false); onPassword(); }}><Icon name="key" />تغییر رمز من</button>
-        </div> : null}
-      </div>
+      {compact ? <AccountMenu me={me} onPassword={onPassword} onReauth={onReauth} variant="icon" /> : null}
       <button type="button" className="icon-button" aria-label="قفل صفحه" title="قفل صفحه" onClick={onLock}><Icon name="lock" /></button>
-      <button type="button" className="icon-button" aria-label="خروج" title="خروج" onClick={onLogout}><Icon name="logout" /></button>
+      {compact ? <button type="button" className="icon-button" aria-label="خروج" title="خروج" onClick={onLogout}><Icon name="logout" /></button> : null}
       <button type="button" className="icon-button" aria-label={themeLabel} title={themeLabel} onClick={onTheme}><Icon name={theme === "system" ? "monitor" : theme === "light" ? "sun" : "moon"} /></button>
     </div>
   );

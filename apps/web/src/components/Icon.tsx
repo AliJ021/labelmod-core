@@ -16,7 +16,8 @@ export type IconName =
   | "dashboard" | "register" | "receipt" | "return" | "tag" | "box" | "vault" | "people"
   | "chart" | "settings" | "more" | "bell" | "check" | "alert" | "info" | "clock"
   | "refresh" | "plus" | "filter" | "sort" | "download" | "print" | "offline" | "shield"
-  | "menu" | "database" | "chevron" | "external" | "card" | "link" | "sparkle";
+  | "menu" | "database" | "chevron" | "external" | "card" | "link" | "sparkle" | "layers" | "store" | "eye"
+  | "doc" | "swap" | "barcode" | "archive" | "calendar" | "gift" | "wallet";
 
 const paths: Record<IconName, ReactNode> = {
   menu: <path d="M4 6h16M4 12h16M4 18h16" />,
@@ -57,8 +58,18 @@ const paths: Record<IconName, ReactNode> = {
   chevron: <path d="m15 6-6 6 6 6" />,
   external: <><path d="M14 4h6v6M20 4l-9 9" /><path d="M18 14v4.5a1.5 1.5 0 0 1-1.5 1.5h-11A1.5 1.5 0 0 1 4 18.5v-11A1.5 1.5 0 0 1 5.5 6H10" /></>,
   card: <><rect x="2.5" y="5" width="19" height="14" rx="2.5" /><path d="M2.5 10h19M6.5 15h4" /></>,
+  eye: <><path d="M2.5 12S6 5.5 12 5.5 21.5 12 21.5 12 18 18.5 12 18.5 2.5 12 2.5 12Z" /><circle cx="12" cy="12" r="3" /></>,
+  layers: <><path d="m12 3.5 8.5 4.5-8.5 4.5L3.5 8 12 3.5Z" /><path d="m3.5 12.5 8.5 4.5 8.5-4.5M3.5 16.5l8.5 4.5 8.5-4.5" /></>,
+  store: <><path d="M3.5 4h17l-1 5a2.6 2.6 0 0 1-5 .3 2.6 2.6 0 0 1-5 0 2.6 2.6 0 0 1-5-.3L3.5 4Z" /><path d="M5 10.5V20h14v-9.5M9.5 20v-5h5v5" /></>,
   link: <><path d="M10 14a4 4 0 0 0 5.7 0l3-3a4 4 0 0 0-5.7-5.7l-1 1" /><path d="M14 10a4 4 0 0 0-5.7 0l-3 3a4 4 0 0 0 5.7 5.7l1-1" /></>,
   sparkle: <path d="M12 3.5 13.8 10l6.7 2-6.7 2L12 20.5 10.2 14l-6.7-2 6.7-2L12 3.5Z" />,
+  doc: <><path d="M6.5 3h7.5l4.5 4.5V19a2 2 0 0 1-2 2h-10a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2Z" /><path d="M13.5 3v5h5M8.5 13h7M8.5 17h4.5" /></>,
+  swap: <path d="M4 8h14m0 0-3.5-3.5M18 8l-3.5 3.5M20 16H6m0 0 3.5-3.5M6 16l3.5 3.5" />,
+  barcode: <path d="M4 5v14M7.5 5v14M10 5v14M13.5 5v14M16 5v14M20 5v14" />,
+  archive: <><rect x="3" y="4" width="18" height="5" rx="1.5" /><path d="M5 9v9a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V9M10 13h4" /></>,
+  calendar: <><rect x="3.5" y="5" width="17" height="15.5" rx="2.5" /><path d="M3.5 10h17M8 3v4m8-4v4" /></>,
+  gift: <><rect x="3.5" y="8" width="17" height="4.5" rx="1" /><path d="M5 12.5V20h14v-7.5M12 8v12M12 8c-1.5-3.5-5.5-4-5.5-1.5S10 8 12 8Zm0 0c1.5-3.5 5.5-4 5.5-1.5S14 8 12 8Z" /></>,
+  wallet: <><path d="M4 7.5A2.5 2.5 0 0 1 6.5 5H18v3" /><rect x="3.5" y="7.5" width="17" height="12" rx="2.5" /><path d="M16 13.5h1.5" /></>,
 };
 
 /** فهرست نام‌ها برای UI Kit و تست خانواده. */
