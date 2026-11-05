@@ -3,7 +3,7 @@
  *
  * رفتار واقعی مرورگر: مرز بازه از «امروز» سرور (نه ساعت مرورگر)، ماه جلالی، یک
  * درخواست برای هر دانه‌بندی، «هنوز نیامده» ≠ صفر، بی‌دسترسی ≠ خطا ≠ خالی، RTL
- * (قدیمی‌تر سمت راست) و بی اسکرول افقی در عرض‌های موبایل.
+ * (مثل طرح ۱۰: قدیمی‌تر سمت چپ، جدیدترین سمت راست) و بی اسکرول افقی در عرض‌های موبایل.
  */
 import { test, expect, fontsReady, DEFAULT_HOURLY, type MockApi } from "./fixtures";
 import type { Page } from "@playwright/test";
@@ -97,7 +97,7 @@ test.describe("روند داشبورد", () => {
     expect(trendCalls(api)).toHaveLength(2);
   });
 
-  test("RTL: the earliest point sits on the right; no page overflow at phone and tablet widths", async ({ page, api }) => {
+  test("V10 time axis: the earliest point sits on the left, the latest on the right; no page overflow at phone and tablet widths", async ({ page, api }) => {
     serveTrend(api, i => ({ salesAmount: String(1_000_000 + i * 10_000), invoiceCount: 1 }));
     for (const width of [320, 375, 768, 1440]) {
       await page.setViewportSize({ width, height: 900 });
@@ -109,7 +109,7 @@ test.describe("روند داشبورد", () => {
         await fontsReady(page);
         const labels = chart.locator(".line-chart-x span");
         const first = (await labels.first().boundingBox())!, last = (await labels.last().boundingBox())!;
-        expect(first.x, `${width}/${g}: first label right of last`).toBeGreaterThan(last.x);
+        expect(first.x, `${width}/${g}: first (earliest) label left of last`).toBeLessThan(last.x);
         const plot = (await chart.locator(".line-chart-plot").boundingBox())!;
         for (const b of [first, last]) {
           expect(b.x, `${width}/${g}: label inside plot`).toBeGreaterThanOrEqual(plot.x - 1);
@@ -189,7 +189,7 @@ test.describe("بررسی نمودار و مقایسه", () => {
     await expect(chart.locator(".line-chart-line")).toHaveCount(1);
   });
 
-  test("keyboard and touch inspection: one Tab stop, RTL arrows/Home/End move the readout; tap picks the nearest point; table can be shown", async ({ page }) => {
+  test("keyboard and touch inspection: one Tab stop, axis-direction arrows/Home/End move the readout; tap picks the nearest point; table can be shown", async ({ page }) => {
     await page.goto("/");
     const chart = panel(page).getByRole("figure", { name: "فروش هر ساعت (تومان)" });
     const plot = chart.getByRole("group");
@@ -199,16 +199,20 @@ test.describe("بررسی نمودار و مقایسه", () => {
     await expect(plot).toBeFocused();
     await page.keyboard.press("Home");
     await expect(readout).toContainText("ساعت ۸");
-    await page.keyboard.press("ArrowLeft"); // RTL: چپ = بعدی
+    await page.keyboard.press("ArrowRight"); // محور طرح ۱۰: راست = جدیدتر
     await expect(readout).toContainText("ساعت ۹");
-    await page.keyboard.press("ArrowRight");
+    await page.keyboard.press("ArrowLeft"); // چپ = قدیمی‌تر
+    await expect(readout).toContainText("ساعت ۸");
+    await page.keyboard.press("ArrowLeft"); // در قدیمی‌ترین می‌ماند
     await expect(readout).toContainText("ساعت ۸");
     await page.keyboard.press("End");
     await expect(readout).toContainText("ساعت ۲۲");
     await expect(readout).toHaveAttribute("aria-live", "polite");
-    // لمس/کلیک: نقطهٔ نزدیک — لبهٔ راست (RTL) قدیمی‌ترین ساعت است.
+    // لمس/کلیک: نقطهٔ نزدیک — لبهٔ چپ قدیمی‌ترین و لبهٔ راست جدیدترین ساعت است.
     const box = (await plot.boundingBox())!;
     await page.mouse.click(box.x + box.width - 2, box.y + box.height / 2);
+    await expect(readout).toContainText("ساعت ۲۲");
+    await page.mouse.click(box.x + 2, box.y + box.height / 2);
     await expect(readout).toContainText("ساعت ۸");
     await expect(readout).toContainText("فروش");
     await expect(readout).toContainText("تومان");

@@ -405,13 +405,13 @@ function Trend({ row }: { row: CompareRow }) {
  * فروش به تفکیک ساعتِ کاری. ساعت از سرور می‌آید، نه از ساعت مرورگر.
  *
  * نمودار: جمع هر ساعت (همهٔ روزها و کانال‌های مجاز) از همان کوئری PostgreSQL؛
- * ساعت‌های زودتر سمت راست (قرارداد نمودار زمانی RTL). جدول زیرش همهٔ
+ * ساعت‌های زودتر سمت چپ، مثل طرح ۱۰ (قرارداد محور زمان). جدول زیرش همهٔ
  * سطرهای سرور را بی‌کم‌وکاست دارد.
  */
 function HourlyReport({ period }: { period: Period }) {
   const query = useReport<HourlyRow>([period.from, period.to, period.branchId],
     async signal => (await reports.hourly(period, { signal })).rows);
-  return <ReportSection title="فروش به تفکیک ساعت" query={query} description={`${TOMAN} ساعت‌های زودتر سمت راست نمودار.`}
+  return <ReportSection title="فروش به تفکیک ساعت" query={query} description={`${TOMAN} ساعت‌های زودتر سمت چپ نمودار.`}
     csv={periodCsvUrl("/reports/hourly", period)} empty="در این بازه فروشی ثبت نشده است.">
     {rows => {
       const totals = new Map<number, bigint>();

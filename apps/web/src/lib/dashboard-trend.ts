@@ -87,7 +87,7 @@ export function trendCopy(metric: Metric, grain: Grain): Copy {
   return {
     title: `روند ${label} ${day ? "روزانه" : "ماهانه"}`,
     description: day
-      ? `${span} تا امروز، به روز کاری تهران؛ هر نقطه همان خلاصهٔ آن روز است. ${METRIC_NOTE[metric]} روزهای زودتر سمت راست.`
+      ? `${span} تا امروز، به روز کاری تهران؛ هر نقطه همان خلاصهٔ آن روز است. ${METRIC_NOTE[metric]} روزهای زودتر سمت چپ و امروز سمت راست.`
       : `${span}؛ هر نقطه جمع خلاصهٔ روزهای همان ماه است که در دیتابیس حساب شده و ماه جاری تا امروز است. ${METRIC_NOTE[metric]}`,
     chart: `${label} هر ${day ? "روز" : "ماه"} (تومان)`,
     value: label,

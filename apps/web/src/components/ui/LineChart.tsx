@@ -10,8 +10,10 @@ import { smoothArea, smoothPath, type Pt } from "../../lib/smooth-path.ts";
  * - مقدار پولی `bigint` می‌ماند؛ فقط **موقعیت عمودی** عدد اعشاری است و هیچ
  *   مبلغی از آن ساخته نمی‌شود. مقدار دقیق هر نقطه در «بازخوانی» زیر نمودار، در
  *   جدول (پنهان برای صفحه‌خوان یا آشکار با «نمایش جدول») می‌آید.
- * - **RTL:** نقطهٔ اول (قدیمی‌تر) سمت راست است؛ SVG جهت ندارد، پس x وارونه
- *   حساب می‌شود و برچسب‌های HTML با `inset-inline-start` همان جا می‌نشینند.
+ * - **محور زمان مثل طرح ۱۰ (تصمیم مالک، ۲۰۲۶/۱۱/۰۶):** قدیمی‌ترین نقطه چپ و جدیدترین
+ *   (امروز، ساعت جاری) راست — هم‌جهت با ساعت و تقویم، هرچند متن و پوسته RTL می‌مانند.
+ *   SVG جهت ندارد، پس x از چپ حساب می‌شود؛ برچسب‌های HTML در پوستهٔ RTL با
+ *   `inset-inline-start` (= راست) به فاصلهٔ «۱ − کسر از چپ» می‌نشینند، بی خاصیت فیزیکی.
  * - مقیاس مشترک از `niceScale` (گام گرد، همیشه با صفر)؛ خط صفر وقتی منفی هست
  *   دیده می‌شود. منفی نه صفر می‌شود و نه قدرمطلق. واحد محور «تومان» صریح است.
  * - `null` یعنی «هنوز نیامده»: خط آنجا قطع می‌شود، نه اینکه به صفر برود. میان دو
@@ -19,7 +21,8 @@ import { smoothArea, smoothPath, type Pt } from "../../lib/smooth-path.ts";
  *   نقطه — بی «بیش‌جهش» ساختگی زیر صفر یا بالای بیشینه.
  *   نقطهٔ `partial` (دورهٔ جاری) توخالی است.
  * - رنگ تنها حامل معنا نیست: هر خط الگوی خط خودش را هم دارد و در راهنما با برچسب آمده.
- * - **بررسی نقطه‌ها:** یک توقف Tab؛ پیکان‌ها (RTL: چپ = بعدی)، Home/End، و لمس/کشیدن
+ * - **بررسی نقطه‌ها:** یک توقف Tab؛ پیکان راست = جدیدتر و چپ = قدیمی‌تر (همان جهت محور)،
+ *   Home قدیمی‌ترین و End جدیدترین، و لمس/کشیدن
  *   یا هاور نقطه را انتخاب می‌کنند و بازخوانی دیدنی و `aria-live` مقدار همهٔ خطوط را می‌گوید.
  * - نقطه یک مسیر صفرطول با سر گرد است و `vector-effect` دارد، پس با کشیدگیِ
  *   `preserveAspectRatio="none"` بیضی نمی‌شود.
@@ -40,11 +43,11 @@ export function LineChart({ title, summary, note, xHeader, points, series, unit 
   const min = scale.min;
   const max = scale.max === scale.min ? scale.min + 1n : scale.max; // همه صفر: خط روی صفرِ پایین.
   const span = max - min;
-  /** کسر افقی از «شروع» (راست در RTL). */
+  /** کسر افقی از **چپ**: نقطهٔ ۰ (قدیمی‌ترین) چپ، آخرین (جدیدترین) راست. */
   const fx = (i: number) => (n === 1 ? 0.5 : (MX + (i / (n - 1)) * (W - 2 * MX)) / W);
   /** کسر عمودی از بالا؛ فقط موقعیت، نه مبلغ. */
   const fy = (v: bigint) => (MY + (Number(((max - v) * 10000n) / span) / 10000) * (H - 2 * MY)) / H;
-  const X = (i: number) => (W * (1 - fx(i))).toFixed(1);
+  const X = (i: number) => (W * fx(i)).toFixed(1);
   const Y = (v: bigint) => (H * fy(v)).toFixed(1);
   const ticksBefore = (i: number) => points.slice(0, i).filter(p => p.tick).length;
   /** آخرین نقطه‌ای که دست‌کم یک خط مقدار دارد — پیش‌فرض بازخوانی (نه ساعتی که هنوز نیامده). */
@@ -58,21 +61,21 @@ export function LineChart({ title, summary, note, xHeader, points, series, unit 
   const at = points[active];
 
   function onKey(e: KeyboardEvent<HTMLDivElement>) {
-    const rtl = getComputedStyle(e.currentTarget).direction === "rtl";
+    // پیکان‌ها جهت **محور** را دنبال می‌کنند، نه جهت متن: محور در هر دو جهت چپ‌به‌راست است.
     let next: number | null = null;
     if (e.key === "Home") next = 0;
     else if (e.key === "End") next = n - 1;
-    else if (e.key === (rtl ? "ArrowLeft" : "ArrowRight")) next = Math.min(n - 1, active + 1);
-    else if (e.key === (rtl ? "ArrowRight" : "ArrowLeft")) next = Math.max(0, active - 1);
+    else if (e.key === "ArrowRight") next = Math.min(n - 1, active + 1);
+    else if (e.key === "ArrowLeft") next = Math.max(0, active - 1);
     if (next !== null) { e.preventDefault(); setChosen(next); }
   }
   function onPointer(e: PointerEvent<HTMLDivElement>) {
     if (e.type === "pointermove" && e.pointerType !== "mouse" && e.buttons === 0) return;
     const r = e.currentTarget.getBoundingClientRect();
     if (r.width <= 0 || n === 0) return;
-    // x از چپ؛ نقطهٔ i در (1 − fx(i)) از چپ است (RTL).
-    const fromStart = 1 - (e.clientX - r.left) / r.width;
-    const i = n === 1 ? 0 : Math.round(((fromStart * W - MX) / (W - 2 * MX)) * (n - 1));
+    // x از چپ؛ نقطهٔ i در fx(i) از چپ است.
+    const fromLeft = (e.clientX - r.left) / r.width;
+    const i = n === 1 ? 0 : Math.round(((fromLeft * W - MX) / (W - 2 * MX)) * (n - 1));
     setChosen(Math.max(0, Math.min(n - 1, i)));
   }
 
@@ -151,7 +154,7 @@ export function LineChart({ title, summary, note, xHeader, points, series, unit 
     <div className="line-chart-x" aria-hidden="true">
       {/* در عرض باریک، برچسب‌های یک‌درمیان (نه اولی و آخری) پنهان می‌شوند تا روی هم نیفتند. */}
       {points.map((p, i) => p.tick ? <span key={p.key} data-minor={(i > 0 && i < n - 1 && ticksBefore(i) % 2 === 1) || undefined}
-        style={{ "--x": fx(i) } as React.CSSProperties}>{p.label}</span> : null)}
+        style={{ "--x": 1 - fx(i) } as React.CSSProperties}>{p.label}</span> : null)}
     </div>
     <p id={`${id}-r`} className="line-chart-readout" aria-live="polite">{readout}</p>
     {note ? <p className="line-chart-note">{note}</p> : null}
@@ -174,8 +177,8 @@ export interface ValuePoint { key: string; label: string; value: bigint | null; 
 
 /**
  * نمودار تک‌خطی برای جایی که پیش‌تر ستونی بود (خواستهٔ مالک: همهٔ نمودارها خطی و نرم).
- * همان `LineChart` است با یک خط برجسته؛ برچسب محور با `tickEvery`. ترتیب و قرارداد RTL
- * همان نمودار خطی است: نقطهٔ اول (زودتر) سمت راست.
+ * همان `LineChart` است با یک خط برجسته؛ برچسب محور با `tickEvery`. محور زمان
+ * همان نمودار خطی است: نقطهٔ اول (زودتر) سمت چپ، آخرین سمت راست.
  */
 export function ValueLineChart({ title, summary, points, labelHeader, valueHeader, unit }: {
   title: string; summary: string; points: readonly ValuePoint[]; labelHeader: string; valueHeader: string; unit?: string;

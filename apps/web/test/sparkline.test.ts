@@ -1,4 +1,4 @@
-/** نمودار کوچک کارت شاخص: تجمعی، راست‌به‌چپ، و «نرسیده» صفر نیست. */
+/** نمودار کوچک کارت شاخص: تجمعی، محور زمان مثل طرح ۱۰ (زودتر چپ، جاری راست)، و «نرسیده» صفر نیست. */
 import { describe, test } from "node:test";
 import assert from "node:assert/strict";
 import { sparkPath, sparkPoints } from "../src/lib/sparkline.ts";
@@ -10,10 +10,10 @@ describe("نمودار کوچک شاخص", () => {
     assert.equal(sparkPath([5n, null, null], 100, 30), null);
   });
 
-  test("تجمعی سرور حفظ می‌شود و ساعت زودتر سمت راست می‌نشیند", () => {
+  test("تجمعی سرور حفظ می‌شود؛ ساعت زودتر سمت چپ و ساعت جاری سمت راست می‌نشیند", () => {
     const p = sparkPoints([10n, 20n, 30n], 100, 30)!;
     assert.equal(p.length, 3);
-    assert.deepEqual(p.map(q => q[0]), [100, 50, 0]);
+    assert.deepEqual(p.map(q => q[0]), [0, 50, 100]);
     // تجمعی رو به بالا: y کوچک‌تر یعنی بالاتر.
     assert.ok(p[0]![1] > p[1]![1] && p[1]![1] > p[2]![1]);
   });
@@ -21,7 +21,7 @@ describe("نمودار کوچک شاخص", () => {
   test("ساعت نرسیده پایان خط است، نه صفر", () => {
     const p = sparkPoints([10n, 20n, null, null], 90, 30)!;
     assert.equal(p.length, 2);
-    assert.equal(p[1]![0], 0, "آخرین نقطهٔ رسیده تا لبهٔ چپ کشیده می‌شود");
+    assert.deepEqual(p.map(q => q[0]), [0, 90], "قدیمی‌ترین روی لبهٔ چپ؛ آخرین نقطهٔ رسیده تا لبهٔ راست کشیده می‌شود");
   });
 
   test("منفی (مرجوعی) حفظ می‌شود و خط ثابت وسط می‌نشیند", () => {

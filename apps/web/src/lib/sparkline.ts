@@ -3,7 +3,7 @@
  *
  * - ورودی جمع‌های تجمعی SQL است؛ هیچ ساعت یا مبلغی اینجا جمع نمی‌شود.
  * - ساعتِ نرسیده (`null`) صفر نیست: خط همان‌جا تمام می‌شود.
- * - زمان مثل نمودار روند راست‌به‌چپ است: ساعت زودتر سمت راست.
+ * - محور زمان مثل طرح ۱۰ و نمودار روند: ساعت زودتر چپ، ساعت جاری راست (تصمیم مالک، ۲۰۲۶/۱۱/۰۶).
  * - هندسه فقط نسبت است؛ هیچ مبلغی از اینجا نمایش داده یا حساب نمی‌شود، پس
  *   تبدیل اختلاف bigint به number برای مختصات پیکسلی بی‌خطر است.
  */
@@ -21,7 +21,7 @@ export function sparkPoints(values: readonly (bigint | null)[], width: number, h
   const span = max - min;
   const last = running.length - 1;
   const y = (v: bigint) => span === 0n ? height / 2 : pad + Number(max - v) / Number(span) * (height - 2 * pad);
-  const x = (i: number) => width - (i / last) * width;
+  const x = (i: number) => (i / last) * width;
   return running.map((v, i) => [round(x(i)), round(y(v))]);
 }
 

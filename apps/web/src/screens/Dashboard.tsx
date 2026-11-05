@@ -655,7 +655,7 @@ function unpostedFailure(err: unknown): Unposted {
  * روند شاخص انتخاب‌شده — پنل مشترکِ سه زبانه، با انتخاب ساعتی/روزانه/ماهانه.
  * هر شاخص و هر دانه‌بندی عنوان، توضیح، حالت خالی و نمودار خودش را دارد؛ متن
  * «فروش» زیر «سود» نمی‌ماند. نمودار همهٔ شاخص‌های معلوم را با هم می‌کشد و خط
- * انتخاب‌شده پررنگ‌تر است. دوره‌های زودتر سمت راست.
+ * انتخاب‌شده پررنگ‌تر است. دوره‌های زودتر سمت چپ و جدیدترین سمت راست (طرح ۱۰).
  */
 function TrendPanel({ id, metric, grain, onGrain, compare, onCompare, today, hourly, trend }: {
   id: string; metric: Metric; grain: Grain; onGrain: (g: Grain) => void;

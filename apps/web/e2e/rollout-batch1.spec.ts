@@ -155,10 +155,10 @@ test.describe("گزارش‌ها", () => {
     await expect(rows.nth(0)).toContainText("۱۰");
     await expect(rows.nth(2)).toContainText("2٬430٬000 تومان");
     await expect(chart).toContainText("بیشترین فروش: ساعت ۱۸");
-    // RTL: ساعت زودتر سمت راست (برچسب اول و آخر محور همیشه دیده می‌شوند).
+    // محور زمان مثل طرح ۱۰ (تصمیم مالک): ساعت زودتر سمت چپ، دیرتر سمت راست (برچسب اول و آخر همیشه دیده می‌شوند).
     const cols = chart.locator(".line-chart-x span");
     const first = await cols.first().boundingBox(), last = await cols.last().boundingBox();
-    expect(first!.x).toBeGreaterThan(last!.x);
+    expect(first!.x, "ساعت زودتر چپِ ساعت دیرتر").toBeLessThan(last!.x);
   });
 
   test("empty report says so and offers no download", async ({ page, api }) => {
