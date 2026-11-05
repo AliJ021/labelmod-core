@@ -205,6 +205,7 @@ function qs(p: Period, extra: Record<string, string | number | undefined> = {}):
 }
 
 export interface HourlyRow {
+  hourTotal: string;
   businessDate: string;
   hourOfDay: number;
   channel: string;

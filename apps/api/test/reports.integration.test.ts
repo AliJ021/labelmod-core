@@ -435,13 +435,14 @@ describe("گزارش‌ها", { skip }, () => {
   test("گزارش ساعتی، ساعت را از دیتابیس می‌دهد نه از کلاینت", async () => {
     const r = await get(admin, `/reports/hourly?from=${today}&to=${today}`);
     assert.equal(r.statusCode, 200, r.body);
-    const rows = JSON.parse(r.body).rows as { hourOfDay: number; netAmount: string }[];
+    const rows = JSON.parse(r.body).rows as { hourOfDay: number; netAmount: string; hourTotal: string }[];
     assert.ok(rows.length > 0, "فروش امروز باید ساعتی هم دیده شود");
     for (const x of rows) {
       assert.ok(Number.isInteger(x.hourOfDay) && x.hourOfDay >= 0 && x.hourOfDay <= 23,
         `ساعت نامعتبر: ${x.hourOfDay}`);
       // پول رشته است، نه عدد — همان قاعده هر مبلغ دیگری.
       assert.equal(typeof x.netAmount, "string", "مبلغ باید رشته باشد");
+      assert.equal(x.hourTotal, String(rows.filter(row => row.hourOfDay === x.hourOfDay).reduce((t, row) => t + BigInt(row.netAmount), 0n)));
     }
   });
 

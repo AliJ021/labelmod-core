@@ -149,13 +149,14 @@ test.describe("گزارش‌ها", () => {
     const chart = page.getByRole("figure", { name: /فروش خالص هر ساعت/ });
     await expect(chart).toBeVisible();
     // چهار ساعت متمایز در داده: ۱۰، ۱۲، ۱۸ (صندوق + سایت)، ۲۰.
-    const rows = chart.locator("table.sr-only tbody tr");
+    // خواستهٔ مالک (۲۰۲۶/۱۱/۰۲): نمودار خطی نرم؛ جدول داده همان جدول نمودار خطی است (پنهان تا «نمایش جدول داده»).
+    const rows = chart.locator("table tbody tr");
     await expect(rows).toHaveCount(4);
     await expect(rows.nth(0)).toContainText("۱۰");
     await expect(rows.nth(2)).toContainText("2٬430٬000 تومان");
     await expect(chart).toContainText("بیشترین فروش: ساعت ۱۸");
-    // RTL: ستون زودتر سمت راست.
-    const cols = chart.locator(".bar-chart-col");
+    // RTL: ساعت زودتر سمت راست (برچسب اول و آخر محور همیشه دیده می‌شوند).
+    const cols = chart.locator(".line-chart-x span");
     const first = await cols.first().boundingBox(), last = await cols.last().boundingBox();
     expect(first!.x).toBeGreaterThan(last!.x);
   });

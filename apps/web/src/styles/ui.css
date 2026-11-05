@@ -210,38 +210,6 @@
 .quick-action--pending { inline-size: 9rem; background: var(--neutral-soft); }
 .quick-actions-note { display: inline-flex; flex-wrap: wrap; align-items: center; gap: var(--s-2); margin: 0; padding: var(--s-2) var(--s-3); font-size: var(--text-sm); color: var(--ink-2); }
 
-/* ── نمودار ستونی (BarChart.tsx) — روی سطح مات ─────────────────────── */
-.bar-chart { margin: 0; display: flex; flex-direction: column; gap: var(--s-3); }
-.bar-chart figcaption { display: flex; flex-wrap: wrap; justify-content: space-between; gap: var(--s-1) var(--s-3); font-size: var(--text-sm); color: var(--ink-2); }
-.bar-chart-title { font-weight: var(--weight-semibold); color: var(--ink); }
-.bar-chart-plot { display: grid; grid-auto-flow: column; grid-auto-columns: minmax(0, 1fr); gap: 3px; align-items: end; block-size: 168px; padding-block-start: var(--s-2); border-block-end: var(--border-w) solid var(--rule-2); }
-.bar-chart-col { position: relative; display: flex; flex-direction: column; align-items: center; justify-content: flex-end; gap: 6px; block-size: 100%; min-inline-size: 0; }
-.bar-chart-bar {
-  display: block; inline-size: min(100%, 22px); block-size: 132px;
-  border-radius: 5px 5px 1px 1px;
-  background: linear-gradient(to top, var(--chart-1), color-mix(in srgb, var(--chart-1) 72%, var(--surface-solid)));
-  transform-origin: bottom; transform: scaleY(var(--bar, 0));
-}
-.bar-chart-bar.is-zero { transform: none; block-size: 2px; background: var(--rule-2); }
-.bar-chart-label { font-size: var(--text-xs); color: var(--ink-2); line-height: 1; }
-.bar-chart-col:hover .bar-chart-bar:not(.is-zero) { filter: brightness(1.08); }
-/* علامت‌دار: خط صفر وسط، مثبت بالا و منفی پایین با یک مقیاس؛ سهم هر سو از بیشینهٔ همان سو. */
-.bar-chart--signed .bar-chart-col { justify-content: stretch; gap: 0; }
-.bar-chart-half { display: flex; justify-content: center; inline-size: 100%; min-block-size: 0; }
-.bar-chart-half--up { flex: var(--up) 1 0; align-items: flex-end; }
-.bar-chart-half--down { flex: var(--down) 1 0; align-items: flex-start; border-block-start: var(--border-w) solid var(--rule-2); }
-.bar-chart--signed .bar-chart-bar { block-size: 100%; }
-.bar-chart--signed .bar-chart-label { padding-block-start: 6px; }
-.bar-chart-bar--negative {
-  border-radius: 1px 1px 5px 5px; transform-origin: top;
-  background: linear-gradient(to bottom, var(--crit), color-mix(in srgb, var(--crit) 72%, var(--surface-solid)));
-}
-.bar-chart-col:hover::after {
-  content: attr(data-tip); position: absolute; inset-block-end: calc(100% + 4px); inset-inline-start: 50%;
-  transform: translateX(50%); z-index: 2; padding: 4px 8px; border-radius: var(--r-xs);
-  background: var(--surface-inverse); color: var(--surface-solid); font-size: var(--text-2xs); white-space: nowrap; pointer-events: none;
-}
-
 /* ── نمودار خطی (روند داشبورد) ─────────────────────────────────────
    سه خط با رنگ **و** الگوی خط جدا؛ خط شاخص انتخاب‌شده پهن‌تر. نقطهٔ دورهٔ جاری توخالی. */
 .line-chart { margin: 0; display: flex; flex-direction: column; gap: var(--s-2); min-inline-size: 0; }
@@ -257,17 +225,17 @@
 .line-chart-plot { position: relative; block-size: 240px; padding-inline-end: 0; touch-action: pan-y; cursor: crosshair; border-radius: var(--r-xs); }
 .line-chart-plot:focus-visible { outline: 2px solid var(--accent); outline-offset: 4px; }
 .line-chart-svg { display: block; inline-size: 100%; block-size: 100%; overflow: visible; }
-.line-chart-grid { stroke: var(--rule); stroke-width: 1; fill: none; vector-effect: non-scaling-stroke; }
+.line-chart-grid { stroke: var(--rule); stroke-dasharray: 3 5; opacity: .72; stroke-width: 1; fill: none; vector-effect: non-scaling-stroke; }
 .line-chart-zero { stroke: var(--rule-2); stroke-width: 1.5; fill: none; vector-effect: non-scaling-stroke; }
 .line-chart-line, .line-chart-swatch path { fill: none; stroke: var(--series); stroke-width: 2; stroke-linejoin: round; stroke-linecap: round; stroke-dasharray: var(--dash, none); vector-effect: non-scaling-stroke; }
-.line-chart-area { fill: color-mix(in srgb, var(--series) 16%, transparent); stroke: none; }
+.line-chart-area { stroke: none; }
 .line-chart-dot { fill: none; stroke: var(--series); stroke-width: 6; stroke-linecap: round; vector-effect: non-scaling-stroke; }
 .line-chart-dot.is-partial { stroke-width: 10; }
 .line-chart-dot-hole { fill: none; stroke: var(--surface-solid); stroke-width: 4; stroke-linecap: round; vector-effect: non-scaling-stroke; }
-.line-chart [data-series="sales"] { --series: var(--chart-1); }
+.line-chart [data-series="value"], .line-chart [data-series="sales"] { --series: var(--chart-1); }
 .line-chart [data-series="received"] { --series: var(--chart-2); --dash: 7 4; }
 .line-chart [data-series="profit"] { --series: var(--ink-2); --dash: 1 4; }
-.line-chart g[data-emphasis] .line-chart-line, .line-chart-legend li[data-emphasis] .line-chart-swatch path { stroke-width: 3.5; }
+.line-chart g[data-emphasis] .line-chart-line, .line-chart-legend li[data-emphasis] .line-chart-swatch path { stroke-width: 2.25; }
 .line-chart g[data-series]:not([data-emphasis]) .line-chart-dot { stroke-width: 4; }
 .line-chart g[data-series]:not([data-emphasis]) .line-chart-dot.is-partial { stroke-width: 8; }
 .line-chart-y { position: absolute; inset-inline-end: 0; inset-block-start: calc(var(--y) * 100%); transform: translateY(-50%); padding-inline: 4px; border-radius: var(--r-xs); background: color-mix(in srgb, var(--surface-solid) 85%, transparent); font-size: var(--text-xs); color: var(--ink-2); font-variant-numeric: tabular-nums; pointer-events: none; }
@@ -420,7 +388,6 @@
 @keyframes lm-rise { from { opacity: 0; transform: translateY(var(--move-md)); } }
 @keyframes lm-sheet-up { from { opacity: 0; transform: translateY(var(--move-lg)); } }
 @keyframes lm-scale-in { from { opacity: 0; transform: translateY(var(--move-sm)) scale(0.98); } }
-@keyframes lm-bar { from { transform: scaleY(0); } }
 @keyframes lm-pulse { 50% { opacity: 0.55; } }
 @media (prefers-reduced-motion: no-preference) {
   :root:not([data-perf="on"]) .m-fade-in { animation: lm-fade-in var(--dur-base) var(--ease-out) both; }
@@ -429,7 +396,6 @@
   :root:not([data-perf="on"]) .ui-dialog--sheet[open] { animation: lm-sheet-up var(--dur-slow) var(--ease-out); }
   :root:not([data-perf="on"]) .ui-dialog[open]::backdrop { animation: lm-fade-in var(--dur-base) var(--ease-out); }
   :root:not([data-perf="on"]) .toast { animation: lm-rise var(--dur-base) var(--ease-out); }
-  :root:not([data-perf="on"]) .bar-chart-bar:not(.is-zero) { animation: lm-bar var(--dur-slow) var(--ease-out) both; }
   :root:not([data-perf="on"]) .kpi--tab::before { transition: opacity var(--dur-base) var(--ease-standard), transform var(--dur-base) var(--ease-standard); }
   :root:not([data-perf="on"]) .skeleton { animation: lm-pulse 1.6s var(--ease-in-out) infinite; }
 }

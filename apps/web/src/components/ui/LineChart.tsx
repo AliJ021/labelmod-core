@@ -1,6 +1,7 @@
 import { useId, useState, type KeyboardEvent, type PointerEvent } from "react";
 import { moneyParts } from "../../lib/format.ts";
 import { niceScale } from "../../lib/chart-scale.ts";
+import { smoothArea, smoothPath, type Pt } from "../../lib/smooth-path.ts";
 
 /**
  * نمودار خطی سبک — بدون کتابخانه، روی سطح **مات** (palette.test.ts: رنگ
@@ -14,7 +15,8 @@ import { niceScale } from "../../lib/chart-scale.ts";
  * - مقیاس مشترک از `niceScale` (گام گرد، همیشه با صفر)؛ خط صفر وقتی منفی هست
  *   دیده می‌شود. منفی نه صفر می‌شود و نه قدرمطلق. واحد محور «تومان» صریح است.
  * - `null` یعنی «هنوز نیامده»: خط آنجا قطع می‌شود، نه اینکه به صفر برود. میان دو
- *   نقطه فقط پارهٔ خط راست است — بی منحنی هموار و بی «بیش‌جهش» ساختگی.
+ *   نقطه منحنی **نرم یکنوا** است (خواستهٔ مالک): هموار، ولی هرگز بیرون از بازهٔ دو
+ *   نقطه — بی «بیش‌جهش» ساختگی زیر صفر یا بالای بیشینه.
  *   نقطهٔ `partial` (دورهٔ جاری) توخالی است.
  * - رنگ تنها حامل معنا نیست: هر خط الگوی خط خودش را هم دارد و در راهنما با برچسب آمده.
  * - **بررسی نقطه‌ها:** یک توقف Tab؛ پیکان‌ها (RTL: چپ = بعدی)، Home/End، و لمس/کشیدن
@@ -103,23 +105,28 @@ export function LineChart({ title, summary, note, xHeader, points, series, unit 
           {scale.ticks.map(t => <path key={String(t)} className={t === 0n ? "line-chart-zero" : "line-chart-grid"} d={`M0 ${Y(t)} H${W}`} />)}
           {at ? <path className="line-chart-cursor" d={`M${X(active)} 0 V${H}`} /> : null}
           {series.map(s => {
-            let d = "", open = false;
-            // سطح زیر خط برجسته (طرح ۱۰): تزئینی، هر تکهٔ پیوسته تا خط صفر بسته می‌شود.
-            const base = Math.min(H, Math.max(0, Number(Y(0n)))).toFixed(1);
-            let area = "", run: string[] = [], first = "", last = "";
-            const flush = () => { if (run.length > 1) area += `M${first} ${base} L${run.join(" L")} L${last} ${base} Z `; run = []; };
+            // طرح ۱۰ (خواستهٔ مالک): خط نرم یکنوا — از همهٔ نقطه‌ها می‌گذرد و هرگز بیرون از دو نقطهٔ
+            // کنارش نمی‌رود (`lib/smooth-path.ts`). هر تکهٔ پیوسته جداست؛ `null` خط را قطع می‌کند.
+            const base = Math.min(H, Math.max(0, Number(Y(0n))));
+            const runs: Pt[][] = [];
+            let run: Pt[] = [];
             s.values.forEach((v, i) => {
-              if (v === null) { open = false; flush(); return; }
-              d += `${open ? "L" : "M"}${X(i)} ${Y(v)} `;
-              if (!open) first = X(i);
-              last = X(i);
-              run.push(`${X(i)} ${Y(v)}`);
-              open = true;
+              if (v === null) { if (run.length) runs.push(run); run = []; return; }
+              run.push([Number(X(i)), Number(Y(v))]);
             });
-            flush();
+            if (run.length) runs.push(run);
+            const d = runs.map(smoothPath).join(" ");
+            // سطح زیر خط برجسته: تزئینی، هر تکهٔ پیوسته تا خط صفر بسته می‌شود.
+            const area = runs.map(r => smoothArea(r, base)).filter(Boolean).join(" ");
             return <g key={s.key} data-series={s.key} data-emphasis={s.emphasis || undefined}>
-              {s.emphasis && area ? <path className="line-chart-area" d={area.trim()} /> : null}
-              <path className="line-chart-line" d={d.trim()} />
+              {s.emphasis && area ? <>
+                <defs><linearGradient id={`${id}-area-${s.key}`} x1="0" y1="0" x2="0" y2="1">
+                  <stop stopColor="var(--series)" stopOpacity=".20" />
+                  <stop offset="1" stopColor="var(--series)" stopOpacity=".01" />
+                </linearGradient></defs>
+                <path className="line-chart-area" fill={`url(#${id}-area-${s.key})`} d={area} />
+              </> : null}
+              <path className="line-chart-line" d={d} />
               {s.values.map((v, i) => {
                 if (v === null) return null;
                 const dot = `M${X(i)} ${Y(v)} h0`, partial = points[i]!.partial;
@@ -160,4 +167,21 @@ export function LineChart({ title, summary, note, xHeader, points, series, unit 
 export function tickEvery(n: number, max = 8): (i: number) => boolean {
   const step = Math.max(1, Math.ceil(n / max));
   return i => i === 0 || i === n - 1 || (i % step === 0 && n - 1 - i >= step / 2);
+}
+
+/** یک مقدار برای هر نقطهٔ محور (ساعت، روز) — داده از سرور، `bigint`. */
+export interface ValuePoint { key: string; label: string; value: bigint | null; display: string }
+
+/**
+ * نمودار تک‌خطی برای جایی که پیش‌تر ستونی بود (خواستهٔ مالک: همهٔ نمودارها خطی و نرم).
+ * همان `LineChart` است با یک خط برجسته؛ برچسب محور با `tickEvery`. ترتیب و قرارداد RTL
+ * همان نمودار خطی است: نقطهٔ اول (زودتر) سمت راست.
+ */
+export function ValueLineChart({ title, summary, points, labelHeader, valueHeader, unit }: {
+  title: string; summary: string; points: readonly ValuePoint[]; labelHeader: string; valueHeader: string; unit?: string;
+}) {
+  const tick = tickEvery(points.length);
+  return <LineChart title={title} summary={summary} note={null} xHeader={labelHeader} {...(unit ? { unit } : {})}
+    points={points.map((p, i) => ({ key: p.key, label: p.label, long: p.label, partial: false, tick: tick(i) }))}
+    series={[{ key: "value", label: valueHeader, values: points.map(p => p.value), displays: points.map(p => p.display), emphasis: true }]} />;
 }

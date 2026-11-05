@@ -40,7 +40,7 @@ import { Button, Field } from "../components/ui/Controls.tsx";
 import { DataTable, type Column } from "../components/ui/DataTable.tsx";
 import { Money, Percent, Qty } from "../components/ui/Money.tsx";
 import { Kpi } from "../components/ui/Kpi.tsx";
-import { BarChart, type Bar } from "../components/ui/BarChart.tsx";
+import { ValueLineChart } from "../components/ui/LineChart.tsx";
 import { StatusBadge } from "../components/ui/Status.tsx";
 import { Skeleton } from "../components/ui/Skeleton.tsx";
 import { Ltr } from "../components/ui/Bidi.tsx";
@@ -404,7 +404,7 @@ function Trend({ row }: { row: CompareRow }) {
 /**
  * فروش به تفکیک ساعتِ کاری. ساعت از سرور می‌آید، نه از ساعت مرورگر.
  *
- * نمودار: جمع همان سطرها به‌ازای ساعت (همهٔ روزها و کانال‌ها) با `bigint`؛
+ * نمودار: جمع هر ساعت (همهٔ روزها و کانال‌های مجاز) از همان کوئری PostgreSQL؛
  * ساعت‌های زودتر سمت راست (قرارداد نمودار زمانی RTL). جدول زیرش همهٔ
  * سطرهای سرور را بی‌کم‌وکاست دارد.
  */
@@ -418,14 +418,13 @@ function HourlyReport({ period }: { period: Period }) {
       let max = 0n;
       for (const r of rows) {
         const v = parseRial(r.netAmount);
-        totals.set(r.hourOfDay, (totals.get(r.hourOfDay) ?? 0n) + v);
+        totals.set(r.hourOfDay, parseRial(r.hourTotal));
         if (v > max) max = v;
       }
-      const bars: Bar[] = [...totals.keys()].sort((a, b) => a - b).map(h => {
-        const value = totals.get(h) ?? 0n;
+      const bars = [...totals.entries()].sort(([a], [b]) => a - b).map(([h, value]) => {
         return { key: String(h), label: formatHour(h), value, display: `${formatMoney(value)} تومان` };
       });
-      const peak = bars.reduce<Bar | null>((m, b) => (!m || b.value > m.value ? b : m), null);
+      const peak = bars.reduce<typeof bars[number] | null>((m, b) => (!m || b.value > m.value ? b : m), null);
       const columns: Column<HourlyRow>[] = [
         { key: "date", header: "تاریخ", cell: r => <JalaliDate iso={r.businessDate} /> },
         { key: "hour", header: "ساعت", cell: r => <bdi className="num">{`${String(r.hourOfDay).padStart(2, "0")}:00`}</bdi> },
@@ -437,7 +436,7 @@ function HourlyReport({ period }: { period: Period }) {
           style={{ width: max === 0n ? "0%" : `${Number((parseRial(r.netAmount) * 100n) / max)}%` }} /> },
       ];
       return <>
-        <BarChart title="فروش خالص هر ساعت در کل بازه (تومان)" labelHeader="ساعت" valueHeader="فروش خالص" bars={bars}
+        <ValueLineChart title="فروش خالص هر ساعت در کل بازه (تومان)" labelHeader="ساعت" valueHeader="فروش خالص" points={bars}
           summary={peak && peak.value > 0n ? `بیشترین فروش: ساعت ${peak.label} با ${peak.display}` : "در این بازه فروش مثبتی نیست."} />
         <DataTable caption="فروش به تفکیک ساعت" columns={columns} rows={rows} bounded
           rowKey={r => `${r.businessDate}-${r.hourOfDay}-${r.channel}`} />

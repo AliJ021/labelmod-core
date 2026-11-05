@@ -7,7 +7,9 @@
  * - هندسه فقط نسبت است؛ هیچ مبلغی از اینجا نمایش داده یا حساب نمی‌شود، پس
  *   تبدیل اختلاف bigint به number برای مختصات پیکسلی بی‌خطر است.
  */
-export function sparkPath(values: readonly (bigint | null)[], width: number, height: number, pad = 2): string | null {
+import { smoothPath, type Pt } from "./smooth-path.ts";
+
+export function sparkPoints(values: readonly (bigint | null)[], width: number, height: number, pad = 2): Pt[] | null {
   const running: bigint[] = [];
   for (const v of values) {
     if (v === null) break;
@@ -20,7 +22,12 @@ export function sparkPath(values: readonly (bigint | null)[], width: number, hei
   const last = running.length - 1;
   const y = (v: bigint) => span === 0n ? height / 2 : pad + Number(max - v) / Number(span) * (height - 2 * pad);
   const x = (i: number) => width - (i / last) * width;
-  return running.map((v, i) => `${i === 0 ? "M" : "L"}${round(x(i))} ${round(y(v))}`).join(" ");
+  return running.map((v, i) => [round(x(i)), round(y(v))]);
+}
+
+export function sparkPath(values: readonly (bigint | null)[], width: number, height: number, pad = 2): string | null {
+  const points = sparkPoints(values, width, height, pad);
+  return points ? smoothPath(points) : null;
 }
 
 const round = (n: number) => Math.round(n * 10) / 10;

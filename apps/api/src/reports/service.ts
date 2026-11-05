@@ -24,6 +24,7 @@ import type { Db } from "../db/client.ts";
 /** یک بازه تاریخ — همیشه شامل هر دو سر. */
 /** یک ساعت از یک روز، به تفکیک کانال. */
 export interface HourlyRow {
+  hourTotal: string;
   businessDate: string;
   hourOfDay: number;
   channel: string;
@@ -262,14 +263,17 @@ export class ReportService {
       invoice_count: string;
       item_qty: string;
       net_amount: string;
+      hour_total: string;
     }>`SELECT business_date::text, hour_of_day, channel, invoice_count,
-              item_qty::text, net_amount::text
+              item_qty::text, net_amount::text,
+              sum(net_amount) OVER (PARTITION BY hour_of_day)::text AS hour_total
          FROM sales.report_hourly(${p.from}::date, ${p.to}::date,
                                   ${p.branchId ?? null}::uuid)`
       .execute(this.#db);
     return r.rows.map((x) => ({
       businessDate: x.business_date,
       hourOfDay: Number(x.hour_of_day),
+      hourTotal: x.hour_total,
       channel: x.channel,
       invoiceCount: Number(x.invoice_count),
       itemQty: x.item_qty,

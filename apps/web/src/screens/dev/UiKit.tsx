@@ -14,13 +14,13 @@ import { TabList, TabPanels, useTabsId } from "../../components/Tabs.tsx";
 import { SearchField } from "../../components/SearchField.tsx";
 import { ResultState } from "../../components/ResultState.tsx";
 import { Accent, ACCENT_NAMES } from "../../components/ui/Accent.tsx";
-import { BarChart } from "../../components/ui/BarChart.tsx";
 import { Ltr } from "../../components/ui/Bidi.tsx";
 import { Button, Field, Segmented, Switch } from "../../components/ui/Controls.tsx";
 import { DataTable, type Column } from "../../components/ui/DataTable.tsx";
 import { FilterBar } from "../../components/ui/FilterBar.tsx";
 import { Dialog } from "../../components/ui/Dialog.tsx";
 import { Kpi } from "../../components/ui/Kpi.tsx";
+import { ValueLineChart } from "../../components/ui/LineChart.tsx";
 import { Money, Percent, Qty } from "../../components/ui/Money.tsx";
 import { PageHeader, SectionHeader } from "../../components/ui/PageHeader.tsx";
 import { SafeAction } from "../../components/ui/SafeAction.tsx";
@@ -248,7 +248,7 @@ function Data({ density }: { density: "comfortable" | "compact" }) {
       </div>
     </Section>
     <Section id="chart" title="نمودار" description="روی سطح مات، با جدول پنهان برای صفحه‌خوان و خلاصهٔ متنی. داده نمونه است.">
-      <BarChart title="فروش خالص هر ساعت — نمونه" labelHeader="ساعت" valueHeader="فروش" summary="بیشترین فروش: ساعت ۱۸ (نمونه)" bars={bars} />
+      <ValueLineChart title="فروش خالص هر ساعت — نمونه" labelHeader="ساعت" valueHeader="فروش" summary="بیشترین فروش: ساعت ۱۸ (نمونه)" points={bars} />
     </Section>
   </div>;
 }
