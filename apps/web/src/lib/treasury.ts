@@ -197,7 +197,48 @@ export function needsAccount(action: ChequeAction): boolean {
 /** ماندهٔ دفتری هر سرفصل خزانه (`GET /treasury/balances`): اسناد ثبت‌شده، در دامنهٔ شعبه. */
 export interface TreasuryBalance { code: string; accountName: string; kinds: string[]; treasuryAccounts: string; balance: string; lastEntry: string | null }
 
+/** طرح ۱۰ — یک کشو (شیفت) در «شیفت‌ها و کشوها». همهٔ مبلغ‌ها از SQL، رشته. */
+export interface DrawerShift {
+  id: string;
+  userName: string;
+  openedAt: string;
+  closedAt: string | null;
+  status: "open" | "closed" | "approved" | string;
+  /** باز و از روز کاری پیش: «ماندهٔ دیروز». */
+  carriedOver: boolean;
+  openingCash: string;
+  /** کشوی باز: `sales.shift_expected_cash` (همان فرمول بستن)؛ بسته: عدد ثبت‌شده. */
+  expectedCash: string | null;
+  /** فقط پس از شمارش؛ پیش از آن `null`، نه صفر. */
+  countedCash: string | null;
+  variance: string | null;
+}
+
+/** حرکت نقد غیرفروشی امروز که از کشو رد شده. علامت مبلغ از دید کشو، از SQL. */
+export interface DrawerMove {
+  id: string;
+  occurredAt: string;
+  /** صندوق‌دارِ شیفت؛ `null` یعنی حرکت کشو بی شیفت. */
+  drawerName: string | null;
+  purpose: Purpose | string;
+  note: string | null;
+  createdByName: string | null;
+  counterpartCode: string | null;
+  counterpartName: string | null;
+  drawerAmount: string;
+}
+
+export interface DrawersBody {
+  businessDate: string;
+  /** بی `report.view` کشوها و انتظار نقد نیامده‌اند (`shifts: null`)، نه «کشویی نیست». */
+  shiftsVisible: boolean;
+  shifts: DrawerShift[] | null;
+  moves: DrawerMove[];
+}
+
 export const treasury = {
+  drawers: (branchId: string, opts?: { signal?: AbortSignal }) =>
+    api.get<DrawersBody>(`/treasury/drawers?branchId=${encodeURIComponent(branchId)}`, opts),
   balances: (opts?: { signal?: AbortSignal }) => api.get<{ balances: TreasuryBalance[] }>("/treasury/balances", opts),
   accounts: (kind?: string) =>
     api.get<{ accounts: TreasuryAccount[] }>(

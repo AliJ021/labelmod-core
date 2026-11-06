@@ -35,7 +35,7 @@ import { StatusBadge, type StatusState } from "../components/ui/Status.tsx";
 import { useCallback, useEffect, useState } from "react";
 import { Solid } from "../components/Glass.tsx";
 import { TreasuryBalances } from "../components/TreasuryBalances.tsx";
-import { TreasuryDesk } from "../components/TreasuryDesk.tsx";
+import { TreasuryDesk, TreasuryTerminals } from "../components/TreasuryDesk.tsx";
 import { ApiError } from "../lib/api.ts";
 import { ActionKeys, actionFor } from "../lib/action-key.ts";
 import { rialFromTomanInput, toman } from "../lib/money.ts";
@@ -130,6 +130,8 @@ function CashMoves() {
   const [suppliers, setSuppliers] = useState<Supplier[]>([]);
   const [branch, setBranch] = useState<Branch | null>(null);
   const [rows, setRows] = useState<TreasuryTransaction[] | null>(null);
+  /** پس از هر حرکت تازه، کشوها و حرکت‌های امروز دوباره از سرور خوانده می‌شوند. */
+  const [deskVersion, setDeskVersion] = useState(0);
   const [error, setError] = useState<string | null>(null);
   const [note, setNote] = useState<string | null>(null);
 
@@ -224,6 +226,7 @@ function CashMoves() {
       setRaw("");
       setMemo("");
       setRefNo("");
+      setDeskVersion(v => v + 1);
       await load();
     } catch (err) {
       setError(message(err));
@@ -244,7 +247,7 @@ function CashMoves() {
         </p>
       ) : null}
       <TreasuryBalances />
-      <TreasuryDesk accounts={accounts} />
+      <TreasuryDesk branchId={branch?.id ?? null} version={deskVersion} />
       {note !== null ? (
         <p className="solid pos-alert" role="status">
           <span className="dot dot--good" aria-hidden="true">●</span> {note}
@@ -432,6 +435,7 @@ function CashMoves() {
           </div>
         )}
       </Solid>
+      <TreasuryTerminals accounts={accounts} />
     </div>
   );
 }

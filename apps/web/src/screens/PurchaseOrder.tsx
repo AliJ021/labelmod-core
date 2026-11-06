@@ -63,7 +63,7 @@ const dash = <span className="muted">—</span>;
  * فقط پهنای نوار پیشرفت نسبت دو تعداد است، نه پول.
  */
 const ORDER_COLUMNS: readonly Column<OrderSummary>[] = [
-  { key: "order", header: "سفارش", cell: (o) => <><span className="num">{o.number ?? "پیش‌نویس"}</span><small className="cell-sub">{shortDate(o.createdAt)}</small></> },
+  { key: "order", header: "سفارش", cell: (o) => <span className="cell-stack"><span className="num">{o.number ?? "پیش‌نویس"}</span><small className="cell-sub">{shortDate(o.createdAt)}</small></span> },
   { key: "supplier", header: "تأمین‌کننده", cell: (o) => o.supplierName },
   { key: "progress", header: "پیشرفت", cell: (o) => {
     const ordered = Number(o.orderedQty);
@@ -77,7 +77,7 @@ const ORDER_COLUMNS: readonly Column<OrderSummary>[] = [
   { key: "remaining", header: "مانده", numeric: true, cell: (o) => isLive(o) ? <span className="num">{formatQty(o.remainingQty)}</span> : dash },
   { key: "over", header: "بیش‌تحویل", numeric: true, cell: (o) => Number(o.overQty) > 0 ? <span className="num po-over">{formatQty(o.overQty)}</span> : dash },
   { key: "amount", header: "جمع سفارش (مقایسه)", numeric: true, cell: (o) => <Money rial={BigInt(o.orderedAmount)} /> },
-  { key: "status", header: "وضعیت", cell: (o) => <span className="po-status">
+  { key: "status", header: "وضعیت", cell: (o) => <span className="cell-stack">
     <StatusBadge state={o.status === "sent" ? "pending" : o.status === "closed" ? "completed" : o.status === "draft" ? "draft" : "cancelled"} label={ORDER_STATUS[o.status] ?? o.status} />
     {o.status === "closed" && o.closeReason ? <small className="cell-sub po-reason">{o.closeReason}</small> : null}
   </span> },

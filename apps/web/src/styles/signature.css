@@ -284,8 +284,6 @@
 .return-account dd { margin: 0; }
 .return-account-rule { margin: 0; }
 
-/* خزانه: کشوهای باز و پایانه‌ها کنار هم در دسکتاپ. */
-.treasury-desk { display: grid; gap: var(--s-4); }
 /* طرح ۱۰: کشوها و پایانه‌ها هر کدام یک ردیف تمام‌عرض‌اند، نه دو ستون. */
 .desk-list { list-style: none; margin: 0; padding: 0; display: grid; }
 .desk-list > li { display: flex; align-items: center; justify-content: space-between; gap: var(--s-3); padding-block: var(--s-2); border-block-end: var(--border-w) solid var(--rule); }
@@ -745,11 +743,26 @@ table.grid td small, table.ui-table td small { font-size: 0.6875rem; color: var(
 /* پیشرفت با «X از Y رسیده»، مانده و بیش‌تحویل جدا، جمع سفارش برای مقایسه، دلیل بستن زیر وضعیت.
    روی گوشی همان `ui-table--stack` نظام طراحی: هر سفارش یک کارت با برچسب کنار مقدار، مثل طرح ۱۰. */
 .po-table .po-over { color: var(--warn); font-weight: var(--weight-semibold); }
-.po-table .po-status { display: inline-grid; justify-items: start; gap: 2px; }
 .po-table .po-reason { max-inline-size: 22ch; }
 .po-table .invoice-icon { margin: 0; border-color: var(--rule); background: var(--surface-solid-2); }
 .po-table .ui-table-actions { text-align: end; }
 @media (max-width: 640px) {
-  .po-table .po-status { justify-items: end; text-align: end; }
   .po-table .progress-cell { min-inline-size: 0; inline-size: min(60%, 180px); }
 }
+
+/* ── WP4 دستهٔ ۴: خزانه مثل طرح ۱۰ ─────────────────────────────────────────────── */
+/* شیفت‌ها و کشوها، حرکت‌های نقد امروز و پایانه‌ها: جدول نظام طراحی، کارت در گوشی. رنگ مغایرت و علامت
+   مبلغ فقط تقویت است؛ علامت «−»، «ندارد» و title معنا را می‌گویند. */
+.drawer-variance[data-tone="crit"] .money-digits { color: var(--crit); }
+.drawer-variance[data-tone="warn"] .money-digits { color: var(--warn); }
+.drawer-variance[data-tone="good"], .drawer-variance[data-tone="good"] .money-digits { color: var(--good); }
+.drawer-expected .money-digits { color: var(--accent); }
+/* خانهٔ دوخطی (نام + زیرنویس) یک واحد است؛ در کارت گوشی (`ui-table--stack`) به انتهای خانه می‌چسبد،
+   نه اینکه flex آن را دو سر کارت پخش کند. */
+.cell-stack { display: inline-grid; justify-items: start; gap: 2px; min-inline-size: 0; }
+.cell-inline { display: inline-flex; flex-wrap: wrap; align-items: baseline; gap: 6px; }
+@media (max-width: 640px) {
+  .ui-table--stack .cell-stack { justify-items: end; text-align: end; }
+  .ui-table--stack .cell-inline { justify-content: flex-end; }
+}
+
