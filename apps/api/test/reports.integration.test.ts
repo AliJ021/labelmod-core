@@ -541,7 +541,7 @@ describe("گزارش‌ها", { skip }, () => {
   const dailyOf = async (username: string, query = "") => {
     const r = await get(username, `/reports/daily?branchId=${BRANCH}${query}`);
     assert.equal(r.statusCode, 200, r.body);
-    return JSON.parse(r.body) as { businessDate: string; salesAmount: string; receivedAmount: string; profitAmount: string | null; invoiceCount: number; returnCount: number };
+    return JSON.parse(r.body) as { businessDate: string; salesAmount: string; receivedAmount: string; profitAmount: string | null; invoiceCount: number; returnCount: number; receivedMinusSales: string };
   };
   const sum = (hours: HourRow[], key: "salesAmount" | "receivedAmount" | "profitAmount") =>
     hours.reduce((t, h) => t + BigInt(h[key] as string), 0n);
@@ -570,6 +570,12 @@ describe("گزارش‌ها", { skip }, () => {
     assert.equal(hourly.hours.reduce((t, h) => t + h.invoiceCount, 0), daily.invoiceCount);
     assert.equal(hourly.hours.reduce((t, h) => t + h.returnCount, 0), daily.returnCount);
     assert.ok(BigInt(daily.salesAmount) > 0n, "فروش واقعی این فایل دیده می‌شود — آشتی روی صفر نیست");
+    // تفاضل کارت «وجه دریافتی» از SQL می‌آید؛ مرورگر آن را حساب نمی‌کند.
+    assert.equal(daily.receivedMinusSales, String(BigInt(daily.receivedAmount) - BigInt(daily.salesAmount)));
+    for (const user of [supervisor, cashier]) {
+      const own = await dailyOf(user);
+      assert.equal(own.receivedMinusSales, String(BigInt(own.receivedAmount) - BigInt(own.salesAmount)), `${user}: بی cost.view هم تفاضل پول است و می‌آید`);
+    }
     for (const [field, metric] of [["salesAmount", "sales"], ["receivedAmount", "received"], ["profitAmount", "profit"]] as const) {
       for (let i = 0; i < hourly.hours.length; i++) {
         assert.equal(hourly.hours[i]!.cumulative[metric], String(sum(hourly.hours.slice(0, i + 1), field)), `${metric}: جمع SQL تا ساعت ${i}`);

@@ -218,6 +218,8 @@ export interface DailyReport {
   profitAmount: string | null;
   invoiceCount: number;
   returnCount: number;
+  /** دریافتی − فروش همان روز، حساب‌شده در SQL (نه در مرورگر). */
+  receivedMinusSales: string;
 }
 
 /**

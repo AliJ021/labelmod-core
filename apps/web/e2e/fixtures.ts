@@ -15,7 +15,11 @@ export const product: Product = { id: "11111111-1111-4111-8111-111111111111", co
 const variation: Variation = { id: "v1", color: "سرمه‌ای", size: "XL", sku: "TR-1405-NAVY-XL", barcode: "1234567890123", status: "active", price: "1234000", priceKind: "regular", priceSince: "2026-09-16T00:00:00Z", locked: false };
 const me: Me = { id: "22222222-2222-4222-8222-222222222222", fullName: "مدیر آزمایشی", roles: ["admin"], expiresAt: "2027-01-01T00:00:00Z", elevated: true, enrollmentRequired: false, device: null };
 const branches: Branch[] = [{ id: "b1", code: "TEST", name: "شعبه آزمایشی", warehouses: [{ id: "w1", code: "STORE", name: "انبار آزمایشی", kind: "store" }] }];
-const daily: DailyReport = { businessDate: "2026-09-16", salesAmount: "12340000", receivedAmount: "11000000", profitAmount: "2340000", invoiceCount: 12, returnCount: 1 };
+/** پاسخ `/reports/daily` مثل سرور: تفاضل دریافتی و فروش را «سرور» (این داده) می‌دهد، نه برنامه. */
+export function dailyBody(o: Omit<DailyReport, "receivedMinusSales">): DailyReport {
+  return { ...o, receivedMinusSales: String(BigInt(o.receivedAmount) - BigInt(o.salesAmount)) };
+}
+const daily: DailyReport = dailyBody({ businessDate: "2026-09-16", salesAmount: "12340000", receivedAmount: "11000000", profitAmount: "2340000", invoiceCount: 12, returnCount: 1 });
 /**
  * «دیروز تا همین لحظه» نمونه، مثل پاسخ سرور (مهاجرت ۱۰۹): فروش دیروز ساعت ۱۰ و ۱۷، مرز همان ساعت جاری
  * (روز تمام‌شده: کل روز)؛ تجمعی، جمع و اختلاف با جمع ساعت‌های امروز — همان تعریف SQL، نه منطق برنامه.

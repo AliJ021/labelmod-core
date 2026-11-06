@@ -5,7 +5,7 @@
  * درخواست برای هر دانه‌بندی، «هنوز نیامده» ≠ صفر، بی‌دسترسی ≠ خطا ≠ خالی، RTL
  * (مثل طرح ۱۰: قدیمی‌تر سمت چپ، جدیدترین سمت راست) و بی اسکرول افقی در عرض‌های موبایل.
  */
-import { test, expect, fontsReady, DEFAULT_HOURLY, hourlyDay, type MockApi } from "./fixtures";
+import { test, expect, dailyBody, fontsReady, DEFAULT_HOURLY, hourlyDay, type MockApi } from "./fixtures";
 import type { Page } from "@playwright/test";
 import type { DailyBucket } from "../src/lib/pos";
 
@@ -294,7 +294,7 @@ test.describe("«تا این لحظه» و دیروز تا همین لحظه (ط
 
   test("yesterday after the cutoff is not drawn as zero; a lower day says 'less'", async ({ page, api }) => {
     api.defaults["GET /reports/daily/hourly"] = hourlyDay({ 11: { salesAmount: "1000000", receivedAmount: "1000000", profitAmount: "100000", invoiceCount: 1, paymentCount: 1 } }, true, "2026-09-16", 14);
-    api.defaults["GET /reports/daily"] = { businessDate: "2026-09-16", salesAmount: "1000000", receivedAmount: "1000000", profitAmount: "100000", invoiceCount: 1, returnCount: 0 };
+    api.defaults["GET /reports/daily"] = dailyBody({ businessDate: "2026-09-16", salesAmount: "1000000", receivedAmount: "1000000", profitAmount: "100000", invoiceCount: 1, returnCount: 0 });
     await page.goto("/");
     const chart = panel(page).getByRole("figure", { name: "فروش تجمعی امروز (تومان)" });
     // دیروز تا ساعت ۱۴: فقط فروش ساعت ۱۰ (۳٬۰۰۰٬۰۰۰ ریال)؛ ساعت ۱۷ دیروز پس از مرز است.

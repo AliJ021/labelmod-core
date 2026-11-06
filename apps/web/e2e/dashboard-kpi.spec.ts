@@ -6,7 +6,7 @@
  * چیدمان در هشت عرض. داده از `DEFAULT_HOURLY` است که با کارت‌ها آشتی دارد.
  * هیچ `sleep`؛ «در حال بارگذاری» با نگه‌داشتن صریح پاسخ ساخته می‌شود.
  */
-import { test, expect, fontsReady, hourlyDay, type MockApi } from "./fixtures";
+import { test, expect, dailyBody, fontsReady, hourlyDay, type MockApi } from "./fixtures";
 import type { Locator, Page } from "@playwright/test";
 
 const tablist = (page: Page) => page.getByRole("tablist", { name: "شاخص‌های امروز" });
@@ -106,7 +106,7 @@ test.describe("زبانه‌های شاخص داشبورد", () => {
   });
 
   test("without cost.view Profit stays unknown: disabled tab with its reason, never selected, no profit anywhere in the DOM", async ({ page, api }) => {
-    api.defaults["GET /reports/daily"] = { businessDate: "2026-09-16", salesAmount: "12340000", receivedAmount: "11000000", profitAmount: null, invoiceCount: 12, returnCount: 1 };
+    api.defaults["GET /reports/daily"] = dailyBody({ businessDate: "2026-09-16", salesAmount: "12340000", receivedAmount: "11000000", profitAmount: null, invoiceCount: 12, returnCount: 1 });
     api.defaults["GET /reports/daily/hourly"] = hourlyDay({
       11: { salesAmount: "4340000", receivedAmount: "4000000", invoiceCount: 5, paymentCount: 5 },
       18: { salesAmount: "9000000", receivedAmount: "7500000", invoiceCount: 7, paymentCount: 6 },
@@ -138,7 +138,7 @@ test.describe("زبانه‌های شاخص داشبورد", () => {
   });
 
   test("empty day: metric-specific empty states; zero profit is 0, not unknown", async ({ page, api }) => {
-    api.defaults["GET /reports/daily"] = { businessDate: "2026-09-16", salesAmount: "0", receivedAmount: "0", profitAmount: "0", invoiceCount: 0, returnCount: 0 };
+    api.defaults["GET /reports/daily"] = dailyBody({ businessDate: "2026-09-16", salesAmount: "0", receivedAmount: "0", profitAmount: "0", invoiceCount: 0, returnCount: 0 });
     api.defaults["GET /reports/daily/hourly"] = hourlyDay();
     await page.goto("/");
     await perHour(page);
@@ -155,7 +155,7 @@ test.describe("زبانه‌های شاخص داشبورد", () => {
   });
 
   test("credit sale: Sales has a chart, Received is empty — the two never merge", async ({ page, api }) => {
-    api.defaults["GET /reports/daily"] = { businessDate: "2026-09-16", salesAmount: "1000000", receivedAmount: "0", profitAmount: "600000", invoiceCount: 1, returnCount: 0 };
+    api.defaults["GET /reports/daily"] = dailyBody({ businessDate: "2026-09-16", salesAmount: "1000000", receivedAmount: "0", profitAmount: "600000", invoiceCount: 1, returnCount: 0 });
     api.defaults["GET /reports/daily/hourly"] = hourlyDay({ 11: { salesAmount: "1000000", profitAmount: "600000", invoiceCount: 1 } });
     await page.goto("/");
     await perHour(page);
@@ -221,7 +221,7 @@ test.describe("زبانه‌های شاخص داشبورد", () => {
     ["more", "13000000", /66٬000\s*تومان\s*بیشتر از فروش امروز/],
     ["equal", "12340000", /برابر با فروش امروز/],
   ] as const) test(`received note is a neutral comparison with today's sales (${label}); never "all money arrived"`, async ({ page, api }) => {
-    api.defaults["GET /reports/daily"] = { businessDate: "2026-09-16", salesAmount: "12340000", receivedAmount: received, profitAmount: "2000000", invoiceCount: 12, returnCount: 0 };
+    api.defaults["GET /reports/daily"] = dailyBody({ businessDate: "2026-09-16", salesAmount: "12340000", receivedAmount: received, profitAmount: "2000000", invoiceCount: 12, returnCount: 0 });
     await page.goto("/");
     const t = tab(page, "وجه دریافتی");
     await expect(t).toContainText(text);

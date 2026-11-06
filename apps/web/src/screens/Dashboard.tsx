@@ -448,7 +448,7 @@ export function Dashboard({ access }: { access: NavAccess }) {
   // ⚠️ تفاوت فروش و وجه دریافتیِ امروز «طلب» نیست و صفرشدنش «همه پول رسیده» نیست:
   //    دریافتِ امروز می‌تواند بابت فاکتور دیروز باشد و بازپرداخت از آن کم می‌شود
   //    (ریشه دید دریافتی بیش از فروش رخ می‌دهد). فقط مقایسهٔ خنثی، بی ادعای فاکتوری.
-  const diff = received - sales;
+  const diff = parseRial(report.receivedMinusSales);
   const posHref = accessOf(["sale.create"], access.verdicts) === "allow" ? routeUrl("pos") : null;
   const items = unposted.state === "ready" ? attentionItems(unposted.rows, report.businessDate, mayClose, posHref) : [];
   const attention = items.filter(i => i.tone === "attention").length;

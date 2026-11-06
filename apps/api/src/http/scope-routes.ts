@@ -227,8 +227,11 @@ export function registerScopeRoutes(app: FastifyInstance, deps: ScopeRouteDeps):
       // برای جلوگیری‌اش هست.
       //
       // `posting-batch.ts` از قبل همین Cast را داشت با همین دلیل.
+      received_minus_sales: string;
     }>`SELECT business_date::text, sales_amount, received_amount,
-              profit_amount, invoice_count, return_count
+              profit_amount, invoice_count, return_count,
+              -- تفاضل دریافتی و فروش هم پول است و در SQL حساب می‌شود، نه در مرورگر.
+              (received_amount - sales_amount)::text AS received_minus_sales
          FROM sales.daily_summary(
            ${branchId}::uuid,
            ${date}::date)`.execute(db);
@@ -247,6 +250,8 @@ export function registerScopeRoutes(app: FastifyInstance, deps: ScopeRouteDeps):
       profitAmount: seesCost ? serializeMoney(BigInt(r.profit_amount)) : null,
       invoiceCount: Number(r.invoice_count),
       returnCount: Number(r.return_count),
+      /** دریافتی − فروش امروز، از SQL؛ «طلب» یا «همه رسید» نیست — فقط مقایسهٔ خنثی کارت. */
+      receivedMinusSales: serializeMoney(BigInt(r.received_minus_sales)),
     };
   });
 
