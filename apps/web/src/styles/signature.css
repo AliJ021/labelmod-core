@@ -766,3 +766,11 @@ table.grid td small, table.ui-table td small { font-size: 0.6875rem; color: var(
   .ui-table--stack .cell-inline { justify-content: flex-end; }
 }
 
+
+/* ── WP4 دستهٔ ۵: کالا و قیمت مثل طرح ۱۰ ─────────────────────────────────────── */
+/* سایزها به ترتیب پوشاک از سرور، با جداکنندهٔ نقطه؛ «انتخاب همه» چاپ لیبل بیرون از جدول تا ستون انتخاب
+   در کارت گوشی هم برچسب داشته باشد. */
+.catalog-sizes { unicode-bidi: isolate; white-space: nowrap; font-variant-numeric: tabular-nums; }
+.catalog-pick-all { display: inline-flex; align-items: center; gap: var(--s-2); min-block-size: var(--touch); margin-block-end: var(--s-2); font-size: var(--text-sm); }
+.catalog-table .ui-table-actions { text-align: end; }
+.catalog-table .invoice-icon { margin: 0; border-color: var(--rule); background: var(--surface-solid-2); }

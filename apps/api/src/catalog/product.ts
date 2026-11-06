@@ -22,6 +22,7 @@ import type { Db } from "../db/client.ts";
 import { parseMoney, serializeMoney } from "../lib/money.ts";
 import { setActor } from "../lib/idempotency.ts";
 import { CatalogError } from "./variation.ts";
+import { sortSizes } from "./size-order.ts";
 
 export interface ProductInput {
   /** خالی یا نبود = کد خودکار سمت سرور (`catalog.next_product_code()`، مهاجرت ۰۹۴). */
@@ -99,6 +100,28 @@ export interface PriceHistoryRow {
   validFrom: string;
   validTo: string | null;
   byUser: string | null;
+}
+
+/**
+ * طرح ۱۰ (WP4 دستهٔ ۵) — ستون‌های موجودی فهرست کالا، جدا از `list()` تا جزئیات کالا عوض نشود.
+ * همه از SQL و در دامنهٔ شعبه‌های کاربر:
+ * - `sizes`/`colors`: تنوع‌های فعال؛ سایز با `sortSizes` (ترتیب پوشاک، نه الفبایی).
+ * - `stock`: جمع `on_hand` هر انبار فروش فعال (store/stock/outlet، همان انبارهای `inventory.low_stock`)،
+ *   فروشگاه اول، بعد انبار؛
+ *   انبار بی‌سطر یعنی سابقه‌ای ندارد، نه صفر ادعاشده.
+ * - `unitCostMin/Max`: بهای واحد هر سطر `stock_balance` با همان تعریف گزارش ارزش موجودی (۰۳۵):
+ *   `round(total_value / on_hand)` فقط برای `on_hand > 0`؛ بی `cost.view` یا بی موجودی `null`، نه صفر.
+ * - `lowStock`: شمار سطرهای (تنوع، انبار) همان `inventory.low_stock(آستانه)` داشبورد؛ آستانهٔ
+ *   تعریف‌نشده `null` («نامعلوم»)، نه صفر.
+ */
+export interface ProductInventory {
+  sizes: string[];
+  colors: string[];
+  stock: { warehouseId: string; warehouseName: string; warehouseKind: string; qty: string }[];
+  costVisible: boolean;
+  unitCostMin: string | null;
+  unitCostMax: string | null;
+  lowStock: number | null;
 }
 
 export class ProductService {
@@ -241,6 +264,62 @@ export class ProductService {
       priceMin: r.price_min === null ? null : serializeMoney(parseMoney(r.price_min)),
       priceMax: r.price_max === null ? null : serializeMoney(parseMoney(r.price_max)),
     }));
+  }
+
+  async inventoryFor(
+    ids: readonly string[],
+    opts: { branchIds: string[] | "all"; seesCost: boolean },
+  ): Promise<Map<string, ProductInventory>> {
+    const out = new Map<string, ProductInventory>();
+    if (ids.length === 0) return out;
+    const all = opts.branchIds === "all";
+    const scope = all ? [] : opts.branchIds;
+    const t = await sql<{ v: string | null }>`SELECT platform.setting_num('inventory.low_stock_threshold')::text AS v`.execute(this.#db);
+    const threshold = t.rows[0]?.v ?? null;
+    const r = await sql<{
+      id: string; sizes: (string | null)[] | null; colors: (string | null)[] | null;
+      stock: { warehouseId: string; warehouseName: string; warehouseKind: string; qty: string }[] | null;
+      cost_min: string | null; cost_max: string | null; low: string | null;
+    }>`
+      WITH wh AS (
+        SELECT w.id, w.name, w.kind FROM inventory.warehouse w
+         WHERE w.is_active AND w.kind IN ('store', 'stock', 'outlet')
+           AND (${all} OR w.branch_id = ANY(${scope}::uuid[]))
+      )
+      SELECT p.id::text,
+             (SELECT array_agg(DISTINCT v.size) FROM catalog.variation v WHERE v.product_id = p.id AND v.status = 'active') AS sizes,
+             (SELECT array_agg(DISTINCT v.color ORDER BY v.color) FROM catalog.variation v WHERE v.product_id = p.id AND v.status = 'active') AS colors,
+             (SELECT json_agg(json_build_object('warehouseId', x.id::text, 'warehouseName', x.name, 'warehouseKind', x.kind, 'qty', x.qty::text)
+                                 ORDER BY array_position(ARRAY['store', 'outlet', 'stock'], x.kind), x.name, x.id)
+                FROM (SELECT wh.id, wh.name, wh.kind, sum(b.on_hand)::platform.qty AS qty
+                        FROM inventory.stock_balance b
+                        JOIN catalog.variation v ON v.id = b.variation_id
+                        JOIN wh ON wh.id = b.warehouse_id
+                       WHERE v.product_id = p.id
+                       GROUP BY wh.id, wh.name, wh.kind) x) AS stock,
+             (SELECT min(round(b.total_value / b.on_hand))::text FROM inventory.stock_balance b
+                JOIN catalog.variation v ON v.id = b.variation_id JOIN wh ON wh.id = b.warehouse_id
+               WHERE ${opts.seesCost} AND v.product_id = p.id AND b.on_hand > 0) AS cost_min,
+             (SELECT max(round(b.total_value / b.on_hand))::text FROM inventory.stock_balance b
+                JOIN catalog.variation v ON v.id = b.variation_id JOIN wh ON wh.id = b.warehouse_id
+               WHERE ${opts.seesCost} AND v.product_id = p.id AND b.on_hand > 0) AS cost_max,
+             (SELECT count(*)::text FROM inventory.low_stock(${threshold}::numeric) l
+                JOIN catalog.variation v ON v.id = l.variation_id JOIN wh ON wh.id = l.warehouse_id
+               WHERE ${threshold}::numeric IS NOT NULL AND v.product_id = p.id) AS low
+        FROM catalog.product p
+       WHERE p.id = ANY(${[...ids]}::uuid[])`.execute(this.#db);
+    for (const row of r.rows) {
+      out.set(row.id, {
+        sizes: sortSizes((row.sizes ?? []).filter((x): x is string => x !== null)).filter((x): x is string => x !== null),
+        colors: (row.colors ?? []).filter((x): x is string => x !== null),
+        stock: row.stock ?? [],
+        costVisible: opts.seesCost,
+        unitCostMin: row.cost_min,
+        unitCostMax: row.cost_max,
+        lowStock: threshold === null ? null : Number(row.low ?? 0),
+      });
+    }
+    return out;
   }
 
   async get(id: string): Promise<ProductRow> {

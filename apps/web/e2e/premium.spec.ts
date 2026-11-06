@@ -33,9 +33,16 @@ async function tabContract(list: Locator, vertical = false) {
   }
 }
 
+/**
+ * نام کالا در فهرست کالا. فهرست جدول `DataTable` با `stack` است و در گوشی برچسب ستون («کالا») جزء نام
+ * دسترس‌پذیر خانه می‌شود؛ پس متن دقیق خودِ نام سنجیده می‌شود، نه نام خانه.
+ */
+const listed = (page: Page, name: string) =>
+  page.getByRole("table", { name: "فهرست کالا؛ قیمت‌ها به تومان" }).getByText(name, { exact: true });
+
 test("visual, local fonts, contrast, targets, long names and 200% text", async ({ page, api }) => {
   await openCatalog(page);
-  await expect(page.getByRole("cell", { name: product.nameInternal, exact: true })).toBeVisible();
+  await expect(listed(page, product.nameInternal)).toBeVisible();
   await fontsReady(page);
   expect(api.fonts.some(x => x.includes("Vazirmatn"))).toBe(true);
   expect(api.fonts.filter(x => x.includes("IBMPlexMono")).length).toBe(4);
@@ -95,22 +102,22 @@ test("search debounce, Enter, stale response after latest response", async ({ pa
   });
   await openCatalog(page);
   const search = page.locator("main").getByRole("searchbox");
-  await expect(page.getByRole("cell", { name: product.nameInternal, exact: true })).toBeVisible();
+  await expect(listed(page, product.nameInternal)).toBeVisible();
   await page.clock.install({ time: new Date("2026-01-01T00:00:00Z") });
   await page.clock.pauseAt(new Date("2026-01-01T00:00:10Z"));
   const before = api.calls.filter(x => x.startsWith("GET /products")).length;
   await search.fill("A");
-  await expect(page.getByRole("cell", { name: product.nameInternal, exact: true })).toHaveCount(0);
+  await expect(listed(page, product.nameInternal)).toHaveCount(0);
   await expect(page.locator('[aria-busy="true"]')).toBeVisible();
   await page.clock.runFor(249);
   expect(api.calls.filter(x => x.startsWith("GET /products")).length).toBe(before);
   await page.clock.runFor(1);
   await expect.poll(() => !!old).toBe(true);
   await search.fill("AB"); await search.press("Enter"); await page.clock.runFor(1);
-  await expect(page.getByRole("cell", { name: "AB", exact: true })).toBeVisible();
+  await expect(listed(page, "AB")).toBeVisible();
   await old!.fulfill({ json: { products: [{ ...product, nameInternal: "OLD" }] } });
-  await expect(page.getByRole("cell", { name: "OLD", exact: true })).toHaveCount(0);
-  await expect(page.getByRole("cell", { name: "AB", exact: true })).toBeVisible();
+  await expect(listed(page, "OLD")).toHaveCount(0);
+  await expect(listed(page, "AB")).toBeVisible();
 });
 
 test("clear, filter and unmount cancel pending searches; error retry and empty states", async ({ page, api }) => {
@@ -127,7 +134,7 @@ test("clear, filter and unmount cancel pending searches; error retry and empty s
   await search.fill("pending"); await search.press("Enter");
   await expect.poll(() => held.length).toBeGreaterThanOrEqual(1);
   await page.getByRole("button", { name: "پاک‌کردن جست‌وجوی کد یا نام کالا", exact: true }).click();
-  await expect(page.getByRole("cell", { name: product.nameInternal, exact: true })).toBeVisible();
+  await expect(listed(page, product.nameInternal)).toBeVisible();
   const firstCount = held.length;
   await search.fill("pending"); await search.press("Enter");
   await expect.poll(() => held.length).toBeGreaterThan(firstCount);
@@ -137,7 +144,7 @@ test("clear, filter and unmount cancel pending searches; error retry and empty s
   await page.getByRole("tab", { name: "داشبورد", exact: true }).click();
   for (const route of held) await route.fulfill({ json: { products: [{ ...product, nameInternal: "OLD" }] } }).catch(() => {});
   await page.getByRole("tab", { name: "کالا و قیمت", exact: true }).click();
-  await expect(page.getByRole("cell", { name: "OLD", exact: true })).toHaveCount(0);
+  await expect(listed(page, "OLD")).toHaveCount(0);
   fail = true;
   await search.fill("error"); await search.press("Enter");
   await expect(page.getByRole("alert")).toContainText("خطای آزمایشی شبکه");
