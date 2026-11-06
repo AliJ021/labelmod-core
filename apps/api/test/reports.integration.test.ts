@@ -673,6 +673,72 @@ describe("گزارش‌ها", { skip }, () => {
     assert.ok(s.hours.every((h) => h.salesAmount === "0" && h.profitAmount === null));
   });
 
+  // ── مقایسه با «همین لحظهٔ دیروز» (مهاجرت ۱۰۹، طرح ۱۰) ─────────────
+
+  type Comparison = {
+    businessDate: string; cutoff: string; lastHour: number | null;
+    total: { sales: string; received: string; profit: string | null };
+    delta: { sales: string; received: string; profit: string | null };
+    hours: { hour: number; cumulative: { sales: string; received: string; profit: string | null } | null }[];
+  };
+  const comparisonOf = async (username: string, query = "") => {
+    const r = await get(username, `/reports/daily/hourly?branchId=${BRANCH}${query}`);
+    assert.equal(r.statusCode, 200, r.body);
+    return JSON.parse(r.body) as Hourly & { comparisonVisible: boolean; comparison: Comparison | null };
+  };
+
+  test("مقایسه: دیروز تا همین لحظه از SQL؛ اختلاف = کارت امروز − دیروز تا مرز؛ ساعت پس از مرز null", async () => {
+    const before = (await sql<{ c: Date }>`SELECT sales.previous_day_cutoff(platform.business_date()) AS c`.execute(handle.db)).rows[0]!.c;
+    const body = await comparisonOf(admin);
+    const after = (await sql<{ c: Date }>`SELECT sales.previous_day_cutoff(platform.business_date()) AS c`.execute(handle.db)).rows[0]!.c;
+    const daily = await dailyOf(admin);
+    assert.equal(body.comparisonVisible, true);
+    const c = body.comparison!;
+    assert.ok(c, "مدیر مقایسه را می‌بیند");
+    const yesterday = (await sql<{ y: string }>`SELECT (${body.businessDate}::date - 1)::text AS y`.execute(handle.db)).rows[0]!.y;
+    assert.equal(c.businessDate, yesterday, "طرف مقایسه روز قبلِ همان روز کاری است");
+    assert.match(c.cutoff, /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{6}Z$/, "مرز ISO و UTC");
+    const cut = new Date(c.cutoff).getTime();
+    assert.ok(cut >= before.getTime() && cut <= after.getTime(), `مرز همان previous_day_cutoff اکنون است: ${c.cutoff}`);
+    // جمع و ساعت‌ها در برابر خودِ تابع SQL با همان مرز — عددی که فقط این آزمون حساب کرده باشد چیزی را ثابت نمی‌کند.
+    const ref = (await sql<{ sales: string; received: string; profit: string; last: number | null }>`
+      SELECT sum(sales_amount)::text AS sales, sum(received_amount)::text AS received, sum(profit_amount)::text AS profit,
+             CASE WHEN ${c.cutoff}::timestamptz > platform.business_day_start(${yesterday}::date)
+                  THEN platform.business_hour(${c.cutoff}::timestamptz - interval '1 microsecond') END AS last
+        FROM sales.daily_summary_hourly_until(${BRANCH}::uuid, ${yesterday}::date, ${c.cutoff}::timestamptz)`.execute(handle.db)).rows[0]!;
+    assert.deepEqual(c.total, { sales: ref.sales, received: ref.received, profit: ref.profit });
+    assert.equal(c.lastHour, ref.last === null ? null : Number(ref.last));
+    assert.equal(c.delta.sales, String(BigInt(daily.salesAmount) - BigInt(ref.sales)));
+    assert.equal(c.delta.received, String(BigInt(daily.receivedAmount) - BigInt(ref.received)));
+    assert.equal(c.delta.profit, String(BigInt(daily.profitAmount as string) - BigInt(ref.profit)));
+    assert.deepEqual(c.hours.map(h => h.hour), Array.from({ length: 24 }, (_, i) => i));
+    for (const h of c.hours) {
+      if (c.lastHour === null || h.hour > c.lastHour) assert.equal(h.cumulative, null, `ساعت ${h.hour} پس از مرز: null، نه صفر`);
+      else for (const k of ["sales", "received", "profit"] as const) assert.match(h.cumulative![k] as string, /^-?\d+$/);
+    }
+    if (c.lastHour !== null) assert.deepEqual(c.hours[c.lastHour]!.cumulative, c.total, "آخرین نقطهٔ رسیده = جمع تا مرز");
+  });
+
+  test("مقایسه: روز گذشته با کل روز قبلش؛ سرپرست بی سود؛ صندوق‌دارِ فقط‌امروز اصلاً دیروز نمی‌گیرد", async () => {
+    const past = await comparisonOf(admin, "&date=2024-02-29");
+    assert.equal(past.comparison!.businessDate, "2024-02-28");
+    assert.equal(past.comparison!.lastHour, 23, "روز تمام‌شده: مرز کل روز قبل است");
+    assert.ok(past.comparison!.hours.every(h => h.cumulative !== null && h.cumulative.sales === "0"));
+    assert.deepEqual(past.comparison!.delta, { sales: "0", received: "0", profit: "0" });
+
+    const sup = await comparisonOf(supervisor);
+    assert.equal(sup.comparisonVisible, true);
+    assert.equal(sup.comparison!.total.profit, null);
+    assert.equal(sup.comparison!.delta.profit, null);
+    assert.ok(sup.comparison!.hours.every(h => h.cumulative === null || h.cumulative.profit === null), "سود دیروز هم بی cost.view پنهان است");
+
+    const cash = await comparisonOf(cashier);
+    assert.equal(cash.comparisonVisible, false);
+    assert.equal(cash.comparison, null, "صندوق‌دار بی report.view: نه دیروز، نه اختلاف");
+    assert.equal(cash.hours.length, 24, "روند امروز خودش همچنان می‌آید");
+    assert.equal((await get(cashier, `/reports/daily/hourly?branchId=${BRANCH}&date=2024-02-29`)).statusCode, 403);
+  });
+
   // ── روند روزانه/ماهانه (مهاجرت ۰۹۳) ──────────────────────────────
 
   type Bucket = {

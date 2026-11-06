@@ -183,7 +183,7 @@ export function registerScopeRoutes(app: FastifyInstance, deps: ScopeRouteDeps):
       operation: "cost.view",
       viaPin: s.pinUnlocked,
     });
-    return { branchId: q.branchId, date, seesCost: costs.verdict === "allow" };
+    return { branchId: q.branchId, date, seesCost: costs.verdict === "allow", seesReports: reports.verdict === "allow" };
   }
 
   /**
@@ -251,6 +251,76 @@ export function registerScopeRoutes(app: FastifyInstance, deps: ScopeRouteDeps):
   });
 
   /**
+   * روز قبل تا «همین لحظه» برای مقایسهٔ روند و کارت فروش (مهاجرت ۱۰۹).
+   * همهٔ جمع‌ها و اختلاف‌ها در یک کوئری SQL؛ اینجا فقط رشته و `null` چیده می‌شود.
+   * اختلاف = خلاصهٔ همان روز (`daily_summary`، یعنی تا اکنون) منهای روز قبل تا مرز.
+   */
+  async function previousDayComparison(branchId: string, date: string, seesCost: boolean) {
+    const rows = await sql<{
+      business_date: string;
+      cutoff: string;
+      last_hour: number | null;
+      hour_of_day: number;
+      cumulative_sales: string;
+      cumulative_received: string;
+      cumulative_profit: string;
+      total_sales: string;
+      total_received: string;
+      total_profit: string;
+      delta_sales: string;
+      delta_received: string;
+      delta_profit: string;
+    }>`WITH c AS (
+         SELECT sales.previous_day_cutoff(${date}::date) AS cut,
+                platform.business_day_start(${date}::date - 1) AS start
+       ), y AS (
+         SELECT u.business_date, u.hour_of_day,
+                sum(u.sales_amount)    OVER w AS cumulative_sales,
+                sum(u.received_amount) OVER w AS cumulative_received,
+                sum(u.profit_amount)   OVER w AS cumulative_profit,
+                sum(u.sales_amount)    OVER () AS total_sales,
+                sum(u.received_amount) OVER () AS total_received,
+                sum(u.profit_amount)   OVER () AS total_profit
+           FROM c, sales.daily_summary_hourly_until(${branchId}::uuid, ${date}::date - 1, c.cut) u
+         WINDOW w AS (ORDER BY u.hour_of_day ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW)
+       )
+       SELECT y.business_date::text,
+              to_char(c.cut AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.US"Z"') AS cutoff,
+              CASE WHEN c.cut > c.start THEN platform.business_hour(c.cut - interval '1 microsecond') END AS last_hour,
+              y.hour_of_day,
+              y.cumulative_sales::text, y.cumulative_received::text, y.cumulative_profit::text,
+              y.total_sales::text, y.total_received::text, y.total_profit::text,
+              (d.sales_amount - y.total_sales)::text       AS delta_sales,
+              (d.received_amount - y.total_received)::text AS delta_received,
+              (d.profit_amount - y.total_profit)::text     AS delta_profit
+         FROM y CROSS JOIN c
+         CROSS JOIN sales.daily_summary(${branchId}::uuid, ${date}::date) d
+        ORDER BY y.hour_of_day`.execute(db);
+    if (rows.rows.length !== 24) throw new Error("sales.daily_summary_hourly_until باید ۲۴ سطر بدهد");
+    const first = rows.rows[0]!;
+    const lastHour = first.last_hour === null ? null : Number(first.last_hour);
+    const money = (v: string) => serializeMoney(BigInt(v));
+    return {
+      businessDate: first.business_date,
+      cutoff: first.cutoff,
+      lastHour,
+      total: { sales: money(first.total_sales), received: money(first.total_received), profit: seesCost ? money(first.total_profit) : null },
+      delta: { sales: money(first.delta_sales), received: money(first.delta_received), profit: seesCost ? money(first.delta_profit) : null },
+      hours: rows.rows.map((r) => {
+        const reached = lastHour !== null && Number(r.hour_of_day) <= lastHour;
+        return {
+          hour: Number(r.hour_of_day),
+          cumulative: reached ? {
+            sales: money(r.cumulative_sales),
+            received: money(r.cumulative_received),
+            profit: seesCost ? money(r.cumulative_profit) : null,
+          } : null,
+        };
+      }),
+    };
+  }
+
+  /**
    * همان خلاصه روز، به تفکیک ساعت کاری (مهاجرت ۰۸۳،
    * `sales.daily_summary_hourly`) — روند زیر سه کارت داشبورد.
    *
@@ -266,9 +336,16 @@ export function registerScopeRoutes(app: FastifyInstance, deps: ScopeRouteDeps):
    *   همان‌طور که هست.
    * - `currentHour` ساعت جاری کسب‌وکار برای امروز (روز گذشته `null`) — مرز
    *   «هنوز نیامده» در نمودار، نه صفر.
+   * - `comparison` (مهاجرت ۱۰۹، طرح ۱۰): روز قبل **تا همین لحظه**
+   *   (`sales.previous_day_cutoff`) — نه کل دیروز و نه تا آخر همین ساعت.
+   *   تجمعی هر ساعت، جمع و **اختلاف** هر سه از SQL؛ ساعت‌های پس از مرز `null`.
+   *   برای تاریخ گذشته مرز کل روز قبل است. دیدن دیروز `report.view` می‌خواهد —
+   *   همان قاعدهٔ `date` دیروز در `dailyScope` — پس صندوق‌دارِ «فقط امروز»
+   *   `comparison: null` و `comparisonVisible: false` می‌گیرد، نه راهی به دیروز.
+   *   سودش بی `cost.view` همان `null` است.
    */
   app.get("/reports/daily/hourly", async (req) => {
-    const { branchId, date, seesCost } = await dailyScope(req);
+    const { branchId, date, seesCost, seesReports } = await dailyScope(req);
     const rows = await sql<{
       business_date: string;
       hour_of_day: number;
@@ -296,10 +373,13 @@ export function registerScopeRoutes(app: FastifyInstance, deps: ScopeRouteDeps):
     const now = await sql<{ today: string; hour: number }>`
       SELECT platform.business_date()::text AS today, platform.business_hour() AS hour`.execute(db);
     const currentHour = now.rows[0]!.today === date ? Number(now.rows[0]!.hour) : null;
+    const comparison = seesReports ? await previousDayComparison(branchId, date, seesCost) : null;
     return {
       businessDate: date,
       currentHour,
       profitVisible: seesCost,
+      comparisonVisible: seesReports,
+      comparison,
       hours: rows.rows.map((r) => ({
         hour: Number(r.hour_of_day),
         salesAmount: serializeMoney(BigInt(r.sales_amount)),
