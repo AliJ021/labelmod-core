@@ -1,9 +1,10 @@
 const Invoices = lazy(() => import("./screens/Invoices.tsx").then(m => ({ default: m.Invoices })));
 /** پوسته: ناوبری شیشه‌ای، محتوای مالی مات و دسترس‌پذیر. */
-import { lazy, Suspense, useCallback, useEffect, useState } from "react";
+import { lazy, Suspense, useCallback, useEffect, useRef, useState } from "react";
 import { GlassFilters, Solid } from "./components/Glass.tsx";
 import { TabPanels, useTabsId } from "./components/Tabs.tsx";
 import { HeaderTools } from "./components/HeaderTools.tsx";
+import { Icon } from "./components/Icon.tsx";
 import { PasswordDialog } from "./components/PasswordDialog.tsx";
 const Dashboard = lazy(() => import("./screens/Dashboard.tsx").then(m => ({ default: m.Dashboard })));
 import { Login, LockScreen, ReauthPanel } from "./screens/Login.tsx";
@@ -76,6 +77,9 @@ export function App() {
   };
   const pathname = usePathname();
   const [more, setMore] = useState(false);
+  /** دکمه‌ای که برگهٔ بخش‌ها را باز کرد (☰ سربرگ یا «بیشتر» نوار پایین)؛ بستن فوکوس را به همان برمی‌گرداند. */
+  const moreOpener = useRef<HTMLElement | null>(null);
+  const openMore = (open: boolean, from?: HTMLElement) => { if (open) moreOpener.current = from ?? null; setMore(open); };
   const [keyboard, setKeyboard] = useState(false);
   useEffect(() => {
     const viewport = window.visualViewport;
@@ -286,12 +290,16 @@ export function App() {
       <GlassFilters />
       <Backdrop variant="workspace" />
 
-      <div className={`app workspace${railed ? " workspace--collapsed" : ""}${more ? " workspace--more" : ""}${keyboard ? " workspace--keyboard" : ""}`}>
+      {/* صندوق در گوشی (تصمیم مالک): نوار پایین پنهان است تا سبد و تسویه جا داشته باشند؛ منو از ☰ در دسترس است. */}
+      <div className={`app workspace${railed ? " workspace--collapsed" : ""}${more ? " workspace--more" : ""}${keyboard ? " workspace--keyboard" : ""}${compact && zone === "pos" && !uiKit ? " workspace--pos-phone" : ""}`}>
         <a className="skip-content" href="#workspace-content">رفتن به محتوا</a>
         {sessionError && <p className="solid pos-alert" role="alert">{sessionError}</p>}
-        <ShellHeader searchKey={`${me?.id}:${me?.elevated}`} trail={trailItem ? <ShellTrail group={trailItem.group} label={trailItem.label} /> : null} tools={me ? <HeaderTools me={me} theme={theme} onTheme={cycleTheme} onLock={() => void lockScreen()} onLogout={() => void signOut()} onPassword={() => setPasswordOpen(true)} onReauth={() => setUpgrading(true)} compact={compact} /> : null} />
+        <ShellHeader searchKey={`${me?.id}:${me?.elevated}`}
+          menu={compact && me ? <button type="button" className="icon-button shell-menu" aria-label="بازکردن منو" title="منو"
+            aria-haspopup="dialog" aria-expanded={more} aria-controls="more-sheet" onClick={e => openMore(true, e.currentTarget)}><Icon name="menu" /></button> : null}
+          trail={trailItem ? <ShellTrail group={trailItem.group} label={trailItem.label} /> : null} tools={me ? <HeaderTools theme={theme} onTheme={cycleTheme} onLock={() => void lockScreen()} /> : null} />
 
-        <ShellNav top={<><ShellBrand />{me ? <ShellBranch key={me.id} /> : null}</>} bottom={me ? <ShellUser me={me} onPassword={() => setPasswordOpen(true)} onReauth={() => setUpgrading(true)} onLogout={() => void signOut()} /> : null} collapsed={railed} onToggle={toggleNav} id={tabsId} items={navItems} pending={pendingItems} access={access.state} onRetry={access.retry} zone={zone} onZone={switchZone} compact={compact} more={more} onMore={setMore} />
+        <ShellNav top={<><ShellBrand />{me ? <ShellBranch key={me.id} /> : null}</>} bottom={me ? <ShellUser me={me} onPassword={() => setPasswordOpen(true)} onReauth={() => setUpgrading(true)} onLogout={() => void signOut()} /> : null} collapsed={railed} onToggle={toggleNav} id={tabsId} items={navItems} pending={pendingItems} access={access.state} onRetry={access.retry} zone={zone} onZone={switchZone} compact={compact} more={more} onMore={openMore} opener={() => moreOpener.current} />
         <main id="workspace-content" tabIndex={-1}>
         {uiKit && UiKit ? <SectionBoundary key="ui-kit"><Suspense fallback={<p className="solid pad" role="status">در حال بارگذاری UI Kit…</p>}><UiKit /></Suspense></SectionBoundary> : null}
         <SectionBoundary key={`${me?.id}:${zone}`}>

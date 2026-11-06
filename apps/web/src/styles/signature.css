@@ -689,3 +689,33 @@ table.grid td small, table.ui-table td small { font-size: 0.6875rem; color: var(
 .kpis.manager-kpis { grid-template-columns: minmax(0, 1fr); }
 @media (min-width: 560px) { .kpis.manager-kpis { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
 @media (min-width: 1100px) { .kpis.manager-kpis { grid-template-columns: repeat(4, minmax(0, 1fr)); } }
+
+/* ── WP3: سربرگ گوشی مثل طرح ۱۰ (تصمیم مالک) ─────────────────────────────────────
+   راست: ☰ و عنوان همین صفحه؛ چپ: جست‌وجو، نقطهٔ وضعیت اتصال، قفل و تم. حساب و خروج پای منوی ☰اند.
+   نوار پایین می‌ماند و فقط در صندوقِ گوشی پنهان است تا سبد و تسویه جا داشته باشند. */
+.shell-menu { flex: none; }
+@media (max-width: 899.98px) {
+  .workspace-header { flex-wrap: nowrap; gap: 8px; }
+  .workspace-header .brand { display: none; }
+  .workspace-header .shell-trail { display: inline-flex; flex: 0 1 auto; min-inline-size: 0; overflow: hidden; font-weight: var(--weight-bold); }
+  .workspace-header .shell-trail > span:first-child, .workspace-header .shell-trail > .icon { display: none; }
+  .workspace-header .shell-trail [aria-current="page"] { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--ink); font-size: var(--text-md); }
+  .workspace-header .feature-search { margin-inline-start: auto; }
+  .workspace-header .server-fresh { display: inline-grid; place-items: center; flex: none; inline-size: 20px; min-block-size: 44px; padding: 0; border: 0; background: none; }
+  .workspace--pos-phone > .workspace-nav { display: none; }
+}
+@media (max-width: 899.98px) {
+  /* نوار سربرگ تمام‌عرض و تخت مثل طرح ۱۰، نه کارت شناور؛ چسبان نیست تا روی محتوای فوکوس‌شده ننشیند. */
+  .workspace > .workspace-header { margin-inline: calc(-1 * var(--s-4)); margin-block-start: calc(-1 * max(var(--s-4), env(safe-area-inset-top)));
+    padding: max(8px, env(safe-area-inset-top)) var(--s-4) 8px; border-radius: 0 !important; border-block-end: var(--border-w) solid var(--rule); box-shadow: none; }
+  .workspace > .workspace-header::before, .workspace > .workspace-header::after { opacity: 0; }
+  /* صندوقِ گوشی بی نوار پایین: خلاصهٔ چسبان سبد تا لبهٔ امن پایین می‌آید. */
+  .workspace--pos-phone .pos-mobile-summary { inset-block-end: calc(var(--s-3) + env(safe-area-inset-bottom)); }
+}
+@media (max-width: 560px) {
+  .workspace > .workspace-header { margin-inline: calc(-1 * var(--s-3)); padding-inline: var(--s-3); }
+}
+.more-sheet-head { display: grid; gap: var(--s-2); padding: 4px 2px 8px; }
+.more-sheet-head .shell-branch { border: var(--border-w) solid var(--rule); background: var(--surface-solid); }
+.more-sheet-account { margin-block-start: 8px; padding-block-start: 8px; border-block-start: var(--border-w) solid var(--rule); }
+.more-sheet-account .shell-user { margin: 0; padding: 0; border: 0; }

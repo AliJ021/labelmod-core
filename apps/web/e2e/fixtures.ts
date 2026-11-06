@@ -276,13 +276,28 @@ export async function fontsReady(page: Page) {
 
 export async function openZone(page: Page, name: string) {
   const nav = page.getByRole("tablist", { name: "بخش‌ها", exact: true });
-  await expect(nav).toBeVisible();
+  const phone = page.viewportSize()!.width < 900;
+  // صندوقِ گوشی (طرح ۱۰، تصمیم مالک) نوار پایین ندارد؛ آنجا همهٔ بخش‌ها از ☰ سربرگ‌اند.
+  const posPhone = phone && await page.locator(".workspace--pos-phone").count() > 0;
+  if (!posPhone) await expect(nav).toBeVisible();
   // گوشی: فقط مقصدهای نوار پایین زبانه‌اند؛ بقیه از برگهٔ مودال «بیشتر» (پیوند، نه زبانه).
-  if (page.viewportSize()!.width >= 900 || MOBILE_PRIMARY.includes(name)) {
+  if (!phone || (!posPhone && MOBILE_PRIMARY.includes(name))) {
     await nav.getByRole("tab", { name, exact: true }).click();
     return;
   }
-  await page.getByRole("button", { name: "بخش‌های بیشتر", exact: true }).click();
+  await page.getByRole("button", { name: posPhone ? "بازکردن منو" : "بخش‌های بیشتر", exact: true }).click();
   await page.getByRole("dialog", { name: "همهٔ بخش‌ها" }).getByRole("link", { name, exact: true }).click();
+}
+
+/**
+ * حساب و خروج (طرح ۱۰): در دسکتاپ پای نوار کناری، در گوشی پای منوی ☰. محدوده‌ای که این دو کنترل
+ * در آن‌اند را برمی‌گرداند و در گوشی منو را باز می‌کند.
+ */
+export async function accountScope(page: Page) {
+  if (page.viewportSize()!.width >= 900) return page.locator("body");
+  await page.getByRole("button", { name: "بازکردن منو", exact: true }).click();
+  const sheet = page.getByRole("dialog", { name: "همهٔ بخش‌ها" });
+  await expect(sheet).toBeVisible();
+  return sheet;
 }
 const MOBILE_PRIMARY: readonly string[] = ZONES.filter(z => z.mobilePrimary).map(z => z.label);

@@ -1,4 +1,4 @@
-import { openZone } from "./fixtures";
+import { accountScope, openZone } from "./fixtures";
 import { test, expect, product, rule, customer, staff, openCatalog, settings, fontsReady } from "./fixtures";
 import type { Page, Route, Locator } from "@playwright/test";
 
@@ -323,14 +323,16 @@ test("بی WebGL، ورود همان زمینهٔ CSS را دارد و پارچ�
 
 test("password suggestion, cancellation, server error, duplicate submit and success", async ({ page, api }) => {
   await page.goto("/");
-  const account = page.getByRole("button", { name: "حساب مدیر آزمایشی" });
+  const account = (await accountScope(page)).getByRole("button", { name: "حساب مدیر آزمایشی" });
   const open = async () => { await account.click(); await page.getByRole("button", { name: "تغییر رمز من" }).click(); };
   await open();
   await page.getByRole("button", { name: "پیشنهاد رمز امن" }).click();
   await expect(page.getByLabel("رمز تازه", { exact: true })).toHaveValue(/^[0-9a-f]{64}$/);
   expect(api.calls.some(x => x.startsWith("POST"))).toBe(false);
   await page.getByRole("button", { name: "انصراف", exact: true }).click();
-  await expect(page.getByRole("dialog")).toHaveCount(0);
+  // گوشی: برگهٔ منو زیر گفت‌وگوی رمز باز می‌ماند و فوکوس به همان دکمهٔ حساب درونش برمی‌گردد.
+  await expect(page.getByRole("dialog", { name: /رمز/ })).toHaveCount(0);
+  await expect(page.getByRole("dialog")).toHaveCount(page.viewportSize()!.width >= 900 ? 0 : 1);
   await expect(account).toBeFocused();
   await open();
   await page.getByLabel("رمز فعلی", { exact: true }).fill("Current-test-only-123");
@@ -359,7 +361,7 @@ test("header lock and logout keep their independent behavior", async ({ page, ap
   await expect(page.getByRole("heading", { name: "صفحه قفل است" })).toBeVisible();
   expect(api.calls).toContain("POST /auth/lock");
   await page.reload();
-  await page.getByRole("button", { name: "خروج", exact: true }).click();
+  await (await accountScope(page)).getByRole("button", { name: "خروج", exact: true }).click();
   await expect(page.getByLabel("نام کاربری", { exact: true })).toBeVisible();
   expect(api.calls).toContain("POST /auth/logout");
 });
@@ -383,7 +385,7 @@ test("locking mid-load stops dashboard requests before reload and logout", async
   await page.evaluate(() => new Promise(resolve => setTimeout(resolve, 300)));
   expect(api.calls.slice(afterLock), "No dashboard request after lock").toEqual([]);
   await page.reload();
-  await page.getByRole("button", { name: "خروج", exact: true }).click();
+  await (await accountScope(page)).getByRole("button", { name: "خروج", exact: true }).click();
   await expect(page.getByLabel("نام کاربری", { exact: true })).toBeVisible();
   expect(api.calls).toContain("POST /auth/logout");
 });

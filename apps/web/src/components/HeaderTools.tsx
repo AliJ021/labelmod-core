@@ -58,23 +58,19 @@ export function ServerFreshness({ online }: { online: boolean }) {
   </span>;
 }
 
-export function HeaderTools({ me, theme, onTheme, onLock, onLogout, onPassword, onReauth, compact }: {
-  me: Me;
+/**
+ * ابزار نوار بالا (طرح ۱۰، تصمیم مالک): در هر عرض فقط قفل و تم. حساب و خروج در دسکتاپ پای نوار
+ * کناری‌اند و در گوشی پای منوی ☰ (همان `ShellUser`) — یک کنترل، نه دو نسخه.
+ */
+export function HeaderTools({ theme, onTheme, onLock }: {
   theme: Theme;
   onTheme: () => void;
   onLock: () => void;
-  onLogout: () => void;
-  onPassword: () => void;
-  onReauth: () => void;
-  /** گوشی: حساب و خروج در نوار بالا می‌مانند؛ دسکتاپ آن‌ها را در پای نوار کناری دارد. */
-  compact: boolean;
 }) {
   const themeLabel = theme === "system" ? "تم: سیستم؛ تغییر به روشن" : theme === "light" ? "تم: روشن؛ تغییر به تیره" : "تم: تیره؛ تغییر به سیستم";
   return (
     <div className="tools" aria-label="ابزارهای حساب">
-      {compact ? <AccountMenu me={me} onPassword={onPassword} onReauth={onReauth} variant="icon" /> : null}
       <button type="button" className="icon-button" aria-label="قفل صفحه" title="قفل صفحه" onClick={onLock}><Icon name="lock" /></button>
-      {compact ? <button type="button" className="icon-button" aria-label="خروج" title="خروج" onClick={onLogout}><Icon name="logout" /></button> : null}
       <button type="button" className="icon-button" aria-label={themeLabel} title={themeLabel} onClick={onTheme}><Icon name={theme === "system" ? "monitor" : theme === "light" ? "sun" : "moon"} /></button>
     </div>
   );
