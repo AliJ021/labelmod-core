@@ -47,7 +47,7 @@ import {
 } from "../lib/pos.ts";
 import {
   bucketPoints, DAYS, GRAINS, hourPoints, MONTHS, trendBounds, trendCopy, trendView,
-  type Grain, type Metric, type TrendPoint,
+  cumulativePoints, type Grain, type Metric, type TrendPoint,
 } from "../lib/dashboard-trend.ts";
 import { attentionItems, type AttentionItem } from "../lib/dashboard-attention.ts";
 import { session } from "../lib/session.ts";
@@ -167,9 +167,12 @@ export function Dashboard({ access }: { access: NavAccess }) {
    */
   const [metric, setMetric] = useState<Metric>("sales");
   /** دانه‌بندی روند هم محلی است؛ روزانه و ماهانه فقط با انتخاب و یک بار بار می‌شوند. */
-  const [grain, setGrain] = useState<Grain>("hour");
+  // پیش‌فرض «تا این لحظه» (تصمیم مالک، طرح ۱۰)؛ «هر ساعت» گزینهٔ دوم برای شیفت و شلوغی است.
+  const [grain, setGrain] = useState<Grain>("cumulative");
   /** «مقایسهٔ هر سه شاخص» — صریح و محلی؛ پیش‌فرض فقط شاخص انتخاب‌شده. */
   const [compare, setCompare] = useState(false);
+  /** خط «دیروز تا همین لحظه» در نمای تجمعی — پیش‌فرض روشن (تصمیم مالک)؛ فقط اگر سرور مقایسه داده باشد. */
+  const [yesterday, setYesterday] = useState(true);
   const [trends, setTrends] = useState<Partial<Record<"day" | "month", Trend>>>({});
   /**
    * دانه‌بندی‌هایی که درخواستشان رفته یا رسیده — در ref، نه state: دو کلیک پیش از
@@ -358,7 +361,7 @@ export function Dashboard({ access }: { access: NavAccess }) {
       trendRequested.current.clear();
       setTrends({});
       const g = latest.current.grain;
-      if (g !== "hour") loadTrend(g, b.id, report);
+      if (g === "day" || g === "month") loadTrend(g, b.id, report);
       // «مرور دوره» (با همان انتخاب) و «همگام‌سازی سایت»، آخرین گام‌های ترتیبی همین زنجیره: سرصفحه تا رسیدن
       // هر دو «تازه» نمی‌گوید و شکست هر کدام شکست همین به‌روزرسانی است (ارقام قبلی همان بخش می‌مانند).
       await sectionReloads.current.period?.(signal);
@@ -436,7 +439,7 @@ export function Dashboard({ access }: { access: NavAccess }) {
   /** روند روزانه/ماهانه با اولین انتخاب (و پس از هر به‌روزرسانی، از نو). */
   function chooseGrain(next: Grain) {
     setGrain(next);
-    if (next === "hour" || !branch || !report) return;
+    if ((next !== "day" && next !== "month") || !branch || !report) return;
     loadTrend(next, branch.id, report);
   }
 
@@ -453,9 +456,18 @@ export function Dashboard({ access }: { access: NavAccess }) {
   // و پنل هرگز روند سود را نمی‌سازد — نه صفر، نه ستون.
   const profitKnown = report.profitAmount !== null && (hourly.state !== "ready" || hourly.data.profitVisible);
   const selected: Metric = metric === "profit" && !profitKnown ? "sales" : metric;
+  // «نسبت به همین لحظهٔ دیروز» (طرح ۱۰): اختلاف از SQL (`comparison.delta`)، فقط اگر سرور مقایسه داده
+  // باشد (`report.view`). اینجا فقط علامت برای کلمهٔ «بیشتر/کمتر» و قدرمطلق برای نمایش خوانده می‌شود.
+  const comparison = hourly.state === "ready" ? hourly.data.comparison : null;
+  const salesDelta = comparison ? parseRial(comparison.delta.sales) : null;
   const kpis: KpiTab<Metric>[] = [
     { key: "sales", label: "فروش", icon: "receipt", primary: true,
       value: <Money rial={sales} size="xl" />,
+      ...(salesDelta === null ? {} : {
+        deltaTone: salesDelta > 0n ? "up" : salesDelta < 0n ? "down" : "flat",
+        delta: salesDelta === 0n ? "برابر با همین لحظهٔ دیروز"
+          : <><Money rial={salesDelta < 0n ? -salesDelta : salesDelta} size="sm" /> {salesDelta < 0n ? "کمتر" : "بیشتر"} از همین لحظهٔ دیروز</>,
+      }),
       note: report.returnCount > 0
         ? `${formatCount(report.invoiceCount)} فاکتور · ${formatCount(report.returnCount)} مرجوعی`
         : `${formatCount(report.invoiceCount)} فاکتور` },
@@ -516,8 +528,8 @@ export function Dashboard({ access }: { access: NavAccess }) {
         : <>
             <KpiTabs items={sparked} value={selected} onChange={setMetric} label="شاخص‌های امروز" panelId={`${tabsId}-panel`} idPrefix={`${tabsId}-tab`} />
             <TrendPanel id={`${tabsId}-panel`} metric={selected} grain={grain} onGrain={chooseGrain}
-              compare={compare} onCompare={setCompare} today={report.businessDate}
-              hourly={hourly} trend={grain === "hour" ? undefined : trends[grain]} />
+              compare={compare} onCompare={setCompare} yesterday={yesterday} onYesterday={setYesterday} today={report.businessDate}
+              hourly={hourly} trend={grain === "day" || grain === "month" ? trends[grain] : undefined} />
           </>}
       {/* طرح ۱۰: سهم کانال‌ها کنار روند — همان روز و همان دروازهٔ خلاصه روز. */}
       {branch ? <DashboardChannels branchId={branch.id} date={report.businessDate} salesAmount={report.salesAmount} register={registerChannels} /> : null}
@@ -657,39 +669,43 @@ function unpostedFailure(err: unknown): Unposted {
  * «فروش» زیر «سود» نمی‌ماند. نمودار همهٔ شاخص‌های معلوم را با هم می‌کشد و خط
  * انتخاب‌شده پررنگ‌تر است. دوره‌های زودتر سمت چپ و جدیدترین سمت راست (طرح ۱۰).
  */
-function TrendPanel({ id, metric, grain, onGrain, compare, onCompare, today, hourly, trend }: {
+function TrendPanel({ id, metric, grain, onGrain, compare, onCompare, yesterday, onYesterday, today, hourly, trend }: {
   id: string; metric: Metric; grain: Grain; onGrain: (g: Grain) => void;
-  compare: boolean; onCompare: (v: boolean) => void; today: string;
+  compare: boolean; onCompare: (v: boolean) => void; yesterday: boolean; onYesterday: (v: boolean) => void; today: string;
   hourly: Exclude<Hourly, { state: "denied" }>; trend: Trend | undefined;
 }) {
   const copy = trendCopy(metric, grain);
-  const what = grain === "hour" ? "روند ساعتی" : grain === "day" ? "روند روزانه" : "روند ماهانه";
+  const hourlyGrain = grain === "hour" || grain === "cumulative";
+  const what = hourlyGrain ? "روند ساعتی" : grain === "day" ? "روند روزانه" : "روند ماهانه";
+  const comparison = hourly.state === "ready" ? hourly.data.comparison : null;
   let body;
   let busy = false;
-  if (grain === "hour" ? hourly.state === "loading" : !trend || trend.state === "loading") {
+  if (hourlyGrain ? hourly.state === "loading" : !trend || trend.state === "loading") {
     busy = true;
     body = <Skeleton variant="chart" lines={1} label={`در حال بارگذاری ${copy.title}…`} />;
-  } else if (grain === "hour" ? hourly.state === "error" : trend?.state === "error") {
+  } else if (hourlyGrain ? hourly.state === "error" : trend?.state === "error") {
     body = <ResultState kind="error" title={`${what} خوانده نشد.`}
       reference={trend?.state === "error" ? trend.reference : null}
-      description={grain === "hour" ? "کارت‌های بالا معتبرند؛ این بخش را بعداً دوباره ببینید." : "کارت‌های بالا معتبرند؛ دوباره همین گزینه را انتخاب کنید."} />;
+      description={hourlyGrain ? "کارت‌های بالا معتبرند؛ این بخش را بعداً دوباره ببینید." : "کارت‌های بالا معتبرند؛ دوباره همین گزینه را انتخاب کنید."} />;
   } else if (trend?.state === "denied") {
     body = <ResultState kind="denied" title={`${what} برای این نقش در دسترس نیست.`}
       description="روند روزهای گذشته به دسترسی گزارش نیاز دارد؛ روند ساعتی امروز در دسترس است." />;
   } else {
-    const points: TrendPoint[] = grain === "hour"
-      ? (hourly.state === "ready" ? hourPoints(hourly.data.hours, hourly.data.currentHour) : [])
-      : trend?.state === "ready" ? bucketPoints(trend.data.buckets, grain) : [];
-    const view = trendView(points, metric, grain, compare);
-    const tick = tickEvery(points.length, grain === "hour" ? 16 : 8);
+    const points: TrendPoint[] = grain === "cumulative"
+      ? (hourly.state === "ready" ? cumulativePoints(hourly.data.hours, hourly.data.currentHour, comparison) : [])
+      : grain === "hour"
+        ? (hourly.state === "ready" ? hourPoints(hourly.data.hours, hourly.data.currentHour) : [])
+        : trend?.state === "ready" ? bucketPoints(trend.data.buckets, grain) : [];
+    const view = trendView(points, metric, grain, compare, yesterday);
+    const tick = tickEvery(points.length, hourlyGrain ? 16 : 8);
     body = view.kind === "unknown"
       ? <ResultState kind="denied" title={`روند سود برای این نقش در دسترس نیست.`} description="دیدن سود به دسترسی بهای تمام‌شده نیاز دارد." />
       : view.kind === "empty"
         ? <ResultState title={copy.empty[0]} description={copy.empty[1]} />
         : <LineChart title={copy.chart} summary={view.summary} note={view.note}
-            xHeader={grain === "hour" ? "ساعت" : grain === "day" ? "روز" : "ماه"}
+            xHeader={hourlyGrain ? "ساعت" : grain === "day" ? "روز" : "ماه"}
             points={points.map((p, i) => ({ key: p.key, label: p.label, long: p.long, partial: p.partial, tick: tick(i) }))}
-            series={view.series.map(s => ({ key: s.metric, label: s.label, values: s.values, displays: s.displays, emphasis: s.metric === metric }))} />;
+            series={view.series.map(s => ({ key: s.kind ?? s.metric, label: s.label, values: s.values, displays: s.displays, emphasis: !s.kind && s.metric === metric }))} />;
   }
   // نام پنل عنوان خودش است («روند وجه دریافتی ساعتی»)، نه زبانه: ارجاع به زبانه متن کامل
   // آن (برچسب + مبلغ + یادداشت) را نام پنل می‌کرد. پیوند زبانه ↔ پنل با `aria-controls` است.
@@ -700,11 +716,15 @@ function TrendPanel({ id, metric, grain, onGrain, compare, onCompare, today, hou
     <div className="trend-tools">
       {/* کارت‌های بالا همیشه «امروز»اند؛ وقتی بازهٔ روند امروز نیست، صریح گفته می‌شود. */}
       <p className="trend-scope">
-        {grain === "hour" ? <>کارت‌ها و نمودار: امروز ({formatJalali(today)})</>
+        {hourlyGrain ? <>کارت‌ها و نمودار: امروز ({formatJalali(today)})</>
           : <>کارت‌های بالا: فقط امروز ({formatJalali(today)}) · نمودار: {grain === "day" ? `${formatCount(DAYS)} روز اخیر` : `${formatCount(MONTHS)} ماه شمسی اخیر`}</>}
       </p>
-      <label className="trend-compare"><input type="checkbox" checked={compare} onChange={e => onCompare(e.target.checked)} />
-        مقایسهٔ هر سه شاخص</label>
+      {grain === "cumulative"
+        // خط دیروز فقط وقتی سرور مقایسه داده (`report.view`)؛ صندوق‌دارِ فقط‌امروز کلیدی نمی‌بیند که کار نکند.
+        ? comparison ? <label className="trend-compare"><input type="checkbox" checked={yesterday} onChange={e => onYesterday(e.target.checked)} />
+            مقایسه با همین ساعت دیروز</label> : null
+        : <label className="trend-compare"><input type="checkbox" checked={compare} onChange={e => onCompare(e.target.checked)} />
+            مقایسهٔ هر سه شاخص</label>}
     </div>
     {body}
   </section>;

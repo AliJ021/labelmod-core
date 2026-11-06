@@ -130,6 +130,10 @@
 .kpi-icon { display: inline-flex; color: var(--ink-3); }
 .kpi-value { min-block-size: 2.4rem; display: flex; align-items: center; overflow-x: auto; scrollbar-width: none; }
 .kpi-note { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; margin: 0; font-size: var(--text-sm); color: var(--ink-2); }
+.kpi-delta { display: inline-flex; align-items: center; gap: 4px; padding-inline: 8px; border-radius: var(--r-pill); border: var(--border-w) solid var(--rule); color: var(--ink-2); white-space: nowrap; }
+/* متن همیشه جوهر است (تضاد ۴٫۵:۱ مثل نشان وضعیت)؛ رنگ فقط زمینهٔ کم‌رنگ است و معنا را «بیشتر/کمتر» می‌گوید. */
+.kpi-delta[data-tone="up"] { background: var(--good-soft); color: var(--ink); border-color: transparent; }
+.kpi-delta[data-tone="down"] { background: var(--crit-soft); color: var(--ink); border-color: transparent; }
 .kpi-unknown { font-size: var(--text-2xl); color: var(--ink-3); }
 /* تأکید برنجیِ یک‌پیکسلی — نه گرادیان، نه درخشش. */
 .kpi--emphasis::before { content: ""; position: absolute; inset-block-start: 0; inset-inline: var(--s-5); block-size: 2px; border-radius: 0 0 2px 2px; background: var(--accent); }
@@ -235,6 +239,8 @@
 .line-chart [data-series="value"], .line-chart [data-series="sales"] { --series: var(--chart-1); }
 .line-chart [data-series="received"] { --series: var(--chart-2); --dash: 7 4; }
 .line-chart [data-series="profit"] { --series: var(--ink-2); --dash: 1 4; }
+/* خط «دیروز تا همین لحظه»: همان شاخص، کم‌رنگ و خط‌چین — با برچسب در راهنما، نه فقط رنگ. */
+.line-chart [data-series="yesterday"] { --series: var(--ink-3); --dash: 5 4; }
 .line-chart g[data-emphasis] .line-chart-line, .line-chart-legend li[data-emphasis] .line-chart-swatch path { stroke-width: 2.25; }
 .line-chart g[data-series]:not([data-emphasis]) .line-chart-dot { stroke-width: 4; }
 .line-chart g[data-series]:not([data-emphasis]) .line-chart-dot.is-partial { stroke-width: 8; }

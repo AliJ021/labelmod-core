@@ -323,7 +323,7 @@ test.describe("کارهای پرتکرار داشبورد", () => {
     await expect(quick(page).getByRole("link")).toHaveText(ACTIONS);
     // بارگذاری دوباره فقط پس از پایان آخرین پرسش داشبورد (روند ساعتی)؛ WebKit
     // درخواستِ در راهی را که بارگذاری دوباره لغو می‌کند «خطای صفحه» گزارش می‌کند.
-    await expect(page.getByRole("figure", { name: "فروش هر ساعت (تومان)" })).toBeVisible();
+    await expect(page.getByRole("figure", { name: "فروش تجمعی امروز (تومان)" })).toBeVisible();
     const allowed = new Set(["sale.create", "return.same_day"]);
     api.handlers.set("GET /auth/can", async (route, url) => { await route.fulfill({ json: { verdict: allowed.has(url.searchParams.get("operation") ?? "") ? "allow" : "deny", approver: null, reason: "" } }); });
     await page.reload();

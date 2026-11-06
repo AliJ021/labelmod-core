@@ -5,7 +5,7 @@ import { redactText, safeRequestPath } from "./redact";
 import type { Product, Variation } from "../src/lib/catalog";
 import type { AppUser, Customer } from "../src/lib/people";
 import type { Me } from "../src/lib/session";
-import type { Branch, DailyHour, DailyHourly, DailyReport, DashboardPeriod, PeriodPayments, PeriodSales } from "../src/lib/pos";
+import type { Branch, DailyComparison, DailyHour, DailyHourly, DailyReport, DashboardPeriod, PeriodPayments, PeriodSales } from "../src/lib/pos";
 import type { PermissionRule } from "../src/lib/admin";
 import type { StockSync } from "../src/lib/stock-sync";
 import type { DashboardOperations } from "../src/lib/dashboard-operations";
@@ -16,11 +16,31 @@ const variation: Variation = { id: "v1", color: "سرمه‌ای", size: "XL", s
 const me: Me = { id: "22222222-2222-4222-8222-222222222222", fullName: "مدیر آزمایشی", roles: ["admin"], expiresAt: "2027-01-01T00:00:00Z", elevated: true, enrollmentRequired: false, device: null };
 const branches: Branch[] = [{ id: "b1", code: "TEST", name: "شعبه آزمایشی", warehouses: [{ id: "w1", code: "STORE", name: "انبار آزمایشی", kind: "store" }] }];
 const daily: DailyReport = { businessDate: "2026-09-16", salesAmount: "12340000", receivedAmount: "11000000", profitAmount: "2340000", invoiceCount: 12, returnCount: 1 };
+/**
+ * «دیروز تا همین لحظه» نمونه، مثل پاسخ سرور (مهاجرت ۱۰۹): فروش دیروز ساعت ۱۰ و ۱۷، مرز همان ساعت جاری
+ * (روز تمام‌شده: کل روز)؛ تجمعی، جمع و اختلاف با جمع ساعت‌های امروز — همان تعریف SQL، نه منطق برنامه.
+ */
+export function yesterdayUntil(today: Record<number, Partial<DailyHour>>, profitVisible: boolean, currentHour: number | null): DailyComparison {
+  const lastHour = currentHour ?? 23;
+  const y: Record<number, [bigint, bigint, bigint]> = { 10: [3000000n, 3000000n, 1000000n], 17: [6000000n, 5000000n, 2000000n] };
+  let s = 0n, r = 0n, p = 0n;
+  const hours = Array.from({ length: 24 }, (_, hour) => {
+    if (hour > lastHour) return { hour, cumulative: null };
+    s += y[hour]?.[0] ?? 0n; r += y[hour]?.[1] ?? 0n; p += y[hour]?.[2] ?? 0n;
+    return { hour, cumulative: { sales: String(s), received: String(r), profit: profitVisible ? String(p) : null } };
+  });
+  const sum = (k: "salesAmount" | "receivedAmount" | "profitAmount") => Object.values(today).reduce((t, h) => t + BigInt(h[k] ?? "0"), 0n);
+  return { businessDate: "2026-09-15", cutoff: "2026-09-15T20:30:00.000000Z", lastHour,
+    total: { sales: String(s), received: String(r), profit: profitVisible ? String(p) : null },
+    delta: { sales: String(sum("salesAmount") - s), received: String(sum("receivedAmount") - r), profit: profitVisible ? String(sum("profitAmount") - p) : null },
+    hours };
+}
 /** ۲۴ ساعت خلاصه روز (مثل پاسخ سرور)؛ ساعت‌های نام‌برده جایگزین صفر می‌شوند. */
-export function hourlyDay(over: Record<number, Partial<DailyHour>> = {}, profitVisible = true, businessDate = daily.businessDate, currentHour: number | null = null): DailyHourly {
+export function hourlyDay(over: Record<number, Partial<DailyHour>> = {}, profitVisible = true, businessDate = daily.businessDate, currentHour: number | null = null,
+  comparison: DailyComparison | null = yesterdayUntil(over, profitVisible, currentHour)): DailyHourly {
   // فقط ساخت پاسخ ساختگی آزمون؛ برنامه جمع را از SQL دریافت می‌کند.
   let sales = 0n, received = 0n, profit = 0n;
-  return { businessDate, currentHour, profitVisible, hours: Array.from({ length: 24 }, (_, hour) => ({
+  return { businessDate, currentHour, profitVisible, comparisonVisible: comparison !== null, comparison, hours: Array.from({ length: 24 }, (_, hour) => ({
     hour, salesAmount: "0", receivedAmount: "0", profitAmount: profitVisible ? "0" : null,
     invoiceCount: 0, returnCount: 0, paymentCount: 0, ...over[hour],
     ...(profitVisible ? {} : { profitAmount: null }),

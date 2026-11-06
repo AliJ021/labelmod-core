@@ -16,13 +16,14 @@
  *   دورهٔ جاری (این ساعت، امروز، این ماه) «ناقص» علامت می‌خورد.
  *   علامت منفی (مرجوعی، فروش زیر بها، بازپرداخت) حفظ می‌شود.
  */
-import type { DailyBucket, DailyHour } from "./pos.ts";
+import type { DailyBucket, DailyComparison, DailyHour } from "./pos.ts";
 import { parseRial } from "./money.ts";
 import { formatCount, formatHour, formatJalali, formatMoney } from "./format.ts";
 import { jalaliMonthRange } from "./jalali-period.ts";
 
 export type Metric = "sales" | "received" | "profit";
-export type Grain = "hour" | "day" | "month";
+/** `cumulative`: ساعتیِ «تا این لحظه» (پیش‌فرض، طرح ۱۰)؛ `hour`: فروش هر ساعت جدا (برای شیفت و شلوغی). */
+export type Grain = "cumulative" | "hour" | "day" | "month";
 
 export const METRICS: readonly { key: Metric; label: string }[] = [
   { key: "sales", label: "فروش" },
@@ -31,7 +32,8 @@ export const METRICS: readonly { key: Metric; label: string }[] = [
 ];
 
 export const GRAINS: readonly { key: Grain; label: string }[] = [
-  { key: "hour", label: "ساعتی" },
+  { key: "cumulative", label: "تا این لحظه" },
+  { key: "hour", label: "هر ساعت" },
   { key: "day", label: "روزانه" },
   { key: "month", label: "ماهانه" },
 ];
@@ -77,9 +79,21 @@ const METRIC_NOTE: Record<Metric, string> = {
 };
 const NOUN: Record<Metric, string> = { sales: "فروشی", received: "وجهی", profit: "فروشی که سودی داشته باشد" };
 
-/** متن‌های هر (شاخص، دانه‌بندی). ساعتی همان `METRIC_COPY` است. */
+/** متن‌های هر (شاخص، دانه‌بندی). «هر ساعت» همان `METRIC_COPY` است. */
 export function trendCopy(metric: Metric, grain: Grain): Copy {
   if (grain === "hour") return METRIC_COPY[metric];
+  if (grain === "cumulative") {
+    const base = METRIC_COPY[metric];
+    const label = METRICS.find(m => m.key === metric)!.label;
+    return {
+      title: `روند ${label}`,
+      description: `${label} تجمعی از آغاز امروز تا این لحظه، همهٔ کانال‌ها؛ ${metric === "received" ? "بازپرداخت کم شده" : "مرجوعی در ساعت خودش کم شده"} · آخرین نقطه = کارت «${label}»`,
+      chart: `${label} تجمعی امروز (تومان)`,
+      value: label,
+      empty: base.empty,
+      peak: base.peak,
+    };
+  }
   const base = METRIC_COPY[metric];
   const label = METRICS.find(m => m.key === metric)!.label;
   const day = grain === "day";
@@ -112,6 +126,8 @@ export interface TrendPoint {
   pending: boolean;
   values: Record<Metric, bigint | null>;
   events: Record<Metric, boolean>;
+  /** فقط در «تا این لحظه»: تجمعی روز قبل تا همین لحظه (از SQL)؛ پس از مرز `null`. */
+  yesterday?: Record<Metric, bigint | null>;
 }
 
 /** ساعت‌های محور مشترک: ۸ تا ۲۲ و هر ساعتِ دارای فعالیت یا مبلغ غیرصفر. */
@@ -135,6 +151,28 @@ export function hourPoints(hours: readonly DailyHour[], currentHour: number | nu
         ? { sales: null, received: null, profit: null }
         : { sales: parseRial(h.salesAmount), received: parseRial(h.receivedAmount), profit: h.profitAmount === null ? null : parseRial(h.profitAmount) },
       events: { sales: sold, received: h.paymentCount > 0, profit: sold },
+    };
+  });
+}
+
+/**
+ * «تا این لحظه»: همان ساعت‌های `hourPoints`، ولی مقدار هر ساعت **تجمعی SQL** است
+ * (`hours[].cumulative`) و خط دیروز از `comparison` (روز قبل تا همین لحظه). هیچ جمعی
+ * اینجا ساخته نمی‌شود؛ ساعت نیامدهٔ امروز و ساعت پس از مرز دیروز `null` می‌مانند.
+ */
+export function cumulativePoints(hours: readonly DailyHour[], currentHour: number | null, comparison: DailyComparison | null): TrendPoint[] {
+  const byHour = new Map(hours.map(h => [h.hour, h]));
+  const yHour = new Map((comparison?.hours ?? []).map(h => [h.hour, h.cumulative]));
+  const money = (v: string | null | undefined) => (v === null || v === undefined ? null : parseRial(v));
+  return hourPoints(hours, currentHour).map(p => {
+    const h = byHour.get(Number(p.key))!;
+    const y = yHour.get(Number(p.key)) ?? null;
+    return {
+      ...p,
+      values: p.pending ? p.values
+        : { sales: money(h.cumulative.sales), received: money(h.cumulative.received), profit: money(h.cumulative.profit) },
+      ...(comparison ? { yesterday: y === null ? { sales: null, received: null, profit: null }
+        : { sales: money(y.sales), received: money(y.received), profit: money(y.profit) } } : {}),
     };
   });
 }
@@ -178,7 +216,8 @@ export function trendBounds(grain: "day" | "month", today: string): string[] {
   return [...starts, addDays(today, 1)];
 }
 
-export interface TrendSeries { metric: Metric; label: string; values: (bigint | null)[]; displays: string[] }
+/** `kind: "yesterday"` = خط مقایسه با روز قبل تا همین لحظه (همان شاخص)، نه شاخص دیگر. */
+export interface TrendSeries { metric: Metric; label: string; values: (bigint | null)[]; displays: string[]; kind?: "yesterday" }
 
 export type TrendView =
   | { kind: "unknown" }
@@ -192,10 +231,11 @@ const display = (v: bigint | null) => (v === null ? "هنوز نرسیده" : `$
  * صریح همهٔ شاخص‌های **معلوم** را با رنگ و الگوی خط متمایز کنار هم می‌گذارد (خط انتخاب‌شده
  * پررنگ‌تر). سود نامعلوم هیچ خطی ندارد. «خالی» و «نامعلوم» برای شاخص انتخاب‌شده سنجیده می‌شوند.
  */
-export function trendView(points: readonly TrendPoint[], metric: Metric, grain: Grain, compare = false): TrendView {
+export function trendView(points: readonly TrendPoint[], metric: Metric, grain: Grain, compare = false, yesterday = false): TrendView {
   const reached = points.filter(p => !p.pending);
   const known = (m: Metric) => reached.every(p => p.values[m] !== null);
   if (metric === "profit" && !known("profit")) return { kind: "unknown" };
+  if (grain === "cumulative") return cumulativeView(points, reached, metric, yesterday);
   if (!reached.some(p => p.events[metric])) return { kind: "empty" };
   const series = METRICS.filter(m => known(m.key) && (compare || m.key === metric)).map(m => ({
     metric: m.key, label: m.label,
@@ -221,4 +261,37 @@ export function trendView(points: readonly TrendPoint[], metric: Metric, grain: 
     summary: parts.length ? parts.join(" · ") : `همهٔ ${grain === "hour" ? "ساعت‌ها" : grain === "day" ? "روزها" : "ماه‌ها"} صفر`,
     note: notes.length ? notes.join(" ") : null,
   };
+}
+
+/**
+ * نمای «تا این لحظه»: خط تجمعی شاخص انتخاب‌شده و، اگر خواسته و مجاز باشد، خط «دیروز تا همین
+ * لحظه» از همان شاخص. «خالی» مثل نمای ساعتی با رویداد سنجیده می‌شود، نه با جمع صفر: روزی که
+ * فروشی نداشته ولی دیروز داشته هم با خط دیروز کشیده می‌شود. سود دیروز بی مجوز خطی ندارد.
+ */
+function cumulativeView(points: readonly TrendPoint[], reached: readonly TrendPoint[], metric: Metric, yesterday: boolean): TrendView {
+  const label = METRICS.find(m => m.key === metric)!.label;
+  const yValues = points.map(p => p.yesterday?.[metric] ?? null);
+  const showYesterday = yesterday && points.some(p => p.yesterday !== undefined) && yValues.some(v => v !== null);
+  const today = reached.some(p => p.events[metric]);
+  if (!today && !showYesterday) return { kind: "empty" };
+  const series: TrendSeries[] = [{
+    metric, label: `${label} امروز`,
+    values: points.map(p => p.values[metric]),
+    displays: points.map(p => display(p.values[metric])),
+  }];
+  if (showYesterday) series.push({ metric, kind: "yesterday", label: "دیروز تا همین لحظه", values: yValues, displays: yValues.map(display) });
+  const last = [...reached].reverse().find(p => p.values[metric] !== null);
+  const yLast = [...yValues].reverse().find(v => v !== null) ?? null;
+  const parts = [
+    last ? `تا این لحظه: ${display(last.values[metric])}` : null,
+    showYesterday && yLast !== null ? `همین لحظهٔ دیروز: ${display(yLast)}` : null,
+  ].filter((x): x is string => x !== null);
+  const current = reached.find(p => p.partial);
+  const pending = points.filter(p => p.pending).length;
+  const notes = [
+    current ? `${current.long} هنوز تمام نشده (نقطهٔ توخالی).` : null,
+    pending > 0 ? `${formatCount(pending)} ساعت بعدی هنوز نرسیده و صفر نشان داده نمی‌شود.` : null,
+    showYesterday ? "خط دیروز فقط تا همان لحظهٔ دیروز است، نه کل دیروز." : null,
+  ].filter((x): x is string => x !== null);
+  return { kind: "chart", series, summary: parts.join(" · ") || "هنوز داده‌ای نیست", note: notes.length ? notes.join(" ") : null };
 }

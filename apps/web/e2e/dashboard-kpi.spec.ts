@@ -13,12 +13,16 @@ const tablist = (page: Page) => page.getByRole("tablist", { name: "شاخص‌ه
 const tab = (page: Page, name: string) => tablist(page).getByRole("tab", { name, exact: true });
 /** پنل مشترک زیر نوار شاخص (پوسته هم پنل زبانهٔ «داشبورد» دارد). */
 const panel = (page: Page) => page.locator(".today [role=tabpanel]");
-const TITLE: Record<string, string> = { "فروش": "روند فروش ساعتی", "وجه دریافتی": "روند وجه دریافتی ساعتی", "سود": "روند سود ساعتی" };
+/** عنوان پنل در نمای پیش‌فرض «تا این لحظه» (طرح ۱۰). */
+const TITLE: Record<string, string> = { "فروش": "روند فروش", "وجه دریافتی": "روند وجه دریافتی", "سود": "روند سود" };
+/** «هر ساعت» گزینهٔ دوم روند است؛ آزمونی که معنای ساعت‌به‌ساعت را می‌سنجد صریح انتخابش می‌کند. */
+const perHour = (page: Page) => panel(page).getByRole("radio", { name: "هر ساعت", exact: true }).check();
 const hourlyCalls = (api: MockApi) => api.calls.filter(c => c.startsWith("GET /reports/daily/hourly")).length;
 /** نشانگر طلایی: شبه‌عنصر `::before`؛ فقط زبانهٔ انتخاب‌شده آن را پیدا دارد. */
 const indicator = (t: Locator) => t.evaluate(el => Number(getComputedStyle(el, "::before").opacity));
 
-async function expectSelected(page: Page, name: string) {
+/** `hourly`: پس از انتخاب «هر ساعت» عنوان پنل «… ساعتی» است. */
+async function expectSelected(page: Page, name: string, hourly = false) {
   for (const n of ["فروش", "وجه دریافتی", "سود"]) {
     await expect(tab(page, n)).toHaveAttribute("aria-selected", String(n === name));
   }
@@ -29,7 +33,7 @@ async function expectSelected(page: Page, name: string) {
   // هر سه زبانه همان پنل را کنترل می‌کنند؛ نام پنل عنوان شاخص انتخاب‌شده است — نه متن زبانه با مبلغ.
   const panelId = (await panel(page).getAttribute("id"))!;
   for (const n of ["فروش", "وجه دریافتی", "سود"]) await expect(tab(page, n)).toHaveAttribute("aria-controls", panelId);
-  await expect(page.getByRole("tabpanel", { name: TITLE[name]!, exact: true })).toBeVisible();
+  await expect(page.getByRole("tabpanel", { name: hourly ? `${TITLE[name]!} ساعتی` : TITLE[name]!, exact: true })).toBeVisible();
 }
 
 test.describe("زبانه‌های شاخص داشبورد", () => {
@@ -37,6 +41,9 @@ test.describe("زبانه‌های شاخص داشبورد", () => {
     await page.goto("/");
     await expect(tablist(page).getByRole("tab")).toHaveText([/^فروش/, /^وجه دریافتی/, /^سود/]);
     await expectSelected(page, "فروش");
+    await expect(panel(page).getByRole("heading", { name: "روند فروش", exact: true })).toBeVisible();
+    await expect(panel(page).getByRole("figure", { name: "فروش تجمعی امروز (تومان)" })).toBeVisible();
+    await perHour(page);
     await expect(panel(page).getByRole("heading", { name: "روند فروش ساعتی" })).toBeVisible();
     await expect(panel(page).getByRole("figure", { name: "فروش هر ساعت (تومان)" })).toBeVisible();
     // نام زبانه فقط برچسب است؛ عدد شاخص خوانده می‌شود ولی نام را عوض نمی‌کند.
@@ -44,7 +51,7 @@ test.describe("زبانه‌های شاخص داشبورد", () => {
     expect(hourlyCalls(api)).toBe(1);
 
     await tab(page, "وجه دریافتی").click();
-    await expectSelected(page, "وجه دریافتی");
+    await expectSelected(page, "وجه دریافتی", true);
     await expect(panel(page).getByRole("heading", { name: "روند وجه دریافتی ساعتی" })).toBeVisible();
     const received = panel(page).getByRole("figure", { name: "وجه دریافتی هر ساعت (تومان)" });
     await expect(received).toBeVisible();
@@ -54,7 +61,7 @@ test.describe("زبانه‌های شاخص داشبورد", () => {
     await expect(received.locator("table tbody tr").filter({ hasText: "۲۰" })).toContainText("−50٬000 تومان");
 
     await tab(page, "سود").click();
-    await expectSelected(page, "سود");
+    await expectSelected(page, "سود", true);
     await expect(panel(page).getByRole("heading", { name: "روند سود ساعتی" })).toBeVisible();
     const profit = panel(page).getByRole("figure", { name: "سود هر ساعت (تومان)" });
     await expect(profit).toContainText("بیشترین سود: ساعت ۱۸ با 200٬000 تومان");
@@ -106,7 +113,7 @@ test.describe("زبانه‌های شاخص داشبورد", () => {
       20: { salesAmount: "-1000000", receivedAmount: "-500000", returnCount: 1, paymentCount: 1 },
     }, false);
     await page.goto("/");
-    await expect(panel(page).getByRole("figure", { name: "فروش هر ساعت (تومان)" })).toBeVisible();
+    await expect(panel(page).getByRole("figure", { name: "فروش تجمعی امروز (تومان)" })).toBeVisible();
     const profit = tab(page, "سود");
     await expect(profit).toHaveAttribute("aria-disabled", "true");
     await expect(profit).toContainText("—");
@@ -126,6 +133,7 @@ test.describe("زبانه‌های شاخص داشبورد", () => {
     // هیچ عددی از سود در DOM (حتی پنهان یا برای صفحه‌خوان) نیست.
     const html = await page.content();
     expect(html).not.toContain("سود هر ساعت");
+    expect(html, "نه سود تجمعی امروز و نه سود دیروز").not.toContain("سود تجمعی");
     expect(html).not.toMatch(/پس از بهای تمام‌شده/);
   });
 
@@ -133,6 +141,7 @@ test.describe("زبانه‌های شاخص داشبورد", () => {
     api.defaults["GET /reports/daily"] = { businessDate: "2026-09-16", salesAmount: "0", receivedAmount: "0", profitAmount: "0", invoiceCount: 0, returnCount: 0 };
     api.defaults["GET /reports/daily/hourly"] = hourlyDay();
     await page.goto("/");
+    await perHour(page);
     await expect(panel(page).getByText("هنوز فروشی برای امروز ثبت نشده است.", { exact: true })).toBeVisible();
     await tab(page, "وجه دریافتی").click();
     await expect(panel(page).getByText("هنوز وجهی برای امروز دریافت نشده است.", { exact: true })).toBeVisible();
@@ -149,6 +158,7 @@ test.describe("زبانه‌های شاخص داشبورد", () => {
     api.defaults["GET /reports/daily"] = { businessDate: "2026-09-16", salesAmount: "1000000", receivedAmount: "0", profitAmount: "600000", invoiceCount: 1, returnCount: 0 };
     api.defaults["GET /reports/daily/hourly"] = hourlyDay({ 11: { salesAmount: "1000000", profitAmount: "600000", invoiceCount: 1 } });
     await page.goto("/");
+    await perHour(page);
     await expect(panel(page).getByRole("figure", { name: "فروش هر ساعت (تومان)" })).toContainText("بیشترین فروش: ساعت ۱۱ با 100٬000 تومان");
     await tab(page, "وجه دریافتی").click();
     await expect(panel(page).getByText("هنوز وجهی برای امروز دریافت نشده است.", { exact: true })).toBeVisible();
@@ -168,7 +178,7 @@ test.describe("زبانه‌های شاخص داشبورد", () => {
     await expect(panel(page)).toHaveAttribute("aria-busy", "true");
     await tab(page, "وجه دریافتی").click();
     await expectSelected(page, "وجه دریافتی");
-    await expect(panel(page).getByRole("heading", { name: "روند وجه دریافتی ساعتی" })).toBeVisible();
+    await expect(panel(page).getByRole("heading", { name: "روند وجه دریافتی", exact: true })).toBeVisible();
     release();
     await expect(panel(page).getByText("روند ساعتی خوانده نشد.")).toBeVisible();
     await expect(panel(page)).not.toHaveAttribute("aria-busy", "true");

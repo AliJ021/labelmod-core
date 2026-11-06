@@ -102,7 +102,7 @@ test("page content always ends above the phone bottom bar, which stays legible",
     }), { message: `${what}: last content ends at least 8px above the bottom bar` }).toBeGreaterThanOrEqual(8);
   };
   await page.goto("/");
-  await expect(page.getByRole("figure", { name: "فروش هر ساعت (تومان)" })).toBeVisible();
+  await expect(page.getByRole("figure", { name: "فروش تجمعی امروز (تومان)" })).toBeVisible();
   await clearance("dashboard");
   const alpha = await page.locator(".workspace-nav").evaluate(el => {
     const m = getComputedStyle(el).backgroundColor.match(/rgba?\(([^)]+)\)|color\(srgb ([^)]+)\)/);
@@ -278,11 +278,19 @@ test("dashboard reference: Jalali date, human channel labels, three labelled KPI
   await expect(page.getByText("۱۲ فاکتور سایت در ۲۴ شهریور ۱۴۰۵ هنوز به دفتر نرفته")).toBeVisible();
   await expect(page.getByText("۱۲ فاکتور صندوق در ۲۵ شهریور ۱۴۰۵ هنوز به دفتر نرفته")).toBeVisible();
   expect(await page.locator("main").innerText(), "raw channel codes never reach the user").not.toMatch(/\b(pos|web)\b/);
-  const chart = page.getByRole("figure", { name: "فروش هر ساعت (تومان)" });
+  // پیش‌فرض طرح ۱۰: «تا این لحظه» — تجمعی سرور؛ ۲٬۰۰۰٬۰۰۰ + ۶٬۵۰۰٬۰۰۰ ریال = ۸۵۰٬۰۰۰ تومان = کارت.
+  const chart = page.getByRole("figure", { name: "فروش تجمعی امروز (تومان)" });
   await expect(chart).toBeVisible();
-  // ۶٬۵۰۰٬۰۰۰ ریال = ۶۵۰٬۰۰۰ تومان.
-  await expect(chart).toContainText("بیشترین فروش: ساعت ۱۸ با 650٬000 تومان");
+  await expect(chart).toContainText("تا این لحظه: 850٬000 تومان");
+  // خط دیروز از `comparison` سرور: ۹٬۰۰۰٬۰۰۰ ریال تا همین لحظهٔ دیروز.
+  await expect(chart).toContainText("همین لحظهٔ دیروز: 900٬000 تومان");
   await expect(chart.getByRole("row", { includeHidden: true })).toHaveCount(16);
+  // «هر ساعت» همچنان گزینهٔ دوم است و همان دادهٔ ساعتی را جدا نشان می‌دهد.
+  await page.locator(".today [role=tabpanel]").getByRole("radio", { name: "هر ساعت", exact: true }).check();
+  const perHour = page.getByRole("figure", { name: "فروش هر ساعت (تومان)" });
+  // ۶٬۵۰۰٬۰۰۰ ریال = ۶۵۰٬۰۰۰ تومان.
+  await expect(perHour).toContainText("بیشترین فروش: ساعت ۱۸ با 650٬000 تومان");
+  await expect(perHour.getByRole("row", { includeHidden: true })).toHaveCount(16);
   await expect(page.locator("main .glass")).toHaveCount(0);
   await noOverflow(page, "dashboard");
   await reference(page, "dashboard");
