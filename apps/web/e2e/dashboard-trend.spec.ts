@@ -202,6 +202,10 @@ test.describe("بررسی نمودار و مقایسه", () => {
   test("keyboard and touch inspection: one Tab stop, axis-direction arrows/Home/End move the readout; tap picks the nearest point; table can be shown", async ({ page }) => {
     await page.goto("/");
     await grain(page, "هر ساعت").check();
+    // کلیک روی گزینه نشانگر موس را بالای نمودار جا می‌گذارد؛ WebKit پس از اسکرولِ فوکوس یک mousemove
+    // مصنوعی می‌فرستد و انتخاب با هاور (رفتار درست نمودار) کلید Home را می‌پوشاند. موس از نمودار بیرون می‌رود
+    // تا این آزمون فقط کیبورد را بسنجد؛ لمس و کلیک پایین‌تر جدا سنجیده می‌شوند (webkit-*-768، run 42259777992).
+    await page.mouse.move(0, 0);
     const chart = panel(page).getByRole("figure", { name: "فروش هر ساعت (تومان)" });
     const plot = chart.getByRole("group");
     const readout = chart.locator(".line-chart-readout");
