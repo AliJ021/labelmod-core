@@ -740,3 +740,16 @@ table.grid td small, table.ui-table td small { font-size: 0.6875rem; color: var(
 .invoice-table td small bdi { unicode-bidi: isolate; }
 .invoice-table tfoot th, .invoice-table tfoot td { padding-block: 12px; border-block-start: var(--border-w) solid var(--rule-2); font-weight: var(--weight-semibold); color: var(--ink); background: var(--surface-solid-2); }
 .invoice-table tfoot th { text-align: start; }
+
+/* ── WP4 دستهٔ ۳: سفارش خرید مثل طرح ۱۰ ───────────────────────────────────────── */
+/* پیشرفت با «X از Y رسیده»، مانده و بیش‌تحویل جدا، جمع سفارش برای مقایسه، دلیل بستن زیر وضعیت.
+   روی گوشی همان `ui-table--stack` نظام طراحی: هر سفارش یک کارت با برچسب کنار مقدار، مثل طرح ۱۰. */
+.po-table .po-over { color: var(--warn); font-weight: var(--weight-semibold); }
+.po-table .po-status { display: inline-grid; justify-items: start; gap: 2px; }
+.po-table .po-reason { max-inline-size: 22ch; }
+.po-table .invoice-icon { margin: 0; border-color: var(--rule); background: var(--surface-solid-2); }
+.po-table .ui-table-actions { text-align: end; }
+@media (max-width: 640px) {
+  .po-table .po-status { justify-items: end; text-align: end; }
+  .po-table .progress-cell { min-inline-size: 0; inline-size: min(60%, 180px); }
+}

@@ -392,6 +392,78 @@ describe("سفارش خرید", { skip }, () => {
     assert.equal((withReason.json() as OrderBody).status, "closed");
   });
 
+  test("طرح ۱۰ — فهرست سفارش‌ها: برآورده، مانده، بیش‌تحویل و جمع سفارش از نمای پیشرفت در SQL؛ دامنهٔ شعبه", async () => {
+    const s = await loginAs(keeper);
+    const order = await sentOrder(); // A: ۱۰ × ۱٬۰۰۰٬۰۰۰، B: ۵ × ۲٬۰۰۰٬۰۰۰
+    const receipt = (await app.inject({ method: "POST", url: `/purchase-orders/${order.id}/receipt`, ...s })).json() as ReceiptBody;
+    const lineA = receipt.lines.find((l) => l.qty === "10.000") ?? receipt.lines[0];
+    const lineB = receipt.lines.find((l) => l.id !== lineA?.id);
+    // تأمین‌کننده از A دوازده تا فرستاد و از B هیچ.
+    const patch = await app.inject({ method: "PATCH", url: `/receipts/${receipt.id}/lines/${lineA?.id}`, ...s, payload: { qty: "12" } });
+    assert.equal(patch.statusCode, 200, patch.body);
+    await app.inject({ method: "DELETE", url: `/receipts/${receipt.id}/lines/${lineB?.id}`, ...s });
+    const posted = await app.inject({ method: "POST", url: `/receipts/${receipt.id}/post`, ...s });
+    assert.equal(posted.statusCode, 200, posted.body);
+
+    // سفارش شعبهٔ دیگر در فهرست انباردار این شعبه نیست.
+    const b2 = await sql<{ id: string }>`INSERT INTO platform.branch (code, name)
+      VALUES (${`B3-${suffix}`}, 'شعبهٔ سوم آزمون') RETURNING id`.execute(handle.db);
+    const w2 = await sql<{ id: string }>`INSERT INTO inventory.warehouse (branch_id, code, name, kind)
+      VALUES (${b2.rows[0]!.id}::uuid, ${`B3W-${suffix}`}, 'قفسهٔ شعبهٔ سوم', 'store') RETURNING id`.execute(handle.db);
+    const foreign = await sql<{ id: string }>`INSERT INTO purchasing.purchase_order (branch_id, supplier_id, warehouse_id)
+      VALUES (${b2.rows[0]!.id}::uuid, ${supplierId}::uuid, ${w2.rows[0]!.id}::uuid) RETURNING id`.execute(handle.db);
+
+    const list = await app.inject({ method: "GET", url: "/purchase-orders?limit=200", ...s });
+    assert.equal(list.statusCode, 200, list.body);
+    const rows = list.json() as {
+      id: string; lineCount: number; pendingLines: number; orderedQty: string; fulfilledQty: string;
+      remainingQty: string; overQty: string; orderedAmount: string; closeReason: string | null;
+    }[];
+    assert.ok(!rows.some((r) => r.id === foreign.rows[0]!.id), "سفارش شعبهٔ دیگر دیده نمی‌شود");
+    const row = rows.find((r) => r.id === order.id);
+    assert.ok(row, "سفارش در فهرست هست");
+    // بیش‌تحویل A جای کمبود B را پر نمی‌کند: برآورده ۱۰ از ۱۵، مانده ۵، بیش‌تحویل ۲.
+    assert.deepEqual(
+      { lineCount: row.lineCount, pendingLines: row.pendingLines, orderedQty: row.orderedQty, fulfilledQty: row.fulfilledQty,
+        remainingQty: row.remainingQty, overQty: row.overQty, orderedAmount: row.orderedAmount, closeReason: row.closeReason },
+      { lineCount: 2, pendingLines: 1, orderedQty: "15.000", fulfilledQty: "10.000", remainingQty: "5.000", overQty: "2.000",
+        orderedAmount: "20000000", closeReason: null },
+    );
+    // همان عددهای جزئیات سفارش: یک تعریف، نه دو.
+    const detail = (await app.inject({ method: "GET", url: `/purchase-orders/${order.id}`, ...s })).json() as OrderBody;
+    assert.equal(detail.orderedAmount, row.orderedAmount);
+    const sum3 = (k: "remainingQty" | "overQty") => detail.lines.reduce((a, l) => a + Number(l[k]), 0);
+    assert.equal(sum3("remainingQty"), Number(row.remainingQty));
+    assert.equal(sum3("overQty"), Number(row.overQty));
+    // و همان نمای دیتابیس، مستقل از API.
+    const view = await sql<{ fulfilled: string; remaining: string; over: string }>`
+      SELECT sum(ordered_qty - remaining_qty)::text AS fulfilled, sum(remaining_qty)::text AS remaining, sum(over_qty)::text AS over
+        FROM purchasing.order_progress WHERE order_id = ${order.id}::uuid`.execute(handle.db);
+    assert.equal(Number(view.rows[0]!.fulfilled), Number(row.fulfilledQty));
+    assert.equal(Number(view.rows[0]!.remaining), Number(row.remainingQty));
+    assert.equal(Number(view.rows[0]!.over), Number(row.overQty));
+
+    // بستن نیمه‌رسیده با دلیل: دلیل در فهرست می‌آید و مانده حذف نمی‌شود.
+    const closed = await app.inject({ method: "POST", url: `/purchase-orders/${order.id}/close`, ...s,
+      payload: { reason: "تأمین‌کننده باقی را ندارد" } });
+    assert.equal(closed.statusCode, 200, closed.body);
+    const after = (await app.inject({ method: "GET", url: "/purchase-orders?status=closed&limit=200", ...s })).json() as typeof rows;
+    const closedRow = after.find((r) => r.id === order.id);
+    assert.equal(closedRow?.closeReason, "تأمین‌کننده باقی را ندارد");
+    assert.equal(closedRow?.remainingQty, "5.000");
+
+    // سفارش بی‌قلم صفر می‌دهد، نه null.
+    const empty = await app.inject({ method: "POST", url: "/purchase-orders", ...s,
+      payload: { branchId: BRANCH, supplierId, warehouseId: STORE_WH } });
+    const emptyId = (empty.json() as OrderBody).id;
+    const draftRow = ((await app.inject({ method: "GET", url: "/purchase-orders?status=draft&limit=200", ...s })).json() as typeof rows)
+      .find((r) => r.id === emptyId);
+    assert.deepEqual(
+      [draftRow?.lineCount, draftRow?.orderedQty, draftRow?.remainingQty, draftRow?.overQty, draftRow?.orderedAmount],
+      [0, "0.000", "0.000", "0.000", "0"],
+    );
+  });
+
   test("سفارش نافرستاده رسید نمی‌گیرد", async () => {
     const s = await loginAs(keeper);
     const created = await app.inject({

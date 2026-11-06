@@ -463,12 +463,22 @@ export interface OrderSummary {
   createdAt: string;
   lineCount: number;
   pendingLines: number;
+  /** طرح ۱۰ — همه از نمای پیشرفت سرور: برآورده = رسیده منهای برگشتی، حداکثر تا سفارش هر سطر. */
+  orderedQty: string;
+  fulfilledQty: string;
+  remainingQty: string;
+  /** بیش‌تحویل جدا شمرده می‌شود و کمبود سطر دیگر را پر نمی‌کند. */
+  overQty: string;
+  /** جمع توافقی از SQL — یک عدد برای مقایسه، نه یک بدهی. */
+  orderedAmount: string;
+  closeReason: string | null;
 }
 
 /** برچسب فارسی وضعیت سفارش. */
 export const ORDER_STATUS: Record<string, string> = {
   draft: "پیش‌نویس",
-  sent: "فرستاده‌شده",
+  // طرح ۱۰: سفارش فرستاده‌شده تعهد «باز» است تا بسته شود.
+  sent: "باز",
   closed: "بسته",
   cancelled: "باطل",
 };

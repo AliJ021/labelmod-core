@@ -72,6 +72,19 @@ export interface OrderSummaryJson {
   lineCount: number;
   /** چند سطر هنوز کامل نرسیده. */
   pendingLines: number;
+  /**
+   * طرح ۱۰ — جمع سطرهای همین سفارش از نمای `order_progress`، همه در SQL:
+   * سفارش‌داده، برآورده (رسیده منهای برگشتی، حداکثر تا سفارش هر سطر)،
+   * مانده و بیش‌تحویل. بیش‌تحویل جدا جمع می‌شود و هرگز «مانده» را منفی
+   * یا «برآورده» را بیش از سفارش نمی‌کند.
+   */
+  orderedQty: string;
+  fulfilledQty: string;
+  remainingQty: string;
+  overQty: string;
+  /** جمع توافقی — یک عدد برای مقایسه، نه یک بدهی. */
+  orderedAmount: string;
+  closeReason: string | null;
 }
 
 export class PurchaseOrderService {
@@ -91,17 +104,40 @@ export class PurchaseOrderService {
     let q = this.#db
       .selectFrom("purchasing.purchase_order as o")
       .innerJoin("purchasing.supplier as s", "s.id", "o.supplier_id")
+      // یک تعریف: همان نمایی که جزئیات سفارش می‌خواند. جمع پولی با round
+      // صریح هر سطر، همان `line_amount` جزئیات.
+      .leftJoinLateral(
+        (eb) =>
+          eb
+            .selectFrom("purchasing.order_progress as p")
+            .whereRef("p.order_id", "=", "o.id")
+            .select([
+              sql<string>`count(*)`.as("line_count"),
+              sql<string>`count(*) FILTER (WHERE p.remaining_qty > 0)`.as("pending_lines"),
+              sql<string>`coalesce(sum(p.ordered_qty), 0)::platform.qty`.as("ordered_qty"),
+              sql<string>`coalesce(sum(p.ordered_qty - p.remaining_qty), 0)::platform.qty`.as("fulfilled_qty"),
+              sql<string>`coalesce(sum(p.remaining_qty), 0)::platform.qty`.as("remaining_qty"),
+              sql<string>`coalesce(sum(p.over_qty), 0)::platform.qty`.as("over_qty"),
+              sql<string>`coalesce(sum(round(p.ordered_qty * p.ordered_unit_price)), 0)::platform.money`.as("ordered_amount"),
+            ])
+            .as("p"),
+        (join) => join.onTrue(),
+      )
       .select([
         "o.id",
         "o.number",
         "o.status",
         "o.expected_at",
         "o.created_at",
+        "o.close_reason",
         "s.name as supplier_name",
-        sql<string>`(SELECT count(*) FROM purchasing.purchase_order_line l
-                      WHERE l.order_id = o.id)`.as("line_count"),
-        sql<string>`(SELECT count(*) FROM purchasing.order_progress p
-                      WHERE p.order_id = o.id AND p.remaining_qty > 0)`.as("pending_lines"),
+        "p.line_count",
+        "p.pending_lines",
+        "p.ordered_qty",
+        "p.fulfilled_qty",
+        "p.remaining_qty",
+        "p.over_qty",
+        "p.ordered_amount",
       ])
       .orderBy("o.created_at", "desc")
       .limit(opts.limit);
@@ -117,8 +153,14 @@ export class PurchaseOrderService {
       supplierName: r.supplier_name,
       expectedAt: r.expected_at,
       createdAt: new Date(r.created_at).toISOString(),
-      lineCount: Number(r.line_count),
-      pendingLines: Number(r.pending_lines),
+      lineCount: Number(r.line_count ?? 0),
+      pendingLines: Number(r.pending_lines ?? 0),
+      orderedQty: r.ordered_qty ?? "0.000",
+      fulfilledQty: r.fulfilled_qty ?? "0.000",
+      remainingQty: r.remaining_qty ?? "0.000",
+      overQty: r.over_qty ?? "0.000",
+      orderedAmount: r.ordered_amount ?? "0",
+      closeReason: r.close_reason,
     }));
   }
 
@@ -170,12 +212,12 @@ export class PurchaseOrderService {
         // محاسبه پولی در SQL، نه در TypeScript: تعداد اعشاری با تقسیم
         // صحیح bigint نتیجه‌ای می‌دهد که با sum() دیتابیس یکی نیست.
         sql<string>`round(l.qty * l.unit_price)`.as("line_amount"),
+        // جمع هم در SQL، همان تعریف فهرست سفارش‌ها؛ نه جمع bigint در TypeScript.
+        sql<string>`sum(round(l.qty * l.unit_price)) OVER ()`.as("ordered_amount"),
       ])
       .where("l.order_id", "=", id)
       .orderBy("l.id")
       .execute();
-
-    const ordered = lines.reduce((a, l) => a + BigInt(l.line_amount), 0n);
 
     return {
       id: head.id,
@@ -192,7 +234,7 @@ export class PurchaseOrderService {
       sentAt: head.sent_at === null ? null : new Date(head.sent_at).toISOString(),
       closedAt: head.closed_at === null ? null : new Date(head.closed_at).toISOString(),
       closeReason: head.close_reason,
-      orderedAmount: ordered.toString(),
+      orderedAmount: lines[0]?.ordered_amount ?? "0",
       lines: lines.map((l) => ({
         id: l.id,
         variationId: l.variation_id,

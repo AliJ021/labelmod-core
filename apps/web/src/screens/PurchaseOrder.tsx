@@ -25,6 +25,9 @@ import { Icon } from "../components/Icon.tsx";
 import { Note } from "../components/ui/Note.tsx";
 import { SectionHeader } from "../components/ui/PageHeader.tsx";
 import { StatusBadge } from "../components/ui/Status.tsx";
+import { Money } from "../components/ui/Money.tsx";
+import { formatQty } from "../lib/format.ts";
+import { DataTable, type Column } from "../components/ui/DataTable.tsx";
 import { ApiError } from "../lib/api.ts";
 import { ActionKeys, actionFor } from "../lib/action-key.ts";
 import { parseRial, rialFromTomanInput, toman } from "../lib/money.ts";
@@ -50,6 +53,35 @@ function shortDate(iso: string): string {
     return iso.slice(0, 10);
   }
 }
+
+/** پیش‌نویس و باطل هنوز تعهدی نیستند؛ پیشرفت و مانده برایشان معنا ندارد («—»، نه صفر). */
+const isLive = (o: OrderSummary) => o.status === "sent" || o.status === "closed";
+const dash = <span className="muted">—</span>;
+
+/**
+ * ستون‌های فهرست سفارش مثل طرح ۱۰. همهٔ عددها از پاسخ سرور (نمای پیشرفت سفارش در SQL)؛
+ * فقط پهنای نوار پیشرفت نسبت دو تعداد است، نه پول.
+ */
+const ORDER_COLUMNS: readonly Column<OrderSummary>[] = [
+  { key: "order", header: "سفارش", cell: (o) => <><span className="num">{o.number ?? "پیش‌نویس"}</span><small className="cell-sub">{shortDate(o.createdAt)}</small></> },
+  { key: "supplier", header: "تأمین‌کننده", cell: (o) => o.supplierName },
+  { key: "progress", header: "پیشرفت", cell: (o) => {
+    const ordered = Number(o.orderedQty);
+    if (!isLive(o) || ordered <= 0) return dash;
+    const share = Math.min(100, Math.max(0, Math.round((Number(o.fulfilledQty) / ordered) * 100)));
+    return <span className="progress-cell">
+      <span className="bar" aria-hidden="true"><i style={{ inlineSize: `${share}%` }} /></span>
+      <small>{formatQty(o.fulfilledQty)} از {formatQty(o.orderedQty)} رسیده</small>
+    </span>;
+  } },
+  { key: "remaining", header: "مانده", numeric: true, cell: (o) => isLive(o) ? <span className="num">{formatQty(o.remainingQty)}</span> : dash },
+  { key: "over", header: "بیش‌تحویل", numeric: true, cell: (o) => Number(o.overQty) > 0 ? <span className="num po-over">{formatQty(o.overQty)}</span> : dash },
+  { key: "amount", header: "جمع سفارش (مقایسه)", numeric: true, cell: (o) => <Money rial={BigInt(o.orderedAmount)} /> },
+  { key: "status", header: "وضعیت", cell: (o) => <span className="po-status">
+    <StatusBadge state={o.status === "sent" ? "pending" : o.status === "closed" ? "completed" : o.status === "draft" ? "draft" : "cancelled"} label={ORDER_STATUS[o.status] ?? o.status} />
+    {o.status === "closed" && o.closeReason ? <small className="cell-sub po-reason">{o.closeReason}</small> : null}
+  </span> },
+];
 
 export function PurchaseOrder() {
   const [branches, setBranches] = useState<Branch[]>([]);
@@ -188,7 +220,7 @@ export function PurchaseOrder() {
 
   return (
     <div className="stack" style={{ gap: "var(--s-4)" }}>
-      <Note>سفارش خرید یک <strong>تعهد</strong> است، نه یک رویداد مالی: نه سندی می‌زند، نه بدهی‌ای، نه موجودی‌ای. تا وقتی کالا نیامده، هیچ‌چیز در دفتر عوض نمی‌شود؛ «چقدرش رسیده» از نمای پیشرفت سفارش می‌آید.</Note>
+      <Note>سفارش خرید یک <strong>تعهد</strong> است، نه رویداد مالی: نه سند می‌زند نه حرکت انبار. جمع آن برای مقایسه است، نه بدهی. «چقدر رسیده» از نمای پیشرفت سفارش می‌آید و برگشتی را کم می‌کند.</Note>
       <Solid as="section" className="list-card" aria-labelledby="orders-title">
         <SectionHeader id="orders-title" title="سفارش‌های خرید"
           actions={<button type="button" className="btn btn--primary" aria-expanded={formOpen} aria-controls="order-new-form" onClick={() => setFormOpen(v => !v)}>
@@ -250,38 +282,28 @@ export function PurchaseOrder() {
         {list.length === 0 ? (
           <p className="empty">هنوز سفارشی ثبت نشده.</p>
         ) : (
-          <div className="scroll-x"><table className="grid">
-            <caption className="sr-only">سفارش‌های خرید</caption>
-            <thead><tr><th>سفارش</th><th>تأمین‌کننده</th><th>پیشرفت</th><th>وضعیت</th><th>عملیات</th></tr></thead>
-            <tbody>
-            {list.map((o) => {
-              const arrived = o.lineCount - o.pendingLines;
-              return (
-              <tr key={o.id}>
-                <td><span className="num">{o.number ?? "پیش‌نویس"}</span><small>{shortDate(o.createdAt)}</small></td>
-                <td>{o.supplierName}<small>{o.lineCount} قلم</small></td>
-                <td>{o.status === "sent" && o.lineCount > 0 ? <span className="progress-cell">
-                  <span className="bar" aria-hidden="true"><i style={{ inlineSize: `${Math.round((arrived / o.lineCount) * 100)}%` }} /></span>
-                  <small>{o.pendingLines === 0 ? "کامل رسید" : `${o.pendingLines} قلم مانده`}</small>
-                </span> : "—"}</td>
-                <td><StatusBadge state={o.status === "sent" ? "pending" : o.status === "closed" ? "completed" : o.status === "draft" ? "draft" : "cancelled"} label={ORDER_STATUS[o.status] ?? o.status} /></td>
-                <td>
-                  <button
-                    type="button"
-                    className="btn btn--quiet"
-                    onClick={() => void load(o.id)}
-                    disabled={busy}
-                  >
-                    باز کن
-                  </button>
-                </td>
-              </tr>
-              );
-            })}
-            </tbody>
-          </table></div>
+          <div className="po-table"><DataTable<OrderSummary>
+            caption="سفارش‌های خرید"
+            stack
+            rows={list}
+            rowKey={(o) => o.id}
+            columns={ORDER_COLUMNS}
+            rowActions={(o) => (
+              <button
+                type="button"
+                className="icon-button invoice-icon"
+                aria-label={`باز کن ${o.number ?? "پیش‌نویس"}`}
+                title="باز کن"
+                onClick={() => void load(o.id)}
+                disabled={busy}
+              >
+                <Icon name="chevron" size="sm" />
+              </button>
+            )}
+          /></div>
         )}
       </Solid>
+      {list.length > 0 ? <Note tone="warn">بستن سفارش نیمه‌رسیده دلیل می‌خواهد و تصمیم انسانی است. بیش‌تحویل بسته نمی‌شود تا انباردار بتواند محمولهٔ واقعی را ثبت کند.</Note> : null}
 
       {error ? (
         <p className="solid pos-alert" role="alert">
