@@ -549,6 +549,37 @@ describe("آمادگی API صندوق", { skip }, () => {
     assert.equal(drafts.statusCode, 200, drafts.body);
     assert.equal(drafts.json().summary.count, 0, "پیش‌نویس هرگز در جمع فروش نیست");
     assert.deepEqual(drafts.json().statusCounts, after.statusCounts);
+
+    // طرح ۱۰: تراشه‌های «تسویه‌شده / مانده‌دار / مرجوعی» افراز فاکتورهای قطعی‌اند و از مانده (SQL) می‌آیند، نه از
+    // وضعیت paid که هیچ تابعی نمی‌نشاند. هر تراشه همان ردیف‌هایی را برمی‌گرداند که شمرده؛ مانده‌دار یعنی مانده > ۰.
+    const c = after.statusCounts as Record<string, number>;
+    assert.equal(c.all, c.draft! + c.cancelled! + c.settled! + c.open! + c.returns!, "تراشه‌های تازه افرازند، نه هم‌پوشان");
+    assert.equal(c.finalized! + c.returned!, c.settled! + c.open! + c.returns!, "همان فاکتورهای قطعی، به تفکیکی دیگر");
+    assert.ok(c.settled! + c.open! > 0, "آزمون‌های قبلی فاکتور قطعی ساخته‌اند");
+    for (const chip of ["settled", "open", "returns"] as const) {
+      const r = await app.inject({ method: "GET", url: `/invoices?status=${chip}&branchId=${BRANCH}`, ...s });
+      assert.equal(r.statusCode, 200, r.body);
+      const body = r.json() as { total: number; rows: Array<{ chip: string; status: string; remainingAmount: string }> };
+      assert.equal(body.total, c[chip], `${chip}: شمار تراشه = ردیف‌های همان فیلتر`);
+      for (const row of body.rows) {
+        assert.equal(row.chip, chip);
+        if (chip === "open") assert.ok(BigInt(row.remainingAmount) > 0n, "مانده‌دار یعنی مانده بیش از صفر");
+        if (chip === "settled") assert.equal(row.remainingAmount, "0");
+        if (chip === "returns") assert.ok(["partially_returned", "returned"].includes(row.status));
+        else assert.ok(["finalized", "paid"].includes(row.status));
+      }
+    }
+    // کانال فیلتر سرور است؛ موبایل مشتری فقط پوشیده (۴ رقم اول و آخر) بیرون می‌رود.
+    const pos = await app.inject({ method: "GET", url: `/invoices?status=all&channel=pos&branchId=${BRANCH}`, ...s });
+    assert.equal(pos.statusCode, 200, pos.body);
+    const posBody = pos.json() as { total: number; rows: Array<{ channel: string; customerMobile: string | null }> };
+    assert.ok(posBody.rows.every(r => r.channel === "pos"));
+    const own2 = (await sql<{ n: string }>`SELECT count(*)::text n FROM sales.invoice i JOIN identity.app_user u ON u.id=i.created_by
+      WHERE u.username=${cashier} AND i.branch_id=${BRANCH}::uuid AND i.channel='pos'`.execute(handle.db)).rows[0]!;
+    assert.equal(posBody.total, Number(own2.n), "فیلتر کانال در دامنهٔ همان نقش");
+    for (const r of [...before.rows, ...posBody.rows] as Array<{ customerMobile?: string | null }>)
+      if (r.customerMobile != null) assert.match(r.customerMobile, /^\d{4} \*\*\* \d{4}$/, "موبایل کامل بیرون نمی‌رود");
+    assert.equal((await app.inject({ method: "GET", url: `/invoices?channel=fax&branchId=${BRANCH}`, ...s })).statusCode, 400);
   });
 
   // ── Batch 2.1: صندوق — اسنپ‌پی شعبه‌ای، سقف غیرنقدی، نسیهٔ صریح ──────────

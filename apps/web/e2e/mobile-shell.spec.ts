@@ -75,6 +75,9 @@ test.describe("سربرگ و منوی گوشی (طرح ۱۰)", () => {
     api.defaults["GET /shifts/current"] = { id: "s1", userId: "22222222-2222-4222-8222-222222222222", branchId: "b1", status: "open", openingCash: "0", openedAt: "2026-09-16T05:00:00Z" };
     await page.goto("/");
     await expect(bottomBar(page)).toBeVisible();
+    // پیش از ترک داشبورد، درخواست‌های در راهش تمام شوند: WebKit قطع درخواست با ناوبری را «خطای صفحه»
+    // گزارش می‌کند («due to access control checks» روی /branches، run 42266966629).
+    await page.waitForLoadState("networkidle");
     await page.goto("/?page=pos");
     await expect(page.locator(".workspace--pos-phone")).toHaveCount(1);
     await expect(bottomBar(page)).toBeHidden();

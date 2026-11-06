@@ -314,7 +314,7 @@ export function App() {
           ) : zone === "pos" ? (
             <Pos key={me?.id} actorId={me?.id ?? ""} />
           ) : zone === "invoices" ? (
-            <Invoices />
+            <Invoices access={access} />
           ) : zone === "returns" ? (
             <Returns />
           ) : zone === "site-orders" ? (

@@ -13,6 +13,7 @@ import { PageHeader, SectionHeader } from "../components/ui/PageHeader.tsx";
 import { StatusBadge, type StatusState } from "../components/ui/Status.tsx";
 import { Icon } from "../components/Icon.tsx";
 import { channelLabel, formatCount } from "../lib/format.ts";
+import { accessOf, routeUrl, type NavAccess } from "../lib/navigation.ts";
 import { TabList, TabPanels, useTabsId } from "../components/Tabs.tsx";
 import { JalaliDateHint, useJalaliDraft } from "../components/ui/JalaliDate.tsx";
 import { parseJalaliDate, readOptionalJalaliPeriod } from "../lib/report-filters.ts";
@@ -23,23 +24,38 @@ interface Row {
   occurredAt: string; payableAmount: string; receivedAmount: string; paymentMethods: string;
   /** کانال و ماندهٔ هر ردیف از SQL (طرح ۱۰)؛ نبودنشان در پاسخ قدیمی یعنی «—»، نه صفر. */
   channel?: string; remainingAmount?: string;
+  /** تراشهٔ طرح ۱۰ از SQL: settled/open/returns برای فاکتور قطعی، وگرنه همان وضعیت. */
+  chip?: string;
+  /** موبایل پوشیده (۴ رقم اول و آخر) از SQL؛ شمارهٔ کامل هرگز در فهرست نمی‌آید. */
+  customerMobile?: string | null;
   canResume: boolean; needsReview: boolean | null;
 }
-type StatusKey = "all" | "draft" | "finalized" | "cancelled" | "returned";
+type StatusKey = "all" | "draft" | "finalized" | "cancelled" | "returned" | "settled" | "open" | "returns";
 /** جمع‌های همین فیلتر، از SQL (GET /invoices). پول رشته است؛ نبودنش یعنی نشان‌ندادن، نه صفر. */
 interface Summary { count: number; payableAmount: string; receivedAmount: string; remainingAmount: string }
-interface ListResponse { rows: Row[]; total: number; pageSize: number; summary?: Summary; statusCounts?: Record<StatusKey, number> }
-/** طرح ۱۰: پیش‌نویس زبانهٔ خودش را دارد؛ تراشه‌های فهرست فقط وضعیت‌های دیگرند. */
-const STATUS_KEYS: readonly StatusKey[] = ["all", "finalized", "cancelled", "returned"];
-const statusNames: Record<string, string> = { draft: "پیش‌نویس", finalized: "قطعی", paid: "پرداخت‌شده", cancelled: "لغوشده", returned: "مرجوع‌شده", partially_returned: "مرجوعی جزئی" };
+interface ListResponse { rows: Row[]; total: number; pageSize: number; summary?: Summary; statusCounts?: Partial<Record<StatusKey, number>> }
+/**
+ * طرح ۱۰: پیش‌نویس زبانهٔ خودش را دارد؛ تراشه‌ها «تسویه‌شده / مانده‌دار / مرجوعی» به‌علاوهٔ «لغوشده»
+ * (تا چیزی پنهان نماند). مانده‌دار و تسویه‌شده از ماندهٔ SQL می‌آیند، نه از وضعیت.
+ * «قطعی» و «مرجوع‌شده» کلیدهای پیوندهای قدیمی‌اند و فقط وقتی در نشانی باشند دیده می‌شوند.
+ */
+const STATUS_KEYS: readonly StatusKey[] = ["all", "settled", "open", "returns", "cancelled"];
+const LEGACY_KEYS: readonly StatusKey[] = ["finalized", "returned"];
+const statusNames: Record<string, string> = { draft: "پیش‌نویس", finalized: "قطعی", paid: "پرداخت‌شده", cancelled: "لغوشده", returned: "مرجوع‌شده", partially_returned: "مرجوعی جزئی",
+  settled: "تسویه‌شده", open: "مانده‌دار", returns: "مرجوعی" };
 /** نشان وضعیت ردیف (طرح ۱۰): آیکون + برچسب، نه فقط رنگ. وضعیت ناشناخته «نامعلوم» است. */
-const statusTone: Record<string, StatusState> = { draft: "draft", finalized: "active", paid: "completed", cancelled: "cancelled", returned: "warning", partially_returned: "warning" };
+const statusTone: Record<string, StatusState> = { draft: "draft", finalized: "active", paid: "completed", cancelled: "cancelled", returned: "warning", partially_returned: "warning",
+  settled: "completed", open: "active" };
+/** برچسب ردیف: فاکتور قطعی با تراشهٔ SQL (تسویه‌شده/مانده‌دار)، مرجوعی و بقیه با وضعیت خودشان. */
+const rowState = (row: Row) => row.chip === "settled" || row.chip === "open" ? row.chip : row.status;
+const CHANNELS = ["pos", "instagram", "web", "phone"] as const;
 const errorMessage = (e: unknown) => e instanceof ApiError ? e.message : "ارتباط با سرور برقرار نشد.";
 const date = (value: string) => new Intl.DateTimeFormat("fa-IR", { dateStyle: "short", timeStyle: "short", timeZone: "Asia/Tehran" }).format(new Date(value));
 
-export function Invoices() {
+export function Invoices({ access }: { access?: NavAccess } = {}) {
   const tabsId = useTabsId();
   const [status, setStatus] = useUrlState("invoices.status", "all");
+  const [channel, setChannel] = useUrlState("invoices.channel");
   const [search, setSearch] = useUrlState("invoices.search", "", true);
   const [branch, setBranch] = useUrlState("invoices.branch");
   const [from, setFrom] = useUrlState("invoices.from");
@@ -81,14 +97,15 @@ export function Invoices() {
   }
   const datesActive = !!(from || to || fromText.trim() || toText.trim());
   useEffect(() => { void pos.branches().then(r => setBranches(r.branches)).catch(e => setError(errorMessage(e))); }, []);
-  const key = JSON.stringify([status, search, branch, page, from, to]);
+  const key = JSON.stringify([status, search, branch, page, from, to, channel]);
   const load = useCallback((signal: AbortSignal) => {
     const q = new URLSearchParams({ status, search, page });
+    if (channel) q.set("channel", channel);
     if (branch) q.set("branchId", branch);
     if (from) q.set("from", from);
     if (to) q.set("to", to);
     return api.get<ListResponse>(`/invoices?${q}`, { signal });
-  }, [status, search, branch, page, from, to]);
+  }, [status, search, branch, page, from, to, channel]);
   const query = useLatestQuery({ key, version: revision, load, delay: search ? 250 : 0, enabled: !selected && issue === null });
   async function resume(row: Row) {
     setError("");
@@ -111,7 +128,7 @@ export function Invoices() {
   const summary = query.error ? undefined : query.data?.summary;
   if (selected) return <InvoiceDetail id={selected} onBack={() => setSelected("")} />;
   return <section className="stack invoice-center">
-    <PageHeader eyebrow="فروش" title="فاکتورها" context="فروش‌ها و پیش‌نویس‌های ذخیره‌شده در سرور"
+    <PageHeader eyebrow="فروش" title="فاکتورها" context="فاکتورهای نهایی و پیش‌نویس‌های ذخیره‌شده در سرور"
       actions={<button className="btn" type="button" onClick={() => setRevision(v => v + 1)}>تازه‌سازی</button>} />
     <TabList id={tabsId} items={tabItems} value={tab} label="فهرست فاکتورها و پیش‌نویس‌ها"
       onChange={next => { setStatus(next === "drafts" ? "draft" : "all"); setPage("1"); }} />
@@ -120,12 +137,18 @@ export function Invoices() {
       <label className="row invoice-search"><span className="sr-only">شماره یا نام مشتری</span><Icon name="search" size="sm" />
         <input type="search" value={search} maxLength={80} placeholder="شمارهٔ فاکتور یا نام مشتری" onChange={e => { setSearch(e.target.value); setPage("1"); }} /></label>
       {/* طرح ۱۰: تراشهٔ وضعیت با شمارش. شمارش از همان فیلتر بی‌وضعیت سرور است؛ تا نیامده عددی نشان داده نمی‌شود. */}
-      {tab === "drafts" ? null : <Segmented<StatusKey> label="وضعیت" value={(STATUS_KEYS as readonly string[]).includes(status) ? status as StatusKey : "all"}
+      {tab === "drafts" ? null : <Segmented<StatusKey> label="وضعیت" value={([...STATUS_KEYS, ...LEGACY_KEYS] as readonly string[]).includes(status) ? status as StatusKey : "all"}
         onChange={next => { setStatus(next); setPage("1"); }}
-        options={STATUS_KEYS.map(k => {
+        options={[...STATUS_KEYS, ...LEGACY_KEYS.filter(k => k === status)].map(k => {
           const n = counts?.[k];
           return { key: k, label: `${k === "all" ? "همه" : statusNames[k]}${n === undefined ? "" : ` (${formatCount(n)})`}` };
         })} />}
+      {/* طرح ۱۰: کانال کنار تراشه‌ها؛ فیلتر سرور است، پس شمارش و جمع‌ها هم همان کانال‌اند. */}
+      <label className="invoice-channel"><span className="sr-only">کانال</span>
+        <select value={channel} aria-label="کانال" onChange={e => { setChannel(e.target.value); setPage("1"); }}>
+          <option value="">همهٔ کانال‌ها</option>
+          {CHANNELS.map(c => <option key={c} value={c}>{channelLabel(c)}</option>)}
+        </select></label>
       <details className="invoice-extra-filters" open={extraOpen || !!(branch || datesActive || issue)} onToggle={e => setExtraOpen(e.currentTarget.open)}>
       <summary><Icon name="filter" size="sm" />فیلتر شعبه و تاریخ{branch || from || to ? " · فعال" : ""}</summary>
       <div className="invoice-filter-fields">
@@ -145,31 +168,41 @@ export function Invoices() {
     </div>
     {error && <p role="alert">{error}</p>}
     {summary && !issue ? <section className="kpis invoice-summary" aria-label="جمع فاکتورهای این فیلتر">
-      <Kpi variant="card" label="فاکتورهای قطعی این فیلتر" value={<span className="kpi-count">{formatCount(summary.count)}</span>} note="پیش‌نویس و لغوشده شمرده نمی‌شوند" />
-      <Kpi variant="card" label="جمع قابل پرداخت" value={<Money rial={BigInt(summary.payableAmount)} size="lg" />} note="مبلغ فاکتورهای قطعی" />
-      <Kpi variant="card" label="دریافت‌شده بابت همین فاکتورها" value={<Money rial={BigInt(summary.receivedAmount)} size="lg" />} note="فقط دریافت موفق" />
-      <Kpi variant="card" label="مانده" value={<Money rial={BigInt(summary.remainingAmount)} size="lg" />} note="قابل پرداخت منهای دریافتی هر فاکتور" />
+      {/* طرح ۱۰: برچسب و عدد؛ توضیح «پیش‌نویس و لغوشده شمرده نمی‌شوند» زیر عنوان فهرست است. */}
+      <Kpi variant="card" label="فاکتورهای این فیلتر" value={<span className="kpi-count">{formatCount(summary.count)} <span className="kpi-unit">فاکتور</span></span>} note={null} />
+      <Kpi variant="card" label="جمع قابل پرداخت" value={<Money rial={BigInt(summary.payableAmount)} size="lg" />} note={null} />
+      <Kpi variant="card" label="دریافت‌شده بابت همین فاکتورها" value={<Money rial={BigInt(summary.receivedAmount)} size="lg" />} note={null} />
+      <Kpi variant="card" label="مانده (نسیه)" value={<span className="invoice-remaining" data-due={summary.remainingAmount !== "0" || undefined}><Money rial={BigInt(summary.remainingAmount)} size="lg" /></span>} note={null} />
     </section> : null}
     <div className="solid pad invoice-list" aria-busy={query.loading}>
       <SectionHeader title={tab === "drafts" ? "پیش‌نویس‌های ذخیره‌شده" : "فاکتورهای این فیلتر"}
-        description={tab === "drafts" ? "پیش‌نویس فروش نیست و در هیچ جمعی شمرده نمی‌شود." : "پیش‌نویس در این فهرست و در هیچ جمعی نیست؛ برای اقلام و پرداخت‌ها «جزئیات» را باز کنید."} />
+        description={tab === "drafts" ? "پیش‌نویس فروش نیست و در هیچ جمعی شمرده نمی‌شود." : "پیش‌نویس و لغوشده در هیچ جمعی نیستند · ردیف را برای اقلام و پرداخت‌ها باز کنید"}
+        actions={tab === "list" && access && accessOf(["sale.create"], access.verdicts) === "allow"
+          ? <a className="btn btn--primary" href={routeUrl("pos")} onClick={e => { if (e.metaKey || e.ctrlKey || e.shiftKey) return; e.preventDefault(); navigate(routeUrl("pos")); }}><Icon name="plus" size="sm" />فروش جدید</a> : undefined} />
       {issue ? <ResultState title="بازهٔ تاریخ کامل نیست." description={issue.message} /> : query.loading ? <ResultState kind="loading" title="در حال دریافت فاکتورها…" /> : query.error ? <ResultState kind="error" title={errorMessage(query.error)} actionLabel="تلاش دوباره" onAction={() => setRevision(v => v + 1)} /> : !query.data?.rows.length ? <ResultState title="فاکتوری با این فیلترها پیدا نشد." /> : <>
         <div className="scroll-x"><table className="grid invoice-table"><caption className="sr-only">فهرست فاکتورها؛ مبلغ‌ها به تومان</caption>
           <thead><tr><th>شمارهٔ فاکتور</th><th>مشتری</th><th>کانال</th><th>روش دریافت</th><th className="num">مبلغ (تومان)</th><th className="num">مانده</th><th>وضعیت</th><th>عملیات</th></tr></thead>
           <tbody>{query.data.rows.map(row => <tr key={row.id}>
             <td data-label="شمارهٔ فاکتور"><span className="num invoice-no">{row.number ?? "بدون شماره"}</span><small>{date(row.occurredAt)} · {row.creatorName ?? "ثبت‌کنندهٔ نامعلوم"}</small></td>
-            <td data-label="مشتری">{row.customerName ?? "مشتری عمومی"}</td>
+            <td data-label="مشتری">{row.customerName ?? "مشتری عمومی"}{row.customerMobile ? <small><bdi dir="ltr" className="num">{row.customerMobile}</bdi></small> : null}</td>
             <td data-label="کانال">{row.channel ? channelLabel(row.channel) : "—"}<small>{row.branchName}</small></td>
             <td data-label="روش دریافت">{row.paymentMethods || "بدون دریافت"}</td>
             <td data-label="مبلغ (تومان)" className="num">{toman(BigInt(row.payableAmount))}</td>
             <td data-label="مانده" className="num">{row.remainingAmount === undefined ? "—" : BigInt(row.remainingAmount) > 0n ? <span className="invoice-due">{toman(BigInt(row.remainingAmount))}</span> : "—"}</td>
-            <td data-label="وضعیت"><StatusBadge state={statusTone[row.status] ?? "unknown"} label={statusNames[row.status] ?? "نامعلوم"} />
+            <td data-label="وضعیت"><StatusBadge state={statusTone[rowState(row)] ?? "unknown"} label={statusNames[rowState(row)] ?? "نامعلوم"} />
               {row.needsReview ? <StatusBadge state="attention" label="نیازمند رسیدگی" /> : null}</td>
             <td data-label="عملیات" className="invoice-actions">
               {row.canResume && <button className="btn" type="button" onClick={() => void resume(row)}>ادامهٔ پیش‌نویس</button>}
               {["finalized", "paid", "partially_returned", "returned"].includes(row.status) && <a className="icon-button invoice-icon" href={`/api/invoices/${row.id}/print`} target="_blank" rel="noopener" aria-label="چاپ فاکتور" title="چاپ فاکتور"><Icon name="print" size="sm" /></a>}
               <button className="icon-button invoice-icon" type="button" aria-label="جزئیات" title="جزئیات" onClick={() => setSelected(row.id)}><Icon name="chevron" size="sm" /></button>
-            </td></tr>)}</tbody></table></div>
+            </td></tr>)}</tbody>
+          {/* ردیف جمع (طرح ۱۰): همان جمع‌های SQL کل این فیلتر، نه جمع این صفحه در مرورگر. */}
+          {summary && tab === "list" ? <tfoot><tr>
+            <th scope="row" colSpan={4}>جمع {formatCount(summary.count)} فاکتور این فیلتر</th>
+            <td className="num">{toman(BigInt(summary.payableAmount))}</td>
+            <td className="num">{toman(BigInt(summary.remainingAmount))}</td>
+            <td colSpan={2} />
+          </tr></tfoot> : null}</table></div>
         <nav className="row between" aria-label="صفحه‌بندی فاکتورها"><button type="button" className="btn" disabled={Number(page) <= 1} onClick={() => setPage(String(Number(page)-1))}>قبلی</button>
           <span>صفحه {page} · {query.data.total} فاکتور</span><button type="button" className="btn" disabled={Number(page)*50 >= query.data.total} onClick={() => setPage(String(Number(page)+1))}>بعدی</button></nav>
       </>}

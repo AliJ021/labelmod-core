@@ -22,7 +22,10 @@ export function registerInvoiceWorkspaceRoutes(app: FastifyInstance, db: Db): vo
     const s = session(req.session);
     await requireInvoiceRead(db, s);
     const q = z.object({ page: z.coerce.number().int().min(1).max(100000).default(1),
-      status: z.enum(["all", "draft", "finalized", "cancelled", "returned"]).default("all"),
+      // طرح ۱۰: «تسویه‌شده»، «مانده‌دار» و «مرجوعی» (settled/open/returns) تراشه‌های فهرست‌اند؛
+      // finalized و returned قدیمی برای پیوندهای ذخیره‌شده می‌مانند.
+      status: z.enum(["all", "draft", "finalized", "cancelled", "returned", "settled", "open", "returns"]).default("all"),
+      channel: z.enum(["pos", "web", "phone", "instagram"]).optional(),
       from: z.iso.date().optional(), to: z.iso.date().optional(),
       branchId: z.string().uuid().optional(), search: z.string().trim().max(80).default("") }).parse(req.query);
     if (q.from && q.to && q.from > q.to) throw new InvoiceError("bad_period", "تاریخ پایان پیش از آغاز است.", 422);
@@ -30,50 +33,66 @@ export function registerInvoiceWorkspaceRoutes(app: FastifyInstance, db: Db): vo
     const scope = await branchesOf(db, s.userId);
     if (q.branchId) await assertBranch(db, s.userId, q.branchId);
     const all = (await can(db, { userId: s.userId, operation: "report.view", viaPin: s.pinUnlocked })).verdict === "allow";
-    // پایه بدون وضعیت: شمارش تراشه‌های وضعیت از همین پایه است تا هر تراشه بگوید «اگر مرا بزنی چند تا می‌بینی».
-    const base = sql`(${scope === "all"} OR i.branch_id=ANY(${scope === "all" ? [] : scope}::uuid[]))
+    // یک تعریف برای ردیف، فیلتر، شمارش تراشه و جمع (طرح ۱۰). پایه بدون وضعیت است تا شمارش هر تراشه
+    // بگوید «اگر مرا بزنی چند تا می‌بینی».
+    //   دریافتی  ورود موفق (succeeded/settled/reconciled).
+    //   مانده    قابل پرداخت منهای دریافتی، هرگز منفی — همان ستون «مانده».
+    //   تراشه    مرجوعی (partially_returned/returned) پیش از همه؛ بعد فاکتور قطعی با ماندهٔ بیش از صفر
+    //            «مانده‌دار» و بی مانده «تسویه‌شده». ⚠️ وضعیت paid را هیچ تابع دیتابیس نمی‌نشاند، پس
+    //            «تسویه‌شده» از وضعیت خوانده نمی‌شود؛ از مانده خوانده می‌شود. پیش‌نویس و لغوشده خودشان‌اند.
+    const scoped = sql`SELECT i.*, c.full_name AS customer_name,
+        CASE WHEN length(c.mobile_normalized) >= 8 THEN left(c.mobile_normalized, 4) || ' *** ' || right(c.mobile_normalized, 4) END AS customer_mobile_masked,
+        coalesce(pay.amount,0) AS received, coalesce(pay.methods,'') AS methods,
+        greatest(i.payable_amount-coalesce(pay.amount,0),0) AS remaining,
+        CASE WHEN i.status IN ('partially_returned','returned') THEN 'returns'
+             WHEN i.status IN ('finalized','paid') THEN CASE WHEN i.payable_amount-coalesce(pay.amount,0) > 0 THEN 'open' ELSE 'settled' END
+             ELSE i.status END AS chip
+      FROM sales.invoice i LEFT JOIN sales.customer c ON c.id=i.customer_id
+      LEFT JOIN LATERAL (SELECT sum(p.amount) AS amount,string_agg(DISTINCT m.name,'، ') AS methods
+        FROM treasury.payment p JOIN treasury.payment_method m ON m.code=p.method_code
+        WHERE p.invoice_id=i.id AND p.direction='in' AND p.status IN ('succeeded','settled','reconciled')) pay ON true
+      WHERE (${scope === "all"} OR i.branch_id=ANY(${scope === "all" ? [] : scope}::uuid[]))
       AND (${q.branchId ?? null}::uuid IS NULL OR i.branch_id=${q.branchId ?? null}::uuid)
+      AND (${q.channel ?? null}::text IS NULL OR i.channel=${q.channel ?? null}::text)
       AND (${q.from ?? null}::date IS NULL OR platform.business_date(i.occurred_at)>=${q.from ?? null}::date)
       AND (${q.to ?? null}::date IS NULL OR platform.business_date(i.occurred_at)<=${q.to ?? null}::date)
       AND (${all} OR i.created_by=${s.userId}::uuid)
       AND (${q.search}='' OR strpos(coalesce(sales.invoice_display_number(i.id),''),${numberSearch})>0 OR strpos(coalesce(i.number,''),${numberSearch})>0 OR strpos(coalesce(c.full_name,''),${q.search})>0)`;
-    const filter = sql`${base}
-      AND (${q.status}='all' OR i.status=${q.status} OR (${q.status}='finalized' AND i.status IN ('paid','partially_returned')))`;
-    const result = await sql`SELECT i.id,sales.invoice_display_number(i.id) AS number,i.status,i.channel,i.branch_id AS "branchId",b.name AS "branchName",
+    const filter = sql`(${q.status}='all' OR i.status=${q.status} OR i.chip=${q.status}
+      OR (${q.status}='finalized' AND i.status IN ('paid','partially_returned')))`;
+    const result = await sql`WITH i AS (${scoped})
+      SELECT i.id,sales.invoice_display_number(i.id) AS number,i.status,i.chip,i.channel,i.branch_id AS "branchId",b.name AS "branchName",
       i.shift_id AS "shiftId",i.created_by AS "createdBy",creator.full_name AS "creatorName",
-      i.finalized_by AS "finalizedBy",finisher.full_name AS "finalizerName",c.full_name AS "customerName",
+      i.finalized_by AS "finalizedBy",finisher.full_name AS "finalizerName",i.customer_name AS "customerName",
+      i.customer_mobile_masked AS "customerMobile",
       i.occurred_at AS "occurredAt",i.last_activity_at AS "lastActivityAt",i.payable_amount::text AS "payableAmount",
-      coalesce(pay.amount,0)::text AS "receivedAmount",coalesce(pay.methods,'') AS "paymentMethods",
-      -- مانده هر ردیف همان تعریف جمع پایین است (قابل پرداخت منهای دریافتی موفق، هرگز منفی) — در SQL، نه مرورگر.
-      greatest(i.payable_amount-coalesce(pay.amount,0),0)::text AS "remainingAmount",
+      i.received::text AS "receivedAmount",i.methods AS "paymentMethods",
+      i.remaining::text AS "remainingAmount",
       (i.status='draft' AND i.created_by=${s.userId}::uuid AND sh.user_id=${s.userId}::uuid AND sh.status='open') AS "canResume",
       (i.status='draft' AND i.last_activity_at < now()-make_interval(hours=>
         (SELECT value::text::int FROM platform.setting WHERE key='sale.draft_attention_hours'))) AS "needsReview"
-      FROM sales.invoice i JOIN platform.branch b ON b.id=i.branch_id
+      FROM i JOIN platform.branch b ON b.id=i.branch_id
       LEFT JOIN identity.app_user creator ON creator.id=i.created_by LEFT JOIN identity.app_user finisher ON finisher.id=i.finalized_by
-      LEFT JOIN sales.customer c ON c.id=i.customer_id LEFT JOIN sales.cash_shift sh ON sh.id=i.shift_id
-      LEFT JOIN LATERAL (SELECT sum(p.amount) AS amount,string_agg(DISTINCT m.name,'، ') AS methods
-        FROM treasury.payment p JOIN treasury.payment_method m ON m.code=p.method_code
-        WHERE p.invoice_id=i.id AND p.direction='in' AND p.status IN ('succeeded','settled','reconciled')) pay ON true
+      LEFT JOIN sales.cash_shift sh ON sh.id=i.shift_id
       WHERE ${filter} ORDER BY i.occurred_at DESC,i.id DESC LIMIT 50 OFFSET ${(q.page-1)*50}`.execute(db);
-    const count = await sql<{ total: string }>`SELECT count(*)::text AS total FROM sales.invoice i
-      LEFT JOIN sales.customer c ON c.id=i.customer_id WHERE ${filter}`.execute(db);
+    const count = await sql<{ total: string }>`WITH i AS (${scoped}) SELECT count(*)::text AS total FROM i WHERE ${filter}`.execute(db);
     // جمع‌های همین فیلتر (طرح ۱۰). پول در SQL جمع می‌شود، نه در مرورگر. فقط «فاکتور واقعی»
     // (finalized، paid، partially_returned، returned) شمرده می‌شود: پیش‌نویس و لغوشده فروش نیستند.
-    // دریافتی همان تعریف ستون ردیف است (ورود موفق)؛ مانده = قابل پرداخت منهای دریافتی، هرگز منفی.
-    const summary = await sql<{ count: string; payable: string; received: string; remaining: string }>`
+    const summary = await sql<{ count: string; payable: string; received: string; remaining: string }>`WITH i AS (${scoped})
       SELECT count(*)::text AS count, coalesce(sum(i.payable_amount),0)::text AS payable,
-        coalesce(sum(coalesce(pay.amount,0)),0)::text AS received,
-        coalesce(sum(greatest(i.payable_amount-coalesce(pay.amount,0),0)),0)::text AS remaining
-      FROM sales.invoice i LEFT JOIN sales.customer c ON c.id=i.customer_id
-      LEFT JOIN LATERAL (SELECT sum(p.amount) AS amount FROM treasury.payment p
-        WHERE p.invoice_id=i.id AND p.direction='in' AND p.status IN ('succeeded','settled','reconciled')) pay ON true
-      WHERE ${filter} AND i.status IN ('finalized','paid','partially_returned','returned')`.execute(db);
-    const buckets = await sql<{ bucket: string; n: string }>`
-      SELECT CASE WHEN i.status IN ('paid','partially_returned') THEN 'finalized' ELSE i.status END AS bucket, count(*)::text AS n
-      FROM sales.invoice i LEFT JOIN sales.customer c ON c.id=i.customer_id WHERE ${base} GROUP BY 1`.execute(db);
-    const statusCounts: Record<string, number> = { all: 0, draft: 0, finalized: 0, cancelled: 0, returned: 0 };
-    for (const b of buckets.rows) { statusCounts[b.bucket] = Number(b.n); statusCounts.all = (statusCounts.all ?? 0) + Number(b.n); }
+        coalesce(sum(i.received),0)::text AS received, coalesce(sum(i.remaining),0)::text AS remaining
+      FROM i WHERE ${filter} AND i.status IN ('finalized','paid','partially_returned','returned')`.execute(db);
+    const buckets = await sql<{ bucket: string; chip: string; n: string }>`WITH i AS (${scoped})
+      SELECT CASE WHEN i.status IN ('paid','partially_returned') THEN 'finalized' ELSE i.status END AS bucket, i.chip, count(*)::text AS n
+      FROM i GROUP BY 1, 2`.execute(db);
+    // کلیدهای قدیمی (all، draft، finalized، cancelled، returned) همان افراز پیشین‌اند؛ تراشه‌های طرح ۱۰
+    // (settled، open، returns) کلید جدا دارند و در «all» دوباره شمرده نمی‌شوند.
+    const statusCounts: Record<string, number> = { all: 0, draft: 0, finalized: 0, cancelled: 0, returned: 0, settled: 0, open: 0, returns: 0 };
+    for (const b of buckets.rows) {
+      statusCounts[b.bucket] = (statusCounts[b.bucket] ?? 0) + Number(b.n);
+      statusCounts.all = (statusCounts.all ?? 0) + Number(b.n);
+      if (b.chip === "settled" || b.chip === "open" || b.chip === "returns") statusCounts[b.chip] = (statusCounts[b.chip] ?? 0) + Number(b.n);
+    }
     const sum = summary.rows[0]!;
     return { rows: result.rows, total: Number(count.rows[0]?.total ?? 0), page: q.page, pageSize: 50,
       summary: { count: Number(sum.count), payableAmount: sum.payable, receivedAmount: sum.received, remainingAmount: sum.remaining },

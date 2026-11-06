@@ -730,3 +730,13 @@ table.grid td small, table.ui-table td small { font-size: 0.6875rem; color: var(
 .line-chart-foot { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: var(--s-2) var(--s-4); }
 .line-chart-foot .trend-compare { font-size: var(--text-xs); color: var(--ink-2); }
 .line-chart-foot .line-chart-table-toggle { align-self: center; }
+
+/* ── WP4 دستهٔ ۲: فاکتورها مثل طرح ۱۰ ───────────────────────────────────────────── */
+.invoice-channel select { min-block-size: var(--touch); inline-size: auto; padding-inline: 12px 32px; border-radius: var(--r-pill); font-size: var(--text-sm); }
+.invoice-summary .kpi-note:has(> span:empty) { display: none; }
+.invoice-summary .kpi-unit { font-size: var(--text-xs); font-weight: var(--weight-regular); color: var(--ink-2); }
+/* «مانده (نسیه)» بیش از صفر با رنگ تأکید، مثل طرح ۱۰؛ برچسب خودش معنا را می‌گوید، نه رنگ. */
+.invoice-remaining[data-due] .money-digits { color: var(--accent); }
+.invoice-table td small bdi { unicode-bidi: isolate; }
+.invoice-table tfoot th, .invoice-table tfoot td { padding-block: 12px; border-block-start: var(--border-w) solid var(--rule-2); font-weight: var(--weight-semibold); color: var(--ink); background: var(--surface-solid-2); }
+.invoice-table tfoot th { text-align: start; }
