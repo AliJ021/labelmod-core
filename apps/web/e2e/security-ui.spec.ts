@@ -1,4 +1,4 @@
-import { openZone } from "./fixtures";
+import { accountScope, openZone } from "./fixtures";
 import { test, expect, type MockApi } from "./fixtures";
 import type { Page } from "@playwright/test";
 
@@ -25,7 +25,9 @@ for (const action of ["lock", "logout"] as const) {
       else await route.fulfill({ json: action === "lock" ? { locked: true } : { ok: true } });
     });
     await page.goto("/");
-    const button = page.getByRole("button", { name: action === "lock" ? "قفل صفحه" : "خروج", exact: true });
+    // خروج در گوشی پای منوی ☰ است (طرح ۱۰)؛ قفل در هر عرض در سربرگ.
+    const scope = action === "logout" ? await accountScope(page) : page.locator("body");
+    const button = scope.getByRole("button", { name: action === "lock" ? "قفل صفحه" : "خروج", exact: true });
     for (let i = 0; i < 3; i++) {
       await button.click();
       await expect(page.getByRole("alert")).toContainText("در سرور تأیید نشد");
