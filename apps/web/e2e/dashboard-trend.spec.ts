@@ -256,7 +256,12 @@ test.describe("بررسی نمودار و مقایسه", () => {
     serveTrend(api, () => ({}));
     await page.goto("/");
     const scope = panel(page).locator(".trend-scope");
-    await expect(scope).toContainText("کارت‌ها و نمودار: امروز");
+    // نمای ساعتی (طرح ۱۰) ردیف جدا ندارد: توضیح کارت خودش «امروز» را می‌گوید.
+    await expect(scope).toHaveCount(0);
+    await expect(panel(page).locator(".section-description")).toContainText("امروز");
+    await grain(page, "هر ساعت").check();
+    await expect(scope).toHaveCount(0);
+    await expect(panel(page).locator(".section-description")).toContainText("امروز");
     await grain(page, "روزانه").check();
     await expect(scope).toContainText("کارت‌های بالا: فقط امروز");
     await expect(scope).toContainText("۳۰ روز اخیر");
@@ -277,6 +282,10 @@ test.describe("«تا این لحظه» و دیروز تا همین لحظه (ط
     await expect(chart).toContainText("تا این لحظه: 1٬234٬000 تومان");
     await expect(chart).toContainText("همین لحظهٔ دیروز: 900٬000 تومان");
     await expect(chart).toContainText("نه کل دیروز");
+    // چیدمان طرح ۱۰: عدد «تا این لحظه» بالای نمودار برابر کارت فروش است؛ کلید مقایسه پایین، کنار «نمایش جدول داده».
+    await expect(chart.locator(".line-chart-lead .trend-lead")).toHaveText(/^1٬234٬000\s*تومان\s*تا این لحظه$/);
+    await expect(chart.locator(".line-chart-foot").getByRole("checkbox", { name: "مقایسه با همین ساعت دیروز" })).toBeVisible();
+    await expect(chart.locator(".line-chart-foot").getByRole("button", { name: "نمایش جدول داده" })).toBeVisible();
     const dashes = await chart.locator(".line-chart-line").evaluateAll(els => els.map(el => getComputedStyle(el).strokeDasharray));
     expect(new Set(dashes).size, "خط دیروز الگوی خط خودش را دارد، نه فقط رنگ").toBe(2);
     // تراشهٔ کارت فروش از `comparison.delta.sales` سرور: ۱۲٬۳۴۰٬۰۰۰ − ۹٬۰۰۰٬۰۰۰ ریال.

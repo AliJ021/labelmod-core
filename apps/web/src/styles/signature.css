@@ -719,3 +719,14 @@ table.grid td small, table.ui-table td small { font-size: 0.6875rem; color: var(
 .more-sheet-head .shell-branch { border: var(--border-w) solid var(--rule); background: var(--surface-solid); }
 .more-sheet-account { margin-block-start: 8px; padding-block-start: 8px; border-block-start: var(--border-w) solid var(--rule); }
 .more-sheet-account .shell-user { margin: 0; padding: 0; border: 0; }
+
+/* ── WP4 دستهٔ ۱: کارت روند داشبورد به چیدمان فشردهٔ طرح ۱۰ ───────────────────────
+   ردیف بالا: عدد «تا این لحظه» (همان کارت) و راهنما؛ ردیف پایین: کلید مقایسه و «نمایش جدول داده». */
+.line-chart-lead { display: flex; flex-wrap: wrap; align-items: baseline; justify-content: space-between; gap: var(--s-2) var(--s-4); }
+.line-chart-lead-value { min-inline-size: 0; }
+.trend-lead { display: inline-flex; align-items: baseline; gap: var(--s-2); }
+.trend-lead .money-digits { font-size: var(--text-2xl); font-weight: var(--weight-heavy); }
+.trend-lead-note { font-size: var(--text-xs); color: var(--ink-2); }
+.line-chart-foot { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: var(--s-2) var(--s-4); }
+.line-chart-foot .trend-compare { font-size: var(--text-xs); color: var(--ink-2); }
+.line-chart-foot .line-chart-table-toggle { align-self: center; }

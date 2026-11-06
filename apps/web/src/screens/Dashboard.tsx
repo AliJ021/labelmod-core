@@ -680,6 +680,14 @@ function TrendPanel({ id, metric, grain, onGrain, compare, onCompare, yesterday,
   const comparison = hourly.state === "ready" ? hourly.data.comparison : null;
   let body;
   let busy = false;
+  let lead: ReactNode;
+  // کلید مقایسه: در نمای ساعتی پایین نمودار کنار «نمایش جدول داده» (طرح ۱۰)، در روزانه/ماهانه بالای نمودار.
+  const compareControl = grain === "cumulative"
+    // خط دیروز فقط وقتی سرور مقایسه داده (`report.view`)؛ صندوق‌دارِ فقط‌امروز کلیدی نمی‌بیند که کار نکند.
+    ? comparison ? <label className="trend-compare"><input type="checkbox" checked={yesterday} onChange={e => onYesterday(e.target.checked)} />
+        مقایسه با همین ساعت دیروز</label> : null
+    : <label className="trend-compare"><input type="checkbox" checked={compare} onChange={e => onCompare(e.target.checked)} />
+        مقایسهٔ هر سه شاخص</label>;
   if (hourlyGrain ? hourly.state === "loading" : !trend || trend.state === "loading") {
     busy = true;
     body = <Skeleton variant="chart" lines={1} label={`در حال بارگذاری ${copy.title}…`} />;
@@ -698,11 +706,14 @@ function TrendPanel({ id, metric, grain, onGrain, compare, onCompare, yesterday,
         : trend?.state === "ready" ? bucketPoints(trend.data.buckets, grain) : [];
     const view = trendView(points, metric, grain, compare, yesterday);
     const tick = tickEvery(points.length, hourlyGrain ? 16 : 8);
+    // طرح ۱۰: عدد «تا این لحظه» بالای نمودار — آخرین تجمعی رسیدهٔ سرور، که همان عدد کارت است.
+    const last = grain === "cumulative" ? [...points].reverse().find(p => !p.pending && p.values[metric] !== null) : undefined;
+    lead = last ? <span className="trend-lead"><Money rial={last.values[metric]!} size="lg" /><span className="trend-lead-note">تا این لحظه</span></span> : undefined;
     body = view.kind === "unknown"
       ? <ResultState kind="denied" title={`روند سود برای این نقش در دسترس نیست.`} description="دیدن سود به دسترسی بهای تمام‌شده نیاز دارد." />
       : view.kind === "empty"
         ? <ResultState title={copy.empty[0]} description={copy.empty[1]} />
-        : <LineChart title={copy.chart} summary={view.summary} note={view.note}
+        : <LineChart title={copy.chart} summary={view.summary} note={view.note} lead={lead} footer={hourlyGrain ? compareControl : undefined}
             xHeader={hourlyGrain ? "ساعت" : grain === "day" ? "روز" : "ماه"}
             points={points.map((p, i) => ({ key: p.key, label: p.label, long: p.long, partial: p.partial, tick: tick(i) }))}
             series={view.series.map(s => ({ key: s.kind ?? s.metric, label: s.label, values: s.values, displays: s.displays, emphasis: !s.kind && s.metric === metric }))} />;
@@ -713,19 +724,14 @@ function TrendPanel({ id, metric, grain, onGrain, compare, onCompare, yesterday,
   return <section className="today-trend" id={id} role="tabpanel" aria-labelledby={headingId} tabIndex={0} aria-busy={busy || undefined}>
     <SectionHeader id={headingId} title={copy.title} description={copy.description}
       actions={<Segmented label="بازهٔ روند" options={GRAINS} value={grain} onChange={onGrain} />} />
-    <div className="trend-tools">
-      {/* کارت‌های بالا همیشه «امروز»اند؛ وقتی بازهٔ روند امروز نیست، صریح گفته می‌شود. */}
+    {/* کارت‌های بالا همیشه «امروز»اند. در نمای ساعتی توضیح کارت همین را می‌گوید (طرح ۱۰ ردیف جدا ندارد)؛
+        وقتی بازهٔ روند امروز نیست، صریح گفته می‌شود. */}
+    {hourlyGrain ? null : <div className="trend-tools">
       <p className="trend-scope">
-        {hourlyGrain ? <>کارت‌ها و نمودار: امروز ({formatJalali(today)})</>
-          : <>کارت‌های بالا: فقط امروز ({formatJalali(today)}) · نمودار: {grain === "day" ? `${formatCount(DAYS)} روز اخیر` : `${formatCount(MONTHS)} ماه شمسی اخیر`}</>}
+        کارت‌های بالا: فقط امروز ({formatJalali(today)}) · نمودار: {grain === "day" ? `${formatCount(DAYS)} روز اخیر` : `${formatCount(MONTHS)} ماه شمسی اخیر`}
       </p>
-      {grain === "cumulative"
-        // خط دیروز فقط وقتی سرور مقایسه داده (`report.view`)؛ صندوق‌دارِ فقط‌امروز کلیدی نمی‌بیند که کار نکند.
-        ? comparison ? <label className="trend-compare"><input type="checkbox" checked={yesterday} onChange={e => onYesterday(e.target.checked)} />
-            مقایسه با همین ساعت دیروز</label> : null
-        : <label className="trend-compare"><input type="checkbox" checked={compare} onChange={e => onCompare(e.target.checked)} />
-            مقایسهٔ هر سه شاخص</label>}
-    </div>
+      {compareControl}
+    </div>}
     {body}
   </section>;
 }

@@ -1,4 +1,4 @@
-import { useId, useState, type KeyboardEvent, type PointerEvent } from "react";
+import { useId, useState, type KeyboardEvent, type PointerEvent, type ReactNode } from "react";
 import { moneyParts } from "../../lib/format.ts";
 import { niceScale } from "../../lib/chart-scale.ts";
 import { smoothArea, smoothPath, type Pt } from "../../lib/smooth-path.ts";
@@ -32,9 +32,16 @@ export interface LineSeries { key: string; label: string; values: readonly (bigi
 
 const W = 600, H = 200, MX = 8, MY = 10;
 
-export function LineChart({ title, summary, note, xHeader, points, series, unit = "تومان" }: {
+export function LineChart({ title, summary, note, xHeader, points, series, unit = "تومان", lead, footer }: {
   title: string; summary: string; note: string | null; xHeader: string;
   points: readonly LinePoint[]; series: readonly LineSeries[]; unit?: string;
+  /**
+   * چیدمان فشردهٔ طرح ۱۰: عدد شاخص کنار راهنما در ردیف بالا. عنوان و خلاصه همچنان نام و توضیح
+   * دسترس‌پذیر نمودارند ولی دیداری تکرار نمی‌شوند (عنوان کارت بالای نمودار همان را می‌گوید).
+   */
+  lead?: ReactNode;
+  /** کنترل کنار «نمایش جدول داده» در ردیف پایین (طرح ۱۰: کلید مقایسه). */
+  footer?: ReactNode;
 }) {
   const id = useId();
   const n = points.length;
@@ -90,15 +97,18 @@ export function LineChart({ title, summary, note, xHeader, points, series, unit 
   </table>;
 
   return <figure className="line-chart" aria-labelledby={`${id}-t`}>
-    <figcaption>
+    <figcaption className={lead ? "sr-only" : undefined}>
       <span id={`${id}-t`} className="line-chart-title">{title}</span>
       <span className="line-chart-summary">{summary}</span>
     </figcaption>
-    <ul className="line-chart-legend" aria-hidden="true">
-      {series.map(s => <li key={s.key} data-series={s.key} data-emphasis={s.emphasis || undefined}>
-        <svg viewBox="0 0 24 8" className="line-chart-swatch"><path d="M1 4 H23" /></svg>{s.label}
-      </li>)}
-    </ul>
+    {(() => {
+      const legend = <ul className="line-chart-legend" aria-hidden="true">
+        {series.map(s => <li key={s.key} data-series={s.key} data-emphasis={s.emphasis || undefined}>
+          <svg viewBox="0 0 24 8" className="line-chart-swatch"><path d="M1 4 H23" /></svg>{s.label}
+        </li>)}
+      </ul>;
+      return lead ? <div className="line-chart-lead"><div className="line-chart-lead-value">{lead}</div>{legend}</div> : legend;
+    })()}
     <div className="line-chart-frame">
       <span className="line-chart-unit" aria-hidden="true">{unit}</span>
       <div className="line-chart-plot" role="group" tabIndex={0}
@@ -158,8 +168,11 @@ export function LineChart({ title, summary, note, xHeader, points, series, unit 
     </div>
     <p id={`${id}-r`} className="line-chart-readout" aria-live="polite">{readout}</p>
     {note ? <p className="line-chart-note">{note}</p> : null}
-    <button type="button" className="link line-chart-table-toggle" aria-expanded={showTable} aria-controls={`${id}-table`}
-      onClick={() => setShowTable(v => !v)}>{showTable ? "پنهان‌کردن جدول داده" : "نمایش جدول داده"}</button>
+    {(() => {
+      const toggle = <button type="button" className="link line-chart-table-toggle" aria-expanded={showTable} aria-controls={`${id}-table`}
+        onClick={() => setShowTable(v => !v)}>{showTable ? "پنهان‌کردن جدول داده" : "نمایش جدول داده"}</button>;
+      return footer ? <div className="line-chart-foot">{footer}{toggle}</div> : toggle;
+    })()}
     {/* پنهان: ظرف sr-only، نه خودِ جدول — جدول چندستونی از عرض ۱px بزرگ‌تر می‌شود و صفحه را افقی می‌کشید.
         آشکار: در ظرف با اسکرول افقی خودش، نه صفحه. یک جدول است، نه دو نسخه. */}
     <div id={`${id}-table`} className={showTable ? "line-chart-table-wrap" : "sr-only"}>{table}</div>
