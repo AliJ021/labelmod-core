@@ -59,7 +59,16 @@ export interface Customer {
   invoiceCount: number;
   totalPurchased: string;
   balance: string;
+  /**
+   * طرح ۱۰ — ماندهٔ دفتر از سند ثبت‌شده (همان تعریف کارت طلب/اعتبار داشبورد)، جدا: یکی از این دو همیشه
+   * صفر است. نبودنش (پاسخ قدیمی) یعنی «نامعلوم»، نه صفر.
+   */
+  ledgerOwed?: string;
+  ledgerCredit?: string;
 }
+
+/** جمع همان دو ستون برای همین فهرست، از SQL. */
+export interface CustomerLedgerTotals { owed: string; credit: string }
 
 /** فراداده یک اندازه — فرم از همین ساخته می‌شود، نه از فهرستی در React. */
 export interface MeasureKey {
@@ -143,7 +152,7 @@ export const people = {
     api.put<{ ok: boolean; hasPin: boolean }>(`/users/${id}/pin`, { pin }),
 
   customers: (q = "", opts?: RequestOptions) =>
-    api.get<{ customers: Customer[] }>(
+    api.get<{ customers: Customer[]; totals?: CustomerLedgerTotals }>(
       `/customers${q.trim() === "" ? "" : `?q=${encodeURIComponent(q.trim())}`}`,
       opts,
     ),

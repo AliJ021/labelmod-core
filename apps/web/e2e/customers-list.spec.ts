@@ -1,0 +1,69 @@
+/**
+ * WP4 دستهٔ ۶ — فهرست مشتریان مثل طرح ۱۰.
+ *
+ * ستون‌ها: مشتری (موبایل پوشیده زیر نام)، از، ماندهٔ دفتر (طلب)، اعتبار نزد ما، پیامک بازاریابی، و سطر جمع.
+ * طلب و اعتبار از سرور و جدا؛ صفر «—»؛ ستون نیامده «نامعلوم»، نه صفر؛ جمع از پاسخ سرور، نه جمع مرورگر.
+ * «اثر ثبت‌نشدهٔ امروز» V10 تعریف مالی تازه است و تا تصمیم مالک ساخته نمی‌شود.
+ */
+import { test, expect, customer } from "./fixtures";
+import type { Customer } from "../src/lib/people";
+
+const row = (id: string, over: Partial<Customer>): Customer => ({ ...customer, id, ...over });
+const ROWS: Customer[] = [
+  row("c1", { fullName: "سارا احمدی", mobile: "09121234821", createdAt: "2025-01-21T08:00:00Z", consentMarketing: true, ledgerOwed: "21500000", ledgerCredit: "0" }),
+  row("c2", { fullName: "علی رضایی", mobile: "09351237777", createdAt: "2025-06-08T08:00:00Z", consentMarketing: false, ledgerOwed: "0", ledgerCredit: "3200000" }),
+  row("c3", { fullName: "مریم توکلی", mobile: "09121235566", createdAt: "2025-11-28T08:00:00Z", consentMarketing: true, ledgerOwed: "0", ledgerCredit: "0", status: "blocked" }),
+];
+
+test.describe("فهرست مشتریان (طرح ۱۰)", () => {
+  test("receivable and credit apart from the server, masked mobile, total row from the server", async ({ page, api }) => {
+    // جمع عمداً با جمع ردیف‌ها فرق دارد: صفحه باید عدد سرور را نشان دهد، نه جمع خودش را.
+    api.defaults["GET /customers"] = { customers: ROWS, totals: { owed: "99900000", credit: "3200000" } };
+    await page.goto("/?page=customers");
+    const table = page.getByRole("table", { name: "فهرست مشتریان؛ مبلغ‌ها به تومان" });
+    await expect(table).toBeVisible();
+    expect((await table.locator("thead th").allInnerTexts()).map(h => h.trim()))
+      .toEqual(["مشتری", "از", "ماندهٔ دفتر (طلب)", "اعتبار نزد ما", "پیامک بازاریابی", "کنش‌ها"]);
+    const cells = (name: string) => table.locator("tbody tr").filter({ hasText: name }).locator("td");
+
+    const sara = cells("سارا احمدی");
+    await expect(sara.nth(0)).toContainText("0912 *** 4821");
+    await expect(sara.nth(0)).not.toContainText("09121234821");
+    await expect(sara.nth(2)).toContainText("2٬150٬000");
+    await expect(sara.nth(3)).toHaveText("—");
+    await expect(sara.nth(4)).toContainText("رضایت دارد");
+
+    const ali = cells("علی رضایی");
+    await expect(ali.nth(2)).toHaveText("—");
+    await expect(ali.nth(3)).toContainText("320٬000");
+    await expect(ali.nth(3)).not.toContainText("−");
+    await expect(ali.nth(4)).toContainText("بدون رضایت");
+
+    await expect(cells("مریم توکلی").nth(0)).toContainText("مسدود");
+
+    const foot = table.locator("tfoot tr");
+    await expect(foot).toContainText("جمع");
+    await expect(foot).toContainText("9٬990٬000");
+    await expect(foot).toContainText("320٬000");
+    await expect(page.getByText("پرداخت مشتری بابت فاکتور قبلی در «وجه دریافتی امروز» داشبورد می‌آید", { exact: false })).toBeVisible();
+    expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth + 1)).toBe(true);
+  });
+
+  test("an older response without ledger columns or totals shows unknown, never zero", async ({ page, api }) => {
+    api.defaults["GET /customers"] = { customers: [customer] };
+    await page.goto("/?page=customers");
+    const table = page.getByRole("table", { name: "فهرست مشتریان؛ مبلغ‌ها به تومان" });
+    const tds = table.locator("tbody tr").first().locator("td");
+    await expect(tds.nth(2)).toContainText("نامعلوم");
+    await expect(tds.nth(3)).toContainText("نامعلوم");
+    await expect(table.locator("tfoot")).toHaveCount(0);
+  });
+
+  test("the row action still opens the customer file", async ({ page, api }) => {
+    api.defaults["GET /customers"] = { customers: ROWS, totals: { owed: "21500000", credit: "3200000" } };
+    api.defaults["GET /customers/c1"] = { customer: ROWS[0], invoices: [] };
+    await page.goto("/?page=customers");
+    await page.getByRole("table", { name: "فهرست مشتریان؛ مبلغ‌ها به تومان" }).locator("tbody tr").first().getByRole("button", { name: "پرونده" }).click();
+    expect(api.calls).toContain("GET /customers/c1");
+  });
+});

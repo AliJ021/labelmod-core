@@ -97,6 +97,19 @@ export interface Customer {
   invoiceCount: number;
   totalPurchased: string;
   balance: string;
+  /**
+   * طرح ۱۰ — ماندهٔ دفتر مشتری با **همان** تعریف کارت «طلب/اعتبار مشتریان» داشبورد (`/dashboard/operations`):
+   * خالص سطرهای `party_type = 'customer'` فقط از سند `confirmed`/`final` و در دامنهٔ شعبه. خالص مثبت «طلب
+   * ما» است و منفی «اعتبار مشتری نزد ما»؛ یکی از این دو همیشه صفر است و با هم جمع نمی‌شوند.
+   */
+  ledgerOwed: string;
+  ledgerCredit: string;
+}
+
+/** جمع همان دو ستون برای همان مشتریانی که فهرست برگردانده — در SQL. */
+export interface CustomerLedgerTotals {
+  owed: string;
+  credit: string;
 }
 
 interface Row {
@@ -119,6 +132,8 @@ interface Row {
   invoice_count: string;
   total_purchased: string;
   balance: string;
+  ledger_owed: string;
+  ledger_credit: string;
 }
 
 function toJson(r: Row): Customer {
@@ -142,6 +157,8 @@ function toJson(r: Row): Customer {
     invoiceCount: Number(r.invoice_count),
     totalPurchased: serializeMoney(parseMoney(r.total_purchased)),
     balance: serializeMoney(parseMoney(r.balance)),
+    ledgerOwed: serializeMoney(parseMoney(r.ledger_owed)),
+    ledgerCredit: serializeMoney(parseMoney(r.ledger_credit)),
   };
 }
 
@@ -153,8 +170,19 @@ function toJson(r: Row): Customer {
  * از دیگری عقب می‌ماند — همان دلیلی که «چقدرش رسیده» هم یک نما است
  * نه یک ستون.
  */
+/** خالص دفتر یک مشتری (`c.id`) از سند ثبت‌شده در دامنهٔ شعبه — یک تعریف برای ستون‌ها و جمع. */
+const ledgerNet = (branches: CustomerBranchScope) => sql`
+  coalesce((SELECT sum(l.debit - l.credit)
+              FROM ledger.journal_line l
+              JOIN ledger.journal_entry e ON e.id = l.entry_id
+             WHERE l.party_type = 'customer' AND l.party_id = c.id
+               AND e.status IN ('confirmed', 'final')
+               AND (${branches === "all"} OR e.branch_id = ANY(${branches === "all" ? [] : branches}::uuid[]))), 0)`;
+
 const selectCustomer = (branches: CustomerBranchScope) => sql`
   SELECT c.*,
+         greatest(${ledgerNet(branches)}, 0)::text AS ledger_owed,
+         greatest(-${ledgerNet(branches)}, 0)::text AS ledger_credit,
          (SELECT count(*) FROM sales.invoice i
            WHERE i.customer_id = c.id
              AND (${branches === "all"} OR i.branch_id = ANY(${branches === "all" ? [] : branches}::uuid[]))
@@ -215,6 +243,16 @@ export class CustomerService {
       LIMIT ${input.limit}
     `.execute(this.#db);
     return rows.rows.map(toJson);
+  }
+
+  /** جمع «طلب» و «اعتبار» همین مشتریان، با همان `ledgerNet` ستون‌ها و در SQL. */
+  async ledgerTotals(ids: readonly string[], branches: CustomerBranchScope): Promise<CustomerLedgerTotals> {
+    if (ids.length === 0) return { owed: "0", credit: "0" };
+    const r = await sql<{ owed: string; credit: string }>`
+      SELECT coalesce(sum(greatest(x.net, 0)), 0)::text AS owed, coalesce(sum(greatest(-x.net, 0)), 0)::text AS credit
+        FROM (SELECT ${ledgerNet(branches)} AS net FROM sales.customer c WHERE c.id = ANY(${[...ids]}::uuid[])) x
+    `.execute(this.#db);
+    return { owed: r.rows[0]!.owed, credit: r.rows[0]!.credit };
   }
 
   /**

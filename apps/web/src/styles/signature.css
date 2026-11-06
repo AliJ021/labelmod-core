@@ -774,3 +774,9 @@ table.grid td small, table.ui-table td small { font-size: 0.6875rem; color: var(
 .catalog-pick-all { display: inline-flex; align-items: center; gap: var(--s-2); min-block-size: var(--touch); margin-block-end: var(--s-2); font-size: var(--text-sm); }
 .catalog-table .ui-table-actions { text-align: end; }
 .catalog-table .invoice-icon { margin: 0; border-color: var(--rule); background: var(--surface-solid-2); }
+
+/* ── WP4 دستهٔ ۶: مشتریان مثل طرح ۱۰ ───────────────────────────────────────────── */
+/* طلب با رنگ تأکید (مثل مانده در فاکتورها) و اعتبار مشتری با رنگ خوب؛ سرستون معنا را می‌گوید، رنگ تقویت است. */
+.customer-credit .money-digits { color: var(--good); }
+.customer-table .ui-table-actions { text-align: end; }
+.customer-table .invoice-icon { margin: 0; border-color: var(--rule); background: var(--surface-solid-2); }

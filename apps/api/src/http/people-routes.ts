@@ -309,13 +309,13 @@ export function registerPeopleRoutes(app: FastifyInstance, deps: PeopleRouteDeps
       })
       .parse(req.query);
     const branches = await branchesOf(db, s.userId);
-    return {
-      customers: await customers.search({
-        limit: q.limit,
-        branches,
-        ...(q.q === undefined ? {} : { q: q.q }),
-      }),
-    };
+    const list = await customers.search({
+      limit: q.limit,
+      branches,
+      ...(q.q === undefined ? {} : { q: q.q }),
+    });
+    // طرح ۱۰: سطر جمع همین فهرست، از SQL و با همان تعریف ستون‌ها.
+    return { customers: list, totals: await customers.ledgerTotals(list.map((c) => c.id), branches) };
   });
 
   app.get("/customers/:id", async (req) => {

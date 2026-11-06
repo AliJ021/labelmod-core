@@ -455,7 +455,8 @@ test("populated customers, empty permissions and clear actions", async ({ page, 
   api.permissionRows = [];
   await page.goto("/");
   await openZone(page, "مشتریان");
-  await expect(page.getByRole("cell", { name: customer.fullName!, exact: true })).toBeVisible();
+  // خانهٔ «مشتری» نام و موبایل پوشیده را با هم دارد (طرح ۱۰)؛ خودِ نام دقیق در جدول سنجیده می‌شود.
+  await expect(page.getByRole("table", { name: "فهرست مشتریان؛ مبلغ‌ها به تومان" }).getByText(customer.fullName!, { exact: true })).toBeVisible();
   await noOverflow(page);
   await screenshot(page, "customers");
   await settings(page, "permissions", "مجوزها");
