@@ -344,8 +344,14 @@ test.describe("پیگیری ثبت حسابداری فروش", () => {
     await expect(items.nth(1)).toContainText("صندوق‌دار کشو را نشمارد");
     await expect(items.nth(2)).toContainText("کاری لازم نیست");
     await expect(items.nth(2).getByRole("button")).toHaveCount(0);
+    // صفحهٔ صندوق پس از ناوبری روش پرداخت و شیفت جاری را می‌خواند؛ بی پاسخ ساختگی، رسیدن یا نرسیدنِ آن دو
+    // درخواست پیش از پایان آزمون به زمان‌بندی وابسته بود («درخواست پیش‌بینی‌نشده» فقط گاهی). حالا پاسخ دارند
+    // و آزمون تا بالا آمدن واقعی صندوق صبر می‌کند — نتیجه قطعی است و ادعایی کم نشده.
+    api.defaults["GET /payment-methods"] = { methods: [{ code: "cash", name: "نقد", kind: "cash", requiresRef: false }] };
+    api.defaults["GET /shifts/current"] = { id: "s1", userId: "22222222-2222-4222-8222-222222222222", branchId: "b1", status: "open", openingCash: "0", openedAt: "2026-09-16T05:00:00Z" };
     await items.nth(1).getByRole("link", { name: "رفتن به صندوق" }).click();
     await expect(page).toHaveURL(/page=pos/);
+    await expect.poll(() => api.calls.some(c => c.startsWith("GET /shifts/current")), "صندوق واقعاً بالا آمد").toBe(true);
   });
 
   test("today's open period alone is information, not a count", async ({ page, api }) => {

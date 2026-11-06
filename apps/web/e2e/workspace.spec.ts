@@ -240,7 +240,8 @@ test("manager report tables scroll inside their card instead of widening the pag
   // بی داده جدولی ساخته نمی‌شود؛ سرریز فقط با سطر واقعی دیده می‌شد (scrollWidth ۴۳۵ در عرض ۳۷۵).
   const d="2026-09-10";
   api.defaults["GET /reports/compare"]={rows:[{channel:"pos",invoiceCount:3,netAmount:"3000000",profitAmount:"500000",prevInvoiceCount:2,prevNetAmount:"2000000",prevProfitAmount:"300000",deltaAmount:"1000000",deltaPercent:50,direction:"up"}]};
-  api.defaults["GET /reports/hourly"]={rows:[{businessDate:d,hourOfDay:10,channel:"pos",invoiceCount:2,itemQty:"3",netAmount:"2000000"}]};
+  // `hourTotal` جزو قرارداد API است (جمع ساعت در SQL)؛ پاسخ ساختگی بی آن، شکل پاسخ واقعی سرور نبود.
+  api.defaults["GET /reports/hourly"]={rows:[{businessDate:d,hourOfDay:10,hourTotal:"2000000",channel:"pos",invoiceCount:2,itemQty:"3",netAmount:"2000000"}]};
   api.defaults["GET /reports/basket"]={rows:[{businessDate:d,channel:"pos",invoiceCount:2,knownCustomers:1,anonymousCount:1,itemQty:"3",lineCount:3,netAmount:"2000000",qtyPerInvoice:"1.5"}]};
   api.defaults["GET /reports/customer-basket"]={rows:[{customerId:"c1",fullName:"مشتری آزمایشی با نام بلند",mobile:"09120000000",invoiceCount:2,itemQty:"3",netAmount:"2000000",lastPurchase:d}]};
   await page.goto("/?page=reports&reports.tab=manager");

@@ -71,7 +71,7 @@ test.describe("زبانه‌های شاخص داشبورد", () => {
     await expect(panel(page)).not.toContainText("روند فروش");
 
     await tab(page, "فروش").click();
-    await expectSelected(page, "فروش");
+    await expectSelected(page, "فروش", true);
     expect(hourlyCalls(api), "switching tabs never refetches").toBe(1);
   });
 
