@@ -150,10 +150,15 @@ test.describe("گزارش‌ها", () => {
     await expect(chart).toBeVisible();
     // چهار ساعت متمایز در داده: ۱۰، ۱۲، ۱۸ (صندوق + سایت)، ۲۰.
     // خواستهٔ مالک (۲۰۲۶/۱۱/۰۲): نمودار خطی نرم؛ جدول داده همان جدول نمودار خطی است (پنهان تا «نمایش جدول داده»).
+    // محور ساعت واقعی است: ۱۰ تا ۲۰ یازده نقطه؛ ساعت بی‌ردیف نه صفر است و نه نقطه دارد.
     const rows = chart.locator("table tbody tr");
-    await expect(rows).toHaveCount(4);
+    await expect(rows).toHaveCount(11);
     await expect(rows.nth(0)).toContainText("۱۰");
-    await expect(rows.nth(2)).toContainText("2٬430٬000 تومان");
+    await expect(rows.nth(0)).toContainText("620٬000 تومان");
+    await expect(rows.nth(1)).toContainText("ردیف فروشی ندارد");
+    await expect(rows.nth(1)).not.toContainText("تومان");
+    await expect(rows.nth(8)).toContainText("2٬430٬000 تومان");
+    await expect(chart.locator(".line-chart-dot"), "فقط ساعت‌های دارای ردیف نقطه دارند").toHaveCount(4);
     await expect(chart).toContainText("بیشترین فروش: ساعت ۱۸");
     // محور زمان مثل طرح ۱۰ (تصمیم مالک): ساعت زودتر سمت چپ، دیرتر سمت راست (برچسب اول و آخر همیشه دیده می‌شوند).
     const cols = chart.locator(".line-chart-x span");

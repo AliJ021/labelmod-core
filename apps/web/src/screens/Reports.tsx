@@ -407,6 +407,10 @@ function Trend({ row }: { row: CompareRow }) {
  * نمودار: جمع هر ساعت (همهٔ روزها و کانال‌های مجاز) از همان کوئری PostgreSQL؛
  * ساعت‌های زودتر سمت چپ، مثل طرح ۱۰ (قرارداد محور زمان). جدول زیرش همهٔ
  * سطرهای سرور را بی‌کم‌وکاست دارد.
+ *
+ * محور، **ساعت واقعی** است نه فهرست ساعت‌های دارای ردیف: هر ساعت میان اولین و آخرین
+ * ساعت یک نقطه دارد. ساعتی که سرور ردیفی برایش نداده `null` است — خط آن‌جا قطع
+ * می‌شود. نه صفر ساخته می‌شود و نه منحنی نرم از روی ساعت‌های بی‌ردیف مقداری می‌سازد.
  */
 function HourlyReport({ period }: { period: Period }) {
   const query = useReport<HourlyRow>([period.from, period.to, period.branchId],
@@ -425,6 +429,13 @@ function HourlyReport({ period }: { period: Period }) {
         return { key: String(h), label: formatHour(h), value, display: `${formatMoney(value)} تومان` };
       });
       const peak = bars.reduce<typeof bars[number] | null>((m, b) => (!m || b.value > m.value ? b : m), null);
+      const hours = bars.length ? Array.from({ length: Number(bars.at(-1)!.key) - Number(bars[0]!.key) + 1 }, (_, i) => Number(bars[0]!.key) + i) : [];
+      const points = hours.map(h => {
+        const v = totals.get(h);
+        return v === undefined
+          ? { key: String(h), label: formatHour(h), value: null, display: "ردیف فروشی ندارد" }
+          : { key: String(h), label: formatHour(h), value: v, display: `${formatMoney(v)} تومان` };
+      });
       const columns: Column<HourlyRow>[] = [
         { key: "date", header: "تاریخ", cell: r => <JalaliDate iso={r.businessDate} /> },
         { key: "hour", header: "ساعت", cell: r => <bdi className="num">{`${String(r.hourOfDay).padStart(2, "0")}:00`}</bdi> },
@@ -436,7 +447,7 @@ function HourlyReport({ period }: { period: Period }) {
           style={{ width: max === 0n ? "0%" : `${Number((parseRial(r.netAmount) * 100n) / max)}%` }} /> },
       ];
       return <>
-        <ValueLineChart title="فروش خالص هر ساعت در کل بازه (تومان)" labelHeader="ساعت" valueHeader="فروش خالص" points={bars}
+        <ValueLineChart title="فروش خالص هر ساعت در کل بازه (تومان)" labelHeader="ساعت" valueHeader="فروش خالص" points={points}
           summary={peak && peak.value > 0n ? `بیشترین فروش: ساعت ${peak.label} با ${peak.display}` : "در این بازه فروش مثبتی نیست."} />
         <DataTable caption="فروش به تفکیک ساعت" columns={columns} rows={rows} bounded
           rowKey={r => `${r.businessDate}-${r.hourOfDay}-${r.channel}`} />
