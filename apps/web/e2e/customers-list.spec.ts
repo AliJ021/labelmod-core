@@ -62,8 +62,13 @@ test.describe("فهرست مشتریان (طرح ۱۰)", () => {
   test("the row action still opens the customer file", async ({ page, api }) => {
     api.defaults["GET /customers"] = { customers: ROWS, totals: { owed: "21500000", credit: "3200000" } };
     api.defaults["GET /customers/c1"] = { customer: ROWS[0], invoices: [] };
+    // پرونده اندازه‌های مشتری را هم می‌خواند؛ پاسخ ماک شده تا آزمون پیش از رسیدنشان تمام نشود.
+    api.defaults["GET /measure-keys"] = { keys: [] };
+    api.defaults["GET /customers/c1/measures"] = { measures: [] };
     await page.goto("/?page=customers");
     await page.getByRole("table", { name: "فهرست مشتریان؛ مبلغ‌ها به تومان" }).locator("tbody tr").first().getByRole("button", { name: "پرونده" }).click();
+    await expect(page.getByRole("heading", { name: /سارا احمدی/ }).last()).toBeVisible();
+    await expect.poll(() => api.calls).toContain("GET /customers/c1/measures");
     expect(api.calls).toContain("GET /customers/c1");
   });
 });
