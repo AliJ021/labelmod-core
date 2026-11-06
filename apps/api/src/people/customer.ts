@@ -93,7 +93,9 @@ export interface Customer {
   tags: string[];
   internalNote: string | null;
   createdAt: string;
-  /** جمع فروش و مانده — از دفتر، نه از یک ستون موازی. */
+  /**
+   * جمع فروش از فاکتور، و مانده (خالص) از **دفتر** — فقط سند `confirmed`/`final`، همان `ledgerOwed − ledgerCredit`.
+   */
   invoiceCount: number;
   totalPurchased: string;
   balance: string;
@@ -193,12 +195,9 @@ const selectCustomer = (branches: CustomerBranchScope) => sql`
              AND (${branches === "all"} OR i.branch_id = ANY(${branches === "all" ? [] : branches}::uuid[]))
                       AND i.status IN ('finalized','paid','partially_returned','returned')), 0)::text
            AS total_purchased,
-         coalesce((SELECT sum(l.debit - l.credit)
-                    FROM ledger.journal_line l
-                    JOIN ledger.journal_entry e ON e.id = l.entry_id
-                                 WHERE l.party_type = 'customer' AND l.party_id = c.id
-                     AND (${branches === "all"} OR e.branch_id = ANY(${branches === "all" ? [] : branches}::uuid[]))), 0)::text
-           AS balance
+         -- یک تعریف با ستون‌های طلب/اعتبار و کارت داشبورد: فقط سند confirmed/final. تا این اصلاح، سند
+         -- draft/temporary هم در «مانده» می‌نشست و پرونده عددی متفاوت با تراز آزمایشی نشان می‌داد.
+         ${ledgerNet(branches)}::text AS balance
     FROM sales.customer c
 `;
 

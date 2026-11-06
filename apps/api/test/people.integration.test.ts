@@ -1078,9 +1078,16 @@ describe("پرسنل و مشتری", { skip }, () => {
       await owner.close();
     }
 
+    // سند پیش‌نویس و موقت ثبت نشده‌اند: نه در طلب، نه در «مانده» پرونده (اصلاح یافتهٔ WP4 دستهٔ ۶).
+    for (const status of ["draft", "temporary"]) {
+      await sql`SELECT ledger.post_entry('sale_shift',${BRANCH}::uuid,platform.business_date(),'Ledger split draft',
+        jsonb_build_array(jsonb_build_object('leg','receivable','amount',40000::numeric,'party_type','customer','party_id',${owes}::text),
+          jsonb_build_object('leg','sales','amount',40000::numeric)),'test',${owes}::uuid,${adminId}::uuid,${status})`.execute(handle.db);
+    }
+
     const r = await app.inject({ method: "GET", url: `/customers?q=${encodeURIComponent(tag)}`, ...s });
     assert.equal(r.statusCode, 200, r.body);
-    const body = r.json() as { customers: { id: string; ledgerOwed: string; ledgerCredit: string }[]; totals: { owed: string; credit: string } };
+    const body = r.json() as { customers: { id: string; balance: string; ledgerOwed: string; ledgerCredit: string }[]; totals: { owed: string; credit: string } };
     const a = body.customers.find((x) => x.id === owes)!;
     const b = body.customers.find((x) => x.id === credit)!;
     assert.deepEqual([a.ledgerOwed, a.ledgerCredit], ["500000", "0"], "طلب، بی سند شعبهٔ دیگر");
@@ -1096,6 +1103,13 @@ describe("پرسنل و مشتری", { skip }, () => {
     const net = Object.fromEntries(dash.rows.map((x) => [x.party_id, BigInt(x.net)]));
     assert.equal(BigInt(a.ledgerOwed) - BigInt(a.ledgerCredit), net[owes]);
     assert.equal(BigInt(b.ledgerOwed) - BigInt(b.ledgerCredit), net[credit]);
+    // «مانده» همان خالص است — یک تعریف، در فهرست و در پرونده.
+    assert.deepEqual([a.balance, b.balance], ["500000", "-120000"], "پیش‌نویس و موقت در مانده نیستند");
+    const file = await app.inject({ method: "GET", url: `/customers/${owes}`, ...s });
+    assert.equal(file.statusCode, 200, file.body);
+    assert.equal(file.json().customer.balance, "500000");
+    const drafts = await sql<{ n: string }>`SELECT count(*)::text n FROM ledger.journal_entry WHERE ref_id = ${owes}::uuid AND status IN ('draft','temporary')`.execute(handle.db);
+    assert.equal(drafts.rows[0]!.n, "2", "سندهای پیش‌نویس واقعاً ساخته شدند (کنترل مثبت)");
     // فهرست خالی: جمع صفر، نه خطا.
     const none = await app.inject({ method: "GET", url: `/customers?q=${encodeURIComponent(`هیچ ${suffix}`)}`, ...s });
     assert.deepEqual(none.json().totals, { owed: "0", credit: "0" });
