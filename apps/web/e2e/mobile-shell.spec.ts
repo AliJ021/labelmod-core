@@ -84,6 +84,9 @@ test.describe("سربرگ و منوی گوشی (طرح ۱۰)", () => {
     await expect(header(page).locator(".shell-trail [aria-current=page]")).toHaveText("صندوق");
     const reserved = await page.evaluate(() => getComputedStyle(document.documentElement).getPropertyValue("--bottom-nav-h").trim());
     expect(reserved, "no space reserved for a hidden bar").toBe("0px");
+    // همان قاعدهٔ بالا برای ترک صندوق: درخواست‌های در راه صندوق (/branches) تمام شوند، وگرنه WebKit قطعشان
+    // را «خطای صفحه» می‌شمارد (run 42299568852، webkit-light-1440).
+    await page.waitForLoadState("networkidle");
     await menuButton(page).click();
     await sheet(page).getByRole("link", { name: "فاکتورها", exact: true }).click();
     await expect(page).toHaveURL(/page=invoices/);
