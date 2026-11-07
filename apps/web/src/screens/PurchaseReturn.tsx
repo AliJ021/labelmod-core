@@ -25,6 +25,12 @@
 import { useEffect, useState } from "react";
 import { Solid } from "../components/Glass.tsx";
 import { SectionHeader } from "../components/ui/PageHeader.tsx";
+import { DataTable, type Column } from "../components/ui/DataTable.tsx";
+import { Money } from "../components/ui/Money.tsx";
+import { Note } from "../components/ui/Note.tsx";
+import { StatusBadge } from "../components/ui/Status.tsx";
+import { Icon } from "../components/Icon.tsx";
+import { formatJalaliMoment, formatQty } from "../lib/format.ts";
 import { ApiError } from "../lib/api.ts";
 import { ActionKeys, actionFor } from "../lib/action-key.ts";
 import { parseRial, toman } from "../lib/money.ts";
@@ -33,6 +39,7 @@ import {
   purchaseReturns,
   purchasing,
   type PurchaseReturn as Sheet,
+  type PurchaseReturnSummary,
   type Returnable,
 } from "../lib/purchasing.ts";
 
@@ -41,7 +48,33 @@ function message(err: unknown): string {
   return "ارتباط با سرور برقرار نشد.";
 }
 
+/**
+ * طرح ۱۰: فهرست برگه‌ها. هر سه مبلغ همان ستون‌هایی‌اند که `post_purchase_return()` نوشته:
+ * بهای فاکتور (کاهش بدهی تأمین‌کننده)، ارزش دفتری (خروج از موجودی) و حمل برنگشتنی (زیان).
+ */
+const RETURN_COLUMNS: readonly Column<PurchaseReturnSummary>[] = [
+  { key: "number", header: "برگه", cell: (r) => <span className="cell-stack"><span className="num">{r.number ?? "—"}</span><small className="muted">{formatJalaliMoment(r.occurredAt)}</small></span> },
+  { key: "supplier", header: "تأمین‌کننده", cell: (r) => <span className="cell-stack"><span>{r.supplierName}</span>{r.receiptNumber ? <small className="muted">رسید <span className="num">{r.receiptNumber}</span></small> : null}</span> },
+  { key: "item", header: "کالا", cell: (r) => r.firstItem ? `${r.firstItem}${r.lineCount > 1 ? ` و ${formatQty(String(r.lineCount - 1))} قلم دیگر` : ""}` : "—" },
+  { key: "qty", header: "تعداد", numeric: true, cell: (r) => <span className="num">{formatQty(r.totalQty)}</span> },
+  { key: "goods", header: "بهای فاکتور", numeric: true, cell: (r) => <Money rial={r.goodsAmount} unit={false} /> },
+  { key: "cost", header: "ارزش دفتری", numeric: true, cell: (r) => <Money rial={r.costAmount} unit={false} /> },
+  { key: "loss", header: "حمل برنگشتنی", numeric: true, cell: (r) => r.chargeLoss === "0" ? <span className="muted">—</span> : <Money rial={r.chargeLoss} unit={false} /> },
+  { key: "status", header: "وضعیت", cell: (r) => <StatusBadge state={r.status === "posted" ? "completed" : r.status === "draft" ? "draft" : "cancelled"}
+    label={r.status === "posted" ? "ثبت‌شده" : r.status === "draft" ? "پیش‌نویس" : "باطل"} /> },
+];
+
 export function PurchaseReturn() {
+  const [list, setList] = useState<PurchaseReturnSummary[] | null>(null);
+  const [listError, setListError] = useState<string | null>(null);
+  const [listVersion, setListVersion] = useState(0);
+  const [formOpen, setFormOpen] = useState(false);
+  useEffect(() => {
+    let alive = true;
+    setListError(null);
+    purchaseReturns.list().then((r) => { if (alive) setList(r.returns); }, (err: unknown) => { if (alive) setListError(message(err)); });
+    return () => { alive = false; };
+  }, [listVersion]);
   const [branches, setBranches] = useState<Branch[]>([]);
   const [branchId, setBranchId] = useState("");
   const [reasons, setReasons] = useState<ReturnReason[]>([]);
@@ -145,6 +178,7 @@ export function PurchaseReturn() {
         purchaseReturns.create(body, { idempotencyKey: key }),
       );
       setPosted(sheet);
+      setListVersion((v) => v + 1);
       setSource(null);
       setPicked(new Map());
       setNumber("");
@@ -158,8 +192,10 @@ export function PurchaseReturn() {
     <div className="stack" style={{ gap: "var(--s-4)" }}>
       <Solid as="section" className="list-card" aria-labelledby="pret-title">
         <SectionHeader id="pret-title" title="برگشت از خرید"
-          description={<>بدهی تأمین‌کننده با بهای فاکتور کم می‌شود و کالا با بهای <strong>همان رسید</strong> خارج می‌شود، نه میانگین جاری انبار.</>} />
-        <div className="list-card-body">
+          description={<>بدهی تأمین‌کننده با بهای فاکتور کم می‌شود و کالا با بهای <strong>همان رسید</strong> خارج می‌شود، نه میانگین جاری انبار.</>}
+          actions={<button type="button" className="btn btn--primary" aria-expanded={formOpen} aria-controls="pret-new-form" onClick={() => setFormOpen(v => !v)}>
+            <Icon name={formOpen ? "close" : "plus"} size="sm" />{formOpen ? "بستن فرم" : "برگشت تازه"}</button>} />
+        {formOpen ? <div id="pret-new-form" className="list-card-body" role="group" aria-label="برگشت تازه">
 
         {branches.length > 1 ? (
           <div className="stack" style={{ gap: "var(--s-2)", marginBottom: "var(--s-3)" }}>
@@ -202,7 +238,12 @@ export function PurchaseReturn() {
             {busy ? "…" : "پیدا کن"}
           </button>
         </form>
-        </div>
+        </div> : null}
+        {listError ? <p className="list-card-body" role="alert">{listError}</p>
+          : <DataTable<PurchaseReturnSummary> caption="برگه‌های برگشت از خرید؛ مبلغ‌ها به تومان" stack loading={list === null}
+              rows={list ?? []} rowKey={(r) => r.id} columns={RETURN_COLUMNS}
+              empty={{ title: "هنوز برگشتی ثبت نشده.", description: "برای برگشت کالا به تأمین‌کننده، «برگشت تازه» را بزنید و شمارهٔ رسید خرید را وارد کنید." }} />}
+        {list?.length ? <div className="list-card-body"><Note>بهای فاکتور بدهی تأمین‌کننده را کم می‌کند و ارزش دفتری از موجودی خارج می‌شود؛ تفاوتشان حملی است که برای کالای پس‌فرستاده پرداخت شده و برنمی‌گردد و زیان ثبت می‌شود.</Note></div> : null}
       </Solid>
 
       {error ? (

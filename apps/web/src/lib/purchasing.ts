@@ -107,6 +107,16 @@ export interface ReceiptSummary {
   supplierInvoiceNo: string | null;
   lineCount: number;
   goodsAmount: string;
+  /** جمع تعداد سطرها؛ پاسخ قدیمی‌تر ندارد و صفحه به «قلم» برمی‌گردد. */
+  totalQty?: string;
+  /** جمع هزینه‌های جانبی (ریال)؛ نیامده «نامعلوم» است، نه صفر. */
+  chargesAmount?: string;
+  charges?: Array<{ chargeType: string; allocation: string }>;
+}
+
+/** توضیح کوتاه هزینه‌های جانبی برای فهرست: «حمل · سرشکن به نسبت مبلغ». */
+export function chargeSummary(charges: ReadonlyArray<{ chargeType: string; allocation: string }>): string {
+  return charges.map((c) => `${c.chargeType} · ${c.allocation === "none" ? "هزینهٔ دوره (بدون تخصیص)" : `سرشکن ${ALLOCATION_LABEL[c.allocation] ?? c.allocation}`}`).join("، ");
 }
 
 /** برچسب فارسی وضعیت — یک تعریف، نه یکی در هر کامپوننت. */
@@ -390,7 +400,28 @@ export interface PurchaseReturn {
   }[];
 }
 
+/** یک سطر فهرست برگشت از خرید — مبلغ‌ها همان ستون‌های ثبت‌شده‌اند (ریال، رشته). */
+export interface PurchaseReturnSummary {
+  id: string;
+  number: string | null;
+  status: string;
+  occurredAt: string;
+  receiptNumber: string | null;
+  supplierName: string;
+  warehouseName: string;
+  firstItem: string | null;
+  lineCount: number;
+  totalQty: string;
+  goodsAmount: string;
+  costAmount: string;
+  taxAmount: string;
+  chargeLoss: string;
+}
+
 export const purchaseReturns = {
+  /** فهرست برگه‌ها، تازه‌ترین اول، در دامنهٔ شعبهٔ کاربر. */
+  list: () => api.get<{ returns: PurchaseReturnSummary[] }>("/purchase-returns"),
+
   /** چه چیزی از یک رسید هنوز قابل برگشت است. */
   returnable: (receiptId: string) =>
     api.get<Returnable>(`/receipts/${receiptId}/returnable`),

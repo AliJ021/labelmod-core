@@ -86,6 +86,25 @@ export interface PurchaseReturnJson {
   lines: PurchaseReturnLineJson[];
 }
 
+/** یک سطر فهرست برگشت از خرید (طرح ۱۰) — همان چهار مبلغی که `post_purchase_return()` نوشته. */
+export interface PurchaseReturnSummaryJson {
+  id: string;
+  number: string | null;
+  status: string;
+  occurredAt: string;
+  receiptNumber: string | null;
+  supplierName: string;
+  warehouseName: string;
+  /** نخستین کالا («نام · رنگ · سایز») و شمار سطرهای دیگر، فقط برای خواندن. */
+  firstItem: string | null;
+  lineCount: number;
+  totalQty: string;
+  goodsAmount: string;
+  costAmount: string;
+  taxAmount: string;
+  chargeLoss: string;
+}
+
 export class PurchaseReturnService {
   readonly #db: Db;
 
@@ -174,6 +193,56 @@ export class PurchaseReturnService {
         landedUnitCost: l.landed_unit_cost,
       })),
     };
+  }
+
+  /**
+   * فهرست برگه‌ها، تازه‌ترین اول، در دامنهٔ شعبه. مبلغ‌ها همان ستون‌هایی‌اند که تابع ثبت نوشته؛
+   * این لایه هیچ مبلغی حساب نمی‌کند (جمع تعداد فقط شمارش است).
+   */
+  async list(branchIds: string[] | "all", limit: number): Promise<PurchaseReturnSummaryJson[]> {
+    if (branchIds !== "all" && branchIds.length === 0) return [];
+    let q = this.#db
+      .selectFrom("purchasing.purchase_return as pr")
+      .innerJoin("purchasing.receipt as r", "r.id", "pr.receipt_id")
+      .innerJoin("purchasing.supplier as s", "s.id", "r.supplier_id")
+      .innerJoin("inventory.warehouse as w", "w.id", "pr.warehouse_id")
+      .select([
+        "pr.id", "pr.number", "pr.status", "pr.occurred_at", "r.number as receipt_number",
+        "s.name as supplier_name", "w.name as warehouse_name",
+        sql<string>`pr.goods_amount::text`.as("goods_amount"),
+        sql<string>`pr.cost_amount::text`.as("cost_amount"),
+        sql<string>`pr.tax_amount::text`.as("tax_amount"),
+        sql<string>`pr.charge_loss::text`.as("charge_loss"),
+        sql<string>`(SELECT count(*) FROM purchasing.purchase_return_line l WHERE l.return_id = pr.id)`.as("line_count"),
+        sql<string>`(SELECT coalesce(sum(l.qty), 0)::text FROM purchasing.purchase_return_line l WHERE l.return_id = pr.id)`.as("total_qty"),
+        sql<string | null>`(SELECT concat_ws(' · ', p.name_internal, v.color, v.size)
+                              FROM purchasing.purchase_return_line l
+                              JOIN purchasing.receipt_line rl ON rl.id = l.receipt_line_id
+                              JOIN catalog.variation v ON v.id = rl.variation_id
+                              JOIN catalog.product p ON p.id = v.product_id
+                             WHERE l.return_id = pr.id ORDER BY l.id LIMIT 1)`.as("first_item"),
+      ])
+      .orderBy("pr.occurred_at", "desc")
+      .orderBy("pr.id", "desc")
+      .limit(limit);
+    if (branchIds !== "all") q = q.where("pr.branch_id", "in", branchIds);
+    const rows = await q.execute();
+    return rows.map((r) => ({
+      id: r.id,
+      number: r.number,
+      status: r.status,
+      occurredAt: new Date(r.occurred_at).toISOString(),
+      receiptNumber: r.receipt_number,
+      supplierName: r.supplier_name,
+      warehouseName: r.warehouse_name,
+      firstItem: r.first_item,
+      lineCount: Number(r.line_count),
+      totalQty: r.total_qty,
+      goodsAmount: r.goods_amount,
+      costAmount: r.cost_amount,
+      taxAmount: r.tax_amount,
+      chargeLoss: r.charge_loss,
+    }));
   }
 
   async get(id: string, branchIds: string[] | "all"): Promise<PurchaseReturnJson | null> {

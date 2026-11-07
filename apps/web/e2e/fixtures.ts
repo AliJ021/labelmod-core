@@ -176,7 +176,7 @@ export class MockApi {
     "GET /reports/sales": { rows: [] }, "GET /reports/hourly": { rows: [] }, "GET /reports/cash-reconciliation": { rows: [] },
     "GET /treasury/accounts": { accounts: [] }, "GET /treasury/balances": { balances: [] }, "GET /products/summary": { activeProducts: 8, activeVariations: 28, inventoryValue: "1220800000", pricesLast30Days: 0 }, "GET /treasury/transactions": { transactions: [] }, "GET /treasury/drawers": { businessDate: "2026-09-16", shiftsVisible: true, shifts: [], moves: [] },
     "GET /purchasing/expense-accounts": [], "GET /purchasing/pay-accounts": [], "GET /suppliers": [],
-    "GET /receipts": [], "GET /stock-counts": [], "GET /cheques/due": { due: [] },
+    "GET /receipts": [], "GET /purchase-returns": { returns: [] }, "GET /stock-counts": [], "GET /cheques/due": { due: [] },
     "GET /invoices": { rows: [], total: 0, pageSize: 50 },
     "GET /reports/daily/trend": { businessDate: "2026-09-16", profitVisible: true, buckets: [] },
     "GET /users": { users: [staff, { ...staff, id: me.id, username: "synthetic_admin", fullName: me.fullName }] }, "GET /roles": { roles: [{ code: "cashier", name: "صندوق‌دار" }] },
