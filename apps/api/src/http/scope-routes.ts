@@ -228,10 +228,13 @@ export function registerScopeRoutes(app: FastifyInstance, deps: ScopeRouteDeps):
       //
       // `posting-batch.ts` از قبل همین Cast را داشت با همین دلیل.
       received_minus_sales: string;
+      received_earlier: string;
     }>`SELECT business_date::text, sales_amount, received_amount,
               profit_amount, invoice_count, return_count,
               -- تفاضل دریافتی و فروش هم پول است و در SQL حساب می‌شود، نه در مرورگر.
-              (received_amount - sales_amount)::text AS received_minus_sales
+              (received_amount - sales_amount)::text AS received_minus_sales,
+              -- تصمیم مالک (۱۱۳): همان دریافتی، بخشِ بابت فاکتورهای روزهای قبل.
+              (SELECT x.earlier_amount::text FROM sales.daily_received_split(${branchId}::uuid, ${date}::date) x) AS received_earlier
          FROM sales.daily_summary(
            ${branchId}::uuid,
            ${date}::date)`.execute(db);
@@ -252,6 +255,11 @@ export function registerScopeRoutes(app: FastifyInstance, deps: ScopeRouteDeps):
       returnCount: Number(r.return_count),
       /** دریافتی − فروش امروز، از SQL؛ «طلب» یا «همه رسید» نیست — فقط مقایسهٔ خنثی کارت. */
       receivedMinusSales: serializeMoney(BigInt(r.received_minus_sales)),
+      /**
+       * بخشی از همان «وجه دریافتی» که بابت فاکتورهای روزهای قبل است (`sales.daily_received_split`، ۱۱۳)؛
+       * علامت‌دار (بازپرداخت مرجوعیِ فاکتور قبلی منفی). جمع با بخش همان روز دقیقاً `receivedAmount` است.
+       */
+      receivedEarlier: serializeMoney(BigInt(r.received_earlier)),
     };
   });
 

@@ -50,7 +50,8 @@ test.describe("فهرست مشتریان (طرح ۱۰)", () => {
     await expect(foot).toContainText("9٬990٬000");
     await expect(foot).toContainText("320٬000");
     await expect(foot).toContainText("770٬000");
-    await expect(page.getByText("پرداخت مشتری بابت فاکتور قبلی در «وجه دریافتی امروز» داشبورد می‌آید", { exact: false })).toBeVisible();
+    // یادداشت درست: دریافت نسیهٔ قبلی از خزانه در «وجه دریافتی» داشبورد نیست (اصلاح ۲۰۲۶/۱۱/۰۷).
+    await expect(page.getByText("در «وجه دریافتی» داشبورد نیست", { exact: false })).toBeVisible();
     expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth + 1)).toBe(true);
   });
 

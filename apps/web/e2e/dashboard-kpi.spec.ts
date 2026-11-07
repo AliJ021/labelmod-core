@@ -229,6 +229,25 @@ test.describe("زبانه‌های شاخص داشبورد", () => {
     await expect(t).not.toContainText("هنوز نرسیده");
     await expect(t.locator(".status-icon"), "بی رنگ وضعیت: تفاوت طلب نیست").toHaveCount(0);
   });
+
+  // تصمیم مالک (۱۱۳): سهم «بابت فاکتورهای روزهای قبل» از همان دریافتی — عدد از سرور، علامت‌دار.
+  for (const [label, earlier, text] of [
+    ["late payments", "7000000", /شامل\s*700٬000\s*تومان\s*بابت فاکتورهای روزهای قبل/],
+    ["refunds", "-3000000", /300٬000\s*تومان\s*بازپرداخت بابت فاکتورهای روزهای قبل از آن کم شده/],
+  ] as const) test(`received card shows the part for earlier invoices from the server (${label})`, async ({ page, api }) => {
+    api.defaults["GET /reports/daily"] = { ...dailyBody({ businessDate: "2026-09-16", salesAmount: "12340000", receivedAmount: "13000000", profitAmount: "2000000", invoiceCount: 12, returnCount: 0 }), receivedEarlier: earlier };
+    await page.goto("/");
+    const t = tab(page, "وجه دریافتی");
+    await expect(t).toContainText(/66٬000\s*تومان\s*بیشتر از فروش امروز/);
+    await expect(t.locator(".kpi-split")).toHaveText(text);
+  });
+
+  test("no earlier part, or an older response without it: no extra line, never a zero claim", async ({ page, api }) => {
+    api.defaults["GET /reports/daily"] = { ...dailyBody({ businessDate: "2026-09-16", salesAmount: "12340000", receivedAmount: "11000000", profitAmount: "2000000", invoiceCount: 12, returnCount: 0 }), receivedEarlier: "0" };
+    await page.goto("/");
+    await expect(tab(page, "وجه دریافتی")).toContainText(/کمتر از فروش امروز/);
+    await expect(tab(page, "وجه دریافتی").locator(".kpi-split")).toHaveCount(0);
+  });
 });
 
 test("sales by channel: amounts from the server, total equals the sales card, donut hidden from readers; 403 hides it; a negative channel drops the donut", async ({ page, api }) => {

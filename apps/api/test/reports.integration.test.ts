@@ -541,7 +541,7 @@ describe("گزارش‌ها", { skip }, () => {
   const dailyOf = async (username: string, query = "") => {
     const r = await get(username, `/reports/daily?branchId=${BRANCH}${query}`);
     assert.equal(r.statusCode, 200, r.body);
-    return JSON.parse(r.body) as { businessDate: string; salesAmount: string; receivedAmount: string; profitAmount: string | null; invoiceCount: number; returnCount: number; receivedMinusSales: string };
+    return JSON.parse(r.body) as { businessDate: string; salesAmount: string; receivedAmount: string; profitAmount: string | null; invoiceCount: number; returnCount: number; receivedMinusSales: string; receivedEarlier: string };
   };
   const sum = (hours: HourRow[], key: "salesAmount" | "receivedAmount" | "profitAmount") =>
     hours.reduce((t, h) => t + BigInt(h[key] as string), 0n);
@@ -575,7 +575,15 @@ describe("گزارش‌ها", { skip }, () => {
     for (const user of [supervisor, cashier]) {
       const own = await dailyOf(user);
       assert.equal(own.receivedMinusSales, String(BigInt(own.receivedAmount) - BigInt(own.salesAmount)), `${user}: بی cost.view هم تفاضل پول است و می‌آید`);
+      assert.equal(own.receivedEarlier, daily.receivedEarlier, `${user}: بخش «بابت روزهای قبل» پول است و برای همه یکی است`);
     }
+    // تصمیم مالک (۱۱۳): «بابت روزهای قبل» همان تابع SQL است و بخشی از همان دریافتی.
+    const split = await sql<{ received: string; same: string; earlier: string }>`
+      SELECT received_amount::text AS received, same_day_amount::text AS same, earlier_amount::text AS earlier
+        FROM sales.daily_received_split(${BRANCH}::uuid, ${daily.businessDate}::date)`.execute(handle.db);
+    assert.equal(daily.receivedEarlier, split.rows[0]!.earlier);
+    assert.equal(split.rows[0]!.received, daily.receivedAmount, "تفکیک همان دریافتی کارت است");
+    assert.equal(BigInt(split.rows[0]!.same) + BigInt(daily.receivedEarlier), BigInt(daily.receivedAmount));
     for (const [field, metric] of [["salesAmount", "sales"], ["receivedAmount", "received"], ["profitAmount", "profit"]] as const) {
       for (let i = 0; i < hourly.hours.length; i++) {
         assert.equal(hourly.hours[i]!.cumulative[metric], String(sum(hourly.hours.slice(0, i + 1), field)), `${metric}: جمع SQL تا ساعت ${i}`);

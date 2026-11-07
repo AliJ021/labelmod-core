@@ -449,6 +449,7 @@ export function Dashboard({ access }: { access: NavAccess }) {
   //    دریافتِ امروز می‌تواند بابت فاکتور دیروز باشد و بازپرداخت از آن کم می‌شود
   //    (ریشه دید دریافتی بیش از فروش رخ می‌دهد). فقط مقایسهٔ خنثی، بی ادعای فاکتوری.
   const diff = parseRial(report.receivedMinusSales);
+  const earlier = report.receivedEarlier === undefined ? null : parseRial(report.receivedEarlier);
   const posHref = accessOf(["sale.create"], access.verdicts) === "allow" ? routeUrl("pos") : null;
   const items = unposted.state === "ready" ? attentionItems(unposted.rows, report.businessDate, mayClose, posHref) : [];
   const attention = items.filter(i => i.tone === "attention").length;
@@ -473,8 +474,12 @@ export function Dashboard({ access }: { access: NavAccess }) {
         : `${formatCount(report.invoiceCount)} فاکتور` },
     { key: "received", label: "وجه دریافتی", icon: "card",
       value: <Money rial={received} size="xl" />,
-      note: diff === 0n ? "برابر با فروش امروز"
-        : <><Money rial={diff < 0n ? -diff : diff} size="sm" /> {diff < 0n ? "کمتر" : "بیشتر"} از فروش امروز</> },
+      note: <>{diff === 0n ? "برابر با فروش امروز"
+        : <><Money rial={diff < 0n ? -diff : diff} size="sm" /> {diff < 0n ? "کمتر" : "بیشتر"} از فروش امروز</>}
+        {/* تصمیم مالک: چه مقدار از همین دریافتی بابت فاکتورهای روزهای قبل است — عدد از SQL (۱۱۳). */}
+        {earlier !== null && earlier !== 0n ? <span className="kpi-split">{earlier > 0n
+          ? <>شامل <Money rial={earlier} size="sm" /> بابت فاکتورهای روزهای قبل</>
+          : <><Money rial={-earlier} size="sm" /> بازپرداخت بابت فاکتورهای روزهای قبل از آن کم شده</>}</span> : null}</> },
     // سود `null` یعنی این کاربر `cost.view` ندارد — نه اینکه سود صفر بوده.
     // نشان‌دادن «۰» به‌جایش، به صندوق‌دار می‌گفت فروشگاه امروز ضرر کرده.
     { key: "profit", label: "سود", icon: "chart", unavailable: !profitKnown,
