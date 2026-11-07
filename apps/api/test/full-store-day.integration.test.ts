@@ -647,6 +647,11 @@ describe("یک روز کامل فروشگاه", { skip, timeout: 300_000 }, () =
 
     const oldView = await call("GET", `/invoices/${day.invMix}/returnable`, cashier);
     assert.equal((oldView.json() as { late: boolean }).late, true, "باید «دیرهنگام» باشد");
+    // مهلتی که صفحه نشان می‌دهد همان تنظیمی است که «دیرهنگام» را تعیین کرد.
+    const windowHours = (await sql<{ h: number }>`SELECT platform.setting_int('return.window_hours', 48) AS h`.execute(handle.db)).rows[0]!.h;
+    const shown = oldView.json() as { windowHours: number; hoursSinceSale: number };
+    assert.equal(shown.windowHours, windowHours);
+    assert.ok(shown.hoursSinceSale > shown.windowHours, "ساعت گذشته از مهلت بیشتر است");
 
     const lateLine = (oldView.json() as { lines: Array<{ invoiceLineId: string }> }).lines[0]!
       .invoiceLineId;

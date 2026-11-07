@@ -97,6 +97,8 @@ export interface InvoiceGift {
 export interface Invoice {
   id: string;
   createdBy?: string | null;
+  /** نام ثبت‌کننده، فقط برای سربرگ صندوق؛ پاسخ قدیمی‌تر ندارد و «—» می‌شود. */
+  createdByName?: string | null;
   number: string | null;
   branchId: string;
   warehouseId: string;
@@ -189,6 +191,8 @@ export interface Returnable {
   hoursSinceSale: number;
   /** دیرتر از مهلت — همچنان ممکن، ولی تأیید مدیر می‌خواهد. */
   late: boolean;
+  /** مهلت به ساعت، از همان تنظیمی که `late` را تعیین کرد؛ پاسخ قدیمی‌تر ندارد. */
+  windowHours?: number;
   lines: ReturnableLine[];
 }
 

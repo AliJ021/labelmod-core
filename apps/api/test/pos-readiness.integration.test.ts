@@ -485,6 +485,10 @@ describe("آمادگی API صندوق", { skip }, () => {
     const line=await app.inject({method:"POST",url:`/invoices/${id}/scan`,...s,
       headers:{...s.headers,"idempotency-key":"name-scan-"+id},payload:{variationId,qty:"1"}});
     assert.equal(line.statusCode,200,line.body);assert.equal(line.json().invoice.payableAmount,"1000001");
+    // سربرگ صندوق (طرح ۱۰): نام ثبت‌کننده از همان کاربر سازندهٔ فاکتور، نه از کلاینت.
+    const creator=(await handle.db.selectFrom("identity.app_user").select("full_name").where("username","=",cashier).executeTakeFirstOrThrow()).full_name;
+    assert.equal(line.json().invoice.createdByName,creator);
+    assert.equal((await app.inject({method:"GET",url:`/invoices/${id}`,...s})).json().createdByName,creator);
     let total=0n;
     for(const [index,methodCode,amount] of [[0,"cash","300000"],[1,"card","400000"],[2,"cash","300001"]] as const){
       total+=BigInt(amount);

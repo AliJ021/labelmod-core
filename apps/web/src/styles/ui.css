@@ -334,6 +334,8 @@
 .segmented-option span { display: inline-flex; align-items: center; min-block-size: 38px; padding-inline: var(--s-3); border-radius: calc(var(--r-sm) - 3px); color: var(--ink-2); font-weight: var(--weight-medium); cursor: pointer; }
 .segmented-option input:checked + span { background: var(--surface-solid); color: var(--ink); font-weight: var(--weight-semibold); box-shadow: var(--elev-1); }
 .segmented-option input:focus-visible + span { outline: var(--focus-ring) solid var(--accent); outline-offset: 1px; }
+.segmented:disabled .segmented-option span { cursor: not-allowed; }
+.segmented:disabled .segmented-option input:not(:checked) + span { opacity: .5; }
 
 /* ── Dialog و Sheet ──────────────────────────────────────────────── */
 .ui-dialog {

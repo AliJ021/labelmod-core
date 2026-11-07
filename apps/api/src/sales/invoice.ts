@@ -80,6 +80,8 @@ export interface InvoiceGift {
 export interface Invoice {
   id: string;
   createdBy: string | null;
+  /** نام ثبت‌کننده برای سربرگ صندوق (طرح ۱۰)؛ فقط نمایشی. */
+  createdByName: string | null;
   number: string | null;
   branchId: string;
   warehouseId: string;
@@ -164,6 +166,7 @@ export class InvoiceService {
       .selectFrom("sales.invoice")
       .selectAll()
       .select(sql<string | null>`sales.invoice_display_number(id)`.as("display_number"))
+      .select(sql<string | null>`(SELECT u.full_name FROM identity.app_user u WHERE u.id = sales.invoice.created_by)`.as("created_by_name"))
       .where("id", "=", invoiceId)
       .executeTakeFirst();
     if (!inv) return null;
@@ -202,6 +205,7 @@ export class InvoiceService {
     return {
       id: inv.id,
       createdBy: inv.created_by,
+      createdByName: inv.created_by_name,
       number: inv.display_number,
       branchId: inv.branch_id,
       warehouseId: inv.warehouse_id,
@@ -1449,6 +1453,7 @@ export function invoiceToJson(inv: Invoice) {
   return {
     id: inv.id,
     createdBy: inv.createdBy,
+    createdByName: inv.createdByName,
     number: inv.number,
     branchId: inv.branchId,
     warehouseId: inv.warehouseId,
