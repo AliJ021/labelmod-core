@@ -52,7 +52,8 @@ test("invoice totals come from the server for the same filter; drafts are not sa
   // پول از سرور است و تومان نشان داده می‌شود: ۲۹۵٬۷۰۰٬۰۰۰ ریال = ۲۹٬۵۷۰٬۰۰۰ تومان.
   await expect(totals.getByRole("region",{name:"جمع قابل پرداخت"})).toContainText("29٬570٬000");
   await expect(totals.getByRole("region",{name:"مانده"})).toContainText("1٬770٬000");
-  await expect(totals.getByRole("region",{name:"فاکتورهای این فیلتر"})).toContainText("۱۸");
+  // فهرست با «امروز» باز می‌شود (تصمیم مالک، ۲۰۲۶/۱۱/۰۷)، پس کارت شمار همان «فاکتورهای امروز» است.
+  await expect(totals.getByRole("region",{name:"فاکتورهای امروز"})).toContainText("۱۸");
   const chips=page.getByRole("group",{name:"وضعیت",exact:true});
   await expect(chips.getByRole("radio",{name:"همه (۲۲)"})).toBeChecked();
   await expect(chips.getByRole("radio",{name:/پیش‌نویس/})).toHaveCount(0);
@@ -94,13 +95,51 @@ test("V10 invoice list: settled/open/returns chips and channel are server filter
   await expect(foot).toContainText("50٬000");
   await expect(page.locator(".invoice-remaining[data-due]")).toHaveCount(1);
   await chips.getByRole("radio",{name:/^مانده‌دار/}).check();
-  await expect.poll(()=>calls().at(-1)).toBe("GET /invoices?status=open&search=&page=1");
+  await expect.poll(()=>calls().at(-1)).toBe("GET /invoices?status=open&search=&page=1&day=today");
   await page.getByRole("combobox",{name:"کانال"}).selectOption("web");
-  await expect.poll(()=>calls().at(-1)).toBe("GET /invoices?status=open&search=&page=1&channel=web");
+  await expect.poll(()=>calls().at(-1)).toBe("GET /invoices?status=open&search=&page=1&channel=web&day=today");
   await expect(page).toHaveURL(/invoices\.channel=web/);
   // «فروش جدید» فقط با sale.create؛ مدیر آزمایشی دارد و پیوند به صندوق است.
   await expect(page.getByRole("link",{name:"فروش جدید",exact:true})).toHaveAttribute("href",/page=pos/);
   expect(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth+1),"no page-level horizontal overflow").toBe(true);
+});
+
+test("owner decision: the list opens on the server's today; all dates, search, explicit dates and drafts never get today", async ({page,api}) => {
+  api.defaults["GET /invoices"]={rows:[],total:0,pageSize:50,summary:{count:0,payableAmount:"0",receivedAmount:"0",remainingAmount:"0"},statusCounts:{all:0},
+    businessDate:"2026-09-16",range:{from:"2026-09-16",to:"2026-09-16"}};
+  const calls=()=>api.calls.filter(c=>c.startsWith("GET /invoices?"));
+  await page.goto("/?page=invoices");
+  const days=page.getByRole("group",{name:"بازهٔ تاریخ"});
+  await expect(days.getByRole("button",{name:"امروز",exact:true})).toHaveAttribute("aria-pressed","true");
+  await expect.poll(()=>calls().at(-1)).toBe("GET /invoices?status=all&search=&page=1&day=today");
+  // عنوان از «امروزِ» پاسخ سرور ساخته می‌شود، نه از ساعت مرورگر: ۱۶ سپتامبر ۲۰۲۶ = ۲۵ شهریور ۱۴۰۵.
+  await expect(page.getByRole("heading",{name:"فاکتورهای امروز",exact:true})).toBeVisible();
+  await expect(page.getByText("۲۵ شهریور ۱۴۰۵",{exact:false})).toBeVisible();
+  await days.getByRole("button",{name:"همهٔ تاریخ‌ها",exact:true}).click();
+  await expect.poll(()=>calls().at(-1)).toBe("GET /invoices?status=all&search=&page=1");
+  await expect(page).toHaveURL(/invoices\.day=all/);
+  await expect(page.getByRole("heading",{name:"فاکتورهای این فیلتر",exact:true})).toBeVisible();
+  await days.getByRole("button",{name:"امروز",exact:true}).click();
+  await expect.poll(()=>calls().at(-1)).toBe("GET /invoices?status=all&search=&page=1&day=today");
+  // جست‌وجو همهٔ تاریخ‌ها را می‌گردد: شمارهٔ فاکتور هفتهٔ پیش نباید خالی برگردد.
+  await page.getByPlaceholder("شمارهٔ فاکتور یا نام مشتری").fill("MAIN-9");
+  await expect.poll(()=>calls().at(-1)).toBe("GET /invoices?status=all&search=MAIN-9&page=1");
+  await expect(days.getByRole("button",{name:"امروز",exact:true})).toBeDisabled();
+  await page.getByPlaceholder("شمارهٔ فاکتور یا نام مشتری").fill("");
+  await expect.poll(()=>calls().at(-1)).toBe("GET /invoices?status=all&search=&page=1&day=today");
+  // پیش‌نویس‌ها «امروز» نمی‌گیرند: پیش‌نویس رهاشدهٔ دیروز هم باید دیده شود.
+  await page.getByRole("tab",{name:/^پیش‌نویس‌ها/}).click();
+  await expect.poll(()=>calls().at(-1)).toBe("GET /invoices?status=draft&search=&page=1");
+  await expect(days).toHaveCount(0);
+});
+
+test("an explicit date range in an old link wins over today", async ({page,api}) => {
+  const calls=()=>api.calls.filter(c=>c.startsWith("GET /invoices?"));
+  await page.goto("/?page=invoices&invoices.from=2026-09-23&invoices.to=2026-09-30");
+  await expect.poll(()=>calls().at(-1)).toBe("GET /invoices?status=all&search=&page=1&from=2026-09-23&to=2026-09-30");
+  const days=page.getByRole("group",{name:"بازهٔ تاریخ"});
+  await expect(days.getByRole("button",{name:"امروز",exact:true})).toHaveAttribute("aria-pressed","false");
+  await expect(days.getByRole("button",{name:"همهٔ تاریخ‌ها",exact:true})).toHaveAttribute("aria-pressed","false");
 });
 
 test("invoice list without sale.create shows no new-sale action", async ({page,api}) => {

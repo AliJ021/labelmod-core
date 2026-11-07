@@ -27,7 +27,12 @@ export function registerInvoiceWorkspaceRoutes(app: FastifyInstance, db: Db): vo
       status: z.enum(["all", "draft", "finalized", "cancelled", "returned", "settled", "open", "returns"]).default("all"),
       channel: z.enum(["pos", "web", "phone", "instagram"]).optional(),
       from: z.iso.date().optional(), to: z.iso.date().optional(),
+      // تصمیم مالک (۲۰۲۶/۱۱/۰۷): فهرست با «امروز» باز می‌شود. «امروز» را سرور تعیین می‌کند
+      // (`platform.business_date()`، منطقهٔ زمانی تنظیمات)، نه ساعت مرورگر؛ از/تا صریح بر آن مقدم است.
+      day: z.enum(["today"]).optional(),
       branchId: z.string().uuid().optional(), search: z.string().trim().max(80).default("") }).parse(req.query);
+    const businessDate = (await sql<{ d: string }>`SELECT platform.business_date()::text AS d`.execute(db)).rows[0]!.d;
+    if (q.day === "today" && !q.from && !q.to) { q.from = businessDate; q.to = businessDate; }
     if (q.from && q.to && q.from > q.to) throw new InvoiceError("bad_period", "تاریخ پایان پیش از آغاز است.", 422);
     const numberSearch = latinDigits(q.search);
     const scope = await branchesOf(db, s.userId);
@@ -96,7 +101,9 @@ export function registerInvoiceWorkspaceRoutes(app: FastifyInstance, db: Db): vo
     const sum = summary.rows[0]!;
     return { rows: result.rows, total: Number(count.rows[0]?.total ?? 0), page: q.page, pageSize: 50,
       summary: { count: Number(sum.count), payableAmount: sum.payable, receivedAmount: sum.received, remainingAmount: sum.remaining },
-      statusCounts };
+      statusCounts,
+      // بازهٔ واقعیِ اعمال‌شده و «امروز» سرور، تا صفحه عنوان را از پاسخ بسازد نه از ساعت مرورگر.
+      businessDate, range: { from: q.from ?? null, to: q.to ?? null } };
   });
 
   app.get("/invoices/:id/refund-sources", async req => {

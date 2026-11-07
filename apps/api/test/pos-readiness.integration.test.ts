@@ -580,6 +580,22 @@ describe("آمادگی API صندوق", { skip }, () => {
     for (const r of [...before.rows, ...posBody.rows] as Array<{ customerMobile?: string | null }>)
       if (r.customerMobile != null) assert.match(r.customerMobile, /^\d{4} \*\*\* \d{4}$/, "موبایل کامل بیرون نمی‌رود");
     assert.equal((await app.inject({ method: "GET", url: `/invoices?channel=fax&branchId=${BRANCH}`, ...s })).statusCode, 400);
+
+    // تصمیم مالک (۲۰۲۶/۱۱/۰۷): day=today یعنی «امروزِ» سرور (platform.business_date)، نه ساعت مرورگر؛ از/تا صریح مقدم است.
+    const today = (await sql<{ d: string }>`SELECT platform.business_date()::text d`.execute(handle.db)).rows[0]!.d;
+    const t = await app.inject({ method: "GET", url: `/invoices?status=all&day=today&branchId=${BRANCH}`, ...s });
+    assert.equal(t.statusCode, 200, t.body);
+    const tBody = t.json() as { total: number; businessDate: string; range: { from: string | null; to: string | null } };
+    assert.equal(tBody.businessDate, today);
+    assert.deepEqual(tBody.range, { from: today, to: today });
+    const ownToday = (await sql<{ n: string }>`SELECT count(*)::text n FROM sales.invoice i JOIN identity.app_user u ON u.id=i.created_by
+      WHERE u.username=${cashier} AND i.branch_id=${BRANCH}::uuid AND platform.business_date(i.occurred_at)=${today}::date`.execute(handle.db)).rows[0]!;
+    assert.equal(tBody.total, Number(ownToday.n), "همان فاکتورهای امروزِ همین دامنه");
+    const explicit = await app.inject({ method: "GET", url: `/invoices?status=all&day=today&from=2020-01-01&to=2020-01-02&branchId=${BRANCH}`, ...s });
+    assert.deepEqual((explicit.json() as { range: unknown }).range, { from: "2020-01-01", to: "2020-01-02" }, "از/تا صریح بر امروز مقدم است");
+    const none = await app.inject({ method: "GET", url: `/invoices?status=all&branchId=${BRANCH}`, ...s });
+    assert.deepEqual((none.json() as { range: unknown }).range, { from: null, to: null }, "بی day همهٔ تاریخ‌ها");
+    assert.equal((await app.inject({ method: "GET", url: `/invoices?day=tomorrow&branchId=${BRANCH}`, ...s })).statusCode, 400);
   });
 
   // ── Batch 2.1: صندوق — اسنپ‌پی شعبه‌ای، سقف غیرنقدی، نسیهٔ صریح ──────────

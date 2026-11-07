@@ -12,7 +12,7 @@ import { Money } from "../components/ui/Money.tsx";
 import { PageHeader, SectionHeader } from "../components/ui/PageHeader.tsx";
 import { StatusBadge, type StatusState } from "../components/ui/Status.tsx";
 import { Icon } from "../components/Icon.tsx";
-import { channelLabel, formatCount } from "../lib/format.ts";
+import { channelLabel, formatCount, formatJalali } from "../lib/format.ts";
 import { accessOf, routeUrl, type NavAccess } from "../lib/navigation.ts";
 import { TabList, TabPanels, useTabsId } from "../components/Tabs.tsx";
 import { JalaliDateHint, useJalaliDraft } from "../components/ui/JalaliDate.tsx";
@@ -33,7 +33,9 @@ interface Row {
 type StatusKey = "all" | "draft" | "finalized" | "cancelled" | "returned" | "settled" | "open" | "returns";
 /** جمع‌های همین فیلتر، از SQL (GET /invoices). پول رشته است؛ نبودنش یعنی نشان‌ندادن، نه صفر. */
 interface Summary { count: number; payableAmount: string; receivedAmount: string; remainingAmount: string }
-interface ListResponse { rows: Row[]; total: number; pageSize: number; summary?: Summary; statusCounts?: Partial<Record<StatusKey, number>> }
+interface ListResponse { rows: Row[]; total: number; pageSize: number; summary?: Summary; statusCounts?: Partial<Record<StatusKey, number>>;
+  /** «امروز» سرور و بازهٔ واقعیِ اعمال‌شده (تصمیم مالک، ۲۰۲۶/۱۱/۰۷). پاسخ قدیمی ندارد. */
+  businessDate?: string; range?: { from: string | null; to: string | null } }
 /**
  * طرح ۱۰: پیش‌نویس زبانهٔ خودش را دارد؛ تراشه‌ها «تسویه‌شده / مانده‌دار / مرجوعی» به‌علاوهٔ «لغوشده»
  * (تا چیزی پنهان نماند). مانده‌دار و تسویه‌شده از ماندهٔ SQL می‌آیند، نه از وضعیت.
@@ -52,6 +54,9 @@ const CHANNELS = ["pos", "instagram", "web", "phone"] as const;
 const errorMessage = (e: unknown) => e instanceof ApiError ? e.message : "ارتباط با سرور برقرار نشد.";
 const date = (value: string) => new Intl.DateTimeFormat("fa-IR", { dateStyle: "short", timeStyle: "short", timeZone: "Asia/Tehran" }).format(new Date(value));
 
+/** زبانهٔ پیش‌نویس‌ها تاریخ «امروز» نمی‌گیرد: پیش‌نویس رهاشدهٔ دیروز هم باید دیده شود. */
+const tab0 = (status: string): "list" | "drafts" => status === "draft" ? "drafts" : "list";
+
 export function Invoices({ access }: { access?: NavAccess } = {}) {
   const tabsId = useTabsId();
   const [status, setStatus] = useUrlState("invoices.status", "all");
@@ -60,6 +65,9 @@ export function Invoices({ access }: { access?: NavAccess } = {}) {
   const [branch, setBranch] = useUrlState("invoices.branch");
   const [from, setFrom] = useUrlState("invoices.from");
   const [to, setTo] = useUrlState("invoices.to");
+  // تصمیم مالک (۲۰۲۶/۱۱/۰۷): فهرست با «امروز» باز می‌شود؛ «امروز» را سرور تعیین می‌کند (day=today)، نه ساعت مرورگر.
+  // «all» یعنی همهٔ تاریخ‌ها. از/تای صریح و جست‌وجو بر آن مقدم‌اند: جست‌وجوی شمارهٔ فاکتور هفتهٔ پیش نباید خالی برگردد.
+  const [day, setDay] = useUrlState("invoices.day");
   const [page, setPage] = useUrlState("invoices.page", "1");
   const [selected, setSelected] = useUrlState("invoices.id");
   const [branches, setBranches] = useState<Branch[]>([]);
@@ -93,19 +101,31 @@ export function Invoices({ access }: { access?: NavAccess } = {}) {
     fromInput.current?.focus();
     if (from) setFrom("");
     if (to) setTo("");
+    // پاک‌کردن بازهٔ دلخواه یعنی «همهٔ تاریخ‌ها»، نه برگشت بی‌صدا به امروز.
+    setDay("all");
     if (from || to) setPage("1");
   }
   const datesActive = !!(from || to || fromText.trim() || toText.trim());
+  const dayMode: "today" | "all" | "custom" = from || to ? "custom" : day !== "all" && !search.trim() ? "today" : "all";
+  function chooseDay(next: "today" | "all") {
+    setFromText(""); setToText("");
+    if (from) setFrom("");
+    if (to) setTo("");
+    setDay(next === "all" ? "all" : "");
+    setPage("1");
+  }
   useEffect(() => { void pos.branches().then(r => setBranches(r.branches)).catch(e => setError(errorMessage(e))); }, []);
-  const key = JSON.stringify([status, search, branch, page, from, to, channel]);
+  const todayFilter = tab0(status) === "list" && dayMode === "today";
+  const key = JSON.stringify([status, search, branch, page, from, to, channel, todayFilter]);
   const load = useCallback((signal: AbortSignal) => {
     const q = new URLSearchParams({ status, search, page });
     if (channel) q.set("channel", channel);
     if (branch) q.set("branchId", branch);
     if (from) q.set("from", from);
     if (to) q.set("to", to);
+    if (todayFilter) q.set("day", "today");
     return api.get<ListResponse>(`/invoices?${q}`, { signal });
-  }, [status, search, branch, page, from, to, channel]);
+  }, [status, search, branch, page, from, to, channel, todayFilter]);
   const query = useLatestQuery({ key, version: revision, load, delay: search ? 250 : 0, enabled: !selected && issue === null });
   async function resume(row: Row) {
     setError("");
@@ -149,6 +169,11 @@ export function Invoices({ access }: { access?: NavAccess } = {}) {
           <option value="">همهٔ کانال‌ها</option>
           {CHANNELS.map(c => <option key={c} value={c}>{channelLabel(c)}</option>)}
         </select></label>
+      {tab === "drafts" ? null : <div className="invoice-day" role="group" aria-label="بازهٔ تاریخ">
+        <button type="button" className="pick-chip" aria-pressed={dayMode === "today"} disabled={!!search.trim()}
+          title={search.trim() ? "جست‌وجو همهٔ تاریخ‌ها را می‌گردد" : undefined} onClick={() => chooseDay("today")}>امروز</button>
+        <button type="button" className="pick-chip" aria-pressed={dayMode === "all"} onClick={() => chooseDay("all")}>همهٔ تاریخ‌ها</button>
+      </div>}
       <details className="invoice-extra-filters" open={extraOpen || !!(branch || datesActive || issue)} onToggle={e => setExtraOpen(e.currentTarget.open)}>
       <summary><Icon name="filter" size="sm" />فیلتر شعبه و تاریخ{branch || from || to ? " · فعال" : ""}</summary>
       <div className="invoice-filter-fields">
@@ -169,14 +194,15 @@ export function Invoices({ access }: { access?: NavAccess } = {}) {
     {error && <p role="alert">{error}</p>}
     {summary && !issue ? <section className="kpis invoice-summary" aria-label="جمع فاکتورهای این فیلتر">
       {/* طرح ۱۰: برچسب و عدد؛ توضیح «پیش‌نویس و لغوشده شمرده نمی‌شوند» زیر عنوان فهرست است. */}
-      <Kpi variant="card" label="فاکتورهای این فیلتر" value={<span className="kpi-count">{formatCount(summary.count)} <span className="kpi-unit">فاکتور</span></span>} note={null} />
+      <Kpi variant="card" label={todayFilter ? "فاکتورهای امروز" : "فاکتورهای این فیلتر"} value={<span className="kpi-count">{formatCount(summary.count)} <span className="kpi-unit">فاکتور</span></span>} note={null} />
       <Kpi variant="card" label="جمع قابل پرداخت" value={<Money rial={BigInt(summary.payableAmount)} size="lg" />} note={null} />
       <Kpi variant="card" label="دریافت‌شده بابت همین فاکتورها" value={<Money rial={BigInt(summary.receivedAmount)} size="lg" />} note={null} />
       <Kpi variant="card" label="مانده (نسیه)" value={<span className="invoice-remaining" data-due={summary.remainingAmount !== "0" || undefined}><Money rial={BigInt(summary.remainingAmount)} size="lg" /></span>} note={null} />
     </section> : null}
     <div className="solid pad invoice-list" aria-busy={query.loading}>
-      <SectionHeader title={tab === "drafts" ? "پیش‌نویس‌های ذخیره‌شده" : "فاکتورهای این فیلتر"}
-        description={tab === "drafts" ? "پیش‌نویس فروش نیست و در هیچ جمعی شمرده نمی‌شود." : "پیش‌نویس و لغوشده در هیچ جمعی نیستند · ردیف را برای اقلام و پرداخت‌ها باز کنید"}
+      <SectionHeader title={tab === "drafts" ? "پیش‌نویس‌های ذخیره‌شده" : todayFilter ? "فاکتورهای امروز" : "فاکتورهای این فیلتر"}
+        description={tab === "drafts" ? "پیش‌نویس فروش نیست و در هیچ جمعی شمرده نمی‌شود."
+          : `${todayFilter && query.data?.businessDate ? `${formatJalali(query.data.businessDate)} · ` : ""}پیش‌نویس و لغوشده در هیچ جمعی نیستند · ردیف را برای اقلام و پرداخت‌ها باز کنید`}
         actions={tab === "list" && access && accessOf(["sale.create"], access.verdicts) === "allow"
           ? <a className="btn btn--primary" href={routeUrl("pos")} onClick={e => { if (e.metaKey || e.ctrlKey || e.shiftKey) return; e.preventDefault(); navigate(routeUrl("pos")); }}><Icon name="plus" size="sm" />فروش جدید</a> : undefined} />
       {issue ? <ResultState title="بازهٔ تاریخ کامل نیست." description={issue.message} /> : query.loading ? <ResultState kind="loading" title="در حال دریافت فاکتورها…" /> : query.error ? <ResultState kind="error" title={errorMessage(query.error)} actionLabel="تلاش دوباره" onAction={() => setRevision(v => v + 1)} /> : !query.data?.rows.length ? <ResultState title="فاکتوری با این فیلترها پیدا نشد." /> : <>

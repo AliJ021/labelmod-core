@@ -785,3 +785,5 @@ table.grid td small, table.ui-table td small { font-size: 0.6875rem; color: var(
 /* تصمیم مالک (۱۱۳): سطر «بابت فاکتورهای روزهای قبل» زیر یادداشت کارت وجه دریافتی، در خط خودش. */
 .kpi-note .kpi-split { display: block; margin-block-start: 2px; color: var(--ink-3); }
 
+/* تصمیم مالک (۲۰۲۶/۱۱/۰۷): «امروز | همهٔ تاریخ‌ها» کنار کانال؛ همان تراشهٔ انتخاب نظام طراحی. */
+.invoice-day { display: inline-flex; gap: var(--s-1); flex-wrap: wrap; }
