@@ -325,6 +325,25 @@ test.describe("«تا این لحظه» و دیروز تا همین لحظه (ط
     await expect(panel(page).getByRole("checkbox", { name: "مقایسه با همین ساعت دیروز" })).toHaveCount(0);
     await expect(page.locator(".kpi-delta")).toHaveCount(0);
   });
+
+  test("owner decision: before the first sale the 'up to now' chart stays — today's line on zero, a 'no sale yet' note, yesterday as usual", async ({ page, api }) => {
+    api.defaults["GET /reports/daily"] = dailyBody({ businessDate: "2026-09-16", salesAmount: "0", receivedAmount: "0", profitAmount: "0", invoiceCount: 0, returnCount: 0 });
+    // دیروز تا همین لحظه فروش داشته (yesterdayUntil: ساعت ۱۰ سه میلیون ریال)؛ امروز هنوز هیچ.
+    api.defaults["GET /reports/daily/hourly"] = hourlyDay({}, true, "2026-09-16", 10);
+    await page.goto("/");
+    const chart = panel(page).getByRole("figure", { name: "فروش تجمعی امروز (تومان)" });
+    await expect(chart).toBeVisible();
+    await expect(panel(page).getByText("هنوز فروشی برای امروز ثبت نشده است.", { exact: false })).toBeVisible();
+    await expect(chart.locator(".line-chart-line")).toHaveCount(2);
+    // عدد «تا این لحظه» صفرِ واقعی است، نه «—».
+    await expect(panel(page).locator(".trend-lead")).toContainText("0");
+    await expect(panel(page).locator(".trend-lead")).not.toContainText("—");
+    // بی مقایسهٔ سرور (صندوق‌دار): هنوز خط صفر و پیام، نه حالت خالی.
+    api.defaults["GET /reports/daily/hourly"] = { ...hourlyDay({}, true, "2026-09-16", 10), comparisonVisible: false, comparison: null };
+    await page.reload();
+    await expect(chart.locator(".line-chart-line")).toHaveCount(1);
+    await expect(panel(page).getByText("هنوز فروشی برای امروز ثبت نشده است.", { exact: false })).toBeVisible();
+  });
 });
 
 test.describe("پیگیری ثبت حسابداری فروش", () => {

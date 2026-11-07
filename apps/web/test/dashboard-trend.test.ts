@@ -270,11 +270,25 @@ describe("روند «تا این لحظه» و دیروز تا همین لحظه
     assert.ok(v.kind === "chart" && v.series.some(s => s.kind === "yesterday"), "فروش دیروز مجاز است");
   });
 
-  test("امروز بی رویداد و بی مقایسه خالی است؛ با دیروز، خط دیروز کشیده می‌شود", () => {
+  test("تصمیم مالک: پیش از اولین فروش، خط امروز روی صفر ساعت‌های رسیده و پیام «هنوز ثبت نشده»؛ ساعت نرسیده null؛ با دیروز، خط دیروز هم", () => {
     const quiet = cum(day());
-    assert.equal(trendView(cumulativePoints(quiet, 12, null), "sales", "cumulative", false, true).kind, "empty");
+    const alone = trendView(cumulativePoints(quiet, 12, null), "sales", "cumulative", false, true);
+    assert.ok(alone.kind === "chart" && alone.series.length === 1, "خالی نیست: خط امروز هست");
+    const pts = cumulativePoints(quiet, 12, null);
+    alone.series[0]!.values.forEach((v, i) => assert.equal(v, Number(pts[i]!.key) > 12 ? null : 0n, "صفرِ واقعی تا اکنون، null پس از آن"));
+    assert.match(alone.note ?? "", /هنوز فروشی برای امروز ثبت نشده است\./);
+    assert.match(alone.summary, /تا این لحظه: 0 تومان/);
+    const received = trendView(cumulativePoints(quiet, 12, null), "received", "cumulative", false, true);
+    assert.ok(received.kind === "chart");
+    assert.match(received.note ?? "", /هنوز وجهی برای امروز دریافت نشده است\./);
     const v = trendView(cumulativePoints(quiet, 12, cmp(12)), "sales", "cumulative", false, true);
     assert.ok(v.kind === "chart" && v.series.length === 2);
+    assert.match(v.note ?? "", /هنوز فروشی برای امروز ثبت نشده است\./);
+    // با اولین فروش، پیام می‌رود.
+    const sold = trendView(cumulativePoints(cum(day({ 9: { salesAmount: "5", invoiceCount: 1 } })), 12, null), "sales", "cumulative", false, true);
+    assert.ok(sold.kind === "chart" && !(sold.note ?? "").includes("هنوز فروشی"));
+    // دادهٔ ساعتی نیامده (هیچ ساعت رسیده‌ای نیست و دیروزی هم نیست): همچنان خالی، نه نمودار ساختگی.
+    assert.equal(trendView([], "sales", "cumulative", false, true).kind, "empty");
   });
 });
 

@@ -265,15 +265,19 @@ export function trendView(points: readonly TrendPoint[], metric: Metric, grain: 
 
 /**
  * نمای «تا این لحظه»: خط تجمعی شاخص انتخاب‌شده و، اگر خواسته و مجاز باشد، خط «دیروز تا همین
- * لحظه» از همان شاخص. «خالی» مثل نمای ساعتی با رویداد سنجیده می‌شود، نه با جمع صفر: روزی که
- * فروشی نداشته ولی دیروز داشته هم با خط دیروز کشیده می‌شود. سود دیروز بی مجوز خطی ندارد.
+ * لحظه» از همان شاخص. سود دیروز بی مجوز خطی ندارد.
+ *
+ * تصمیم مالک (۲۰۲۶/۱۱/۰۷): پیش از اولین رویداد امروز، نمودار خالی نمی‌شود. خط امروز روی صفر
+ * ساعت‌های رسیده می‌ماند (صفرِ سرور، واقعی است نه «نامعلوم») و پیام «هنوز … ثبت نشده» در یادداشت
+ * می‌آید؛ خط دیروز مثل همیشه. ساعت‌های نرسیده همچنان `null`اند، نه صفر. فقط وقتی هیچ ساعتی
+ * نرسیده (دادهٔ ساعتی نیامده) «خالی» است.
  */
 function cumulativeView(points: readonly TrendPoint[], reached: readonly TrendPoint[], metric: Metric, yesterday: boolean): TrendView {
   const label = METRICS.find(m => m.key === metric)!.label;
   const yValues = points.map(p => p.yesterday?.[metric] ?? null);
   const showYesterday = yesterday && points.some(p => p.yesterday !== undefined) && yValues.some(v => v !== null);
   const today = reached.some(p => p.events[metric]);
-  if (!today && !showYesterday) return { kind: "empty" };
+  if (reached.length === 0 && !showYesterday) return { kind: "empty" };
   const series: TrendSeries[] = [{
     metric, label: `${label} امروز`,
     values: points.map(p => p.values[metric]),
@@ -289,6 +293,7 @@ function cumulativeView(points: readonly TrendPoint[], reached: readonly TrendPo
   const current = reached.find(p => p.partial);
   const pending = points.filter(p => p.pending).length;
   const notes = [
+    today ? null : trendCopy(metric, "cumulative").empty[0],
     current ? `${current.long} هنوز تمام نشده (نقطهٔ توخالی).` : null,
     pending > 0 ? `${formatCount(pending)} ساعت بعدی هنوز نرسیده و صفر نشان داده نمی‌شود.` : null,
     showYesterday ? "خط دیروز فقط تا همان لحظهٔ دیروز است، نه کل دیروز." : null,
