@@ -85,7 +85,8 @@ test("اپراتور اینستاگرام: بی شیفت، کارت‌به‌ک�
   await expect(bar(page)).toContainText("فروش اینستاگرام");
   await expect(bar(page)).not.toContainText("شیفت باز");
   await expect(page.getByRole("button", { name: "چاپ پیش‌فاکتور", exact: true })).toHaveCount(0);
-  await expect(page.getByRole("button", { name: "صندوق فروشگاه", exact: true }), "اپراتور حالت فروشگاه ندارد").toHaveCount(0);
+  await expect(page.getByRole("group", { name: "نوع فروش" }), "اپراتور حالت فروشگاه ندارد").toHaveCount(0);
+  await expect(page.getByRole("radio", { name: "حضوری", exact: true })).toHaveCount(0);
   await page.locator("summary", { hasText: "ابزارهای فروش" }).click();
   await expect(page.getByRole("button", { name: "رها کردن سبد", exact: true })).toBeVisible();
   await expect(page.getByRole("button", { name: "بستن شیفت", exact: true })).toHaveCount(0);
@@ -152,7 +153,9 @@ test("مدیر: پیش‌فرض صندوق فروشگاه؛ دکمهٔ «فرو�
   // کنترل منفی: فروش حضوری مدیر همان کانال صندوق است.
   await add();
   expect(created.at(-1)).toMatchObject({ channel: "pos" });
-  await expect(page.getByRole("button", { name: "فروش اینستاگرام", exact: true }), "با سبد باز، حالت عوض نمی‌شود").toBeDisabled();
+  const mode = page.getByRole("group", { name: "نوع فروش" });
+  await expect(mode.getByRole("radio", { name: "حضوری", exact: true })).toBeChecked();
+  await expect(mode.getByRole("radio", { name: "اینستاگرام", exact: true }), "با سبد باز، حالت عوض نمی‌شود").toBeDisabled();
 
   await page.goto(`/?page=pos&pos.branch=${BR}&pos.warehouse=w1&pos.mode=instagram`);
   await expect(bar(page)).toContainText("فروش اینستاگرام");

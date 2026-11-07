@@ -1,6 +1,7 @@
-import { useId, useState, type KeyboardEvent, type PointerEvent } from "react";
+import { useId, useState, type KeyboardEvent, type PointerEvent, type ReactNode } from "react";
 import { moneyParts } from "../../lib/format.ts";
 import { niceScale } from "../../lib/chart-scale.ts";
+import { smoothArea, smoothPath, type Pt } from "../../lib/smooth-path.ts";
 
 /**
  * نمودار خطی سبک — بدون کتابخانه، روی سطح **مات** (palette.test.ts: رنگ
@@ -9,15 +10,19 @@ import { niceScale } from "../../lib/chart-scale.ts";
  * - مقدار پولی `bigint` می‌ماند؛ فقط **موقعیت عمودی** عدد اعشاری است و هیچ
  *   مبلغی از آن ساخته نمی‌شود. مقدار دقیق هر نقطه در «بازخوانی» زیر نمودار، در
  *   جدول (پنهان برای صفحه‌خوان یا آشکار با «نمایش جدول») می‌آید.
- * - **RTL:** نقطهٔ اول (قدیمی‌تر) سمت راست است؛ SVG جهت ندارد، پس x وارونه
- *   حساب می‌شود و برچسب‌های HTML با `inset-inline-start` همان جا می‌نشینند.
+ * - **محور زمان مثل طرح ۱۰ (تصمیم مالک، ۲۰۲۶/۱۱/۰۶):** قدیمی‌ترین نقطه چپ و جدیدترین
+ *   (امروز، ساعت جاری) راست — هم‌جهت با ساعت و تقویم، هرچند متن و پوسته RTL می‌مانند.
+ *   SVG جهت ندارد، پس x از چپ حساب می‌شود؛ برچسب‌های HTML در پوستهٔ RTL با
+ *   `inset-inline-start` (= راست) به فاصلهٔ «۱ − کسر از چپ» می‌نشینند، بی خاصیت فیزیکی.
  * - مقیاس مشترک از `niceScale` (گام گرد، همیشه با صفر)؛ خط صفر وقتی منفی هست
  *   دیده می‌شود. منفی نه صفر می‌شود و نه قدرمطلق. واحد محور «تومان» صریح است.
  * - `null` یعنی «هنوز نیامده»: خط آنجا قطع می‌شود، نه اینکه به صفر برود. میان دو
- *   نقطه فقط پارهٔ خط راست است — بی منحنی هموار و بی «بیش‌جهش» ساختگی.
+ *   نقطه منحنی **نرم یکنوا** است (خواستهٔ مالک): هموار، ولی هرگز بیرون از بازهٔ دو
+ *   نقطه — بی «بیش‌جهش» ساختگی زیر صفر یا بالای بیشینه.
  *   نقطهٔ `partial` (دورهٔ جاری) توخالی است.
  * - رنگ تنها حامل معنا نیست: هر خط الگوی خط خودش را هم دارد و در راهنما با برچسب آمده.
- * - **بررسی نقطه‌ها:** یک توقف Tab؛ پیکان‌ها (RTL: چپ = بعدی)، Home/End، و لمس/کشیدن
+ * - **بررسی نقطه‌ها:** یک توقف Tab؛ پیکان راست = جدیدتر و چپ = قدیمی‌تر (همان جهت محور)،
+ *   Home قدیمی‌ترین و End جدیدترین، و لمس/کشیدن
  *   یا هاور نقطه را انتخاب می‌کنند و بازخوانی دیدنی و `aria-live` مقدار همهٔ خطوط را می‌گوید.
  * - نقطه یک مسیر صفرطول با سر گرد است و `vector-effect` دارد، پس با کشیدگیِ
  *   `preserveAspectRatio="none"` بیضی نمی‌شود.
@@ -27,9 +32,16 @@ export interface LineSeries { key: string; label: string; values: readonly (bigi
 
 const W = 600, H = 200, MX = 8, MY = 10;
 
-export function LineChart({ title, summary, note, xHeader, points, series, unit = "تومان" }: {
+export function LineChart({ title, summary, note, xHeader, points, series, unit = "تومان", lead, footer }: {
   title: string; summary: string; note: string | null; xHeader: string;
   points: readonly LinePoint[]; series: readonly LineSeries[]; unit?: string;
+  /**
+   * چیدمان فشردهٔ طرح ۱۰: عدد شاخص کنار راهنما در ردیف بالا. عنوان و خلاصه همچنان نام و توضیح
+   * دسترس‌پذیر نمودارند ولی دیداری تکرار نمی‌شوند (عنوان کارت بالای نمودار همان را می‌گوید).
+   */
+  lead?: ReactNode;
+  /** کنترل کنار «نمایش جدول داده» در ردیف پایین (طرح ۱۰: کلید مقایسه). */
+  footer?: ReactNode;
 }) {
   const id = useId();
   const n = points.length;
@@ -38,11 +50,11 @@ export function LineChart({ title, summary, note, xHeader, points, series, unit 
   const min = scale.min;
   const max = scale.max === scale.min ? scale.min + 1n : scale.max; // همه صفر: خط روی صفرِ پایین.
   const span = max - min;
-  /** کسر افقی از «شروع» (راست در RTL). */
+  /** کسر افقی از **چپ**: نقطهٔ ۰ (قدیمی‌ترین) چپ، آخرین (جدیدترین) راست. */
   const fx = (i: number) => (n === 1 ? 0.5 : (MX + (i / (n - 1)) * (W - 2 * MX)) / W);
   /** کسر عمودی از بالا؛ فقط موقعیت، نه مبلغ. */
   const fy = (v: bigint) => (MY + (Number(((max - v) * 10000n) / span) / 10000) * (H - 2 * MY)) / H;
-  const X = (i: number) => (W * (1 - fx(i))).toFixed(1);
+  const X = (i: number) => (W * fx(i)).toFixed(1);
   const Y = (v: bigint) => (H * fy(v)).toFixed(1);
   const ticksBefore = (i: number) => points.slice(0, i).filter(p => p.tick).length;
   /** آخرین نقطه‌ای که دست‌کم یک خط مقدار دارد — پیش‌فرض بازخوانی (نه ساعتی که هنوز نیامده). */
@@ -56,21 +68,21 @@ export function LineChart({ title, summary, note, xHeader, points, series, unit 
   const at = points[active];
 
   function onKey(e: KeyboardEvent<HTMLDivElement>) {
-    const rtl = getComputedStyle(e.currentTarget).direction === "rtl";
+    // پیکان‌ها جهت **محور** را دنبال می‌کنند، نه جهت متن: محور در هر دو جهت چپ‌به‌راست است.
     let next: number | null = null;
     if (e.key === "Home") next = 0;
     else if (e.key === "End") next = n - 1;
-    else if (e.key === (rtl ? "ArrowLeft" : "ArrowRight")) next = Math.min(n - 1, active + 1);
-    else if (e.key === (rtl ? "ArrowRight" : "ArrowLeft")) next = Math.max(0, active - 1);
+    else if (e.key === "ArrowRight") next = Math.min(n - 1, active + 1);
+    else if (e.key === "ArrowLeft") next = Math.max(0, active - 1);
     if (next !== null) { e.preventDefault(); setChosen(next); }
   }
   function onPointer(e: PointerEvent<HTMLDivElement>) {
     if (e.type === "pointermove" && e.pointerType !== "mouse" && e.buttons === 0) return;
     const r = e.currentTarget.getBoundingClientRect();
     if (r.width <= 0 || n === 0) return;
-    // x از چپ؛ نقطهٔ i در (1 − fx(i)) از چپ است (RTL).
-    const fromStart = 1 - (e.clientX - r.left) / r.width;
-    const i = n === 1 ? 0 : Math.round(((fromStart * W - MX) / (W - 2 * MX)) * (n - 1));
+    // x از چپ؛ نقطهٔ i در fx(i) از چپ است.
+    const fromLeft = (e.clientX - r.left) / r.width;
+    const i = n === 1 ? 0 : Math.round(((fromLeft * W - MX) / (W - 2 * MX)) * (n - 1));
     setChosen(Math.max(0, Math.min(n - 1, i)));
   }
 
@@ -85,15 +97,18 @@ export function LineChart({ title, summary, note, xHeader, points, series, unit 
   </table>;
 
   return <figure className="line-chart" aria-labelledby={`${id}-t`}>
-    <figcaption>
+    <figcaption className={lead ? "sr-only" : undefined}>
       <span id={`${id}-t`} className="line-chart-title">{title}</span>
       <span className="line-chart-summary">{summary}</span>
     </figcaption>
-    <ul className="line-chart-legend" aria-hidden="true">
-      {series.map(s => <li key={s.key} data-series={s.key} data-emphasis={s.emphasis || undefined}>
-        <svg viewBox="0 0 24 8" className="line-chart-swatch"><path d="M1 4 H23" /></svg>{s.label}
-      </li>)}
-    </ul>
+    {(() => {
+      const legend = <ul className="line-chart-legend" aria-hidden="true">
+        {series.map(s => <li key={s.key} data-series={s.key} data-emphasis={s.emphasis || undefined}>
+          <svg viewBox="0 0 24 8" className="line-chart-swatch"><path d="M1 4 H23" /></svg>{s.label}
+        </li>)}
+      </ul>;
+      return lead ? <div className="line-chart-lead"><div className="line-chart-lead-value">{lead}</div>{legend}</div> : legend;
+    })()}
     <div className="line-chart-frame">
       <span className="line-chart-unit" aria-hidden="true">{unit}</span>
       <div className="line-chart-plot" role="group" tabIndex={0}
@@ -103,23 +118,28 @@ export function LineChart({ title, summary, note, xHeader, points, series, unit 
           {scale.ticks.map(t => <path key={String(t)} className={t === 0n ? "line-chart-zero" : "line-chart-grid"} d={`M0 ${Y(t)} H${W}`} />)}
           {at ? <path className="line-chart-cursor" d={`M${X(active)} 0 V${H}`} /> : null}
           {series.map(s => {
-            let d = "", open = false;
-            // سطح زیر خط برجسته (طرح ۱۰): تزئینی، هر تکهٔ پیوسته تا خط صفر بسته می‌شود.
-            const base = Math.min(H, Math.max(0, Number(Y(0n)))).toFixed(1);
-            let area = "", run: string[] = [], first = "", last = "";
-            const flush = () => { if (run.length > 1) area += `M${first} ${base} L${run.join(" L")} L${last} ${base} Z `; run = []; };
+            // طرح ۱۰ (خواستهٔ مالک): خط نرم یکنوا — از همهٔ نقطه‌ها می‌گذرد و هرگز بیرون از دو نقطهٔ
+            // کنارش نمی‌رود (`lib/smooth-path.ts`). هر تکهٔ پیوسته جداست؛ `null` خط را قطع می‌کند.
+            const base = Math.min(H, Math.max(0, Number(Y(0n))));
+            const runs: Pt[][] = [];
+            let run: Pt[] = [];
             s.values.forEach((v, i) => {
-              if (v === null) { open = false; flush(); return; }
-              d += `${open ? "L" : "M"}${X(i)} ${Y(v)} `;
-              if (!open) first = X(i);
-              last = X(i);
-              run.push(`${X(i)} ${Y(v)}`);
-              open = true;
+              if (v === null) { if (run.length) runs.push(run); run = []; return; }
+              run.push([Number(X(i)), Number(Y(v))]);
             });
-            flush();
+            if (run.length) runs.push(run);
+            const d = runs.map(smoothPath).join(" ");
+            // سطح زیر خط برجسته: تزئینی، هر تکهٔ پیوسته تا خط صفر بسته می‌شود.
+            const area = runs.map(r => smoothArea(r, base)).filter(Boolean).join(" ");
             return <g key={s.key} data-series={s.key} data-emphasis={s.emphasis || undefined}>
-              {s.emphasis && area ? <path className="line-chart-area" d={area.trim()} /> : null}
-              <path className="line-chart-line" d={d.trim()} />
+              {s.emphasis && area ? <>
+                <defs><linearGradient id={`${id}-area-${s.key}`} x1="0" y1="0" x2="0" y2="1">
+                  <stop stopColor="var(--series)" stopOpacity=".20" />
+                  <stop offset="1" stopColor="var(--series)" stopOpacity=".01" />
+                </linearGradient></defs>
+                <path className="line-chart-area" fill={`url(#${id}-area-${s.key})`} d={area} />
+              </> : null}
+              <path className="line-chart-line" d={d} />
               {s.values.map((v, i) => {
                 if (v === null) return null;
                 const dot = `M${X(i)} ${Y(v)} h0`, partial = points[i]!.partial;
@@ -144,12 +164,15 @@ export function LineChart({ title, summary, note, xHeader, points, series, unit 
     <div className="line-chart-x" aria-hidden="true">
       {/* در عرض باریک، برچسب‌های یک‌درمیان (نه اولی و آخری) پنهان می‌شوند تا روی هم نیفتند. */}
       {points.map((p, i) => p.tick ? <span key={p.key} data-minor={(i > 0 && i < n - 1 && ticksBefore(i) % 2 === 1) || undefined}
-        style={{ "--x": fx(i) } as React.CSSProperties}>{p.label}</span> : null)}
+        style={{ "--x": 1 - fx(i) } as React.CSSProperties}>{p.label}</span> : null)}
     </div>
     <p id={`${id}-r`} className="line-chart-readout" aria-live="polite">{readout}</p>
     {note ? <p className="line-chart-note">{note}</p> : null}
-    <button type="button" className="link line-chart-table-toggle" aria-expanded={showTable} aria-controls={`${id}-table`}
-      onClick={() => setShowTable(v => !v)}>{showTable ? "پنهان‌کردن جدول داده" : "نمایش جدول داده"}</button>
+    {(() => {
+      const toggle = <button type="button" className="link line-chart-table-toggle" aria-expanded={showTable} aria-controls={`${id}-table`}
+        onClick={() => setShowTable(v => !v)}>{showTable ? "پنهان‌کردن جدول داده" : "نمایش جدول داده"}</button>;
+      return footer ? <div className="line-chart-foot">{footer}{toggle}</div> : toggle;
+    })()}
     {/* پنهان: ظرف sr-only، نه خودِ جدول — جدول چندستونی از عرض ۱px بزرگ‌تر می‌شود و صفحه را افقی می‌کشید.
         آشکار: در ظرف با اسکرول افقی خودش، نه صفحه. یک جدول است، نه دو نسخه. */}
     <div id={`${id}-table`} className={showTable ? "line-chart-table-wrap" : "sr-only"}>{table}</div>
@@ -160,4 +183,21 @@ export function LineChart({ title, summary, note, xHeader, points, series, unit 
 export function tickEvery(n: number, max = 8): (i: number) => boolean {
   const step = Math.max(1, Math.ceil(n / max));
   return i => i === 0 || i === n - 1 || (i % step === 0 && n - 1 - i >= step / 2);
+}
+
+/** یک مقدار برای هر نقطهٔ محور (ساعت، روز) — داده از سرور، `bigint`. */
+export interface ValuePoint { key: string; label: string; value: bigint | null; display: string }
+
+/**
+ * نمودار تک‌خطی برای جایی که پیش‌تر ستونی بود (خواستهٔ مالک: همهٔ نمودارها خطی و نرم).
+ * همان `LineChart` است با یک خط برجسته؛ برچسب محور با `tickEvery`. محور زمان
+ * همان نمودار خطی است: نقطهٔ اول (زودتر) سمت چپ، آخرین سمت راست.
+ */
+export function ValueLineChart({ title, summary, points, labelHeader, valueHeader, unit }: {
+  title: string; summary: string; points: readonly ValuePoint[]; labelHeader: string; valueHeader: string; unit?: string;
+}) {
+  const tick = tickEvery(points.length);
+  return <LineChart title={title} summary={summary} note={null} xHeader={labelHeader} {...(unit ? { unit } : {})}
+    points={points.map((p, i) => ({ key: p.key, label: p.label, long: p.label, partial: false, tick: tick(i) }))}
+    series={[{ key: "value", label: valueHeader, values: points.map(p => p.value), displays: points.map(p => p.display), emphasis: true }]} />;
 }

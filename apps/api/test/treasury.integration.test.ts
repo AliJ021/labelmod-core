@@ -849,4 +849,78 @@ describe("خزانه و چک", { skip }, () => {
     assert.equal(c.statusCode, 403, c.body);
     assert.equal((await app.inject({ method: "GET", url: "/treasury/balances" })).statusCode, 401);
   });
+  test("طرح ۱۰ — کشوها و حرکت‌های نقد امروز: انتظار نقد کشوی باز همان فرمول بستن؛ علامت از دید کشو؛ دامنه و مجوز", async () => {
+    const a = await loginAs(admin);
+    const c = await loginAs(cashier);
+    const shiftId = await openShift(c);
+    // ورود و خروج غیرفروشی کشو، و یک حرکت بانکی که نباید در «نقد» بیاید.
+    for (const payload of [
+      { branchId: BRANCH, purpose: "capital", amount: "400000", toAccountId: cashBox.id, note: "پول خرد" },
+      { branchId: BRANCH, purpose: "expense", amount: "180000", fromAccountId: cashBox.id, expenseAccountCode: "6102", note: "کرایهٔ پیک ارسال" },
+      { branchId: BRANCH, purpose: "supplier_payment", amount: "900000", fromAccountId: bank.id, partyType: "supplier", partyId: supplierId },
+    ]) {
+      const r = await app.inject({ method: "POST", url: "/treasury/transactions", ...a, payload });
+      assert.equal(r.statusCode, 201, r.body);
+    }
+
+    const r = await app.inject({ method: "GET", url: `/treasury/drawers?branchId=${BRANCH}`, ...a });
+    assert.equal(r.statusCode, 200, r.body);
+    const body = r.json() as {
+      businessDate: string; shiftsVisible: boolean;
+      shifts: { id: string; status: string; userName: string; openingCash: string; expectedCash: string | null; countedCash: string | null; variance: string | null }[] | null;
+      moves: { purpose: string; drawerName: string | null; createdByName: string | null; counterpartCode: string | null; counterpartName: string | null; drawerAmount: string; note: string | null }[];
+    };
+    const today = await sql<{ d: string }>`SELECT platform.business_date()::text AS d`.execute(handle.db);
+    assert.equal(body.businessDate, today.rows[0]!.d, "«امروز» از سرور");
+    assert.equal(body.shiftsVisible, true);
+
+    // انتظار نقد کشوی باز = همان تابع ۱۱۰ (که db/test/shift-expected-cash.sql با close_shift برابرش می‌کند).
+    const shift = body.shifts!.find((x) => x.id === shiftId);
+    assert.ok(shift, "کشوی باز در فهرست است");
+    const live = await sql<{ e: string }>`SELECT sales.shift_expected_cash(${shiftId}::uuid)::text AS e`.execute(handle.db);
+    assert.equal(shift.expectedCash, live.rows[0]!.e);
+    assert.equal(shift.status, "open");
+    assert.equal(shift.userName, "صندوق‌دار خزانه");
+    assert.deepEqual([shift.countedCash, shift.variance], [null, null], "پیش از شمارش، شمرده و مغایرت null است نه صفر");
+
+    // حرکت‌ها: فقط کشو، علامت از دید کشو، طرف حساب از SQL.
+    const capital = body.moves.find((m) => m.purpose === "capital" && m.note === "پول خرد");
+    const expense = body.moves.find((m) => m.purpose === "expense" && m.note === "کرایهٔ پیک ارسال");
+    assert.equal(capital?.drawerAmount, "400000");
+    assert.equal(expense?.drawerAmount, "-180000");
+    assert.equal(expense?.counterpartCode, "6102");
+    assert.equal(expense?.counterpartName, "هزینه حمل و ارسال");
+    assert.equal(expense?.drawerName, "صندوق‌دار خزانه", "کشو از شیفت می‌آید، نه از کاربر عامل");
+    assert.equal(expense?.createdByName, "مدیر خزانه");
+    assert.ok(!body.moves.some((m) => m.purpose === "supplier_payment"), "حرکت بانکی نقد کشو نیست");
+    const own = await sql<{ n: string }>`
+      SELECT coalesce(sum(CASE WHEN fa.kind = 'cash_box' THEN -t.amount ELSE t.amount END), 0)::text AS n
+        FROM treasury.transaction t
+        LEFT JOIN treasury.account fa ON fa.id = t.from_account_id
+        LEFT JOIN treasury.account ta ON ta.id = t.to_account_id
+       WHERE t.shift_id = ${shiftId}::uuid AND t.status = 'posted'`.execute(handle.db);
+    const listed = body.moves.filter((m) => m.drawerName === "صندوق‌دار خزانه").reduce((x, m) => x + BigInt(m.drawerAmount), 0n);
+    assert.equal(listed.toString(), own.rows[0]!.n, "جمع حرکت‌های فهرست = جمع حرکت‌های همان شیفت در دیتابیس");
+
+    // دامنه و مجوز: صندوق‌دار treasury.manage ندارد؛ شعبهٔ بیرون از دامنه ۴۰۳؛ بی نشست ۴۰۱؛ بی شعبه ۴۰۰.
+    assert.equal((await app.inject({ method: "GET", url: `/treasury/drawers?branchId=${BRANCH}`, ...c })).statusCode, 403);
+    assert.equal((await app.inject({ method: "GET", url: `/treasury/drawers?branchId=${BRANCH}` })).statusCode, 401);
+    assert.equal((await app.inject({ method: "GET", url: "/treasury/drawers", ...a })).statusCode, 400);
+    const other = await sql<{ id: string }>`INSERT INTO platform.branch (code, name) VALUES (${`DR-${suffix}`.slice(0, 20)}, 'شعبهٔ بیرون') RETURNING id`.execute(handle.db);
+    assert.equal((await app.inject({ method: "GET", url: `/treasury/drawers?branchId=${other.rows[0]!.id}`, ...a })).statusCode, 403);
+
+    // treasury.manage بی report.view: حرکت‌ها آری، کشوها و انتظار نقد نه (null، نه فهرست خالی).
+    const role = `tronly_${suffix}`.slice(0, 30);
+    await sql`INSERT INTO identity.role (code, name) VALUES (${role}, 'فقط خزانه')`.execute(handle.db);
+    await sql`INSERT INTO identity.permission_rule (role_code, operation, allowed) VALUES (${role}, 'treasury.manage', true), (${role}, 'report.view', false)`.execute(handle.db);
+    const u = await sql<{ id: string }>`
+      INSERT INTO identity.app_user (username, full_name, password_hash, is_active)
+      VALUES (${`tronly_${suffix}`}, 'خزانه‌دار بی گزارش', ${await hashSecret(PASSWORD)}, true) RETURNING id`.execute(handle.db);
+    await sql`INSERT INTO identity.user_role (user_id, role_code, branch_id) VALUES (${u.rows[0]!.id}::uuid, ${role}, ${BRANCH}::uuid)`.execute(handle.db);
+    const t = await app.inject({ method: "GET", url: `/treasury/drawers?branchId=${BRANCH}`, ...await loginAs(`tronly_${suffix}`) });
+    assert.equal(t.statusCode, 200, t.body);
+    assert.equal(t.json().shiftsVisible, false);
+    assert.equal(t.json().shifts, null);
+    assert.ok((t.json().moves as unknown[]).length >= 2);
+  });
 });

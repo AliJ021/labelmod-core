@@ -185,7 +185,9 @@ describe("کارهای عملیاتی داشبورد", { skip }, () => {
     const body = JSON.parse(r.body);
     // c1 طلب ۳۰۰٬۰۰۰؛ اعتبار: c2 ۵۰٬۰۰۰ و c6 ۸۰۰٬۰۰۰ (فقط چک وصول‌شده). چهار چک وصول‌نشدهٔ c6 (۴٬۲۰۰٬۰۰۱) خالص او
     // را عوض نمی‌کنند — اگر فقط حساب دریافتنی شمرده می‌شد، c6 اعتبار ۵٬۰۰۰٬۰۰۱ نشان می‌داد.
-    assert.deepEqual(body.receivables, { state: "ready", owed: { count: 1, amount: "300000" }, credit: { count: 2, amount: "850000" } });
+    // اثر ثبت‌نشده (۱۱۲): این سناریو فاکتور دورهٔ باز ندارد، پس صفر واقعی است؛ حالت غیرصفر در people.integration.
+    assert.deepEqual(body.receivables, { state: "ready", owed: { count: 1, amount: "300000" }, credit: { count: 2, amount: "850000" },
+      unposted: { count: 0, amount: "0" } });
     assert.equal(body.cheques.state, "ready");
     assert.equal(body.cheques.warningDays, 7);
     assert.deepEqual(body.cheques.received.overdue, { count: 2, amount: "3000001", nextDue: body.cheques.received.overdue.nextDue });

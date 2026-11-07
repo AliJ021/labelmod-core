@@ -142,6 +142,7 @@ export function registerReturnRoutes(app: FastifyInstance, deps: ReturnRouteDeps
       daysSinceSale: window.daysSince,
       hoursSinceSale: window.hoursSince,
       late: window.late,
+      windowHours: window.windowHours,
       lines: returnableToJson(await returns.returnable(id)),
     };
   });

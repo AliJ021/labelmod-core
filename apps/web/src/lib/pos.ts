@@ -97,6 +97,8 @@ export interface InvoiceGift {
 export interface Invoice {
   id: string;
   createdBy?: string | null;
+  /** نام ثبت‌کننده، فقط برای سربرگ صندوق؛ پاسخ قدیمی‌تر ندارد و «—» می‌شود. */
+  createdByName?: string | null;
   number: string | null;
   branchId: string;
   warehouseId: string;
@@ -189,6 +191,8 @@ export interface Returnable {
   hoursSinceSale: number;
   /** دیرتر از مهلت — همچنان ممکن، ولی تأیید مدیر می‌خواهد. */
   late: boolean;
+  /** مهلت به ساعت، از همان تنظیمی که `late` را تعیین کرد؛ پاسخ قدیمی‌تر ندارد. */
+  windowHours?: number;
   lines: ReturnableLine[];
 }
 
@@ -218,6 +222,13 @@ export interface DailyReport {
   profitAmount: string | null;
   invoiceCount: number;
   returnCount: number;
+  /** دریافتی − فروش همان روز، حساب‌شده در SQL (نه در مرورگر). */
+  receivedMinusSales: string;
+  /**
+   * تصمیم مالک (مهاجرت ۱۱۳): بخشی از همان دریافتی که بابت فاکتورهای روزهای قبل است؛ علامت‌دار (بازپرداخت
+   * مرجوعیِ فاکتور قبلی منفی). نبودنش (پاسخ قدیمی) یعنی سطر نمایش داده نمی‌شود، نه صفر.
+   */
+  receivedEarlier?: string;
 }
 
 /**
@@ -240,7 +251,26 @@ export interface DailyHour {
  * `currentHour`: ساعت جاری کسب‌وکار برای امروز (از سرور)، `null` برای روز گذشته.
  * ساعت‌های پس از آن «هنوز نیامده»اند، نه صفر.
  */
-export interface DailyHourly { businessDate: string; currentHour: number | null; profitVisible: boolean; hours: DailyHour[] }
+export interface DailyHourly {
+  businessDate: string; currentHour: number | null; profitVisible: boolean; hours: DailyHour[];
+  /** فقط با `report.view`؛ صندوق‌دارِ «فقط امروز» `false` و `comparison: null`. */
+  comparisonVisible: boolean;
+  comparison: DailyComparison | null;
+}
+/**
+ * روز قبل **تا همین لحظه** (مهاجرت ۱۰۹، `sales.previous_day_cutoff`): مرز = آغاز روز قبل +
+ * مدت سپری‌شده از آغاز این روز؛ برای روز تمام‌شده کل روز قبل. تجمعی، جمع و اختلاف همه از SQL.
+ * ساعت پس از `lastHour` مقدار ندارد (`null`، نه صفر). سود بی `cost.view` همان `null`.
+ */
+export interface DailyComparison {
+  businessDate: string;
+  cutoff: string;
+  lastHour: number | null;
+  total: { sales: string; received: string; profit: string | null };
+  /** خلاصهٔ این روز منهای روز قبل تا مرز — از SQL. */
+  delta: { sales: string; received: string; profit: string | null };
+  hours: { hour: number; cumulative: { sales: string; received: string; profit: string | null } | null }[];
+}
 
 /** خلاصه روز به تفکیک کانال فاکتور (مهاجرت ۱۰۸). جمع کانال‌ها همان خلاصه روز است؛ روز خالی آرایهٔ خالی. */
 export interface DailyChannel { channel: string; salesShare: string | null; salesAmount: string; receivedAmount: string; profitAmount: string | null; invoiceCount: number; returnCount: number }

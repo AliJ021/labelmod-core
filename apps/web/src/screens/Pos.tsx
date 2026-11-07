@@ -1,4 +1,5 @@
 import { AmountInput } from "../components/ui/AmountInput.tsx";
+import { Segmented } from "../components/ui/Controls.tsx";
 import { useUrlState, navigate } from "../lib/use-url-state.ts";
 import { readPendingScan, writePendingScan, clearPendingScan, type PendingScan } from "../lib/pending-scan.ts";
 /**
@@ -1352,13 +1353,17 @@ function PosScreen({ actorId, mode, onMode, browseInvoices }: {
           <span className="pill">{countLabel}</span>
         </div>
         <div className="pos-tools">
-          {onMode ? <button type="button" className="tool" disabled={busy || !payIdle || draftActive || completed !== null}
+          {/* طرح ۱۰: دو حالت در یک کلید دوتایی؛ همان شرط پیشین — با سبد باز حالت عوض نمی‌شود. */}
+          {onMode ? <div className="pos-mode"><Segmented label="نوع فروش" value={instagram ? "instagram" : "store"}
+            options={[{ key: "store", label: "حضوری" }, { key: "instagram", label: "اینستاگرام" }]}
+            disabled={busy || !payIdle || draftActive || completed !== null}
             title={draftActive ? "پیش از تغییر حالت، سبد جاری را نهایی، ذخیره یا رها کنید." : undefined}
-            onClick={() => onMode(instagram ? "store" : "instagram")}>
-            {instagram ? "صندوق فروشگاه" : "فروش اینستاگرام"}
-          </button> : null}
+            onChange={(next) => { if (next !== (instagram ? "instagram" : "store")) onMode(next); }} /></div> : null}
+          {/* بی دسترسی به فهرست فاکتور، پیش‌نویس کنارگذاشته راه برگشتی ندارد؛ پس پیوند هم نیست. */}
+          {browseInvoices ? <a className="tool" href="/?page=invoices&invoices.status=draft" onClick={e => { if (e.metaKey || e.ctrlKey || e.shiftKey) return; e.preventDefault(); navigate(e.currentTarget.href); }}>
+            <Icon name="receipt" size="sm" />پیش‌نویس‌ها</a> : null}
           {instagram ? null : <button type="button" className="tool" disabled={!canPrintProforma} onClick={() => void printProforma()}>
-            {proformaPrinting ? "در حال آماده‌سازی پیش‌فاکتور…" : "چاپ پیش‌فاکتور"}
+            <Icon name="print" size="sm" />{proformaPrinting ? "در حال آماده‌سازی پیش‌فاکتور…" : "چاپ پیش‌فاکتور"}
           </button>}
           <details className="pos-more" onKeyDown={e => {
             if (e.key === "Escape") { e.currentTarget.open = false; e.currentTarget.querySelector("summary")?.focus(); }
@@ -1372,7 +1377,6 @@ function PosScreen({ actorId, mode, onMode, browseInvoices }: {
           }}>
           {/* بی دسترسی به فهرست فاکتور، پیش‌نویس کنارگذاشته راه برگشتی ندارد؛ پس فقط «رها کردن». */}
           {browseInvoices ? <>
-          <a className="tool" href="/?page=invoices&invoices.status=draft" onClick={e => { if (e.metaKey || e.ctrlKey || e.shiftKey) return; e.preventDefault(); navigate(e.currentTarget.href); }}>پیش‌نویس‌ها</a>
           <button type="button" className="tool" disabled={busy || !invoice || completed !== null || !payIdle} onClick={() => {
             if (!invoice || busy) return;
             forgetCart(); setInvoice(null); setReceived(0n); scans.current.reset();
@@ -1475,12 +1479,16 @@ function PosScreen({ actorId, mode, onMode, browseInvoices }: {
           <div className="pos-doc-head pos-doc-block">
             <span className="pos-doc-icon" aria-hidden="true"><Icon name="receipt" /></span>
             <div className="pos-doc-title">
-              <strong>{instagram ? "فاکتور فروش اینستاگرام" : "فاکتور فروش جدید"}</strong>
+              <span className="pos-doc-name"><strong>{instagram ? "فاکتور فروش اینستاگرام" : "فاکتور فروش جدید"}</strong>
+                {/* این کارت فقط پیش‌نویس را نشان می‌دهد؛ پس از نهایی‌سازی جایش را «فروش ثبت شد» می‌گیرد. */}
+                <StatusBadge state="draft" label="پیش‌نویس" /></span>
               <small>شماره پس از ثبت نهایی اختصاص می‌یابد.</small>
             </div>
             <dl className="pos-doc-meta">
               <div><dt>تاریخ فاکتور</dt><dd>{invoice?.occurredAt ? formatJalaliMoment(invoice.occurredAt) : "—"}</dd></div>
               <div><dt>نوع فروش</dt><dd>{instagram ? "اینستاگرام" : "حضوری"}</dd></div>
+              {/* نام از سرور (`createdByName`)؛ پیش از اولین قلم پیش‌نویسی نیست و حدس زده نمی‌شود. */}
+              <div><dt>ثبت‌کننده</dt><dd>{invoice?.createdByName ?? "—"}</dd></div>
             </dl>
           </div>
           {/* مشتری همیشه باز و پیش از جست‌وجوست؛ اختیاری/الزامی فقط سیاست فروش (`pos.require_customer`) است، نه چیدمان. */}

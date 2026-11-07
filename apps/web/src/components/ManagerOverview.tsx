@@ -19,7 +19,7 @@ import { trendBounds, bucketPoints } from "../lib/dashboard-trend.ts";
 import { formatMoney } from "../lib/format.ts";
 import { Kpi } from "./ui/Kpi.tsx";
 import { Money } from "./ui/Money.tsx";
-import { BarChart } from "./ui/BarChart.tsx";
+import { ValueLineChart } from "./ui/LineChart.tsx";
 import { Solid } from "./Glass.tsx";
 import { SectionHeader } from "./ui/PageHeader.tsx";
 
@@ -57,10 +57,11 @@ export function ManagerOverview({ branchId: chosen }: { branchId?: string | unde
   return <>
     {cards.length ? <section className="kpis kpi-cards manager-kpis" aria-label="شاخص‌های امروز">{cards}</section> : null}
     {points.length ? <Solid as="section" className="pad manager-trend" aria-labelledby="manager-trend-title">
-      <SectionHeader id="manager-trend-title" title={`فروش خالص ${DAYS} روز`} description="هر ستون خلاصهٔ همان روز است که در دیتابیس حساب شده؛ امروز هنوز تمام نشده." />
-      <BarChart title={`فروش خالص ${DAYS} روز اخیر (تومان)`} labelHeader="روز" valueHeader="فروش خالص (تومان)"
+      <SectionHeader id="manager-trend-title" title={`فروش خالص ${DAYS} روز`} description="هر نقطه خلاصهٔ همان روز است که در دیتابیس حساب شده؛ امروز هنوز تمام نشده." />
+      <ValueLineChart title={`فروش خالص ${DAYS} روز اخیر (تومان)`} labelHeader="روز" valueHeader="فروش خالص (تومان)"
         summary={`${DAYS} روز تا امروز، شعبهٔ همین گزارش.`}
-        bars={points.map(p => { const v = p.values.sales ?? 0n; return { key: p.key, label: p.label, value: v, display: `${formatMoney(v)} تومان` }; })} />
+        points={points.map(p => ({ key: p.key, label: p.label, value: p.values.sales,
+          display: p.values.sales === null ? "نامعلوم" : `${formatMoney(p.values.sales)} تومان` }))} />
     </Solid> : null}
   </>;
 }

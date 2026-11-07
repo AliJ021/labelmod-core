@@ -40,9 +40,13 @@ import { ActionKeys, actionFor } from "../lib/action-key.ts";
 import { parseRial, rialFromTomanInput, toman } from "../lib/money.ts";
 import { pos, type Branch } from "../lib/pos.ts";
 import { ReceiptBulkAdd } from "./ReceiptBulkAdd.tsx";
+import { DataTable, type Column } from "../components/ui/DataTable.tsx";
+import { Money } from "../components/ui/Money.tsx";
+import { formatQty } from "../lib/format.ts";
 import {
   ALLOCATION_LABEL,
   RECEIPT_STATUS,
+  chargeSummary,
   purchasing,
   type ExpenseAccount,
   type PayAccount,
@@ -64,6 +68,22 @@ function shortDate(iso: string): string {
     return iso.slice(0, 10);
   }
 }
+
+/**
+ * طرح ۱۰: ستون‌های فهرست رسید. جمع تعداد و هزینهٔ جانبی از SQL سرور است؛ پاسخ قدیمی‌تر بی آن‌ها
+ * «قلم» و «نامعلوم» می‌گیرد، نه صفر.
+ */
+const RECEIPT_COLUMNS: readonly Column<ReceiptSummary>[] = [
+  { key: "number", header: "رسید", cell: (r) => <span className="cell-stack"><span className="num">{r.number ?? "پس از ثبت"}</span><small className="muted">{r.warehouseName}</small></span> },
+  { key: "date", header: "تاریخ", cell: (r) => shortDate(r.occurredAt) },
+  { key: "supplier", header: "تأمین‌کننده", cell: (r) => <span className="cell-stack"><span>{r.supplierName}</span>{r.supplierInvoiceNo ? <small className="muted">فاکتور {r.supplierInvoiceNo}{r.status === "draft" ? " (پیش‌نویس)" : ""}</small> : null}</span> },
+  { key: "qty", header: "اقلام", cell: (r) => typeof r.totalQty === "string" ? `${formatQty(r.totalQty)} عدد` : `${r.lineCount} قلم` },
+  { key: "goods", header: "کالا", numeric: true, cell: (r) => <Money rial={r.goodsAmount} unit={false} /> },
+  { key: "charges", header: "هزینهٔ جانبی", cell: (r) => typeof r.chargesAmount !== "string" ? <Money rial={null} />
+    : r.chargesAmount === "0" ? <span className="muted">—</span>
+    : <span className="cell-stack"><Money rial={r.chargesAmount} unit={false} />{r.charges?.length ? <small className="muted">{chargeSummary(r.charges)}</small> : null}</span> },
+  { key: "status", header: "وضعیت", cell: (r) => <StatusBadge state={r.status === "posted" ? "completed" : r.status === "draft" ? "draft" : "cancelled"} label={RECEIPT_STATUS[r.status] ?? r.status} /> },
+];
 
 export function Purchasing() {
   const [branches, setBranches] = useState<Branch[]>([]);
@@ -399,32 +419,13 @@ export function Purchasing() {
         {list.length === 0 ? (
           <p className="empty">هنوز رسیدی ثبت نشده.</p>
         ) : (
-          <div className="scroll-x"><table className="grid">
-            <caption className="sr-only">رسیدهای خرید؛ مبلغ‌ها به تومان</caption>
-            <thead><tr><th>رسید</th><th>تاریخ</th><th>تأمین‌کننده</th><th>اقلام</th><th className="num">کالا (تومان)</th><th>وضعیت</th><th>عملیات</th></tr></thead>
-            <tbody>
-            {list.map((r) => (
-              <tr key={r.id}>
-                <td><span className="num">{r.number ?? "پس از ثبت"}</span><small>{r.warehouseName}</small></td>
-                <td>{shortDate(r.occurredAt)}</td>
-                <td>{r.supplierName}{r.supplierInvoiceNo ? <small>فاکتور {r.supplierInvoiceNo}</small> : null}</td>
-                <td>{r.lineCount} قلم</td>
-                <td className="num">{toman(parseRial(r.goodsAmount))}</td>
-                <td><StatusBadge state={r.status === "posted" ? "completed" : r.status === "draft" ? "draft" : "cancelled"} label={RECEIPT_STATUS[r.status] ?? r.status} /></td>
-                <td>
-                  <button
-                    type="button"
-                    className="btn btn--quiet"
-                    onClick={() => void open(r.id)}
-                    disabled={busyAll}
-                  >
-                    باز کن
-                  </button>
-                </td>
-              </tr>
-            ))}
-            </tbody>
-          </table></div>
+          <DataTable<ReceiptSummary> caption="رسیدهای خرید؛ مبلغ‌ها به تومان" stack rows={list} rowKey={(r) => r.id} columns={RECEIPT_COLUMNS}
+            rowActions={(r) => (
+              <button type="button" className="icon-button invoice-icon" aria-label={`باز کن ${r.number ?? "پیش‌نویس"}`} title="باز کن"
+                onClick={() => void open(r.id)} disabled={busyAll}>
+                <Icon name="chevron" size="sm" />
+              </button>
+            )} />
         )}
       </Solid>
 

@@ -226,6 +226,9 @@ describe("رسید خرید", { skip }, () => {
     });
     assert.equal(r.statusCode, 403, r.body);
     assert.equal(r.json().error.code, "deny");
+    // فهرست برگشت از خرید همان مجوز را می‌خواهد.
+    const list = await app.inject({ method: "GET", url: "/purchase-returns", ...s });
+    assert.equal(list.statusCode, 403, list.body);
   });
 
   test("انباردار تأمین‌کننده تازه نمی‌سازد — تفصیلی، کار حسابداری است", async () => {
@@ -627,6 +630,15 @@ describe("رسید خرید", { skip }, () => {
     });
     assert.equal(charge.statusCode, 201, charge.body);
 
+    // فهرست رسیدها (طرح ۱۰): جمع تعداد و هزینهٔ جانبی از SQL، و نوع و روش هر هزینه.
+    const listed = await app.inject({ method: "GET", url: "/receipts?status=draft&limit=200", ...s });
+    assert.equal(listed.statusCode, 200, listed.body);
+    const row = (listed.json() as Array<{ id: string; totalQty: string; chargesAmount: string; charges: unknown; lineCount: number }>)
+      .find((r) => r.id === draft.id);
+    assert.ok(row, "رسید در فهرست است");
+    assert.deepEqual({ lineCount: row.lineCount, totalQty: Number(row.totalQty), chargesAmount: row.chargesAmount, charges: row.charges },
+      { lineCount: 2, totalQty: 20, chargesAmount: "2000000", charges: [{ chargeType: "حمل", allocation: "by_value" }] });
+
     const posted = await app.inject({
       method: "POST",
       url: `/receipts/${draft.id}/post`,
@@ -940,6 +952,17 @@ describe("رسید خرید", { skip }, () => {
     assert.equal(body.goodsAmount, "2000000");
     assert.equal(body.costAmount, "2400000");
     assert.equal(body.chargeLoss, "400000");
+
+    // فهرست برگه‌ها (طرح ۱۰): همان مبلغ‌های ثبت‌شده، نه محاسبهٔ تازه.
+    const listed = await app.inject({ method: "GET", url: "/purchase-returns?limit=200", ...s });
+    assert.equal(listed.statusCode, 200, listed.body);
+    const item = (listed.json() as { returns: Array<Record<string, unknown>> }).returns.find((r) => r.number === body.number);
+    assert.ok(item, "برگه در فهرست است");
+    assert.deepEqual(
+      { goods: item.goodsAmount, cost: item.costAmount, loss: item.chargeLoss, qty: Number(item.totalQty), lines: item.lineCount, status: item.status },
+      { goods: "2000000", cost: "2400000", loss: "400000", qty: 2, lines: 1, status: "posted" });
+    assert.equal(item.receiptNumber, (await app.inject({ method: "GET", url: `/receipts/${draft.id}`, ...s })).json().number);
+    assert.match(String(item.firstItem), /\S/);
 
     assert.equal(await onHand(variationA), before - 2);
 

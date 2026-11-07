@@ -52,7 +52,8 @@ test("invoice totals come from the server for the same filter; drafts are not sa
   // پول از سرور است و تومان نشان داده می‌شود: ۲۹۵٬۷۰۰٬۰۰۰ ریال = ۲۹٬۵۷۰٬۰۰۰ تومان.
   await expect(totals.getByRole("region",{name:"جمع قابل پرداخت"})).toContainText("29٬570٬000");
   await expect(totals.getByRole("region",{name:"مانده"})).toContainText("1٬770٬000");
-  await expect(totals.getByRole("region",{name:"فاکتورهای قطعی این فیلتر"})).toContainText("۱۸");
+  // فهرست با «امروز» باز می‌شود (تصمیم مالک، ۲۰۲۶/۱۱/۰۷)، پس کارت شمار همان «فاکتورهای امروز» است.
+  await expect(totals.getByRole("region",{name:"فاکتورهای امروز"})).toContainText("۱۸");
   const chips=page.getByRole("group",{name:"وضعیت",exact:true});
   await expect(chips.getByRole("radio",{name:"همه (۲۲)"})).toBeChecked();
   await expect(chips.getByRole("radio",{name:/پیش‌نویس/})).toHaveCount(0);
@@ -65,6 +66,89 @@ test("invoice totals come from the server for the same filter; drafts are not sa
   await expect(totals).toHaveCount(0);
   await expect(page.getByRole("tab",{name:"پیش‌نویس‌ها",exact:true})).toHaveAttribute("aria-selected","true");
   expect(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth+1)).toBe(true);
+});
+
+test("V10 invoice list: settled/open/returns chips and channel are server filters; total row from SQL; masked mobile; new sale only when allowed", async ({page,api}) => {
+  const base={branchId:"b1",branchName:"شعبه آزمون",shiftId:"s1",creatorName:"صندوق‌دار آزمون",finalizerName:"صندوق‌دار آزمون",occurredAt:"2026-09-26T08:00:00Z",paymentMethods:"نقد",canResume:false,needsReview:false};
+  const open={...base,id:"i1",number:"MAIN-1",status:"finalized",chip:"open",channel:"pos",customerName:"سارا احمدی",customerMobile:"0912 *** 4821",payableAmount:"2000000",receivedAmount:"1500000",remainingAmount:"500000"};
+  const settled={...base,id:"i2",number:"MAIN-2",status:"finalized",chip:"settled",channel:"web",customerName:null,customerMobile:null,payableAmount:"1000000",receivedAmount:"1000000",remainingAmount:"0"};
+  api.defaults["GET /invoices"]={rows:[open,settled],total:2,pageSize:50,
+    summary:{count:2,payableAmount:"3000000",receivedAmount:"2500000",remainingAmount:"500000"},
+    statusCounts:{all:4,draft:1,finalized:2,cancelled:1,returned:0,settled:1,open:1,returns:0}};
+  const calls=()=>api.calls.filter(c=>c.startsWith("GET /invoices?"));
+  await page.goto("/?page=invoices");
+  const chips=page.getByRole("group",{name:"وضعیت",exact:true});
+  await expect(chips.getByRole("radio")).toHaveCount(5);
+  for (const name of ["همه (۴)","تسویه‌شده (۱)","مانده‌دار (۱)","مرجوعی (۰)","لغوشده (۱)"]) await expect(chips.getByRole("radio",{name,exact:true}),name).toHaveCount(1);
+  await expect(chips.getByRole("radio",{name:"همه (۴)",exact:true})).toBeChecked();
+  await expect(chips.getByRole("radio",{name:/^قطعی/}),"legacy chip only when the URL carries it").toHaveCount(0);
+  // نشان ردیف همان تراشهٔ SQL است: قطعیِ مانده‌دار و قطعیِ تسویه‌شده، نه «قطعی» برای هر دو.
+  const rows=page.locator(".invoice-table tbody tr");
+  await expect(rows.nth(0)).toContainText("مانده‌دار");
+  await expect(rows.nth(1)).toContainText("تسویه‌شده");
+  // موبایل فقط پوشیده و جدا از متن فارسی (LTR).
+  await expect(rows.nth(0).locator("bdi[dir=ltr]")).toHaveText("0912 *** 4821");
+  // ردیف جمع از جمع‌های سرور برای کل فیلتر: ۳٬۰۰۰٬۰۰۰ ریال = ۳۰۰٬۰۰۰ تومان؛ مانده ۵۰٬۰۰۰ تومان.
+  const foot=page.locator(".invoice-table tfoot");
+  await expect(foot).toContainText("جمع ۲ فاکتور این فیلتر");
+  await expect(foot).toContainText("300٬000");
+  await expect(foot).toContainText("50٬000");
+  await expect(page.locator(".invoice-remaining[data-due]")).toHaveCount(1);
+  await chips.getByRole("radio",{name:/^مانده‌دار/}).check();
+  await expect.poll(()=>calls().at(-1)).toBe("GET /invoices?status=open&search=&page=1&day=today");
+  await page.getByRole("combobox",{name:"کانال"}).selectOption("web");
+  await expect.poll(()=>calls().at(-1)).toBe("GET /invoices?status=open&search=&page=1&channel=web&day=today");
+  await expect(page).toHaveURL(/invoices\.channel=web/);
+  // «فروش جدید» فقط با sale.create؛ مدیر آزمایشی دارد و پیوند به صندوق است.
+  await expect(page.getByRole("link",{name:"فروش جدید",exact:true})).toHaveAttribute("href",/page=pos/);
+  expect(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth+1),"no page-level horizontal overflow").toBe(true);
+});
+
+test("owner decision: the list opens on the server's today; all dates, search, explicit dates and drafts never get today", async ({page,api}) => {
+  api.defaults["GET /invoices"]={rows:[],total:0,pageSize:50,summary:{count:0,payableAmount:"0",receivedAmount:"0",remainingAmount:"0"},statusCounts:{all:0},
+    businessDate:"2026-09-16",range:{from:"2026-09-16",to:"2026-09-16"}};
+  const calls=()=>api.calls.filter(c=>c.startsWith("GET /invoices?"));
+  await page.goto("/?page=invoices");
+  const days=page.getByRole("group",{name:"بازهٔ تاریخ"});
+  await expect(days.getByRole("button",{name:"امروز",exact:true})).toHaveAttribute("aria-pressed","true");
+  await expect.poll(()=>calls().at(-1)).toBe("GET /invoices?status=all&search=&page=1&day=today");
+  // عنوان از «امروزِ» پاسخ سرور ساخته می‌شود، نه از ساعت مرورگر: ۱۶ سپتامبر ۲۰۲۶ = ۲۵ شهریور ۱۴۰۵.
+  await expect(page.getByRole("heading",{name:"فاکتورهای امروز",exact:true})).toBeVisible();
+  await expect(page.getByText("۲۵ شهریور ۱۴۰۵",{exact:false})).toBeVisible();
+  await days.getByRole("button",{name:"همهٔ تاریخ‌ها",exact:true}).click();
+  await expect.poll(()=>calls().at(-1)).toBe("GET /invoices?status=all&search=&page=1");
+  await expect(page).toHaveURL(/invoices\.day=all/);
+  await expect(page.getByRole("heading",{name:"فاکتورهای این فیلتر",exact:true})).toBeVisible();
+  await days.getByRole("button",{name:"امروز",exact:true}).click();
+  await expect.poll(()=>calls().at(-1)).toBe("GET /invoices?status=all&search=&page=1&day=today");
+  // جست‌وجو همهٔ تاریخ‌ها را می‌گردد: شمارهٔ فاکتور هفتهٔ پیش نباید خالی برگردد.
+  await page.getByPlaceholder("شمارهٔ فاکتور یا نام مشتری").fill("MAIN-9");
+  await expect.poll(()=>calls().at(-1)).toBe("GET /invoices?status=all&search=MAIN-9&page=1");
+  await expect(days.getByRole("button",{name:"امروز",exact:true})).toBeDisabled();
+  await page.getByPlaceholder("شمارهٔ فاکتور یا نام مشتری").fill("");
+  await expect.poll(()=>calls().at(-1)).toBe("GET /invoices?status=all&search=&page=1&day=today");
+  // پیش‌نویس‌ها «امروز» نمی‌گیرند: پیش‌نویس رهاشدهٔ دیروز هم باید دیده شود.
+  await page.getByRole("tab",{name:/^پیش‌نویس‌ها/}).click();
+  await expect.poll(()=>calls().at(-1)).toBe("GET /invoices?status=draft&search=&page=1");
+  await expect(days).toHaveCount(0);
+});
+
+test("an explicit date range in an old link wins over today", async ({page,api}) => {
+  const calls=()=>api.calls.filter(c=>c.startsWith("GET /invoices?"));
+  await page.goto("/?page=invoices&invoices.from=2026-09-23&invoices.to=2026-09-30");
+  await expect.poll(()=>calls().at(-1)).toBe("GET /invoices?status=all&search=&page=1&from=2026-09-23&to=2026-09-30");
+  const days=page.getByRole("group",{name:"بازهٔ تاریخ"});
+  await expect(days.getByRole("button",{name:"امروز",exact:true})).toHaveAttribute("aria-pressed","false");
+  await expect(days.getByRole("button",{name:"همهٔ تاریخ‌ها",exact:true})).toHaveAttribute("aria-pressed","false");
+});
+
+test("invoice list without sale.create shows no new-sale action", async ({page,api}) => {
+  api.handlers.set("GET /auth/can", async (route, url) => { await route.fulfill({ json: { verdict: url.searchParams.get("operation")==="sale.create" ? "deny" : "allow", approver: null, reason: "" } }); });
+  api.defaults["GET /invoices"]={rows:[],total:0,pageSize:50,summary:{count:0,payableAmount:"0",receivedAmount:"0",remainingAmount:"0"},statusCounts:{all:0}};
+  await page.goto("/?page=invoices");
+  await expect(page.getByRole("heading",{name:"فاکتورها",exact:true})).toBeVisible();
+  await expect(page.getByText("فاکتوری با این فیلترها پیدا نشد.")).toBeVisible();
+  await expect(page.getByRole("link",{name:"فروش جدید",exact:true})).toHaveCount(0);
 });
 
 test("invoice date filters are Jalali-first: ISO stays in the URL and request, incomplete/missing/reversed dates are never sent", async ({page,api}) => {
@@ -240,7 +324,8 @@ test("manager report tables scroll inside their card instead of widening the pag
   // بی داده جدولی ساخته نمی‌شود؛ سرریز فقط با سطر واقعی دیده می‌شد (scrollWidth ۴۳۵ در عرض ۳۷۵).
   const d="2026-09-10";
   api.defaults["GET /reports/compare"]={rows:[{channel:"pos",invoiceCount:3,netAmount:"3000000",profitAmount:"500000",prevInvoiceCount:2,prevNetAmount:"2000000",prevProfitAmount:"300000",deltaAmount:"1000000",deltaPercent:50,direction:"up"}]};
-  api.defaults["GET /reports/hourly"]={rows:[{businessDate:d,hourOfDay:10,channel:"pos",invoiceCount:2,itemQty:"3",netAmount:"2000000"}]};
+  // `hourTotal` جزو قرارداد API است (جمع ساعت در SQL)؛ پاسخ ساختگی بی آن، شکل پاسخ واقعی سرور نبود.
+  api.defaults["GET /reports/hourly"]={rows:[{businessDate:d,hourOfDay:10,hourTotal:"2000000",channel:"pos",invoiceCount:2,itemQty:"3",netAmount:"2000000"}]};
   api.defaults["GET /reports/basket"]={rows:[{businessDate:d,channel:"pos",invoiceCount:2,knownCustomers:1,anonymousCount:1,itemQty:"3",lineCount:3,netAmount:"2000000",qtyPerInvoice:"1.5"}]};
   api.defaults["GET /reports/customer-basket"]={rows:[{customerId:"c1",fullName:"مشتری آزمایشی با نام بلند",mobile:"09120000000",invoiceCount:2,itemQty:"3",netAmount:"2000000",lastPurchase:d}]};
   await page.goto("/?page=reports&reports.tab=manager");

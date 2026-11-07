@@ -966,6 +966,14 @@ export function registerPurchasingRoutes(
     return view;
   });
 
+  /** فهرست برگه‌های برگشت از خرید — همان مجوز و دامنهٔ خواندن یک برگه. */
+  app.get("/purchase-returns", async (req) => {
+    const s = session(req);
+    const { limit } = z.object({ limit: z.coerce.number().int().min(1).max(200).default(50) }).parse(req.query ?? {});
+    await requireForSession(db, s, "stock.receive");
+    return { returns: await returns.list(await branchesOf(db, s.userId), limit) };
+  });
+
   app.get("/purchase-returns/:id", async (req) => {
     const s = session(req);
     const { id } = z.object({ id: uuid }).parse(req.params);

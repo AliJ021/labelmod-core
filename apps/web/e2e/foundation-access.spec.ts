@@ -143,7 +143,11 @@ test.describe("F-110-01 — conservative permission loading", () => {
     const before = (await dashboard.boundingBox())!;
     release();
     if (!compact(page)) await expect(page.locator(".shell-branch:not([data-pending])").getByText("شعبه آزمایشی", { exact: true })).toBeVisible();
-    else await expect(page.locator(".shell-branch")).toHaveCount(0);
+    // گوشی (طرح ۱۰): کارت شعبه فقط درون منوی ☰ است که بسته است — نه در نوار پایین، نه دیدنی.
+    else {
+      await expect(page.locator(".workspace-nav .shell-branch")).toHaveCount(0);
+      await expect(page.locator("#more-sheet .shell-branch")).toBeHidden();
+    }
     const after = (await dashboard.boundingBox())!;
     for (const k of ["x", "y", "width", "height"] as const) {
       expect(Math.abs(after[k] - before[k]), `dashboard tab ${k} stays put`).toBeLessThanOrEqual(1);

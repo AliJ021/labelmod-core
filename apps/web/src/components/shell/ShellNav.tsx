@@ -16,7 +16,7 @@ import { NAV_ITEMS, routeUrl, type AccessState, type NavItem, type Zone } from "
  * نمی‌شود و فقط جای‌نگهدارِ بی‌برچسب جایش را نگه می‌دارد. اگر پرسش نرسید،
  * پیامی آرام با «بررسی دوباره» می‌آید؛ مقصدِ نامعلوم هرگز نشان داده نمی‌شود.
  */
-export function ShellNav({ id, items, pending, access, onRetry, zone, onZone, compact, more, onMore, collapsed, onToggle, top, bottom }: {
+export function ShellNav({ id, items, pending, access, onRetry, zone, onZone, compact, more, onMore, collapsed, onToggle, top, bottom, opener }: {
   /** طرح ۱۰: کارت شعبه بالای منو و نام کاربر پایین آن — فقط نوار کناری دسکتاپ. */
   top?: ReactNode;
   bottom?: ReactNode;
@@ -31,7 +31,10 @@ export function ShellNav({ id, items, pending, access, onRetry, zone, onZone, co
   onZone: (next: Zone) => void;
   compact: boolean;
   more: boolean;
-  onMore: (open: boolean) => void;
+  /** `from`: دکمه‌ای که برگه را باز کرد («بیشتر» نوار پایین یا ☰ سربرگ) — فوکوس به همان برمی‌گردد. */
+  onMore: (open: boolean, from?: HTMLElement) => void;
+  /** بازکنندهٔ آخر برگه؛ اگر نبود، دکمهٔ «بیشتر». */
+  opener?: () => HTMLElement | null;
 }) {
   const toggle = useRef<HTMLButtonElement>(null);
   /**
@@ -69,7 +72,7 @@ export function ShellNav({ id, items, pending, access, onRetry, zone, onZone, co
       </div> : null}
       <button ref={toggle} type="button" className="workspace-more" aria-haspopup="dialog" aria-expanded={compact && more} aria-controls={compact ? "more-sheet" : undefined}
         aria-label="بخش‌های بیشتر" aria-description={insideMore ? `بخش باز: ${current.label}` : access === "degraded" ? "دسترسی بعضی بخش‌ها بررسی نشد" : undefined}
-        data-current={insideMore ? "" : undefined} onClick={() => onMore(true)}>
+        data-current={insideMore ? "" : undefined} onClick={e => onMore(true, e.currentTarget)}>
         <Icon name="more" />
         <span className="tab-label">بیشتر</span>
       </button>
@@ -84,6 +87,7 @@ export function ShellNav({ id, items, pending, access, onRetry, zone, onZone, co
       </div> : null}
     </Glass>
     {compact ? <MoreSheet open={more} items={items} pending={pending.length} access={access} zone={zone}
-      onNavigate={onZone} onDismiss={() => onMore(false)} onRetry={onRetry} trigger={() => toggle.current} /> : null}
+      onNavigate={onZone} onDismiss={() => onMore(false)} onRetry={onRetry}
+      trigger={() => { const el = opener?.(); return el?.isConnected && el.offsetParent !== null ? el : toggle.current; }} footer={bottom} header={top} /> : null}
   </>;
 }

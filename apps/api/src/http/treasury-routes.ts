@@ -30,7 +30,7 @@ import type { FastifyInstance } from "fastify";
 import { sql } from "kysely";
 import { z } from "zod";
 import { AuthError } from "../auth/service.ts";
-import { requireForSession } from "../auth/permission.ts";
+import { can, requireForSession } from "../auth/permission.ts";
 import type { Db } from "../db/client.ts";
 import { parseMoney } from "../lib/money.ts";
 import { runOnce } from "../lib/idempotency.ts";
@@ -255,6 +255,84 @@ export function registerTreasuryRoutes(
         ) b ON true
        ORDER BY acc.code`.execute(db);
     return { balances: rows.rows };
+  });
+
+  /**
+   * طرح ۱۰ — «شیفت‌ها و کشوها» و «حرکت‌های نقد غیرفروشی امروز» یک شعبه.
+   *
+   * - **کشوها** (پشت `report.view`، همان قاعدهٔ کارت کشوهای داشبورد و گزارش مغایرت نقد):
+   *   شیفت‌های باز، به‌علاوهٔ شیفت‌های امروز و دیروز. «انتظار نقد» کشوی باز از
+   *   `sales.shift_expected_cash` (۱۱۰) است — همان فرمول `close_shift`، با آزمون برابری؛ کشوی
+   *   بسته همان `expected_cash` ثبت‌شده. شمرده و مغایرت فقط پس از بستن وجود دارند (`null`، نه صفر).
+   * - **حرکت‌ها** (پشت `treasury.manage`): حرکت خزانهٔ ثبت‌شدهٔ امروز که از کشوی صندوق رد شده؛
+   *   حرکتی که شیفت ندارد هم می‌آید (`drawerName: null`) — پنهان‌کردنش همان پولی را گم می‌کرد
+   *   که شمارش کشو نمی‌بیند.
+   *   علامت مبلغ از دید کشو در SQL: خروج از کشو منفی، ورود مثبت.
+   * - «امروز» از `platform.business_date()` است، نه ساعت سرور یا مرورگر.
+   */
+  app.get("/treasury/drawers", async (req) => {
+    const s = session(req);
+    const { branchId } = z.object({ branchId: uuid }).parse(req.query ?? {});
+    await requireForSession(db, s, "treasury.manage");
+    await assertBranch(db, s.userId, branchId);
+    const reports = await can(db, { userId: s.userId, operation: "report.view", viaPin: s.pinUnlocked });
+    const shiftsVisible = reports.verdict === "allow";
+
+    const day = await sql<{ d: string }>`SELECT platform.business_date()::text AS d`.execute(db);
+    const shifts = shiftsVisible ? (await sql<{
+      id: string; userName: string; openedAt: Date; closedAt: Date | null; status: string; carriedOver: boolean;
+      openingCash: string; expectedCash: string | null; countedCash: string | null; variance: string | null;
+    }>`
+      SELECT s.id::text, u.full_name AS "userName", s.opened_at AS "openedAt", s.closed_at AS "closedAt", s.status,
+             (s.status = 'open' AND s.opened_at < platform.business_day_start(platform.business_date())) AS "carriedOver",
+             s.opening_cash::text AS "openingCash",
+             (CASE WHEN s.status = 'open' THEN sales.shift_expected_cash(s.id) ELSE s.expected_cash END)::text AS "expectedCash",
+             s.counted_cash::text AS "countedCash", s.variance::text AS variance
+        FROM sales.cash_shift s
+        JOIN identity.app_user u ON u.id = s.user_id
+       WHERE s.branch_id = ${branchId}::uuid
+         AND (s.status = 'open' OR s.opened_at >= platform.business_day_start(platform.business_date() - 1))
+       ORDER BY (s.status = 'open') DESC, s.opened_at DESC, s.id
+       LIMIT 20`.execute(db)).rows.map(r => ({
+        ...r, openedAt: r.openedAt.toISOString(), closedAt: r.closedAt === null ? null : r.closedAt.toISOString(),
+      })) : null;
+
+    const moves = await sql<{
+      id: string; occurredAt: Date; drawerName: string | null; purpose: string; note: string | null; createdByName: string | null;
+      counterpartCode: string | null; counterpartName: string | null; drawerAmount: string;
+    }>`
+      SELECT t.id::text, t.occurred_at AS "occurredAt", su.full_name AS "drawerName", t.purpose, t.note,
+             cu.full_name AS "createdByName",
+             CASE WHEN fa.kind = 'cash_box' THEN coalesce(t.expense_account_code, ta.ledger_account_code)
+                  ELSE fa.ledger_account_code END AS "counterpartCode",
+             CASE WHEN fa.kind = 'cash_box' THEN coalesce(ea.name, ta.name)
+                  ELSE coalesce(fa.name, CASE t.party_type
+                    WHEN 'supplier' THEN (SELECT x.name      FROM purchasing.supplier x WHERE x.id = t.party_id)
+                    WHEN 'customer' THEN (SELECT x.full_name FROM sales.customer     x WHERE x.id = t.party_id)
+                    WHEN 'user'     THEN (SELECT x.full_name FROM identity.app_user  x WHERE x.id = t.party_id) END) END AS "counterpartName",
+             (CASE WHEN fa.kind = 'cash_box' AND ta.kind = 'cash_box' THEN 0
+                   WHEN fa.kind = 'cash_box' THEN -t.amount
+                   ELSE t.amount END)::text AS "drawerAmount"
+        FROM treasury.transaction t
+        LEFT JOIN sales.cash_shift sh ON sh.id = t.shift_id
+        LEFT JOIN identity.app_user su ON su.id = sh.user_id
+        LEFT JOIN identity.app_user cu ON cu.id = t.created_by
+        LEFT JOIN treasury.account fa ON fa.id = t.from_account_id
+        LEFT JOIN treasury.account ta ON ta.id = t.to_account_id
+        LEFT JOIN ledger.account ea ON ea.code = t.expense_account_code
+       WHERE t.branch_id = ${branchId}::uuid AND t.status = 'posted'
+         AND (fa.kind = 'cash_box' OR ta.kind = 'cash_box')
+         AND t.occurred_at >= platform.business_day_start(platform.business_date())
+         AND t.occurred_at <  platform.business_day_start(platform.business_date() + 1)
+       ORDER BY t.occurred_at DESC, t.id
+       LIMIT 100`.execute(db);
+
+    return {
+      businessDate: day.rows[0]!.d,
+      shiftsVisible,
+      shifts,
+      moves: moves.rows.map(r => ({ ...r, occurredAt: r.occurredAt.toISOString() })),
+    };
   });
 
   // ── حرکت نقد ───────────────────────────────────────────────────────

@@ -184,15 +184,20 @@
 .cart .qty button:hover:not(:disabled) { background: var(--surface-solid); box-shadow: var(--elev-1); }
 .cart .qty > span, .cart .qty input { min-inline-size: 2.75ch; }
 
-/* ── مرجوعی طرح ۱۰: دو گام کنار هم — «فاکتور و اقلام» و «علت و مبلغ» ───────
-   شمارهٔ گام تزئینی و پنهان از صفحه‌خوان است؛ متن عنوان‌ها دست نخورده. هشدار مهلت
-   تمام‌عرض بالای هر دو می‌ماند. */
-.returns-steps { counter-reset: return-step; }
-.returns-steps > section > h3::before { counter-increment: return-step; content: counter(return-step, persian) ". " / ""; color: var(--accent); }
+/* ── مرجوعی طرح ۱۰: دو ستون — «۱. فاکتور و اقلام» (پهن‌تر، راست) و «۲. حساب مرجوعی» ─────
+   پیش از بارشدن فاکتور فقط ستون یک هست و تمام‌عرض. زیر ۱۱۰۰ پیکسل زیر هم. */
+.returns-grid { display: grid; gap: var(--s-4); align-items: start; min-inline-size: 0; }
+.returns-grid > * { min-inline-size: 0; }
 @media (min-width: 1100px) {
-  .returns-steps { display: grid; grid-template-columns: minmax(0, 1.4fr) minmax(0, 1fr); align-items: start; }
-  .returns-steps > :not(section) { grid-column: 1 / -1; }
+  .returns-grid--loaded { grid-template-columns: minmax(0, 1.8fr) minmax(0, 1fr); }
 }
+.returns-window { margin: 0; }
+.returns-qty { gap: var(--s-2); align-items: center; }
+.returns-condition { inline-size: 9rem; max-inline-size: 100%; min-block-size: var(--touch); }
+/* نام کالا و کد نمی‌شکنند؛ جدول در کارت خودش اسکرول می‌خورد، نه صفحه. */
+.returns-invoice .ui-table td:first-child .cell-stack { min-inline-size: 9rem; }
+.returns-invoice .ui-table .ltr { white-space: nowrap; }
+.returns-qty .qty { flex: 0 0 auto; }
 
 /* ── ردیف شاخص صفحه‌ها (فاکتورها، کالا، خزانه، مشتریان): شمارش هم‌وزن مبلغ ─── */
 .kpi-count { font-size: var(--text-xl); font-weight: var(--weight-heavy); font-variant-numeric: tabular-nums; }
@@ -261,6 +266,8 @@
 .line-variant { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; }
 .line-chip { display: inline-flex; align-items: center; min-block-size: 26px; padding: 2px 9px; border-radius: var(--r-pill); font-size: var(--text-xs); color: var(--ink-2); background: var(--surface-solid-2); box-shadow: inset 0 0 0 var(--border-w) var(--rule); }
 .line-chip--size { min-inline-size: 26px; justify-content: center; font-weight: var(--weight-bold); color: var(--ink); }
+/* طرح ۱۰: رنگ متن ساده است و فقط سایز قاب می‌گیرد؛ نقطهٔ رنگی ساخته نمی‌شود چون نام رنگ آزاد است و نگاشتش به Hex حدس بود. */
+.line-chip:not(.line-chip--size) { padding-inline: 0; background: none; box-shadow: none; }
 .lines-head { display: none; }
 @media (min-width: 1100px) {
   /* شماره · کالا · رنگ و سایز · تعداد · فی واحد · مبلغ کل · تخفیف · حذف (طرح ۱۰) — پنل‌ها، خطا و راهنما تمام‌عرض زیر ردیف. */
@@ -284,8 +291,6 @@
 .return-account dd { margin: 0; }
 .return-account-rule { margin: 0; }
 
-/* خزانه: کشوهای باز و پایانه‌ها کنار هم در دسکتاپ. */
-.treasury-desk { display: grid; gap: var(--s-4); }
 /* طرح ۱۰: کشوها و پایانه‌ها هر کدام یک ردیف تمام‌عرض‌اند، نه دو ستون. */
 .desk-list { list-style: none; margin: 0; padding: 0; display: grid; }
 .desk-list > li { display: flex; align-items: center; justify-content: space-between; gap: var(--s-3); padding-block: var(--s-2); border-block-end: var(--border-w) solid var(--rule); }
@@ -515,6 +520,14 @@ body { font-feature-settings: "ss01" 1; }
 .pos-search-card .product-search-label { position: absolute; inline-size: 1px; block-size: 1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }
 .pos-search-card .product-search-input { min-block-size: 52px; border-radius: 14px; box-shadow: inset 0 0 0 1.5px color-mix(in srgb, var(--brand) 55%, var(--rule)); }
 .lines-head { background: var(--surface-solid-2); border-radius: var(--r-sm) var(--r-sm) 0 0; }
+/* طرح ۱۰: نشانهٔ میان‌بر F2 داخل کادر؛ روی لمسی (بی صفحه‌کلید) پنهان. */
+.product-search-key { flex: 0 0 auto; min-inline-size: 26px; padding: 2px 6px; border: var(--border-w) solid var(--rule-2); border-radius: 6px; background: var(--surface-solid-2); font-family: var(--font-num); font-size: var(--text-2xs); color: var(--ink-3); text-align: center; }
+@media (hover: none) and (pointer: coarse) { .product-search-key { display: none; } }
+.pos-doc-name { display: inline-flex; flex-wrap: wrap; align-items: center; gap: var(--s-2); }
+.pos-mode .segmented { padding: 2px; }
+.pos-mode .segmented-option span { min-block-size: calc(var(--touch) - 6px); font-size: var(--text-sm); }
+.pos-tools .tool .icon, .pos-tools .tool svg { flex: 0 0 auto; }
+
 
 .pay-head { display: flex; align-items: center; justify-content: space-between; gap: var(--s-2); margin-block-end: var(--s-2); }
 .pay-head .cart-title { margin: 0; }
@@ -689,3 +702,103 @@ table.grid td small, table.ui-table td small { font-size: 0.6875rem; color: var(
 .kpis.manager-kpis { grid-template-columns: minmax(0, 1fr); }
 @media (min-width: 560px) { .kpis.manager-kpis { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
 @media (min-width: 1100px) { .kpis.manager-kpis { grid-template-columns: repeat(4, minmax(0, 1fr)); } }
+
+/* ── WP3: سربرگ گوشی مثل طرح ۱۰ (تصمیم مالک) ─────────────────────────────────────
+   راست: ☰ و عنوان همین صفحه؛ چپ: جست‌وجو، نقطهٔ وضعیت اتصال، قفل و تم. حساب و خروج پای منوی ☰اند.
+   نوار پایین می‌ماند و فقط در صندوقِ گوشی پنهان است تا سبد و تسویه جا داشته باشند. */
+.shell-menu { flex: none; }
+@media (max-width: 899.98px) {
+  .workspace-header { flex-wrap: nowrap; gap: 8px; }
+  .workspace-header .brand { display: none; }
+  .workspace-header .shell-trail { display: inline-flex; flex: 0 1 auto; min-inline-size: 0; overflow: hidden; font-weight: var(--weight-bold); }
+  .workspace-header .shell-trail > span:first-child, .workspace-header .shell-trail > .icon { display: none; }
+  .workspace-header .shell-trail [aria-current="page"] { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--ink); font-size: var(--text-md); }
+  .workspace-header .feature-search { margin-inline-start: auto; }
+  .workspace-header .server-fresh { display: inline-grid; place-items: center; flex: none; inline-size: 20px; min-block-size: 44px; padding: 0; border: 0; background: none; }
+  .workspace--pos-phone > .workspace-nav { display: none; }
+}
+@media (max-width: 899.98px) {
+  /* نوار سربرگ تمام‌عرض و تخت مثل طرح ۱۰، نه کارت شناور؛ چسبان نیست تا روی محتوای فوکوس‌شده ننشیند. */
+  .workspace > .workspace-header { margin-inline: calc(-1 * var(--s-4)); margin-block-start: calc(-1 * max(var(--s-4), env(safe-area-inset-top)));
+    padding: max(8px, env(safe-area-inset-top)) var(--s-4) 8px; border-radius: 0 !important; border-block-end: var(--border-w) solid var(--rule); box-shadow: none; }
+  .workspace > .workspace-header::before, .workspace > .workspace-header::after { opacity: 0; }
+  /* صندوقِ گوشی بی نوار پایین: خلاصهٔ چسبان سبد تا لبهٔ امن پایین می‌آید. */
+  .workspace--pos-phone .pos-mobile-summary { inset-block-end: calc(var(--s-3) + env(safe-area-inset-bottom)); }
+}
+@media (max-width: 560px) {
+  .workspace > .workspace-header { margin-inline: calc(-1 * var(--s-3)); padding-inline: var(--s-3); }
+}
+.more-sheet-head { display: grid; gap: var(--s-2); padding: 4px 2px 8px; }
+.more-sheet-head .shell-branch { border: var(--border-w) solid var(--rule); background: var(--surface-solid); }
+.more-sheet-account { margin-block-start: 8px; padding-block-start: 8px; border-block-start: var(--border-w) solid var(--rule); }
+.more-sheet-account .shell-user { margin: 0; padding: 0; border: 0; }
+
+/* ── WP4 دستهٔ ۱: کارت روند داشبورد به چیدمان فشردهٔ طرح ۱۰ ───────────────────────
+   ردیف بالا: عدد «تا این لحظه» (همان کارت) و راهنما؛ ردیف پایین: کلید مقایسه و «نمایش جدول داده». */
+.line-chart-lead { display: flex; flex-wrap: wrap; align-items: baseline; justify-content: space-between; gap: var(--s-2) var(--s-4); }
+.line-chart-lead-value { min-inline-size: 0; }
+.trend-lead { display: inline-flex; align-items: baseline; gap: var(--s-2); }
+.trend-lead .money-digits { font-size: var(--text-2xl); font-weight: var(--weight-heavy); }
+.trend-lead-note { font-size: var(--text-xs); color: var(--ink-2); }
+.line-chart-foot { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: var(--s-2) var(--s-4); }
+.line-chart-foot .trend-compare { font-size: var(--text-xs); color: var(--ink-2); }
+.line-chart-foot .line-chart-table-toggle { align-self: center; }
+
+/* ── WP4 دستهٔ ۲: فاکتورها مثل طرح ۱۰ ───────────────────────────────────────────── */
+.invoice-channel select { min-block-size: var(--touch); inline-size: auto; padding-inline: 12px 32px; border-radius: var(--r-pill); font-size: var(--text-sm); }
+.invoice-summary .kpi-note:has(> span:empty) { display: none; }
+.invoice-summary .kpi-unit { font-size: var(--text-xs); font-weight: var(--weight-regular); color: var(--ink-2); }
+/* «مانده (نسیه)» بیش از صفر با رنگ تأکید، مثل طرح ۱۰؛ برچسب خودش معنا را می‌گوید، نه رنگ. */
+.invoice-remaining[data-due] .money-digits { color: var(--accent); }
+.invoice-table td small bdi { unicode-bidi: isolate; }
+.invoice-table tfoot th, .invoice-table tfoot td { padding-block: 12px; border-block-start: var(--border-w) solid var(--rule-2); font-weight: var(--weight-semibold); color: var(--ink); background: var(--surface-solid-2); }
+.invoice-table tfoot th { text-align: start; }
+
+/* ── WP4 دستهٔ ۳: سفارش خرید مثل طرح ۱۰ ───────────────────────────────────────── */
+/* پیشرفت با «X از Y رسیده»، مانده و بیش‌تحویل جدا، جمع سفارش برای مقایسه، دلیل بستن زیر وضعیت.
+   روی گوشی همان `ui-table--stack` نظام طراحی: هر سفارش یک کارت با برچسب کنار مقدار، مثل طرح ۱۰. */
+.po-table .po-over { color: var(--warn); font-weight: var(--weight-semibold); }
+.po-table .po-reason { max-inline-size: 22ch; }
+.po-table .invoice-icon { margin: 0; border-color: var(--rule); background: var(--surface-solid-2); }
+.po-table .ui-table-actions { text-align: end; }
+@media (max-width: 640px) {
+  .po-table .progress-cell { min-inline-size: 0; inline-size: min(60%, 180px); }
+}
+
+/* ── WP4 دستهٔ ۴: خزانه مثل طرح ۱۰ ─────────────────────────────────────────────── */
+/* شیفت‌ها و کشوها، حرکت‌های نقد امروز و پایانه‌ها: جدول نظام طراحی، کارت در گوشی. رنگ مغایرت و علامت
+   مبلغ فقط تقویت است؛ علامت «−»، «ندارد» و title معنا را می‌گویند. */
+.drawer-variance[data-tone="crit"] .money-digits { color: var(--crit); }
+.drawer-variance[data-tone="warn"] .money-digits { color: var(--warn); }
+.drawer-variance[data-tone="good"], .drawer-variance[data-tone="good"] .money-digits { color: var(--good); }
+.drawer-expected .money-digits { color: var(--accent); }
+/* خانهٔ دوخطی (نام + زیرنویس) یک واحد است؛ در کارت گوشی (`ui-table--stack`) به انتهای خانه می‌چسبد،
+   نه اینکه flex آن را دو سر کارت پخش کند. */
+.cell-stack { display: inline-grid; justify-items: start; gap: 2px; min-inline-size: 0; }
+.cell-inline { display: inline-flex; flex-wrap: wrap; align-items: baseline; gap: 6px; }
+@media (max-width: 640px) {
+  .ui-table--stack .cell-stack { justify-items: end; text-align: end; }
+  .ui-table--stack .cell-inline { justify-content: flex-end; }
+}
+
+
+/* ── WP4 دستهٔ ۵: کالا و قیمت مثل طرح ۱۰ ─────────────────────────────────────── */
+/* سایزها به ترتیب پوشاک از سرور، با جداکنندهٔ نقطه؛ «انتخاب همه» چاپ لیبل بیرون از جدول تا ستون انتخاب
+   در کارت گوشی هم برچسب داشته باشد. */
+.catalog-sizes { unicode-bidi: isolate; white-space: nowrap; font-variant-numeric: tabular-nums; }
+.catalog-pick-all { display: inline-flex; align-items: center; gap: var(--s-2); min-block-size: var(--touch); margin-block-end: var(--s-2); font-size: var(--text-sm); }
+.catalog-table .ui-table-actions { text-align: end; }
+.catalog-table .invoice-icon { margin: 0; border-color: var(--rule); background: var(--surface-solid-2); }
+
+/* ── WP4 دستهٔ ۶: مشتریان مثل طرح ۱۰ ───────────────────────────────────────────── */
+/* طلب با رنگ تأکید (مثل مانده در فاکتورها) و اعتبار مشتری با رنگ خوب؛ سرستون معنا را می‌گوید، رنگ تقویت است. */
+.customer-credit .money-digits { color: var(--good); }
+.customer-table .ui-table-actions { text-align: end; }
+.customer-table .invoice-icon { margin: 0; border-color: var(--rule); background: var(--surface-solid-2); }
+/* اثر ثبت‌نشده (مهاجرت ۱۱۲): موقت، پس کم‌رنگ‌تر از طلب ثبت‌شده؛ علامت «+»/«−» معنا را می‌گوید. */
+.customer-unposted .money-digits { color: var(--ink-2); }
+/* تصمیم مالک (۱۱۳): سطر «بابت فاکتورهای روزهای قبل» زیر یادداشت کارت وجه دریافتی، در خط خودش. */
+.kpi-note .kpi-split { display: block; margin-block-start: 2px; color: var(--ink-3); }
+
+/* تصمیم مالک (۲۰۲۶/۱۱/۰۷): «امروز | همهٔ تاریخ‌ها» کنار کانال؛ همان تراشهٔ انتخاب نظام طراحی. */
+.invoice-day { display: inline-flex; gap: var(--s-1); flex-wrap: wrap; }

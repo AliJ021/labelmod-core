@@ -485,6 +485,10 @@ describe("آمادگی API صندوق", { skip }, () => {
     const line=await app.inject({method:"POST",url:`/invoices/${id}/scan`,...s,
       headers:{...s.headers,"idempotency-key":"name-scan-"+id},payload:{variationId,qty:"1"}});
     assert.equal(line.statusCode,200,line.body);assert.equal(line.json().invoice.payableAmount,"1000001");
+    // سربرگ صندوق (طرح ۱۰): نام ثبت‌کننده از همان کاربر سازندهٔ فاکتور، نه از کلاینت.
+    const creator=(await handle.db.selectFrom("identity.app_user").select("full_name").where("username","=",cashier).executeTakeFirstOrThrow()).full_name;
+    assert.equal(line.json().invoice.createdByName,creator);
+    assert.equal((await app.inject({method:"GET",url:`/invoices/${id}`,...s})).json().createdByName,creator);
     let total=0n;
     for(const [index,methodCode,amount] of [[0,"cash","300000"],[1,"card","400000"],[2,"cash","300001"]] as const){
       total+=BigInt(amount);
@@ -549,6 +553,53 @@ describe("آمادگی API صندوق", { skip }, () => {
     assert.equal(drafts.statusCode, 200, drafts.body);
     assert.equal(drafts.json().summary.count, 0, "پیش‌نویس هرگز در جمع فروش نیست");
     assert.deepEqual(drafts.json().statusCounts, after.statusCounts);
+
+    // طرح ۱۰: تراشه‌های «تسویه‌شده / مانده‌دار / مرجوعی» افراز فاکتورهای قطعی‌اند و از مانده (SQL) می‌آیند، نه از
+    // وضعیت paid که هیچ تابعی نمی‌نشاند. هر تراشه همان ردیف‌هایی را برمی‌گرداند که شمرده؛ مانده‌دار یعنی مانده > ۰.
+    const c = after.statusCounts as Record<string, number>;
+    assert.equal(c.all, c.draft! + c.cancelled! + c.settled! + c.open! + c.returns!, "تراشه‌های تازه افرازند، نه هم‌پوشان");
+    assert.equal(c.finalized! + c.returned!, c.settled! + c.open! + c.returns!, "همان فاکتورهای قطعی، به تفکیکی دیگر");
+    assert.ok(c.settled! + c.open! > 0, "آزمون‌های قبلی فاکتور قطعی ساخته‌اند");
+    for (const chip of ["settled", "open", "returns"] as const) {
+      const r = await app.inject({ method: "GET", url: `/invoices?status=${chip}&branchId=${BRANCH}`, ...s });
+      assert.equal(r.statusCode, 200, r.body);
+      const body = r.json() as { total: number; rows: Array<{ chip: string; status: string; remainingAmount: string }> };
+      assert.equal(body.total, c[chip], `${chip}: شمار تراشه = ردیف‌های همان فیلتر`);
+      for (const row of body.rows) {
+        assert.equal(row.chip, chip);
+        if (chip === "open") assert.ok(BigInt(row.remainingAmount) > 0n, "مانده‌دار یعنی مانده بیش از صفر");
+        if (chip === "settled") assert.equal(row.remainingAmount, "0");
+        if (chip === "returns") assert.ok(["partially_returned", "returned"].includes(row.status));
+        else assert.ok(["finalized", "paid"].includes(row.status));
+      }
+    }
+    // کانال فیلتر سرور است؛ موبایل مشتری فقط پوشیده (۴ رقم اول و آخر) بیرون می‌رود.
+    const pos = await app.inject({ method: "GET", url: `/invoices?status=all&channel=pos&branchId=${BRANCH}`, ...s });
+    assert.equal(pos.statusCode, 200, pos.body);
+    const posBody = pos.json() as { total: number; rows: Array<{ channel: string; customerMobile: string | null }> };
+    assert.ok(posBody.rows.every(r => r.channel === "pos"));
+    const own2 = (await sql<{ n: string }>`SELECT count(*)::text n FROM sales.invoice i JOIN identity.app_user u ON u.id=i.created_by
+      WHERE u.username=${cashier} AND i.branch_id=${BRANCH}::uuid AND i.channel='pos'`.execute(handle.db)).rows[0]!;
+    assert.equal(posBody.total, Number(own2.n), "فیلتر کانال در دامنهٔ همان نقش");
+    for (const r of [...before.rows, ...posBody.rows] as Array<{ customerMobile?: string | null }>)
+      if (r.customerMobile != null) assert.match(r.customerMobile, /^\d{4} \*\*\* \d{4}$/, "موبایل کامل بیرون نمی‌رود");
+    assert.equal((await app.inject({ method: "GET", url: `/invoices?channel=fax&branchId=${BRANCH}`, ...s })).statusCode, 400);
+
+    // تصمیم مالک (۲۰۲۶/۱۱/۰۷): day=today یعنی «امروزِ» سرور (platform.business_date)، نه ساعت مرورگر؛ از/تا صریح مقدم است.
+    const today = (await sql<{ d: string }>`SELECT platform.business_date()::text d`.execute(handle.db)).rows[0]!.d;
+    const t = await app.inject({ method: "GET", url: `/invoices?status=all&day=today&branchId=${BRANCH}`, ...s });
+    assert.equal(t.statusCode, 200, t.body);
+    const tBody = t.json() as { total: number; businessDate: string; range: { from: string | null; to: string | null } };
+    assert.equal(tBody.businessDate, today);
+    assert.deepEqual(tBody.range, { from: today, to: today });
+    const ownToday = (await sql<{ n: string }>`SELECT count(*)::text n FROM sales.invoice i JOIN identity.app_user u ON u.id=i.created_by
+      WHERE u.username=${cashier} AND i.branch_id=${BRANCH}::uuid AND platform.business_date(i.occurred_at)=${today}::date`.execute(handle.db)).rows[0]!;
+    assert.equal(tBody.total, Number(ownToday.n), "همان فاکتورهای امروزِ همین دامنه");
+    const explicit = await app.inject({ method: "GET", url: `/invoices?status=all&day=today&from=2020-01-01&to=2020-01-02&branchId=${BRANCH}`, ...s });
+    assert.deepEqual((explicit.json() as { range: unknown }).range, { from: "2020-01-01", to: "2020-01-02" }, "از/تا صریح بر امروز مقدم است");
+    const none = await app.inject({ method: "GET", url: `/invoices?status=all&branchId=${BRANCH}`, ...s });
+    assert.deepEqual((none.json() as { range: unknown }).range, { from: null, to: null }, "بی day همهٔ تاریخ‌ها");
+    assert.equal((await app.inject({ method: "GET", url: `/invoices?day=tomorrow&branchId=${BRANCH}`, ...s })).statusCode, 400);
   });
 
   // ── Batch 2.1: صندوق — اسنپ‌پی شعبه‌ای، سقف غیرنقدی، نسیهٔ صریح ──────────

@@ -1048,4 +1048,97 @@ describe("پرسنل و مشتری", { skip }, () => {
     assert.ok(row);
     assert.equal(row.balance, "0", "۱۸۰۰۰۰ بدهی و ۱۸۰۰۰۰ اعتبار باید صفر باشد، نه ۳۶۰۰۰۰");
   });
+  test("طرح ۱۰ — طلب و اعتبار هر مشتری جدا، با تعریف کارت داشبورد؛ جمع فهرست از SQL؛ سند شعبهٔ دیگر بیرون", async () => {
+    const s = await loginAs(admin);
+    const tag = `Ledger split ${suffix}`;
+    const mk = async (name: string) => {
+      const id = (await sql<{ id: string }>`INSERT INTO sales.customer(full_name) VALUES(${name}) RETURNING id`.execute(handle.db)).rows[0]!.id;
+      await sql`INSERT INTO sales.customer_branch(customer_id,branch_id) VALUES(${id}::uuid,${BRANCH}::uuid)`.execute(handle.db);
+      return id;
+    };
+    const owes = await mk(`${tag} A`);
+    const credit = await mk(`${tag} B`);
+    const receivable = (party: string, amount: number, branch: string) => sql`SELECT ledger.post_entry('sale_shift',${branch}::uuid,platform.business_date(),'Ledger split',
+      jsonb_build_array(jsonb_build_object('leg','receivable','amount',${amount}::numeric,'party_type','customer','party_id',${party}::text),
+        jsonb_build_object('leg','sales','amount',${amount}::numeric)),'test',${party}::uuid,${adminId}::uuid)`.execute(handle.db);
+    await receivable(owes, 500000, BRANCH);
+    await sql`SELECT ledger.post_entry('loyalty_grant',${BRANCH}::uuid,platform.business_date(),'Ledger split credit',
+      jsonb_build_array(jsonb_build_object('leg','expense','amount',120000),
+        jsonb_build_object('leg','liability','amount',120000,'party_type','customer','party_id',${credit}::text)),
+      'test',${credit}::uuid,${adminId}::uuid)`.execute(handle.db);
+    // سند همین مشتری در شعبهٔ دیگر — بیرون از دامنهٔ مدیر شعبه‌ای (مدیر این آزمون فقط شعبهٔ اصلی را دارد).
+    // شعبهٔ تازه شمارندهٔ سند ندارد؛ همان الگوی dashboard-operations. دادهٔ مرجع با نقش مالک.
+    const owner = createDb(disposable!.ownerUrl, 1);
+    try {
+      const other = (await sql<{ id: string }>`INSERT INTO platform.branch (code, name) VALUES (${`LS-${suffix}`.slice(0, 20)}, 'شعبهٔ بیرون از دامنه') RETURNING id`.execute(owner.db)).rows[0]!.id;
+      await sql`INSERT INTO platform.document_counter (branch_id, doc_type, fiscal_year, prefix)
+        SELECT ${other}::uuid, doc_type, fiscal_year, prefix FROM platform.document_counter WHERE branch_id = ${BRANCH}::uuid`.execute(owner.db);
+      await receivable(owes, 70000, other);
+    } finally {
+      await owner.close();
+    }
+
+    // سند پیش‌نویس و موقت ثبت نشده‌اند: نه در طلب، نه در «مانده» پرونده (اصلاح یافتهٔ WP4 دستهٔ ۶).
+    for (const status of ["draft", "temporary"]) {
+      await sql`SELECT ledger.post_entry('sale_shift',${BRANCH}::uuid,platform.business_date(),'Ledger split draft',
+        jsonb_build_array(jsonb_build_object('leg','receivable','amount',40000::numeric,'party_type','customer','party_id',${owes}::text),
+          jsonb_build_object('leg','sales','amount',40000::numeric)),'test',${owes}::uuid,${adminId}::uuid,${status})`.execute(handle.db);
+    }
+
+    const r = await app.inject({ method: "GET", url: `/customers?q=${encodeURIComponent(tag)}`, ...s });
+    assert.equal(r.statusCode, 200, r.body);
+    const body = r.json() as { customers: { id: string; balance: string; ledgerOwed: string; ledgerCredit: string }[]; totals: { owed: string; credit: string; unposted: string } };
+    const a = body.customers.find((x) => x.id === owes)!;
+    const b = body.customers.find((x) => x.id === credit)!;
+    assert.deepEqual([a.ledgerOwed, a.ledgerCredit], ["500000", "0"], "طلب، بی سند شعبهٔ دیگر");
+    assert.deepEqual([b.ledgerOwed, b.ledgerCredit], ["0", "120000"], "اعتبار جدا، نه طلب منفی");
+    assert.deepEqual(body.totals, { owed: "500000", credit: "120000", unposted: "0" }, "جمع همین فهرست، با هم جمع نمی‌شوند");
+    // همان تعریف کارت «طلب/اعتبار مشتریان» داشبورد: خالص سند confirmed/final همین شعبه.
+    const dash = await sql<{ party_id: string; net: string }>`
+      SELECT l.party_id::text, sum(l.debit - l.credit)::text AS net
+        FROM ledger.journal_line l JOIN ledger.journal_entry e ON e.id = l.entry_id
+       WHERE l.party_type = 'customer' AND e.branch_id = ${BRANCH}::uuid AND e.status IN ('confirmed', 'final')
+         AND l.party_id = ANY(${[owes, credit]}::uuid[])
+       GROUP BY l.party_id`.execute(handle.db);
+    const net = Object.fromEntries(dash.rows.map((x) => [x.party_id, BigInt(x.net)]));
+    assert.equal(BigInt(a.ledgerOwed) - BigInt(a.ledgerCredit), net[owes]);
+    assert.equal(BigInt(b.ledgerOwed) - BigInt(b.ledgerCredit), net[credit]);
+    // «مانده» همان خالص است — یک تعریف، در فهرست و در پرونده.
+    assert.deepEqual([a.balance, b.balance], ["500000", "-120000"], "پیش‌نویس و موقت در مانده نیستند");
+    const file = await app.inject({ method: "GET", url: `/customers/${owes}`, ...s });
+    assert.equal(file.statusCode, 200, file.body);
+    assert.equal(file.json().customer.balance, "500000");
+    const drafts = await sql<{ n: string }>`SELECT count(*)::text n FROM ledger.journal_entry WHERE ref_id = ${owes}::uuid AND status IN ('draft','temporary')`.execute(handle.db);
+    assert.equal(drafts.rows[0]!.n, "2", "سندهای پیش‌نویس واقعاً ساخته شدند (کنترل مثبت)");
+    // فهرست خالی: جمع صفر، نه خطا.
+    const none = await app.inject({ method: "GET", url: `/customers?q=${encodeURIComponent(`هیچ ${suffix}`)}`, ...s });
+    assert.deepEqual(none.json().totals, { owed: "0", credit: "0", unposted: "0" });
+
+    // تصمیم مالک — اثر ثبت‌نشده (۱۱۲): نسیهٔ فاکتور دورهٔ باز در «طلب» ثبت‌شده نیست و ستون جدای خودش را دارد.
+    await sql.raw(`DO $fx$
+    DECLARE u uuid := '${adminId}'; br uuid := '${BRANCH}'; wh uuid := '00000000-0000-7000-8000-000000000101';
+            cu uuid := '${owes}'; pr uuid; va uuid; sh uuid; inv uuid;
+    BEGIN
+      PERFORM platform.set_actor(u);
+      UPDATE sales.customer SET credit_limit = 1000000 WHERE id = cu;
+      INSERT INTO catalog.product (code, name_internal) VALUES ('${`UNP-${suffix}`.slice(0, 24)}', 'کالای نسیهٔ آزمون') RETURNING id INTO pr;
+      INSERT INTO catalog.variation (product_id, color, size, sku) VALUES (pr, 'مشکی', 'M', '${`UNP-${suffix}`.slice(0, 30)}') RETURNING id INTO va;
+      PERFORM inventory.apply_movement(va, wh, 5, 'opening', NULL, NULL, u, 100000);
+      INSERT INTO sales.cash_shift (branch_id, user_id, opening_cash) VALUES (br, u, 0) RETURNING id INTO sh;
+      INSERT INTO sales.invoice (branch_id, warehouse_id, shift_id, customer_id, created_by) VALUES (br, wh, sh, cu, u) RETURNING id INTO inv;
+      INSERT INTO sales.invoice_line (invoice_id, line_no, variation_id, qty, unit_price, net_amount) VALUES (inv, 1, va, 1, 300000, 300000);
+      PERFORM sales.refresh_invoice_totals(inv);
+      PERFORM sales.finalize_invoice(inv, u);
+    END $fx$`).execute(handle.db);
+    const withUnposted = (await app.inject({ method: "GET", url: `/customers?q=${encodeURIComponent(tag)}`, ...s })).json() as {
+      customers: { id: string; ledgerOwed: string; ledgerUnposted: string }[]; totals: { owed: string; credit: string; unposted: string } };
+    const a2 = withUnposted.customers.find((x) => x.id === owes)!;
+    assert.deepEqual([a2.ledgerOwed, a2.ledgerUnposted], ["500000", "300000"], "طلب ثبت‌شده دست‌نخورده؛ نسیهٔ باز جدا");
+    assert.equal(withUnposted.customers.find((x) => x.id === credit)!.ledgerUnposted, "0");
+    assert.deepEqual(withUnposted.totals, { owed: "500000", credit: "120000", unposted: "300000" });
+    const preview = await sql<{ amount: string }>`SELECT coalesce(sum(amount), 0)::text AS amount FROM sales.unposted_receivable() WHERE branch_id = ${BRANCH}::uuid`.execute(handle.db);
+    const ops = await app.inject({ method: "GET", url: `/dashboard/operations?branchId=${BRANCH}`, ...s });
+    assert.equal(ops.statusCode, 200, ops.body);
+    assert.equal(ops.json().receivables.unposted.amount, preview.rows[0]!.amount, "کارت شعبه همان تابع است");
+  });
 });

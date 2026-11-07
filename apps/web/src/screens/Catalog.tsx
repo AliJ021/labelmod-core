@@ -49,7 +49,8 @@ import { rialFromTomanInput, toman } from "../lib/money.ts";
 import { pos } from "../lib/pos.ts";
 import { Money } from "../components/ui/Money.tsx";
 import { StatusBadge } from "../components/ui/Status.tsx";
-import { formatCount } from "../lib/format.ts";
+import { formatCount, formatQty } from "../lib/format.ts";
+import { DataTable, type Column } from "../components/ui/DataTable.tsx";
 import {
   catalog,
   priceSummary,
@@ -237,44 +238,26 @@ export function Catalog() {
               onClick={() => void addPickedToQueue()}>{adding ? "در حال افزودن به فهرست چاپ…" : `افزودن ${picked.size.toLocaleString("fa-IR")} کالای انتخاب‌شده به فهرست چاپ`}</button>
             {picked.size > 0 ? <button type="button" className="btn" disabled={adding} onClick={() => setPicked(new Map())}>پاک‌کردن انتخاب</button> : null}
           </div> : null}
-          <div className="scroll-x"><table className="grid">
-            <caption className="sr-only">فهرست کالا؛ قیمت‌ها به تومان</caption>
-            <thead>
-              <tr>
-                {labels === "1" ? <th><input type="checkbox" aria-label="انتخاب همهٔ کالاهای این فهرست" checked={products.length > 0 && products.every((p) => picked.has(p.id))}
-                  onChange={(e) => togglePicked(products, e.target.checked)} /></th> : null}
-                <th>کد</th>
-                <th>کالا</th>
-                <th className="num">تنوع</th>
-                <th>قیمت فروش</th>
-                <th>وضعیت</th>
-                <th>عملیات</th>
-              </tr>
-            </thead>
-            <tbody>
-              {products.map((p) => (
-                <tr key={p.id}>
-                  {labels === "1" ? <td><input type="checkbox" aria-label={`انتخاب ${p.nameInternal} برای چاپ گروهی`} checked={picked.has(p.id)}
-                    onChange={(e) => togglePicked([p], e.target.checked)} /></td> : null}
-                  <td><Ltr>{p.code}</Ltr></td>
-                  <td>
-                    <strong className="cell-title">{p.nameInternal}</strong>
-                    {p.categoryName || p.brandName ? <small>{[p.categoryName, p.brandName].filter(Boolean).join(" · ")}</small> : null}
-                  </td>
-                  <td className="num">{p.variationCount}</td>
-                  <td>
-                    <ProductPrice product={p} />
-                  </td>
-                  <td>{p.status === "archived" ? <StatusBadge state="archived" label="بایگانی" /> : <StatusBadge state="active" label="فعال" quiet />}</td>
-                  <td>
-                    {/* تا پایان افزودن گروهی، صفحهٔ کالا باز نمی‌شود؛ وگرنه نتیجه بی‌پیام در پس‌زمینه ثبت می‌شد. */}
-                    {labels === "1" ? <button type="button" className="btn" disabled={adding} onClick={() => setSelected(p.id)}>انتخاب تنوع و چاپ لیبل</button>
-                      : <button type="button" className="icon-button invoice-icon" aria-label="باز کردن" title="باز کردن" disabled={adding} onClick={() => setSelected(p.id)}><Icon name="chevron" size="sm" /></button>}
-                  </td>
-                </tr>
-              ))}
-            </tbody>
-          </table></div>
+          {labels === "1" ? <label className="catalog-pick-all">
+            <input type="checkbox" aria-label="انتخاب همهٔ کالاهای این فهرست" checked={products.length > 0 && products.every((p) => picked.has(p.id))}
+              onChange={(e) => togglePicked(products, e.target.checked)} />
+            <span aria-hidden="true">انتخاب همه</span>
+          </label> : null}
+          <div className="catalog-table"><DataTable<Product>
+            caption="فهرست کالا؛ قیمت‌ها به تومان"
+            stack
+            rows={products}
+            rowKey={(p) => p.id}
+            columns={[
+              ...(labels === "1" ? [{ key: "pick", header: "انتخاب", cell: (p: Product) => <input type="checkbox" aria-label={`انتخاب ${p.nameInternal} برای چاپ گروهی`} checked={picked.has(p.id)}
+                onChange={(e) => togglePicked([p], e.target.checked)} /> }] : []),
+              ...productColumns(products),
+            ]}
+            rowActions={(p) => labels === "1"
+              // تا پایان افزودن گروهی، صفحهٔ کالا باز نمی‌شود؛ وگرنه نتیجه بی‌پیام در پس‌زمینه ثبت می‌شد.
+              ? <button type="button" className="btn" disabled={adding} onClick={() => setSelected(p.id)}>انتخاب تنوع و چاپ لیبل</button>
+              : <button type="button" className="icon-button invoice-icon" aria-label="باز کردن" title="باز کردن" disabled={adding} onClick={() => setSelected(p.id)}><Icon name="chevron" size="sm" /></button>}
+          /></div>
           </>
         )}
       </Solid>
@@ -282,6 +265,51 @@ export function Catalog() {
       </TabPanels>
     </div>
   );
+}
+
+// ── ستون‌های فهرست کالا (طرح ۱۰) ──────────────────────────────────────
+
+const dash = (why: string) => <span className="muted" title={why}>—<span className="sr-only">{why}</span></span>;
+
+/**
+ * ستون‌های V10: کد، کالا (رنگ‌ها · دسته)، سایزها، موجودی هر انبار، قیمت فروش، بها (فقط با `cost.view`)
+ * و وضعیت کمبود. همهٔ عددها از سرور؛ ستون انبار از خودِ پاسخ ساخته می‌شود، نه از فهرست ثابت.
+ * انبار بی‌سطر برای یک کالا «—» است (سابقه‌ای ندارد)، نه صفر.
+ */
+function productColumns(products: readonly Product[]): Column<Product>[] {
+  // فروشگاه اول، بعد انبار (همان ترتیب سرور)، تا ستون‌ها از کالایی به کالای دیگر جابه‌جا نشوند.
+  const rank = (kind?: string) => { const i = ["store", "outlet", "stock"].indexOf(kind ?? ""); return i < 0 ? 9 : i; };
+  const warehouses = new Map<string, { name: string; kind?: string }>();
+  for (const p of products) for (const w of p.inventory?.stock ?? []) warehouses.set(w.warehouseId, { name: w.warehouseName, ...(w.warehouseKind ? { kind: w.warehouseKind } : {}) });
+  const ordered = [...warehouses].sort((a, b) => rank(a[1].kind) - rank(b[1].kind) || a[1].name.localeCompare(b[1].name, "fa") || a[0].localeCompare(b[0]))
+    .map(([id, w]) => [id, w.name] as const);
+  const seesCost = products.some((p) => p.inventory?.costVisible);
+  return [
+    { key: "code", header: "کد", cell: (p) => <Ltr>{p.code}</Ltr> },
+    { key: "name", header: "کالا", cell: (p) => {
+      const meta = [(p.inventory?.colors ?? []).join("، "), p.categoryName, p.brandName].filter(Boolean).join(" · ");
+      return <span className="cell-stack"><strong className="cell-title">{p.nameInternal}</strong>{meta ? <small className="cell-sub">{meta}</small> : null}</span>;
+    } },
+    { key: "sizes", header: "سایزها", cell: (p) => p.inventory ? (p.inventory.sizes.length ? <bdi className="catalog-sizes">{p.inventory.sizes.join(" · ")}</bdi> : dash("سایز ندارد")) : dash("نامعلوم") },
+    ...ordered.map(([id, name]): Column<Product> => ({
+      key: `wh:${id}`, header: name, numeric: true,
+      cell: (p) => {
+        const row = p.inventory?.stock.find((w) => w.warehouseId === id);
+        return row ? <span className="num">{formatQty(row.qty)}</span> : dash("در این انبار سابقه ندارد");
+      },
+    })),
+    { key: "price", header: "قیمت فروش", cell: (p) => <ProductPrice product={p} /> },
+    ...(seesCost ? [{ key: "cost", header: "بهای واحد", numeric: true, cell: (p: Product) => {
+      const inv = p.inventory;
+      if (!inv?.costVisible || inv.unitCostMin === null || inv.unitCostMax === null) return dash("موجودی یا بها ندارد");
+      return inv.unitCostMin === inv.unitCostMax ? <Money rial={BigInt(inv.unitCostMin)} />
+        : <span className="cell-inline"><Money rial={BigInt(inv.unitCostMin)} unit={false} /> تا <Money rial={BigInt(inv.unitCostMax)} /></span>;
+    } }] : []),
+    { key: "status", header: "وضعیت", cell: (p) => p.status === "archived" ? <StatusBadge state="archived" label="بایگانی" />
+      : p.inventory?.lowStock ? <span title={`${formatCount(p.inventory.lowStock)} ردیف تنوع و انبار زیر آستانه`}><StatusBadge state="warning" label="کمبود" /></span>
+      : p.inventory?.lowStock === 0 ? <StatusBadge state="completed" label="عادی" quiet />
+      : <StatusBadge state="active" label="فعال" quiet /> },
+  ];
 }
 
 // ── قیمت فروش در فهرست ───────────────────────────────────────────────

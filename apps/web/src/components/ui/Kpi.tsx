@@ -52,6 +52,9 @@ export interface KpiTab<K extends string> {
   unavailable?: boolean;
   /** مسیر نمودار کوچک تجمعی (`sparkPath`)؛ تزئینی و پنهان از صفحه‌خوان — عدد خودش در مقدار است. */
   spark?: string | null;
+  /** تراشهٔ مقایسه (طرح ۱۰: «نسبت به همین لحظهٔ دیروز»)؛ جزو توضیح دسترس‌پذیر کارت. */
+  delta?: ReactNode;
+  deltaTone?: "up" | "down" | "flat";
 }
 
 export function KpiTabs<K extends string>({ items, value, onChange, label, panelId, idPrefix }: {
@@ -91,7 +94,8 @@ export function KpiTabs<K extends string>({ items, value, onChange, label, panel
           </svg> : null}
         </span>
         <span className="kpi-value" id={`${base}-v`}>{item.value}</span>
-        <span className="kpi-note" id={`${base}-n`}>{item.state ? <StatusIcon state={item.state} /> : null}<span>{item.note}</span></span>
+        <span className="kpi-note" id={`${base}-n`}>{item.state ? <StatusIcon state={item.state} /> : null}<span>{item.note}</span>
+          {item.delta ? <span className="kpi-delta" data-tone={item.deltaTone}>{item.delta}</span> : null}</span>
       </button>;
     })}
   </div>;
