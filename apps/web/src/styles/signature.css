@@ -780,3 +780,6 @@ table.grid td small, table.ui-table td small { font-size: 0.6875rem; color: var(
 .customer-credit .money-digits { color: var(--good); }
 .customer-table .ui-table-actions { text-align: end; }
 .customer-table .invoice-icon { margin: 0; border-color: var(--rule); background: var(--surface-solid-2); }
+/* اثر ثبت‌نشده (مهاجرت ۱۱۲): موقت، پس کم‌رنگ‌تر از طلب ثبت‌شده؛ علامت «+»/«−» معنا را می‌گوید. */
+.customer-unposted .money-digits { color: var(--ink-2); }
+

@@ -72,7 +72,7 @@ const ledgerCell = (value: string | undefined, tone: "due" | "credit") => {
   return v === 0n ? <span className="muted">—</span> : <span className={tone === "due" ? "invoice-due" : "customer-credit"}><Money rial={v} /></span>;
 };
 
-/** ستون‌های V10: مشتری (موبایل پوشیده)، از، ماندهٔ دفتر (طلب)، اعتبار نزد ما، پیامک بازاریابی. */
+/** ستون‌های V10: مشتری (موبایل پوشیده)، از، ماندهٔ دفتر (طلب)، اعتبار نزد ما، ثبت‌نشده (موقت)، پیامک بازاریابی. */
 const CUSTOMER_COLUMNS: readonly Column<Customer>[] = [
   { key: "name", header: "مشتری", cell: (c) => <span className="cell-stack">
     {c.fullName ? <strong className="cell-title">{c.fullName}</strong> : <span className="muted">بی‌نام</span>}
@@ -82,6 +82,13 @@ const CUSTOMER_COLUMNS: readonly Column<Customer>[] = [
   { key: "since", header: "از", cell: (c) => <span className="num">{c.createdAt ? formatJalaliDay(c.createdAt) : "—"}</span> },
   { key: "owed", header: "ماندهٔ دفتر (طلب)", numeric: true, cell: (c) => ledgerCell(c.ledgerOwed, "due") },
   { key: "credit", header: "اعتبار نزد ما", numeric: true, cell: (c) => ledgerCell(c.ledgerCredit, "credit") },
+  { key: "unposted", header: "ثبت‌نشده (موقت)", numeric: true, cell: (c) => {
+    if (c.ledgerUnposted === undefined) return unknown;
+    const v = BigInt(c.ledgerUnposted);
+    // علامت صریح: «+» یعنی بستن دوره به طلب اضافه می‌کند، «−» کم.
+    return v === 0n ? <span className="muted">—</span> : <span className="customer-unposted" title="پس از بستن دوره به طلب می‌رود">
+      {v > 0n ? <span aria-hidden="true">+</span> : null}<Money rial={v} /></span>;
+  } },
   { key: "consent", header: "پیامک بازاریابی", cell: (c) => c.consentMarketing ? <StatusBadge state="completed" label="رضایت دارد" quiet /> : <StatusBadge state="cancelled" label="بدون رضایت" quiet /> },
 ];
 
@@ -242,6 +249,7 @@ export function Customers() {
             {...(totals ? { foot: { label: "جمع", cells: {
               owed: <Money rial={BigInt(totals.owed)} />,
               credit: <Money rial={BigInt(totals.credit)} />,
+              ...(totals.unposted === undefined ? {} : { unposted: <Money rial={BigInt(totals.unposted)} /> }),
             } } } : {})}
           /></div>
         )}

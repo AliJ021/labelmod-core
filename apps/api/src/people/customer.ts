@@ -106,12 +106,18 @@ export interface Customer {
    */
   ledgerOwed: string;
   ledgerCredit: string;
+  /**
+   * تصمیم مالک (۲۰۲۶/۱۱/۰۷) — اثر ثبت‌نشده: پیش‌نمایش سطر طلبی که بستن دوره‌های بازِ همین مشتری به
+   * دفتر می‌زند (`sales.unposted_receivable`، مهاجرت ۱۱۲). موقت؛ با طلب و اعتبار ثبت‌شده جمع نمی‌شود.
+   */
+  ledgerUnposted: string;
 }
 
-/** جمع همان دو ستون برای همان مشتریانی که فهرست برگردانده — در SQL. */
+/** جمع همان ستون‌ها برای همان مشتریانی که فهرست برگردانده — در SQL. */
 export interface CustomerLedgerTotals {
   owed: string;
   credit: string;
+  unposted: string;
 }
 
 interface Row {
@@ -136,6 +142,7 @@ interface Row {
   balance: string;
   ledger_owed: string;
   ledger_credit: string;
+  ledger_unposted: string;
 }
 
 function toJson(r: Row): Customer {
@@ -161,6 +168,7 @@ function toJson(r: Row): Customer {
     balance: serializeMoney(parseMoney(r.balance)),
     ledgerOwed: serializeMoney(parseMoney(r.ledger_owed)),
     ledgerCredit: serializeMoney(parseMoney(r.ledger_credit)),
+    ledgerUnposted: serializeMoney(parseMoney(r.ledger_unposted)),
   };
 }
 
@@ -181,8 +189,15 @@ const ledgerNet = (branches: CustomerBranchScope) => sql`
                AND e.status IN ('confirmed', 'final')
                AND (${branches === "all"} OR e.branch_id = ANY(${branches === "all" ? [] : branches}::uuid[]))), 0)`;
 
+/** اثر ثبت‌نشدهٔ یک مشتری (`c.id`) در دامنهٔ شعبه — مهاجرت ۱۱۲، همان فرمول post_batch. */
+const ledgerUnposted = (branches: CustomerBranchScope) => sql`
+  coalesce((SELECT sum(u.amount) FROM sales.unposted_receivable() u
+             WHERE u.customer_id = c.id
+               AND (${branches === "all"} OR u.branch_id = ANY(${branches === "all" ? [] : branches}::uuid[]))), 0)`;
+
 const selectCustomer = (branches: CustomerBranchScope) => sql`
   SELECT c.*,
+         ${ledgerUnposted(branches)}::text AS ledger_unposted,
          greatest(${ledgerNet(branches)}, 0)::text AS ledger_owed,
          greatest(-${ledgerNet(branches)}, 0)::text AS ledger_credit,
          (SELECT count(*) FROM sales.invoice i
@@ -246,12 +261,14 @@ export class CustomerService {
 
   /** جمع «طلب» و «اعتبار» همین مشتریان، با همان `ledgerNet` ستون‌ها و در SQL. */
   async ledgerTotals(ids: readonly string[], branches: CustomerBranchScope): Promise<CustomerLedgerTotals> {
-    if (ids.length === 0) return { owed: "0", credit: "0" };
-    const r = await sql<{ owed: string; credit: string }>`
-      SELECT coalesce(sum(greatest(x.net, 0)), 0)::text AS owed, coalesce(sum(greatest(-x.net, 0)), 0)::text AS credit
-        FROM (SELECT ${ledgerNet(branches)} AS net FROM sales.customer c WHERE c.id = ANY(${[...ids]}::uuid[])) x
+    if (ids.length === 0) return { owed: "0", credit: "0", unposted: "0" };
+    const r = await sql<{ owed: string; credit: string; unposted: string }>`
+      SELECT coalesce(sum(greatest(x.net, 0)), 0)::text AS owed, coalesce(sum(greatest(-x.net, 0)), 0)::text AS credit,
+             coalesce(sum(x.unposted), 0)::text AS unposted
+        FROM (SELECT ${ledgerNet(branches)} AS net, ${ledgerUnposted(branches)} AS unposted
+                FROM sales.customer c WHERE c.id = ANY(${[...ids]}::uuid[])) x
     `.execute(this.#db);
-    return { owed: r.rows[0]!.owed, credit: r.rows[0]!.credit };
+    return { owed: r.rows[0]!.owed, credit: r.rows[0]!.credit, unposted: r.rows[0]!.unposted };
   }
 
   /**

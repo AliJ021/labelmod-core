@@ -65,10 +65,12 @@ export interface Customer {
    */
   ledgerOwed?: string;
   ledgerCredit?: string;
+  /** اثر ثبت‌نشده (مهاجرت ۱۱۲): علامت‌دار، موقت؛ با طلب و اعتبار جمع نمی‌شود. */
+  ledgerUnposted?: string;
 }
 
 /** جمع همان دو ستون برای همین فهرست، از SQL. */
-export interface CustomerLedgerTotals { owed: string; credit: string }
+export interface CustomerLedgerTotals { owed: string; credit: string; unposted?: string }
 
 /** فراداده یک اندازه — فرم از همین ساخته می‌شود، نه از فهرستی در React. */
 export interface MeasureKey {

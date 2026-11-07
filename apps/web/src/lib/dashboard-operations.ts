@@ -20,7 +20,14 @@ export interface ChequesReady {
   received: { overdue: ChequeCell; dueSoon: ChequeCell };
   issued: { overdue: ChequeCell; dueSoon: ChequeCell };
 }
-export interface ReceivablesReady { state: "ready"; owed: CountAmount; credit: CountAmount }
+export interface ReceivablesReady {
+  state: "ready"; owed: CountAmount; credit: CountAmount;
+  /**
+   * اثر ثبت‌نشده (مهاجرت ۱۱۲): خالص علامت‌دار سطر طلبی که بستن دوره‌های باز می‌زند. موقت؛ با طلب جمع نمی‌شود.
+   * پاسخ قدیمی بی این فیلد «نامعلوم» است، نه صفر.
+   */
+  unposted?: CountAmount;
+}
 /** کمبود موجودی (۱۰۴): شمار دقیق سطرهای (تنوع، انبار) در هر انبار فروش فعال شعبه؛ آستانه رشته است. */
 export interface LowStockReady {
   state: "ready"; threshold: string; total: number;
