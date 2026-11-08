@@ -802,3 +802,7 @@ table.grid td small, table.ui-table td small { font-size: 0.6875rem; color: var(
 
 /* تصمیم مالک (۲۰۲۶/۱۱/۰۷): «امروز | همهٔ تاریخ‌ها» کنار کانال؛ همان تراشهٔ انتخاب نظام طراحی. */
 .invoice-day { display: inline-flex; gap: var(--s-1); flex-wrap: wrap; }
+
+/* طرح ۱۰: نشان سررسید زیر تاریخ چک — متن خودش معنا را می‌گوید و رنگ فقط تأکید است. */
+.cheque-urgency[data-urgency="overdue"] { color: var(--crit); font-weight: var(--weight-semibold); }
+.cheque-urgency[data-urgency="due_soon"] { color: var(--warn); }

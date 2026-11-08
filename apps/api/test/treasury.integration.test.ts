@@ -17,6 +17,7 @@ import { createDisposableDb, type DisposableDb } from "./helpers/disposable-db.t
 import { AuthService } from "../src/auth/service.ts";
 import { hashSecret } from "../src/auth/password.ts";
 import { buildApp } from "../src/http/app.ts";
+import { ChequeService } from "../src/treasury/cheque.ts";
 import { loadConfig } from "../src/lib/config.ts";
 
 const DATABASE_URL = process.env.DATABASE_URL;
@@ -578,6 +579,36 @@ describe("خزانه و چک", { skip }, () => {
     const found = due.find((x) => x.id === made.json().id);
     assert.ok(found, "چک سررسیدشده باید در فهرست باشد");
     assert.equal(found.urgency, "overdue", "و دیتابیس آن را سررسیدشده می‌داند");
+
+    // طرح ۱۰: روز تا سررسید از همان نما، و جمع‌ها از SQL برابر جمع همان سطرها (فهرست زیر سقف است).
+    const rows = r.json().due as Array<{ id: string; direction: string; amount: string; daysLeft: number }>;
+    const viewDays = await sql<{ d: number }>`SELECT days_left AS d FROM treasury.cheque_due WHERE id = ${made.json().id}::uuid`.execute(handle.db);
+    assert.equal(rows.find((x) => x.id === made.json().id)?.daysLeft, viewDays.rows[0]!.d);
+    assert.ok(viewDays.rows[0]!.d < 0, "سررسید ۲۰۲۰ منفی است");
+    assert.ok(rows.length < 500, "فهرست بریده نشده، پس جمع سطرها مرجع مستقل است");
+    const sum = (dir: (d: string) => boolean) => rows.filter((x) => dir(x.direction)).reduce((a, x) => a + BigInt(x.amount), 0n);
+    const totals = r.json().totals as { received: string; receivedCount: number; issued: string; issuedCount: number; net: string };
+    assert.equal(totals.received, sum((d) => d === "received").toString());
+    assert.equal(totals.issued, sum((d) => d !== "received").toString());
+    assert.equal(totals.receivedCount, rows.filter((x) => x.direction === "received").length);
+    assert.equal(totals.issuedCount, rows.filter((x) => x.direction !== "received").length);
+    assert.equal(BigInt(totals.net), BigInt(totals.received) - BigInt(totals.issued));
+    // دامنهٔ شعبه همان `due()`: بی شعبه صفر، شعبهٔ بی‌ربط صفر، شعبهٔ خودش شامل همین چک.
+    const service = new ChequeService(handle.db);
+    assert.deepEqual(await service.dueTotals([]), { received: "0", receivedCount: 0, issued: "0", issuedCount: 0, net: "0" });
+    assert.equal((await service.dueTotals(["00000000-0000-7000-8000-00000000dead"])).receivedCount, 0);
+    const own = await service.dueTotals([BRANCH]);
+    assert.ok(BigInt(own.received) >= 2000000n && own.receivedCount >= 1, "چک همین شعبه شمرده شد");
+
+    // فهرست چک‌ها (طرح ۱۰) همان `urgency` نمای سررسید را دارد، نه حساب دوم با تاریخ مرورگر.
+    const list = await app.inject({ method: "GET", url: "/cheques", ...a });
+    const row = (list.json().cheques as Array<{ id: string; urgency: string | null }>).find((x) => x.id === made.json().id);
+    assert.equal(row?.urgency, found.urgency);
+    const view = new Map((await sql<{ id: string; urgency: string }>`SELECT id, urgency FROM treasury.cheque_due`.execute(handle.db))
+      .rows.map((d) => [d.id, d.urgency]));
+    for (const c of list.json().cheques as Array<{ id: string; urgency: string | null }>) {
+      assert.equal(c.urgency, view.get(c.id) ?? null, "هر سطر دقیقاً همان urgency نما را دارد؛ بیرون از نما null");
+    }
   });
 
   // ── اعتبارسنجی ───────────────────────────────────────────────────────

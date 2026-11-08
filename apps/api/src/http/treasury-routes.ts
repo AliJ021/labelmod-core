@@ -482,7 +482,7 @@ export function registerTreasuryRoutes(
     const s = session(req);
     await requireForSession(db, s, "cheque.manage");
     const branchIds = await scopeOf(s.userId);
-    return { due: await cheques.due(branchIds) };
+    return { due: await cheques.due(branchIds), totals: await cheques.dueTotals(branchIds) };
   });
 
   app.get("/cheques/:id", async (req) => {

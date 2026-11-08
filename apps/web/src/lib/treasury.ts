@@ -78,6 +78,8 @@ export interface Cheque {
   status: string;
   note: string | null;
   createdAt: string;
+  /** همان `urgency` نمای سررسید سرور؛ چک تسویه‌شده `null`، پاسخ قدیمی‌تر ندارد. */
+  urgency?: "overdue" | "due_soon" | "future" | null;
 }
 
 export interface ChequeEvent {
@@ -99,8 +101,22 @@ export interface ChequeDue {
   dueOn: string;
   status: string;
   partyName: string | null;
-  /** `overdue` | `today` | `soon` | `future` — **دیتابیس** حسابش می‌کند. */
+  /**
+   * `overdue` | `due_soon` | `future` — **دیتابیس** حسابش می‌کند (نمای `treasury.cheque_due`).
+   * ⚠️ این توضیح پیش‌تر `today`/`soon` می‌گفت و صفحه `due_soon` را «آینده» نشان می‌داد.
+   */
   urgency: string;
+  /** روز تا سررسید با «امروز» سرور؛ منفی یعنی گذشته. پاسخ قدیمی‌تر ندارد. */
+  daysLeft?: number;
+}
+
+/** جمع چک‌های سررسید به تفکیک جهت، از SQL (ریال، رشته). */
+export interface ChequeDueTotals {
+  received: string;
+  receivedCount: number;
+  issued: string;
+  issuedCount: number;
+  net: string;
 }
 
 export type ChequeAction =
@@ -281,7 +297,7 @@ export const treasury = {
     return api.get<{ cheques: Cheque[] }>(`/cheques${qs ? `?${qs}` : ""}`);
   },
 
-  chequeDue: () => api.get<{ due: ChequeDue[] }>("/cheques/due"),
+  chequeDue: () => api.get<{ due: ChequeDue[]; totals?: ChequeDueTotals }>("/cheques/due"),
 
   cheque: (id: string) =>
     api.get<{ cheque: Cheque; events: ChequeEvent[] }>(`/cheques/${id}`),

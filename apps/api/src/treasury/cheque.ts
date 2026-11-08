@@ -104,6 +104,11 @@ export interface ChequeRow {
   status: string;
   note: string | null;
   createdAt: string;
+  /**
+   * همان `urgency` نمای `treasury.cheque_due` (overdue / due_soon / future) با «امروز» سرور؛
+   * چک تسویه‌شده یا باطل در آن نما نیست و `null` است. مرورگر خودش سررسید را با تاریخ امروز نمی‌سنجد.
+   */
+  urgency: "overdue" | "due_soon" | "future" | null;
 }
 
 export interface ChequeEventRow {
@@ -127,6 +132,18 @@ export interface DueRow {
   partyName: string | null;
   /** `overdue` | `today` | `soon` | `future` — از نمای دیتابیس. */
   urgency: string;
+  /** روز تا سررسید با «امروز» سرور (`days_left` نما)؛ منفی یعنی گذشته. */
+  daysLeft: number;
+}
+
+/** جمع همان چک‌های نمای سررسید در دامنهٔ شعبه (ریال، رشته) — بی سقف فهرست. */
+export interface DueTotals {
+  received: string;
+  receivedCount: number;
+  issued: string;
+  issuedCount: number;
+  /** دریافتی منهای پرداختی، در SQL. */
+  net: string;
 }
 
 const day = (v: Date | string): string =>
@@ -248,6 +265,7 @@ export class ChequeService {
              WHEN 'supplier' THEN (SELECT s.name      FROM purchasing.supplier s WHERE s.id = c.party_id)
              WHEN 'customer' THEN (SELECT cu.full_name FROM sales.customer    cu WHERE cu.id = c.party_id)
            END`.as("party_name"),
+        sql<"overdue" | "due_soon" | "future" | null>`(SELECT d.urgency FROM treasury.cheque_due d WHERE d.id = c.id)`.as("urgency"),
       ])
       .orderBy("c.due_on")
       .limit(Math.min(opts.limit ?? 200, 500));
@@ -284,6 +302,7 @@ export class ChequeService {
       status: r.status,
       note: r.note,
       createdAt: new Date(r.created_at).toISOString(),
+      urgency: r.urgency,
     }));
   }
 
@@ -340,6 +359,7 @@ export class ChequeService {
         "d.status",
         "d.party_name",
         "d.urgency",
+        "d.days_left",
       ])
       .orderBy("d.due_on")
       .limit(500);
@@ -360,6 +380,27 @@ export class ChequeService {
       status: r.status,
       partyName: r.party_name,
       urgency: r.urgency,
+      daysLeft: Number(r.days_left),
     }));
+  }
+
+  /**
+   * جمع چک‌های سررسید به تفکیک جهت — همان سطرهای نمای `treasury.cheque_due` و همان دامنهٔ شعبهٔ
+   * `due()`، ولی بی سقف ۵۰۰ تا جمع با فهرست بریده‌شده عوض نشود. تفریق هم در SQL است.
+   */
+  async dueTotals(branchIds?: string[]): Promise<DueTotals> {
+    if (branchIds !== undefined && branchIds.length === 0) return { received: "0", receivedCount: 0, issued: "0", issuedCount: 0, net: "0" };
+    const r = await sql<{ received: string; received_count: string; issued: string; issued_count: string; net: string }>`
+      SELECT coalesce(sum(d.amount) FILTER (WHERE d.direction = 'received'), 0)::text AS received,
+             count(*) FILTER (WHERE d.direction = 'received')::text AS received_count,
+             coalesce(sum(d.amount) FILTER (WHERE d.direction <> 'received'), 0)::text AS issued,
+             count(*) FILTER (WHERE d.direction <> 'received')::text AS issued_count,
+             (coalesce(sum(d.amount) FILTER (WHERE d.direction = 'received'), 0)
+              - coalesce(sum(d.amount) FILTER (WHERE d.direction <> 'received'), 0))::text AS net
+        FROM treasury.cheque_due d
+        JOIN treasury.cheque c ON c.id = d.id
+       WHERE ${branchIds === undefined ? sql`true` : sql`c.branch_id = ANY(${branchIds}::uuid[])`}`.execute(this.#db);
+    const t = r.rows[0]!;
+    return { received: t.received, receivedCount: Number(t.received_count), issued: t.issued, issuedCount: Number(t.issued_count), net: t.net };
   }
 }
