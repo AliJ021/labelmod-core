@@ -413,6 +413,8 @@ function PosScreen({ actorId, mode, onMode, browseInvoices }: {
   // همان Retry که باید نجاتش بدهد عوض می‌شود.
   const keys = useRef(new ActionKeys());
   const scans = useRef(new ScanCounter());
+  /** بازیابی پیش‌نویس در راه؛ `ensureInvoice` تا پایانش فاکتور تازه نمی‌سازد. */
+  const restoring = useRef<Promise<Invoice | null> | null>(null);
   const buffer = useRef(new ScanBuffer());
 
   const branch = branches.find((b) => b.id === branchId) ?? null;
@@ -538,10 +540,21 @@ function PosScreen({ actorId, mode, onMode, browseInvoices }: {
     const saved = readCart(shift.id);
     const target = held?.invoiceId ?? saved?.invoiceId;
     if (!target) return;
+    /*
+     * ⚠️ تا بازیابی تمام نشده، اسکن نباید فاکتور تازه بسازد. پیش از این، بارکدی که در همان
+     *    چند صد میلی‌ثانیهٔ خواندن پیش‌نویس می‌رسید `POST /invoices` می‌زد؛ بعد بازیابی
+     *    `setInvoice` را با پیش‌نویس قدیمی جایگزین می‌کرد و قلم اسکن‌شده روی یک پیش‌نویس
+     *    یتیم می‌ماند و بی‌صدا از سبد می‌افتاد (CI، webkit-dark-1920). `ensureInvoice` حالا
+     *    منتظر همین وعده است و اگر پیش‌نویس برگشت، همان را می‌گیرد.
+     */
+    let settle: (inv: Invoice | null) => void = () => undefined;
+    restoring.current = new Promise<Invoice | null>((resolve) => { settle = resolve; });
     void (async () => {
+      let restored: Invoice | null = null;
       try {
         const inv = await pos.invoice(target);
         if (inv.status === "draft" && inv.createdBy === actorId && belongs(inv, shift) && inv.branchId === shift.branchId && shift.userId === actorId && shift.status === "open") {
+          restored = inv;
           setInvoice(inv);
           setReceived(parseRial(inv.receivedAmount));
           if (held) {
@@ -559,6 +572,9 @@ function PosScreen({ actorId, mode, onMode, browseInvoices }: {
         }
       } catch (e) {
         setError(message(e));
+      } finally {
+        settle(restored);
+        restoring.current = null;
       }
     })();
     // فقط هنگام تغییر شیفت — نه با هر تغییر سبد.
@@ -576,6 +592,12 @@ function PosScreen({ actorId, mode, onMode, browseInvoices }: {
   /** فاکتور پیش‌نویس، در صورت نبود ساخته می‌شود. */
   const ensureInvoice = useCallback(async (): Promise<Invoice> => {
     if (openDraft) return openDraft;
+    // بازیابی در راه: همان پیش‌نویس برگشتی، نه فاکتور دوم (توضیح در اثر بازیابی بالا).
+    const pending = restoring.current;
+    if (pending) {
+      const restored = await pending;
+      if (restored) return restored;
+    }
     const created = await keys.current.run(`create:${shift?.id ?? branchId}`, (key) =>
       pos.createInvoice({ branchId, warehouseId, channel: instagram ? "instagram" : "pos" }, { idempotencyKey: key }),
     );
