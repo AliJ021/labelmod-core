@@ -152,4 +152,20 @@ test.describe("سفارش‌های سایت", () => {
     await expect(page.getByRole("tab", { name: "سفارش‌های سایت", includeHidden: true })).toHaveCount(0);
     expect(calls(api)).toEqual([]);
   });
+
+  test("V10 column order: date under the order, payment method under the amount; nothing extra is requested", async ({ page, api }) => {
+    api.handlers.set("GET /web/orders", async route => { await route.fulfill({ json: page1 }); });
+    await page.goto("/?page=site-orders");
+    const table = list(page).getByRole("table", { name: "سفارش‌های سایت" });
+    await expect(table.locator("tbody tr").filter({ hasText: "مشتری سایت" })).toBeVisible();
+    expect((await table.locator("thead th").allInnerTexts()).map(h => h.trim()))
+      .toEqual(["سفارش", "مشتری", "اقلام", "مبلغ سفارش", "وضعیت در سایت", "ثبت در Core", "کنش‌ها"]);
+    const cells = table.locator("tbody tr").filter({ hasText: "مشتری سایت" }).locator("td");
+    await expect(cells.nth(0)).toContainText("#41");
+    await expect(cells.nth(0).locator("small")).not.toHaveText("—");
+    await expect(cells.nth(2)).toContainText("۲ قلم");
+    await expect(cells.nth(3)).toContainText("1٬200٬000");
+    await expect(cells.nth(3)).toContainText("زرین‌پال");
+    expect(calls(api)).toEqual(["GET /web/orders?page=1"]);
+  });
 });

@@ -82,8 +82,9 @@ export function MyWithdrawals({ currentUserId }: { currentUserId: string }) {
 
   const columns: Column<WithdrawalItem>[] = [
     { key: "at", header: "زمان ثبت", cell: r => <span className="cell-nowrap">{formatJalaliMoment(r.createdAt)}</span> },
-    { key: "amount", header: "مبلغ", numeric: true, cell: r => <Money rial={r.amount} exact size="sm" /> },
+    // طرح ۱۰: تاریخ، دلیل، مبلغ، وضعیت (تسویه‌شده در همین ستون).
     { key: "reason", header: "دلیل", cell: r => r.reason },
+    { key: "amount", header: "مبلغ", numeric: true, cell: r => <Money rial={r.amount} exact size="sm" /> },
     { key: "state", header: "وضعیت", cell: r => <WithdrawalStatus item={r} /> },
   ];
 

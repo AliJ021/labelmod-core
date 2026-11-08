@@ -223,14 +223,15 @@ function OrdersList({ load, page, selected, anchored, onPage, onSelect, onRetry 
   onPage: (p: number) => void; onSelect: (id: number | null) => void; onRetry: () => void;
 }) {
   const columns: Column<OrderSummary>[] = [
-    { key: "number", header: "سفارش", cell: r => <Ltr>#{r.number}</Ltr> },
-    { key: "date", header: "تاریخ", cell: r => r.createdAt ? <span className="nowrap">{formatJalaliMoment(r.createdAt)}</span> : <span className="muted">—</span> },
+    // طرح ۱۰: سفارش (تاریخ زیرش)، مشتری، اقلام، مبلغ (روش پرداخت زیرش)، وضعیت در سایت، ثبت در Core.
+    { key: "number", header: "سفارش", cell: r => <span className="cell-stack"><Ltr>#{r.number}</Ltr>
+      {r.createdAt ? <small className="muted nowrap">{formatJalaliMoment(r.createdAt)}</small> : <small className="muted">—</small>}</span> },
     { key: "customer", header: "مشتری", cell: r => <>{r.customerName || <span className="muted">بی‌نام</span>}{r.customerType === "guest" ? <span className="muted small"> (مهمان)</span> : null}</> },
-    { key: "status", header: "وضعیت سایت", cell: r => <StatusBadge state={orderStatusState(r.status)} label={r.statusLabel || r.status} /> },
-    { key: "payment", header: "پرداخت", cell: r => r.paymentMethod || <span className="muted">—</span> },
+    { key: "items", header: "اقلام", numeric: true, cell: r => <span className="num">{formatCount(r.itemCount)} قلم</span> },
+    { key: "total", header: "مبلغ سفارش", numeric: true, cell: r => <span className="cell-stack"><Amount m={r.total} currency={r.currency} />
+      <small className="muted">{r.paymentMethod || "—"}</small></span> },
+    { key: "status", header: "وضعیت در سایت", cell: r => <StatusBadge state={orderStatusState(r.status)} label={r.statusLabel || r.status} /> },
     { key: "core", header: "ثبت در Core", cell: r => { const c = coreState(r.core); return <StatusBadge state={c.state} label={c.label} quiet />; } },
-    { key: "items", header: "کالا", numeric: true, cell: r => <span className="num">{formatCount(r.itemCount)}</span> },
-    { key: "total", header: "مبلغ", numeric: true, cell: r => <Amount m={r.total} currency={r.currency} /> },
   ];
   const data = load.state === "done" && load.data.state === "ready" ? load.data : null;
   return <Solid as="section" className="list-card site-orders-list" aria-labelledby="site-orders-list">

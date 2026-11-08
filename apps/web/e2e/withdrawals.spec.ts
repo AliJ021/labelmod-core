@@ -199,6 +199,10 @@ test.describe("برداشت‌های من", () => {
       { version: 2, amount: "0", reason: "کرایه", note: "ثبت تکراری", actor: GM, at: "2026-10-02T08:00:00Z" },
     ])));
     await openMine(page);
+    // طرح ۱۰: ترتیب ستون‌ها تاریخ، دلیل، مبلغ، وضعیت.
+    const mine = page.getByRole("table", { name: "برداشت‌های من" });
+    await expect(mine.locator("tbody tr").first()).toContainText("کرایه");
+    expect((await mine.locator("thead th").allInnerTexts()).map(h => h.trim()).slice(0, 4)).toEqual(["زمان ثبت", "دلیل", "مبلغ", "وضعیت"]);
     await page.getByRole("button", { name: /^تاریخچهٔ برداشت/ }).click();
     const history = page.getByRole("region", { name: "تاریخچهٔ نسخه‌های این برداشت" });
     await expect(history.getByText("ثبت تکراری")).toBeVisible();
