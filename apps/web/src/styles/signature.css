@@ -806,3 +806,6 @@ table.grid td small, table.ui-table td small { font-size: 0.6875rem; color: var(
 /* طرح ۱۰: نشان سررسید زیر تاریخ چک — متن خودش معنا را می‌گوید و رنگ فقط تأکید است. */
 .cheque-urgency[data-urgency="overdue"] { color: var(--crit); font-weight: var(--weight-semibold); }
 .cheque-urgency[data-urgency="due_soon"] { color: var(--warn); }
+
+/* طرح ۱۰: سرگروه زیرمنوی تنظیمات مثل سرگروه منوی اصلی — کوچک و کم‌رنگ؛ مورد فعال وزن را نگه می‌دارد. */
+.settings-nav .tab-group { padding: 14px 12px 4px; font-size: var(--text-2xs); font-weight: var(--weight-semibold); color: var(--ink-3); letter-spacing: 0.3px; }
