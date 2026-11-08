@@ -218,7 +218,7 @@ test.describe("F-110-01 — conservative permission loading", () => {
     // رد شد: بخش باز همچنان همان است (سرور دادهٔ پشتش را می‌سنجد)؛ بقیه هرگز ساخته نشدند.
     await expect(current).toHaveAttribute("aria-selected", "true");
     expect(await seen()).toEqual(["برداشت و پاداش", "تنظیمات", "خزانه و چک", "داشبورد"].sort());
-    await page.waitForLoadState("networkidle");
+    await api.settled();
   });
 });
 
@@ -289,7 +289,7 @@ test.describe("F-110-04 — the More sheet is a real modal", () => {
     if (!compact(page)) await page.setViewportSize({ width: 390, height: 844 });
   });
 
-  test("focus enters, stays inside, and every close path returns it to the More button", async ({ page }) => {
+  test("focus enters, stays inside, and every close path returns it to the More button", async ({ page, api }) => {
     await page.goto("/");
     await expect(mainList(page).getByRole("tab", { name: "کالا و قیمت", exact: true })).toBeVisible();
     const more = page.getByRole("button", { name: "بخش‌های بیشتر", exact: true });
@@ -341,7 +341,7 @@ test.describe("F-110-04 — the More sheet is a real modal", () => {
     await expect(page.getByRole("tablist", { name: "بخش‌های خزانه", exact: true })).toBeVisible();
     await expect(page.locator("main#workspace-content")).toBeFocused();
     await expect(more).toHaveAttribute("data-current", "");
-    await page.waitForLoadState("networkidle");
+    await api.settled();
   });
 
   test("a late close event from the previous close never dismisses the reopened sheet", async ({ page }) => {

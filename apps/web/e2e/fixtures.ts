@@ -154,6 +154,8 @@ type Handler = (route: Route, url: URL) => Promise<void>;
 export class MockApi {
   handlers = new Map<string, Handler>();
   calls: string[] = [];
+  /** درخواست‌های API در راه: از ورود به route تا پایان پاسخ (حتی اگر صفحه لغوش کند). */
+  inflight = 0;
   unexpected: string[] = [];
   errors: string[] = [];
   external: string[] = [];
@@ -192,6 +194,21 @@ export class MockApi {
       if (!url.pathname.startsWith("/api/")) { await route.continue(); return; }
       const key = route.request().method() + " " + url.pathname.slice(4);
       this.calls.push(key + url.search);
+      this.inflight++;
+      try { await this.respond(route, url, key); } finally { this.inflight--; }
+    });
+  }
+  /**
+   * تا همهٔ درخواست‌های API در راه پاسخ بگیرند صبر می‌کند — پیش از ترک صفحه، تا WebKit قطع درخواست با
+   * ناوبری را «خطای صفحه» نشمارد. `waitForLoadState("networkidle")` این کار را نمی‌کند: آن یک نقطهٔ
+   * یک‌بارهٔ ناوبری است و پس از رسیدن، فراخوان دوباره بی‌درنگ برمی‌گردد؛ ردّ CI (webkit-dark-768،
+   * run 42480673872) بیست درخواست `auth/can` و `/branches` در راه را هنگام ناوبری بعدی نشان داد.
+   * پیش از صدا زدن، چیزی از صفحه که پس از سوار شدن برنامه می‌آید دیده شده باشد.
+   */
+  async settled() {
+    await expect.poll(() => this.inflight, { message: "API requests still in flight" }).toBe(0);
+  }
+  private async respond(route: Route, url: URL, key: string) {
       const handler = this.handlers.get(key);
       if (handler) { await handler(route, url); return; }
       if (key === "GET /labels/frame") {
@@ -203,7 +220,6 @@ export class MockApi {
       const body = key === "GET /products" ? { products: this.productRows } : key === "GET /permission-rules" ? { rules: this.permissionRows } : this.defaults[key];
       if (body === undefined) { this.unexpected.push(key + url.search); await route.fulfill({ status: 501, json: { error: { code: "unmocked", message: key } } }); return; }
       await route.fulfill({ json: body });
-    });
   }
 }
 /**

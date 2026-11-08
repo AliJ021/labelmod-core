@@ -77,7 +77,7 @@ test.describe("سربرگ و منوی گوشی (طرح ۱۰)", () => {
     await expect(bottomBar(page)).toBeVisible();
     // پیش از ترک داشبورد، درخواست‌های در راهش تمام شوند: WebKit قطع درخواست با ناوبری را «خطای صفحه»
     // گزارش می‌کند («due to access control checks» روی /branches، run 42266966629).
-    await page.waitForLoadState("networkidle");
+    await api.settled();
     await page.goto("/?page=pos");
     await expect(page.locator(".workspace--pos-phone")).toHaveCount(1);
     await expect(bottomBar(page)).toBeHidden();
@@ -86,7 +86,7 @@ test.describe("سربرگ و منوی گوشی (طرح ۱۰)", () => {
     expect(reserved, "no space reserved for a hidden bar").toBe("0px");
     // همان قاعدهٔ بالا برای ترک صندوق: درخواست‌های در راه صندوق (/branches) تمام شوند، وگرنه WebKit قطعشان
     // را «خطای صفحه» می‌شمارد (run 42299568852، webkit-light-1440).
-    await page.waitForLoadState("networkidle");
+    await api.settled();
     await menuButton(page).click();
     await sheet(page).getByRole("link", { name: "فاکتورها", exact: true }).click();
     await expect(page).toHaveURL(/page=invoices/);

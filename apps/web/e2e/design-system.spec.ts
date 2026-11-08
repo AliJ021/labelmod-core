@@ -228,7 +228,7 @@ test("navigation hides server-denied destinations but keeps the open section and
   // می‌تواند در فاصلهٔ میان آخرین پاسخ مجوز و شروع زنجیره برقرار شود (WebKit زیر بار CI، PR198). پس حلقهٔ
   // آخر زنجیره (تأمین‌کنندگان) دیده می‌شود و بعد آرامش شبکه.
   await expect.poll(() => api.calls.slice(beforeTreasury).includes("GET /suppliers"), { message: "treasury load chain reached its last request" }).toBe(true);
-  await page.waitForLoadState("networkidle");
+  await api.settled();
   // سرور روند ساعتی را نداد (۴۰۳): نمودار ساخته نمی‌شود — نه صفر، نه خطا — و کارت‌ها
   // زبانه نمی‌شوند، چون پنلی برای نشان‌دادن نیست.
   api.handlers.set("GET /reports/daily/hourly", async route => { await route.fulfill({ status: 403, json: { error: { code: "forbidden", message: "اجازه ندارید" } } }); });

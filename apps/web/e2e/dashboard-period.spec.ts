@@ -153,7 +153,7 @@ test.describe("مرور دوره در داشبورد", () => {
     await expect(freshness).toHaveAttribute("data-state", "fresh");
     // پاسخ کهنهٔ انتخاب شعبه دیر می‌رسد و جای نتیجهٔ تازه‌تر را نمی‌گیرد.
     holds.get(3)!();
-    await page.waitForLoadState("networkidle");
+    await api.settled();
     await expect(kpi(page, "فروش خالص")).toContainText("8٬880٬000");
     await expect(section(page).getByLabel("شعبه")).toHaveValue("b2");
     await expect(section(page).getByRole("radio", { name: "۳۰ روز اخیر" })).toBeChecked();
