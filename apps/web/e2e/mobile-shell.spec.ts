@@ -75,10 +75,13 @@ test.describe("سربرگ و منوی گوشی (طرح ۱۰)", () => {
     api.defaults["GET /shifts/current"] = { id: "s1", userId: "22222222-2222-4222-8222-222222222222", branchId: "b1", status: "open", openingCash: "0", openedAt: "2026-09-16T05:00:00Z" };
     await page.goto("/");
     await expect(bottomBar(page)).toBeVisible();
-    // پیش از ترک داشبورد، درخواست‌های در راهش تمام شوند: WebKit قطع درخواست با ناوبری را «خطای صفحه»
-    // گزارش می‌کند («due to access control checks» روی /branches، run 42266966629).
+    // صندوق از راه خودِ نوار پایین باز می‌شود، نه با بارگذاری دوبارهٔ صفحه: `page.goto` صفحه را
+    // پایین می‌آورد و WebKit پاسخ `/branches`ی را که هنوز بدنه‌اش خوانده نشده «خطای صفحه» می‌شمارد
+    // (run 42266966629 و 42485363115؛ حتی پس از صفرشدن درخواست‌های در راهِ ماک، چون پاسخ
+    // تحویل‌شده هنوز در مرورگر در حال خواندن است). مسیر واقعی کاربر هم همین تپ است.
     await api.settled();
-    await page.goto("/?page=pos");
+    await bottomBar(page).getByRole("tab", { name: "صندوق", exact: true }).click();
+    await expect(page).toHaveURL(/page=pos/);
     await expect(page.locator(".workspace--pos-phone")).toHaveCount(1);
     await expect(bottomBar(page)).toBeHidden();
     await expect(header(page).locator(".shell-trail [aria-current=page]")).toHaveText("صندوق");
