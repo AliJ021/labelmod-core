@@ -94,6 +94,12 @@ test.describe("سربرگ و منوی گوشی (طرح ۱۰)", () => {
     await sheet(page).getByRole("link", { name: "فاکتورها", exact: true }).click();
     await expect(page).toHaveURL(/page=invoices/);
     await expect(bottomBar(page)).toBeVisible();
+    // بازگشت از صندوق: جای رزرو دوباره همان ارتفاع واقعی نوار است، نه صفرِ صندوق و نه عدد پیش‌فرض.
+    await expect.poll(() => page.evaluate(() => {
+      const bar = document.querySelector<HTMLElement>(".workspace > .workspace-nav");
+      const v = getComputedStyle(document.documentElement).getPropertyValue("--bottom-nav-h").trim();
+      return bar ? v === `${Math.ceil(bar.getBoundingClientRect().height)}px` && v !== "0px" : false;
+    }), { message: "reserved space equals the visible bar height after leaving the POS" }).toBe(true);
   });
 });
 

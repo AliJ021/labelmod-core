@@ -51,7 +51,14 @@ export function ShellNav({ id, items, pending, access, onRetry, zone, onZone, co
     const observer = new ResizeObserver(apply);
     observer.observe(el);
     return () => observer.disconnect();
-  }, [compact]);
+    /*
+     * ⚠️ `zone` عمداً در وابستگی‌هاست: صندوقِ گوشی نوار را `display: none` می‌کند و WebKit (سافاری و
+     *    آیفون) برای این گذار ResizeObserver را صدا نمی‌زند، پس با ناوبری درون‌برنامه‌ای ۶۶ پیکسل جای
+     *    نوارِ پنهان رزرو می‌ماند (CI، mobile-shell روی WebKit ۳۷۵ و ۱۴۴۰). بارگذاری مستقیم همان را
+     *    پنهان می‌کرد چون `apply()` اول کار اندازه می‌گیرد. اندازه‌گیری دوباره با هر تغییر بخش، پس از
+     *    commit همان رندر که کلاس صندوق را می‌گذارد، به رویداد مرورگر وابسته نیست.
+     */
+  }, [compact, zone]);
   useEffect(() => () => { document.documentElement.style.removeProperty("--bottom-nav-h"); }, []);
   // بخش باز که در نوار پایین نیست: «بیشتر» حالت انتخاب می‌گیرد تا کاربر بداند کجاست.
   const current = items.find(z => z.key === zone);
