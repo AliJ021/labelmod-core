@@ -92,8 +92,12 @@ test("مسیر finalize صندوق واقعاً صف می‌کند — و با �
    * ترتیب: `enqueue` باید **پیش از** پاک‌کردن سبد باشد. برعکسش یعنی
    * اگر صف خطا بدهد، فروش هم از صفحه رفته باشد و هم در صف نباشد.
    */
+  // پاک‌کردن سبد در صندوق `dropCart()` است (`forgetCart` + کنارگذاشتن وعدهٔ بازیابی پیش‌نویس).
+  // نبودنش هم شکست است: `indexOf` منفی، مقایسهٔ ترتیب را بی‌معنا سبز نمی‌کند.
+  const clearAt = body.indexOf("dropCart()");
+  assert.ok(clearAt > 0, "مسیر finalize سبد را با dropCart() پاک نمی‌کند.");
   assert.ok(
-    body.indexOf("saleQueue().enqueue(") < body.indexOf("forgetCart()"),
+    body.indexOf("saleQueue().enqueue(") < clearAt,
     "سبد پیش از نشستنِ فروش در صف پاک می‌شود — فروش می‌تواند گم شود.",
   );
 });

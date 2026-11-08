@@ -413,8 +413,12 @@ function PosScreen({ actorId, mode, onMode, browseInvoices }: {
   // همان Retry که باید نجاتش بدهد عوض می‌شود.
   const keys = useRef(new ActionKeys());
   const scans = useRef(new ScanCounter());
-  /** بازیابی پیش‌نویس در راه؛ `ensureInvoice` تا پایانش فاکتور تازه نمی‌سازد. */
+  /**
+   * وعدهٔ بازیابی پیش‌نویس. `ensureInvoice` پیش از ساختن فاکتور تازه منتظرش می‌ماند و اگر پیش‌نویس
+   * برگشته بود همان را می‌گیرد. فقط کنارگذاشتن عمدی سبد (`dropCart`) یا بازیابی ناموفق پاکش می‌کند.
+   */
   const restoring = useRef<Promise<Invoice | null> | null>(null);
+  const dropCart = () => { forgetCart(); restoring.current = null; };
   const buffer = useRef(new ScanBuffer());
 
   const branch = branches.find((b) => b.id === branchId) ?? null;
@@ -574,7 +578,11 @@ function PosScreen({ actorId, mode, onMode, browseInvoices }: {
         setError(message(e));
       } finally {
         settle(restored);
-        restoring.current = null;
+        // ⚠️ بازیابی موفق، وعدهٔ حل‌شده را نگه می‌دارد تا سبد **عمداً** کنار گذاشته شود (`dropCart`).
+        //    پاک‌کردن پس از حل یا حتی پس از commit کافی نبود: اسکنی که با بستار پیش از commit می‌رسید
+        //    `openDraft` تهی می‌دید و وعده را هم پاک‌شده (CI، chromium-light-1920؛ با لاگ زمان‌دار و
+        //    کندسازی ۴ برابر CPU بازتولید شد).
+        if (restored === null) restoring.current = null;
       }
     })();
     // فقط هنگام تغییر شیفت — نه با هر تغییر سبد.
@@ -1181,7 +1189,7 @@ function PosScreen({ actorId, mode, onMode, browseInvoices }: {
         completeSale(invoice.id, null, null, { payable: amount, received });
       }
       keys.current.clear(action);
-      forgetCart();
+      dropCart();
     });
 
   /** «آیا نهایی شده؟» — فقط خواندن؛ اگر شده، همان وضعیت موفق نشان داده می‌شود. */
@@ -1191,7 +1199,7 @@ function PosScreen({ actorId, mode, onMode, browseInvoices }: {
     if (!["finalized", "paid", "partially_returned", "returned"].includes(fresh.status)) return false;
     completeSale(invoice.id, fresh.number, finalAmounts(fresh.settlement), null);
     keys.current.clear(`finalize:${invoice.id}`);
-    forgetCart();
+    dropCart();
     return true;
   };
 
@@ -1202,7 +1210,7 @@ function PosScreen({ actorId, mode, onMode, browseInvoices }: {
 
   /** «فروش بعدی» — تنها جایی که صفحهٔ «ثبت شد» برداشته و سبد تازه می‌شود. */
   const nextSale = () => {
-    forgetCart();
+    dropCart();
     setCompleted(null);
     setInvoice(null);
     setReceived(0n);
@@ -1231,7 +1239,7 @@ function PosScreen({ actorId, mode, onMode, browseInvoices }: {
       );
       setShift(null);
       setClosing(false);
-      forgetCart();
+      dropCart();
     });
 
   const abandon = () =>
@@ -1245,7 +1253,7 @@ function PosScreen({ actorId, mode, onMode, browseInvoices }: {
         setDraftRefund({ invoiceId: invoice.id, payments });
         return;
       }
-      forgetCart();
+      dropCart();
       setInvoice(null);
       setReceived(0n);
       scans.current.reset();
@@ -1258,7 +1266,7 @@ function PosScreen({ actorId, mode, onMode, browseInvoices }: {
     await keys.current.run(`refund-draft:${draftRefund.invoiceId}:${JSON.stringify(body)}`, (key) =>
       pos.refundDraft(draftRefund.invoiceId, body, key));
     setDraftRefund(null);
-    forgetCart(); setInvoice(null); setReceived(0n); scans.current.reset();
+    dropCart(); setInvoice(null); setReceived(0n); scans.current.reset();
     setNote("برگشت پرداخت پیش‌نویس ثبت و سبد لغو شد.");
   });
 
@@ -1401,7 +1409,7 @@ function PosScreen({ actorId, mode, onMode, browseInvoices }: {
           {browseInvoices ? <>
           <button type="button" className="tool" disabled={busy || !invoice || completed !== null || !payIdle} onClick={() => {
             if (!invoice || busy) return;
-            forgetCart(); setInvoice(null); setReceived(0n); scans.current.reset();
+            dropCart(); setInvoice(null); setReceived(0n); scans.current.reset();
             setNote("پیش‌نویس در سرور ذخیره است و از بخش فاکتورها قابل ادامه است.");
           }}>ذخیره و فروش جدید</button>
           </> : null}
