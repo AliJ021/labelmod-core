@@ -13,7 +13,6 @@ import {
   hasSelection,
   maxReturnable,
   selectionToLines,
-  suggestedRefund,
   type Returnable,
   type Selection,
 } from "../src/lib/returns.ts";
@@ -44,71 +43,6 @@ describe("چقدر قابل برگشت است", () => {
   test("انتخاب منفی یا بی‌معنا صفر است", () => {
     assert.equal(clampQty(line(), -1), 0);
     assert.equal(clampQty(line(), Number.NaN), 0);
-  });
-});
-
-describe("مبلغ پیشنهادی بازپرداخت", () => {
-  test("مرجوعی دوم باقی‌مانده ریالی و مالیات واقعی را پیشنهاد می‌کند", () => {
-    const l = line({ soldQty: "2", remainingQty: "1", netAmount: "399999", returnedNetAmount: "200000",
-      taxAmount: "39999", returnedTaxAmount: "20000" });
-    assert.equal(suggestedRefund([l], pick([["l1", 1]])), 219998n);
-  });
-  test("برگشت کامل، کل مبلغ سطر", () => {
-    const l = line({ soldQty: "2", netAmount: "2000000" });
-    assert.equal(suggestedRefund([l], pick([["l1", 2]])), 2_000_000n);
-  });
-
-  test("برگشت نصف، نصف مبلغ", () => {
-    const l = line({ soldQty: "2", netAmount: "2000000" });
-    assert.equal(suggestedRefund([l], pick([["l1", 1]])), 1_000_000n);
-  });
-
-  test("انتخاب‌نشده چیزی اضافه نمی‌کند", () => {
-    assert.equal(suggestedRefund([line()], pick([])), 0n);
-    assert.equal(suggestedRefund([line()], pick([["l1", 0]])), 0n);
-  });
-
-  test("تخفیف سطر در مبلغ برگشتی لحاظ است", () => {
-    // مهم: `netAmount` تخفیف را در خود دارد. اگر اینجا
-    // `unitPrice × qty` می‌نوشتیم، مشتری بیشتر از آنچه داده پس
-    // می‌گرفت.
-    const discounted = line({ soldQty: "2", netAmount: "1500000" });
-    assert.equal(suggestedRefund([discounted], pick([["l1", 1]])), 750_000n);
-  });
-
-  test("گرد کردن نیم‌به‌بالا، مثل round() پستگرس", () => {
-    // ۱۰۰۱ ÷ ۲ = ۵۰۰٫۵ → ۵۰۱. تقسیم bigint به‌تنهایی ۵۰۰ می‌داد و
-    // هر سطر یک ریال کم می‌شد.
-    const odd = line({ soldQty: "2", netAmount: "1001" });
-    assert.equal(suggestedRefund([odd], pick([["l1", 1]])), 501n);
-  });
-
-  test("هر سطر جدا گرد می‌شود، نه جمع کل", () => {
-    // همان ترتیبی که سرور دارد: هر sale_return_line جداگانه round()
-    // می‌خورد و سند از جمعشان ساخته می‌شود.
-    const a = line({ invoiceLineId: "a", soldQty: "2", netAmount: "1001" });
-    const b = line({ invoiceLineId: "b", soldQty: "2", netAmount: "1001" });
-    assert.equal(
-      suggestedRefund([a, b], pick([["a", 1], ["b", 1]])),
-      1002n,
-      "۵۰۱ + ۵۰۱، نه گرد کردن ۱۰۰۱",
-    );
-  });
-
-  test("چند سطر با تعدادهای متفاوت", () => {
-    const a = line({ invoiceLineId: "a", soldQty: "3", netAmount: "3000000" });
-    const b = line({ invoiceLineId: "b", soldQty: "1", netAmount: "500000" });
-    assert.equal(suggestedRefund([a, b], pick([["a", 2], ["b", 1]])), 2_500_000n);
-  });
-
-  test("مبالغ بزرگ دقت را از دست نمی‌دهند", () => {
-    const big = line({ soldQty: "1", netAmount: "9007199254740993" });
-    assert.equal(suggestedRefund([big], pick([["l1", 1]])), 9_007_199_254_740_993n);
-  });
-
-  test("تعداد فروخته صفر، تقسیم بر صفر نمی‌شود", () => {
-    const broken = line({ soldQty: "0", netAmount: "1000" });
-    assert.equal(suggestedRefund([broken], pick([["l1", 1]])), 0n);
   });
 });
 

@@ -53,6 +53,8 @@ test("bulk settlement selects all filtered versions across pages, reviews exact 
     selectedOwner=url.searchParams.get("ownerId") ?? "";
     await json(route,{items:[one,two]});
   });
+  const previews: unknown[] = [];
+  api.handlers.set("POST /withdrawals/settlements/preview",async route=>{ previews.push(route.request().postDataJSON()); await json(route,{count:2,amount:"203",stale:0}); });
   api.handlers.set("POST /withdrawals/settlements",async route=>{
     posts++; key=route.request().headers()["idempotency-key"]!;
     expect(route.request().postDataJSON()).toEqual({items:[{id:W1,expectedVersion:1},{id:W2,expectedVersion:1}],note:"تسویهٔ دوره"});
@@ -71,6 +73,8 @@ test("bulk settlement selects all filtered versions across pages, reviews exact 
   await expect(dialog).toContainText("20٫3");
   await expect(dialog).toContainText(CASHIER.name);
   expect(posts).toBe(0);
+  // جمع از سرور برای همان نسخه‌ها، نه جمع مرورگر.
+  expect(previews.at(-1)).toEqual({items:[{id:W1,expectedVersion:1},{id:W2,expectedVersion:1}]});
   await dialog.getByRole("button",{name:"تأیید و ثبت تسویه",exact:true}).click();
   await expect.poll(()=>posts).toBe(1); expect(recorded).toBe(true);
   await page.reload();
@@ -86,6 +90,7 @@ test("bulk settlement conflict clears selection, while settled rows remain visib
   const settled={...item(W2,GM,"200","تسویه قبلی"),settledAt:"2026-10-03T03:00:00Z",settledBy:GM.name};
   api.defaults["GET /withdrawals/owners"]={owners:[CASHIER,GM]};
   api.handlers.set("GET /withdrawals",route=>json(route,{items:[row,settled],total:2,page:1,pageSize:20}));
+  api.handlers.set("POST /withdrawals/settlements/preview",route=>json(route,{count:1,amount:"101",stale:0}));
   api.handlers.set("POST /withdrawals/settlements",async route=>{
     row={...row,version:2,amount:"102"};
     await json(route,{error:{code:"withdrawal_stale",message:"انتخاب قدیمی است؛ دوباره انتخاب کنید"}},409);
@@ -99,6 +104,35 @@ test("bulk settlement conflict clears selection, while settled rows remain visib
   await expect(page.getByRole("alert")).toContainText("انتخاب قدیمی است");
   await expect(page.getByRole("checkbox",{name:`انتخاب برداشت ${CASHIER.name}، ثبت قدیمی`})).not.toBeChecked();
   expect(api.calls.filter(c=>c==="POST /withdrawals/settlements")).toHaveLength(1);
+});
+
+test("settlement total comes from the server; a changed selection blocks settling and a failed read never shows a number", async ({page,api})=>{
+  const one=item(W1,CASHIER,"101","ثبت یک"),two=item(W2,CASHIER,"102","ثبت دو");
+  api.handlers.set("GET /withdrawals",route=>json(route,{items:[one,two],total:2,page:1,pageSize:20}));
+  // عمداً با جمع ردیف‌ها (۲۰٫۳ تومان) فرق دارد: صفحه باید عدد سرور را نشان دهد.
+  let reply: {status:number; body:unknown} = {status:200, body:{count:2,amount:"5000",stale:0}};
+  api.handlers.set("POST /withdrawals/settlements/preview",route=>json(route,reply.body,reply.status));
+  await page.goto("/?page=personnel&personnel.tab=withdrawal-log");
+  await page.getByRole("button",{name:"انتخاب تسویه‌نشده‌های این صفحه",exact:true}).click();
+  await page.getByLabel("یادداشت تسویه",{exact:true}).fill("تسویه");
+  const line=page.getByRole("status").filter({hasText:"برداشت انتخاب شده"});
+  await expect(line).toContainText("500");
+  await expect(line).not.toContainText("20٫3");
+  const trigger=page.getByRole("button",{name:"تسویهٔ انتخاب‌ها",exact:true});
+  await expect(trigger).toBeEnabled();
+
+  reply={status:200, body:{count:2,amount:"203",stale:1}};
+  await page.getByRole("checkbox",{name:`انتخاب برداشت ${CASHIER.name}، ثبت دو`}).uncheck();
+  await page.getByRole("checkbox",{name:`انتخاب برداشت ${CASHIER.name}، ثبت دو`}).check();
+  await expect(page.getByRole("alert")).toContainText("تغییر کرده یا تسویه شده");
+  await expect(trigger).toBeDisabled();
+
+  reply={status:500, body:{error:{code:"internal",message:"خطای سرور"}}};
+  await page.getByRole("checkbox",{name:`انتخاب برداشت ${CASHIER.name}، ثبت دو`}).uncheck();
+  await expect(line).toContainText("خوانده نشد");
+  await expect(trigger).toBeDisabled();
+  expect(api.calls.filter(c=>c==="POST /withdrawals/settlements")).toHaveLength(0);
+  api.errors.length = 0;
 });
 
 test.describe("برداشت‌های من", () => {

@@ -385,6 +385,8 @@ export interface PurchaseReturn {
   taxAmount: string;
   /** حملِ کالای پس‌فرستاده — پرداختیم و باربری برنمی‌گرداند. */
   chargeLoss: string;
+  /** کاهش بدهی = کالا + مالیات، جمع در SQL؛ پاسخ قدیمی‌تر ندارد. */
+  payableReduction?: string | null;
   lines: {
     id: string;
     receiptLineId: string;
@@ -418,6 +420,15 @@ export interface PurchaseReturnSummary {
   chargeLoss: string;
 }
 
+/** پنج عدد پیش‌نمایش؛ «کاهش بدهی» کالا به‌علاوهٔ مالیات است. */
+export interface PurchaseReturnPreview {
+  goodsAmount: string;
+  costAmount: string;
+  taxAmount: string;
+  chargeLoss: string;
+  payableReduction: string;
+}
+
 export const purchaseReturns = {
   /** فهرست برگه‌ها، تازه‌ترین اول، در دامنهٔ شعبهٔ کاربر. */
   list: () => api.get<{ returns: PurchaseReturnSummary[] }>("/purchase-returns"),
@@ -427,6 +438,10 @@ export const purchaseReturns = {
     api.get<Returnable>(`/receipts/${receiptId}/returnable`),
 
   get: (id: string) => api.get<PurchaseReturn>(`/purchase-returns/${id}`),
+
+  /** پیش‌نمایش فقط‌خواندنی از SQL (مهاجرت ۱۱۵) — همان عبارت‌های ثبت؛ مرورگر مبلغی حساب نمی‌کند. */
+  preview: (receiptId: string, lines: { receiptLineId: string; qty: string }[], opts: RequestOptions = {}) =>
+    api.post<PurchaseReturnPreview>(`/receipts/${receiptId}/return-preview`, { lines }, opts),
 
   /**
    * ساخت و ثبت در یک درخواست.

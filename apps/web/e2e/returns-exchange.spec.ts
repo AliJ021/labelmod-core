@@ -16,6 +16,7 @@ function fixture(api: MockApi) {
   api.defaults["GET /invoices/i1/returnable"] = { invoiceId: "i1", invoiceStatus: "finalized", late: false,
     lines: [{ invoiceLineId: "l1", variationId: "v1", soldQty: "2", returnedQty: "0", remainingQty: "2",
       unitPrice: "1000000", netAmount: "2000000", returnedNetAmount: "0", taxAmount: "0", returnedTaxAmount: "0" }] };
+  api.defaults["POST /invoices/i1/return-account"] = { returnedValue: "1000000", outstanding: "0", funds: "1000000", maxRefund: "1000000", suggestedRefund: "1000000", refundAmount: "1000000", debtApplied: "0", customerCredit: "0", problem: null };
   api.defaults["GET /exchanges/variation/v1"] = { id: "v1", name: "پیراهن آزمایشی", sku: "TEST-M" };
   api.defaults["POST /exchanges/quote"] = { token: "a".repeat(64), returnedValue: "1000000", replacementValue: "1000000",
     debt: "0", funds: "2000000", debtApplied: "0", transferAmount: "1000000", fundedTransfer: "1000000", collectAmount: "0", refundAmount: "0", policy: "carry_debt" };

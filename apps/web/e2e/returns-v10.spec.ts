@@ -30,6 +30,7 @@ function fixture(api: MockApi, view: Record<string, unknown>) {
   api.defaults["GET /invoices/i1/refund-sources"] = { payments: [] };
   api.defaults["GET /shifts/open"] = [{ id: "s1", userName: "سارا کریمی", openedAt: "2026-10-29T05:25:00Z" }];
   api.defaults["GET /invoices/i1/returnable"] = view;
+  api.defaults["POST /invoices/i1/return-account"] = { returnedValue: "4900000", outstanding: "0", funds: "4900000", maxRefund: "4900000", suggestedRefund: "4900000", refundAmount: "4900000", debtApplied: "0", customerCredit: "0", problem: null };
 }
 async function find(page: Page) {
   await page.goto("/?page=returns");
@@ -69,7 +70,9 @@ test.describe("مرجوعی (طرح ۱۰)", () => {
     // حساب: همان سه عدد معلوم؛ ارزش کالا از همان پیشنهاد پیشین (۴۹۰٬۰۰۰ تومان).
     await expect(two.locator(".return-account")).toContainText("490٬000");
     await expect(two.getByRole("button", { name: "۱. بررسی مرجوعی", exact: true })).toBeVisible();
-    expect(api.calls.filter(c => c.startsWith("POST ")), "هیچ چیزی ثبت نشد").toEqual([]);
+    // «حساب مرجوعی» POST فقط‌خواندنی است (پیش‌نمایش SQL)؛ هر POST دیگری یعنی چیزی ثبت شده.
+    expect(api.calls.filter(c => c.startsWith("POST ") && c !== "POST /invoices/i1/return-account"), "هیچ چیزی ثبت نشد").toEqual([]);
+    expect(api.calls).toContain("POST /invoices/i1/return-account");
 
     const width = page.viewportSize()!.width;
     const a = (await one.boundingBox())!, b = (await two.boundingBox())!;
@@ -98,6 +101,62 @@ test.describe("مرجوعی (طرح ۱۰)", () => {
     fixture(api, older);
     await find(page);
     await expect(page.getByRole("region", { name: "۱. فاکتور و اقلام برگشتی" }).locator(".returns-window")).toHaveText("2 ساعت از فروش گذشته");
+  });
+
+  test("return account rows come from the server: debt first, refund cap, customer credit; a problem or failed read blocks posting", async ({ page, api }) => {
+    fixture(api, returnable());
+    // همان مثال مالک: بدهی ۱٫۹ میلیون، کالای ۴۹۰ هزار تومانی — همه صرف بدهی، پیشنهاد بازپرداخت صفر.
+    const bodies: Array<Record<string, unknown>> = [];
+    api.handlers.set("POST /invoices/i1/return-account", async route => {
+      const body = route.request().postDataJSON() as { refundAmount?: string };
+      bodies.push(body);
+      const refund = body.refundAmount ?? "0";
+      const json = refund === "0"
+        ? { returnedValue: "4900000", outstanding: "19000000", funds: "30000000", maxRefund: "4900000", suggestedRefund: "0", refundAmount: "0", debtApplied: "4900000", customerCredit: "0", problem: null }
+        : refund === "1000000"
+        ? { returnedValue: "4900000", outstanding: "19000000", funds: "30000000", maxRefund: "4900000", suggestedRefund: "0", refundAmount: "1000000", debtApplied: "3900000", customerCredit: "0", problem: null }
+        : { returnedValue: "4900000", outstanding: "19000000", funds: "30000000", maxRefund: "4900000", suggestedRefund: "0", refundAmount: refund, debtApplied: "0", customerCredit: "0", problem: "بازپرداخت بیش از ارزش کالای مرجوعی است." };
+      await route.fulfill({ json });
+    });
+    let submitted: Record<string, unknown> | undefined;
+    api.handlers.set("POST /returns/commit", async route => { submitted = route.request().postDataJSON() as Record<string, unknown>;
+      await route.fulfill({ json: { id: "r9", number: "R-9", status: "posted" } }); });
+    await find(page);
+    await page.getByRole("button", { name: "اضافه کردن تیشرت بیسیک پنبه‌ای", exact: true }).click();
+    await page.getByRole("combobox", { name: "علت مرجوعی", exact: true }).selectOption("changed_mind");
+    const rows = page.getByRole("region", { name: "۲. حساب مرجوعی" }).locator(".return-account");
+    const row = (label: string) => rows.locator("div").filter({ has: page.getByText(label, { exact: true }) });
+    await expect(row("بدهی همین فاکتور")).toContainText("1٬900٬000");
+    await expect(row("اول صرف بدهی")).toContainText("490٬000");
+    await expect(row("بازپرداخت")).toContainText("0");
+    expect(bodies.at(-1)).toEqual({ lines: [{ invoiceLineId: "l2", qty: "1" }] });
+
+    // بازپرداخت دلخواه: همان عدد به سرور می‌رود و صرف بدهی را سرور دوباره حساب می‌کند.
+    await page.getByLabel(/مبلغ بازپرداخت/).fill("100000");
+    await expect(row("اول صرف بدهی")).toContainText("390٬000");
+    expect(bodies.at(-1)).toMatchObject({ refundAmount: "1000000" });
+
+    // بیش از ارزش: پیام سرور و دکمه بسته.
+    await page.getByLabel(/مبلغ بازپرداخت/).fill("900000");
+    await expect(page.getByRole("alert").filter({ hasText: "بیش از ارزش کالای مرجوعی" })).toBeVisible();
+    await expect(page.getByRole("button", { name: "۱. بررسی مرجوعی", exact: true })).toBeDisabled();
+
+    // خالی = پیشنهاد سرور (صفر)، همان که ثبت می‌شود.
+    await page.getByLabel(/مبلغ بازپرداخت/).fill("");
+    await expect(row("اول صرف بدهی")).toContainText("490٬000");
+    await page.getByRole("button", { name: "۱. بررسی مرجوعی", exact: true }).click();
+    await page.getByRole("button", { name: "اقلام و مبلغ را تأیید می‌کنم؛ ثبت مرجوعی", exact: true }).click();
+    await expect(page.getByRole("status").filter({ hasText: "R-9" })).toBeVisible();
+    expect(submitted?.refundAmount).toBe("0");
+
+    // خواندن ناموفق: خطا، نه عدد.
+    api.handlers.set("POST /invoices/i1/return-account", async route => { await route.fulfill({ status: 500, json: { error: { code: "internal", message: "خطای سرور" } } }); });
+    await find(page);
+    await page.getByRole("button", { name: "اضافه کردن تیشرت بیسیک پنبه‌ای", exact: true }).click();
+    await expect(page.getByRole("alert").filter({ hasText: "حساب مرجوعی خوانده نشد" })).toBeVisible();
+    await expect(row("اول صرف بدهی")).toContainText("—");
+    await expect(page.getByRole("button", { name: "۱. بررسی مرجوعی", exact: true })).toBeDisabled();
+    api.errors.length = 0;
   });
 
   test("today's returns: stored amounts from the server, condition from counts, reloaded after a posted return; a failed read is an error", async ({ page, api }) => {

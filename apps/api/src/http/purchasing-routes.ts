@@ -966,6 +966,27 @@ export function registerPurchasingRoutes(
     return view;
   });
 
+  /**
+   * پیش‌نمایش برگشت از خرید — فقط‌خواندنی، همان مجوز و دامنهٔ ثبت.
+   *
+   * هر پنج عدد از `purchasing.purchase_return_preview` (مهاجرت ۱۱۵) با همان عبارت‌های
+   * `post_purchase_return`؛ مرورگر هیچ مبلغی حساب نمی‌کند. «کاهش بدهی» کالا به‌علاوهٔ
+   * مالیات است، نه فقط کالا. خطای ورودی همان پیام ثبت است (P0001 ← ۴۰۹).
+   */
+  app.post("/receipts/:id/return-preview", async (req) => {
+    const s = session(req);
+    const { id } = z.object({ id: uuid }).parse(req.params);
+    const body = z.object({ lines: createReturnBody.shape.lines }).parse(req.body);
+    await requireForSession(db, s, "stock.receive");
+    const scope = await branchesOf(db, s.userId);
+    if (!(await returns.returnable(id, scope))) throw new PurchasingError("receipt_not_found", "رسید خرید یافت نشد", 404);
+    const row = (await sql<{ goods: string; cost: string; tax: string; chargeLoss: string; payable: string }>`
+      SELECT goods_amount::text AS goods, cost_amount::text AS cost, tax_amount::text AS tax,
+             charge_loss::text AS "chargeLoss", payable_reduction::text AS payable
+        FROM purchasing.purchase_return_preview(${id}::uuid, ${JSON.stringify(body.lines)}::jsonb)`.execute(db)).rows[0]!;
+    return { goodsAmount: row.goods, costAmount: row.cost, taxAmount: row.tax, chargeLoss: row.chargeLoss, payableReduction: row.payable };
+  });
+
   /** فهرست برگه‌های برگشت از خرید — همان مجوز و دامنهٔ خواندن یک برگه. */
   app.get("/purchase-returns", async (req) => {
     const s = session(req);

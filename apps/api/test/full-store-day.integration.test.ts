@@ -611,6 +611,18 @@ describe("یک روز کامل فروشگاه", { skip, timeout: 300_000 }, () =
       SELECT unit_cost::text AS c FROM sales.invoice_line WHERE id = ${lineId}::uuid`
       .execute(handle.db);
 
+    // «حساب مرجوعی» پیش از ثبت (مهاجرت ۱۱۶) — بعد از ثبت با ستون‌های برگ مقایسه می‌شود.
+    const account = await call("POST", `/invoices/${day.invCash}/return-account`, supervisor,
+      { lines: [{ invoiceLineId: lineId, qty: "1" }], refundAmount: "4000000" });
+    assert.equal(account.statusCode, 200, account.body);
+    const acc = account.json() as { returnedValue: string; debtApplied: string; customerCredit: string; refundAmount: string; problem: string | null };
+    assert.equal(acc.problem, null);
+    const overFunds = await call("POST", `/invoices/${day.invCash}/return-account`, supervisor,
+      { lines: [{ invoiceLineId: lineId, qty: "1" }], refundAmount: "999999999999" });
+    assert.match(String((overFunds.json() as { problem: string | null }).problem), /بیش از/);
+    assert.equal((await call("POST", `/invoices/${day.invCash}/return-account`, supervisor,
+      { lines: [{ invoiceLineId: lineId, qty: "999" }] })).statusCode, 409, "بیش از باقی‌مانده: همان پیام ثبت");
+
     const draft = await call("POST", "/returns", supervisor, {
       invoiceId: day.invCash,
       reasonCode: "size_small",
@@ -629,6 +641,12 @@ describe("یک روز کامل فروشگاه", { skip, timeout: 300_000 }, () =
       SELECT cogs_amount::text AS c FROM sales.sale_return WHERE id = ${rid}::uuid`
       .execute(handle.db);
     assert.equal(rc.rows[0]!.c, cost.rows[0]!.c, "بهای مرجوعی باید بهای همان فروش باشد");
+
+    const after = (await sql<{ value: string; debt: string; credit: string; refund: string }>`
+      SELECT (net_amount + tax_amount + shipping_amount)::text AS value, receivable_applied::text AS debt,
+             credit_applied::text AS credit, refund_amount::text AS refund FROM sales.sale_return WHERE id = ${rid}::uuid`.execute(handle.db)).rows[0]!;
+    assert.deepEqual({ value: acc.returnedValue, debt: acc.debtApplied, credit: acc.customerCredit, refund: acc.refundAmount }, after,
+      "حساب مرجوعی پیش از ثبت = برگ ثبت‌شده");
 
     // و بازپرداخت نقدی به شیفت باز چسبید — وگرنه شمارش کشو مغایرت کاذب
     const pay = await sql<{ s: string | null }>`

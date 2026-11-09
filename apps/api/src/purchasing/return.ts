@@ -83,6 +83,8 @@ export interface PurchaseReturnJson {
   taxAmount: string;
   /** حملِ کالای پس‌فرستاده — پرداختیم و برنمی‌گردد. */
   chargeLoss: string;
+  /** کاهش بدهی تأمین‌کننده = کالا + مالیات (همان سطر ۲۱۰۱ سند)، جمع در SQL. پیش‌نویس: null. */
+  payableReduction: string | null;
   lines: PurchaseReturnLineJson[];
 }
 
@@ -265,6 +267,7 @@ export class PurchaseReturnService {
         "pr.cost_amount",
         "pr.tax_amount",
         "pr.charge_loss",
+        sql<string | null>`(pr.goods_amount + pr.tax_amount)::text`.as("payable_reduction"),
         "r.number as receipt_number",
         "s.name as supplier_name",
         "w.name as warehouse_name",
@@ -314,6 +317,7 @@ export class PurchaseReturnService {
       costAmount: head.cost_amount,
       taxAmount: head.tax_amount,
       chargeLoss: head.charge_loss,
+      payableReduction: head.payable_reduction,
       lines: lines.map((l) => ({
         id: l.id,
         receiptLineId: l.receipt_line_id,

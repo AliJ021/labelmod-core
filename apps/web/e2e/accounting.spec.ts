@@ -6,6 +6,8 @@ test("cash refund explicitly selects one of several open drawers", async ({ page
   api.defaults["GET /return-reasons"] = { reasons: [{ code: "defective", label: "معیوب" }] };
   api.defaults["GET /invoices/lookup"] = { id: "i1", branchId: "b1", number: "F-1", netAmount: "200000", lines: [{ id: "l1", productName: "کالای آزمون", sku: "TEST" }] };
   api.defaults["GET /invoices/i1/refund-sources"] = { payments: [] };
+  // «حساب مرجوعی» از سرور (مهاجرت ۱۱۶)؛ پیشنهاد بازپرداخت همان عدد سرور است.
+  api.defaults["POST /invoices/i1/return-account"] = { returnedValue: "200000", outstanding: "0", funds: "200000", maxRefund: "200000", suggestedRefund: "200000", refundAmount: "200000", debtApplied: "0", customerCredit: "0", problem: null };
   api.defaults["GET /invoices/i1/returnable"] = { invoiceId: "i1", late: false, hoursSinceSale: 1,
     lines: [{ invoiceLineId: "l1", soldQty: "1", returnedQty: "0", remainingQty: "1", netAmount: "200000" }] };
   api.defaults["GET /shifts/open"] = [{ id: "s1", userName: "صندوق اول", openedAt: "2026-09-22T08:00:00Z" },

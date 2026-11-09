@@ -148,6 +148,34 @@ export function registerReturnRoutes(app: FastifyInstance, deps: ReturnRouteDeps
   });
 
   /**
+   * «حساب مرجوعی» پیش از ثبت — فقط‌خواندنی، همان دروازهٔ `returnable`.
+   *
+   * هر عدد از `sales.return_account_preview` (مهاجرت ۱۱۶) با همان عبارت‌های `post_return`:
+   * ارزش کالا، بدهی همین فاکتور، صرف بدهی، سقف و پیشنهاد بازپرداخت، و اعتبار مشتری. مرورگر
+   * هیچ مبلغی حساب نمی‌کند. بازپرداخت نامجاز خطا نیست و در `problem` برمی‌گردد؛ ثبت همان را رد می‌کند.
+   */
+  app.post("/invoices/:id/return-account", async (req) => {
+    const s = session(req);
+    await requireInvoiceRead(db, s);
+    const { id } = z.object({ id: uuid }).parse(req.params);
+    const body = z.object({
+      lines: z.array(z.object({ invoiceLineId: uuid, qty: z.string().regex(/^\d+(\.\d{1,3})?$/, "تعداد نامعتبر") })).min(1).max(200),
+      refundAmount: moneyString.optional(),
+    }).parse(req.body);
+    const inv = await db.selectFrom("sales.invoice").select(["branch_id"]).where("id", "=", id).executeTakeFirst();
+    if (!inv) throw new ReturnError("invoice_not_found", "فاکتور یافت نشد", 404);
+    await assertBranch(db, s.userId, inv.branch_id);
+    const lines = body.lines.map(l => ({ invoiceLineId: l.invoiceLineId, qty: l.qty }));
+    const row = (await sql<{ value: string; outstanding: string; funds: string; max: string; suggested: string; refund: string;
+      debt: string; credit: string; problem: string | null }>`
+      SELECT returned_value::text AS value, outstanding::text, funds::text, max_refund::text AS max, suggested_refund::text AS suggested,
+             refund::text, debt_applied::text AS debt, customer_credit::text AS credit, problem
+        FROM sales.return_account_preview(${id}::uuid, ${JSON.stringify(lines)}::jsonb, ${body.refundAmount ?? null}::numeric)`.execute(db)).rows[0]!;
+    return { returnedValue: row.value, outstanding: row.outstanding, funds: row.funds, maxRefund: row.max, suggestedRefund: row.suggested,
+      refundAmount: row.refund, debtApplied: row.debt, customerCredit: row.credit, problem: row.problem };
+  });
+
+  /**
    * ساخت برگ مرجوعی (پیش‌نویس).
    *
    * هنوز نه کالایی برمی‌گردد نه پولی — ولی مجوزها **همین‌جا** سنجیده

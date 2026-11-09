@@ -925,6 +925,18 @@ describe("رسید خرید", { skip }, () => {
     assert.equal(view.lines[0]?.remainingQty, "10.000");
     assert.equal(view.lines[0]?.landedUnitCost, "1200000", "بهای دفتری شامل حمل است");
 
+    // پیش‌نمایش (مهاجرت ۱۱۵): همان پنج عدد ثبت، از SQL؛ هیچ اثری ندارد.
+    const lineId = view.lines[0]?.receiptLineId;
+    const previewOf = (lines: unknown) => app.inject({ method: "POST", url: `/receipts/${draft.id}/return-preview`, ...s, payload: { lines } });
+    const preview = await previewOf([{ receiptLineId: lineId, qty: "2" }]);
+    assert.equal(preview.statusCode, 200, preview.body);
+    assert.equal(await onHand(variationA), before, "پیش‌نمایش موجودی را دست نمی‌زند");
+    const over = await previewOf([{ receiptLineId: lineId, qty: "11" }]);
+    assert.equal(over.statusCode, 409, over.body);
+    assert.match(over.json().error.message, /بیشتر از آنچه رسید شده/);
+    assert.equal((await previewOf([{ receiptLineId: lineId, qty: "1" }, { receiptLineId: lineId, qty: "1" }])).statusCode, 409);
+    assert.equal((await previewOf([])).statusCode, 400);
+
     const posted = await app.inject({
       method: "POST",
       url: "/purchase-returns",
@@ -952,6 +964,9 @@ describe("رسید خرید", { skip }, () => {
     assert.equal(body.goodsAmount, "2000000");
     assert.equal(body.costAmount, "2400000");
     assert.equal(body.chargeLoss, "400000");
+    assert.deepEqual(preview.json(), { goodsAmount: "2000000", costAmount: "2400000", taxAmount: "0", chargeLoss: "400000", payableReduction: "2000000" },
+      "پیش‌نمایش همان عدد ثبت است");
+    assert.equal((posted.json() as { payableReduction: string }).payableReduction, preview.json().payableReduction, "کاهش بدهی برگهٔ ثبت‌شده = پیش‌نمایش");
 
     // فهرست برگه‌ها (طرح ۱۰): همان مبلغ‌های ثبت‌شده، نه محاسبهٔ تازه.
     const listed = await app.inject({ method: "GET", url: "/purchase-returns?limit=200", ...s });

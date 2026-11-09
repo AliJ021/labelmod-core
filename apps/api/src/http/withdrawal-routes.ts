@@ -65,6 +65,9 @@ const pageQuery = z.object({
   pageSize: z.coerce.number().int().min(1).max(100).default(20),
 });
 
+/** پیش‌نمایش تسویه: همان شکل اقلام تسویه، بی یادداشت؛ شناسهٔ تکراری پذیرفته نمی‌شود. */
+const settlementPreviewBody = z.object({ items: z.array(z.object({ id: uuid, expectedVersion: z.number().int().min(1) }).strict()).min(1).max(500)
+  .refine(items => new Set(items.map(i => i.id)).size === items.length, { message: "شناسهٔ تکراری در انتخاب" }) }).strict();
 const managerQuery = pageQuery.extend({ ownerId: uuid.optional(), status: z.enum(["all", "open", "settled"]).default("all") });
 const settlementBody = z.object({ items: z.array(z.object({ id: uuid, expectedVersion: z.number().int().min(1) }).strict()).min(1).max(500)
   .refine(items => new Set(items.map(i => i.id)).size === items.length, "ثبت تکراری در انتخاب وجود دارد"), note: text }).strict();
@@ -153,13 +156,14 @@ function managerWhere(userId: string, q: { ownerId?: string | undefined; status:
 }
 
 async function settlementResult(db: Executor, batchId: string, actorId: string) {
-  const rows = (await sql<{ id: string; version: number; amount: string; inScope: boolean }>`SELECT s.withdrawal_id AS id,s.version,r.amount::text AS amount,
-    identity.withdrawal_in_scope(${actorId}::uuid,w.branch_id) AS "inScope"
+  // جمع پول در SQL (قاعدهٔ پروژه)، نه با BigInt در TypeScript.
+  const rows = (await sql<{ id: string; version: number; total: string; inScope: boolean }>`SELECT s.withdrawal_id AS id,s.version,
+    (sum(r.amount) OVER ())::text AS total, identity.withdrawal_in_scope(${actorId}::uuid,w.branch_id) AS "inScope"
     FROM identity.staff_withdrawal_settlement s JOIN identity.staff_withdrawal w ON w.id=s.withdrawal_id
     JOIN identity.staff_withdrawal_revision r ON r.withdrawal_id=s.withdrawal_id AND r.version=s.version
     WHERE s.batch_id=${batchId}::uuid ORDER BY s.withdrawal_id`.execute(db)).rows;
   if (!rows.length || rows.some(r => !r.inScope)) throw new WithdrawalError("withdrawal_not_found", "تسویه در دامنهٔ شما یافت نشد", 404);
-  return { batchId, count: rows.length, totalAmount: rows.reduce((sum,r) => sum+BigInt(r.amount),0n).toString(),
+  return { batchId, count: rows.length, totalAmount: rows[0]!.total,
     items: rows.map(r => ({ id:r.id, version:r.version })) };
 }
 
@@ -233,6 +237,25 @@ export function registerWithdrawalRoutes(app: FastifyInstance, db: Db): void {
       ORDER BY c.created_at DESC,c.id DESC LIMIT 501`.execute(db);
     if (rows.rows.length > 500) throw new WithdrawalError("withdrawal_selection_limit", "بیش از ۵۰۰ ثبت باز وجود دارد؛ کاربر را انتخاب کنید یا هر صفحه را جدا تسویه کنید.", 422);
     return { items: rows.rows.map(item) };
+  });
+
+  // جمع انتخاب پیش از تأیید — فقط‌خواندنی. مبلغ همان نسخه‌هایی است که تسویه می‌شوند (نه نسخهٔ جاری)،
+  // و «تغییرکرده» هر قلمی است که خارج از دامنه، ناموجود، نسخه‌اش عوض‌شده یا تسویه‌شده است — همان شرطی
+  // که تسویه با ۴۰۹ ردش می‌کند. قلم بیرون از دامنه مبلغی به جمع نمی‌دهد تا چیزی لو نرود.
+  app.post("/withdrawals/settlements/preview", async req => {
+    const s = await managerSession(db, req, "withdrawal.correct");
+    const body = settlementPreviewBody.parse(req.body);
+    const out = (await sql<{ count: number; amount: string; stale: number }>`
+      WITH x AS (SELECT * FROM jsonb_to_recordset(${JSON.stringify(body.items)}::jsonb) AS x(id uuid, "expectedVersion" int)),
+      j AS (SELECT r.amount, (w.id IS NOT NULL AND identity.withdrawal_in_scope(${s.userId}::uuid, w.branch_id)) AS visible,
+          (c.version = x."expectedVersion" AND c.settled_at IS NULL) AS open
+        FROM x LEFT JOIN identity.staff_withdrawal w ON w.id = x.id
+        LEFT JOIN identity.staff_withdrawal_current c ON c.id = x.id
+        LEFT JOIN identity.staff_withdrawal_revision r ON r.withdrawal_id = x.id AND r.version = x."expectedVersion")
+      SELECT count(*) FILTER (WHERE visible AND amount IS NOT NULL)::int AS count,
+        coalesce(sum(amount) FILTER (WHERE visible), 0)::text AS amount,
+        count(*) FILTER (WHERE NOT coalesce(visible AND open, false))::int AS stale FROM j`.execute(db)).rows[0]!;
+    return out;
   });
 
   app.get("/withdrawals/settlements/by-key/:key", async req => {

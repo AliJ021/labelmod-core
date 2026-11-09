@@ -44,8 +44,13 @@ test.describe("برگشت از خرید (طرح ۱۰)", () => {
     await page.getByRole("button", { name: "برگشت تازه" }).click();
     await page.getByLabel("شماره رسید خرید", { exact: true }).fill("P-1405-000112");
     await page.getByRole("button", { name: "پیدا کن", exact: true }).click();
+    const previews: unknown[] = [];
+    api.handlers.set("POST /receipts/rc1/return-preview", async route => { previews.push(route.request().postDataJSON());
+      await route.fulfill({ json: { goodsAmount: "1325000", costAmount: "1425000", taxAmount: "0", chargeLoss: "100000", payableReduction: "1325000" } }); });
     await page.getByRole("button", { name: "اضافه کردن تیشرت بیسیک پنبه‌ای" }).click();
     await page.getByRole("combobox", { name: "علت برگشت" }).selectOption("quality");
+    await expect(page.getByText("کاهش بدهی تأمین‌کننده").locator("..")).toContainText("132٬500");
+    expect(previews.at(-1)).toEqual({ lines: [{ receiptLineId: "rl1", qty: "1" }] });
     let posts = 0;
     api.handlers.set("POST /purchase-returns", async route => {
       posts++;
@@ -58,6 +63,37 @@ test.describe("برگشت از خرید (طرح ۱۰)", () => {
     expect(posts).toBe(1);
     await expect.poll(() => api.calls.filter(c => c.startsWith("GET /purchase-returns")).length, "فهرست دوباره خوانده شد").toBe(before + 1);
     expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth + 1)).toBe(true);
+  });
+
+  test("preview amounts come from the server: payable includes tax; a rejected preview blocks posting", async ({ page, api }) => {
+    api.defaults["GET /receipts/lookup"] = { id: "rc1", number: "P-1405-000112" };
+    api.defaults["GET /receipts/rc1/returnable"] = { receiptId: "rc1", number: "P-1405-000112", supplierName: "تولیدی نخ‌آرا", warehouseId: "w1",
+      warehouseName: "انبار مرکزی", occurredAt: "2026-10-25T08:00:00Z", lines: [{ receiptLineId: "rl1", variationId: "v1", sku: "LM-1043",
+        productName: "تیشرت بیسیک پنبه‌ای", color: "استخوانی", size: "L", receivedQty: "5.000", returnedQty: "0.000", remainingQty: "5.000",
+        unitPrice: "1325000", landedUnitCost: "1425000" }] };
+    // عمداً با «تعداد × بها» در مرورگر فرق دارد (مالیات و گرد کردن آخرین تکه): صفحه باید عدد سرور را نشان دهد.
+    let reply: { status: number; json: unknown } = { status: 200, json: { goodsAmount: "1325000", costAmount: "1424999", taxAmount: "132500",
+      chargeLoss: "99999", payableReduction: "1457500" } };
+    api.handlers.set("POST /receipts/rc1/return-preview", async route => { await route.fulfill(reply); });
+    await page.goto("/?page=purchasing&purchasing.tab=returns");
+    await page.getByRole("button", { name: "برگشت تازه" }).click();
+    await page.getByLabel("شماره رسید خرید", { exact: true }).fill("P-1405-000112");
+    await page.getByRole("button", { name: "پیدا کن", exact: true }).click();
+    await page.getByRole("button", { name: "اضافه کردن تیشرت بیسیک پنبه‌ای" }).click();
+    await page.getByRole("combobox", { name: "علت برگشت" }).selectOption("quality");
+    const payable = page.getByText("کاهش بدهی تأمین‌کننده").locator("..");
+    await expect(payable).toContainText("145٬750");
+    await expect(page.getByText("شامل مالیات برگشتی")).toContainText("13٬250");
+    await expect(page.getByText("کاهش ارزش موجودی").locator("..")).toContainText("142٬499٫9");
+    await expect(page.getByRole("button", { name: /ثبت برگشت/ })).toBeEnabled();
+
+    reply = { status: 409, json: { error: { code: "rule_violation", message: "بیشتر از آنچه رسید شده برگشت داده می‌شود" } } };
+    await page.getByRole("button", { name: "اضافه کردن تیشرت بیسیک پنبه‌ای" }).click();
+    await expect(page.getByRole("alert").filter({ hasText: "بیشتر از آنچه رسید شده" })).toBeVisible();
+    await expect(page.getByText("کاهش بدهی تأمین‌کننده")).toHaveCount(0);
+    await expect(page.getByRole("button", { name: /ثبت برگشت/ })).toBeDisabled();
+    expect(api.calls.filter(c => c === "POST /purchase-returns")).toHaveLength(0);
+    api.errors.length = 0;
   });
 
   test("empty list says how to start; a failed read is an error, not an empty list", async ({ page, api }) => {
