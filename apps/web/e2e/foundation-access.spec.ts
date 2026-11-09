@@ -12,9 +12,9 @@ import type { Locator, Page } from "@playwright/test";
 import { NAV_OPERATIONS } from "../src/lib/navigation";
 
 type Decision = "allow" | "deny" | "fail";
-const PROTECTED = ["صندوق", "فاکتورها", "مرجوعی", "سفارش‌های سایت", "کالا و قیمت", "انبار و خرید", "خزانه و چک", "مشتریان", "گزارش‌ها"];
+const PROTECTED = ["صندوق", "فاکتورها", "مرجوعی و تعویض", "سفارش‌های سایت", "کالا و قیمت", "انبار و خرید", "خزانه و چک", "مشتریان", "گزارش‌ها"];
 /** همهٔ مقصدها وقتی هر مجوزی «بله» است — به ترتیب گروه‌های ناوبری (روزانه، انبار، مالی، اشخاص، سامانه)، نه فقط شمارشان. */
-const ALL_TABS = ["داشبورد", "صندوق", "فاکتورها", "مرجوعی", "سفارش‌های سایت", "کالا و قیمت", "انبار و خرید",
+const ALL_TABS = ["داشبورد", "صندوق", "فاکتورها", "مرجوعی و تعویض", "سفارش‌های سایت", "کالا و قیمت", "انبار و خرید",
   "خزانه و چک", "گزارش‌ها", "مشتریان", "برداشت و پاداش", "تنظیمات"];
 const PERSONAL = ["نمایش و عملکرد", "PIN من — ساخت و تغییر", "ورود دومرحله‌ای"];
 const ADMIN = ["تنظیمات", "سلامت سیستم", "اتصال ووکامرس", "پشتیبان‌گیری و بازیابی", "کدینگ حساب", "نگاشت حساب", "اسنپ‌پی", "دیجی‌پی", "پایانه‌ها", "افتتاحیه و تفصیلی", "پرسنل", "مجوزها", "دستگاه‌ها"];
@@ -102,10 +102,10 @@ test.describe("F-110-01 — conservative permission loading", () => {
     expect(await mainList(page).locator(".tab-pending").evaluateAll(nodes => nodes.every(n => n.textContent === "" && n.getAttribute("aria-hidden") === "true"))).toBe(true);
     await expect(page.getByRole("status").filter({ hasText: "در حال بررسی دسترسی بخش‌ها…" }).first()).toBeAttached();
     auth.release();
-    await expect(mainList(page).getByRole("tab", { name: "مرجوعی", includeHidden: true })).toHaveCount(1);
+    await expect(mainList(page).getByRole("tab", { name: "مرجوعی و تعویض", exact: true, includeHidden: true })).toHaveCount(1);
     await expect(mainList(page).locator(".tab-pending")).toHaveCount(0);
-    expect(await tabLabels(page)).toEqual(["داشبورد", "صندوق", "فاکتورها", "مرجوعی", "برداشت و پاداش", "تنظیمات"]);
-    expect(await seen(), "no protected label was ever rendered before an allow verdict").toEqual(["برداشت و پاداش", "تنظیمات", "داشبورد", "صندوق", "فاکتورها", "مرجوعی"].sort());
+    expect(await tabLabels(page)).toEqual(["داشبورد", "صندوق", "فاکتورها", "مرجوعی و تعویض", "برداشت و پاداش", "تنظیمات"]);
+    expect(await seen(), "no protected label was ever rendered before an allow verdict").toEqual(["برداشت و پاداش", "تنظیمات", "داشبورد", "صندوق", "فاکتورها", "مرجوعی و تعویض"].sort());
   });
 
   test("placeholders hold the navigation in place until every destination is allowed", async ({ page, api }) => {

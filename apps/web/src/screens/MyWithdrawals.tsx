@@ -7,6 +7,7 @@ import { Button, Field } from "../components/ui/Controls.tsx";
 import { DataTable, type Column } from "../components/ui/DataTable.tsx";
 import { Money } from "../components/ui/Money.tsx";
 import { PageHeader, SectionHeader } from "../components/ui/PageHeader.tsx";
+import { WithdrawalUnsettled } from "../components/WithdrawalUnsettled.tsx";
 import { SafeAction } from "../components/ui/SafeAction.tsx";
 import { Skeleton } from "../components/ui/Skeleton.tsx";
 import { useWithdrawalOperation } from "../lib/use-withdrawal-operation.ts";
@@ -91,6 +92,7 @@ export function MyWithdrawals({ currentUserId }: { currentUserId: string }) {
   return <div className="settings-page">
     <PageHeader title="برداشت‌های من"
       context="پس از ثبت، فقط مدیر کل می‌تواند مبلغ یا دلیل را اصلاح کند؛ تاریخچهٔ هر اصلاح می‌ماند." />
+    <WithdrawalUnsettled data={list.data?.unsettled} note="برداشت‌های خود شما" />
 
     <Solid as="section" className="settings-section" aria-labelledby={listId}>
       <SectionHeader id={listId} title="برداشت‌های ثبت‌شده" description="تازه‌ترین بالا. مبالغ به تومان‌اند." />

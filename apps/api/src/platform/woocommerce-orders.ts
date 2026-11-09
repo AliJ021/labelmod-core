@@ -197,7 +197,7 @@ function checkEnvelope(site: WooOrdersSite, body: z.infer<typeof envelope>): Una
     return unavailable("site_mismatch", "هویت سایت پاسخ‌دهنده با نشانی تنظیم‌شده یکسان نیست؛ دامنه و مسیر نصب را بررسی کنید.");
   }
   if (body.branchId !== site.branchId || body.warehouseId !== site.warehouseId) {
-    return unavailable("scope_mismatch", "شعبه یا انبار افزونه با انبار سایت در Core یکسان نیست.");
+    return unavailable("scope_mismatch", "شعبه یا انبار افزونه با انبار سایت در مرکز یکسان نیست.");
   }
   return null;
 }

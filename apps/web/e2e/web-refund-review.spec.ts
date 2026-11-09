@@ -17,7 +17,7 @@ for (const decision of ["approved", "rejected"] as const) {
       await route.fulfill({ json: { requestId: "r1", status: decision === "approved" ? "posted" : "rejected" } });
     });
     await page.goto("/");
-    await openZone(page, "مرجوعی");
+    await openZone(page, "مرجوعی و تعویض");
     // طرح ۱۰: صف بررسی مرجوعی سایت زبانهٔ خودش را دارد.
     await page.locator("main").getByRole("tab", { name: "درخواست‌های سایت", exact: true }).click();
     const panel = page.getByRole("region", { name: "بررسی مرجوعی سایت" });

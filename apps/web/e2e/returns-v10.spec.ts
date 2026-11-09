@@ -99,4 +99,47 @@ test.describe("مرجوعی (طرح ۱۰)", () => {
     await find(page);
     await expect(page.getByRole("region", { name: "۱. فاکتور و اقلام برگشتی" }).locator(".returns-window")).toHaveText("2 ساعت از فروش گذشته");
   });
+
+  test("today's returns: stored amounts from the server, condition from counts, reloaded after a posted return; a failed read is an error", async ({ page, api }) => {
+    fixture(api, returnable());
+    api.defaults["GET /returns/today"] = { businessDate: "2026-10-29", returns: [
+      { id: "r1", number: "R-1405-0807-01", kind: "return", occurredAt: "2026-10-29T14:10:00Z", createdByName: "مدیر فروشگاه", invoiceNumber: "1405080711",
+        firstItem: "تیشرت بیسیک پنبه‌ای · S × 1", lineCount: 1, totalQty: "1.000", sellable: 1, defective: 0, notRestocked: 0,
+        netAmount: "4900000", refundAmount: "4900000", refundMethod: "نقد", drawerName: "سارا کریمی" },
+      { id: "r2", number: "R-1405-0807-02", kind: "exchange", occurredAt: "2026-10-29T15:00:00Z", createdByName: null, invoiceNumber: "1405080712",
+        firstItem: "شلوار جین · 32 × 1", lineCount: 2, totalQty: "2.000", sellable: 1, defective: 1, notRestocked: 0,
+        netAmount: "9000000", refundAmount: "0", refundMethod: null, drawerName: null } ] };
+    await page.goto("/?page=returns");
+    const table = page.getByRole("table", { name: "مرجوعی‌های امروز؛ مبلغ‌ها به تومان" });
+    await expect(table.locator("tbody tr").first()).toBeVisible();
+    expect((await table.locator("thead th").allInnerTexts()).map(h => h.trim())).toEqual(["برگ", "فاکتور", "کالا", "وضعیت کالا", "بازپرداخت"]);
+    const a = table.locator("tbody tr").filter({ hasText: "R-1405-0807-01" }).locator("td");
+    await expect(a.nth(0)).toContainText("مدیر فروشگاه");
+    await expect(a.nth(1)).toContainText("1405080711");
+    await expect(a.nth(3)).toHaveText(/سالم · برگشت به قفسه$/);
+    await expect(a.nth(4)).toContainText("490٬000");
+    await expect(a.nth(4)).toContainText("نقد · شیفت سارا کریمی");
+    const b = table.locator("tbody tr").filter({ hasText: "R-1405-0807-02" }).locator("td");
+    await expect(b.nth(0)).toContainText("تعویض");
+    await expect(b.nth(2)).toContainText("و 1 قلم دیگر");
+    await expect(b.nth(3)).toContainText("معیوب");
+
+    // پس از ثبت مرجوعی تازه، فهرست دوباره از سرور خوانده می‌شود.
+    const before = api.calls.filter(c => c === "GET /returns/today").length;
+    api.handlers.set("POST /returns/commit", async route => { await route.fulfill({ json: { id: "r3", number: "R-NEW", status: "posted" } }); });
+    await page.getByLabel("شماره فاکتور", { exact: true }).fill("1405080714");
+    await page.getByRole("button", { name: "پیدا کن", exact: true }).click();
+    await page.getByRole("button", { name: "اضافه کردن تیشرت بیسیک پنبه‌ای", exact: true }).click();
+    await page.getByRole("combobox", { name: "علت مرجوعی", exact: true }).selectOption("changed_mind");
+    await page.getByRole("button", { name: "۱. بررسی مرجوعی", exact: true }).click();
+    await page.getByRole("button", { name: "اقلام و مبلغ را تأیید می‌کنم؛ ثبت مرجوعی", exact: true }).click();
+    await expect(page.getByRole("status").filter({ hasText: "R-NEW" })).toBeVisible();
+    await expect.poll(() => api.calls.filter(c => c === "GET /returns/today").length).toBe(before + 1);
+
+    api.handlers.set("GET /returns/today", async route => { await route.fulfill({ status: 500, json: { error: { code: "internal", message: "خطای سرور" } } }); });
+    await page.reload();
+    await expect(page.getByText("مرجوعی‌های امروز خوانده نشد")).toBeVisible();
+    await expect(page.getByText("امروز مرجوعی‌ای ثبت نشده است.")).toHaveCount(0);
+    api.errors.length = 0;
+  });
 });

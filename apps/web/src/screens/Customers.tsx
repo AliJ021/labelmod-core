@@ -113,6 +113,12 @@ export function Customers() {
   const query = useLatestQuery({ key: submitted, version: revision, load });
   const rows = query.data?.customers ?? [];
   const totals = query.data?.totals ?? null;
+  /*
+   * تصمیم مالک (۲۰۲۶/۱۱/۰۹): فروشگاه نسیه نمی‌فروشد، پس ستون «ثبت‌نشده (موقت)» فقط وقتی پنهان می‌شود که
+   * سرور صفربودن را تأیید کرده باشد: جمع **و** تک‌تک ردیف‌ها صفر (مثبت و منفی ممکن است جمع را صفر کنند).
+   * ردیف بی‌مقدار (پاسخ قدیمی‌تر) ستون را نگه می‌دارد تا «نامعلوم» دیده شود، نه صفر.
+   */
+  const hideUnposted = totals?.unposted === "0" && rows.every((c) => c.ledgerUnposted === "0");
   function reload(term: string) { setSubmitted(term); setRevision(v => v + 1); }
 
   async function guarded(fn: () => Promise<void>) {
@@ -243,13 +249,13 @@ export function Customers() {
             stack
             rows={rows}
             rowKey={(c) => c.id}
-            columns={CUSTOMER_COLUMNS}
+            columns={hideUnposted ? CUSTOMER_COLUMNS.filter((c) => c.key !== "unposted") : CUSTOMER_COLUMNS}
             rowActions={(c) => <button type="button" className="icon-button invoice-icon" aria-label="پرونده" title="پرونده"
               onClick={() => void openFile(c.id)} disabled={busy}><Icon name="chevron" size="sm" /></button>}
             {...(totals ? { foot: { label: "جمع", cells: {
               owed: <Money rial={BigInt(totals.owed)} />,
               credit: <Money rial={BigInt(totals.credit)} />,
-              ...(totals.unposted === undefined ? {} : { unposted: <Money rial={BigInt(totals.unposted)} /> }),
+              ...(totals.unposted === undefined || hideUnposted ? {} : { unposted: <Money rial={BigInt(totals.unposted)} /> }),
             } } } : {})}
           /></div>
         )}

@@ -381,4 +381,30 @@ describe("دفتر برداشت پرسنل", { skip: DATABASE_URL ? false : "DAT
     }),/مجوز/);
     assert.equal(await footprint(),footprintBefore);
   });
+
+  test("کارت «تسویه‌نشده»: جمع SQL نسخهٔ جاری ثبت‌های باز؛ با تسویه کم می‌شود؛ فیلتر وضعیت اثرش نمی‌گذارد", async () => {
+    requestAddress = "127.0.5.4";
+    const expected = async () => (await sql<{ amount: string; count: number }>`SELECT coalesce(sum(amount),0)::text AS amount, count(*)::int AS count
+      FROM identity.staff_withdrawal_current WHERE owner_id=${cashier.id}::uuid AND settled_at IS NULL`.execute(owner.db)).rows[0]!;
+    const a = await create(cashier, "700", "کارت تسویه‌نشده یک");
+    await create(cashier, "300", "کارت تسویه‌نشده دو");
+    const mine = await call(cashier, "GET", "/withdrawals/mine");
+    assert.equal(mine.statusCode, 200, mine.body);
+    assert.deepEqual(mine.json().unsettled, await expected(), "برابر جمع مستقیم SQL");
+    // دفتر مدیر برای همین کارمند: همان عدد، چه فیلتر «همه» چه «تسویه‌شده».
+    const all = await call(gm, "GET", `/withdrawals?ownerId=${cashier.id}&status=all`);
+    const settledOnly = await call(gm, "GET", `/withdrawals?ownerId=${cashier.id}&status=settled`);
+    assert.deepEqual(all.json().unsettled, await expected());
+    assert.deepEqual(settledOnly.json().unsettled, all.json().unsettled, "فیلتر وضعیت کارت را صفر نمی‌کند");
+    const before = BigInt(mine.json().unsettled.amount);
+    const settled = await call(gm, "POST", "/withdrawals/settlements", { items: [{ id: a.id, expectedVersion: a.version }], note: "تسویه کارت" }, randomUUID());
+    assert.equal(settled.statusCode, 200, settled.body);
+    const after = await call(cashier, "GET", "/withdrawals/mine");
+    assert.equal(BigInt(after.json().unsettled.amount), before - 700n);
+    assert.equal(after.json().unsettled.count, mine.json().unsettled.count - 1);
+    // کارمند دیگر عدد این کارمند را نمی‌بیند.
+    const other = (await sql<{ amount: string }>`SELECT coalesce(sum(amount),0)::text AS amount FROM identity.staff_withdrawal_current
+      WHERE owner_id=${otherCashier.id}::uuid AND settled_at IS NULL`.execute(owner.db)).rows[0]!.amount;
+    assert.equal((await call(otherCashier, "GET", "/withdrawals/mine")).json().unsettled.amount, other);
+  });
 });

@@ -89,7 +89,7 @@ export function registerWooDiagnosticsRoutes(app: FastifyInstance, db: Db, secre
     const result = await testWooConnection({ siteUrl: local.siteUrl, secret }, body.orderId);
     reply.header("cache-control", "no-store");
     if (result.remote && (result.remote.warehouseId !== local.warehouseId || result.remote.branchId !== wh.branch_id)) {
-      return { ok: false, code: "scope_mismatch", message: "شعبه یا انبار افزونه با انبار سایت در Core یکسان نیست.", remote: null };
+      return { ok: false, code: "scope_mismatch", message: "شعبه یا انبار افزونه با انبار سایت در مرکز یکسان نیست.", remote: null };
     }
     return result;
   });

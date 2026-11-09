@@ -212,6 +212,23 @@ test.describe("برداشت‌های من", () => {
   });
 });
 
+test("unsettled card: the server total for my withdrawals; all settled says so; an older response shows no card", async ({ page, api }) => {
+  api.handlers.set("GET /withdrawals/mine", route => json(route, { items: [item(W1, CASHIER, "900000", "کرایه")], total: 1, page: 1, pageSize: 20,
+    unsettled: { amount: "12345000", count: 3 } }));
+  await openMine(page);
+  const card = page.getByRole("region", { name: "خلاصهٔ برداشت" }).getByRole("region", { name: "تسویه‌نشده" });
+  // عمداً با ردیف فهرست فرق دارد: عدد از جمع سرور است، نه جمع مرورگر.
+  await expect(card).toContainText("1٬234٬500");
+  await expect(card).toContainText("۳ برداشت باز");
+  api.handlers.set("GET /withdrawals/mine", route => json(route, { items: [], total: 0, page: 1, pageSize: 20, unsettled: { amount: "0", count: 0 } }));
+  await page.reload();
+  await expect(page.getByRole("region", { name: "تسویه‌نشده" })).toContainText("همهٔ برداشت‌ها تسویه شده‌اند");
+  api.handlers.set("GET /withdrawals/mine", route => json(route, { items: [], total: 0, page: 1, pageSize: 20 }));
+  await page.reload();
+  await expect(page.getByRole("heading", { name: "برداشت‌های ثبت‌شده" })).toBeVisible();
+  await expect(page.getByRole("region", { name: "خلاصهٔ برداشت" })).toHaveCount(0);
+});
+
 test.describe("دفتر برداشت پرسنل (مدیر کل)", () => {
   function gmLog(api: MockApi, current: { value: WithdrawalDetail }) {
     api.handlers.set("GET /withdrawals", route => json(route, { items: [current.value, item(W2, GM, "300000", "برداشت مدیر")], total: 2, page: 1, pageSize: 20 }));

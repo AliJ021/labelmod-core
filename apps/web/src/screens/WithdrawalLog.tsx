@@ -7,6 +7,7 @@ import { Button, Field } from "../components/ui/Controls.tsx";
 import { DataTable, type Column } from "../components/ui/DataTable.tsx";
 import { Money } from "../components/ui/Money.tsx";
 import { PageHeader, SectionHeader } from "../components/ui/PageHeader.tsx";
+import { WithdrawalUnsettled } from "../components/WithdrawalUnsettled.tsx";
 import { SafeAction } from "../components/ui/SafeAction.tsx";
 import { Skeleton } from "../components/ui/Skeleton.tsx";
 import { useWithdrawalOperation } from "../lib/use-withdrawal-operation.ts";
@@ -104,6 +105,7 @@ export function WithdrawalLog({ currentUserId, write, writeState }: { currentUse
   return <div className="settings-page">
     <PageHeader title="دفتر برداشت پرسنل"
       context="برداشت‌هایی که هر کاربر برای خودش ثبت کرده، در دامنهٔ شعبهٔ شما. این دفتر فقط ثبت است و هیچ اثری بر صندوق، حساب‌ها یا حقوق ندارد؛ اصلاح یک نسخهٔ تازه با دلیل است و نسخهٔ قبلی می‌ماند." />
+    <WithdrawalUnsettled data={list.data?.unsettled} note={ownerId ? "همین کاربر، در دامنهٔ شما" : "همهٔ کاربران در دامنهٔ شما؛ فیلتر وضعیت اثری ندارد"} />
     <Solid as="section" className="settings-section" aria-labelledby={listId}>
       <SectionHeader id={listId} title="همهٔ برداشت‌ها" description="تازه‌ترین بالا. مبالغ به تومان‌اند. تسویه فقط وضعیت دفتر را تغییر می‌دهد." />
       <div className="settings-form">

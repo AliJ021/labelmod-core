@@ -101,7 +101,7 @@ export async function readWooToCore(
   if (!result.ok || !result.remote) {
     value = { state: "unknown", code: result.code, message: result.message, fetchedAt };
   } else if (result.remote.warehouseId !== local.warehouseId || result.remote.branchId !== local.branchId) {
-    value = { state: "unknown", code: "scope_mismatch", message: "شعبه یا انبار افزونه با انبار سایت در Core یکسان نیست.", fetchedAt };
+    value = { state: "unknown", code: "scope_mismatch", message: "شعبه یا انبار افزونه با انبار سایت در مرکز یکسان نیست.", fetchedAt };
   } else {
     value = { ...wooQueueView(result.remote.queue), fetchedAt };
   }

@@ -125,11 +125,17 @@ async function detail(db: Executor, id: string) {
   };
 }
 
-async function page(db: Db, where: ReturnType<typeof sql>, q: { page: number; pageSize: number }) {
+/**
+ * `scopeWhere` دامنهٔ کارت «تسویه‌نشده» است (تصمیم مالک ۲۰۲۶/۱۱/۰۹): همان دامنهٔ فهرست ولی **بی** فیلتر وضعیت،
+ * تا انتخاب «تسویه‌شده» کارت را صفر نکند. جمع مبلغ نسخهٔ جاری ثبت‌های بازِ تسویه‌نشده، در SQL.
+ */
+async function page(db: Db, where: ReturnType<typeof sql>, q: { page: number; pageSize: number }, scopeWhere: ReturnType<typeof sql> = where) {
   const rows = await sql<Row>`${SELECT_CURRENT} WHERE ${where}
     ORDER BY c.created_at DESC, c.id DESC LIMIT ${q.pageSize} OFFSET ${(q.page - 1) * q.pageSize}`.execute(db);
   const total = (await sql<{ n: number }>`SELECT count(*)::int AS n FROM identity.staff_withdrawal_current c WHERE ${where}`.execute(db)).rows[0]?.n ?? 0;
-  return { items: rows.rows.map(item), total, page: q.page, pageSize: q.pageSize };
+  const open = (await sql<{ amount: string; count: number }>`SELECT coalesce(sum(c.amount), 0)::text AS amount, count(*)::int AS count
+    FROM identity.staff_withdrawal_current c WHERE ${scopeWhere} AND c.settled_at IS NULL`.execute(db)).rows[0]!;
+  return { items: rows.rows.map(item), total, page: q.page, pageSize: q.pageSize, unsettled: { amount: open.amount, count: open.count } };
 }
 
 /** دفتر مدیر: نشست انسانی کامل + مجوز اختصاصی. نام نقش هرگز سنجیده نمی‌شود. */
@@ -208,7 +214,7 @@ export function registerWithdrawalRoutes(app: FastifyInstance, db: Db): void {
   app.get("/withdrawals", async req => {
     const s = await managerSession(db, req, "withdrawal.view_all");
     const q = managerQuery.parse(req.query);
-    return page(db, managerWhere(s.userId, q), q);
+    return page(db, managerWhere(s.userId, q), q, managerWhere(s.userId, { ...q, status: "all" }));
   });
 
   app.get("/withdrawals/owners", async req => {

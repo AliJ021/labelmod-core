@@ -23,7 +23,7 @@ import { resolveCashDrawer } from "../treasury/cash-drawer.ts";
 import type { Db } from "../db/client.ts";
 import { parseMoney } from "../lib/money.ts";
 import { runOnce } from "../lib/idempotency.ts";
-import { assertBranch, assertWarehouseInBranch } from "../sales/scope.ts";
+import { assertBranch, assertWarehouseInBranch, branchesOf } from "../sales/scope.ts";
 import { requireInvoiceRead } from "../sales/invoice-access.ts";
 import {
   ReturnError,
@@ -238,6 +238,51 @@ export function registerReturnRoutes(app: FastifyInstance, deps: ReturnRouteDeps
       ...(gate.shiftId === undefined ? {} : { shiftId: gate.shiftId }),
     });
     return reply.code(201).send(returnToJson(r, await seesCost(s)));
+  });
+
+  /**
+   * «مرجوعی‌های امروز» (طرح ۱۰، تصمیم مالک ۲۰۲۶/۱۱/۰۹) — فقط برگ‌های **ثبت‌شده** با تاریخ کاری امروز
+   * سرور، در دامنهٔ شعبهٔ کاربر. فقط‌خواندنی است و هیچ مبلغی حساب نمی‌کند: بازپرداخت و ارزش همان ستون‌هایی‌اند
+   * که `post_return` نوشته. مجوزش همان مجوز صفحهٔ مرجوعی است (همان‌روز یا دیرهنگام)، نه فروش.
+   */
+  app.get("/returns/today", async (req) => {
+    const s = session(req);
+    const sameDay = await can(db, { userId: s.userId, operation: "return.same_day", viaPin: s.pinUnlocked });
+    if (sameDay.verdict !== "allow") await requireForSession(db, s, "return.late");
+    const scope = await branchesOf(db, s.userId);
+    const day = (await sql<{ d: string }>`SELECT platform.business_date()::text AS d`.execute(db)).rows[0]!.d;
+    if (scope !== "all" && scope.length === 0) return { businessDate: day, returns: [] };
+    const rows = await sql<{
+      id: string; number: string | null; kind: string; occurredAt: Date; createdByName: string | null; invoiceNumber: string | null;
+      firstItem: string | null; lineCount: number; totalQty: string; sellable: number; defective: number; notRestocked: number;
+      netAmount: string; refundAmount: string; refundMethod: string | null; drawerName: string | null;
+    }>`
+      SELECT r.id, r.number, r.kind, r.occurred_at AS "occurredAt", u.full_name AS "createdByName",
+             sales.invoice_display_number(r.invoice_id) AS "invoiceNumber",
+             (SELECT concat_ws(' · ', p.name_internal, v.size) || ' × ' || trim(trailing '.' FROM trim(trailing '0' FROM l.qty::text))
+                FROM sales.sale_return_line l
+                JOIN sales.invoice_line il ON il.id = l.invoice_line_id
+                JOIN catalog.variation v ON v.id = il.variation_id
+                JOIN catalog.product p ON p.id = v.product_id
+               WHERE l.return_id = r.id ORDER BY l.id LIMIT 1) AS "firstItem",
+             (SELECT count(*)::int FROM sales.sale_return_line l WHERE l.return_id = r.id) AS "lineCount",
+             (SELECT coalesce(sum(l.qty), 0)::text FROM sales.sale_return_line l WHERE l.return_id = r.id) AS "totalQty",
+             (SELECT count(*)::int FROM sales.sale_return_line l WHERE l.return_id = r.id AND l.restock AND l.condition = 'sellable') AS sellable,
+             (SELECT count(*)::int FROM sales.sale_return_line l WHERE l.return_id = r.id AND l.restock AND l.condition = 'defective') AS defective,
+             (SELECT count(*)::int FROM sales.sale_return_line l WHERE l.return_id = r.id AND NOT l.restock) AS "notRestocked",
+             r.net_amount::text AS "netAmount", r.refund_amount::text AS "refundAmount",
+             pm.name AS "refundMethod", su.full_name AS "drawerName"
+        FROM sales.sale_return r
+        LEFT JOIN identity.app_user u ON u.id = r.created_by
+        LEFT JOIN treasury.payment_method pm ON pm.code = r.refund_method
+        LEFT JOIN sales.cash_shift cs ON cs.id = r.shift_id
+        LEFT JOIN identity.app_user su ON su.id = cs.user_id
+       WHERE r.status = 'posted'
+         AND platform.business_date(r.occurred_at) = platform.business_date()
+         AND ${scope === "all" ? sql`true` : sql`r.branch_id = ANY(${scope}::uuid[])`}
+       ORDER BY r.occurred_at DESC, r.id DESC
+       LIMIT 200`.execute(db);
+    return { businessDate: day, returns: rows.rows.map((r) => ({ ...r, occurredAt: new Date(r.occurredAt).toISOString() })) };
   });
 
   app.get("/returns/:id", async (req) => {

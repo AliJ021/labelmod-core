@@ -19,6 +19,7 @@ import { StatusBadge } from "../components/ui/Status.tsx";
 import { Ltr } from "../components/ui/Bidi.tsx";
 import { formatJalaliMoment, formatQty } from "../lib/format.ts";
 import { ExchangePanel } from "../components/ExchangePanel.tsx";
+import { TodayReturns } from "../components/TodayReturns.tsx";
 import { ReturnRecovery, useReturnOperation } from "../components/ReturnRecovery.tsx";
 import { parseRial, rialFromTomanInput, toman } from "../lib/money.ts";
 import {
@@ -91,8 +92,10 @@ export function Returns() {
   const [error, setError] = useState<string | null>(null);
   const [done, setDone] = useState<string | null>(null);
 
+  const [todayVersion, setTodayVersion] = useState(0);
   const operation = useReturnOperation((postedNumber) => {
     setDone(`عملیات ${postedNumber} ثبت شد.`);
+    setTodayVersion((v) => v + 1);
     setInvoice(null); setView(null); setSelection(new Map()); setRefund("");
   });
 
@@ -453,6 +456,8 @@ export function Returns() {
             run={body => operation.run("exchanges", body)} verify={operation.verify} />
         </fieldset>
       ) : null}
+      {/* طرح ۱۰: فهرست برگ‌های ثبت‌شدهٔ امروز، زیر هر دو زبانهٔ مرجوعی و تعویض. */}
+      <TodayReturns version={todayVersion} />
       </>}
       </TabPanels>
     </div>

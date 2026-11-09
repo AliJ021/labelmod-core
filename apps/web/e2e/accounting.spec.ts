@@ -18,7 +18,7 @@ test("cash refund explicitly selects one of several open drawers", async ({ page
     await route.fulfill({ json: { id: "r1", number: "R-1", status: "posted" } });
   });
   await page.goto("/");
-  await openZone(page, "مرجوعی");
+  await openZone(page, "مرجوعی و تعویض");
   await page.getByLabel("شماره فاکتور", { exact: true }).fill("F-1");
   await page.getByRole("button", { name: "پیدا کن", exact: true }).click();
   await page.getByRole("button", { name: "اضافه کردن کالای آزمون", exact: true }).click();

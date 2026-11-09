@@ -126,7 +126,7 @@ function CoreSide({ data }: { data: CoreToWoo }) {
     { key: "id", header: "شناسه", cell: r => <Ltr>{r.id}</Ltr> },
   ];
   return <section className="sync-side" aria-labelledby={id}>
-    <h3 className="section-title sync-subtitle" id={id}>Core → سایت <span className="muted small">موجودی، قیمت، خرید حضوری</span></h3>
+    <h3 className="section-title sync-subtitle" id={id}>مرکز → سایت <span className="muted small">موجودی، قیمت، خرید حضوری</span></h3>
     <Verdict {...verdict} />
     <DataTable caption="صف ارسال به سایت به تفکیک وضعیت" columns={countColumns} rows={coreRows(data)} rowKey={r => r.key} density="compact" stack />
     <p className="sync-meta muted small">
@@ -149,12 +149,12 @@ function WooSide({ data }: { data: WooToCore }) {
   const id = useId();
   const verdict = wooVerdict(data);
   return <section className="sync-side" aria-labelledby={id}>
-    <h3 className="section-title sync-subtitle" id={id}>سایت → Core <span className="muted small">سفارش، مرجوعی، رزرو</span></h3>
+    <h3 className="section-title sync-subtitle" id={id}>سایت → مرکز <span className="muted small">سفارش، مرجوعی، رزرو</span></h3>
     <Verdict {...verdict} />
     {data.state === "unknown"
       ? <p className="muted small">هیچ شماری نشان داده نمی‌شود؛ نبودِ گزارش به معنای «صف خالی» نیست.</p>
       : <>
-          <DataTable caption="صف افزونه به سمت Core به تفکیک وضعیت" columns={countColumns} rows={wooRows(data.counts)} rowKey={r => r.key} density="compact" stack />
+          <DataTable caption="صف افزونه به سمت مرکز به تفکیک وضعیت" columns={countColumns} rows={wooRows(data.counts)} rowKey={r => r.key} density="compact" stack />
           <p className="muted small">«—» یعنی افزونه این شمار را گزارش نکرد، نه صفر. سطر ناموفق Action Scheduler شمار سطر است، نه شمار کار.</p>
         </>}
     <p className="sync-meta muted small">گزارش افزونه از <span className="nowrap">{formatJalaliMoment(data.fetchedAt)}</span> (حداکثر ۳۰ ثانیه کهنه)</p>

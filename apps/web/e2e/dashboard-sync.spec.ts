@@ -7,8 +7,8 @@ import { test, expect, syncBody, type MockApi } from "./fixtures";
 import type { Page, Route } from "@playwright/test";
 
 const section = (page: Page) => page.getByRole("region", { name: "همگام‌سازی سایت" });
-const core = (page: Page) => section(page).getByRole("region", { name: /^Core → سایت/ });
-const woo = (page: Page) => section(page).getByRole("region", { name: /^سایت → Core/ });
+const core = (page: Page) => section(page).getByRole("region", { name: /^مرکز → سایت/ });
+const woo = (page: Page) => section(page).getByRole("region", { name: /^سایت → مرکز/ });
 const syncCalls = (api: MockApi) => api.calls.filter(c => c.startsWith("GET /dashboard/stock-sync"));
 /** سطر جدول شمار هر جهت (نه جدول نمونه، که همان برچسب وضعیت را هم دارد). */
 const row = (scope: ReturnType<typeof core>, label: string) =>

@@ -92,4 +92,30 @@ test.describe("فهرست مشتریان (طرح ۱۰)", () => {
     await expect(row.getByRole("region", { name: "طلب از مشتریان" })).toBeVisible();
     await expect(row.getByRole("region", { name: "اثر ثبت‌نشده" })).toHaveCount(0);
   });
+
+  test("no credit sales: the unposted column and card hide only when the server confirms zero", async ({ page, api }) => {
+    const { opsBody } = await import("./fixtures");
+    const zero = ROWS.map((r) => ({ ...r, ledgerUnposted: "0" }));
+    api.defaults["GET /customers"] = { customers: zero, totals: { owed: "21500000", credit: "3200000", unposted: "0" } };
+    api.defaults["GET /dashboard/operations"] = opsBody({ receivables: { state: "ready", owed: { count: 1, amount: "21500000" },
+      credit: { count: 1, amount: "3200000" }, unposted: { count: 0, amount: "0" } } });
+    await page.goto("/?page=customers");
+    const table = page.getByRole("table", { name: "فهرست مشتریان؛ مبلغ‌ها به تومان" });
+    await expect(table.locator("tbody tr").first()).toBeVisible();
+    expect((await table.locator("thead th").allInnerTexts()).map(h => h.trim())).not.toContain("ثبت‌نشده (موقت)");
+    await expect(page.getByRole("region", { name: "طلب از مشتریان" })).toBeVisible();
+    await expect(page.getByRole("region", { name: "اثر ثبت‌نشده" })).toHaveCount(0);
+
+    // مثبت و منفی جمع را صفر می‌کنند: ستون می‌ماند، چون ردیف‌ها صفر نیستند.
+    api.defaults["GET /customers"] = { customers: [{ ...zero[0]!, ledgerUnposted: "500000" }, { ...zero[1]!, ledgerUnposted: "-500000" }],
+      totals: { owed: "21500000", credit: "3200000", unposted: "0" } };
+    await page.reload();
+    await expect(table.locator("tbody tr").first()).toBeVisible();
+    expect((await table.locator("thead th").allInnerTexts()).map(h => h.trim())).toContain("ثبت‌نشده (موقت)");
+
+    // ردیف بی‌مقدار (پاسخ قدیمی‌تر): ستون می‌ماند و «نامعلوم» نشان می‌دهد، نه صفر.
+    api.defaults["GET /customers"] = { customers: [{ ...zero[0]!, ledgerUnposted: undefined }], totals: { owed: "21500000", credit: "3200000", unposted: "0" } };
+    await page.reload();
+    await expect(table.locator("tbody tr").first().locator("td").nth(4)).toContainText("نامعلوم");
+  });
 });

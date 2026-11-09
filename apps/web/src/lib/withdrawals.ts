@@ -36,7 +36,11 @@ export interface WithdrawalDetail extends WithdrawalItem {
   /** فقط در دفتر مدیر؛ نمایش است، دروازه سرور است. */
   canCorrect?: boolean;
 }
-export interface WithdrawalPage { items: WithdrawalItem[]; total: number; page: number; pageSize: number }
+export interface WithdrawalPage {
+  items: WithdrawalItem[]; total: number; page: number; pageSize: number;
+  /** جمع SQL ثبت‌های تسویه‌نشده در همان دامنه، بی فیلتر وضعیت (تصمیم مالک ۲۰۲۶/۱۱/۰۹)؛ پاسخ قدیمی‌تر ندارد. */
+  unsettled?: { amount: string; count: number };
+}
 
 export const REASON_MAX = 500;
 export const PAGE_SIZE = 20;

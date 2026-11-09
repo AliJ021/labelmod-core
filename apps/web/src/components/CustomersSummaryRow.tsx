@@ -18,7 +18,8 @@ export function CustomersSummaryRow() {
       note={`${formatCount(r.owed.count)} مشتری · از سند ثبت‌شده · ${data.branch.name}`} />
     <Kpi variant="card" label="اعتبار مشتریان نزد ما" value={<Money rial={BigInt(r.credit.amount)} size="lg" />}
       note={`${formatCount(r.credit.count)} مشتری · بدهی ما؛ با طلب جمع نمی‌شود`} />
-    {r.unposted ? <Kpi variant="card" label="اثر ثبت‌نشده" value={<span className="customer-unposted"><Money rial={BigInt(r.unposted.amount)} size="lg" /></span>}
+    {/* کارت سوم فقط وقتی اثری هست: نه مشتری‌ای، نه مبلغی یعنی کارت خالی (تصمیم مالک، ۲۰۲۶/۱۱/۰۹). */}
+    {r.unposted && (r.unposted.count > 0 || r.unposted.amount !== "0") ? <Kpi variant="card" label="اثر ثبت‌نشده" value={<span className="customer-unposted"><Money rial={BigInt(r.unposted.amount)} size="lg" /></span>}
       note={`${formatCount(r.unposted.count)} مشتری · نسیهٔ دوره‌های بازِ امروز؛ پس از بستن دوره به طلب می‌رود`} /> : null}
   </section>;
 }

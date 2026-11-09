@@ -1740,7 +1740,8 @@ describe("آمادگی API صندوق", { skip }, () => {
     const posted = await app.inject({ method: "POST", url: `/invoices/${invoiceId}/finalize`, ...cash });
     assert.equal(posted.statusCode, 200, posted.body);
     const lookup = `/invoices/lookup?number=${encodeURIComponent(posted.json().number as string)}&branchId=${BRANCH}`;
-    const paths = [`/invoices/${invoiceId}`, `/invoices/${invoiceId}/returnable`, lookup];
+    // «مرجوعی‌های امروز» همان مجوز صفحهٔ مرجوعی را دارد: انباردار و بازاریاب نه، مرجوعی‌خوان بله، و تأییدِ معلق نه.
+    const paths = [`/invoices/${invoiceId}`, `/invoices/${invoiceId}/returnable`, lookup, "/returns/today"];
     for (const username of [warehouse, marketing]) {
       const s = await loginAs(username);
       for (const url of [

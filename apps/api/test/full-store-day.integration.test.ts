@@ -636,6 +636,20 @@ describe("یک روز کامل فروشگاه", { skip, timeout: 300_000 }, () =
        WHERE return_id = ${rid}::uuid`.execute(handle.db);
     assert.equal(pay.rows[0]!.s, day.shift, "بازپرداخت نقدی باید shift_id داشته باشد");
 
+    // «مرجوعی‌های امروز» (طرح ۱۰): همان برگ ثبت‌شده با همان مبلغ‌هایی که post_return نوشته، برای صندوق‌دار هم.
+    const today = await call("GET", "/returns/today", cashier);
+    assert.equal(today.statusCode, 200, today.body);
+    const listed = (today.json() as { returns: Array<{ id: string; refundAmount: string; netAmount: string; drawerName: string | null;
+      lineCount: number; sellable: number; firstItem: string | null }> }).returns.find((x) => x.id === rid);
+    assert.ok(listed, "برگ امروز در فهرست است");
+    const stored = (await sql<{ refund: string; net: string; drawer: string }>`
+      SELECT r.refund_amount::text AS refund, r.net_amount::text AS net, u.full_name AS drawer
+        FROM sales.sale_return r JOIN sales.cash_shift cs ON cs.id = r.shift_id JOIN identity.app_user u ON u.id = cs.user_id
+       WHERE r.id = ${rid}::uuid`.execute(handle.db)).rows[0]!;
+    assert.deepEqual({ refund: listed.refundAmount, net: listed.netAmount, drawer: listed.drawerName, lines: listed.lineCount, sellable: listed.sellable },
+      { refund: stored.refund, net: stored.net, drawer: stored.drawer, lines: 1, sellable: 1 });
+    assert.match(String(listed.firstItem), /× 1$/);
+
     // ── خارج از مهلت: فاکتور را ۷۲ ساعت به عقب می‌بریم ──────────────
     // چرا این کار مجاز است: `returnWindow` از `finalized_at` می‌خواند و
     // ما فاکتوری **واقعاً قدیمی** را شبیه‌سازی می‌کنیم، نه اینکه

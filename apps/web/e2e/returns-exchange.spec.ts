@@ -21,7 +21,7 @@ function fixture(api: MockApi) {
     debt: "0", funds: "2000000", debtApplied: "0", transferAmount: "1000000", fundedTransfer: "1000000", collectAmount: "0", refundAmount: "0", policy: "carry_debt" };
 }
 async function choose(page: Page) {
-  await page.goto("/"); await openZone(page, "مرجوعی");
+  await page.goto("/"); await openZone(page, "مرجوعی و تعویض");
   await page.getByLabel("شماره فاکتور", { exact: true }).fill("F-TEST-1");
   await page.getByRole("button", { name: "پیدا کن", exact: true }).click();
   await page.getByRole("button", { name: "اضافه کردن پیراهن آزمایشی", exact: true }).click();
@@ -124,7 +124,7 @@ test("phone results are explicit choices with pagination; not-found recovery nev
     expect(url.searchParams.get("phone")).toBe("۰۹۱۲۰۰۰۰۰۰۰");
     await route.fulfill({ json: { invoices: [{ id: "i1", number: "F-TEST-1", payableAmount: "2000000" }], next: "next-1" } });
   });
-  await page.goto("/"); await openZone(page, "مرجوعی");
+  await page.goto("/"); await openZone(page, "مرجوعی و تعویض");
   await page.getByLabel("جست‌وجو با", { exact: true }).selectOption("phone");
   await page.getByLabel("شماره همراه", { exact: true }).fill("۰۹۱۲۰۰۰۰۰۰۰");
   await page.getByRole("button", { name: "پیدا کن", exact: true }).click();
