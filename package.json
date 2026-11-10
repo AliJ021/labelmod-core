@@ -25,7 +25,8 @@
       "@typescript-eslint/utils>typescript": "6.0.3",
       "@typescript-eslint/type-utils>typescript": "6.0.3",
       "@typescript-eslint/eslint-plugin>typescript": "6.0.3",
-      "@typescript-eslint/project-service>typescript": "6.0.3"
+      "@typescript-eslint/project-service>typescript": "6.0.3",
+      "minimatch@<11.0.1": "11.0.4"
     }
   },
   "devDependencies": {
