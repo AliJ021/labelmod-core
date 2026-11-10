@@ -124,6 +124,14 @@ export function formatJalaliMoment(iso: string): string {
   return Number.isNaN(d.getTime()) ? iso.slice(0, 16).replace("T", " ") : JALALI_MOMENT.format(d);
 }
 
+const CLOCK = new Intl.DateTimeFormat("fa-IR", { hour: "2-digit", minute: "2-digit", hourCycle: "h23" });
+
+/** «۱۸:۳۰» — ساعتِ یک لحظه در منطقهٔ زمانی مرورگر (همان قرارداد `formatJalaliMoment`)؛ ورودی نامعتبر «—». */
+export function formatClock(iso: string): string {
+  const d = new Date(iso);
+  return Number.isNaN(d.getTime()) ? "—" : CLOCK.format(d);
+}
+
 const JALALI_DAY = new Intl.DateTimeFormat("fa-IR-u-ca-persian", { dateStyle: "short" });
 
 /** «۱۴۰۵/۶/۲۵» — روزِ یک لحظه (timestamptz) در منطقهٔ زمانی مرورگر؛ ورودی نامعتبر «—». */

@@ -1,4 +1,4 @@
-import { openZone } from "./fixtures";
+import { accountScope, openZone } from "./fixtures";
 import { test, expect, product, rule, customer, staff, openCatalog, settings, fontsReady } from "./fixtures";
 import type { Page, Route, Locator } from "@playwright/test";
 
@@ -33,9 +33,16 @@ async function tabContract(list: Locator, vertical = false) {
   }
 }
 
+/**
+ * نام کالا در فهرست کالا. فهرست جدول `DataTable` با `stack` است و در گوشی برچسب ستون («کالا») جزء نام
+ * دسترس‌پذیر خانه می‌شود؛ پس متن دقیق خودِ نام سنجیده می‌شود، نه نام خانه.
+ */
+const listed = (page: Page, name: string) =>
+  page.getByRole("table", { name: "فهرست کالا؛ قیمت‌ها به تومان" }).getByText(name, { exact: true });
+
 test("visual, local fonts, contrast, targets, long names and 200% text", async ({ page, api }) => {
   await openCatalog(page);
-  await expect(page.getByRole("cell", { name: product.nameInternal, exact: true })).toBeVisible();
+  await expect(listed(page, product.nameInternal)).toBeVisible();
   await fontsReady(page);
   expect(api.fonts.some(x => x.includes("Vazirmatn"))).toBe(true);
   expect(api.fonts.filter(x => x.includes("IBMPlexMono")).length).toBe(4);
@@ -95,22 +102,22 @@ test("search debounce, Enter, stale response after latest response", async ({ pa
   });
   await openCatalog(page);
   const search = page.locator("main").getByRole("searchbox");
-  await expect(page.getByRole("cell", { name: product.nameInternal, exact: true })).toBeVisible();
+  await expect(listed(page, product.nameInternal)).toBeVisible();
   await page.clock.install({ time: new Date("2026-01-01T00:00:00Z") });
   await page.clock.pauseAt(new Date("2026-01-01T00:00:10Z"));
   const before = api.calls.filter(x => x.startsWith("GET /products")).length;
   await search.fill("A");
-  await expect(page.getByRole("cell", { name: product.nameInternal, exact: true })).toHaveCount(0);
+  await expect(listed(page, product.nameInternal)).toHaveCount(0);
   await expect(page.locator('[aria-busy="true"]')).toBeVisible();
   await page.clock.runFor(249);
   expect(api.calls.filter(x => x.startsWith("GET /products")).length).toBe(before);
   await page.clock.runFor(1);
   await expect.poll(() => !!old).toBe(true);
   await search.fill("AB"); await search.press("Enter"); await page.clock.runFor(1);
-  await expect(page.getByRole("cell", { name: "AB", exact: true })).toBeVisible();
+  await expect(listed(page, "AB")).toBeVisible();
   await old!.fulfill({ json: { products: [{ ...product, nameInternal: "OLD" }] } });
-  await expect(page.getByRole("cell", { name: "OLD", exact: true })).toHaveCount(0);
-  await expect(page.getByRole("cell", { name: "AB", exact: true })).toBeVisible();
+  await expect(listed(page, "OLD")).toHaveCount(0);
+  await expect(listed(page, "AB")).toBeVisible();
 });
 
 test("clear, filter and unmount cancel pending searches; error retry and empty states", async ({ page, api }) => {
@@ -127,7 +134,7 @@ test("clear, filter and unmount cancel pending searches; error retry and empty s
   await search.fill("pending"); await search.press("Enter");
   await expect.poll(() => held.length).toBeGreaterThanOrEqual(1);
   await page.getByRole("button", { name: "پاک‌کردن جست‌وجوی کد یا نام کالا", exact: true }).click();
-  await expect(page.getByRole("cell", { name: product.nameInternal, exact: true })).toBeVisible();
+  await expect(listed(page, product.nameInternal)).toBeVisible();
   const firstCount = held.length;
   await search.fill("pending"); await search.press("Enter");
   await expect.poll(() => held.length).toBeGreaterThan(firstCount);
@@ -137,7 +144,7 @@ test("clear, filter and unmount cancel pending searches; error retry and empty s
   await page.getByRole("tab", { name: "داشبورد", exact: true }).click();
   for (const route of held) await route.fulfill({ json: { products: [{ ...product, nameInternal: "OLD" }] } }).catch(() => {});
   await page.getByRole("tab", { name: "کالا و قیمت", exact: true }).click();
-  await expect(page.getByRole("cell", { name: "OLD", exact: true })).toHaveCount(0);
+  await expect(listed(page, "OLD")).toHaveCount(0);
   fail = true;
   await search.fill("error"); await search.press("Enter");
   await expect(page.getByRole("alert")).toContainText("خطای آزمایشی شبکه");
@@ -323,14 +330,16 @@ test("بی WebGL، ورود همان زمینهٔ CSS را دارد و پارچ�
 
 test("password suggestion, cancellation, server error, duplicate submit and success", async ({ page, api }) => {
   await page.goto("/");
-  const account = page.getByRole("button", { name: "حساب مدیر آزمایشی" });
+  const account = (await accountScope(page)).getByRole("button", { name: "حساب مدیر آزمایشی" });
   const open = async () => { await account.click(); await page.getByRole("button", { name: "تغییر رمز من" }).click(); };
   await open();
   await page.getByRole("button", { name: "پیشنهاد رمز امن" }).click();
   await expect(page.getByLabel("رمز تازه", { exact: true })).toHaveValue(/^[0-9a-f]{64}$/);
   expect(api.calls.some(x => x.startsWith("POST"))).toBe(false);
   await page.getByRole("button", { name: "انصراف", exact: true }).click();
-  await expect(page.getByRole("dialog")).toHaveCount(0);
+  // گوشی: برگهٔ منو زیر گفت‌وگوی رمز باز می‌ماند و فوکوس به همان دکمهٔ حساب درونش برمی‌گردد.
+  await expect(page.getByRole("dialog", { name: /رمز/ })).toHaveCount(0);
+  await expect(page.getByRole("dialog")).toHaveCount(page.viewportSize()!.width >= 900 ? 0 : 1);
   await expect(account).toBeFocused();
   await open();
   await page.getByLabel("رمز فعلی", { exact: true }).fill("Current-test-only-123");
@@ -359,7 +368,7 @@ test("header lock and logout keep their independent behavior", async ({ page, ap
   await expect(page.getByRole("heading", { name: "صفحه قفل است" })).toBeVisible();
   expect(api.calls).toContain("POST /auth/lock");
   await page.reload();
-  await page.getByRole("button", { name: "خروج", exact: true }).click();
+  await (await accountScope(page)).getByRole("button", { name: "خروج", exact: true }).click();
   await expect(page.getByLabel("نام کاربری", { exact: true })).toBeVisible();
   expect(api.calls).toContain("POST /auth/logout");
 });
@@ -383,7 +392,7 @@ test("locking mid-load stops dashboard requests before reload and logout", async
   await page.evaluate(() => new Promise(resolve => setTimeout(resolve, 300)));
   expect(api.calls.slice(afterLock), "No dashboard request after lock").toEqual([]);
   await page.reload();
-  await page.getByRole("button", { name: "خروج", exact: true }).click();
+  await (await accountScope(page)).getByRole("button", { name: "خروج", exact: true }).click();
   await expect(page.getByLabel("نام کاربری", { exact: true })).toBeVisible();
   expect(api.calls).toContain("POST /auth/logout");
 });
@@ -446,7 +455,8 @@ test("populated customers, empty permissions and clear actions", async ({ page, 
   api.permissionRows = [];
   await page.goto("/");
   await openZone(page, "مشتریان");
-  await expect(page.getByRole("cell", { name: customer.fullName!, exact: true })).toBeVisible();
+  // خانهٔ «مشتری» نام و موبایل پوشیده را با هم دارد (طرح ۱۰)؛ خودِ نام دقیق در جدول سنجیده می‌شود.
+  await expect(page.getByRole("table", { name: "فهرست مشتریان؛ مبلغ‌ها به تومان" }).getByText(customer.fullName!, { exact: true })).toBeVisible();
   await noOverflow(page);
   await screenshot(page, "customers");
   await settings(page, "permissions", "مجوزها");

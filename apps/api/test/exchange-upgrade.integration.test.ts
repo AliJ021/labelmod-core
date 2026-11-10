@@ -26,7 +26,9 @@ function baselineSeed(name: string): string {
     text = text.slice(0, at) + "\nCOMMIT;\n";
   } else if (name === "030_settings.sql") {
     text = text.replace(',"exchange.policy"', "").replace(/^ {3}\{"value":"exchange.policy"[^\n]+\n/m, "")
-      .replace(',"instagram.payment.verify"', "").replace(/^ {3}\{"value":"instagram.payment.verify"[^\n]+\n/m, "");
+      .replace(',"instagram.payment.verify"', "").replace(/^ {3}\{"value":"instagram.payment.verify"[^\n]+\n/m, "")
+      // مهاجرت ۱۱۴ واژهٔ «مرکز» را آورد؛ Seed دورهٔ ۰۸۳ هنوز «Core» داشت و ارتقا همان را با ۱۱۴ عوض می‌کند.
+      .replace("موجودی سایت با مرکز — تور ایمنی", "موجودی سایت با Core — تور ایمنی");
   } else if (name === "040_reference.sql") {
     text = text.replace("INSERT INTO identity.permission_rule(role_code,operation,allowed)\nSELECT code,'exchange.policy',code='admin' FROM identity.role ON CONFLICT(role_code,operation) DO NOTHING;\n", "");
   }
@@ -64,6 +66,8 @@ test("existing 083 seeded database upgrades through 084/085/086 without bypassin
     owner = createDb(url.toString(), 1);
     const before = (await sql<{ value: string[] }>`SELECT value FROM platform.setting WHERE key='auth.pin_forbidden_operations'`.execute(owner.db)).rows[0]!.value;
     assert.ok(!before.includes("exchange.policy"), "must exercise an existing old setting");
+    assert.match((await sql<{ d: string }>`SELECT description d FROM platform.setting WHERE key='web.reconcile_minutes'`.execute(owner.db)).rows[0]!.d,
+      /موجودی سایت با Core/, "نصب قدیمی باید متن «Core» را داشته باشد تا ۱۱۴ واقعاً سنجیده شود");
     // This is the exact failed production write, not an empty-table assertion.
     await assert.rejects(sql`UPDATE platform.setting SET value=value || '["exchange.policy"]'::jsonb WHERE key='auth.pin_forbidden_operations'`.execute(owner.db), /platform.set_setting/);
     const sentinel = (await sql<{ id: string }>`INSERT INTO identity.app_user(username,full_name) VALUES('upgrade_sentinel','دادهٔ موجود') RETURNING id`.execute(owner.db)).rows[0]!.id;
@@ -82,6 +86,11 @@ test("existing 083 seeded database upgrades through 084/085/086 without bypassin
     assert.equal(result.options.filter(o => o.value === "exchange.policy").length, 1);
     assert.equal(result.options.filter(o => o.value === "instagram.payment.verify").length, 1);
     assert.equal((await sql<{ value: string }>`SELECT value FROM platform.setting WHERE key='exchange.debt_policy'`.execute(owner.db)).rows[0]!.value, "unset");
+    // ۱۱۴: نصب قدیمی‌ای که همان متن Seed را دارد، «مرکز» می‌گیرد؛ مقدار تنظیم دست نمی‌خورد.
+    const reconcile = (await sql<{ description: string; value: number }>`SELECT description, value FROM platform.setting WHERE key='web.reconcile_minutes'`.execute(owner.db)).rows[0]!;
+    assert.match(reconcile.description, /موجودی سایت با مرکز/);
+    assert.doesNotMatch(reconcile.description, /Core/);
+    assert.equal(reconcile.value, 15);
     assert.equal((await sql<{ n: number }>`SELECT count(*)::int n FROM identity.app_user WHERE id=${sentinel}::uuid AND full_name='دادهٔ موجود'`.execute(owner.db)).rows[0]!.n, 1);
     assert.equal(await footprint(), oldFootprint);
     assert.equal((await sql<{ checksum: string }>`SELECT checksum FROM public.schema_migration WHERE filename='084_staff_withdrawal_register.sql'`.execute(owner.db)).rows[0]!.checksum, applied084);

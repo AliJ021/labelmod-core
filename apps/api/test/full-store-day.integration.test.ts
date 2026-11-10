@@ -611,6 +611,18 @@ describe("یک روز کامل فروشگاه", { skip, timeout: 300_000 }, () =
       SELECT unit_cost::text AS c FROM sales.invoice_line WHERE id = ${lineId}::uuid`
       .execute(handle.db);
 
+    // «حساب مرجوعی» پیش از ثبت (مهاجرت ۱۱۶) — بعد از ثبت با ستون‌های برگ مقایسه می‌شود.
+    const account = await call("POST", `/invoices/${day.invCash}/return-account`, supervisor,
+      { lines: [{ invoiceLineId: lineId, qty: "1" }], refundAmount: "4000000" });
+    assert.equal(account.statusCode, 200, account.body);
+    const acc = account.json() as { returnedValue: string; debtApplied: string; customerCredit: string; refundAmount: string; problem: string | null };
+    assert.equal(acc.problem, null);
+    const overFunds = await call("POST", `/invoices/${day.invCash}/return-account`, supervisor,
+      { lines: [{ invoiceLineId: lineId, qty: "1" }], refundAmount: "999999999999" });
+    assert.match(String((overFunds.json() as { problem: string | null }).problem), /بیش از/);
+    assert.equal((await call("POST", `/invoices/${day.invCash}/return-account`, supervisor,
+      { lines: [{ invoiceLineId: lineId, qty: "999" }] })).statusCode, 409, "بیش از باقی‌مانده: همان پیام ثبت");
+
     const draft = await call("POST", "/returns", supervisor, {
       invoiceId: day.invCash,
       reasonCode: "size_small",
@@ -630,11 +642,31 @@ describe("یک روز کامل فروشگاه", { skip, timeout: 300_000 }, () =
       .execute(handle.db);
     assert.equal(rc.rows[0]!.c, cost.rows[0]!.c, "بهای مرجوعی باید بهای همان فروش باشد");
 
+    const after = (await sql<{ value: string; debt: string; credit: string; refund: string }>`
+      SELECT (net_amount + tax_amount + shipping_amount)::text AS value, receivable_applied::text AS debt,
+             credit_applied::text AS credit, refund_amount::text AS refund FROM sales.sale_return WHERE id = ${rid}::uuid`.execute(handle.db)).rows[0]!;
+    assert.deepEqual({ value: acc.returnedValue, debt: acc.debtApplied, credit: acc.customerCredit, refund: acc.refundAmount }, after,
+      "حساب مرجوعی پیش از ثبت = برگ ثبت‌شده");
+
     // و بازپرداخت نقدی به شیفت باز چسبید — وگرنه شمارش کشو مغایرت کاذب
     const pay = await sql<{ s: string | null }>`
       SELECT shift_id::text AS s FROM treasury.payment
        WHERE return_id = ${rid}::uuid`.execute(handle.db);
     assert.equal(pay.rows[0]!.s, day.shift, "بازپرداخت نقدی باید shift_id داشته باشد");
+
+    // «مرجوعی‌های امروز» (طرح ۱۰): همان برگ ثبت‌شده با همان مبلغ‌هایی که post_return نوشته، برای صندوق‌دار هم.
+    const today = await call("GET", "/returns/today", cashier);
+    assert.equal(today.statusCode, 200, today.body);
+    const listed = (today.json() as { returns: Array<{ id: string; refundAmount: string; netAmount: string; drawerName: string | null;
+      lineCount: number; sellable: number; firstItem: string | null }> }).returns.find((x) => x.id === rid);
+    assert.ok(listed, "برگ امروز در فهرست است");
+    const stored = (await sql<{ refund: string; net: string; drawer: string }>`
+      SELECT r.refund_amount::text AS refund, r.net_amount::text AS net, u.full_name AS drawer
+        FROM sales.sale_return r JOIN sales.cash_shift cs ON cs.id = r.shift_id JOIN identity.app_user u ON u.id = cs.user_id
+       WHERE r.id = ${rid}::uuid`.execute(handle.db)).rows[0]!;
+    assert.deepEqual({ refund: listed.refundAmount, net: listed.netAmount, drawer: listed.drawerName, lines: listed.lineCount, sellable: listed.sellable },
+      { refund: stored.refund, net: stored.net, drawer: stored.drawer, lines: 1, sellable: 1 });
+    assert.match(String(listed.firstItem), /× 1$/);
 
     // ── خارج از مهلت: فاکتور را ۷۲ ساعت به عقب می‌بریم ──────────────
     // چرا این کار مجاز است: `returnWindow` از `finalized_at` می‌خواند و
@@ -647,6 +679,11 @@ describe("یک روز کامل فروشگاه", { skip, timeout: 300_000 }, () =
 
     const oldView = await call("GET", `/invoices/${day.invMix}/returnable`, cashier);
     assert.equal((oldView.json() as { late: boolean }).late, true, "باید «دیرهنگام» باشد");
+    // مهلتی که صفحه نشان می‌دهد همان تنظیمی است که «دیرهنگام» را تعیین کرد.
+    const windowHours = (await sql<{ h: number }>`SELECT platform.setting_int('return.window_hours', 48) AS h`.execute(handle.db)).rows[0]!.h;
+    const shown = oldView.json() as { windowHours: number; hoursSinceSale: number };
+    assert.equal(shown.windowHours, windowHours);
+    assert.ok(shown.hoursSinceSale > shown.windowHours, "ساعت گذشته از مهلت بیشتر است");
 
     const lateLine = (oldView.json() as { lines: Array<{ invoiceLineId: string }> }).lines[0]!
       .invoiceLineId;

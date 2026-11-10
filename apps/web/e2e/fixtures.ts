@@ -5,7 +5,7 @@ import { redactText, safeRequestPath } from "./redact";
 import type { Product, Variation } from "../src/lib/catalog";
 import type { AppUser, Customer } from "../src/lib/people";
 import type { Me } from "../src/lib/session";
-import type { Branch, DailyHour, DailyHourly, DailyReport, DashboardPeriod, PeriodPayments, PeriodSales } from "../src/lib/pos";
+import type { Branch, DailyComparison, DailyHour, DailyHourly, DailyReport, DashboardPeriod, PeriodPayments, PeriodSales } from "../src/lib/pos";
 import type { PermissionRule } from "../src/lib/admin";
 import type { StockSync } from "../src/lib/stock-sync";
 import type { DashboardOperations } from "../src/lib/dashboard-operations";
@@ -15,12 +15,36 @@ export const product: Product = { id: "11111111-1111-4111-8111-111111111111", co
 const variation: Variation = { id: "v1", color: "سرمه‌ای", size: "XL", sku: "TR-1405-NAVY-XL", barcode: "1234567890123", status: "active", price: "1234000", priceKind: "regular", priceSince: "2026-09-16T00:00:00Z", locked: false };
 const me: Me = { id: "22222222-2222-4222-8222-222222222222", fullName: "مدیر آزمایشی", roles: ["admin"], expiresAt: "2027-01-01T00:00:00Z", elevated: true, enrollmentRequired: false, device: null };
 const branches: Branch[] = [{ id: "b1", code: "TEST", name: "شعبه آزمایشی", warehouses: [{ id: "w1", code: "STORE", name: "انبار آزمایشی", kind: "store" }] }];
-const daily: DailyReport = { businessDate: "2026-09-16", salesAmount: "12340000", receivedAmount: "11000000", profitAmount: "2340000", invoiceCount: 12, returnCount: 1 };
+/** پاسخ `/reports/daily` مثل سرور: تفاضل دریافتی و فروش را «سرور» (این داده) می‌دهد، نه برنامه. */
+export function dailyBody(o: Omit<DailyReport, "receivedMinusSales">): DailyReport {
+  return { ...o, receivedMinusSales: String(BigInt(o.receivedAmount) - BigInt(o.salesAmount)) };
+}
+const daily: DailyReport = dailyBody({ businessDate: "2026-09-16", salesAmount: "12340000", receivedAmount: "11000000", profitAmount: "2340000", invoiceCount: 12, returnCount: 1 });
+/**
+ * «دیروز تا همین لحظه» نمونه، مثل پاسخ سرور (مهاجرت ۱۰۹): فروش دیروز ساعت ۱۰ و ۱۷، مرز همان ساعت جاری
+ * (روز تمام‌شده: کل روز)؛ تجمعی، جمع و اختلاف با جمع ساعت‌های امروز — همان تعریف SQL، نه منطق برنامه.
+ */
+export function yesterdayUntil(today: Record<number, Partial<DailyHour>>, profitVisible: boolean, currentHour: number | null): DailyComparison {
+  const lastHour = currentHour ?? 23;
+  const y: Record<number, [bigint, bigint, bigint]> = { 10: [3000000n, 3000000n, 1000000n], 17: [6000000n, 5000000n, 2000000n] };
+  let s = 0n, r = 0n, p = 0n;
+  const hours = Array.from({ length: 24 }, (_, hour) => {
+    if (hour > lastHour) return { hour, cumulative: null };
+    s += y[hour]?.[0] ?? 0n; r += y[hour]?.[1] ?? 0n; p += y[hour]?.[2] ?? 0n;
+    return { hour, cumulative: { sales: String(s), received: String(r), profit: profitVisible ? String(p) : null } };
+  });
+  const sum = (k: "salesAmount" | "receivedAmount" | "profitAmount") => Object.values(today).reduce((t, h) => t + BigInt(h[k] ?? "0"), 0n);
+  return { businessDate: "2026-09-15", cutoff: "2026-09-15T20:30:00.000000Z", lastHour,
+    total: { sales: String(s), received: String(r), profit: profitVisible ? String(p) : null },
+    delta: { sales: String(sum("salesAmount") - s), received: String(sum("receivedAmount") - r), profit: profitVisible ? String(sum("profitAmount") - p) : null },
+    hours };
+}
 /** ۲۴ ساعت خلاصه روز (مثل پاسخ سرور)؛ ساعت‌های نام‌برده جایگزین صفر می‌شوند. */
-export function hourlyDay(over: Record<number, Partial<DailyHour>> = {}, profitVisible = true, businessDate = daily.businessDate, currentHour: number | null = null): DailyHourly {
+export function hourlyDay(over: Record<number, Partial<DailyHour>> = {}, profitVisible = true, businessDate = daily.businessDate, currentHour: number | null = null,
+  comparison: DailyComparison | null = yesterdayUntil(over, profitVisible, currentHour)): DailyHourly {
   // فقط ساخت پاسخ ساختگی آزمون؛ برنامه جمع را از SQL دریافت می‌کند.
   let sales = 0n, received = 0n, profit = 0n;
-  return { businessDate, currentHour, profitVisible, hours: Array.from({ length: 24 }, (_, hour) => ({
+  return { businessDate, currentHour, profitVisible, comparisonVisible: comparison !== null, comparison, hours: Array.from({ length: 24 }, (_, hour) => ({
     hour, salesAmount: "0", receivedAmount: "0", profitAmount: profitVisible ? "0" : null,
     invoiceCount: 0, returnCount: 0, paymentCount: 0, ...over[hour],
     ...(profitVisible ? {} : { profitAmount: null }),
@@ -130,6 +154,8 @@ type Handler = (route: Route, url: URL) => Promise<void>;
 export class MockApi {
   handlers = new Map<string, Handler>();
   calls: string[] = [];
+  /** درخواست‌های API در راه: از ورود به route تا پایان پاسخ (حتی اگر صفحه لغوش کند). */
+  inflight = 0;
   unexpected: string[] = [];
   errors: string[] = [];
   external: string[] = [];
@@ -143,16 +169,16 @@ export class MockApi {
     "GET /dashboard/stock-sync": syncBody(),
     "GET /dashboard/operations": opsBody(),
     "GET /posting-batches/unposted": { rows: [] }, "GET /auth/can": { verdict: "allow", approver: null, reason: "" },
-    "GET /settings": { groups: [] }, "GET /settlement-terms": { terms: [] }, "GET /customers": { customers: [] },
+    "GET /settings": { groups: [] }, "GET /settlement-terms": { terms: [] }, "GET /terminal-drivers": { terminals: [] }, "GET /customers": { customers: [] },
     "GET /products/ref-data": { brands: [], categories: [] }, "GET /seasons": { seasons: [] },
     ["GET /products/" + product.id]: { product, variations: [variation] },
     ["GET /products/" + product.id + "/stock-matrix"]: { totalOnHand:"12", cells:{ navy:{ XL:{variationId:"v1",onHand:"12",reserved:"2"} } } },
     "GET /auth/2fa/sms/status": { enabled:false, maskedMobile:null },
     "GET /variations/v1/price-history": { history: [] },
     "GET /reports/sales": { rows: [] }, "GET /reports/hourly": { rows: [] }, "GET /reports/cash-reconciliation": { rows: [] },
-    "GET /treasury/accounts": { accounts: [] }, "GET /treasury/balances": { balances: [] }, "GET /products/summary": { activeProducts: 8, activeVariations: 28, inventoryValue: "1220800000", pricesLast30Days: 0 }, "GET /treasury/transactions": { transactions: [] },
+    "GET /treasury/accounts": { accounts: [] }, "GET /treasury/balances": { balances: [] }, "GET /products/summary": { activeProducts: 8, activeVariations: 28, inventoryValue: "1220800000", pricesLast30Days: 0 }, "GET /treasury/transactions": { transactions: [] }, "GET /treasury/drawers": { businessDate: "2026-09-16", shiftsVisible: true, shifts: [], moves: [] },
     "GET /purchasing/expense-accounts": [], "GET /purchasing/pay-accounts": [], "GET /suppliers": [],
-    "GET /receipts": [], "GET /stock-counts": [], "GET /cheques/due": { due: [] },
+    "GET /receipts": [], "GET /purchase-returns": { returns: [] }, "GET /returns/today": { businessDate: "2026-09-16", returns: [] }, "GET /stock-counts": [], "GET /cheques/due": { due: [] },
     "GET /invoices": { rows: [], total: 0, pageSize: 50 },
     "GET /reports/daily/trend": { businessDate: "2026-09-16", profitVisible: true, buckets: [] },
     "GET /users": { users: [staff, { ...staff, id: me.id, username: "synthetic_admin", fullName: me.fullName }] }, "GET /roles": { roles: [{ code: "cashier", name: "صندوق‌دار" }] },
@@ -168,6 +194,21 @@ export class MockApi {
       if (!url.pathname.startsWith("/api/")) { await route.continue(); return; }
       const key = route.request().method() + " " + url.pathname.slice(4);
       this.calls.push(key + url.search);
+      this.inflight++;
+      try { await this.respond(route, url, key); } finally { this.inflight--; }
+    });
+  }
+  /**
+   * تا همهٔ درخواست‌های API در راه پاسخ بگیرند صبر می‌کند — پیش از ترک صفحه، تا WebKit قطع درخواست با
+   * ناوبری را «خطای صفحه» نشمارد. `waitForLoadState("networkidle")` این کار را نمی‌کند: آن یک نقطهٔ
+   * یک‌بارهٔ ناوبری است و پس از رسیدن، فراخوان دوباره بی‌درنگ برمی‌گردد؛ ردّ CI (webkit-dark-768،
+   * run 42480673872) بیست درخواست `auth/can` و `/branches` در راه را هنگام ناوبری بعدی نشان داد.
+   * پیش از صدا زدن، چیزی از صفحه که پس از سوار شدن برنامه می‌آید دیده شده باشد.
+   */
+  async settled() {
+    await expect.poll(() => this.inflight, { message: "API requests still in flight" }).toBe(0);
+  }
+  private async respond(route: Route, url: URL, key: string) {
       const handler = this.handlers.get(key);
       if (handler) { await handler(route, url); return; }
       if (key === "GET /labels/frame") {
@@ -179,7 +220,6 @@ export class MockApi {
       const body = key === "GET /products" ? { products: this.productRows } : key === "GET /permission-rules" ? { rules: this.permissionRows } : this.defaults[key];
       if (body === undefined) { this.unexpected.push(key + url.search); await route.fulfill({ status: 501, json: { error: { code: "unmocked", message: key } } }); return; }
       await route.fulfill({ json: body });
-    });
   }
 }
 /**
@@ -252,13 +292,28 @@ export async function fontsReady(page: Page) {
 
 export async function openZone(page: Page, name: string) {
   const nav = page.getByRole("tablist", { name: "بخش‌ها", exact: true });
-  await expect(nav).toBeVisible();
+  const phone = page.viewportSize()!.width < 900;
+  // صندوقِ گوشی (طرح ۱۰، تصمیم مالک) نوار پایین ندارد؛ آنجا همهٔ بخش‌ها از ☰ سربرگ‌اند.
+  const posPhone = phone && await page.locator(".workspace--pos-phone").count() > 0;
+  if (!posPhone) await expect(nav).toBeVisible();
   // گوشی: فقط مقصدهای نوار پایین زبانه‌اند؛ بقیه از برگهٔ مودال «بیشتر» (پیوند، نه زبانه).
-  if (page.viewportSize()!.width >= 900 || MOBILE_PRIMARY.includes(name)) {
+  if (!phone || (!posPhone && MOBILE_PRIMARY.includes(name))) {
     await nav.getByRole("tab", { name, exact: true }).click();
     return;
   }
-  await page.getByRole("button", { name: "بخش‌های بیشتر", exact: true }).click();
+  await page.getByRole("button", { name: posPhone ? "بازکردن منو" : "بخش‌های بیشتر", exact: true }).click();
   await page.getByRole("dialog", { name: "همهٔ بخش‌ها" }).getByRole("link", { name, exact: true }).click();
+}
+
+/**
+ * حساب و خروج (طرح ۱۰): در دسکتاپ پای نوار کناری، در گوشی پای منوی ☰. محدوده‌ای که این دو کنترل
+ * در آن‌اند را برمی‌گرداند و در گوشی منو را باز می‌کند.
+ */
+export async function accountScope(page: Page) {
+  if (page.viewportSize()!.width >= 900) return page.locator("body");
+  await page.getByRole("button", { name: "بازکردن منو", exact: true }).click();
+  const sheet = page.getByRole("dialog", { name: "همهٔ بخش‌ها" });
+  await expect(sheet).toBeVisible();
+  return sheet;
 }
 const MOBILE_PRIMARY: readonly string[] = ZONES.filter(z => z.mobilePrimary).map(z => z.label);

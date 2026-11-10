@@ -148,3 +148,28 @@ test("تایپ دستی با سرعت انسان دست نمی‌خورد و ا�
   expect(scans).toHaveLength(0);
   await expect(entry).toHaveValue("2000");
 });
+
+/**
+ * رگرسیون CI (webkit-dark-1920 ۲۰۲۶/۱۱/۰۷ و chromium-light-1920 ۲۰۲۶/۱۱/۰۸): اسکنی که وسط بازیابی
+ * پیش‌نویس می‌رسید `POST /invoices` می‌زد و پس از بازیابی، قلمش روی پیش‌نویسی یتیم می‌ماند. دو
+ * ترتیب سنجیده می‌شود: پاسخ پیش‌نویس **پس از** اسکن آزاد شود (بازیابی هنوز در راه)، یا **هم‌زمان** با
+ * آن (بازیابی حل شده ولی پیش‌نویس هنوز در state ننشسته — پنجره‌ای که اصلاح اول باز گذاشته بود).
+ */
+for (const order of ["after", "with"] as const) {
+  test(`HID: اسکن وسط بازیابی پیش‌نویس روی همان پیش‌نویس می‌نشیند، نه فاکتور دوم (آزادسازی ${order === "after" ? "پس از" : "هم‌زمان با"} اسکن)`, async ({ page, api, browserName }) => {
+    const scans = mock(api);
+    let release: () => void = () => undefined;
+    const held = new Promise<void>((resolve) => { release = resolve; });
+    api.handlers.set(`GET /invoices/${id}`, async route => { await held; await route.fulfill({ json: draft }); });
+    await page.addInitScript(([invoiceId, shiftId]) => localStorage.setItem("labelmod_open_cart", JSON.stringify({ invoiceId, shiftId })), [id, shift]);
+    await page.goto("/?page=pos&pos.branch=b1&pos.warehouse=w1");
+    await expect(page.getByRole("region", { name: "افزودن کالا" }).getByRole("searchbox")).toBeVisible();
+    await expect.poll(() => api.calls, "بازیابی شروع شده").toContain(`GET /invoices/${id}`);
+    await page.locator("body").click({ position: { x: 1, y: 1 } });
+    if (order === "with") { release(); await scan(page, [...digits(EAN), "Enter"], browserName); }
+    else { await scan(page, [...digits(EAN), "Enter"], browserName); release(); }
+    await expect.poll(() => scans.length).toBe(1);
+    expect(scans[0]).toMatchObject({ barcode: EAN });
+    expect(api.calls.filter((c) => c === "POST /invoices"), "فاکتور دومی ساخته نشد").toEqual([]);
+  });
+}

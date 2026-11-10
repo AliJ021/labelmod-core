@@ -28,11 +28,11 @@ export const REPORT_DATA: Record<string, unknown> = {
     { channel: "web", invoiceCount: 3, netAmount: "9900000", profitAmount: "3800000", prevInvoiceCount: 5, prevNetAmount: "12800000", prevProfitAmount: "4100000", deltaAmount: "-2900000", deltaPercent: -22.7, direction: "down" },
   ] },
   "GET /reports/hourly": { rows: [
-    { businessDate: d1, hourOfDay: 10, channel: "pos", invoiceCount: 2, itemQty: "3", netAmount: "6200000" },
-    { businessDate: d1, hourOfDay: 12, channel: "pos", invoiceCount: 4, itemQty: "6", netAmount: "14800000" },
-    { businessDate: d1, hourOfDay: 18, channel: "pos", invoiceCount: 6, itemQty: "9", netAmount: "21000000" },
-    { businessDate: d1, hourOfDay: 18, channel: "web", invoiceCount: 1, itemQty: "1", netAmount: "3300000" },
-    { businessDate: d2, hourOfDay: 20, channel: "pos", invoiceCount: 3, itemQty: "4", netAmount: "9500000" },
+    { businessDate: d1, hourOfDay: 10, hourTotal: "6200000", channel: "pos", invoiceCount: 2, itemQty: "3", netAmount: "6200000" },
+    { businessDate: d1, hourOfDay: 12, hourTotal: "14800000", channel: "pos", invoiceCount: 4, itemQty: "6", netAmount: "14800000" },
+    { businessDate: d1, hourOfDay: 18, hourTotal: "24300000", channel: "pos", invoiceCount: 6, itemQty: "9", netAmount: "21000000" },
+    { businessDate: d1, hourOfDay: 18, hourTotal: "24300000", channel: "web", invoiceCount: 1, itemQty: "1", netAmount: "3300000" },
+    { businessDate: d2, hourOfDay: 20, hourTotal: "9500000", channel: "pos", invoiceCount: 3, itemQty: "4", netAmount: "9500000" },
   ] },
   "GET /reports/basket": { rows: [
     { businessDate: d1, channel: "pos", invoiceCount: 14, knownCustomers: 9, anonymousCount: 5, itemQty: "21", lineCount: 19, netAmount: "47000000", qtyPerInvoice: "1.5" },

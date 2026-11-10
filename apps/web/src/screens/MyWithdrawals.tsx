@@ -7,6 +7,7 @@ import { Button, Field } from "../components/ui/Controls.tsx";
 import { DataTable, type Column } from "../components/ui/DataTable.tsx";
 import { Money } from "../components/ui/Money.tsx";
 import { PageHeader, SectionHeader } from "../components/ui/PageHeader.tsx";
+import { WithdrawalUnsettled } from "../components/WithdrawalUnsettled.tsx";
 import { SafeAction } from "../components/ui/SafeAction.tsx";
 import { Skeleton } from "../components/ui/Skeleton.tsx";
 import { useWithdrawalOperation } from "../lib/use-withdrawal-operation.ts";
@@ -82,14 +83,16 @@ export function MyWithdrawals({ currentUserId }: { currentUserId: string }) {
 
   const columns: Column<WithdrawalItem>[] = [
     { key: "at", header: "زمان ثبت", cell: r => <span className="cell-nowrap">{formatJalaliMoment(r.createdAt)}</span> },
-    { key: "amount", header: "مبلغ", numeric: true, cell: r => <Money rial={r.amount} exact size="sm" /> },
+    // طرح ۱۰: تاریخ، دلیل، مبلغ، وضعیت (تسویه‌شده در همین ستون).
     { key: "reason", header: "دلیل", cell: r => r.reason },
+    { key: "amount", header: "مبلغ", numeric: true, cell: r => <Money rial={r.amount} exact size="sm" /> },
     { key: "state", header: "وضعیت", cell: r => <WithdrawalStatus item={r} /> },
   ];
 
   return <div className="settings-page">
     <PageHeader title="برداشت‌های من"
       context="پس از ثبت، فقط مدیر کل می‌تواند مبلغ یا دلیل را اصلاح کند؛ تاریخچهٔ هر اصلاح می‌ماند." />
+    <WithdrawalUnsettled data={list.data?.unsettled} note="برداشت‌های خود شما" />
 
     <Solid as="section" className="settings-section" aria-labelledby={listId}>
       <SectionHeader id={listId} title="برداشت‌های ثبت‌شده" description="تازه‌ترین بالا. مبالغ به تومان‌اند." />

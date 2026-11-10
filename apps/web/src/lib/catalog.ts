@@ -56,6 +56,26 @@ export interface Product {
    */
   priceMin: string | null;
   priceMax: string | null;
+  /**
+   * طرح ۱۰ — ستون‌های موجودی فهرست (`GET /products`)، در دامنهٔ شعبهٔ کاربر. نبودنش (پاسخ قدیمی) یعنی
+   * «نامعلوم»، نه صفر.
+   */
+  inventory?: ProductInventory | null;
+}
+
+export interface ProductInventory {
+  /** سایزهای تنوع فعال، به ترتیب پوشاک از سرور. */
+  sizes: string[];
+  colors: string[];
+  /** جمع موجودی هر انبار فروش؛ انبار بی‌سطر یعنی بی‌سابقه، نه صفر. */
+  /** فروشگاه اول (store، outlet، بعد stock) از سرور. */
+  stock: { warehouseId: string; warehouseName: string; warehouseKind?: string; qty: string }[];
+  /** بی `cost.view` بها اصلاً نیامده (`null`)، نه صفر. */
+  costVisible: boolean;
+  unitCostMin: string | null;
+  unitCostMax: string | null;
+  /** شمار (تنوع، انبار) زیر آستانه؛ `null` یعنی آستانه تعریف نشده. */
+  lowStock: number | null;
 }
 
 /**

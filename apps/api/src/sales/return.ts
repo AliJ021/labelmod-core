@@ -266,14 +266,17 @@ export class ReturnService {
    */
   async returnWindow(
     invoiceId: string,
-  ): Promise<{ hoursSince: number; daysSince: number; late: boolean }> {
-    const res = await sql<{ hours: number; late: boolean }>`
+  ): Promise<{ hoursSince: number; daysSince: number; late: boolean; windowHours: number }> {
+    // مهلت همان مقداری است که «دیرهنگام» را تعیین می‌کند — یک بار خوانده می‌شود، پس متن صفحه و تصمیم یکی‌اند.
+    const res = await sql<{ hours: number; late: boolean; window_hours: number }>`
       SELECT
         floor(extract(epoch FROM (now() - coalesce(i.finalized_at, i.occurred_at))) / 3600)::int
           AS hours,
-        now() > coalesce(i.finalized_at, i.occurred_at)
-          + make_interval(hours => platform.setting_int('return.window_hours', 48)) AS late
-        FROM sales.invoice i WHERE i.id = ${invoiceId}::uuid
+        now() > coalesce(i.finalized_at, i.occurred_at) + make_interval(hours => w.h) AS late,
+        w.h AS window_hours
+        FROM sales.invoice i
+        CROSS JOIN (SELECT platform.setting_int('return.window_hours', 48) AS h) w
+       WHERE i.id = ${invoiceId}::uuid
     `.execute(this.#db);
 
     const r = res.rows[0];
@@ -283,6 +286,7 @@ export class ReturnService {
       // برای نمایش نگه داشته شده؛ تصمیم «دیرهنگام» فقط به ساعت است.
       daysSince: Math.floor(r.hours / 24),
       late: r.late,
+      windowHours: r.window_hours,
     };
   }
 

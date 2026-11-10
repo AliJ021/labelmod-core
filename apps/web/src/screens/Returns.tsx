@@ -3,7 +3,7 @@ import { AmountInput } from "../components/ui/AmountInput.tsx";
  * مرجوعی/تعویض با جست‌وجوی دقیق، انتخاب جزئی، تأیید دوم و بازیابی پایدار.
  * اثر مالی از endpoint اتمیک می‌آید؛ نتیجه نامعلوم فقط بررسی می‌شود.
  */
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { Solid } from "../components/Glass.tsx";
 import { TabList, TabPanels, useTabsId } from "../components/Tabs.tsx";
 import { Icon } from "../components/Icon.tsx";
@@ -13,15 +13,23 @@ import { WebRefundRequests } from "./WebRefundRequests.tsx";
 import { api, ApiError } from "../lib/api.ts";
 import { SafeAction } from "../components/ui/SafeAction.tsx";
 import { Money } from "../components/ui/Money.tsx";
+import { DataTable } from "../components/ui/DataTable.tsx";
+import { Note } from "../components/ui/Note.tsx";
+import { StatusBadge } from "../components/ui/Status.tsx";
+import { Ltr } from "../components/ui/Bidi.tsx";
+import { formatJalaliMoment, formatQty } from "../lib/format.ts";
 import { ExchangePanel } from "../components/ExchangePanel.tsx";
+import { TodayReturns } from "../components/TodayReturns.tsx";
 import { ReturnRecovery, useReturnOperation } from "../components/ReturnRecovery.tsx";
 import { parseRial, rialFromTomanInput, toman } from "../lib/money.ts";
+import { useLatestQuery } from "../lib/use-latest-query.ts";
 import {
   pos,
   type Branch,
   type Invoice,
   type PaymentMethod,
   type Returnable as ReturnableView,
+  type ReturnableLine,
   type ReturnReason,
   type Warehouse,
   type SaleReturn,
@@ -31,9 +39,14 @@ import {
   hasSelection,
   maxReturnable,
   selectionToLines,
-  suggestedRefund,
   type Selection,
 } from "../lib/returns.ts";
+
+/** پاسخ `POST /invoices/:id/return-account` — همه رشتهٔ ریالی از SQL. */
+interface ReturnAccount {
+  returnedValue: string; outstanding: string; funds: string; maxRefund: string; suggestedRefund: string;
+  refundAmount: string; debtApplied: string; customerCredit: string; problem: string | null;
+}
 
 function message(err: unknown): string {
   if (err instanceof ApiError) return err.message;
@@ -85,8 +98,10 @@ export function Returns() {
   const [error, setError] = useState<string | null>(null);
   const [done, setDone] = useState<string | null>(null);
 
+  const [todayVersion, setTodayVersion] = useState(0);
   const operation = useReturnOperation((postedNumber) => {
     setDone(`عملیات ${postedNumber} ثبت شد.`);
+    setTodayVersion((v) => v + 1);
     setInvoice(null); setView(null); setSelection(new Map()); setRefund("");
   });
 
@@ -167,8 +182,22 @@ export function Returns() {
     if (refund === "") setDone(null);
   }
 
-  const suggestion = view ? suggestedRefund(view.lines, selection) : 0n;
-  const typedRefund = refund.trim() === "" ? suggestion : rialFromTomanInput(refund);
+  // «حساب مرجوعی» از سرور (مهاجرت ۱۱۶) — همان عبارت‌های `post_return`؛ مرورگر هیچ مبلغی حساب نمی‌کند.
+  // بازپرداخت خالی یعنی پیشنهاد سرور: اول بدهی همین فاکتور، بعد پول تا سقف دریافت‌شده.
+  const typedText = refund.trim();
+  const typedRial = typedText === "" ? null : rialFromTomanInput(typedText);
+  const accountLines = selectionToLines(selection).map(l => `${l.invoiceLineId}:${l.qty}`).join(",");
+  const accountKey = invoice && accountLines ? `${invoice.id}|${accountLines}|${typedText === "" ? "" : typedRial ?? "bad"}` : "";
+  const loadAccount = useCallback((signal: AbortSignal) => {
+    const [invoiceId = "", lines = "", typed = ""] = accountKey.split("|");
+    return api.post<ReturnAccount>(`/invoices/${encodeURIComponent(invoiceId)}/return-account`, {
+      lines: lines.split(",").map(p => { const [invoiceLineId = "", qty = "0"] = p.split(":"); return { invoiceLineId, qty }; }),
+      ...(typed === "" ? {} : { refundAmount: typed }),
+    }, { signal });
+  }, [accountKey]);
+  const account = useLatestQuery({ key: accountKey, load: loadAccount, delay: 200, enabled: accountKey !== "" && (typedText === "" || typedRial !== null) });
+  const suggestion = account.data ? parseRial(account.data.suggestedRefund) : null;
+  const typedRefund = typedText === "" ? suggestion : typedRial;
   const selectedLines = selectionToLines(selection).map(l => ({ ...l, ...(quality[l.invoiceLineId] ?? { restock: true, condition: "sellable" as const }) }));
 
   async function submit() {
@@ -188,7 +217,7 @@ export function Returns() {
   /** نام کالا از خودِ فاکتور می‌آید — `returnable` فقط شناسه می‌دهد. */
   function nameOf(invoiceLineId: string) {
     const l = invoice?.lines.find((x) => x.id === invoiceLineId);
-    return l ? { name: l.productName, sku: l.sku } : { name: "—", sku: "" };
+    return l ? { name: l.productName, sku: l.sku, color: l.color ?? null, size: l.size ?? null } : { name: "—", sku: "", color: null, size: null };
   }
 
   const chosen = methods.find((m) => m.code === method) ?? null;
@@ -199,9 +228,22 @@ export function Returns() {
       <TabList id={tabsId} items={RETURN_TAB_ITEMS} value={tab} onChange={k => { if (!operation.pending) setTabRaw(k); }} label="مرجوعی و تعویض" />
       <TabPanels id={tabsId} items={RETURN_TAB_ITEMS} value={tab} className="stack returns-panel">
       {tab === "web" ? <WebRefundRequests key={branchId} branchId={branchId} /> : <>
-      <Solid as="section" className="list-card" aria-labelledby="ret-find">
+      {error ? (
+        <p className="solid pos-alert" role="alert">
+          <span className="dot dot--crit" aria-hidden="true">●</span> {error}
+        </p>
+      ) : null}
+      {done ? (
+        <p className="solid pos-alert" role="status">
+          <span className="dot dot--good" aria-hidden="true">●</span> {done}
+        </p>
+      ) : null}
+      {/* طرح ۱۰: دو ستون — «۱. فاکتور و اقلام» و «۲. حساب مرجوعی»؛ روی عرض کم زیر هم. */}
+      <div className={`returns-grid${view && invoice ? " returns-grid--loaded" : ""}`}>
+      <Solid as="section" className="list-card returns-invoice" aria-labelledby="ret-find">
         <SectionHeader id="ret-find" title={mode === "exchanges" ? "۱. فاکتور تعویض" : "۱. فاکتور و اقلام برگشتی"}
-          description="شماره دقیق فاکتور یا شماره همراه ثبت‌شده مشتری را وارد کنید." />
+          description={invoice && view ? <>فاکتور <Ltr>{invoice.number}</Ltr>{typeof invoice.occurredAt === "string" ? ` · ${formatJalaliMoment(invoice.occurredAt)}` : ""}{invoice.createdByName ? ` · ${invoice.createdByName}` : ""}</>
+            : "شماره دقیق فاکتور یا شماره همراه ثبت‌شده مشتری را وارد کنید."} />
         <div className="list-card-body stack">
         <ReturnRecovery operation={operation} />
 
@@ -259,96 +301,72 @@ export function Returns() {
           {row.number} · <Money rial={row.payableAmount} />
         </button>)}</div>
         {nextPage ? <button className="btn" disabled={busy || !!operation.pending} onClick={() => void lookup(nextPage)}>صفحه بعد</button> : null}
+        {view && invoice ? (
+          <fieldset className="stack returns-steps" disabled={!!operation.pending} style={{ border: 0, padding: 0, minWidth: 0 }}>
+            {/* مهلت از همان تنظیمی که «دیرهنگام» را تعیین می‌کند (`windowHours` پاسخ سرور)؛ پاسخ قدیمی‌تر فقط ساعت گذشته را می‌گوید. */}
+            {/* ساعتِ نیامده (پاسخ قدیمی‌تر) هیچ نشانی نمی‌سازد؛ «۰ ساعت» حدس است. */}
+            {typeof view.hoursSinceSale === "number" ? <p className="returns-window">{view.late
+              ? <StatusBadge state="failed" label={`خارج از مهلت: ${formatQty(String(view.hoursSinceSale))} ساعت از فروش گذشته${view.windowHours ? ` (مهلت ${formatQty(String(view.windowHours))} ساعت)` : ""}`} />
+              : <StatusBadge state="active" label={view.windowHours ? `در مهلت: ${formatQty(String(view.hoursSinceSale))} ساعت از ${formatQty(String(view.windowHours))} ساعت گذشته` : `${formatQty(String(view.hoursSinceSale))} ساعت از فروش گذشته`} />}</p> : null}
+            {view.late ? (
+              <p className="solid pos-alert" role="status">
+                <span className="dot dot--warn" aria-hidden="true">●</span> این فروش{" "}
+                {view.hoursSinceSale} ساعت پیش بوده و از مهلت مرجوعی گذشته — ثبتش تأیید
+                مدیر می‌خواهد.
+              </p>
+            ) : null}
+            <DataTable caption={`اقلام فاکتور ${invoice.number ?? ""}؛ مبلغ‌ها به تومان`} stack density="compact"
+              rowKey={(l: ReturnableLine) => l.invoiceLineId} rows={view.lines} columns={[
+                { key: "item", header: "کالا", cell: (l: ReturnableLine) => { const info = nameOf(l.invoiceLineId); return <span className="cell-stack">
+                  <strong>{info.name}</strong>
+                  <span className="muted small"><Ltr>{info.sku}</Ltr>{info.color ? ` · ${info.color}` : ""}{info.size ? ` · ${info.size}` : ""}
+                    {Number(l.returnedQty) > 0 ? ` · قبلاً برگشته ${formatQty(l.returnedQty)}` : ""}</span></span>; } },
+                { key: "sold", header: "فروخته", numeric: true, cell: (l: ReturnableLine) => <span className="num">{typeof l.soldQty === "string" ? formatQty(l.soldQty) : "—"}</span> },
+                { key: "price", header: "بهای همان فروش", numeric: true, cell: (l: ReturnableLine) => <Money rial={typeof l.unitPrice === "string" ? l.unitPrice : null} unit={false} /> },
+                { key: "qty", header: "برگشتی", cell: (l: ReturnableLine) => {
+                  const max = maxReturnable(l); const picked = selection.get(l.invoiceLineId) ?? 0; const info = nameOf(l.invoiceLineId);
+                  return <span className="cell-inline returns-qty"><span className="qty">
+                    <button type="button" onClick={() => setQty(l.invoiceLineId, picked - 1)} disabled={busy || picked <= 0} aria-label={`کم کردن ${info.name}`}>−</button>
+                    <span className="num" aria-live="polite">{picked}</span>
+                    <button type="button" onClick={() => setQty(l.invoiceLineId, picked + 1)} disabled={busy || picked >= max} aria-label={`اضافه کردن ${info.name}`}>+</button>
+                  </span><span className="muted small">{max === 0 ? "کاملاً برگشته" : `حداکثر ${max}`}</span></span>; } },
+                { key: "condition", header: "وضعیت کالا", cell: (l: ReturnableLine) => {
+                  const picked = selection.get(l.invoiceLineId) ?? 0; const info = nameOf(l.invoiceLineId);
+                  return picked > 0 ? <select className="returns-condition" aria-label={`وضعیت برگشتی ${info.name}`}
+                    value={quality[l.invoiceLineId]?.restock === false ? "no_restock" : quality[l.invoiceLineId]?.condition ?? "sellable"}
+                    onChange={e => setQuality(current => ({ ...current, [l.invoiceLineId]: { restock: e.target.value !== "no_restock", condition: e.target.value === "defective" ? "defective" : "sellable" } }))}>
+                    <option value="sellable">سالم — بازگشت به انبار انتخاب‌شده</option><option value="defective">معیوب — انبار معیوب</option>
+                    <option value="no_restock">بدون بازگشت موجودی</option>
+                  </select> : <span className="muted" aria-label="انتخاب نشده">—</span>; } },
+              ]} />
+            <Note>بهای برگشتی همان قیمت و بهای تمام‌شدهٔ همان فروش است، نه میانگین جاری انبار. فاکتور بیرون از مهلت مجوز «مرجوعی خارج از مهلت» می‌خواهد.</Note>
+          </fieldset>
+        ) : null}
         </div>
       </Solid>
 
-      {error ? (
-        <p className="solid pos-alert" role="alert">
-          <span className="dot dot--crit" aria-hidden="true">●</span> {error}
-        </p>
-      ) : null}
-      {done ? (
-        <p className="solid pos-alert" role="status">
-          <span className="dot dot--good" aria-hidden="true">●</span> {done}
-        </p>
-      ) : null}
-
-
       {view && invoice ? (
-        <fieldset className="stack returns-steps" disabled={!!operation.pending} style={{ border: 0, padding: 0, minWidth: 0 }}>
-          {view.late ? (
-            <p className="solid pos-alert" role="status">
-              <span className="dot dot--warn" aria-hidden="true">●</span> این فروش{" "}
-              {view.hoursSinceSale} ساعت پیش بوده و از مهلت مرجوعی گذشته — ثبتش تأیید
-              مدیر می‌خواهد.
-            </p>
-          ) : null}
-
-          <Solid as="section" className="pad">
-            <h3 style={{ marginTop: 0 }}>
-              فاکتور {invoice.number} — <span className="num">{toman(parseRial(invoice.netAmount))}</span>{" "}
-              تومان
-            </h3>
-            <ul className="lines">
-              {view.lines.map((l) => {
-                const max = maxReturnable(l);
-                const picked = selection.get(l.invoiceLineId) ?? 0;
-                const info = nameOf(l.invoiceLineId);
-                return (
-                  <li key={l.invoiceLineId}>
-                    <div className="line-name">
-                      <strong>{info.name}</strong>
-                      <span className="muted small">
-                        {info.sku} · فروخته {Number(l.soldQty)}
-                        {Number(l.returnedQty) > 0
-                          ? ` · قبلاً برگشته ${Number(l.returnedQty)}`
-                          : ""}
-                      </span>
-                    </div>
-                    <div className="qty">
-                      <button
-                        type="button"
-                        onClick={() => setQty(l.invoiceLineId, picked - 1)}
-                        disabled={busy || picked <= 0}
-                        aria-label={`کم کردن ${info.name}`}
-                      >
-                        −
-                      </button>
-                      <span className="num" aria-live="polite">{picked}</span>
-                      <button
-                        type="button"
-                        onClick={() => setQty(l.invoiceLineId, picked + 1)}
-                        disabled={busy || picked >= max}
-                        aria-label={`اضافه کردن ${info.name}`}
-                      >
-                        +
-                      </button>
-                    </div>
-                    <span className="num line-total">
-                      {max === 0 ? "کاملاً برگشته" : `حداکثر ${max}`}
-                    </span>
-                    {picked > 0 ? <label>وضعیت کالای برگشتی<select aria-label={`وضعیت برگشتی ${info.name}`}
-                      value={quality[l.invoiceLineId]?.restock === false ? "no_restock" : quality[l.invoiceLineId]?.condition ?? "sellable"}
-                      onChange={e => setQuality(current => ({ ...current, [l.invoiceLineId]: { restock: e.target.value !== "no_restock", condition: e.target.value === "defective" ? "defective" : "sellable" } }))}>
-                      <option value="sellable">سالم — بازگشت به انبار انتخاب‌شده</option><option value="defective">معیوب — انبار معیوب</option>
-                      <option value="no_restock">بدون بازگشت موجودی</option>
-                    </select></label> : null}
-                  </li>
-                );
-              })}
-            </ul>
-          </Solid>
-
-          <Solid as="section" className="pad stack" style={{ gap: "var(--s-3)" }}>
-            <h3 style={{ margin: 0 }}>علت و مبلغ</h3>
+        <fieldset className="stack returns-account-col" disabled={!!operation.pending} style={{ border: 0, padding: 0, minWidth: 0 }}>
+          <Solid as="section" className="list-card returns-account" aria-labelledby="ret-account">
+            <SectionHeader id="ret-account" title={mode === "exchanges" ? "۲. علت تعویض" : "۲. حساب مرجوعی"} description="پیش از تأیید، هیچ اثری ثبت نمی‌شود." />
+            <div className="list-card-body stack" style={{ gap: "var(--s-3)" }}>
             {/* طرح ۱۰: «حساب مرجوعی» — فقط اعداد معلوم، بی محاسبهٔ پولی در مرورگر. اثر واقعی
                 (صفرکردن بدهی همین فاکتور و مازاد به اعتبار مشتری) را `post_return` در تراکنش ثبت تعیین می‌کند. */}
+            {/* طرح ۱۰: هر ردیف از `return_account_preview` سرور (همان عبارت‌های ثبت)؛ تا انتخاب نشده، «—». */}
             <dl className="return-account">
-              <div><dt>ارزش کالای برگشتی (بهای همان فروش)</dt><dd><Money rial={suggestion} /></dd></div>
-              {/* میدانِ نیامده «—» است، نه صفر و نه فروپاشی صفحهٔ مرجوعی. */}
-              <div><dt>قابل پرداخت همین فاکتور</dt><dd><Money rial={typeof invoice.payableAmount === "string" ? parseRial(invoice.payableAmount) : null} /></dd></div>
-              <div><dt>دریافت‌شده بابت این فاکتور</dt><dd><Money rial={typeof invoice.paidAmount === "string" ? parseRial(invoice.paidAmount) : null} /></dd></div>
+              <div><dt>ارزش کالای برگشتی (بهای همان فروش)</dt><dd>{account.data ? <Money rial={account.data.returnedValue} /> : "—"}</dd></div>
+              {mode === "returns" ? <>
+                <div><dt>بدهی همین فاکتور</dt><dd>{account.data ? <Money rial={account.data.outstanding} /> : "—"}</dd></div>
+                <div><dt>اول صرف بدهی</dt><dd>{account.data ? <Money rial={account.data.debtApplied} /> : "—"}</dd></div>
+                <div><dt>سقف بازپرداخت (دریافت‌شده)</dt><dd>{account.data ? <Money rial={account.data.maxRefund} /> : "—"}</dd></div>
+                <div><dt>بازپرداخت</dt><dd>{account.data ? <Money rial={account.data.refundAmount} /> : "—"}</dd></div>
+                {account.data && account.data.customerCredit !== "0" ? <div><dt>مازاد به اعتبار مشتری</dt><dd><Money rial={account.data.customerCredit} /></dd></div> : null}
+              </> : null}
             </dl>
+            {accountKey === "" ? null : account.loading ? <p className="muted small" role="status">در حال محاسبهٔ حساب مرجوعی…</p>
+              : account.error ? <p role="alert">حساب مرجوعی خوانده نشد: {message(account.error)} تا روشن نشود، ثبت ممکن نیست.</p>
+              : mode === "returns" && account.data?.problem ? <p role="alert">{account.data.problem}</p> : null}
+            {typedText !== "" && typedRial === null ? <p role="alert">مبلغ بازپرداخت نامعتبر است.</p> : null}
             <p className="muted small return-account-rule">بازپرداخت از دریافت‌شده بیشتر نمی‌شود؛ مازادِ ارزش کالا اول بدهی همین فاکتور را صفر می‌کند و بعد اعتبار مشتری می‌شود. پیش از ثبت، هیچ اثری ثبت نمی‌شود.</p>
 
             <label className="auth-field">
@@ -372,14 +390,14 @@ export function Returns() {
             {mode === "returns" ? <><label className="auth-field">
               <span>
                 مبلغ بازپرداخت (تومان) — خالی یعنی پیشنهاد سرور:{" "}
-                <span className="num">{toman(suggestion)}</span>
+                <span className="num">{suggestion === null ? "—" : toman(suggestion)}</span>
               </span>
               <AmountInput
                 type="text"
                 inputMode="numeric"
                 value={refund}
                 onChange={(e) => setRefund(e.target.value)}
-                placeholder={toman(suggestion)}
+                placeholder={suggestion === null ? "" : toman(suggestion)}
               />
             </label>
 
@@ -449,18 +467,30 @@ export function Returns() {
             ) : null}
 
             {mode === "returns" ? <SafeAction trigger="۱. بررسی مرجوعی" title="۲. تأیید نهایی مرجوعی" triggerVariant="primary"
-              summary={<p>بازپرداخت: <Money rial={typedRefund} /></p>}
+              summary={account.data ? <dl className="settings-facts">
+                <div><dt>بازپرداخت</dt><dd><Money rial={account.data.refundAmount} /></dd></div>
+                <div><dt>صرف بدهی همین فاکتور</dt><dd><Money rial={account.data.debtApplied} /></dd></div>
+                {account.data.customerCredit !== "0" ? <div><dt>به اعتبار مشتری</dt><dd><Money rial={account.data.customerCredit} /></dd></div> : null}
+              </dl> : <p>بازپرداخت: <Money rial={typedRefund} /></p>}
               consequence="فقط اقلام و تعداد انتخاب‌شده به انبار برمی‌گردند و تسویه مالی هم‌زمان ثبت می‌شود."
               confirmLabel="اقلام و مبلغ را تأیید می‌کنم؛ ثبت مرجوعی" pendingLabel="در حال ثبت مرجوعی…"
-              disabled={busy || !!operation.pending || !operation.ready || !ready || typedRefund === null || ((method === "snappay" || method === "digipay") && (!refundPaymentId || !refundReference.trim())) || (typedRefund > 0n && (chosen?.kind === "cash" || method === "") && drawers.length > 1 && drawerId === "")}
+              disabled={busy || !!operation.pending || !operation.ready || !ready || typedRefund === null || !account.data || !!account.data.problem || ((method === "snappay" || method === "digipay") && (!refundPaymentId || !refundReference.trim())) || (typedRefund > 0n && (chosen?.kind === "cash" || method === "") && drawers.length > 1 && drawerId === "")}
               run={submit} verify={operation.verify} onDone={() => undefined} /> : null}
+            </div>
           </Solid>
-          {mode === "exchanges" ? <ExchangePanel key={invoice.id} invoice={invoice} lines={selectedLines} reasonCode={reason} reasonNote={note}
-            returnWarehouseId={destWh || invoice.warehouseId} warehouses={branches.find(b => b.id === invoice.branchId)?.warehouses ?? []}
-            methods={methods} locked={busy || !!operation.pending || !operation.ready}
-            run={body => operation.run("exchanges", body)} verify={operation.verify} /> : null}
         </fieldset>
       ) : null}
+      </div>
+      {view && invoice && mode === "exchanges" ? (
+        <fieldset className="stack" disabled={!!operation.pending} style={{ border: 0, padding: 0, minWidth: 0 }}>
+          <ExchangePanel key={invoice.id} invoice={invoice} lines={selectedLines} reasonCode={reason} reasonNote={note}
+            returnWarehouseId={destWh || invoice.warehouseId} warehouses={branches.find(b => b.id === invoice.branchId)?.warehouses ?? []}
+            methods={methods} locked={busy || !!operation.pending || !operation.ready}
+            run={body => operation.run("exchanges", body)} verify={operation.verify} />
+        </fieldset>
+      ) : null}
+      {/* طرح ۱۰: فهرست برگ‌های ثبت‌شدهٔ امروز، زیر هر دو زبانهٔ مرجوعی و تعویض. */}
+      <TodayReturns version={todayVersion} />
       </>}
       </TabPanels>
     </div>

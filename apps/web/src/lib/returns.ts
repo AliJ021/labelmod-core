@@ -37,22 +37,6 @@ export interface Returnable {
 /** آنچه صندوق‌دار انتخاب کرده: چند تا از هر سطر. */
 export type Selection = Map<string, number>;
 
-/**
- * گرد کردن نیم‌به‌بالا روی `bigint` — همان کاری که `round()` پستگرس
- * با `NUMERIC` می‌کند.
- *
- * تقسیم `bigint` در جاوااسکریپت به سمت صفر می‌برد، پس بدون این،
- * هر سطر یک ریال کم می‌شد و جمع مرجوعیِ ده‌قلمی ده ریال با سند فرق
- * می‌کرد.
- */
-function divRound(numerator: bigint, denominator: bigint): bigint {
-  if (denominator === 0n) return 0n;
-  const negative = numerator < 0n !== denominator < 0n;
-  const n = numerator < 0n ? -numerator : numerator;
-  const d = denominator < 0n ? -denominator : denominator;
-  const q = (n * 2n + d) / (d * 2n);
-  return negative ? -q : q;
-}
 
 /** بیشترین تعدادی که از این سطر می‌شود برگرداند. */
 export function maxReturnable(line: Returnable): number {
@@ -67,35 +51,8 @@ export function clampQty(line: Returnable, wanted: number): number {
   return Math.min(Math.floor(wanted), max);
 }
 
-/**
- * مبلغ پیشنهادی بازپرداخت برای انتخاب فعلی.
- *
- * سطر به سطر گرد می‌شود و بعد جمع — نه اینکه جمع کل یک بار گرد شود.
- * همان ترتیبی که سرور دارد: هر `sale_return_line` جداگانه
- * `round()` می‌خورد و سند از جمع آن‌ها ساخته می‌شود.
- */
-export function suggestedRefund(lines: Returnable[], selection: Selection): bigint {
-  let total = 0n;
-  for (const line of lines) {
-    const qty = selection.get(line.invoiceLineId) ?? 0;
-    if (qty <= 0) continue;
-    const scaled = (value: string) => {
-      const [whole, fraction = ""] = value.split(".");
-      return BigInt(whole ?? "0") * 1000n + BigInt(fraction.padEnd(3, "0").slice(0, 3));
-    };
-    const sold = scaled(line.soldQty);
-    if (sold === 0n) continue;
-    const before = sold - scaled(line.remainingQty);
-    const after = before + BigInt(qty) * 1000n;
-    const net = BigInt(line.netAmount);
-    const tax = BigInt(line.taxAmount ?? "0");
-    total += divRound(net * after, sold) - (line.returnedNetAmount === undefined
-      ? divRound(net * before, sold) : BigInt(line.returnedNetAmount));
-    total += divRound(tax * after, sold) - (line.returnedTaxAmount === undefined
-      ? divRound(tax * before, sold) : BigInt(line.returnedTaxAmount));
-  }
-  return total;
-}
+// مبلغ پیشنهادی بازپرداخت دیگر در مرورگر حساب نمی‌شود: `POST /invoices/:id/return-account` (مهاجرت ۱۱۶)
+// همان عبارت‌های `post_return` را در SQL می‌راند. آزمون‌های گرد کردن به `db/test/return-account-preview.sql` رفتند.
 
 /** آیا چیزی برای برگرداندن انتخاب شده؟ */
 export function hasSelection(selection: Selection): boolean {

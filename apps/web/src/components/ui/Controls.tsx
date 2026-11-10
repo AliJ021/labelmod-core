@@ -55,11 +55,13 @@ export function Switch({ label, checked, onChange, disabled = false, description
 }
 
 /** انتخاب یکی از چند گزینهٔ کوتاه: radio بومی، پس پیکان‌ها و Tab درست کار می‌کنند. */
-export function Segmented<K extends string>({ label, options, value, onChange }: {
+export function Segmented<K extends string>({ label, options, value, onChange, disabled, title }: {
   label: string; options: readonly { key: K; label: string }[]; value: K; onChange: (next: K) => void;
+  /** کل گروه بومی غیرفعال می‌شود؛ `title` دلیلش را می‌گوید. */
+  disabled?: boolean; title?: string | undefined;
 }) {
   const name = useId();
-  return <fieldset className="segmented">
+  return <fieldset className="segmented" disabled={disabled} title={title}>
     <legend className="sr-only">{label}</legend>
     {options.map(o => <label key={o.key} className="segmented-option">
       <input type="radio" name={name} value={o.key} checked={value === o.key} onChange={() => onChange(o.key)} />

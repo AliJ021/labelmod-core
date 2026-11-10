@@ -129,10 +129,16 @@ async function readReceivables(db: Db, branchId: string) {
            coalesce(-sum(net) FILTER (WHERE net < 0), 0)::text AS credit
       FROM p`.execute(db);
   const x = r.rows[0]!;
+  // تصمیم مالک (۲۰۲۶/۱۱/۰۷): اثر ثبت‌نشده — پیش‌نمایش سطر طلب دوره‌های بازِ همین شعبه (مهاجرت ۱۱۲). خالص و
+  // علامت‌دار؛ موقت و جدا از طلب ثبت‌شده، هرگز با آن جمع نمی‌شود.
+  const u = await sql<{ n: string; amount: string }>`
+    SELECT count(*)::text AS n, coalesce(sum(amount), 0)::text AS amount
+      FROM sales.unposted_receivable() WHERE branch_id = ${branchId}::uuid`.execute(db);
   return {
     state: "ready" as const,
     owed: { count: Number(x.owed_n), amount: x.owed } satisfies CountAmount,
     credit: { count: Number(x.credit_n), amount: x.credit } satisfies CountAmount,
+    unposted: { count: Number(u.rows[0]!.n), amount: u.rows[0]!.amount } satisfies CountAmount,
   };
 }
 

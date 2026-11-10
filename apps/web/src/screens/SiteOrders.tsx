@@ -69,7 +69,7 @@ function Amount({ m, currency }: { m: WooMoney; currency: string }) {
   const v = moneyView(m, currency);
   if (v.kind === "rial") return <Money rial={v.rial} exact size="sm" />;
   if (v.kind === "foreign") {
-    return <span title="این مبلغ به ارز خود سفارش است و Core قرارداد تبدیلش به ریال را ندارد">
+    return <span title="این مبلغ به ارز خود سفارش است و مرکز قرارداد تبدیلش به ریال را ندارد">
       <Ltr>{v.amount} {v.currency}</Ltr>
     </span>;
   }
@@ -223,14 +223,15 @@ function OrdersList({ load, page, selected, anchored, onPage, onSelect, onRetry 
   onPage: (p: number) => void; onSelect: (id: number | null) => void; onRetry: () => void;
 }) {
   const columns: Column<OrderSummary>[] = [
-    { key: "number", header: "سفارش", cell: r => <Ltr>#{r.number}</Ltr> },
-    { key: "date", header: "تاریخ", cell: r => r.createdAt ? <span className="nowrap">{formatJalaliMoment(r.createdAt)}</span> : <span className="muted">—</span> },
+    // طرح ۱۰: سفارش (تاریخ زیرش)، مشتری، اقلام، مبلغ (روش پرداخت زیرش)، وضعیت در سایت، ثبت در مرکز.
+    { key: "number", header: "سفارش", cell: r => <span className="cell-stack"><Ltr>#{r.number}</Ltr>
+      {r.createdAt ? <small className="muted nowrap">{formatJalaliMoment(r.createdAt)}</small> : <small className="muted">—</small>}</span> },
     { key: "customer", header: "مشتری", cell: r => <>{r.customerName || <span className="muted">بی‌نام</span>}{r.customerType === "guest" ? <span className="muted small"> (مهمان)</span> : null}</> },
-    { key: "status", header: "وضعیت سایت", cell: r => <StatusBadge state={orderStatusState(r.status)} label={r.statusLabel || r.status} /> },
-    { key: "payment", header: "پرداخت", cell: r => r.paymentMethod || <span className="muted">—</span> },
-    { key: "core", header: "ثبت در Core", cell: r => { const c = coreState(r.core); return <StatusBadge state={c.state} label={c.label} quiet />; } },
-    { key: "items", header: "کالا", numeric: true, cell: r => <span className="num">{formatCount(r.itemCount)}</span> },
-    { key: "total", header: "مبلغ", numeric: true, cell: r => <Amount m={r.total} currency={r.currency} /> },
+    { key: "items", header: "اقلام", numeric: true, cell: r => <span className="num">{formatCount(r.itemCount)} قلم</span> },
+    { key: "total", header: "مبلغ سفارش", numeric: true, cell: r => <span className="cell-stack"><Amount m={r.total} currency={r.currency} />
+      <small className="muted">{r.paymentMethod || "—"}</small></span> },
+    { key: "status", header: "وضعیت در سایت", cell: r => <StatusBadge state={orderStatusState(r.status)} label={r.statusLabel || r.status} /> },
+    { key: "core", header: "ثبت در مرکز", cell: r => { const c = coreState(r.core); return <StatusBadge state={c.state} label={c.label} quiet />; } },
   ];
   const data = load.state === "done" && load.data.state === "ready" ? load.data : null;
   return <Solid as="section" className="list-card site-orders-list" aria-labelledby="site-orders-list">
@@ -302,7 +303,7 @@ function OrderDetailView({ order, onItemsPage, onNotesPage }: {
     { key: "name", header: "کالا", cell: r => <>{r.name}{r.attributes.length > 0
       ? <span className="muted small site-order-attrs">{r.attributes.map(a => `${a.key}: ${a.value}`).join("، ")}</span> : null}</> },
     { key: "sku", header: "SKU", cell: r => r.sku ? <Ltr>{r.sku}</Ltr> : <span className="muted">—</span> },
-    { key: "map", header: "اتصال به Core", cell: r => !r.productExists
+    { key: "map", header: "اتصال به مرکز", cell: r => !r.productExists
       ? <StatusBadge state="unknown" label="کالا در سایت حذف شده" quiet />
       : r.mapped ? <StatusBadge state="completed" label="متصل" quiet /> : <StatusBadge state="warning" label="بی اتصال" quiet /> },
     { key: "qty", header: "تعداد", numeric: true, cell: r => <span className="num">{formatCount(r.quantity)}</span> },
@@ -314,7 +315,7 @@ function OrderDetailView({ order, onItemsPage, onNotesPage }: {
   return <div className="stack">
     <dl className="site-order-facts">
       <Fact label="وضعیت سایت"><StatusBadge state={orderStatusState(order.status)} label={order.statusLabel || order.status} /></Fact>
-      <Fact label="ثبت در Core"><StatusBadge state={core.state} label={core.label} /></Fact>
+      <Fact label="ثبت در مرکز"><StatusBadge state={core.state} label={core.label} /></Fact>
       <Fact label="تاریخ">{order.createdAt ? formatJalaliMoment(order.createdAt) : "—"}</Fact>
       <Fact label="مشتری">{order.customerName || "بی‌نام"} {order.customerType === "guest" ? "(مهمان)" : "(عضو سایت)"}</Fact>
       <Fact label="ارز سفارش"><Ltr>{c || "نامعلوم"}</Ltr></Fact>
@@ -360,8 +361,8 @@ function OrderDetailView({ order, onItemsPage, onNotesPage }: {
       label: <>{r.createdAt ? formatJalaliMoment(r.createdAt) : "—"}{r.reason ? ` — ${r.reason}` : ""}</>, value: <Amount m={r.amount} currency={c} /> }))} /> : null}
     {order.refundsTruncated ? <p className="muted small" role="note">فقط ۵۰ استرداد تازه‌تر نشان داده شده است؛ جمع «مستردشده» همهٔ آن‌ها را دارد.</p> : null}
 
-    <section aria-label="ثبت در Core">
-      <h3 className="site-order-h">ثبت در Core</h3>
+    <section aria-label="ثبت در مرکز">
+      <h3 className="site-order-h">ثبت در مرکز</h3>
       <dl className="site-order-facts">
         <Fact label="پرداخت تأییدشده">{order.core.paymentConfirmed ? "بله" : "خیر"}</Fact>
         <Fact label="صف ارسال">{(() => { const q = queueView(order.core.queue); return <StatusBadge state={q.state} label={q.label} quiet />; })()}</Fact>

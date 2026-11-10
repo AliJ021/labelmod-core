@@ -3,9 +3,9 @@
  *
  * رفتار واقعی مرورگر: مرز بازه از «امروز» سرور (نه ساعت مرورگر)، ماه جلالی، یک
  * درخواست برای هر دانه‌بندی، «هنوز نیامده» ≠ صفر، بی‌دسترسی ≠ خطا ≠ خالی، RTL
- * (قدیمی‌تر سمت راست) و بی اسکرول افقی در عرض‌های موبایل.
+ * (مثل طرح ۱۰: قدیمی‌تر سمت چپ، جدیدترین سمت راست) و بی اسکرول افقی در عرض‌های موبایل.
  */
-import { test, expect, fontsReady, DEFAULT_HOURLY, type MockApi } from "./fixtures";
+import { test, expect, dailyBody, fontsReady, DEFAULT_HOURLY, hourlyDay, type MockApi } from "./fixtures";
 import type { Page } from "@playwright/test";
 import type { DailyBucket } from "../src/lib/pos";
 
@@ -30,7 +30,7 @@ for (const persisted of [false, true]) test(`dashboard pagehide: request chain $
     .then(() => true, err => { if (err.name === "TimeoutError") return false; throw err; });
   release();
   expect(await nextRequest).toBe(persisted);
-  if (persisted) await expect(panel(page).getByRole("figure", { name: "فروش هر ساعت (تومان)" })).toBeVisible();
+  if (persisted) await expect(panel(page).getByRole("figure", { name: "فروش تجمعی امروز (تومان)" })).toBeVisible();
 });
 
 /** پاسخ سرور برای همان مرزهایی که مرورگر فرستاده؛ سطل آخر شامل امروز است. */
@@ -50,10 +50,12 @@ function serveTrend(api: MockApi, over: (i: number) => Partial<DailyBucket>) {
 }
 
 test.describe("روند داشبورد", () => {
-  test("hourly line chart by default; daily and monthly fetch once each with server-day Jalali bounds", async ({ page, api }) => {
+  test("cumulative 'up to now' by default; per-hour, daily and monthly fetch once each with server-day Jalali bounds", async ({ page, api }) => {
     serveTrend(api, i => i % 3 === 0 ? { salesAmount: String((i + 1) * 1_000_000), receivedAmount: String(i * 900_000), profitAmount: "100000", invoiceCount: 2, paymentCount: 2 } : {});
     await page.goto("/");
-    await expect(grain(page, "ساعتی")).toBeChecked();
+    await expect(grain(page, "تا این لحظه")).toBeChecked();
+    await expect(panel(page).getByRole("figure", { name: "فروش تجمعی امروز (تومان)" })).toBeVisible();
+    await grain(page, "هر ساعت").check();
     const hourly = panel(page).getByRole("figure", { name: "فروش هر ساعت (تومان)" });
     // پیش‌فرض فقط شاخص انتخاب‌شده (بازطراحی مصوب مالک)؛ مقایسه صریح است.
     await expect(hourly.locator(".line-chart-line")).toHaveCount(1);
@@ -92,24 +94,26 @@ test.describe("روند داشبورد", () => {
     await page.getByRole("tab", { name: "وجه دریافتی", exact: true }).click();
     await expect(panel(page).getByRole("heading", { name: "روند وجه دریافتی ماهانه" })).toBeVisible();
     await grain(page, "روزانه").check();
-    await grain(page, "ساعتی").check();
+    await grain(page, "هر ساعت").check();
     await expect(panel(page).getByRole("figure", { name: "وجه دریافتی هر ساعت (تومان)" })).toBeVisible();
-    expect(trendCalls(api)).toHaveLength(2);
+    await grain(page, "تا این لحظه").check();
+    await expect(panel(page).getByRole("figure", { name: "وجه دریافتی تجمعی امروز (تومان)" })).toBeVisible();
+    expect(trendCalls(api), "hourly views share the one hourly answer").toHaveLength(2);
   });
 
-  test("RTL: the earliest point sits on the right; no page overflow at phone and tablet widths", async ({ page, api }) => {
+  test("V10 time axis: the earliest point sits on the left, the latest on the right; no page overflow at phone and tablet widths", async ({ page, api }) => {
     serveTrend(api, i => ({ salesAmount: String(1_000_000 + i * 10_000), invoiceCount: 1 }));
     for (const width of [320, 375, 768, 1440]) {
       await page.setViewportSize({ width, height: 900 });
       await page.goto("/");
-      for (const g of ["روزانه", "ماهانه", "ساعتی"]) {
+      for (const g of ["روزانه", "ماهانه", "هر ساعت", "تا این لحظه"]) {
         await grain(page, g).check();
         const chart = panel(page).getByRole("figure");
         await expect(chart).toBeVisible();
         await fontsReady(page);
         const labels = chart.locator(".line-chart-x span");
         const first = (await labels.first().boundingBox())!, last = (await labels.last().boundingBox())!;
-        expect(first.x, `${width}/${g}: first label right of last`).toBeGreaterThan(last.x);
+        expect(first.x, `${width}/${g}: first (earliest) label left of last`).toBeLessThan(last.x);
         const plot = (await chart.locator(".line-chart-plot").boundingBox())!;
         for (const b of [first, last]) {
           expect(b.x, `${width}/${g}: label inside plot`).toBeGreaterThanOrEqual(plot.x - 1);
@@ -124,6 +128,11 @@ test.describe("روند داشبورد", () => {
   test("hours after the server's current hour are not drawn as zero", async ({ page, api }) => {
     api.defaults["GET /reports/daily/hourly"] = { ...DEFAULT_HOURLY, currentHour: 18 };
     await page.goto("/");
+    // «تا این لحظه» هم ساعت نیامده را صفر نمی‌کشد: تجمعی تا ساعت ۱۸ و بعد هیچ.
+    const cumulative = panel(page).getByRole("figure", { name: "فروش تجمعی امروز (تومان)" });
+    await expect(cumulative.locator("table tbody tr").filter({ hasText: "ساعت ۱۹" })).toContainText("هنوز نرسیده");
+    await expect(cumulative.locator('g[data-series="sales"] .line-chart-dot')).toHaveCount(11);
+    await grain(page, "هر ساعت").check();
     const chart = panel(page).getByRole("figure", { name: "فروش هر ساعت (تومان)" });
     await expect(chart).toContainText("ساعت ۱۸ هنوز تمام نشده");
     await expect(chart).toContainText("۴ ساعت بعدی هنوز نرسیده");
@@ -144,7 +153,7 @@ test.describe("روند داشبورد", () => {
     await expect(panel(page).getByText("روند روزانه برای این نقش در دسترس نیست.")).toBeVisible();
     await expect(panel(page)).toContainText("روند ساعتی امروز در دسترس است");
     expect(trendCalls(api), "explicit deny sends nothing").toHaveLength(0);
-    await grain(page, "ساعتی").check();
+    await grain(page, "هر ساعت").check();
     await expect(panel(page).getByRole("figure", { name: "فروش هر ساعت (تومان)" })).toBeVisible();
 
     api.handlers.delete("GET /auth/can");
@@ -162,7 +171,7 @@ test.describe("روند داشبورد", () => {
     await expect(panel(page)).toContainText("req-42");
     await expect(panel(page).getByRole("figure")).toHaveCount(0);
     status = 200;
-    await grain(page, "ساعتی").check();
+    await grain(page, "هر ساعت").check();
     await grain(page, "روزانه").check();
     // روز بی رویداد «خالی» است: متن خاص روزانه، نه خط صفر.
     await expect(panel(page).getByText("در ۳۰ روز اخیر فروشی ثبت نشده است.", { exact: true })).toBeVisible();
@@ -172,6 +181,7 @@ test.describe("روند داشبورد", () => {
 test.describe("بررسی نمودار و مقایسه", () => {
   test("compare-all is explicit: three lines with distinct colours AND dash patterns; off again shows only the selected metric", async ({ page }) => {
     await page.goto("/");
+    await grain(page, "هر ساعت").check();
     const chart = panel(page).getByRole("figure", { name: "فروش هر ساعت (تومان)" });
     await expect(chart.locator(".line-chart-line")).toHaveCount(1);
     const compare = panel(page).getByRole("checkbox", { name: "مقایسهٔ هر سه شاخص" });
@@ -189,8 +199,13 @@ test.describe("بررسی نمودار و مقایسه", () => {
     await expect(chart.locator(".line-chart-line")).toHaveCount(1);
   });
 
-  test("keyboard and touch inspection: one Tab stop, RTL arrows/Home/End move the readout; tap picks the nearest point; table can be shown", async ({ page }) => {
+  test("keyboard and touch inspection: one Tab stop, axis-direction arrows/Home/End move the readout; tap picks the nearest point; table can be shown", async ({ page }) => {
     await page.goto("/");
+    await grain(page, "هر ساعت").check();
+    // کلیک روی گزینه نشانگر موس را بالای نمودار جا می‌گذارد؛ WebKit پس از اسکرولِ فوکوس یک mousemove
+    // مصنوعی می‌فرستد و انتخاب با هاور (رفتار درست نمودار) کلید Home را می‌پوشاند. موس از نمودار بیرون می‌رود
+    // تا این آزمون فقط کیبورد را بسنجد؛ لمس و کلیک پایین‌تر جدا سنجیده می‌شوند (webkit-*-768، run 42259777992).
+    await page.mouse.move(0, 0);
     const chart = panel(page).getByRole("figure", { name: "فروش هر ساعت (تومان)" });
     const plot = chart.getByRole("group");
     const readout = chart.locator(".line-chart-readout");
@@ -199,16 +214,20 @@ test.describe("بررسی نمودار و مقایسه", () => {
     await expect(plot).toBeFocused();
     await page.keyboard.press("Home");
     await expect(readout).toContainText("ساعت ۸");
-    await page.keyboard.press("ArrowLeft"); // RTL: چپ = بعدی
+    await page.keyboard.press("ArrowRight"); // محور طرح ۱۰: راست = جدیدتر
     await expect(readout).toContainText("ساعت ۹");
-    await page.keyboard.press("ArrowRight");
+    await page.keyboard.press("ArrowLeft"); // چپ = قدیمی‌تر
+    await expect(readout).toContainText("ساعت ۸");
+    await page.keyboard.press("ArrowLeft"); // در قدیمی‌ترین می‌ماند
     await expect(readout).toContainText("ساعت ۸");
     await page.keyboard.press("End");
     await expect(readout).toContainText("ساعت ۲۲");
     await expect(readout).toHaveAttribute("aria-live", "polite");
-    // لمس/کلیک: نقطهٔ نزدیک — لبهٔ راست (RTL) قدیمی‌ترین ساعت است.
+    // لمس/کلیک: نقطهٔ نزدیک — لبهٔ چپ قدیمی‌ترین و لبهٔ راست جدیدترین ساعت است.
     const box = (await plot.boundingBox())!;
     await page.mouse.click(box.x + box.width - 2, box.y + box.height / 2);
+    await expect(readout).toContainText("ساعت ۲۲");
+    await page.mouse.click(box.x + 2, box.y + box.height / 2);
     await expect(readout).toContainText("ساعت ۸");
     await expect(readout).toContainText("فروش");
     await expect(readout).toContainText("تومان");
@@ -227,6 +246,7 @@ test.describe("بررسی نمودار و مقایسه", () => {
   test("axis has a unit and round ticks that include zero; negative profit stays below zero, not clamped", async ({ page }) => {
     await page.goto("/");
     await page.getByRole("tab", { name: "سود", exact: true }).click();
+    await grain(page, "هر ساعت").check();
     const chart = panel(page).getByRole("figure", { name: "سود هر ساعت (تومان)" });
     await expect(chart.locator(".line-chart-unit")).toHaveText("تومان");
     const ys = await chart.locator(".line-chart-y").allTextContents();
@@ -240,12 +260,89 @@ test.describe("بررسی نمودار و مقایسه", () => {
     serveTrend(api, () => ({}));
     await page.goto("/");
     const scope = panel(page).locator(".trend-scope");
-    await expect(scope).toContainText("کارت‌ها و نمودار: امروز");
+    // نمای ساعتی (طرح ۱۰) ردیف جدا ندارد: توضیح کارت خودش «امروز» را می‌گوید.
+    await expect(scope).toHaveCount(0);
+    await expect(panel(page).locator(".section-description")).toContainText("امروز");
+    await grain(page, "هر ساعت").check();
+    await expect(scope).toHaveCount(0);
+    await expect(panel(page).locator(".section-description")).toContainText("امروز");
     await grain(page, "روزانه").check();
     await expect(scope).toContainText("کارت‌های بالا: فقط امروز");
     await expect(scope).toContainText("۳۰ روز اخیر");
     await grain(page, "ماهانه").check();
     await expect(scope).toContainText("۱۲ ماه شمسی اخیر");
+  });
+});
+
+test.describe("«تا این لحظه» و دیروز تا همین لحظه (طرح ۱۰)", () => {
+  test("default: cumulative today plus yesterday-until-now from the server; switch hides it; card chip states the SQL delta", async ({ page }) => {
+    await page.goto("/");
+    const chart = panel(page).getByRole("figure", { name: "فروش تجمعی امروز (تومان)" });
+    await expect(chart).toBeVisible();
+    await expect(chart.locator(".line-chart-legend li")).toHaveText(["فروش امروز", "دیروز تا همین لحظه"]);
+    await expect(chart.locator('g[data-series="yesterday"] .line-chart-line')).toHaveCount(1);
+    await expect(chart.locator("g[data-emphasis]")).toHaveAttribute("data-series", "sales");
+    // تجمعی سرور: ۴٬۳۴۰٬۰۰۰ + ۹٬۰۰۰٬۰۰۰ − ۱٬۰۰۰٬۰۰۰ ریال = ۱٬۲۳۴٬۰۰۰ تومان = کارت فروش.
+    await expect(chart).toContainText("تا این لحظه: 1٬234٬000 تومان");
+    await expect(chart).toContainText("همین لحظهٔ دیروز: 900٬000 تومان");
+    await expect(chart).toContainText("نه کل دیروز");
+    // چیدمان طرح ۱۰: عدد «تا این لحظه» بالای نمودار برابر کارت فروش است؛ کلید مقایسه پایین، کنار «نمایش جدول داده».
+    await expect(chart.locator(".line-chart-lead .trend-lead")).toHaveText(/^1٬234٬000\s*تومان\s*تا این لحظه$/);
+    await expect(chart.locator(".line-chart-foot").getByRole("checkbox", { name: "مقایسه با همین ساعت دیروز" })).toBeVisible();
+    await expect(chart.locator(".line-chart-foot").getByRole("button", { name: "نمایش جدول داده" })).toBeVisible();
+    const dashes = await chart.locator(".line-chart-line").evaluateAll(els => els.map(el => getComputedStyle(el).strokeDasharray));
+    expect(new Set(dashes).size, "خط دیروز الگوی خط خودش را دارد، نه فقط رنگ").toBe(2);
+    // تراشهٔ کارت فروش از `comparison.delta.sales` سرور: ۱۲٬۳۴۰٬۰۰۰ − ۹٬۰۰۰٬۰۰۰ ریال.
+    const chip = page.getByRole("tab", { name: "فروش", exact: true }).locator(".kpi-delta");
+    await expect(chip).toHaveText(/^334٬000\s*تومان بیشتر از همین لحظهٔ دیروز$/);
+    await expect(chip).toHaveAttribute("data-tone", "up");
+    const toggle = panel(page).getByRole("checkbox", { name: "مقایسه با همین ساعت دیروز" });
+    await expect(toggle).toBeChecked();
+    await toggle.uncheck();
+    await expect(chart.locator(".line-chart-line")).toHaveCount(1);
+    await expect(chart).not.toContainText("همین لحظهٔ دیروز");
+    await toggle.check();
+    await expect(chart.locator(".line-chart-line")).toHaveCount(2);
+  });
+
+  test("yesterday after the cutoff is not drawn as zero; a lower day says 'less'", async ({ page, api }) => {
+    api.defaults["GET /reports/daily/hourly"] = hourlyDay({ 11: { salesAmount: "1000000", receivedAmount: "1000000", profitAmount: "100000", invoiceCount: 1, paymentCount: 1 } }, true, "2026-09-16", 14);
+    api.defaults["GET /reports/daily"] = dailyBody({ businessDate: "2026-09-16", salesAmount: "1000000", receivedAmount: "1000000", profitAmount: "100000", invoiceCount: 1, returnCount: 0 });
+    await page.goto("/");
+    const chart = panel(page).getByRole("figure", { name: "فروش تجمعی امروز (تومان)" });
+    // دیروز تا ساعت ۱۴: فقط فروش ساعت ۱۰ (۳٬۰۰۰٬۰۰۰ ریال)؛ ساعت ۱۷ دیروز پس از مرز است.
+    await expect(chart).toContainText("همین لحظهٔ دیروز: 300٬000 تومان");
+    await expect(chart.locator('g[data-series="yesterday"] .line-chart-dot')).toHaveCount(7);
+    await expect(page.getByRole("tab", { name: "فروش", exact: true }).locator(".kpi-delta")).toHaveText(/^200٬000\s*تومان کمتر از همین لحظهٔ دیروز$/);
+  });
+
+  test("no comparison from the server (today-only role): no yesterday line, no switch, no chip — not zero", async ({ page, api }) => {
+    api.defaults["GET /reports/daily/hourly"] = { ...DEFAULT_HOURLY, comparisonVisible: false, comparison: null };
+    await page.goto("/");
+    const chart = panel(page).getByRole("figure", { name: "فروش تجمعی امروز (تومان)" });
+    await expect(chart.locator(".line-chart-line")).toHaveCount(1);
+    await expect(chart).not.toContainText("دیروز");
+    await expect(panel(page).getByRole("checkbox", { name: "مقایسه با همین ساعت دیروز" })).toHaveCount(0);
+    await expect(page.locator(".kpi-delta")).toHaveCount(0);
+  });
+
+  test("owner decision: before the first sale the 'up to now' chart stays — today's line on zero, a 'no sale yet' note, yesterday as usual", async ({ page, api }) => {
+    api.defaults["GET /reports/daily"] = dailyBody({ businessDate: "2026-09-16", salesAmount: "0", receivedAmount: "0", profitAmount: "0", invoiceCount: 0, returnCount: 0 });
+    // دیروز تا همین لحظه فروش داشته (yesterdayUntil: ساعت ۱۰ سه میلیون ریال)؛ امروز هنوز هیچ.
+    api.defaults["GET /reports/daily/hourly"] = hourlyDay({}, true, "2026-09-16", 10);
+    await page.goto("/");
+    const chart = panel(page).getByRole("figure", { name: "فروش تجمعی امروز (تومان)" });
+    await expect(chart).toBeVisible();
+    await expect(panel(page).getByText("هنوز فروشی برای امروز ثبت نشده است.", { exact: false })).toBeVisible();
+    await expect(chart.locator(".line-chart-line")).toHaveCount(2);
+    // عدد «تا این لحظه» صفرِ واقعی است، نه «—».
+    await expect(panel(page).locator(".trend-lead")).toContainText("0");
+    await expect(panel(page).locator(".trend-lead")).not.toContainText("—");
+    // بی مقایسهٔ سرور (صندوق‌دار): هنوز خط صفر و پیام، نه حالت خالی.
+    api.defaults["GET /reports/daily/hourly"] = { ...hourlyDay({}, true, "2026-09-16", 10), comparisonVisible: false, comparison: null };
+    await page.reload();
+    await expect(chart.locator(".line-chart-line")).toHaveCount(1);
+    await expect(panel(page).getByText("هنوز فروشی برای امروز ثبت نشده است.", { exact: false })).toBeVisible();
   });
 });
 
@@ -279,8 +376,14 @@ test.describe("پیگیری ثبت حسابداری فروش", () => {
     await expect(items.nth(1)).toContainText("صندوق‌دار کشو را نشمارد");
     await expect(items.nth(2)).toContainText("کاری لازم نیست");
     await expect(items.nth(2).getByRole("button")).toHaveCount(0);
+    // صفحهٔ صندوق پس از ناوبری روش پرداخت و شیفت جاری را می‌خواند؛ بی پاسخ ساختگی، رسیدن یا نرسیدنِ آن دو
+    // درخواست پیش از پایان آزمون به زمان‌بندی وابسته بود («درخواست پیش‌بینی‌نشده» فقط گاهی). حالا پاسخ دارند
+    // و آزمون تا بالا آمدن واقعی صندوق صبر می‌کند — نتیجه قطعی است و ادعایی کم نشده.
+    api.defaults["GET /payment-methods"] = { methods: [{ code: "cash", name: "نقد", kind: "cash", requiresRef: false }] };
+    api.defaults["GET /shifts/current"] = { id: "s1", userId: "22222222-2222-4222-8222-222222222222", branchId: "b1", status: "open", openingCash: "0", openedAt: "2026-09-16T05:00:00Z" };
     await items.nth(1).getByRole("link", { name: "رفتن به صندوق" }).click();
     await expect(page).toHaveURL(/page=pos/);
+    await expect.poll(() => api.calls.some(c => c.startsWith("GET /shifts/current")), "صندوق واقعاً بالا آمد").toBe(true);
   });
 
   test("today's open period alone is information, not a count", async ({ page, api }) => {

@@ -23,7 +23,7 @@ import { resolveCashDrawer } from "../treasury/cash-drawer.ts";
 import type { Db } from "../db/client.ts";
 import { parseMoney } from "../lib/money.ts";
 import { runOnce } from "../lib/idempotency.ts";
-import { assertBranch, assertWarehouseInBranch } from "../sales/scope.ts";
+import { assertBranch, assertWarehouseInBranch, branchesOf } from "../sales/scope.ts";
 import { requireInvoiceRead } from "../sales/invoice-access.ts";
 import {
   ReturnError,
@@ -142,8 +142,37 @@ export function registerReturnRoutes(app: FastifyInstance, deps: ReturnRouteDeps
       daysSinceSale: window.daysSince,
       hoursSinceSale: window.hoursSince,
       late: window.late,
+      windowHours: window.windowHours,
       lines: returnableToJson(await returns.returnable(id)),
     };
+  });
+
+  /**
+   * «حساب مرجوعی» پیش از ثبت — فقط‌خواندنی، همان دروازهٔ `returnable`.
+   *
+   * هر عدد از `sales.return_account_preview` (مهاجرت ۱۱۶) با همان عبارت‌های `post_return`:
+   * ارزش کالا، بدهی همین فاکتور، صرف بدهی، سقف و پیشنهاد بازپرداخت، و اعتبار مشتری. مرورگر
+   * هیچ مبلغی حساب نمی‌کند. بازپرداخت نامجاز خطا نیست و در `problem` برمی‌گردد؛ ثبت همان را رد می‌کند.
+   */
+  app.post("/invoices/:id/return-account", async (req) => {
+    const s = session(req);
+    await requireInvoiceRead(db, s);
+    const { id } = z.object({ id: uuid }).parse(req.params);
+    const body = z.object({
+      lines: z.array(z.object({ invoiceLineId: uuid, qty: z.string().regex(/^\d+(\.\d{1,3})?$/, "تعداد نامعتبر") })).min(1).max(200),
+      refundAmount: moneyString.optional(),
+    }).parse(req.body);
+    const inv = await db.selectFrom("sales.invoice").select(["branch_id"]).where("id", "=", id).executeTakeFirst();
+    if (!inv) throw new ReturnError("invoice_not_found", "فاکتور یافت نشد", 404);
+    await assertBranch(db, s.userId, inv.branch_id);
+    const lines = body.lines.map(l => ({ invoiceLineId: l.invoiceLineId, qty: l.qty }));
+    const row = (await sql<{ value: string; outstanding: string; funds: string; max: string; suggested: string; refund: string;
+      debt: string; credit: string; problem: string | null }>`
+      SELECT returned_value::text AS value, outstanding::text, funds::text, max_refund::text AS max, suggested_refund::text AS suggested,
+             refund::text, debt_applied::text AS debt, customer_credit::text AS credit, problem
+        FROM sales.return_account_preview(${id}::uuid, ${JSON.stringify(lines)}::jsonb, ${body.refundAmount ?? null}::numeric)`.execute(db)).rows[0]!;
+    return { returnedValue: row.value, outstanding: row.outstanding, funds: row.funds, maxRefund: row.max, suggestedRefund: row.suggested,
+      refundAmount: row.refund, debtApplied: row.debt, customerCredit: row.credit, problem: row.problem };
   });
 
   /**
@@ -237,6 +266,51 @@ export function registerReturnRoutes(app: FastifyInstance, deps: ReturnRouteDeps
       ...(gate.shiftId === undefined ? {} : { shiftId: gate.shiftId }),
     });
     return reply.code(201).send(returnToJson(r, await seesCost(s)));
+  });
+
+  /**
+   * «مرجوعی‌های امروز» (طرح ۱۰، تصمیم مالک ۲۰۲۶/۱۱/۰۹) — فقط برگ‌های **ثبت‌شده** با تاریخ کاری امروز
+   * سرور، در دامنهٔ شعبهٔ کاربر. فقط‌خواندنی است و هیچ مبلغی حساب نمی‌کند: بازپرداخت و ارزش همان ستون‌هایی‌اند
+   * که `post_return` نوشته. مجوزش همان مجوز صفحهٔ مرجوعی است (همان‌روز یا دیرهنگام)، نه فروش.
+   */
+  app.get("/returns/today", async (req) => {
+    const s = session(req);
+    const sameDay = await can(db, { userId: s.userId, operation: "return.same_day", viaPin: s.pinUnlocked });
+    if (sameDay.verdict !== "allow") await requireForSession(db, s, "return.late");
+    const scope = await branchesOf(db, s.userId);
+    const day = (await sql<{ d: string }>`SELECT platform.business_date()::text AS d`.execute(db)).rows[0]!.d;
+    if (scope !== "all" && scope.length === 0) return { businessDate: day, returns: [] };
+    const rows = await sql<{
+      id: string; number: string | null; kind: string; occurredAt: Date; createdByName: string | null; invoiceNumber: string | null;
+      firstItem: string | null; lineCount: number; totalQty: string; sellable: number; defective: number; notRestocked: number;
+      netAmount: string; refundAmount: string; refundMethod: string | null; drawerName: string | null;
+    }>`
+      SELECT r.id, r.number, r.kind, r.occurred_at AS "occurredAt", u.full_name AS "createdByName",
+             sales.invoice_display_number(r.invoice_id) AS "invoiceNumber",
+             (SELECT concat_ws(' · ', p.name_internal, v.size) || ' × ' || trim(trailing '.' FROM trim(trailing '0' FROM l.qty::text))
+                FROM sales.sale_return_line l
+                JOIN sales.invoice_line il ON il.id = l.invoice_line_id
+                JOIN catalog.variation v ON v.id = il.variation_id
+                JOIN catalog.product p ON p.id = v.product_id
+               WHERE l.return_id = r.id ORDER BY l.id LIMIT 1) AS "firstItem",
+             (SELECT count(*)::int FROM sales.sale_return_line l WHERE l.return_id = r.id) AS "lineCount",
+             (SELECT coalesce(sum(l.qty), 0)::text FROM sales.sale_return_line l WHERE l.return_id = r.id) AS "totalQty",
+             (SELECT count(*)::int FROM sales.sale_return_line l WHERE l.return_id = r.id AND l.restock AND l.condition = 'sellable') AS sellable,
+             (SELECT count(*)::int FROM sales.sale_return_line l WHERE l.return_id = r.id AND l.restock AND l.condition = 'defective') AS defective,
+             (SELECT count(*)::int FROM sales.sale_return_line l WHERE l.return_id = r.id AND NOT l.restock) AS "notRestocked",
+             r.net_amount::text AS "netAmount", r.refund_amount::text AS "refundAmount",
+             pm.name AS "refundMethod", su.full_name AS "drawerName"
+        FROM sales.sale_return r
+        LEFT JOIN identity.app_user u ON u.id = r.created_by
+        LEFT JOIN treasury.payment_method pm ON pm.code = r.refund_method
+        LEFT JOIN sales.cash_shift cs ON cs.id = r.shift_id
+        LEFT JOIN identity.app_user su ON su.id = cs.user_id
+       WHERE r.status = 'posted'
+         AND platform.business_date(r.occurred_at) = platform.business_date()
+         AND ${scope === "all" ? sql`true` : sql`r.branch_id = ANY(${scope}::uuid[])`}
+       ORDER BY r.occurred_at DESC, r.id DESC
+       LIMIT 200`.execute(db);
+    return { businessDate: day, returns: rows.rows.map((r) => ({ ...r, occurredAt: new Date(r.occurredAt).toISOString() })) };
   });
 
   app.get("/returns/:id", async (req) => {

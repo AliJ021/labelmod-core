@@ -1,5 +1,8 @@
 import { StatusBadge } from "../components/ui/Status.tsx";
 import { formatJalaliDay } from "../lib/format.ts";
+import { DataTable, type Column } from "../components/ui/DataTable.tsx";
+import { Money } from "../components/ui/Money.tsx";
+import { Note } from "../components/ui/Note.tsx";
 import { CustomersSummaryRow } from "../components/CustomersSummaryRow.tsx";
 import { AmountInput } from "../components/ui/AmountInput.tsx";
 import { useUrlState } from "../lib/use-url-state.ts";
@@ -56,6 +59,39 @@ function shortDate(iso: string): string {
 
 const CHANNEL: Record<string, string> = { pos: "صندوق", web: "سایت", phone: "تلفنی" };
 
+/** «۰۹۱۲ *** ۴۸۲۱» — فهرست شماره را کامل نشان نمی‌دهد (طرح ۱۰)؛ پرونده نشانش می‌دهد. */
+export function maskMobile(mobile: string): string {
+  return mobile.length >= 8 ? `${mobile.slice(0, 4)} *** ${mobile.slice(-4)}` : mobile;
+}
+
+const unknown = <span className="muted" title="نامعلوم">—<span className="sr-only">نامعلوم</span></span>;
+/** مبلغ دفتر: صفر «—» است چون یکی از دو ستون همیشه صفر است؛ پاسخ بی‌ستون «نامعلوم». */
+const ledgerCell = (value: string | undefined, tone: "due" | "credit") => {
+  if (value === undefined) return unknown;
+  const v = BigInt(value);
+  return v === 0n ? <span className="muted">—</span> : <span className={tone === "due" ? "invoice-due" : "customer-credit"}><Money rial={v} /></span>;
+};
+
+/** ستون‌های V10: مشتری (موبایل پوشیده)، از، ماندهٔ دفتر (طلب)، اعتبار نزد ما، ثبت‌نشده (موقت)، پیامک بازاریابی. */
+const CUSTOMER_COLUMNS: readonly Column<Customer>[] = [
+  { key: "name", header: "مشتری", cell: (c) => <span className="cell-stack">
+    {c.fullName ? <strong className="cell-title">{c.fullName}</strong> : <span className="muted">بی‌نام</span>}
+    <small className="cell-sub"><Ltr>{maskMobile(c.mobile)}</Ltr></small>
+    {c.status === "active" ? null : <StatusBadge state={c.status === "blocked" ? "attention" : "archived"} label={CUSTOMER_STATUS[c.status] ?? c.status} />}
+  </span> },
+  { key: "since", header: "از", cell: (c) => <span className="num">{c.createdAt ? formatJalaliDay(c.createdAt) : "—"}</span> },
+  { key: "owed", header: "ماندهٔ دفتر (طلب)", numeric: true, cell: (c) => ledgerCell(c.ledgerOwed, "due") },
+  { key: "credit", header: "اعتبار نزد ما", numeric: true, cell: (c) => ledgerCell(c.ledgerCredit, "credit") },
+  { key: "unposted", header: "ثبت‌نشده (موقت)", numeric: true, cell: (c) => {
+    if (c.ledgerUnposted === undefined) return unknown;
+    const v = BigInt(c.ledgerUnposted);
+    // علامت صریح: «+» یعنی بستن دوره به طلب اضافه می‌کند، «−» کم.
+    return v === 0n ? <span className="muted">—</span> : <span className="customer-unposted" title="پس از بستن دوره به طلب می‌رود">
+      {v > 0n ? <span aria-hidden="true">+</span> : null}<Money rial={v} /></span>;
+  } },
+  { key: "consent", header: "پیامک بازاریابی", cell: (c) => c.consentMarketing ? <StatusBadge state="completed" label="رضایت دارد" quiet /> : <StatusBadge state="cancelled" label="بدون رضایت" quiet /> },
+];
+
 export function Customers() {
   const [q, setQ] = useState("");
   const [submitted, setSubmitted] = useUrlState("customers.search");
@@ -73,9 +109,16 @@ export function Customers() {
   const [mobile, setMobile] = useState("");
   const [fullName, setFullName] = useState("");
 
-  const load = useCallback(async (signal: AbortSignal) => (await people.customers(submitted, { signal })).customers, [submitted]);
+  const load = useCallback((signal: AbortSignal) => people.customers(submitted, { signal }), [submitted]);
   const query = useLatestQuery({ key: submitted, version: revision, load });
-  const rows = query.data ?? [];
+  const rows = query.data?.customers ?? [];
+  const totals = query.data?.totals ?? null;
+  /*
+   * تصمیم مالک (۲۰۲۶/۱۱/۰۹): فروشگاه نسیه نمی‌فروشد، پس ستون «ثبت‌نشده (موقت)» فقط وقتی پنهان می‌شود که
+   * سرور صفربودن را تأیید کرده باشد: جمع **و** تک‌تک ردیف‌ها صفر (مثبت و منفی ممکن است جمع را صفر کنند).
+   * ردیف بی‌مقدار (پاسخ قدیمی‌تر) ستون را نگه می‌دارد تا «نامعلوم» دیده شود، نه صفر.
+   */
+  const hideUnposted = totals?.unposted === "0" && rows.every((c) => c.ledgerUnposted === "0");
   function reload(term: string) { setSubmitted(term); setRevision(v => v + 1); }
 
   async function guarded(fn: () => Promise<void>) {
@@ -195,59 +238,30 @@ export function Customers() {
 
       <div aria-busy={query.loading}>
       <Solid as="section" className="list-card" aria-labelledby="customers-title">
-        <SectionHeader id="customers-title" title="مشتریان" description="موبایل یکتاست و مانده از فاکتورهای همین مشتری می‌آید."
+        <SectionHeader id="customers-title" title="مشتریان" description="موبایل یکتاست و در فهرست پوشیده است؛ طلب و اعتبار از سند ثبت‌شدهٔ همین مشتری می‌آیند و با هم جمع نمی‌شوند."
           actions={<button type="button" className={creating ? "btn" : "btn btn--primary"} onClick={() => setCreating((v) => !v)}>
             <Icon name={creating ? "close" : "plus"} size="sm" />{creating ? "انصراف" : "مشتری تازه"}</button>} />
         {query.loading ? <ResultState kind="loading" title="در حال بارگذاری مشتریان…" /> : query.error ? <ResultState kind="error" title={message(query.error)} actionLabel="تلاش دوباره" onAction={() => reload(submitted)} /> : rows.length === 0 ? (
           <ResultState title={submitted ? "برای این جست‌وجو مشتری‌ای پیدا نشد." : "فهرست مشتریان خالی است."} actionLabel={submitted ? "پاک‌کردن جست‌وجو" : "افزودن مشتری"} onAction={() => { if (submitted) { setQ(""); reload(""); } else setCreating(true); }} />
         ) : (
-          <div className="scroll-x">
-            <table className="grid">
-              <caption className="sr-only">فهرست مشتریان؛ مبلغ‌ها به تومان</caption>
-              <thead>
-                <tr>
-                  <th scope="col">مشتری</th>
-                  <th scope="col">موبایل</th>
-                  <th scope="col">مشتری از</th>
-                  <th scope="col" className="num">فاکتور</th>
-                  <th scope="col" className="num">جمع خرید</th>
-                  <th scope="col" className="num">مانده</th>
-                  <th scope="col">وضعیت</th>
-                  <th scope="col">پیامک بازاریابی</th>
-                  <th scope="col">عملیات</th>
-                </tr>
-              </thead>
-              <tbody>
-                {rows.map((c) => (
-                  <tr key={c.id}>
-                    <td>{c.fullName ? <strong className="cell-title">{c.fullName}</strong> : <span className="muted">بی‌نام</span>}</td>
-                    <td><Ltr>{c.mobile}</Ltr></td>
-                    <td className="num">{c.createdAt ? formatJalaliDay(c.createdAt) : "—"}</td>
-                    <td className="num">{c.invoiceCount}</td>
-                    <td className="num">{toman(parseRial(c.totalPurchased))}</td>
-                    <td className="num">{parseRial(c.balance) > 0n ? <span className="invoice-due">{toman(parseRial(c.balance))}</span> : toman(parseRial(c.balance))}</td>
-                    <td>{c.status === "active" ? <StatusBadge state="active" label={CUSTOMER_STATUS[c.status] ?? c.status} quiet /> : <StatusBadge state={c.status === "blocked" ? "attention" : "archived"} label={CUSTOMER_STATUS[c.status] ?? c.status} />}</td>
-                    <td>{c.consentMarketing ? <StatusBadge state="completed" label="رضایت دارد" quiet /> : <StatusBadge state="cancelled" label="بدون رضایت" quiet />}</td>
-                    <td>
-                      <button
-                        type="button"
-                        className="icon-button invoice-icon"
-                        aria-label="پرونده"
-                        title="پرونده"
-                        onClick={() => void openFile(c.id)}
-                        disabled={busy}
-                      >
-                        <Icon name="chevron" size="sm" />
-                      </button>
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
+          <div className="customer-table"><DataTable<Customer>
+            caption="فهرست مشتریان؛ مبلغ‌ها به تومان"
+            stack
+            rows={rows}
+            rowKey={(c) => c.id}
+            columns={hideUnposted ? CUSTOMER_COLUMNS.filter((c) => c.key !== "unposted") : CUSTOMER_COLUMNS}
+            rowActions={(c) => <button type="button" className="icon-button invoice-icon" aria-label="پرونده" title="پرونده"
+              onClick={() => void openFile(c.id)} disabled={busy}><Icon name="chevron" size="sm" /></button>}
+            {...(totals ? { foot: { label: "جمع", cells: {
+              owed: <Money rial={BigInt(totals.owed)} />,
+              credit: <Money rial={BigInt(totals.credit)} />,
+              ...(totals.unposted === undefined || hideUnposted ? {} : { unposted: <Money rial={BigInt(totals.unposted)} /> }),
+            } } } : {})}
+          /></div>
         )}
       </Solid>
       </div>
+      <Note>دریافت از مشتری بابت نسیهٔ قبلی (از خزانه) همان لحظه از «طلب» کم می‌شود و در «وجه دریافتی» داشبورد نیست؛ آن کارت فقط پرداخت‌های روی فاکتور و بازپرداخت مرجوعی را می‌شمارد.</Note>
 
       {open ? (
         <CustomerFile

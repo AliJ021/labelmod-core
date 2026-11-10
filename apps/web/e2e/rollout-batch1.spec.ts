@@ -149,15 +149,21 @@ test.describe("گزارش‌ها", () => {
     const chart = page.getByRole("figure", { name: /فروش خالص هر ساعت/ });
     await expect(chart).toBeVisible();
     // چهار ساعت متمایز در داده: ۱۰، ۱۲، ۱۸ (صندوق + سایت)، ۲۰.
-    const rows = chart.locator("table.sr-only tbody tr");
-    await expect(rows).toHaveCount(4);
+    // خواستهٔ مالک (۲۰۲۶/۱۱/۰۲): نمودار خطی نرم؛ جدول داده همان جدول نمودار خطی است (پنهان تا «نمایش جدول داده»).
+    // محور ساعت واقعی است: ۱۰ تا ۲۰ یازده نقطه؛ ساعت بی‌ردیف نه صفر است و نه نقطه دارد.
+    const rows = chart.locator("table tbody tr");
+    await expect(rows).toHaveCount(11);
     await expect(rows.nth(0)).toContainText("۱۰");
-    await expect(rows.nth(2)).toContainText("2٬430٬000 تومان");
+    await expect(rows.nth(0)).toContainText("620٬000 تومان");
+    await expect(rows.nth(1)).toContainText("ردیف فروشی ندارد");
+    await expect(rows.nth(1)).not.toContainText("تومان");
+    await expect(rows.nth(8)).toContainText("2٬430٬000 تومان");
+    await expect(chart.locator(".line-chart-dot"), "فقط ساعت‌های دارای ردیف نقطه دارند").toHaveCount(4);
     await expect(chart).toContainText("بیشترین فروش: ساعت ۱۸");
-    // RTL: ستون زودتر سمت راست.
-    const cols = chart.locator(".bar-chart-col");
+    // محور زمان مثل طرح ۱۰ (تصمیم مالک): ساعت زودتر سمت چپ، دیرتر سمت راست (برچسب اول و آخر همیشه دیده می‌شوند).
+    const cols = chart.locator(".line-chart-x span");
     const first = await cols.first().boundingBox(), last = await cols.last().boundingBox();
-    expect(first!.x).toBeGreaterThan(last!.x);
+    expect(first!.x, "ساعت زودتر چپِ ساعت دیرتر").toBeLessThan(last!.x);
   });
 
   test("empty report says so and offers no download", async ({ page, api }) => {
@@ -317,7 +323,7 @@ test.describe("کارهای پرتکرار داشبورد", () => {
     await expect(quick(page).getByRole("link")).toHaveText(ACTIONS);
     // بارگذاری دوباره فقط پس از پایان آخرین پرسش داشبورد (روند ساعتی)؛ WebKit
     // درخواستِ در راهی را که بارگذاری دوباره لغو می‌کند «خطای صفحه» گزارش می‌کند.
-    await expect(page.getByRole("figure", { name: "فروش هر ساعت (تومان)" })).toBeVisible();
+    await expect(page.getByRole("figure", { name: "فروش تجمعی امروز (تومان)" })).toBeVisible();
     const allowed = new Set(["sale.create", "return.same_day"]);
     api.handlers.set("GET /auth/can", async (route, url) => { await route.fulfill({ json: { verdict: allowed.has(url.searchParams.get("operation") ?? "") ? "allow" : "deny", approver: null, reason: "" } }); });
     await page.reload();

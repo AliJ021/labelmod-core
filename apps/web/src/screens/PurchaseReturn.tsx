@@ -22,17 +22,25 @@
  * `remainingQty` و بهای دفتری هر دو از سرور می‌آیند. تفریق در مرورگر
  * یعنی دو تعریف از یک عدد — و آنکه در مرورگر است، کهنه می‌شود.
  */
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { Solid } from "../components/Glass.tsx";
 import { SectionHeader } from "../components/ui/PageHeader.tsx";
+import { DataTable, type Column } from "../components/ui/DataTable.tsx";
+import { Money } from "../components/ui/Money.tsx";
+import { Note } from "../components/ui/Note.tsx";
+import { StatusBadge } from "../components/ui/Status.tsx";
+import { Icon } from "../components/Icon.tsx";
+import { formatJalaliMoment, formatQty } from "../lib/format.ts";
 import { ApiError } from "../lib/api.ts";
+import { useLatestQuery } from "../lib/use-latest-query.ts";
 import { ActionKeys, actionFor } from "../lib/action-key.ts";
-import { parseRial, toman } from "../lib/money.ts";
+import { parseRial, tomanExact } from "../lib/money.ts";
 import { pos, type Branch, type ReturnReason } from "../lib/pos.ts";
 import {
   purchaseReturns,
   purchasing,
   type PurchaseReturn as Sheet,
+  type PurchaseReturnSummary,
   type Returnable,
 } from "../lib/purchasing.ts";
 
@@ -41,7 +49,33 @@ function message(err: unknown): string {
   return "ارتباط با سرور برقرار نشد.";
 }
 
+/**
+ * طرح ۱۰: فهرست برگه‌ها. هر سه مبلغ همان ستون‌هایی‌اند که `post_purchase_return()` نوشته:
+ * بهای فاکتور (کاهش بدهی تأمین‌کننده)، ارزش دفتری (خروج از موجودی) و حمل برنگشتنی (زیان).
+ */
+const RETURN_COLUMNS: readonly Column<PurchaseReturnSummary>[] = [
+  { key: "number", header: "برگه", cell: (r) => <span className="cell-stack"><span className="num">{r.number ?? "—"}</span><small className="muted">{formatJalaliMoment(r.occurredAt)}</small></span> },
+  { key: "supplier", header: "تأمین‌کننده", cell: (r) => <span className="cell-stack"><span>{r.supplierName}</span>{r.receiptNumber ? <small className="muted">رسید <span className="num">{r.receiptNumber}</span></small> : null}</span> },
+  { key: "item", header: "کالا", cell: (r) => r.firstItem ? `${r.firstItem}${r.lineCount > 1 ? ` و ${formatQty(String(r.lineCount - 1))} قلم دیگر` : ""}` : "—" },
+  { key: "qty", header: "تعداد", numeric: true, cell: (r) => <span className="num">{formatQty(r.totalQty)}</span> },
+  { key: "goods", header: "بهای فاکتور", numeric: true, cell: (r) => <Money rial={r.goodsAmount} unit={false} /> },
+  { key: "cost", header: "ارزش دفتری", numeric: true, cell: (r) => <Money rial={r.costAmount} unit={false} /> },
+  { key: "loss", header: "حمل برنگشتنی", numeric: true, cell: (r) => r.chargeLoss === "0" ? <span className="muted">—</span> : <Money rial={r.chargeLoss} unit={false} /> },
+  { key: "status", header: "وضعیت", cell: (r) => <StatusBadge state={r.status === "posted" ? "completed" : r.status === "draft" ? "draft" : "cancelled"}
+    label={r.status === "posted" ? "ثبت‌شده" : r.status === "draft" ? "پیش‌نویس" : "باطل"} /> },
+];
+
 export function PurchaseReturn() {
+  const [list, setList] = useState<PurchaseReturnSummary[] | null>(null);
+  const [listError, setListError] = useState<string | null>(null);
+  const [listVersion, setListVersion] = useState(0);
+  const [formOpen, setFormOpen] = useState(false);
+  useEffect(() => {
+    let alive = true;
+    setListError(null);
+    purchaseReturns.list().then((r) => { if (alive) setList(r.returns); }, (err: unknown) => { if (alive) setListError(message(err)); });
+    return () => { alive = false; };
+  }, [listVersion]);
   const [branches, setBranches] = useState<Branch[]>([]);
   const [branchId, setBranchId] = useState("");
   const [reasons, setReasons] = useState<ReturnReason[]>([]);
@@ -111,20 +145,19 @@ export function PurchaseReturn() {
   const chosen = (source?.lines ?? []).filter((l) => (picked.get(l.receiptLineId) ?? 0) > 0);
 
   /**
-   * پیش‌نمای دو مبلغ.
+   * پیش‌نمایش از سرور (مهاجرت ۱۱۵) — نه جمع BigInt در مرورگر.
    *
-   * این‌ها **پیشنهاد** نیستند، محاسبه‌اند: هر دو نرخ Snapshot سطر
-   * رسیدند و سرور با همان‌ها ثبت می‌کند. اگر روزی از هم جدا افتادند،
-   * یعنی جایی نرخ جاری جای نرخ رسید نشسته.
+   * همان عبارت‌های `post_purchase_return`: «کاهش بدهی» کالا **به‌علاوهٔ مالیات** است، و برگشت
+   * آخرین تکهٔ یک سطر باقی‌ماندهٔ گرد کردن را می‌برد. هر دو را جمع مرورگر غلط می‌گفت.
    */
-  const goods = chosen.reduce(
-    (a, l) => a + parseRial(l.unitPrice) * BigInt(picked.get(l.receiptLineId) ?? 0),
-    0n,
-  );
-  const cost = chosen.reduce(
-    (a, l) => a + parseRial(l.landedUnitCost) * BigInt(picked.get(l.receiptLineId) ?? 0),
-    0n,
-  );
+  const previewLines = chosen.map((l) => ({ receiptLineId: l.receiptLineId, qty: String(picked.get(l.receiptLineId) ?? 0) }));
+  const previewKey = source ? `${source.receiptId}|${previewLines.map((l) => `${l.receiptLineId}:${l.qty}`).join(",")}` : "";
+  const loadPreview = useCallback((signal: AbortSignal) => {
+    const [receiptId = "", rest = ""] = previewKey.split("|");
+    const lines = rest.split(",").map((p) => { const [receiptLineId = "", qty = "0"] = p.split(":"); return { receiptLineId, qty }; });
+    return purchaseReturns.preview(receiptId, lines, { signal });
+  }, [previewKey]);
+  const preview = useLatestQuery({ key: previewKey, load: loadPreview, delay: 150, enabled: previewLines.length > 0 });
 
   const submit = () =>
     guarded(async () => {
@@ -145,6 +178,7 @@ export function PurchaseReturn() {
         purchaseReturns.create(body, { idempotencyKey: key }),
       );
       setPosted(sheet);
+      setListVersion((v) => v + 1);
       setSource(null);
       setPicked(new Map());
       setNumber("");
@@ -152,14 +186,16 @@ export function PurchaseReturn() {
       setNote("");
     });
 
-  const ready = source !== null && chosen.length > 0 && reason !== "";
+  const ready = source !== null && chosen.length > 0 && reason !== "" && preview.data !== null;
 
   return (
     <div className="stack" style={{ gap: "var(--s-4)" }}>
       <Solid as="section" className="list-card" aria-labelledby="pret-title">
         <SectionHeader id="pret-title" title="برگشت از خرید"
-          description={<>بدهی تأمین‌کننده با بهای فاکتور کم می‌شود و کالا با بهای <strong>همان رسید</strong> خارج می‌شود، نه میانگین جاری انبار.</>} />
-        <div className="list-card-body">
+          description={<>بدهی تأمین‌کننده با بهای فاکتور کم می‌شود و کالا با بهای <strong>همان رسید</strong> خارج می‌شود، نه میانگین جاری انبار.</>}
+          actions={<button type="button" className="btn btn--primary" aria-expanded={formOpen} aria-controls="pret-new-form" onClick={() => setFormOpen(v => !v)}>
+            <Icon name={formOpen ? "close" : "plus"} size="sm" />{formOpen ? "بستن فرم" : "برگشت تازه"}</button>} />
+        {formOpen ? <div id="pret-new-form" className="list-card-body" role="group" aria-label="برگشت تازه">
 
         {branches.length > 1 ? (
           <div className="stack" style={{ gap: "var(--s-2)", marginBottom: "var(--s-3)" }}>
@@ -202,7 +238,12 @@ export function PurchaseReturn() {
             {busy ? "…" : "پیدا کن"}
           </button>
         </form>
-        </div>
+        </div> : null}
+        {listError ? <p className="list-card-body" role="alert">{listError}</p>
+          : <DataTable<PurchaseReturnSummary> caption="برگه‌های برگشت از خرید؛ مبلغ‌ها به تومان" stack loading={list === null}
+              rows={list ?? []} rowKey={(r) => r.id} columns={RETURN_COLUMNS}
+              empty={{ title: "هنوز برگشتی ثبت نشده.", description: "برای برگشت کالا به تأمین‌کننده، «برگشت تازه» را بزنید و شمارهٔ رسید خرید را وارد کنید." }} />}
+        {list?.length ? <div className="list-card-body"><Note>بهای فاکتور بدهی تأمین‌کننده را کم می‌کند و ارزش دفتری از موجودی خارج می‌شود؛ تفاوتشان حملی است که برای کالای پس‌فرستاده پرداخت شده و برنمی‌گردد و زیان ثبت می‌شود.</Note></div> : null}
       </Solid>
 
       {error ? (
@@ -219,16 +260,18 @@ export function PurchaseReturn() {
           </p>
           <div className="total">
             <span>کاهش بدهی تأمین‌کننده</span>
-            <span className="num total-value">{toman(parseRial(posted.goodsAmount))}</span>
+            {/* کالا + مالیات از SQL؛ پاسخ قدیمی‌تر فقط وقتی مالیات صفر است همان بهای کالاست. */}
+            <span className="num total-value">{(() => { const v = posted.payableReduction ?? (posted.taxAmount === "0" ? posted.goodsAmount : null);
+              return v === null ? "—" : tomanExact(parseRial(v)); })()}</span>
           </div>
           <div className="total">
             <span>کاهش ارزش موجودی</span>
-            <span className="num total-value">{toman(parseRial(posted.costAmount))}</span>
+            <span className="num total-value">{tomanExact(parseRial(posted.costAmount))}</span>
           </div>
           {parseRial(posted.chargeLoss) !== 0n ? (
             <div className="total">
               <span>حملِ برنگشتنی (زیان)</span>
-              <span className="num total-value">{toman(parseRial(posted.chargeLoss))}</span>
+              <span className="num total-value">{tomanExact(parseRial(posted.chargeLoss))}</span>
             </div>
           ) : null}
         </Solid>
@@ -261,8 +304,8 @@ export function PurchaseReturn() {
                       </span>
                       {/* دو نرخ کنار هم — تفاوتشان سهم حمل است. */}
                       <span className="muted small">
-                        فاکتور {toman(parseRial(l.unitPrice))} · دفتری{" "}
-                        {toman(parseRial(l.landedUnitCost))}
+                        فاکتور {tomanExact(parseRial(l.unitPrice))} · دفتری{" "}
+                        {tomanExact(parseRial(l.landedUnitCost))}
                       </span>
                     </div>
                     <div className="qty">
@@ -314,22 +357,28 @@ export function PurchaseReturn() {
               <input value={note} onChange={(e) => setNote(e.target.value)} />
             </label>
 
-            <div className="total">
-              <span>کاهش بدهی تأمین‌کننده</span>
-              <span className="num total-value">{toman(goods)}</span>
-            </div>
-            <div className="total">
-              <span>کاهش ارزش موجودی</span>
-              <span className="num total-value">{toman(cost)}</span>
-            </div>
-            {cost !== goods ? (
-              <p className="muted small" style={{ margin: 0 }}>
-                <span className="dot dot--warn" aria-hidden="true">●</span> تفاوت{" "}
-                <span className="num">{toman(cost > goods ? cost - goods : goods - cost)}</span>{" "}
-                تومان، سهم حمل این کالاست. باربری آن را برنمی‌گرداند و به‌عنوان زیان ثبت
-                می‌شود.
-              </p>
-            ) : null}
+            {chosen.length === 0 ? null : preview.data ? <>
+              <div className="total">
+                <span>کاهش بدهی تأمین‌کننده</span>
+                <span className="num total-value">{tomanExact(parseRial(preview.data.payableReduction))}</span>
+              </div>
+              {preview.data.taxAmount !== "0" ? <p className="muted small" style={{ margin: 0 }}>
+                شامل مالیات برگشتی <span className="num">{tomanExact(parseRial(preview.data.taxAmount))}</span> تومان؛ بهای کالا{" "}
+                <span className="num">{tomanExact(parseRial(preview.data.goodsAmount))}</span> تومان.</p> : null}
+              <div className="total">
+                <span>کاهش ارزش موجودی</span>
+                <span className="num total-value">{tomanExact(parseRial(preview.data.costAmount))}</span>
+              </div>
+              {preview.data.chargeLoss !== "0" ? (
+                <p className="muted small" style={{ margin: 0 }}>
+                  <span className="dot dot--warn" aria-hidden="true">●</span> حملِ برنگشتنی{" "}
+                  <span className="num">{tomanExact(parseRial(preview.data.chargeLoss))}</span>{" "}
+                  تومان، سهم حمل این کالاست. باربری آن را برنمی‌گرداند و به‌عنوان زیان ثبت
+                  می‌شود.
+                </p>
+              ) : null}
+            </> : preview.loading ? <p className="muted small" role="status" style={{ margin: 0 }}>در حال محاسبهٔ مبلغ‌ها…</p>
+              : <p role="alert" style={{ margin: 0 }}>مبلغ‌ها خوانده نشد: {message(preview.error)} تا روشن نشود، ثبت ممکن نیست.</p>}
 
             <button
               type="button"

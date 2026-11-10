@@ -16,12 +16,13 @@ function fixture(api: MockApi) {
   api.defaults["GET /invoices/i1/returnable"] = { invoiceId: "i1", invoiceStatus: "finalized", late: false,
     lines: [{ invoiceLineId: "l1", variationId: "v1", soldQty: "2", returnedQty: "0", remainingQty: "2",
       unitPrice: "1000000", netAmount: "2000000", returnedNetAmount: "0", taxAmount: "0", returnedTaxAmount: "0" }] };
+  api.defaults["POST /invoices/i1/return-account"] = { returnedValue: "1000000", outstanding: "0", funds: "1000000", maxRefund: "1000000", suggestedRefund: "1000000", refundAmount: "1000000", debtApplied: "0", customerCredit: "0", problem: null };
   api.defaults["GET /exchanges/variation/v1"] = { id: "v1", name: "پیراهن آزمایشی", sku: "TEST-M" };
   api.defaults["POST /exchanges/quote"] = { token: "a".repeat(64), returnedValue: "1000000", replacementValue: "1000000",
     debt: "0", funds: "2000000", debtApplied: "0", transferAmount: "1000000", fundedTransfer: "1000000", collectAmount: "0", refundAmount: "0", policy: "carry_debt" };
 }
 async function choose(page: Page) {
-  await page.goto("/"); await openZone(page, "مرجوعی");
+  await page.goto("/"); await openZone(page, "مرجوعی و تعویض");
   await page.getByLabel("شماره فاکتور", { exact: true }).fill("F-TEST-1");
   await page.getByRole("button", { name: "پیدا کن", exact: true }).click();
   await page.getByRole("button", { name: "اضافه کردن پیراهن آزمایشی", exact: true }).click();
@@ -124,7 +125,7 @@ test("phone results are explicit choices with pagination; not-found recovery nev
     expect(url.searchParams.get("phone")).toBe("۰۹۱۲۰۰۰۰۰۰۰");
     await route.fulfill({ json: { invoices: [{ id: "i1", number: "F-TEST-1", payableAmount: "2000000" }], next: "next-1" } });
   });
-  await page.goto("/"); await openZone(page, "مرجوعی");
+  await page.goto("/"); await openZone(page, "مرجوعی و تعویض");
   await page.getByLabel("جست‌وجو با", { exact: true }).selectOption("phone");
   await page.getByLabel("شماره همراه", { exact: true }).fill("۰۹۱۲۰۰۰۰۰۰۰");
   await page.getByRole("button", { name: "پیدا کن", exact: true }).click();

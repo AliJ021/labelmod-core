@@ -13,10 +13,10 @@ import { ZONES } from "../src/lib/navigation.ts";
 const base: OrderCore = { paymentConfirmed: false, recorded: false, invoiceNumber: null, attempts: 0, hasError: false, stopped: false };
 
 test("وضعیت ثبت در Core: ثبت > متوقف > خطا > در انتظار > پرداخت‌نشده", () => {
-  assert.deepEqual(coreState({ ...base, recorded: true, invoiceNumber: "۱۴۰۵-۱", hasError: true, stopped: true }), { state: "completed", label: "ثبت در Core: ۱۴۰۵-۱" });
-  assert.deepEqual(coreState({ ...base, recorded: true }), { state: "completed", label: "ثبت در Core" });
+  assert.deepEqual(coreState({ ...base, recorded: true, invoiceNumber: "۱۴۰۵-۱", hasError: true, stopped: true }), { state: "completed", label: "ثبت در مرکز: ۱۴۰۵-۱" });
+  assert.deepEqual(coreState({ ...base, recorded: true }), { state: "completed", label: "ثبت در مرکز" });
   assert.equal(coreState({ ...base, paymentConfirmed: true, stopped: true, hasError: true }).state, "attention");
-  assert.deepEqual(coreState({ ...base, paymentConfirmed: true, hasError: true, attempts: 3 }), { state: "warning", label: "خطا در ارسال به Core (3 تلاش)" });
+  assert.deepEqual(coreState({ ...base, paymentConfirmed: true, hasError: true, attempts: 3 }), { state: "warning", label: "خطا در ارسال به مرکز (3 تلاش)" });
   assert.equal(coreState({ ...base, paymentConfirmed: true }).state, "pending");
   assert.deepEqual(coreState(base), { state: "draft", label: "پرداخت تأیید نشده" });
 });

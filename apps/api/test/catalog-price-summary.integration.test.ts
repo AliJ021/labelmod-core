@@ -356,4 +356,71 @@ describe("قیمت کالا در فهرست کالا و قیمت", { skip }, () 
     assert.ok(rows.every(x => x.categoryId === cat));
     assert.equal((await app.inject({ method: "GET", url: "/products?categoryId=nope", ...s })).statusCode, 400);
   });
+  test("طرح ۱۰ — ستون‌های موجودی فهرست: سایز به ترتیب پوشاک، موجودی هر انبار شعبه، بازهٔ بهای واحد فقط با cost.view، کمبود از همان آستانه", async () => {
+    const code = `IV-${suffix}`.slice(0, 24);
+    const { id, vars } = await product(code, ["XL", "S", "M"]);
+    const [xl, small, medium] = vars.map((v) => v.id);
+    const STORE = "00000000-0000-7000-8000-000000000101";
+    const STOCK = "00000000-0000-7000-8000-000000000102";
+    // S: ۵ عدد در فروشگاه به بهای ۱۰۰٬۰۰۰؛ M: ۱ عدد در فروشگاه به ۱۲۰٬۰۰۰ (زیر آستانهٔ ۲)؛ XL: ۴ در انبار به ۱۱۰٬۰۰۰.
+    for (const [v, wh, qty, cost] of [[small, STORE, 5, 100000], [medium, STORE, 1, 120000], [xl, STOCK, 4, 110000]] as const) {
+      await sql`SELECT inventory.apply_movement(${v}::uuid, ${wh}::uuid, ${qty}, 'opening', NULL, NULL, ${adminId}::uuid, ${cost})`.execute(handle.db);
+    }
+    // تنوع بایگانی‌شده در سایزها نمی‌آید.
+    await sql`INSERT INTO catalog.variation (product_id, color, size, sku, status) VALUES (${id}::uuid, 'سفید', 'XXS', ${`IVX-${suffix}`.slice(0, 30)}, 'archived')`.execute(handle.db);
+    // انبار شعبهٔ دیگر در دامنهٔ کاربر شعبه‌ای نیست.
+    const other = await sql<{ id: string }>`INSERT INTO platform.branch (code, name) VALUES (${`IV-${suffix}`.slice(0, 20)}, 'شعبهٔ دیگر') RETURNING id`.execute(handle.db);
+    const ow = await sql<{ id: string }>`INSERT INTO inventory.warehouse (branch_id, code, name, kind) VALUES (${other.rows[0]!.id}::uuid, ${`IVW-${suffix}`.slice(0, 20)}, 'انبار شعبهٔ دیگر', 'store') RETURNING id`.execute(handle.db);
+    await sql`SELECT inventory.apply_movement(${small}::uuid, ${ow.rows[0]!.id}::uuid, 9, 'opening', NULL, NULL, ${adminId}::uuid, 999000)`.execute(handle.db);
+
+    type Inv = { sizes: string[]; colors: string[]; stock: { warehouseId: string; warehouseName: string; warehouseKind: string; qty: string }[];
+      costVisible: boolean; unitCostMin: string | null; unitCostMax: string | null; lowStock: number | null };
+    const read = async () => {
+      const r = await app.inject({ method: "GET", url: `/products?search=${code}`, ...s });
+      assert.equal(r.statusCode, 200, r.body);
+      return (r.json().products as { code: string; inventory: Inv | null }[]).find((p) => p.code === code)!.inventory!;
+    };
+    const inv = await read();
+    assert.deepEqual(inv.sizes, ["S", "M", "XL"], "ترتیب پوشاک، نه الفبایی یا ترتیب ساخت؛ بایگانی بیرون");
+    assert.deepEqual(inv.colors, ["مشکی"]);
+    const qty = Object.fromEntries(inv.stock.map((x) => [x.warehouseId, x.qty]));
+    assert.equal(Number(qty[STORE]), 6);
+    assert.equal(Number(qty[STOCK]), 4);
+    assert.equal(qty[ow.rows[0]!.id], undefined, "انبار شعبهٔ دیگر دیده نمی‌شود");
+    assert.deepEqual(inv.stock.map((x) => x.warehouseKind), ["store", "stock"], "فروشگاه اول، بعد انبار");
+    assert.deepEqual([inv.costVisible, inv.unitCostMin, inv.unitCostMax], [true, "100000", "120000"]);
+    // همان تعریف گزارش ارزش موجودی: round(total_value / on_hand) هر سطر در دامنه.
+    const direct = await sql<{ lo: string; hi: string }>`
+      SELECT min(round(b.total_value / b.on_hand))::text lo, max(round(b.total_value / b.on_hand))::text hi
+        FROM inventory.stock_balance b JOIN catalog.variation v ON v.id = b.variation_id
+        JOIN inventory.warehouse w ON w.id = b.warehouse_id
+       WHERE v.product_id = ${id}::uuid AND b.on_hand > 0 AND w.branch_id = ${BRANCH}::uuid`.execute(handle.db);
+    assert.deepEqual([inv.unitCostMin, inv.unitCostMax], [direct.rows[0]!.lo, direct.rows[0]!.hi]);
+    const low = await sql<{ n: string }>`SELECT count(*)::text n FROM inventory.low_stock(platform.setting_num('inventory.low_stock_threshold')) l
+      JOIN catalog.variation v ON v.id = l.variation_id JOIN inventory.warehouse w ON w.id = l.warehouse_id
+      WHERE v.product_id = ${id}::uuid AND w.branch_id = ${BRANCH}::uuid`.execute(handle.db);
+    assert.equal(inv.lowStock, Number(low.rows[0]!.n));
+    assert.equal(inv.lowStock, 1, "فقط M با ۱ عدد زیر آستانهٔ ۲");
+
+    // دادهٔ مرجع آزمون با نقش مالک عوض می‌شود (با LMC_TEST_DB_ROLE=app نقش برنامه حقش را ندارد).
+    const owner = createDb(disposable!.ownerUrl, 1);
+    try {
+      // بی cost.view: بها null است نه صفر، و موجودی همچنان هست.
+      await sql`UPDATE identity.permission_rule SET allowed = false WHERE role_code = 'admin' AND operation = 'cost.view'`.execute(owner.db);
+      try {
+        const hidden = await read();
+        assert.deepEqual([hidden.costVisible, hidden.unitCostMin, hidden.unitCostMax], [false, null, null]);
+        assert.equal(Number(Object.fromEntries(hidden.stock.map((x) => [x.warehouseId, x.qty]))[STORE]), 6);
+      } finally {
+        await sql`UPDATE identity.permission_rule SET allowed = true WHERE role_code = 'admin' AND operation = 'cost.view'`.execute(owner.db);
+      }
+      // آستانهٔ تعریف‌نشده: «نامعلوم» (null)، نه صفر — همان قرارداد کارت کمبود داشبورد.
+      await sql`DELETE FROM platform.setting WHERE key = 'inventory.low_stock_threshold'`.execute(owner.db);
+      const unknown = await read();
+      assert.equal(unknown.lowStock, null);
+      assert.equal(Number(Object.fromEntries(unknown.stock.map((x) => [x.warehouseId, x.qty]))[STORE]), 6);
+    } finally {
+      await owner.close();
+    }
+  });
 });

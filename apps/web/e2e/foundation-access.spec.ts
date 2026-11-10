@@ -12,9 +12,9 @@ import type { Locator, Page } from "@playwright/test";
 import { NAV_OPERATIONS } from "../src/lib/navigation";
 
 type Decision = "allow" | "deny" | "fail";
-const PROTECTED = ["صندوق", "فاکتورها", "مرجوعی", "سفارش‌های سایت", "کالا و قیمت", "انبار و خرید", "خزانه و چک", "مشتریان", "گزارش‌ها"];
+const PROTECTED = ["صندوق", "فاکتورها", "مرجوعی و تعویض", "سفارش‌های سایت", "کالا و قیمت", "انبار و خرید", "خزانه و چک", "مشتریان", "گزارش‌ها"];
 /** همهٔ مقصدها وقتی هر مجوزی «بله» است — به ترتیب گروه‌های ناوبری (روزانه، انبار، مالی، اشخاص، سامانه)، نه فقط شمارشان. */
-const ALL_TABS = ["داشبورد", "صندوق", "فاکتورها", "مرجوعی", "سفارش‌های سایت", "کالا و قیمت", "انبار و خرید",
+const ALL_TABS = ["داشبورد", "صندوق", "فاکتورها", "مرجوعی و تعویض", "سفارش‌های سایت", "کالا و قیمت", "انبار و خرید",
   "خزانه و چک", "گزارش‌ها", "مشتریان", "برداشت و پاداش", "تنظیمات"];
 const PERSONAL = ["نمایش و عملکرد", "PIN من — ساخت و تغییر", "ورود دومرحله‌ای"];
 const ADMIN = ["تنظیمات", "سلامت سیستم", "اتصال ووکامرس", "پشتیبان‌گیری و بازیابی", "کدینگ حساب", "نگاشت حساب", "اسنپ‌پی", "دیجی‌پی", "پایانه‌ها", "افتتاحیه و تفصیلی", "پرسنل", "مجوزها", "دستگاه‌ها"];
@@ -102,10 +102,10 @@ test.describe("F-110-01 — conservative permission loading", () => {
     expect(await mainList(page).locator(".tab-pending").evaluateAll(nodes => nodes.every(n => n.textContent === "" && n.getAttribute("aria-hidden") === "true"))).toBe(true);
     await expect(page.getByRole("status").filter({ hasText: "در حال بررسی دسترسی بخش‌ها…" }).first()).toBeAttached();
     auth.release();
-    await expect(mainList(page).getByRole("tab", { name: "مرجوعی", includeHidden: true })).toHaveCount(1);
+    await expect(mainList(page).getByRole("tab", { name: "مرجوعی و تعویض", exact: true, includeHidden: true })).toHaveCount(1);
     await expect(mainList(page).locator(".tab-pending")).toHaveCount(0);
-    expect(await tabLabels(page)).toEqual(["داشبورد", "صندوق", "فاکتورها", "مرجوعی", "برداشت و پاداش", "تنظیمات"]);
-    expect(await seen(), "no protected label was ever rendered before an allow verdict").toEqual(["برداشت و پاداش", "تنظیمات", "داشبورد", "صندوق", "فاکتورها", "مرجوعی"].sort());
+    expect(await tabLabels(page)).toEqual(["داشبورد", "صندوق", "فاکتورها", "مرجوعی و تعویض", "برداشت و پاداش", "تنظیمات"]);
+    expect(await seen(), "no protected label was ever rendered before an allow verdict").toEqual(["برداشت و پاداش", "تنظیمات", "داشبورد", "صندوق", "فاکتورها", "مرجوعی و تعویض"].sort());
   });
 
   test("placeholders hold the navigation in place until every destination is allowed", async ({ page, api }) => {
@@ -143,7 +143,11 @@ test.describe("F-110-01 — conservative permission loading", () => {
     const before = (await dashboard.boundingBox())!;
     release();
     if (!compact(page)) await expect(page.locator(".shell-branch:not([data-pending])").getByText("شعبه آزمایشی", { exact: true })).toBeVisible();
-    else await expect(page.locator(".shell-branch")).toHaveCount(0);
+    // گوشی (طرح ۱۰): کارت شعبه فقط درون منوی ☰ است که بسته است — نه در نوار پایین، نه دیدنی.
+    else {
+      await expect(page.locator(".workspace-nav .shell-branch")).toHaveCount(0);
+      await expect(page.locator("#more-sheet .shell-branch")).toBeHidden();
+    }
     const after = (await dashboard.boundingBox())!;
     for (const k of ["x", "y", "width", "height"] as const) {
       expect(Math.abs(after[k] - before[k]), `dashboard tab ${k} stays put`).toBeLessThanOrEqual(1);
@@ -214,7 +218,7 @@ test.describe("F-110-01 — conservative permission loading", () => {
     // رد شد: بخش باز همچنان همان است (سرور دادهٔ پشتش را می‌سنجد)؛ بقیه هرگز ساخته نشدند.
     await expect(current).toHaveAttribute("aria-selected", "true");
     expect(await seen()).toEqual(["برداشت و پاداش", "تنظیمات", "خزانه و چک", "داشبورد"].sort());
-    await page.waitForLoadState("networkidle");
+    await api.settled();
   });
 });
 
@@ -285,7 +289,7 @@ test.describe("F-110-04 — the More sheet is a real modal", () => {
     if (!compact(page)) await page.setViewportSize({ width: 390, height: 844 });
   });
 
-  test("focus enters, stays inside, and every close path returns it to the More button", async ({ page }) => {
+  test("focus enters, stays inside, and every close path returns it to the More button", async ({ page, api }) => {
     await page.goto("/");
     await expect(mainList(page).getByRole("tab", { name: "کالا و قیمت", exact: true })).toBeVisible();
     const more = page.getByRole("button", { name: "بخش‌های بیشتر", exact: true });
@@ -337,7 +341,7 @@ test.describe("F-110-04 — the More sheet is a real modal", () => {
     await expect(page.getByRole("tablist", { name: "بخش‌های خزانه", exact: true })).toBeVisible();
     await expect(page.locator("main#workspace-content")).toBeFocused();
     await expect(more).toHaveAttribute("data-current", "");
-    await page.waitForLoadState("networkidle");
+    await api.settled();
   });
 
   test("a late close event from the previous close never dismisses the reopened sheet", async ({ page }) => {

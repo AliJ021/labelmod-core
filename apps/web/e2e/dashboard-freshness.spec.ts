@@ -3,7 +3,7 @@
  * دیده می‌شود و شبکه هست، Backoff پس از شکست، بی هم‌پوشانی، و هیچ پاسخ کهنه‌ای نتیجهٔ تازه‌تر را
  * بازنویسی نمی‌کند. ساعت با `page.clock` کنترل می‌شود — هیچ sleep دلخواهی نیست.
  */
-import { test, expect, DEFAULT_HOURLY, type MockApi } from "./fixtures";
+import { test, expect, dailyBody, DEFAULT_HOURLY, type MockApi } from "./fixtures";
 import type { Page, Route } from "@playwright/test";
 import type { DailyBucket, DailyReport } from "../src/lib/pos";
 
@@ -11,7 +11,7 @@ test.use({ timezoneId: "Asia/Tehran" });
 
 /** ۱۰:۴۰ به وقت تهران. */
 const T0 = new Date("2026-09-16T07:10:00Z");
-const report = (over: Partial<DailyReport> = {}): DailyReport => ({
+const report = (over: Partial<Omit<DailyReport, "receivedMinusSales">> = {}): DailyReport => dailyBody({
   businessDate: "2026-09-16", salesAmount: "12340000", receivedAmount: "11000000", profitAmount: "2340000",
   invoiceCount: 12, returnCount: 1, ...over,
 });

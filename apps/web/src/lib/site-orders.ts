@@ -159,14 +159,14 @@ export function addressLines(a: Address): string[] {
 }
 
 /**
- * وضعیت ثبت در Core از متای افزونه — یک برچسب، یک حالت.
+ * وضعیت ثبت در مرکز از متای افزونه — یک برچسب، یک حالت.
  * ترتیب مهم است: متوقف و خطا پیش از «در انتظار ثبت» می‌آیند، چون سفارش پرداخت‌شده‌ای که خطا دارد
  * «در انتظار» نیست. سفارش پرداخت‌نشده هیچ‌وقت «ثبت‌نشده = مشکل» گفته نمی‌شود.
  */
 export function coreState(core: OrderCore): { state: StatusState; label: string } {
-  if (core.recorded) return { state: "completed", label: core.invoiceNumber ? `ثبت در Core: ${core.invoiceNumber}` : "ثبت در Core" };
-  if (core.stopped) return { state: "attention", label: "ارسال به Core متوقف شده" };
-  if (core.hasError) return { state: "warning", label: `خطا در ارسال به Core (${core.attempts} تلاش)` };
-  if (core.paymentConfirmed) return { state: "pending", label: "در انتظار ثبت در Core" };
+  if (core.recorded) return { state: "completed", label: core.invoiceNumber ? `ثبت در مرکز: ${core.invoiceNumber}` : "ثبت در مرکز" };
+  if (core.stopped) return { state: "attention", label: "ارسال به مرکز متوقف شده" };
+  if (core.hasError) return { state: "warning", label: `خطا در ارسال به مرکز (${core.attempts} تلاش)` };
+  if (core.paymentConfirmed) return { state: "pending", label: "در انتظار ثبت در مرکز" };
   return { state: "draft", label: "پرداخت تأیید نشده" };
 }

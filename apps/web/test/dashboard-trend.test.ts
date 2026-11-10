@@ -11,11 +11,11 @@ import { describe, test } from "node:test";
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import {
-  addDays, bucketPoints, hourAxis, hourPoints, METRIC_COPY, METRICS, trendBounds, trendCopy, trendView,
+  addDays, bucketPoints, cumulativePoints, GRAINS, hourAxis, hourPoints, METRIC_COPY, METRICS, trendBounds, trendCopy, trendView,
   type Metric, type TrendPoint,
 } from "../src/lib/dashboard-trend.ts";
 import { toJalali } from "../src/lib/jalali-period.ts";
-import type { DailyBucket, DailyHour } from "../src/lib/pos.ts";
+import type { DailyBucket, DailyComparison, DailyHour } from "../src/lib/pos.ts";
 
 /** همان سطح قرارداد قبلی: نمای ساعتیِ روز کامل‌شده. */
 const hourlyView = (hours: DailyHour[], metric: Metric, currentHour: number | null = null) =>
@@ -210,6 +210,85 @@ describe("روند — هنوز نیامده، روزانه و ماهانه", ()
     const v = trendView(pts, "received", "hour");
     if (v.kind !== "chart") throw new Error("chart");
     for (const s of v.series) assert.deepEqual(s.values, pts.map(p => p.values[s.metric]));
+  });
+});
+
+describe("روند «تا این لحظه» و دیروز تا همین لحظه (طرح ۱۰، مهاجرت ۱۰۹)", () => {
+  /** همان STORE با تجمعی سرور (در آزمون واحد، تجمعی را خودِ داده می‌آورد، نه برنامه). */
+  const cum = (hours: DailyHour[]) => {
+    let s = 0n, r = 0n, p = 0n;
+    return hours.map(h => {
+      s += BigInt(h.salesAmount); r += BigInt(h.receivedAmount); p += BigInt(h.profitAmount ?? "0");
+      return { ...h, cumulative: { sales: String(s), received: String(r), profit: h.profitAmount === null ? null : String(p) } };
+    });
+  };
+  const HOURS = cum(STORE);
+  const cmp = (lastHour: number | null, profit = true): DailyComparison => ({
+    businessDate: "2026-09-15", cutoff: "2026-09-15T13:10:00.000000Z", lastHour,
+    total: { sales: "777", received: "0", profit: profit ? "0" : null }, delta: { sales: "1", received: "0", profit: profit ? "0" : null },
+    hours: Array.from({ length: 24 }, (_, hour) => ({ hour, cumulative: lastHour === null || hour > lastHour ? null
+      : { sales: String(hour * 100), received: "0", profit: profit ? "0" : null } })),
+  });
+
+  test("پیش‌فرض نخستین گزینه «تا این لحظه» است و «هر ساعت» هم می‌ماند", () => {
+    assert.deepEqual(GRAINS.map(g => g.key), ["cumulative", "hour", "day", "month"]);
+    assert.equal(trendCopy("sales", "cumulative").chart, "فروش تجمعی امروز (تومان)");
+    assert.equal(trendCopy("sales", "hour").chart, "فروش هر ساعت (تومان)");
+  });
+
+  test("مقدار هر ساعت همان تجمعی سرور است؛ ساعت نیامده null؛ آخرین نقطه = کارت", () => {
+    const pts = cumulativePoints(HOURS, 15, null);
+    const v = trendView(pts, "sales", "cumulative");
+    if (v.kind !== "chart") throw new Error("chart");
+    assert.equal(v.series.length, 1, "بی مقایسه یک خط");
+    for (let i = 0; i < pts.length; i++) {
+      const h = HOURS.find(x => x.hour === Number(pts[i]!.key))!;
+      assert.equal(v.series[0]!.values[i], h.hour > 15 ? null : BigInt(h.cumulative.sales));
+    }
+    assert.match(v.summary, /تا این لحظه: 390٬000 تومان/, "۹ و ۱۱ و ۱۴: ۳٬۹۰۰٬۰۰۰ ریال تا ساعت ۱۵ = تجمعی سرور");
+  });
+
+  test("خط دیروز فقط با مقایسهٔ سرور و کلید روشن؛ پس از مرز null نه صفر؛ متن می‌گوید «نه کل دیروز»", () => {
+    const pts = cumulativePoints(HOURS, 15, cmp(13));
+    const on = trendView(pts, "sales", "cumulative", false, true);
+    if (on.kind !== "chart") throw new Error("chart");
+    const y = on.series.find(s => s.kind === "yesterday")!;
+    assert.equal(y.label, "دیروز تا همین لحظه");
+    pts.forEach((p, i) => assert.equal(y.values[i], Number(p.key) > 13 ? null : BigInt(Number(p.key) * 100)));
+    assert.match(on.note ?? "", /نه کل دیروز/);
+    assert.match(on.summary, /همین لحظهٔ دیروز: /);
+    const off = trendView(pts, "sales", "cumulative", false, false);
+    assert.ok(off.kind === "chart" && off.series.every(s => !s.kind), "کلید خاموش: بی خط دیروز");
+    const none = trendView(cumulativePoints(HOURS, 15, null), "sales", "cumulative", false, true);
+    assert.ok(none.kind === "chart" && none.series.length === 1, "بی مقایسهٔ سرور (صندوق‌دار): بی خط دیروز، حتی با کلید روشن");
+  });
+
+  test("سود نامعلوم در «تا این لحظه» هم نامعلوم است؛ سود دیروزِ پنهان خطی نمی‌سازد", () => {
+    const blind = cum(day({ 9: { salesAmount: "5", invoiceCount: 1 } }, false));
+    assert.equal(trendView(cumulativePoints(blind, null, cmp(23, false)), "profit", "cumulative", false, true).kind, "unknown");
+    const v = trendView(cumulativePoints(blind, null, cmp(23, false)), "sales", "cumulative", false, true);
+    assert.ok(v.kind === "chart" && v.series.some(s => s.kind === "yesterday"), "فروش دیروز مجاز است");
+  });
+
+  test("تصمیم مالک: پیش از اولین فروش، خط امروز روی صفر ساعت‌های رسیده و پیام «هنوز ثبت نشده»؛ ساعت نرسیده null؛ با دیروز، خط دیروز هم", () => {
+    const quiet = cum(day());
+    const alone = trendView(cumulativePoints(quiet, 12, null), "sales", "cumulative", false, true);
+    assert.ok(alone.kind === "chart" && alone.series.length === 1, "خالی نیست: خط امروز هست");
+    const pts = cumulativePoints(quiet, 12, null);
+    alone.series[0]!.values.forEach((v, i) => assert.equal(v, Number(pts[i]!.key) > 12 ? null : 0n, "صفرِ واقعی تا اکنون، null پس از آن"));
+    assert.match(alone.note ?? "", /هنوز فروشی برای امروز ثبت نشده است\./);
+    assert.match(alone.summary, /تا این لحظه: 0 تومان/);
+    const received = trendView(cumulativePoints(quiet, 12, null), "received", "cumulative", false, true);
+    assert.ok(received.kind === "chart");
+    assert.match(received.note ?? "", /هنوز وجهی برای امروز دریافت نشده است\./);
+    const v = trendView(cumulativePoints(quiet, 12, cmp(12)), "sales", "cumulative", false, true);
+    assert.ok(v.kind === "chart" && v.series.length === 2);
+    assert.match(v.note ?? "", /هنوز فروشی برای امروز ثبت نشده است\./);
+    // با اولین فروش، پیام می‌رود.
+    const sold = trendView(cumulativePoints(cum(day({ 9: { salesAmount: "5", invoiceCount: 1 } })), 12, null), "sales", "cumulative", false, true);
+    assert.ok(sold.kind === "chart" && !(sold.note ?? "").includes("هنوز فروشی"));
+    // دادهٔ ساعتی نیامده (هیچ ساعت رسیده‌ای نیست و دیروزی هم نیست): همچنان خالی، نه نمودار ساختگی.
+    assert.equal(trendView([], "sales", "cumulative", false, true).kind, "empty");
   });
 });
 

@@ -20,6 +20,19 @@ export function PosProductPicker({ warehouseId, busy, onPick }: {
   const [error, setError] = useState("");
   const selecting = useRef(false);
   const revision = useRef(0);
+  const input = useRef<HTMLInputElement>(null);
+  // طرح ۱۰: F2 کادر جست‌وجو را فوکوس می‌کند — فقط وقتی پنجرهٔ مودالی باز نیست (فوکوس مودال دزدیده نمی‌شود).
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key !== "F2" || e.defaultPrevented || e.altKey || e.ctrlKey || e.metaKey) return;
+      // فقط پنجرهٔ واقعاً باز؛ برگهٔ «بیشتر» بسته هم aria-modal دارد و نباید میان‌بر را ببندد.
+      if (document.querySelector("dialog[open]")) return;
+      e.preventDefault();
+      input.current?.focus();
+    };
+    document.addEventListener("keydown", onKey);
+    return () => document.removeEventListener("keydown", onKey);
+  }, []);
   useEffect(() => () => { revision.current++; }, [warehouseId]);
   async function submit() {
     const term = normalizeSearch(query);
@@ -57,7 +70,7 @@ export function PosProductPicker({ warehouseId, busy, onPick }: {
       <label className="product-search-field">
         <span className="product-search-label">نام، رنگ، سایز یا بارکد</span>
         <span className="product-search-input">
-          <Icon name="search" size="sm" />
+          <Icon name="barcode" size="sm" />
           {/*
             در حال کار «فقط‌خواندنی + aria-disabled»، نه disabled: ورودیِ disabled فوکوس را از دست
             می‌دهد، پس پس از هر افزودن صندوق‌دار باید دوباره روی کادر بزند، و React پس از هر commit
@@ -65,10 +78,11 @@ export function PosProductPicker({ warehouseId, busy, onPick }: {
             صفحه که با اندازهٔ سبد بزرگ می‌شود (۱۵۰ قلم: حدود ۵۰ms در هر افزودن، apps/web/e2e/perf).
             تایپ را readOnly می‌بندد و ارسال را خودِ submit() با busy.
           */}
-          <input type="search" value={query} maxLength={80} placeholder="بارکد یا نام و تنوع؛ مثلاً کتونی 36 مشکی"
+          <input ref={input} type="search" value={query} aria-keyshortcuts="F2" maxLength={80} placeholder="بارکد یا نام و تنوع؛ مثلاً کتونی 36 مشکی"
             readOnly={busy} aria-disabled={busy || undefined} autoComplete="off"
             onChange={(e) => { revision.current++; setQuery(e.target.value); setSelected(null); }}
             onKeyDown={e => { if (e.nativeEvent.isComposing && e.key === "Enter") e.preventDefault(); }} />
+          <kbd className="product-search-key" aria-hidden="true">F2</kbd>
         </span>
       </label>
       <button type="submit" className="btn product-search-submit" disabled={busy || query.trim().length < 2}>

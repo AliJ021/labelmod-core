@@ -27,10 +27,12 @@ const ROWS: Product[] = [
 test("قیمت فروش: برابر، بازه، بی‌قیمت، بخشی بی‌قیمت، بی‌تنوع فعال و مبلغ بزرگ", async ({ page, api }) => {
   api.productRows = ROWS;
   await openCatalog(page);
-  const table = page.locator("main table.grid");
+  const table = page.getByRole("table", { name: "فهرست کالا؛ قیمت‌ها به تومان" });
   await expect(table.getByRole("columnheader", { name: "قیمت فروش", exact: true })).toBeVisible();
   await expect(table.getByRole("columnheader", { name: "قیمت‌دار", exact: true })).toHaveCount(0);
-  // ستون‌ها (طرح ۱۰): کد، کالا، تنوع، قیمت فروش، وضعیت، عملیات.
+  // ستون‌ها (طرح ۱۰): کد، کالا، سایزها، [موجودی هر انبار]، قیمت فروش، [بها]، وضعیت، کنش‌ها. این ردیف‌ها
+  // موجودی ندارند، پس ستون انباری نیست و قیمت چهارمین خانه است — با سرستون هم سنجیده می‌شود.
+  await expect(table.locator("thead th").nth(3)).toHaveText("قیمت فروش");
   const cell = (code: string) => table.getByRole("row").filter({ hasText: code }).getByRole("cell").nth(3);
 
   await expect(cell("EQ-1")).toContainText("1٬250٬000");

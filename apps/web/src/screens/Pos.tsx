@@ -1,4 +1,5 @@
 import { AmountInput } from "../components/ui/AmountInput.tsx";
+import { Segmented } from "../components/ui/Controls.tsx";
 import { useUrlState, navigate } from "../lib/use-url-state.ts";
 import { readPendingScan, writePendingScan, clearPendingScan, type PendingScan } from "../lib/pending-scan.ts";
 /**
@@ -412,6 +413,12 @@ function PosScreen({ actorId, mode, onMode, browseInvoices }: {
   // همان Retry که باید نجاتش بدهد عوض می‌شود.
   const keys = useRef(new ActionKeys());
   const scans = useRef(new ScanCounter());
+  /**
+   * وعدهٔ بازیابی پیش‌نویس. `ensureInvoice` پیش از ساختن فاکتور تازه منتظرش می‌ماند و اگر پیش‌نویس
+   * برگشته بود همان را می‌گیرد. فقط کنارگذاشتن عمدی سبد (`dropCart`) یا بازیابی ناموفق پاکش می‌کند.
+   */
+  const restoring = useRef<Promise<Invoice | null> | null>(null);
+  const dropCart = () => { forgetCart(); restoring.current = null; };
   const buffer = useRef(new ScanBuffer());
 
   const branch = branches.find((b) => b.id === branchId) ?? null;
@@ -537,10 +544,21 @@ function PosScreen({ actorId, mode, onMode, browseInvoices }: {
     const saved = readCart(shift.id);
     const target = held?.invoiceId ?? saved?.invoiceId;
     if (!target) return;
+    /*
+     * ⚠️ تا بازیابی تمام نشده، اسکن نباید فاکتور تازه بسازد. پیش از این، بارکدی که در همان
+     *    چند صد میلی‌ثانیهٔ خواندن پیش‌نویس می‌رسید `POST /invoices` می‌زد؛ بعد بازیابی
+     *    `setInvoice` را با پیش‌نویس قدیمی جایگزین می‌کرد و قلم اسکن‌شده روی یک پیش‌نویس
+     *    یتیم می‌ماند و بی‌صدا از سبد می‌افتاد (CI، webkit-dark-1920). `ensureInvoice` حالا
+     *    منتظر همین وعده است و اگر پیش‌نویس برگشت، همان را می‌گیرد.
+     */
+    let settle: (inv: Invoice | null) => void = () => undefined;
+    restoring.current = new Promise<Invoice | null>((resolve) => { settle = resolve; });
     void (async () => {
+      let restored: Invoice | null = null;
       try {
         const inv = await pos.invoice(target);
         if (inv.status === "draft" && inv.createdBy === actorId && belongs(inv, shift) && inv.branchId === shift.branchId && shift.userId === actorId && shift.status === "open") {
+          restored = inv;
           setInvoice(inv);
           setReceived(parseRial(inv.receivedAmount));
           if (held) {
@@ -558,6 +576,13 @@ function PosScreen({ actorId, mode, onMode, browseInvoices }: {
         }
       } catch (e) {
         setError(message(e));
+      } finally {
+        settle(restored);
+        // ⚠️ بازیابی موفق، وعدهٔ حل‌شده را نگه می‌دارد تا سبد **عمداً** کنار گذاشته شود (`dropCart`).
+        //    پاک‌کردن پس از حل یا حتی پس از commit کافی نبود: اسکنی که با بستار پیش از commit می‌رسید
+        //    `openDraft` تهی می‌دید و وعده را هم پاک‌شده (CI، chromium-light-1920؛ با لاگ زمان‌دار و
+        //    کندسازی ۴ برابر CPU بازتولید شد).
+        if (restored === null) restoring.current = null;
       }
     })();
     // فقط هنگام تغییر شیفت — نه با هر تغییر سبد.
@@ -575,6 +600,12 @@ function PosScreen({ actorId, mode, onMode, browseInvoices }: {
   /** فاکتور پیش‌نویس، در صورت نبود ساخته می‌شود. */
   const ensureInvoice = useCallback(async (): Promise<Invoice> => {
     if (openDraft) return openDraft;
+    // بازیابی در راه: همان پیش‌نویس برگشتی، نه فاکتور دوم (توضیح در اثر بازیابی بالا).
+    const pending = restoring.current;
+    if (pending) {
+      const restored = await pending;
+      if (restored) return restored;
+    }
     const created = await keys.current.run(`create:${shift?.id ?? branchId}`, (key) =>
       pos.createInvoice({ branchId, warehouseId, channel: instagram ? "instagram" : "pos" }, { idempotencyKey: key }),
     );
@@ -1158,7 +1189,7 @@ function PosScreen({ actorId, mode, onMode, browseInvoices }: {
         completeSale(invoice.id, null, null, { payable: amount, received });
       }
       keys.current.clear(action);
-      forgetCart();
+      dropCart();
     });
 
   /** «آیا نهایی شده؟» — فقط خواندن؛ اگر شده، همان وضعیت موفق نشان داده می‌شود. */
@@ -1168,7 +1199,7 @@ function PosScreen({ actorId, mode, onMode, browseInvoices }: {
     if (!["finalized", "paid", "partially_returned", "returned"].includes(fresh.status)) return false;
     completeSale(invoice.id, fresh.number, finalAmounts(fresh.settlement), null);
     keys.current.clear(`finalize:${invoice.id}`);
-    forgetCart();
+    dropCart();
     return true;
   };
 
@@ -1179,7 +1210,7 @@ function PosScreen({ actorId, mode, onMode, browseInvoices }: {
 
   /** «فروش بعدی» — تنها جایی که صفحهٔ «ثبت شد» برداشته و سبد تازه می‌شود. */
   const nextSale = () => {
-    forgetCart();
+    dropCart();
     setCompleted(null);
     setInvoice(null);
     setReceived(0n);
@@ -1208,7 +1239,7 @@ function PosScreen({ actorId, mode, onMode, browseInvoices }: {
       );
       setShift(null);
       setClosing(false);
-      forgetCart();
+      dropCart();
     });
 
   const abandon = () =>
@@ -1222,7 +1253,7 @@ function PosScreen({ actorId, mode, onMode, browseInvoices }: {
         setDraftRefund({ invoiceId: invoice.id, payments });
         return;
       }
-      forgetCart();
+      dropCart();
       setInvoice(null);
       setReceived(0n);
       scans.current.reset();
@@ -1235,7 +1266,7 @@ function PosScreen({ actorId, mode, onMode, browseInvoices }: {
     await keys.current.run(`refund-draft:${draftRefund.invoiceId}:${JSON.stringify(body)}`, (key) =>
       pos.refundDraft(draftRefund.invoiceId, body, key));
     setDraftRefund(null);
-    forgetCart(); setInvoice(null); setReceived(0n); scans.current.reset();
+    dropCart(); setInvoice(null); setReceived(0n); scans.current.reset();
     setNote("برگشت پرداخت پیش‌نویس ثبت و سبد لغو شد.");
   });
 
@@ -1352,13 +1383,17 @@ function PosScreen({ actorId, mode, onMode, browseInvoices }: {
           <span className="pill">{countLabel}</span>
         </div>
         <div className="pos-tools">
-          {onMode ? <button type="button" className="tool" disabled={busy || !payIdle || draftActive || completed !== null}
+          {/* طرح ۱۰: دو حالت در یک کلید دوتایی؛ همان شرط پیشین — با سبد باز حالت عوض نمی‌شود. */}
+          {onMode ? <div className="pos-mode"><Segmented label="نوع فروش" value={instagram ? "instagram" : "store"}
+            options={[{ key: "store", label: "حضوری" }, { key: "instagram", label: "اینستاگرام" }]}
+            disabled={busy || !payIdle || draftActive || completed !== null}
             title={draftActive ? "پیش از تغییر حالت، سبد جاری را نهایی، ذخیره یا رها کنید." : undefined}
-            onClick={() => onMode(instagram ? "store" : "instagram")}>
-            {instagram ? "صندوق فروشگاه" : "فروش اینستاگرام"}
-          </button> : null}
+            onChange={(next) => { if (next !== (instagram ? "instagram" : "store")) onMode(next); }} /></div> : null}
+          {/* بی دسترسی به فهرست فاکتور، پیش‌نویس کنارگذاشته راه برگشتی ندارد؛ پس پیوند هم نیست. */}
+          {browseInvoices ? <a className="tool" href="/?page=invoices&invoices.status=draft" onClick={e => { if (e.metaKey || e.ctrlKey || e.shiftKey) return; e.preventDefault(); navigate(e.currentTarget.href); }}>
+            <Icon name="receipt" size="sm" />پیش‌نویس‌ها</a> : null}
           {instagram ? null : <button type="button" className="tool" disabled={!canPrintProforma} onClick={() => void printProforma()}>
-            {proformaPrinting ? "در حال آماده‌سازی پیش‌فاکتور…" : "چاپ پیش‌فاکتور"}
+            <Icon name="print" size="sm" />{proformaPrinting ? "در حال آماده‌سازی پیش‌فاکتور…" : "چاپ پیش‌فاکتور"}
           </button>}
           <details className="pos-more" onKeyDown={e => {
             if (e.key === "Escape") { e.currentTarget.open = false; e.currentTarget.querySelector("summary")?.focus(); }
@@ -1372,10 +1407,9 @@ function PosScreen({ actorId, mode, onMode, browseInvoices }: {
           }}>
           {/* بی دسترسی به فهرست فاکتور، پیش‌نویس کنارگذاشته راه برگشتی ندارد؛ پس فقط «رها کردن». */}
           {browseInvoices ? <>
-          <a className="tool" href="/?page=invoices&invoices.status=draft" onClick={e => { if (e.metaKey || e.ctrlKey || e.shiftKey) return; e.preventDefault(); navigate(e.currentTarget.href); }}>پیش‌نویس‌ها</a>
           <button type="button" className="tool" disabled={busy || !invoice || completed !== null || !payIdle} onClick={() => {
             if (!invoice || busy) return;
-            forgetCart(); setInvoice(null); setReceived(0n); scans.current.reset();
+            dropCart(); setInvoice(null); setReceived(0n); scans.current.reset();
             setNote("پیش‌نویس در سرور ذخیره است و از بخش فاکتورها قابل ادامه است.");
           }}>ذخیره و فروش جدید</button>
           </> : null}
@@ -1475,12 +1509,16 @@ function PosScreen({ actorId, mode, onMode, browseInvoices }: {
           <div className="pos-doc-head pos-doc-block">
             <span className="pos-doc-icon" aria-hidden="true"><Icon name="receipt" /></span>
             <div className="pos-doc-title">
-              <strong>{instagram ? "فاکتور فروش اینستاگرام" : "فاکتور فروش جدید"}</strong>
+              <span className="pos-doc-name"><strong>{instagram ? "فاکتور فروش اینستاگرام" : "فاکتور فروش جدید"}</strong>
+                {/* این کارت فقط پیش‌نویس را نشان می‌دهد؛ پس از نهایی‌سازی جایش را «فروش ثبت شد» می‌گیرد. */}
+                <StatusBadge state="draft" label="پیش‌نویس" /></span>
               <small>شماره پس از ثبت نهایی اختصاص می‌یابد.</small>
             </div>
             <dl className="pos-doc-meta">
               <div><dt>تاریخ فاکتور</dt><dd>{invoice?.occurredAt ? formatJalaliMoment(invoice.occurredAt) : "—"}</dd></div>
               <div><dt>نوع فروش</dt><dd>{instagram ? "اینستاگرام" : "حضوری"}</dd></div>
+              {/* نام از سرور (`createdByName`)؛ پیش از اولین قلم پیش‌نویسی نیست و حدس زده نمی‌شود. */}
+              <div><dt>ثبت‌کننده</dt><dd>{invoice?.createdByName ?? "—"}</dd></div>
             </dl>
           </div>
           {/* مشتری همیشه باز و پیش از جست‌وجوست؛ اختیاری/الزامی فقط سیاست فروش (`pos.require_customer`) است، نه چیدمان. */}

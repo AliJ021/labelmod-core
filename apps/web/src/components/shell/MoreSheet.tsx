@@ -1,4 +1,4 @@
-import { useId } from "react";
+import { useId, type ReactNode } from "react";
 import { Icon } from "../Icon.tsx";
 import { useModalDialog } from "../ui/use-modal.ts";
 import { NAV_GROUPS, routeUrl, type AccessState, type NavItem, type Zone } from "../../lib/navigation.ts";
@@ -16,7 +16,7 @@ import { NAV_GROUPS, routeUrl, type AccessState, type NavItem, type Zone } from 
  * مقصدها پیوندند (`aria-current="page"`)، نه زبانه: درون مودال tablistی
  * نیست که پنل‌هایش بیرونِ inert باشند.
  */
-export function MoreSheet({ open, items, pending, access, zone, onNavigate, onDismiss, onRetry, trigger }: {
+export function MoreSheet({ open, items, pending, access, zone, onNavigate, onDismiss, onRetry, trigger, footer, header }: {
   open: boolean;
   items: readonly NavItem[];
   pending: number;
@@ -26,6 +26,10 @@ export function MoreSheet({ open, items, pending, access, zone, onNavigate, onDi
   onDismiss: () => void;
   onRetry: () => void;
   trigger: () => HTMLElement | null;
+  /** گوشی (طرح ۱۰): حساب و خروج پای همین برگه‌اند، چون نوار بالا دیگر آن‌ها را ندارد. */
+  footer?: ReactNode;
+  /** بالای برگه مثل منوی طرح ۱۰: نشان و کارت شعبه (همان اجزای نوار کناری دسکتاپ). */
+  header?: ReactNode;
 }) {
   const titleId = useId();
   const { ref, props, closeInto } = useModalDialog(open, {
@@ -37,7 +41,9 @@ export function MoreSheet({ open, items, pending, access, zone, onNavigate, onDi
   const groups = NAV_GROUPS.map(g => ({ ...g, items: items.filter(z => z.navGroup === g.key) })).filter(g => g.items.length > 0);
   return <dialog ref={ref} id="more-sheet" className="more-sheet" aria-labelledby={titleId} aria-modal="true" {...props}>
     <div className="more-sheet-body">
-      <h2 id={titleId} className="more-sheet-title">همهٔ بخش‌ها</h2>
+      {header ? <div className="more-sheet-head">{header}</div> : null}
+      {/* نام دسترس‌پذیر برگه همیشه همین است؛ وقتی نشان و شعبه بالای برگه‌اند، عنوان فقط برای صفحه‌خوان است. */}
+      <h2 id={titleId} className={header ? "more-sheet-title sr-only" : "more-sheet-title"}>همهٔ بخش‌ها</h2>
       {access === "degraded" ? <div className="nav-access-note" role="status">
         <p>دسترسی بعضی بخش‌ها بررسی نشد؛ تا پاسخ سرور نیاید نشان داده نمی‌شوند.</p>
         <button type="button" className="btn" onClick={onRetry}>بررسی دوباره</button>
@@ -62,6 +68,7 @@ export function MoreSheet({ open, items, pending, access, zone, onNavigate, onDi
       {access === "loading" && pending > 0 ? <ul className="more-list more-list--pending" aria-hidden="true">
         {Array.from({ length: pending }, (_, i) => <li key={i}><span className="skeleton more-pending" /></li>)}
       </ul> : null}
+      {footer ? <div className="more-sheet-account">{footer}</div> : null}
       <button type="button" className="more-sheet-close" aria-label="بستن بخش‌های بیشتر" onClick={onDismiss}>
         <Icon name="close" /><span>بستن</span>
       </button>

@@ -118,6 +118,12 @@ export interface ReceiptSummaryJson {
   supplierInvoiceNo: string | null;
   lineCount: number;
   goodsAmount: string;
+  /** جمع تعداد سطرها (رشته، چون تعداد اعشاری مجاز است) — «۱۲ عدد» طرح ۱۰. */
+  totalQty: string;
+  /** جمع هزینه‌های جانبی رسید (ریال، رشته)؛ بی هزینه «0». */
+  chargesAmount: string;
+  /** نوع و روش تخصیص هر هزینه، به ترتیب ثبت — فقط برای توضیح ستون. */
+  charges: Array<{ chargeType: string; allocation: string }>;
 }
 
 export class ReceiptService {
@@ -164,6 +170,10 @@ export class ReceiptService {
                        FROM purchasing.receipt_line l WHERE l.receipt_id = r.id)`.as(
           "goods_amount",
         ),
+        sql<string>`(SELECT coalesce(sum(l.qty), 0)::text FROM purchasing.receipt_line l WHERE l.receipt_id = r.id)`.as("total_qty"),
+        sql<string>`(SELECT coalesce(sum(c.amount), 0)::text FROM purchasing.receipt_charge c WHERE c.receipt_id = r.id)`.as("charges_amount"),
+        sql<Array<{ chargeType: string; allocation: string }>>`(SELECT coalesce(json_agg(json_build_object('chargeType', c.charge_type, 'allocation', c.allocation) ORDER BY c.id), '[]'::json)
+                       FROM purchasing.receipt_charge c WHERE c.receipt_id = r.id)`.as("charges"),
       ])
       .orderBy("r.occurred_at", "desc")
       .orderBy("r.id", "desc")
@@ -183,6 +193,9 @@ export class ReceiptService {
       supplierInvoiceNo: r.supplier_invoice_no,
       lineCount: Number(r.line_count),
       goodsAmount: r.goods_amount,
+      totalQty: r.total_qty,
+      chargesAmount: r.charges_amount,
+      charges: r.charges,
     }));
   }
 

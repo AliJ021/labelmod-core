@@ -93,10 +93,31 @@ export interface Customer {
   tags: string[];
   internalNote: string | null;
   createdAt: string;
-  /** جمع فروش و مانده — از دفتر، نه از یک ستون موازی. */
+  /**
+   * جمع فروش از فاکتور، و مانده (خالص) از **دفتر** — فقط سند `confirmed`/`final`، همان `ledgerOwed − ledgerCredit`.
+   */
   invoiceCount: number;
   totalPurchased: string;
   balance: string;
+  /**
+   * طرح ۱۰ — ماندهٔ دفتر مشتری با **همان** تعریف کارت «طلب/اعتبار مشتریان» داشبورد (`/dashboard/operations`):
+   * خالص سطرهای `party_type = 'customer'` فقط از سند `confirmed`/`final` و در دامنهٔ شعبه. خالص مثبت «طلب
+   * ما» است و منفی «اعتبار مشتری نزد ما»؛ یکی از این دو همیشه صفر است و با هم جمع نمی‌شوند.
+   */
+  ledgerOwed: string;
+  ledgerCredit: string;
+  /**
+   * تصمیم مالک (۲۰۲۶/۱۱/۰۷) — اثر ثبت‌نشده: پیش‌نمایش سطر طلبی که بستن دوره‌های بازِ همین مشتری به
+   * دفتر می‌زند (`sales.unposted_receivable`، مهاجرت ۱۱۲). موقت؛ با طلب و اعتبار ثبت‌شده جمع نمی‌شود.
+   */
+  ledgerUnposted: string;
+}
+
+/** جمع همان ستون‌ها برای همان مشتریانی که فهرست برگردانده — در SQL. */
+export interface CustomerLedgerTotals {
+  owed: string;
+  credit: string;
+  unposted: string;
 }
 
 interface Row {
@@ -119,6 +140,9 @@ interface Row {
   invoice_count: string;
   total_purchased: string;
   balance: string;
+  ledger_owed: string;
+  ledger_credit: string;
+  ledger_unposted: string;
 }
 
 function toJson(r: Row): Customer {
@@ -142,6 +166,9 @@ function toJson(r: Row): Customer {
     invoiceCount: Number(r.invoice_count),
     totalPurchased: serializeMoney(parseMoney(r.total_purchased)),
     balance: serializeMoney(parseMoney(r.balance)),
+    ledgerOwed: serializeMoney(parseMoney(r.ledger_owed)),
+    ledgerCredit: serializeMoney(parseMoney(r.ledger_credit)),
+    ledgerUnposted: serializeMoney(parseMoney(r.ledger_unposted)),
   };
 }
 
@@ -153,8 +180,26 @@ function toJson(r: Row): Customer {
  * از دیگری عقب می‌ماند — همان دلیلی که «چقدرش رسیده» هم یک نما است
  * نه یک ستون.
  */
+/** خالص دفتر یک مشتری (`c.id`) از سند ثبت‌شده در دامنهٔ شعبه — یک تعریف برای ستون‌ها و جمع. */
+const ledgerNet = (branches: CustomerBranchScope) => sql`
+  coalesce((SELECT sum(l.debit - l.credit)
+              FROM ledger.journal_line l
+              JOIN ledger.journal_entry e ON e.id = l.entry_id
+             WHERE l.party_type = 'customer' AND l.party_id = c.id
+               AND e.status IN ('confirmed', 'final')
+               AND (${branches === "all"} OR e.branch_id = ANY(${branches === "all" ? [] : branches}::uuid[]))), 0)`;
+
+/** اثر ثبت‌نشدهٔ یک مشتری (`c.id`) در دامنهٔ شعبه — مهاجرت ۱۱۲، همان فرمول post_batch. */
+const ledgerUnposted = (branches: CustomerBranchScope) => sql`
+  coalesce((SELECT sum(u.amount) FROM sales.unposted_receivable() u
+             WHERE u.customer_id = c.id
+               AND (${branches === "all"} OR u.branch_id = ANY(${branches === "all" ? [] : branches}::uuid[]))), 0)`;
+
 const selectCustomer = (branches: CustomerBranchScope) => sql`
   SELECT c.*,
+         ${ledgerUnposted(branches)}::text AS ledger_unposted,
+         greatest(${ledgerNet(branches)}, 0)::text AS ledger_owed,
+         greatest(-${ledgerNet(branches)}, 0)::text AS ledger_credit,
          (SELECT count(*) FROM sales.invoice i
            WHERE i.customer_id = c.id
              AND (${branches === "all"} OR i.branch_id = ANY(${branches === "all" ? [] : branches}::uuid[]))
@@ -165,12 +210,9 @@ const selectCustomer = (branches: CustomerBranchScope) => sql`
              AND (${branches === "all"} OR i.branch_id = ANY(${branches === "all" ? [] : branches}::uuid[]))
                       AND i.status IN ('finalized','paid','partially_returned','returned')), 0)::text
            AS total_purchased,
-         coalesce((SELECT sum(l.debit - l.credit)
-                    FROM ledger.journal_line l
-                    JOIN ledger.journal_entry e ON e.id = l.entry_id
-                                 WHERE l.party_type = 'customer' AND l.party_id = c.id
-                     AND (${branches === "all"} OR e.branch_id = ANY(${branches === "all" ? [] : branches}::uuid[]))), 0)::text
-           AS balance
+         -- یک تعریف با ستون‌های طلب/اعتبار و کارت داشبورد: فقط سند confirmed/final. تا این اصلاح، سند
+         -- draft/temporary هم در «مانده» می‌نشست و پرونده عددی متفاوت با تراز آزمایشی نشان می‌داد.
+         ${ledgerNet(branches)}::text AS balance
     FROM sales.customer c
 `;
 
@@ -215,6 +257,18 @@ export class CustomerService {
       LIMIT ${input.limit}
     `.execute(this.#db);
     return rows.rows.map(toJson);
+  }
+
+  /** جمع «طلب» و «اعتبار» همین مشتریان، با همان `ledgerNet` ستون‌ها و در SQL. */
+  async ledgerTotals(ids: readonly string[], branches: CustomerBranchScope): Promise<CustomerLedgerTotals> {
+    if (ids.length === 0) return { owed: "0", credit: "0", unposted: "0" };
+    const r = await sql<{ owed: string; credit: string; unposted: string }>`
+      SELECT coalesce(sum(greatest(x.net, 0)), 0)::text AS owed, coalesce(sum(greatest(-x.net, 0)), 0)::text AS credit,
+             coalesce(sum(x.unposted), 0)::text AS unposted
+        FROM (SELECT ${ledgerNet(branches)} AS net, ${ledgerUnposted(branches)} AS unposted
+                FROM sales.customer c WHERE c.id = ANY(${[...ids]}::uuid[])) x
+    `.execute(this.#db);
+    return { owed: r.rows[0]!.owed, credit: r.rows[0]!.credit, unposted: r.rows[0]!.unposted };
   }
 
   /**

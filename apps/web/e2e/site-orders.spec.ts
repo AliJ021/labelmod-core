@@ -55,7 +55,7 @@ test.describe("سفارش‌های سایت", () => {
     await page.goto("/?page=site-orders");
     const row = list(page).getByRole("row").filter({ hasText: "مشتری سایت" });
     await expect(row).toContainText("1٬200٬000");
-    await expect(row).toContainText("خطا در ارسال به Core (2 تلاش)");
+    await expect(row).toContainText("خطا در ارسال به مرکز (2 تلاش)");
     await expect(row).toContainText("منتظر ارسال");
     // دلار ریال نمی‌شود: همان عدد سایت با کد ارز.
     const usd = list(page).getByRole("row").filter({ hasText: "مشتری دلاری" });
@@ -73,7 +73,7 @@ test.describe("سفارش‌های سایت", () => {
     await expect(panel.getByRole("region", { name: "نشانی ارسال" })).toContainText("خیابان ولیعصر ۱۰");
     await expect(panel).toContainText("A1B2C3");
     // تصمیم معوق ماندگار (بازبینی ریشه روی 4b0046a): «در صف»، نه «خیر».
-    const queue = panel.getByRole("region", { name: "ثبت در Core" }).locator(".site-order-facts div").filter({ hasText: "صف ارسال" });
+    const queue = panel.getByRole("region", { name: "ثبت در مرکز" }).locator(".site-order-facts div").filter({ hasText: "صف ارسال" });
     await expect(queue).toContainText("در صف ماندگار؛ منتظر ثبت در زمان‌بند");
     await expect(queue).not.toContainText("خیر");
     await expect(panel.getByRole("region", { name: "کوپن‌ها" })).toContainText("off10");
@@ -132,10 +132,10 @@ test.describe("سفارش‌های سایت", () => {
 
   test("an unreliable site answer is “unknown” with its reason — never an empty list", async ({ page, api }) => {
     api.handlers.set("GET /web/orders", async route => {
-      await route.fulfill({ json: { state: "unavailable", code: "scope_mismatch", message: "شعبه یا انبار افزونه با انبار سایت در Core یکسان نیست.", fetchedAt: "2026-09-16T09:00:00.000Z" } });
+      await route.fulfill({ json: { state: "unavailable", code: "scope_mismatch", message: "شعبه یا انبار افزونه با انبار سایت در مرکز یکسان نیست.", fetchedAt: "2026-09-16T09:00:00.000Z" } });
     });
     await page.goto("/?page=site-orders");
-    await expect(list(page)).toContainText("شعبه یا انبار افزونه با انبار سایت در Core یکسان نیست.");
+    await expect(list(page)).toContainText("شعبه یا انبار افزونه با انبار سایت در مرکز یکسان نیست.");
     await expect(list(page)).toContainText("scope_mismatch");
     await expect(list(page)).toContainText("این به معنای «سفارشی نیست» نیست");
     await expect(list(page)).not.toContainText("در این صفحه سفارشی نیست");
@@ -148,8 +148,24 @@ test.describe("سفارش‌های سایت", () => {
     });
     await page.goto("/");
     // کنترل منفی معنادار: «مرجوعی» در همان رندرِ پس از دسترسی ظاهر می‌شود که این مقصد می‌شد.
-    await expect(page.getByRole("tab", { name: "مرجوعی", includeHidden: true }).first()).toBeAttached();
+    await expect(page.getByRole("tab", { name: "مرجوعی و تعویض", exact: true, includeHidden: true }).first()).toBeAttached();
     await expect(page.getByRole("tab", { name: "سفارش‌های سایت", includeHidden: true })).toHaveCount(0);
     expect(calls(api)).toEqual([]);
+  });
+
+  test("V10 column order: date under the order, payment method under the amount; nothing extra is requested", async ({ page, api }) => {
+    api.handlers.set("GET /web/orders", async route => { await route.fulfill({ json: page1 }); });
+    await page.goto("/?page=site-orders");
+    const table = list(page).getByRole("table", { name: "سفارش‌های سایت" });
+    await expect(table.locator("tbody tr").filter({ hasText: "مشتری سایت" })).toBeVisible();
+    expect((await table.locator("thead th").allInnerTexts()).map(h => h.trim()))
+      .toEqual(["سفارش", "مشتری", "اقلام", "مبلغ سفارش", "وضعیت در سایت", "ثبت در مرکز", "کنش‌ها"]);
+    const cells = table.locator("tbody tr").filter({ hasText: "مشتری سایت" }).locator("td");
+    await expect(cells.nth(0)).toContainText("#41");
+    await expect(cells.nth(0).locator("small")).not.toHaveText("—");
+    await expect(cells.nth(2)).toContainText("۲ قلم");
+    await expect(cells.nth(3)).toContainText("1٬200٬000");
+    await expect(cells.nth(3)).toContainText("زرین‌پال");
+    expect(calls(api)).toEqual(["GET /web/orders?page=1"]);
   });
 });

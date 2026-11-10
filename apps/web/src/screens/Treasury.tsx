@@ -8,6 +8,10 @@ import { Icon } from "../components/Icon.tsx";
 import { Note } from "../components/ui/Note.tsx";
 import { SectionHeader } from "../components/ui/PageHeader.tsx";
 import { StatusBadge, type StatusState } from "../components/ui/Status.tsx";
+import { DataTable } from "../components/ui/DataTable.tsx";
+import { Kpi } from "../components/ui/Kpi.tsx";
+import { Money } from "../components/ui/Money.tsx";
+import { formatQty } from "../lib/format.ts";
 /**
  * خزانه و چک.
  *
@@ -35,7 +39,7 @@ import { StatusBadge, type StatusState } from "../components/ui/Status.tsx";
 import { useCallback, useEffect, useState } from "react";
 import { Solid } from "../components/Glass.tsx";
 import { TreasuryBalances } from "../components/TreasuryBalances.tsx";
-import { TreasuryDesk } from "../components/TreasuryDesk.tsx";
+import { TreasuryDesk, TreasuryTerminals } from "../components/TreasuryDesk.tsx";
 import { ApiError } from "../lib/api.ts";
 import { ActionKeys, actionFor } from "../lib/action-key.ts";
 import { rialFromTomanInput, toman } from "../lib/money.ts";
@@ -52,6 +56,7 @@ import {
   type Cheque,
   type ChequeAction,
   type ChequeDue,
+  type ChequeDueTotals,
   type Purpose,
   type TreasuryAccount,
   type TreasuryTransaction,
@@ -88,13 +93,14 @@ function when(iso: string): string {
 /** نقطه وضعیت — رنگ به‌تنهایی معنا حمل نمی‌کند (قاعده ۳ طراحی). */
 function Urgency({ level }: { level: string }) {
   const tone =
-    level === "overdue" ? "crit" : level === "today" ? "warn" : level === "soon" ? "warn" : "good";
+    level === "overdue" ? "crit" : level === "today" || level === "soon" || level === "due_soon" ? "warn" : "good";
+  // ⚠️ نمای سرور `due_soon` می‌فرستد؛ پیش‌تر فقط `soon` شناخته می‌شد و چک نزدیک سررسید «آینده» و سبز دیده می‌شد.
   const label =
     level === "overdue"
       ? "گذشته"
       : level === "today"
         ? "امروز"
-        : level === "soon"
+        : level === "soon" || level === "due_soon"
           ? "نزدیک"
           : "آینده";
   return (
@@ -130,6 +136,8 @@ function CashMoves() {
   const [suppliers, setSuppliers] = useState<Supplier[]>([]);
   const [branch, setBranch] = useState<Branch | null>(null);
   const [rows, setRows] = useState<TreasuryTransaction[] | null>(null);
+  /** پس از هر حرکت تازه، کشوها و حرکت‌های امروز دوباره از سرور خوانده می‌شوند. */
+  const [deskVersion, setDeskVersion] = useState(0);
   const [error, setError] = useState<string | null>(null);
   const [note, setNote] = useState<string | null>(null);
 
@@ -224,6 +232,7 @@ function CashMoves() {
       setRaw("");
       setMemo("");
       setRefNo("");
+      setDeskVersion(v => v + 1);
       await load();
     } catch (err) {
       setError(message(err));
@@ -244,7 +253,7 @@ function CashMoves() {
         </p>
       ) : null}
       <TreasuryBalances />
-      <TreasuryDesk accounts={accounts} />
+      <TreasuryDesk branchId={branch?.id ?? null} version={deskVersion} />
       {note !== null ? (
         <p className="solid pos-alert" role="status">
           <span className="dot dot--good" aria-hidden="true">●</span> {note}
@@ -432,6 +441,7 @@ function CashMoves() {
           </div>
         )}
       </Solid>
+      <TreasuryTerminals accounts={accounts} />
     </div>
   );
 }
@@ -524,7 +534,9 @@ function Cheques() {
                   <td><span className="num">{c.chequeNo}</span><small>{c.bankName}</small></td>
                   <td>{c.direction === "received" ? "دریافتی" : "پرداختی"}</td>
                   <td>{c.partyName ?? "—"}{c.depositAccountName !== null ? <small>{c.depositAccountName}</small> : null}</td>
-                  <td>{when(c.dueOn)}</td>
+                  {/* طرح ۱۰: «سررسیدگذشته» / «نزدیک سررسید» از `urgency` سرور، نه مقایسه با ساعت مرورگر. */}
+                  <td>{when(c.dueOn)}{c.urgency === "overdue" ? <small className="cheque-urgency" data-urgency="overdue">سررسیدگذشته</small>
+                    : c.urgency === "due_soon" ? <small className="cheque-urgency" data-urgency="due_soon">نزدیک سررسید</small> : null}</td>
                   <td className="num">{toman(BigInt(c.amount))}</td>
                   <td><StatusBadge state={CHEQUE_TONE[c.status] ?? "unknown"} label={CHEQUE_STATUS[c.status] ?? c.status} /></td>
                   <td>
@@ -611,6 +623,7 @@ function Cheques() {
 
 function DueList() {
   const [rows, setRows] = useState<ChequeDue[] | null>(null);
+  const [totals, setTotals] = useState<ChequeDueTotals | null>(null);
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
@@ -618,7 +631,7 @@ function DueList() {
     void (async () => {
       try {
         const r = await treasury.chequeDue();
-        if (alive) setRows(r.due);
+        if (alive) { setRows(r.due); setTotals(r.totals ?? null); }
       } catch (err) {
         if (alive) {
           setError(message(err));
@@ -634,46 +647,33 @@ function DueList() {
   return (
     <div className="stack" style={{ gap: "var(--s-4)" }}>
     <Note tone="warn">هشدار یعنی «برو بانک»، نه اینکه کاری انجام شده باشد. هیچ چیزی خودکار چک را وصول نمی‌کند؛ پس از وصول، از زبانه «چک‌ها» ثبتش کنید.</Note>
+    {/* طرح ۱۰: سه کارت از جمع SQL همان چک‌های فهرست (و همان دامنهٔ شعبه)؛ پاسخ قدیمی‌تر بی جمع، کارتی نمی‌سازد. */}
+    {totals ? <section className="kpis kpi-cards cheque-due-summary" aria-label="جمع سررسیدها">
+      <Kpi variant="card" icon="wallet" label="دریافتی باز" value={<Money rial={totals.received} size="lg" />} note={`${formatQty(String(totals.receivedCount))} چک دریافتی`} />
+      <Kpi variant="card" icon="external" label="پرداختی باز" value={<Money rial={totals.issued} size="lg" />} note={`${formatQty(String(totals.issuedCount))} چک پرداختی`} />
+      <Kpi variant="card" icon="chart" label="خالص سررسیدها" value={<Money rial={totals.net} size="lg" />} note="دریافتی منهای پرداختی، شامل چک برگشتیِ در انتظار" />
+    </section> : null}
     <Solid as="section" className="list-card" aria-labelledby="treasury-due">
-      <SectionHeader id="treasury-due" title="سررسیدها" description="«امروز» و «گذشته» را سرور با تاریخ کاری فروشگاه تعیین می‌کند." />
+      <SectionHeader id="treasury-due" title="تقویم سررسید" description="به ترتیب تاریخ؛ «امروز» و «گذشته» را سرور با تاریخ کاری فروشگاه تعیین می‌کند." />
 
       {error !== null ? (
         <p className="pos-alert" role="alert">
           <span className="dot dot--crit" aria-hidden="true">●</span> {error}
         </p>
-      ) : rows === null ? (
-        <p className="muted">در حال بارگذاری…</p>
-      ) : rows.length === 0 ? (
-        <p className="empty">چکی در راه نیست.</p>
       ) : (
-        <div className="scroll-x">
-          <table className="grid">
-            <thead>
-              <tr>
-                <th>وضعیت سررسید</th>
-                <th>سررسید</th>
-                <th>چک</th>
-                <th>بانک</th>
-                <th>طرف</th>
-                <th className="num">مبلغ (تومان)</th>
-              </tr>
-            </thead>
-            <tbody>
-              {rows.map((c) => (
-                <tr key={c.id}>
-                  <td>
-                    <Urgency level={c.urgency} />
-                  </td>
-                  <td>{when(c.dueOn)}</td>
-                  <td className="num">{c.chequeNo}</td>
-                  <td>{c.bankName}</td>
-                  <td>{c.partyName ?? "—"}</td>
-                  <td className="num">{toman(BigInt(c.amount))}</td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
+        <DataTable<ChequeDue> caption="تقویم سررسید چک‌ها؛ مبلغ‌ها به تومان" stack loading={rows === null} rows={rows ?? []} rowKey={(c) => c.id}
+          empty={{ title: "چکی در راه نیست." }}
+          columns={[
+            { key: "date", header: "تاریخ", cell: (c) => <span className="cell-stack"><span>{when(c.dueOn)}</span>
+              <small className="muted"><Urgency level={c.urgency} />{typeof c.daysLeft === "number" ? ` · ${c.daysLeft < 0 ? `${formatQty(String(-c.daysLeft))} روز گذشته` : c.daysLeft === 0 ? "امروز" : `${formatQty(String(c.daysLeft))} روز مانده`}` : ""}</small></span> },
+            // جهت وضعیت نیست؛ پس متن ساده، نه نشان وضعیت.
+            { key: "direction", header: "جهت", cell: (c) => c.direction === "received" ? "دریافتی" : "پرداختی" },
+            { key: "party", header: "طرف", cell: (c) => c.partyName ?? "—" },
+            { key: "cheque", header: "چک", cell: (c) => <span className="cell-stack"><span className="num">{c.chequeNo}</span><small className="muted">{c.bankName}</small></span> },
+            { key: "amount", header: "مبلغ", numeric: true, cell: (c) => <Money rial={c.amount} unit={false} /> },
+            { key: "status", header: "وضعیت", cell: (c) => CHEQUE_STATUS[c.status] ?? c.status },
+          ]}
+          {...(totals && rows && rows.length ? { foot: { label: "خالص (دریافتی منهای پرداختی)", cells: { amount: <Money rial={totals.net} unit={false} /> } } } : {})} />
       )}
     </Solid>
     </div>

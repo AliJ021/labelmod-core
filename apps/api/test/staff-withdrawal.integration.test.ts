@@ -381,4 +381,65 @@ describe("دفتر برداشت پرسنل", { skip: DATABASE_URL ? false : "DAT
     }),/مجوز/);
     assert.equal(await footprint(),footprintBefore);
   });
+
+  test("کارت «تسویه‌نشده»: جمع SQL نسخهٔ جاری ثبت‌های باز؛ با تسویه کم می‌شود؛ فیلتر وضعیت اثرش نمی‌گذارد", async () => {
+    requestAddress = "127.0.5.4";
+    const expected = async () => (await sql<{ amount: string; count: number }>`SELECT coalesce(sum(amount),0)::text AS amount, count(*)::int AS count
+      FROM identity.staff_withdrawal_current WHERE owner_id=${cashier.id}::uuid AND settled_at IS NULL`.execute(owner.db)).rows[0]!;
+    const a = await create(cashier, "700", "کارت تسویه‌نشده یک");
+    await create(cashier, "300", "کارت تسویه‌نشده دو");
+    const mine = await call(cashier, "GET", "/withdrawals/mine");
+    assert.equal(mine.statusCode, 200, mine.body);
+    assert.deepEqual(mine.json().unsettled, await expected(), "برابر جمع مستقیم SQL");
+    // دفتر مدیر برای همین کارمند: همان عدد، چه فیلتر «همه» چه «تسویه‌شده».
+    const all = await call(gm, "GET", `/withdrawals?ownerId=${cashier.id}&status=all`);
+    const settledOnly = await call(gm, "GET", `/withdrawals?ownerId=${cashier.id}&status=settled`);
+    assert.deepEqual(all.json().unsettled, await expected());
+    assert.deepEqual(settledOnly.json().unsettled, all.json().unsettled, "فیلتر وضعیت کارت را صفر نمی‌کند");
+    const before = BigInt(mine.json().unsettled.amount);
+    const settled = await call(gm, "POST", "/withdrawals/settlements", { items: [{ id: a.id, expectedVersion: a.version }], note: "تسویه کارت" }, randomUUID());
+    assert.equal(settled.statusCode, 200, settled.body);
+    const after = await call(cashier, "GET", "/withdrawals/mine");
+    assert.equal(BigInt(after.json().unsettled.amount), before - 700n);
+    assert.equal(after.json().unsettled.count, mine.json().unsettled.count - 1);
+    // کارمند دیگر عدد این کارمند را نمی‌بیند.
+    const other = (await sql<{ amount: string }>`SELECT coalesce(sum(amount),0)::text AS amount FROM identity.staff_withdrawal_current
+      WHERE owner_id=${otherCashier.id}::uuid AND settled_at IS NULL`.execute(owner.db)).rows[0]!.amount;
+    assert.equal((await call(otherCashier, "GET", "/withdrawals/mine")).json().unsettled.amount, other);
+  });
+  test("پیش‌نمایش تسویه: جمع SQL همان نسخه‌ها؛ تغییرکرده، تسویه‌شده و خارج دامنه شمرده می‌شوند و مبلغ بیرون‌دامنه لو نمی‌رود", async () => {
+    requestAddress = "127.0.5.5";
+    const preview = (who: Actor, items: Array<{ id: string; expectedVersion: number }>) => call(who, "POST", "/withdrawals/settlements/preview", { items });
+    const a = await create(cashier, "999999999999999999", "پیش‌نمایش یک");
+    const b = await create(cashier, "101", "پیش‌نمایش دو");
+    const foreign = await create(cashierB, "5000", "پیش‌نمایش شعبهٔ دوم");
+    const items = [a, b].map(w => ({ id: w.id, expectedVersion: w.version }));
+    const ok = await preview(gm, items);
+    assert.equal(ok.statusCode, 200, ok.body);
+    const direct = (await sql<{ amount: string }>`SELECT sum(amount)::text AS amount FROM identity.staff_withdrawal_revision
+      WHERE (withdrawal_id, version) IN ((${a.id}::uuid, 1), (${b.id}::uuid, 1))`.execute(owner.db)).rows[0]!.amount;
+    assert.deepEqual(ok.json(), { count: 2, amount: direct, stale: 0 });
+    assert.equal(direct, "1000000000000000100", "بیش از دقت number؛ جمع دقیق از SQL");
+    // مدیر شعبه‌ای قلم شعبهٔ دیگر را «تغییرکرده» می‌بیند، بی مبلغ.
+    const scoped = await preview(gmA, [...items, { id: foreign.id, expectedVersion: 1 }]);
+    assert.deepEqual(scoped.json(), { count: 2, amount: direct, stale: 1 });
+    // پیش‌نمایش هیچ اثری ندارد؛ پس از اصلاح، نسخهٔ قدیمی «تغییرکرده» است ولی مبلغش همان نسخه است.
+    assert.equal((await call(gm, "GET", `/withdrawals/${b.id}`)).json().settledAt, null);
+    const corrected = await call(gm, "POST", `/withdrawals/${b.id}/corrections`, { expectedVersion: 1, amount: "202", reason: "پیش‌نمایش دو", note: "اصلاح" }, randomUUID());
+    assert.equal(corrected.statusCode, 200, corrected.body);
+    assert.deepEqual((await preview(gm, items)).json(), { count: 2, amount: direct, stale: 1 });
+    // تسویه: جمع پاسخ همان جمع پیش‌نمایش است.
+    const fresh = [{ id: a.id, expectedVersion: 1 }, { id: b.id, expectedVersion: 2 }];
+    const before = (await preview(gm, fresh)).json();
+    assert.equal(before.stale, 0);
+    const settled = await call(gm, "POST", "/withdrawals/settlements", { items: fresh, note: "پیش‌نمایش" }, randomUUID());
+    assert.equal(settled.statusCode, 200, settled.body);
+    assert.equal(settled.json().totalAmount, before.amount);
+    assert.deepEqual((await preview(gm, fresh)).json(), { ...before, stale: 2 }, "تسویه‌شده، تغییرکرده شمرده می‌شود");
+    // ورودی و مجوز
+    assert.equal((await preview(gm, [fresh[0]!, fresh[0]!])).statusCode, 400);
+    assert.equal((await preview(gm, [])).statusCode, 400);
+    for (const who of [cashier, supervisor, accountant]) assert.equal((await preview(who, fresh)).statusCode, 403);
+    assert.equal(await footprint(), footprintBefore);
+  });
 });

@@ -319,7 +319,7 @@ export function Login({ onDone }: { onDone: () => void }) {
           ) : null}
 
           <button type="submit" className="auth-submit" disabled={busy}>
-            {busy ? "در حال ورود…" : "ورود"}
+            {busy ? "در حال ورود…" : <>ورود <Icon name="chevron" size="sm" /></>}
           </button>
           <p className="auth-note"><Icon name="info" size="sm" />رمز را فراموش کرده‌اید؟ مدیر فروشگاه رمز تازه می‌سازد؛ بازیابی خودکار با ایمیل نداریم.</p>
         </form>

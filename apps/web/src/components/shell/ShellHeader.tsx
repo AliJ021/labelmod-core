@@ -12,10 +12,15 @@ import { ServerFreshness } from "../HeaderTools.tsx";
  * زنگوله‌ای که چیزی نمی‌شمارد، یک ادعای ساختگی است
  * (docs/UI_PATTERNS.md، «اعلان‌ها» و «سلامت عملیاتی»).
  */
-export function ShellHeader({ searchKey, tools, trail }: { searchKey: string; tools: ReactNode; trail?: ReactNode }) {
+export function ShellHeader({ searchKey, tools, trail, menu }: {
+  searchKey: string; tools: ReactNode; trail?: ReactNode;
+  /** گوشی (طرح ۱۰): دکمهٔ ☰ که همان برگهٔ همهٔ بخش‌ها را باز می‌کند؛ در دسکتاپ نیست. */
+  menu?: ReactNode;
+}) {
   const online = useOnline();
   return <>
     <Glass as="header" radius="md" className="workspace-header" refract={false}>
+      {menu}
       <strong className="brand">
         <span className="brand-mark" aria-hidden="true" />
         <span className="brand-name">لیبل مد</span>

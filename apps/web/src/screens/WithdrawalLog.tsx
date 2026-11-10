@@ -7,6 +7,7 @@ import { Button, Field } from "../components/ui/Controls.tsx";
 import { DataTable, type Column } from "../components/ui/DataTable.tsx";
 import { Money } from "../components/ui/Money.tsx";
 import { PageHeader, SectionHeader } from "../components/ui/PageHeader.tsx";
+import { WithdrawalUnsettled } from "../components/WithdrawalUnsettled.tsx";
 import { SafeAction } from "../components/ui/SafeAction.tsx";
 import { Skeleton } from "../components/ui/Skeleton.tsx";
 import { useWithdrawalOperation } from "../lib/use-withdrawal-operation.ts";
@@ -56,7 +57,17 @@ export function WithdrawalLog({ currentUserId, write, writeState }: { currentUse
   const locked = !!sent || selecting || !!recovery.error;
   const payload: SettlementPayload | null = sent ?? (chosen.length && note.trim() && !checkText(note, "یادداشت تسویه")
     ? { items: chosen.map(r => ({ id: r.id, expectedVersion: r.version, amount: r.amount, ownerName: r.owner.name })), note: note.trim() } : null);
-  const total = (sent?.items ?? chosen).reduce((sum,r) => sum+BigInt(r.amount),0n).toString();
+  // جمع انتخاب از سرور (SQL)، نه با BigInt در مرورگر؛ مبلغ همان نسخه‌هایی است که تسویه می‌شوند.
+  const previewItems = (sent?.items ?? chosen).map(r => ({ id: r.id, expectedVersion: "expectedVersion" in r ? r.expectedVersion : r.version }));
+  const previewKey = previewItems.map(i => `${i.id}:${i.expectedVersion}`).join(",");
+  const loadPreview = useCallback((signal: AbortSignal) => api.post<{ count: number; amount: string; stale: number }>("/withdrawals/settlements/preview",
+    { items: previewKey.split(",").map(p => { const [id, v] = p.split(":"); return { id: id!, expectedVersion: Number(v) }; }) }, { signal }), [previewKey]);
+  const preview = useLatestQuery({ key: previewKey, load: loadPreview, delay: 150, enabled: write === "allow" && previewItems.length > 0 });
+  // پیش از روشن‌شدن نتیجهٔ تسویهٔ قبلی، «تغییرکرده» طبیعی است (همان‌ها تسویه شده‌اند)؛ هشدار فقط برای انتخاب تازه.
+  const stale = !sent && (preview.data?.stale ?? 0) > 0;
+  const totalText = !previewItems.length ? null
+    : preview.data ? <Money rial={preview.data.amount} exact size="sm" />
+    : preview.loading ? <span className="muted">در حال محاسبه…</span> : <span className="muted">خوانده نشد</span>;
   const clearChoice = () => { setChosen([]); setBulkError(""); setBulkDone(""); };
   async function selectAll() {
     setSelecting(true); setBulkError("");
@@ -104,6 +115,7 @@ export function WithdrawalLog({ currentUserId, write, writeState }: { currentUse
   return <div className="settings-page">
     <PageHeader title="دفتر برداشت پرسنل"
       context="برداشت‌هایی که هر کاربر برای خودش ثبت کرده، در دامنهٔ شعبهٔ شما. این دفتر فقط ثبت است و هیچ اثری بر صندوق، حساب‌ها یا حقوق ندارد؛ اصلاح یک نسخهٔ تازه با دلیل است و نسخهٔ قبلی می‌ماند." />
+    <WithdrawalUnsettled data={list.data?.unsettled} note={ownerId ? "همین کاربر، در دامنهٔ شما" : "همهٔ کاربران در دامنهٔ شما؛ فیلتر وضعیت اثری ندارد"} />
     <Solid as="section" className="settings-section" aria-labelledby={listId}>
       <SectionHeader id={listId} title="همهٔ برداشت‌ها" description="تازه‌ترین بالا. مبالغ به تومان‌اند. تسویه فقط وضعیت دفتر را تغییر می‌دهد." />
       <div className="settings-form">
@@ -119,15 +131,16 @@ export function WithdrawalLog({ currentUserId, write, writeState }: { currentUse
             <Button disabled={locked || filter === "settled" || list.loading || !list.data?.items.length} onClick={() => void selectAll()}>انتخاب همهٔ تسویه‌نشده‌های این فیلتر</Button>
             <Button disabled={locked || !chosen.length} onClick={clearChoice}>لغو انتخاب</Button>
           </div>
-          <p role="status">{formatCount(sent?.items.length ?? chosen.length)} برداشت انتخاب شده · جمع <Money rial={total} exact size="sm" />. انتخاب همه، شامل صفحه‌های دیگر همین کاربر و فیلتر است؛ حداکثر ۵۰۰ ثبت.</p>
+          <p role="status">{formatCount(sent?.items.length ?? chosen.length)} برداشت انتخاب شده{totalText ? <> · جمع {totalText}</> : null}. انتخاب همه، شامل صفحه‌های دیگر همین کاربر و فیلتر است؛ حداکثر ۵۰۰ ثبت.</p>
+          {stale ? <p role="alert">{formatCount(preview.data!.stale)} مورد از انتخاب تغییر کرده یا تسویه شده است؛ انتخاب را لغو و دوباره انتخاب کنید.</p> : null}
           <Field label="یادداشت تسویه" error={checkText(sent?.note ?? note,"یادداشت تسویه")} hint="همراه نام مدیر و زمان سرور برای هر نسخه حفظ می‌شود.">
             <textarea rows={2} maxLength={REASON_MAX} value={sent?.note ?? note} disabled={locked} onChange={e => setNote(e.target.value)} />
           </Field>
           {sent ? <p role="status">نتیجهٔ تسویهٔ قبلی هنوز روشن نیست؛ انتخاب قفل است. ابتدا نتیجه را بررسی کنید.</p> : null}
           {bulkError || recovery.error ? <p role="alert">{bulkError || recovery.error}</p> : null}
           <SafeAction trigger="تسویهٔ انتخاب‌ها" title="تأیید تسویهٔ برداشت‌های انتخاب‌شده" triggerVariant="primary"
-            disabled={!payload || !!recovery.error || selecting} initialUnknown={!!sent}
-            summary={payload ? <><p>{formatCount(payload.items.length)} برداشت · جمع <Money rial={total} exact /></p>
+            disabled={!payload || !!recovery.error || selecting || (!sent && (!preview.data || stale))} initialUnknown={!!sent}
+            summary={payload ? <><p>{formatCount(payload.items.length)} برداشت · جمع {preview.data ? <Money rial={preview.data.amount} exact /> : "نامعلوم"}</p>
               <p>کاربران: {[...new Set(payload.items.map(i => i.ownerName))].join("، ")}</p><p>یادداشت: {payload.note}</p></> : null}
             consequence="فقط همین نسخه‌های انتخاب‌شده تسویه می‌شوند؛ مبلغ و سابقه پاک نمی‌شود و هیچ اثر مالی ندارد. اصلاح بعدی یک نسخهٔ تسویه‌نشده می‌سازد."
             confirmLabel="تأیید و ثبت تسویه" pendingLabel="در حال ثبت تسویه…" run={settle} verify={verifySettlement} onDone={settlementFinished} />

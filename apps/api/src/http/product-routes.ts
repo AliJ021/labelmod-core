@@ -134,7 +134,11 @@ export function registerProductRoutes(
         categoryId: z.string().uuid().optional(),
       })
       .parse(req.query ?? {});
-    return { products: await products.list(q) };
+    const list = await products.list(q);
+    // طرح ۱۰: ستون‌های موجودی و بها در دامنهٔ شعبهٔ کاربر؛ بها فقط با `cost.view`.
+    const seesCost = (await can(db, { userId: s.userId, operation: "cost.view", viaPin: s.pinUnlocked })).verdict === "allow";
+    const inventory = await products.inventoryFor(list.map((p) => p.id), { branchIds: await branchesOf(db, s.userId), seesCost });
+    return { products: list.map((p) => ({ ...p, inventory: inventory.get(p.id) ?? null })) };
   });
 
   /**
