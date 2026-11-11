@@ -509,6 +509,19 @@ test("نشست محدود فقط صفحه ثبت عامل دوم را می‌ب�
   api.defaults["GET /auth/2fa/webauthn"] = { credentials: [] };
   await page.goto("/");
   await expect(page.getByRole("heading", { name: "راه‌اندازی احراز هویت دومرحله‌ای" })).toBeVisible();
+  // «visible» فقط CSS را می‌سنجد، نه اینکه چیزی رویش کشیده شده باشد. پارچهٔ ورود (`.mesh`، fixed) کارتِ
+  // بی‌لایه را می‌پوشاند و فقط ورودی و دکمه بیرون می‌ماندند؛ پس نقطهٔ وسط عنوان و توضیح باید خودِ کارت باشد.
+  // `.mesh` عمداً pointer-events ندارد و elementFromPoint از رویش رد می‌شود؛ فقط در این آزمون قابل‌برخوردش
+  // می‌کنیم تا برخورد همان ترتیب نقاشی را نشان دهد (بی این، آزمون روی کد معیوب هم سبز بود).
+  await page.addStyleTag({ content: ".mesh, .mesh * { pointer-events: auto !important; }" });
+  for (const text of ["راه‌اندازی احراز هویت دومرحله‌ای", "برای دسترسی به حساب، ابتدا یک عامل دوم ثبت کنید."]) {
+    const onTop = await page.getByText(text, { exact: true }).evaluate((el) => {
+      const r = el.getBoundingClientRect();
+      const hit = document.elementFromPoint(r.left + r.width / 2, r.top + r.height / 2);
+      return !!hit && !!hit.closest(".auth-card");
+    });
+    expect(onTop, `«${text}» زیر پس‌زمینه نرفته است`).toBe(true);
+  }
   await expect(page.getByRole("tablist", { name: "بخش‌ها" })).toHaveCount(0);
   expect(api.calls.some(x => x.includes("/reports/") || x.includes("/customers") || x.includes("/branches"))).toBe(false);
 });
