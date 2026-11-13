@@ -382,6 +382,34 @@ test("عددهای ساختاری README با واقعیت مخزن می‌خو�
 });
 
 /**
+ * `runOnce` تراکنش Inbox را به `run` می‌دهد — و `run` باید از آن استفاده کند.
+ *
+ * یافتهٔ ممیزی LM-04: سه مسیر خزانه و چک `run: async () =>` داشتند و سرویس
+ * تراکنش جدای خودش را باز و Commit می‌کرد. همه‌چیز کار می‌کرد و هر آزمونی
+ * سبز بود؛ فقط خرابی میان دو Commit، پرداخت تکراری می‌ساخت.
+ *
+ * رفتارش در `treasury.integration.test.ts` با تزریق خرابی سنجیده می‌شود.
+ * این ادعا **کلاس** را می‌بندد: مسیر تازه‌ای که پارامتر تراکنش را نگیرد،
+ * نمی‌تواند اثرش را روی همان تراکنش بگذارد.
+ */
+test("هیچ run ِ runOnce در لایهٔ HTTP تراکنش Inbox را نادیده نمی‌گیرد", () => {
+  const dir = join(ROOT, "apps/api/src/http");
+  const offenders: string[] = [];
+  let seen = 0;
+  for (const file of readdirSync(dir).filter((f) => f.endsWith(".ts"))) {
+    const lines = readFileSync(join(dir, file), "utf8").split("\n");
+    lines.forEach((line, index) => {
+      if (!/\brun:\s*(async\s*)?\(/.test(line)) return;
+      seen += 1;
+      if (/\brun:\s*(async\s*)?\(\s*\)/.test(line)) offenders.push(`${file}:${index + 1}`);
+    });
+  }
+  // ضد‌پوچی: اگر الگو دیگر چیزی پیدا نکند، ادعای پایین بی‌معنا سبز می‌شود.
+  assert.ok(seen >= 20, `الگوی run: فقط ${seen} مورد پیدا کرد؛ این تست دیگر چیزی را نمی‌سنجد`);
+  assert.deepEqual(offenders, [], "run باید پارامتر تراکنش را بگیرد و اثر را روی همان بگذارد");
+});
+
+/**
  * ابزارِ موقت نباید در مخزن جا بماند — و این یک بار CI را شکست.
  *
  * ── چه شد ───────────────────────────────────────────────────────────

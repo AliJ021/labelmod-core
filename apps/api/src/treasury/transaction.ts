@@ -195,19 +195,31 @@ export class TreasuryService {
    * ولی در دفتر نیست.
    */
   async createAndPost(input: TransactionInput): Promise<string> {
+    return this.#db.transaction().execute((trx) => this.createAndPostIn(trx, input));
+  }
+
+  /**
+   * همان ساخت و ثبت، روی تراکنشِ **فراخوان**.
+   *
+   * ⚠️ مسیر HTTP از این می‌گذرد، نه از `createAndPost`: `runOnce` سطر
+   *    Inbox را در تراکنش خودش می‌نشاند و اگر اثر مالی در تراکنش جدایی
+   *    Commit شود، خرابی میان دو Commit یعنی سندی که در دفتر هست و سطر
+   *    Inboxی که برگشته — و تلاش مجدد کلاینت با **همان** کلید، همان
+   *    پرداخت را دوباره ثبت می‌کرد (یافتهٔ ممیزی LM-04). با یک تراکنش،
+   *    یا هر دو می‌نشینند یا هیچ‌کدام.
+   */
+  async createAndPostIn(trx: Transaction<Database>, input: TransactionInput): Promise<string> {
     if (input.amount <= 0n) {
       throw new TreasuryError("bad_amount", "مبلغ باید بزرگ‌تر از صفر باشد", 400);
     }
 
-    await this.#assertReferences(input);
+    await this.#assertReferences(trx, input);
 
-    return this.#db.transaction().execute(async (trx) => {
-      await setActor(trx, input.actorId);
-      const id = await this.#insert(trx, input);
-      await sql`SELECT treasury.post_transaction(${id}::uuid, ${input.actorId}::uuid)`
-        .execute(trx);
-      return id;
-    });
+    await setActor(trx, input.actorId);
+    const id = await this.#insert(trx, input);
+    await sql`SELECT treasury.post_transaction(${id}::uuid, ${input.actorId}::uuid)`
+      .execute(trx);
+    return id;
   }
 
   /**
@@ -222,10 +234,10 @@ export class TreasuryService {
    *    کلید خارجی دیگری همان پیام را می‌گرفت. تصمیم از روی همان
    *    میدانی گرفته می‌شود که واقعاً اشتباه است.
    */
-  async #assertReferences(input: TransactionInput): Promise<void> {
+  async #assertReferences(db: Db, input: TransactionInput): Promise<void> {
     const ids = accountsOf(input);
     if (ids.length > 0) {
-      const found = await this.#db
+      const found = await db
         .selectFrom("treasury.account")
         .select(["id", "is_active", "branch_id"])
         .where("id", "in", ids)
@@ -253,7 +265,7 @@ export class TreasuryService {
     }
 
     if (input.expenseAccountCode !== undefined) {
-      const acc = await this.#db
+      const acc = await db
         .selectFrom("ledger.account")
         .select(["code", "is_postable", "is_active", "type"])
         .where("code", "=", input.expenseAccountCode)
@@ -269,7 +281,7 @@ export class TreasuryService {
       // ولی اینجا پیامش می‌گوید **چرا**.
       const freight = await sql<{ allowed: boolean }>`SELECT EXISTS(
         SELECT 1 FROM ledger.posting_rule WHERE event_type='purchase_receipt'
-          AND leg='other_payable' AND account_code=${acc.code} AND is_active) AS allowed`.execute(this.#db);
+          AND leg='other_payable' AND account_code=${acc.code} AND is_active) AS allowed`.execute(db);
       const freightPayable = acc.type === "liability" && freight.rows[0]?.allowed;
       // Existing freight liabilities are settled here; they are not a new expense.
       if (acc.type !== "expense" && !freightPayable) {

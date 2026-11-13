@@ -26,7 +26,9 @@
  * `clear` می‌آید و آن هم به حساب بانکیِ واگذاری، نه به کشو.
  */
 import { sql } from "kysely";
+import type { Transaction } from "kysely";
 import type { Db } from "../db/client.ts";
+import type { Database } from "../db/types.ts";
 import { parseMoney, serializeMoney } from "../lib/money.ts";
 import { setActor } from "../lib/idempotency.ts";
 
@@ -149,6 +151,16 @@ export interface DueTotals {
 const day = (v: Date | string): string =>
   typeof v === "string" ? v.slice(0, 10) : v.toISOString().slice(0, 10);
 
+export interface ChequeEventInput {
+  chequeId: string;
+  action: ChequeAction;
+  accountId?: string | undefined;
+  partyId?: string | undefined;
+  on?: string | undefined;
+  note?: string | undefined;
+  actorId: string;
+}
+
 export class ChequeService {
   readonly #db: Db;
 
@@ -163,6 +175,14 @@ export class ChequeService {
    * سند با `receive` یا `issue` می‌خورد.
    */
   async create(input: ChequeInput): Promise<string> {
+    return this.#db.transaction().execute((trx) => this.createIn(trx, input));
+  }
+
+  /**
+   * همان ثبت، روی تراکنشِ **فراخوان** — مسیر HTTP از این می‌گذرد تا چک و
+   * سطر Inbox با هم Commit شوند (یافتهٔ ممیزی LM-04).
+   */
+  async createIn(trx: Transaction<Database>, input: ChequeInput): Promise<string> {
     if (input.amount <= 0n) {
       throw new ChequeError("bad_amount", "مبلغ چک باید بزرگ‌تر از صفر باشد", 400);
     }
@@ -174,34 +194,32 @@ export class ChequeService {
       );
     }
 
-    return this.#db.transaction().execute(async (trx) => {
-      await setActor(trx, input.actorId);
-      const row = await trx
-        .insertInto("treasury.cheque")
-        .values({
-          direction: input.direction,
-          branch_id: input.branchId,
-          cheque_no: input.chequeNo,
-          sayad_id: input.sayadId ?? null,
-          bank_name: input.bankName,
-          bank_branch: input.bankBranch ?? null,
-          account_no: input.accountNo ?? null,
-          drawer_name: input.drawerName ?? null,
-          amount: serializeMoney(input.amount),
-          issued_on: input.issuedOn,
-          due_on: input.dueOn,
-          party_type: input.partyType,
-          party_id: input.partyId,
-          bank_account_id: input.bankAccountId ?? null,
-          note: input.note ?? null,
-          created_by: input.actorId,
-        })
-        .returning("id")
-        .executeTakeFirst();
+    await setActor(trx, input.actorId);
+    const row = await trx
+      .insertInto("treasury.cheque")
+      .values({
+        direction: input.direction,
+        branch_id: input.branchId,
+        cheque_no: input.chequeNo,
+        sayad_id: input.sayadId ?? null,
+        bank_name: input.bankName,
+        bank_branch: input.bankBranch ?? null,
+        account_no: input.accountNo ?? null,
+        drawer_name: input.drawerName ?? null,
+        amount: serializeMoney(input.amount),
+        issued_on: input.issuedOn,
+        due_on: input.dueOn,
+        party_type: input.partyType,
+        party_id: input.partyId,
+        bank_account_id: input.bankAccountId ?? null,
+        note: input.note ?? null,
+        created_by: input.actorId,
+      })
+      .returning("id")
+      .executeTakeFirst();
 
-      if (!row) throw new ChequeError("insert_failed", "ثبت چک انجام نشد", 500);
-      return row.id;
-    });
+    if (!row) throw new ChequeError("insert_failed", "ثبت چک انجام نشد", 500);
+    return row.id;
   }
 
   /**
@@ -211,24 +229,22 @@ export class ChequeService {
    * `treasury.post_cheque_event()` است و باید همان‌جا بماند: تابع
    * دیتابیس تنها چیزی است که psql هم نمی‌تواند دورش بزند.
    */
-  async postEvent(input: {
-    chequeId: string;
-    action: ChequeAction;
-    accountId?: string | undefined;
-    partyId?: string | undefined;
-    on?: string | undefined;
-    note?: string | undefined;
-    actorId: string;
-  }): Promise<void> {
-    await this.#db.transaction().execute(async (trx) => {
-      await setActor(trx, input.actorId);
-      await sql`
-        SELECT treasury.post_cheque_event(
-          ${input.chequeId}::uuid, ${input.action}, ${input.actorId}::uuid,
-          ${input.accountId ?? null}::uuid, ${input.partyId ?? null}::uuid,
-          ${input.on ?? null}::date, ${input.note ?? null})
-      `.execute(trx);
-    });
+  async postEvent(input: ChequeEventInput): Promise<void> {
+    await this.#db.transaction().execute((trx) => this.postEventIn(trx, input));
+  }
+
+  /**
+   * همان گذار، روی تراکنشِ **فراخوان** — مسیر HTTP از این می‌گذرد تا سند
+   * رویداد چک و سطر Inbox با هم Commit شوند (یافتهٔ ممیزی LM-04).
+   */
+  async postEventIn(trx: Transaction<Database>, input: ChequeEventInput): Promise<void> {
+    await setActor(trx, input.actorId);
+    await sql`
+      SELECT treasury.post_cheque_event(
+        ${input.chequeId}::uuid, ${input.action}, ${input.actorId}::uuid,
+        ${input.accountId ?? null}::uuid, ${input.partyId ?? null}::uuid,
+        ${input.on ?? null}::date, ${input.note ?? null})
+    `.execute(trx);
   }
 
   async list(opts: {
