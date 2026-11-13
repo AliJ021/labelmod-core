@@ -364,6 +364,7 @@ APP_PASSWORD='…' ops/db-roles.sh  # نقش برنامه بدون حق نوشت
 
 ops/install-hooks.sh  # یک بار روی هر کلون
 ops/close-due-days.sh # بستن شبانه دوره فروش سایت — برای cron
+ops/open-fiscal-year.sh 1406 2027-03-21 2028-03-19  # سال مالی بعد + شمارنده‌های سند (۱۱۷)
 
 # استقرار تولیدی — راهنمای کامل در docs/DEPLOYMENT.md
 ops/deploy.sh up      # Build و اجرای docker-compose.prod.yml

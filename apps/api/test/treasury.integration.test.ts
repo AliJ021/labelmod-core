@@ -18,6 +18,8 @@ import { AuthService } from "../src/auth/service.ts";
 import { hashSecret } from "../src/auth/password.ts";
 import { buildApp } from "../src/http/app.ts";
 import { ChequeService } from "../src/treasury/cheque.ts";
+import { TreasuryService } from "../src/treasury/transaction.ts";
+import { runOnce } from "../src/lib/idempotency.ts";
 import { loadConfig } from "../src/lib/config.ts";
 
 const DATABASE_URL = process.env.DATABASE_URL;
@@ -745,6 +747,114 @@ describe("خزانه و چک", { skip }, () => {
       SELECT count(*) AS n FROM treasury.transaction
        WHERE amount = 4000000 AND purpose = 'supplier_payment'`.execute(handle.db);
     assert.equal(n.rows[0]!.n, "1", "فقط یک تراکنش ساخته شد");
+  });
+
+  /**
+   * یافتهٔ ممیزی LM-04 — اثر مالی و سطر Inbox باید **با هم** Commit شوند.
+   *
+   * آزمون بالا فقط مسیر سالم را می‌سنجد و با نسخهٔ قبلی هم سبز بود: آنجا
+   * اثر در تراکنش جدایی Commit می‌شد و فقط خرابیِ **میان دو Commit** فرقش
+   * را نشان می‌داد. اینجا همان خرابی تزریق می‌شود: `run` اثر را می‌گذارد
+   * و بعد خطا می‌دهد، دقیقاً جایی که فرایند می‌توانست بمیرد.
+   *
+   * ⚠️ بند آخر **کنترل** است و حذف نمی‌شود: همان تزریق را با نسخهٔ
+   *    جداتراکنش (`createAndPost`) می‌راند و ادعا می‌کند سند **می‌ماند**.
+   *    بی آن، تزریقی که هیچ‌چیز را نمی‌گرفت هم این تست را سبز می‌کرد.
+   */
+  test("خرابی پس از اثر و پیش از Commit سطر Inbox: نه سند می‌ماند، نه کلید می‌سوزد", async () => {
+    const treasury = new TreasuryService(handle.db);
+    const chequeSvc = new ChequeService(handle.db);
+    const boom = new Error("خرابی تزریق‌شده پس از اثر");
+    const count = async (amount: string): Promise<string> =>
+      (await sql<{ n: string }>`SELECT count(*)::text AS n FROM treasury.transaction
+         WHERE amount = ${amount}::numeric`.execute(handle.db)).rows[0]!.n;
+    const inbox = async (source: string, key: string): Promise<string> =>
+      (await sql<{ n: string }>`SELECT count(*)::text AS n FROM platform.inbox_message
+         WHERE source = ${source} AND event_id = ${key}`.execute(handle.db)).rows[0]!.n;
+    const input = (amount: bigint) => ({
+      branchId: BRANCH,
+      purpose: "supplier_payment" as const,
+      amount,
+      fromAccountId: bank.id,
+      partyType: "supplier" as const,
+      partyId: supplierId,
+      actorId: ids.admin!,
+    });
+
+    // ── حرکت خزانه ───────────────────────────────────────────────
+    const key = `tr-crash-${suffix}`;
+    const source = "api.treasury.transaction";
+    await assert.rejects(
+      runOnce<string>(handle.db, {
+        key, source, payload: { probe: key },
+        run: async (trx) => {
+          await treasury.createAndPostIn(trx, input(4_100_001n));
+          throw boom;
+        },
+        replay: async (ref) => ref,
+      }),
+      /خرابی تزریق‌شده/,
+    );
+    assert.equal(await count("4100001"), "0", "سند خزانه با سطر Inbox برگشت");
+    assert.equal(await inbox(source, key), "0", "کلید نسوخت");
+
+    // تلاش مجدد با **همان** کلید: یک تراکنش، نه صفر و نه دو.
+    const retry = await runOnce<string>(handle.db, {
+      key, source, payload: { probe: key },
+      run: async (trx) => {
+        const id = await treasury.createAndPostIn(trx, input(4_100_001n));
+        return { value: id, ref: id };
+      },
+      replay: async (ref) => ref,
+    });
+    assert.equal(retry.replayed, false);
+    assert.equal(await count("4100001"), "1", "تلاش مجدد دقیقاً یک تراکنش ساخت");
+    const again = await runOnce<string>(handle.db, {
+      key, source, payload: { probe: key },
+      run: async () => { throw new Error("نباید دوباره اجرا شود"); },
+      replay: async (ref) => ref,
+    });
+    assert.equal(again.replayed, true);
+    assert.equal(again.value, retry.value);
+
+    // ── ساخت چک ─────────────────────────────────────────────────
+    const chequeNo = `CR${suffix}`.slice(0, 20);
+    const chequeKey = `chq-crash-${suffix}`;
+    await assert.rejects(
+      runOnce<string>(handle.db, {
+        key: chequeKey, source: "api.cheque.create", payload: { probe: chequeKey },
+        run: async (trx) => {
+          await chequeSvc.createIn(trx, {
+            direction: "received", branchId: BRANCH, chequeNo, bankName: "بانک آزمون خرابی",
+            amount: 7_700_001n, issuedOn: "2026-06-01", dueOn: "2026-09-01",
+            partyType: "customer", partyId: customerId, actorId: ids.admin!,
+          });
+          throw boom;
+        },
+        replay: async (ref) => ref,
+      }),
+      /خرابی تزریق‌شده/,
+    );
+    const cheques = await sql<{ n: string }>`SELECT count(*)::text AS n FROM treasury.cheque
+      WHERE cheque_no = ${chequeNo}`.execute(handle.db);
+    assert.equal(cheques.rows[0]!.n, "0", "چک با سطر Inbox برگشت");
+
+    // ── کنترل: نسخهٔ جداتراکنش همین تزریق را **رد نمی‌کند** ──────────
+    const controlKey = `tr-control-${suffix}`;
+    await assert.rejects(
+      runOnce<string>(handle.db, {
+        key: controlKey, source, payload: { probe: controlKey },
+        run: async () => {
+          await treasury.createAndPost(input(4_100_002n));
+          throw boom;
+        },
+        replay: async (ref) => ref,
+      }),
+      /خرابی تزریق‌شده/,
+    );
+    assert.equal(await count("4100002"), "1",
+      "کنترل: اثرِ جداتراکنش می‌ماند — همان شکافی که مسیر HTTP دیگر ندارد");
+    assert.equal(await inbox(source, controlKey), "0");
   });
 
   test("دو بار «وصول شد» روی یک چک، دو سند نمی‌زند", async () => {

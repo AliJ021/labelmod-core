@@ -280,7 +280,7 @@ SELECT * FROM (VALUES
 --    ادعا می‌کند — وگرنه زنگ تازه‌ای اضافه می‌شد که هیچ‌کس نمی‌توانست
 --    روشن یا خاموشش کند.
 ('notify.health_alert_codes',
- '["unposted_revenue","outbox_dead","stock_mismatch","ledger_divergence","party_orphan","audit_tamper","restore_drill"]'::jsonb,
+ '["unposted_revenue","outbox_dead","stock_mismatch","ledger_divergence","party_orphan","audit_tamper","restore_drill","fiscal_year_ending"]'::jsonb,
  'کدام زنگ‌های خطر پیام بفرستند.', false,
  'multichoice', 'زنگ‌هایی که پیام می‌فرستند', 'notify',
  '[{"value":"unposted_revenue","label":"درآمد ثبت‌نشده در دفتر"},
@@ -290,7 +290,8 @@ SELECT * FROM (VALUES
    {"value":"party_orphan","label":"سطر سند با شخص ناموجود"},
    {"value":"audit_tamper","label":"دست‌کاری در دفتر حسابرسی"},
    {"value":"restore_drill","label":"تمرین بازیابی بکاپ عقب‌افتاده"},
-   {"value":"cheque_due","label":"چک سررسیدشده یا نزدیک"}]'::jsonb,
+   {"value":"cheque_due","label":"چک سررسیدشده یا نزدیک"},
+   {"value":"fiscal_year_ending","label":"سال مالی بعد تعریف نشده"}]'::jsonb,
  NULL, NULL, NULL,
  'پیش‌فرض همه را دارد جز «چک سررسیدشده»، چون آن از قبل پیامک جدای خودش را دارد (کلید بالاتر) و دو پیام برای یک چک یعنی مالک هر دو را نادیده بگیرد. اگر پیامک چک را خاموش کرده‌اید، این را روشن کنید تا دست‌کم خلاصهٔ روزانه برسد.',
  70, 'settings.manage', true),

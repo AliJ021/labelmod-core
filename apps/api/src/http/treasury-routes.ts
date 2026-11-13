@@ -403,8 +403,9 @@ export function registerTreasuryRoutes(
       key: idempotencyKey(req),
       source: "api.treasury.transaction",
       payload: { actorId: s.userId, ...body, shiftId },
-      run: async () => {
-        const id = await treasury.createAndPost({
+      // اثر مالی روی **همان** تراکنش Inbox — نه تراکنش جدا (LM-04).
+      run: async (trx) => {
+        const id = await treasury.createAndPostIn(trx, {
           ...input,
           ...(shiftId === null ? {} : { shiftId }),
         });
@@ -513,8 +514,8 @@ export function registerTreasuryRoutes(
       key: idempotencyKey(req),
       source: "api.cheque.create",
       payload: { actorId: s.userId, ...body },
-      run: async () => {
-        const id = await cheques.create({
+      run: async (trx) => {
+        const id = await cheques.createIn(trx, {
           ...body,
           amount: parseMoney(body.amount),
           actorId: s.userId,
@@ -547,8 +548,8 @@ export function registerTreasuryRoutes(
       key: idempotencyKey(req) ?? `cheque:${id}:${body.action}`,
       source: "api.cheque.event",
       payload: { actorId: s.userId, chequeId: id, ...body },
-      run: async () => {
-        await cheques.postEvent({
+      run: async (trx) => {
+        await cheques.postEventIn(trx, {
           chequeId: id,
           action: body.action,
           accountId: body.accountId,
