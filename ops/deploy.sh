@@ -75,11 +75,18 @@ case "${1:-}" in
       in_db_tools 'cd /app && BACKUP_DIR=/backup ops/restore-drill.sh'
     fi
     ;;
+  fiscal-year)
+    # سال مالی بعد و شمارنده‌های سندش — `ledger.open_fiscal_year()` (مهاجرت ۱۱۷).
+    # ⚠️ ورودی از راه متغیر محیطی به ظرف می‌رود، نه درون رشتهٔ فرمان.
+    export FY_YEAR="${2:-}" FY_START="${3:-}" FY_END="${4:-}"
+    "${COMPOSE[@]}" run --rm --entrypoint bash -e FY_YEAR -e FY_START -e FY_END scheduler \
+      -lc 'cd /app && ops/open-fiscal-year.sh "$FY_YEAR" "$FY_START" "$FY_END"'
+    ;;
   logs)    "${COMPOSE[@]}" logs -f --tail=100 "${2:-}" ;;
   status)
     "${COMPOSE[@]}" ps
     echo
-    # ⚠️ خلاصهٔ هشت زنگ، از **همان** تابعی که صفحهٔ «سلامت سیستم» و
+    # ⚠️ خلاصهٔ زنگ‌های خطر (نهمی: «سال مالی بعد تعریف نشده»، مهاجرت ۱۱۷)، از **همان** تابعی که صفحهٔ «سلامت سیستم» و
     #    تولیدکنندهٔ هشدار از آن می‌خوانند. سه مصرف‌کننده و یک تعریف —
     #    وگرنه زنگ تازه‌ای اضافه می‌شد و دو جا عقب می‌ماندند، بی‌صدا.
     echo "── خلاصه زنگ‌های خطر (تعداد صفر یعنی خاموش) ──"
@@ -123,5 +130,5 @@ case "${1:-}" in
     in_db_tools "psql -d \"\$DATABASE_URL\" -c \"SELECT * FROM treasury.cheque_due WHERE urgency <> 'future' LIMIT 20\"" || true
     ;;
   down)    "${COMPOSE[@]}" down ;;
-  *) echo "استفاده: ops/deploy.sh {up|migrate|seed|roles|user|api-client|psql|backup|drill|logs|status|down}"; exit 1 ;;
+  *) echo "استفاده: ops/deploy.sh {up|migrate|seed|roles|user|api-client|fiscal-year <سال> <شروع> <پایان>|psql|backup|drill|logs|status|down}"; exit 1 ;;
 esac

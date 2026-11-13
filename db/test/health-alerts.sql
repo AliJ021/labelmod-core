@@ -42,11 +42,12 @@ PERFORM platform.set_actor(v_user);
 v_today := platform.business_date();
 
 -- ═══════════════════════════════════════════════════════════════════
-RAISE NOTICE E'\n═══ ۱. هشت زنگ، هر کدام با شدت معلوم ═══';
+RAISE NOTICE E'\n═══ ۱. نه زنگ، هر کدام با شدت معلوم ═══';
 -- ═══════════════════════════════════════════════════════════════════
 
 SELECT array_agg(code ORDER BY code) INTO v_codes FROM platform.health_alerts();
-PERFORM pg_temp.assert_eq('شمار زنگ‌ها', array_length(v_codes,1)::text, '8');
+-- نهمی «سال مالی بعد تعریف نشده» است (مهاجرت ۱۱۷، `db/test/fiscal-year.sql`).
+PERFORM pg_temp.assert_eq('شمار زنگ‌ها', array_length(v_codes,1)::text, '9');
 
 SELECT count(*) INTO v_n FROM platform.health_alerts()
  WHERE severity NOT IN ('critical','warn') OR title = '' OR title IS NULL;
@@ -152,7 +153,7 @@ PERFORM pg_temp.assert_eq('اجرای دوباره در همان روز',
 PERFORM pg_temp.assert_eq('روز کاری بعد پیام تازه می‌سازد',
   platform.enqueue_health_alerts(v_today + 1)::text, '1');
 
-RAISE NOTICE E'\n✔ زنگ خطر سیستم — هشت زنگ، تفکیک امروز از دیروز، فیلتر، و Idempotency';
+RAISE NOTICE E'\n✔ زنگ خطر سیستم — نه زنگ، تفکیک امروز از دیروز، فیلتر، و Idempotency';
 END $test$;
 
 ROLLBACK;
