@@ -52,8 +52,8 @@ importers:
         specifier: 5.12.8
         version: 5.12.8
       kysely:
-        specifier: 0.29.6
-        version: 0.29.6
+        specifier: 0.29.8
+        version: 0.29.8
       pg:
         specifier: 8.23.1
         version: 8.23.1
@@ -1020,8 +1020,8 @@ packages:
   keyv@5.6.0:
     resolution: {integrity: sha512-CYDD3SOtsHtyXeEORYRx2qBtpDJFjRTGXUtmNEMGyzYOKj1TE3tycdlho7kA1Ufx9OYWZzg52QFBGALTirzDSw==}
 
-  kysely@0.29.6:
-    resolution: {integrity: sha512-hHaB8C/rfzDDtr/t8YZwxAuPJTT0zHyaPoVzcXwDYhYNAgH/4sIfVhi/XLLIY+bL/FqaIJnjATDbi8ObSELmxg==}
+  kysely@0.29.8:
+    resolution: {integrity: sha512-ixHU1H4R+LeC5Y0nAhYgiGRFpFRHm2DXKEmJSs/vbes9sKXyssyzxzE/NYiOJX5fY0BL28biCre3GqlCqUwyXQ==}
     engines: {node: '>=22.0.0'}
 
   levn@0.4.1:
@@ -2425,7 +2425,7 @@ snapshots:
     dependencies:
       '@keyv/serialize': 1.1.1
 
-  kysely@0.29.6: {}
+  kysely@0.29.8: {}
 
   levn@0.4.1:
     dependencies:
