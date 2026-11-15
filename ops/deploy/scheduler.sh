@@ -47,6 +47,14 @@ while true; do
     else log "⚠️  بستن دوره شکست خورد — sales.unposted_revenue را ببینید"; fi
   fi
 
+  # تسویهٔ خودکار کارت‌خوان و درگاه (مهاجرت ۱۲۱) — همان ساعت بستن دوره.
+  # شکستش حلقه را نمی‌کشد: اجرای بعد جبران می‌کند و زنگ «تسویه‌نشده» می‌ماند.
+  if due settle "$CLOSE_HOUR"; then
+    log "تسویهٔ خودکار کارت‌خوان و درگاه"
+    if /app/ops/auto-settle.sh; then done_today settle
+    else log "⚠️  تسویهٔ بعضی پایانه‌ها انجام نشد — خروجی بالا و زنگ «تسویه‌نشده» را ببینید"; done_today settle; fi
+  fi
+
   if due backup "$BACKUP_HOUR"; then
     log "بکاپ"
     if /app/ops/db.sh backup; then

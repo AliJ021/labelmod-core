@@ -29,9 +29,10 @@ function baselineSeed(name: string): string {
       .replace(',"instagram.payment.verify"', "").replace(/^ {3}\{"value":"instagram.payment.verify"[^\n]+\n/m, "")
       // مهاجرت ۱۱۴ واژهٔ «مرکز» را آورد؛ Seed دورهٔ ۰۸۳ هنوز «Core» داشت و ارتقا همان را با ۱۱۴ عوض می‌کند.
       .replace("موجودی سایت با مرکز — تور ایمنی", "موجودی سایت با Core — تور ایمنی")
-      // مهاجرت ۱۱۷ زنگ «سال مالی بعد تعریف نشده» را آورد؛ Seed دورهٔ ۰۸۳ نه گزینه‌اش را داشت نه انتخابش را.
-      .replace(',"fiscal_year_ending"]\'::jsonb', "]'::jsonb")
-      .replace('},\n   {"value":"fiscal_year_ending","label":"سال مالی بعد تعریف نشده"}]', "}]");
+      // مهاجرت‌های ۱۱۷ و ۱۲۱ زنگ‌های «سال مالی بعد تعریف نشده» و «پرداخت تسویه‌نشده» را آوردند؛
+      // Seed دورهٔ ۰۸۳ نه گزینه‌شان را داشت نه انتخابشان را.
+      .replace(',"fiscal_year_ending","unsettled_terminal"]\'::jsonb', "]'::jsonb")
+      .replace('},\n   {"value":"fiscal_year_ending","label":"سال مالی بعد تعریف نشده"},\n   {"value":"unsettled_terminal","label":"پرداخت کارتی یا درگاهی تسویه‌نشده"}]', "}]");
   } else if (name === "040_reference.sql") {
     text = text.replace("INSERT INTO identity.permission_rule(role_code,operation,allowed)\nSELECT code,'exchange.policy',code='admin' FROM identity.role ON CONFLICT(role_code,operation) DO NOTHING;\n", "");
   }
