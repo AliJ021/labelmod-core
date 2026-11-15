@@ -56,6 +56,9 @@ test("موجودی اول ناهم‌خوان: کادر دلیل، و بی دل�
   const dialog = page.getByRole("dialog", { name: "باز کردن شیفت با ثبت اختلاف" });
   await expect(dialog).toContainText("مدیر ۳ میلیون برای واریز بانک برداشت");
   await expect(dialog).toContainText("مغایرت صندوق");
+  // تصمیم مالک (۲۰۲۶/۱۱/۱۵): تا صفحهٔ سند دستی/معکوس ساخته نشده، راه اصلاح حسابدار است، نه ابزاری که نیست.
+  await expect(dialog).toContainText("اصلاحش با حسابدار است");
+  await expect(dialog).not.toContainText("سند معکوس");
   expect(bodies, "پیش از تأیید هیچ درخواست دومی نرفته").toHaveLength(1);
   await dialog.getByRole("button", { name: "باز کردن شیفت" }).click();
 

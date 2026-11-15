@@ -2005,7 +2005,7 @@ function OpenShiftPanel({
                 <div><dt>موجودی اولیه</dt><dd><Money rial={rial} exact /></dd></div>
                 <div><dt>دلیل اختلاف</dt><dd>{reasonText}</dd></div>
               </dl> : null}
-              consequence="اختلاف این مبلغ با شمارش پایان شیفت قبل به‌عنوان «مغایرت صندوق» در دفتر ثبت می‌شود و دلیل شما کنار آن می‌ماند. اصلاحش فقط با سند معکوس ممکن است."
+              consequence="اختلاف این مبلغ با شمارش پایان شیفت قبل به‌عنوان «مغایرت صندوق» در دفتر ثبت می‌شود و دلیل شما کنار آن می‌ماند. اصلاحش با حسابدار است."
               confirmLabel="باز کردن شیفت" pendingLabel="در حال باز کردن…"
               run={async () => { if (rial !== null) opened.current = await onOpenWithReason(rial.toString(), reasonText); }}
               verify={async () => { opened.current = await openedShift(); return opened.current !== null; }}
