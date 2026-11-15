@@ -169,7 +169,10 @@ RAISE NOTICE E'\n── ۳. گسست پیوند: حذف یک سطر میانی �
 
   -- این همان چیزی است که نگهبان قبلی **می‌گرفت**؛ باید همچنان بگیرد.
   DELETE FROM platform.audit_log
-   WHERE id = (SELECT min(id) + 1 FROM platform.audit_log);
+   -- دومین سطر به ترتیب، نه «min(id) + 1»: شناسه‌ها پیوسته نیستند (تراکنش‌های
+   -- برگشت‌خورده دنباله را مصرف می‌کنند) و با یک سطر پیشین، آن شناسه اصلاً وجود نداشت
+   -- و ادعا با «هیچ سطری حذف نشد» بی‌معنا می‌شد.
+   WHERE id = (SELECT id FROM platform.audit_log ORDER BY id OFFSET 1 LIMIT 1);
   SELECT count(*) INTO n FROM platform.audit_check WHERE problem = 'broken_link';
   PERFORM pg_temp.assert_eq('حذف سطر میانی گرفته شد', n, 1);
 

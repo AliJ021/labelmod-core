@@ -209,6 +209,9 @@ run_tests () {
 
   migrate "$TESTURL" >/dev/null
   seed    "$TESTURL" >/dev/null
+  # سال‌های مالی تا «امروز» — فقط دیتابیس آزمون. بی این، از ۲۰۲۷/۰۳/۲۱ (پایان سال
+  # ۱۴۰۵ Seed) هر آزمون سندزن قرمز می‌شد بی‌آنکه کدی خراب شده باشد.
+  $PSQL -d "$TESTURL" -f db/fixture/fiscal-years-to-today.sql >/dev/null
 
   local fail=0
   local out
