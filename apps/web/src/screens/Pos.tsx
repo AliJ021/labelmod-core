@@ -1,5 +1,7 @@
 import { AmountInput } from "../components/ui/AmountInput.tsx";
-import { Segmented } from "../components/ui/Controls.tsx";
+import { Field, Segmented } from "../components/ui/Controls.tsx";
+import { SectionHeader } from "../components/ui/PageHeader.tsx";
+import { Note } from "../components/ui/Note.tsx";
 import { useUrlState, navigate } from "../lib/use-url-state.ts";
 import { readPendingScan, writePendingScan, clearPendingScan, type PendingScan } from "../lib/pending-scan.ts";
 /**
@@ -30,7 +32,7 @@ import { readPendingScan, writePendingScan, clearPendingScan, type PendingScan }
  * **هر عمل کاربر یک کلید Idempotency دارد** که روی Retry ثابت می‌ماند
  * و برای عمل بعدی تازه می‌شود — `lib/action-key.ts`.
  */
-import { memo, useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { memo, useCallback, useEffect, useId, useMemo, useRef, useState } from "react";
 import { CameraScan } from "../components/CameraScan.tsx";
 import { PosProductPicker } from "../components/PosProductPicker.tsx";
 import { PaymentBreakdown } from "../components/PaymentBreakdown.tsx";
@@ -840,17 +842,18 @@ function PosScreen({ actorId, mode, onMode, browseInvoices }: {
     }
   }
 
-  const openShift = (openingCash: string, openingNote: string) =>
+  const openShift = (openingCash: string) =>
     guarded(async () => {
       try {
-        setShift(await pos.openShift({ branchId, openingCash, ...(openingNote === "" ? {} : { openingNote }) }));
+        setShift(await pos.openShift({ branchId, openingCash }));
         setOpeningMismatch(false);
       } catch (err) {
-        // موجودی اول با شمارش پایان شیفت قبل نمی‌خواند (مهاجرت ۱۲۰). سرور عدد
-        // مورد انتظار را نمی‌گوید (شمارش کور)؛ فقط کادر دلیل باز می‌شود.
+        // موجودی اول با شمارش پایان شیفت قبل نمی‌خواند (مهاجرت ۱۲۰). این یک
+        // حالت فرم است، نه خطا: کادر دلیل و یادداشت هشدار باز می‌شوند. سرور
+        // عدد مورد انتظار را نمی‌گوید (شمارش کور).
         if (err instanceof ApiError && err.code === "opening_cash_mismatch") {
           setOpeningMismatch(true);
-          throw err;
+          return;
         }
         // همان درسِ اسکن، روی یک مسیر دیگر: اگر سرور شیفت را باز کند
         // ولی پاسخ در راه گم شود، صندوق‌دار خطا می‌بیند و صفحه هنوز
@@ -872,6 +875,16 @@ function PosScreen({ actorId, mode, onMode, browseInvoices }: {
         throw err;
       }
     });
+
+  /**
+   * باز کردن با دلیل اختلاف — سند مغایرت صندوق می‌زند، پس از `SafeAction`
+   * می‌گذرد (UI_PATTERNS بند ۵). خطا بالا می‌رود تا پنجره ردّ یا «نامعلوم» را
+   * نشان دهد؛ «بررسی وضعیت» شیفت باز همین شعبه را می‌خواند.
+   */
+  const openShiftWithReason = (openingCash: string, openingNote: string) =>
+    exclusive(() => pos.openShift({ branchId, openingCash, openingNote }));
+  const openedShift = async (): Promise<Shift | null> => pos.currentShift(branchId);
+  const shiftOpened = (opened: Shift) => { setShift(opened); setOpeningMismatch(false); };
 
   const changeQty = (lineId: string, current: string, delta: number) =>
     guarded(async () => {
@@ -1309,7 +1322,8 @@ function PosScreen({ actorId, mode, onMode, browseInvoices }: {
   if (!shift) {
     // حالت اینستاگرام شیفت باز نمی‌کند؛ زمینه‌اش در همان رندر بعدی ساخته می‌شود.
     if (instagram) return <Solid className="pad">در حال آماده‌سازی فروش اینستاگرام…</Solid>;
-    return <OpenShiftPanel busy={busy} error={error} onOpen={openShift} branch={branch} needsReason={openingMismatch} />;
+    return <OpenShiftPanel busy={busy} error={error} onOpen={openShift} branch={branch} needsReason={openingMismatch}
+      onOpenWithReason={openShiftWithReason} openedShift={openedShift} onOpened={shiftOpened} />;
   }
 
   const lines = invoice?.lines ?? [];
@@ -1937,60 +1951,73 @@ function OpenShiftPanel({
   error,
   onOpen,
   needsReason,
+  onOpenWithReason,
+  openedShift,
+  onOpened,
 }: {
   branch: Branch | null;
   busy: boolean;
   error: string | null;
-  onOpen: (openingCash: string, openingNote: string) => void;
-  /** سرور گفت موجودی با شمارش پایان شیفت قبل نمی‌خواند؛ دلیل اجباری است. */
+  onOpen: (openingCash: string) => void;
+  /** سرور گفت موجودی با شمارش پایان شیفت قبل نمی‌خواند؛ دلیل اجباری است (مهاجرت ۱۲۰). */
   needsReason: boolean;
+  onOpenWithReason: (openingCash: string, openingNote: string) => Promise<Shift>;
+  openedShift: () => Promise<Shift | null>;
+  onOpened: (shift: Shift) => void;
 }) {
+  const titleId = useId();
   const [cash, setCash] = useState("0");
   const [reason, setReason] = useState("");
+  const [touched, setTouched] = useState(false);
+  const opened = useRef<Shift | null>(null);
   const rial = rialFromTomanInput(cash);
-  const reasonOk = !needsReason || reason.trim().length >= 3;
+  const reasonText = reason.trim();
+  const reasonOk = reasonText.length >= 3;
+  const amountError = cash.trim() !== "" && rial === null ? "مبلغ معتبر نیست؛ فقط رقم، بدون اعشار." : null;
+  const reasonError = needsReason && touched && !reasonOk ? "دلیل اختلاف را بنویسید (دست‌کم ۳ نویسه)." : null;
   return (
-    <Solid className="pad stack" style={{ gap: "var(--s-3)" }}>
-      <h2 style={{ margin: 0 }}>شیفت باز نیست</h2>
-      <p className="muted" style={{ margin: 0 }}>
-        {branch?.name} — موجودی ابتدای کشو را وارد کنید.
-      </p>
-      <label className="auth-field">
-        <span>موجودی اولیه (تومان)</span>
-        {/* `type="text"` نه `number`: صفحه‌کلید فارسی «۱۵۰۰۰» می‌فرستد
-            و ورودی عددی مرورگر آن را دور می‌اندازد. */}
-        <AmountInput
-          type="text"
-          inputMode="numeric"
-          value={cash}
-          onChange={(e) => setCash(e.target.value)}
-        />
-      </label>
-      {needsReason ? (
-        <label className="auth-field">
-          <span>دلیل اختلاف با شمارش پایان شیفت قبل</span>
-          <input
-            value={reason}
-            onChange={(e) => setReason(e.target.value)}
-            maxLength={300}
-            placeholder="مثلاً: مدیر برای واریز بانک برداشت"
-            autoFocus
-          />
-        </label>
-      ) : null}
-      {error ? (
-        <p className="auth-error" role="alert">
-          <span className="dot dot--crit" aria-hidden="true">●</span> {error}
-        </p>
-      ) : null}
-      <button
-        type="button"
-        className="btn btn--primary"
-        disabled={busy || rial === null || !reasonOk}
-        onClick={() => rial !== null && reasonOk && onOpen(rial.toString(), needsReason ? reason.trim() : "")}
-      >
-        {busy ? "…" : needsReason ? "باز کردن با ثبت اختلاف" : "باز کردن شیفت"}
-      </button>
+    <Solid as="section" className="settings-section" aria-labelledby={titleId}>
+      <SectionHeader id={titleId} title="شیفت باز نیست"
+        description={`${branch?.name ?? ""} — پول کشو را بشمارید و وارد کنید.`} />
+      <div className="settings-form">
+        <Field label="موجودی اولیه (تومان)" error={amountError}
+          hint={rial !== null ? <>ثبت می‌شود: <Money rial={rial} exact size="sm" /></> : "بدون اعشار؛ رقم فارسی یا لاتین."}>
+          {/* `type="text"` نه `number`: صفحه‌کلید فارسی «۱۵۰۰۰» می‌فرستد
+              و ورودی عددی مرورگر آن را دور می‌اندازد. */}
+          <AmountInput type="text" inputMode="numeric" autoComplete="off" value={cash} onChange={(e) => setCash(e.target.value)} />
+        </Field>
+        {needsReason ? (
+          <>
+            {/* شمارش کور: عدد مورد انتظار عمداً نشان داده نمی‌شود. */}
+            <Note tone="warn">این مبلغ با شمارش پایان شیفت قبل نمی‌خواند. دوباره بشمارید؛ اگر مبلغ درست است، دلیل اختلاف را بنویسید. اختلاف به‌عنوان مغایرت صندوق در دفتر ثبت می‌شود.</Note>
+            <Field label="دلیل اختلاف" error={reasonError} hint="مثلاً «مدیر برای واریز بانک برداشت». حداکثر ۳۰۰ نویسه.">
+              <textarea className="set-input" rows={2} maxLength={300} value={reason}
+                onChange={(e) => setReason(e.target.value)} onBlur={() => setTouched(true)} autoFocus />
+            </Field>
+          </>
+        ) : null}
+        {error ? <p role="alert">{error}</p> : null}
+        <div className="settings-actions">
+          {needsReason ? (
+            <SafeAction trigger="باز کردن با ثبت اختلاف" triggerVariant="primary" title="باز کردن شیفت با ثبت اختلاف"
+              disabled={busy || rial === null || !reasonOk}
+              summary={rial !== null ? <dl className="settings-facts">
+                <div><dt>موجودی اولیه</dt><dd><Money rial={rial} exact /></dd></div>
+                <div><dt>دلیل اختلاف</dt><dd>{reasonText}</dd></div>
+              </dl> : null}
+              consequence="اختلاف این مبلغ با شمارش پایان شیفت قبل به‌عنوان «مغایرت صندوق» در دفتر ثبت می‌شود و دلیل شما کنار آن می‌ماند. اصلاحش فقط با سند معکوس ممکن است."
+              confirmLabel="باز کردن شیفت" pendingLabel="در حال باز کردن…"
+              run={async () => { if (rial !== null) opened.current = await onOpenWithReason(rial.toString(), reasonText); }}
+              verify={async () => { opened.current = await openedShift(); return opened.current !== null; }}
+              onDone={() => { if (opened.current) onOpened(opened.current); }} />
+          ) : (
+            <button type="button" className="btn btn--primary" disabled={busy || rial === null}
+              onClick={() => rial !== null && onOpen(rial.toString())}>
+              {busy ? "…" : "باز کردن شیفت"}
+            </button>
+          )}
+        </div>
+      </div>
     </Solid>
   );
 }
