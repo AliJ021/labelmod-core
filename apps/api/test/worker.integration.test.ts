@@ -395,6 +395,24 @@ describe("Worker — صف پیام، پیامک و هشدار چک", { skip }, (
     const r = await app.inject({ method: "GET", url: "/i/AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA" });
     assert.notEqual(r.statusCode, 401);
   });
+
+  /**
+   * تنها مسیر محتوایی بی‌نشست، سقف نرخ دارد (یافتهٔ ممیزی LM-23).
+   *
+   * توکن ۲۴ بایتی است و حدس‌زدنش عملاً ناممکن؛ سقف برای جلوگیری از
+   * پیمایش انبوه و بار بی‌حساب روی دیتابیس است، نه دفاع رمزنگاری.
+   * از یک IP جدا می‌آید تا آزمون‌های دیگر همین پرونده را نخورد، و
+   * کنترل مثبتش این است که IP دیگر همان لحظه هنوز پاسخ عادی می‌گیرد.
+   */
+  test("صفحهٔ عمومی فاکتور سقف نرخ به‌ازای IP دارد", async () => {
+    const hit = (ip: string) =>
+      app.inject({ method: "GET", url: "/i/BBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBB", remoteAddress: ip });
+    const codes: number[] = [];
+    for (let i = 0; i < 61; i++) codes.push((await hit("10.77.0.1")).statusCode);
+    assert.deepEqual(new Set(codes.slice(0, 60)), new Set([404]), "تا سقف، پاسخ عادی");
+    assert.equal(codes[60], 429, "درخواست شصت‌ویکم در همان دقیقه رد می‌شود");
+    assert.equal((await hit("10.77.0.2")).statusCode, 404, "IP دیگر محدود نشده است");
+  });
 });
 
 describe("نرمال‌سازی موبایل برای سرویس پیامک", () => {
