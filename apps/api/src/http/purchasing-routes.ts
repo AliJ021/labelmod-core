@@ -21,7 +21,7 @@ import { AuthError } from "../auth/service.ts";
 import { requireForSession } from "../auth/permission.ts";
 import type { Db } from "../db/client.ts";
 import { parseMoney } from "../lib/money.ts";
-import { runOnce } from "../lib/idempotency.ts";
+import { runOnce, setActor } from "../lib/idempotency.ts";
 import { assertBranch, assertWarehouseInBranch } from "../sales/scope.ts";
 import { branchesOf } from "../sales/scope.ts";
 import { PurchasingError, type ReceiptService } from "../purchasing/receipt.ts";
@@ -332,6 +332,13 @@ export function registerPurchasingRoutes(
           })
           .returning("id")
           .executeTakeFirstOrThrow();
+        // ردّ حسابرسی در همان تراکنش، مثل `customer.create`: تأمین‌کننده طرف
+        // حساب بدهی است و «چه کسی ساختش» باید از دفتر حسابرسی جواب داشته باشد.
+        await setActor(trx, s.userId);
+        await sql`
+          SELECT platform.audit('supplier.create', 'supplier', ${row.id}::text,
+            ${JSON.stringify({ code: body.code, name: body.name })}::jsonb, ${s.userId}::uuid)
+        `.execute(trx);
         return { value: row.id, ref: row.id };
       },
       replay: async (ref) => ref,
