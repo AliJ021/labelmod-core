@@ -278,8 +278,8 @@
   Worker هر پیامی را با خاموشیِ پیامک بی‌صدا `sent` می‌کرد؛ از وقتی
   `health.alert` هم Webhook می‌فرستد، یعنی هشدار سلامت با پیامکِ خاموش
   **بی‌صدا بسته می‌شد**. `SMS_ONLY_TOPICS` این را بست.
-- **هشت زنگ خطر یک تعریف دارند: `platform.health_alerts()`** — مهاجرت
-  ۰۵۵. سه مصرف‌کننده: صفحهٔ «سلامت سیستم»، `platform.enqueue_health_alerts()`
+- **زنگ‌های خطر یک تعریف دارند: `platform.health_alerts()`** — مهاجرت
+  ۰۵۵؛ نهمی «سال مالی بعد تعریف نشده» از مهاجرت ۱۱۷ است. سه مصرف‌کننده: صفحهٔ «سلامت سیستم»، `platform.enqueue_health_alerts()`
   و `ops/deploy.sh status`. هشت کوئری در سه جا یعنی هر زنگ تازه دو جا را
   عقب می‌گذارد — و **بی‌صدا**، چون نبودِ یک هشدار شبیه «همه‌چیز خوب است»
   به نظر می‌رسد.
@@ -426,7 +426,7 @@ pnpm --filter @labelmod/api dev
   `db/test/outbox.sql` اجاره صف، Backoff و نامه مرده را و
   `db/test/outbox-requeue.sql` زنده‌کردن نامهٔ مرده را و
   `db/test/posting-rule.sql` تغییر نگاشت حساب را و
-  `db/test/health-alerts.sql` هشت زنگ خطر و تفکیک «امروز» از «دیروز» را و
+  `db/test/health-alerts.sql` نه زنگ خطر و تفکیک «امروز» از «دیروز» را و
   `db/test/write-gate.sql` این را که هیچ نویسندهٔ جدول قفل‌شده‌ای بدون
   `SECURITY DEFINER` نمانده باشد **و هیچ تابع DEFINERی `EXECUTE` برای
   `PUBLIC` نداشته باشد** (با کنترل مثبتی که یک تابع بازِ موقت می‌سازد) و
