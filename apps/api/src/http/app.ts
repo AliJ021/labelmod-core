@@ -414,6 +414,7 @@ export async function buildApp(deps: AppDeps): Promise<FastifyInstance> {
     devices: new DeviceService(deps.db),
     twoFactor: new TwoFactorService(deps.db),
     webauthn: new WebauthnService(deps.db),
+    users: new UserService(deps.db),
   });
   registerSalesRoutes(app, { db: deps.db, invoices, shifts });
   registerPosCatalogRoutes(app, deps.db);

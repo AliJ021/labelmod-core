@@ -12,6 +12,7 @@ import { can, requireForSession } from "../auth/permission.ts";
 import type { DeviceService } from "../auth/devices.ts";
 import type { TwoFactorService } from "../auth/two-factor.ts";
 import type { WebauthnService } from "../auth/webauthn.ts";
+import { UserError, type UserService } from "../people/user.ts";
 import { csrfCookieOptions, deviceCookieOptions, sessionCookieOptions } from "../auth/token.ts";
 import type { Db } from "../db/client.ts";
 import type { Config } from "../lib/config.ts";
@@ -62,10 +63,11 @@ export interface AuthRouteDeps {
   devices: DeviceService;
   twoFactor: TwoFactorService;
   webauthn: WebauthnService;
+  users: UserService;
 }
 
 export function registerAuthRoutes(app: FastifyInstance, deps: AuthRouteDeps): void {
-  const { auth, db, config, devices, twoFactor, webauthn } = deps;
+  const { auth, db, config, devices, twoFactor, webauthn, users } = deps;
   const smsFactor = new SmsFactorService(db, config);
   const human = (req: FastifyRequest) => {
     const s = req.session;
@@ -512,7 +514,13 @@ export function registerAuthRoutes(app: FastifyInstance, deps: AuthRouteDeps): v
     if (!s) throw new AuthError("no_session", "وارد نشده‌اید");
     const { id } = z.object({ id: z.string().uuid() }).parse(req.params);
     await requireForSession(db, s, "user.manage");
-    await twoFactor.disableTotp(id, s.userId);
+    // همان دامنهٔ ویرایش، تغییر رمز و PIN: کاربر بیرون از دامنه «یافت نشد»
+    // است (وجودش افشا نمی‌شود)، و سنجش دوباره زیر قفل، در همان تراکنشِ
+    // برداشتن، جلوی تغییر نقش هم‌زمان را می‌گیرد.
+    if (!(await users.byId(id, s.userId))) {
+      throw new UserError("user_not_found", "کاربر یافت نشد", 404);
+    }
+    await twoFactor.disableTotp(id, s.userId, (trx) => users.assertManageableIn(trx, id, s.userId));
     return { ok: true };
   });
 
