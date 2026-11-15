@@ -29,7 +29,11 @@ test("backup routes enforce independent permissions, global scope, password and 
   };
   const manager=new RestoreManager(store,driver);const backup=await manager.createBackup();
   const app=await buildApp({db:handle.db,auth:new AuthService(handle.db),config:loadConfig({...process.env,NODE_ENV:"test",LOG_LEVEL:"fatal"})});
-  const rpcToken="c".repeat(64),management=await buildManagementApp({db:handle.db,manager,rpcToken});
+  // سرویس مستقل بکاپ در تولید با نقش **مالک** وصل است (`OPS_DATABASE_URL`)، نه نقش برنامه؛
+  // با `LMC_TEST_DB_ROLE=app` هم باید همان‌طور بماند، وگرنه ثبت سابقهٔ بکاپ (که از نقش برنامه
+  // گرفته شده) اینجا به‌اشتباه می‌شکست.
+  const owner=createDb(disposable.ownerUrl,2);
+  const rpcToken="c".repeat(64),management=await buildManagementApp({db:owner.db,manager,rpcToken});
   await app.ready();await management.ready();
   const password="backup-access-only-strong-password";
   try {
@@ -57,6 +61,21 @@ test("backup routes enforce independent permissions, global scope, password and 
     const noChannel=await management.inject({method:"GET",url:"/status",headers:{"x-labelmod-session":admin.token}});assert.equal(noChannel.statusCode,401);
     const restricted=await management.inject({method:"GET",url:"/status",headers:{...channel,"x-labelmod-session":users[1]!.token}});assert.equal(restricted.statusCode,403);
     const download=await management.inject({method:"GET",url:`/download/${backup.id}`,headers:channel});assert.equal(download.statusCode,200,download.body);
+    // مهاجرت ۱۲۲: چه کسی بکاپ را بیرون برد در حسابرسی، و «نسخهٔ بیرونی» در سابقهٔ بکاپ.
+    const events=async()=>(await sql<{kind:string;source:string;backup_ref:string;actor_id:string|null;sha256:string|null}>`
+      SELECT kind,source,backup_ref,actor_id,sha256 FROM platform.backup_event ORDER BY occurred_at`.execute(handle.db)).rows;
+    for(let n=0;n<100&&!(await events()).some(e=>e.kind==="downloaded");n++)await new Promise(r=>setTimeout(r,10));
+    assert.deepEqual(await events(),[{kind:"downloaded",source:"manager",backup_ref:backup.id,actor_id:admin.id,sha256:backup.sha256}]);
+    const downloadAudit=await sql<{actor_id:string;entity_id:string}>`SELECT actor_id,entity_id FROM platform.audit_log WHERE action='backup.download'`.execute(handle.db);
+    assert.deepEqual(downloadAudit.rows,[{actor_id:admin.id,entity_id:backup.id}]);
+    assert.equal((await sql<{n:string}>`SELECT n::text FROM platform.health_alerts() WHERE code='backup_offsite_stale'`.execute(handle.db)).rows[0]!.n,"0");
+    // ساخت از پنل هم ثبت می‌شود؛ ساختِ مستقیم مدیر (بالا، بیرون از مسیر) نه.
+    const created=await management.inject({method:"POST",url:"/backup",headers:channel,payload:{}});assert.equal(created.statusCode,200,created.body);
+    assert.deepEqual((await events()).map(e=>[e.kind,e.backup_ref,e.actor_id]),[["downloaded",backup.id,admin.id],["created",created.json().id,admin.id]]);
+    assert.equal((await sql<{n:string}>`SELECT n::text FROM platform.health_alerts() WHERE code='backup_stale'`.execute(handle.db)).rows[0]!.n,"0");
+    // دانلودِ ردشده نه حسابرسی دانلود می‌سازد و نه نسخهٔ بیرونی.
+    const unknownBackup=await management.inject({method:"GET",url:`/download/${randomUUID()}`,headers:channel});assert.notEqual(unknownBackup.statusCode,200);
+    assert.equal((await events()).filter(e=>e.kind==="downloaded").length,1);
     const secret=await handle.db.selectFrom("identity.app_user").select("totp_secret").where("id","=",admin.id).executeTakeFirstOrThrow();assert.ok(secret.totp_secret);
     const code=totp(secret.totp_secret);
     const payload={backupId:backup.id,operationId:randomUUID(),confirmedTimestamp:backup.createdAt,password,code,factorKind:"totp"};
@@ -71,7 +90,7 @@ test("backup routes enforce independent permissions, global scope, password and 
     const deniedDownload=await management.inject({method:"GET",url:`/download/${backup.id}`,headers:channel});assert.equal(deniedDownload.statusCode,403);
     const stillVisible=await management.inject({method:"GET",url:"/status",headers:channel});assert.equal(stillVisible.statusCode,200);
   } finally {
-    await management.close();await app.close();await handle.close();disposable.drop();
+    await management.close();await app.close();await owner.close();await handle.close();disposable.drop();
     assert.equal(path.dirname(root),tmpdir());assert.ok(path.basename(root).startsWith("labelmod-backup-access-"));await rm(root,{recursive:true});
   }
 });

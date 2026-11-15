@@ -280,7 +280,7 @@ SELECT * FROM (VALUES
 --    ادعا می‌کند — وگرنه زنگ تازه‌ای اضافه می‌شد که هیچ‌کس نمی‌توانست
 --    روشن یا خاموشش کند.
 ('notify.health_alert_codes',
- '["unposted_revenue","outbox_dead","stock_mismatch","ledger_divergence","party_orphan","audit_tamper","restore_drill","fiscal_year_ending","unsettled_terminal"]'::jsonb,
+ '["unposted_revenue","outbox_dead","stock_mismatch","ledger_divergence","party_orphan","audit_tamper","restore_drill","fiscal_year_ending","unsettled_terminal","backup_stale","backup_offsite_stale","payment_unresolved"]'::jsonb,
  'کدام زنگ‌های خطر پیام بفرستند.', false,
  'multichoice', 'زنگ‌هایی که پیام می‌فرستند', 'notify',
  '[{"value":"unposted_revenue","label":"درآمد ثبت‌نشده در دفتر"},
@@ -292,7 +292,10 @@ SELECT * FROM (VALUES
    {"value":"restore_drill","label":"تمرین بازیابی بکاپ عقب‌افتاده"},
    {"value":"cheque_due","label":"چک سررسیدشده یا نزدیک"},
    {"value":"fiscal_year_ending","label":"سال مالی بعد تعریف نشده"},
-   {"value":"unsettled_terminal","label":"پرداخت کارتی یا درگاهی تسویه‌نشده"}]'::jsonb,
+   {"value":"unsettled_terminal","label":"پرداخت کارتی یا درگاهی تسویه‌نشده"},
+   {"value":"backup_stale","label":"بکاپ تازه‌ای ساخته نشده است"},
+   {"value":"backup_offsite_stale","label":"نسخهٔ بیرون از سرور قدیمی است"},
+   {"value":"payment_unresolved","label":"پرداخت بلاتکلیف منتظر بررسی"}]'::jsonb,
  NULL, NULL, NULL,
  'پیش‌فرض همه را دارد جز «چک سررسیدشده»، چون آن از قبل پیامک جدای خودش را دارد (کلید بالاتر) و دو پیام برای یک چک یعنی مالک هر دو را نادیده بگیرد. اگر پیامک چک را خاموش کرده‌اید، این را روشن کنید تا دست‌کم خلاصهٔ روزانه برسد.',
  70, 'settings.manage', true),

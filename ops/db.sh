@@ -239,10 +239,24 @@ run_tests () {
 }
 
 backup () {
-  local dir="${BACKUP_DIR:-./backup}"; mkdir -p "$dir"
+  local dir="${BACKUP_DIR:-./backup}"
+  # دامپ دادهٔ مشتری، هش رمز و راز TOTP دارد؛ فقط مالک فرایند بخواندش (LM-09).
+  # umask در زیرپوسته می‌ماند تا بقیهٔ اسکریپت را عوض نکند.
+  ( umask 077 && mkdir -p "$dir" )
   local f="$dir/labelmod-$(date +%Y%m%d-%H%M%S).dump"
-  pg_dump -Fc -d "$DATABASE_URL" -f "$f"
+  ( umask 077 && pg_dump -Fc -d "$DATABASE_URL" -f "$f" )
+  chmod 600 "$f"
   echo "✓ بکاپ: $f"
+  # سابقهٔ بکاپ (مهاجرت ۱۲۲) فقط **پس از** دامپ موفق؛ شکست بالا با `set -e` به
+  # اینجا نمی‌رسد، پس زنگ «بکاپ تازه نیست» با بکاپ ناموفق خاموش نمی‌شود.
+  # شکست ثبت، بکاپ را باطل نمی‌کند ولی زنگ روشن می‌ماند — هشدار کاذب، نه سکوت.
+  local bytes sha
+  bytes=$(wc -c < "$f" | tr -d ' ')
+  sha=$(sha256sum "$f" | cut -d' ' -f1)
+  if ! printf '%s\n' "SELECT platform.record_backup_event('created', 'scheduler', :'ref', :'bytes'::bigint, :'sha');" \
+       | $PSQL -d "$DATABASE_URL" -v ref="$(basename "$f")" -v bytes="$bytes" -v sha="$sha" >/dev/null; then
+    echo "⚠️  بکاپ ساخته شد ولی در سابقه ثبت نشد؛ زنگ «بکاپ تازه نیست» روشن می‌ماند."
+  fi
   echo "⚠️  این فایل باید به جایی خارج از همین سرور کپی شود."
   echo "⚠️  بکاپی که Restore آن تست نشده، بکاپ نیست."
 }
