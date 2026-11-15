@@ -208,7 +208,8 @@ describe("بازیابی پیش‌نویس پرداخت‌شده", { skip: !proc
    * قفل انجام شده باشد، کهنه است و این آزمون می‌بیندش.
    */
   test("پیش‌چک نسیهٔ نهایی‌سازی وضعیت را زیر قفل فاکتور می‌خواند، نه پیش از آن", async () => {
-    const opened = await app.inject({ method: "POST", url: "/shifts", ...admin, payload: { branchId: BRANCH, openingCash: "0" } });
+    // شیفت قبلی با شمارش غیرصفر بسته شده؛ مهاجرت ۱۲۰ اختلاف را فقط با دلیل می‌پذیرد.
+    const opened = await app.inject({ method: "POST", url: "/shifts", ...admin, payload: { branchId: BRANCH, openingCash: "0", openingNote: "آزمون: کشوی تازه، مستقل از شمارش شیفت قبل" } });
     assert.equal(opened.statusCode, 201, opened.body); shiftId = opened.json().id;
     const gate = new Client({ connectionString: disposable.ownerUrl });
     await gate.connect();

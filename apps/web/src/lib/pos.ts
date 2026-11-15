@@ -66,6 +66,10 @@ export interface Shift {
   expectedCash: string | null;
   variance: string | null;
   status: string;
+  /** شمارش پایان شیفت قبل هنگام باز شدن؛ `null` یعنی سنجش نشد (مهاجرت ۱۲۰). */
+  openingExpected?: string | null;
+  openingVariance?: string | null;
+  openingNote?: string | null;
 }
 
 export interface InvoiceLine {
@@ -414,7 +418,8 @@ export const pos = {
   currentShift: (branchId: string) =>
     api.get<Shift | null>(`/shifts/current?branchId=${encodeURIComponent(branchId)}`),
 
-  openShift: (input: { branchId: string; openingCash: string }) =>
+  /** `openingNote`: دلیل اختلاف با شمارش پایان شیفت قبل (مهاجرت ۱۲۰). */
+  openShift: (input: { branchId: string; openingCash: string; openingNote?: string }) =>
     api.post<Shift>("/shifts", input),
 
   closeShift: (

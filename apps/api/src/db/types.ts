@@ -309,6 +309,10 @@ export interface CashShiftTable {
   variance_note: string | null;
   approved_by: string | null;
   status: string;
+  /** مهاجرت ۱۲۰ — پیوستگی نقد با شمارش شیفت قبل. */
+  opening_expected: Generated<string | null>;
+  opening_variance: Generated<string | null>;
+  opening_note: Generated<string | null>;
 }
 
 export interface InvoiceTable {

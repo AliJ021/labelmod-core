@@ -388,6 +388,8 @@ function PosScreen({ actorId, mode, onMode, browseInvoices }: {
   }, [actorId]);
   const [lineErrors, setLineErrors] = useState<Record<string,string>>({});
   const [error, setError] = useState<string | null>(null);
+  /** موجودی اول با شمارش پایان شیفت قبل نخواند؛ فرم باز کردن، دلیل می‌خواهد. */
+  const [openingMismatch, setOpeningMismatch] = useState(false);
   const [note, setNote] = useState<string | null>(null);
   const [closing, setClosing] = useState(false);
   const rootRef = useRef<HTMLDivElement>(null);
@@ -838,11 +840,18 @@ function PosScreen({ actorId, mode, onMode, browseInvoices }: {
     }
   }
 
-  const openShift = (openingCash: string) =>
+  const openShift = (openingCash: string, openingNote: string) =>
     guarded(async () => {
       try {
-        setShift(await pos.openShift({ branchId, openingCash }));
+        setShift(await pos.openShift({ branchId, openingCash, ...(openingNote === "" ? {} : { openingNote }) }));
+        setOpeningMismatch(false);
       } catch (err) {
+        // موجودی اول با شمارش پایان شیفت قبل نمی‌خواند (مهاجرت ۱۲۰). سرور عدد
+        // مورد انتظار را نمی‌گوید (شمارش کور)؛ فقط کادر دلیل باز می‌شود.
+        if (err instanceof ApiError && err.code === "opening_cash_mismatch") {
+          setOpeningMismatch(true);
+          throw err;
+        }
         // همان درسِ اسکن، روی یک مسیر دیگر: اگر سرور شیفت را باز کند
         // ولی پاسخ در راه گم شود، صندوق‌دار خطا می‌بیند و صفحه هنوز
         // «شیفت باز نیست» نشان می‌دهد — در حالی که **دارد**. تلاش
@@ -1300,7 +1309,7 @@ function PosScreen({ actorId, mode, onMode, browseInvoices }: {
   if (!shift) {
     // حالت اینستاگرام شیفت باز نمی‌کند؛ زمینه‌اش در همان رندر بعدی ساخته می‌شود.
     if (instagram) return <Solid className="pad">در حال آماده‌سازی فروش اینستاگرام…</Solid>;
-    return <OpenShiftPanel busy={busy} error={error} onOpen={openShift} branch={branch} />;
+    return <OpenShiftPanel busy={busy} error={error} onOpen={openShift} branch={branch} needsReason={openingMismatch} />;
   }
 
   const lines = invoice?.lines ?? [];
@@ -1927,14 +1936,19 @@ function OpenShiftPanel({
   busy,
   error,
   onOpen,
+  needsReason,
 }: {
   branch: Branch | null;
   busy: boolean;
   error: string | null;
-  onOpen: (openingCash: string) => void;
+  onOpen: (openingCash: string, openingNote: string) => void;
+  /** سرور گفت موجودی با شمارش پایان شیفت قبل نمی‌خواند؛ دلیل اجباری است. */
+  needsReason: boolean;
 }) {
   const [cash, setCash] = useState("0");
+  const [reason, setReason] = useState("");
   const rial = rialFromTomanInput(cash);
+  const reasonOk = !needsReason || reason.trim().length >= 3;
   return (
     <Solid className="pad stack" style={{ gap: "var(--s-3)" }}>
       <h2 style={{ margin: 0 }}>شیفت باز نیست</h2>
@@ -1952,6 +1966,18 @@ function OpenShiftPanel({
           onChange={(e) => setCash(e.target.value)}
         />
       </label>
+      {needsReason ? (
+        <label className="auth-field">
+          <span>دلیل اختلاف با شمارش پایان شیفت قبل</span>
+          <input
+            value={reason}
+            onChange={(e) => setReason(e.target.value)}
+            maxLength={300}
+            placeholder="مثلاً: مدیر برای واریز بانک برداشت"
+            autoFocus
+          />
+        </label>
+      ) : null}
       {error ? (
         <p className="auth-error" role="alert">
           <span className="dot dot--crit" aria-hidden="true">●</span> {error}
@@ -1960,10 +1986,10 @@ function OpenShiftPanel({
       <button
         type="button"
         className="btn btn--primary"
-        disabled={busy || rial === null}
-        onClick={() => rial !== null && onOpen(rial.toString())}
+        disabled={busy || rial === null || !reasonOk}
+        onClick={() => rial !== null && reasonOk && onOpen(rial.toString(), needsReason ? reason.trim() : "")}
       >
-        {busy ? "…" : "باز کردن شیفت"}
+        {busy ? "…" : needsReason ? "باز کردن با ثبت اختلاف" : "باز کردن شیفت"}
       </button>
     </Solid>
   );
