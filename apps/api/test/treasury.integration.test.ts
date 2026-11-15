@@ -1064,4 +1064,97 @@ describe("خزانه و چک", { skip }, () => {
     assert.equal(t.json().shifts, null);
     assert.ok((t.json().moves as unknown[]).length >= 2);
   });
+
+  /**
+   * دامنهٔ شعبه روی **خودِ چک**، نه فقط روی فهرست.
+   *
+   * `GET /cheques` و `GET /cheques/:id` دامنه را می‌سنجیدند، ولی
+   * `POST /cheques/:id/events` فقط مجوز `cheque.manage` را می‌خواست: کاربر
+   * شعبهٔ «الف» با دانستن شناسه می‌توانست چک شعبهٔ «ب» را دریافت، وصول یا
+   * برگشت بزند — یعنی سند مالی در شعبه‌ای که دامنه‌اش را ندارد.
+   *
+   * پاسخ ۴۰۴ است، نه ۴۰۳: همان پاسخی که `GET /cheques/:id` می‌دهد، تا وجود
+   * چک شعبهٔ دیگر هم افشا نشود.
+   */
+  test("رویداد چک شعبهٔ دیگر رد می‌شود و هیچ سندی نمی‌زند", async () => {
+    const a = await loginAs(admin);
+    const other = (await sql<{ id: string }>`
+      INSERT INTO platform.branch (code, name)
+      VALUES (${`C-${suffix}`.slice(0, 12)}, 'شعبه چک دیگر') RETURNING id`.execute(handle.db)).rows[0]!.id;
+    // شمارنده‌های سند شعبهٔ دوم: بی آن‌ها رویداد با «شمارنده تعریف نشده» رد می‌شد
+    // و این آزمون به دلیلِ **اشتباه** سبز می‌ماند.
+    await sql`INSERT INTO platform.document_counter (branch_id, doc_type, fiscal_year, prefix)
+      SELECT ${other}::uuid, doc_type, fiscal_year, 'X' || prefix
+        FROM platform.document_counter WHERE branch_id = ${BRANCH}::uuid`.execute(handle.db);
+    const foreign = (await sql<{ id: string }>`
+      INSERT INTO treasury.cheque
+        (direction, branch_id, cheque_no, bank_name, amount, issued_on, due_on, party_type, party_id, created_by)
+      VALUES ('received', ${other}::uuid, ${`F${suffix}`.slice(0, 20)}, 'بانک شعبه دیگر', 9900000,
+              '2026-06-01', '2026-09-01', 'customer', ${customerId}::uuid, ${ids.admin}::uuid)
+      RETURNING id`.execute(handle.db)).rows[0]!.id;
+
+    const seen = await app.inject({ method: "GET", url: `/cheques/${foreign}`, ...a });
+    assert.equal(seen.statusCode, 404, seen.body);
+
+    const r = await app.inject({
+      method: "POST", url: `/cheques/${foreign}/events`, ...a,
+      payload: { action: "receive" },
+    });
+    assert.equal(r.statusCode, 404, r.body);
+    assert.equal(r.json().error.code, "cheque_not_found");
+
+    const after = await sql<{ status: string; events: string }>`
+      SELECT c.status, (SELECT count(*)::text FROM treasury.cheque_event e WHERE e.cheque_id = c.id) AS events
+        FROM treasury.cheque c WHERE c.id = ${foreign}::uuid`.execute(handle.db);
+    assert.deepEqual(after.rows[0], { status: "draft", events: "0" }, "چک شعبهٔ دیگر دست نخورد");
+
+    // کنترل مثبت: همان رویداد روی چک شعبهٔ **خودش** کار می‌کند — وگرنه
+    // نگهبانی که همه‌چیز را رد کند هم این آزمون را سبز می‌کرد.
+    const own = await app.inject({
+      method: "POST", url: "/cheques", ...a,
+      payload: {
+        direction: "received", branchId: BRANCH, chequeNo: `O${suffix}`.slice(0, 20), bankName: "بانک خودی",
+        amount: "9900000", issuedOn: "2026-06-01", dueOn: "2026-09-01",
+        partyType: "customer", partyId: customerId,
+      },
+    });
+    assert.equal(own.statusCode, 201, own.body);
+    const ok = await app.inject({
+      method: "POST", url: `/cheques/${own.json().id}/events`, ...a,
+      payload: { action: "receive" },
+    });
+    assert.equal(ok.statusCode, 200, ok.body);
+  });
+
+  /**
+   * `GET /cheques/:id` چک را در «۵۰۰ چکِ اول فهرست» جست‌وجو می‌کرد. پروندهٔ
+   * چکی که سررسیدش پس از ۵۰۰ چک دیگر بود، با «چک یافت نشد» رد می‌شد — در
+   * حالی که وجود داشت و در دامنهٔ کاربر بود.
+   *
+   * ⚠️ این آزمون آخر پرونده است: ۵۰۰ برگهٔ پیش‌نویسش نباید ادعای سررسیدِ
+   *    آزمون‌های دیگر را عوض کند.
+   */
+  test("پروندهٔ چک به جایگاهش در فهرست وابسته نیست", async () => {
+    const a = await loginAs(admin);
+    const late = await app.inject({
+      method: "POST", url: "/cheques", ...a,
+      payload: {
+        direction: "received", branchId: BRANCH, chequeNo: `L${suffix}`.slice(0, 20), bankName: "بانک دیررس",
+        amount: "1230000", issuedOn: "2026-06-01", dueOn: "2031-01-01",
+        partyType: "customer", partyId: customerId,
+      },
+    });
+    assert.equal(late.statusCode, 201, late.body);
+    await sql`
+      INSERT INTO treasury.cheque
+        (direction, branch_id, cheque_no, bank_name, amount, issued_on, due_on, party_type, party_id, created_by)
+      SELECT 'received', ${BRANCH}::uuid, 'BULK' || g::text, ${`انبوه ${suffix}`}, 1000,
+             '2026-01-01', '2026-02-01', 'customer', ${customerId}::uuid, ${ids.admin}::uuid
+        FROM generate_series(1, 500) g`.execute(handle.db);
+
+    const r = await app.inject({ method: "GET", url: `/cheques/${late.json().id}`, ...a });
+    assert.equal(r.statusCode, 200, r.body);
+    assert.equal(r.json().cheque.id, late.json().id);
+    assert.equal(r.json().cheque.amount, "1230000");
+  });
 });

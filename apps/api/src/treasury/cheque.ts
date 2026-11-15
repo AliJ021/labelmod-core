@@ -252,6 +252,8 @@ export class ChequeService {
     direction?: "received" | "issued" | undefined;
     status?: string | undefined;
     limit?: number | undefined;
+    /** فقط همین چک — برای `get`؛ سقف فهرست روی آن اثری ندارد. */
+    id?: string | undefined;
   } = {}): Promise<ChequeRow[]> {
     let q = this.#db
       .selectFrom("treasury.cheque as c")
@@ -292,6 +294,7 @@ export class ChequeService {
           ? q.where(sql<boolean>`false`)
           : q.where("c.branch_id", "in", opts.branchIds);
     }
+    if (opts.id !== undefined) q = q.where("c.id", "=", opts.id);
     if (opts.direction !== undefined) q = q.where("c.direction", "=", opts.direction);
     if (opts.status !== undefined) q = q.where("c.status", "=", opts.status);
 
@@ -320,6 +323,19 @@ export class ChequeService {
       createdAt: new Date(r.created_at).toISOString(),
       urgency: r.urgency,
     }));
+  }
+
+  /**
+   * یک چک، در دامنهٔ شعبهٔ داده‌شده — یا `null`.
+   *
+   * ⚠️ «در دامنه نیست» و «وجود ندارد» عمداً یک پاسخ دارند: فراخوان ۴۰۴
+   *    می‌دهد و وجود چک شعبهٔ دیگر افشا نمی‌شود.
+   * ⚠️ مستقیم با شناسه خوانده می‌شود، نه با جست‌وجو در فهرست: فهرست سقف
+   *    دارد و چکی که پس از سقف بیفتد «یافت نشد» می‌شد.
+   */
+  async get(id: string, branchIds?: string[]): Promise<ChequeRow | null> {
+    const rows = await this.list({ id, limit: 1, ...(branchIds === undefined ? {} : { branchIds }) });
+    return rows[0] ?? null;
   }
 
   /** زنجیره رویداد یک چک — همان چیزی که `status` از آن ساخته می‌شود. */

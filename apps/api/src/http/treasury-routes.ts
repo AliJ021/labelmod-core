@@ -491,12 +491,7 @@ export function registerTreasuryRoutes(
     await requireForSession(db, s, "cheque.manage");
     const { id } = z.object({ id: uuid }).parse(req.params);
 
-    const branchIds = await scopeOf(s.userId);
-    const rows = await cheques.list({
-      ...(branchIds === undefined ? {} : { branchIds }),
-      limit: 500,
-    });
-    const found = rows.find((c) => c.id === id);
+    const found = await cheques.get(id, await scopeOf(s.userId));
     if (!found) throw new ChequeError("cheque_not_found", "چک یافت نشد", 404);
 
     return { cheque: found, events: await cheques.events(id) };
@@ -543,6 +538,12 @@ export function registerTreasuryRoutes(
     const { id } = z.object({ id: uuid }).parse(req.params);
     const body = eventBody.parse(req.body);
     await requireForSession(db, s, "cheque.manage");
+    // دامنهٔ شعبه روی **خودِ چک**: مجوز `cheque.manage` به‌تنهایی یعنی کاربر
+    // شعبهٔ دیگر با دانستن شناسه، روی این چک سند مالی بزند. ۴۰۴ همان پاسخ
+    // `GET /cheques/:id` است تا وجود چک هم افشا نشود.
+    if (!(await cheques.get(id, await scopeOf(s.userId)))) {
+      throw new ChequeError("cheque_not_found", "چک یافت نشد", 404);
+    }
 
     const out = await runOnce<{ ok: true }>(db, {
       key: idempotencyKey(req) ?? `cheque:${id}:${body.action}`,
