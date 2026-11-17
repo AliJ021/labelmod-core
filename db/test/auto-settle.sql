@@ -43,7 +43,7 @@ DECLARE
   POS  uuid := '00000000-0000-7000-8000-000000000203';
   GW   uuid := '00000000-0000-7000-8000-000000000204';
   v_user uuid; v_sup uuid; v_prod uuid; v_var uuid; v_rcpt uuid; v_shift uuid;
-  v_inv1 uuid; v_line1 uuid; v_inv2 uuid; v_inv3 uuid; v_ret uuid; v_pos2 uuid;
+  v_inv1 uuid; v_line1 uuid; v_inv2 uuid; v_inv3 uuid; v_inv4 uuid; v_pay uuid; v_ret uuid; v_pos2 uuid;
   v_n int; r record;
 BEGIN
 
@@ -267,6 +267,23 @@ PERFORM platform.set_setting('payment.snappay_account_id', '""', 'آزمون', v
 PERFORM platform.set_setting('payment.digipay_account_id', to_jsonb(v_pos2::text), 'آزمون', v_user);
 PERFORM pg_temp.assert_eq('همین برای دیجی‌پی',
   treasury.payment_terminal(BR, 'gateway')::text, GW::text);
+
+-- ═══════════════════════════════════════════════════════════════════
+RAISE NOTICE E'\n═══ ۸. پرداخت در انتظارِ پیش از مهاجرت، با موفق‌شدن پایانه می‌گیرد ═══';
+-- ═══════════════════════════════════════════════════════════════════
+-- پرکردن گذشته فقط پرداخت موفق را می‌گیرد؛ سطر پیش از ۱۲۱ با تهی‌کردن دستی
+-- `account_id` شبیه‌سازی می‌شود (نقش مالک).
+
+INSERT INTO sales.invoice (branch_id, warehouse_id, channel, created_by)
+VALUES (BR, WH, 'web', v_user) RETURNING id INTO v_inv4;
+INSERT INTO treasury.payment (invoice_id, method_code, direction, amount, status, occurred_at)
+VALUES (v_inv4, 'card', 'in', 100000, 'pending', now()) RETURNING id INTO v_pay;
+UPDATE treasury.payment SET account_id = NULL WHERE id = v_pay;
+PERFORM pg_temp.assert_eq('کنترل منفی: در انتظارِ قدیمی بی‌پایانه',
+  (SELECT coalesce(account_id::text, 'NULL') FROM treasury.payment WHERE id = v_pay), 'NULL');
+UPDATE treasury.payment SET status = 'succeeded' WHERE id = v_pay;
+PERFORM pg_temp.assert_eq('موفق‌شدن پایانه را پر کرد',
+  (SELECT account_id::text FROM treasury.payment WHERE id = v_pay), POS::text);
 
 RAISE NOTICE E'\n✔ تسویهٔ خودکار — پیش‌فرض خاموش، پایانه، موعد واریز، کارمزد قراردادی، برگشت کارتی، جبران، ابهام، کلید، اسنپ‌پی';
 END $test$;

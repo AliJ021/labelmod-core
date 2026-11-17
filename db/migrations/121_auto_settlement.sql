@@ -103,8 +103,11 @@ BEGIN
   RETURN NEW;
 END $$;
 
+-- ⚠️ روی تغییر وضعیت هم: پرداخت کارتیِ در انتظار یا نامعلومِ پیش از این مهاجرت در
+--    پرکردن گذشته نیست؛ وقتی بعداً موفق شود، همین‌جا پایانه می‌گیرد. بی این، تا ابد
+--    بی‌پایانه می‌ماند و زنگ «تسویه‌نشده» راهی برای خاموش‌شدن نداشت.
 CREATE TRIGGER payment_fill_terminal
-  BEFORE INSERT ON treasury.payment
+  BEFORE INSERT OR UPDATE OF status ON treasury.payment
   FOR EACH ROW EXECUTE FUNCTION treasury.payment_fill_terminal();
 
 -- پرداخت‌های موفقِ تسویه‌نشدهٔ موجود هم پایانه می‌گیرند؛ تسویه‌شده، در انتظار و
