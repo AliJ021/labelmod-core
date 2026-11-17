@@ -93,8 +93,8 @@ CHECK ((direction='received' AND party_type='customer')
 
 | مسیر | سیگنال | زمان همگرایی مورد انتظار |
 |---|---|---|
-| فروش → موجودی سایت | `platform.outbox_message` با topic خوراک موجودی | `WORKER_INTERVAL_MS` (پیش‌فرض **۵ ثانیه**) + یک چرخهٔ Pull افزونه |
-| فروش → پیامک مشتری | Outbox → `sent_at` | همان ۵ ثانیه + تأخیر سرویس پیامک |
+| فروش → موجودی سایت | `platform.outbox_message` با topic خوراک موجودی | `WORKER_INTERVAL_MS` (پیش‌فرض **۱ ثانیه**، تا ۲۰۲۶/۱۱/۱۷ پنج ثانیه) + یک چرخهٔ Pull افزونه |
+| فروش → پیامک مشتری | Outbox → `sent_at` | همان ۱ ثانیه + تأخیر سرویس پیامک |
 | فاکتور نهایی → دفتر | `sales.unposted_revenue` خالی شود | **تا بستن دوره**: شیفت با شمردن کشو، کانال سایت شبانه |
 | چک → دفتر | `treasury.cheque_check` | همان تراکنش — Async نیست |
 
