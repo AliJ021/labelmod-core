@@ -340,6 +340,34 @@ describe("Worker — صف پیام، پیامک و هشدار چک", { skip }, (
     assert.equal(r.dead, 0);
   });
 
+  /*
+   * بازبینی مستقل ۲۰۲۶/۱۱/۱۷: با دور ۱ ثانیه‌ای، زنگ سلامت (که زنجیرهٔ حسابرسی را
+   * بازمحاسبه می‌کند) هر ثانیه اجرا می‌شد. `runLoop` حالا تولیدکننده‌ها را با
+   * `producersDue` دقیقه‌ای می‌زند و بقیهٔ دورها `skipProducers` می‌فرستد.
+   * ⚠️ کنترل مثبت لازم است: بی دور دوم، `tick`ی که اصلاً زنگ نسازد هم پاس می‌شد.
+   */
+  test("دور بی تولیدکننده زنگ سلامت نمی‌سازد؛ دور عادی می‌سازد", async () => {
+    const codesBefore = (await sql<{ v: unknown }>`
+      SELECT value AS v FROM platform.setting WHERE key = 'notify.health_alert_codes'`.execute(handle.db)).rows[0]!.v;
+    await set("notify.health_alert_codes", ["backup_stale"]);
+    await set("notify.health_alerts", true);
+    try {
+      const count = async () => Number((await sql<{ n: string }>`
+        SELECT count(*)::text AS n FROM platform.outbox_message
+         WHERE topic = 'health.alert' AND payload->>'code' = 'backup_stale'`.execute(handle.db)).rows[0]!.n);
+      const before = await count();
+      const skipped = await tick({ ...opts(), skipProducers: true });
+      assert.equal(skipped.enqueuedAlerts, 0);
+      assert.equal(await count(), before, "دور بی تولیدکننده پیامی ساخت");
+      const normal = await tick(opts());
+      assert.equal(normal.enqueuedAlerts, 1, "کنترل مثبت: زنگ بکاپ تازه روی دیتابیس آزمون روشن است");
+      assert.equal(await count(), before + 1);
+    } finally {
+      await set("notify.health_alerts", false);
+      await set("notify.health_alert_codes", codesBefore);
+    }
+  });
+
   // ── صفحه عمومی فاکتور ───────────────────────────────────────────
 
   test("صفحه فاکتور با توکن درست باز می‌شود", async () => {

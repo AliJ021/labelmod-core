@@ -48,13 +48,13 @@ test("موجودی اول ناهم‌خوان: کادر دلیل، و بی دل�
   await expect(reason).toBeVisible();
   const submit = page.getByRole("button", { name: "باز کردن با ثبت اختلاف" });
   await expect(submit, "بی دلیل بسته است").toBeDisabled();
-  await reason.fill("مدیر ۳ میلیون برای واریز بانک برداشت");
+  await reason.fill("شمارش آخر شب اشتباه بود");
   await expect(submit).toBeEnabled();
 
   // اثر دفتری دارد، پس از الگوی «عمل مالی ایمن» می‌گذرد: خلاصه، پیامد، تأیید.
   await submit.click();
   const dialog = page.getByRole("dialog", { name: "باز کردن شیفت با ثبت اختلاف" });
-  await expect(dialog).toContainText("مدیر ۳ میلیون برای واریز بانک برداشت");
+  await expect(dialog).toContainText("شمارش آخر شب اشتباه بود");
   await expect(dialog).toContainText("مغایرت صندوق");
   // تصمیم مالک (۲۰۲۶/۱۱/۱۵): تا صفحهٔ سند دستی/معکوس ساخته نشده، راه اصلاح حسابدار است، نه ابزاری که نیست.
   await expect(dialog).toContainText("اصلاحش با حسابدار است");
@@ -65,6 +65,6 @@ test("موجودی اول ناهم‌خوان: کادر دلیل، و بی دل�
   await expect(page.getByRole("heading", { name: "شیفت باز نیست" })).toHaveCount(0);
   expect(bodies).toHaveLength(2);
   expect(bodies[0]).toEqual({ branchId: "b1", openingCash: "20000000" });
-  expect(bodies[1]).toEqual({ branchId: "b1", openingCash: "20000000", openingNote: "مدیر ۳ میلیون برای واریز بانک برداشت" });
+  expect(bodies[1]).toEqual({ branchId: "b1", openingCash: "20000000", openingNote: "شمارش آخر شب اشتباه بود" });
   await api.settled();
 });

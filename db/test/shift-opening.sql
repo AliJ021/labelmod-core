@@ -52,7 +52,7 @@ DO $test$
 DECLARE
   BR uuid;
   v_user uuid; v_user2 uuid;
-  v_s1 uuid; v_s2 uuid; v_s3 uuid; v_s4 uuid; v_s5 uuid;
+  v_s1 uuid; v_s2 uuid; v_s3 uuid; v_s4 uuid; v_s5 uuid; v_s6 uuid;
   v_msg text;
 BEGIN
 
@@ -154,7 +154,32 @@ PERFORM pg_temp.assert_eq('کشوی دوم بی سنجش و بی سند باز �
           (SELECT count(*) FROM ledger.journal_entry WHERE ref_type = 'cash_shift' AND ref_id = v_s5)
      FROM sales.cash_shift WHERE id = v_s5), 'NULL 0');
 
-RAISE NOTICE E'\n✔ پیوستگی نقد شیفت‌ها — اولین شیفت، کنترل منفی، شمارش کور، سند مغایرت، کشوی دوم';
+-- ═══════════════════════════════════════════════════════════════════
+RAISE NOTICE E'\n═══ ۶. پس از دو کشوی هم‌زمان، شمارش یک کشو انتظار نیست ═══';
+-- ═══════════════════════════════════════════════════════════════════
+-- یافتهٔ بازبینی مستقل: دو کشو با ۲٫۵ و ۰٫۷۷۷ میلیون بسته شدند؛ شیفت بعد با جمع
+-- هر دو باز می‌شود و نباید «اضافه» و سند مغایرت بگیرد. زمان‌ها صریح‌اند چون در
+-- یک تراکنش `now()` برای همه یکی است و هم‌پوشانی دیده نمی‌شد.
+
+PERFORM sales.close_shift(v_s4, 2500000, v_user);
+PERFORM sales.close_shift(v_s5, 777000, v_user2);
+UPDATE sales.cash_shift SET opened_at = now() + interval '1 hour', closed_at = now() + interval '9 hours' WHERE id = v_s4;
+UPDATE sales.cash_shift SET opened_at = now() + interval '3 hours', closed_at = now() + interval '8 hours' WHERE id = v_s5;
+PERFORM pg_temp.assert_eq('آخرین شیفت بسته هم‌زمان با کشوی دیگر بود: انتظار NULL',
+  coalesce(sales.shift_opening_expected(BR)::text, 'NULL'), 'NULL');
+v_s6 := sales.open_shift(BR, v_user, 3277000);
+PERFORM pg_temp.assert_eq('جمع دو کشو بی سنجش و بی سند مغایرت باز شد',
+  (SELECT coalesce(opening_expected::text, 'NULL') || ' ' ||
+          (SELECT count(*) FROM ledger.journal_entry WHERE ref_type = 'cash_shift' AND ref_id = v_s6)
+     FROM sales.cash_shift WHERE id = v_s6), 'NULL 0');
+
+-- کنترل منفی: شیفت تنها پس از آن دوباره سنجیده می‌شود.
+PERFORM sales.close_shift(v_s6, 3277000, v_user);
+UPDATE sales.cash_shift SET opened_at = now() + interval '10 hours', closed_at = now() + interval '11 hours' WHERE id = v_s6;
+PERFORM pg_temp.assert_eq('شیفت تنها: انتظار همان شمارش است',
+  sales.shift_opening_expected(BR)::text, '3277000');
+
+RAISE NOTICE E'\n✔ پیوستگی نقد شیفت‌ها — اولین شیفت، کنترل منفی، شمارش کور، سند مغایرت، کشوی دوم، کشوهای هم‌زمان';
 END $test$;
 
 ROLLBACK;

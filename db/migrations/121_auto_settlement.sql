@@ -33,7 +33,17 @@
 -- ⚠️ پایانهٔ مشترک میان شعبه‌ها (`branch_id` تهی) خودکار تسویه نمی‌شود: برگ
 --    تسویه شعبه می‌خواهد و تقسیم حدس زده نمی‌شود.
 --
--- کلید: `treasury.auto_settlement` (پیش‌فرض روشن). زنگ: `unsettled_terminal`.
+-- ⚠️ **پیش‌فرض خاموش** (بازبینی مستقل ۲۰۲۶/۱۱/۱۷). روشن‌کردنش تصمیم مالک است و فقط
+--    پس از واردکردن کارمزد و دورهٔ تسویهٔ قرارداد در «پایانه‌ها»: اولین اجرا همهٔ
+--    پرداخت‌های موفقِ تسویه‌نشدهٔ گذشته را هم با کارمزد **همان لحظه** تسویه می‌کند و
+--    برگ تسویه قطعی است. اگر حسابدار پیش‌تر انتقال دستی از حساب واسط به بانک زده،
+--    پیش از روشن‌کردن هماهنگ شود؛ وگرنه آن مبلغ دو بار به بانک می‌رود.
+-- ⚠️ حساب واسط اسنپ‌پی و دیجی‌پی (`payment.*_account_id`) پایانهٔ درگاه سایت شمرده
+--    نمی‌شود؛ وگرنه با پیکربندی آن‌ها درگاه سایت «چند پایانه» می‌شد و هرگز پر نمی‌شد.
+-- ⚠️ پرکردن پایانهٔ گذشته فقط پرداخت **موفق** را می‌گیرد؛ در انتظار و نامعلوم دست
+--    نمی‌خورند (و Trigger قیدهای فاکتورشان را بی‌دلیل دوباره نمی‌سنجد).
+--
+-- کلید: `treasury.auto_settlement` (پیش‌فرض خاموش). زنگ: `unsettled_terminal`.
 -- آزمون: `db/test/auto-settle.sql`.
 -- =====================================================================
 
@@ -43,10 +53,10 @@ SET LOCAL lock_timeout = '5s';
 
 INSERT INTO platform.setting(key, value, description, requires_approval, kind, label, group_key,
                              help, sort_order, permission, is_editable)
-VALUES ('treasury.auto_settlement', 'true'::jsonb,
+VALUES ('treasury.auto_settlement', 'false'::jsonb,
   'تسویهٔ خودکار شبانهٔ کارت‌خوان و درگاه با کارمزد قراردادی.', false,
   'bool', 'تسویهٔ خودکار کارت‌خوان و درگاه', 'treasury',
-  'هر شب فروش کارتی و درگاهی روزهایی که موعد واریزشان رسیده، با کارمزد قراردادی همان پایانه (صفحهٔ «پایانه‌ها») از حساب «وجوه در راه» به بانک منتقل می‌شود. فرض می‌کند پذیرنده طبق قرارداد واریز کرده؛ کم‌واریزی را کشف نمی‌کند. خاموش‌کردنش یعنی فروش کارتی در حساب واسط می‌ماند و زنگ «تسویه‌نشده» می‌خورد.',
+  'هر شب فروش کارتی و درگاهی روزهایی که موعد واریزشان رسیده، با کارمزد قراردادی همان پایانه (صفحهٔ «پایانه‌ها») از حساب «وجوه در راه» به بانک منتقل می‌شود. فرض می‌کند پذیرنده طبق قرارداد واریز کرده؛ کم‌واریزی را کشف نمی‌کند. خاموش‌کردنش یعنی فروش کارتی در حساب واسط می‌ماند و زنگ «تسویه‌نشده» می‌خورد. پیش از روشن‌کردن کارمزد قرارداد را در «پایانه‌ها» وارد کنید؛ اولین اجرا فروش کارتی تسویه‌نشدهٔ گذشته را هم تسویه می‌کند. اگر حسابدار انتقال دستی از حساب واسط به بانک زده، پیش از روشن‌کردن هماهنگ کنید.',
   30, 'settings.security', true)
 ON CONFLICT (key) DO NOTHING;
 
@@ -66,6 +76,8 @@ AS $$
      AND a.kind = CASE m.kind WHEN 'card_reader' THEN 'card_terminal' WHEN 'gateway' THEN 'gateway' END
      AND a.ledger_account_code = pr.account_code
      AND (a.branch_id = p_branch OR a.branch_id IS NULL)
+     AND a.id::text NOT IN (coalesce(platform.setting_text('payment.snappay_account_id', ''), ''),
+                            coalesce(platform.setting_text('payment.digipay_account_id', ''), ''))
    WHERE m.code = p_method
 $$;
 
@@ -95,7 +107,8 @@ CREATE TRIGGER payment_fill_terminal
   BEFORE INSERT ON treasury.payment
   FOR EACH ROW EXECUTE FUNCTION treasury.payment_fill_terminal();
 
--- پرداخت‌های تسویه‌نشدهٔ موجود هم پایانه می‌گیرند؛ تسویه‌شده‌ها دست نمی‌خورند.
+-- پرداخت‌های موفقِ تسویه‌نشدهٔ موجود هم پایانه می‌گیرند؛ تسویه‌شده، در انتظار و
+-- نامعلوم دست نمی‌خورند.
 UPDATE treasury.payment p
    SET account_id = treasury.payment_terminal(
          coalesce((SELECT branch_id FROM sales.invoice WHERE id = p.invoice_id),
@@ -103,7 +116,7 @@ UPDATE treasury.payment p
          p.method_code)
   FROM treasury.payment_method m
  WHERE m.code = p.method_code AND m.kind IN ('card_reader','gateway')
-   AND p.account_id IS NULL AND p.settlement_id IS NULL;
+   AND p.status = 'succeeded' AND p.account_id IS NULL AND p.settlement_id IS NULL;
 
 -- ── ۳. تسویه با کسر بازپرداخت همان پایانه ──────────────────────────
 CREATE OR REPLACE FUNCTION treasury.post_settlement(p_settlement uuid, p_user uuid DEFAULT NULL::uuid)

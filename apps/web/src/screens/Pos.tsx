@@ -1990,7 +1990,7 @@ function OpenShiftPanel({
           <>
             {/* شمارش کور: عدد مورد انتظار عمداً نشان داده نمی‌شود. */}
             <Note tone="warn">این مبلغ با شمارش پایان شیفت قبل نمی‌خواند. دوباره بشمارید؛ اگر مبلغ درست است، دلیل اختلاف را بنویسید. اختلاف به‌عنوان مغایرت صندوق در دفتر ثبت می‌شود.</Note>
-            <Field label="دلیل اختلاف" error={reasonError} hint="مثلاً «مدیر برای واریز بانک برداشت». حداکثر ۳۰۰ نویسه.">
+            <Field label="دلیل اختلاف" error={reasonError} hint="مثلاً «شمارش آخر شب اشتباه بود». حداکثر ۳۰۰ نویسه.">
               <textarea className="set-input" rows={2} maxLength={300} value={reason}
                 onChange={(e) => setReason(e.target.value)} onBlur={() => setTouched(true)} autoFocus />
             </Field>

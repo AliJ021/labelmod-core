@@ -26,6 +26,10 @@
 --    است (نقد ممکن است میان دو کشو تقسیم شده باشد) و سنجش انجام نمی‌شود؛
 --    نتیجه در `opening_expected = NULL` دیده می‌شود. اولین شیفت شعبه هم
 --    انتظاری ندارد.
+-- ⚠️ **و پس از دو کشوی هم‌زمان هم** (بازبینی مستقل ۲۰۲۶/۱۱/۱۷): اگر آخرین شیفت
+--    بسته با شیفت دیگری هم‌پوشانی داشت، شمارش آن یک کشو نقد کل شعبه نیست. با
+--    کشوهای ۳ و ۵ میلیونی، شیفت فردا با ۸ میلیون «۳ میلیون اضافه» و سند مغایرت
+--    کاذب می‌گرفت. سنجش انجام نمی‌شود؛ جمع‌زدن هم حدس است چون کشوها جدا شمرده شده‌اند.
 -- ⚠️ اگر اختلاف در واقع یک واریز به بانک بوده، این سند آن را «مغایرت»
 --    ثبت می‌کند؛ اصلاح طبقه‌بندی به سند معکوس/دستی نیاز دارد که هنوز ساخته
 --    نشده (LM-06) — همان محدودیتی که مغایرت بستن شیفت از قبل داشت.
@@ -62,15 +66,21 @@ AS $$
   SELECT CASE
            WHEN EXISTS (SELECT 1 FROM sales.cash_shift
                          WHERE branch_id = p_branch AND status = 'open') THEN NULL
-           ELSE (SELECT counted_cash FROM sales.cash_shift
-                  WHERE branch_id = p_branch AND status = 'closed'
-                  ORDER BY closed_at DESC, id DESC
-                  LIMIT 1)
+           ELSE (SELECT CASE WHEN EXISTS (
+                                SELECT 1 FROM sales.cash_shift o
+                                 WHERE o.branch_id = p_branch AND o.id <> l.id
+                                   AND o.opened_at < l.closed_at
+                                   AND coalesce(o.closed_at, 'infinity') > l.opened_at)
+                             THEN NULL ELSE l.counted_cash END
+                   FROM (SELECT id, opened_at, closed_at, counted_cash FROM sales.cash_shift
+                          WHERE branch_id = p_branch AND status = 'closed'
+                          ORDER BY closed_at DESC, id DESC
+                          LIMIT 1) l)
          END
 $$;
 
 COMMENT ON FUNCTION sales.shift_opening_expected(uuid) IS
-  'نقدی که شیفت تازهٔ شعبه باید با آن شروع شود؛ NULL یعنی سنجش ندارد (اولین شیفت یا کشوی باز دیگر)';
+  'نقدی که شیفت تازهٔ شعبه باید با آن شروع شود؛ NULL یعنی سنجش ندارد (اولین شیفت، کشوی باز دیگر، یا آخرین شیفت بسته هم‌زمان با کشوی دیگر)';
 
 -- ── ۲. باز کردن شیفت ────────────────────────────────────────────────
 CREATE FUNCTION sales.open_shift(

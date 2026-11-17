@@ -70,7 +70,28 @@ export interface LoopOptions {
    * همان رفتار پیش از تفکیک.
    */
   lane?: WorkerLane | undefined;
+  /**
+   * این دور تولیدکننده‌ها (هشدار چک، زنگ سلامت، انقضای اینستاگرام) را اجرا
+   * نکند. فقط `runLoop` ست می‌کند؛ پیش‌فرض اجرا است، همان رفتار پیشین `tick`.
+   */
+  skipProducers?: boolean | undefined;
   log: (line: string) => void;
+}
+
+/**
+ * فاصلهٔ تولیدکننده‌ها، جدا از فاصلهٔ دور.
+ *
+ * ⚠️ از ۲۰۲۶/۱۱/۱۷ دور هر ۱ ثانیه است تا موجودی سایت زود برسد. تولیدکننده‌ها
+ *    روزانه Idempotentاند و به این سرعت نیازی ندارند؛ ولی `enqueue_health_alerts`
+ *    کل `health_alerts()` را می‌راند که زنجیرهٔ حسابرسی را بازمحاسبه می‌کند
+ *    (بازبینی مستقل: ~۱٫۱ ثانیه با ۱۰۰ هزار سطر). هر ثانیه اجرایش یعنی دیتابیس
+ *    دائم مشغول و هر دور Push پشت آن.
+ */
+export const PRODUCER_INTERVAL_MS = 60_000;
+
+/** آیا تولیدکننده‌ها در این دور اجرا شوند؟ `null` = هنوز هرگز (اولین دور). */
+export function producersDue(lastAt: number | null, now: number, intervalMs = PRODUCER_INTERVAL_MS): boolean {
+  return lastAt === null || now - lastAt >= intervalMs || now < lastAt;
 }
 
 /**
@@ -152,7 +173,7 @@ export async function tick(opts: LoopOptions): Promise<TickResult> {
   const settings = await readNotifySettings(opts.db);
 
   // تولیدکننده‌ها فقط در خطی که مصرف‌کنندهٔ پیامشان است (نه `web`).
-  if (lane.producers) {
+  if (lane.producers && opts.skipProducers !== true) {
     // هشدار چک: تولید پیام، پیش از مصرف. اگر همین دور تولید شود، همین
     // دور هم فرستاده می‌شود.
     const cheques = await sql<{ n: number }>`
@@ -444,6 +465,7 @@ export function runLoop(
   let running = true;
   let current: Promise<unknown> = Promise.resolve();
   let pace: PaceState = { backlog: 0, errors: 0 };
+  let producersAt: number | null = null;
 
   const sleep = (ms: number) =>
     new Promise<void>((resolve) => {
@@ -459,7 +481,11 @@ export function runLoop(
     while (running) {
       let outcome: { ok: true; claimed: number } | { ok: false };
       try {
-        current = tick(opts);
+        // زمان پیش از اجرا ثبت می‌شود: دورِ شکسته هم تا یک دقیقهٔ بعد تکرار نمی‌شود.
+        const now = Date.now();
+        const due = producersDue(producersAt, now);
+        if (due) producersAt = now;
+        current = tick({ ...opts, skipProducers: !due });
         const r = (await current) as TickResult;
         outcome = { ok: true, claimed: r.claimed };
         // دور خالی لاگ نمی‌خورد: Workerی که هر پنج ثانیه «کاری نبود»

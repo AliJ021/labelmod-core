@@ -46,7 +46,13 @@ fi
 while IFS='|' read -r code from to gross fee net skipped; do
   [ -z "${code:-}" ] && continue
   if [ -n "$skipped" ]; then
-    echo "⚠️  $code ($from تا $to): $skipped"; failed=1
+    # پایانهٔ مشترک یک وضعیت پیکربندی است، نه شکست اجرا: اگر هر شب کد ۱ می‌داد،
+    # زمان‌بند هر شب «ناموفق» می‌دید و شکست واقعی در همان صدا گم می‌شد. پرداخت‌هایش
+    # تسویه‌نشده می‌مانند و زنگ «پرداخت کارتی یا درگاهی تسویه‌نشده» نشانشان می‌دهد.
+    case "$skipped" in
+      "پایانهٔ مشترک"*) echo "ℹ️  $code: $skipped" ;;
+      *) echo "⚠️  $code ($from تا $to): $skipped"; failed=1 ;;
+    esac
   else
     echo "✓ $code ($from تا $to): ناخالص $gross، کارمزد $fee، واریز $net ریال"
   fi

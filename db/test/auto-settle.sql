@@ -10,6 +10,10 @@
 -- ⚠️ بند ۴ بازپرداخت کارتی را می‌سنجد: پذیرنده برگشت را از واریز کم می‌کند و
 --    بی کسرش حساب واسط برای همیشه منفی می‌ماند.
 -- ⚠️ «امروز» صریح داده می‌شود (`p_today`)، نه از ساعت دیواری.
+-- ⚠️ بند ۰ پیش‌فرض **خاموش** را می‌سنجد (بازبینی مستقل ۲۰۲۶/۱۱/۱۷): روشن‌بودن پیش‌فرض یعنی
+--    شب اول پس از مهاجرت، کل سابقه با کارمزد صفرِ Seed قطعی تسویه می‌شد.
+-- ⚠️ بند ۷ حساب واسط اسنپ‌پی/دیجی‌پی را می‌سنجد، با کنترل منفی: بی تنظیم، دو حساب درگاه
+--    واقعاً مبهم‌اند؛ با تنظیم، حساب اسنپ‌پی از شمارش بیرون می‌رود.
 -- =====================================================================
 
 \set ON_ERROR_STOP on
@@ -47,6 +51,13 @@ INSERT INTO identity.app_user (username, full_name) VALUES ('autosettle','تست
   RETURNING id INTO v_user;
 INSERT INTO identity.user_role (user_id, role_code, branch_id) VALUES (v_user,'admin',BR);
 PERFORM platform.set_actor(v_user);
+
+RAISE NOTICE E'\n═══ ۰. پیش‌فرض خاموش است ═══';
+PERFORM pg_temp.assert_eq('پیش‌فرض کلید تسویهٔ خودکار',
+  (SELECT value::text FROM platform.setting WHERE key = 'treasury.auto_settlement'), 'false');
+SELECT count(*) INTO v_n FROM treasury.auto_settle_due(v_user, '2026-09-30');
+PERFORM pg_temp.assert_eq('خاموش: هیچ پایانه‌ای سنجیده نمی‌شود', v_n::text, '0');
+PERFORM platform.set_setting('treasury.auto_settlement', 'true', 'آزمون', v_user);
 
 -- کارمزد قراردادی: کارت‌خوان ۱٫۵٪ و واریز فردا، درگاه ۲٪ و واریز دو روز بعد.
 PERFORM treasury.set_settlement_terms(POS, 1::smallint, 1.5, 'آزمون تسویهٔ خودکار', v_user);
@@ -240,7 +251,24 @@ PERFORM treasury.auto_settle_due(v_user, platform.business_date());
 PERFORM pg_temp.assert_eq('روشن: تسویه شد و زنگ خاموش شد',
   (SELECT n::text FROM platform.health_alerts() WHERE code = 'unsettled_terminal'), '0');
 
-RAISE NOTICE E'\n✔ تسویهٔ خودکار — پایانه، موعد واریز، کارمزد قراردادی، برگشت کارتی، جبران، ابهام، کلید';
+-- ═══════════════════════════════════════════════════════════════════
+RAISE NOTICE E'\n═══ ۷. حساب واسط اسنپ‌پی/دیجی‌پی پایانهٔ درگاه سایت نیست ═══';
+-- ═══════════════════════════════════════════════════════════════════
+
+INSERT INTO treasury.account (code, name, kind, branch_id, ledger_account_code, settlement_account_id, settlement_days)
+VALUES ('SNAP-1', 'اسنپ‌پی', 'gateway', BR, '1104', '00000000-0000-7000-8000-000000000202', 3)
+RETURNING id INTO v_pos2;
+PERFORM pg_temp.assert_eq('کنترل منفی: دو حساب درگاه بی تنظیم مبهم‌اند',
+  coalesce(treasury.payment_terminal(BR, 'gateway')::text, 'NULL'), 'NULL');
+PERFORM platform.set_setting('payment.snappay_account_id', to_jsonb(v_pos2::text), 'آزمون', v_user);
+PERFORM pg_temp.assert_eq('حساب اسنپ‌پی شمرده نمی‌شود؛ درگاه سایت پیدا می‌شود',
+  treasury.payment_terminal(BR, 'gateway')::text, GW::text);
+PERFORM platform.set_setting('payment.snappay_account_id', '""', 'آزمون', v_user);
+PERFORM platform.set_setting('payment.digipay_account_id', to_jsonb(v_pos2::text), 'آزمون', v_user);
+PERFORM pg_temp.assert_eq('همین برای دیجی‌پی',
+  treasury.payment_terminal(BR, 'gateway')::text, GW::text);
+
+RAISE NOTICE E'\n✔ تسویهٔ خودکار — پیش‌فرض خاموش، پایانه، موعد واریز، کارمزد قراردادی، برگشت کارتی، جبران، ابهام، کلید، اسنپ‌پی';
 END $test$;
 
 ROLLBACK;
