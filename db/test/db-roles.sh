@@ -143,6 +143,12 @@ attack "INSERT مستقیم در سابقهٔ بکاپ" \
 attack "record_backup_event با نقش برنامه" \
   "SELECT platform.record_backup_event('created', 'scheduler', 'fake.dump');"
 
+# مهاجرت ۱۲۵ — کمکیِ درونیِ آزادسازی رزرو سایت. با نقش برنامه یعنی آزادکردن هر رزرو
+# پرداخت در محل یا نگه‌داشت پرداخت آنلاین بی سنجش سفارش و بی حسابرسی؛ صندوق بعدش همان
+# تک‌قلم را می‌فروخت.
+attack "release_web_reservation_line با نقش برنامه" \
+  "SELECT inventory.release_web_reservation_line(gen_random_uuid());"
+
 echo
 echo "═══ و نقشی که فقط USAGE روی یک اسکیما دارد ═══"
 # ⚠️ این همان بازتولید یافته است، عیناً: نقشی **بی هیچ حقی روی هیچ
@@ -282,6 +288,21 @@ PUSH_VER=$(run -c "SELECT payload->>'version' FROM platform.outbox_message
 
 run -c "SELECT platform.set_setting('web.push_enabled', 'false'::jsonb,
           'تست نقش', '$USER_ID'::uuid);" >/dev/null
+
+# مهاجرت ۱۲۵ — دروازه‌های نگه‌داشت پرداخت آنلاین باید با نقش برنامه باز بمانند: API
+# نگه‌داشت می‌سازد و Worker جاروی انقضا را می‌زند. بی این، REVOKE کمکیِ آزادسازی
+# (بالا) می‌توانست هر دو را بی‌صدا بشکند و پرداخت آنلاین هیچ‌وقت نگه‌داشت نمی‌گرفت.
+if psql -v ON_ERROR_STOP=1 -q -d "$APP_CONN" -tAc \
+   "SELECT inventory.expire_checkout_holds('$USER_ID'::uuid);" >/dev/null 2>&1; then
+  echo "  ✓ جاروی نگه‌داشت منقضی با نقش برنامه کار کرد"
+else
+  echo "  ✗ جاروی نگه‌داشت منقضی با نقش برنامه شکست"; FAIL=1
+fi
+HOLD_OK=$(run -c "SELECT has_function_privilege('$ROLE',
+  'inventory.web_checkout_hold(uuid,text,uuid,uuid,jsonb)', 'EXECUTE');")
+[ "$HOLD_OK" = "t" ] \
+  && echo "  ✓ نقش برنامه نگه‌داشت پرداخت آنلاین را صدا می‌زند" \
+  || { echo "  ✗ نقش برنامه به web_checkout_hold دسترسی ندارد"; FAIL=1; }
 
 
 echo

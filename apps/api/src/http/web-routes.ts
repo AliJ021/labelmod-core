@@ -138,6 +138,39 @@ export function registerWebRoutes(app: FastifyInstance, deps: WebRouteDeps): voi
   }
 
   /**
+   * نگه‌داشت موجودی سبد سایت **پیش از** رفتن به درگاه (مهاجرت ۱۲۵).
+   *
+   * افزونه هنگام ساخت سفارش (و در «پرداخت دوباره») صدایش می‌زند. `unavailable` یعنی
+   * دست‌کم یک قلم همین حالا در فروشگاه فروخته شده یا در پرداختِ مشتری دیگری است، و
+   * پرداخت **نباید** شروع شود؛ هیچ قلمی نگه داشته نشده است (یا همه یا هیچ).
+   *
+   * ⚠️ پاسخ «ناموجود» ۲۰۰ با `status` است، نه ۴۰۹: نتیجهٔ عادی یک پرسش است و افزونه
+   *    باید فهرست اقلام را بخواند؛ کلاینت HTTP افزونه بدنهٔ خطا را دور می‌ریزد.
+   * ⚠️ Idempotency-Key نمی‌خواهد: هویت عملیات شمارهٔ سفارش است و تکرارش فقط مهلت را
+   *    تمدید می‌کند (همان قاعدهٔ PUT شمارش انبار).
+   */
+  app.post("/web/checkout-holds", async (req, reply) => {
+    const s = session(req);
+    const body = reservationBody.parse(req.body);
+    await requireForSession(db, s, "sale.create");
+    await assertBranch(db, s.userId, body.branchId);
+    await assertWarehouseInBranch(db, body.warehouseId, body.branchId);
+    const result = await db.transaction().execute(async (trx) => {
+      const out = await sql<{ result: {
+        status: "held" | "unavailable" | "reserved" | "consumed";
+        reservationId?: string; expiresAt?: string;
+        unavailable?: Array<{ sku: string; available: string; heldByCheckout: boolean }>;
+      } }>`
+        SELECT inventory.web_checkout_hold(${s.userId}::uuid, ${body.externalId},
+          ${body.branchId}::uuid, ${body.warehouseId}::uuid, ${JSON.stringify(body.lines)}::jsonb) AS result
+      `.execute(trx);
+      return out.rows[0]!.result;
+    });
+    reply.header("cache-control", "no-store");
+    return reply.code(result.status === "held" ? 201 : 200).send(result);
+  });
+
+  /**
    * ثبت یک سفارش سایت.
    *
    * پیش‌نویس، اقلام، پرداخت و نهایی‌سازی همه در **یک** تراکنش با درج
@@ -262,7 +295,8 @@ export function registerWebRoutes(app: FastifyInstance, deps: WebRouteDeps): voi
    *    که مشتری دیده و پرداخته درست است.
    *
    * `reserved` کم می‌شود: کالایی که در سبدی رزرو شده، برای سایت
-   * موجود نیست.
+   * موجود نیست — به‌جز نگه‌داشت پرداخت آنلاین (`checkout_held`، ۱۲۵)، که
+   * همان فرمول `inventory.push_web_stock` است: «یک تعریف» برای Push و خوراک.
    */
   app.get("/web/stock", async (req) => {
     const s = session(req);
@@ -295,6 +329,7 @@ export function registerWebRoutes(app: FastifyInstance, deps: WebRouteDeps): voi
         "v.sku",
         "b.on_hand",
         "b.reserved",
+        "b.checkout_held",
         "b.row_version",
         "b.updated_at",
         "v.status",
@@ -336,7 +371,7 @@ export function registerWebRoutes(app: FastifyInstance, deps: WebRouteDeps): voi
         // سایت عدد قبلی‌اش را نگه می‌دارد و می‌فروشد.
         available:
           r.status === "active"
-            ? String(Math.max(0, Number(r.on_hand) - Number(r.reserved)))
+            ? String(Math.max(0, Number(r.on_hand) - Number(r.reserved) + Number(r.checkout_held)))
             : "0",
         // `null` یعنی «این کالا در این فهرست قیمت ندارد» — که با
         // «قیمتش صفر است» یکی نیست. افزونه باید ردش کند، نه اینکه

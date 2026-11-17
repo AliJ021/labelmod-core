@@ -188,6 +188,67 @@ describe("سفارش سایت (ووکامرس)", { skip }, () => {
     disposable?.drop();
   });
 
+  /*
+   * مهاجرت ۱۲۵ — خواستهٔ مالک: کالای تک‌قلم را دو نفر نخرند. نگه‌داشت **پیش از** رفتن به
+   * درگاه؛ صندوق پس از آن نمی‌فروشد و مشتری دوم «ناموجود» می‌گیرد، ولی عدد سایت عوض نمی‌شود
+   * (وگرنه خود همان مشتری در «پرداخت دوباره» رد می‌شد). پرداخت موفق نگه‌داشت را مصرف می‌کند.
+   */
+  test("نگه‌داشت پرداخت آنلاین: تک‌قلم پیش از درگاه نگه داشته و با سفارش پرداخت‌شده مصرف می‌شود", async () => {
+    const code = `HOLD-${suffix}`;
+    const product = await sql<{ id: string }>`INSERT INTO catalog.product(code,name_internal)
+      VALUES(${code},'کالای تک‌قلم آزمون نگه‌داشت') RETURNING id`.execute(handle.db);
+    const variation = await sql<{ id: string }>`INSERT INTO catalog.variation(product_id,sku,color,size)
+      VALUES(${product.rows[0]!.id}::uuid,${code},'مشکی','S') RETURNING id`.execute(handle.db);
+    const variationId = variation.rows[0]!.id;
+    await sql`INSERT INTO catalog.price(variation_id,price_list,amount) VALUES(${variationId}::uuid,'default',2000000)`.execute(handle.db);
+    await sql`SELECT platform.set_actor(${SYSTEM_USER}::uuid)`.execute(handle.db);
+    await sql`SELECT inventory.apply_movement(${variationId}::uuid,${STORE_WH}::uuid,1,'opening',
+      NULL,NULL,${SYSTEM_USER}::uuid,800000)`.execute(handle.db);
+    const hold = (externalId: string) => order({ branchId: BRANCH, warehouseId: STORE_WH, externalId,
+      lines: [{ sku: code, qty: "1" }] }, "/web/checkout-holds");
+    const balance = async () => (await sql<{ v: string }>`SELECT trim_scale(on_hand)||' '||trim_scale(reserved)
+      ||' '||trim_scale(checkout_held) AS v FROM inventory.stock_balance
+      WHERE variation_id=${variationId}::uuid AND warehouse_id=${STORE_WH}::uuid`.execute(handle.db)).rows[0]!.v;
+    const feed = async () => {
+      const r = await app.inject({ method: "GET", url: `/web/stock?warehouseId=${STORE_WH}&limit=5000`, ...auth() });
+      assert.equal(r.statusCode, 200, r.body);
+      return (r.json().items as Array<{ sku: string; available: string }>).find((i) => i.sku === code)?.available;
+    };
+
+    const conn = await app.inject({ method: "GET", url: `/web/connection?branchId=${BRANCH}&warehouseId=${STORE_WH}`, ...auth() });
+    assert.equal(conn.json().features.checkoutHolds, true, "افزونه از روی این پرچم می‌فهمد Core نگه‌داشت دارد");
+    assert.equal((await app.inject({ method: "POST", url: "/web/checkout-holds",
+      payload: { branchId: BRANCH, warehouseId: STORE_WH, externalId: "x", lines: [{ sku: code, qty: "1" }] } })).statusCode, 401);
+    const other = await order({ branchId: "00000000-0000-7000-8000-000000000999", warehouseId: STORE_WH,
+      externalId: `hold-x-${suffix}`, lines: [{ sku: code, qty: "1" }] }, "/web/checkout-holds");
+    assert.equal(other.statusCode, 403, other.body);
+
+    const a = await hold(`hold-a-${suffix}`);
+    assert.equal(a.statusCode, 201, a.body);
+    assert.equal(a.json().status, "held");
+    assert.match(a.json().expiresAt, /^\d{4}-\d\d-\d\dT/);
+    assert.equal(await balance(), "1 1 1");
+    assert.equal(await feed(), "1", "نگه‌داشت عدد خوراک سایت را عوض نمی‌کند");
+    await assert.rejects(sql`SELECT inventory.apply_movement(${variationId}::uuid,${STORE_WH}::uuid,-1,'sale',
+      'test',${variationId}::uuid,${SYSTEM_USER}::uuid)`.execute(handle.db), /رزرو/, "صندوق قلم نگه‌داشته را نمی‌فروشد");
+
+    const b = await hold(`hold-b-${suffix}`);
+    assert.equal(b.statusCode, 200, b.body);
+    assert.deepEqual(b.json(), { status: "unavailable", unavailable: [{ sku: code, available: "0", heldByCheckout: true }] });
+    assert.equal((await hold(`hold-a-${suffix}`)).json().status, "held", "پرداخت دوبارهٔ همان سفارش تمدید است");
+    assert.equal(await balance(), "1 1 1", "تمدید دو برابر نکرد");
+
+    const paid = await order({ branchId: BRANCH, warehouseId: STORE_WH, externalId: `hold-a-${suffix}`,
+      lines: [{ sku: code, qty: "1", unitPrice: "2000000" }],
+      paymentMethod: "gateway", paymentRef: `hold-ref-${suffix}`, paidAmount: "2000000" });
+    assert.equal(paid.statusCode, 201, paid.body);
+    assert.equal(await balance(), "0 0 0", "سفارش پرداخت‌شده نگه‌داشت را مصرف کرد و قلم خارج شد");
+    assert.equal(await feed(), "0");
+    assert.equal((await hold(`hold-a-${suffix}`)).json().status, "consumed");
+    assert.deepEqual((await hold(`hold-b-${suffix}`)).json().unavailable,
+      [{ sku: code, available: "0", heldByCheckout: false }], "کنترل منفی: حالا کمبود از فروش است");
+  });
+
   test("رزرو پرداخت در محل، لغو و خروج پس از تحویل با پرداخت واقعی اتمی و تکرارپذیر است", async () => {
     const code = `COD-${suffix}`;
     const product = await sql<{ id: string }>`INSERT INTO catalog.product(code,name_internal)

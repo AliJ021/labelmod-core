@@ -225,6 +225,25 @@ SELECT format('REVOKE EXECUTE ON FUNCTION %s FROM %I', fn, :'app_role')
 \gexec
 SQL
 
+# ۸. نگه‌داشت پرداخت آنلاین (مهاجرت ۱۲۵). کمکیِ درونیِ آزادسازی یک سطر رزرو سایت مستقیم
+#    روی «stock_balance» می‌نویسد و هیچ سنجش سفارشی ندارد؛ فقط توابع ورودیِ ۱۲۵ (نگه‌داشت،
+#    رزرو سفارش، جاروی انقضا) صدایش می‌زنند. اگر نقش برنامه می‌توانست، هر رزرو پرداخت در
+#    محل یا نگه‌داشتی را بی حسابرسی آزاد می‌کرد و صندوق همان تک‌قلم را می‌فروخت.
+#    همان الگوی بند ۶ و ۷: فقط وقتی شیء هست، و ۱۲۵ اجراشده بی‌شیء رد می‌شود.
+$PSQL -v app_role="$APP_ROLE" <<'SQL'
+DO $guard$
+BEGIN
+  IF to_regprocedure('inventory.web_checkout_hold(uuid, text, uuid, uuid, jsonb)') IS NOT NULL
+     AND to_regprocedure('inventory.release_web_reservation_line(uuid)') IS NULL THEN
+    RAISE EXCEPTION 'مهاجرت ۱۲۵ اجرا شده ولی inventory.release_web_reservation_line با امضای مورد انتظار نیست؛ ops/db-roles.sh را با مهاجرت هم‌خوان کنید';
+  END IF;
+END $guard$;
+SELECT format('REVOKE EXECUTE ON FUNCTION %s FROM %I', fn, :'app_role')
+  FROM unnest(ARRAY['inventory.release_web_reservation_line(uuid)']) AS fn
+ WHERE to_regprocedure(fn) IS NOT NULL
+\gexec
+SQL
+
 # ⚠️ اینجا عمداً `ALTER DEFAULT PRIVILEGES … REVOKE … IN SCHEMA inventory`
 #    **نیست**، و یک بار بود و اشتباه بود.
 #

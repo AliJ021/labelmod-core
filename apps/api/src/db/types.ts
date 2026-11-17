@@ -280,6 +280,8 @@ export interface StockBalanceTable {
   warehouse_id: string;
   on_hand: string;
   reserved: string;
+  /** بخشی از reserved که نگه‌داشت پرداخت آنلاین است (۱۲۵)؛ از عدد سایت کم نمی‌شود. */
+  checkout_held: string;
   total_value: string;
   row_version: number;
   updated_at: Generated<Date>;

@@ -368,6 +368,34 @@ describe("Worker — صف پیام، پیامک و هشدار چک", { skip }, (
     }
   });
 
+  /*
+   * مهاجرت ۱۲۵: صندوق نگه‌داشتِ منقضی را خودش آزاد نمی‌کند؛ تا جاروی Worker، قلم را
+   * «رزرو سایت» می‌بیند. پس جارو باید واقعاً در تولیدکننده‌ها باشد، نه فقط در SQL.
+   */
+  test("تولیدکننده‌ها نگه‌داشت پرداخت آنلاینِ منقضی را آزاد می‌کنند", async () => {
+    const web = await sql<{ id: string }>`INSERT INTO identity.app_user(username,full_name,is_active)
+      VALUES (${`api:hold:${Date.now()}`}, 'سایت', false) RETURNING id`.execute(handle.db);
+    await sql`INSERT INTO identity.user_role(user_id,role_code,branch_id)
+      VALUES (${web.rows[0]!.id}::uuid,'web',${BRANCH}::uuid)`.execute(handle.db);
+    const sku = (await sql<{ sku: string }>`SELECT v.sku FROM catalog.variation v
+      JOIN inventory.stock_balance b ON b.variation_id = v.id
+      WHERE b.warehouse_id = ${STORE_WH}::uuid AND b.on_hand - b.reserved >= 1 LIMIT 1`.execute(handle.db)).rows[0]!.sku;
+    const held = await sql<{ r: { status: string; reservationId: string } }>`
+      SELECT inventory.web_checkout_hold(${web.rows[0]!.id}::uuid, ${`exp-${Date.now()}`},
+        ${BRANCH}::uuid, ${STORE_WH}::uuid, ${JSON.stringify([{ sku, qty: "1" }])}::jsonb) AS r`.execute(handle.db);
+    assert.equal(held.rows[0]!.r.status, "held");
+    const ref = held.rows[0]!.r.reservationId;
+    await sql`UPDATE inventory.stock_reservation SET expires_at = now() - interval '1 second'
+              WHERE source = 'woo_checkout' AND source_ref = ${ref}`.execute(handle.db);
+    const skipped = await tick({ ...opts(), skipProducers: true });
+    assert.equal(skipped.expiredCheckoutHolds, 0, "دور مصرف تولیدکننده‌ها را نمی‌زند");
+    const r = await tick(opts());
+    assert.equal(r.expiredCheckoutHolds, 1);
+    const open = await sql<{ n: string }>`SELECT count(*)::text AS n FROM inventory.stock_reservation
+      WHERE source = 'woo_checkout' AND source_ref = ${ref} AND released_at IS NULL`.execute(handle.db);
+    assert.equal(open.rows[0]!.n, "0");
+  });
+
   // ── صفحه عمومی فاکتور ───────────────────────────────────────────
 
   test("صفحه فاکتور با توکن درست باز می‌شود", async () => {

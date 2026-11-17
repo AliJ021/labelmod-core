@@ -141,6 +141,8 @@ export interface TickResult {
   enqueuedAlerts: number;
   /** رزرو سفارش اینستاگرامِ سررسیده که بی واریزِ در جریان آزاد شد (مهاجرت ۱۰۲). */
   expiredInstagram: number;
+  /** سطر نگه‌داشت پرداخت آنلاینِ منقضی که آزاد شد (مهاجرت ۱۲۵). */
+  expiredCheckoutHolds: number;
 }
 
 /**
@@ -166,8 +168,8 @@ const SMS_ONLY_TOPICS = new Set(["invoice.finalized", "cheque.due"]);
  */
 export async function runProducers(
   opts: Pick<LoopOptions, "db" | "log">,
-): Promise<Pick<TickResult, "enqueuedCheques" | "enqueuedAlerts" | "expiredInstagram">> {
-  const result = { enqueuedCheques: 0, enqueuedAlerts: 0, expiredInstagram: 0 };
+): Promise<Pick<TickResult, "enqueuedCheques" | "enqueuedAlerts" | "expiredInstagram" | "expiredCheckoutHolds">> {
+  const result = { enqueuedCheques: 0, enqueuedAlerts: 0, expiredInstagram: 0, expiredCheckoutHolds: 0 };
   // هشدار چک: تولید پیام؛ دور مصرفِ بعدی می‌فرستدش.
   const cheques = await sql<{ n: number }>`
     SELECT treasury.enqueue_due_cheque_alerts() AS n
@@ -202,6 +204,20 @@ export async function runProducers(
   } catch (err) {
     opts.log(`✗ انقضای رزرو اینستاگرام: ${err instanceof Error ? err.message : String(err)}`);
   }
+
+  /*
+   * نگه‌داشت پرداخت آنلاینِ منقضی (مهاجرت ۱۲۵). نگه‌داشت سفارش دیگرِ همان کالا هم
+   * منقضی‌ها را همان لحظه آزاد می‌کند؛ این جارو برای صندوق است، که خودش آزاد نمی‌کند و
+   * تا پایان مهلت قلم را «رزرو سایت» می‌بیند. شکستش بقیهٔ تولیدکننده‌ها را نمی‌خواباند.
+   */
+  try {
+    const holds = await sql<{ n: number }>`
+      SELECT inventory.expire_checkout_holds(${SYSTEM_USER}::uuid) AS n
+    `.execute(opts.db);
+    result.expiredCheckoutHolds = Number(holds.rows[0]?.n ?? 0);
+  } catch (err) {
+    opts.log(`✗ انقضای نگه‌داشت پرداخت آنلاین: ${err instanceof Error ? err.message : String(err)}`);
+  }
   return result;
 }
 
@@ -215,6 +231,7 @@ export async function tick(opts: LoopOptions): Promise<TickResult> {
     enqueuedCheques: 0,
     enqueuedAlerts: 0,
     expiredInstagram: 0,
+    expiredCheckoutHolds: 0,
   };
 
   assertLease(opts.leaseSeconds);
@@ -543,10 +560,10 @@ export function runLoop(
         try {
           producing = runProducers(opts);
           const r = (await producing) as Awaited<ReturnType<typeof runProducers>>;
-          if (r.enqueuedCheques > 0 || r.enqueuedAlerts > 0 || r.expiredInstagram > 0) {
+          if (r.enqueuedCheques > 0 || r.enqueuedAlerts > 0 || r.expiredInstagram > 0 || r.expiredCheckoutHolds > 0) {
             opts.log(
               `تولید: ${r.enqueuedCheques} هشدار چک، ${r.enqueuedAlerts} زنگ سلامت، ` +
-                `${r.expiredInstagram} رزرو اینستاگرام منقضی`,
+                `${r.expiredInstagram} رزرو اینستاگرام منقضی، ${r.expiredCheckoutHolds} نگه‌داشت پرداخت منقضی`,
             );
           }
         } catch (err) {

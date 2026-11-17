@@ -29,9 +29,13 @@ class LMC_Client
     /** خطای نهایی — تلاش دوباره همین جواب را می‌گیرد. */
     const PERMANENT = 'permanent';
 
-    public static function post(string $path, array $body)
+    /**
+     * `$timeout` فقط برای مسیر هم‌زمان با مشتری (نگه‌داشت هنگام پرداخت) کوتاه‌تر می‌شود؛
+     * کارهای صف همان ۲۰ ثانیه را دارند.
+     */
+    public static function post(string $path, array $body, int $timeout = 20)
     {
-        return self::request('POST', $path, $body);
+        return self::request('POST', $path, $body, $timeout);
     }
 
     public static function get(string $path, array $query = [])
@@ -46,7 +50,7 @@ class LMC_Client
      * @return array|WP_Error آرایه پاسخ، یا WP_Error با `data['kind']`
      *                        برابر RETRYABLE / PERMANENT.
      */
-    private static function request(string $method, string $path, ?array $body)
+    private static function request(string $method, string $path, ?array $body, int $timeout = 20)
     {
         $base = rtrim((string) lmc_setting('base_url'), '/');
         $key  = (string) lmc_setting('api_key');
@@ -71,7 +75,7 @@ class LMC_Client
             //    یک درخواست وب را دقیقه‌ها نگه دارد. Timeout یعنی
             //    «شاید رسید» و همان مسیر Retry را می‌گیرد — سرور
             //    Idempotent است، پس ارسال دوباره فاکتور دوم نمی‌سازد.
-            'timeout' => 20,
+            'timeout' => max(1, min(20, $timeout)),
             'redirection' => 0,
             'limit_response_size' => 4 * 1024 * 1024,
             'headers' => [

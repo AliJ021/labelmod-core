@@ -19,6 +19,7 @@ test("بستهٔ افزونه در دو ساخت بایت‌به‌بایت یک
     assert.equal(zip.readUInt32LE(0), 0x04034b50);
     assert.equal(zip.readUInt32LE(zip.length - 22), 0x06054b50);
     assert.ok(zip.includes(Buffer.from("labelmod-connector/includes/class-lmc-diagnostics.php")));
+    assert.ok(zip.includes(Buffer.from("labelmod-connector/includes/class-lmc-checkout-hold.php")));
     assert.ok(zip.includes(Buffer.from("labelmod-connector/includes/class-lmc-push-secret.php")));
     assert.ok(zip.includes(Buffer.from("labelmod-connector/includes/class-lmc-push-secret-settings.php")));
     assert.ok(zip.includes(Buffer.from("labelmod-connector/uninstall.php")));
