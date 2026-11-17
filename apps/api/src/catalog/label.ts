@@ -253,6 +253,12 @@ export function labelGeometry(
   height: number,
   /** پهن‌ترین بارکد برگه، با حاشیهٔ سکوت (EAN-13 = ۱۱۳). */
   totalModules: number = EAN13_TOTAL_MODULES,
+  /**
+   * اولویت با متن: وقتی نام کامل یک کالا در چیدمان عادی جا نمی‌شود (`labelPage`)،
+   * دو سطر شرح بر نام فروشگاه و بلندی میله‌ها مقدم است — میله تا کمینهٔ ۵mm کوتاه
+   * می‌شود ولی هرگز کوتاه‌تر. چیدمان عادی برای همهٔ برگه‌های دیگر دست‌نخورده است.
+   */
+  prefer: "barcode" | "text" = "barcode",
 ): LabelGeometry {
   const round1 = (v: number) => Math.round(v * 10) / 10;
   const r2 = (v: number) => Math.round(v * 100) / 100;
@@ -275,7 +281,7 @@ export function labelGeometry(
   });
   // ترتیب ترجیح (مرجع مالک): فروشگاه + دو سطر شرح؛ برای نگه‌داشتن آن‌ها
   // اول قلم کوچک می‌شود، بعد شرح یک‌سطری، بعد نام فروشگاه می‌رود.
-  const configs: Array<[boolean, number]> = [[true, 2], [true, 1], [false, 1]];
+  const configs: Array<[boolean, number]> = prefer === "text" ? [[true, 2], [false, 2], [true, 1], [false, 1]] : [[true, 2], [true, 1], [false, 1]];
   const fStart = fontMm;
   const attempt = (shop: boolean, lines: number, f: number, minBar: number): LabelGeometry | null => {
     const r = rowsFor(f, shop, lines);
@@ -289,8 +295,9 @@ export function labelGeometry(
   const fits = barcodeFits && (isA4 || (width >= ROLL_MIN_WIDTH_MM && height >= ROLL_MIN_HEIGHT_MM));
   if (fits) {
     for (const [shop, lines] of configs) {
-      for (let f = fStart; f >= 2.2 - 1e-9; f = round1(f - 0.1)) {
-        const g = attempt(shop, lines, f, barTarget);
+      // در اولویت متن، قلم پایه تا همان کف «آخرین چاره» (۲mm) پایین می‌رود.
+      for (let f = fStart; f >= (prefer === "text" ? 2 : 2.2) - 1e-9; f = round1(f - 0.1)) {
+        const g = attempt(shop, lines, f, prefer === "text" ? MIN_BAR_MM : barTarget);
         if (g) return g;
       }
     }
@@ -353,8 +360,109 @@ function priceFontMm(text: string, g: LabelGeometry, width: number): number {
   return Math.min(base, Math.floor((inner / em) * 100) / 100);
 }
 
-function labelHtml(item: LabelItem, shopName: string, g: LabelGeometry, width: number): string {
+/** نام کالایی که حتی با کوچک‌ترین قلم خوانا در ردیف شرح جا نمی‌شود — چاپ نمی‌شود، بریده هم نمی‌شود. */
+export class LabelTextError extends Error {
+  readonly statusCode = 422;
+  readonly code = "label_text_too_long";
+  constructor(name: string, width: number, height: number) {
+    super(`نام «${name}» حتی با کوچک‌ترین قلم خوانا در برچسب ${width}×${height} میلی‌متر جا نمی‌شود؛ نام کوتاه‌تر یا برچسب بزرگ‌تر لازم است.`);
+    this.name = "LabelTextError";
+  }
+}
+
+/**
+ * کوچک‌ترین قلم شرح به میلی‌متر (حدود ۴٫۵pt). ریزتر از این روی چاپگر حرارتی ۲۰۳dpi
+ * خوانا نمی‌ماند؛ نامی که با این قلم هم جا نشود رد می‌شود، نه بریده.
+ */
+export const DESC_MIN_FONT_MM = 1.6;
+/** بیشترین سطر شرح. سطر چهارم یعنی قلمی ریزتر از حد خوانا در همان ارتفاع. */
+const DESC_MAX_LINES = 3;
+
+/**
+ * برآورد **محافظه‌کارانهٔ** پهنای متن پررنگ به em. صفحهٔ برچسب قلم خودش را ندارد
+ * (`Vazirmatn, Tahoma, sans-serif`) و روی رایانهٔ صندوق معمولاً Tahoma است، پس پهنای
+ * واقعی را سرور نمی‌داند. ضریب‌ها از پهن‌ترین قلم سنجیده‌شده (DejaVu Sans Bold:
+ * فارسی ۰٫۵۵em، لاتین بزرگ ۰٫۷۷em، کوچک ۰٫۶۶em، رقم ۰٫۶۴em، فاصله ۰٫۳۵em) حدود ۱۰٪
+ * بزرگ‌ترند؛ برآورد بزرگ‌تر فقط قلم را کمی ریزتر می‌کند، برآورد کوچک‌تر نام را می‌برید.
+ * آزمون مرورگر (`label-geometry.spec.ts`) جاشدن واقعی را می‌سنجد.
+ */
+export function descTextEm(text: string): number {
+  let em = 0;
+  for (const ch of text) {
+    if (ch === "\u200c" || ch === "\u200d") continue;
+    if (ch === " " || ch === "\u00a0") em += 0.38;
+    else if (/[A-Z]/.test(ch)) em += 0.85;
+    else if (/[a-z]/.test(ch)) em += 0.73;
+    else if (/[0-9]/.test(ch)) em += 0.7;
+    else if (/[\u0600-\u06ff\ufb50-\ufdff\ufe70-\ufeff]/.test(ch)) em += 0.62;
+    else em += 0.75;
+  }
+  return em;
+}
+
+/** چند سطر با شکستن روی فاصله (و شکستن واژهٔ بلندتر از سطر، مثل `overflow-wrap: anywhere`). */
+function descLinesNeeded(text: string, fontMm: number, widthMm: number): number {
+  const space = 0.38 * fontMm;
+  let lines = 1;
+  let used = 0;
+  for (const word of text.split(" ").filter((w) => w !== "")) {
+    let w = descTextEm(word) * fontMm;
+    if (used > 0 && used + space + w <= widthMm) { used += space + w; continue; }
+    if (used > 0) lines++;
+    while (w > widthMm) { lines++; w -= widthMm; }
+    used = w;
+  }
+  return lines;
+}
+
+/**
+ * بزرگ‌ترین قلمی که **کل** متن شرح را در ارتفاع ثابت ردیف شرح جا می‌دهد (۱ تا ۳ سطر).
+ * قلم هرگز از قلم پایهٔ برچسب بزرگ‌تر نمی‌شود و از `DESC_MIN_FONT_MM` کوچک‌تر نمی‌شود.
+ */
+export function descFit(text: string, g: LabelGeometry, width: number): { fontMm: number; lines: number } | null {
+  const inner = width - 2 * CODE_PAD_X_MM - 2 * TEXT_PAD_X_MM;
+  let best: { fontMm: number; lines: number } | null = null;
+  for (let lines = 1; lines <= DESC_MAX_LINES; lines++) {
+    let f = Math.floor(Math.min(g.fontMm, g.rows.desc / (lines * DESC_LINE)) * 100) / 100;
+    while (f >= DESC_MIN_FONT_MM - 1e-9 && descLinesNeeded(text, f, inner) > lines) f = Math.round((f - 0.05) * 100) / 100;
+    if (f >= DESC_MIN_FONT_MM - 1e-9 && (best === null || f > best.fontMm + 1e-9)) best = { fontMm: f, lines };
+  }
+  return best;
+}
+
+const descNorm = (v: string) =>
+  v.replace(/[۰-۹٠-٩]/g, (d) => String(d.charCodeAt(0) - (d >= "۰" ? 0x06f0 : 0x0660))).replace(/\s+/g, " ").trim();
+
+/** متن شرح پیوسته: نام کالا و سپس برند · رنگ · سایز. «·» به واژهٔ قبلش می‌چسبد تا سر سطر نیفتد. */
+export function descText(item: Pick<LabelItem, "productName" | "brand" | "color" | "size">): string {
   const details = [item.brand ?? null, item.color, item.size].filter((v): v is string => v !== null && v !== "");
+  return [item.productName, ...details].map(descNorm).filter((v) => v !== "").join("\u00a0· ");
+}
+
+export type DescLayout =
+  /** چیدمان مرجع مالک: سطر اول نام، سطر دوم برند · رنگ · سایز — وقتی هر دو کامل جا می‌شوند. */
+  | { kind: "split"; fontMm: number; lines: string[] }
+  /** نام بلند: نام و مشخصات پیوسته، با قلمی که کل متن را جا می‌دهد. */
+  | { kind: "flow"; fontMm: number; lines: number; text: string };
+
+/**
+ * چیدمان شرح یک برچسب. اگر نام در یک سطر و مشخصات در سطر دوم با قلم پایه کامل جا
+ * شوند، همان چیدمان مرجع می‌ماند؛ وگرنه متن پیوسته می‌شود و قلم تا جایی کوچک می‌شود
+ * که **کل** آن جا شود. `null` یعنی حتی با کوچک‌ترین قلم خوانا جا نمی‌شود.
+ */
+export function descLayout(item: Pick<LabelItem, "productName" | "brand" | "color" | "size">, g: LabelGeometry, width: number): DescLayout | null {
+  const inner = width - 2 * CODE_PAD_X_MM - 2 * TEXT_PAD_X_MM;
+  const name = descNorm(item.productName);
+  const details = [item.brand ?? null, item.color, item.size].filter((v): v is string => v !== null && v !== "").map(descNorm).filter((v) => v !== "");
+  const second = details.join(" · ");
+  if (g.nameLines === 2 && descLinesNeeded(name, g.fontMm, inner) === 1 && (second === "" || descLinesNeeded(second, g.fontMm, inner) === 1))
+    return { kind: "split", fontMm: g.fontMm, lines: second === "" ? [name] : [name, second] };
+  const text = descText(item);
+  const fit = descFit(text, g, width);
+  return fit === null ? null : { kind: "flow", fontMm: fit.fontMm, lines: fit.lines, text };
+}
+
+function labelHtml(item: LabelItem, shopName: string, g: LabelGeometry, width: number, height: number): string {
   const priceText = item.priceRial === null ? "" : priceToman(item.priceRial);
   const price =
     item.priceRial === null
@@ -370,16 +478,20 @@ function labelHtml(item: LabelItem, shopName: string, g: LabelGeometry, width: n
     : kind === "code128" ? code128Svg(item.barcode as string, svgOpts)
     : `<div class="nobarcode">${labelText(item.sku)}</div>`;
 
-  // شرح: دو سطر جدا (نام، سپس برند · رنگ · سایز) یا یک سطر پیوسته. هر سطر
-  // nowrap با «…» است، پس هیچ‌وقت نیم‌سطری دیده نمی‌شود.
-  const desc = g.nameLines === 2
-    ? `<span class="l">${labelText(item.productName)}</span><span class="l">${details.map(labelText).join(" · ")}</span>`
-    : `<span class="l">${[item.productName, ...details].map(labelText).join(" · ")}</span>`;
+  // شرح: نام کالا و سپس برند · رنگ · سایز، **پیوسته** و چندسطری. کل نام همیشه چاپ
+  // می‌شود — هیچ «…» و هیچ بریدنی نیست (درخواست مالک ۲۰۲۶/۱۱/۱۶): قلم آن‌قدر کوچک
+  // می‌شود که کل متن در ارتفاع ثابت ردیف شرح جا شود، وگرنه برچسب ساخته نمی‌شود.
+  const layout = descLayout(item, g, width);
+  if (layout === null) throw new LabelTextError(item.productName, width, height);
+  const descStyle = `font-size:${layout.fontMm.toFixed(2)}mm`;
+  const desc = layout.kind === "split"
+    ? layout.lines.map((l) => `<span class="l">${esc(l)}</span>`).join("")
+    : `<span class="l">${esc(layout.text)}</span>`;
 
   return `<div class="label">
   ${g.showShop ? `<div class="shop" dir="ltr" lang="en">${labelText(shopName)}</div>` : ""}
   <div class="code">${code}</div>
-  <div class="desc">${desc}</div>
+  <div class="desc" style="${descStyle}">${desc}</div>
   <div class="price" style="font-size:${pf.toFixed(2)}mm">${price}</div>
 </div>`;
 }
@@ -401,13 +513,20 @@ export function labelPage(items: LabelItem[], opts: LabelPageOptions): string {
   // در ۳۰mm جا نمی‌شود و آن برگه با پیام کمترین عرض رد می‌شود.
   const widths = items.filter((i) => i.barcode !== null).map((i) => barcodeTotalModules(i.barcode as string));
   const modules = Math.max(EAN13_TOTAL_MODULES, ...widths);
-  const g = labelGeometry(opts.layout, size.width, size.height, modules);
+  let g = labelGeometry(opts.layout, size.width, size.height, modules);
   if (!g.fits) throw new LabelSizeError(size.width, size.height, modules);
+  // نام کامل همیشه چاپ می‌شود: اگر نام کالایی در چیدمان عادی جا نشود، کل برگه با
+  // اولویت متن ساخته می‌شود (دو سطر شرح، میلهٔ کوتاه‌تر ولی ≥ ۵mm). اگر باز هم جا نشود،
+  // `labelHtml` با `LabelTextError` رد می‌کند — بریدن نام هرگز.
+  if (items.some((i) => descLayout(i, g, size.width) === null)) {
+    const textFirst = labelGeometry(opts.layout, size.width, size.height, modules, "text");
+    if (textFirst.fits) g = textFirst;
+  }
 
   const repeated: string[] = [];
   for (const item of items) {
     for (let i = 0; i < item.count; i++) {
-      repeated.push(labelHtml(item, opts.shopName, g, size.width));
+      repeated.push(labelHtml(item, opts.shopName, g, size.width, size.height));
     }
   }
 
@@ -454,8 +573,8 @@ export function labelPage(items: LabelItem[], opts: LabelPageOptions): string {
   .shop, .desc, .price { padding-inline: ${TEXT_PAD_X_MM}mm; }
   .shop { height: ${g.rows.shop}mm; line-height: ${g.rows.shop}mm; font-size: ${(f * SHOP_FONT).toFixed(2)}mm; font-weight: 800; white-space: nowrap; text-overflow: ellipsis; }
   .code { height: ${g.rows.code}mm; line-height: 0; display: flex; justify-content: center; align-items: flex-start; }
-  .desc { height: ${g.rows.desc}mm; font-size: ${f.toFixed(2)}mm; font-weight: 700; line-height: ${DESC_LINE}; }
-  .desc .l { display: block; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .desc { height: ${g.rows.desc}mm; font-size: ${f.toFixed(2)}mm; font-weight: 700; line-height: ${DESC_LINE}; display: flex; flex-direction: column; align-items: center; justify-content: center; }
+  .desc .l { display: block; width: 100%; white-space: normal; overflow-wrap: anywhere; }
   .price { display: grid; grid-template-columns: minmax(0, 1fr) max-content minmax(0, 1fr); align-items: center; column-gap: 0.35em; height: ${g.rows.price}mm; line-height: ${g.rows.price}mm; font-weight: 800; direction: rtl; white-space: nowrap; }
   .price .digits { grid-column: 2; }
   .price small { grid-column: 3; justify-self: start; font-size: 0.5em; font-weight: 600; }

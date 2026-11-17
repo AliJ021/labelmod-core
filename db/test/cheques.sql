@@ -352,7 +352,9 @@ PERFORM platform.set_setting('cheque.max_due_days', '180'::jsonb, 'بازگشت 
 
 -- شماره‌گذاری بدون پرش: سه رویداد روی یک چک، فقط یک شماره
 PERFORM pg_temp.assert_eq('شمارنده سند = تعداد چک‌های شماره‌دار',
-  (SELECT last_no FROM platform.document_counter
+  -- جمع روی همهٔ سال‌ها: هر سال مالی شمارندهٔ خودش را دارد و چک‌های این پرونده
+  -- می‌توانند در بیش از یک سال شماره بگیرند.
+  (SELECT sum(last_no) FROM platform.document_counter
     WHERE doc_type = 'cheque' AND branch_id = BR),
   (SELECT count(*) FROM treasury.cheque WHERE number IS NOT NULL));
 

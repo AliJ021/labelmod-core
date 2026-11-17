@@ -199,10 +199,39 @@ describe("دروازه کشو: بازپرداخت نقدی و حرکت نقد غ
     assert.equal((r.json() as { error: { code: string } }).error.code, "no_open_shift");
   });
 
+  /**
+   * پیوستگی نقد از راه HTTP (مهاجرت ۱۲۰). قاعده و اثر دفتری در
+   * `db/test/shift-opening.sql` سنجیده می‌شوند؛ اینجا قرارداد مسیر: کد خطا،
+   * شمارش کور در پیام، و اینکه دلیل از بدنه به شیفت می‌رسد.
+   * آزمون بالا شیفت را با شمارش ۱۰ میلیون + فروش بسته است.
+   */
+  test("موجودی اول ناهم‌خوان: ۴۲۲ بی دلیل، پذیرش با دلیل", async () => {
+    const bare = await call("POST", "/shifts", cashier, { branchId: BRANCH, openingCash: "1" });
+    assert.equal(bare.statusCode, 422, bare.body);
+    const err = (bare.json() as { error: { code: string; message: string } }).error;
+    assert.equal(err.code, "opening_cash_mismatch");
+    assert.doesNotMatch(err.message, /\d{4,}/, "پیام عدد مورد انتظار را نمی‌گوید (شمارش کور)");
+
+    const ok = await call("POST", "/shifts", cashier, {
+      branchId: BRANCH, openingCash: "1", openingNote: "آزمون: کسری میان دو شیفت",
+    });
+    assert.equal(ok.statusCode, 201, ok.body);
+    const shift = ok.json() as { id: string; openingExpected: string; openingVariance: string; openingNote: string };
+    assert.equal(shift.openingNote, "آزمون: کسری میان دو شیفت");
+    assert.equal(BigInt(shift.openingVariance), 1n - BigInt(shift.openingExpected));
+
+    const closed = await call("POST", `/shifts/${shift.id}/close`, supervisor, { countedCash: "1" });
+    assert.equal(closed.statusCode, 200, closed.body);
+  });
+
   test("یک کشوی باز: سرپرست بازپرداخت می‌زند و پول از همان کشو کم می‌شود", async () => {
+    // هر آزمون این پرونده کشوی تازهٔ خودش را با مبلغ ثابت باز می‌کند؛ مهاجرت ۱۲۰
+    // اختلاف با شمارش شیفت قبل را فقط با دلیل می‌پذیرد، و موضوع این آزمون‌ها
+    // بازپرداخت است نه پیوستگی نقد (آن در db/test/shift-opening.sql است).
     const sh = await call("POST", "/shifts", cashier, {
       branchId: BRANCH,
       openingCash: "10000000",
+      openingNote: "آزمون: کشوی تازه، مستقل از شمارش شیفت قبل",
     });
     assert.equal(sh.statusCode, 201, sh.body);
     const shiftId = (sh.json() as { id: string }).id;
@@ -252,7 +281,7 @@ describe("دروازه کشو: بازپرداخت نقدی و حرکت نقد غ
   });
 
   test("دو کشوی باز: دروازه حدس نمی‌زند، ۴۲۲ می‌دهد", async () => {
-    const a = await call("POST", "/shifts", cashier, { branchId: BRANCH, openingCash: "5000000" });
+    const a = await call("POST", "/shifts", cashier, { branchId: BRANCH, openingCash: "5000000", openingNote: "آزمون: کشوی تازه، مستقل از شمارش شیفت قبل" });
     assert.equal(a.statusCode, 201, a.body);
     const sale = await cashSale("2");
 
@@ -294,6 +323,7 @@ describe("دروازه کشو: بازپرداخت نقدی و حرکت نقد غ
     const sh = await call("POST", "/shifts", cashier, {
       branchId: BRANCH,
       openingCash: "10000000",
+      openingNote: "آزمون: کشوی تازه، مستقل از شمارش شیفت قبل",
     });
     const shiftId = (sh.json() as { id: string }).id;
     const sale = await cashSale("2");

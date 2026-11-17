@@ -181,9 +181,12 @@ VALUES ('conc-open-'||:'rid', 'تست افتتاحیه همزمان') RETURNING 
 SQL
 )
 OPEN_YEAR=$(run <<'SQL' | tr -d ' '
+-- سال **بعد از آخرین سال موجود**، نه تاریخ ثابت ۲۰۳۰: با تاریخ ثابت، روزی که داربست
+-- سال‌های مالی به همان بازه برسد این درج با سال موجود هم‌پوشان می‌شد و می‌شکست
+-- (اندازه‌گیری شد: ساعت ۲۰۳۰/۰۶/۰۷).
 INSERT INTO ledger.fiscal_year (id, starts_on, ends_on, status)
-SELECT y, make_date(2030, 3, 21), make_date(2031, 3, 20), 'open'
-  FROM (SELECT coalesce(max(id), 1405) + 1 AS y FROM ledger.fiscal_year) n
+SELECT id + 1, ends_on + 1, ends_on + 365, 'open'
+  FROM ledger.fiscal_year ORDER BY ends_on DESC LIMIT 1
 RETURNING id;
 SQL
 )

@@ -131,9 +131,10 @@ echo
 echo "═══ ۳. سند افتتاحیه: single_open_opening_t روی journal_entry ═══"
 # مهاجرت ۰۴۹. درج **مستقیم** یک سند افتتاحیه دوم، بدون معکوس‌کردن اولی.
 YEAR=$(run <<SQL
+-- سال **بعد از آخرین سال موجود**، نه تاریخ ثابت ۲۰۳۲ (همان دلیل concurrency.sh).
 INSERT INTO ledger.fiscal_year (id, starts_on, ends_on, status)
-SELECT y, make_date(2032,3,21), make_date(2033,3,20), 'open'
-  FROM (SELECT coalesce(max(id),1405)+1 AS y FROM ledger.fiscal_year) n
+SELECT id + 1, ends_on + 1, ends_on + 365, 'open'
+  FROM ledger.fiscal_year ORDER BY ends_on DESC LIMIT 1
 RETURNING id;
 SQL
 )
@@ -148,7 +149,7 @@ must_fail_at_commit "سند افتتاحیه دوم با درج مستقیم" "
 INSERT INTO ledger.journal_entry (number, fiscal_year, branch_id, entry_date,
   kind, status, description, created_by)
 VALUES (platform.next_document_no('$BR','journal',$YEAR::smallint), $YEAR, '$BR',
-  '2032-03-21', 'opening', 'final', 'افتتاحیه دوم $RID', '$USER_ID');
+  (SELECT starts_on FROM ledger.fiscal_year WHERE id = $YEAR), 'opening', 'final', 'افتتاحیه دوم $RID', '$USER_ID');
 INSERT INTO ledger.journal_line (entry_id, line_no, account_code, debit, credit, description)
 SELECT id, 1, '1101', 1000, 0, 'بدهکار'   FROM ledger.journal_entry WHERE description = 'افتتاحیه دوم $RID'
 UNION ALL

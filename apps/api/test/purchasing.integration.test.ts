@@ -258,6 +258,15 @@ describe("رسید خرید", { skip }, () => {
     assert.equal(r.statusCode, 201, r.body);
     // بدون شماره تفصیلی، گردش حساب این تأمین‌کننده از دفتر ساختنی نیست.
     assert.ok(Number(r.json().tafsiliNo) > 0, "شماره تفصیلی نگرفت");
+
+    // ساخت طرف حساب بدهی، ردّ حسابرسی دارد — مثل مشتری. بی آن «چه کسی این
+    // تأمین‌کننده را ساخت» از دفتر حسابرسی جواب نداشت.
+    const audit = await sql<{ actor: string; code: string; name: string }>`
+      SELECT u.username AS actor, a.after->>'code' AS code, a.after->>'name' AS name
+        FROM platform.audit_log a JOIN identity.app_user u ON u.id = a.actor_id
+       WHERE a.action = 'supplier.create' AND a.entity_id = ${r.json().id as string}`.execute(handle.db);
+    assert.equal(audit.rows.length, 1, "ساخت تأمین‌کننده یک ردّ حسابرسی دارد");
+    assert.deepEqual(audit.rows[0], { actor: manager, code: `S3-${suffix}`, name: "تأمین‌کننده سوم" });
   });
 
   // ── پیش‌نویس ───────────────────────────────────────────────────────

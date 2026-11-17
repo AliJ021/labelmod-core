@@ -10,7 +10,8 @@ interface LabelItem { barcode: string | null; sku: string; productName: string; 
 interface RollRow { columns: number; gapMm: number; mediaWidthMm: number; offsetXMm: number; startSlot: number }
 interface LabelModule {
   labelPage(items: LabelItem[], opts: { layout: "roll" | "a4"; shopName: string; rollMm?: { width: number; height: number }; rollRow?: RollRow }): string;
-  labelGeometry(layout: "roll" | "a4", width: number, height: number): { nameLines: number };
+  labelGeometry(layout: "roll" | "a4", width: number, height: number, totalModules?: number, prefer?: "barcode" | "text"): { nameLines: number };
+  descLayout(item: LabelItem, g: { nameLines: number }, width: number): { kind: "split"; lines: string[] } | { kind: "flow"; text: string } | null;
   ROLL_PRESETS_MM: ReadonlyArray<{ width: number; height: number }>;
   ROLL_MIN_WIDTH_MM: number; ROLL_MIN_HEIGHT_MM: number;
   rollRowProblem(widthMm: number, row: RollRow): string | null;
@@ -35,6 +36,8 @@ const PRESETS = LABEL_PRESETS.map(({ width, height }) => ({ width, height }));
 const itemsFor = (makeEan13: (n: number) => string): LabelItem[] => [
   { barcode: makeEan13(1201), sku: "LM-1201", brand: "لیبل مد کلاسیک", productName: "شلوار پارچه‌ای رگولار با نام طولانی برای بررسی چیدمان و شکست سطر", color: "سرمه‌ای", size: "XL", priceRial: 99_999_999_995n, count: 1 },
   { barcode: makeEan13(1202), sku: "LM-1202", productName: "شال", color: null, size: null, priceRial: 3_500_000n, count: 1 },
+  // نمونهٔ واقعی مالک (۲۰۲۶/۱۱/۱۶) که با «…» چاپ می‌شد.
+  { barcode: makeEan13(190), sku: "LM00001", productName: "شلوار پارچه ای کمر مخفی مام فیونا Soomaro", color: "سرمه ای", size: "40", priceRial: 129_000_000n, count: 1 },
   { barcode: null, sku: "LM-1203-LONG-SKU", productName: "کالای بی‌بارکد", color: "کرم", size: "M", priceRial: null, count: 1 },
 ];
 const sizes = [...PRESETS, { width: 31, height: 20 }, { width: 35, height: 22 }, { width: 120, height: 120 }];
@@ -43,10 +46,17 @@ const sizes = [...PRESETS, { width: 31, height: 20 }, { width: 35, height: 22 },
 for (const s of [...sizes.map((x) => ({ layout: "roll" as const, ...x })), { layout: "a4" as const, width: 70, height: 37 }]) {
   test(`label ${s.layout} ${s.width}x${s.height}: rows, price and quiet zone stay inside the inner box in reference order`, async ({ page }) => {
     const { label, makeEan13 } = await load();
-    await page.setContent(label.labelPage(itemsFor(makeEan13), { layout: s.layout, shopName: "لیبل مد", ...(s.layout === "roll" ? { rollMm: s } : {}) }));
+    const g0 = label.labelGeometry(s.layout, s.width, s.height);
+    const gText = label.labelGeometry(s.layout, s.width, s.height, undefined, "text");
+    // نامی که در این اندازه با قلم خوانا جا نمی‌شود رد می‌شود (۴۲۲، آزمون واحد label.test.ts)،
+    // نه بریده؛ این آزمون هندسهٔ برچسب‌های چاپ‌شدنی را می‌سنجد.
+    const items = itemsFor(makeEan13).filter((it) => label.descLayout(it, g0, s.width) ?? label.descLayout(it, gText, s.width));
+    expect(items.length, "دست‌کم دو برچسب در هر اندازه").toBeGreaterThanOrEqual(2);
+    // همان تصمیم `labelPage`: اگر نامی در چیدمان عادی جا نشود، کل برگه با اولویت متن.
+    const g = items.some((it) => label.descLayout(it, g0, s.width) === null) ? gText : g0;
+    await page.setContent(label.labelPage(items, { layout: s.layout, shopName: "لیبل مد", ...(s.layout === "roll" ? { rollMm: s } : {}) }));
     await page.emulateMedia({ media: "print" });
-    const g = label.labelGeometry(s.layout, s.width, s.height);
-    const problems = await page.$$eval(".label", (labels, nameLines) => {
+    const problems = await page.$$eval(".label", (labels) => {
       const out: string[] = [];
       labels.forEach((label, li) => {
         const cs = getComputedStyle(label);
@@ -62,18 +72,37 @@ for (const s of [...sizes.map((x) => ({ layout: "roll" as const, ...x })), { lay
         const svg = label.querySelector("svg"); if (svg) inside("svg", svg);
         const price = label.querySelector<HTMLElement>(".price")!;
         if (price.scrollWidth > price.clientWidth + 1) out.push(`#${li} price clipped ${price.scrollWidth}>${price.clientWidth}`);
+        // شرح (درخواست مالک ۲۰۲۶/۱۱/۱۶): نام کامل، بی «…» و بی بریدن. ردیف ارتفاع ثابت
+        // دارد و متن با قلم خودش در آن جا می‌شود — نه بیرون می‌زند، نه زیر لبه پنهان می‌ماند.
         const desc = label.querySelector<HTMLElement>(".desc")!;
-        const lh = parseFloat(getComputedStyle(desc).lineHeight);
-        if (Math.abs(desc.clientHeight - nameLines * lh) > 1) out.push(`#${li} desc ${desc.clientHeight}px is not ${nameLines} complete lines of ${lh}px`);
+        const dcs = getComputedStyle(desc);
+        if (dcs.textOverflow === "ellipsis" || dcs.whiteSpace === "nowrap") out.push(`#${li} desc can truncate`);
         const lines = Array.from(desc.querySelectorAll<HTMLElement>(".l"));
-        if (lines.length !== nameLines) out.push(`#${li} desc has ${lines.length} lines, expected ${nameLines}`);
-        for (const l of lines) if (l.getBoundingClientRect().height > lh + 0.5) out.push(`#${li} desc line wraps (${l.getBoundingClientRect().height}px)`);
+        if (lines.length < 1 || lines.length > 2) out.push(`#${li} desc has ${lines.length} blocks`);
+        const dr = desc.getBoundingClientRect();
+        for (const l of lines) {
+          const lcs = getComputedStyle(l);
+          if (lcs.textOverflow === "ellipsis" || lcs.whiteSpace === "nowrap") out.push(`#${li} desc line can truncate`);
+          if (l.scrollWidth > l.clientWidth + 1) out.push(`#${li} desc text wider than its line (${l.scrollWidth}>${l.clientWidth})`);
+          const lr = l.getBoundingClientRect();
+          if (lr.top < dr.top - 0.5 || lr.bottom > dr.bottom + 0.5) out.push(`#${li} desc text [${lr.top.toFixed(2)},${lr.bottom.toFixed(2)}] outside its row [${dr.top.toFixed(2)},${dr.bottom.toFixed(2)}]`);
+        }
+        const rendered = lines.reduce((n, l) => n + Math.round(l.getBoundingClientRect().height / parseFloat(getComputedStyle(l).lineHeight)), 0);
+        if (rendered > 3) out.push(`#${li} desc renders ${rendered} lines`);
+        if (desc.scrollHeight > desc.clientHeight + 1) out.push(`#${li} desc overflows (${desc.scrollHeight}>${desc.clientHeight})`);
         const order = ["shop", "code", "desc", "price"].map((c) => label.querySelector(`.${c}`)?.getBoundingClientRect().top ?? null).filter((t): t is number => t !== null);
         if (order.some((t, n) => n > 0 && t < order[n - 1]!)) out.push(`#${li} row order broken`);
       });
       return out;
-    }, g.nameLines);
+    });
     expect(problems).toEqual([]);
+    // هر شرح کامل در صفحه هست (مقایسه با متنی که سرور چیده، نه با یک کپی).
+    const texts = await page.$$eval(".desc", (ds) => ds.map((d) => Array.from(d.querySelectorAll(".l")).map((l) => l.textContent).join("|")));
+    for (const it of items) {
+      const lay = label.descLayout(it, g, s.width)!;
+      const want = lay.kind === "split" ? lay.lines.join("|") : lay.text;
+      expect(texts, `${s.width}x${s.height}: ${want}`).toContain(want);
+    }
   });
 }
 
@@ -110,7 +139,8 @@ for (const startSlot of [1, 2]) {
           shop: s.querySelector(".shop")?.textContent ?? null, labelDir: lab ? getComputedStyle(lab).direction : null, out };
       }) };
     }), PX_PER_MM);
-    const n = 3 + 2;
+    // از خودِ فهرست شمرده می‌شود، نه با دست (قاعدهٔ «سرجمع را با دست ننویس»).
+    const n = items.reduce((sum, it) => sum + it.count, 0);
     expect(m.length).toBe(Math.ceil((n + startSlot - 1) / 2));
     for (const r of m) {
       expect(r.dir).toBe("ltr");

@@ -42,6 +42,9 @@ describe("شمارهٔ عددی فاکتور: مهاجرت، هم‌زمانی �
       await sql.raw(readFileSync(path.join(root,"db/migrations",file),"utf8")).execute(owner.db);
     for (const file of readdirSync(path.join(root,"db/seed")).sort().filter(f => f.endsWith(".sql")))
       await sql.raw(readFileSync(path.join(root,"db/seed",file),"utf8")).execute(owner.db);
+    // سال‌های مالی تا «امروز» (همان داربست بقیهٔ آزمون‌ها): Seed فقط ۱۴۰۵ را دارد و این آزمون
+    // امروز فاکتور نهایی می‌کند. پیش از ساخت فاکتورهای قدیمی، چون داربست فقط روی دیتابیس بی‌سند می‌نشیند.
+    await sql.raw(readFileSync(path.join(root,"db/fixture/fiscal-years-to-today.sql"),"utf8")).execute(owner.db);
     branch2 = (await sql<{id:string}>`INSERT INTO platform.branch(code,name) VALUES('NUM2','شعبه آزمون') RETURNING id`.execute(owner.db)).rows[0]!.id;
     wh2 = (await sql<{id:string}>`INSERT INTO inventory.warehouse(branch_id,code,name) VALUES(${branch2}::uuid,'NUM2','انبار آزمون') RETURNING id`.execute(owner.db)).rows[0]!.id;
     const product = (await sql<{id:string}>`INSERT INTO catalog.product(code,name_internal) VALUES('NUM','کالای آزمون') RETURNING id`.execute(owner.db)).rows[0]!.id;
@@ -180,9 +183,13 @@ describe("شمارهٔ عددی فاکتور: مهاجرت، هم‌زمانی �
     }
   });
   test("سال مالی تازه شمارنده را از نو آغاز نمی‌کند و نهایی‌سازی هم‌زمان یک سند تکراری نمی‌سازد", async () => {
-    await sql`INSERT INTO ledger.fiscal_year(id,starts_on,ends_on,status) VALUES(1406,'2027-03-21','2028-03-19','open')`.execute(app.db);
+    // «سال تازه» نسبت به آخرین سال موجود ساخته می‌شود، نه با عدد ثابت ۱۴۰۶: پس از ۲۰۲۷/۰۳/۲۱ آن سال
+    // از پیش هست (داربست سال‌های مالی) و ادعا دربارهٔ سالی است که **بعد از** امروز می‌آید.
+    const next=(await sql<{day:string}>`INSERT INTO ledger.fiscal_year(id,starts_on,ends_on,status)
+      SELECT id+1,ends_on+1,ends_on+365,'open' FROM ledger.fiscal_year ORDER BY ends_on DESC LIMIT 1
+      RETURNING (starts_on+11)::text AS day`.execute(app.db)).rows[0]!;
     const id=await draft();
-    await sql`UPDATE sales.invoice SET occurred_at='2027-04-01T12:00:00Z' WHERE id=${id}::uuid`.execute(app.db);
+    await sql`UPDATE sales.invoice SET occurred_at=(${next.day}||'T12:00:00Z')::timestamptz WHERE id=${id}::uuid`.execute(app.db);
     const before=(await sql<{n:string}>`SELECT last_value::text AS n FROM sales.invoice_number_counter`.execute(app.db)).rows[0]!.n;
     const numbers=await Promise.all([1,2].map(async ()=>
       (await sql<{n:string}>`SELECT sales.finalize_invoice(${id}::uuid,${ACTOR}::uuid) AS n`.execute(app.db)).rows[0]!.n));

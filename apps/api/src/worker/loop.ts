@@ -70,7 +70,32 @@ export interface LoopOptions {
    * همان رفتار پیش از تفکیک.
    */
   lane?: WorkerLane | undefined;
+  /**
+   * این دور تولیدکننده‌ها (هشدار چک، زنگ سلامت، انقضای اینستاگرام) را اجرا
+   * نکند. فقط `runLoop` ست می‌کند؛ پیش‌فرض اجرا است، همان رفتار پیشین `tick`.
+   */
+  skipProducers?: boolean | undefined;
   log: (line: string) => void;
+}
+
+/**
+ * فاصلهٔ تولیدکننده‌ها، جدا از فاصلهٔ دور.
+ *
+ * ⚠️ از ۲۰۲۶/۱۱/۱۷ دور هر ۱ ثانیه است تا موجودی سایت زود برسد. تولیدکننده‌ها
+ *    روزانه Idempotentاند و به این سرعت نیازی ندارند؛ ولی `enqueue_health_alerts`
+ *    کل `health_alerts()` را می‌راند که زنجیرهٔ حسابرسی را بازمحاسبه می‌کند
+ *    (بازبینی مستقل: ~۱٫۱ ثانیه با ۱۰۰ هزار سطر). هر ثانیه اجرایش یعنی دیتابیس
+ *    دائم مشغول.
+ * ⚠️ و **در حلقهٔ جدا** (`runLoop`)، نه در همان دور: اگر یک بار در دقیقه پیش از
+ *    برداشتن پیام‌ها اجرا می‌شد، Push موجودی همان دور تا پایانش (تا ~۱ ثانیه)
+ *    منتظر می‌ماند. حالا حلقهٔ Push هرگز پشت تولیدکننده‌ها نمی‌ایستد؛
+ *    `web-push.integration.test.ts` با تولیدکنندهٔ سه‌ثانیه‌ای همین را می‌سنجد.
+ */
+export const PRODUCER_INTERVAL_MS = 60_000;
+
+/** آیا تولیدکننده‌ها در این دور اجرا شوند؟ `null` = هنوز هرگز (اولین دور). */
+export function producersDue(lastAt: number | null, now: number, intervalMs = PRODUCER_INTERVAL_MS): boolean {
+  return lastAt === null || now - lastAt >= intervalMs || now < lastAt;
 }
 
 /**
@@ -135,6 +160,51 @@ export interface TickResult {
  */
 const SMS_ONLY_TOPICS = new Set(["invoice.finalized", "cheque.due"]);
 
+/**
+ * تولیدکننده‌ها: هشدار چک، زنگ سلامت و انقضای رزرو اینستاگرام. هر سه روزانه یا
+ * ساعتی Idempotentاند و پیامشان را در صف می‌گذارند؛ دور بعدِ مصرف می‌فرستدشان.
+ */
+export async function runProducers(
+  opts: Pick<LoopOptions, "db" | "log">,
+): Promise<Pick<TickResult, "enqueuedCheques" | "enqueuedAlerts" | "expiredInstagram">> {
+  const result = { enqueuedCheques: 0, enqueuedAlerts: 0, expiredInstagram: 0 };
+  // هشدار چک: تولید پیام؛ دور مصرفِ بعدی می‌فرستدش.
+  const cheques = await sql<{ n: number }>`
+    SELECT treasury.enqueue_due_cheque_alerts() AS n
+  `.execute(opts.db);
+  result.enqueuedCheques = Number(cheques.rows[0]?.n ?? 0);
+
+  /*
+   * زنگ خطر سیستم — همان‌جا و به همان دلیل که هشدار چک اینجاست.
+   *
+   * هشت زنگ از قبل بودند و کار می‌کردند؛ آنچه نبود، رسیدنشان به آدم
+   * بود: همه فقط با اجرای دستی `ops/deploy.sh status` دیده می‌شدند.
+   * `enqueue_health_alerts()` روی کلید (کد زنگ، روز کاری) Idempotent
+   * است، پس فراخوانی ساعتی‌اش حداکثر یک پیام در روز می‌سازد.
+   */
+  const alerts = await sql<{ n: number }>`
+    SELECT platform.enqueue_health_alerts() AS n
+  `.execute(opts.db);
+  result.enqueuedAlerts = Number(alerts.rows[0]?.n ?? 0);
+
+  /*
+   * انقضای رزرو سفارش اینستاگرام (docs/INSTAGRAM-ORDERS.md). تابع خودش
+   * سفارشی را که واریزش «ادعاشده» یا «نیازمند رسیدگی» است آزاد نمی‌کند و
+   * با SKIP LOCKED از سفارشِ در حال تأیید واریز می‌گذرد؛ تکرارش بی‌ضرر است.
+   * شکستش ثبت می‌شود ولی پیامک، Push و هشدار سلامت همین مسیر را نمی‌خواباند؛ تابع خودش هر سفارش
+   * را در زیرتراکنش جدا می‌زند و این catch فقط خطای کلی (اتصال، تابع ناموجود) را می‌گیرد.
+   */
+  try {
+    const expired = await sql<{ n: number }>`
+      SELECT sales.instagram_expire_due(${SYSTEM_USER}::uuid) AS n
+    `.execute(opts.db);
+    result.expiredInstagram = Number(expired.rows[0]?.n ?? 0);
+  } catch (err) {
+    opts.log(`✗ انقضای رزرو اینستاگرام: ${err instanceof Error ? err.message : String(err)}`);
+  }
+  return result;
+}
+
 export async function tick(opts: LoopOptions): Promise<TickResult> {
   const out: TickResult = {
     claimed: 0,
@@ -151,43 +221,10 @@ export async function tick(opts: LoopOptions): Promise<TickResult> {
   const lane = WORKER_LANES[opts.lane ?? "all"];
   const settings = await readNotifySettings(opts.db);
 
-  // تولیدکننده‌ها فقط در خطی که مصرف‌کنندهٔ پیامشان است (نه `web`).
-  if (lane.producers) {
-    // هشدار چک: تولید پیام، پیش از مصرف. اگر همین دور تولید شود، همین
-    // دور هم فرستاده می‌شود.
-    const cheques = await sql<{ n: number }>`
-      SELECT treasury.enqueue_due_cheque_alerts() AS n
-    `.execute(opts.db);
-    out.enqueuedCheques = Number(cheques.rows[0]?.n ?? 0);
-
-    /*
-     * زنگ خطر سیستم — همان‌جا و به همان دلیل که هشدار چک اینجاست.
-     *
-     * هشت زنگ از قبل بودند و کار می‌کردند؛ آنچه نبود، رسیدنشان به آدم
-     * بود: همه فقط با اجرای دستی `ops/deploy.sh status` دیده می‌شدند.
-     * `enqueue_health_alerts()` روی کلید (کد زنگ، روز کاری) Idempotent
-     * است، پس فراخوانی ساعتی‌اش حداکثر یک پیام در روز می‌سازد.
-     */
-    const alerts = await sql<{ n: number }>`
-      SELECT platform.enqueue_health_alerts() AS n
-    `.execute(opts.db);
-    out.enqueuedAlerts = Number(alerts.rows[0]?.n ?? 0);
-
-    /*
-     * انقضای رزرو سفارش اینستاگرام (docs/INSTAGRAM-ORDERS.md). تابع خودش
-     * سفارشی را که واریزش «ادعاشده» یا «نیازمند رسیدگی» است آزاد نمی‌کند و
-     * با SKIP LOCKED از سفارشِ در حال تأیید واریز می‌گذرد؛ تکرارش بی‌ضرر است.
-     * شکستش ثبت می‌شود ولی پیامک، Push و هشدار سلامت همین مسیر را نمی‌خواباند؛ تابع خودش هر سفارش
-     * را در زیرتراکنش جدا می‌زند و این catch فقط خطای کلی (اتصال، تابع ناموجود) را می‌گیرد.
-     */
-    try {
-      const expired = await sql<{ n: number }>`
-        SELECT sales.instagram_expire_due(${SYSTEM_USER}::uuid) AS n
-      `.execute(opts.db);
-      out.expiredInstagram = Number(expired.rows[0]?.n ?? 0);
-    } catch (err) {
-      opts.log(`✗ انقضای رزرو اینستاگرام: ${err instanceof Error ? err.message : String(err)}`);
-    }
+  // تولیدکننده‌ها فقط در خطی که مصرف‌کنندهٔ پیامشان است (نه `web`). `runLoop`
+  // آن‌ها را در حلقهٔ جدای خودشان می‌زند (`skipProducers`)؛ این مسیر برای فراخوان مستقیم است.
+  if (lane.producers && opts.skipProducers !== true) {
+    Object.assign(out, await runProducers(opts));
   }
 
   const claimed = await sql<{
@@ -436,6 +473,13 @@ export function nextPace(
  * Workerی که وسط ارسال کشته شود، پیامش در `sending` می‌ماند و تا
  * پایان اجاره دوباره برداشته نمی‌شود — یعنی پیامک فاکتور دو دقیقه دیر
  * می‌رسد. با خاموشی تمیز، دورِ جاری تمام می‌شود و بعد بیرون می‌آییم.
+ *
+ * ── دو حلقه، نه یکی ────────────────────────────────────────────────
+ *
+ * حلقهٔ مصرف (Push سایت، پیامک، Webhook) هر `intervalMs` اجرا می‌شود و هرگز
+ * تولیدکننده‌ها را صدا نمی‌زند. تولیدکننده‌ها حلقهٔ خودشان را دارند (دقیقه‌ای،
+ * `PRODUCER_INTERVAL_MS`) و روی اتصال دیگری از همان استخر اجرا می‌شوند؛ کندی
+ * یا شکستشان Push موجودی را حتی یک دور عقب نمی‌اندازد.
  */
 export function runLoop(
   opts: LoopOptions & { intervalMs: number },
@@ -444,6 +488,7 @@ export function runLoop(
   let running = true;
   let current: Promise<unknown> = Promise.resolve();
   let pace: PaceState = { backlog: 0, errors: 0 };
+  const lane = WORKER_LANES[opts.lane ?? "all"];
 
   const sleep = (ms: number) =>
     new Promise<void>((resolve) => {
@@ -459,16 +504,16 @@ export function runLoop(
     while (running) {
       let outcome: { ok: true; claimed: number } | { ok: false };
       try {
-        current = tick(opts);
+        current = tick({ ...opts, skipProducers: true });
         const r = (await current) as TickResult;
         outcome = { ok: true, claimed: r.claimed };
         // دور خالی لاگ نمی‌خورد: Workerی که هر پنج ثانیه «کاری نبود»
         // بنویسد، لاگ را طوری پر می‌کند که خطای واقعی گم شود.
-        if (r.claimed > 0 || r.enqueuedCheques > 0 || r.expiredInstagram > 0) {
+        // تولیدکننده‌ها در حلقهٔ خودشان لاگ می‌خورند.
+        if (r.claimed > 0) {
           opts.log(
             `دور: ${r.claimed} برداشته، ${r.sent} فرستاده، ${r.failed} ناموفق، ` +
-              `${r.dead} مرده، ${r.lost} اجارهٔ ازدست‌رفته، ${r.enqueuedCheques} هشدار چک تازه، ` +
-              `${r.expiredInstagram} رزرو اینستاگرام منقضی`,
+              `${r.dead} مرده، ${r.lost} اجارهٔ ازدست‌رفته`,
           );
         }
       } catch (err) {
@@ -483,13 +528,45 @@ export function runLoop(
     }
   };
 
+  /*
+   * حلقهٔ تولیدکننده‌ها. هر `intervalMs` بیدار می‌شود تا خاموشی منتظر یک دقیقه
+   * نماند، ولی فقط وقتی `producersDue` اجرا می‌کند. زمان پیش از اجرا ثبت می‌شود:
+   * اجرای شکسته هم تا یک دقیقهٔ بعد تکرار نمی‌شود.
+   */
+  let producing: Promise<unknown> = Promise.resolve();
+  const producerLoop = async () => {
+    let producersAt: number | null = null;
+    while (running) {
+      const now = Date.now();
+      if (producersDue(producersAt, now)) {
+        producersAt = now;
+        try {
+          producing = runProducers(opts);
+          const r = (await producing) as Awaited<ReturnType<typeof runProducers>>;
+          if (r.enqueuedCheques > 0 || r.enqueuedAlerts > 0 || r.expiredInstagram > 0) {
+            opts.log(
+              `تولید: ${r.enqueuedCheques} هشدار چک، ${r.enqueuedAlerts} زنگ سلامت، ` +
+                `${r.expiredInstagram} رزرو اینستاگرام منقضی`,
+            );
+          }
+        } catch (err) {
+          opts.log(`✗ تولیدکننده‌ها: ${err instanceof Error ? err.message : String(err)}`);
+        }
+      }
+      if (running) await sleep(opts.intervalMs);
+    }
+  };
+
   const done = loop();
+  const producersDone = lane.producers ? producerLoop() : Promise.resolve();
 
   return {
     async stop() {
       running = false;
       await current.catch(() => undefined);
+      await producing.catch(() => undefined);
       await done.catch(() => undefined);
+      await producersDone.catch(() => undefined);
     },
   };
 }
