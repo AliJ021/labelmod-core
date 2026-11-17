@@ -102,6 +102,57 @@ async function openLabels(page: Page, api: { defaults: Record<string, unknown> }
   return panel;
 }
 
+test("no-price printing: product and bulk selection, stale preview invalidation and reload reset", async ({ page, api }, testInfo) => {
+  const labelModule = "../../api/src/catalog/label.ts";
+  const { labelPage, LABEL_CSP } = await import(labelModule);
+  const bodies: Array<{ hidePrice?: boolean; layout: "roll" | "a4" }> = [];
+  api.handlers.set("POST /labels", async route => {
+    const body = route.request().postDataJSON();
+    bodies.push(body);
+    await route.fulfill({ contentType: "text/html", headers: { "content-security-policy": LABEL_CSP }, body: labelPage([{
+      barcode: "2000000014012", sku: "TR-1405-NAVY-S", productName: "شلوار پارچه ای کمر مخفی مام فیونا Soomaro", brand: null,
+      color: "سرمه‌ای", size: "S", priceRial: 1234000n, count: 1,
+    }], { layout: body.layout, hidePrice: body.hidePrice, shopName: "Label Mod", rollMm: { width: 50, height: 30 } }) });
+  });
+  const panel = await openLabels(page, api);
+  await panel.getByRole("textbox", { name: "تعداد لیبل TR-1405-NAVY-S" }).fill("1");
+  const toggle = panel.getByRole("switch", { name: "چاپ بدون قیمت" });
+  await expect(toggle).not.toBeChecked();
+  const preview = panel.getByRole("button", { name: "پیش‌نمایش لیبل‌های انتخاب‌شده" });
+  await preview.click();
+  const frame = panel.frameLocator('iframe[title="پیش‌نمایش چاپ بارکد"]');
+  await expect(frame.locator(".price")).toContainText("123,400");
+  await panel.getByText("چاپ بدون قیمت", { exact: true }).click();
+  await expect(toggle).toBeChecked();
+  await expect(panel.locator("iframe")).toHaveCount(0);
+  await preview.click();
+  await expect(frame.locator(".desc")).toContainText("Soomaro");
+  await expect(frame.locator(".price")).toHaveCount(0);
+  await expect(frame.locator(".label")).not.toContainText("تومان");
+  await expect(frame.locator("svg")).toHaveCount(1);
+  expect(bodies.at(-1)!.hidePrice).toBe(true);
+  await panel.screenshot({ path: testInfo.outputPath("labels-without-price.png") });
+  await panel.getByRole("button", { name: "افزودن به فهرست چاپ گروهی" }).click();
+  const queue = page.getByRole("region", { name: "فهرست چاپ گروهی" });
+  const bulkToggle = queue.getByRole("switch", { name: "چاپ بدون قیمت" });
+  await expect(bulkToggle).not.toBeChecked();
+  await queue.getByText("چاپ بدون قیمت", { exact: true }).click();
+  await expect(bulkToggle).toBeChecked();
+  await queue.getByRole("combobox", { name: "نوع برچسب" }).selectOption("a4");
+  await queue.getByRole("button", { name: /پیش‌نمایش .* لیبل/ }).click();
+  await expect(queue.frameLocator("iframe").locator(".desc")).toContainText("Soomaro");
+  await expect(queue.frameLocator("iframe").locator(".price")).toHaveCount(0);
+  expect(bodies.at(-1)).toMatchObject({ layout: "a4", hidePrice: true });
+  await bulkToggle.press("Space");
+  await expect(bulkToggle).not.toBeChecked();
+  await expect(queue.locator("iframe")).toHaveCount(0);
+  await queue.getByRole("button", { name: /پیش‌نمایش .* لیبل/ }).click();
+  await expect(queue.frameLocator("iframe").locator(".price")).toContainText("123,400");
+  expect(bodies.at(-1)!.hidePrice).toBeUndefined();
+  await page.reload();
+  await expect(page.getByRole("region", { name: "فهرست چاپ گروهی" }).getByRole("switch", { name: "چاپ بدون قیمت" })).not.toBeChecked();
+});
+
 test("label size is one choice: the product panel's size reaches the bulk list, its request and a reload", async ({ page, api }) => {
   const bodies: unknown[] = [];
   api.handlers.set("POST /labels", async route => { bodies.push(route.request().postDataJSON()); await route.fulfill({ contentType: "text/html", body: '<!doctype html><html lang="fa"><body><p>LABELS</p></body></html>' }); });

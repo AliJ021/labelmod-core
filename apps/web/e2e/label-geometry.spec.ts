@@ -9,7 +9,7 @@ import { LABEL_PRESETS } from "../src/lib/label-print.ts";
 interface LabelItem { barcode: string | null; sku: string; productName: string; brand?: string | null; color: string | null; size: string | null; priceRial: bigint | null; count: number }
 interface RollRow { columns: number; gapMm: number; mediaWidthMm: number; offsetXMm: number; startSlot: number }
 interface LabelModule {
-  labelPage(items: LabelItem[], opts: { layout: "roll" | "a4"; shopName: string; rollMm?: { width: number; height: number }; rollRow?: RollRow }): string;
+  labelPage(items: LabelItem[], opts: { layout: "roll" | "a4"; shopName: string; rollMm?: { width: number; height: number }; rollRow?: RollRow; hidePrice?: boolean }): string;
   labelGeometry(layout: "roll" | "a4", width: number, height: number, totalModules?: number, prefer?: "barcode" | "text"): { nameLines: number };
   descLayout(item: LabelItem, g: { nameLines: number }, width: number): { kind: "split"; lines: string[] } | { kind: "flow"; text: string } | null;
   ROLL_PRESETS_MM: ReadonlyArray<{ width: number; height: number }>;
@@ -222,3 +222,39 @@ test("50x30 label centers price digits independently of Toman", async ({page}) =
     expect(Math.abs(centers.digit-centers.row)).toBeLessThan(0.6);
   }
 });
+
+for (const hidePrice of [false, true]) {
+  test(`long name fits in at most three complete lines, hidePrice=${hidePrice}`, async ({ page }, testInfo) => {
+    const { label, makeEan13 } = await load();
+    const name = "شلوار پارچه ای کمر مخفی مام فیونا Soomaro تابستانی جیب دار";
+    for (const s of [{ width: 30, height: 20 }, { width: 40, height: 25 }, { width: 50, height: 30 }, { width: 70, height: 37 }]) {
+      const it = { barcode: makeEan13(190), sku: "LM00001", productName: name, color: "سرمه‌ای", size: "XL", priceRial: 12345670n, count: 1 };
+      await page.setContent(label.labelPage([it], { layout: s.width === 70 ? "a4" : "roll", shopName: "Label Mod", rollMm: s, hidePrice }));
+      await page.emulateMedia({ media: "print" });
+      await expect(page.locator(".desc")).toContainText(name);
+      await expect(page.locator(".price")).toHaveCount(hidePrice ? 0 : 1);
+      if (hidePrice) {
+        await expect(page.locator(".label")).not.toContainText("تومان");
+        await expect(page.locator(".label")).not.toContainText("1,234,567");
+        await expect(page.locator(".label")).not.toContainText("بدون قیمت");
+      }
+      const measured = await page.locator(".label").evaluate(el => {
+        const r = el.getBoundingClientRect();
+        const d = el.querySelector<HTMLElement>(".desc")!;
+        const dr = d.getBoundingClientRect();
+        const lines = Array.from(d.querySelectorAll<HTMLElement>(".l"));
+        return {
+          overflow: lines.some(l => { const lr = l.getBoundingClientRect(); return lr.top < dr.top - .5 || lr.bottom > dr.bottom + .5 || l.scrollWidth > l.clientWidth + 1; }),
+          outside: Array.from(el.children).some(c => { const cr = c.getBoundingClientRect(); return cr.left < r.left - .5 || cr.right > r.right + .5 || cr.top < r.top - .5 || cr.bottom > r.bottom + .5; }),
+          lines: lines.reduce((n, l) => n + Math.round(l.getBoundingClientRect().height / parseFloat(getComputedStyle(l).lineHeight)), 0),
+          fontMm: parseFloat(getComputedStyle(d).fontSize) * 25.4 / 96,
+        };
+      });
+      expect(measured.overflow, JSON.stringify({ s, measured })).toBe(false);
+      expect(measured.outside).toBe(false);
+      expect(measured.lines).toBeLessThanOrEqual(3);
+      expect(measured.fontMm).toBeGreaterThanOrEqual(1.3 - .01);
+      if (s.width === 50) await page.screenshot({ path: testInfo.outputPath(`long-label-${hidePrice ? "no-price" : "priced"}.png`) });
+    }
+  });
+}

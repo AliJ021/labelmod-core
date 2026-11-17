@@ -31,7 +31,7 @@ export const ROLL_LIMITS = { minWidth: 30, maxWidth: 120, minHeight: 20, maxHeig
  * لیبل (`width`/`height`) جدا از کل ردیف است: صفحه = پهنای لاینر × ارتفاع لیبل.
  */
 export interface LabelRow { columns: number; gapMm: number; mediaWidthMm: number; offsetXMm: number; startSlot: number }
-export interface LabelSize { layout: LabelLayout; width: number; height: number; row?: LabelRow | undefined }
+export interface LabelSize { layout: LabelLayout; width: number; height: number; row?: LabelRow | undefined; hidePrice?: boolean | undefined }
 
 /**
  * همان مرزهای سرور: پهنای چاپ‌پذیر BIXOLON XD3-40t ۱۰۴mm (راهنما، بخش ۷-۱)
@@ -249,9 +249,9 @@ export function labelRequestProblem(items: readonly { count: number }[], size: L
  * بی‌بارکد (فقط SKU) را عمداً می‌سازد. ولی لیبلی که قیمت یا بارکد ندارد
  * روی رگال به کار صندوق‌دار نمی‌آید، پس پیش از چاپ صریح گفته می‌شود.
  */
-export function labelContentWarning(items: readonly { count: number; priced?: boolean; hasBarcode?: boolean }[]): string | null {
+export function labelContentWarning(items: readonly { count: number; priced?: boolean; hasBarcode?: boolean }[], hidePrice = false): string | null {
   const chosen = items.filter((i) => i.count > 0);
-  const noPrice = chosen.filter((i) => i.priced === false);
+  const noPrice = hidePrice ? [] : chosen.filter((i) => i.priced === false);
   const noBarcode = chosen.filter((i) => i.hasBarcode === false);
   const parts: string[] = [];
   if (noPrice.length > 0)
@@ -272,6 +272,7 @@ export function labelRequestBody(items: readonly { variationId: string; count: n
     layout: size.layout,
     ...(size.layout === "roll" ? { rollWidthMm: size.width, rollHeightMm: size.height } : {}),
     ...(size.layout === "roll" && size.row ? { rollRow: { ...size.row } } : {}),
+    ...(size.hidePrice ? { hidePrice: true } : {}),
   };
 }
 

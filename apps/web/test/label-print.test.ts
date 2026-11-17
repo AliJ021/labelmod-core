@@ -12,6 +12,24 @@ const item = (variationId: string, productId: string, count: number): QueueItem 
 });
 
 describe("فهرست چاپ گروهی لیبل", () => {
+  test("چاپ بدون قیمت برای رول و A4 صریح است، کلید پیش‌نمایش را عوض می‌کند و دادهٔ کالا را دست نمی‌زند", () => {
+    const items = [item("v1", "p1", 2), item("v2", "p2", 0)];
+    const before = structuredClone(items);
+    for (const layout of ["roll", "a4"] as const) {
+      const size = { layout, width: 50, height: 30 };
+      const normal = labelRequestBody(items, size);
+      const hidden = labelRequestBody(items, { ...size, hidePrice: true });
+      assert.deepEqual(hidden, { ...normal, hidePrice: true });
+      assert.deepEqual(labelRequestBody(items, { ...size, hidePrice: false }), normal);
+      assert.notEqual(JSON.stringify(normal), JSON.stringify(hidden));
+      assert.deepEqual(hidden.items, [{ variationId: "v1", count: 2 }]);
+    }
+    assert.deepEqual(items, before);
+    assert.equal(labelContentWarning([{ count: 1, priced: false }], true), null);
+    assert.match(labelContentWarning([{ count: 1, priced: false, hasBarcode: false }], true)!, /بارکد/);
+    assert.doesNotMatch(labelContentWarning([{ count: 1, priced: false, hasBarcode: false }], true)!, /قیمت/);
+    assert.match(labelContentWarning([{ count: 1, priced: false }], false)!, /قیمت/);
+  });
   test("افزودن دوباره همان تنوع جمع می‌شود و ترتیب اولین افزودن می‌ماند", () => {
     let q = mergeQueue([], [item("v1", "p1", 2), item("v2", "p1", 1)]);
     q = mergeQueue(q, [item("v3", "p2", 4), item("v1", "p1", 3)]);

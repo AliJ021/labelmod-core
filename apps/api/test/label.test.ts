@@ -18,7 +18,7 @@ import {
   BarcodeError,
 } from "../src/catalog/barcode-svg.ts";
 import { makeEan13, ean13CheckDigit } from "../src/catalog/barcode.ts";
-import { esc, descLayout, DESC_MIN_FONT_MM, LabelTextError, labelGeometry, labelPage, LabelSizeError, barcodeFitsWidth, minRollWidthFor, ROLL_MIN_HEIGHT_MM, ROLL_MIN_WIDTH_MM, ROLL_PRESETS_MM, type LabelItem } from "../src/catalog/label.ts";
+import { esc, descLayout, DESC_MIN_FONT_MM, DESC_FLOOR_MM, LabelTextError, labelGeometry, labelPage, LabelSizeError, barcodeFitsWidth, minRollWidthFor, ROLL_MIN_HEIGHT_MM, ROLL_MIN_WIDTH_MM, ROLL_PRESETS_MM, type LabelItem } from "../src/catalog/label.ts";
 import { LABEL_BRAND, LabelRowError, labelCalibrationPage, rollRowProblem, rollRowSlots, type RollRow } from "../src/catalog/label.ts";
 
 describe("رسم EAN-13", () => {
@@ -335,8 +335,22 @@ describe("اندازهٔ برچسب", () => {
     assert.match(html, new RegExp(`<div class="desc" style="font-size:${g.fontMm.toFixed(2)}mm"><span class="l">شال</span><span class="l">لیبل مد · مشکی · M</span></div>`));
   });
 
+  test("نام قبلاً ردشده با سه سطر و قلم کمی کوچک‌تر کامل چاپ می‌شود", () => {
+    const name = "شلوار پارچه ای کمر مخفی مام فیونا Soomaro تابستانی جیب دار";
+    const html = labelPage([{ ...item, productName: name }], { layout: "roll", shopName: "ف", rollMm: { width: 30, height: 20 } });
+    assert.ok(html.includes(name));
+    assert.doesNotMatch(html, /…|\.\.\./);
+    const g = labelGeometry("roll", 30, 20, undefined, "text3");
+    assert.ok(g.barHeightMm >= 5);
+    const layout = descLayout({ ...item, productName: name }, g, 30, DESC_FLOOR_MM)!;
+    assert.equal(layout.kind, "flow");
+    assert.equal(layout.lines, 3);
+    assert.ok(layout.fontMm >= DESC_FLOOR_MM);
+    assert.ok(layout.fontMm < DESC_MIN_FONT_MM);
+  });
+
   test("نامی که حتی با کوچک‌ترین قلم خوانا جا نشود، رد می‌شود (۴۲۲) — هرگز بریده چاپ نمی‌شود", () => {
-    const long: LabelItem = { ...item, productName: "شلوار پارچه ای کمر مخفی مام فیونا Soomaro" };
+    const long: LabelItem = { ...item, productName: "شلوار پارچه ای کمر مخفی مام فیونا Soomaro ".repeat(8) };
     assert.throws(() => labelPage([long], { layout: "roll", shopName: "ف", rollMm: { width: 30, height: 20 } }),
       (err: unknown) => err instanceof LabelTextError && err.statusCode === 422 && err.code === "label_text_too_long"
         && err.message.includes("شلوار پارچه ای کمر مخفی مام فیونا Soomaro") && err.message.includes("30×20"));
@@ -348,13 +362,14 @@ describe("اندازهٔ برچسب", () => {
     const rnd = (n: number) => { seed = (seed * 1103515245 + 12345) % 2147483648; return seed % n; };
     let printed = 0, rejected = 0;
     for (let k = 0; k < 120; k++) {
-      const name = Array.from({ length: 1 + rnd(16) }, () => words[rnd(words.length)]).join(" ");
+      const name = Array.from({ length: k % 10 === 0 ? 60 : 1 + rnd(16) }, () => words[rnd(words.length)]).join(" ");
       const it: LabelItem = { ...item, productName: name, brand: rnd(2) ? "لیبل مد" : null, color: rnd(2) ? "سرمه ای" : null, size: rnd(2) ? "XL" : null };
       for (const p of ROLL_PRESETS_MM) {
         try {
           const html = labelPage([it], { layout: "roll", shopName: "ف", rollMm: p });
           const g = labelGeometry("roll", p.width, p.height);
-          const want = descLayout(it, g, p.width) ?? descLayout(it, labelGeometry("roll", p.width, p.height, undefined, "text"), p.width);
+          const want = descLayout(it, g, p.width) ?? descLayout(it, labelGeometry("roll", p.width, p.height, undefined, "text"), p.width)
+            ?? descLayout(it, labelGeometry("roll", p.width, p.height, undefined, "text3"), p.width, DESC_FLOOR_MM);
           assert.ok(want, `${p.width}×${p.height}: چاپ شد ولی چیدمانی نداشت`);
           const pieces = want.kind === "split" ? want.lines : [want.text];
           for (const piece of pieces) assert.ok(html.includes(esc(piece)), `${p.width}×${p.height}: «${piece}» کامل نیامد`);

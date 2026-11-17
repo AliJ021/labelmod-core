@@ -505,6 +505,22 @@ describe("ساخت خودکار تنوع و ماتریس موجودی", { skip }
     assert.ok(!html.includes("3,200,000"), "ریال نباید روی برچسب بیاید");
     assert.ok(html.includes("<svg"), "بارکد باید رسم شود");
     assert.ok(!html.includes("شعبه اصلی"), "نام شعبه جای برند روی لیبل چاپ نمی‌شود");
+    const payload = { items: [{ variationId: made[0]!.id, count: 2 }, { variationId: made[1]!.id, count: 1 }] };
+    for (const layout of ["roll", "a4"]) {
+      const hidden = await app.inject({ method: "POST", url: "/labels", ...sup, payload: { ...payload, layout, hidePrice: true } });
+      assert.equal(hidden.statusCode, 200, hidden.body);
+      assert.equal(hidden.body.split('class="label"').length - 1, 3);
+      assert.doesNotMatch(hidden.body, /class="price"|320,000|<small>تومان|<span class="noprice">/);
+      assert.match(hidden.body, /<svg/);
+      assert.equal(hidden.headers["cache-control"], "no-store");
+      const priced = await app.inject({ method: "POST", url: "/labels", ...sup, payload: { ...payload, layout, hidePrice: false } });
+      assert.equal(priced.statusCode, 200, priced.body);
+      assert.match(priced.body, /320,000/, "حذف قیمت فقط نمایش است و قیمت ثبت‌شده تغییر نمی‌کند");
+    }
+    for (const hidePrice of ["true", "false", 1, null]) {
+      const invalid = await app.inject({ method: "POST", url: "/labels", ...sup, payload: { ...payload, hidePrice } });
+      assert.equal(invalid.statusCode, 400, invalid.body);
+    }
   });
 
   test("رول دو‌ستونه و ردیف کالیبراسیون: همان مجوز و هدرها؛ ردیف نامعتبر ۴۲۲ بی Fit", async () => {

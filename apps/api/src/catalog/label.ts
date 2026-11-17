@@ -136,6 +136,8 @@ export interface LabelPageOptions {
   rollMm?: { width: number; height: number } | undefined;
   /** فقط برای `roll` — نبودنش یعنی همان رول تک‌ستونی قدیمی (هر لیبل یک صفحه). */
   rollRow?: RollRow | undefined;
+  /** حذف کامل ردیف قیمت، از جمله تومان و نشان «بدون قیمت»؛ فقط همین درخواست. */
+  hidePrice?: boolean | undefined;
 }
 
 /**
@@ -258,7 +260,8 @@ export function labelGeometry(
    * دو سطر شرح بر نام فروشگاه و بلندی میله‌ها مقدم است — میله تا کمینهٔ ۵mm کوتاه
    * می‌شود ولی هرگز کوتاه‌تر. چیدمان عادی برای همهٔ برگه‌های دیگر دست‌نخورده است.
    */
-  prefer: "barcode" | "text" = "barcode",
+  prefer: "barcode" | "text" | "text3" = "barcode",
+  hidePrice = false,
 ): LabelGeometry {
   const round1 = (v: number) => Math.round(v * 10) / 10;
   const r2 = (v: number) => Math.round(v * 100) / 100;
@@ -277,15 +280,16 @@ export function labelGeometry(
   const rowsFor = (f: number, shop: boolean, lines: number) => ({
     shop: shop ? r2(f * 1.05 * 1.25) : 0,
     desc: r2(lines * f * DESC_LINE),
-    price: r2(f * 1.75 * 1.12),
+    price: hidePrice ? 0 : r2(f * 1.75 * 1.12),
   });
   // ترتیب ترجیح (مرجع مالک): فروشگاه + دو سطر شرح؛ برای نگه‌داشتن آن‌ها
   // اول قلم کوچک می‌شود، بعد شرح یک‌سطری، بعد نام فروشگاه می‌رود.
-  const configs: Array<[boolean, number]> = prefer === "text" ? [[true, 2], [false, 2], [true, 1], [false, 1]] : [[true, 2], [true, 1], [false, 1]];
+  const configs: Array<[boolean, number]> = prefer === "text3" ? [[true, 3], [false, 3], [false, 2], [false, 1]]
+    : prefer === "text" ? [[true, 2], [false, 2], [true, 1], [false, 1]] : [[true, 2], [true, 1], [false, 1]];
   const fStart = fontMm;
   const attempt = (shop: boolean, lines: number, f: number, minBar: number): LabelGeometry | null => {
     const r = rowsFor(f, shop, lines);
-    const visible = shop ? 4 : 3;
+    const visible = 2 + (shop ? 1 : 0) + (hidePrice ? 0 : 1);
     const fixed = padY[0] + padY[1] + ROW_GAP_MM * (visible - 1) + r.shop + r.desc + r.price + BARCODE_TEXT_MM;
     const bar = Math.floor(Math.min(barCap, height - fixed) * 10) / 10;
     if (bar < minBar) return null;
@@ -296,8 +300,8 @@ export function labelGeometry(
   if (fits) {
     for (const [shop, lines] of configs) {
       // در اولویت متن، قلم پایه تا همان کف «آخرین چاره» (۲mm) پایین می‌رود.
-      for (let f = fStart; f >= (prefer === "text" ? 2 : 2.2) - 1e-9; f = round1(f - 0.1)) {
-        const g = attempt(shop, lines, f, prefer === "text" ? MIN_BAR_MM : barTarget);
+      for (let f = fStart; f >= (prefer === "barcode" ? 2.2 : 2) - 1e-9; f = round1(f - 0.1)) {
+        const g = attempt(shop, lines, f, prefer === "barcode" ? barTarget : MIN_BAR_MM);
         if (g) return g;
       }
     }
@@ -371,10 +375,12 @@ export class LabelTextError extends Error {
 }
 
 /**
- * کوچک‌ترین قلم شرح به میلی‌متر (حدود ۴٫۵pt). ریزتر از این روی چاپگر حرارتی ۲۰۳dpi
- * خوانا نمی‌ماند؛ نامی که با این قلم هم جا نشود رد می‌شود، نه بریده.
+ * کف عادی قلم شرح به میلی‌متر (حدود ۴٫۵pt). پیش از کوچک‌ترکردن قلم، فضای
+ * سه سطر بررسی می‌شود؛ آخرین حد `DESC_FLOOR_MM` است.
  */
 export const DESC_MIN_FONT_MM = 1.6;
+/** پس از بررسی چیدمان سه‌سطری، فقط قلم شرح کمی کوچک‌تر می‌شود. */
+export const DESC_FLOOR_MM = 1.3;
 /** بیشترین سطر شرح. سطر چهارم یعنی قلمی ریزتر از حد خوانا در همان ارتفاع. */
 const DESC_MAX_LINES = 3;
 
@@ -417,15 +423,15 @@ function descLinesNeeded(text: string, fontMm: number, widthMm: number): number 
 
 /**
  * بزرگ‌ترین قلمی که **کل** متن شرح را در ارتفاع ثابت ردیف شرح جا می‌دهد (۱ تا ۳ سطر).
- * قلم هرگز از قلم پایهٔ برچسب بزرگ‌تر نمی‌شود و از `DESC_MIN_FONT_MM` کوچک‌تر نمی‌شود.
+ * قلم هرگز از قلم پایهٔ برچسب بزرگ‌تر و از کف تعیین‌شده کوچک‌تر نمی‌شود.
  */
-export function descFit(text: string, g: LabelGeometry, width: number): { fontMm: number; lines: number } | null {
+export function descFit(text: string, g: LabelGeometry, width: number, minFont = DESC_MIN_FONT_MM): { fontMm: number; lines: number } | null {
   const inner = width - 2 * CODE_PAD_X_MM - 2 * TEXT_PAD_X_MM;
   let best: { fontMm: number; lines: number } | null = null;
   for (let lines = 1; lines <= DESC_MAX_LINES; lines++) {
     let f = Math.floor(Math.min(g.fontMm, g.rows.desc / (lines * DESC_LINE)) * 100) / 100;
-    while (f >= DESC_MIN_FONT_MM - 1e-9 && descLinesNeeded(text, f, inner) > lines) f = Math.round((f - 0.05) * 100) / 100;
-    if (f >= DESC_MIN_FONT_MM - 1e-9 && (best === null || f > best.fontMm + 1e-9)) best = { fontMm: f, lines };
+    while (f >= minFont - 1e-9 && descLinesNeeded(text, f, inner) > lines) f = Math.round((f - 0.05) * 100) / 100;
+    if (f >= minFont - 1e-9 && (best === null || f > best.fontMm + 1e-9)) best = { fontMm: f, lines };
   }
   return best;
 }
@@ -450,7 +456,7 @@ export type DescLayout =
  * شوند، همان چیدمان مرجع می‌ماند؛ وگرنه متن پیوسته می‌شود و قلم تا جایی کوچک می‌شود
  * که **کل** آن جا شود. `null` یعنی حتی با کوچک‌ترین قلم خوانا جا نمی‌شود.
  */
-export function descLayout(item: Pick<LabelItem, "productName" | "brand" | "color" | "size">, g: LabelGeometry, width: number): DescLayout | null {
+export function descLayout(item: Pick<LabelItem, "productName" | "brand" | "color" | "size">, g: LabelGeometry, width: number, minFont = DESC_MIN_FONT_MM): DescLayout | null {
   const inner = width - 2 * CODE_PAD_X_MM - 2 * TEXT_PAD_X_MM;
   const name = descNorm(item.productName);
   const details = [item.brand ?? null, item.color, item.size].filter((v): v is string => v !== null && v !== "").map(descNorm).filter((v) => v !== "");
@@ -458,11 +464,11 @@ export function descLayout(item: Pick<LabelItem, "productName" | "brand" | "colo
   if (g.nameLines === 2 && descLinesNeeded(name, g.fontMm, inner) === 1 && (second === "" || descLinesNeeded(second, g.fontMm, inner) === 1))
     return { kind: "split", fontMm: g.fontMm, lines: second === "" ? [name] : [name, second] };
   const text = descText(item);
-  const fit = descFit(text, g, width);
+  const fit = descFit(text, g, width, minFont);
   return fit === null ? null : { kind: "flow", fontMm: fit.fontMm, lines: fit.lines, text };
 }
 
-function labelHtml(item: LabelItem, shopName: string, g: LabelGeometry, width: number, height: number): string {
+function labelHtml(item: LabelItem, shopName: string, g: LabelGeometry, width: number, height: number, hidePrice: boolean): string {
   const priceText = item.priceRial === null ? "" : priceToman(item.priceRial);
   const price =
     item.priceRial === null
@@ -481,7 +487,7 @@ function labelHtml(item: LabelItem, shopName: string, g: LabelGeometry, width: n
   // شرح: نام کالا و سپس برند · رنگ · سایز، **پیوسته** و چندسطری. کل نام همیشه چاپ
   // می‌شود — هیچ «…» و هیچ بریدنی نیست (درخواست مالک ۲۰۲۶/۱۱/۱۶): قلم آن‌قدر کوچک
   // می‌شود که کل متن در ارتفاع ثابت ردیف شرح جا شود، وگرنه برچسب ساخته نمی‌شود.
-  const layout = descLayout(item, g, width);
+  const layout = descLayout(item, g, width, DESC_FLOOR_MM);
   if (layout === null) throw new LabelTextError(item.productName, width, height);
   const descStyle = `font-size:${layout.fontMm.toFixed(2)}mm`;
   const desc = layout.kind === "split"
@@ -492,7 +498,7 @@ function labelHtml(item: LabelItem, shopName: string, g: LabelGeometry, width: n
   ${g.showShop ? `<div class="shop" dir="ltr" lang="en">${labelText(shopName)}</div>` : ""}
   <div class="code">${code}</div>
   <div class="desc" style="${descStyle}">${desc}</div>
-  <div class="price" style="font-size:${pf.toFixed(2)}mm">${price}</div>
+  ${hidePrice ? "" : `<div class="price" style="font-size:${pf.toFixed(2)}mm">${price}</div>`}
 </div>`;
 }
 
@@ -513,20 +519,21 @@ export function labelPage(items: LabelItem[], opts: LabelPageOptions): string {
   // در ۳۰mm جا نمی‌شود و آن برگه با پیام کمترین عرض رد می‌شود.
   const widths = items.filter((i) => i.barcode !== null).map((i) => barcodeTotalModules(i.barcode as string));
   const modules = Math.max(EAN13_TOTAL_MODULES, ...widths);
-  let g = labelGeometry(opts.layout, size.width, size.height, modules);
+  const hidePrice = opts.hidePrice === true;
+  let g = labelGeometry(opts.layout, size.width, size.height, modules, "barcode", hidePrice);
   if (!g.fits) throw new LabelSizeError(size.width, size.height, modules);
-  // نام کامل همیشه چاپ می‌شود: اگر نام کالایی در چیدمان عادی جا نشود، کل برگه با
-  // اولویت متن ساخته می‌شود (دو سطر شرح، میلهٔ کوتاه‌تر ولی ≥ ۵mm). اگر باز هم جا نشود،
-  // `labelHtml` با `LabelTextError` رد می‌کند — بریدن نام هرگز.
-  if (items.some((i) => descLayout(i, g, size.width) === null)) {
-    const textFirst = labelGeometry(opts.layout, size.width, size.height, modules, "text");
-    if (textFirst.fits) g = textFirst;
+  // ابتدا دو سطر، سپس سه سطر کامل با همان کف قلم؛ فقط پس از آن تا ۱٫۳mm کوچک
+  // می‌شود. متن ناممکن همچنان خطای روشن دارد، نه بیرون‌زدگی روی بارکد/لیبل بعدی.
+  for (const prefer of ["text", "text3"] as const) {
+    if (items.every((i) => descLayout(i, g, size.width) !== null)) break;
+    const next = labelGeometry(opts.layout, size.width, size.height, modules, prefer, hidePrice);
+    if (next.fits && next.rows.desc >= g.rows.desc) g = next;
   }
 
   const repeated: string[] = [];
   for (const item of items) {
     for (let i = 0; i < item.count; i++) {
-      repeated.push(labelHtml(item, opts.shopName, g, size.width, size.height));
+      repeated.push(labelHtml(item, opts.shopName, g, size.width, size.height, hidePrice));
     }
   }
 
