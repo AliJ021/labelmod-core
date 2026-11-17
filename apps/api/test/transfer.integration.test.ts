@@ -317,7 +317,11 @@ describe("انتقال بین انبارها", { skip }, () => {
     assert.equal(post.statusCode, 200, post.body);
     const posted = JSON.parse(post.body) as TransferJson & { replayed: boolean };
     assert.equal(posted.status, "posted");
-    assert.match(posted.number as string, /^TR-1405-/, "شماره در لحظه ثبت");
+    // سال از «امروزِ» دیتابیس می‌آید، نه عدد ثابت: برگهٔ امروز به سال مالی جاری می‌خورد.
+    const fiscalYear = (await sql<{ id: number }>`
+      SELECT id FROM ledger.fiscal_year WHERE platform.business_date() BETWEEN starts_on AND ends_on
+    `.execute(handle.db)).rows[0]!.id;
+    assert.match(posted.number as string, new RegExp(`^TR-${fiscalYear}-`), "شماره در لحظه ثبت");
     assert.equal(posted.replayed, false);
     assert.equal(post.json().totalValue, null, "انباردار مجوز دیدن بها ندارد");
     const stored = await sql<{ unit_cost: string }>`SELECT unit_cost::text FROM inventory.transfer_line

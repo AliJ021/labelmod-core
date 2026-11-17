@@ -26,9 +26,17 @@ mkdir -p "$STATE_DIR"
 log () { echo "── $(date '+%Y-%m-%d %H:%M:%S %Z') $*"; }
 
 # یک کار در روز، یک بار. برگشت ۰ یعنی «باید اجرا شود».
+#
+# ⚠️ «از ساعت X به بعد»، نه «دقیقاً ساعت X» (یافتهٔ LM-19). نسخهٔ قبلی فقط وقتی
+#    اجرا می‌کرد که ساعت جاری **برابر** ساعت تنظیم‌شده بود؛ ظرفی که ساعت ۴ پایین
+#    بود یا بیدارشدن ساعتی‌اش از روی ۴ پرید، بکاپ آن شب را **بی‌صدا** از دست می‌داد.
+#    حالا اولین بیدارشدن پس از آن ساعت جبران می‌کند؛ نشانهٔ «امروز انجام شد» همچنان
+#    جلوی اجرای دوباره را می‌گیرد. پیش از آن ساعت (مثلاً ۰۰:۰۰ تا ۰۳:۵۹) کار روز تازه
+#    اجرا نمی‌شود، پس بستن دوره هرگز به امروزِ در جریان نمی‌رسد — آن را هم خودِ
+#    `close_due_channel_days` جدا نگه می‌دارد.
 due () {
   local name="$1" hour="$2" today marker
-  [ "$(date +%-H)" = "$hour" ] || return 1
+  [ "$(date +%-H)" -ge "$hour" ] || return 1
   today=$(date +%Y-%m-%d)
   marker="$STATE_DIR/$name"
   [ -f "$marker" ] && [ "$(cat "$marker")" = "$today" ] && return 1
@@ -45,6 +53,14 @@ while true; do
     # `sales.unposted_revenue` همچنان زنگ خطر است.
     if /app/ops/close-due-days.sh; then done_today close
     else log "⚠️  بستن دوره شکست خورد — sales.unposted_revenue را ببینید"; fi
+  fi
+
+  # تسویهٔ خودکار کارت‌خوان و درگاه (مهاجرت ۱۲۱) — همان ساعت بستن دوره.
+  # شکستش حلقه را نمی‌کشد: اجرای بعد جبران می‌کند و زنگ «تسویه‌نشده» می‌ماند.
+  if due settle "$CLOSE_HOUR"; then
+    log "تسویهٔ خودکار کارت‌خوان و درگاه"
+    if /app/ops/auto-settle.sh; then done_today settle
+    else log "⚠️  تسویهٔ بعضی پایانه‌ها انجام نشد — خروجی بالا و زنگ «تسویه‌نشده» را ببینید"; done_today settle; fi
   fi
 
   if due backup "$BACKUP_HOUR"; then

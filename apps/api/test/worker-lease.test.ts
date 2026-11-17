@@ -16,7 +16,7 @@ import assert from "node:assert/strict";
 import { parseRetryAfter, retryAfterFor, RETRY_AFTER_MAX_SECONDS } from "../src/worker/retry-after.ts";
 import {
   assertLease, ERROR_JITTER, MAX_BACKLOG_STREAK, MAX_ERROR_BACKOFF_MS, MESSAGE_BUDGET_SECONDS, nextPace,
-  WEB_TOPICS, WORKER_LANES, type PaceState,
+  PRODUCER_INTERVAL_MS, producersDue, WEB_TOPICS, WORKER_LANES, type PaceState,
 } from "../src/worker/loop.ts";
 import { HANDLERS } from "../src/worker/handlers.ts";
 import { makeSender, SmsError } from "../src/worker/sms.ts";
@@ -206,5 +206,26 @@ describe("فرستنده‌ها Retry-After سنجیده را به خطا می�
     } finally {
       globalThis.fetch = original;
     }
+  });
+});
+
+describe("فاصلهٔ تولیدکننده‌ها جدا از دور Push", () => {
+  test("اولین دور اجرا می‌کند، دورهای ثانیه‌ای بعدی نه، پس از یک دقیقه دوباره", () => {
+    assert.equal(PRODUCER_INTERVAL_MS, 60_000);
+    assert.equal(producersDue(null, 1_000), true);
+    assert.equal(producersDue(1_000, 2_000), false);
+    assert.equal(producersDue(1_000, 1_000 + PRODUCER_INTERVAL_MS - 1), false);
+    assert.equal(producersDue(1_000, 1_000 + PRODUCER_INTERVAL_MS), true);
+  });
+  test("ساعتِ عقب‌رفته تولیدکننده‌ها را برای همیشه نمی‌خواباند", () => {
+    assert.equal(producersDue(10_000_000, 5_000), true);
+  });
+  test("در یک ساعت دور ۱ ثانیه‌ای، تولیدکننده‌ها ۶۰ بار اجرا می‌شوند نه ۳۶۰۰ بار", () => {
+    let last: number | null = null;
+    let runs = 0;
+    for (let t = 0; t < 3_600_000; t += 1_000) {
+      if (producersDue(last, t)) { last = t; runs += 1; }
+    }
+    assert.equal(runs, 60);
   });
 });

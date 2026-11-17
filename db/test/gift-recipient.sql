@@ -42,7 +42,7 @@ END $$;
 DO $outer$
 DECLARE
   BR uuid; WH uuid; v_user uuid; v_sup uuid; v_prod uuid; v_var uuid;
-  v_rcpt uuid; v_shift uuid; v_inv uuid; v_buyer uuid; v_recip uuid;
+  v_rcpt uuid; v_shift uuid; v_inv uuid; v_inv2 uuid; v_buyer uuid; v_recip uuid;
   v_n numeric; v_t text; v_b boolean;
 BEGIN
   SELECT id INTO BR FROM platform.branch WHERE code='MAIN';
@@ -166,6 +166,55 @@ BEGIN
      AND entity_id = v_inv::text;
   IF v_n < 3 THEN RAISE EXCEPTION '✗ تغییرات هدیه ردّ حسابرسی ندارند: %', v_n; END IF;
   RAISE NOTICE '  ✓ ردّ حسابرسی ثبت شد = %', v_n;
+
+  RAISE NOTICE E'\n═══ ۱۰. گزینهٔ قیمت‌دار به فاکتور نمی‌نشیند (ردیف ۴ دفتر امنیتی، مهاجرت ۱۲۳) ═══';
+  -- قیمت گزینهٔ هدیه در هیچ جمعی نمی‌آید. تا تصویب سرفصل و مالیاتش، گزینهٔ
+  -- قیمت‌دار رد می‌شود — نه رایگان فروخته می‌شود و نه با پیش‌فرض اختراعی شارژ.
+  INSERT INTO sales.gift_option (code, kind, label, price, sort_order)
+  VALUES ('wrap_velvet', 'wrap', 'جعبهٔ مخمل', 250000, 50);
+  INSERT INTO sales.invoice (branch_id,warehouse_id,shift_id,customer_id,occurred_at,created_by)
+  VALUES (BR,WH,v_shift,v_buyer,now(),v_user) RETURNING id INTO v_inv2;
+  INSERT INTO sales.invoice_line (invoice_id,line_no,variation_id,qty,unit_price,net_amount)
+  VALUES (v_inv2,1,v_var,1,900000,900000);
+  PERFORM sales.refresh_invoice_totals(v_inv2);
+
+  BEGIN
+    PERFORM sales.set_invoice_gift(v_inv2, 'wrap_velvet', NULL, NULL, NULL, true, v_user);
+    v_t := 'پذیرفته شد';
+  EXCEPTION WHEN others THEN v_t := SQLERRM; END;
+  PERFORM pg_temp.assert_txt('انتخاب گزینهٔ قیمت‌دار رد می‌شود و نامش را می‌گوید',
+    (v_t LIKE '%«جعبهٔ مخمل» قیمت دارد%')::text, 'true');
+  BEGIN
+    INSERT INTO sales.invoice_gift (invoice_id, wrap_code) VALUES (v_inv2, 'wrap_velvet');
+    v_t := 'پذیرفته شد';
+  EXCEPTION WHEN others THEN v_t := SQLERRM; END;
+  PERFORM pg_temp.assert_txt('درج مستقیم هم رد می‌شود (Trigger، نه فقط تابع)',
+    (v_t LIKE '%قیمت دارد%')::text, 'true');
+
+  -- کنترل منفی: گزینهٔ رایگان روی همان فاکتور می‌نشیند و جمع را عوض نمی‌کند.
+  PERFORM sales.set_invoice_gift(v_inv2, 'wrap_bag', 'color_gold', 'flower_rose', NULL, true, v_user);
+  SELECT payable_amount INTO v_n FROM sales.invoice WHERE id = v_inv2;
+  PERFORM pg_temp.assert_eq('گزینهٔ رایگان پذیرفته شد و مبلغ همان است', v_n, 900000);
+
+  -- گزینه‌ای که **پس از** انتخاب قیمت بگیرد، در نهایی‌سازی می‌ایستد.
+  UPDATE sales.gift_option SET price = 100000 WHERE code = 'color_gold';
+  INSERT INTO treasury.payment (invoice_id,shift_id,method_code,direction,amount,status,occurred_at)
+  VALUES (v_inv2,v_shift,'cash','in',900000,'succeeded',now());
+  BEGIN
+    PERFORM sales.finalize_invoice(v_inv2, v_user);
+    v_t := 'پذیرفته شد';
+  EXCEPTION WHEN others THEN v_t := SQLERRM; END;
+  PERFORM pg_temp.assert_txt('نهایی‌سازی با گزینه‌ای که بعداً قیمت گرفت رد می‌شود',
+    (v_t LIKE '%«طلایی» قیمت دارد و مبلغش در این فاکتور نیامده%')::text, 'true');
+  SELECT status INTO v_t FROM sales.invoice WHERE id = v_inv2;
+  PERFORM pg_temp.assert_txt('فاکتور همچنان باز است', v_t, 'draft');
+
+  -- کنترل منفی دوم: با برداشتن همان گزینه، همان فاکتور نهایی می‌شود.
+  PERFORM sales.set_invoice_gift(v_inv2, 'wrap_bag', NULL, 'flower_rose', NULL, true, v_user);
+  PERFORM sales.finalize_invoice(v_inv2, v_user);
+  SELECT status INTO v_t FROM sales.invoice WHERE id = v_inv2;
+  PERFORM pg_temp.assert_txt('پس از برداشتن گزینهٔ قیمت‌دار نهایی شد',
+    (v_t IN ('finalized','paid'))::text, 'true');
 
   RAISE NOTICE E'\n✓ خرید برای دیگری و هدیه — همه ادعاها پاس شدند';
 END $outer$;

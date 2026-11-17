@@ -36,6 +36,8 @@ const uuid = z.string().uuid("شناسه نامعتبر");
 const openShiftBody = z.object({
   branchId: uuid,
   openingCash: moneyString.default("0"),
+  /** دلیل اختلاف با شمارش پایان شیفت قبل — مهاجرت ۱۲۰. */
+  openingNote: z.string().trim().min(3, "دلیل اختلاف را کامل‌تر بنویسید").max(300).optional(),
 });
 
 const closeShiftBody = z.object({
@@ -201,6 +203,7 @@ export function registerSalesRoutes(app: FastifyInstance, deps: SalesRouteDeps):
       userId: s.userId,
       branchId: body.branchId,
       openingCash: parseMoney(body.openingCash),
+      ...(body.openingNote === undefined ? {} : { openingNote: body.openingNote }),
     });
     return reply.code(201).send(shiftToJson(shift));
   });

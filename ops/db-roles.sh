@@ -203,6 +203,28 @@ SELECT format('REVOKE INSERT, UPDATE, DELETE, TRUNCATE ON sales.instagram_paymen
 \gexec
 SQL
 
+# ۷. سابقهٔ بکاپ (مهاجرت ۱۲۲). فقط زمان‌بند و سرویس مستقل بکاپ — هر دو با نقش
+#    مالک — می‌نویسندش. اگر نقش برنامه می‌توانست، یک «دانلود» جعلی زنگ «نسخهٔ
+#    بیرون از سرور قدیمی است» را خاموش می‌کرد، یا یک «ساخت» جعلی زنگ «بکاپ تازه
+#    نیست» را. همان الگوی بند ۶: فقط وقتی شیء هست، و ۱۲۲ اجراشده بی‌شیء رد می‌شود.
+$PSQL -v app_role="$APP_ROLE" <<'SQL'
+DO $guard$
+BEGIN
+  IF to_regclass('platform.backup_status') IS NOT NULL AND (
+       to_regclass('platform.backup_event') IS NULL
+    OR to_regprocedure('platform.record_backup_event(text, text, text, bigint, text, uuid)') IS NULL) THEN
+    RAISE EXCEPTION 'مهاجرت ۱۲۲ اجرا شده ولی platform.backup_event یا record_backup_event با امضای مورد انتظار نیست؛ ops/db-roles.sh را با مهاجرت هم‌خوان کنید';
+  END IF;
+END $guard$;
+SELECT format('REVOKE INSERT, UPDATE, DELETE, TRUNCATE ON platform.backup_event FROM %I', :'app_role')
+ WHERE to_regclass('platform.backup_event') IS NOT NULL
+UNION ALL
+SELECT format('REVOKE EXECUTE ON FUNCTION %s FROM %I', fn, :'app_role')
+  FROM unnest(ARRAY['platform.record_backup_event(text, text, text, bigint, text, uuid)']) AS fn
+ WHERE to_regprocedure(fn) IS NOT NULL
+\gexec
+SQL
+
 # ⚠️ اینجا عمداً `ALTER DEFAULT PRIVILEGES … REVOKE … IN SCHEMA inventory`
 #    **نیست**، و یک بار بود و اشتباه بود.
 #

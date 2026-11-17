@@ -382,6 +382,80 @@ test("عددهای ساختاری README با واقعیت مخزن می‌خو�
 });
 
 /**
+ * هر مهاجرت تازه دقیقاً یک `BEGIN;` و یک `COMMIT;` دارد.
+ *
+ * `ops/db.sh migrate` هر فایل را با یک psql اجرا می‌کند و ثبتش در
+ * `public.schema_migration` را با psql **جدایی** می‌زند. فایلی که خودش
+ * تراکنش نداشته باشد، اگر وسطش بشکند اثر نیمه‌کاره می‌گذارد و ثبت نمی‌شود؛
+ * اجرای بعدی روی اشیای نیمه‌ساخته می‌شکند. ممیزی ۲۰۲۶/۱۱/۱۲ (LM-10) چهارده
+ * مهاجرت تاریخی این‌شکلی پیدا کرد.
+ *
+ * ⚠️ مهاجرت اجراشده ویرایش نمی‌شود (هشش در دفتر نشسته)، پس آن چهارده تا در
+ *    فهرست بستهٔ پایین می‌مانند. این ادعا جلوی **پانزدهمی** را می‌گیرد و
+ *    فهرست فقط کوچک‌تر می‌شود، هرگز بزرگ‌تر.
+ */
+test("هر مهاجرت تازه دقیقاً یک تراکنش صریح دارد", () => {
+  const legacy = new Set([
+    "041_manager_panel.sql", "042_customer_profile.sql", "043_season_outlet.sql",
+    "044_gift_recipient.sql", "045_size_fit.sql", "046_device_drivers.sql",
+    "047_driver_registry_write.sql", "051_audit_verify.sql", "052_party_exists.sql",
+    "057_web_push.sql", "060_definer_acl.sql", "061_tafsili_branch_scope.sql",
+    "073_instore_purchase_push.sql", "104_low_stock.sql",
+  ]);
+  // سه مهاجرت اولیه چند تراکنش پشت‌سرهم دارند؛ هر کدام بسته است.
+  const multi = new Set(["005_cheques.sql", "006_sessions.sql", "007_device_trust.sql"]);
+  const dir = join(ROOT, "db/migrations");
+  const offenders: string[] = [];
+  let checked = 0;
+  for (const file of readdirSync(dir).filter((f) => f.endsWith(".sql")).sort()) {
+    const text = readFileSync(join(dir, file), "utf8");
+    const begins = (text.match(/^\s*BEGIN\s*;/gim) ?? []).length;
+    const commits = (text.match(/^\s*COMMIT\s*;/gim) ?? []).length;
+    if (legacy.has(file)) {
+      // فهرست تاریخی باید راست بماند: مهاجرتی که تراکنش گرفته از آن بیرون می‌رود.
+      assert.equal(begins + commits, 0, `${file} در فهرست تاریخی است ولی دیگر بی‌تراکنش نیست`);
+      continue;
+    }
+    if (multi.has(file)) {
+      assert.ok(begins === commits && begins > 1, `${file}: تراکنش‌های باز و بسته نمی‌خوانند`);
+      continue;
+    }
+    checked += 1;
+    if (begins !== 1 || commits !== 1) offenders.push(`${file} (BEGIN=${begins}، COMMIT=${commits})`);
+  }
+  assert.ok(checked > 90, `فقط ${checked} مهاجرت سنجیده شد؛ این تست دیگر چیزی را نمی‌سنجد`);
+  assert.deepEqual(offenders, [], "مهاجرت تازه باید داخل یک BEGIN; … COMMIT; باشد");
+});
+
+/**
+ * `runOnce` تراکنش Inbox را به `run` می‌دهد — و `run` باید از آن استفاده کند.
+ *
+ * یافتهٔ ممیزی LM-04: سه مسیر خزانه و چک `run: async () =>` داشتند و سرویس
+ * تراکنش جدای خودش را باز و Commit می‌کرد. همه‌چیز کار می‌کرد و هر آزمونی
+ * سبز بود؛ فقط خرابی میان دو Commit، پرداخت تکراری می‌ساخت.
+ *
+ * رفتارش در `treasury.integration.test.ts` با تزریق خرابی سنجیده می‌شود.
+ * این ادعا **کلاس** را می‌بندد: مسیر تازه‌ای که پارامتر تراکنش را نگیرد،
+ * نمی‌تواند اثرش را روی همان تراکنش بگذارد.
+ */
+test("هیچ run ِ runOnce در لایهٔ HTTP تراکنش Inbox را نادیده نمی‌گیرد", () => {
+  const dir = join(ROOT, "apps/api/src/http");
+  const offenders: string[] = [];
+  let seen = 0;
+  for (const file of readdirSync(dir).filter((f) => f.endsWith(".ts"))) {
+    const lines = readFileSync(join(dir, file), "utf8").split("\n");
+    lines.forEach((line, index) => {
+      if (!/\brun:\s*(async\s*)?\(/.test(line)) return;
+      seen += 1;
+      if (/\brun:\s*(async\s*)?\(\s*\)/.test(line)) offenders.push(`${file}:${index + 1}`);
+    });
+  }
+  // ضد‌پوچی: اگر الگو دیگر چیزی پیدا نکند، ادعای پایین بی‌معنا سبز می‌شود.
+  assert.ok(seen >= 20, `الگوی run: فقط ${seen} مورد پیدا کرد؛ این تست دیگر چیزی را نمی‌سنجد`);
+  assert.deepEqual(offenders, [], "run باید پارامتر تراکنش را بگیرد و اثر را روی همان بگذارد");
+});
+
+/**
  * ابزارِ موقت نباید در مخزن جا بماند — و این یک بار CI را شکست.
  *
  * ── چه شد ───────────────────────────────────────────────────────────

@@ -107,6 +107,12 @@ export function createDisposableDb(adminUrl: string): DisposableDb | null {
         env: { ...process.env, DATABASE_URL: url, PGCLIENTENCODING: "UTF8" },
       });
     }
+    // سال‌های مالی تا «امروز» — همان داربست `ops/db.sh test`. Seed فقط ۱۴۰۵ را دارد و
+    // آزمون‌ها با ساعت واقعی کار می‌کنند؛ بی این، از ۲۰۲۷/۰۳/۲۱ هر آزمون سندزن رد می‌شد.
+    execFileSync("psql", ["-v", "ON_ERROR_STOP=1", "-q", "-d", url, "-f", path.join(REPO_ROOT, "db/fixture/fiscal-years-to-today.sql")], {
+      stdio: "pipe",
+      env: { ...process.env, PGCLIENTENCODING: "UTF8" },
+    });
   } catch (err) {
     psql(adminUrl, `DROP DATABASE IF EXISTS "${name}" WITH (FORCE)`);
     throw err;

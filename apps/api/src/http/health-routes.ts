@@ -63,7 +63,7 @@ export function registerHealthRoutes(app: FastifyInstance, deps: HealthRouteDeps
   };
 
   /**
-   * هشت زنگ خطر.
+   * زنگ‌های خطر (نه زنگ از مهاجرت ۱۱۷).
    *
    * فهرست از `platform.health_alerts()` می‌آید، نه از هشت کوئری اینجا —
    * سه مصرف‌کننده دارد (این مسیر، تولیدکنندهٔ هشدار،

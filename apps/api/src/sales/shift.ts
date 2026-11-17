@@ -25,6 +25,10 @@ export interface Shift {
   expectedCash: bigint | null;
   variance: bigint | null;
   status: string;
+  /** شمارش پایان شیفت قبل هنگام باز شدن؛ `null` یعنی سنجش نشد. */
+  openingExpected: bigint | null;
+  openingVariance: bigint | null;
+  openingNote: string | null;
 }
 
 export class ShiftError extends Error {
@@ -95,10 +99,23 @@ export class ShiftService {
     return row ? toShift(row) : null;
   }
 
+  /**
+   * باز کردن شیفت — با سنجش پیوستگی نقد (مهاجرت ۱۲۰، تصمیم مالک ۲۰۲۶/۱۱/۱۵).
+   *
+   * اگر موجودی اول با شمارش پایان آخرین شیفت بستهٔ شعبه نخواند، بی دلیل
+   * ۴۲۲ `opening_cash_mismatch` می‌گیرد و با دلیل پذیرفته می‌شود و سند
+   * مغایرت می‌خورد. «انتظار» یک تعریف دارد: `sales.shift_opening_expected`؛
+   * پیش‌سنجش اینجا فقط برای پاسخ خوانا است و `sales.open_shift` زیر قفل
+   * دوباره می‌سنجد.
+   *
+   * ⚠️ پیام عدد مورد انتظار را **نمی‌گوید** (شمارش کور): اگر بگوید،
+   *    صندوق‌دار به‌جای شمردن همان را تایپ می‌کند.
+   */
   async open(input: {
     userId: string;
     branchId: string;
     openingCash: bigint;
+    openingNote?: string | undefined;
   }): Promise<Shift> {
     if (input.openingCash < 0n) {
       throw new ShiftError("bad_opening_cash", "موجودی اول شیفت منفی نمی‌شود", 400);
@@ -112,30 +129,27 @@ export class ShiftService {
       );
     }
 
+    const note = input.openingNote?.trim() ?? "";
+    if (note === "") {
+      const expected = (await sql<{ expected: string | null }>`
+        SELECT sales.shift_opening_expected(${input.branchId}::uuid)::text AS expected`
+        .execute(this.#db)).rows[0]?.expected ?? null;
+      if (expected !== null && parseMoney(expected) !== input.openingCash) {
+        throw new ShiftError(
+          "opening_cash_mismatch",
+          "موجودی اول شیفت با شمارش پایان شیفت قبل نمی‌خواند. دوباره بشمارید، یا اگر درست است دلیل اختلاف را بنویسید.",
+          422,
+        );
+      }
+    }
+
     const row = await this.#db.transaction().execute(async (trx) => {
       await setActor(trx, input.userId);
-      const created = await trx
-        .insertInto("sales.cash_shift")
-        .values({
-          branch_id: input.branchId,
-          user_id: input.userId,
-          opening_cash: serializeMoney(input.openingCash),
-          status: "open",
-          closed_at: null,
-          counted_cash: null,
-          expected_cash: null,
-          variance: null,
-          variance_note: null,
-          approved_by: null,
-        })
-        .returningAll()
-        .executeTakeFirstOrThrow();
-
-      await sql`SELECT platform.audit('shift.open', 'cash_shift', ${created.id}::text,
-        jsonb_build_object('opening_cash', ${serializeMoney(input.openingCash)}::numeric),
-        ${input.userId}::uuid)`.execute(trx);
-
-      return created;
+      const id = (await sql<{ id: string }>`
+        SELECT sales.open_shift(${input.branchId}::uuid, ${input.userId}::uuid,
+          ${serializeMoney(input.openingCash)}::numeric, ${note === "" ? null : note}) AS id`
+        .execute(trx)).rows[0]!.id;
+      return trx.selectFrom("sales.cash_shift").selectAll().where("id", "=", id).executeTakeFirstOrThrow();
     });
 
     return toShift(row);
@@ -211,6 +225,9 @@ function toShift(row: {
   expected_cash: string | null;
   variance: string | null;
   status: string;
+  opening_expected: string | null;
+  opening_variance: string | null;
+  opening_note: string | null;
 }): Shift {
   return {
     id: row.id,
@@ -223,6 +240,9 @@ function toShift(row: {
     expectedCash: row.expected_cash === null ? null : parseMoney(row.expected_cash),
     variance: row.variance === null ? null : parseMoney(row.variance),
     status: row.status,
+    openingExpected: row.opening_expected === null ? null : parseMoney(row.opening_expected),
+    openingVariance: row.opening_variance === null ? null : parseMoney(row.opening_variance),
+    openingNote: row.opening_note,
   };
 }
 
@@ -239,5 +259,8 @@ export function shiftToJson(s: Shift) {
     expectedCash: s.expectedCash === null ? null : serializeMoney(s.expectedCash),
     variance: s.variance === null ? null : serializeMoney(s.variance),
     status: s.status,
+    openingExpected: s.openingExpected === null ? null : serializeMoney(s.openingExpected),
+    openingVariance: s.openingVariance === null ? null : serializeMoney(s.openingVariance),
+    openingNote: s.openingNote,
   };
 }

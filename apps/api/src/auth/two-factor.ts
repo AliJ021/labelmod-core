@@ -22,6 +22,8 @@
  */
 import { createHash, randomBytes, randomInt, timingSafeEqual } from "node:crypto";
 import { sql } from "kysely";
+import type { Transaction } from "kysely";
+import type { Database } from "../db/types.ts";
 import { setActor } from "../lib/idempotency.ts";
 import type { Db } from "../db/client.ts";
 import { newTotpSecret, otpauthUri, verifyTotp } from "./totp.ts";
@@ -187,8 +189,18 @@ export class TwoFactorService {
    * کدهای بازیابی هم می‌روند: نگه‌داشتنشان یعنی راهی باز بماند که
    * کاربر فکر می‌کند بسته است.
    */
-  async disableTotp(userId: string, actorId: string): Promise<void> {
+  async disableTotp(
+    userId: string,
+    actorId: string,
+    /**
+     * نگهبانی که پیش از هر تغییر، روی **همین** تراکنش اجرا می‌شود — برای
+     * برداشتن عامل دوم کاربر دیگر، دامنهٔ شعبهٔ هدف. جدا بودنش از تراکنش
+     * یعنی تغییر نقش هم‌زمان میان سنجش و نوشتن جا بگیرد.
+     */
+    guard?: (trx: Transaction<Database>) => Promise<void>,
+  ): Promise<void> {
     await this.#db.transaction().execute(async (trx) => {
+      if (guard) await guard(trx);
       await setActor(trx, actorId);
       await trx
         .updateTable("identity.app_user")

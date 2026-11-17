@@ -114,7 +114,9 @@ PERFORM pg_temp.assert_eq('پیش‌نویس سفارش شماره ندارد',
   (SELECT count(*) FROM purchasing.purchase_order WHERE id = v_ord AND number IS NULL), 1);
 
 SELECT purchasing.send_purchase_order(v_ord, v_user) INTO v_no;
-PERFORM pg_temp.assert_txt('شماره در لحظه فرستادن آمد', left(v_no, 8), 'PO-1405-');
+-- سال از «امروزِ» دیتابیس می‌آید، نه عدد ثابت: سفارش امروز به سال مالی جاری می‌خورد.
+PERFORM pg_temp.assert_txt('شماره در لحظه فرستادن آمد', left(v_no, 8),
+  'PO-' || (SELECT id FROM ledger.fiscal_year WHERE platform.business_date() BETWEEN starts_on AND ends_on) || '-');
 PERFORM pg_temp.assert_eq('وضعیت: فرستاده‌شده',
   (SELECT count(*) FROM purchasing.purchase_order WHERE id = v_ord AND status = 'sent'), 1);
 

@@ -67,7 +67,10 @@ interface Row {
 export function registerPublicRoutes(app: FastifyInstance, deps: { db: Db }): void {
   const { db } = deps;
 
-  app.get("/i/:token", async (req, reply) => {
+  // تنها مسیر محتوایی بی‌نشست: سقف نرخ به‌ازای IP (یافتهٔ ممیزی LM-23).
+  // توکن ۲۴ بایتی حدس‌زدنی نیست؛ این سقف جلوی پیمایش انبوه و بار بی‌حساب را
+  // می‌گیرد. شصت در دقیقه برای مشتری‌ای که لینک پیامکش را باز می‌کند بس است.
+  app.get("/i/:token", { config: { rateLimit: { max: 60, timeWindow: "1 minute" } } }, async (req, reply) => {
     const parsed = tokenParam.safeParse(req.params);
     if (!parsed.success) return notFound(reply);
     const { token } = parsed.data;
