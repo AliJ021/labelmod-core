@@ -2,6 +2,7 @@ import { useRef, useState } from "react";
 import { api, ApiError } from "../lib/api.ts";
 import { Ltr } from "./ui/Bidi.tsx";
 import { StatusBadge } from "./ui/Status.tsx";
+import { Switch } from "./ui/Controls.tsx";
 import { normalizeDigits } from "../lib/settings-value.ts";
 import {
   DEFAULT_PRESET, LABEL_PRESETS, MAX_PER_VARIANT, MAX_TOTAL, groupByProduct, labelCalibrationBody, labelContentWarning, labelRequestBody,
@@ -21,6 +22,8 @@ export function useLabelSize() {
   const { layout, preset, width, height, columns, gap, media, offset } = useLabelSizeChoice();
   // خانهٔ شروع فقط برای همین نوبت است و ماندگار نمی‌شود: رول نیمه‌مصرف استثناست، نه قاعده.
   const [startSlot, setStartSlot] = useState(1);
+  // انتخاب محتوا فقط برای این صفحه است؛ در تنظیمات دائمی چاپگر ذخیره نمی‌شود.
+  const [hidePrice, setHidePrice] = useState(false);
   const chosen = LABEL_PRESETS.find((p) => p.id === preset);
   const twoAcross = layout === "roll" && columns === "2";
   const size: LabelSize = {
@@ -28,9 +31,10 @@ export function useLabelSize() {
     width: chosen ? chosen.width : Number(normalizeDigits(width)),
     height: chosen ? chosen.height : Number(normalizeDigits(height)),
     ...(twoAcross ? { row: { columns: 2, gapMm: parseMm(gap), mediaWidthMm: parseMm(media), offsetXMm: parseMm(offset), startSlot: Math.min(startSlot, 2) } } : {}),
+    ...(hidePrice ? { hidePrice: true } : {}),
   };
   return {
-    size, layout, preset, width, height, columns, gap, media, offset, startSlot,
+    size, layout, preset, width, height, columns, gap, media, offset, startSlot, hidePrice, setHidePrice,
     setLayout: (v: LabelLayout) => labelSize.set({ layout: v }),
     setPreset: (v: string) => labelSize.set({ preset: v }),
     setWidth: (v: string) => labelSize.set({ width: v }),
@@ -85,6 +89,9 @@ export function LabelSizeFields({ state, onChange, idPrefix }: { state: LabelSiz
       <label className="auth-field">عرض لیبل (میلی‌متر)<input inputMode="decimal" value={width} {...invalidFor(issues.width, widthId)} onChange={(e) => { state.setWidth(e.target.value); onChange(); }} /></label>
       <label className="auth-field">ارتفاع لیبل (میلی‌متر)<input inputMode="decimal" value={height} {...invalidFor(issues.height, heightId)} onChange={(e) => { state.setHeight(e.target.value); onChange(); }} /></label>
     </div> : null}
+    <Switch label="چاپ بدون قیمت" checked={state.hidePrice} stateLabels={["بدون قیمت", "با قیمت"]}
+      description="قیمت و «تومان» از همهٔ لیبل‌های این چاپ حذف می‌شوند. این انتخاب ذخیره نمی‌شود."
+      onChange={(value) => { state.setHidePrice(value); onChange(); }} />
     {([[issues.width, widthId], [issues.height, heightId], [issues.row, rowId]] as const).map(([msg, id]) => msg === null ? null
       : <p key={id} id={id} className="small" role="status" style={{ margin: 0 }}><StatusBadge state="warning" label="اندازه نامعتبر" /> {msg}</p>)}
   </div>;
@@ -160,7 +167,7 @@ export function LabelPrintQueue() {
   const pv = useLabelPreview();
   const total = queueTotal(items);
   const problem = labelRequestProblem(items, sizeState.size);
-  const warning = labelContentWarning(items);
+  const warning = labelContentWarning(items, sizeState.hidePrice);
   const body = labelRequestBody(items, sizeState.size);
   const currentKey = JSON.stringify(body);
   if (items.length === 0) {

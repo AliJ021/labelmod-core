@@ -96,6 +96,7 @@ const labelBody = z.object({
   // کمتر از این، نام و قیمت و بارکد خوانا با هم جا نمی‌شوند (`labelGeometry`).
   rollHeightMm: rollHeightMm.optional(),
   rollRow: rollRow.optional(),
+  hidePrice: z.boolean().optional(),
 }).refine((body) => body.items.reduce((sum, item) => sum + item.count, 0) <= 500, {
   message: "حداکثر ۵۰۰ لیبل در هر درخواست مجاز است",
   path: ["items"],
@@ -203,6 +204,7 @@ export function registerCatalogRoutes(
       layout: body.layout,
       // روی لیبل «Label Mod» انگلیسی؛ برند فارسی فاکتور (`STORE_BRAND`) دست نمی‌خورد.
       shopName: LABEL_BRAND,
+      hidePrice: body.hidePrice === true,
       ...(body.layout === "roll"
         ? {
             rollMm: {

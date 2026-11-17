@@ -62,7 +62,7 @@ export function ProductStockLabels({ productId, productName, variations, selecte
   }));
   const total = queueTotal(chosen);
   const problem = labelRequestProblem(chosen, sizeState.size);
-  const warning = labelContentWarning(chosen);
+  const warning = labelContentWarning(chosen, sizeState.hidePrice);
   const body = labelRequestBody(chosen, sizeState.size);
   const currentKey = JSON.stringify([productId, body]);
 
