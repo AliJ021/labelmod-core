@@ -22,7 +22,7 @@ import { createServer, type Server } from "node:http";
 import { sql } from "kysely";
 import { createDb, type DbHandle } from "../src/db/client.ts";
 import { createDisposableDb, type DisposableDb } from "./helpers/disposable-db.ts";
-import { tick, type LoopOptions } from "../src/worker/loop.ts";
+import { runLoop, tick, type LoopOptions } from "../src/worker/loop.ts";
 import { makePinnedPost } from "../src/worker/web-push.ts";
 
 const DATABASE_URL = process.env.DATABASE_URL;
@@ -371,6 +371,46 @@ describe("ارسال لحظه‌ای به سایت — از حرکت انبار 
        ORDER BY id DESC LIMIT 1`.execute(handle.db);
     // ۴۰۳ یعنی امضا غلط است؛ تلاش صدم هم درستش نمی‌کند.
     assert.equal(row.rows[0]!.status, "dead", "امضای غلط باید مستقیم نامهٔ مرده بگیرد");
+  });
+
+  /*
+   * خواستهٔ مالک (۲۰۲۶/۱۱/۱۷): تولیدکننده‌های Worker (زنگ سلامت، که زنجیرهٔ حسابرسی را
+   * بازمحاسبه می‌کند) نباید Push موجودی را **حتی یک ثانیه** عقب بیندازند.
+   * زنگ سلامت اینجا عمداً سه ثانیه طول می‌کشد. اگر تولیدکننده‌ها هنوز در همان دورِ Push
+   * بودند، پیام تا پایان آن سه ثانیه منتظر می‌ماند و بیشینه‌ای که سنجیده می‌شود
+   * می‌شکست. تعریف کُند با نقش مالک ساخته و در پایان برگردانده می‌شود.
+   */
+  test("تولیدکنندهٔ کند (۳ ثانیه) Push موجودی را عقب نمی‌اندازد", async () => {
+    const owner = createDb(disposable!.ownerUrl, 1);
+    const original = (await sql<{ def: string }>`
+      SELECT pg_get_functiondef('platform.enqueue_health_alerts(date)'::regprocedure) AS def
+    `.execute(owner.db)).rows[0]!.def;
+    await sql.raw(`
+      CREATE OR REPLACE FUNCTION platform.enqueue_health_alerts(p_today date DEFAULT platform.business_date())
+      RETURNS int LANGUAGE plpgsql AS $f$ BEGIN PERFORM pg_sleep(3); RETURN 0; END $f$`).execute(owner.db);
+    const loop = runLoop({ ...opts(), intervalMs: 200 });
+    try {
+      // تولیدکننده همان لحظهٔ شروع اجرا می‌شود؛ صبر کوتاه تا وسط سه ثانیه‌اش باشیم.
+      await new Promise((r) => setTimeout(r, 300));
+      const v = await makeVariation("PUSH-SLOW");
+      const delays: number[] = [];
+      for (const [i, qty] of [[1, 9], [2, -2], [3, -3]] as const) {
+        const started = Date.now();
+        await move(v, qty);
+        const want = [9, 7, 4][i - 1];
+        while (site.get(v)?.onHand !== want) {
+          if (Date.now() - started > 5_000) assert.fail(`Push ${i} پس از ۵ ثانیه نرسید`);
+          await new Promise((r) => setTimeout(r, 20));
+        }
+        delays.push(Date.now() - started);
+      }
+      // دور ۲۰۰ میلی‌ثانیه است؛ با تولیدکننده در همان دور، دست‌کم یکی ~۳ ثانیه می‌شد.
+      assert.ok(Math.max(...delays) < 1_000, `تأخیر Push: ${delays.join("، ")} میلی‌ثانیه`);
+    } finally {
+      await loop.stop();
+      await sql.raw(original).execute(owner.db);
+      await owner.close();
+    }
   });
 
   test("خاموش‌کردن → صف تازه پر نمی‌شود", async () => {

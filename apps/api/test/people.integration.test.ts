@@ -511,6 +511,54 @@ describe("پرسنل و مشتری", { skip }, () => {
     }
   });
 
+  /**
+   * برداشتن عامل دوم کاربر دیگر هم مدیریت کاربر است و همان دامنه را دارد.
+   *
+   * `DELETE /users/:id/2fa` فقط `user.manage` را می‌سنجید، نه شعبهٔ هدف را —
+   * برخلاف ویرایش، تغییر رمز، PIN و قطع نشست. مدیرِ یک شعبه می‌توانست عامل
+   * دوم مدیر سراسری را بردارد و حساب او را به «فقط رمز» برگرداند.
+   *
+   * ⚠️ این آزمون پس از آزمون بالا اجرا می‌شود و کاربر شعبهٔ دیگرِ همان را
+   *    به کار می‌برد؛ مستقل بودنش را با ساخت کاربر تازه حفظ می‌کند.
+   */
+  test("مدیر شعبه عامل دوم کاربر شعبهٔ دیگر را برنمی‌دارد", async () => {
+    const victim = await handle.db
+      .insertInto("identity.app_user")
+      .values({
+        username: `foreign2fa_${suffix}`,
+        full_name: "کاربر عامل‌دار شعبه دیگر",
+        password_hash: await hashSecret(PASSWORD),
+        is_active: true,
+        mobile: null,
+        pin_hash: null,
+        totp_secret: "JBSWY3DPEHPK3PXP",
+      })
+      .returning("id")
+      .executeTakeFirstOrThrow();
+    await handle.db
+      .insertInto("identity.user_role")
+      .values({ user_id: victim.id, role_code: "admin", branch_id: OTHER_BRANCH })
+      .execute();
+    await handle.db
+      .insertInto("identity.recovery_code")
+      .values({ user_id: victim.id, code_hash: "x".repeat(64) })
+      .execute();
+
+    const s = await loginAs(admin);
+    const r = await app.inject({ method: "DELETE", url: `/users/${victim.id}/2fa`, ...s });
+    assert.equal(r.statusCode, 404, r.body);
+
+    const after = await sql<{ totp: boolean; codes: string }>`
+      SELECT (totp_secret IS NOT NULL) AS totp,
+             (SELECT count(*)::text FROM identity.recovery_code WHERE user_id = u.id) AS codes
+        FROM identity.app_user u WHERE u.id = ${victim.id}::uuid`.execute(handle.db);
+    assert.deepEqual(after.rows[0], { totp: true, codes: "1" }, "عامل دوم و کدهای بازیابی دست نخوردند");
+    const audit = await sql<{ n: string }>`
+      SELECT count(*)::text AS n FROM platform.audit_log
+       WHERE action = 'auth.totp_disable' AND entity_id = ${victim.id}`.execute(handle.db);
+    assert.equal(audit.rows[0]!.n, "0", "هیچ ردّ حسابرسیِ برداشتنی ثبت نشد");
+  });
+
   test("PIN تعیین و برداشته می‌شود، و خودش هرگز برنمی‌گردد", async () => {
     const s = await loginAs(admin);
     const created = await app.inject({

@@ -151,7 +151,9 @@ PERFORM pg_temp.assert_eq('موجودی به عدد شمارنده رسید',
     WHERE variation_id = v_a AND warehouse_id = WH), 10);
 
 SELECT number INTO v_no FROM inventory.stock_count WHERE id = v_count;
-PERFORM pg_temp.assert_txt('شماره در لحظه ثبت آمد', left(v_no, 7), 'C-1405-');
+-- سال از «امروزِ» دیتابیس می‌آید، نه عدد ثابت: برگهٔ امروز به سال مالی جاری می‌خورد.
+PERFORM pg_temp.assert_txt('شماره در لحظه ثبت آمد', left(v_no, 7),
+  'C-' || (SELECT id FROM ledger.fiscal_year WHERE platform.business_date() BETWEEN starts_on AND ends_on) || '-');
 
 -- ═════════════════════════════════════════════════════════════════
 RAISE NOTICE E'\n═══ ۲. کالای شمرده‌نشده دست نمی‌خورد ═══';

@@ -243,7 +243,9 @@ test.describe("F-110-02 — personal settings apart from administrative settings
     await page.goto("/?page=settings");
     await expect(page.getByRole("heading", { name: "تنظیمات", level: 1 })).toBeVisible();
     await expect.poll(() => settingsLabels(page)).toEqual([...PERSONAL, ...ADMIN]);
-    expect(api.calls.some(c => c.startsWith("GET /settings"))).toBe(true);
+    // پنل کلیدها پس از کامل‌شدن ناوبری mount می‌شود و بعد می‌خواند؛ سنجش هم‌زمان در WebKit زیر بار
+    // CI پیش از رسیدن درخواست اجرا شد (run 43707449555، webkit-dark-320). ادعا همان است: باید خوانده شود.
+    await expect.poll(() => api.calls.some(c => c.startsWith("GET /settings"))).toBe(true);
     const picker = page.getByRole("combobox", { name: "بخش تنظیمات" });
     if (await picker.isVisible()) await picker.selectOption("staff");
     else await page.getByRole("tab", { name: "پرسنل", exact: true }).click();

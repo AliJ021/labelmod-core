@@ -18,7 +18,7 @@ import {
   BarcodeError,
 } from "../src/catalog/barcode-svg.ts";
 import { makeEan13, ean13CheckDigit } from "../src/catalog/barcode.ts";
-import { esc, labelGeometry, labelPage, LabelSizeError, barcodeFitsWidth, minRollWidthFor, ROLL_MIN_HEIGHT_MM, ROLL_MIN_WIDTH_MM, ROLL_PRESETS_MM, type LabelItem } from "../src/catalog/label.ts";
+import { esc, descLayout, DESC_MIN_FONT_MM, LabelTextError, labelGeometry, labelPage, LabelSizeError, barcodeFitsWidth, minRollWidthFor, ROLL_MIN_HEIGHT_MM, ROLL_MIN_WIDTH_MM, ROLL_PRESETS_MM, type LabelItem } from "../src/catalog/label.ts";
 import { LABEL_BRAND, LabelRowError, labelCalibrationPage, rollRowProblem, rollRowSlots, type RollRow } from "../src/catalog/label.ts";
 
 describe("رسم EAN-13", () => {
@@ -262,10 +262,16 @@ describe("اندازهٔ برچسب", () => {
     color: "سرمه‌ای", size: "XL", priceRial: 12_345_675n, count: 1,
   };
   const svgWidth = (html: string) => Number(/<svg[^>]*width="([\d.]+)mm"/.exec(html)?.[1]);
+  /**
+   * دو آزمون بارکد پایین دربارهٔ پهنای بارکد و رقم‌هایش‌اند، نه نام. نام ۵۵ نویسه‌ای `item`
+   * از ۲۰۲۶/۱۱/۱۶ در ۳۰×۲۰ با قلم خوانا جا نمی‌شود و درست رد می‌شود (آزمون «رد می‌شود (۴۲۲)»)؛
+   * پس این دو با نام کوتاه می‌رانند. پهنای بارکد در چیدمان «اولویت متن» را آزمون ویژگی می‌سنجد.
+   */
+  const barcodeItem: LabelItem = { ...item, productName: "مانتو کتان" };
 
   test("در هر اندازهٔ آماده، بارکد کامل با حاشیهٔ سکوت داخل عرض برچسب جا می‌شود", () => {
     for (const p of ROLL_PRESETS_MM) {
-      const html = labelPage([item], { layout: "roll", shopName: "ف", rollMm: p });
+      const html = labelPage([barcodeItem], { layout: "roll", shopName: "ف", rollMm: p });
       const w = svgWidth(html);
       assert.ok(w > 0, `بارکد رسم شد ${p.width}×${p.height}`);
       assert.ok(w <= p.width - 1, `${p.width}×${p.height}: بارکد ${w}mm از عرض بیرون زد`);
@@ -276,7 +282,7 @@ describe("اندازهٔ برچسب", () => {
   });
 
   test("کمترین عرض: بارکد کامل با حاشیهٔ سکوت در عرض داخلی جا می‌شود و رقم‌ها همان بارکد ثبت‌شده‌اند", () => {
-    const html = labelPage([item], { layout: "roll", shopName: "ف", rollMm: { width: ROLL_MIN_WIDTH_MM, height: 20 } });
+    const html = labelPage([barcodeItem], { layout: "roll", shopName: "ف", rollMm: { width: ROLL_MIN_WIDTH_MM, height: 20 } });
     assert.ok(svgWidth(html) <= ROLL_MIN_WIDTH_MM - 1, "۰٫۵mm حاشیهٔ هر طرف");
     assert.equal(labelGeometry("roll", ROLL_MIN_WIDTH_MM, 20).moduleMm, 0.25);
     const digits = [...html.matchAll(/<text[^>]*>(\d)<\/text>/g)].map((m) => m[1]).join("");
@@ -292,15 +298,82 @@ describe("اندازهٔ برچسب", () => {
     const label = html.slice(html.indexOf('<div class="label">'));
     const order = ["shop", "code", "desc", "price"].map((c) => label.indexOf(`<div class="${c}"`));
     assert.ok(order.every((i, n) => i > 0 && (n === 0 || i > order[n - 1]!)), `ترتیب ردیف‌ها: ${order.join(",")}`);
-    assert.match(label, /<div class="desc"><span class="l">مانتو کتان[^<]*<\/span><span class="l">برند &lt;ب&gt; · سرمه‌ای · XL<\/span>/);
+    // نام بلند در یک سطر جا نمی‌شود: نام و برند · رنگ · سایز پیوسته‌اند و **کامل** چاپ می‌شوند
+    // (درخواست مالک ۲۰۲۶/۱۱/۱۶ — دیگر «…» نیست). برند ورودی کاربر است و Escape می‌ماند.
+    assert.match(label, /<div class="desc" style="font-size:[\d.]+mm"><span class="l">مانتو کتان بلند با نام بسیار طولانی برای آزمون شکست سطر\u00a0· برند &lt;ب&gt;\u00a0· سرمه‌ای\u00a0· XL<\/span><\/div>/);
     assert.match(html, /\.label > div \{ flex: none;/, "هیچ ردیفی فشرده نمی‌شود");
-    assert.match(html, /\.desc \.l \{ display: block; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; \}/);
+    assert.match(html, /\.desc \.l \{ display: block; width: 100%; white-space: normal; overflow-wrap: anywhere; \}/);
+    assert.doesNotMatch(html, /\.desc[^{]*\{[^}]*(ellipsis|nowrap)/, "شرح هرگز بریده یا تک‌سطری اجباری نیست");
     const g50 = labelGeometry("roll", 50, 30);
     assert.ok(g50.showShop && g50.nameLines === 2 && g50.barHeightMm >= 6, "۵۰×۳۰ مرجع: فروشگاه + دو سطر شرح + بارکد");
     assert.equal(g50.moduleMm, 0.375, "۵۰×۳۰: بارکد پهن");
     const g40 = labelGeometry("roll", 40, 25);
     assert.ok(g40.showShop, "۴۰×۲۵: فروشگاه می‌ماند");
     assert.ok(!labelGeometry("roll", 30, 20).showShop, "۳۰×۲۰: نام فروشگاه پیش از بارکد کنار می‌رود");
+  });
+
+  test("نام کامل چاپ می‌شود، نه «…»: نمونهٔ واقعی مالک در ۵۰×۳۰ و ۴۰×۲۵", () => {
+    // گزارش مالک ۲۰۲۶/۱۱/۱۶: «شلوار پارچه ای کمر مخفی مام...» چاپ می‌شد.
+    const real: LabelItem = { barcode: makeEan13(190), sku: "LM00001", productName: "شلوار پارچه ای کمر مخفی مام فیونا Soomaro",
+      color: "سرمه ای", size: "40", priceRial: 129_000_000n, count: 1 };
+    for (const size of [{ width: 50, height: 30 }, { width: 40, height: 25 }]) {
+      const html = labelPage([real], { layout: "roll", shopName: "Label Mod", rollMm: size });
+      assert.ok(html.includes("شلوار پارچه ای کمر مخفی مام فیونا Soomaro\u00a0· سرمه ای\u00a0· 40"), `${size.width}×${size.height}: نام و مشخصات کامل`);
+      assert.doesNotMatch(html, /…|\.\.\./, `${size.width}×${size.height}: هیچ سه‌نقطه‌ای`);
+      const g = labelGeometry("roll", size.width, size.height);
+      const layout = descLayout(real, g, size.width)!;
+      assert.equal(layout.kind, "flow");
+      assert.ok(layout.fontMm >= DESC_MIN_FONT_MM && layout.fontMm <= g.fontMm, `قلم ${layout.fontMm}`);
+      assert.ok(layout.lines * layout.fontMm * 1.3 <= g.rows.desc + 1e-9, "سطرها در ارتفاع ثابت ردیف شرح جا می‌شوند");
+    }
+  });
+
+  test("کنترل منفی: نام کوتاه همان چیدمان مرجع را دارد — نام در سطر اول، برند · رنگ · سایز در سطر دوم، با قلم پایه", () => {
+    const short: LabelItem = { ...item, productName: "شال", brand: "لیبل مد", color: "مشکی", size: "M" };
+    const html = labelPage([short], { layout: "roll", shopName: "ف", rollMm: { width: 50, height: 30 } });
+    const g = labelGeometry("roll", 50, 30);
+    assert.match(html, new RegExp(`<div class="desc" style="font-size:${g.fontMm.toFixed(2)}mm"><span class="l">شال</span><span class="l">لیبل مد · مشکی · M</span></div>`));
+  });
+
+  test("نامی که حتی با کوچک‌ترین قلم خوانا جا نشود، رد می‌شود (۴۲۲) — هرگز بریده چاپ نمی‌شود", () => {
+    const long: LabelItem = { ...item, productName: "شلوار پارچه ای کمر مخفی مام فیونا Soomaro" };
+    assert.throws(() => labelPage([long], { layout: "roll", shopName: "ف", rollMm: { width: 30, height: 20 } }),
+      (err: unknown) => err instanceof LabelTextError && err.statusCode === 422 && err.code === "label_text_too_long"
+        && err.message.includes("شلوار پارچه ای کمر مخفی مام فیونا Soomaro") && err.message.includes("30×20"));
+  });
+
+  test("ویژگی: هر نام در هر اندازهٔ آماده یا کامل در خروجی هست یا خطای ۴۲۲ می‌دهد — حالت سوم (بریده) وجود ندارد", () => {
+    const words = ["شلوار", "پارچه‌ای", "کمر", "مخفی", "مام", "فیونا", "Soomaro", "مانتو", "کتان", "بلند", "WXYZ", "ششمم", "۴۰", "جیب‌دار"];
+    let seed = 7;
+    const rnd = (n: number) => { seed = (seed * 1103515245 + 12345) % 2147483648; return seed % n; };
+    let printed = 0, rejected = 0;
+    for (let k = 0; k < 120; k++) {
+      const name = Array.from({ length: 1 + rnd(16) }, () => words[rnd(words.length)]).join(" ");
+      const it: LabelItem = { ...item, productName: name, brand: rnd(2) ? "لیبل مد" : null, color: rnd(2) ? "سرمه ای" : null, size: rnd(2) ? "XL" : null };
+      for (const p of ROLL_PRESETS_MM) {
+        try {
+          const html = labelPage([it], { layout: "roll", shopName: "ف", rollMm: p });
+          const g = labelGeometry("roll", p.width, p.height);
+          const want = descLayout(it, g, p.width) ?? descLayout(it, labelGeometry("roll", p.width, p.height, undefined, "text"), p.width);
+          assert.ok(want, `${p.width}×${p.height}: چاپ شد ولی چیدمانی نداشت`);
+          const pieces = want.kind === "split" ? want.lines : [want.text];
+          for (const piece of pieces) assert.ok(html.includes(esc(piece)), `${p.width}×${p.height}: «${piece}» کامل نیامد`);
+          assert.ok(svgWidth(html) <= p.width - 1, `${p.width}×${p.height}: بارکد با حاشیهٔ سکوت داخل عرض`);
+          // کوتاه‌ترین میلهٔ سیاه (نه مستطیل سفید زمینه، که رقم‌ها را هم می‌پوشاند).
+          const black = /<g fill="#000">([\s\S]*?)<\/g>/.exec(html)?.[1] ?? "";
+          const heights = [...black.matchAll(/<rect [^>]*height="([\d.]+)"/g)].map((m) => Number(m[1]));
+          if (it.barcode !== null) {
+            assert.ok(heights.length > 20, `${p.width}×${p.height}: میله‌ها خوانده نشدند`);
+            assert.ok(Math.min(...heights) >= 5 - 1e-9, `${p.width}×${p.height}: میلهٔ ${Math.min(...heights)}mm زیر ۵mm`);
+          }
+          printed++;
+        } catch (err) {
+          assert.ok(err instanceof LabelTextError, `${p.width}×${p.height}: خطای غیرمنتظره ${String(err)}`);
+          rejected++;
+        }
+      }
+    }
+    assert.ok(printed > 500 && rejected > 0, `هر دو شاخه سنجیده شدند: ${printed} چاپ، ${rejected} رد`);
   });
 
   test("بودجهٔ ارتفاع: در هر اندازهٔ معتبر همهٔ ردیف‌ها کامل جا می‌شوند و شرح فقط سطر کامل دارد", () => {

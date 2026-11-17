@@ -2,6 +2,7 @@ import Fastify from "fastify";
 import rateLimit from "@fastify/rate-limit";
 import { createReadStream } from "node:fs";
 import { z } from "zod";
+import { sql } from "kysely";
 import { safeEqual } from "../auth/password.ts";
 import { AuthService, AuthError } from "../auth/service.ts";
 import { TwoFactorService } from "../auth/two-factor.ts";
@@ -35,6 +36,16 @@ export async function buildManagementApp(deps:{db:Db;manager:RestoreManager;rpcT
     if(await branchesOf(deps.db,session.userId)!=="all") throw new AuthError("no_session","بکاپ سراسری فقط برای مدیر مجاز همهٔ شعب است.");
     return session;
   }
+  // سابقهٔ بکاپ و ردّ حسابرسی (مهاجرت ۱۲۲). این سرویس با نقش مالک وصل است؛ نقش برنامه
+  // حق نوشتن در `platform.backup_event` را ندارد تا API نتواند زنگ نسخهٔ بیرونی را با یک
+  // «دانلود» جعلی خاموش کند.
+  async function record(actorId:string,action:"backup.create"|"backup.download"|null,manifest:{id:string;bytes:number;sha256:string;createdAt:string},event:"created"|"downloaded"|null) {
+    await deps.db.transaction().execute(async trx=>{
+      await sql`SELECT platform.set_actor(${actorId}::uuid)`.execute(trx);
+      if(action) await sql`SELECT platform.audit(${action},'backup',${manifest.id},${JSON.stringify({bytes:manifest.bytes,sha256:manifest.sha256,createdAt:manifest.createdAt})}::jsonb,${actorId}::uuid)`.execute(trx);
+      if(event) await sql`SELECT platform.record_backup_event(${event},'manager',${manifest.id},${manifest.bytes},${manifest.sha256},${actorId}::uuid)`.execute(trx);
+    });
+  }
   app.get("/status",async req=>{
     await guard(req.headers["x-labelmod-session"],"backup.view");
     const jobs=await store.jobs();
@@ -42,13 +53,21 @@ export async function buildManagementApp(deps:{db:Db;manager:RestoreManager;rpcT
     return {available:true,backups:await store.backups(),jobs,busy:operation.busy,needsRecovery:operation.abandoned||jobs.some(j=>!terminalPhase(j.phase)||j.phase==="manual_recovery")};
   });
   app.post("/backup",{config:{rateLimit:{max:4,timeWindow:"1 hour"}}},async req=>{
-    await guard(req.headers["x-labelmod-session"],"backup.create");
-    return await deps.manager.createBackup();
+    const session=await guard(req.headers["x-labelmod-session"],"backup.create");
+    const backup=await deps.manager.createBackup();
+    // فقط ساختِ مهروموم‌شده ثبت می‌شود؛ شکست پیش از این خط زنگ «بکاپ تازه نیست» را خاموش نمی‌کند.
+    await record(session.userId,"backup.create",backup,"created");
+    return backup;
   });
   app.get("/download/:id",async(req,reply)=>{
-    await guard(req.headers["x-labelmod-session"],"backup.download");
+    const session=await guard(req.headers["x-labelmod-session"],"backup.download");
     const {id}=z.object({id:z.string().uuid()}).parse(req.params);
-    await store.verify(id);
+    const manifest=await store.verify(id);
+    // چه کسی دادهٔ کامل را بیرون برد، **پیش از** ارسال در لاگ حسابرسی می‌نشیند، حتی اگر
+    // دانلود نیمه‌کاره بماند. «نسخهٔ بیرونی» اما فقط با پایان کامل پاسخ ثبت می‌شود؛ شکست
+    // ثبت زنگ را روشن نگه می‌دارد، که جهت امن است.
+    await record(session.userId,"backup.download",manifest,null);
+    reply.raw.once("finish",()=>{void record(session.userId,null,manifest,"downloaded").catch(()=>{});});
     return reply.type("application/octet-stream").header("Content-Disposition",`attachment; filename="labelmod-${id}.dump"`).send(createReadStream(store.file(id,"dump")));
   });
   app.post("/restore",{config:{rateLimit:{max:5,timeWindow:"10 minutes"}}},async(req,reply)=>{

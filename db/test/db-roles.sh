@@ -136,6 +136,13 @@ attack "push_web_stock با نقش برنامه" \
 attack "push_web_price با نقش برنامه" \
   "SELECT catalog.push_web_price('$VAR_ID'::uuid);"
 
+# مهاجرت ۱۲۲ — سابقهٔ بکاپ. یک «دانلود» یا «ساخت» جعلی از راه API زنگ نسخهٔ
+# بیرونی یا بکاپ قدیمی را خاموش می‌کرد؛ فقط زمان‌بند و سرویس بکاپ (مالک) می‌نویسند.
+attack "INSERT مستقیم در سابقهٔ بکاپ" \
+  "INSERT INTO platform.backup_event (kind, source, backup_ref) VALUES ('created', 'scheduler', 'fake.dump');"
+attack "record_backup_event با نقش برنامه" \
+  "SELECT platform.record_backup_event('created', 'scheduler', 'fake.dump');"
+
 echo
 echo "═══ و نقشی که فقط USAGE روی یک اسکیما دارد ═══"
 # ⚠️ این همان بازتولید یافته است، عیناً: نقشی **بی هیچ حقی روی هیچ

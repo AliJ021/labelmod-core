@@ -137,7 +137,9 @@ PERFORM pg_temp.assert_eq('بهای سطر پس از ثبت نوشته شد',
     WHERE id = v_line AND unit_cost IS NOT NULL AND value_delta IS NOT NULL), 1);
 PERFORM pg_temp.assert_eq('شماره در لحظه ثبت تخصیص یافت',
   (SELECT count(*) FROM inventory.transfer
-    WHERE id = v_tr AND number LIKE 'TR-1405-%' AND status = 'posted'), 1);
+    WHERE id = v_tr AND status = 'posted'
+      -- سال از «امروزِ» دیتابیس می‌آید، نه عدد ثابت.
+      AND number LIKE 'TR-' || (SELECT id FROM ledger.fiscal_year WHERE platform.business_date() BETWEEN starts_on AND ends_on) || '-%'), 1);
 
 -- ═══════════════════════════════════════════════════════════════════
 RAISE NOTICE E'\n═══ ۲. انبار مبدأ خالی می‌شود — باقی‌مانده گرد کردن ═══';

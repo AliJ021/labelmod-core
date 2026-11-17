@@ -403,8 +403,9 @@ export function registerTreasuryRoutes(
       key: idempotencyKey(req),
       source: "api.treasury.transaction",
       payload: { actorId: s.userId, ...body, shiftId },
-      run: async () => {
-        const id = await treasury.createAndPost({
+      // اثر مالی روی **همان** تراکنش Inbox — نه تراکنش جدا (LM-04).
+      run: async (trx) => {
+        const id = await treasury.createAndPostIn(trx, {
           ...input,
           ...(shiftId === null ? {} : { shiftId }),
         });
@@ -490,12 +491,7 @@ export function registerTreasuryRoutes(
     await requireForSession(db, s, "cheque.manage");
     const { id } = z.object({ id: uuid }).parse(req.params);
 
-    const branchIds = await scopeOf(s.userId);
-    const rows = await cheques.list({
-      ...(branchIds === undefined ? {} : { branchIds }),
-      limit: 500,
-    });
-    const found = rows.find((c) => c.id === id);
+    const found = await cheques.get(id, await scopeOf(s.userId));
     if (!found) throw new ChequeError("cheque_not_found", "چک یافت نشد", 404);
 
     return { cheque: found, events: await cheques.events(id) };
@@ -513,8 +509,8 @@ export function registerTreasuryRoutes(
       key: idempotencyKey(req),
       source: "api.cheque.create",
       payload: { actorId: s.userId, ...body },
-      run: async () => {
-        const id = await cheques.create({
+      run: async (trx) => {
+        const id = await cheques.createIn(trx, {
           ...body,
           amount: parseMoney(body.amount),
           actorId: s.userId,
@@ -542,13 +538,19 @@ export function registerTreasuryRoutes(
     const { id } = z.object({ id: uuid }).parse(req.params);
     const body = eventBody.parse(req.body);
     await requireForSession(db, s, "cheque.manage");
+    // دامنهٔ شعبه روی **خودِ چک**: مجوز `cheque.manage` به‌تنهایی یعنی کاربر
+    // شعبهٔ دیگر با دانستن شناسه، روی این چک سند مالی بزند. ۴۰۴ همان پاسخ
+    // `GET /cheques/:id` است تا وجود چک هم افشا نشود.
+    if (!(await cheques.get(id, await scopeOf(s.userId)))) {
+      throw new ChequeError("cheque_not_found", "چک یافت نشد", 404);
+    }
 
     const out = await runOnce<{ ok: true }>(db, {
       key: idempotencyKey(req) ?? `cheque:${id}:${body.action}`,
       source: "api.cheque.event",
       payload: { actorId: s.userId, chequeId: id, ...body },
-      run: async () => {
-        await cheques.postEvent({
+      run: async (trx) => {
+        await cheques.postEventIn(trx, {
           chequeId: id,
           action: body.action,
           accountId: body.accountId,

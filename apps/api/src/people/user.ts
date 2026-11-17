@@ -164,6 +164,15 @@ export class UserService {
   }
 
   /**
+   * همان نگهبان دامنهٔ ویرایش، تغییر رمز و PIN — برای عملیات مدیریت کاربری
+   * که بیرون از این سرویس انجام می‌شود (برداشتن عامل دوم کاربر دیگر).
+   * روی تراکنشِ فراخوان اجرا می‌شود و کاربر هدف را قفل می‌کند.
+   */
+  async assertManageableIn(trx: Transaction<Database>, id: string, actorId: string): Promise<void> {
+    await this.#assertTargetInScope(trx, id, actorId);
+  }
+
+  /**
    * قفل کاربر، هم بررسی دامنه را با تغییر بعدی اتمی می‌کند و هم تغییر
    * هم‌زمان نقش‌ها را سریالی می‌کند (setRoles نیز نخست همین قفل را می‌گیرد).
    */
