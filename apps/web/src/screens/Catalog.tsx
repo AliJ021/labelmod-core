@@ -149,7 +149,10 @@ export function Catalog() {
     setAdding(true); setError(null); setNote(null);
     try {
       const items: QueueItem[] = [];
-      for (const p of ids) items.push(...queueItemsForProduct(p, (await catalog.product(p.id)).variations, count));
+      for (const p of ids) {
+        const detail = await catalog.product(p.id);
+        items.push(...queueItemsForProduct({ id: p.id, name: detail.product.nameInternal }, detail.variations, count));
+      }
       if (!alive.current) return;
       const r = labelQueue.add(items);
       // فقط همان‌هایی که فرستاده شدند؛ تیکی که در حین خواندن زده شد می‌ماند.
