@@ -169,7 +169,7 @@ export function LabelPrintQueue() {
   const problem = labelRequestProblem(items, sizeState.size);
   const warning = labelContentWarning(items, sizeState.hidePrice);
   const body = labelRequestBody(items, sizeState.size);
-  const currentKey = JSON.stringify(body);
+  const currentKey = JSON.stringify([body, items.map(i => i.productName)]);
   if (items.length === 0) {
     return <section className="solid pad stack" aria-label="فهرست چاپ گروهی">
       <h3 style={{ margin: 0 }}>فهرست چاپ گروهی</h3>

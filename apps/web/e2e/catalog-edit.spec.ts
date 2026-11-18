@@ -17,7 +17,17 @@ test("ویرایش نام ذخیره و با Reload حفظ می‌شود؛ ان�
     current = { ...current, nameInternal: body.nameInternal };
     await route.fulfill({ json: { ok: true } });
   });
-  await page.goto(`/?page=catalog&catalog.product=${product.id}`);
+  api.handlers.set("POST /labels", async route => {
+    await route.fulfill({ contentType: "text/html", body: `<html><body>${current.nameInternal}</body></html>` });
+  });
+  await page.goto(`/?page=catalog&catalog.product=${product.id}&catalog.labels=1`);
+  const panel = page.getByRole("region", { name: "موجودی و چاپ بارکد" });
+  const queue = page.getByRole("region", { name: "فهرست چاپ گروهی" });
+  await page.getByRole("checkbox", { name: "انتخاب TR-S", exact: true }).check();
+  await panel.getByRole("button", { name: "افزودن به فهرست چاپ گروهی", exact: true }).click();
+  await panel.getByRole("button", { name: "پیش‌نمایش لیبل‌های انتخاب‌شده" }).click();
+  await queue.getByRole("button", { name: "پیش‌نمایش ۱ لیبل" }).click();
+  await expect(page.locator("iframe")).toHaveCount(2);
   await page.getByRole("button", { name: "ویرایش نام کالا" }).click();
   const form = page.getByRole("form", { name: "ویرایش نام کالا" });
   await expect(form.getByRole("button", { name: "ذخیرهٔ نام" })).toBeDisabled();
@@ -30,6 +40,12 @@ test("ویرایش نام ذخیره و با Reload حفظ می‌شود؛ ان�
   await form.getByRole("button", { name: "ذخیرهٔ نام" }).click();
   await expect(page.getByRole("heading", { name: "نام اصلاح‌شدهٔ کالا", exact: true })).toBeVisible();
   await expect(page.getByRole("status").filter({ hasText: "نام کالا ذخیره شد." })).toBeVisible();
+  await expect(page.locator("iframe")).toHaveCount(0);
+  await expect(queue).toContainText("نام اصلاح‌شدهٔ کالا");
+  await panel.getByRole("button", { name: "پیش‌نمایش لیبل‌های انتخاب‌شده" }).click();
+  await expect(panel.locator("iframe").contentFrame().locator("body")).toContainText("نام اصلاح‌شدهٔ کالا");
+  await queue.getByRole("button", { name: "پیش‌نمایش ۱ لیبل" }).click();
+  await expect(queue.locator("iframe").contentFrame().locator("body")).toContainText("نام اصلاح‌شدهٔ کالا");
   await api.settled();
   await page.reload();
   await expect(page.getByRole("heading", { name: "نام اصلاح‌شدهٔ کالا", exact: true })).toBeVisible();

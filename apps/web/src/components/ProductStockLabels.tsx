@@ -42,8 +42,8 @@ export function ProductStockLabels({ productId, productName, variations, selecte
   // قیمت/بارکدی که پس از افزودن به فهرست در همین صفحه تعیین شد، به فهرست گروهی هم برسد؛
   // وگرنه هشدار «بدون قیمت» برای لیبلی می‌ماند که سرور با قیمت تازه چاپش می‌کند.
   useEffect(() => {
-    labelQueue.syncMeta(variations.map((v) => ({ variationId: v.id, priced: v.price !== null, hasBarcode: v.barcode !== null && v.barcode !== "" })));
-  }, [variations]);
+    labelQueue.syncMeta(variations.map((v) => ({ variationId: v.id, productName, priced: v.price !== null, hasBarcode: v.barcode !== null && v.barcode !== "" })));
+  }, [variations, productName]);
 
   // تیک جدول تنوع‌ها: تازه‌انتخاب‌شده دست‌کم ۱، برداشته‌شده صفر — هنگام
   // رندر (الگوی «تنظیم state از تغییر prop»)، نه با Effect پس از نقاشی.
@@ -64,7 +64,7 @@ export function ProductStockLabels({ productId, productName, variations, selecte
   const problem = labelRequestProblem(chosen, sizeState.size);
   const warning = labelContentWarning(chosen, sizeState.hidePrice);
   const body = labelRequestBody(chosen, sizeState.size);
-  const currentKey = JSON.stringify([productId, body]);
+  const currentKey = JSON.stringify([productId, productName, body]);
 
   function setCount(id: string, raw: string) {
     setCounts((prev) => ({ ...prev, [id]: clampCount(Number(normalizeDigits(raw))) }));
