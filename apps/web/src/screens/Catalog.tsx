@@ -1,6 +1,6 @@
 import { AmountInput } from "../components/ui/AmountInput.tsx";
 import { CatalogSummaryRow } from "../components/CatalogSummaryRow.tsx";
-import { useUrlState, useUrlFlag } from "../lib/use-url-state.ts";
+import { navigate, useNavigationGuard, useUrlState, useUrlFlag } from "../lib/use-url-state.ts";
 /**
  * کالا و قیمت — تعریف مدل، ساخت تنوع‌ها، و تغییر قیمت.
  *
@@ -100,24 +100,27 @@ const CATALOG_TABS = [
 
 export function Catalog() {
   const tabsId = useTabsId();
-  const [search, setSearch] = useUrlState("catalog.search", "", true);
-  const [showArchived, setShowArchived] = useUrlFlag("catalog.archived");
+  const [search] = useUrlState("catalog.search", "", true);
+  const [showArchived] = useUrlFlag("catalog.archived");
+  const [pageRaw, setPage] = useUrlState("catalog.page", "1");
+  const pageNumber = Number(pageRaw);
+  const page = Number.isInteger(pageNumber) && pageNumber >= 1 && pageNumber <= 10000 ? pageNumber : 1;
   const [selectedId, setSelectedId] = useUrlState("catalog.product");
   const selected = selectedId || null;
   const setSelected = (id: string | null) => setSelectedId(id ?? "");
-  const [labels, setLabels] = useUrlState("catalog.labels");
+  const [labels] = useUrlState("catalog.labels");
   const [error, setError] = useState<string | null>(null);
   const [note, setNote] = useState<string | null>(null);
   const [creating, setCreating] = useState(false);
   const [revision, setRevision] = useState(0);
   const [delay, setDelay] = useState(0);
   // طرح ۱۰: تراشهٔ دسته. فیلتر سمت سرور است تا سقف فهرست کالای دستهٔ دیگری را جای آن نگذارد.
-  const [category, setCategory] = useUrlState("catalog.category");
+  const [category] = useUrlState("catalog.category");
   const categoriesLoad = useCallback((signal: AbortSignal) => catalog.refData({ signal }).then(r => r.categories), []);
   const categories = useLatestQuery({ key: "catalog-categories", load: categoriesLoad }).data ?? [];
-  const load = useCallback(async (signal: AbortSignal) => (await catalog.products({ search, status: showArchived ? "archived" : "active", ...(category ? { categoryId: category } : {}) }, { signal })).products, [search, showArchived, category]);
-  const query = useLatestQuery({ key: JSON.stringify([search, showArchived, category]), version: revision, load, delay, enabled: selected === null });
-  const products = query.data ?? [];
+  const load = useCallback((signal: AbortSignal) => catalog.products({ search, status: showArchived ? "archived" : "active", page, ...(category ? { categoryId: category } : {}) }, { signal }), [search, showArchived, category, page]);
+  const query = useLatestQuery({ key: JSON.stringify([search, showArchived, category, page]), version: revision, load, delay, enabled: selected === null });
+  const products = query.data?.products ?? [];
   function reload() { setDelay(0); setRevision(v => v + 1); }
   // چاپ گروهی از همین فهرست: چند کالا را تیک بزنید، «از هر تنوع N لیبل»، و همه یک‌جا به
   // همان فهرست چاپ گروهی می‌روند — بی باز کردن صفحهٔ تک‌تک کالاها.
@@ -157,7 +160,17 @@ export function Catalog() {
       setError(`${e instanceof ApiError ? e.message : "خواندن تنوع‌ها ممکن نشد."} چیزی به فهرست چاپ افزوده نشد و انتخاب‌ها سر جایشان هستند؛ دوباره تلاش کنید.`);
     } finally { if (alive.current) setAdding(false); }
   }
-  function changeSearch(value: string) { setSearch(value); setDelay(value === "" ? 0 : 250); }
+  // فیلتر و برگشت به صفحهٔ اول یک تغییر نشانی‌اند؛ Back ترکیب نیمه‌کاره نمی‌بیند.
+  function changeFilters(values: Record<string, string>, replace = false) {
+    const url = new URL(window.location.href);
+    url.searchParams.delete("catalog.page");
+    for (const [key, value] of Object.entries(values)) {
+      if (value) url.searchParams.set(key, value); else url.searchParams.delete(key);
+    }
+    navigate(url.href, replace);
+  }
+  function changeSearch(value: string) { changeFilters({ "catalog.search": value }, true); setDelay(value === "" ? 0 : 250); }
+  function changePage(next: number) { setDelay(0); setPage(String(next)); }
 
   if (selected !== null) {
     return (
@@ -176,8 +189,7 @@ export function Catalog() {
 
   const tab: CatalogTab = labels === "1" ? "labels" : showArchived ? "archive" : "products";
   function changeTab(next: CatalogTab) {
-    setLabels(next === "labels" ? "1" : "");
-    setShowArchived(next === "archive");
+    changeFilters({ "catalog.labels": next === "labels" ? "1" : "", "catalog.archived": next === "archive" ? "1" : "" });
     setDelay(0);
   }
 
@@ -188,9 +200,9 @@ export function Catalog() {
       <div className="catalog-toolbar">
         <SearchField label="جست‌وجوی کد یا نام کالا" value={search} onChange={changeSearch} onSearch={reload} onClear={reload} />
         {categories.length > 0 ? <div className="catalog-categories" role="group" aria-label="دستهٔ کالا">
-          <button type="button" className="pick-chip" aria-pressed={category === ""} onClick={() => { setCategory(""); setDelay(0); }}>همه</button>
+          <button type="button" className="pick-chip" aria-pressed={category === ""} onClick={() => { changeFilters({ "catalog.category": "" }); setDelay(0); }}>همه</button>
           {categories.map(c => <button key={c.id} type="button" className="pick-chip" aria-pressed={category === c.id}
-            onClick={() => { setCategory(c.id); setDelay(0); }}>{c.name}</button>)}
+            onClick={() => { changeFilters({ "catalog.category": c.id }); setDelay(0); }}>{c.name}</button>)}
         </div> : null}
       </div>
       {tab === "products" ? <CatalogSummaryRow /> : null}
@@ -241,7 +253,7 @@ export function Catalog() {
           {labels === "1" ? <label className="catalog-pick-all">
             <input type="checkbox" aria-label="انتخاب همهٔ کالاهای این فهرست" checked={products.length > 0 && products.every((p) => picked.has(p.id))}
               onChange={(e) => togglePicked(products, e.target.checked)} />
-            <span aria-hidden="true">انتخاب همه</span>
+            <span aria-hidden="true">انتخاب همهٔ این صفحه</span>
           </label> : null}
           <div className="catalog-table"><DataTable<Product>
             caption="فهرست کالا؛ قیمت‌ها به تومان"
@@ -260,6 +272,12 @@ export function Catalog() {
           /></div>
           </>
         )}
+        <nav className="site-orders-pager" aria-label="صفحه‌های کالا">
+          <button type="button" className="btn" disabled={page === 1 || query.loading} onClick={() => changePage(1)}>صفحهٔ اول</button>
+          <button type="button" className="btn" disabled={page === 1 || query.loading} onClick={() => changePage(page - 1)}>صفحهٔ قبل</button>
+          <span role="status">صفحهٔ {formatCount(page)}{query.data ? ` · ${formatCount(products.length)} کالا در این صفحه` : ""}</span>
+          <button type="button" className="btn" disabled={query.loading || !query.data?.hasMore || page >= 10000} onClick={() => changePage(page + 1)}>صفحهٔ بعد</button>
+        </nav>
       </Solid>
       </div>
       </TabPanels>
@@ -508,6 +526,7 @@ function ProductDetail({
   initialNote?: string | null;
 }) {
   const [statusBusy, setStatusBusy] = useState(false);
+  const [editingName, setEditingName] = useState(false);
   const [product, setProduct] = useState<Product | null>(null);
   useEffect(() => {
     if (labelMode && product) document.getElementById("product-labels")?.scrollIntoView({block:"start",behavior:"instant"});
@@ -564,7 +583,7 @@ function ProductDetail({
   return (
     <div className="stack catalog-detail">
       <Glass as="section" className="pad">
-        <div className="row" style={{ justifyContent: "space-between", alignItems: "center" }}>
+        <div className="row" style={{ justifyContent: "space-between", alignItems: "center", flexWrap: "wrap", gap: "var(--s-2)" }}>
           <div>
             <h2 style={{ fontSize: "1rem", margin: 0 }}>{product.nameInternal}</h2>
             <p className="muted" style={{ margin: ".25rem 0 0" }}>
@@ -572,11 +591,18 @@ function ProductDetail({
               {product.status === "archived" ? " — بایگانی‌شده" : ""}
             </p>
           </div>
+          <button type="button" className="btn" onClick={() => setEditingName(true)} disabled={editingName}>ویرایش نام کالا</button>
           <button type="button" className="btn" onClick={onBack}>
             بازگشت به فهرست
           </button>
         </div>
       </Glass>
+
+      {editingName ? <ProductNameEditor product={product} onCancel={() => setEditingName(false)} onSaved={(name) => {
+        setProduct(p => p ? { ...p, nameInternal: name } : p);
+        setEditingName(false);
+        setNote("نام کالا ذخیره شد.");
+      }} /> : null}
 
       {error !== null ? (
         <p className="solid pos-alert" role="alert">
@@ -600,6 +626,13 @@ function ProductDetail({
 
       <Solid className="pad" as="section">
         <h3 style={{ fontSize: ".95rem", marginTop: 0 }}>تنوع‌ها</h3>
+        {variations.length > 0 ? <label className="catalog-pick-all">
+          <input type="checkbox" aria-label="انتخاب همهٔ تنوع‌ها"
+            checked={variations.every(v => picked.has(v.id))}
+            ref={el => { if (el) el.indeterminate = variations.some(v => picked.has(v.id)) && !variations.every(v => picked.has(v.id)); }}
+            onChange={e => setPicked(e.target.checked ? new Set(variations.map(v => v.id)) : new Set())} />
+          <span>انتخاب همهٔ تنوع‌ها · {formatCount(picked.size)} از {formatCount(variations.length)} انتخاب شده</span>
+        </label> : null}
         {variations.length === 0 ? (
           <p className="muted" style={{ margin: 0 }}>
             هنوز تنوعی ساخته نشده. تا تنوع نباشد، نه بارکدی هست نه قیمتی.
@@ -711,6 +744,37 @@ function ProductDetail({
 }
 
 // ── ساخت تنوع ────────────────────────────────────────────────────────
+
+function ProductNameEditor({ product, onCancel, onSaved }: {
+  product: Product; onCancel: () => void; onSaved: (name: string) => void;
+}) {
+  const [name, setName] = useState(product.nameInternal);
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const next = name.trim();
+  useNavigationGuard(busy || next !== product.nameInternal, "نام کالا هنوز ذخیره نشده است. از ویرایش خارج می‌شوید؟");
+  async function submit(e: React.FormEvent) {
+    e.preventDefault();
+    if (busy || !next || next === product.nameInternal) return;
+    setBusy(true); setError(null);
+    try {
+      await catalog.renameProduct(product.id, next, product.nameInternal);
+      onSaved(next);
+    } catch (err) { setError(message(err)); }
+    finally { setBusy(false); }
+  }
+  return <Solid as="section" className="pad">
+    <form className="stack" onSubmit={e => void submit(e)} aria-label="ویرایش نام کالا" aria-busy={busy}>
+      <label className="auth-field">نام کالا<input value={name} maxLength={120} required disabled={busy} onChange={e => setName(e.target.value)} /></label>
+      <p className="muted">این نام در فهرست کالا و لیبل چاپی استفاده می‌شود. نام سایت جداگانه است.</p>
+      {error ? <p role="alert">{error}</p> : null}
+      <div className="row" style={{ gap: "var(--s-2)", flexWrap: "wrap" }}>
+        <button type="submit" className="btn btn--primary" disabled={busy || !next || next === product.nameInternal}>{busy ? "در حال ذخیره…" : "ذخیرهٔ نام"}</button>
+        <button type="button" className="btn" disabled={busy} onClick={onCancel}>انصراف از ویرایش</button>
+      </div>
+    </form>
+  </Solid>;
+}
 
 function VariationBuilder({
   productId,

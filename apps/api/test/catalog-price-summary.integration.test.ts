@@ -325,6 +325,87 @@ describe("قیمت کالا در فهرست کالا و قیمت", { skip }, () 
     assert.equal(d.json().product.sellablePricedCount, 3);
   });
 
+  test("صفحه‌بندی از کالای صدم عبور می‌کند؛ فیلتر، مرز دقیق و سقف ۵۰۰ حفظ می‌شوند", async () => {
+    const prefix = `PAGE-${suffix}`;
+    const owner = createDb(disposable!.ownerUrl, 1);
+    let categoryId: string;
+    try {
+      const category = await owner.db.insertInto("catalog.category").values({ name: prefix, parent_id: null, path: "pagination" }).returning("id").executeTakeFirstOrThrow();
+      categoryId = category.id;
+      // فقط دادهٔ یک‌بارمصرف آزمون؛ کد ثابت‌طول، همان ترتیب یکتای فهرست.
+      await owner.db.insertInto("catalog.product").values(Array.from({ length: 501 }, (_, i) => ({
+        code: `PG-${String(i + 1).padStart(4, "0")}`,
+        name_internal: `${prefix} ${i < 100 ? "groupA" : "groupB"}`,
+        status: i < 114 ? "active" : "archived",
+        category_id: i < 100 ? null : categoryId,
+      }))).execute();
+    } finally { await owner.close(); }
+    const read = async (query = "") => {
+      const r = await app.inject({ method: "GET", url: `/products?search=${prefix}${query}`, ...s });
+      assert.equal(r.statusCode, 200, r.body);
+      return r.json() as { products: ProductOut[]; page: number; hasMore: boolean };
+    };
+    const first = await read();
+    const second = await read("&page=2");
+    assert.deepEqual([first.products.length, first.page, first.hasMore], [100, 1, true]);
+    assert.deepEqual([second.products.length, second.page, second.hasMore], [14, 2, false]);
+    const ids = [...first.products, ...second.products].map(p => p.id);
+    assert.equal(new Set(ids).size, 114, "کالایی تکرار یا حذف نمی‌شود");
+    assert.deepEqual([first.products[0]!.code, second.products[0]!.code, second.products.at(-1)!.code], ["PG-0001", "PG-0101", "PG-0114"]);
+    const exact = await read("&limit=114");
+    assert.deepEqual([exact.products.length, exact.hasMore], [114, false]);
+    const filtered = await read(`&categoryId=${categoryId!}`);
+    assert.deepEqual([filtered.products.length, filtered.hasMore], [14, false]);
+    assert.equal(filtered.products[0]!.code, "PG-0101");
+    const archived = await read("&status=archived&page=4");
+    assert.deepEqual([archived.products.length, archived.hasMore], [87, false]);
+    assert.ok(archived.products.every(p => p.status === "archived"));
+    const max = await read("&status=all&limit=500");
+    const tail = await read("&status=all&limit=500&page=2");
+    assert.deepEqual([max.products.length, max.hasMore, tail.products.length, tail.hasMore], [500, true, 1, false]);
+    const empty = await read("&page=3");
+    assert.deepEqual([empty.products.length, empty.hasMore], [0, false]);
+    for (const page of ["0", "-1", "1.5", "nope", "10001"]) {
+      const r = await app.inject({ method: "GET", url: `/products?page=${page}`, ...s });
+      assert.equal(r.statusCode, 400, `صفحهٔ نامعتبر: ${page}`);
+    }
+  });
+
+  test("ویرایش نام، سایر ویژگی‌ها و تنوع و قیمت را حفظ می‌کند و ویرایش هم‌زمان را نمی‌پوشاند", async () => {
+    const code = `RN-${suffix}`.slice(0, 24);
+    const { id, vars } = await product(code, ["S", "M"]);
+    await price(vars[0]!.id, "2300000");
+    const owner = createDb(disposable!.ownerUrl, 1);
+    try {
+      await owner.db.updateTable("catalog.product").set({ name_web: "Web name", fabric: "پنبه", fit: "آزاد", collection: "مجموعه", notes: "یادداشت حفظ شود", origin_country: "ایران" }).where("id", "=", id).execute();
+      const before = await owner.db.selectFrom("catalog.product").selectAll().where("id", "=", id).executeTakeFirstOrThrow();
+      const variations = await owner.db.selectFrom("catalog.variation").selectAll().where("product_id", "=", id).orderBy("id").execute();
+      const prices = await owner.db.selectFrom("catalog.price").selectAll().where("variation_id", "in", vars.map(v => v.id)).orderBy("id").execute();
+      const rename = (nameInternal: string, expectedName = before.name_internal) => app.inject({ method: "PATCH", url: `/products/${id}/name`, ...s, payload: { nameInternal, expectedName } });
+      for (const bad of ["", " ", "x".repeat(121), "bad\u0001name"]) assert.equal((await rename(bad)).statusCode, 400);
+      const res = await rename("نام اصلاح‌شده");
+      assert.equal(res.statusCode, 200, res.body);
+      assert.equal((await rename("نام اصلاح‌شده")).statusCode, 200, "تکرار همان درخواست بی‌خطر است");
+      assert.equal((await rename("ویرایش کهنه")).statusCode, 409, "نام تازه با فرم قدیمی بازنویسی نمی‌شود");
+      const after = await owner.db.selectFrom("catalog.product").selectAll().where("id", "=", id).executeTakeFirstOrThrow();
+      assert.deepEqual({ ...after, name_internal: before.name_internal }, before);
+      assert.equal(after.name_internal, "نام اصلاح‌شده");
+      const audit = await sql<{ actor_id: string; before: { name_internal: string }; after: { name_internal: string } }>`
+        SELECT actor_id, before, after FROM platform.audit_log WHERE action = 'product.update' AND entity_id = ${id}`.execute(owner.db);
+      assert.equal(audit.rows.length, 1, "ارسال دوباره لاگ ویرایش تکراری نمی‌سازد");
+      assert.equal(audit.rows[0]!.actor_id, adminId);
+      assert.equal(audit.rows[0]!.before.name_internal, before.name_internal);
+      assert.equal(audit.rows[0]!.after.name_internal, "نام اصلاح‌شده");
+      assert.deepEqual(await owner.db.selectFrom("catalog.variation").selectAll().where("product_id", "=", id).orderBy("id").execute(), variations);
+      assert.deepEqual(await owner.db.selectFrom("catalog.price").selectAll().where("variation_id", "in", vars.map(v => v.id)).orderBy("id").execute(), prices);
+      const race = await Promise.all([rename("نام هم‌زمان یک", "نام اصلاح‌شده"), rename("نام هم‌زمان دو", "نام اصلاح‌شده")]);
+      assert.deepEqual(race.map(r => r.statusCode).sort(), [200, 409]);
+      await sql`UPDATE identity.permission_rule SET allowed = false WHERE role_code = 'admin' AND operation = 'catalog.manage'`.execute(owner.db);
+      try { assert.equal((await rename("بی مجوز")).statusCode, 403); }
+      finally { await sql`UPDATE identity.permission_rule SET allowed = true WHERE role_code = 'admin' AND operation = 'catalog.manage'`.execute(owner.db); }
+    } finally { await owner.close(); }
+  });
+
   test("خلاصهٔ کالا و قیمت از SQL: شمار فعال‌ها، ارزش موجودی به بها و قیمت‌های ۳۰ روز؛ پول رشته", async () => {
     const before = await app.inject({ method: "GET", url: "/products/summary", ...s });
     assert.equal(before.statusCode, 200, before.body);

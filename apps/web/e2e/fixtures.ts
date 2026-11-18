@@ -217,7 +217,7 @@ export class MockApi {
         await route.fulfill({ contentType: "text/html", body: LABEL_FRAME_HTML, headers: { "content-security-policy": LABEL_FRAME_CSP } });
         return;
       }
-      const body = key === "GET /products" ? { products: this.productRows } : key === "GET /permission-rules" ? { rules: this.permissionRows } : this.defaults[key];
+      const body = key === "GET /products" ? { products: this.productRows, page: 1, hasMore: false } : key === "GET /permission-rules" ? { rules: this.permissionRows } : this.defaults[key];
       if (body === undefined) { this.unexpected.push(key + url.search); await route.fulfill({ status: 501, json: { error: { code: "unmocked", message: key } } }); return; }
       await route.fulfill({ json: body });
   }

@@ -131,14 +131,17 @@ export function registerProductRoutes(
         search: z.string().trim().max(80).optional(),
         status: z.enum(["active", "archived", "all"]).default("active"),
         limit: z.coerce.number().int().min(1).max(500).default(100),
+        page: z.coerce.number().int().min(1).max(10000).default(1),
         categoryId: z.string().uuid().optional(),
       })
       .parse(req.query ?? {});
-    const list = await products.list(q);
+    const rows = await products.list({ ...q, offset: (q.page - 1) * q.limit, extraRow: true });
+    const hasMore = rows.length > q.limit;
+    const list = rows.slice(0, q.limit);
     // طرح ۱۰: ستون‌های موجودی و بها در دامنهٔ شعبهٔ کاربر؛ بها فقط با `cost.view`.
     const seesCost = (await can(db, { userId: s.userId, operation: "cost.view", viaPin: s.pinUnlocked })).verdict === "allow";
     const inventory = await products.inventoryFor(list.map((p) => p.id), { branchIds: await branchesOf(db, s.userId), seesCost });
-    return { products: list.map((p) => ({ ...p, inventory: inventory.get(p.id) ?? null })) };
+    return { products: list.map((p) => ({ ...p, inventory: inventory.get(p.id) ?? null })), page: q.page, hasMore };
   });
 
   /**
@@ -225,6 +228,16 @@ export function registerProductRoutes(
     // عوض‌شدنش را رد می‌کند و فرستادنش فقط راه یک خطای گیج‌کننده بود.
     const current = await products.get(id);
     await products.update(id, { ...body, code: current.code }, s.userId);
+    return { ok: true };
+  });
+
+  // ویرایش نام، مقدار مطلق و تکرارپذیر است؛ نام دیده‌شده مانع بازنویسی ویرایش هم‌زمان می‌شود.
+  app.patch("/products/:id/name", async (req) => {
+    const s = session(req);
+    const { id } = z.object({ id: uuid }).parse(req.params);
+    const body = z.object({ nameInternal: cleanText(120), expectedName: cleanText(120) }).strict().parse(req.body);
+    await requireForSession(db, s, "catalog.manage");
+    await products.rename(id, body.nameInternal, body.expectedName, s.userId);
     return { ok: true };
   });
 
