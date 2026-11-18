@@ -94,7 +94,10 @@ for (const size of [{ width: 1440, height: 960 }, { width: 1366, height: 768 }, 
     await row(page, "نقدی").getByRole("button", { name: "دریافت وجه", exact: true }).click();
     await expect.poll(() => s.posted.at(-1)).toEqual({ methodCode: "cash", amount: "350000" });
     const finalize = page.getByRole("button", { name: "نهایی‌کردن فاکتور", exact: true });
+    // ثبت درخواست در ماک زودتر از دریافت پاسخ در رابط رخ می‌دهد؛ دکمهٔ غیرفعال فوکوس نمی‌گیرد.
+    await expect(finalize).toBeEnabled();
     await finalize.focus();
+    await expect(finalize).toBeFocused();
     await expectUncovered(finalize, "نهایی‌کردن");
     const size2 = await page.evaluate(() => ({ scroll: document.documentElement.scrollWidth, client: document.documentElement.clientWidth }));
     expect(size2.scroll, "بی اسکرول افقی").toBeLessThanOrEqual(size2.client);
