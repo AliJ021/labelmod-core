@@ -154,6 +154,9 @@ export class ProductService {
     search?: string | undefined;
     status?: "active" | "archived" | "all" | undefined;
     limit?: number | undefined;
+    offset?: number | undefined;
+    /** یک سطر اضافه فقط برای تشخیص وجود صفحهٔ بعد؛ در پاسخ کاربر نمی‌آید. */
+    extraRow?: boolean | undefined;
     /** فیلتر دسته (طرح ۱۰) سمت سرور، تا سقف فهرست کالای دستهٔ دیگری را جای آن نگذارد. */
     categoryId?: string | undefined;
   } = {}): Promise<ProductRow[]> {
@@ -224,7 +227,8 @@ export class ProductService {
         "agg.price_max",
       ])
       .orderBy("p.code")
-      .limit(limit);
+      .limit(limit + (opts.extraRow ? 1 : 0))
+      .offset(opts.offset ?? 0);
 
     if (status !== "all") q = q.where("p.status", "=", status);
     if (opts.categoryId !== undefined) q = q.where("p.category_id", "=", opts.categoryId);
@@ -437,6 +441,24 @@ export class ProductService {
 
   async update(id: string, input: ProductInput, actorId: string): Promise<string> {
     return this.#upsert(id, input, actorId);
+  }
+
+  /** تغییر فقط نام داخلی؛ سایر ویژگی‌ها زیر همان قفل از سطر فعلی حفظ می‌شوند. */
+  async rename(id: string, name: string, expectedName: string, actorId: string): Promise<void> {
+    await this.#db.transaction().execute(async trx => {
+      const p = await trx.selectFrom("catalog.product").selectAll().where("id", "=", id).forUpdate().executeTakeFirst();
+      if (!p) throw new CatalogError("product_not_found", "کالا پیدا نشد.", 404);
+      if (p.name_internal === name) return; // تکرار پس از قطع پاسخ، اثر یا لاگ دوباره ندارد.
+      if (p.name_internal !== expectedName) throw new CatalogError("product_name_changed", "نام کالا در این فاصله تغییر کرده است؛ صفحه را به‌روز کنید و دوباره بررسی کنید.", 409);
+      await this.#upsertIn(trx, id, {
+        code: p.code, nameInternal: name, nameWeb: p.name_web ?? undefined,
+        brandId: p.brand_id ?? undefined, categoryId: p.category_id ?? undefined,
+        season: p.season ?? undefined, collection: p.collection ?? undefined,
+        fabric: p.fabric ?? undefined, fit: p.fit ?? undefined,
+        originCountry: p.origin_country ?? undefined, taxRateCode: p.tax_rate_code,
+        notes: p.notes ?? undefined,
+      }, actorId);
+    });
   }
 
   async #upsert(

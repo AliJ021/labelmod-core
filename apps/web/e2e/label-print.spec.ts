@@ -235,9 +235,14 @@ test("bulk from the product list: tick products, N labels per active variation, 
   await openCatalog(page);
   await page.locator("main").getByRole("tab", { name: "چاپ لیبل بارکد", exact: true }).click();
   await page.getByRole("checkbox", { name: `انتخاب ${product.nameInternal} برای چاپ گروهی` }).check();
+  // نام پس از انتخاب کالا و پیش از افزودن عوض شده؛ صف باید پاسخ تازهٔ سرور را بخواند.
+  const renamed = "نام تازهٔ کالای انتخاب‌شده";
+  api.defaults["GET /products/" + product.id] = { product: { ...product, nameInternal: renamed }, variations: [...variations, { ...variations[0]!, id: "v3", sku: "TR-1405-OLD", status: "archived" }] };
   await page.getByRole("textbox", { name: "از هر تنوع (لیبل)" }).fill("۲");
   await page.getByRole("button", { name: /افزودن .* کالای انتخاب‌شده به فهرست چاپ/ }).click();
   const queue = page.getByRole("region", { name: "فهرست چاپ گروهی" });
+  await expect(queue).toContainText(renamed);
+  await expect(queue).not.toContainText(product.nameInternal);
   await expect(queue.getByRole("textbox", { name: "تعداد لیبل TR-1405-NAVY-S" })).toHaveValue("2");
   await expect(queue.getByRole("textbox", { name: "تعداد لیبل TR-1405-CREAM-XL" })).toHaveValue("2");
   await expect(queue.getByRole("textbox", { name: "تعداد لیبل TR-1405-OLD" })).toHaveCount(0);

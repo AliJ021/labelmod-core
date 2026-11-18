@@ -111,14 +111,14 @@ export function mergeQueue(current: readonly QueueItem[], adds: readonly QueueIt
  */
 export function syncQueueMeta(
   current: readonly QueueItem[],
-  facts: readonly { variationId: string; priced: boolean; hasBarcode: boolean }[],
+  facts: readonly { variationId: string; priced: boolean; hasBarcode: boolean; productName?: string }[],
 ): readonly QueueItem[] {
   let changed = false;
   const next = current.map((i) => {
     const f = facts.find((x) => x.variationId === i.variationId);
-    if (!f || (f.priced === i.priced && f.hasBarcode === i.hasBarcode)) return i;
+    if (!f || (f.priced === i.priced && f.hasBarcode === i.hasBarcode && (f.productName === undefined || f.productName === i.productName))) return i;
     changed = true;
-    return { ...i, priced: f.priced, hasBarcode: f.hasBarcode };
+    return { ...i, priced: f.priced, hasBarcode: f.hasBarcode, productName: f.productName ?? i.productName };
   });
   return changed ? next : current;
 }
