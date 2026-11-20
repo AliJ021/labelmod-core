@@ -131,7 +131,7 @@ class LMC_Settings
         }
         $s = lmc_settings();
 
-        echo '<div class="wrap lmc-admin" dir="rtl"><header class="lmc-hero"><span class="dashicons dashicons-store" aria-hidden="true"></span><div><h1>اتصال لیبل مد</h1><nav aria-label="بخش‌های اتصال"><a href="#lmc-config">تنظیمات فروشگاه</a><a href="#lmc-live">ارسال لحظه‌ای</a><a href="#lmc-health">وضعیت اتصال</a></nav></div></header>';
+        echo '<div class="wrap lmc-admin" dir="rtl"><header class="lmc-hero"><span class="dashicons dashicons-store" aria-hidden="true"></span><div><h1>اتصال لیبل مد</h1><nav aria-label="بخش‌های اتصال"><a href="#lmc-config">تنظیمات فروشگاه</a>' . (LMC_Push_Secret_Settings::allowed() ? '<a href="#lmc-live">ارسال لحظه‌ای</a>' : '') . '<a href="#lmc-health">وضعیت اتصال</a></nav></div></header>';
         self::notices();
         echo '<div class="lmc-layout"><section id="lmc-config" class="lmc-card"><h2>تنظیمات فروشگاه</h2>';
         self::connection_box($s);
@@ -238,9 +238,13 @@ class LMC_Settings
 
         echo '</table>';
         submit_button(__('ذخیره', 'labelmod-connector'));
-        echo '</form></section><div class="lmc-side"><section id="lmc-live" class="lmc-card">';
-        LMC_Push_Secret_Settings::render();
-        echo '</section><section id="lmc-health" class="lmc-card">';
+        echo '</form></section><div class="lmc-side">';
+        if (LMC_Push_Secret_Settings::allowed()) {
+            echo '<section id="lmc-live" class="lmc-card">';
+            LMC_Push_Secret_Settings::render();
+            echo '</section>';
+        }
+        echo '<section id="lmc-health" class="lmc-card">';
         LMC_Diagnostics::render();
 
         // همگام‌سازی دستی — فرم جدا، چون یک عمل است نه یک تنظیم.
@@ -477,9 +481,15 @@ class LMC_Settings
 
     private static function row(string $label, string $field, string $help): void
     {
+        $heading = esc_html($label);
+        if (preg_match('/^<(?:select|textarea|input type="(?:text|url|password)") name="([a-z_]+)"/', $field, $match)) {
+            $id = 'lmc-' . $match[1];
+            $field = str_replace($match[0], $match[0] . ' id="' . esc_attr($id) . '"', $field);
+            $heading = '<label for="' . esc_attr($id) . '">' . $heading . '</label>';
+        }
         printf(
             '<tr><th scope="row">%s</th><td>%s<p class="description">%s</p></td></tr>',
-            esc_html($label),
+            $heading,
             // فیلدها بالا با esc_attr ساخته شده‌اند؛ اینجا HTML عمدی است.
             $field, // phpcs:ignore WordPress.Security.EscapeOutput.OutputNotEscaped
             esc_html($help)

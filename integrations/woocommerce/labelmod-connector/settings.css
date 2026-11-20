@@ -28,7 +28,7 @@
 .lmc-card hr { border: 0; border-top: 1px solid var(--line); margin: 18px 0; }
 .lmc-card > hr:first-child { display: none; }
 .lmc-card .form-table th, .lmc-card .form-table td { display: block; width: auto; padding: 0; }
-.lmc-card .form-table th { padding: 16px 0 6px; color: var(--ink); }
+.lmc-card .form-table th { text-align: start; padding: 16px 0 6px; color: var(--ink); }
 .lmc-card .form-table td { padding-bottom: 14px; border-bottom: 1px solid #edf2ef; }
 .lmc-card :is(input.regular-text, select, textarea) { max-width: 100%; width: 100%; border-color: #9daea9; border-radius: 7px; }
 .lmc-card .description { color: #526661; line-height: 1.8; }
@@ -36,3 +36,7 @@
 .lmc-card .button-primary { background: var(--accent); border-color: var(--accent); padding-inline: 18px; }
 .lmc-admin :focus-visible { outline: 3px solid #c88a32; outline-offset: 3px; }
 @media (max-width: 960px) { .lmc-layout { grid-template-columns: 1fr; } }
+
+.lmc-card .form-table { width: 100%; }
+.lmc-card :is(input.regular-text, select, textarea) { box-sizing: border-box; min-height: 38px; padding-inline: 10px; }
+.lmc-card .button { min-height: 36px; }
