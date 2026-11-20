@@ -616,6 +616,9 @@ function PosScreen({ actorId, mode, onMode, browseInvoices }: {
     return () => abort.abort();
   }, [actorId, shift, instagram]);
   const currentStaff = shift && staff?.key.endsWith(`:${shift.id}`) ? staff : null;
+  const displayedSellerId = invoice ? invoice.sellerId ?? invoice.createdBy ?? "" : currentStaff?.selected ?? "";
+  const invoiceSellerName = invoice?.sellerName ?? (!invoice?.sellerId || invoice.sellerId === invoice.createdBy ? invoice?.createdByName : null);
+  const sellerInRoster = currentStaff?.names.some(person => person.id === displayedSellerId);
   const sellerForDraft = useCallback(() => {
     if (instagram || !shift) return undefined;
     if (currentStaff) return currentStaff.selected === actorId ? undefined : currentStaff.selected;
@@ -1613,9 +1616,10 @@ function PosScreen({ actorId, mode, onMode, browseInvoices }: {
               <div><dt>تاریخ فاکتور</dt><dd>{invoice?.occurredAt ? formatJalaliMoment(invoice.occurredAt) : "—"}</dd></div>
               <div><dt>نوع فروش</dt><dd>{instagram ? "اینستاگرام" : "حضوری"}</dd></div>
               {/* نام از سرور (`createdByName`)؛ پیش از اولین قلم پیش‌نویسی نیست و حدس زده نمی‌شود. */}
-              <div><dt>ثبت‌کننده</dt><dd>{currentStaff ? <select aria-label="ثبت‌کننده" value={invoice ? invoice.sellerId ?? invoice.createdBy ?? actorId : currentStaff.selected}
+              <div><dt>ثبت‌کننده</dt><dd>{currentStaff ? <select aria-label="ثبت‌کننده" value={displayedSellerId}
                 disabled={busy || !payIdle} onChange={e => void changeSeller(e.target.value)}>
-                {currentStaff.names.map(s => <option key={s.id} value={s.id}>{s.name}</option>)}</select> : invoice?.createdByName ?? "—"}</dd></div>
+                {!sellerInRoster && <option value={displayedSellerId} disabled>{invoiceSellerName ?? "—"}</option>}
+                {currentStaff.names.map(s => <option key={s.id} value={s.id}>{s.name}</option>)}</select> : invoiceSellerName ?? "—"}</dd></div>
             </dl>
           </div>
           {/* مشتری همیشه باز و پیش از جست‌وجوست؛ اختیاری/الزامی فقط سیاست فروش (`pos.require_customer`) است، نه چیدمان. */}

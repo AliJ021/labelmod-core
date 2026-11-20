@@ -276,7 +276,7 @@ export async function settings(page: Page, value: string, label: string) {
 }
 /** بخش «برداشت و پاداش» — همان الگوی ناوبری بخش‌ها، در ناحیهٔ منوی اصلی. */
 export async function personnel(page: Page, value: string, label: string) {
-  await openZone(page, "برداشت و پاداش");
+  if (new URL(page.url()).searchParams.get("page") !== "personnel") await openZone(page, "برداشت و پاداش");
   await expect(page.locator(".settings-nav")).toBeVisible();
   const picker = page.getByRole("combobox", { name: "بخش برداشت و پاداش" });
   if (await picker.isVisible()) await picker.selectOption(value);

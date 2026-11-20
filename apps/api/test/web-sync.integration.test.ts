@@ -296,8 +296,13 @@ describe("خوراک‌های همگام‌سازی سایت", { skip }, () => {
       FROM generate_series(1, 503) n RETURNING id, sku
     `.execute(handle.db);
     const [medium, large, xl] = variants;
-    await sql`INSERT INTO inventory.stock_balance (warehouse_id, variation_id)
-      VALUES (${STORE_WH}, ${large!.id})`.execute(handle.db);
+    await sql`SELECT inventory.apply_movement(${large!.id}::uuid, ${STORE_WH}::uuid, 1, 'purchase_receipt',
+      'test_receipt', ${large!.id}::uuid, ${SYSTEM_USER}::uuid, 800000)`.execute(handle.db);
+    await sql`SELECT inventory.apply_movement(${large!.id}::uuid, ${STORE_WH}::uuid, -1, 'sale',
+      'test_sale', ${large!.id}::uuid, ${SYSTEM_USER}::uuid)`.execute(handle.db);
+    const balance = await handle.db.selectFrom("inventory.stock_balance").select("row_version")
+      .where("variation_id", "=", large!.id).where("warehouse_id", "=", STORE_WH).executeTakeFirstOrThrow();
+    assert.ok(BigInt(balance.row_version) > 0n);
     await sql`INSERT INTO catalog.price (variation_id, price_list, amount)
       VALUES (${medium!.id}, 'default', 99000000), (${large!.id}, 'default', 99000000)`.execute(handle.db);
 
@@ -313,7 +318,7 @@ describe("خوراک‌های همگام‌سازی سایت", { skip }, () => {
     for (const v of [medium!, large!, xl!]) {
       const r = rows.find(row => row.variationId === v.id)!;
       assert.equal(r.available, "0");
-      assert.equal(r.stockRev, v === large ? "1" : "0");
+      assert.equal(r.stockRev, v === large ? String(balance.row_version) : "0");
       assert.equal(r.price, v === xl ? null : "99000000");
     }
     const upgraded = await stock(`&since=${stamp}&restartCatalog=1&limit=5000`);

@@ -42,6 +42,7 @@ const restoreCart = (page: import("@playwright/test").Page) =>
 test.describe("سربرگ صندوق (طرح ۱۰)", () => {
   test("open cart: draft badge, creator from the server, drafts link outside the menu, mode locked", async ({ page, api }) => {
     setup(api, draft);
+    api.defaults["GET /pos/sellers"] = { sellers: [{ id: ME, name: draft.createdByName }], sessionId: "header-test" };
     await restoreCart(page);
     await page.goto(`/?page=pos&pos.branch=${BR}&pos.warehouse=w1`);
     await expect(page.locator(".lines li").first()).toContainText("شلوار کتان");
@@ -49,7 +50,9 @@ test.describe("سربرگ صندوق (طرح ۱۰)", () => {
     const head = page.locator(".pos-doc-head");
     await expect(head.locator(".status")).toHaveText("پیش‌نویس");
     await expect(head.locator(".pos-doc-meta")).toContainText("ثبت‌کننده");
-    await expect(head.locator(".pos-doc-meta")).toContainText("سارا کریمی");
+    const seller = head.getByRole("combobox", { name: "ثبت‌کننده" });
+    await expect(seller).toHaveValue(ME);
+    await expect(seller.locator("option:checked")).toHaveText("سارا کریمی");
 
     const bar = page.locator(".pos-bar");
     const mode = bar.getByRole("group", { name: "نوع فروش" });
@@ -67,11 +70,14 @@ test.describe("سربرگ صندوق (طرح ۱۰)", () => {
   test("an older invoice response without the creator name shows a dash, never a guess", async ({ page, api }) => {
     const { createdByName: _omit, ...older } = draft;
     setup(api, older);
+    api.defaults["GET /pos/sellers"] = { sellers: [{ id: "another-seller", name: "فروشنده دیگر" }], sessionId: "header-test" };
     await restoreCart(page);
     await page.goto(`/?page=pos&pos.branch=${BR}&pos.warehouse=w1`);
     await expect(page.locator(".lines li").first()).toContainText("شلوار کتان");
     const meta = page.locator(".pos-doc-head .pos-doc-meta > div").filter({ hasText: "ثبت‌کننده" });
-    await expect(meta.locator("dd")).toHaveText("—");
+    const seller = meta.getByRole("combobox", { name: "ثبت‌کننده" });
+    await expect(seller).toHaveValue(ME);
+    await expect(seller.locator("option:checked")).toHaveText("—");
   });
 
   test("empty cart: the toggle switches to instagram through the same URL state", async ({ page, api }) => {
