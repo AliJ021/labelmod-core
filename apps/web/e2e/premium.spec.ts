@@ -71,13 +71,15 @@ test("visual, local fonts, contrast, targets, long names and 200% text", async (
   await noOverflow(page);
   await page.evaluate(() => { document.documentElement.style.fontSize = ""; });
   await page.getByRole("button", { name: "باز کردن", exact: true }).click();
-  await expect(page.getByRole("button", { name: "بایگانی‌کردن کالا" })).toBeVisible();
+  await expect(page.getByRole("tab", { name: "تنوع و قیمت" })).toHaveAttribute("aria-selected", "true");
   await expect(page.locator(".catalog-detail")).toHaveCSS("gap", (page.viewportSize()!.width < 768 ? 16 : 24) + "px");
   for (const name of ["تاریخچه قیمت", "بایگانی‌کردن کالا"]) {
+    if (name === "بایگانی‌کردن کالا") await page.getByRole("tab", { name: "مدیریت کالا" }).click();
     const b = page.getByRole("button", { name, exact: true }); const box = await b.boundingBox();
     expect(box!.height).toBeGreaterThanOrEqual(44); expect(box!.width).toBeGreaterThanOrEqual(44);
   }
   await noOverflow(page);
+  await page.getByRole("tab", { name: "تنوع و قیمت" }).click();
   await screenshot(page, "product-detail");
   await settings(page, "appearance", "نمایش و عملکرد");
   await noOverflow(page);

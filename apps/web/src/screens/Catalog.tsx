@@ -178,6 +178,7 @@ export function Catalog() {
   if (selected !== null) {
     return (
       <ProductDetail
+        key={selected}
         productId={selected}
         labelMode={labels === "1"}
         initialNote={note}
@@ -200,14 +201,6 @@ export function Catalog() {
     <div className="stack catalog-page">
       <TabList id={tabsId} items={CATALOG_TABS} value={tab} onChange={changeTab} label="کالا و قیمت" />
       <TabPanels id={tabsId} items={CATALOG_TABS} value={tab} className="stack catalog-panel">
-      <div className="catalog-toolbar">
-        <SearchField label="جست‌وجوی کد یا نام کالا" value={search} onChange={changeSearch} onSearch={reload} onClear={reload} />
-        {categories.length > 0 ? <div className="catalog-categories" role="group" aria-label="دستهٔ کالا">
-          <button type="button" className="pick-chip" aria-pressed={category === ""} onClick={() => { changeFilters({ "catalog.category": "" }); setDelay(0); }}>همه</button>
-          {categories.map(c => <button key={c.id} type="button" className="pick-chip" aria-pressed={category === c.id}
-            onClick={() => { changeFilters({ "catalog.category": c.id }); setDelay(0); }}>{c.name}</button>)}
-        </div> : null}
-      </div>
       {tab === "products" ? <CatalogSummaryRow /> : null}
       {labels === "1" ? <LabelPrintQueue /> : null}
 
@@ -236,9 +229,16 @@ export function Catalog() {
       <div aria-busy={query.loading}>
       <Solid as="section" className="list-card catalog-list" aria-labelledby="catalog-list-title">
         <SectionHeader id="catalog-list-title" title={tab === "labels" ? "انتخاب کالا برای چاپ لیبل" : tab === "archive" ? "کالاهای بایگانی‌شده" : "فهرست کالا"}
-          description={tab === "archive" ? "کالا حذف نمی‌شود، بایگانی می‌شود؛ فاکتورهای قدیمی به همان سطر ارجاع می‌دهند." : "قیمت فروش همان قیمتی است که صندوق برای تنوع فعال می‌خواند؛ بی‌قیمت هرگز صفر نوشته نمی‌شود."}
           actions={<button type="button" className={creating ? "btn" : "btn btn--primary"} onClick={() => setCreating((v) => !v)}>
             <Icon name={creating ? "close" : "plus"} size="sm" />{creating ? "انصراف" : "کالای تازه"}</button>} />
+        <div className="catalog-toolbar">
+          <SearchField label="جست‌وجوی کد یا نام کالا" value={search} onChange={changeSearch} onSearch={reload} onClear={reload} />
+          {categories.length > 0 ? <div className="catalog-categories" role="group" aria-label="دستهٔ کالا">
+            <button type="button" className="pick-chip" aria-pressed={category === ""} onClick={() => { changeFilters({ "catalog.category": "" }); setDelay(0); }}>همه</button>
+            {categories.map(c => <button key={c.id} type="button" className="pick-chip" aria-pressed={category === c.id}
+              onClick={() => { changeFilters({ "catalog.category": c.id }); setDelay(0); }}>{c.name}</button>)}
+          </div> : null}
+        </div>
         {query.loading ? (
           <ResultState kind="loading" title="در حال جست‌وجوی کالاها…" />
         ) : query.error ? (
@@ -516,6 +516,13 @@ function ProductForm({
 
 // ── جزئیات کالا ──────────────────────────────────────────────────────
 
+const PRODUCT_SECTIONS = [
+  { key: "variants", label: "تنوع و قیمت", icon: <Icon name="tag" size="sm" /> },
+  { key: "labels", label: "موجودی و لیبل", icon: <Icon name="barcode" size="sm" /> },
+  { key: "manage", label: "مدیریت کالا", icon: <Icon name="archive" size="sm" /> },
+] as const;
+type ProductSection = typeof PRODUCT_SECTIONS[number]["key"];
+
 function ProductDetail({
   labelMode,
   productId,
@@ -531,9 +538,17 @@ function ProductDetail({
   const [statusBusy, setStatusBusy] = useState(false);
   const [editingName, setEditingName] = useState(false);
   const [product, setProduct] = useState<Product | null>(null);
-  useEffect(() => {
-    if (labelMode && product) document.getElementById("product-labels")?.scrollIntoView({block:"start",behavior:"instant"});
-  }, [labelMode, product]);
+  const tabsId = useTabsId();
+  const [section, setSection] = useState<ProductSection>(labelMode ? "labels" : initialNote ? "manage" : "variants");
+  const [visitedLabels, setVisitedLabels] = useState(labelMode);
+  function selectSection(next: ProductSection) {
+    setSection(next);
+    if (next === "labels") setVisitedLabels(true);
+  }
+  function panelProps(key: ProductSection) {
+    return { role: "tabpanel", tabIndex: 0, hidden: section !== key,
+      id: `${tabsId}-panel-${key}`, "aria-labelledby": `${tabsId}-tab-${key}`, className: "catalog-product-panel" };
+  }
   const [variations, setVariations] = useState<Variation[]>([]);
   const [error, setError] = useState<string | null>(null);
   const [note, setNote] = useState<string | null>(initialNote);
@@ -586,11 +601,11 @@ function ProductDetail({
   return (
     <div className="stack catalog-detail">
       <Glass as="section" className="pad">
-        <div className="row" style={{ justifyContent: "space-between", alignItems: "center", flexWrap: "wrap", gap: "var(--s-2)" }}>
-          <div>
-            <h2 style={{ fontSize: "1rem", margin: 0 }}>{product.nameInternal}</h2>
+        <div className="catalog-product-heading">
+          <div className="catalog-product-title">
+            <h2>{product.nameInternal}</h2>
             <p className="muted" style={{ margin: ".25rem 0 0" }}>
-              {product.code}
+              <bdi dir="ltr">{product.code}</bdi> · {formatCount(variations.length)} تنوع
               {product.status === "archived" ? " — بایگانی‌شده" : ""}
             </p>
           </div>
@@ -618,130 +633,140 @@ function ProductDetail({
         </p>
       ) : null}
 
-      <VariationBuilder
-        productId={productId}
-        onDone={(msg) => {
-          setNote(msg);
-          void load();
-        }}
-        onError={setError}
-      />
-
-      <Solid className="pad" as="section">
-        <h3 style={{ fontSize: ".95rem", marginTop: 0 }}>تنوع‌ها</h3>
-        {variations.length > 0 ? <label className="catalog-pick-all">
-          <input type="checkbox" aria-label="انتخاب همهٔ تنوع‌ها"
-            checked={variations.every(v => picked.has(v.id))}
-            ref={el => { if (el) el.indeterminate = variations.some(v => picked.has(v.id)) && !variations.every(v => picked.has(v.id)); }}
-            onChange={e => setPicked(e.target.checked ? new Set(variations.map(v => v.id)) : new Set())} />
-          <span>انتخاب همهٔ تنوع‌ها · {formatCount(picked.size)} از {formatCount(variations.length)} انتخاب شده</span>
-        </label> : null}
-        {variations.length === 0 ? (
-          <p className="muted" style={{ margin: 0 }}>
-            هنوز تنوعی ساخته نشده. تا تنوع نباشد، نه بارکدی هست نه قیمتی.
-          </p>
-        ) : (
-          <table className="grid">
-            <thead>
-              <tr>
-                <th />
-                <th>SKU</th>
-                <th>رنگ</th>
-                <th>سایز</th>
-                <th>بارکد</th>
-                <th>قیمت (تومان)</th>
-                <th>وضعیت</th>
-                <th />
-              </tr>
-            </thead>
-            <tbody>
-              {variations.map((v) => (
-                <tr key={v.id}>
-                  <td>
-                    <input
-                      type="checkbox"
-                      checked={picked.has(v.id)}
-                      onChange={() => toggle(v.id)}
-                      aria-label={`انتخاب ${v.sku}`}
-                    />
-                  </td>
-                  <td>{v.sku}</td>
-                  <td>{v.color ?? "—"}</td>
-                  <td>{v.size ?? "—"}</td>
-                  <td className="num">{v.barcode ?? "—"}</td>
-                  <td>
-                    {v.price === null ? (
-                      <span>
-                        <span className="dot dot--warn" aria-hidden="true">●</span>{" "}
-                        بدون قیمت
-                      </span>
-                    ) : (
-                      <>
-                        <span className="num">{toman(BigInt(v.price))}</span>
-                        {v.priceKind !== null && v.priceKind !== "regular" ? (
-                          <span className="muted"> ({PRICE_KIND[v.priceKind]})</span>
-                        ) : null}
-                      </>
-                    )}
-                  </td>
-                  <td>{VARIATION_STATUS[v.status] ?? v.status}</td>
-                  <td>
-                    <button
-                      type="button"
-                      className="btn btn--quiet"
-                      onClick={() => setHistoryOf(historyOf === v.id ? null : v.id)}
-                    >
-                      {historyOf === v.id ? "بستن تاریخچه" : "تاریخچه قیمت"}
-                    </button>
-                  </td>
+      <TabList id={tabsId} items={PRODUCT_SECTIONS} value={section} onChange={selectSection} label="پرونده کالا" />
+      <div {...panelProps("variants")}>
+        <Solid className="pad" as="section">
+          <h3 style={{ fontSize: ".95rem", marginTop: 0 }}>تنوع‌ها</h3>
+          {variations.length > 0 ? <label className="catalog-pick-all">
+            <input type="checkbox" aria-label="انتخاب همهٔ تنوع‌ها"
+              checked={variations.every(v => picked.has(v.id))}
+              ref={el => { if (el) el.indeterminate = variations.some(v => picked.has(v.id)) && !variations.every(v => picked.has(v.id)); }}
+              onChange={e => setPicked(e.target.checked ? new Set(variations.map(v => v.id)) : new Set())} />
+            <span>انتخاب همهٔ تنوع‌ها · {formatCount(picked.size)} از {formatCount(variations.length)} انتخاب شده</span>
+          </label> : null}
+          {variations.length === 0 ? (
+            <p className="muted" style={{ margin: 0 }}>
+              هنوز تنوعی ساخته نشده. تا تنوع نباشد، نه بارکدی هست نه قیمتی.
+            </p>
+          ) : (
+            <div className="catalog-variation-scroll" role="region" aria-label="فهرست تنوع‌ها" tabIndex={0}><table className="grid">
+              <thead>
+                <tr>
+                  <th />
+                  <th>SKU</th>
+                  <th>رنگ</th>
+                  <th>سایز</th>
+                  <th>بارکد</th>
+                  <th>قیمت (تومان)</th>
+                  <th>وضعیت</th>
+                  <th />
                 </tr>
-              ))}
-            </tbody>
-          </table>
-        )}
-      </Solid>
+              </thead>
+              <tbody>
+                {variations.map((v) => (
+                  <tr key={v.id}>
+                    <td>
+                      <input
+                        type="checkbox"
+                        checked={picked.has(v.id)}
+                        onChange={() => toggle(v.id)}
+                        aria-label={`انتخاب ${v.sku}`}
+                      />
+                    </td>
+                    <td>{v.sku}</td>
+                    <td>{v.color ?? "—"}</td>
+                    <td>{v.size ?? "—"}</td>
+                    <td className="num">{v.barcode ?? "—"}</td>
+                    <td>
+                      {v.price === null ? (
+                        <span>
+                          <span className="dot dot--warn" aria-hidden="true">●</span>{" "}
+                          بدون قیمت
+                        </span>
+                      ) : (
+                        <>
+                          <span className="num">{toman(BigInt(v.price))}</span>
+                          {v.priceKind !== null && v.priceKind !== "regular" ? (
+                            <span className="muted"> ({PRICE_KIND[v.priceKind]})</span>
+                          ) : null}
+                        </>
+                      )}
+                    </td>
+                    <td>{VARIATION_STATUS[v.status] ?? v.status}</td>
+                    <td>
+                      <button
+                        type="button"
+                        className="btn btn--quiet"
+                        onClick={() => setHistoryOf(historyOf === v.id ? null : v.id)}
+                      >
+                        {historyOf === v.id ? "بستن تاریخچه" : "تاریخچه قیمت"}
+                      </button>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table></div>
+          )}
+        </Solid>
 
-      <div id="product-labels"><ProductStockLabels key={productId} productId={productId} productName={product?.nameInternal ?? ""} variations={variations} selected={[...picked]} />{labelMode ? <LabelPrintQueue /> : null}</div>
-      {historyOf !== null ? <PriceHistory variationId={historyOf} /> : null}
+        {historyOf !== null ? <PriceHistory variationId={historyOf} /> : null}
 
-      <PricePanel
-        picked={[...picked]}
-        variations={variations}
-        onDone={(msg) => {
-          setNote(msg);
-          setPicked(new Set());
-          void load();
-        }}
-        onError={setError}
-      />
-
-      <Solid className="pad" as="section">
-        <h3 style={{ fontSize: ".95rem", marginTop: 0 }}>وضعیت کالا</h3>
-        <p className="muted" style={{ marginTop: 0 }}>
-          بایگانی، تنوع‌های فعال را هم می‌بندد تا از راه اسکن بارکد وارد سبد
-          نشوند. کالا حذف نمی‌شود — فاکتورهای قبلی به همین سطر ارجاع می‌دهند.
-        </p>
-        <button
-          type="button"
-          className="btn"
-          disabled={statusBusy}
-          aria-busy={statusBusy}
-          onClick={async () => {
-            if (statusBusy) return;
-            setStatusBusy(true);
-            const next = product.status === "archived" ? "active" : "archived";
-            try {
-              await catalog.setProductStatus(productId, next);
-              setNote(next === "archived" ? "کالا بایگانی شد." : "کالا فعال شد.");
-              await load();
-            } catch (err) {
-              setError(message(err));
-            } finally { setStatusBusy(false); }
+        <PricePanel
+          picked={[...picked]}
+          variations={variations}
+          onDone={(msg) => {
+            setNote(msg);
+            setPicked(new Set());
+            void load();
           }}
-        >
-          {statusBusy ? "در حال ثبت…" : product.status === "archived" ? "فعال‌کردن کالا" : "بایگانی‌کردن کالا"}
-        </button>
-      </Solid>
+          onError={setError}
+        />
+
+      </div>
+      <div {...panelProps("labels")}>
+        {visitedLabels && <>
+          <ProductStockLabels productId={productId} productName={product.nameInternal} variations={variations} selected={[...picked]} />
+          {labelMode ? <LabelPrintQueue /> : null}
+        </>}
+      </div>
+      <div {...panelProps("manage")}>
+        <VariationBuilder
+          productId={productId}
+          onDone={(msg) => {
+            setNote(msg);
+            void load();
+          }}
+          onError={setError}
+        />
+
+        <Solid className="pad" as="section">
+          <h3 style={{ fontSize: ".95rem", marginTop: 0 }}>وضعیت کالا</h3>
+          <p className="muted" style={{ marginTop: 0 }}>
+            بایگانی، تنوع‌های فعال را هم می‌بندد تا از راه اسکن بارکد وارد سبد
+            نشوند. کالا حذف نمی‌شود — فاکتورهای قبلی به همین سطر ارجاع می‌دهند.
+          </p>
+          <button
+            type="button"
+            className="btn"
+            disabled={statusBusy}
+            aria-busy={statusBusy}
+            onClick={async () => {
+              if (statusBusy) return;
+              setStatusBusy(true);
+              const next = product.status === "archived" ? "active" : "archived";
+              try {
+                await catalog.setProductStatus(productId, next);
+                setNote(next === "archived" ? "کالا بایگانی شد." : "کالا فعال شد.");
+                await load();
+              } catch (err) {
+                setError(message(err));
+              } finally { setStatusBusy(false); }
+            }}
+          >
+            {statusBusy ? "در حال ثبت…" : product.status === "archived" ? "فعال‌کردن کالا" : "بایگانی‌کردن کالا"}
+          </button>
+        </Solid>
+      </div>
     </div>
   );
 }

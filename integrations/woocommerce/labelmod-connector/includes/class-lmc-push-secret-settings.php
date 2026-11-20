@@ -22,7 +22,7 @@ class LMC_Push_Secret_Settings
         $raw = $_POST['push_secret'] ?? '';
         $clear = isset($_POST['clear_push_secret']) && $_POST['clear_push_secret'] === '1';
         $ok = is_string($raw) && LMC_Push_Secret::save(wp_unslash($raw), $clear);
-        wp_safe_redirect(add_query_arg('lmc_push_msg', $ok ? 'saved' : 'failed', admin_url('admin.php?page=' . LMC_Settings::PAGE)));
+        wp_safe_redirect(add_query_arg('lmc_push_msg', $ok ? 'saved' : 'failed', admin_url('admin.php?page=' . LMC_Settings::PAGE . '&lmc_section=live')));
         exit;
     }
 

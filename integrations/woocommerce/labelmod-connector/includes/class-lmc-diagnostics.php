@@ -80,8 +80,7 @@ class LMC_Diagnostics
     public static function render(): void
     {
         if (!current_user_can('manage_woocommerce')) { return; }
-        echo '<hr><h2>تست اتصال فقط‌خواندنی</h2><p>نسخهٔ افزونه: ' . esc_html(LMC_VERSION) . '</p>';
-        echo '<p>سفارش با SKU به Core می‌رود؛ موجودی با شناسهٔ ثابت تنوع از Core به سایت می‌آید. تست اتصال سفارش یا موجودی را تغییر نمی‌دهد.</p>';
+        echo '<h2>تست اتصال فقط‌خواندنی</h2><p class="description">برای بررسی اتصال، تست را اجرا کنید. برای بررسی یک سفارش یا تنوع، شناسهٔ آن را هم وارد کنید.</p>';
         echo '<form method="post">';
         wp_nonce_field('lmc_diagnostics');
         echo '<p><label>شمارهٔ داخلی سفارش (اختیاری) <input name="lmc_order_id" inputmode="numeric"></label></p>';

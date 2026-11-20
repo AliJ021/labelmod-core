@@ -23,7 +23,10 @@ test("ویرایش نام ذخیره و با Reload حفظ می‌شود؛ ان�
   await page.goto(`/?page=catalog&catalog.product=${product.id}&catalog.labels=1`);
   const panel = page.getByRole("region", { name: "موجودی و چاپ بارکد" });
   const queue = page.getByRole("region", { name: "فهرست چاپ گروهی" });
+  await expect(panel).toBeVisible();
+  await page.getByRole("tab", { name: "تنوع و قیمت" }).click();
   await page.getByRole("checkbox", { name: "انتخاب TR-S", exact: true }).check();
+  await page.getByRole("tab", { name: "موجودی و لیبل" }).click();
   await panel.getByRole("button", { name: "افزودن به فهرست چاپ گروهی", exact: true }).click();
   await panel.getByRole("button", { name: "پیش‌نمایش لیبل‌های انتخاب‌شده" }).click();
   await queue.getByRole("button", { name: "پیش‌نمایش ۱ لیبل" }).click();
