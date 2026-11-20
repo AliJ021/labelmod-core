@@ -28,7 +28,7 @@ describe("شمارهٔ عددی فاکتور: مهاجرت، هم‌زمانی �
   const role = `lmc_numeric_${randomBytes(6).toString("hex")}`;
   let admin: DbHandle; let owner: DbHandle; let app: DbHandle;
   const legacy: Array<{ id: string; number: string }> = [];
-  let beforeInvoices: unknown; let beforeAudit: unknown;
+  let beforeInvoices: { row: Record<string, unknown> }[]; let beforeAudit: unknown;
   let branch2: string; let wh2: string; let variation: string;
   const restricted = process.env.LMC_TEST_DB_ROLE === "app";
 
@@ -62,9 +62,14 @@ describe("شمارهٔ عددی فاکتور: مهاجرت، هم‌زمانی �
     legacy.push((await sql<{id:string;number:string}>`INSERT INTO sales.invoice(branch_id,warehouse_id,number,status)
       VALUES(${branch2}::uuid,${wh2}::uuid,'9007199254740993','finalized') RETURNING id,number`.execute(owner.db)).rows[0]!);
     await sql`SELECT platform.audit('invoice.finalize','invoice',${legacy[0]!.id},'{"number":"9007199254740993"}'::jsonb,${ACTOR}::uuid)`.execute(owner.db);
-    beforeInvoices = (await sql`SELECT to_jsonb(i) AS row FROM sales.invoice i ORDER BY id`.execute(owner.db)).rows;
+    beforeInvoices = (await sql<{row: Record<string, unknown>}>`SELECT to_jsonb(i) AS row FROM sales.invoice i ORDER BY id`.execute(owner.db)).rows;
     beforeAudit = (await sql`SELECT to_jsonb(a) AS row FROM platform.audit_log a ORDER BY id`.execute(owner.db)).rows;
     await sql.raw(readFileSync(path.join(root,"db/migrations/095_numeric_invoice_numbers.sql"),"utf8")).execute(owner.db);
+    assert.deepEqual((await sql`SELECT to_jsonb(i) AS row FROM sales.invoice i ORDER BY id`.execute(owner.db)).rows, beforeInvoices);
+    // Exercise the current API against the complete upgrade from the historical installation.
+    for (const file of readdirSync(path.join(root, "db/migrations")).sort().filter(f => f.endsWith(".sql") && f > "095_numeric_invoice_numbers.sql")) {
+      await sql.raw(readFileSync(path.join(root, "db/migrations", file), "utf8")).execute(owner.db);
+    }
     if (restricted) {
       execFileSync("bash",[path.join(root,"ops/db-roles.sh")],{cwd:root,stdio:"pipe",env:{...process.env,DATABASE_URL:url.toString(),APP_ROLE:role,APP_PASSWORD:"numeric-test-only",PGCLIENTENCODING:"UTF8"}});
       url.username=role; url.password="numeric-test-only";
@@ -83,7 +88,11 @@ describe("شمارهٔ عددی فاکتور: مهاجرت، هم‌زمانی �
     }
   });
   test("همهٔ سندهای شماره‌دار نگاشت دارند، شمارهٔ قدیمی و زنجیره حسابرسی تغییر نمی‌کنند", async () => {
-    assert.deepEqual((await sql`SELECT to_jsonb(i) AS row FROM sales.invoice i ORDER BY id`.execute(app.db)).rows,beforeInvoices);
+    const currentRows = (await sql<{row: Record<string, unknown>}>`SELECT to_jsonb(i) AS row FROM sales.invoice i ORDER BY id`.execute(app.db)).rows;
+    assert.equal(currentRows.length, beforeInvoices.length);
+    for (const [i, { row }] of beforeInvoices.entries()) {
+      for (const key of Object.keys(row)) assert.deepEqual(currentRows[i]!.row[key], row[key], key);
+    }
     // پس از مهاجرت، آماده‌سازی کالا حسابرسی تازه می‌افزاید؛ پیشوند تاریخی دقیقاً حفظ می‌شود.
     const audit = (await sql`SELECT to_jsonb(a) AS row FROM platform.audit_log a ORDER BY id`.execute(app.db)).rows;
     assert.deepEqual(audit.slice(0,(beforeAudit as unknown[]).length),beforeAudit);

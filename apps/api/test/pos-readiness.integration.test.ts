@@ -244,7 +244,7 @@ describe("آمادگی API صندوق", { skip }, () => {
       assert.equal(sources.statusCode,200,sources.body);assert.deepEqual(sources.json().payments,[{id:paymentId,methodCode:"snappay",reference:"SNAPP-CONFIRMED-1",remaining:"1000001"}]);
       // Disabling new receipts must not erase the ability to reverse historical confirmed receipts.
       assert.equal((await app.inject({method:"PUT",url:"/snappay/config",...a,payload:{accountId:""}})).statusCode,200);
-      const refund={invoiceId,reasonCode:"quality",refundAmount:"1000001",refundMethod:"snappay",lines:[{invoiceLineId:body.lines[0]!.id,qty:"1"}]};
+      const refund={invoiceId,reasonCode:"quality",reasonNote:"بازپرداخت این قلم به درخواست مشتری از درگاه اصلی انجام شد",refundAmount:"1000001",refundMethod:"snappay",lines:[{invoiceLineId:body.lines[0]!.id,qty:"1"}]};
       const missing=await app.inject({method:"POST",url:"/returns",...a,payload:refund});assert.equal(missing.statusCode,422,missing.body);
       const draft=await app.inject({method:"POST",url:"/returns",...a,payload:{...refund,refundReference:"SNAPP-REFUND-1",refundPaymentId:paymentId}});assert.equal(draft.statusCode,201,draft.body);
       const returned=await app.inject({method:"POST",url:`/returns/${draft.json().id}/post`,...a,payload:{}});assert.equal(returned.statusCode,200,returned.body);
@@ -304,7 +304,7 @@ describe("آمادگی API صندوق", { skip }, () => {
       assert.equal(sources.statusCode,200,sources.body);assert.deepEqual(sources.json().payments,[{id:paymentId,methodCode:"digipay",reference:"DIGI-CONFIRMED-1",remaining:"1000001"}]);
       // Disabling new receipts must not erase the ability to reverse historical confirmed receipts.
       assert.equal((await app.inject({method:"PUT",url:"/digipay/config",...a,payload:{accountId:""}})).statusCode,200);
-      const refund={invoiceId,reasonCode:"quality",refundAmount:"1000001",refundMethod:"digipay",lines:[{invoiceLineId:body.lines[0]!.id,qty:"1"}]};
+      const refund={invoiceId,reasonCode:"quality",reasonNote:"بازپرداخت این قلم به درخواست مشتری از درگاه اصلی انجام شد",refundAmount:"1000001",refundMethod:"digipay",lines:[{invoiceLineId:body.lines[0]!.id,qty:"1"}]};
       const missing=await app.inject({method:"POST",url:"/returns",...a,payload:refund});assert.equal(missing.statusCode,422,missing.body);
       const draft=await app.inject({method:"POST",url:"/returns",...a,payload:{...refund,refundReference:"DIGI-REFUND-1",refundPaymentId:paymentId}});assert.equal(draft.statusCode,201,draft.body);
       const returned=await app.inject({method:"POST",url:`/returns/${draft.json().id}/post`,...a,payload:{}});assert.equal(returned.statusCode,200,returned.body);
