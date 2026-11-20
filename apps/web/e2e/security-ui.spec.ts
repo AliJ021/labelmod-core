@@ -1,6 +1,5 @@
 import { accountScope, openZone } from "./fixtures";
 import { test, expect, type MockApi } from "./fixtures";
-import { code128Modules } from "../../api/src/catalog/code128";
 import type { Page } from "@playwright/test";
 
 function pos(api: MockApi) {
@@ -145,7 +144,10 @@ for (const format of ["EAN13","Code128"] as const) test(`local WASM decodes ${fo
   api.defaults["GET /shifts/current"] = {...(api.defaults["GET /shifts/current"] as object),branchId};
   // The real decoder reads pixels through the browser canvas API; only the camera is synthetic.
   const code = format === "EAN13" ? "5901234123457" : "LM-00123";
-  const encoded = format === "Code128" ? code128Modules(code) : "";
+  // Printed Code 128B fixture for LM-00123, including start, checksum and stop.
+  const encoded = format === "Code128"
+    ? "110100100001000110111010111011000100110111001011101111011011001100101100111001011110111011001011100110111000101100011101011"
+    : "";
   await page.addInitScript(({encoded}) => {
     class MissingFrames {
       static async getSupportedFormats() { return ["ean_13","code_128"]; }
