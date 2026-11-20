@@ -816,6 +816,7 @@ table.grid td small, table.ui-table td small { font-size: 0.6875rem; color: var(
 /* Catalog list and product workspace */
 .catalog-panel:not([hidden]), .catalog-product-panel:not([hidden]) {
   display: grid;
+  grid-template-columns: minmax(0, 1fr);
   min-width: 0;
   gap: var(--s-4);
 }

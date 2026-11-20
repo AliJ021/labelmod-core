@@ -88,3 +88,29 @@ test("انتخاب همهٔ تنوع‌ها، حالت نیمه‌انتخاب �
   for (const v of variations) await expect(page.getByRole("checkbox", { name: `انتخاب ${v.sku}`, exact: true })).not.toBeChecked();
   expect(api.calls.some(c => c.startsWith("PUT /prices"))).toBe(false);
 });
+
+test("product with 30 variations keeps price drafts and scrolls inside the table", async ({ page, api }) => {
+  const colors = ["سرمه‌ای", "قهوه‌ای", "مشکی", "موکا", "نباتی"];
+  const sizes = ["40", "42", "44", "46", "48", "50"];
+  const variations = colors.flatMap((color,c) => sizes.map((size,i) => ({
+    id: "v"+(c*6+i), sku: "LM10000-"+String(c*6+i+1).padStart(3,"0"), color, size,
+    barcode: String(2000000000000+c*6+i), status:"active", price:"12340000", priceKind:"regular", locked:false,
+  })));
+  api.defaults["GET /products/"+product.id] = { product:{...product,nameInternal:"شلوار پارچه‌ای مدل فیونا",variationCount:30},variations };
+  await page.goto("/?page=catalog&catalog.product="+product.id);
+  const list = page.getByRole("region", {name:"فهرست تنوع‌ها"});
+  await expect(list.locator("tbody tr")).toHaveCount(30);
+  await expect.poll(()=>list.evaluate(e=>e.scrollHeight>e.clientHeight)).toBe(true);
+  const checkbox=page.getByRole("checkbox",{name:"انتخاب LM10000-001",exact:true});
+  await checkbox.check();
+  const field=page.getByRole("textbox",{name:"مبلغ (تومان)"});
+  await field.fill("1250000");
+  await page.getByRole("tab",{name:"مدیریت کالا"}).click();
+  await expect(page.getByRole("button",{name:"بایگانی‌کردن کالا"})).toBeVisible();
+  await page.getByRole("tab",{name:"موجودی و لیبل"}).click();
+  await expect(page.getByRole("region",{name:"موجودی و چاپ بارکد"})).toBeVisible();
+  await page.getByRole("tab",{name:"تنوع و قیمت"}).click();
+  await expect(field).toHaveValue(/1.*2.*5/);
+  await expect(checkbox).toBeChecked();
+  expect(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth+1)).toBe(true);
+});
