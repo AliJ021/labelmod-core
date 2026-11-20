@@ -194,11 +194,15 @@ test("lost scan response survives reload and retries the same operation exactly 
   api.defaults["GET /pos/products"] = {products: [], exactVariationId: "66666666-6666-4666-8666-666666666666"};
   const attempts: Array<{key: string | undefined; body: unknown}> = [];
   const committed = new Set<string>();
+  const storageKey = "labelmod_pending_scan_v1:" + invoice.createdBy;
+  let confirmReplay!: () => void;
+  const responseReady = new Promise<void>(resolve => { confirmReplay = resolve; });
   api.handlers.set("POST /invoices/33333333-3333-4333-8333-333333333333/scan", async route => {
     const key = route.request().headers()["idempotency-key"];
     attempts.push({key, body: route.request().postDataJSON()});
     if (key) committed.add(key);
     if (attempts.length === 1) { await route.abort("connectionreset"); return; }
+    await responseReady;
     await route.fulfill({json: {invoice, replayed: true}});
   });
   await page.goto("/?page=pos");
@@ -209,6 +213,12 @@ test("lost scan response survives reload and retries the same operation exactly 
   await expect(entry).toBeDisabled();
   await page.reload();
   await expect(retry).toBeEnabled(); await retry.click();
+  try {
+    await expect.poll(() => attempts.length).toBe(2);
+    const pending = await page.evaluate(key => localStorage.getItem(key), storageKey);
+    expect(JSON.parse(pending!).key).toBe(attempts[0]?.key);
+  } finally { confirmReplay(); }
+  await expect.poll(() => page.evaluate(key => localStorage.getItem(key), storageKey)).toBeNull();
   await expect(retry).toHaveCount(0);
   expect(attempts).toHaveLength(2); expect(attempts[0]?.key).toBeTruthy();
   expect(attempts[1]).toEqual(attempts[0]); expect(committed.size).toBe(1);

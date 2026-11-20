@@ -661,7 +661,8 @@ function PosScreen({ actorId, mode, onMode, browseInvoices }: {
   const appendToActive = useRef<((body: PendingScan["body"]) => void) | null>(null);
   const addByBarcode = useCallback(async (barcode: string, variationId?: string, retry = false) => {
     const body: PendingScan["body"] = variationId ? {variationId,qty:"1"} : {barcode,qty:"1"};
-    if (scanRunning.current && !retry) {
+    if (scanRunning.current) {
+      if (retry) return;
       try {
         if (appendToActive.current) appendToActive.current(body);
         else staging.current.push(body);
@@ -1531,7 +1532,7 @@ function PosScreen({ actorId, mode, onMode, browseInvoices }: {
       {paymentStoreError && <p className="solid pos-alert" role="alert">{paymentStoreError}</p>}
       {pendingScan && !working && <div className="solid pad" role="status">
         <p>نتیجهٔ اسکن هنوز قطعی نیست. برای جلوگیری از ثبت دوباره، ابتدا همین اسکن را تعیین تکلیف کنید.</p>
-        <button type="button" className="btn" disabled={working} onClick={() => void addByBarcode("", undefined, true)}>بررسی و تلاش دوبارهٔ همان اسکن</button>
+        <button type="button" className="btn" disabled={!shift || !branchId || !warehouseId || !payIdle || !!scanStorageError || !!paymentStoreError} onClick={() => void addByBarcode("", undefined, true)}>بررسی و تلاش دوبارهٔ همان اسکن</button>
       </div>}
 
       {/* عنصر ساده با کلاس `solid`، نه کامپوننت `Solid`: آن `role`
