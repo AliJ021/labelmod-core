@@ -46,6 +46,8 @@ class LMC_Stored_Product
 // این خوراک بی stockRev است، پس مسیر قدیمی (apply_legacy) را می‌سنجد؛ قفل همیشه آزاد است.
 $GLOBALS['wpdb'] = new class {
     public string $prefix = 'wp_';
+    public string $options = 'wp_options';
+    public string $last_error = '';
     public function prepare($q, ...$a) { return vsprintf(str_replace(['%s', '%d'], ["'%s'", '%d'], $q), $a); }
     public function get_var($q) { return str_contains($q, 'GET_LOCK') ? '1' : null; }
     public function query($q) { return 1; }
@@ -111,6 +113,13 @@ foreach ([
     assert_eq("$label replay does not save", $GLOBALS['stock_saves'], $saves);
 }
 
+$GLOBALS['stock_items'] = [['variationId' => 'saden-size', 'available' => '0', 'price' => '99000000']];
+$result = LMC_Stock_Sync::run();
+$saden = wc_get_product(42);
+assert_eq('matching size updates price even at zero stock',
+    [$result['updated'], $saden->get_regular_price(), $saden->get_stock_quantity(), $saden->get_stock_status()],
+    [1, '9900000', 0, 'outofstock']);
+
 // «صفر به‌روز شد» در سه حالت متفاوت؛ گزارش باید علت قابل بررسی بدهد.
 $requests = $GLOBALS['stock_requests'];
 set_settings(['sync_stock' => 'no']);
@@ -123,7 +132,7 @@ set_settings(['sync_stock' => 'yes', 'sync_price' => 'no', 'link_by_sku' => 'no'
 $GLOBALS['stock_items'] = [];
 $empty = LMC_Stock_Sync::run();
 assert_eq('empty feed has zero received', $empty['received'], 0);
-assert_eq('empty feed explains warehouse balance check', str_contains(LMC_Stock_Sync::manual_summary($empty), 'وجود مانده'), true);
+assert_eq('empty page reports no new rows', str_contains(LMC_Stock_Sync::manual_summary($empty), 'سطر تازه‌ای'), true);
 assert_eq('price disabled is explicit', str_contains(LMC_Stock_Sync::manual_summary($empty), 'همگام‌سازی قیمت خاموش'), true);
 
 $GLOBALS['stock_items'] = [['variationId' => 'synthetic-stock', 'sku' => 'synthetic-sku', 'available' => '4', 'price' => null]];

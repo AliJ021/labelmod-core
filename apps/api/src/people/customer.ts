@@ -78,6 +78,8 @@ export interface Customer {
   id: string;
   mobile: string;
   fullName: string | null;
+  salutation: "mr" | "ms" | null;
+  birthDate: string | null;
   email: string | null;
   status: string;
   creditLimit: string;
@@ -124,6 +126,8 @@ interface Row {
   id: string;
   mobile_normalized: string;
   full_name: string | null;
+  salutation: "mr" | "ms" | null;
+  birth_iso: string | null;
   email: string | null;
   status: string;
   credit_limit: string;
@@ -150,6 +154,7 @@ function toJson(r: Row): Customer {
     id: r.id,
     mobile: r.mobile_normalized,
     fullName: r.full_name,
+    birthDate: r.birth_iso, salutation: r.salutation,
     email: r.email,
     status: r.status,
     creditLimit: serializeMoney(parseMoney(r.credit_limit)),
@@ -196,7 +201,7 @@ const ledgerUnposted = (branches: CustomerBranchScope) => sql`
                AND (${branches === "all"} OR u.branch_id = ANY(${branches === "all" ? [] : branches}::uuid[]))), 0)`;
 
 const selectCustomer = (branches: CustomerBranchScope) => sql`
-  SELECT c.*,
+  SELECT c.*, c.birth_date::text AS birth_iso,
          ${ledgerUnposted(branches)}::text AS ledger_unposted,
          greatest(${ledgerNet(branches)}, 0)::text AS ledger_owed,
          greatest(-${ledgerNet(branches)}, 0)::text AS ledger_credit,
@@ -216,6 +221,19 @@ const selectCustomer = (branches: CustomerBranchScope) => sql`
     FROM sales.customer c
 `;
 
+function customerSearchPredicate(term: string, branches: CustomerBranchScope) {
+    const branchFilter = branches === "all"
+      ? sql``
+      : sql`AND (
+          EXISTS (SELECT 1 FROM sales.customer_branch cb
+                   WHERE cb.customer_id = c.id
+                     AND cb.branch_id = ANY(${branches}::uuid[]))
+        )`;
+    return sql`c.status <> 'merged' ${branchFilter} AND
+      (${term}='' OR c.mobile_normalized LIKE ${`%${term}%`} OR c.full_name ILIKE ${`%${term}%`}
+       OR sales.normalize_mobile(${term}) = c.mobile_normalized)`;
+}
+
 export class CustomerService {
   readonly #db: Db;
 
@@ -230,33 +248,28 @@ export class CustomerService {
    * همان درسی که `GET /receipts/lookup` داد.
    */
   async search(input: {
+    title?: string | undefined;
     q?: string | undefined;
     limit: number;
     branches: CustomerBranchScope;
   }): Promise<Customer[]> {
-    const term = (input.q ?? "").trim();
-    const branchFilter = input.branches === "all"
-      ? sql``
-      : sql`AND (
-          EXISTS (SELECT 1 FROM sales.customer_branch cb
-                   WHERE cb.customer_id = c.id
-                     AND cb.branch_id = ANY(${input.branches}::uuid[]))
-        )`;
     const rows = await sql<Row>`
       ${selectCustomer(input.branches)}
-      ${
-        term === ""
-          ? sql`WHERE c.status <> 'merged' ${branchFilter}`
-          : sql`WHERE c.status <> 'merged'
-                  AND (c.mobile_normalized LIKE ${`%${term}%`}
-                       OR c.full_name ILIKE ${`%${term}%`}
-                       OR sales.normalize_mobile(${term}) = c.mobile_normalized)
-                  ${branchFilter}`
-      }
+      WHERE ${customerSearchPredicate((input.q ?? "").trim(), input.branches)}
+      AND (${input.title ?? "all"}='all' OR coalesce(c.salutation,'unknown')=${input.title ?? "all"})
       ORDER BY c.created_at DESC
       LIMIT ${input.limit}
     `.execute(this.#db);
     return rows.rows.map(toJson);
+  }
+
+  async titleCounts(term: string, branches: CustomerBranchScope) {
+    const result = await sql<{mr: number; ms: number; unknown: number}>`
+      SELECT count(*) FILTER (WHERE c.salutation='mr')::int AS mr,
+        count(*) FILTER (WHERE c.salutation='ms')::int AS ms,
+        count(*) FILTER (WHERE c.salutation IS NULL)::int AS unknown FROM sales.customer c
+        WHERE ${customerSearchPredicate(term.trim(), branches)}`.execute(this.#db);
+    return result.rows[0]!;
   }
 
   /** جمع «طلب» و «اعتبار» همین مشتریان، با همان `ledgerNet` ستون‌ها و در SQL. */
@@ -481,6 +494,8 @@ export class CustomerService {
   async update(input: {
     id: string;
     fullName?: string | null | undefined;
+    salutation?: "mr" | "ms" | null | undefined;
+    birthDate?: string | null | undefined;
     email?: string | null | undefined;
     status?: string | undefined;
     creditLimit?: bigint | undefined;
@@ -519,6 +534,8 @@ export class CustomerService {
       await trx
         .updateTable("sales.customer")
         .set({
+          ...(input.salutation === undefined ? {} : {salutation:input.salutation}),
+          ...(input.birthDate === undefined ? {} : {birth_date:sql<Date | null>`${input.birthDate}::date`}),
           ...(input.fullName === undefined ? {} : { full_name: input.fullName }),
           ...(input.email === undefined ? {} : { email: input.email }),
           ...(input.status === undefined ? {} : { status: input.status }),

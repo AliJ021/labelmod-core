@@ -48,6 +48,12 @@ services:
       CSRF_COOKIE_NAME: ${CSRF_COOKIE_NAME:-labelmod_csrf}
       SMS_CREDENTIAL_KEY: ${SMS_CREDENTIAL_KEY:-}
       WEB_PUSH_SECRET: ${WEB_PUSH_SECRET:-}
+      WOO_SIGNING_KEY_FILE: /var/lib/labelmod-woo/signing-key
+      BACKUP_MANAGER_SOCKET: /run/labelmod-panel-backup/manager.sock
+      BACKUP_MANAGER_TOKEN_FILE: /run/labelmod-panel-backup/rpc-token
+    volumes:
+      - woo_keys:/var/lib/labelmod-woo
+      - panel_backup_channel:/run/labelmod-panel-backup:ro
     depends_on:
       db:
         condition: service_healthy
@@ -88,15 +94,33 @@ services:
       SMS_API_KEY: ${SMS_API_KEY:-}
       SMS_CREDENTIAL_KEY: ${SMS_CREDENTIAL_KEY:-}
       WEB_PUSH_SECRET: ${WEB_PUSH_SECRET:-}
+      WOO_SIGNING_KEY_FILE: /var/lib/labelmod-woo/signing-key
       NOTIFY_WEBHOOK_TOKEN: ${NOTIFY_WEBHOOK_TOKEN:-}
       WORKER_INTERVAL_MS: ${WORKER_INTERVAL_MS:-1000}
       WORKER_BATCH: ${WORKER_BATCH:-20}
       WORKER_LEASE_SECONDS: ${WORKER_LEASE_SECONDS:-120}
       WORKER_LANE: ${WORKER_LANE:-all}
+    volumes:
+      - woo_keys:/var/lib/labelmod-woo:ro
     depends_on:
       db:
         condition: service_healthy
     # هیچ پورتی، هیچ Healthcheck HTTP: این یک حلقه است، نه یک سرور.
+    restart: unless-stopped
+
+  panel-backup:
+    build:
+      context: .
+      dockerfile: apps/api/Dockerfile
+      target: panel-backup
+    environment:
+      OPS_DATABASE_URL: postgres://labelmod:${DB_PASSWORD:?DB_PASSWORD لازم است}@db:5432/labelmod
+    volumes:
+      - panel_backup_files:/var/lib/labelmod-panel-backup
+      - panel_backup_channel:/run/labelmod-panel-backup
+    depends_on:
+      db:
+        condition: service_healthy
     restart: unless-stopped
 
   caddy:
@@ -149,3 +173,6 @@ volumes:
   caddy_data:
   caddy_config:
   scheduler_state:
+  woo_keys:
+  panel_backup_files:
+  panel_backup_channel:

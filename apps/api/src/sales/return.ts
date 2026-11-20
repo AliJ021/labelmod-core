@@ -21,17 +21,9 @@ import type { Database } from "../db/types.ts";
 import { parseMoney, serializeMoney } from "../lib/money.ts";
 import { setActor } from "../lib/idempotency.ts";
 
-export class ReturnError extends Error {
-  readonly statusCode: number;
-  readonly code: string;
-
-  constructor(code: string, message: string, statusCode = 409) {
-    super(message);
-    this.name = "ReturnError";
-    this.code = code;
-    this.statusCode = statusCode;
-  }
-}
+import { ReturnError } from "./return-error.ts";
+export { ReturnError } from "./return-error.ts";
+import { refundPlan, recordSplit, type SplitRefund } from "./refund-plan.ts";
 
 export interface ReturnLineInput {
   invoiceLineId: string;
@@ -54,6 +46,7 @@ export interface SaleReturn {
   taxAmount: bigint;
   refundAmount: bigint;
   refundMethod: string | null;
+  payouts: Array<{method:string;amount:string;reference:string|null;sourceId:string|null}>;
   refundReference: string | null;
   refundPaymentId: string | null;
   receivableApplied: bigint;
@@ -126,7 +119,12 @@ export class ReturnService {
       .where("return_id", "=", returnId)
       .execute();
 
+    const payouts=await sql<SaleReturn["payouts"][number]>`SELECT p.method_code method,p.amount::text,p.ref_no reference,
+      coalesce(p.refund_origin_id,r.refund_payment_id) "sourceId" FROM treasury.payment p
+      JOIN sales.sale_return r ON r.id=p.return_id WHERE r.id=${returnId}::uuid AND p.direction='out'
+      AND p.status IN ('succeeded','settled','reconciled') ORDER BY p.method_code,p.id`.execute(this.#db);
     return {
+      payouts:payouts.rows,
       id: r.id,
       number: r.number,
       invoiceId: r.invoice_id,
@@ -438,13 +436,42 @@ export class ReturnService {
     trx: Transaction<Database>,
     returnId: string,
     actorId: string,
+    split?: SplitRefund,
   ): Promise<string> {
     await setActor(trx, actorId);
+    const doc = await trx.selectFrom("sales.sale_return").select(["invoice_id","refund_method","refund_amount",
+      "refund_reference","reason_note","shift_id","status","number"]).where("id","=",returnId).forUpdate().executeTakeFirstOrThrow();
+    if (doc.status === "posted" && doc.number) return doc.number;
+    await trx.selectFrom("sales.invoice").select("id").where("id","=",doc.invoice_id).forUpdate().executeTakeFirstOrThrow();
+    const sources = await sql<{id:string; method:string; status:string}>`
+      SELECT p.id,p.method_code AS method,p.status FROM treasury.payment p
+      JOIN sales.exchange_ancestors(${doc.invoice_id}::uuid) a ON p.invoice_id=a.invoice_id
+      WHERE p.direction='in' AND p.status NOT IN ('failed','reversed') ORDER BY p.id FOR UPDATE OF p`.execute(trx);
+    if (sources.rows.some(p => ["initiated","pending","unknown"].includes(p.status)))
+      throw new ReturnError("payment_review_required","ابتدا وضعیت دریافت نامشخص را بررسی کنید.",409);
+    const payout = doc.refund_method ?? "cash";
+    const amount = parseMoney(doc.refund_amount);
+    const plan = split ? await recordSplit(trx,{id:returnId,invoice:doc.invoice_id,shift:doc.shift_id,
+      amount,reason:doc.reason_note,split}) : null;
+    if (!split && amount > 0n && !doc.refund_reference?.trim()) {
+      const method = await trx.selectFrom("treasury.payment_method").select("requires_ref")
+        .where("code", "=", payout).executeTakeFirst();
+      if (method?.requires_ref)
+        throw new ReturnError("refund_reference_required", "شماره پیگیری بازپرداخت را وارد کنید.", 422);
+    }
+    if (!split && amount>0n && sources.rows.length && !doc.reason_note?.trim() &&
+        (!sources.rows.some(p=>p.method===payout) || (new Set(sources.rows.map(p=>p.method)).size>1 &&
+         (await refundPlan(trx,doc.invoice_id,amount)).legs.some(l=>l.amount!=="0" && l.method!==payout))))
+      throw new ReturnError("payout_reason_required","برای تغییر روش بازپرداخت دلیل بنویسید.",422);
     const r = await sql<{ post_return: string }>`
       SELECT sales.post_return(${returnId}::uuid, ${actorId}::uuid) AS post_return
     `.execute(trx);
     const number = r.rows[0]?.post_return;
     if (!number) throw new ReturnError("post_failed", "ثبت مرجوعی ناموفق بود", 500);
+    await sql`SELECT platform.audit('return.payout_basis','sale_return',${returnId}::text,
+      ${JSON.stringify({invoice:doc.invoice_id,sourcePayments:sources.rows.map(p=>p.id),method:split ? null : payout,
+        ...(split && {actual:split.legs, suggested:plan?.legs,changeReason:split.reason ?? doc.reason_note}),
+        amount:doc.refund_amount,shift:doc.shift_id,reference:doc.refund_reference})}::jsonb,${actorId}::uuid,${doc.reason_note})`.execute(trx);
     return number;
   }
 
@@ -487,6 +514,7 @@ export function returnToJson(r: SaleReturn, showCost: boolean) {
     taxAmount: serializeMoney(r.taxAmount),
     refundAmount: serializeMoney(r.refundAmount),
     refundMethod: r.refundMethod,
+    payouts:r.payouts,
     refundReference: r.refundReference,
     refundPaymentId: r.refundPaymentId,
     receivableApplied: serializeMoney(r.receivableApplied),

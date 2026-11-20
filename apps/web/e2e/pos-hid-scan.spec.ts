@@ -96,12 +96,30 @@ test("HID: اسکن با Enter در کادر فوکوس‌دار — بارکد 
   expect(scans[0]).toMatchObject({ barcode: EAN, qty: "1" });
   await expect(entry).toHaveValue("");
   await expect(entry).toBeFocused();
-  // اسکن دوم پشت سر هم: باز هم کامل و بی نشت. اسکن اول باید پیش‌تر پایان یافته باشد
-  // (کادر در حال کار فقط‌خواندنی است و اسکن تازه را «عملیات قبلی» رد می‌کند).
   await expect(entry).toBeEditable();
   await scan(page, [...digits(EAN), "Enter"], browserName);
   await expect.poll(() => scans.length).toBe(2);
   await expect(entry).toHaveValue("");
+});
+
+test("دو اسکن پیاپی تا پاسخ کند اول در صف همان سبد می‌مانند", async ({page,api,browserName})=>{
+  const {entry} = await open(page,api);
+  let release!:()=>void;
+  const held = new Promise<void>(resolve=>{release=resolve;});
+  const keys:string[]=[];
+  api.handlers.set(`POST /invoices/${id}/scan`,async route=>{
+    keys.push(route.request().headers()["idempotency-key"]!);
+    if (keys.length===1) await held;
+    await route.fulfill({json:{invoice:draft,replayed:false}});
+  });
+  await entry.focus();
+  await scan(page,[...digits(EAN),"Enter"],browserName);
+  await expect.poll(()=>keys.length).toBe(1);
+  await scan(page,[...digits(EAN),"Enter"],browserName);
+  await expect.poll(()=>page.evaluate(a=>JSON.parse(localStorage.getItem("labelmod_pending_scan_v1:"+a) ?? "[]").length,actor)).toBe(2);
+  release();
+  await expect.poll(()=>keys.length).toBe(2);
+  expect(new Set(keys).size).toBe(2);
 });
 
 test("HID: بیرون از هر کادر، کد قدیمی ۱۷ رقمی هم کامل و بی‌تغییر ثبت می‌شود", async ({ page, api, browserName }) => {
@@ -167,7 +185,12 @@ for (const order of ["after", "with"] as const) {
     await expect.poll(() => api.calls, "بازیابی شروع شده").toContain(`GET /invoices/${id}`);
     await page.locator("body").click({ position: { x: 1, y: 1 } });
     if (order === "with") { release(); await scan(page, [...digits(EAN), "Enter"], browserName); }
-    else { await scan(page, [...digits(EAN), "Enter"], browserName); release(); }
+    else {
+      await scan(page, [...digits(EAN), "Enter"], browserName);
+      await expect.poll(() => page.evaluate(() => Object.keys(localStorage).some(k =>
+        k.startsWith("labelmod_pending_scan_v1:") && localStorage.getItem(k)?.includes("barcode")))).toBe(true);
+      release();
+    }
     await expect.poll(() => scans.length).toBe(1);
     expect(scans[0]).toMatchObject({ barcode: EAN });
     expect(api.calls.filter((c) => c === "POST /invoices"), "فاکتور دومی ساخته نشد").toEqual([]);

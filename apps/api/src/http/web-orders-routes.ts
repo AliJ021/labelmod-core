@@ -21,6 +21,7 @@ import type { Db } from "../db/client.ts";
 import { AuthError } from "../auth/service.ts";
 import { requireForSession } from "../auth/permission.ts";
 import { assertBranch } from "../sales/scope.ts";
+import { wooSigningKey } from "../lib/private-key-file.ts";
 import { readWooSite } from "../platform/woocommerce-site.ts";
 import { hasControlChars } from "../lib/text.ts";
 import {
@@ -35,13 +36,14 @@ export function registerWebOrdersRoutes(app: FastifyInstance, db: Db, secret: st
   async function site(req: FastifyRequest): Promise<WooOrdersSite | { state: "unavailable"; code: string; message: string }> {
     if (!req.session) throw new AuthError("no_session", "وارد نشده‌اید");
     await requireForSession(db, req.session, "web.orders.view");
-    const local = await readWooSite(db, secret);
+    const signingKey = await wooSigningKey(secret);
+    const local = await readWooSite(db, signingKey);
     if (!local.warehouseId) {
       return { state: "unavailable", code: "warehouse", message: "انبار سایت تعیین نشده یا معتبر نیست؛ web.stock_warehouse را بررسی کنید." };
     }
     await assertBranch(db, req.session.userId, local.branchId);
     if (!local.siteUrl) return { state: "unavailable", code: "site_url", message: "نشانی سایت (web.site_url) تنظیم نشده است." };
-    return { siteUrl: local.siteUrl, secret, branchId: local.branchId, warehouseId: local.warehouseId };
+    return { siteUrl: local.siteUrl, secret: signingKey, branchId: local.branchId, warehouseId: local.warehouseId };
   }
 
   /** فیلترهای فهرست؛ `coerce` چون GET رشته می‌دهد و بدنهٔ POST عدد. */

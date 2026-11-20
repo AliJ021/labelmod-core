@@ -55,14 +55,15 @@ const snapshot = () => window.location.search;
  * `force` فقط برای جابه‌جایی‌ای که پس از پایان نشست رخ می‌دهد (خروج، تغییر
  * رمز): آنجا پوسته از قبل Unmount شده و چیزی برای نگه‌داشتن نمانده است.
  */
-export function navigate(href: string, replace = false, force = false): void {
+export function navigate(href: string, replace = false, force = false, reselect = false): boolean {
   const target = new URL(href, window.location.href);
-  if (target.origin !== window.location.origin) return;
-  if (target.href === window.location.href) return;
-  if (!force && !mayLeave()) return;
+  if (target.origin !== window.location.origin) return false;
+  if (target.href === window.location.href) return reselect && mayLeave();
+  if (!force && !mayLeave()) return false;
   window.history[replace ? "replaceState" : "pushState"](null, "", target);
   committed = window.location.href;
   window.dispatchEvent(new Event(changed));
+  return true;
 }
 
 /**

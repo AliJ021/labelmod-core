@@ -69,6 +69,8 @@ export const RECEIPT_STYLES = `
     .print-bar { display: none !important; }
     html, body { background: #fff; margin: 0; padding: 0; }
     .sheet { width: 72mm; max-width: 72mm; margin: 0 auto; padding: 3mm 0 4mm; box-shadow: none; font-size: 9pt; }
+    :root { --muted: #000; }
+    .thermal-logo .logo { filter: none; image-rendering: pixelated; }
     .logo { width: 62mm; max-width: 62mm; max-height: 40mm; }
     .shop { font-size: 11pt; margin-top: 1.5mm; }
     .brand { font-size: 18pt; }

@@ -1,5 +1,5 @@
 import { api } from "./api.ts";
-export interface WooConfig { siteUrl: string; warehouseId: string; pushEnabled: boolean; signingConfigured: boolean; priceList: string }
+export interface WooConfig { canManageKeys?: boolean; siteUrl: string; warehouseId: string; pushEnabled: boolean; signingConfigured: boolean; priceList: string }
 export interface WooResult {
   ok: boolean; message: string;
   remote: null | { pluginVersion: string; wooVersion: string; siteUrl: string; apiKeyConfigured: boolean; pushConfigured?: boolean;

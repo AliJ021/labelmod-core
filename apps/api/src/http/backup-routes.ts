@@ -1,3 +1,4 @@
+import { readPrivateKey } from "../lib/private-key-file.ts";
 import { request } from "node:http";
 import type { FastifyInstance, FastifyRequest } from "fastify";
 import { z } from "zod";
@@ -13,8 +14,8 @@ export function registerBackupRoutes(app:FastifyInstance,db:Db,config:Config) {
     await requireForSession(db,req.session,operation);
     if(await branchesOf(db,req.session.userId)!=="all") throw new InvoiceError("backup_scope","بکاپ سراسری فقط برای مدیر مجاز همهٔ شعب است.",403);
   }
-  function rpc(req:FastifyRequest,method:string,url:string,body?:unknown) {
-    const socketPath=config.BACKUP_MANAGER_SOCKET,token=config.BACKUP_MANAGER_TOKEN;
+  async function rpc(req:FastifyRequest,method:string,url:string,body?:unknown) {
+    const socketPath=config.BACKUP_MANAGER_SOCKET,token=config.BACKUP_MANAGER_TOKEN ?? (config.BACKUP_MANAGER_TOKEN_FILE ? await readPrivateKey(config.BACKUP_MANAGER_TOKEN_FILE) : undefined);
     if(!socketPath || !token) throw new InvoiceError("backup_unavailable","سرویس مستقل پشتیبان‌گیری هنوز به این نصب متصل نشده است.",503);
     return new Promise<import("node:http").IncomingMessage>((resolve,reject)=>{
       const data=body===undefined?undefined:JSON.stringify(body);
@@ -25,7 +26,7 @@ export function registerBackupRoutes(app:FastifyInstance,db:Db,config:Config) {
   }
   app.get("/backups",async(req,reply)=>{
     await guard(req,"backup.view");reply.header("Cache-Control","no-store");
-    if(!config.BACKUP_MANAGER_SOCKET || !config.BACKUP_MANAGER_TOKEN) return {available:false,backups:[],jobs:[],needsRecovery:false};
+    if(!config.BACKUP_MANAGER_SOCKET || !(config.BACKUP_MANAGER_TOKEN || config.BACKUP_MANAGER_TOKEN_FILE)) return {available:false,backups:[],jobs:[],needsRecovery:false};
     const response=await rpc(req,"GET","/status");return reply.code(response.statusCode??502).type("application/json").send(response);
   });
   app.post("/backups",async(req,reply)=>{

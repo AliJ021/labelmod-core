@@ -10,7 +10,7 @@ import { formatJalali } from "../lib/format.ts";
 
 interface Manifest {id:string;createdAt:string;bytes:number;serverMajor:number;}
 interface Job {id:string;backupId:string;phase:string;createdAt:string;updatedAt:string;error?:string;safetyBackupId?:string;}
-interface Status {available:boolean;backups:Array<{id:string;valid:boolean;manifest:Manifest|null}>;jobs:Job[];needsRecovery:boolean;busy?:boolean;}
+interface Status {restoreEnabled?:boolean;available:boolean;backups:Array<{id:string;valid:boolean;manifest:Manifest|null}>;jobs:Job[];needsRecovery:boolean;busy?:boolean;}
 const phases:Record<string,string>={queued:"در صف",verifying:"بررسی صحت فایل",rehearsing:"بازیابی آزمایشی و کنترل مالی",quiescing:"توقف ثبت‌های سامانه",safety_backup:"ساخت بکاپ بازگشت",swapping:"جایگزینی دیتابیس",validating:"کنترل نسخهٔ جایگزین",resuming:"راه‌اندازی مجدد",completed:"بازیابی کامل شد؛ اتصال‌های بیرونی منتظر بررسی مدیرند",failed:"متوقف شد؛ اصلی جایگزین نشده",rolled_back:"بازگشت به نسخهٔ قبل انجام شد",manual_recovery:"رسیدگی مدیر سامانه لازم است"};
 const backupDay=new Intl.DateTimeFormat("en-CA",{year:"numeric",month:"2-digit",day:"2-digit",timeZone:"Asia/Tehran"});
 const backupTime=new Intl.DateTimeFormat("fa-IR",{timeStyle:"medium",timeZone:"Asia/Tehran"});
@@ -79,7 +79,7 @@ export function Backups() {
       {!status.backups.length?<ResultState title="هنوز بکاپی در این سرویس ثبت نشده است." description={permissions.has("create")?"برای تهیهٔ نخستین نسخه، از «ساخت بکاپ تازه» استفاده کنید.":"ساخت نسخهٔ تازه به دسترسی پشتیبان‌گیری نیاز دارد."}/>:<ul className="operations-list">{status.backups.map(b=><li key={b.id} className="operations-entry">
         {b.valid&&b.manifest?<><div className="operations-entry-head"><strong>{date(b.manifest.createdAt)}</strong><StatusBadge state="archived" label="نسخهٔ پشتیبان" /></div><p className="muted small">{(b.manifest.bytes/1048576).toFixed(1)} مگابایت</p><div className="operations-actions">
           {permissions.has("download")&&<a className="btn" href={`/api/backups/${b.id}/download`}>دانلود بکاپ</a>}
-          {permissions.has("restore")&&<button className="btn" type="button" disabled={busy||active||unavailable||!!status?.needsRecovery} onClick={()=>{setSelected(b.manifest);setConfirmed(false);setPassword("");setCode("");operation.current=null;}}>بررسی برای بازیابی</button>}
+          {status.restoreEnabled !== false && permissions.has("restore")&&<button className="btn" type="button" disabled={busy||active||unavailable||!!status?.needsRecovery} onClick={()=>{setSelected(b.manifest);setConfirmed(false);setPassword("");setCode("");operation.current=null;}}>بررسی برای بازیابی</button>}
         </div></>:<><StatusBadge state="failed" label="غیرقابل استفاده" /><p role="alert">این بکاپ امضای معتبر ندارد و قابل استفاده نیست.</p></>}
       </li>)}</ul>}
       </section>

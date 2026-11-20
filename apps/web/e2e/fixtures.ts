@@ -165,6 +165,7 @@ export class MockApi {
   defaults: Record<string, unknown> = {
     "GET /pos/policy": { requireCustomer: false },
     "GET /auth/me": me, "GET /branches": { branches }, "GET /reports/daily": daily, "GET /reports/daily/hourly": DEFAULT_HOURLY, "GET /reports/daily/channels": DEFAULT_CHANNELS,
+    "GET /pos/sellers": { sellers:[{id: me.id, name: me.fullName},{id:staff.id,name:staff.fullName}], sessionId:"test-session" },
     "GET /reports/dashboard/period": periodBody(),
     "GET /dashboard/stock-sync": syncBody(),
     "GET /dashboard/operations": opsBody(),

@@ -23,42 +23,25 @@
 /** فرمت‌هایی که این فروشگاه چاپ و می‌خواند. */
 export const BARCODE_FORMATS = ["ean_13", "ean_8", "code_128"] as const;
 
-/**
- * مهار تکرار — مهم‌ترین منطق این فایل.
- *
- * دوربین یک بارکد را **ده‌ها بار در ثانیه** می‌بیند. بدون مهار، یک
- * بار گرفتن گوشی جلوی برچسب، سی قلم به سبد اضافه می‌کرد — و
- * صندوق‌دار تازه سرِ پرداخت می‌فهمید.
- *
- * قاعده: همان بارکد تا `holdMs` دوباره شمرده نمی‌شود؛ بارکد
- * **متفاوت** فوراً پذیرفته می‌شود، چون اسکن پشت‌سرهم دو کالا باید
- * روان باشد.
- */
+/** یک برچسب تا خروج از کادر یک بار شمرده می‌شود، حتی با تأخیر پردازش. */
 export class ScanThrottle {
-  readonly #hold: number;
   #last: string | null = null;
-  #at = 0;
+  #absent = 0;
 
-  constructor(holdMs = 1500) {
-    this.#hold = holdMs;
+  absentFrame(): void {
+    if (++this.#absent >= 3) this.reset();
   }
 
-  /** آیا این خواندن یک اسکن **تازه** است؟ */
-  accept(code: string, at: number): boolean {
-    if (code === this.#last && at - this.#at < this.#hold) {
-      // همان بارکد، هنوز داخل پنجره: فقط زمان را جلو می‌بریم تا
-      // نگه‌داشتنِ ممتد گوشی، پنجره را تمام نکند.
-      this.#at = at;
-      return false;
-    }
+  accept(code: string): boolean {
+    this.#absent = 0;
+    if (this.#last === code) return false;
     this.#last = code;
-    this.#at = at;
     return true;
   }
 
   reset(): void {
     this.#last = null;
-    this.#at = 0;
+    this.#absent = 0;
   }
 }
 
@@ -85,10 +68,11 @@ export function hasNativeDetector(g: Record<string, unknown> = globalThis): bool
 /** سازنده آشکارساز بومی، اگر باشد. */
 export function nativeDetector(
   g: Record<string, unknown> = globalThis,
+  formats: readonly string[] = BARCODE_FORMATS,
 ): DetectorLike | null {
   if (!hasNativeDetector(g)) return null;
   const Ctor = g.BarcodeDetector as DetectorCtor;
-  return new Ctor({ formats: BARCODE_FORMATS });
+  return new Ctor({ formats });
 }
 
 /** تصویر همان فریم دوربین؛ بوم فقط یک بار ساخته و میان فریم‌ها استفاده می‌شود. */
@@ -118,8 +102,30 @@ export function videoDetector(
 export async function resolveDetector(
   g: Record<string, unknown> = globalThis,
 ): Promise<DetectorLike> {
-  const native = nativeDetector(g);
-  if (native) return native;
+  try {
+    const ctor = g.BarcodeDetector as DetectorCtor | undefined;
+    const formats = await ctor?.getSupportedFormats?.();
+    const supported = BARCODE_FORMATS.filter(format => !formats || formats.includes(format));
+    const native = supported.includes("ean_13") && supported.includes("code_128") && nativeDetector(g, supported);
+    if (native) {
+      let misses = 0;
+      let fallback: Promise<DetectorLike> | undefined;
+      return { async detect(source) {
+        if (fallback) return (await fallback).detect(source);
+        try {
+          const found = await native.detect(source);
+          if (found.length) { misses = 0; return found; }
+        } catch { misses = 8; }
+        if (++misses < 8) return [];
+        fallback ??= wasmDetector();
+        return (await fallback).detect(source);
+      } };
+    }
+  } catch { /* پشتیبانی ناقص دستگاه؛ رمزگشای همراه برنامه قابل استفاده است. */ }
+  return wasmDetector();
+}
+
+async function wasmDetector(): Promise<DetectorLike> {
 
   const mod = await import("zxing-wasm/reader");
   // Vite باینری همین بسته را کنار دارایی‌های برنامه منتشر می‌کند؛ CDN لازم نیست.
@@ -157,6 +163,6 @@ export function cameraError(err: unknown): string {
  * را باز می‌کند و کاربر باید برچسب را به خودش نشان بدهد.
  */
 export const CAMERA_CONSTRAINTS: MediaStreamConstraints = {
-  video: { facingMode: { ideal: "environment" } },
+  video: { facingMode: { ideal: "environment" }, width: {ideal: 1920}, height: {ideal: 1080} },
   audio: false,
 };

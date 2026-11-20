@@ -71,7 +71,7 @@ async function openMore(page: Page) {
   await expect(morePanel(page)).toBeVisible();
 }
 
-test("layout: card reader alone full width, then SnapPay | DigiPay side by side, then «نمایش بیشتر» with the rest; none preselected", async ({ page, api }) => {
+test("layout: card reader alone full width, then SnapPay | transfer side by side, then «نمایش بیشتر» with the rest; none preselected", async ({ page, api }) => {
   mock(api, [...METHODS, SNAPPAY]);
   await open(page);
   const tiles = selector(page).locator(".pay-tiles .pay-tile");
@@ -79,12 +79,11 @@ test("layout: card reader alone full width, then SnapPay | DigiPay side by side,
   await expect(tiles).toHaveCount(3);
   await expect(tiles.nth(0)).toHaveAccessibleName("کارت‌خوان");
   await expect(tiles.nth(1)).toHaveAccessibleName("اسنپ‌پی");
-  await expect(tiles.nth(2)).toHaveAccessibleName("دیجی‌پی");
+  await expect(tiles.nth(2)).toHaveAccessibleName("کارت‌به‌کارت");
   await expect(selector(page).locator('[aria-pressed="true"]')).toHaveCount(0);
   await expect(method(page, "کارت‌خوان")).toBeEnabled();
   await expect(method(page, "کارت‌خوان")).not.toHaveAttribute("aria-disabled", "true");
-  await expect(method(page, "دیجی‌پی")).toHaveAttribute("aria-disabled", "true");
-  await expect(method(page, "دیجی‌پی")).toContainText("برای این شعبه تنظیم نشده");
+  await expect(method(page, "کارت‌به‌کارت")).toBeEnabled();
 
   const group = (await selector(page).locator(".pay-tiles").boundingBox())!;
   const card = (await tiles.nth(0).boundingBox())!, snap = (await tiles.nth(1).boundingBox())!, digi = (await tiles.nth(2).boundingBox())!;
@@ -104,13 +103,13 @@ test("layout: card reader alone full width, then SnapPay | DigiPay side by side,
   // بقیه زیر «نمایش بیشتر»، بسته و پس از ردیف ارائه‌دهنده‌ها.
   await expect(moreToggle(page)).toHaveAttribute("aria-expanded", "false");
   await expect(morePanel(page)).toBeHidden();
-  for (const name of ["نقدی", "کارت‌به‌کارت", "درگاه پرداخت"]) await expect(method(page, name)).toBeHidden();
+  for (const name of ["نقدی", "درگاه پرداخت"]) await expect(method(page, name)).toBeHidden();
   expect((await moreToggle(page).boundingBox())!.y).toBeGreaterThanOrEqual(snap.y + snap.height - 1);
   await shot(page, "collapsed");
   await openMore(page);
   await shot(page, "more-open");
   await expect(moreToggle(page)).toHaveAttribute("aria-expanded", "true");
-  await expect(morePanel(page).locator(".pay-chip")).toHaveText(["نقدی", "کارت‌به‌کارت", "درگاه پرداخت"]);
+  await expect(morePanel(page).locator(".pay-chip")).toHaveText(["نقدی", "درگاه پرداخت"]);
   for (const name of ["امتیاز باشگاه", "کارت هدیه", "لینک پرداخت"]) await expect(method(page, name), `${name} انتخاب‌شدنی نیست`).toHaveCount(0);
   const overflow = await morePanel(page).evaluate((el) => getComputedStyle(el).overflowY);
   expect(["visible", "clip"], "بخش بیشتر اسکرول تودرتو ندارد").toContain(overflow);
@@ -162,17 +161,11 @@ test("multi-select across rows: tile and More method each get their own amount r
 test("unavailable: DigiPay tile is disabled with its reason on the tile; the rest list their reasons under «نمایش بیشتر»; never selectable, never a request", async ({ page, api }) => {
   const s = mock(api, [...METHODS, SNAPPAY]);
   await open(page);
-  const digi = method(page, "دیجی‌پی");
-  await expect(digi).toBeVisible();
-  await expect(digi).toHaveAttribute("aria-disabled", "true");
-  await expect(digi).toHaveAccessibleDescription(/برای این شعبه تنظیم نشده/);
-  await digi.click({ force: true });
-  await expect(digi).not.toHaveAttribute("aria-pressed", "true");
-  await expect(page.getByLabel("مبلغ (تومان)", { exact: true })).toHaveCount(0);
-  const off = selector(page).locator(".pay-unavailable");
-  await expect(off).toBeHidden();
+  await expect(method(page,"دیجی‌پی")).toHaveCount(0);
   await openMore(page);
-  await expect(off.locator(".pay-unavailable-head")).toHaveText("ناموجود (3)");
+  const off = morePanel(page).locator(".pay-unavailable");
+  await expect(off.locator(".pay-unavailable-head")).toHaveText("ناموجود (4)");
+  await expect(off.getByRole("listitem").filter({hasText:"دیجی‌پی"})).toContainText("برای این شعبه تنظیم نشده");
   await expect(off.getByRole("listitem").filter({ hasText: "لینک پرداخت" })).toContainText("ساخت لینک پرداخت هنوز در سرور پیاده نشده است");
   for (const name of ["امتیاز باشگاه", "کارت هدیه"]) await expect(off.getByRole("listitem").filter({ hasText: name })).toContainText("ابتدا مشتری را به فاکتور وصل کنید.");
   await expect(off.getByRole("button"), "در بخش ناموجود هیچ دکمه یا گزینهٔ انتخابی نیست").toHaveCount(0);

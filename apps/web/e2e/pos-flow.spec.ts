@@ -41,7 +41,7 @@ test("cashier workspace keeps an always-open customer panel above search and an 
 
 test("secondary sale tools disclose by keyboard without mutating the draft and close after an action", async ({page, api}) => {
   await open(page, api);
-  const toggle = page.locator("summary", {hasText: "ابزارهای فروش"});
+  const toggle = page.getByRole("button", {name:"ابزارهای فروش",exact:true});
   const discard = page.getByRole("button", {name: "رها کردن سبد", exact: true});
   await expect(discard).toBeHidden();
   await expect(page.getByRole("button", {name: "چاپ پیش‌فاکتور", exact: true})).toBeVisible();
@@ -49,7 +49,7 @@ test("secondary sale tools disclose by keyboard without mutating the draft and c
   const before = writes();
   await toggle.focus(); await page.keyboard.press("Enter");
   await expect(discard).toBeVisible();
-  await expect(page.getByRole("button", {name: "ذخیره و فروش جدید", exact: true})).toBeVisible();
+  await expect(page.getByRole("button", {name: "تعلیق پیش‌نویس و فروش جدید", exact: true})).toBeVisible();
   expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
   await discard.focus(); await page.keyboard.press("Escape");
   await expect(discard).toBeHidden(); await expect(toggle).toBeFocused();

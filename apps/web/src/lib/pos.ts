@@ -103,6 +103,9 @@ export interface Invoice {
   createdBy?: string | null;
   /** نام ثبت‌کننده، فقط برای سربرگ صندوق؛ پاسخ قدیمی‌تر ندارد و «—» می‌شود. */
   createdByName?: string | null;
+  sellerName?: string | null;
+  sellerId?: string | null;
+  reviewReason?: string | null;
   number: string | null;
   branchId: string;
   warehouseId: string;
@@ -429,7 +432,7 @@ export const pos = {
   ) => api.post<Shift & { replayed: boolean }>(`/shifts/${shiftId}/close`, input, opts),
 
   createInvoice: (
-    input: { branchId: string; warehouseId: string; channel?: string; customerId?: string },
+    input: { branchId: string; warehouseId: string; channel?: string; customerId?: string; sellerId?: string },
     opts?: RequestOptions,
   ) => api.post<CreatedInvoice>("/invoices", input, opts),
 
@@ -510,7 +513,7 @@ export const pos = {
    */
   attachCustomer: (
     invoiceId: string,
-    input: { mobile: string; fullName?: string; requireNameForNew?: boolean },
+    input: { mobile: string; fullName?: string; salutation?: "mr" | "ms"; birthDate?: string; requireNameForNew?: boolean },
     opts?: RequestOptions,
   ) => api.patch<Invoice>(`/invoices/${invoiceId}/customer`, input, opts),
 
@@ -686,7 +689,7 @@ export const pos = {
     api.post<SaleReturn>(`/returns/${returnId}/cancel`, {}),
 
   draftPayments: (id: string) => api.get<{ payments: DraftPayment[] }>(`/invoices/${id}/draft-payments`),
-  refundDraft: (id: string, body: { reason: string; confirmed: true; paymentIds: string[]; refundReference?: string }, key: string) =>
+  refundDraft: (id: string, body: { reason: string; confirmed: true; paymentIds: string[]; payoutMethod?: string; refundReference?: string }, key: string) =>
     api.post<{ invoice: Invoice; replayed: boolean }>(`/invoices/${id}/refund-draft`, body, { idempotencyKey: key }),
 
   cancel: (invoiceId: string, reason?: string) =>
@@ -694,6 +697,7 @@ export const pos = {
 };
 
 export interface DraftPayment {
+  method_code?: string;
   id: string; amount: string; status: string; direction: string; kind: string; name: string;
   settlement_id: string | null; settled_at: string | null; fee_amount: string;
 }

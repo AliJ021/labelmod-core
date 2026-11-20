@@ -124,6 +124,7 @@ function update_post_meta($id, $k, $v)
 function delete_post_meta($id, $k) { $GLOBALS['wpdb']->pdo->prepare('DELETE FROM wp_postmeta WHERE post_id = ? AND meta_key = ?')->execute([(int) $id, $k]); return true; }
 function delete_post_meta_by_key($k) { $GLOBALS['wpdb']->pdo->prepare('DELETE FROM wp_postmeta WHERE meta_key = ?')->execute([$k]); return true; }
 function get_posts($args) { return ($args['meta_value'] ?? '') === VAR_ID ? [P] : []; }
+function wc_get_product_id_by_sku($sku) { return $sku === 'NEW-SKU' ? P : 0; }
 function wc_get_product($id) { return stock_of((int) $id) !== null ? new Product((int) $id) : false; }
 function wc_get_order($id)
 {
@@ -136,7 +137,15 @@ function wc_get_orders($args) {
     usort($all, static fn ($a, $b) => $a->id <=> $b->id);
     return array_slice($all, ((int) $args['paged'] - 1) * (int) $args['limit'], (int) $args['limit']);
 }
-function wp_schedule_single_event(...$a) { $GLOBALS['scheduled'][] = $a; }
+function get_post_type($id) { return 'product_variation'; }
+function wp_generate_uuid4() { return 'new-sku-generation'; }
+function wp_next_scheduled($hook, $args = []) {
+    foreach ($GLOBALS['scheduled'] ?? [] as $event) {
+        if ($event[1] === $hook && ($event[2] ?? []) === $args) { return $event[0]; }
+    }
+    return false;
+}
+function wp_schedule_single_event(...$a) { $GLOBALS['scheduled'][] = $a; return true; }
 function is_wp_error($v) { return $v instanceof WP_Error; }
 class WP_Error {
     public function __construct(public $code = '', public $message = '', public $data = []) {}
@@ -1421,6 +1430,47 @@ $GLOBALS['wpdb']->pdo->exec("INSERT OR REPLACE INTO wp_options (option_name, opt
 stock_set(P, 4);
 $r = LMC_Stock_Ledger::apply_legacy(P, 9, 0);
 check('R12. فعال‌شدن هم‌زمان در پردازهٔ دیگر: legacy با Cache کهنه رد شد', [$r['rejected'] ?? false, stock()], [true, 4]);
+
+// A real stored balance starts above the initial zero watermark. An old zero cannot undo new stock.
+fresh();
+stock_set(P, 1);
+pull(['available' => '0', 'stockRev' => '0']);
+check('صفر صریح سایز بدون مانده', [stock(), rev()], [0, 0]);
+wpush(3, 1, 1);
+pull(['available' => '0', 'stockRev' => '0']);
+check('صفر کهنه پس از اولین ورود کالا', [stock(), rev()], [3, 1]);
+
+fresh();
+$GLOBALS['settings']['link_by_sku'] = 'yes';
+$GLOBALS['scheduled'] = [[time() + 90, LMC_STOCK_EVENT]];
+$GLOBALS['options'][LMC_Stock_Sync::CURSOR_OPTION] = '1:old';
+$item = ['variationId' => 'unlinked-test-variation', 'available' => '0', 'stockRev' => '0'];
+$GLOBALS['feed'] = ['items' => array_fill(0, 500, $item), 'cursor' => '2026-11-01T00:00:00.123456Z', 'cursorId' => VAR_ID];
+LMC_Stock_Sync::run();
+check('ارتقا به خوراک کامل تنوع‌ها', end($GLOBALS['feed_queries'])['restartCatalog'] ?? null, '1');
+check('صفحه بعد مستقل از نوبت دوره‌ای است', array_column($GLOBALS['scheduled'], 1), [LMC_STOCK_EVENT, LMC_Stock_Sync::NEXT_PAGE_EVENT]);
+$GLOBALS['feed'] = ['items' => [], 'cursor' => null, 'cursorId' => null];
+LMC_Stock_Sync::run(true);
+$query = end($GLOBALS['feed_queries']);
+check('دکمهٔ دستی در میانهٔ فهرست ادامه می‌دهد', [$query['since'], $query['sinceId']], ['2026-11-01T00:00:00.123456Z', VAR_ID]);
+LMC_Stock_Sync::run();
+check('صفحه خالی مکان‌نما را از بین نمی‌برد', end($GLOBALS['feed_queries'])['sinceId'], VAR_ID);
+LMC_Stock_Sync::run(true);
+check('دکمهٔ دستی بعد از پایان از ابتدا می‌خواند', isset(end($GLOBALS['feed_queries'])['since']), false);
+
+$GLOBALS['feed'] = ['items' => [$item], 'cursor' => '2026-11-01T08:00:00.000000Z', 'cursorId' => VAR_ID];
+LMC_Stock_Sync::run();
+check('پیش از تغییر کد یک مکان‌نمای معتبر داریم', LMC_Stock_Sync::cursor_for(1), $GLOBALS['feed']['cursor']);
+LMC_Stock_Sync::on_sku_change(1, P, '_sku', 'NEW-SKU');
+$GLOBALS['feed']['items'][0]['sku'] = 'NEW-SKU';
+$result = LMC_Stock_Sync::run();
+check('پس از ویرایش SKU، کالای بدون تغییر موجودی دوباره متصل می‌شود',
+    [isset(end($GLOBALS['feed_queries'])['since']), $result['linked'], get_post_meta(P, LMC_Stock_Sync::META_KEY, true)],
+    [false, 1, $item['variationId']]);
+$GLOBALS['feed']['items'][0]['variationId'] = 'different-variation';
+$result = LMC_Stock_Sync::run();
+check('کد استفاده‌شده اتصال قبلی را بازنویسی نمی‌کند', [$result['conflicts'], get_post_meta(P, LMC_Stock_Sync::META_KEY, true)], [1, $item['variationId']]);
+$GLOBALS['settings']['link_by_sku'] = 'no';
 
 // ── R10. موتور بی تراکنش: نشاندن بسته، نه «کار کند ولی ناامن» ─────────
 fresh();

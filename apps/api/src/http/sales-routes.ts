@@ -16,7 +16,7 @@ import { AuthError } from "../auth/service.ts";
 import { can, requireForSession, requireSellerForSession, saleOperationFor } from "../auth/permission.ts";
 import type { Db } from "../db/client.ts";
 import { parseMoney, serializeMoney } from "../lib/money.ts";
-import { runOnce } from "../lib/idempotency.ts";
+import { runOnce, setActor } from "../lib/idempotency.ts";
 import { CONTROL_CHARS_MESSAGE, hasControlChars } from "../lib/text.ts";
 import { InvoiceError, invoiceToJson, PAYMENT_INBOX_SOURCE, paymentIntentToJson, settlementToJson,
   type InvoiceService } from "../sales/invoice.ts";
@@ -46,6 +46,7 @@ const closeShiftBody = z.object({
 });
 
 const createInvoiceBody = z.object({
+  sellerId: uuid.optional(),
   branchId: uuid,
   warehouseId: uuid,
   customerId: uuid.optional(),
@@ -133,7 +134,7 @@ export function registerSalesRoutes(app: FastifyInstance, deps: SalesRouteDeps):
 
   const session = (req: { session: unknown }) => {
     const s = req.session as
-      | { userId: string; pinUnlocked: boolean; fullName: string }
+      | { sessionId: string; userId: string; pinUnlocked: boolean; fullName: string }
       | null;
     if (!s) throw new AuthError("no_session", "وارد نشده‌اید");
     return s;
@@ -262,6 +263,40 @@ export function registerSalesRoutes(app: FastifyInstance, deps: SalesRouteDeps):
 
   // ── سبد و فاکتور ────────────────────────────────────────────────
 
+  const eligibleSeller = (branchId: string) => sql`u.is_active AND EXISTS (
+    SELECT 1 FROM identity.user_role r WHERE r.user_id=u.id AND (r.branch_id IS NULL OR r.branch_id=${branchId}::uuid))`;
+
+  app.get("/pos/sellers", async req => {
+    const s = session(req);
+    const { branchId } = z.object({branchId: uuid}).parse(req.query);
+    await requireForSession(db, s, "sale.create");
+    await assertBranch(db, s.userId, branchId);
+    const rows = await sql<{id:string; name:string}>`SELECT u.id,u.full_name AS name FROM identity.app_user u
+      WHERE ${eligibleSeller(branchId)} ORDER BY u.full_name,u.id`.execute(db);
+    return { sellers: rows.rows, sessionId: s.sessionId };
+  });
+
+  app.patch("/invoices/:id/seller", async req => {
+    const s = session(req);
+    const { id } = z.object({id:uuid}).parse(req.params);
+    const { sellerId } = z.object({sellerId:uuid}).parse(req.body);
+    await db.transaction().execute(async trx => {
+      await requireForSession(trx,s,"sale.create");
+      const inv = await trx.selectFrom("sales.invoice").selectAll().where("id","=",id).forUpdate().executeTakeFirst();
+      if (!inv || inv.created_by !== s.userId || inv.channel !== "pos" || inv.status !== "draft" || !inv.shift_id)
+        throw new InvoiceError("draft_context","فقط ثبت‌کنندهٔ سبد باز قابل انتخاب است.");
+      await assertBranch(trx,s.userId,inv.branch_id);
+      const shift = await trx.selectFrom("sales.cash_shift").select(["status","user_id"]).where("id","=",inv.shift_id).forShare().executeTakeFirst();
+      if (shift?.status !== "open" || shift.user_id !== s.userId) throw new InvoiceError("shift_not_open","شیفت فعال نیست.");
+      const valid = await sql`SELECT u.id FROM identity.app_user u WHERE u.id=${sellerId}::uuid AND ${eligibleSeller(inv.branch_id)} FOR SHARE`.execute(trx);
+      if (!valid.rows.length) throw new InvoiceError("seller_unavailable","پرسنل انتخاب‌شده در این شعبه فعال نیست.");
+      await setActor(trx,s.userId);
+      await trx.updateTable("sales.invoice").set({seller_id:sellerId}).where("id","=",id).execute();
+      await sql`SELECT platform.audit('invoice.seller','invoice',${id},jsonb_build_object('previous',${inv.seller_id ?? inv.created_by}::uuid,'seller',${sellerId}::uuid),${s.userId}::uuid)`.execute(trx);
+    });
+    return invoiceToJson((await invoices.byId(id))!);
+  });
+
   app.post("/invoices", async (req, reply) => {
     const s = session(req);
     const body = createInvoiceBody.parse(req.body);
@@ -312,6 +347,7 @@ export function registerSalesRoutes(app: FastifyInstance, deps: SalesRouteDeps):
         warehouseId: body.warehouseId,
         channel,
         customerId: body.customerId ?? null,
+        ...(body.sellerId && { sellerId: body.sellerId }),
       },
       run: async (trx) => {
         // زمینهٔ «حالت صندوق» فقط برای همین درج؛ دیتابیس مجوز و شعبهٔ سازنده را خودش می‌سنجد.
@@ -324,6 +360,12 @@ export function registerSalesRoutes(app: FastifyInstance, deps: SalesRouteDeps):
           ...(shiftId === undefined ? {} : { shiftId }),
           ...(body.customerId === undefined ? {} : { customerId: body.customerId }),
         });
+        if (body.sellerId) {
+          const valid = await sql`SELECT u.id FROM identity.app_user u WHERE u.id=${body.sellerId}::uuid AND ${eligibleSeller(body.branchId)} FOR SHARE`.execute(trx);
+          if (channel !== "pos" || !valid.rows.length) throw new InvoiceError("seller_unavailable","انتخاب پرسنل در این شعبه مجاز نیست.");
+          await trx.updateTable("sales.invoice").set({seller_id:body.sellerId}).where("id","=",id).execute();
+          await sql`SELECT platform.audit('invoice.seller','invoice',${id},jsonb_build_object('seller',${body.sellerId}::uuid),${s.userId}::uuid)`.execute(trx);
+        }
         if (channel === "instagram") await sql`SELECT set_config('lmc.instagram_order', '', true)`.execute(trx);
         return { value: id, ref: id };
       },
@@ -611,6 +653,8 @@ export function registerSalesRoutes(app: FastifyInstance, deps: SalesRouteDeps):
       .object({
         mobile: z.string().trim().min(1).max(20),
         fullName: z.string().trim().max(120).optional(),
+        salutation: z.enum(["mr","ms"]).optional(),
+        birthDate: z.iso.date().refine(v => v <= new Date().toLocaleDateString("sv-SE", { timeZone: "Asia/Tehran" }), "تاریخ تولد در آینده است").optional(),
         requireNameForNew: z.boolean().optional(),
       })
       .parse(req.body);
@@ -620,6 +664,7 @@ export function registerSalesRoutes(app: FastifyInstance, deps: SalesRouteDeps):
         invoiceId: id,
         mobile: body.mobile,
         ...(body.fullName === undefined ? {} : { fullName: body.fullName }),
+        salutation: body.salutation, birthDate: body.birthDate,
         ...(body.requireNameForNew === undefined ? {} : { requireNameForNew: body.requireNameForNew }),
         actorId: s.userId,
       }),
@@ -864,6 +909,7 @@ export function registerSalesRoutes(app: FastifyInstance, deps: SalesRouteDeps):
       reason: z.string().trim().min(3).max(200),
       confirmed: z.literal(true),
       paymentIds: z.array(uuid).min(1).max(100),
+      payoutMethod: z.enum(["cash","transfer"]).optional(),
       refundReference: z.string().trim().min(1).max(120).optional(),
     }).parse(req.body);
     await assertInvoiceInScope(db, s.userId, id, invoices, false);
@@ -874,8 +920,11 @@ export function registerSalesRoutes(app: FastifyInstance, deps: SalesRouteDeps):
       key, source: "api.invoice.refund_draft", payload: { actorId: s.userId, invoiceId: id, ...body },
       run: async (trx) => {
         const value = await invoices.refundDraftIn(trx, { invoiceId: id, actorId: s.userId,
-          reason: body.reason, paymentIds: body.paymentIds,
-          authorize: async (amount) => { await requireForSession(trx, s, "invoice.cancel", { amount }); },
+          reason: body.reason, paymentIds: body.paymentIds, payoutMethod: body.payoutMethod,
+          authorize: async (amount) => {
+            await requireForSession(trx, s, "invoice.cancel", {amount});
+            if (body.payoutMethod) await requireForSession(trx,s,"refund.cash",{amount});
+          },
           ...(body.refundReference === undefined ? {} : { refundReference: body.refundReference }) });
         return { value, ref: value };
       },

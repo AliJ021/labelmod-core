@@ -23,7 +23,7 @@ export async function packagePlugin(outDir = resolve(here, "../../apps/web/publi
     for (const entry of await readdir(dir, { withFileTypes: true })) {
       const path = resolve(dir, entry.name);
       if (entry.isDirectory()) await walk(path);
-      else if (entry.isFile() && entry.name.endsWith(".php")) paths.push(path);
+      else if (entry.isFile() && (entry.name.endsWith(".php") || path === resolve(root, "settings.css"))) paths.push(path);
       else throw new Error("فایل غیرمجاز در پوشهٔ بسته");
     }
   }

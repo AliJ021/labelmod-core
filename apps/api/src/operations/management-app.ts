@@ -13,7 +13,7 @@ import { RestoreManager } from "./restore-manager.ts";
 import { terminalPhase } from "./backup-store.ts";
 
 const restoreInput=z.object({backupId:z.string().uuid(),operationId:z.string().uuid(),confirmedTimestamp:z.string().datetime(),password:z.string().min(1).max(1024),factorKind:z.enum(["totp","recovery"]),code:z.string().trim().min(6).max(100)}).strict();
-export async function buildManagementApp(deps:{db:Db;manager:RestoreManager;rpcToken:string}) {
+export async function buildManagementApp(deps:{db:Db;manager:RestoreManager;rpcToken:string;restoreEnabled?:boolean}) {
   if(!/^[a-f0-9]{64,128}$/i.test(deps.rpcToken)) throw new Error("کلید کانال مدیریت نامعتبر است.");
   const app=Fastify({logger:false,bodyLimit:8192});
   const auth=new AuthService(deps.db),factor=new TwoFactorService(deps.db),store=deps.manager.store;
@@ -50,7 +50,7 @@ export async function buildManagementApp(deps:{db:Db;manager:RestoreManager;rpcT
     await guard(req.headers["x-labelmod-session"],"backup.view");
     const jobs=await store.jobs();
     const operation=await store.operationState();
-    return {available:true,backups:await store.backups(),jobs,busy:operation.busy,needsRecovery:operation.abandoned||jobs.some(j=>!terminalPhase(j.phase)||j.phase==="manual_recovery")};
+    return {available:true,restoreEnabled:deps.restoreEnabled !== false,backups:await store.backups(),jobs,busy:operation.busy,needsRecovery:operation.abandoned||jobs.some(j=>!terminalPhase(j.phase)||j.phase==="manual_recovery")};
   });
   app.post("/backup",{config:{rateLimit:{max:4,timeWindow:"1 hour"}}},async req=>{
     const session=await guard(req.headers["x-labelmod-session"],"backup.create");
@@ -72,6 +72,7 @@ export async function buildManagementApp(deps:{db:Db;manager:RestoreManager;rpcT
   });
   app.post("/restore",{config:{rateLimit:{max:5,timeWindow:"10 minutes"}}},async(req,reply)=>{
     const token=req.headers["x-labelmod-session"],session=await guard(token,"backup.restore");
+    if(deps.restoreEnabled === false) throw new AuthError("no_session","بازیابی سراسری فقط از سرویس مدیریت میزبان در دسترس است.");
     const body=restoreInput.parse(req.body);
     await auth.reauthenticate(token as string,body.password);
     const ok=body.factorKind==="totp" ? await factor.verifyTotpFor(session.userId,body.code) : await factor.consumeRecoveryCode(session.userId,body.code);

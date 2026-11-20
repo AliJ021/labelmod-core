@@ -29,6 +29,11 @@ class LMC_Settings
     public static function init(): void
     {
         add_action('admin_menu', [__CLASS__, 'menu']);
+        add_action('admin_enqueue_scripts', static function ($hook) {
+            if ($hook === 'woocommerce_page_' . self::PAGE) {
+                wp_enqueue_style('lmc-settings', plugins_url('settings.css', dirname(__DIR__) . '/labelmod-connector.php'), [], LMC_VERSION);
+            }
+        });
         add_action('admin_post_lmc_save_settings', [__CLASS__, 'save']);
     }
 
@@ -126,12 +131,10 @@ class LMC_Settings
         }
         $s = lmc_settings();
 
-        echo '<div class="wrap" dir="rtl">';
-        echo '<h1>' . esc_html__('اتصال به سامانه لیبل مد', 'labelmod-connector') . '</h1>';
-
+        echo '<div class="wrap lmc-admin" dir="rtl"><header class="lmc-hero"><span class="dashicons dashicons-store" aria-hidden="true"></span><div><h1>اتصال لیبل مد</h1><nav aria-label="بخش‌های اتصال"><a href="#lmc-config">تنظیمات فروشگاه</a><a href="#lmc-live">ارسال لحظه‌ای</a><a href="#lmc-health">وضعیت اتصال</a></nav></div></header>';
         self::notices();
+        echo '<div class="lmc-layout"><section id="lmc-config" class="lmc-card"><h2>تنظیمات فروشگاه</h2>';
         self::connection_box($s);
-        LMC_Diagnostics::render();
 
         echo '<form method="post" action="' . esc_url(admin_url('admin-post.php')) . '">';
         wp_nonce_field('lmc_save_settings');
@@ -153,7 +156,7 @@ class LMC_Settings
             '<input type="password" name="api_key" class="regular-text" dir="ltr" autocomplete="new-password" value="">'
                 . '<p><label><input type="checkbox" name="clear_key" value="1"> '
                 . esc_html__('کلید ذخیره‌شده پاک شود', 'labelmod-connector') . '</label></p>',
-            $key_note . ' ' . __('کلید را با دستور create-api-client روی سرور بسازید.', 'labelmod-connector')
+            $key_note . ' ' . __('مسیر ساخت کلید در پنل حسابداری ← تنظیمات ← اتصال ووکامرس است.', 'labelmod-connector')
         );
 
         [$branches, $scope_error] = self::fetch_scope();
@@ -183,7 +186,7 @@ class LMC_Settings
             __('نگاشت درگاه پرداخت', 'labelmod-connector'),
             '<textarea name="payment_map" rows="4" class="large-text" dir="ltr">'
                 . esc_textarea($s['payment_map']) . '</textarea>',
-            __('هر خط یکی: شناسه درگاه ووکامرس = کد روش پرداخت لیبل مد. مثال: zarinpal=gateway. برای پرداخت در محل، نگاشت cod به روش واقعی دریافت اجباری است؛ فقط اگر نقدی است cod=cash. بدون این نگاشت، رزرو انجام می‌شود ولی ثبت وجه متوقف می‌ماند. سایر درگاه‌های بدون نگاشت gateway فرض می‌شوند.', 'labelmod-connector')
+            __('هر درگاه در یک خط، مانند zarinpal=gateway. برای پرداخت در محل، روش واقعی دریافت را برای cod وارد کنید.', 'labelmod-connector')
         );
 
         self::row(
@@ -191,7 +194,7 @@ class LMC_Settings
             '<label><input type="checkbox" name="sync_stock" value="1" '
                 . checked($s['sync_stock'], 'yes', false) . '> '
                 . esc_html__('موجودی سایت هر ۱۵ دقیقه از انبار به‌روز شود', 'labelmod-connector') . '</label>',
-            __('انبار مرجع است. اتصال با کلید «_lmc_variation_id» روی کالای سایت برقرار می‌شود، نه با نام و نه با SKU — پس نام سایت می‌تواند برای سئو آزادانه فرق کند.', 'labelmod-connector')
+            __('موجودی هر تنوع از انبار انتخاب‌شده دریافت می‌شود.', 'labelmod-connector')
         );
 
         self::row(
@@ -199,7 +202,7 @@ class LMC_Settings
             '<label><input type="checkbox" name="sync_price" value="1" '
                 . checked($s['sync_price'], 'yes', false) . '> '
                 . esc_html__('قیمت کالاهای سایت از حسابداری به‌روز شود', 'labelmod-connector') . '</label>',
-            __('قیمت مرجع در حسابداری است. «فروش ویژه» ووکامرس دست نمی‌خورد؛ فقط قیمت اصلی نوشته می‌شود. کالایی که در فهرست قیمت انتخاب‌شده قیمت ندارد، دست‌نخورده می‌ماند — صفر نوشته نمی‌شود.', 'labelmod-connector')
+            __('قیمت اصلی از فهرست انتخاب‌شده می‌آید. قیمت فروش ویژه را در ووکامرس مدیریت کنید.', 'labelmod-connector')
         );
 
         self::row(
@@ -214,7 +217,7 @@ class LMC_Settings
             '<label><input type="checkbox" name="link_by_sku" value="1" '
                 . checked($s['link_by_sku'], 'yes', false) . '> '
                 . esc_html__('کالاهایی که هنوز کلید اتصال ندارند، یک بار با SKU پیدا شوند', 'labelmod-connector') . '</label>',
-            __('پلی برای اتصال اولیهٔ موجودی: کلید اتصال همان لحظه نوشته می‌شود. سفارش سایت همچنان به SKU یکسان با Core نیاز دارد؛ تغییر SKU بدون تطبیق، ارسال سفارش را متوقف می‌کند.', 'labelmod-connector')
+            __('برای هر سایز و رنگ، SKU همان تنوع را در ووکامرس وارد کنید.', 'labelmod-connector')
         );
 
         self::row(
@@ -235,9 +238,10 @@ class LMC_Settings
 
         echo '</table>';
         submit_button(__('ذخیره', 'labelmod-connector'));
-        echo '</form>';
-
+        echo '</form></section><div class="lmc-side"><section id="lmc-live" class="lmc-card">';
         LMC_Push_Secret_Settings::render();
+        echo '</section><section id="lmc-health" class="lmc-card">';
+        LMC_Diagnostics::render();
 
         // همگام‌سازی دستی — فرم جدا، چون یک عمل است نه یک تنظیم.
         echo '<hr><form method="post" action="' . esc_url(admin_url('admin-post.php')) . '">';
@@ -245,9 +249,10 @@ class LMC_Settings
         echo '<input type="hidden" name="action" value="lmc_sync_now">';
         submit_button(__('همین حالا موجودی را همگام کن', 'labelmod-connector'), 'secondary', 'submit', false);
         echo ' <span class="description">'
-            . esc_html__('همه کالاها را دوباره می‌گیرد، نه فقط تغییرات تازه.', 'labelmod-connector')
+            . esc_html__('دریافت کامل را شروع می‌کند. اگر هنوز صفحه‌ای باقی مانده باشد، از همان صفحه ادامه می‌دهد.', 'labelmod-connector')
             . '</span></form>';
 
+        echo '</section><details class="lmc-card"><summary>رسیدگی به مغایرت موجودی و بازیابی</summary>';
         // بازنشانی صریح واترمارک (docs/STOCK-SYNC-PROTOCOL.md): فقط پس از بازیابی Core از بکاپ
         // قدیمی‌تر. کسرهای محلی پاک نمی‌شوند و عکس بی واترمارک باز پذیرفته نمی‌شود.
         echo '<form method="post" action="' . esc_url(admin_url('admin-post.php')) . '">';
@@ -261,8 +266,7 @@ class LMC_Settings
             . '</span></form>';
 
         self::stuck_holds();
-
-        echo '</div>';
+        echo '</details></div></div></div>';
     }
 
     /**

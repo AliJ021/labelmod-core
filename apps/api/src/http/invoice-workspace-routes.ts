@@ -8,6 +8,7 @@ import { assertBranch, branchesOf } from "../sales/scope.ts";
 import { requireInvoiceRead, requireInvoiceReadOf } from "../sales/invoice-access.ts";
 import { InvoiceError, InvoiceService, invoiceToJson } from "../sales/invoice.ts";
 import { invoicePage, INVOICE_PAGE_CSP, receiptFooterFromSettings, latinDigits } from "../sales/invoice-page.ts";
+import { setActor } from "../lib/idempotency.ts";
 import { parseMoney } from "../lib/money.ts";
 import { STORE_BRAND } from "../lib/store-brand.ts";
 
@@ -29,6 +30,7 @@ export function registerInvoiceWorkspaceRoutes(app: FastifyInstance, db: Db): vo
       from: z.iso.date().optional(), to: z.iso.date().optional(),
       // تصمیم مالک (۲۰۲۶/۱۱/۰۷): فهرست با «امروز» باز می‌شود. «امروز» را سرور تعیین می‌کند
       // (`platform.business_date()`، منطقهٔ زمانی تنظیمات)، نه ساعت مرورگر؛ از/تا صریح بر آن مقدم است.
+      mine: z.literal("1").optional(),
       day: z.enum(["today"]).optional(),
       branchId: z.string().uuid().optional(), search: z.string().trim().max(80).default("") }).parse(req.query);
     const businessDate = (await sql<{ d: string }>`SELECT platform.business_date()::text AS d`.execute(db)).rows[0]!.d;
@@ -61,7 +63,8 @@ export function registerInvoiceWorkspaceRoutes(app: FastifyInstance, db: Db): vo
       AND (${q.channel ?? null}::text IS NULL OR i.channel=${q.channel ?? null}::text)
       AND (${q.from ?? null}::date IS NULL OR platform.business_date(i.occurred_at)>=${q.from ?? null}::date)
       AND (${q.to ?? null}::date IS NULL OR platform.business_date(i.occurred_at)<=${q.to ?? null}::date)
-      AND (${all} OR i.created_by=${s.userId}::uuid)
+      AND (${!q.mine} OR coalesce(i.seller_id,i.created_by)=${s.userId}::uuid)
+      AND (${all} OR coalesce(i.seller_id,i.created_by)=${s.userId}::uuid OR (i.status='draft' AND i.created_by=${s.userId}::uuid))
       AND (${q.search}='' OR strpos(coalesce(sales.invoice_display_number(i.id),''),${numberSearch})>0 OR strpos(coalesce(i.number,''),${numberSearch})>0 OR strpos(coalesce(c.full_name,''),${q.search})>0)`;
     const filter = sql`(${q.status}='all' OR i.status=${q.status} OR i.chip=${q.status}
       OR (${q.status}='finalized' AND i.status IN ('paid','partially_returned')))`;
@@ -74,10 +77,10 @@ export function registerInvoiceWorkspaceRoutes(app: FastifyInstance, db: Db): vo
       i.received::text AS "receivedAmount",i.methods AS "paymentMethods",
       i.remaining::text AS "remainingAmount",
       (i.status='draft' AND i.created_by=${s.userId}::uuid AND sh.user_id=${s.userId}::uuid AND sh.status='open') AS "canResume",
-      (i.status='draft' AND i.last_activity_at < now()-make_interval(hours=>
+      (EXISTS(SELECT 1 FROM sales.invoice_review r WHERE r.invoice_id=i.id) OR i.status='draft' AND i.last_activity_at < now()-make_interval(hours=>
         (SELECT value::text::int FROM platform.setting WHERE key='sale.draft_attention_hours'))) AS "needsReview"
       FROM i JOIN platform.branch b ON b.id=i.branch_id
-      LEFT JOIN identity.app_user creator ON creator.id=i.created_by LEFT JOIN identity.app_user finisher ON finisher.id=i.finalized_by
+      LEFT JOIN identity.app_user creator ON creator.id=coalesce(i.seller_id,i.created_by) LEFT JOIN identity.app_user finisher ON finisher.id=i.finalized_by
       LEFT JOIN sales.cash_shift sh ON sh.id=i.shift_id
       WHERE ${filter} ORDER BY i.occurred_at DESC,i.id DESC LIMIT 50 OFFSET ${(q.page-1)*50}`.execute(db);
     const count = await sql<{ total: string }>`WITH i AS (${scoped}) SELECT count(*)::text AS total FROM i WHERE ${filter}`.execute(db);
@@ -116,11 +119,14 @@ export function registerInvoiceWorkspaceRoutes(app: FastifyInstance, db: Db): vo
     const rows = await sql`SELECT p.id,p.method_code AS "methodCode",p.ref_no AS reference,(p.amount-coalesce(refunded.amount,0))::text AS remaining
       FROM treasury.payment p LEFT JOIN LATERAL (
         SELECT sum(out.amount) AS amount FROM treasury.payment out JOIN sales.sale_return r ON r.id=out.return_id
-        WHERE r.refund_payment_id=p.id AND out.direction='out' AND out.status IN ('succeeded','settled','reconciled')
+        WHERE coalesce(out.refund_origin_id,r.refund_payment_id)=p.id AND out.method_code=p.method_code AND out.direction='out' AND out.status IN ('succeeded','settled','reconciled')
       ) refunded ON true WHERE p.invoice_id IN (SELECT invoice_id FROM sales.exchange_ancestors(${id}::uuid)) AND p.method_code IN ('snappay','digipay') AND p.direction='in'
         AND p.status IN ('succeeded','settled','reconciled') AND p.amount>coalesce(refunded.amount,0)
       ORDER BY p.occurred_at,p.id`.execute(db);
-    return { payments: rows.rows };
+    const received = await sql<{method: string}>`SELECT DISTINCT p.method_code AS method
+      FROM treasury.payment p JOIN sales.exchange_ancestors(${id}::uuid) a ON a.invoice_id=p.invoice_id
+      WHERE p.direction='in' AND p.status IN ('succeeded','settled','reconciled') ORDER BY method`.execute(db);
+    return { payments: rows.rows, receivedMethods: received.rows.map(row => row.method) };
   });
 
   for (const documentKind of ["sale", "proforma"] as const) app.get(`/invoices/:id/${documentKind === "sale" ? "print" : "proforma-print"}`, async (req, reply) => {
@@ -141,7 +147,7 @@ export function registerInvoiceWorkspaceRoutes(app: FastifyInstance, db: Db): vo
       } else if (!["finalized", "paid", "partially_returned", "returned"].includes(inv.status))
         throw new InvoiceError("invoice_not_finalized", "چاپ رسید فقط برای فاکتور قطعی ممکن است.");
       const meta = await sql<{ shop: string; customer: string | null; zone: string; return_hours: string | null; site_url: string | null }>`
-        SELECT b.name AS shop,c.full_name AS customer,platform.setting_text('platform.timezone','Asia/Tehran') AS zone,
+        SELECT b.name AS shop,CASE WHEN i.number IS NULL THEN sales.customer_print_name(c.full_name,c.salutation) ELSE coalesce(i.receipt_customer_name,c.full_name) END AS customer,platform.setting_text('platform.timezone','Asia/Tehran') AS zone,
           (SELECT value::text FROM platform.setting WHERE key='return.window_hours') AS return_hours,
           platform.setting_text('web.site_url','') AS site_url
         FROM sales.invoice i JOIN platform.branch b ON b.id=i.branch_id LEFT JOIN sales.customer c ON c.id=i.customer_id WHERE i.id=${id}::uuid`.execute(trx);
@@ -165,6 +171,34 @@ export function registerInvoiceWorkspaceRoutes(app: FastifyInstance, db: Db): vo
       .header("content-security-policy", INVOICE_PAGE_CSP).header("x-robots-tag", "noindex, nofollow").send(html);
   });
 
+  app.patch("/invoices/:id/review", async req => {
+    const s = session(req.session);
+    const { id } = z.object({id:z.uuid()}).parse(req.params);
+    const body = z.object({hold:z.boolean(), reason:z.string().trim().min(1).max(200)}).parse(req.body);
+    await db.transaction().execute(async trx => {
+      const inv = await trx.selectFrom("sales.invoice").select(["branch_id","status","created_by","channel","shift_id"])
+        .where("id","=",id).forUpdate().executeTakeFirst();
+      if (!inv) throw new InvoiceError("invoice_not_found","فاکتور یافت نشد",404);
+      await assertBranch(trx,s.userId,inv.branch_id);
+      if (inv.status === "draft" && inv.created_by === s.userId) {
+        await requireForSession(trx,s,inv.channel === "instagram" ? "instagram.pos.sell" : "sale.create");
+      } else await requireForSession(trx,s,"invoice.cancel");
+      if (body.hold && !["draft","finalized","paid","partially_returned"].includes(inv.status)) throw new InvoiceError("invalid_state","این سند قابل تعلیق نیست.");
+      if (body.hold && inv.status === "draft") {
+        const uncertain = await trx.selectFrom("treasury.payment").select("id").where("invoice_id","=",id)
+          .where("status","in",["initiated","pending","unknown"]).executeTakeFirst();
+        if (uncertain) throw new InvoiceError("payment_review_required","ابتدا نتیجهٔ دریافت وجه روشن شود.");
+      }
+      await setActor(trx,s.userId);
+      const change = body.hold ? await sql`INSERT INTO sales.invoice_review(invoice_id,reason,actor_id)
+        VALUES(${id}::uuid,${body.reason},${s.userId}::uuid) ON CONFLICT DO NOTHING RETURNING invoice_id`.execute(trx)
+        : await sql`DELETE FROM sales.invoice_review WHERE invoice_id=${id}::uuid RETURNING invoice_id`.execute(trx);
+      if (change.rows.length) await sql`SELECT platform.audit(${body.hold ? "invoice.hold" : "invoice.resume"},'invoice',${id},
+        jsonb_build_object('reason',${body.reason}::text),${s.userId}::uuid)`.execute(trx);
+    });
+    return {held: body.hold};
+  });
+
   app.get("/invoices/:id/overview", async req => {
     const s = session(req.session);
     await requireInvoiceRead(db, s);
@@ -172,7 +206,7 @@ export function registerInvoiceWorkspaceRoutes(app: FastifyInstance, db: Db): vo
     const inv = await invoices.byId(id);
     if (!inv) throw new InvoiceError("invoice_not_found", "فاکتور یافت نشد", 404);
     await assertBranch(db, s.userId, inv.branchId);
-    if (inv.createdBy !== s.userId) await requireForSession(db, s, "report.view");
+    if (inv.createdBy !== s.userId && inv.sellerId !== s.userId) await requireForSession(db, s, "report.view");
     return { invoice: invoiceToJson(inv), payments: await invoices.draftPayments(id) };
   });
 }

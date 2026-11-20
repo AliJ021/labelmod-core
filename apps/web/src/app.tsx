@@ -65,7 +65,8 @@ export function App() {
   const [posRail, setPosRail] = useState(() => {
     try { return localStorage.getItem("labelmod.nav-collapsed.pos") !== "0"; } catch { return true; }
   });
-  const [zone, setZone] = useUrlTab("page", ZONES, "dashboard");
+  const [homeVisit, setHomeVisit] = useState(0);
+  const [zone] = useUrlTab("page", ZONES, "dashboard");
   const railed = zone === "pos" ? posRail : navCollapsed;
   const toggleNav = () => {
     const [set, key] = zone === "pos" ? [setPosRail, "labelmod.nav-collapsed.pos"] as const : [setNavCollapsed, "labelmod.nav-collapsed"] as const;
@@ -261,7 +262,8 @@ export function App() {
     // frame دیرهنگام نباید فوکوسی را که کاربر روی زیرزبانه یا کنترل دیگری برده، پس بگیرد.
     const origin = document.activeElement;
     // از /dev/ui-kit برگشت به مسیر ریشه؛ بقیهٔ وضعیت نشانی همان useUrlTab است.
-    if (window.location.pathname !== "/") navigate(routeUrl(next)); else setZone(next);
+    if (!navigate(routeUrl(next), false, false, next === zone)) return;
+    if (next === zone) setHomeVisit(visit => visit + 1);
     setMore(false);
     requestAnimationFrame(() => {
       const now = document.activeElement;
@@ -302,7 +304,7 @@ export function App() {
         <ShellNav top={<><ShellBrand />{me ? <ShellBranch key={me.id} /> : null}</>} bottom={me ? <ShellUser me={me} onPassword={() => setPasswordOpen(true)} onReauth={() => setUpgrading(true)} onLogout={() => void signOut()} /> : null} collapsed={railed} onToggle={toggleNav} id={tabsId} items={navItems} pending={pendingItems} access={access.state} onRetry={access.retry} zone={zone} onZone={switchZone} compact={compact} more={more} onMore={openMore} opener={() => moreOpener.current} />
         <main id="workspace-content" tabIndex={-1}>
         {uiKit && UiKit ? <SectionBoundary key="ui-kit"><Suspense fallback={<p className="solid pad" role="status">در حال بارگذاری UI Kit…</p>}><UiKit /></Suspense></SectionBoundary> : null}
-        <SectionBoundary key={`${me?.id}:${zone}`}>
+        <SectionBoundary key={`${me?.id}:${zone}:${homeVisit}`}>
         {/* Suspense داخل پنل است، نه دور همهٔ پنل‌ها: هنگام بارگذاری یک بخش،
             هر tabpanel باید بماند تا aria-controls هیچ زبانه‌ای به شناسهٔ ناموجود اشاره نکند. */}
         <TabPanels id={tabsId} items={ZONES} value={uiKit ? null : zone} className="zone-panel"

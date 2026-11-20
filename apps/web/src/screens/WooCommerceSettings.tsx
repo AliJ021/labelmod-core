@@ -2,7 +2,7 @@ import { useEffect, useRef, useState } from "react";
 import { Solid } from "../components/Glass.tsx";
 import { Ltr } from "../components/ui/Bidi.tsx";
 import { Button, Field } from "../components/ui/Controls.tsx";
-import { ApiError } from "../lib/api.ts";
+import { api, ApiError } from "../lib/api.ts";
 import { normalizeDigits } from "../lib/settings-value.ts";
 import { StatusIcon } from "../components/ui/Status.tsx";
 import { woo, pluginPackage, setupSteps, type PluginPackage, type SetupState, type WooConfig, type WooResult } from "../lib/woocommerce.ts";
@@ -57,6 +57,8 @@ export function WooCommerceSettings() {
       <p>ارسال لحظه‌ای فعال: {yes(config.pushEnabled)}؛ کلید امضای API تنظیم شده: {yes(config.signingConfigured)}</p>
       <p>انبار سایت: <Ltr>{config.warehouseId || "—"}</Ltr></p>
     </>}
+    <p><a href="/?page=settings&settings.tab=keys&settings.group=web">تنظیم نشانی فروشگاه، انبار و ارسال لحظه‌ای</a></p>
+    {config?.canManageKeys && <WooKeys onSigningReady={() => setConfig(c => c && ({ ...c, signingConfigured: true }))} />}
     <Field label="شمارهٔ داخلی سفارش ووکامرس (اختیاری)">
       <input inputMode="numeric" value={order} onChange={e => setOrder(e.target.value)} disabled={busy} />
     </Field>
@@ -92,12 +94,43 @@ export function WooCommerceSettings() {
       <li>بسته را در وردپرس ← افزونه‌ها ← افزودن ← بارگذاری نصب یا به‌روزرسانی کنید.</li>
       <li>در ووکامرس ← اتصال لیبل مد، نشانی HTTPS نهایی سامانه و کلید API مجاز همان شعبه را ذخیره کنید.</li>
       <li>شعبه، انبار، واحد ریال/تومان و نگاشت درگاه پرداخت را مطابق تنظیم واقعی انتخاب کنید.</li>
-      <li>برای ارسال لحظه‌ای، مدیر سرور کلید امضا را در API و Worker یکسان تنظیم کند؛ مدیر وردپرس همان مقدار را از نسخهٔ 1.3.5 در فرم محافظت‌شدهٔ «همگام‌سازی لحظه‌ای با حسابداری» در صفحهٔ اتصال لیبل مد ذخیره کند. کلید امضا با کلید API سفارش‌ها متفاوت است و نباید در تنظیمات عمومی وارد شود.</li>
-      <li>فرم کلید به OpenSSL و کلیدهای امنیتی معتبر وردپرس نیاز دارد. ثابت قدیمی LMC_PUSH_SECRET فقط تا پیش از ذخیره یا پاک‌کردن صریح کلید از فرم جدید، مسیر سازگاری است؛ برای راه‌اندازی نسخهٔ تازه نیازی به ویرایش آن نیست.</li>
-      <li>در هر دو سمت «تست اتصال» را بزنید. داخل وردپرس شناسهٔ محصول را هم وارد کنید تا SKU و شناسهٔ اتصال با مرکز تطبیق داده شوند.</li>
-      <li>پس از تأیید دسترسی TEST، یک سفارش کنترل‌شده و تکرار همان درخواست باید فقط یک فاکتور و یک خروج موجودی بسازند؛ این پذیرش زنده هنوز انجام نشده است.</li>
+      <li>کلید API و کلید ارسال لحظه‌ای را از همین صفحه بگیرید و در دو فیلد مربوط در وردپرس ذخیره کنید. سپس در هر دو پنل تست اتصال را بزنید.</li>
     </ol>
   </Solid>;
+}
+
+function WooKeys({ onSigningReady }: { onSigningReady: () => void }) {
+  const [password, setPassword] = useState("");
+  const [kind, setKind] = useState<"api" | "push">("api");
+  const [value, setValue] = useState("");
+  const [error, setError] = useState("");
+  const [busy, setBusy] = useState(false);
+  useEffect(() => {
+    if (!value) return;
+    const timer = window.setTimeout(() => setValue(""), 60000);
+    return () => window.clearTimeout(timer);
+  }, [value]);
+  async function reveal() {
+    setValue(""); setError(""); setBusy(true);
+    try {
+      const response = await api.post<{ key: string }>("/settings/woocommerce/credentials", { kind, password });
+      setValue(response.key);
+      if (kind === "push") onSigningReady();
+    } catch (e) {
+      setError(e instanceof ApiError ? e.message : "دریافت کلید ممکن نشد.");
+    } finally { setPassword(""); setBusy(false); }
+  }
+  return <form className="solid pad" onSubmit={e => { e.preventDefault(); if (!busy && password) void reveal(); }}>
+    <h3>کلیدهای اتصال وردپرس</h3>
+    <Field label="نشانی سامانه برای افزونه"><input readOnly dir="ltr" value={window.location.origin} /></Field>
+    <Field label="کلید مورد نیاز"><select disabled={busy} value={kind} onChange={e => { setKind(e.target.value === "push" ? "push" : "api"); setValue(""); }}>
+      <option value="api">کلید API سفارش و موجودی</option><option value="push">کلید امضای ارسال لحظه‌ای</option>
+    </select></Field>
+    <Field label="رمز فعلی حساب"><input type="password" autoComplete="current-password" value={password} required onChange={e => setPassword(e.target.value)} /></Field>
+    <Button type="submit" disabled={busy || !password}>ساخت یا نمایش کلید</Button>
+    {error && <p role="alert">{error}</p>}
+    {value && <Field label={kind === "api" ? "کلید API برای افزونه" : "کلید امضا برای افزونه"} hint="کلید را در وردپرس وارد کنید. نمایش آن پس از یک دقیقه پایان می‌یابد."><input readOnly dir="ltr" autoComplete="off" value={value} onFocus={e => e.target.select()} /></Field>}
+  </form>;
 }
 
 /** راه‌اندازی هفت‌مرحله‌ای (طرح ۱۰): شمارش فقط «انجام‌شده»ها را می‌شمارد؛ نامعلوم هرگز پیشرفت حساب نمی‌شود. */

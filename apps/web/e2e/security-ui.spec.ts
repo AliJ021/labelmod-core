@@ -1,5 +1,6 @@
 import { accountScope, openZone } from "./fixtures";
 import { test, expect, type MockApi } from "./fixtures";
+import { code128Modules } from "../../api/src/catalog/code128";
 import type { Page } from "@playwright/test";
 
 function pos(api: MockApi) {
@@ -10,7 +11,7 @@ function pos(api: MockApi) {
 async function camera(page: Page) {
   await page.goto("/");
   await page.getByRole("tab", { name: "صندوق", exact: true }).click();
-  await page.locator("summary", { hasText: "ابزارهای فروش" }).click();
+  await page.getByRole("button", {name:"ابزارهای فروش",exact:true}).click();
   await page.getByRole("button", { name: "دوربین", exact: true }).click();
 }
 
@@ -135,22 +136,33 @@ for (const mode of ["late-stream", "play-failure"] as const) {
   });
 }
 
-test("local WASM decodes EAN13 through the camera fallback", async ({ page, api }) => {
+for (const format of ["EAN13","Code128"] as const) test(`local WASM decodes ${format} through the camera fallback`, async ({ page, api }) => {
   pos(api);
+  const branchId = "88888888-8888-4888-8888-888888888888";
+  const warehouseId = "99999999-9999-4999-8999-999999999999";
+  api.defaults["GET /branches"] = {branches:[{id:branchId,code:"TEST",name:"شعبه آزمایشی",
+    warehouses:[{id:warehouseId,code:"STORE",name:"انبار آزمایشی",kind:"store"}]}]};
+  api.defaults["GET /shifts/current"] = {...(api.defaults["GET /shifts/current"] as object),branchId};
   // The real decoder reads pixels through the browser canvas API; only the camera is synthetic.
-  await page.addInitScript(() => {
-    Object.defineProperty(window, "BarcodeDetector", { value: undefined });
+  const code = format === "EAN13" ? "5901234123457" : "LM-00123";
+  const encoded = format === "Code128" ? code128Modules(code) : "";
+  await page.addInitScript(({encoded}) => {
+    class MissingFrames {
+      static async getSupportedFormats() { return ["ean_13","code_128"]; }
+      async detect() { return []; }
+    }
+    Object.defineProperty(window, "BarcodeDetector", { value: encoded ? MissingFrames : undefined });
     Object.defineProperty(navigator, "mediaDevices", { value: { getUserMedia: async () => ({ getTracks: () => [{ stop() {} }] }) } });
     Object.defineProperty(HTMLMediaElement.prototype, "srcObject", { set() {} });
     Object.defineProperty(HTMLMediaElement.prototype, "readyState", { get: () => 4 });
-    Object.defineProperty(HTMLVideoElement.prototype, "videoWidth", { get: () => 345 });
+    Object.defineProperty(HTMLVideoElement.prototype, "videoWidth", { get: () => encoded ? (encoded.length + 20) * 3 : 345 });
     Object.defineProperty(HTMLVideoElement.prototype, "videoHeight", { get: () => 120 });
     HTMLMediaElement.prototype.play = async () => {};
     // Independent EAN-13 fixture 5901234123457, including its valid check digit.
     const left = ["0001101","0011001","0010011","0111101","0100011","0110001","0101111","0111011","0110111","0001011"];
     const even = ["0100111","0110011","0011011","0100001","0011101","0111001","0000101","0010001","0001001","0010111"];
     const digits = "5901234123457";
-    const bars = "101" + [...digits.slice(1,7)].map((d,i) => ("LGGLLG"[i] === "L" ? left : even)[Number(d)]).join("") + "01010" + [...digits.slice(7)].map(d => [...left[Number(d)]!].map(b => b === "1" ? "0" : "1").join("")).join("") + "101";
+    const bars = encoded || "101" + [...digits.slice(1,7)].map((d,i) => ("LGGLLG"[i] === "L" ? left : even)[Number(d)]).join("") + "01010" + [...digits.slice(7)].map(d => [...left[Number(d)]!].map(b => b === "1" ? "0" : "1").join("")).join("") + "101";
     const original = CanvasRenderingContext2D.prototype.drawImage;
     CanvasRenderingContext2D.prototype.drawImage = function (this: CanvasRenderingContext2D, ...args: [CanvasImageSource, ...number[]]) {
       if (args[0] instanceof HTMLVideoElement) {
@@ -169,13 +181,13 @@ test("local WASM decodes EAN13 through the camera fallback", async ({ page, api 
         } else Reflect.apply(offscreenDraw, this, args);
       };
     }
-  });
-  const invoice = { id: "77777777-7777-4777-8777-777777777777", createdBy: "22222222-2222-4222-8222-222222222222", status: "draft", channel: "pos", branchId: "b1", warehouseId: "w1", shiftId: "55555555-5555-4555-8555-555555555555", lines: [], payableAmount: "0", receivedAmount: "0", grossAmount: "0", discountAmount: "0", netAmount: "0", taxAmount: "0", shippingAmount: "0", gift: null };
+  }, {encoded});
+  const invoice = { id: "77777777-7777-4777-8777-777777777777", createdBy: "22222222-2222-4222-8222-222222222222", status: "draft", channel: "pos", branchId, warehouseId, shiftId: "55555555-5555-4555-8555-555555555555", lines: [], payableAmount: "0", receivedAmount: "0", grossAmount: "0", discountAmount: "0", netAmount: "0", taxAmount: "0", shippingAmount: "0", gift: null };
   api.defaults["POST /invoices"] = invoice;
   let barcode: string | undefined;
   api.handlers.set(`POST /invoices/${invoice.id}/scan`, async route => { barcode = route.request().postDataJSON().barcode; await route.fulfill({ json: { invoice, replayed: false } }); });
   await camera(page);
-  await expect.poll(() => barcode).toBe("5901234123457");
+  await expect.poll(() => barcode).toBe(code);
   await expect(page.getByRole("alert")).toHaveCount(0);
   await page.getByRole("button", { name: "بستن دوربین", exact: true }).last().click();
 });

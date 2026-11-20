@@ -19,6 +19,7 @@ import { StatusBadge } from "../components/ui/Status.tsx";
 import { Ltr } from "../components/ui/Bidi.tsx";
 import { formatJalaliMoment, formatQty } from "../lib/format.ts";
 import { ExchangePanel } from "../components/ExchangePanel.tsx";
+import { useRefundSplit, type RefundPlan } from "../components/RefundSplit.tsx";
 import { TodayReturns } from "../components/TodayReturns.tsx";
 import { ReturnRecovery, useReturnOperation } from "../components/ReturnRecovery.tsx";
 import { parseRial, rialFromTomanInput, toman } from "../lib/money.ts";
@@ -44,6 +45,7 @@ import {
 
 /** پاسخ `POST /invoices/:id/return-account` — همه رشتهٔ ریالی از SQL. */
 interface ReturnAccount {
+  splitPlan?: RefundPlan | null;
   returnedValue: string; outstanding: string; funds: string; maxRefund: string; suggestedRefund: string;
   refundAmount: string; debtApplied: string; customerCredit: string; problem: string | null;
 }
@@ -84,6 +86,8 @@ export function Returns() {
   const [note, setNote] = useState("");
   const [refund, setRefund] = useState("");
   const [method, setMethod] = useState("");
+  const [fullCancellation,setFullCancellation] = useState(false);
+  const [receivedMethods,setReceivedMethods] = useState<string[]>([]);
   const [refundReference, setRefundReference] = useState("");
   const [refundPaymentId, setRefundPaymentId] = useState("");
   const [refundSources, setRefundSources] = useState<Array<{ id: string; methodCode?: string; reference: string; remaining: string }>>([]);
@@ -122,7 +126,13 @@ export function Returns() {
         setOutlets(
           b.branches.flatMap((x) => x.warehouses.filter((w) => w.kind === "outlet")),
         );
-        if (b.branches.length === 1) setBranchId(b.branches[0]?.id ?? "");
+        const params = new URLSearchParams(window.location.search);
+        const linked = params.get("returns.invoice");
+        if (linked) {
+          const inv = await pos.invoice(linked);
+          setNumber(inv.number ?? ""); setBranchId(inv.branchId);
+          await loadInvoice(inv, params.get("returns.full") === "1");
+        } else if (b.branches.length === 1) setBranchId(b.branches[0]?.id ?? "");
       } catch (err) {
         setError(message(err));
       }
@@ -142,18 +152,20 @@ export function Returns() {
     }
   }
 
-  async function loadInvoice(inv: Invoice) {
+  async function loadInvoice(inv: Invoice, full = false) {
       const [returnable, open] = await Promise.all([pos.returnable(inv.id), pos.openShifts(inv.branchId)]);
       setDrawers(open);
       setDrawerId(open.length === 1 ? open[0]?.id ?? "" : "");
-      const sources = await api.get<{ payments: Array<{ id: string; methodCode?: string; reference: string; remaining: string }> }>(`/invoices/${inv.id}/refund-sources`);
+      const sources = await api.get<{ receivedMethods?: string[]; payments: Array<{ id: string; methodCode?: string; reference: string; remaining: string }> }>(`/invoices/${inv.id}/refund-sources`);
       setRefundSources(sources.payments);
       setRefundPaymentId(sources.payments.length === 1 ? sources.payments[0]!.id : "");
-      setRefundReference(""); setMethod("");
+      const original = sources.receivedMethods ?? [];
+      setReceivedMethods(original); setFullCancellation(full);
+      setRefundReference(""); setMethod(original.length === 1 ? original[0]! : "");
       setMethods(current => [...current.filter(m => m.code !== "snappay" && m.code !== "digipay"), ...[...new Set(sources.payments.map(p => p.methodCode ?? "snappay"))].map(code => ({code, name: `${code === "digipay" ? "دیجی‌پی" : "اسنپ‌پی"} — برگشت تأییدشده`, kind: "gateway", requiresRef: true}))]);
       setInvoice(inv);
       setView(returnable);
-      setSelection(new Map());
+      setSelection(full ? new Map(returnable.lines.filter(l => Number(l.remainingQty)>0).map(l => [l.invoiceLineId,Number(l.remainingQty)])) : new Map());
       setQuality({});
       setRefund("");
   }
@@ -187,11 +199,12 @@ export function Returns() {
   const typedText = refund.trim();
   const typedRial = typedText === "" ? null : rialFromTomanInput(typedText);
   const accountLines = selectionToLines(selection).map(l => `${l.invoiceLineId}:${l.qty}`).join(",");
-  const accountKey = invoice && accountLines ? `${invoice.id}|${accountLines}|${typedText === "" ? "" : typedRial ?? "bad"}` : "";
+  const accountKey = invoice && accountLines ? `${invoice.id}|${accountLines}|${typedText === "" ? "" : typedRial ?? "bad"}|${fullCancellation ? "full" : ""}` : "";
   const loadAccount = useCallback((signal: AbortSignal) => {
-    const [invoiceId = "", lines = "", typed = ""] = accountKey.split("|");
+    const [invoiceId = "", lines = "", typed = "", full = ""] = accountKey.split("|");
     return api.post<ReturnAccount>(`/invoices/${encodeURIComponent(invoiceId)}/return-account`, {
       lines: lines.split(",").map(p => { const [invoiceLineId = "", qty = "0"] = p.split(":"); return { invoiceLineId, qty }; }),
+      ...(full === "full" && {fullCancellation:true}),
       ...(typed === "" ? {} : { refundAmount: typed }),
     }, { signal });
   }, [accountKey]);
@@ -200,15 +213,18 @@ export function Returns() {
   const typedRefund = typedText === "" ? suggestion : typedRial;
   const selectedLines = selectionToLines(selection).map(l => ({ ...l, ...(quality[l.invoiceLineId] ?? { restock: true, condition: "sellable" as const }) }));
 
+  const split=useRefundSplit(account.data?.splitPlan,typedRefund,methods,note,busy || !!draft || !!operation.pending);
+
   async function submit() {
     if (!invoice || typedRefund === null) throw new Error("اقلام مرجوعی کامل نیست");
     const body = {
       invoiceId: invoice.id, reasonCode: reason, refundAmount: typedRefund.toString(),
-      lines: selectedLines, confirmed: true,
+      lines: selectedLines, confirmed: true, ...(fullCancellation && {fullCancellation:true}),
       ...(note.trim() ? { reasonNote: note.trim() } : {}),
-      ...(method ? { refundMethod: method } : {}),
-      ...((method === "snappay" || method === "digipay") ? { refundReference: refundReference.trim(), refundPaymentId } : {}),
-      ...((chosen?.kind === "cash" || method === "") && drawerId ? { shiftId: drawerId } : {}),
+      ...(split ? {splitRefund:split.payload} : method ? { refundMethod: method } : {}),
+      ...(!split && chosen?.requiresRef && refundReference.trim() && {refundReference:refundReference.trim()}),
+      ...(!split && (method === "snappay" || method === "digipay") ? { refundReference: refundReference.trim(), refundPaymentId } : {}),
+      ...((split ? split.hasCash : chosen?.kind === "cash" || method === "") && drawerId ? { shiftId: drawerId } : {}),
       ...(destWh ? { warehouseId: destWh } : {}),
     };
     await operation.run("returns", body);
@@ -326,9 +342,9 @@ export function Returns() {
                 { key: "qty", header: "برگشتی", cell: (l: ReturnableLine) => {
                   const max = maxReturnable(l); const picked = selection.get(l.invoiceLineId) ?? 0; const info = nameOf(l.invoiceLineId);
                   return <span className="cell-inline returns-qty"><span className="qty">
-                    <button type="button" onClick={() => setQty(l.invoiceLineId, picked - 1)} disabled={busy || picked <= 0} aria-label={`کم کردن ${info.name}`}>−</button>
+                    <button type="button" onClick={() => setQty(l.invoiceLineId, picked - 1)} disabled={busy || fullCancellation || picked <= 0} aria-label={`کم کردن ${info.name}`}>−</button>
                     <span className="num" aria-live="polite">{picked}</span>
-                    <button type="button" onClick={() => setQty(l.invoiceLineId, picked + 1)} disabled={busy || picked >= max} aria-label={`اضافه کردن ${info.name}`}>+</button>
+                    <button type="button" onClick={() => setQty(l.invoiceLineId, picked + 1)} disabled={busy || fullCancellation || picked >= max} aria-label={`اضافه کردن ${info.name}`}>+</button>
                   </span><span className="muted small">{max === 0 ? "کاملاً برگشته" : `حداکثر ${max}`}</span></span>; } },
                 { key: "condition", header: "وضعیت کالا", cell: (l: ReturnableLine) => {
                   const picked = selection.get(l.invoiceLineId) ?? 0; const info = nameOf(l.invoiceLineId);
@@ -383,7 +399,7 @@ export function Returns() {
             </label>
 
             <label className="auth-field">
-              <span>توضیح (اختیاری)</span>
+              <span>{split?.changed || receivedMethods.length && method && !receivedMethods.includes(method) ? "دلیل تغییر روش بازپرداخت" : "توضیح (اختیاری)"}</span>
               <input value={note} onChange={(e) => setNote(e.target.value)} />
             </label>
 
@@ -395,14 +411,15 @@ export function Returns() {
               <AmountInput
                 type="text"
                 inputMode="numeric"
-                value={refund}
+                value={refund} disabled={fullCancellation}
                 onChange={(e) => setRefund(e.target.value)}
                 placeholder={suggestion === null ? "" : toman(suggestion)}
               />
             </label>
 
-            <div className="stack" style={{ gap: "var(--s-2)" }}>
+            {split ? split.editor : <><div className="stack" style={{ gap: "var(--s-2)" }}>
               <span className="muted small">روش بازپرداخت</span>
+              {receivedMethods.length > 0 && <span className="small">روش دریافت اولیه‌ · {receivedMethods.map(code => methods.find(m=>m.code===code)?.name ?? code).join("، ")}</span>}
               {methods.map((m) => (
                 <button
                   key={m.code}
@@ -422,7 +439,10 @@ export function Returns() {
               </select></label>
               <label>شماره پیگیری برگشت تأییدشده<input value={refundReference} maxLength={200} disabled={busy || !!draft} onChange={e => setRefundReference(e.target.value)} /></label>
             </div>}
-            {(chosen?.kind === "cash" || method === "") && drawers.length > 1 ? (
+            {chosen?.requiresRef && !["digipay","snappay"].includes(method) && <label className="auth-field">پیگیری بازپرداخت بانکی
+              <input value={refundReference} maxLength={200} onChange={e=>setRefundReference(e.target.value)} /></label>}
+            </>}
+            {(split ? split.hasCash : chosen?.kind === "cash" || method === "") && drawers.length > 1 ? (
               <label className="auth-field">
                 <span>صندوق بازپرداخت</span>
                 <select value={drawerId} onChange={(e) => setDrawerId(e.target.value)} disabled={busy || draft !== null}>
@@ -466,15 +486,15 @@ export function Returns() {
               </label>
             ) : null}
 
-            {mode === "returns" ? <SafeAction trigger="۱. بررسی مرجوعی" title="۲. تأیید نهایی مرجوعی" triggerVariant="primary"
+            {mode === "returns" ? <SafeAction trigger={fullCancellation ? "بررسی ابطال کامل" : "۱. بررسی مرجوعی"} title={fullCancellation ? "تأیید ابطال و تسویهٔ کامل فاکتور" : "۲. تأیید نهایی مرجوعی"} triggerVariant="primary"
               summary={account.data ? <dl className="settings-facts">
-                <div><dt>بازپرداخت</dt><dd><Money rial={account.data.refundAmount} /></dd></div>
+                <div><dt>بازپرداخت</dt><dd><Money rial={account.data.refundAmount} />{split?.summary}</dd></div>
                 <div><dt>صرف بدهی همین فاکتور</dt><dd><Money rial={account.data.debtApplied} /></dd></div>
                 {account.data.customerCredit !== "0" ? <div><dt>به اعتبار مشتری</dt><dd><Money rial={account.data.customerCredit} /></dd></div> : null}
               </dl> : <p>بازپرداخت: <Money rial={typedRefund} /></p>}
               consequence="فقط اقلام و تعداد انتخاب‌شده به انبار برمی‌گردند و تسویه مالی هم‌زمان ثبت می‌شود."
-              confirmLabel="اقلام و مبلغ را تأیید می‌کنم؛ ثبت مرجوعی" pendingLabel="در حال ثبت مرجوعی…"
-              disabled={busy || !!operation.pending || !operation.ready || !ready || typedRefund === null || !account.data || !!account.data.problem || ((method === "snappay" || method === "digipay") && (!refundPaymentId || !refundReference.trim())) || (typedRefund > 0n && (chosen?.kind === "cash" || method === "") && drawers.length > 1 && drawerId === "")}
+              confirmLabel={fullCancellation ? "ابطال و تسویهٔ همهٔ اقلام باقی‌مانده" : "اقلام و مبلغ را تأیید می‌کنم؛ ثبت مرجوعی"} pendingLabel="در حال ثبت مرجوعی…"
+              disabled={busy || !!operation.pending || !operation.ready || !ready || (split ? !split.ready : typedRefund !== null && typedRefund > 0n && receivedMethods.length > 0 && (!method || (!receivedMethods.includes(method) && !note.trim()) || (chosen?.requiresRef && !refundReference.trim()))) || typedRefund === null || !account.data || !!account.data.problem || (!split && (method === "snappay" || method === "digipay") && (!refundPaymentId || !refundReference.trim())) || (typedRefund > 0n && (split ? split.hasCash : chosen?.kind === "cash" || method === "") && drawers.length > 1 && drawerId === "")}
               run={submit} verify={operation.verify} onDone={() => undefined} /> : null}
             </div>
           </Solid>

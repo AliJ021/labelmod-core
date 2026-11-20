@@ -40,6 +40,8 @@ export interface Role {
 }
 
 export interface Customer {
+  salutation?: "mr" | "ms" | null;
+  birthDate?: string | null;
   id: string;
   mobile: string;
   fullName: string | null;
@@ -153,9 +155,9 @@ export const people = {
   setPin: (id: string, pin: string | null) =>
     api.put<{ ok: boolean; hasPin: boolean }>(`/users/${id}/pin`, { pin }),
 
-  customers: (q = "", opts?: RequestOptions) =>
-    api.get<{ customers: Customer[]; totals?: CustomerLedgerTotals }>(
-      `/customers${q.trim() === "" ? "" : `?q=${encodeURIComponent(q.trim())}`}`,
+  customers: (q = "", opts?: RequestOptions, title = "all") =>
+    api.get<{ customers: Customer[]; titleCounts?: Record<string, number>; totals?: CustomerLedgerTotals }>(
+      `/customers?${new URLSearchParams({ q: q.trim(), title })}`,
       opts,
     ),
 
@@ -175,6 +177,8 @@ export const people = {
     id: string,
     input: {
       fullName?: string | null;
+      salutation?: "mr" | "ms" | null;
+      birthDate?: string | null;
       email?: string | null;
       status?: string;
       creditLimit?: string;

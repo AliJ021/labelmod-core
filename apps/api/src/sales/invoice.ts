@@ -82,6 +82,9 @@ export interface Invoice {
   createdBy: string | null;
   /** نام ثبت‌کننده برای سربرگ صندوق (طرح ۱۰)؛ فقط نمایشی. */
   createdByName: string | null;
+  sellerName?: string | null;
+  sellerId?: string | null;
+  reviewReason?: string | null;
   number: string | null;
   branchId: string;
   warehouseId: string;
@@ -165,8 +168,10 @@ export class InvoiceService {
     const inv = await ex
       .selectFrom("sales.invoice")
       .selectAll()
+      .select(sql<string | null>`(SELECT r.reason FROM sales.invoice_review r WHERE r.invoice_id=sales.invoice.id)`.as("review_reason"))
       .select(sql<string | null>`sales.invoice_display_number(id)`.as("display_number"))
       .select(sql<string | null>`(SELECT u.full_name FROM identity.app_user u WHERE u.id = sales.invoice.created_by)`.as("created_by_name"))
+      .select(sql<string | null>`(SELECT u.full_name FROM identity.app_user u WHERE u.id=coalesce(sales.invoice.seller_id,sales.invoice.created_by))`.as("seller_name"))
       .where("id", "=", invoiceId)
       .executeTakeFirst();
     if (!inv) return null;
@@ -206,6 +211,7 @@ export class InvoiceService {
       id: inv.id,
       createdBy: inv.created_by,
       createdByName: inv.created_by_name,
+      sellerName: inv.seller_name, sellerId: inv.seller_id, reviewReason: inv.review_reason,
       number: inv.display_number,
       branchId: inv.branch_id,
       warehouseId: inv.warehouse_id,
@@ -325,16 +331,17 @@ export class InvoiceService {
    */
   async currentPrice(
     variationId: string,
-    at: Date = new Date(),
+    at: Date | undefined = undefined,
     ex: Executor = this.#db,
   ): Promise<bigint> {
+    const instant = at ?? sql<Date>`statement_timestamp()`;
     const row = await ex
       .selectFrom("catalog.price")
       .select("amount")
       .where("variation_id", "=", variationId)
       .where("price_list", "=", "default")
-      .where("valid_from", "<=", at)
-      .where((eb) => eb.or([eb("valid_to", "is", null), eb("valid_to", ">", at)]))
+      .where("valid_from", "<=", instant)
+      .where((eb) => eb.or([eb("valid_to", "is", null), eb("valid_to", ">", instant)]))
       .orderBy("valid_from", "desc")
       .executeTakeFirst();
 
@@ -413,7 +420,7 @@ export class InvoiceService {
     // یک عدد استفاده کنند. `at` فقط برای خواندن تاریخیِ صریح باقی است.
     const list = listPrice ??
       (at === undefined
-        ? await this.currentPrice(variationId, new Date(), ex)
+        ? await this.currentPrice(variationId, undefined, ex)
         : await this.currentPrice(variationId, at, ex));
     const listGross = await this.grossOf(list, qty, ex);
     const soldGross = unitPrice === undefined ? listGross : await this.grossOf(unitPrice, qty, ex);
@@ -483,7 +490,7 @@ export class InvoiceService {
     await this.requireDraft(input.invoiceId, trx);
     const variationId = await this.resolveVariation(input, trx);
     await this.assertStock(trx, input.invoiceId, variationId, input.qty);
-    const listPrice = await this.currentPrice(variationId, new Date(), trx);
+    const listPrice = await this.currentPrice(variationId, undefined, trx);
     const discount = input.discountAmount ?? 0n;
 
     const qty = Number(input.qty);
@@ -608,7 +615,7 @@ export class InvoiceService {
     await this.requireDraft(input.invoiceId, trx);
     const variationId = await this.resolveVariation(input, trx);
     await this.assertStock(trx, input.invoiceId, variationId, input.qty);
-    const price = await this.currentPrice(variationId, new Date(), trx);
+    const price = await this.currentPrice(variationId, undefined, trx);
 
     // اگر چند سطر سازگار باشد، کم‌ترین `line_no` انتخاب می‌شود —
     // ترتیب قطعی، بدون ادغام یا حذف سطرهای دیگر. سطر تکراری قبلی کار
@@ -792,6 +799,8 @@ export class InvoiceService {
     invoiceId: string;
     mobile: string;
     fullName?: string | undefined;
+    salutation?: "mr" | "ms" | undefined;
+    birthDate?: string | undefined;
     requireNameForNew?: boolean | undefined;
     actorId: string;
   }): Promise<Invoice> {
@@ -821,8 +830,8 @@ export class InvoiceService {
       const r = await sql<{ id: string; created: boolean }>`
         WITH norm AS (SELECT sales.normalize_mobile(${input.mobile}) AS m),
         ins AS (
-          INSERT INTO sales.customer (mobile_normalized, full_name)
-          SELECT m, nullif(${input.fullName ?? null}::text, '') FROM norm
+          INSERT INTO sales.customer (mobile_normalized, full_name, salutation, birth_date)
+          SELECT m, nullif(${input.fullName ?? null}::text, ''), ${input.salutation ?? null}, ${input.birthDate ?? null}::date FROM norm
           ON CONFLICT (mobile_normalized) DO NOTHING
           RETURNING id
         )
@@ -1145,7 +1154,7 @@ export class InvoiceService {
     return ex.selectFrom("treasury.payment as p")
       .innerJoin("treasury.payment_method as m", "m.code", "p.method_code")
       .select(["p.id", "p.amount", "p.status", "p.direction", "p.settlement_id", "p.settled_at",
-        "p.fee_amount", "m.kind", "m.name"])
+        "p.fee_amount", "p.method_code", "m.kind", "m.name"])
       .where("p.invoice_id", "=", invoiceId).orderBy("p.id").execute();
   }
 
@@ -1171,7 +1180,7 @@ export class InvoiceService {
 
   /** پیش‌نویس هنوز سند فروش ندارد؛ برگشت، وضعیت پرداخت و رزرو اعتبار را با رد حسابرسی می‌بندد. */
   async refundDraftIn(trx: Transaction<Database>, input: {
-    invoiceId: string; actorId: string; reason: string; paymentIds: string[]; refundReference?: string;
+    invoiceId: string; actorId: string; reason: string; paymentIds: string[]; refundReference?: string; payoutMethod?: string | undefined;
     authorize: (amount: bigint) => Promise<void>;
   }): Promise<string> {
     const { invoiceId, actorId } = input;
@@ -1194,17 +1203,28 @@ export class InvoiceService {
     if (!payments.length || JSON.stringify(payments.map((p) => p.id).sort()) !== JSON.stringify([...input.paymentIds].sort())) {
       throw new InvoiceError("payments_changed", "فهرست پرداخت‌ها تغییر کرده؛ دوباره بررسی و تأیید کنید.");
     }
-    if (payments.some((p) => p.status !== "succeeded" || p.direction !== "in" || p.settlement_id !== null ||
-      p.settled_at !== null || parseMoney(p.fee_amount) !== 0n)) {
+    const payout = input.payoutMethod;
+    const linkedPayout = (p: typeof payments[number]) =>
+      !["snappay","digipay"].includes(p.method_code) &&
+      (payout && ["cash","card_reader","gateway","transfer"].includes(p.kind) ||
+       ["card_reader","gateway","transfer"].includes(p.kind) &&
+       (p.status === "settled" || p.status === "reconciled" || p.settlement_id !== null || p.settled_at !== null || parseMoney(p.fee_amount) !== 0n));
+    if (payments.some(p => p.direction !== "in" || (payout && ["snappay","digipay"].includes(p.method_code)) || (linkedPayout(p)
+      ? !["succeeded","settled","reconciled"].includes(p.status)
+      : p.status !== "succeeded" || p.settlement_id !== null || p.settled_at !== null || parseMoney(p.fee_amount) !== 0n))) {
       throw new InvoiceError("payment_review_required", "پرداخت نامشخص یا تسویه‌شده از این مسیر برگشت نمی‌خورد؛ بررسی حسابدار لازم است.");
     }
     await input.authorize(payments.reduce((sum, p) => sum + parseMoney(p.amount), 0n));
     const external = payments.some((p) => ["card_reader", "gateway", "transfer"].includes(p.kind));
-    if (external && !input.refundReference?.trim()) {
+    if ((payout === "transfer" || !payout && external) && !input.refundReference?.trim()) {
       throw new InvoiceError("refund_reference_required", "ابتدا وجه را از مسیر بانکی برگردانید و شماره پیگیری برگشت را ثبت کنید.");
     }
     await setActor(trx, actorId);
     for (const p of payments) {
+      if (linkedPayout(p)) {
+        await sql`SELECT sales.post_draft_payout(${invoiceId}::uuid,${p.id}::uuid,${payout ?? p.method_code},${input.refundReference ?? null},${input.reason},${actorId}::uuid)`.execute(trx);
+        continue;
+      }
       await trx.updateTable("treasury.payment").set({ status: "reversed" }).where("id", "=", p.id).execute();
       await sql`SELECT platform.audit('payment.reverse_draft', 'payment', ${p.id}::text,
         ${JSON.stringify({ invoiceId, amount: p.amount, previousStatus: p.status, kind: p.kind,
@@ -1375,11 +1395,14 @@ export class InvoiceService {
           AND (${excludeLineId ?? null}::uuid IS NULL OR id<>${excludeLineId ?? null}::uuid)
         UNION ALL SELECT ${variationId ?? null}::uuid, ${qty}::numeric WHERE ${variationId ?? null}::uuid IS NOT NULL
       ), totals AS (SELECT variation_id, sum(qty) AS requested FROM quantities GROUP BY variation_id)
-      SELECT concat_ws(' · ', p.name_internal, v.color, v.size) AS product_name, greatest(coalesce(b.on_hand,0)-coalesce(b.reserved,0),0)::text AS available, t.requested::text
+      SELECT concat_ws(' · ', p.name_internal, v.color, v.size) AS product_name, (greatest(coalesce(b.on_hand,0)-coalesce(b.reserved,0),0)+kept.qty)::text AS available, t.requested::text
       FROM sales.invoice i JOIN totals t ON true JOIN catalog.variation v ON v.id=t.variation_id JOIN catalog.product p ON p.id=v.product_id
       LEFT JOIN inventory.stock_balance b ON b.variation_id=t.variation_id AND b.warehouse_id=i.warehouse_id
+      CROSS JOIN LATERAL (SELECT coalesce(sum(k.qty),0) qty FROM sales.exchange e
+        JOIN sales.exchange_retained_line k ON k.exchange_id=e.id AND k.variation_id=t.variation_id
+        WHERE e.replacement_invoice_id=i.id AND k.cost IS NOT NULL) kept
       WHERE i.id=${invoiceId}::uuid AND i.channel='pos' AND i.status='draft'
-        AND t.requested>greatest(coalesce(b.on_hand,0)-coalesce(b.reserved,0),0)
+        AND t.requested>greatest(coalesce(b.on_hand,0)-coalesce(b.reserved,0),0)+kept.qty
       ORDER BY v.sku LIMIT 1`.execute(ex);
     const shortage = result.rows[0];
     if (shortage) throw new InvoiceError("insufficient_stock", `موجودی «${shortage.product_name}» کافی نیست. موجودی قابل‌فروش: ${shortage.available.replace(/(\.\d*?[1-9])0+$|\.0+$/, "$1")}؛ تعداد قبلی حفظ شد.`, 409);
@@ -1454,6 +1477,7 @@ export function invoiceToJson(inv: Invoice) {
     id: inv.id,
     createdBy: inv.createdBy,
     createdByName: inv.createdByName,
+    sellerName: inv.sellerName, sellerId: inv.sellerId, reviewReason: inv.reviewReason,
     number: inv.number,
     branchId: inv.branchId,
     warehouseId: inv.warehouseId,

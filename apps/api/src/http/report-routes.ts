@@ -508,9 +508,9 @@ export function registerReportRoutes(app: FastifyInstance, deps: ReportRouteDeps
   app.get("/reports/staff-sales", async req => {
     const s = session(req);
     await requireForSession(db, s, "report.view");
-    const q = periodQuery.extend({ basis: z.enum(["finalizer", "creator"]).default("finalizer") }).parse(req.query);
+    const q = periodQuery.extend({ basis: z.enum(["finalizer", "creator"]).default("creator") }).parse(req.query);
     const p = await period(s.userId, q);
-    const actor = q.basis === "creator" ? sql`i.created_by` : sql`i.finalized_by`;
+    const actor = q.basis === "creator" ? sql`coalesce(i.seller_id,i.created_by)` : sql`i.finalized_by`;
     const rows = await sql`
       WITH events AS (
         SELECT ${actor} AS actor,1::bigint AS count,i.gross_amount AS gross,i.discount_amount AS discount,0::numeric AS returned

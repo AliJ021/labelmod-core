@@ -270,7 +270,7 @@ export function invoicePage(data: InvoicePageData, timeZone: string): string {
   const logo = data.logo === undefined ? receiptLogo() : data.logo;
   // لوگوی اصیل کامل و با نسبت واقعی (width/height ذاتی فایل)، بزرگ و بی بازطراحی.
   const brand = logo
-    ? `<img class="logo logo--${logo.treatment}" src="${logo.dataUri}" width="${logo.width}" height="${logo.height}" alt="${txt(data.shopName)}">
+    ? `<picture${logo.thermalUri ? ' class="thermal-logo"' : ""}>${logo.thermalUri ? `<source media="print" srcset="${logo.thermalUri}">` : ""}<img class="logo logo--${logo.treatment}" src="${logo.dataUri}" width="${logo.width}" height="${logo.height}" alt="${txt(data.shopName)}"></picture>
     <div class="shop">${esc(STORE_TITLE)}</div>`
     : `<div class="brand">${txt(data.shopName)}</div>`;
 
