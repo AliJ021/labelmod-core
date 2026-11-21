@@ -108,7 +108,7 @@ class FakeStore {
         $claim = ++$this->claims; $ids = [];
         foreach ($GLOBALS['as'] as $id => $a) {
             if (count($ids) >= $max) { break; }
-            if ($a['status'] === 'pending' && $a['claim'] === 0 && ($group === '' || $a['group'] === $group)
+            if ($a['status'] === 'pending' && $a['claim'] === 0 && (!$hooks || in_array($a['hook'], $hooks, true)) && ($group === '' || $a['group'] === $group)
                 && ($a['at'] === null || $a['at'] <= time())) {
                 $GLOBALS['as'][$id]['claim'] = $claim; $ids[] = $id;
             }
@@ -136,7 +136,9 @@ class FakeStore {
         return $ret === 'count' ? (string) count($ids) : $ids;
     }
 }
+function fastcgi_finish_request() { return true; }
 class FakeRunner {
+    public function has_maximum_concurrent_batches() { return !empty($GLOBALS['runner_full']); }
     /** همان ترتیب ActionScheduler_Abstract_QueueRunner::process_action (AS 4.0.0). */
     public function process_action($id, $context = '') {
         try {
@@ -325,6 +327,16 @@ check(wp_next_scheduled(LMC_ORDER_EVENT, [7]) === false, 'خودِ کار در W
 // ۲. تکرار اعلان پرداخت کار دوم نمی‌سازد.
 LMC_Order_Sync::payment_complete(7);
 check(count(pending_rows(LMC_ORDER_EVENT, [7])) === 1, 'تکرار: همان یک کار معلق');
+
+// After checkout releases the response, the normal AS claim handles the paid order.
+$GLOBALS['runner_full'] = true;
+do_action('shutdown');
+check(count(pending_rows(LMC_ORDER_EVENT, [7])) === 1, 'worker at capacity leaves durable order pending');
+$GLOBALS['runner_full'] = false;
+$unrelated = as_enqueue_async_action('lmc_send_refund', [8], LMC_Queue::GROUP);
+do_action('shutdown');
+check($GLOBALS['as'][1]['status'] === 'complete', 'payment is processed without another visit or cron tick');
+check($GLOBALS['as'][$unrelated]['status'] === 'pending', 'payment wake does not consume a refund');
 
 // ۳. اجرای جاری می‌تواند تلاش بعدی خودش را صف کند (کارِ in-progress «معلق» نیست).
 reset_queue();

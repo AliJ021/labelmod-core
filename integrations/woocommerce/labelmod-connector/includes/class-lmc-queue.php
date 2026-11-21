@@ -136,8 +136,12 @@ class LMC_Queue
         return [LMC_ORDER_EVENT, LMC_Order_Reservation::EVENT, LMC_Refund_Sync::EVENT];
     }
 
+    private static $paid_request;
+
     public static function init(): void
     {
+        // Woo registers its async request transport during initialization.
+        add_action('init', [__CLASS__, 'init_paid_request'], 5);
         add_action(self::KICK, [__CLASS__, 'kick']);
         // کف تضمینی تخلیهٔ نشان‌های معوق: هر دور اجراکنندهٔ دقیقه‌ای خودِ Action Scheduler.
         add_action('action_scheduler_before_process_queue', [__CLASS__, 'drain']);
@@ -438,6 +442,9 @@ class LMC_Queue
             if ($id) {
                 if ($delay === 0) {
                     self::request_kick();
+                    if ($hook === LMC_ORDER_EVENT) {
+                        add_action('shutdown', [__CLASS__, 'wake_paid_orders'], PHP_INT_MAX);
+                    }
                 }
                 return true;
             }
@@ -486,6 +493,63 @@ class LMC_Queue
         return max(1, min($cap, $delay));
     }
 
+    public static function init_paid_request(): void
+    {
+        if (!class_exists('WP_Async_Request') || self::$paid_request) {
+            return;
+        }
+        self::$paid_request = new class extends WP_Async_Request {
+            protected $prefix = 'lmc';
+            protected $action = 'wake_paid_orders';
+
+            protected function get_post_args() {
+                $args = parent::get_post_args();
+                $args['blocking'] = false;
+                $args['timeout'] = 0.1;
+                $args['redirection'] = 0;
+                $args['sslverify'] = true;
+                $args['cookies'] = wp_unslash($_COOKIE);
+                return $args;
+            }
+
+            protected function handle() {
+                LMC_Queue::run_paid_order();
+            }
+        };
+    }
+
+    public static function run_paid_order(): void
+    {
+        if (self::action_scheduler() && !ActionScheduler::runner()->has_maximum_concurrent_batches()) {
+            self::run(1, 'LMC Paid Order', [LMC_ORDER_EVENT]);
+        }
+    }
+
+    /** The paid action is durable before shutdown. Claim one due order through the normal AS lifecycle. */
+    public static function wake_paid_orders(): void
+    {
+        if (!self::action_scheduler()) {
+            return;
+        }
+        try {
+            if (function_exists('fastcgi_finish_request')) {
+                $detached = fastcgi_finish_request();
+            } elseif (function_exists('litespeed_finish_request')) {
+                $detached = litespeed_finish_request();
+            } else {
+                $detached = false;
+            }
+            if ($detached) {
+                self::run_paid_order();
+            } elseif (self::$paid_request) {
+                // Other SAPIs use Woo's nonce-checked, non-blocking loopback.
+                self::$paid_request->dispatch();
+            }
+        } catch (Throwable $error) {
+            lmc_log('ارسال فوری شروع نشد؛ سفارش در صف پایدار است.');
+        }
+    }
+
     /** رویداد kick: فقط گروه بحرانی، با Claim خودِ Action Scheduler. */
     public static function kick(): void
     {
@@ -503,7 +567,7 @@ class LMC_Queue
      * Claim اتمیک است، پس اجراکنندهٔ دقیقه‌ای Action Scheduler یا WP-CLI
      * هم‌زمان همان کار را برنمی‌دارند.
      */
-    public static function run(int $max, string $context): int
+    public static function run(int $max, string $context, array $hooks = []): int
     {
         if (!self::action_scheduler() || $max <= 0) {
             return 0;
@@ -517,7 +581,12 @@ class LMC_Queue
         //    Hybrid همیشه در جدول اصلی (DBStore) ذخیره می‌شود، پس Claim از همان‌جاست.
         $claims = ($store instanceof ActionScheduler_HybridStore && class_exists('ActionScheduler_DBStore'))
             ? new ActionScheduler_DBStore() : $store;
-        $claim = $claims->stake_claim($max, null, [], self::GROUP);
+        // AS DBStore retains hook filters for subsequent claims on the same instance.
+        // Scope the paid-order filter to this claim so it never hides later refunds.
+        if ($hooks && $claims === $store && $store instanceof ActionScheduler_DBStore) {
+            $claims = clone $store;
+        }
+        $claim = $claims->stake_claim($max, null, $hooks, self::GROUP);
         $monitor = class_exists('ActionScheduler_FatalErrorMonitor') ? new ActionScheduler_FatalErrorMonitor($claims) : null;
         if ($monitor) {
             // خطای مرگبار وسط کار → همان لحظه failed و Hook بازیابی، نه پنج دقیقه in-progress.

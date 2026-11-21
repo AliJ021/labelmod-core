@@ -1147,6 +1147,13 @@ export function registerSalesRoutes(app: FastifyInstance, deps: SalesRouteDeps):
       },
     });
 
+    // runOnce has committed the stock and durable outbox row. A missed wake-up
+    // is covered by polling and cannot roll back the sale or delay its receipt.
+    if (!out.replayed) {
+      void sql`SELECT pg_notify('lmc_pos_stock', '')`.execute(db).catch(() => {
+        req.log.warn("POS stock wake-up failed; the outbox worker will poll");
+      });
+    }
     const finalized = await invoices.byId(id);
     return {
       ...invoiceToJson(finalized as NonNullable<typeof finalized>),

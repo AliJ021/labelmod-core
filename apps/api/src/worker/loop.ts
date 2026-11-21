@@ -1,15 +1,9 @@
 /**
  * حلقه Worker — برداشتن، فرستادن، بستن.
  *
- * ── چرا Polling و نه LISTEN/NOTIFY ──────────────────────────────────
+ * اعلان صندوق پس از ثبت قطعی، همین حلقه را زودتر بیدار می‌کند.
  *
- * `LISTEN/NOTIFY` پستگرس سریع‌تر است ولی **تحویل تضمین‌شده ندارد**:
- * اگر Worker در لحظه NOTIFY وصل نباشد، آن اعلان برای همیشه رفته و
- * پیام تا وقتی کسی دستی نگاه نکند در صف می‌ماند. آن‌وقت باید یک
- * Polling پشتیبان هم می‌داشتیم — یعنی دو مسیر به‌جای یکی.
- *
- * برای فروشگاهی با چند ده پیام در روز، یک SELECT هر چند ثانیه هیچ
- * هزینه‌ای نیست. سادگی برنده است.
+ * صف ماندگار و بررسی دوره‌ای، تحویل پس از قطعی و تلاش مجدد را تضمین می‌کنند.
  *
  * ── و چرا تولیدکننده هشدار چک هم اینجاست ────────────────────────────
  *
@@ -18,6 +12,7 @@
  * `enqueue_due_cheque_alerts()` روی کلید (چک، روز کاری) Idempotent است،
  * پس فراخوانی ساعتی‌اش بی‌ضرر است.
  */
+import { setTimeout as delay } from "node:timers/promises";
 import { sql } from "kysely";
 import type { Db } from "../db/client.ts";
 import { HANDLERS, type OutboxMessage } from "./handlers.ts";
@@ -485,25 +480,24 @@ export function nextPace(
  */
 export function runLoop(
   opts: LoopOptions & { intervalMs: number },
-): { stop: () => Promise<void> } {
+): { stop: () => Promise<void>; wake: () => void } {
   assertLease(opts.leaseSeconds);
   let running = true;
   let current: Promise<unknown> = Promise.resolve();
   let pace: PaceState = { backlog: 0, errors: 0 };
   const lane = WORKER_LANES[opts.lane ?? "all"];
 
-  const sleep = (ms: number) =>
-    new Promise<void>((resolve) => {
-      // صفر هم یک بار Event Loop را آزاد می‌کند؛ صف عقب‌افتاده خاموشی را
-      // گروگان نمی‌گیرد.
-      if (ms === 0) { setImmediate(resolve); return; }
-      const t = setTimeout(resolve, ms);
-      // تایمر نباید فرآیند را زنده نگه دارد وقتی همه‌چیز تمام شده.
-      t.unref?.();
+  const shutdown = new AbortController();
+  let pendingWake = false;
+  let idle: AbortController | undefined;
+  const sleep = (ms: number, signal = shutdown.signal) =>
+    delay(ms, undefined, { ref: false, signal }).catch((err: Error) => {
+      if (err.name !== "AbortError") throw err;
     });
 
   const loop = async () => {
     while (running) {
+      pendingWake = false;
       let outcome: { ok: true; claimed: number } | { ok: false };
       try {
         current = tick({ ...opts, skipProducers: true });
@@ -524,9 +518,20 @@ export function runLoop(
         outcome = { ok: false };
         opts.log(`✗ دور ناموفق: ${err instanceof Error ? err.message : String(err)}`);
       }
+      const interruptible = outcome.ok && outcome.claimed < opts.batchSize;
       const next = nextPace(pace, outcome, opts.intervalMs, opts.batchSize);
       pace = next.state;
-      if (running) await sleep(next.delayMs);
+      if (!running) break;
+      if (interruptible) {
+        // A commit can arrive while tick is reading settings or delivering.
+        if (pendingWake) continue;
+        idle = new AbortController();
+        await sleep(next.delayMs, idle.signal);
+        idle = undefined;
+      } else {
+        // Neither a notification nor a burst of sales overrides error/backlog pacing.
+        await sleep(next.delayMs);
+      }
     }
   };
 
@@ -563,8 +568,14 @@ export function runLoop(
   const producersDone = lane.producers ? producerLoop() : Promise.resolve();
 
   return {
+    wake() {
+      pendingWake = true;
+      idle?.abort();
+    },
     async stop() {
       running = false;
+      shutdown.abort();
+      idle?.abort();
       await current.catch(() => undefined);
       await producing.catch(() => undefined);
       await done.catch(() => undefined);

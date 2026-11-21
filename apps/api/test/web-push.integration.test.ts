@@ -23,6 +23,7 @@ import { sql } from "kysely";
 import { createDb, type DbHandle } from "../src/db/client.ts";
 import { createDisposableDb, type DisposableDb } from "./helpers/disposable-db.ts";
 import { runLoop, tick, type LoopOptions } from "../src/worker/loop.ts";
+import { listenForPosStock } from "../src/worker/pos-wake.ts";
 import { makePinnedPost } from "../src/worker/web-push.ts";
 
 const DATABASE_URL = process.env.DATABASE_URL;
@@ -410,6 +411,61 @@ describe("ارسال لحظه‌ای به سایت — از حرکت انبار 
       await loop.stop();
       await sql.raw(original).execute(owner.db);
       await owner.close();
+    }
+  });
+
+  test("POS commit wakes an idle worker before its next poll", async (t) => {
+    const v = await makeVariation("PUSH-WAKE");
+    await move(v, 101);
+    await pushAll();
+    const loop = runLoop({ ...opts(), lane: "web", intervalMs: 30_000 });
+    let ready!: () => void;
+    const listening = new Promise<void>(resolve => { ready = resolve; });
+    const listener = listenForPosStock(disposable!.url, () => { ready(); loop.wake(); }, () => {});
+    const ms: number[] = [];
+    try {
+      await Promise.race([listening, new Promise<void>((_, reject) => {
+        setTimeout(() => reject(new Error("LISTEN not ready")), 5000).unref();
+      })]);
+      for (let stock = 100; stock >= 1; stock--) {
+        const start = performance.now();
+        await move(v, -1);
+        await sql`SELECT pg_notify('lmc_pos_stock', '')`.execute(handle.db);
+        while (site.get(v)?.onHand !== stock) {
+          assert.ok(performance.now() - start < 5000, "timed out before fallback poll");
+          await new Promise(resolve => setTimeout(resolve, 5));
+        }
+        ms.push(performance.now() - start);
+      }
+      ms.sort((a, b) => a - b);
+      t.diagnostic(`movement to local signed receiver (ms), n=100 p50=${ms[49]!.toFixed(1)} p95=${ms[94]!.toFixed(1)} max=${ms[99]!.toFixed(1)}`);
+    } finally {
+      await Promise.all([listener.stop(), loop.stop()]);
+    }
+  });
+
+  test("stock still reaches the site while the notification connection is down", async () => {
+    const v = await makeVariation("PUSH-DISCONNECT");
+    let ready!: () => void;
+    const listening = new Promise<void>(resolve => { ready = resolve; });
+    const loop = runLoop({ ...opts(), lane: "web", intervalMs: 200 });
+    const listener = listenForPosStock(disposable!.url, () => { ready(); loop.wake(); }, () => {});
+    try {
+      await Promise.race([listening, new Promise<void>((_, reject) => {
+        setTimeout(() => reject(new Error("LISTEN not ready")), 5000).unref();
+      })]);
+      const killed = await sql<{ ok: boolean }>`
+        SELECT pg_terminate_backend(pid) AS ok FROM pg_stat_activity
+         WHERE datname = current_database() AND application_name = 'lmc-pos-stock-listener'`.execute(handle.db);
+      assert.equal(killed.rows[0]?.ok, true);
+      await move(v, 1);
+      const until = Date.now() + 4000;
+      while (site.get(v)?.onHand !== 1) {
+        assert.ok(Date.now() < until, "poll must deliver before listener reconnects");
+        await new Promise(resolve => setTimeout(resolve, 20));
+      }
+    } finally {
+      await Promise.all([listener.stop(), loop.stop()]);
     }
   });
 

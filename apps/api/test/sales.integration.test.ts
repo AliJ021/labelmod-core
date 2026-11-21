@@ -312,7 +312,7 @@ describe("فروش و صندوق روی دیتابیس واقعی", { skip }, ()
       WHERE invoice_id=${invoiceId}::uuid AND method_code='credit'`.execute(handle.db)).rows[0]!.n, 0);
   });
 
-  test("چرخه کامل فروش نقدی — و Idempotency روی نهایی‌سازی", async () => {
+  test("چرخه کامل فروش نقدی — و Idempotency روی نهایی‌سازی", async (t) => {
     const s = await loginAs(supervisor);
     await app.inject({
       method: "POST",
@@ -342,6 +342,17 @@ describe("فروش و صندوق روی دیتابیس واقعی", { skip }, ()
       payload: { methodCode: "cash", amount: "3600000" },
     });
 
+    const listener = await handle.pool.connect();
+    t.after(() => listener.release(true));
+    await listener.query("LISTEN lmc_pos_stock");
+    const notified = new Promise<boolean>(resolve => {
+      const timer = setTimeout(() => resolve(false), 5000);
+      listener.once("notification", msg => {
+        clearTimeout(timer);
+        resolve(msg.channel === "lmc_pos_stock");
+      });
+    });
+
     const key = `finalize-${suffix}`;
     const first = await app.inject({
       method: "POST",
@@ -350,6 +361,7 @@ describe("فروش و صندوق روی دیتابیس واقعی", { skip }, ()
       headers: { ...s.headers, "idempotency-key": key },
     });
     assert.equal(first.statusCode, 200, first.body);
+    assert.equal(await notified, true, "finalize must wake the worker after commit");
     assert.equal(first.json().status, "finalized");
     assert.match(first.json().number, /^[1-9][0-9]*$/, "شماره فاکتور فقط رقم است");
     assert.equal(first.json().replayed, false);

@@ -23,6 +23,7 @@ import { hostname } from "node:os";
 import { loadConfig } from "./lib/config.ts";
 import { createDb } from "./db/client.ts";
 import { assertRuntimeDatabaseRole } from "./db/runtime-role.ts";
+import { listenForPosStock } from "./worker/pos-wake.ts";
 import { runLoop } from "./worker/loop.ts";
 
 async function main(): Promise<void> {
@@ -56,6 +57,9 @@ async function main(): Promise<void> {
     log,
   });
 
+  const listener = config.WORKER_LANE === "notify" ? null :
+    listenForPosStock(config.DATABASE_URL, loop.wake, log);
+
   // خاموشی تمیز: دورِ جاری تمام شود، بعد بیرون. پیامی که وسط ارسال
   // رها شود تا پایان اجاره دوباره برداشته نمی‌شود.
   let shuttingDown = false;
@@ -63,7 +67,7 @@ async function main(): Promise<void> {
     if (shuttingDown) return;
     shuttingDown = true;
     log(`${signal} — در حال خاموشی…`);
-    await loop.stop();
+    await Promise.all([listener?.stop(), loop.stop()]);
     await handle.close();
     log("خاموش شد.");
     process.exit(0);
