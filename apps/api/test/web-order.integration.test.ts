@@ -25,6 +25,7 @@ import { loginWithMfa } from "./helpers/login-with-mfa.ts";
 import { after, before, describe, test } from "node:test";
 import assert from "node:assert/strict";
 import { mkdtemp, rm } from "node:fs/promises";
+import { createServer } from "node:http";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { sql } from "kysely";
@@ -1020,9 +1021,33 @@ describe("سفارش سایت (ووکامرس)", { skip }, () => {
       paymentMethod: "gateway", paidAmount: NET.toString(), paymentRef: `partial-ref-${suffix}`,
       lines: [{ sku, qty: "3", unitPrice: "1500000", discountAmount: DISCOUNT.toString() }] };
 
-    // دو تحویل هم‌زمان همان Webhook: یک فاکتور، یک بازپخش.
+    // Drop the TCP connection after the real Core handler commits, before the
+    // caller receives any headers. Two workers then retry the same frozen order.
+    let committedStatus = 0;
+    const relay = createServer(async (req, res) => {
+      try {
+        const bytes: Buffer[] = [];
+        for await (const chunk of req) bytes.push(Buffer.from(chunk));
+        const upstream = await order(JSON.parse(Buffer.concat(bytes).toString()), "/web/discounted-orders");
+        committedStatus = upstream.statusCode;
+      } finally {
+        res.destroy();
+      }
+    });
+    await new Promise<void>(resolve => relay.listen(0, "127.0.0.1", resolve));
+    try {
+      const address = relay.address();
+      assert.ok(address && typeof address !== "string");
+      await assert.rejects(fetch(`http://127.0.0.1:${address.port}`, {
+        method: "POST", body: JSON.stringify(payload),
+      }), /fetch failed/);
+      assert.equal(committedStatus, 201);
+      assert.equal(await onHand(), 2);
+    } finally {
+      await new Promise<void>(resolve => relay.close(() => resolve()));
+    }
     const both = await Promise.all([order(payload, "/web/discounted-orders"), order(payload, "/web/discounted-orders")]);
-    assert.deepEqual(both.map((r) => r.statusCode).sort(), [200, 201], both.map((r) => r.body).join(" | "));
+    assert.deepEqual(both.map((r) => r.statusCode), [200, 200], both.map((r) => r.body).join(" | "));
     const invoiceId = both[0]!.json<OrderResponse>().invoiceId;
     assert.equal(both[1]!.json<OrderResponse>().invoiceId, invoiceId);
     for (const r of both) assert.equal(r.json<OrderResponse>().payableAmount, NET.toString());
