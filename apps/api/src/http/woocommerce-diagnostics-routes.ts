@@ -24,6 +24,7 @@ export function registerWooDiagnosticsRoutes(app: FastifyInstance, db: Db, secre
     const variation = q.sku ? await db.selectFrom("catalog.variation").select(["id", "status"])
       .where("sku", "=", q.sku).executeTakeFirst() : undefined;
     reply.header("cache-control", "no-store");
+    reply.header("server-timing", `lmc;dur=${reply.elapsedTime.toFixed(2)}`);
     return { protocol: 1, authenticated: true, auth: "apiClientId" in req.session ? "api_key" : "session",
       branchId: q.branchId, warehouseId: q.warehouseId, orderIdentity: "sku", stockIdentity: "variationId",
       features: { explicitLineDiscount: true, codReservations: true },

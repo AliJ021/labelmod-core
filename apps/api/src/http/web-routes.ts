@@ -221,6 +221,8 @@ export function registerWebRoutes(app: FastifyInstance, deps: WebRouteDeps): voi
     const invoice = await invoices.byId(out.value);
     if (!invoice) throw new InvoiceError("invoice_not_found", "فاکتور یافت نشد", 404);
 
+    const stock = await stockWatermarks(body.warehouseId, body.lines.map((l) => l.sku));
+    reply.header("server-timing", `lmc;dur=${reply.elapsedTime.toFixed(2)}`);
     return reply.code(out.replayed ? 200 : 201).send({
       invoiceId: invoice.id,
       number: invoice.number,
@@ -229,7 +231,7 @@ export function registerWebRoutes(app: FastifyInstance, deps: WebRouteDeps): voi
       // نمی‌شود Serialize کرد. `serializeMoney` تنها مرز تبدیل است.
       payableAmount: serializeMoney(invoice.payableAmount),
       replayed: out.replayed,
-      stock: await stockWatermarks(body.warehouseId, body.lines.map((l) => l.sku)),
+      stock,
     });
   };
   app.post("/web/orders", ingestWebOrder);

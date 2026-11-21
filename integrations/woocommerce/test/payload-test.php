@@ -239,6 +239,8 @@ class WC_Order
         return $this->txn;
     }
 
+    public function get_date_paid() { return new DateTimeImmutable(); }
+
     public function get_customer_note(): string
     {
         return $this->customer_note;
@@ -346,11 +348,16 @@ assert_eq(
     isset($GLOBALS['lmc_test_actions']['woocommerce_payment_complete']),
     true
 );
-assert_eq(
-    'processing به‌تنهایی hook ارسال نیست',
-    isset($GLOBALS['lmc_test_actions']['woocommerce_order_status_processing']),
-    false
-);
+$manual = new WC_Order();
+$manual->id = 7000;
+$manual->txn = 'manual-test';
+$GLOBALS['lmc_test_orders'][$manual->id] = $manual;
+$early = $GLOBALS['lmc_test_actions']['woocommerce_order_status_processing'];
+$early($manual->id, $manual);
+assert_eq('تغییر دستی وضعیت پرداخت را تأیید نمی‌کند', $manual->get_meta(LMC_Order_Sync::META_PAID), '');
+$GLOBALS['lmc_test_actions']['woocommerce_pre_payment_complete']($manual->id, $manual->txn);
+$early($manual->id, $manual);
+assert_eq('اعلان پیش از پرداخت به‌تنهایی مجوز ساخت فاکتور نیست', $manual->get_meta(LMC_Order_Sync::META_PAID), '');
 
 $paid_order = new WC_Order();
 $GLOBALS['lmc_test_orders'][$paid_order->id] = $paid_order;

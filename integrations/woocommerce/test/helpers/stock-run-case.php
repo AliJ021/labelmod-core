@@ -73,6 +73,7 @@ function wp_safe_remote_request($url, $args) {
     ]]])];
 }
 function wp_remote_retrieve_response_code($response) { return 200; }
+function wp_remote_retrieve_header($response, $header) { return $response['headers'][$header] ?? ''; }
 function wp_remote_retrieve_body($response) { return $response['body']; }
 
 set_settings(['sync_stock' => 'yes', 'sync_price' => 'yes',

@@ -29,24 +29,24 @@ class LMC_Client
     /** خطای نهایی — تلاش دوباره همین جواب را می‌گیرد. */
     const PERMANENT = 'permanent';
 
-    public static function post(string $path, array $body, ?float $deadline = null)
+    public static function post(string $path, array $body, ?float $deadline = null, ?array &$timings = null)
     {
-        return self::request('POST', $path, $body, $deadline);
+        return self::request('POST', $path, $body, $deadline, $timings);
     }
 
-    public static function get(string $path, array $query = [], ?float $deadline = null)
+    public static function get(string $path, array $query = [], ?float $deadline = null, ?array &$timings = null)
     {
         if ($query) {
             $path .= (strpos($path, '?') === false ? '?' : '&') . http_build_query($query);
         }
-        return self::request('GET', $path, null, $deadline);
+        return self::request('GET', $path, null, $deadline, $timings);
     }
 
     /**
      * @return array|WP_Error آرایه پاسخ، یا WP_Error با `data['kind']`
      *                        برابر RETRYABLE / PERMANENT.
      */
-    private static function request(string $method, string $path, ?array $body, ?float $deadline)
+    private static function request(string $method, string $path, ?array $body, ?float $deadline, ?array &$timings)
     {
         $base = rtrim((string) lmc_setting('base_url'), '/');
         $key  = (string) lmc_setting('api_key');
@@ -91,7 +91,16 @@ class LMC_Client
             $args['body'] = wp_json_encode($body, JSON_UNESCAPED_UNICODE);
         }
 
+        $start = hrtime(true);
         $res = wp_safe_remote_request($url, $args);
+        if ($timings !== null && !is_wp_error($res)) {
+            $sample = ['http' => (hrtime(true) - $start) / 1e6];
+            $server = wp_remote_retrieve_header($res, 'server-timing');
+            if (is_string($server) && preg_match('/(?:^|,)\s*lmc;dur=([0-9]+(?:\.[0-9]+)?)(?:\s*,|$)/', $server, $m)) {
+                $sample['core'] = (float) $m[1];
+            }
+            $timings[] = $sample;
+        }
 
         if (is_wp_error($res)) {
             lmc_log(sprintf('%s → خطای شبکه', $method));
