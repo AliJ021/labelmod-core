@@ -55,6 +55,7 @@ class LMC_Stock_Sync
         add_action(self::NEXT_PAGE_EVENT, [__CLASS__, 'run']);
         add_action('added_post_meta', [__CLASS__, 'on_sku_change'], 10, 4);
         add_action('updated_post_meta', [__CLASS__, 'on_sku_change'], 10, 4);
+        add_action('wp_ajax_lmc_stock_scan', [__CLASS__, 'ajax_scan']);
         add_action('admin_post_lmc_sync_now', [__CLASS__, 'handle_manual']);
     }
 
@@ -81,7 +82,7 @@ class LMC_Stock_Sync
      *
      * @return array{updated:int,skipped:int,busy:int,linked:int,received:int,unchanged:int,invalid:int,price_enabled:bool,link_enabled:bool,error:string}
      */
-    public static function run(bool $manual = false): array
+    public static function run(bool $manual = false, string $scan_action = ''): array
     {
         global $wpdb;
         $out = ['updated' => 0, 'skipped' => 0, 'busy' => 0, 'linked' => 0, 'received' => 0, 'unchanged' => 0,
@@ -93,13 +94,13 @@ class LMC_Stock_Sync
             return $out;
         }
         try {
-            return self::read_page($out, $manual);
+            return self::read_page($out, $manual, $scan_action);
         } finally {
             LMC_Push_Guard::release($lock);
         }
     }
 
-    private static function read_page(array $out, bool $manual): array
+    private static function read_page(array $out, bool $manual, string $scan_action): array
     {
         if (lmc_setting('sync_stock') !== 'yes') {
             $out['error'] = __('دریافت موجودی خاموش است؛ ابتدا آن را در تنظیمات فعال کنید.', 'labelmod-connector');
@@ -133,9 +134,23 @@ class LMC_Stock_Sync
         // مُرده باشد) و برای مکان‌نمایی که Pull نسل قبل دیر نوشته، Pull کامل است نه افزایشی.
         $scope = hash('sha256', wp_json_encode([lmc_setting('base_url'), $warehouse, $list,
             $out['link_enabled'], $out['price_enabled'], lmc_setting('currency_unit')]));
+        // Another request can finish a page before this request acquires the feed lock.
+        if (function_exists('wp_cache_delete')) { wp_cache_delete(self::CURSOR_OPTION, 'options'); }
         $stored = get_option(self::CURSOR_OPTION, '');
         $checkpoint = is_array($stored) && ($stored['epoch'] ?? null) === $epoch && ($stored['scope'] ?? null) === $scope
             ? $stored : [];
+        $report = $checkpoint['report'] ?? null;
+        if ($scan_action === 'next' && empty($report['running'])) {
+            $out['report'] = $report;
+            if (!$report) { $out['error'] = 'وضعیت همگام‌سازی عوض شد؛ دوباره شروع کنید.'; }
+            return $out;
+        }
+        if ($scan_action === 'start' && empty($report['running'])) {
+            $checkpoint = [];
+            $manual = true;
+            $report = ['running' => true, 'received' => 0, 'updated' => 0, 'unchanged' => 0,
+                'skipped' => 0, 'linked' => 0, 'invalid' => 0, 'conflicts' => 0];
+        }
         $scan_started = $checkpoint['scan_started'] ?? time();
         $sku_generation = (string) get_option(self::SKU_GENERATION, '');
         $scanning_generation = $checkpoint['sku_generation'] ?? $sku_generation;
@@ -147,11 +162,11 @@ class LMC_Stock_Sync
             $scan_started = time();
             // Persist the restart before I/O so a busy first page or HTTP failure retries from the beginning.
             update_option(self::CURSOR_OPTION, ['epoch' => $epoch, 'scope' => $scope,
-                'more' => true, 'scan_started' => $scan_started, 'sku_generation' => $scanning_generation, 'since' => null, 'id' => null], false);
+                'more' => true, 'report' => $report, 'scan_started' => $scan_started, 'sku_generation' => $scanning_generation, 'since' => null, 'id' => null], false);
         }
         if (!empty($checkpoint['since'])) {
             $query['since'] = $checkpoint['since'];
-            $query['sinceId'] = $checkpoint['id'];
+            if (!empty($checkpoint['id'])) { $query['sinceId'] = $checkpoint['id']; }
         } elseif (!$manual && is_string($stored)) {
             // Old Core ignores restartCatalog. New Core replays the catalog once on upgrade.
             $since = self::cursor_for($epoch);
@@ -171,12 +186,22 @@ class LMC_Stock_Sync
 
         $sync_price = lmc_setting('sync_price') === 'yes';
 
-        $items = isset($res['items']) && is_array($res['items']) ? $res['items'] : [];
+        if (!isset($res['items']) || !is_array($res['items'])) {
+            $out['error'] = 'پاسخ فهرست موجودی کامل نیست؛ دریافت از همین صفحه قابل تکرار است.';
+            return $out;
+        }
+        $items = $res['items'];
+        if (count($items) >= self::BATCH && (empty($res['cursor']) || (isset($query['since']) && $res['cursor'] === $query['since']
+            && ($res['cursorId'] ?? null) === ($query['sinceId'] ?? null)))) {
+            $out['error'] = 'حسابداری نشانگر صفحهٔ بعد را برنگرداند؛ دریافت کامل نشده است.';
+            return $out;
+        }
         $out['received'] = count($items);
         foreach ($items as $item) {
             $variation_id = isset($item['variationId']) ? (string) $item['variationId'] : '';
             $sku          = isset($item['sku']) ? (string) $item['sku'] : '';
-            if ($variation_id === '' || !isset($item['available'])) {
+            if ($variation_id === '' || !isset($item['available']) || !is_scalar($item['available'])
+                || !preg_match('/^\d+(?:\.\d+)?$/D', (string) $item['available'])) {
                 $out['invalid']++;
                 continue;
             }
@@ -260,16 +285,34 @@ class LMC_Stock_Sync
         // است ولی هر بار همه‌چیز را می‌فرستد.
         $more = count($items) >= self::BATCH;
         if ($out['busy'] === 0 && !$reset['pending'] && $epoch === LMC_Stock_Ledger::epoch()) {
-            if (array_key_exists('cursorId', $res)) {
-                update_option(self::CURSOR_OPTION, [
+            if (array_key_exists('cursorId', $res) || $report) {
+                if (!empty($report['running'])) {
+                    foreach (['received', 'updated', 'unchanged', 'skipped', 'linked', 'invalid', 'conflicts'] as $key) {
+                        $report[$key] += $out[$key];
+                    }
+                    $report['running'] = $more;
+                }
+                $next_checkpoint = [
+                    'report' => $report,
                     'epoch' => $epoch, 'scope' => $scope, 'more' => $more, 'scan_started' => $scan_started,
                     'sku_generation' => $scanning_generation,
                     'since' => $res['cursor'] ?? ($checkpoint['since'] ?? null),
                     'id' => $res['cursorId'] ?? ($checkpoint['id'] ?? null),
-                ], false);
+                ];
+                if (!update_option(self::CURSOR_OPTION, $next_checkpoint, false) && get_option(self::CURSOR_OPTION) !== $next_checkpoint) {
+                    $out['error'] = 'ذخیرهٔ پیشرفت همگام‌سازی ممکن نشد؛ دوباره تلاش کنید.';
+                    return $out;
+                }
             } elseif (!empty($res['cursor'])) {
                 update_option(self::CURSOR_OPTION, $epoch . ':' . (string) $res['cursor'], false);
             }
+        }
+        $out['report'] = $report;
+        if (!empty($report['running']) && $out['busy'] > 0) {
+            $out['error'] = 'برخی تنوع‌ها در حال تغییرند؛ دریافت از همین صفحه ادامه می‌یابد.';
+        }
+        if ($epoch !== LMC_Stock_Ledger::epoch()) {
+            $out['error'] = 'دورهٔ موجودی عوض شد؛ همگام‌سازی را دوباره شروع کنید.';
         }
         if ($reset['pending']) {
             $out['error'] = __('بازنشانی واترمارک هنوز کامل نشده است (بازمحاسبهٔ بخشی از کالاها ماند)؛ دور بعد دوباره تلاش می‌کند. گزارش افزونه را ببینید.', 'labelmod-connector');
@@ -439,7 +482,7 @@ class LMC_Stock_Sync
             $result['received'], $result['updated'], $result['unchanged'], $result['skipped'], $result['linked'], $result['invalid']);
         if ($result['received'] === 0) {
             $text .= ' در این صفحه سطر تازه‌ای برای دریافت نبود.';
-        } elseif ($result['skipped'] > 0) {
+        } elseif ($result['skipped'] > 0 && $result['received'] < self::BATCH) {
             $text .= ' شناسهٔ اتصال یا SKU دقیق محصول/تنوع سایت را بررسی کنید.';
         }
         if (!empty($result['conflicts'])) {
@@ -448,8 +491,28 @@ class LMC_Stock_Sync
         if (!$result['link_enabled']) { $text .= ' اتصال اولیه با SKU خاموش است.'; }
         if (!$result['price_enabled']) { $text .= ' همگام‌سازی قیمت خاموش است؛ قیمت سایت تغییر نمی‌کند.'; }
         if (!empty($result['busy'])) { $text .= sprintf(' %d سطر نشانده نشد (مشغول، دفتر کسر ناقص یا عکس بی‌واترمارک)؛ دور بعد دوباره می‌آید.', $result['busy']); }
-        if ($result['received'] >= self::BATCH) { $text .= ' صفحه پر است؛ ادامهٔ دریافت به زمان‌بند سپرده شد.'; }
+        if ($result['received'] >= self::BATCH) { $text .= ' هر سطر یک تنوع حسابداری (مثل یک رنگ و سایز) است. این شمارش فقط برای همین صفحه است؛ زمان‌بند ادامهٔ فهرست را بررسی می‌کند.'; }
         return $text;
+    }
+
+    public static function scan_message(array $result): string
+    {
+        $report = $result['report'] ?? null;
+        if (!$report) { return self::manual_summary($result); }
+        return ($report['running'] ? 'در حال بررسی فهرست. ' : 'بررسی کامل فهرست پایان یافت. ')
+            . sprintf('%d تنوع بررسی شد؛ %d به‌روز، %d برابر، %d بدون کالای متناظر، %d اتصال تازه، %d نامعتبر و %d تعارض اتصال.',
+                $report['received'], $report['updated'], $report['unchanged'], $report['skipped'],
+                $report['linked'], $report['invalid'], $report['conflicts']);
+    }
+
+    public static function ajax_scan(): void
+    {
+        if (!current_user_can('manage_woocommerce')) { wp_send_json_error(null, 403); }
+        check_ajax_referer('lmc_sync_now', '_wpnonce');
+        $action = ($_POST['step'] ?? '') === 'start' ? 'start' : 'next';
+        $result = self::run($action === 'start', $action);
+        if ($result['error'] !== '') { wp_send_json_error(['message' => $result['error']]); }
+        wp_send_json_success(['message' => self::scan_message($result), 'more' => !empty($result['report']['running'])]);
     }
 
     /** «همین حالا همگام کن» از صفحه تنظیمات. */
@@ -460,11 +523,11 @@ class LMC_Stock_Sync
         }
         check_admin_referer('lmc_sync_now');
 
-        $res = self::run(true);
+        $res = self::run(true, 'start');
 
         $args = $res['error'] !== ''
             ? ['lmc_msg' => 'sync_failed', 'lmc_detail' => rawurlencode($res['error'])]
-            : ['lmc_msg' => 'synced', 'lmc_count' => $res['updated'], 'lmc_detail' => rawurlencode(self::manual_summary($res))];
+            : ['lmc_msg' => 'synced', 'lmc_count' => $res['updated'], 'lmc_detail' => rawurlencode(self::scan_message($res))];
 
         wp_safe_redirect(add_query_arg($args, admin_url('admin.php?page=labelmod-connector')));
         exit;
