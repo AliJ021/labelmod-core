@@ -1,3 +1,4 @@
+/* global document, window, FormData, fetch */
 (() => {
     const form = document.getElementById('lmc-stock-scan');
     if (!form || !window.fetch || !window.ajaxurl) return;
