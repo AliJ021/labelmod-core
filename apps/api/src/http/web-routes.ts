@@ -221,6 +221,7 @@ export function registerWebRoutes(app: FastifyInstance, deps: WebRouteDeps): voi
     const invoice = await invoices.byId(out.value);
     if (!invoice) throw new InvoiceError("invoice_not_found", "فاکتور یافت نشد", 404);
 
+    reply.header("server-timing", `lmc;dur=${reply.elapsedTime.toFixed(2)}`);
     return reply.code(out.replayed ? 200 : 201).send({
       invoiceId: invoice.id,
       number: invoice.number,
