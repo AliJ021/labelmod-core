@@ -378,4 +378,37 @@ foreach ([0, 5] as $failedBefore) {
     }
 }
 
+// Call the registered Woo hook while no queue worker is running.
+LMC_Order_Sync::init();
+$paid = $hooks['woocommerce_payment_complete'][0];
+$orders[80] = $direct = new WC_Order(80);
+$direct->method = 'bacs';
+$direct->meta[LMC_Order_Sync::META_PAYLOAD] = array_replace($outagePayload, ['externalId' => '80']);
+$direct->meta[LMC_Order_Sync::META_LINES] = [1 => 1];
+$directCalls = count(LMC_Client::$calls);
+LMC_Client::$on_post = static function () {
+    check((bool) wp_next_scheduled(LMC_ORDER_EVENT, [80]), 'recovery job exists before direct HTTP');
+};
+LMC_Client::$result = ['invoiceId' => 'direct-80', 'number' => '80'];
+$paid(80);
+check($direct->get_meta(LMC_Order_Sync::META_INVOICE) === 'direct-80', 'paid hook obtains invoice without running the queue');
+$paid(80);
+LMC_Order_Sync::send(80);
+check(count(LMC_Client::$calls) === $directCalls + 1, 'duplicate callback and backup worker do not POST again');
+
+$orders[81] = $uncertain = new WC_Order(81);
+$uncertain->method = 'bacs';
+$uncertain->meta[LMC_Order_Sync::META_PAYLOAD] = array_replace($outagePayload, ['externalId' => '81']);
+$uncertain->meta[LMC_Order_Sync::META_LINES] = [1 => 1];
+LMC_Client::$result = new WP_Error('network', 'response lost');
+$paid(81);
+$sent = end(LMC_Client::$calls);
+$due = wp_next_scheduled(LMC_ORDER_EVENT, [81]);
+$callCount = count(LMC_Client::$calls);
+$paid(81);
+check($due > time() && wp_next_scheduled(LMC_ORDER_EVENT, [81]) === $due && count(LMC_Client::$calls) === $callCount, 'duplicate payment preserves backoff after lost ACK');
+LMC_Client::$result = ['invoiceId' => 'direct-81', 'number' => '81'];
+LMC_Order_Sync::send(81);
+check(end(LMC_Client::$calls) === $sent && $uncertain->get_meta(LMC_Order_Sync::META_INVOICE) === 'direct-81', 'worker reuses identical payload after unknown outcome');
+
 printf("✓ %d بررسی رزرو و بازیابی سفارش موفق بود\n", $checks);
