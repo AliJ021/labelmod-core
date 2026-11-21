@@ -17,7 +17,8 @@ export async function buildManagementApp(deps:{db:Db;manager:RestoreManager;rpcT
   if(!/^[a-f0-9]{64,128}$/i.test(deps.rpcToken)) throw new Error("کلید کانال مدیریت نامعتبر است.");
   const app=Fastify({logger:false,bodyLimit:8192});
   const auth=new AuthService(deps.db),factor=new TwoFactorService(deps.db),store=deps.manager.store;
-  await app.register(rateLimit,{global:false});
+  // All calls arrive from the API over one private Unix socket, which has no IP address.
+  await app.register(rateLimit,{global:false,keyGenerator:()=>"management-socket"});
   app.addHook("onRequest",async(req,reply)=>{
     if(typeof req.headers.authorization!=="string" || !safeEqual(req.headers.authorization,"Bearer "+deps.rpcToken)) return reply.code(401).send({error:{code:"manager_auth",message:"دسترسی کانال مدیریت معتبر نیست."}});
     reply.header("Cache-Control","no-store");

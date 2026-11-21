@@ -380,6 +380,23 @@ jobs:
             import http from 'node:http';
             http.get({socketPath:'/run/labelmod-panel-backup/manager.sock',path:'/status'},
               res => { if(res.statusCode !== 401) process.exitCode=1; });"
+          # A Unix socket has no peer IP. Exercise a rate-limited route on the real socket.
+          docker exec panel-backup-ci node --input-type=module -e "
+            import http from 'node:http';
+            import {readFileSync} from 'node:fs';
+            import assert from 'node:assert/strict';
+            const channel='/run/labelmod-panel-backup';
+            const token=readFileSync(channel+'/rpc-token','utf8').trim();
+            for (const expected of [403,403,403,403,429]) {
+              const status=await new Promise((resolve,reject)=>{
+                const req=http.request({socketPath:channel+'/manager.sock',path:'/backup',
+                  method:'POST',headers:{authorization:'Bearer '+token}},res=>{
+                    res.resume();res.on('end',()=>resolve(res.statusCode));
+                  });
+                req.on('error',reject);req.end();
+              });
+              assert.equal(status,expected);
+            }"
 
 
       # ⚠️ `-w /app/apps/api` لازم است، نه تزئین: چیدمان pnpm وابستگی‌ها
