@@ -21,7 +21,7 @@
  * ── «فوری» یعنی چه ─────────────────────────────────────────────────
  *
  * درج سطر در همان درخواست Checkout و بی تأخیر انجام می‌شود (یک INSERT؛
- * هیچ HTTP به Core در مسیر مشتری نیست). اجرا با یکی از این سه است:
+ * پیش از ارسال مستقیم سفارش پرداخت‌شده). اجرا با یکی از این سه است:
  *   • اجراکنندهٔ WP-CLI (اختیاری، مستند در README) — سریع‌ترین؛
  *   • رویداد `lmc_queue_kick` که در درخواست **بعدی** هر بازدیدکننده‌ای
  *     WP-Cron را بیدار می‌کند و فقط همین گروه را می‌راند؛
@@ -288,6 +288,13 @@ class LMC_Queue
         lmc_log(sprintf('اجرای %s هم‌اکنون ممکن نشد (قفل اجرا %s)؛ دوباره صف شد.', $hook, $lock === false ? 'در دست اجرای دیگر' : 'در دسترس نیست'));
         self::enqueue($hook, $args, 30 + random_int(0, 30));
         return null;
+    }
+
+    /** Nonblocking checkout attempt. A durable job already owns recovery. */
+    public static function try_exclusive(string $hook, array $args): ?string
+    {
+        $lock = self::lock($hook, $args, 0, 'x');
+        return is_string($lock) ? $lock : null;
     }
 
     public static function release(?string $lock): void

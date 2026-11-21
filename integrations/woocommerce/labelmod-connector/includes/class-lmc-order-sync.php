@@ -10,11 +10,8 @@
  * کالا را همان لحظه از انبار خارج می‌کند — سفارشی که هرگز پرداخت نشود،
  * موجودی را می‌خورد و کسی هم نمی‌فهمد چرا.
  *
- * ── چرا ناهم‌زمان ───────────────────────────────────────────────────
- *
- * ارسال هرگز نباید Checkout را کند یا خراب کند. اگر سرور لیبل مد پایین
- * باشد، مشتری باید بتواند خریدش را تمام کند. پس اینجا فقط یک رویداد
- * زمان‌بندی می‌شود و کار واقعی بعداً انجام می‌گیرد.
+ * پرداخت موفق یک کار بازیابی ماندگار می‌سازد و اولین ارسال همان سفارش را همان‌جا انجام می‌دهد.
+ * رسیدگی به قطع ارتباط و تلاش‌های بعدی بر عهدهٔ صف است.
  *
  * ── تکرار، و چرا نگرانش نیستیم ──────────────────────────────────────
  *
@@ -38,6 +35,9 @@ class LMC_Order_Sync
     const META_ERROR    = '_lmc_last_error';
     const META_STOPPED  = '_lmc_order_stopped';
     const META_PAID     = '_lmc_payment_complete';
+    const META_PAID_AT_MS = '_lmc_paid_at_ms';
+    private static $payment_started = [];
+
     const META_DELIVERED = '_lmc_cod_delivered';
     const META_PAYLOAD  = '_lmc_order_payload';
     const META_LINES    = '_lmc_order_line_map';
@@ -47,7 +47,10 @@ class LMC_Order_Sync
 
     public static function init(): void
     {
-        add_action('woocommerce_payment_complete', [__CLASS__, 'payment_complete']);
+        add_action('woocommerce_pre_payment_complete', static function ($id) {
+            self::$payment_started[(int) $id] = (int) round(microtime(true) * 1000);
+        }, 1);
+        add_action('woocommerce_payment_complete', [__CLASS__, 'dispatch_paid_order'], 1);
         add_action('woocommerce_order_status_changed', [__CLASS__, 'resume_confirmed_order']);
         add_action(LMC_ORDER_EVENT, [__CLASS__, 'send']);
 
@@ -56,40 +59,58 @@ class LMC_Order_Sync
         add_action('admin_post_lmc_confirm_payment', [__CLASS__, 'handle_confirm_payment']);
     }
 
-    /**
-     * زمان‌بندی ارسال — فوری و ماندگار (LMC_Queue، گروه labelmod-critical).
-     *
-     * تأخیر ثابت ۱۰ ثانیه‌ای نسخه‌های قبل برای این بود که شمارهٔ پیگیری
-     * پرداخت هنوز ننشسته باشد. در ووکامرس این Hook پس از
-     * `set_transaction_id()` و `save()` صدا زده می‌شود
-     * (`WC_Order::payment_complete`)، و کار در پردازهٔ دیگری اجرا می‌شود.
-     */
-    public static function payment_complete($order_id): void
+    /** Woo has saved payment before calling this hook. Persist recovery work before any HTTP. */
+    public static function dispatch_paid_order($order_id): void
+    {
+        $order_id = (int) $order_id;
+        if (!self::payment_complete($order_id)) {
+            return;
+        }
+        $lock = LMC_Queue::try_exclusive(LMC_ORDER_EVENT, [$order_id]);
+        if ($lock === null) {
+            return;
+        }
+        try {
+            // The worker may have completed or scheduled backoff while we acquired the lock.
+            self::deliver($order_id, microtime(true) + 2.0);
+        } catch (Throwable $error) {
+            lmc_log(sprintf('ارسال فوری سفارش %d کامل نشد؛ پیگیری از صف بازیابی.', $order_id));
+        } finally {
+            LMC_Queue::release($lock);
+        }
+    }
+
+    /** Return true for the first paid callback once a durable recovery job exists. */
+    public static function payment_complete($order_id): bool
     {
         $order_id = (int) $order_id;
         if ($order_id <= 0) {
-            return;
+            return false;
         }
         $order = wc_get_order($order_id);
         if (!$order || $order->get_meta(self::META_INVOICE) !== '') {
-            return;
+            return false;
         }
 
         // خود status برای اثبات پرداخت کافی نیست: پرداخت در محل هم
         // پیش از دریافت پول وارد processing می‌شود. این نشان فقط از
         // رویداد موفق پرداخت ووکامرس نوشته می‌شود.
-        $order->update_meta_data(self::META_PAID, 'yes');
-        $order->save();
+        $first = $order->get_meta(self::META_PAID) !== 'yes';
+        if ($first) {
+            $order->update_meta_data(self::META_PAID, 'yes');
+            $order->update_meta_data(self::META_PAID_AT_MS, self::$payment_started[$order_id] ?? (int) round(microtime(true) * 1000));
+            $order->save();
+        }
 
         // تکرار اعلان پرداخت، تصمیم ارسال دستی نیست. صف موجود مسئول backoff است؛
         // خطای دائمی یا پایان سقف تلاش با webhook تکراری دوباره باز نمی‌شود.
         if ($order->get_meta(self::META_STOPPED) === 'yes'
             || $order->get_meta(self::META_ERROR) !== ''
             || (int) $order->get_meta(self::META_ATTEMPTS) >= self::MAX_ATTEMPTS) {
-            return;
+            return false;
         }
 
-        LMC_Queue::enqueue(LMC_ORDER_EVENT, [$order_id]);
+        return LMC_Queue::enqueue(LMC_ORDER_EVENT, [$order_id]) && $first;
     }
 
     /** بازیابی پرداخت تأییدشده‌ای که هنگام اجرای صف هنوز وضعیت مجاز نداشت. */
@@ -136,7 +157,7 @@ class LMC_Order_Sync
     }
 
     /** ارسال واقعی — فقط زیر قفل اجرا (از `send`). */
-    private static function deliver($order_id): void
+    private static function deliver($order_id, ?float $deadline = null): void
     {
         $epoch    = LMC_Stock_Ledger::epoch();
         $order_id = (int) $order_id;
@@ -147,6 +168,7 @@ class LMC_Order_Sync
         // A duplicate payment callback may queue work while another worker is
         // awaiting HTTP. Every worker must enforce the persisted stop decision.
         if ($order->get_meta(self::META_INVOICE) !== '' || !self::is_eligible($order)
+            || ($deadline !== null && ($order->get_meta(self::META_ERROR) !== '' || (int) $order->get_meta(self::META_ATTEMPTS) > 0))
             || $order->get_meta(self::META_STOPPED) === 'yes'
             || (int) $order->get_meta(self::META_ATTEMPTS) >= self::MAX_ATTEMPTS) {
             return;
@@ -174,7 +196,7 @@ class LMC_Order_Sync
             $payload['codDelivered'] = true;
         }
 
-        $supported = self::check_discount_support($payload);
+        $supported = self::check_discount_support($payload, $deadline);
         if (is_wp_error($supported)) {
             self::fail($order, $supported, LMC_Client::is_retryable($supported));
             return;
@@ -183,7 +205,7 @@ class LMC_Order_Sync
         foreach ($payload['lines'] as $line) {
             if (array_key_exists('discountAmount', $line)) { $path = '/web/discounted-orders'; break; }
         }
-        $res = LMC_Client::post($path, $payload);
+        $res = LMC_Client::post($path, $payload, $deadline);
 
         if (is_wp_error($res)) {
             self::fail($order, $res, LMC_Client::is_retryable($res));
@@ -197,17 +219,23 @@ class LMC_Order_Sync
             return;
         }
 
+        $ack_ms = (int) round(microtime(true) * 1000);
         $order->update_meta_data(self::META_INVOICE, $res['invoiceId']);
         // ACK کسر محلی: پاسخ فاکتور واترمارک هر تنوع پس از Commit را دارد.
         LMC_Stock_Ledger::ack_order($order, $res['stock'] ?? null, (string) ($payload['warehouseId'] ?? ''),
             LMC_Stock_Ledger::sent_from($payload, $order->get_meta(self::META_LINES)), $epoch);
         $order->update_meta_data(self::META_NUMBER, (string) ($res['number'] ?? ''));
         $order->delete_meta_data(self::META_ERROR);
-        $order->add_order_note(sprintf(
+        $note = sprintf(
             /* translators: %s: شماره فاکتور در سامانه لیبل مد */
             __('در لیبل مد ثبت شد — فاکتور %s', 'labelmod-connector'),
             (string) ($res['number'] ?? '—')
-        ));
+        );
+        $started_ms = (int) $order->get_meta(self::META_PAID_AT_MS);
+        if ($started_ms > 0 && $ack_ms >= $started_ms) {
+            $note .= sprintf('؛ از تأیید پرداخت تا پاسخ حسابداری: %d میلی‌ثانیه', $ack_ms - $started_ms);
+        }
+        $order->add_order_note($note);
 
         // ⚠️ مقایسه مبلغ، و چرا نه یک بررسی ساکت.
         //
@@ -429,7 +457,7 @@ class LMC_Order_Sync
     }
 
     /** Core قدیمی فیلد ناشناخته را حذف می‌کند؛ تا اعلام پشتیبانی ارسال ممنوع است. */
-    public static function check_discount_support(array $payload)
+    public static function check_discount_support(array $payload, ?float $deadline = null)
     {
         $has_discount = false;
         foreach ($payload['lines'] as $line) {
@@ -439,7 +467,7 @@ class LMC_Order_Sync
         if (!$has_discount && !$cod) { return true; }
         $response = LMC_Client::get('/web/connection', [
             'branchId' => $payload['branchId'], 'warehouseId' => $payload['warehouseId'],
-        ]);
+        ], $deadline);
         if (is_wp_error($response)) { return $response; }
         if (($response['protocol'] ?? null) !== 1 || ($response['authenticated'] ?? false) !== true
             || ($response['branchId'] ?? '') !== $payload['branchId'] || ($response['warehouseId'] ?? '') !== $payload['warehouseId']
