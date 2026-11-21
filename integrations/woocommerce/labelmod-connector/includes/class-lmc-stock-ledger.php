@@ -922,6 +922,20 @@ class LMC_Stock_Ledger
                 }
             }
             if ($state !== null && $state['w'] === $wh && $rev <= $state['r']) {
+                // Woo stock can be edited independently of the warehouse revision.
+                // A fresh pull may reconcile the display against the accepted state,
+                // including outstanding order deductions. Never replay an older payload.
+                if ($may_enter && $version === null && $rev === $state['r']) {
+                    $product = wc_get_product($pid);
+                    if (!$product) { throw new LMC_Stock_Ledger_Error('کالا خوانده نشد'); }
+                    $expected = $state['a'] ? max(0, $state['c'] - self::pending($pid, $rev, $wh, $state['e'])) : 0;
+                    $quantity = $product->get_stock_quantity('edit');
+                    if ($quantity === null || (float) $quantity !== (float) $expected) {
+                        $publish = $state['d'] ? ['state' => self::state_json($state), 'version' => null] : null;
+                        $display = self::write_stock($pid, $state, $publish);
+                        return ['ok' => true, 'applied' => true, 'display' => $display];
+                    }
+                }
                 if ($state['d'] || $bound > 0) { self::recompute_locked($pid); }
                 return ['ok' => true, 'applied' => false, 'stale' => true, 'note' => 'واترمارک قدیمی یا تکراری'];
             }

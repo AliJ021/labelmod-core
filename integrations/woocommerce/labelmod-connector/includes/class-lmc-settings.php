@@ -31,6 +31,7 @@ class LMC_Settings
         add_action('admin_menu', [__CLASS__, 'menu']);
         add_action('admin_enqueue_scripts', static function ($hook) {
             if ($hook === 'woocommerce_page_' . self::PAGE) {
+                wp_enqueue_script('lmc-stock-scan', plugins_url('stock-scan.js', dirname(__DIR__) . '/labelmod-connector.php'), [], LMC_VERSION, true);
                 wp_enqueue_style('lmc-settings', plugins_url('settings.css', dirname(__DIR__) . '/labelmod-connector.php'), [], LMC_VERSION);
             }
         });
@@ -289,14 +290,17 @@ class LMC_Settings
         }
         echo '</dl>';
         // همگام‌سازی دستی — فرم جدا، چون یک عمل است نه یک تنظیم.
-        echo '<form method="post" action="' . esc_url(admin_url('admin-post.php')) . '">';
+        echo '<form id="lmc-stock-scan" method="post" action="' . esc_url(admin_url('admin-post.php')) . '">';
         wp_nonce_field('lmc_sync_now');
         echo '<input type="hidden" name="action" value="lmc_sync_now">';
-        submit_button(__('همگام‌سازی دستی', 'labelmod-connector'), 'primary', 'submit', false);
+        submit_button(__('همگام‌سازی کامل موجودی', 'labelmod-connector'), 'primary', 'submit', false);
         echo ' <span class="description">'
-            . esc_html__('دریافت کامل را شروع می‌کند. اگر هنوز صفحه‌ای باقی مانده باشد، از همان صفحه ادامه می‌دهد.', 'labelmod-connector')
+            . esc_html__('با یک کلیک همهٔ رنگ‌ها و سایزها بررسی می‌شوند.', 'labelmod-connector')
             . '</span></form>';
 
+        $scan = get_option(LMC_Stock_Sync::CURSOR_OPTION, []);
+        $status = !empty($scan['report']) ? LMC_Stock_Sync::scan_message($scan) : '';
+        echo '<p id="lmc-stock-progress" role="status" aria-live="polite">' . esc_html($status) . '</p>';
         echo '</section><section class="lmc-card">';
         LMC_Diagnostics::render();
         echo '</section></div>';

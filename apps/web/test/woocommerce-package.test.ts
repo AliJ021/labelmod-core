@@ -21,6 +21,7 @@ test("بستهٔ افزونه در دو ساخت بایت‌به‌بایت یک
     assert.ok(zip.includes(Buffer.from("labelmod-connector/includes/class-lmc-diagnostics.php")));
     assert.ok(zip.includes(Buffer.from("labelmod-connector/includes/class-lmc-push-secret.php")));
     assert.ok(zip.includes(Buffer.from("labelmod-connector/includes/class-lmc-push-secret-settings.php")));
+    assert.ok(zip.includes(Buffer.from("labelmod-connector/stock-scan.js")));
     assert.ok(zip.includes(Buffer.from("labelmod-connector/uninstall.php")));
     assert.ok(zip.includes(Buffer.from(`define('LMC_VERSION', '${first.version}');`)));
     assert.ok(!zip.includes(Buffer.from("payload-test.php")));

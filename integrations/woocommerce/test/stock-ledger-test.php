@@ -526,6 +526,22 @@ fresh();
 stock_set(P, 9);
 check('R3. کنترل منفی: کالای بی‌حالت عکس بی واترمارک را می‌نشاند', [LMC_Stock_Ledger::apply_legacy(P, 6, 0)['applied'] ?? null, stock()], [true, 6]);
 
+// A shop edit can change Woo stock while the authoritative warehouse revision stays unchanged.
+fresh();
+snap(0, 0);
+stock_set(P, 1);
+$feedRow = ['available' => '0', 'stockRev' => '0'];
+$result = pull($feedRow);
+check('Pull repairs a local edit at warehouse revision zero', [$result['updated'], stock()], [1, 0]);
+$result = pull($feedRow);
+check('Repeating the repaired page is unchanged', [$result['unchanged'], stock()], [1, 0]);
+fresh();
+snap(4, 10);
+woo_order(7001, [[31, 1]]);
+stock_set(P, 5);
+$result = pull(['available' => '4', 'stockRev' => '10']);
+check('Repair preserves the outstanding order deduction', [$result['updated'], stock(), holds_unacked()], [1, 3, 1]);
+
 // ── R4. شکست ذخیره میان مراحل: هیچ کسری پیش از نشستن عکس حذف نمی‌شود ──
 fresh();
 snap(5, 10);
@@ -1471,6 +1487,27 @@ $GLOBALS['feed']['items'][0]['variationId'] = 'different-variation';
 $result = LMC_Stock_Sync::run();
 check('کد استفاده‌شده اتصال قبلی را بازنویسی نمی‌کند', [$result['conflicts'], get_post_meta(P, LMC_Stock_Sync::META_KEY, true)], [1, $item['variationId']]);
 $GLOBALS['settings']['link_by_sku'] = 'no';
+
+// A manual full scan starts before the incremental cursor. Cron and the browser can share it.
+fresh();
+$GLOBALS['feed'] = ['items' => array_fill(0, 500, $item), 'cursor' => 't1', 'cursorId' => 'a'];
+$r = LMC_Stock_Sync::run(true, 'start');
+check('First full page is progress, not completion', [$r['report']['received'], $r['report']['running']], [500, true]);
+$r = LMC_Stock_Sync::run(false, 'next');
+check('Repeated cursor stops without double counting', [$r['error'] !== '', get_option(LMC_Stock_Sync::CURSOR_OPTION)['report']['received']], [true, 500]);
+$GLOBALS['feed']['cursorId'] = 'b';
+$r = LMC_Stock_Sync::run();
+check('Scheduled continuation preserves full-scan totals', $r['report']['received'], 1000);
+stock_set(P, 1);
+$GLOBALS['feed'] = ['items' => [['variationId' => VAR_ID, 'available' => '0', 'stockRev' => '0']], 'cursor' => 't2', 'cursorId' => VAR_ID];
+$r = LMC_Stock_Sync::run(false, 'next');
+check('One full scan reaches the variation after 1000 rows', [$r['report']['received'], $r['report']['running'], $r['report']['updated'], stock()], [1001, false, 1, 0]);
+$count = count($GLOBALS['feed_queries']);
+$r = LMC_Stock_Sync::run(false, 'next');
+check('Final response retry does not restart the scan', [$r['report']['received'], count($GLOBALS['feed_queries'])], [1001, $count]);
+$GLOBALS['feed'] = [];
+$r = LMC_Stock_Sync::run(true, 'start');
+check('Malformed feed cannot finish a full scan', [$r['error'] !== '', get_option(LMC_Stock_Sync::CURSOR_OPTION)['report']['running']], [true, true]);
 
 // ── R10. موتور بی تراکنش: نشاندن بسته، نه «کار کند ولی ناامن» ─────────
 fresh();
