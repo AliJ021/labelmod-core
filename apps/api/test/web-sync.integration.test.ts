@@ -39,12 +39,14 @@ const STORE_WH = "00000000-0000-7000-8000-000000000101";
 const SYSTEM_USER = "00000000-0000-7000-8000-0000000000f1";
 
 interface StockFeed {
+  cursorId: string | null;
   priceList: string;
   cursor: string | null;
   items: Array<{
     variationId: string;
     sku: string;
     available: string;
+    stockRev: string;
     price: string | null;
   }>;
 }
@@ -280,6 +282,50 @@ describe("خوراک‌های همگام‌سازی سایت", { skip }, () => {
     const row = feed.items.find((i) => i.variationId === pricedId);
     assert.ok(row, "کالا باید با شناسه تنوع پیدا شود");
     assert.equal(row.sku, pricedSku, "SKU هم می‌آید، برای اتصال اولیه");
+  });
+
+  test("سایزهای بدون مانده، نمونهٔ صفر دارند و ۵۰۳ تغییر هم‌زمان دقیقاً یک بار خوانده می‌شوند", async () => {
+    const { rows: [product] } = await sql<{id: string}>`
+      INSERT INTO catalog.product (code, name_internal)
+      VALUES (${`P-PAGE-${suffix}`}, 'جکت تست') RETURNING id
+    `.execute(handle.db);
+    const stamp = "2040-01-01T00:00:00.123456Z";
+    const { rows: variants } = await sql<{id: string; sku: string}>`
+      INSERT INTO catalog.variation (product_id, size, sku, created_at)
+      SELECT ${product!.id}::uuid, n::text, ${suffix} || '-page-' || n, ${stamp}::timestamptz
+      FROM generate_series(1, 503) n RETURNING id, sku
+    `.execute(handle.db);
+    const [medium, large, xl] = variants;
+    await sql`SELECT inventory.apply_movement(${large!.id}::uuid, ${STORE_WH}::uuid, 1, 'purchase_receipt',
+      'test_receipt', ${large!.id}::uuid, ${SYSTEM_USER}::uuid, 800000)`.execute(handle.db);
+    await sql`SELECT inventory.apply_movement(${large!.id}::uuid, ${STORE_WH}::uuid, -1, 'sale',
+      'test_sale', ${large!.id}::uuid, ${SYSTEM_USER}::uuid)`.execute(handle.db);
+    const balance = await handle.db.selectFrom("inventory.stock_balance").select("row_version")
+      .where("variation_id", "=", large!.id).where("warehouse_id", "=", STORE_WH).executeTakeFirstOrThrow();
+    assert.ok(BigInt(balance.row_version) > 0n);
+    await sql`INSERT INTO catalog.price (variation_id, price_list, amount)
+      VALUES (${medium!.id}, 'default', 99000000), (${large!.id}, 'default', 99000000)`.execute(handle.db);
+
+    const first = await stock("&since=2040-01-01T00:00:00.123455Z&limit=500");
+    const nextPage = (page: StockFeed) => stock(`&since=${page.cursor}&sinceId=${page.cursorId}&limit=500`);
+    const second = await nextPage(first);
+    assert.equal(first.cursor, stamp);
+    assert.equal(first.items.length, 500);
+    assert.equal(second.items.length, 3);
+    const rows = [...first.items, ...second.items];
+    assert.deepEqual(new Set(rows.map(r => r.variationId)), new Set(variants.map(v => v.id)));
+    assert.deepEqual((await nextPage(second)).items, []);
+    for (const v of [medium!, large!, xl!]) {
+      const r = rows.find(row => row.variationId === v.id)!;
+      assert.equal(r.available, "0");
+      assert.equal(r.stockRev, v === large ? String(balance.row_version) : "0");
+      assert.equal(r.price, v === xl ? null : "99000000");
+    }
+    const upgraded = await stock(`&since=${stamp}&restartCatalog=1&limit=5000`);
+    assert.ok(upgraded.items.some(row => row.variationId === medium!.id));
+    const dbRows = await sql<{n: number}>`SELECT count(*)::int AS n FROM inventory.stock_balance
+      WHERE warehouse_id = ${STORE_WH} AND variation_id IN (${medium!.id}, ${xl!.id})`.execute(handle.db);
+    assert.equal(dbRows.rows[0]?.n, 0);
   });
 
   test("قیمت از فهرست قیمت می‌آید، به‌شکل رشته", async () => {

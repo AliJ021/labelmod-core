@@ -11,6 +11,8 @@ import { ExchangeService, type ExchangeInput } from "../sales/exchange.ts";
 import { ReturnError } from "../sales/return.ts";
 import type { ReturnRouteDeps } from "./return-routes.ts";
 
+import { previewRefundPlan, splitRefundSchema } from "../sales/refund-plan.ts";
+
 const uuid = z.string().uuid();
 const qty = z.string().regex(/^\d{1,11}(\.\d{1,3})?$/).refine(v => !/^0+(\.0+)?$/.test(v), "تعداد باید مثبت باشد");
 const code = z.string().regex(/^[a-z0-9_]{1,64}$/);
@@ -18,10 +20,11 @@ const quoteBody = z.object({
   invoiceId: uuid, warehouseId: uuid, returnWarehouseId: uuid,
   lines: z.array(z.object({ invoiceLineId: uuid, qty, restock: z.boolean().optional(),
     condition: z.enum(["sellable", "defective"]).optional() })).min(1).max(200),
-  replacements: z.array(z.object({ variationId: uuid, qty })).min(1).max(200),
+  replacements: z.array(z.object({ variationId: uuid, qty, retainLineId: uuid.optional(),
+    unitPrice:z.string().regex(/^[1-9][0-9]{0,17}$/).optional(), discountAmount:z.string().regex(/^[0-9]{1,18}$/).optional() })).min(1).max(200),
   reasonCode: code, reasonNote: z.string().trim().max(500).optional(),
 });
-const postBody = quoteBody.extend({ token: z.string().regex(/^[a-f0-9]{64}$/),
+const postBody = quoteBody.extend({ splitRefund:splitRefundSchema.optional(), token: z.string().regex(/^[a-f0-9]{64}$/),
   collectMethod: code.optional(), collectReference: z.string().trim().min(1).max(200).optional(),
   refundMethod: code.optional(), refundReference: z.string().trim().min(1).max(200).optional(), refundPaymentId: uuid.optional(),
   confirmed: z.literal(true),
@@ -55,7 +58,8 @@ export function registerExchangeRoutes(app: FastifyInstance, deps: ReturnRouteDe
     const body = quoteBody.parse(req.body);
     await gate(s, body);
     await returns.assertReasonCode(body.reasonCode);
-    return exchanges.quote(body);
+    const quote = await exchanges.quote(body);
+    return {...quote,splitPlan:await previewRefundPlan(db,body.invoiceId,BigInt(quote.refundAmount),s)};
   });
   app.get("/exchanges/variation/:id", async req => {
     const s = session(req.session);
@@ -77,12 +81,12 @@ export function registerExchangeRoutes(app: FastifyInstance, deps: ReturnRouteDe
         await requireHumanSession(trx, s);
         await requireManualReturnChannel(trx, body.invoiceId);
         const { token: _token, collectMethod: _collect, collectReference: _collectRef,
-          refundMethod: _refund, refundReference: _refundRef, refundPaymentId: _payment, confirmed: _confirmed, ...quoteInput } = body;
+          refundMethod: _refund, refundReference: _refundRef, refundPaymentId: _payment, splitRefund:_split, confirmed: _confirmed, ...quoteInput } = body;
         const q = await exchanges.quote(quoteInput, trx);
         if (q.token !== body.token) throw new ReturnError("exchange_quote_changed", "تسویه تغییر کرده؛ پیش‌نمایش تازه را تأیید کنید");
         if (BigInt(q.refundAmount)>0n) {
           await requireForSession(trx, s, "refund.cash", { amount: BigInt(q.refundAmount) });
-          await returns.assertRefundMethod(body.refundMethod ?? "cash");
+          if (!body.splitRefund) await returns.assertRefundMethod(body.refundMethod ?? "cash");
         }
         if (BigInt(q.collectAmount)>0n) {
           const method = await trx.selectFrom("treasury.payment_method").select("kind")
@@ -90,9 +94,11 @@ export function registerExchangeRoutes(app: FastifyInstance, deps: ReturnRouteDe
           if (!method || !["cash", "card_reader", "gateway", "transfer"].includes(method.kind))
             throw new ReturnError("bad_exchange_payment", "دریافت اختلاف فقط با روش دریافت وجه فعال ممکن است", 422);
         }
+        if (body.splitRefund && (BigInt(q.refundAmount)===0n || body.refundMethod || body.refundReference || body.refundPaymentId))
+          throw new ReturnError("conflicting_refund_methods","روش‌های برگشت را با پیش‌نمایش تطبیق دهید.",422);
         const shift = await shifts.current(s.userId, branchId);
         if (!shift) throw new ReturnError("no_open_shift", "برای تعویض باید شیفت باز داشته باشید", 422);
-        const id = await exchanges.postIn(trx, { ...body, actorId: s.userId, shiftId: shift.id });
+        const id = await exchanges.postIn(trx, { ...body, actorId: s.userId, shiftId: shift.id, viaPin:s.pinUnlocked });
         return { value: id, ref: id };
       }, replay: async ref => ref,
     });

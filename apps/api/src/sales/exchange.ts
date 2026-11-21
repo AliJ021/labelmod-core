@@ -3,15 +3,18 @@ import { sql, type Transaction } from "kysely";
 import type { Db } from "../db/client.ts";
 import type { Database } from "../db/types.ts";
 import { canonicalJson, setActor } from "../lib/idempotency.ts";
+import { assertMarkdownAllowed } from "./markdown-gate.ts";
 import { InvoiceService } from "./invoice.ts";
 import { ReturnError, ReturnService, type ReturnLineInput } from "./return.ts";
+
+import type { SplitRefund } from "./refund-plan.ts";
 
 export interface ExchangeInput {
   invoiceId: string;
   warehouseId: string;
   returnWarehouseId: string;
   lines: ReturnLineInput[];
-  replacements: Array<{ variationId: string; qty: string }>;
+  replacements: Array<{ variationId: string; qty: string; retainLineId?: string | undefined; unitPrice?:string | undefined; discountAmount?:string | undefined }>;
   reasonCode: string;
   reasonNote?: string | undefined;
 }
@@ -27,6 +30,11 @@ export class ExchangeService {
   constructor(db: Db) { this.db = db; }
 
   async quote(input: ExchangeInput, ex: Executor = this.db): Promise<ExchangeQuote> {
+    if (input.replacements.some(line => line.unitPrice !== undefined || BigInt(line.discountAmount ?? "0") > 0n) && !input.reasonNote?.trim())
+      throw new ReturnError("correction_reason_required","برای اصلاح قیمت یا تخفیف دلیل بنویسید.",422);
+    const retained = input.replacements.flatMap(line => line.retainLineId ? [line.retainLineId] : []);
+    if (new Set(retained).size !== retained.length)
+      throw new ReturnError("duplicate_retained_line", "هر قلم نگه‌داشته‌شده را یک بار انتخاب کنید.", 422);
     // Preview only; the shared write guard rechecks under lock when posting.
     const policy = await sql<{ allowed: boolean }>`SELECT platform.setting_bool('sales.allow_fractional_qty', false)
       OR NOT EXISTS (SELECT 1 FROM jsonb_to_recordset(${JSON.stringify(input.replacements)}::jsonb) x(qty numeric)
@@ -35,20 +43,22 @@ export class ExchangeService {
     // تعداد، مالیات و باقی‌مانده گردکردن همگی در SQL محاسبه می‌شوند.
     const result = await sql<Omit<ExchangeQuote, "token">>`
       WITH selected AS (
-        SELECT * FROM jsonb_to_recordset(${JSON.stringify(input.lines)}::jsonb) AS x("invoiceLineId" uuid,qty numeric)
+        SELECT * FROM jsonb_to_recordset(${JSON.stringify(input.lines)}::jsonb) AS x("invoiceLineId" uuid,qty numeric,restock boolean,condition text)
       ), returned AS (
-        SELECT il.id, s.qty, il.qty-il.returned_qty remaining,
+        SELECT il.id, il.variation_id, coalesce(s.restock,true) restock, coalesce(s.condition,'sellable') condition, s.qty, il.qty-il.returned_qty remaining,
           round(il.net_amount*(il.returned_qty+s.qty)/il.qty)-coalesce((SELECT sum(rl.net_amount)
             FROM sales.sale_return_line rl JOIN sales.sale_return r ON r.id=rl.return_id WHERE rl.invoice_line_id=il.id AND r.status='posted'),0)
           +round(il.tax_amount*(il.returned_qty+s.qty)/il.qty)-coalesce((SELECT sum(rl.tax_amount)
             FROM sales.sale_return_line rl JOIN sales.sale_return r ON r.id=rl.return_id WHERE rl.invoice_line_id=il.id AND r.status='posted'),0) value
         FROM selected s JOIN sales.invoice_line il ON il.id=s."invoiceLineId" AND il.invoice_id=${input.invoiceId}::uuid
       ), replacements AS (
-        SELECT x."variationId", x.qty, round(x.qty*p.amount) net FROM
-          jsonb_to_recordset(${JSON.stringify(input.replacements)}::jsonb) x("variationId" uuid,qty numeric)
+        SELECT x."variationId", x.qty, round(x.qty*coalesce(x."unitPrice",p.amount))-coalesce(x."discountAmount",0) net FROM
+          jsonb_to_recordset(${JSON.stringify(input.replacements)}::jsonb) x("variationId" uuid,qty numeric,"unitPrice" numeric,"discountAmount" numeric,"retainLineId" uuid)
         JOIN catalog.variation v ON v.id=x."variationId" AND v.status='active'
         JOIN LATERAL (SELECT amount FROM catalog.price WHERE variation_id=v.id AND price_list='default'
           AND valid_from<=now() AND (valid_to IS NULL OR valid_to>now()) ORDER BY valid_from DESC LIMIT 1) p ON true
+        WHERE x."retainLineId" IS NULL OR (${input.warehouseId}::uuid=${input.returnWarehouseId}::uuid AND EXISTS
+          (SELECT 1 FROM returned r WHERE r.id=x."retainLineId" AND r.variation_id=v.id AND r.restock AND r.condition='sellable'))
       ), totals AS (
         SELECT (SELECT sum(value) FROM returned) returned,
           (SELECT sum(net+sales.line_tax("variationId",net)) FROM replacements) replacement,
@@ -64,7 +74,7 @@ export class ExchangeService {
           AND (SELECT count(DISTINCT id) FROM returned)=${input.lines.length}
           AND NOT EXISTS(SELECT 1 FROM returned WHERE qty<=0 OR qty>remaining)
           AND (SELECT count(*) FROM replacements)=${input.replacements.length}
-          AND NOT EXISTS(SELECT 1 FROM replacements WHERE qty<=0)
+          AND NOT EXISTS(SELECT 1 FROM replacements WHERE qty<=0 OR net<0)
       ), balances AS (
         SELECT *,greatest(payable_amount-previous-received+refunded+sales.exchange_out(${input.invoiceId}::uuid)
           -sales.exchange_in(${input.invoiceId}::uuid),0) debt,
@@ -81,9 +91,9 @@ export class ExchangeService {
   }
 
   async postIn(trx: Transaction<Database>, input: ExchangeInput & {
-    token: string; actorId: string; shiftId: string;
+    token: string; actorId: string; shiftId: string; viaPin?: boolean;
     collectMethod?: string | undefined; collectReference?: string | undefined;
-    refundMethod?: string | undefined; refundReference?: string | undefined; refundPaymentId?: string | undefined;
+    splitRefund?: SplitRefund | undefined; refundMethod?: string | undefined; refundReference?: string | undefined; refundPaymentId?: string | undefined;
   }): Promise<string> {
     await setActor(trx, input.actorId);
     // فاکتور اصلی، سپس مشتری، سپس همه موجودی‌ها با ترتیب ثابت؛ همان قفل refund/finalize.
@@ -110,6 +120,8 @@ export class ExchangeService {
     const returns = new ReturnService(this.db);
     const replacement = await invoices.createDraftIn(trx, { branchId: old.branch_id, warehouseId: input.warehouseId,
       shiftId: input.shiftId, customerId: old.customer_id ?? undefined, channel: "pos", actorId: input.actorId });
+    await trx.updateTable("sales.invoice").set({seller_id: old.seller_id ?? old.created_by})
+      .where("id", "=", replacement).execute();
     const returnId = await returns.createDraftIn(trx, { invoiceId: input.invoiceId, lines: input.lines,
       refundAmount: BigInt(q.refundAmount), refundMethod: input.refundMethod, refundReference: input.refundReference,
       refundPaymentId: input.refundPaymentId, reasonCode: input.reasonCode, reasonNote: input.reasonNote,
@@ -122,10 +134,23 @@ export class ExchangeService {
       VALUES (${input.invoiceId}::uuid,${replacement}::uuid,${returnId}::uuid,${input.actorId}::uuid,${q.policy},
         ${q.returnedValue}::numeric,${q.replacementValue}::numeric,${q.debtApplied}::numeric,${q.transferAmount}::numeric,
         ${q.fundedTransfer}::numeric,${q.collectAmount}::numeric,${q.refundAmount}::numeric) RETURNING id`.execute(trx);
-    await returns.postIn(trx, returnId, input.actorId);
+    const exchangeId = inserted.rows[0]!.id;
+    if (input.replacements.some(line => line.retainLineId)) {
+      await sql`INSERT INTO sales.exchange_retained_line(return_line_id,exchange_id,line_no,variation_id,qty)
+        SELECT rl.id,${exchangeId}::uuid,new_line.n,il.variation_id,least(rl.qty,(new_line.item->>'qty')::numeric)
+        FROM jsonb_array_elements(${JSON.stringify(input.replacements)}::jsonb) WITH ORDINALITY new_line(item,n)
+        JOIN sales.sale_return_line rl ON rl.return_id=${returnId}::uuid AND rl.invoice_line_id=(new_line.item->>'retainLineId')::uuid
+        JOIN sales.invoice_line il ON il.id=rl.invoice_line_id`.execute(trx);
+    }
+    await returns.postIn(trx, returnId, input.actorId,input.splitRefund);
     // کالای سالمِ همان انبار اکنون قابل فروش است؛ معیوب/بدون بازگشت هرگز پشتوانه فروش نمی‌شود.
     for (const line of input.replacements) await invoices.addLineIn(trx, { invoiceId: replacement,
-      variationId: line.variationId, qty: line.qty, actorId: input.actorId });
+      variationId: line.variationId, qty: line.qty, actorId: input.actorId,
+      ...(line.unitPrice !== undefined && {unitPrice:BigInt(line.unitPrice), priceOverrideReason:input.reasonNote}),
+      ...(line.discountAmount !== undefined && {discountAmount:BigInt(line.discountAmount), discountReason:input.reasonNote})
+    }, (executor,row) => assertMarkdownAllowed(executor,invoices,{userId:input.actorId,pinUnlocked:input.viaPin ?? false},{
+      variationId:row.variationId,qty:row.qty,discount:row.discountAmount,settingPrice:row.unitPrice,listPrice:row.listPrice
+    }));
     if (BigInt(q.collectAmount)>0n) {
       if (!input.collectMethod) throw new ReturnError("payment_required", "روش دریافت اختلاف قیمت لازم است", 422);
       await invoices.addPaymentIn(trx, { invoiceId: replacement, methodCode: input.collectMethod,

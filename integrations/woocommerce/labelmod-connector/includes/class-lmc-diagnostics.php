@@ -80,8 +80,7 @@ class LMC_Diagnostics
     public static function render(): void
     {
         if (!current_user_can('manage_woocommerce')) { return; }
-        echo '<hr><h2>تست اتصال فقط‌خواندنی</h2><p>نسخهٔ افزونه: ' . esc_html(LMC_VERSION) . '</p>';
-        echo '<p>سفارش با SKU به Core می‌رود؛ موجودی با شناسهٔ ثابت تنوع از Core به سایت می‌آید. تست اتصال سفارش یا موجودی را تغییر نمی‌دهد.</p>';
+        echo '<h2>تست اتصال فقط‌خواندنی</h2><p class="description">برای بررسی اتصال، تست را اجرا کنید. برای بررسی یک سفارش یا تنوع، شناسهٔ آن را هم وارد کنید.</p>';
         echo '<form method="post">';
         wp_nonce_field('lmc_diagnostics');
         echo '<p><label>شمارهٔ داخلی سفارش (اختیاری) <input name="lmc_order_id" inputmode="numeric"></label></p>';
@@ -95,12 +94,16 @@ class LMC_Diagnostics
         $query = ['branchId' => (string) lmc_setting('branch_id'), 'warehouseId' => (string) lmc_setting('warehouse_id')];
         if ($product_id) {
             $product = wc_get_product($product_id);
-            if (!$product || $product->get_sku() === '') {
-                echo '<p role="alert">کالا یافت نشد یا SKU ندارد؛ قرارداد فعلی سفارش به SKU معتبر نیاز دارد.</p>';
-                return;
+            if (!$product) {
+                echo '<p role="alert">کالا یا تنوعی با این شناسه در سایت پیدا نشد.</p>';
+            } elseif ($product->get_sku() === '') {
+                echo '<p role="alert">این کالا SKU ندارد. کد همان تنوع حسابداری را در ووکامرس وارد کنید.</p>';
+            } else {
+                $query['sku'] = $product->get_sku();
+                if ($product->get_meta('_lmc_variation_id') !== '') {
+                    $query['variationId'] = $product->get_meta('_lmc_variation_id');
+                }
             }
-            $query['sku'] = $product->get_sku();
-            if ($product->get_meta('_lmc_variation_id') !== '') { $query['variationId'] = $product->get_meta('_lmc_variation_id'); }
         }
         $res = LMC_Client::get('/web/connection', $query);
         if (is_wp_error($res)) {
@@ -152,9 +155,23 @@ class LMC_Diagnostics
         }
         if ($r['order'] !== null) {
             $o = $r['order'];
-            echo '<p>' . esc_html(!$o['found'] ? 'سفارش یافت نشد.' : ($o['recorded'] ? 'شناسهٔ فاکتور Core روی سفارش ثبت شده است.'
-                : (!$o['eligible'] ? 'سفارش آمادهٔ ارسال نیست؛ تأیید پرداخت و وضعیت processing/completed را بررسی کنید.'
-                : ($o['scheduled'] ? 'سفارش در انتظار اجرای زمان‌بند است.' : 'سفارش ارسال‌نشده و بدون رویداد زمان‌بندی است؛ گزارش سفارش را بررسی کنید.')))) . '</p>';
+            if (!$o['found']) {
+                echo '<p>سفارش یافت نشد.</p>';
+                return;
+            }
+            echo '<h3>سفارش <bdi>#' . esc_html((string) $order_id) . '</bdi></h3>';
+            echo '<p>وضعیت در سایت: ' . esc_html(wc_get_order_status_name($o['status']))
+                . ' · تأیید پرداخت در افزونه: ' . ($o['paymentConfirmed'] ? 'ثبت شده' : 'ثبت نشده') . '</p>';
+            if ($o['recorded']) {
+                $state = 'شمارهٔ فاکتور حسابداری روی سفارش ثبت شده است.';
+            } elseif (!$o['paymentConfirmed']) {
+                $state = 'افزونه هنوز تأیید پرداخت را دریافت نکرده است. رسید و یادداشت پرداخت همین سفارش را بررسی کنید.';
+            } elseif (!$o['eligible']) {
+                $state = 'وضعیت فعلی سفارش برای ارسال مناسب نیست. سفارش رزروی یا پرداخت در محل پس از تکمیل ارسال می‌شود.';
+            } else {
+                $state = $o['scheduled'] ? 'سفارش در انتظار اجرای زمان‌بند است.' : 'سفارش بدون فاکتور و بدون رویداد زمان‌بندی است. گزارش سفارش را بررسی کنید.';
+            }
+            echo '<p>' . esc_html($state) . '</p>';
             echo '<p>تعداد تلاش: ' . esc_html((string) $o['attempts']) . '؛ اقلام بدون SKU: ' . esc_html((string) $o['missingSku']) . '</p>';
             if ($o['hasError']) { echo '<p>خطای ارسال ثبت شده است؛ یادداشت همان سفارش را بررسی کنید.</p>'; }
         }

@@ -1,9 +1,10 @@
 import { AmountInput } from "../components/ui/AmountInput.tsx";
+import { Dialog } from "../components/ui/Dialog.tsx";
 import { Field, Segmented } from "../components/ui/Controls.tsx";
 import { SectionHeader } from "../components/ui/PageHeader.tsx";
 import { Note } from "../components/ui/Note.tsx";
 import { useUrlState, navigate } from "../lib/use-url-state.ts";
-import { readPendingScan, writePendingScan, clearPendingScan, type PendingScan } from "../lib/pending-scan.ts";
+import { readPendingScan, appendScans, bindScanCart, clearPendingScan, type PendingScan } from "../lib/pending-scan.ts";
 /**
  * صندوق فروشگاهی — ناحیه مات.
  *
@@ -38,7 +39,7 @@ import { PosProductPicker } from "../components/PosProductPicker.tsx";
 import { PaymentBreakdown } from "../components/PaymentBreakdown.tsx";
 import { Solid } from "../components/Glass.tsx";
 import { Icon } from "../components/Icon.tsx";
-import { ApiError } from "../lib/api.ts";
+import { api, ApiError } from "../lib/api.ts";
 import { ActionKeys, ScanCounter } from "../lib/action-key.ts";
 import { canFinalize, lineGross, steppedQty } from "../lib/cart.ts";
 import { exactTomanInput, parseRial, rialFromExactTomanInput, rialFromTomanInput, toman } from "../lib/money.ts";
@@ -69,7 +70,7 @@ import { onSettingSaved } from "../lib/settings-events.ts";
 import { ScanBuffer, retractLeak, snapshotField, type FieldSnapshot } from "../lib/scanner.ts";
 
 function message(err: unknown): string {
-  if (err instanceof ApiError) return err.message;
+  if (err instanceof ApiError || (err instanceof Error && /^[آ-ی]/u.test(err.message))) return err.message;
   return "ارتباط با سرور برقرار نشد.";
 }
 
@@ -398,6 +399,8 @@ function PosScreen({ actorId, mode, onMode, browseInvoices }: {
   const [draftRefund, setDraftRefund] = useState<{ invoiceId: string; payments: DraftPayment[] } | null>(null);
   const [discounting, setDiscounting] = useState<string | null>(null);
   const [pricing, setPricing] = useState<string | null>(null);
+  const [toolsOpen, setToolsOpen] = useState(false);
+  const toolsTrigger = useRef<HTMLButtonElement>(null);
   const [camera, setCamera] = useState(false);
   /** شماره مشتری؛ اختیاری یا الزامی طبق تنظیم جاری صندوق. */
   const [mobile, setMobile] = useState("");
@@ -599,6 +602,38 @@ function PosScreen({ actorId, mode, onMode, browseInvoices }: {
    * ⚠️ این را `ensureInvoice` و `addByBarcode` هر دو می‌خوانند. اگر
    *    شرطش دو جا نوشته می‌شد، یکی‌شان دیر یا زود عقب می‌ماند.
    */
+  const [staff, setStaff] = useState<{key:string; names:{id:string;name:string}[]; selected:string} | null>(null);
+  useEffect(() => {
+    if (instagram || !shift) return;
+    const abort = new AbortController();
+    void api.get<{ sellers:{id:string;name:string}[]; sessionId:string }>(`/pos/sellers?branchId=${shift.branchId}`, {signal:abort.signal})
+      .then(({sellers, sessionId}) => {
+        if (abort.signal.aborted) return;
+        const key = `pos-seller:${sessionId}:${shift.id}`;
+        const previous = sessionStorage.getItem(key);
+        setStaff({key, names:sellers, selected:sellers.some(s => s.id === previous) ? previous! : actorId});
+      }).catch(err => { if (!abort.signal.aborted) setError(message(err)); });
+    return () => abort.abort();
+  }, [actorId, shift, instagram]);
+  const currentStaff = shift && staff?.key.endsWith(`:${shift.id}`) ? staff : null;
+  const displayedSellerId = invoice ? invoice.sellerId ?? invoice.createdBy ?? "" : currentStaff?.selected ?? "";
+  const invoiceSellerName = invoice?.sellerName ?? (!invoice?.sellerId || invoice.sellerId === invoice.createdBy ? invoice?.createdByName : null);
+  const sellerInRoster = currentStaff?.names.some(person => person.id === displayedSellerId);
+  const sellerForDraft = useCallback(() => {
+    if (instagram || !shift) return undefined;
+    if (currentStaff) return currentStaff.selected === actorId ? undefined : currentStaff.selected;
+    if (Object.keys(sessionStorage).some(k => k.startsWith("pos-seller:") && k.endsWith(`:${shift.id}`)))
+      throw new Error("انتخاب ثبت‌کنندهٔ این شیفت در حال بازیابی است. پس از نمایش نام دوباره تلاش کنید.");
+    return undefined;
+  }, [instagram, shift, currentStaff, actorId]);
+  async function changeSeller(id: string) {
+    if (!currentStaff || busy) return;
+    await guarded(async () => {
+      if (invoice) setInvoice(await api.patch<Invoice>(`/invoices/${invoice.id}/seller`, {sellerId:id}));
+      sessionStorage.setItem(currentStaff.key,id);
+      setStaff({...currentStaff,selected:id});
+    });
+  }
   const openDraft = invoice && invoice.status === "draft" ? invoice : null;
 
   /** فاکتور پیش‌نویس، در صورت نبود ساخته می‌شود. */
@@ -610,8 +645,9 @@ function PosScreen({ actorId, mode, onMode, browseInvoices }: {
       const restored = await pending;
       if (restored) return restored;
     }
+    const sellerId = sellerForDraft();
     const created = await keys.current.run(`create:${shift?.id ?? branchId}`, (key) =>
-      pos.createInvoice({ branchId, warehouseId, channel: instagram ? "instagram" : "pos" }, { idempotencyKey: key }),
+      pos.createInvoice({ branchId, warehouseId, channel: instagram ? "instagram" : "pos", ...(sellerId && {sellerId}) }, { idempotencyKey: key }),
     );
     setInvoice(created);
     setReceived(0n);
@@ -619,53 +655,95 @@ function PosScreen({ actorId, mode, onMode, browseInvoices }: {
     // شناسه در حافظه مرورگر می‌نشیند تا Reload آن را یتیم نکند.
     if (shift) rememberCart({ invoiceId: created.id, shiftId: shift.id });
     return created;
-  }, [openDraft, shift, branchId, warehouseId, instagram]);
+  }, [openDraft, shift, branchId, warehouseId, instagram, sellerForDraft]);
 
+  const staging = useRef<PendingScan["body"][]>([]);
+  const appendToActive = useRef<((body: PendingScan["body"]) => void) | null>(null);
   const addByBarcode = useCallback(async (barcode: string, variationId?: string, retry = false) => {
-    // روی صفحهٔ «ثبت شد»، اسکن فروش بعدی را بی‌صدا شروع نمی‌کند: باقی پول هنوز
-    // روی صفحه است و فقط «فروش بعدی» آن را برمی‌دارد.
-    if (completedRef.current && !retry) { setError("برای فروش تازه، اول «فروش بعدی» را بزنید."); return; }
-    if (scanRunning.current || mutationRunning.current || proformaJob.current || scanStorageError || (pendingScanRef.current && !retry)) {
-      setError("عملیات قبلی هنوز تأیید نشده است؛ پس از بررسی دوباره اسکن کنید."); return;
+    const body: PendingScan["body"] = variationId ? {variationId,qty:"1"} : {barcode,qty:"1"};
+    if (scanRunning.current) {
+      if (retry) return;
+      try {
+        if (appendToActive.current) appendToActive.current(body);
+        else staging.current.push(body);
+      } catch (e) { setError(message(e)); }
+      return;
+    }
+    if (!shift || !branchId || !warehouseId || completedRef.current || mutationRunning.current || proformaJob.current ||
+        payPhase.kind !== "idle" || paymentStoreError || scanStorageError || (pendingScanRef.current && !retry)) {
+      setError("برای اسکن، سبد فعال و نتیجهٔ قطعی عملیات قبلی لازم است."); return;
     }
     scanRunning.current = true;
+    if (!retry) staging.current.push(body);
     setBusy(true); setError(null);
+    const sync = () => {
+      const head = readPendingScan(actorId);
+      pendingScanRef.current = head; setPendingScan(head);
+      return head;
+    };
     try {
-      if (!navigator.locks) throw new Error("برای ثبت ایمن اسکن، مرورگر به‌روز و اتصال امن لازم است.");
+      if (!navigator.locks) throw new Error("اتصال امن و مرورگر به‌روز لازم است.");
       await navigator.locks.request(`labelmod-pos:${actorId}`, {ifAvailable:true}, async lock => {
-      if (!lock) throw new Error("عملیات صندوق در تب دیگری جریان دارد؛ پس از پایان آن دوباره تلاش کنید.");
-      let intent = readPendingScan(actorId);
-      pendingScanRef.current = intent; setPendingScan(intent);
-      if (intent && !retry) throw new Error("اسکن معلق در تب دیگری ثبت شده است؛ ابتدا همان اسکن را بررسی کنید.");
-      if (!intent && retry) throw new Error("اسکن معلق قبلاً تعیین تکلیف شده است؛ فاکتور را تازه‌سازی کنید.");
-      if (!intent) {
-        const inv = openDraft ?? await ensureInvoice();
-        if (!shift || !belongs(inv, shift)) throw new Error(instagram ? "فاکتور به فروش اینستاگرام همین شعبه تعلق ندارد." : "شیفت فاکتور معتبر نیست.");
-        intent = { actorId, invoiceId: inv.id, shiftId: shift.id, key: crypto.randomUUID(),
-          body: { ...(variationId ? { variationId } : { barcode }), qty: "1" } };
-        // Persistence must succeed before sending an increment.
-        writePendingScan(intent);
-        pendingScanRef.current = intent; setPendingScan(intent);
-      }
-      if (intent.actorId !== actorId || intent.shiftId !== shift?.id)
-        throw new Error("اسکن معلق متعلق به این کاربر و شیفت نیست؛ بررسی مدیر لازم است.");
-      try {
-      const out = await pos.scan(intent.invoiceId, intent.body, { idempotencyKey: intent.key });
-      if (out.invoice.id !== intent.invoiceId) throw new Error("پاسخ اسکن تأیید نشد.");
-      setInvoice(out.invoice);
-      clearPendingScan(actorId, intent.key); pendingScanRef.current = null; setPendingScan(null);
-      } catch (err) {
-        // فقط رد قطعی همین عملیات می‌تواند رکورد خودش را پاک کند؛ قفل هنوز برقرار است.
-        if (err instanceof ApiError && [400, 409, 422].includes(err.status) && err.code !== "idempotency_in_flight") {
-          clearPendingScan(actorId, intent.key); pendingScanRef.current = null; setPendingScan(null);
+        if (!lock) throw new Error("صندوق در تب دیگری مشغول است؛ اسکن را تکرار کنید.");
+        let head = sync();
+        if (head && !retry) throw new Error("ابتدا نتیجهٔ اسکن معلق را بررسی کنید.");
+        if (!head && retry) throw new Error("اسکن معلق قبلاً رسیدگی شده است.");
+        if (head && head.shiftId !== shift.id) throw new Error("صف اسکن متعلق به شیفت دیگری است.");
+        if (readPendingPayment(actorId)) throw new Error("ابتدا وضعیت پرداخت قبلی را بررسی کنید.");
+        const restoringCart = restoring.current;
+        const restoredId = openDraft?.id ?? readCart(shift.id)?.invoiceId;
+        if (head && !head.draft && restoredId && restoredId !== head.invoiceId) throw new Error("صف اسکن به سبد دیگری تعلق دارد.");
+        let cartId = head?.invoiceId ?? restoredId ?? crypto.randomUUID();
+        const sellerId = !head && !restoredId ? sellerForDraft() : undefined;
+        let draft = head?.draft ?? (!head && !restoredId ? {branchId, warehouseId, channel: instagram ? "instagram" as const : "pos" as const,
+          ...(sellerId && {sellerId})} : undefined);
+        const makeScan = (value: PendingScan["body"]): PendingScan => ({actorId,invoiceId:cartId, shiftId:shift.id,
+          key:crypto.randomUUID(), body:value, ...(draft && {draft})});
+        appendScans(staging.current.map(makeScan)); staging.current = [];
+        appendToActive.current = value => { appendScans([makeScan(value)]); sync(); };
+        head = sync();
+        const restored = openDraft ?? await restoringCart;
+        if (restored && (restored.id !== cartId || !belongs(restored,shift) || restored.reviewReason))
+          throw new Error("ابتدا پیش‌نویس همین شیفت را ادامه دهید.");
+        if (draft) {
+          const create = async () => {
+            try { return await pos.createInvoice(draft!, {idempotencyKey:cartId}); }
+            catch (e) {
+              if (!(e instanceof ApiError) || !([400,422].includes(e.status) || ["seller_unavailable","no_open_shift"].includes(e.code))) throw e;
+              let count = 0;
+              while (head?.draft && head.invoiceId === cartId) {
+                clearPendingScan(actorId,head.key); head=sync(); count++;
+              }
+              throw new Error(`${message(e)} · ${count.toLocaleString("fa-IR")} اسکن در سبد ثبت نشد. پس از اصلاح، دوباره اسکن کنید.`, {cause:e});
+            }
+          };
+          const created = await create();
+          if (!belongs(created,shift) || created.status !== "draft") throw new Error("سبد برای اسکن فعال نیست.");
+          bindScanCart(actorId,cartId,created.id); cartId = created.id; draft = undefined;
+          rememberCart({invoiceId:cartId,shiftId:shift.id}); setInvoice(created);
+          head = sync();
         }
-        throw err;
-      }
+        while (head) {
+          try {
+            const start = performance.now();
+            const out = await pos.scan(head.invoiceId,head.body,{idempotencyKey:head.key});
+            performance.clearMeasures("pos-scan-commit");
+            performance.measure("pos-scan-commit", {start, end:performance.now()});
+            if (out.invoice.id !== head.invoiceId) throw new Error("پاسخ اسکن با سبد تطابق ندارد.");
+            setInvoice(out.invoice);
+          } catch (err) {
+            if (err instanceof ApiError && ([400,409,422].includes(err.status) || err.code === "variation_not_found") && err.code !== "idempotency_in_flight") {
+              clearPendingScan(actorId,head.key); sync();
+            }
+            throw err;
+          }
+          clearPendingScan(actorId,head.key); head = sync();
+        }
+        appendToActive.current = null;
       });
-    } catch (err) {
-      setError(message(err));
-    } finally { scanRunning.current = false; setBusy(false); }
-  }, [actorId, openDraft, ensureInvoice, shift, scanStorageError, belongs, instagram]);
+    } catch (e) { setError(message(e)); }
+    finally { staging.current = []; appendToActive.current = null; scanRunning.current = false; setBusy(false); }
+  }, [actorId, openDraft, shift, branchId, warehouseId, instagram, sellerForDraft, belongs, scanStorageError, payPhase.kind, paymentStoreError]);
 
   // ── ستون پرداخت ──────────────────────────────────────────────────
   //
@@ -992,14 +1070,14 @@ function PosScreen({ actorId, mode, onMode, browseInvoices }: {
    * `normalizeDigits` فقط رقم فارسی و عربی را لاتین می‌کند چون
    * صفحه‌کلید فارسی «۰۹۱۲…» می‌فرستد.
    */
-  const attachCustomer = (fullName?: string) =>
+  const attachCustomer = (fullName?: string, salutation?: "mr" | "ms", birthDate?: string) =>
     guarded(async () => {
       const m = fullName === undefined ? normalizeDigits(mobile).trim() : nameForMobile;
       if (m === "") return;
       if (!m) return;
       const inv = await ensureInvoice();
       try {
-        setInvoice(await pos.attachCustomer(inv.id, { mobile: m, requireNameForNew: true, ...(fullName === undefined ? {} : { fullName }) }));
+        setInvoice(await pos.attachCustomer(inv.id, { mobile: m, requireNameForNew: true, ...(salutation && { salutation }), ...(birthDate && { birthDate }), ...(fullName === undefined ? {} : { fullName }) }));
       } catch (err) {
         if (err instanceof ApiError && err.code === "customer_name_required") { setNameForMobile(m); return; }
         throw err;
@@ -1272,7 +1350,7 @@ function PosScreen({ actorId, mode, onMode, browseInvoices }: {
       } catch (err) {
         if (!(err instanceof ApiError) || err.code !== "invoice_has_payment") throw err;
         const { payments } = await pos.draftPayments(invoice.id);
-        setDraftRefund({ invoiceId: invoice.id, payments });
+        setDraftRefund({ invoiceId: invoice.id, payments:payments.filter(p=>!["failed","reversed"].includes(p.status)) });
         return;
       }
       dropCart();
@@ -1281,9 +1359,9 @@ function PosScreen({ actorId, mode, onMode, browseInvoices }: {
       scans.current.reset();
     });
 
-  const confirmDraftRefund = (reason: string, refundReference: string) => guarded(async () => {
+  const confirmDraftRefund = (reason: string, refundReference: string, payoutMethod: string) => guarded(async () => {
     if (!draftRefund) return;
-    const body = { reason, confirmed: true as const, paymentIds: draftRefund.payments.map((p) => p.id),
+    const body = { reason, ...(payoutMethod && {payoutMethod}), confirmed: true as const, paymentIds: draftRefund.payments.map((p) => p.id),
       ...(refundReference.trim() ? { refundReference: refundReference.trim() } : {}) };
     await keys.current.run(`refund-draft:${draftRefund.invoiceId}:${JSON.stringify(body)}`, (key) =>
       pos.refundDraft(draftRefund.invoiceId, body, key));
@@ -1366,7 +1444,7 @@ function PosScreen({ actorId, mode, onMode, browseInvoices }: {
   const customerBlock = <CustomerSummary customer={linkedCustomer} loading={customerLoading} error={customerError}
     required={policyReady && policy.requireCustomer}
     mobile={mobile} onMobile={(v) => { setMobile(v); setNameForMobile(null); }} onAttach={() => void attachCustomer()}
-    nameForMobile={nameForMobile} onConfirmName={(name) => void attachCustomer(name)} onCancelName={() => setNameForMobile(null)}
+    nameForMobile={nameForMobile} onConfirmName={(name, title, dob) => void attachCustomer(name, title, dob)} onCancelName={() => setNameForMobile(null)}
     canManage={canManageCustomer} onSaveName={(name) => void saveCustomerName(name)}
     busy={busy} inputRef={customerInput} />;
   const focusCustomer = () => {
@@ -1418,23 +1496,21 @@ function PosScreen({ actorId, mode, onMode, browseInvoices }: {
           {instagram ? null : <button type="button" className="tool" disabled={!canPrintProforma} onClick={() => void printProforma()}>
             <Icon name="print" size="sm" />{proformaPrinting ? "در حال آماده‌سازی پیش‌فاکتور…" : "چاپ پیش‌فاکتور"}
           </button>}
-          <details className="pos-more" onKeyDown={e => {
-            if (e.key === "Escape") { e.currentTarget.open = false; e.currentTarget.querySelector("summary")?.focus(); }
-          }}>
-          <summary className="tool">ابزارهای فروش</summary>
-          <div className="pos-more-actions" onClick={e => {
-            const action = (e.target as HTMLElement).closest<HTMLButtonElement | HTMLAnchorElement>("button, a");
-            if (!action || (action instanceof HTMLButtonElement && action.disabled)) return;
-            const details = e.currentTarget.closest("details");
-            if (details) { details.open = false; details.querySelector("summary")?.focus(); }
+          <button type="button" className="tool" ref={toolsTrigger} aria-haspopup="dialog" aria-expanded={toolsOpen} onClick={() => setToolsOpen(true)}>ابزارهای فروش</button>
+          <Dialog open={toolsOpen} onClose={() => setToolsOpen(false)} title="ابزارهای فروش" variant="sheet" returnFocus={() => toolsTrigger.current}>
+          <div className="pos-tools-list" onClick={e => {
+            if ((e.target as HTMLElement).closest("button:enabled, a")) setToolsOpen(false);
           }}>
           {/* بی دسترسی به فهرست فاکتور، پیش‌نویس کنارگذاشته راه برگشتی ندارد؛ پس فقط «رها کردن». */}
           {browseInvoices ? <>
           <button type="button" className="tool" disabled={busy || !invoice || completed !== null || !payIdle} onClick={() => {
             if (!invoice || busy) return;
-            dropCart(); setInvoice(null); setReceived(0n); scans.current.reset();
-            setNote("پیش‌نویس در سرور ذخیره است و از بخش فاکتورها قابل ادامه است.");
-          }}>ذخیره و فروش جدید</button>
+            void guarded(async () => {
+              await api.patch(`/invoices/${invoice.id}/review`, {hold:true,reason:"تعلیق در صندوق"});
+              dropCart(); setInvoice(null); setReceived(0n); scans.current.reset();
+              setNote("پیش‌نویس معلق شد؛ از فهرست فاکتورها می‌توانید آن را ادامه دهید.");
+            });
+          }}>تعلیق پیش‌نویس و فروش جدید</button>
           </> : null}
           <button type="button" className="tool" disabled={!hasCart || busy || !payIdle || completed !== null} onClick={() => void abandon()}>
             رها کردن سبد
@@ -1444,19 +1520,19 @@ function PosScreen({ actorId, mode, onMode, browseInvoices }: {
           <button type="button" className="tool" disabled={completed !== null} onClick={() => setCamera((v) => !v)}>
             {camera ? "بستن دوربین" : "دوربین"}
           </button>
-          {instagram ? null : <button type="button" className="tool" onClick={() => setClosing((v) => !v)}>
+          {instagram ? null : <button type="button" className="tool" disabled={busy || !payIdle} onClick={() => setClosing((v) => !v)}>
             بستن شیفت
           </button>}
           </div>
-          </details>
+          </Dialog>
         </div>
       </header>
 
       {scanStorageError && <p className="solid pos-alert" role="alert">{scanStorageError}</p>}
       {paymentStoreError && <p className="solid pos-alert" role="alert">{paymentStoreError}</p>}
-      {pendingScan && <div className="solid pad" role="status">
+      {pendingScan && !working && <div className="solid pad" role="status">
         <p>نتیجهٔ اسکن هنوز قطعی نیست. برای جلوگیری از ثبت دوباره، ابتدا همین اسکن را تعیین تکلیف کنید.</p>
-        <button type="button" className="btn" disabled={working} onClick={() => void addByBarcode("", undefined, true)}>بررسی و تلاش دوبارهٔ همان اسکن</button>
+        <button type="button" className="btn" disabled={!shift || !branchId || !warehouseId || !payIdle || !!scanStorageError || !!paymentStoreError} onClick={() => void addByBarcode("", undefined, true)}>بررسی و تلاش دوبارهٔ همان اسکن</button>
       </div>}
 
       {/* عنصر ساده با کلاس `solid`، نه کامپوننت `Solid`: آن `role`
@@ -1515,7 +1591,7 @@ function PosScreen({ actorId, mode, onMode, browseInvoices }: {
       ) : null}
 
       {draftRefund ? <DraftRefundPanel payments={draftRefund.payments} busy={busy}
-        onCancel={() => setDraftRefund(null)} onConfirm={(reason, ref) => void confirmDraftRefund(reason, ref)} /> : null}
+        onCancel={() => setDraftRefund(null)} onConfirm={(reason, ref, payout) => void confirmDraftRefund(reason, ref, payout)} /> : null}
       {closing ? (
         <CloseShiftPanel
           busy={busy}
@@ -1541,7 +1617,10 @@ function PosScreen({ actorId, mode, onMode, browseInvoices }: {
               <div><dt>تاریخ فاکتور</dt><dd>{invoice?.occurredAt ? formatJalaliMoment(invoice.occurredAt) : "—"}</dd></div>
               <div><dt>نوع فروش</dt><dd>{instagram ? "اینستاگرام" : "حضوری"}</dd></div>
               {/* نام از سرور (`createdByName`)؛ پیش از اولین قلم پیش‌نویسی نیست و حدس زده نمی‌شود. */}
-              <div><dt>ثبت‌کننده</dt><dd>{invoice?.createdByName ?? "—"}</dd></div>
+              <div><dt>ثبت‌کننده</dt><dd>{currentStaff ? <select aria-label="ثبت‌کننده" value={displayedSellerId}
+                disabled={busy || !payIdle} onChange={e => void changeSeller(e.target.value)}>
+                {!sellerInRoster && <option value={displayedSellerId} disabled>{invoiceSellerName ?? "—"}</option>}
+                {currentStaff.names.map(s => <option key={s.id} value={s.id}>{s.name}</option>)}</select> : invoiceSellerName ?? "—"}</dd></div>
             </dl>
           </div>
           {/* مشتری همیشه باز و پیش از جست‌وجوست؛ اختیاری/الزامی فقط سیاست فروش (`pos.require_customer`) است، نه چیدمان. */}
@@ -2248,24 +2327,30 @@ function DiscountPanel({
 
 function DraftRefundPanel({ payments, busy, onCancel, onConfirm }: {
   payments: DraftPayment[]; busy: boolean; onCancel: () => void;
-  onConfirm: (reason: string, ref: string) => void;
+  onConfirm: (reason: string, ref: string, payoutMethod:string) => void;
 }) {
   const [reason, setReason] = useState("");
   const [ref, setRef] = useState("");
   const [confirmed, setConfirmed] = useState(false);
-  const external = payments.some((p) => ["card_reader", "gateway", "transfer"].includes(p.kind));
-  const blocked = payments.some((p) => p.status !== "succeeded" || p.direction !== "in" ||
-    p.settlement_id !== null || p.settled_at !== null || parseRial(p.fee_amount) !== 0n);
+  const [payout,setPayout] = useState("");
+  const external = payout === "transfer" || !payout && payments.some((p) => ["card_reader", "gateway", "transfer"].includes(p.kind));
+  const blocked = payments.some(p => p.direction !== "in" || (payout && ["snappay","digipay"].includes(p.method_code ?? "")) ||
+    ((!["snappay","digipay"].includes(p.method_code ?? "") && (payout && ["cash","card_reader","gateway","transfer"].includes(p.kind) || ["card_reader","gateway","transfer"].includes(p.kind)))
+    ? !["succeeded","settled","reconciled"].includes(p.status)
+    : p.status !== "succeeded" || p.settlement_id !== null || p.settled_at !== null || parseRial(p.fee_amount) !== 0n));
   return <section role="region" aria-label="برگشت پرداخت پیش‌نویس"><Solid className="pad">
     <h3>برگشت پرداخت و لغو پیش‌نویس</h3>
-    <p>این عملیات پرداخت بانکی انجام نمی‌دهد. وجه نقد را به مشتری برگردانید؛ برای پرداخت بانکی، ابتدا برگشت را در بانک انجام دهید. رزرو اعتبار مشتری آزاد می‌شود.</p>
+    <p>{external ? "بازپرداخت بانکی را انجام دهید و شماره پیگیری آن را ثبت کنید." : "مبلغ نقدی انتخاب‌شده را از کشوی همین شیفت به مشتری تحویل دهید."} رزرو اعتبار و امتیاز مربوط به پیش‌نویس هنگام لغو آزاد می‌شود.</p>
     <ul>{payments.map((p) => <li key={p.id}>{p.name}: <Money rial={p.amount} /></li>)}</ul>
-    {blocked ? <p role="alert">پرداخت نامشخص یا تسویه‌شده نیازمند بررسی حسابدار است و از این مسیر برگشت نمی‌خورد.</p> : null}
+    <label>روش پس‌دادن وجه<select disabled={busy} value={payout} onChange={e => {setPayout(e.target.value);setConfirmed(false);}}>
+      <option value="">هر مبلغ با روش دریافت خودش</option><option value="cash">نقد از کشوی همین شیفت</option>
+      <option value="transfer">کارت‌به‌کارت با شماره پیگیری</option></select></label>
+    {blocked ? <p role="alert">برای این پرداخت، وضعیت یا تأیید برگشت ارائه‌دهنده باید بررسی شود.</p> : null}
     <label className="auth-field">دلیل برگشت<input value={reason} maxLength={200} onChange={(e) => setReason(e.target.value)} /></label>
     {external ? <label className="auth-field">شماره پیگیری برگشت بانکی<input value={ref} maxLength={120} onChange={(e) => setRef(e.target.value)} /></label> : null}
     <label><input type="checkbox" checked={confirmed} onChange={(e) => setConfirmed(e.target.checked)} />برگشت وجه لازم را انجام داده‌ام و لغو این پیش‌نویس را تأیید می‌کنم.</label>
     <button type="button" className="btn btn--primary" disabled={busy || blocked || !confirmed || reason.trim().length < 3 || (external && !ref.trim())}
-      onClick={() => onConfirm(reason.trim(), ref)}>ثبت برگشت و لغو پیش‌نویس</button>
+      onClick={() => onConfirm(reason.trim(), ref, payout)}>ثبت برگشت و لغو پیش‌نویس</button>
     <button type="button" className="btn btn--quiet" disabled={busy} onClick={onCancel}>انصراف</button>
   </Solid></section>;
 }

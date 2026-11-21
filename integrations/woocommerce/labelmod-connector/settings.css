@@ -1,0 +1,48 @@
+/* Keep connector styles inside its WordPress admin screen. */
+.lmc-admin {
+    --ink: #202b2c;
+    --muted: #536466;
+    --accent: #135b58;
+    --line: #d5dedb;
+    max-width: 1080px;
+    margin-inline: auto;
+    padding: 0 clamp(8px, 2vw, 24px) 32px;
+    color: var(--ink);
+}
+.lmc-hero { display: flex; align-items: center; gap: 12px; margin-block: 24px 16px; }
+.lmc-hero > .dashicons { width: 44px; height: 44px; line-height: 44px; border-radius: 12px; background: #173d39; color: #f8d387; font-size: 25px; }
+.lmc-admin .lmc-hero h1 { color: var(--ink); font-size: 24px; line-height: 1.4; padding: 0; font-weight: 700; }
+.lmc-hero h1 { flex: 1; }
+.lmc-version { font-variant-numeric: tabular-nums; color: var(--muted); }
+.lmc-navigation { display: flex; flex-wrap: wrap; gap: 4px; padding: 5px; margin-block: 16px; border: 1px solid var(--line); border-radius: 14px; background: #e7ece9; }
+.lmc-navigation a { display: flex; flex: 1 1 auto; justify-content: center; align-items: center; gap: 8px; min-height: 42px; padding-inline: 10px; font-weight: 600; text-decoration: none; color: #354946; border-radius: 10px; }
+.lmc-navigation a[aria-current] { background: #fff; color: var(--accent); box-shadow: 0 1px 4px #203b3726; }
+.lmc-navigation a:hover { color: #083c38; background-color: #f7f9f8; }
+.lmc-layout { display: grid; grid-template-columns: 1fr 1fr; align-items: start; gap: 16px; }
+.lmc-card { background: white; min-width: 0; border: 1px solid var(--line); border-radius: 14px; padding: clamp(16px, 2vw, 26px); overflow-wrap: anywhere; }
+.lmc-card + details { margin-block-start: 12px; }
+.lmc-card h2, .lmc-card summary { margin: 0 0 12px; color: var(--ink); font-size: 17px; line-height: 1.6; }
+.lmc-card summary { cursor: pointer; font-weight: 600; margin: 0; }
+.lmc-card > hr:first-child { display: none; }
+.lmc-card .notice.inline { margin: 12px 0 16px; box-shadow: none; }
+.lmc-section-heading { padding-block-start: 20px; margin-block: 18px 0; border-block-start: 1px solid var(--line); }
+.lmc-card .form-table { width: 100%; }
+.lmc-card .form-table tbody { display: grid; grid-template-columns: repeat(2,minmax(0,1fr)); gap: 16px 28px; }
+.lmc-card .form-table tr, .lmc-card .form-table th, .lmc-card .form-table td { display: block; width: auto; margin: 0; padding: 0; }
+.lmc-card .form-table th { padding-block: 6px; text-align: start; }
+.lmc-card :is(input.regular-text, select, textarea, input[inputmode=numeric]) { box-sizing: border-box; width: 100%; max-width: 100%; min-height: 40px; padding-inline: 10px; border: 1px solid #99aaa5; border-radius: 7px; }
+.lmc-card .description { display: block; color: var(--muted); font-size: 13px; line-height: 1.7; margin-block: 6px; }
+.lmc-card .button { min-height: 40px; border-radius: 8px; padding-inline: 16px; white-space: normal; margin-block: 4px; color: var(--accent); border-color: var(--accent); }
+.lmc-card .button-primary { background: var(--accent); color: white; }
+.lmc-card .button-primary:hover { background: #113f3a; }
+.lmc-sync-summary { display: flex; flex-wrap: wrap; gap: 12px; margin: 18px 0; padding-block: 12px; border-block: 1px solid var(--line); }
+.lmc-sync-summary > div { flex: 1 1 100px; }
+.lmc-sync-summary dt { color: var(--muted); font-size: 12px; }
+.lmc-sync-summary dd { margin: 4px 0 0; font-weight: 650; }
+.lmc-holds { overflow-x: auto; }
+.lmc-admin :focus-visible { outline: 3px solid #927023; outline-offset: 3px; }
+@media (max-width: 782px) {
+    .lmc-layout, .lmc-card .form-table tbody { grid-template-columns: 1fr; }
+    .lmc-navigation { display: grid; grid-template-columns: repeat(2,minmax(0,1fr)); }
+    .lmc-navigation a { font-size: 13px; padding-inline: 4px; }
+}

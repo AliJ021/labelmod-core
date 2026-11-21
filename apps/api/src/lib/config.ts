@@ -19,6 +19,7 @@ const schema = z.object({
   DATABASE_URL: z.string().min(1, "DATABASE_URL تنظیم نشده است"),
   DB_POOL_MAX: z.coerce.number().int().min(1).max(100).default(10),
   // فقط سوکت و کلید کانال؛ اعتبارنامهٔ مالک دیتابیس در فرایند API قرار نمی‌گیرد.
+  BACKUP_MANAGER_TOKEN_FILE: z.string().min(1).optional(),
   BACKUP_MANAGER_SOCKET: z.string().min(1).optional(),
   BACKUP_MANAGER_TOKEN: z.string().regex(/^[a-f0-9]{64,128}$/i).optional(),
 

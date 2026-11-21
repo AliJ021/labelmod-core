@@ -77,7 +77,7 @@ export function registerPublicRoutes(app: FastifyInstance, deps: { db: Db }): vo
 
     const head = await sql<Row>`
       SELECT sales.invoice_display_number(i.id) AS number, i.occurred_at,
-             c.full_name AS customer_name,
+             coalesce(i.receipt_customer_name,c.full_name) AS customer_name,
              i.net_amount::text, i.tax_amount::text, i.shipping_amount::text,
              i.payable_amount::text, i.paid_amount::text,
              sales.exchange_in(i.id)::text AS exchange_amount,

@@ -1,3 +1,5 @@
+import { Field } from "../components/ui/Controls.tsx";
+import { jalaliInputOf, parseJalaliDate } from "../lib/report-filters.ts";
 import { StatusBadge } from "../components/ui/Status.tsx";
 import { formatJalaliDay } from "../lib/format.ts";
 import { DataTable, type Column } from "../components/ui/DataTable.tsx";
@@ -109,8 +111,9 @@ export function Customers() {
   const [mobile, setMobile] = useState("");
   const [fullName, setFullName] = useState("");
 
-  const load = useCallback((signal: AbortSignal) => people.customers(submitted, { signal }), [submitted]);
-  const query = useLatestQuery({ key: submitted, version: revision, load });
+  const [title, setTitle] = useState("all");
+  const load = useCallback((signal: AbortSignal) => people.customers(submitted, { signal }, title), [submitted, title]);
+  const query = useLatestQuery({ key: JSON.stringify([submitted, title]), version: revision, load });
   const rows = query.data?.customers ?? [];
   const totals = query.data?.totals ?? null;
   /*
@@ -192,6 +195,10 @@ export function Customers() {
           void search();
         }}
       >
+        <label>عنوان مشتری<select aria-label="عنوان مشتری" value={title} onChange={e => setTitle(e.target.value)}>
+          <option value="all">همه</option>{Object.entries({mr:"آقا",ms:"خانم",unknown:"نامشخص"}).map(([v,label]) =>
+            <option key={v} value={v}>{label}{query.data?.titleCounts ? ` (${query.data.titleCounts[v]})` : ""}</option>)}
+        </select></label>
         <SearchField label="جست‌وجوی شماره یا نام مشتری" value={q} onChange={setQ} onClear={() => reload("")} />
         <button type="submit" className="btn" disabled={busy}>
           جست‌وجو
@@ -532,6 +539,9 @@ function CustomerFile({
     c.creditLimit === "0" ? "" : toman(parseRial(c.creditLimit)).replace(/٬/g, ""),
   );
   const [name, setName] = useState(c.fullName ?? "");
+  const [customerTitle,setCustomerTitle] = useState(c.salutation ?? "");
+  const [birth,setBirth] = useState(c.birthDate ? jalaliInputOf(c.birthDate) : "");
+  const parsedBirth = birth.trim() ? parseJalaliDate(birth) : null;
   const [addr, setAddr] = useState(c.address ?? "");
   const [postal, setPostal] = useState(c.postalCode ?? "");
   const [city, setCity] = useState(c.city ?? "");
@@ -560,6 +570,10 @@ function CustomerFile({
 
       <Solid className="pad stack" style={{ gap: "var(--s-3)" }}>
         <div className="filters">
+          <label>عنوان مشتری<select value={customerTitle} onChange={e => setCustomerTitle(e.target.value)}>
+            <option value="">نامشخص</option><option value="mr">آقا</option><option value="ms">خانم</option></select></label>
+          <Field label="تاریخ تولد شمسی" optional error={parsedBirth && parsedBirth.kind !== "ok" ? parsedBirth.message : null}>
+            <input dir="ltr" value={birth} onChange={e => setBirth(e.target.value)} /></Field>
           <label className="auth-field">
             <span>نام</span>
             <input value={name} onChange={(e) => setName(e.target.value)} />
@@ -576,11 +590,13 @@ function CustomerFile({
           <button
             type="button"
             className="btn btn--primary"
-            disabled={busy || rial === null}
+            disabled={busy || rial === null || (parsedBirth !== null && parsedBirth.kind !== "ok")}
             onClick={() =>
               rial !== null &&
               onPatch({
                 fullName: name.trim() === "" ? null : name.trim(),
+                salutation:customerTitle === "mr" || customerTitle === "ms" ? customerTitle : null,
+                birthDate:parsedBirth?.kind === "ok" ? parsedBirth.iso : null,
                 creditLimit: rial.toString(),
               })
             }

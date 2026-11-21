@@ -101,7 +101,7 @@ const payPanel = (page: Page) => page.getByRole("complementary", { name: "پرد
 const selector = (page: Page) => page.getByRole("region", { name: "روش پرداخت" });
 /** دکمهٔ روش: سه خانهٔ اصلی (کارت‌خوان، اسنپ‌پی، دیجی‌پی) همیشه دیده می‌شوند؛ بقیه تراشهٔ «نمایش بیشتر»اند. */
 const method = (page: Page, name: string) => selector(page).getByRole("button", { name, exact: true });
-const TILES = new Set(["کارت‌خوان", "اسنپ‌پی", "دیجی‌پی"]);
+const TILES = new Set(["کارت‌خوان", "اسنپ‌پی", "کارت‌به‌کارت"]);
 const moreToggle = (page: Page) => selector(page).getByRole("button", { name: /^نمایش (بیشتر|کمتر)/ });
 async function openMore(page: Page) {
   if ((await moreToggle(page).getAttribute("aria-expanded")) !== "true") await moreToggle(page).click();
@@ -406,11 +406,16 @@ for (const required of [false, true]) test(`customer entry (${required ? "requir
   await expect(page.getByLabel("نام و نام خانوادگی مشتری")).toBeVisible();
   await expect(page.getByRole("button",{name:"ثبت نام و افزودن مشتری",exact:true})).toBeDisabled();
   expect(s.invoice.customerId).toBeNull();
+  await expect(page.getByRole("button",{name:"آقا",exact:true})).toHaveAttribute("aria-pressed","true");
+  if (required) {
+    await page.getByRole("button",{name:"خانم",exact:true}).click();
+    await page.getByLabel(/تاریخ تولد شمسی/).fill("۱۳۸۰/۰۱/۰۱");
+  }
   await page.getByLabel("نام و نام خانوادگی مشتری").fill("مریم آزمون");
   await page.getByRole("button",{name:"ثبت نام و افزودن مشتری",exact:true}).click();
   await expect(page.getByRole("region",{name:"مشتری",exact:true})).toContainText("مریم آزمون");
   expect(creates).toBe(1);
-  expect(attached).toEqual([{mobile:"09121234567",requireNameForNew:true},{mobile:"09121234567",requireNameForNew:true,fullName:"مریم آزمون"}]);
+  expect(attached).toEqual([{mobile:"09121234567",requireNameForNew:true},{mobile:"09121234567",requireNameForNew:true,fullName:"مریم آزمون",salutation:required ? "ms" : "mr",...(required && {birthDate:"2001-03-21"})}]);
   expect(s.posted).toEqual([]); expect(s.finalized).toBe(0);
 });
 
@@ -444,7 +449,7 @@ test("manager can complete an existing unnamed customer through the audited cust
 });
 
 test("configured DigiPay records only explicit manual payment with reference; payment link stays unavailable",async({page,api})=>{
-  const s=pos(api);await open(page);await method(page,"دیجی‌پی").click();
+  const s=pos(api);await open(page);await pick(page,"دیجی‌پی");
   // «لینک پرداخت» تراشه یا گزینه‌ای ندارد؛ فقط در بخش ناموجودها با دلیلش.
   await expect(selector(page).getByRole("radio")).toHaveCount(0);
   await expect(await openUnavailable(page)).toContainText("ساخت لینک پرداخت هنوز در سرور پیاده نشده است");
@@ -1050,4 +1055,24 @@ test("layout: no page overflow, two columns from 900 with finalize in view, mobi
       await expect(method(page, "کارت‌خوان")).toBeInViewport();
     }
   }
+});
+
+test("فروشنده در نشست و شیفت مشترک برای فروش بعد باقی می‌ماند",async({page,api})=>{
+  const s=pos(api);
+  const seller="55555555-5555-4555-8555-555555555555";
+  api.defaults["GET /pos/sellers"]={sellers:[{id:ME,name:"علی"},{id:seller,name:"شروین"}],sessionId:"session-one"};
+  const bodies:Array<Record<string,unknown>>=[];
+  api.handlers.set(`PATCH /invoices/${INV}/customer`,route=>route.fulfill({json:s.invoice}));
+  api.handlers.set("POST /invoices",async route=>{
+    bodies.push(route.request().postDataJSON());await route.fulfill({json:{...s.invoice,sellerId:seller}});
+  });
+  await page.goto("/?page=pos&pos.branch=b1&pos.warehouse=w1");
+  const picker=page.getByRole("combobox",{name:"ثبت‌کننده"});
+  await picker.selectOption(seller);
+  await page.reload();
+  await expect(picker).toHaveValue(seller);
+  await page.getByLabel("موبایل مشتری",{exact:false}).fill("09121234567");
+  await page.getByRole("button",{name:"افزودن مشتری",exact:true}).click();
+  await expect.poll(()=>bodies.length).toBe(1);
+  expect(bodies[0]).toMatchObject({sellerId:seller});
 });

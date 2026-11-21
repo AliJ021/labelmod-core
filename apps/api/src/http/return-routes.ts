@@ -34,6 +34,8 @@ import {
 import type { ShiftService } from "../sales/shift.ts";
 import { registerExchangeRoutes } from "./exchange-routes.ts";
 
+import { previewRefundPlan, splitRefundSchema } from "../sales/refund-plan.ts";
+
 const moneyString = z
   .string()
   .regex(/^\d+$/, "مبلغ باید رقم صحیح باشد (ریال، بدون اعشار)");
@@ -161,6 +163,7 @@ export function registerReturnRoutes(app: FastifyInstance, deps: ReturnRouteDeps
     const body = z.object({
       lines: z.array(z.object({ invoiceLineId: uuid, qty: z.string().regex(/^\d+(\.\d{1,3})?$/, "تعداد نامعتبر") })).min(1).max(200),
       refundAmount: moneyString.optional(),
+      fullCancellation: z.literal(true).optional(),
     }).parse(req.body);
     const inv = await db.selectFrom("sales.invoice").select(["branch_id"]).where("id", "=", id).executeTakeFirst();
     if (!inv) throw new ReturnError("invoice_not_found", "فاکتور یافت نشد", 404);
@@ -170,8 +173,8 @@ export function registerReturnRoutes(app: FastifyInstance, deps: ReturnRouteDeps
       debt: string; credit: string; problem: string | null }>`
       SELECT returned_value::text AS value, outstanding::text, funds::text, max_refund::text AS max, suggested_refund::text AS suggested,
              refund::text, debt_applied::text AS debt, customer_credit::text AS credit, problem
-        FROM sales.return_account_preview(${id}::uuid, ${JSON.stringify(lines)}::jsonb, ${body.refundAmount ?? null}::numeric)`.execute(db)).rows[0]!;
-    return { returnedValue: row.value, outstanding: row.outstanding, funds: row.funds, maxRefund: row.max, suggestedRefund: row.suggested,
+        FROM sales.return_account_preview(${id}::uuid, ${JSON.stringify(lines)}::jsonb, ${body.refundAmount ?? null}::numeric, ${body.fullCancellation ?? false})`.execute(db)).rows[0]!;
+    return { splitPlan: await previewRefundPlan(db,id,BigInt(row.refund),s), returnedValue: row.value, outstanding: row.outstanding, funds: row.funds, maxRefund: row.max, suggestedRefund: row.suggested,
       refundAmount: row.refund, debtApplied: row.debt, customerCredit: row.credit, problem: row.problem };
   });
 
@@ -184,7 +187,7 @@ export function registerReturnRoutes(app: FastifyInstance, deps: ReturnRouteDeps
    */
   app.post("/returns/commit", { config: MONEY_OUT_LIMIT }, async req => {
     const s = session(req);
-    const body = createReturnBody.extend({ warehouseId: uuid.optional(), confirmed: z.literal(true) }).parse(req.body);
+    const body = createReturnBody.extend({ splitRefund:splitRefundSchema.optional(), warehouseId: uuid.optional(), fullCancellation:z.literal(true).optional(), confirmed: z.literal(true) }).parse(req.body);
     const key = uuid.parse(req.headers["idempotency-key"]);
     const inv = await db.selectFrom("sales.invoice").select("branch_id").where("id", "=", body.invoiceId).executeTakeFirst();
     if (!inv) throw new ReturnError("invoice_not_found", "فاکتور یافت نشد", 404);
@@ -193,12 +196,35 @@ export function registerReturnRoutes(app: FastifyInstance, deps: ReturnRouteDeps
     const out = await runOnce(db, { key, source: `api.return.commit.${s.userId}`, payload: body,
       run: async trx => {
         await requireManualReturnChannel(trx, body.invoiceId);
+        await trx.selectFrom("sales.invoice").select("id").where("id","=",body.invoiceId).forUpdate().executeTakeFirstOrThrow();
+        if (body.fullCancellation) {
+          const qty = new Map(body.lines.map(l => [l.invoiceLineId,Number(l.qty)]));
+          const remaining = await sql<{id:string; qty:string}>`SELECT id,(qty-returned_qty)::text AS qty FROM sales.invoice_line
+            WHERE invoice_id=${body.invoiceId}::uuid AND qty>returned_qty`.execute(trx);
+          const preview = await sql<{amount:string}>`SELECT suggested_refund::text AS amount FROM
+            sales.return_account_preview(${body.invoiceId}::uuid,${JSON.stringify(body.lines)}::jsonb,NULL,true)`.execute(trx);
+          if (remaining.rows.length !== qty.size || remaining.rows.some(l => Number(l.qty)!==qty.get(l.id)) ||
+              parseMoney(preview.rows[0]!.amount)!==parseMoney(body.refundAmount))
+            throw new ReturnError("cancellation_changed","مبلغ یا اقلام قابل ابطال تغییر کرده است. فاکتور را دوباره باز کنید.",409);
+        }
+        if (body.splitRefund && (body.refundMethod || body.refundPaymentId || body.refundReference))
+          throw new ReturnError("conflicting_refund_methods","ترکیب برگشت و روش تکی هم‌زمان قابل ثبت نیستند.",422);
+        const splitMethods=body.splitRefund?.legs.map(l=>l.method);
+        const gateMethod = splitMethods?.length ? (await trx.selectFrom("treasury.payment_method").select("code")
+          .where("code","in",splitMethods).where("kind","=","cash").executeTakeFirst())?.code ?? splitMethods[0] : body.refundMethod;
         const gate = await returnGate(deps, s, { invoiceId: body.invoiceId, branchId: inv.branch_id,
-          refund: parseMoney(body.refundAmount), refundMethod: body.refundMethod, shiftId: body.shiftId });
+          refund: parseMoney(body.refundAmount), refundMethod: gateMethod, shiftId: body.shiftId });
         const id = await returns.createDraftIn(trx, { ...body, refundAmount: parseMoney(body.refundAmount),
           shiftId: gate.shiftId, actorId: s.userId });
+        if (body.fullCancellation)
+          await sql`UPDATE sales.sale_return SET shipping_amount=sales.return_shipping_remaining(${body.invoiceId}::uuid)
+            WHERE id=${id}::uuid`.execute(trx);
         if (body.warehouseId) await sql`SELECT sales.set_return_warehouse(${id}::uuid,${body.warehouseId}::uuid,${s.userId}::uuid)`.execute(trx);
-        await returns.postIn(trx, id, s.userId);
+        await returns.postIn(trx, id, s.userId, body.splitRefund);
+        if (body.fullCancellation) {
+          await sql`SELECT platform.audit('invoice.full_cancellation','sale_return',${id}::text,
+            jsonb_build_object('invoice',${body.invoiceId}::uuid),${s.userId}::uuid,${body.reasonNote ?? null})`.execute(trx);
+        }
         return { value: id, ref: id };
       }, replay: async ref => ref,
     });
@@ -299,7 +325,11 @@ export function registerReturnRoutes(app: FastifyInstance, deps: ReturnRouteDeps
              (SELECT count(*)::int FROM sales.sale_return_line l WHERE l.return_id = r.id AND l.restock AND l.condition = 'defective') AS defective,
              (SELECT count(*)::int FROM sales.sale_return_line l WHERE l.return_id = r.id AND NOT l.restock) AS "notRestocked",
              r.net_amount::text AS "netAmount", r.refund_amount::text AS "refundAmount",
-             pm.name AS "refundMethod", su.full_name AS "drawerName"
+             coalesce((SELECT string_agg(m.name || ' (' || p.amount::text || ' ریال)', ' + ' ORDER BY p.method_code,p.id)
+               FROM treasury.payment p JOIN treasury.payment_method m ON m.code=p.method_code
+               WHERE p.return_id=r.id AND p.direction='out' AND p.status IN ('succeeded','settled','reconciled') HAVING count(*)>1),
+               pm.name,(SELECT m.name FROM treasury.payment p JOIN treasury.payment_method m ON m.code=p.method_code
+                        WHERE p.return_id=r.id AND p.direction='out' LIMIT 1)) AS "refundMethod", su.full_name AS "drawerName"
         FROM sales.sale_return r
         LEFT JOIN identity.app_user u ON u.id = r.created_by
         LEFT JOIN treasury.payment_method pm ON pm.code = r.refund_method

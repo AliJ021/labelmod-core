@@ -3,6 +3,8 @@ import { api, ApiError } from "../lib/api.ts";
 import { useUrlState, navigate } from "../lib/use-url-state.ts";
 import { useLatestQuery } from "../lib/use-latest-query.ts";
 import { pos, type Branch, type DraftPayment, type Invoice } from "../lib/pos.ts";
+import {readPendingScan} from "../lib/pending-scan.ts";
+import {readPendingPayment} from "../lib/pending-payment.ts";
 import { rememberCart } from "../lib/open-cart.ts";
 import { toman } from "../lib/money.ts";
 import { ResultState } from "../components/ResultState.tsx";
@@ -61,6 +63,7 @@ export function Invoices({ access }: { access?: NavAccess } = {}) {
   const tabsId = useTabsId();
   const [status, setStatus] = useUrlState("invoices.status", "all");
   const [channel, setChannel] = useUrlState("invoices.channel");
+  const [mine,setMine] = useUrlState("invoices.mine","");
   const [search, setSearch] = useUrlState("invoices.search", "", true);
   const [branch, setBranch] = useUrlState("invoices.branch");
   const [from, setFrom] = useUrlState("invoices.from");
@@ -116,23 +119,27 @@ export function Invoices({ access }: { access?: NavAccess } = {}) {
   }
   useEffect(() => { void pos.branches().then(r => setBranches(r.branches)).catch(e => setError(errorMessage(e))); }, []);
   const todayFilter = tab0(status) === "list" && dayMode === "today";
-  const key = JSON.stringify([status, search, branch, page, from, to, channel, todayFilter]);
+  const key = JSON.stringify([status, search, branch, page, from, to, channel, todayFilter, mine]);
   const load = useCallback((signal: AbortSignal) => {
     const q = new URLSearchParams({ status, search, page });
+    if (mine === "1") q.set("mine","1");
     if (channel) q.set("channel", channel);
     if (branch) q.set("branchId", branch);
     if (from) q.set("from", from);
     if (to) q.set("to", to);
     if (todayFilter) q.set("day", "today");
     return api.get<ListResponse>(`/invoices?${q}`, { signal });
-  }, [status, search, branch, page, from, to, channel, todayFilter]);
+  }, [status, search, branch, page, from, to, channel, todayFilter, mine]);
   const query = useLatestQuery({ key, version: revision, load, delay: search ? 250 : 0, enabled: !selected && issue === null });
-  async function resume(row: Row) {
+  async function resume(row: Pick<Row,"id"|"branchId">) {
     setError("");
     try {
       const [invoice, shift] = await Promise.all([pos.invoice(row.id), pos.currentShift(row.branchId)]);
       if (!shift || shift.id !== invoice.shiftId || shift.status !== "open" || invoice.createdBy !== shift.userId || invoice.status !== "draft")
         throw new ApiError(409, "draft_context", "این پیش‌نویس در شیفت فعلی قابل ادامه نیست.", null);
+      if (readPendingScan(shift.userId) || readPendingPayment(shift.userId))
+        throw new Error("ابتدا عملیات معلق صندوق را تعیین تکلیف کنید.");
+      if (invoice.reviewReason) await api.patch(`/invoices/${invoice.id}/review`, {hold:false,reason:"ادامهٔ پیش‌نویس در صندوق"});
       rememberCart({ invoiceId: invoice.id, shiftId: shift.id });
       navigate(`/?page=pos&pos.branch=${encodeURIComponent(row.branchId)}&pos.warehouse=${encodeURIComponent(invoice.warehouseId)}`);
     } catch (e) { setError(errorMessage(e)); }
@@ -146,7 +153,7 @@ export function Invoices({ access }: { access?: NavAccess } = {}) {
   // آخرین شمارش و جمع رسیده می‌ماند تا هنگام بارگذاری صفحه نپرد؛ با خطا پنهان می‌شود.
   const counts = query.data?.statusCounts;
   const summary = query.error ? undefined : query.data?.summary;
-  if (selected) return <InvoiceDetail id={selected} onBack={() => setSelected("")} />;
+  if (selected) return <InvoiceDetail onResume={resume} resumeError={error} id={selected} onBack={() => setSelected("")} />;
   return <section className="stack invoice-center">
     <PageHeader eyebrow="فروش" title="فاکتورها" context="فاکتورهای نهایی و پیش‌نویس‌های ذخیره‌شده در سرور"
       actions={<button className="btn" type="button" onClick={() => setRevision(v => v + 1)}>تازه‌سازی</button>} />
@@ -177,6 +184,7 @@ export function Invoices({ access }: { access?: NavAccess } = {}) {
       <details className="invoice-extra-filters" open={extraOpen || !!(branch || datesActive || issue)} onToggle={e => setExtraOpen(e.currentTarget.open)}>
       <summary><Icon name="filter" size="sm" />فیلتر شعبه و تاریخ{branch || from || to ? " · فعال" : ""}</summary>
       <div className="invoice-filter-fields">
+      <label><input type="checkbox" checked={mine==="1"} onChange={e=>{setMine(e.target.checked ? "1" : "");setPage("1");}} /> فاکتورهای من</label>
       <Field label="شعبه"><select value={branch} onChange={e => { setBranch(e.target.value); setPage("1"); }}><option value="">شعبه‌های مجاز</option>{branches.map(b => <option key={b.id} value={b.id}>{b.name}</option>)}</select></Field>
       {/* `inputMode="decimal"`: صفحه‌کلید عددی گوشی «/» ندارد؛ «.» یا هشت رقم پشت‌هم هم پذیرفته است. تقویم بومی میلادی عمداً نیست. */}
       <Field label="از تاریخ" hint={<JalaliDateHint iso={range.from} example="مثلاً ۱۴۰۵/۰۷/۰۱" />} error={issue?.field === "from" ? issue.message : null}>
@@ -237,9 +245,18 @@ export function Invoices({ access }: { access?: NavAccess } = {}) {
   </section>;
 }
 
-function InvoiceDetail({ id, onBack }: { id: string; onBack: () => void }) {
+function InvoiceDetail({ id, onBack, onResume, resumeError }: { id: string; onBack: () => void; onResume: (row:Pick<Row,"id"|"branchId">)=>Promise<void>; resumeError:string }) {
   const load = useCallback((signal: AbortSignal) => api.get<{ invoice: Invoice; payments: DraftPayment[] }>(`/invoices/${encodeURIComponent(id)}/overview`, { signal }), [id]);
-  const q = useLatestQuery({ key: id, load });
+  const [revision,setRevision] = useState(0);
+  const [reason,setReason] = useState("");
+  const [pending,setPending] = useState(false);
+  const [issue,setIssue] = useState("");
+  const q = useLatestQuery({ key: id, version:revision, load });
+  async function review(hold:boolean) {
+    setPending(true); setIssue("");
+    try { await api.patch(`/invoices/${id}/review`,{hold,reason:reason.trim()}); setReason(""); setRevision(n => n+1); }
+    catch(err) { setIssue(errorMessage(err)); } finally { setPending(false); }
+  }
   const inv = q.data?.invoice;
   return <section className="solid pad stack"><button className="btn" type="button" onClick={onBack}>بازگشت به فاکتورها</button>
     {q.loading ? <ResultState kind="loading" title="در حال دریافت جزئیات…" /> : q.error ? <ResultState kind="error" title={errorMessage(q.error)} /> : inv && <>
@@ -247,6 +264,21 @@ function InvoiceDetail({ id, onBack }: { id: string; onBack: () => void }) {
       <div className="scroll-x"><table className="grid"><thead><tr><th>کالا</th><th>تعداد</th><th>قیمت واحد (تومان)</th><th>مبلغ (تومان)</th></tr></thead>
         <tbody>{inv.lines.map(l => <tr key={l.id}><td>{l.productName}<small>{l.sku}</small></td><td>{l.qty}</td><td>{toman(BigInt(l.unitPrice))}</td><td>{toman(BigInt(l.netAmount))}</td></tr>)}</tbody></table></div>
       <p>قابل پرداخت: <strong>{toman(BigInt(inv.payableAmount))} تومان</strong></p>
+      {issue && <p role="alert">{issue}</p>}
+      {inv.reviewReason && <p role="status">در انتظار بررسی · {inv.reviewReason}</p>}
+      {["draft","finalized","paid","partially_returned"].includes(inv.status) && <div className="stack">
+        <Field label="دلیل تعلیق یا رفع تعلیق"><input value={reason} maxLength={200} onChange={e => setReason(e.target.value)} /></Field>
+        <button className="btn" disabled={pending || !reason.trim()} onClick={() => void review(!inv.reviewReason)}>{inv.reviewReason ? "رفع تعلیق" : "تعلیق برای بررسی"}</button>
+      </div>}
+      {["finalized","paid","partially_returned"].includes(inv.status) && <div className="invoice-actions">
+        <a className="btn" href={`/?page=returns&returns.invoice=${inv.id}&returns.tab=exchanges`}>اصلاح اقلام با سند مرتبط</a>
+        <a className="btn" href={`/?page=returns&returns.invoice=${inv.id}`}>مرجوعی و بازپرداخت</a>
+        <a className="btn" href={`/?page=returns&returns.invoice=${inv.id}&returns.full=1`}>ابطال کامل و تسویه</a>
+      </div>}
+      {inv.status==="draft" && inv.channel==="pos" && <button type="button" className="btn" disabled={pending} onClick={()=>void onResume(inv)}>ادامه در صندوق برای ویرایش یا لغو</button>}
+      {resumeError && <p role="alert">{resumeError}</p>}
+      <p>فروشنده · {inv.sellerName ?? inv.createdByName ?? "نامشخص"}</p>
+      <p>کاربر صادرکننده: {inv.createdByName ?? "نامشخص"}</p>
       <h2>گردش پرداخت</h2>{q.data?.payments.length ? q.data.payments.map(p => <p key={p.id}>{p.name} · {toman(BigInt(p.amount))} تومان · {p.direction === "in" ? "دریافت" : "برگشت"} · {({succeeded:"موفق",settled:"تسویه‌شده",reconciled:"تطبیق‌شده",reversed:"برگشت‌خورده",failed:"ناموفق",pending:"در انتظار",unknown:"نامشخص"} as Record<string,string>)[p.status] ?? p.status}</p>) : <p>پرداختی ثبت نشده است.</p>}
       {["finalized", "paid", "partially_returned", "returned"].includes(inv.status) && <a className="btn" href={`/api/invoices/${inv.id}/print`} target="_blank" rel="noopener">چاپ فاکتور / ذخیره PDF</a>}
     </>}

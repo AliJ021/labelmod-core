@@ -76,7 +76,7 @@ const LEAVE_MESSAGE = "تغییرات ذخیره‌نشدهٔ تنظیمات د�
 export function SettingKeys({ onOpenTerminals }: { onOpenTerminals: () => void }) {
   const [groups, setGroups] = useState<Group[] | null>(null);
   const [loadError, setLoadError] = useState<{ message: string; reference: string | null } | null>(null);
-  const [openGroup, setOpenGroup] = useState<string | null>(null);
+  const [openGroup, setOpenGroup] = useState<string | null>(() => new URLSearchParams(location.search).get("settings.group"));
   const [dirty, setDirty] = useState<ReadonlySet<string>>(new Set());
   const [attempt, setAttempt] = useState(0);
 

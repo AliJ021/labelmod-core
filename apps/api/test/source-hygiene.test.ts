@@ -622,9 +622,13 @@ test("ایمیج‌های پایهٔ CI ابتدا از ECR Public می‌آین
     assert.match(src, /^ARG BASE_REGISTRY=docker\.io\/library$/m, `${f}: پیش‌فرض رجیستری`);
     const froms = src.match(/^FROM .+$/gm) ?? [];
     assert.ok(froms.length > 0, `${f}: FROM ندارد`);
+    const stages = new Set<string>();
     for (const from of froms) {
+      if (stages.has(from.split(" ")[1]!)) continue;
       // مرحلهٔ ساخته‌شده در همین فایل (FROM deps) استثناست؛ هر ایمیج بیرونی از آرگومان.
-      assert.match(from, /^FROM \$\{BASE_REGISTRY\}\/[a-z0-9]+:[\w.-]+( AS \w+)?$/, `${f}: «${from}» از BASE_REGISTRY نمی‌خواند`);
+      assert.match(from, /^FROM \$\{BASE_REGISTRY\}\/[a-z0-9]+:[\w.-]+( AS [\w-]+)?$/, `${f}: «${from}» از BASE_REGISTRY نمی‌خواند`);
+      const stage = / AS ([\w-]+)$/.exec(from)?.[1];
+      if (stage) stages.add(stage);
     }
   }
   const ci = readFileSync(join(ROOT, ".github/workflows/db-tests.yml"), "utf8");
@@ -636,12 +640,13 @@ test("ایمیج‌های پایهٔ CI ابتدا از ECR Public می‌آین
       ".github/scripts/build-image.sh apps/api/Dockerfile labelmod-api:ci",
       ".github/scripts/build-image.sh apps/web/Dockerfile labelmod-web:ci",
       ".github/scripts/build-image.sh ops/deploy/Dockerfile.scheduler labelmod-scheduler:ci",
+      ".github/scripts/build-image.sh apps/api/Dockerfile labelmod-panel-backup:ci panel-backup",
     ], "هر Dockerfile با tag درست دقیقاً یک بار از wrapper ساخته شود");
     assert.doesNotMatch(workflow, /^\s*(?:run:\s*)?docker build\b/m, "build مستقیم نباید wrapper را دور بزند");
     const builds = script.match(/docker build .*/g)?.map((s) => s.trim()) ?? [];
     assert.deepEqual(builds, [
-      `docker build --progress=plain --build-arg BASE_REGISTRY=${MIRROR} -f "$1" -t "$2" . 2>&1 | tee "$log"; then`,
-      'docker build --progress=plain --build-arg BASE_REGISTRY=docker.io/library -f "$1" -t "$2" .',
+      `docker build "\${target[@]}" --progress=plain --build-arg BASE_REGISTRY=${MIRROR} -f "$1" -t "$2" . 2>&1 | tee "$log"; then`,
+      'docker build "${target[@]}" --progress=plain --build-arg BASE_REGISTRY=docker.io/library -f "$1" -t "$2" .',
     ], "تلاش اول ECR و تنها تلاش جایگزین Docker Hub رسمی با همان ورودی‌ها باشد");
     assert.ok(script.includes("if grep -Eq 'ERROR:.*(failed to resolve source metadata|failed to copy: httpReadSeeker).*https://public\\.ecr\\.aws/.*(429 Too Many Requests|toomanyrequests)' \"$log\"; then"), "fallback فقط با خطای دانلود 429 از ECR فعال شود");
     assert.doesNotMatch(script, /^\s*(?:for|while|until)\b/m, "fallback نباید حلقهٔ retry داشته باشد");

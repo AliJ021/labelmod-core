@@ -44,6 +44,7 @@ import { registerWithdrawalRoutes } from "./withdrawal-routes.ts";
 import { registerBonusRoutes } from "./bonus-routes.ts";
 import { registerHealthRoutes } from "./health-routes.ts";
 import { registerWebRoutes } from "./web-routes.ts";
+import { registerWooCredentials } from "./woo-credential-routes.ts";
 import { registerWooDiagnosticsRoutes } from "./woocommerce-diagnostics-routes.ts";
 import { registerWebOrdersRoutes } from "./web-orders-routes.ts";
 import { registerInstagramOrderRoutes } from "./instagram-order-routes.ts";
@@ -473,6 +474,7 @@ export async function buildApp(deps: AppDeps): Promise<FastifyInstance> {
     settings: new SettingService(deps.db),
   });
   registerWebRefundRoutes(app, deps.db);
+  registerWooCredentials(app, deps.db, deps.auth, config.COOKIE_NAME, config.WEB_PUSH_SECRET);
   registerWooDiagnosticsRoutes(app, deps.db, config.WEB_PUSH_SECRET);
   registerWebOrdersRoutes(app, deps.db, config.WEB_PUSH_SECRET, deps.wooOrders);
   registerInstagramOrderRoutes(app, { db: deps.db, invoices });

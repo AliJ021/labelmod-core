@@ -99,6 +99,8 @@ const upsertCustomerBody = z.object({
 });
 
 const updateCustomerBody = z.object({
+  salutation:z.enum(["mr","ms"]).nullable().optional(),
+  birthDate:z.iso.date().refine(d => d <= new Date().toLocaleDateString("sv-SE",{timeZone:"Asia/Tehran"}),"تاریخ تولد در آینده است").nullable().optional(),
   fullName: z.string().trim().max(120).nullable().optional(),
   email: z.email("ایمیل نامعتبر").nullable().optional(),
   status: z.enum(["active", "blocked"]).optional(),
@@ -304,18 +306,19 @@ export function registerPeopleRoutes(app: FastifyInstance, deps: PeopleRouteDeps
     await requireForSession(db, s, "customer.manage");
     const q = z
       .object({
+        title: z.enum(["all","mr","ms","unknown"]).optional(),
         q: z.string().trim().max(64).optional(),
         limit: z.coerce.number().int().min(1).max(200).default(50),
       })
       .parse(req.query);
     const branches = await branchesOf(db, s.userId);
     const list = await customers.search({
-      limit: q.limit,
+      limit: q.limit, title: q.title,
       branches,
       ...(q.q === undefined ? {} : { q: q.q }),
     });
     // طرح ۱۰: سطر جمع همین فهرست، از SQL و با همان تعریف ستون‌ها.
-    return { customers: list, totals: await customers.ledgerTotals(list.map((c) => c.id), branches) };
+    return { customers: list, titleCounts: await customers.titleCounts(q.q ?? "", branches), totals: await customers.ledgerTotals(list.map((c) => c.id), branches) };
   });
 
   app.get("/customers/:id", async (req) => {
@@ -366,7 +369,7 @@ export function registerPeopleRoutes(app: FastifyInstance, deps: PeopleRouteDeps
     const branches = await assertCustomerInScope(s.userId, id);
 
     await customers.update({
-      id,
+      id, salutation:body.salutation, birthDate:body.birthDate,
       actorId: s.userId,
       ...(body.fullName === undefined ? {} : { fullName: body.fullName }),
       ...(body.email === undefined ? {} : { email: body.email }),

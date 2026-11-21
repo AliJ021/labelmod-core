@@ -119,3 +119,16 @@ test.describe("فهرست مشتریان (طرح ۱۰)", () => {
     await expect(table.locator("tbody tr").first().locator("td").nth(4)).toContainText("نامعلوم");
   });
 });
+
+test("عنوان مشتری شمارش کل و فیلتر سمت سرور دارد",async ({page,api})=>{
+  const seen:string[]=[];
+  api.handlers.set("GET /customers",async(route,url)=>{
+    seen.push(url.searchParams.get("title") ?? "all");
+    await route.fulfill({json:{customers:[],titleCounts:{mr:22,ms:13,unknown:4},totals:{owed:"0",credit:"0",unposted:"0"}}});
+  });
+  await page.goto("/?page=customers");
+  const filter=page.getByRole("combobox",{name:"عنوان مشتری",exact:true});
+  await expect(filter.locator('option[value="ms"]')).toContainText("13");
+  await filter.selectOption("ms");
+  await expect.poll(()=>seen.at(-1)).toBe("ms");
+});

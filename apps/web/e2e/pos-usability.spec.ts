@@ -1,14 +1,15 @@
 import { test, expect, product, openCatalog, settings } from "./fixtures";
 import type { MockApi } from "./fixtures";
 import { expectUncovered } from "./uncovered.ts";
-const invoice = { id:"33333333-3333-4333-8333-333333333333",number:null,branchId:"b1",warehouseId:"w1",shiftId:"44444444-4444-4444-8444-444444444444",createdBy:"22222222-2222-4222-8222-222222222222",customerId:null,
+const invoice = { id:"33333333-3333-4333-8333-333333333333",number:null,branchId:"55555555-5555-4555-8555-555555555555",warehouseId:"77777777-7777-4777-8777-777777777777",shiftId:"44444444-4444-4444-8444-444444444444",createdBy:"22222222-2222-4222-8222-222222222222",customerId:null,
   status:"draft",channel:"pos",grossAmount:"200000",discountAmount:"0",netAmount:"200000",taxAmount:"0",
   shippingAmount:"0",payableAmount:"200000",paidAmount:"0",receivedAmount:"0",recipientId:null,gift:null,
   occurredAt:"2026-09-24T00:00:00Z",lines:[{id:"l1",lineNo:1,variationId:"66666666-6666-4666-8666-666666666666",productName:"شلوار کتان",
     sku:"TEST",qty:"1",unitPrice:"200000",netAmount:"200000",discountAmount:"0",listPrice:null,priceOverrideReason:null,discountReason:null}] };
 function pos(api:MockApi) {
+  api.defaults["GET /branches"] = {branches:[{id:invoice.branchId,code:"TEST",name:"شعبه آزمایشی",warehouses:[{id:invoice.warehouseId,code:"STORE",name:"انبار آزمایشی",kind:"store"}]}]};
   api.defaults["GET /payment-methods"]={methods:[{code:"cash",name:"نقد",kind:"cash",requiresRef:false},{code:"card",name:"کارت‌خوان",kind:"card_reader",requiresRef:true}]};
-  api.defaults["GET /shifts/current"]={id:"44444444-4444-4444-8444-444444444444",userId:"22222222-2222-4222-8222-222222222222",branchId:"b1",status:"open",openingCash:"0",openedAt:"2026-09-24T00:00:00Z"};
+  api.defaults["GET /shifts/current"]={id:"44444444-4444-4444-8444-444444444444",userId:"22222222-2222-4222-8222-222222222222",branchId:"55555555-5555-4555-8555-555555555555",status:"open",openingCash:"0",openedAt:"2026-09-24T00:00:00Z"};
   api.defaults["GET /gift-options"]={wraps:[],colors:[],flowers:[]};
   api.defaults["GET /invoices/33333333-3333-4333-8333-333333333333"]=invoice;
 }
@@ -98,15 +99,22 @@ test("catalog shows stock and previews correctly sized labels; changing selectio
   api.handlers.set("POST /labels",async route=>{body=route.request().postDataJSON();await route.fulfill({contentType:"text/html",body:'<!doctype html><html lang="fa"><body><p>TEST LABEL</p></body></html>'});});
   await openCatalog(page);await page.getByRole("button",{name:"باز کردن",exact:true}).click();
   const panel=page.getByRole("region",{name:"موجودی و چاپ بارکد"});
+  const labels=page.getByRole("tab",{name:"موجودی و لیبل"});
+  const prices=page.getByRole("tab",{name:"تنوع و قیمت"});
+  await labels.click();
   await expect(panel.getByText(/جمع موجودی/)).toContainText("12");
   await expect(panel.getByRole("button",{name:"پیش‌نمایش لیبل‌های انتخاب‌شده"})).toBeDisabled();
+  await prices.click();
   await page.getByRole("checkbox",{name:"انتخاب TR-1405-NAVY-XL"}).check();
+  await labels.click();
   await panel.getByRole("button",{name:"پیش‌نمایش لیبل‌های انتخاب‌شده"}).click();
   await expect(panel.getByRole("button",{name:"چاپ لیبل بارکد",exact:true})).toBeVisible();
   expect(body).toEqual({items:[{variationId:"v1",count:1}],layout:"roll",rollWidthMm:50,rollHeightMm:30});
   await expect(page.frameLocator('iframe[title="پیش‌نمایش چاپ بارکد"]').getByText("TEST LABEL")).toBeVisible();
   expect(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth+1)).toBe(true);
+  await prices.click();
   await page.getByRole("checkbox",{name:"انتخاب TR-1405-NAVY-XL"}).uncheck();
+  await labels.click();
   await expect(panel.getByRole("button",{name:"چاپ لیبل بارکد",exact:true})).toHaveCount(0);
   expect(api.calls).toContain("GET /products/"+product.id+"/stock-matrix");
 });
@@ -193,11 +201,15 @@ test("lost scan response survives reload and retries the same operation exactly 
   api.defaults["GET /pos/products"] = {products: [], exactVariationId: "66666666-6666-4666-8666-666666666666"};
   const attempts: Array<{key: string | undefined; body: unknown}> = [];
   const committed = new Set<string>();
+  const storageKey = "labelmod_pending_scan_v1:" + invoice.createdBy;
+  let confirmReplay!: () => void;
+  const responseReady = new Promise<void>(resolve => { confirmReplay = resolve; });
   api.handlers.set("POST /invoices/33333333-3333-4333-8333-333333333333/scan", async route => {
     const key = route.request().headers()["idempotency-key"];
     attempts.push({key, body: route.request().postDataJSON()});
     if (key) committed.add(key);
     if (attempts.length === 1) { await route.abort("connectionreset"); return; }
+    await responseReady;
     await route.fulfill({json: {invoice, replayed: true}});
   });
   await page.goto("/?page=pos");
@@ -208,6 +220,12 @@ test("lost scan response survives reload and retries the same operation exactly 
   await expect(entry).toBeDisabled();
   await page.reload();
   await expect(retry).toBeEnabled(); await retry.click();
+  try {
+    await expect.poll(() => attempts.length).toBe(2);
+    const pending = await page.evaluate(key => localStorage.getItem(key), storageKey);
+    expect(JSON.parse(pending!).key).toBe(attempts[0]?.key);
+  } finally { confirmReplay(); }
+  await expect.poll(() => page.evaluate(key => localStorage.getItem(key), storageKey)).toBeNull();
   await expect(retry).toHaveCount(0);
   expect(attempts).toHaveLength(2); expect(attempts[0]?.key).toBeTruthy();
   expect(attempts[1]).toEqual(attempts[0]); expect(committed.size).toBe(1);

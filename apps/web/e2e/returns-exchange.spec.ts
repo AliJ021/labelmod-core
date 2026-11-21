@@ -29,6 +29,40 @@ async function choose(page: Page) {
   await page.getByRole("combobox", { name: "علت مرجوعی", exact: true }).selectOption("changed_mind");
 }
 
+test("mixed refund keeps the original split and allows a justified change",async({page,api})=>{
+  fixture(api);
+  const basis="b".repeat(64);
+  const card="11111111-1111-4111-8111-111111111111",cash="22222222-2222-4222-8222-222222222222";
+  api.defaults["GET /payment-methods"]={methods:[{code:"cash",name:"نقد",kind:"cash",requiresRef:false},
+    {code:"card",name:"کارت‌خوان",kind:"card_reader",requiresRef:true}]};
+  api.defaults["GET /invoices/i1/refund-sources"]={receivedMethods:["cash","card"],payments:[]};
+  api.defaults["POST /invoices/i1/return-account"]={...(api.defaults["POST /invoices/i1/return-account"] as object),
+    splitPlan:{basis,mixed:true,canChange:true,legs:[{method:"card",sourceId:card,originalReference:"bank-in",amount:"600000",remaining:"1200000"},
+      {method:"cash",sourceId:cash,originalReference:null,amount:"400000",remaining:"800000"}]}};
+  let submitted:unknown;
+  api.handlers.set("POST /returns/commit",async route=>{
+    submitted=route.request().postDataJSON();await route.fulfill({json:{status:"posted",number:"R-MIX"}});
+  });
+  await choose(page);
+  const group=page.getByRole("group",{name:"ترکیب بازپرداخت"});
+  await expect(group).toContainText("طبق پرداخت مشتری");
+  await group.getByRole("button",{name:"تغییر ترکیب"}).click();
+  const first=group.getByLabel("سهم کارت‌خوان (تومان)");
+  const second=group.getByLabel("سهم نقد (تومان)");
+  const digits=(s:string)=>s.replace(/[۰-۹]/g,c=>String("۰۱۲۳۴۵۶۷۸۹".indexOf(c))).replace(/\D/g,"");
+  expect(digits(await first.inputValue())).toBe("60000");
+  expect(digits(await second.inputValue())).toBe("40000");
+  await first.fill("70000"); await second.fill("30000");
+  await group.getByLabel("پیگیری برگشت کارت‌خوان").fill("bank-out");
+  const review=page.getByRole("button",{name:"۱. بررسی مرجوعی",exact:true});
+  await expect(review).toBeDisabled();
+  await group.getByLabel("دلیل تغییر ترکیب").fill("درخواست مشتری");
+  await review.click();
+  await page.getByRole("button",{name:"اقلام و مبلغ را تأیید می‌کنم؛ ثبت مرجوعی",exact:true}).click();
+  await expect.poll(()=>submitted).toMatchObject({splitRefund:{basis,reason:"درخواست مشتری",legs:[
+    {method:"card",sourceId:card,amount:"700000",reference:"bank-out"},{method:"cash",sourceId:cash,amount:"300000"}]}});
+});
+
 test("manual DigiPay refund selects only its original receipt and sends confirmed reference", async ({ page, api }) => {
   fixture(api);
   api.defaults["GET /invoices/i1/refund-sources"] = { payments: [
@@ -82,13 +116,13 @@ test("exchange separately quotes settlement before explicit final confirmation",
   let posts = 0;
   api.handlers.set("POST /exchanges", async route => {
     posts++; expect(route.request().postDataJSON()).toMatchObject({ token: "a".repeat(64), confirmed: true,
-      replacements: [{ variationId: "v1", qty: "1" }] });
+      replacements: [{ variationId: "v1", qty: "1", retainLineId:"l1" }] });
     await route.fulfill({ json: { status: "posted", number: "E-TEST-1" } });
   });
   await choose(page);
   await page.getByRole("tab", { name: "تعویض", exact: true }).click();
   await expect(page.getByRole("button", { name: "۱. بررسی مرجوعی", exact: true })).toHaveCount(0);
-  await page.getByRole("button", { name: /جایگزین با همان تنوع/ }).click();
+  await page.getByRole("button", { name: /اصلاح همان کالا نزد مشتری/ }).click();
   await page.getByRole("button", { name: "۱. محاسبه و بررسی تسویه", exact: true }).click();
   await page.getByRole("button", { name: "۲. بررسی نهایی تعویض", exact: true }).click();
   expect(posts).toBe(0);
@@ -108,7 +142,7 @@ for (const enabled of [false, true]) test(`exchange replacement fractional polic
   });
   await choose(page);
   await page.getByRole("tab", { name: "تعویض", exact: true }).click();
-  await page.getByRole("button", { name: /جایگزین با همان تنوع/ }).click();
+  await page.getByRole("button", { name: /اصلاح همان کالا نزد مشتری/ }).click();
   await page.getByLabel("تعداد جایگزین 1").fill("۰٫۱۲۵");
   const button = page.getByRole("button", { name: "۱. محاسبه و بررسی تسویه", exact: true });
   if (!enabled) { await expect(button).toBeDisabled(); expect(requests).toEqual([]); }
@@ -159,7 +193,7 @@ for (const kind of ["returns", "exchanges"] as const) {
       await page.getByRole("button", { name: "اقلام و مبلغ را تأیید می‌کنم؛ ثبت مرجوعی", exact: true }).click();
     } else {
       await page.getByRole("tab", { name: "تعویض", exact: true }).click();
-      await page.getByRole("button", { name: /جایگزین با همان تنوع/ }).click();
+      await page.getByRole("button", { name: /اصلاح همان کالا نزد مشتری/ }).click();
       await page.getByRole("button", { name: "۱. محاسبه و بررسی تسویه", exact: true }).click();
       await page.getByRole("button", { name: "۲. بررسی نهایی تعویض", exact: true }).click();
       await page.getByRole("button", { name: "اقلام و تسویه را تأیید می‌کنم؛ ثبت تعویض", exact: true }).click();

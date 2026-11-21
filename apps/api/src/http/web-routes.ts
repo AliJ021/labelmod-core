@@ -271,6 +271,9 @@ export function registerWebRoutes(app: FastifyInstance, deps: WebRouteDeps): voi
         warehouseId: uuid,
         /** فقط کالاهایی که پس از این زمان تغییر کرده‌اند. */
         since: z.string().datetime().optional(),
+        sinceId: uuid.optional(),
+        // A time-only checkpoint from an earlier catalog cannot cover never-stocked variants.
+        restartCatalog: z.literal("1").optional(),
         limit: z.coerce.number().int().min(1).max(5000).default(1000),
         /** کدام فهرست قیمت به سایت برود. */
         priceList: z.string().trim().min(1).max(40).default("default"),
@@ -287,35 +290,41 @@ export function registerWebRoutes(app: FastifyInstance, deps: WebRouteDeps): voi
     if (!wh) throw new InvoiceError("warehouse_not_found", "انبار یافت نشد", 404);
     await assertBranch(db, s.userId, wh.branch_id);
 
-    let q = db
-      .selectFrom("inventory.stock_balance as b")
-      .innerJoin("catalog.variation as v", "v.id", "b.variation_id")
-      .select((eb) => [
-        "v.id as variation_id",
-        "v.sku",
-        "b.on_hand",
-        "b.reserved",
-        "b.row_version",
-        "b.updated_at",
-        "v.status",
-        // قیمت باز همان فهرست، در همین لحظه. سطر بسته (`valid_to`)
-        // تاریخچه است و به ویترین نمی‌رود.
-        eb
-          .selectFrom("catalog.price as p")
-          .select("p.amount")
-          .whereRef("p.variation_id", "=", "v.id")
-          .where("p.price_list", "=", query.priceList)
-          .where("p.valid_to", "is", null)
-          .limit(1)
-          .as("price"),
-      ])
-      .where("b.warehouse_id", "=", query.warehouseId)
-      .orderBy("b.updated_at", "asc")
-      .limit(query.limit);
-
-    if (query.since) q = q.where("b.updated_at", ">", new Date(query.since));
-
-    const rows = await q.execute();
+    // Keep PostgreSQL microseconds throughout. A UUID breaks ties in batch imports.
+    const after = query.since && !query.restartCatalog
+      ? query.sinceId
+        ? sql`WHERE (changed_at, variation_id) > (${query.since}::timestamptz, ${query.sinceId}::uuid)`
+        : sql`WHERE changed_at > ${query.since}::timestamptz`
+      : sql``;
+    const result = await sql<{
+      variation_id: string; sku: string; status: string; available: string;
+      row_version: string; price: string | null; updated_at: string;
+    }>`
+      WITH feed AS (
+        SELECT v.id AS variation_id, v.sku, v.status,
+               CASE WHEN v.status = 'active' THEN greatest(0, b.on_hand - b.reserved)
+                    ELSE 0 END AS available,
+               coalesce(b.row_version, 0) AS row_version, price.amount AS price,
+               greatest(v.created_at, b.updated_at, price.valid_from, last_end.valid_to) AS changed_at
+          FROM catalog.variation v
+          LEFT JOIN inventory.stock_balance b
+            ON b.variation_id = v.id AND b.warehouse_id = ${query.warehouseId}::uuid
+          LEFT JOIN LATERAL (
+            SELECT amount, valid_from FROM catalog.price
+             WHERE variation_id = v.id AND price_list = ${query.priceList}
+               AND valid_from <= now() AND (valid_to IS NULL OR valid_to > now())
+             ORDER BY valid_from DESC, id DESC LIMIT 1
+          ) price ON true
+          LEFT JOIN LATERAL (
+            SELECT max(valid_to) AS valid_to FROM catalog.price
+             WHERE variation_id = v.id AND price_list = ${query.priceList} AND valid_to <= now()
+          ) last_end ON true
+      )
+      SELECT variation_id, sku, status, trim_scale(available)::text AS available, row_version::text, price::text,
+             to_char(changed_at AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.US"Z"') AS updated_at
+        FROM feed ${after} ORDER BY changed_at, variation_id LIMIT ${query.limit}
+    `.execute(db);
+    const rows = result.rows;
 
     return {
       warehouseId: query.warehouseId,
@@ -326,6 +335,7 @@ export function registerWebRoutes(app: FastifyInstance, deps: WebRouteDeps): voi
        * فرستاده شود.
        */
       cursor: rows.at(-1)?.updated_at ?? null,
+      cursorId: rows.at(-1)?.variation_id ?? null,
       priceList: query.priceList,
       items: rows.map((r) => ({
         /** کلید اتصال — افزونه همین را در متای کالا نگه می‌دارد. */
@@ -334,10 +344,7 @@ export function registerWebRoutes(app: FastifyInstance, deps: WebRouteDeps): voi
         sku: r.sku,
         // کالای غیرفعال «صفر» است، نه «غایب»: اگر از خوراک حذف شود،
         // سایت عدد قبلی‌اش را نگه می‌دارد و می‌فروشد.
-        available:
-          r.status === "active"
-            ? String(Math.max(0, Number(r.on_hand) - Number(r.reserved)))
-            : "0",
+        available: r.available,
         // `null` یعنی «این کالا در این فهرست قیمت ندارد» — که با
         // «قیمتش صفر است» یکی نیست. افزونه باید ردش کند، نه اینکه
         // کالا را مجانی کند.

@@ -165,6 +165,7 @@ export class MockApi {
   defaults: Record<string, unknown> = {
     "GET /pos/policy": { requireCustomer: false },
     "GET /auth/me": me, "GET /branches": { branches }, "GET /reports/daily": daily, "GET /reports/daily/hourly": DEFAULT_HOURLY, "GET /reports/daily/channels": DEFAULT_CHANNELS,
+    "GET /pos/sellers": { sellers:[{id: me.id, name: me.fullName},{id:staff.id,name:staff.fullName}], sessionId:"test-session" },
     "GET /reports/dashboard/period": periodBody(),
     "GET /dashboard/stock-sync": syncBody(),
     "GET /dashboard/operations": opsBody(),
@@ -275,7 +276,7 @@ export async function settings(page: Page, value: string, label: string) {
 }
 /** بخش «برداشت و پاداش» — همان الگوی ناوبری بخش‌ها، در ناحیهٔ منوی اصلی. */
 export async function personnel(page: Page, value: string, label: string) {
-  await openZone(page, "برداشت و پاداش");
+  if (new URL(page.url()).searchParams.get("page") !== "personnel") await openZone(page, "برداشت و پاداش");
   await expect(page.locator(".settings-nav")).toBeVisible();
   const picker = page.getByRole("combobox", { name: "بخش برداشت و پاداش" });
   if (await picker.isVisible()) await picker.selectOption(value);

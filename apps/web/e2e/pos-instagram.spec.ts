@@ -19,9 +19,9 @@ const ME = "22222222-2222-4222-8222-222222222222";
 const SHIFT = "44444444-4444-4444-8444-444444444444";
 // کلید زمینهٔ فروش اینستاگرام شناسهٔ شعبه است و مثل شیفت باید UUID باشد.
 const BR = "55555555-5555-4555-8555-555555555555";
-const BRANCHES = { branches: [{ id: BR, code: "TEST", name: "شعبه آزمایشی", warehouses: [{ id: "w1", code: "STORE", name: "انبار آزمایشی", kind: "store" }] }] };
+const BRANCHES = { branches: [{ id: BR, code: "TEST", name: "شعبه آزمایشی", warehouses: [{ id: "77777777-7777-4777-8777-777777777777", code: "STORE", name: "انبار آزمایشی", kind: "store" }] }] };
 const VAR = "66666666-6666-4666-8666-666666666666";
-const draft = { id: INV, number: null, branchId: BR, warehouseId: "w1", shiftId: null as string | null, createdBy: ME, customerId: null,
+const draft = { id: INV, number: null, branchId: BR, warehouseId: "77777777-7777-4777-8777-777777777777", shiftId: null as string | null, createdBy: ME, customerId: null,
   status: "draft", channel: "instagram", grossAmount: "200000", discountAmount: "0", netAmount: "200000", taxAmount: "0", shippingAmount: "0",
   payableAmount: "200000", paidAmount: "0", receivedAmount: "0", recipientId: null, gift: null, occurredAt: "2026-10-26T08:00:00Z",
   lines: [{ id: "l1", lineNo: 1, variationId: VAR, productName: "شلوار کتان", sku: "NAVY-M", qty: "2", unitPrice: "100000",
@@ -79,7 +79,7 @@ test("اپراتور اینستاگرام: بی شیفت، کارت‌به‌ک�
   const s = server(api);
   allow(api, ["instagram.pos.sell"]);
   await page.addInitScript(([inv, ctx]) => localStorage.setItem("labelmod_open_cart", JSON.stringify({ invoiceId: inv, shiftId: ctx })), [INV, BR]);
-  await page.goto(`/?page=pos&pos.branch=${BR}&pos.warehouse=w1`);
+  await page.goto(`/?page=pos&pos.branch=${BR}&pos.warehouse=77777777-7777-4777-8777-777777777777`);
   await expect(page.locator(".lines li").first()).toContainText("شلوار کتان");
 
   await expect(bar(page)).toContainText("فروش اینستاگرام");
@@ -87,7 +87,7 @@ test("اپراتور اینستاگرام: بی شیفت، کارت‌به‌ک�
   await expect(page.getByRole("button", { name: "چاپ پیش‌فاکتور", exact: true })).toHaveCount(0);
   await expect(page.getByRole("group", { name: "نوع فروش" }), "اپراتور حالت فروشگاه ندارد").toHaveCount(0);
   await expect(page.getByRole("radio", { name: "حضوری", exact: true })).toHaveCount(0);
-  await page.locator("summary", { hasText: "ابزارهای فروش" }).click();
+  await page.getByRole("button", {name:"ابزارهای فروش",exact:true}).click();
   await expect(page.getByRole("button", { name: "رها کردن سبد", exact: true })).toBeVisible();
   await expect(page.getByRole("button", { name: "بستن شیفت", exact: true })).toHaveCount(0);
   await expect(page.getByRole("link", { name: "پیش‌نویس‌ها", exact: true }), "فهرست فاکتور برای نقش محدود بسته است").toHaveCount(0);
@@ -148,7 +148,7 @@ test("مدیر: پیش‌فرض صندوق فروشگاه؛ دکمهٔ «فرو�
     await expect(page.locator(".lines li").first()).toContainText("شلوار کتان");
   };
 
-  await page.goto(`/?page=pos&pos.branch=${BR}&pos.warehouse=w1`);
+  await page.goto(`/?page=pos&pos.branch=${BR}&pos.warehouse=77777777-7777-4777-8777-777777777777`);
   await expect(bar(page)).toContainText("شیفت باز");
   // کنترل منفی: فروش حضوری مدیر همان کانال صندوق است.
   await add();
@@ -157,7 +157,7 @@ test("مدیر: پیش‌فرض صندوق فروشگاه؛ دکمهٔ «فرو�
   await expect(mode.getByRole("radio", { name: "حضوری", exact: true })).toBeChecked();
   await expect(mode.getByRole("radio", { name: "اینستاگرام", exact: true }), "با سبد باز، حالت عوض نمی‌شود").toBeDisabled();
 
-  await page.goto(`/?page=pos&pos.branch=${BR}&pos.warehouse=w1&pos.mode=instagram`);
+  await page.goto(`/?page=pos&pos.branch=${BR}&pos.warehouse=77777777-7777-4777-8777-777777777777&pos.mode=instagram`);
   await expect(bar(page)).toContainText("فروش اینستاگرام");
   await expect(page.locator(".lines li"), "سبد حضوری به حالت اینستاگرام نمی‌چسبد").toHaveCount(0);
   await add();
@@ -200,7 +200,7 @@ test("نقد اینستاگرام: بی باقی پول، و دو کشوی با�
       invoice: { ...s.invoice, receivedAmount: String(body.amount) } } });
   });
   await page.addInitScript(([inv, ctx]) => localStorage.setItem("labelmod_open_cart", JSON.stringify({ invoiceId: inv, shiftId: ctx })), [INV, BR]);
-  await page.goto(`/?page=pos&pos.branch=${BR}&pos.warehouse=w1`);
+  await page.goto(`/?page=pos&pos.branch=${BR}&pos.warehouse=77777777-7777-4777-8777-777777777777`);
   await expect(page.locator(".lines li").first()).toContainText("شلوار کتان");
   await selector(page).getByRole("button", { name: /^نمایش (بیشتر|کمتر)/ }).click();
   await method(page, "نقدی").click();
@@ -235,7 +235,7 @@ test("Instagram cash drawer: choose among two; lost response and reload replay t
     await route.fulfill({ status: 200, json: { paymentId: "p1", replayed: true, receivedAmount: "200000", invoice: { ...draft, receivedAmount: "200000" } } });
   });
   await page.addInitScript(([inv, ctx]) => localStorage.setItem("labelmod_open_cart", JSON.stringify({ invoiceId: inv, shiftId: ctx })), [INV, BR]);
-  await page.goto(`/?page=pos&pos.branch=${BR}&pos.warehouse=w1`);
+  await page.goto(`/?page=pos&pos.branch=${BR}&pos.warehouse=77777777-7777-4777-8777-777777777777`);
   await expect(page.locator(".lines li").first()).toContainText("شلوار کتان");
   await selector(page).getByRole("button", { name: /^نمایش (بیشتر|کمتر)/ }).click();
   await method(page, "نقدی").click();

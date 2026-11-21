@@ -290,6 +290,7 @@ require_once __DIR__ . '/../labelmod-connector/includes/class-lmc-queue.php';
 function get_option($key, $default = false) { return $default; }
 // دورهٔ واترمارک موجودی از جدول گزینه‌ها با SQL خوانده می‌شود (نه Cache)؛ گزینه نیست = دورهٔ ۱.
 $GLOBALS['wpdb'] = new class {
+    public string $prefix = 'wp_';
     public string $options = 'wp_options';
     public string $last_error = '';
     public function prepare($q, ...$a) { return $q; }

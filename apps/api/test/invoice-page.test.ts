@@ -371,7 +371,7 @@ describe("رقم لاتین روی فاکتور و پیش‌فاکتور (خوا
     assert.doesNotMatch(html, /قیمت واحد/, "فاکتور خلوت: قیمت واحد چاپ نمی‌شود");
     assert.match(html, /مهلت تعویض: 2 روز \(48 ساعت\)/);
     // با لوگو زیرنویس ثابت «فروشگاه لیبل مد» است؛ نام شعبه alt لوگو یا نشان متنی بی لوگو.
-    assert.match(html, /alt="لیبل مد 2">\s*<div class="shop">فروشگاه لیبل مد<\/div>|<div class="brand">لیبل مد 2<\/div>/);
+    assert.match(html, /alt="لیبل مد 2"><\/picture>\s*<div class="shop">فروشگاه لیبل مد<\/div>|<div class="brand">لیبل مد 2<\/div>/);
     // مبالغ همان bigintها، فقط با رقم لاتین.
     assert.ok(html.includes("1,817,283.7"));
     assert.match(html, /<tr class="grand"><th>قابل پرداخت<\/th><td class="num">1,817,283\.7 <small>تومان/);

@@ -316,6 +316,7 @@ export interface CashShiftTable {
 }
 
 export interface InvoiceTable {
+  seller_id: string | null;
   id: Generated<string>;
   number: string | null;
   branch_id: string;
@@ -514,6 +515,7 @@ export interface CustomerTable {
   full_name: string | null;
   email: string | null;
   birth_date: Date | null;
+  salutation: "mr" | "ms" | null;
   status: Generated<string>;
   merged_into: string | null;
   credit_limit: Generated<string>;
@@ -529,6 +531,7 @@ export interface CustomerTable {
 // ── خزانه ─────────────────────────────────────────────────────────
 
 export interface PaymentTable {
+  refund_origin_id: Generated<string | null>;
   id: Generated<string>;
   invoice_id: string | null;
   return_id: string | null;

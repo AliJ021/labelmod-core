@@ -29,6 +29,11 @@ class LMC_Settings
     public static function init(): void
     {
         add_action('admin_menu', [__CLASS__, 'menu']);
+        add_action('admin_enqueue_scripts', static function ($hook) {
+            if ($hook === 'woocommerce_page_' . self::PAGE) {
+                wp_enqueue_style('lmc-settings', plugins_url('settings.css', dirname(__DIR__) . '/labelmod-connector.php'), [], LMC_VERSION);
+            }
+        });
         add_action('admin_post_lmc_save_settings', [__CLASS__, 'save']);
     }
 
@@ -115,7 +120,7 @@ class LMC_Settings
             delete_option(LMC_Instore::CHECKPOINT);
         }
 
-        wp_safe_redirect(add_query_arg('lmc_msg', 'saved', admin_url('admin.php?page=' . self::PAGE)));
+        wp_safe_redirect(add_query_arg('lmc_msg', 'saved', admin_url('admin.php?page=' . self::PAGE . '&lmc_section=store')));
         exit;
     }
 
@@ -126,13 +131,43 @@ class LMC_Settings
         }
         $s = lmc_settings();
 
-        echo '<div class="wrap" dir="rtl">';
-        echo '<h1>' . esc_html__('اتصال به سامانه لیبل مد', 'labelmod-connector') . '</h1>';
-
+        $sections = [
+            'overview' => ['dashboard', 'وضعیت و همگام‌سازی'],
+            'store' => ['admin-settings', 'تنظیمات فروشگاه'],
+        ];
+        if (LMC_Push_Secret_Settings::allowed()) {
+            $sections['live'] = ['update', 'ارسال لحظه‌ای'];
+        }
+        $sections['holds'] = ['backup', 'مغایرت موجودی'];
+        $default = $s['base_url'] === '' || $s['api_key'] === '' ? 'store' : 'overview';
+        $requested = isset($_GET['lmc_section']) ? sanitize_key(wp_unslash($_GET['lmc_section'])) : $default;
+        $section = array_key_exists($requested, $sections) ? $requested : $default;
+        echo '<div class="wrap lmc-admin" dir="rtl"><header class="lmc-hero"><span class="dashicons dashicons-store" aria-hidden="true"></span><h1>اتصال لیبل مد</h1><span class="lmc-version" dir="ltr">v' . esc_html(LMC_VERSION) . '</span></header><hr class="wp-header-end">';
         self::notices();
-        self::connection_box($s);
-        LMC_Diagnostics::render();
+        echo '<nav class="lmc-navigation" aria-label="بخش‌های اتصال">';
+        foreach ($sections as $key => [$icon, $label]) {
+            $url = add_query_arg('lmc_section', $key, admin_url('admin.php?page=' . self::PAGE));
+            echo '<a href="' . esc_url($url) . '"' . ($section === $key ? ' aria-current="page"' : '') . '><span class="dashicons dashicons-' . esc_attr($icon) . '" aria-hidden="true"></span>' . esc_html($label) . '</a>';
+        }
+        echo '</nav>';
+        if ($section === 'store') {
+            self::store_form($s);
+        } elseif ($section === 'live') {
+            echo '<section class="lmc-card">';
+            LMC_Push_Secret_Settings::render();
+            echo '</section>';
+        } elseif ($section === 'holds') {
+            self::holds_panel();
+        } else {
+            self::overview($s);
+        }
+        echo '</div>';
+    }
 
+    private static function store_form(array $s): void
+    {
+        echo '<section class="lmc-card"><h2>اتصال به حسابداری</h2>';
+        self::connection_box($s);
         echo '<form method="post" action="' . esc_url(admin_url('admin-post.php')) . '">';
         wp_nonce_field('lmc_save_settings');
         echo '<input type="hidden" name="action" value="lmc_save_settings">';
@@ -153,8 +188,10 @@ class LMC_Settings
             '<input type="password" name="api_key" class="regular-text" dir="ltr" autocomplete="new-password" value="">'
                 . '<p><label><input type="checkbox" name="clear_key" value="1"> '
                 . esc_html__('کلید ذخیره‌شده پاک شود', 'labelmod-connector') . '</label></p>',
-            $key_note . ' ' . __('کلید را با دستور create-api-client روی سرور بسازید.', 'labelmod-connector')
+            $key_note . ' ' . __('مسیر ساخت کلید در پنل حسابداری ← تنظیمات ← اتصال ووکامرس است.', 'labelmod-connector')
         );
+
+        echo '</table><h3 class="lmc-section-heading">شعبه و فروش</h3><table class="form-table" role="presentation">';
 
         [$branches, $scope_error] = self::fetch_scope();
         self::row(
@@ -183,15 +220,17 @@ class LMC_Settings
             __('نگاشت درگاه پرداخت', 'labelmod-connector'),
             '<textarea name="payment_map" rows="4" class="large-text" dir="ltr">'
                 . esc_textarea($s['payment_map']) . '</textarea>',
-            __('هر خط یکی: شناسه درگاه ووکامرس = کد روش پرداخت لیبل مد. مثال: zarinpal=gateway. برای پرداخت در محل، نگاشت cod به روش واقعی دریافت اجباری است؛ فقط اگر نقدی است cod=cash. بدون این نگاشت، رزرو انجام می‌شود ولی ثبت وجه متوقف می‌ماند. سایر درگاه‌های بدون نگاشت gateway فرض می‌شوند.', 'labelmod-connector')
+            __('هر درگاه در یک خط، مانند zarinpal=gateway. برای پرداخت در محل، روش واقعی دریافت را برای cod وارد کنید.', 'labelmod-connector')
         );
+
+        echo '</table><h3 class="lmc-section-heading">تنظیمات همگام‌سازی</h3><table class="form-table" role="presentation">';
 
         self::row(
             __('همگام‌سازی موجودی', 'labelmod-connector'),
             '<label><input type="checkbox" name="sync_stock" value="1" '
                 . checked($s['sync_stock'], 'yes', false) . '> '
                 . esc_html__('موجودی سایت هر ۱۵ دقیقه از انبار به‌روز شود', 'labelmod-connector') . '</label>',
-            __('انبار مرجع است. اتصال با کلید «_lmc_variation_id» روی کالای سایت برقرار می‌شود، نه با نام و نه با SKU — پس نام سایت می‌تواند برای سئو آزادانه فرق کند.', 'labelmod-connector')
+            __('موجودی هر تنوع از انبار انتخاب‌شده دریافت می‌شود.', 'labelmod-connector')
         );
 
         self::row(
@@ -199,7 +238,7 @@ class LMC_Settings
             '<label><input type="checkbox" name="sync_price" value="1" '
                 . checked($s['sync_price'], 'yes', false) . '> '
                 . esc_html__('قیمت کالاهای سایت از حسابداری به‌روز شود', 'labelmod-connector') . '</label>',
-            __('قیمت مرجع در حسابداری است. «فروش ویژه» ووکامرس دست نمی‌خورد؛ فقط قیمت اصلی نوشته می‌شود. کالایی که در فهرست قیمت انتخاب‌شده قیمت ندارد، دست‌نخورده می‌ماند — صفر نوشته نمی‌شود.', 'labelmod-connector')
+            __('قیمت اصلی از فهرست انتخاب‌شده می‌آید. قیمت فروش ویژه را در ووکامرس مدیریت کنید.', 'labelmod-connector')
         );
 
         self::row(
@@ -214,7 +253,7 @@ class LMC_Settings
             '<label><input type="checkbox" name="link_by_sku" value="1" '
                 . checked($s['link_by_sku'], 'yes', false) . '> '
                 . esc_html__('کالاهایی که هنوز کلید اتصال ندارند، یک بار با SKU پیدا شوند', 'labelmod-connector') . '</label>',
-            __('پلی برای اتصال اولیهٔ موجودی: کلید اتصال همان لحظه نوشته می‌شود. سفارش سایت همچنان به SKU یکسان با Core نیاز دارد؛ تغییر SKU بدون تطبیق، ارسال سفارش را متوقف می‌کند.', 'labelmod-connector')
+            __('برای هر سایز و رنگ، SKU همان تنوع را در ووکامرس وارد کنید.', 'labelmod-connector')
         );
 
         self::row(
@@ -222,7 +261,7 @@ class LMC_Settings
             '<label><input type="checkbox" name="sync_instore" value="1" '
                 . checked($s['sync_instore'], 'yes', false) . '> '
                 . esc_html__('خرید حضوری مشتری در حساب کاربری سایت دیده شود', 'labelmod-connector') . '</label>',
-            __('با شماره موبایل به حساب مشتری وصل می‌شود و اگر حسابی نباشد ساخته می‌شود. این رکورد **سفارش ووکامرس نیست**: موجودی را کم نمی‌کند، ایمیل نمی‌فرستد و در گزارش فروش سایت نمی‌آید.', 'labelmod-connector')
+            __('سیستم با شمارهٔ موبایل، حساب مشتری را پیدا می‌کند یا برای او حساب می‌سازد. این نمایش روی موجودی و فروش سایت اثری ندارد.', 'labelmod-connector')
         );
 
         self::row(
@@ -235,19 +274,39 @@ class LMC_Settings
 
         echo '</table>';
         submit_button(__('ذخیره', 'labelmod-connector'));
-        echo '</form>';
+        echo '</form></section>';
+    }
 
-        LMC_Push_Secret_Settings::render();
-
+    private static function overview(array $s): void
+    {
+        echo '<div class="lmc-layout"><section class="lmc-card"><h2>موجودی و قیمت سایت</h2>';
+        self::connection_box($s);
+        echo '<dl class="lmc-sync-summary">';
+        foreach (['موجودی دوره‌ای' => $s['sync_stock'] === 'yes' ? 'هر ۱۵ دقیقه' : 'خاموش',
+            'قیمت سایت' => $s['sync_price'] === 'yes' ? 'از حسابداری' : 'خاموش',
+            'اتصال اولیهٔ تنوع' => $s['link_by_sku'] === 'yes' ? 'با SKU' : 'دستی'] as $label => $value) {
+            echo '<div><dt>' . esc_html($label) . '</dt><dd>' . esc_html($value) . '</dd></div>';
+        }
+        echo '</dl>';
         // همگام‌سازی دستی — فرم جدا، چون یک عمل است نه یک تنظیم.
-        echo '<hr><form method="post" action="' . esc_url(admin_url('admin-post.php')) . '">';
+        echo '<form method="post" action="' . esc_url(admin_url('admin-post.php')) . '">';
         wp_nonce_field('lmc_sync_now');
         echo '<input type="hidden" name="action" value="lmc_sync_now">';
-        submit_button(__('همین حالا موجودی را همگام کن', 'labelmod-connector'), 'secondary', 'submit', false);
+        submit_button(__('همگام‌سازی دستی', 'labelmod-connector'), 'primary', 'submit', false);
         echo ' <span class="description">'
-            . esc_html__('همه کالاها را دوباره می‌گیرد، نه فقط تغییرات تازه.', 'labelmod-connector')
+            . esc_html__('دریافت کامل را شروع می‌کند. اگر هنوز صفحه‌ای باقی مانده باشد، از همان صفحه ادامه می‌دهد.', 'labelmod-connector')
             . '</span></form>';
 
+        echo '</section><section class="lmc-card">';
+        LMC_Diagnostics::render();
+        echo '</section></div>';
+    }
+
+    private static function holds_panel(): void
+    {
+        echo '<section class="lmc-card lmc-holds">';
+        self::stuck_holds();
+        echo '</section><details class="lmc-card"><summary>بازنشانی پس از بازیابی بکاپ</summary>';
         // بازنشانی صریح واترمارک (docs/STOCK-SYNC-PROTOCOL.md): فقط پس از بازیابی Core از بکاپ
         // قدیمی‌تر. کسرهای محلی پاک نمی‌شوند و عکس بی واترمارک باز پذیرفته نمی‌شود.
         echo '<form method="post" action="' . esc_url(admin_url('admin-post.php')) . '">';
@@ -260,9 +319,7 @@ class LMC_Settings
             . esc_html__('فقط پس از بازیابی سامانه از بکاپ قدیمی‌تر.', 'labelmod-connector')
             . '</span></form>';
 
-        self::stuck_holds();
-
-        echo '</div>';
+        echo '</details>';
     }
 
     /**
@@ -473,9 +530,15 @@ class LMC_Settings
 
     private static function row(string $label, string $field, string $help): void
     {
+        $heading = esc_html($label);
+        if (preg_match('/^<(?:select|textarea|input type="(?:text|url|password)") name="([a-z_]+)"/', $field, $match)) {
+            $id = 'lmc-' . $match[1];
+            $field = str_replace($match[0], $match[0] . ' id="' . esc_attr($id) . '"', $field);
+            $heading = '<label for="' . esc_attr($id) . '">' . $heading . '</label>';
+        }
         printf(
             '<tr><th scope="row">%s</th><td>%s<p class="description">%s</p></td></tr>',
-            esc_html($label),
+            $heading,
             // فیلدها بالا با esc_attr ساخته شده‌اند؛ اینجا HTML عمدی است.
             $field, // phpcs:ignore WordPress.Security.EscapeOutput.OutputNotEscaped
             esc_html($help)

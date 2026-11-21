@@ -18,56 +18,18 @@ import {
 } from "../src/lib/camera-scan.ts";
 
 describe("مهار تکرار", () => {
-  test("اولین خواندن پذیرفته می‌شود", () => {
-    const t = new ScanThrottle(1500);
-    assert.equal(t.accept("2001234567890", 1000), true);
-  });
-
-  test("همان بارکد داخل پنجره، دوباره شمرده نمی‌شود", () => {
-    // این همان چیزی است که «یک اسکن، سی قلم» را می‌سازد.
-    const t = new ScanThrottle(1500);
-    t.accept("2001234567890", 1000);
-    for (let at = 1030; at < 2500; at += 30) {
-      assert.equal(t.accept("2001234567890", at), false, `در ${at}`);
-    }
-  });
-
-  test("بارکد متفاوت، فوراً پذیرفته می‌شود", () => {
-    // اسکن پشت‌سرهم دو کالا نباید منتظر پنجره بماند.
-    const t = new ScanThrottle(1500);
-    t.accept("2001234567890", 1000);
-    assert.equal(t.accept("2009876543210", 1050), true);
-  });
-
-  test("نگه‌داشتن ممتد گوشی پنجره را تمام نمی‌کند", () => {
-    // اگر زمان آخرین دیدن به‌روز نمی‌شد، گرفتن ممتد گوشی بعد از
-    // ۱٫۵ ثانیه همان قلم را دوباره اضافه می‌کرد.
-    const t = new ScanThrottle(1500);
-    t.accept("2001234567890", 1000);
-    for (let at = 1100; at < 6000; at += 100) {
-      assert.equal(t.accept("2001234567890", at), false, `در ${at}`);
-    }
-  });
-
-  test("پس از برداشتن گوشی و اسکن دوباره، پذیرفته می‌شود", () => {
-    // اسکن **عمدی** دوم همان کالا باید بشمارد.
-    const t = new ScanThrottle(1500);
-    t.accept("2001234567890", 1000);
-    assert.equal(t.accept("2001234567890", 3000), true, "پس از مکث");
-  });
-
-  test("reset حافظه را پاک می‌کند", () => {
-    const t = new ScanThrottle(1500);
-    t.accept("2001234567890", 1000);
-    t.reset();
-    assert.equal(t.accept("2001234567890", 1050), true);
-  });
-
-  test("پنجره تنظیم‌پذیر است", () => {
-    const t = new ScanThrottle(100);
-    t.accept("x", 1000);
-    assert.equal(t.accept("x", 1050), false);
-    assert.equal(t.accept("x", 1200), true);
+  test("برچسب ثابت یک بار شمرده می‌شود و سه فریم خالی شمارش دوباره را آزاد می‌کند", () => {
+    const gate = new ScanThrottle();
+    assert.equal(gate.accept("00123"), true);
+    for (let i = 0; i < 60; i++) assert.equal(gate.accept("00123"), false);
+    gate.absentFrame();
+    gate.absentFrame();
+    assert.equal(gate.accept("00123"), false);
+    for (let i = 0; i < 3; i++) gate.absentFrame();
+    assert.equal(gate.accept("00123"), true);
+    assert.equal(gate.accept("00456"), true);
+    gate.reset();
+    assert.equal(gate.accept("00456"), true);
   });
 });
 
@@ -76,7 +38,8 @@ describe("تشخیص توان مرورگر", () => {
     class Native {
       async detect() { return [{ rawValue: "00123" }]; }
     }
-    assert.ok(await resolveDetector({ BarcodeDetector: Native }) instanceof Native);
+    const detector = await resolveDetector({ BarcodeDetector: Native });
+    assert.deepEqual(await detector.detect({} as HTMLVideoElement), [{rawValue:"00123"}]);
   });
   test("کروم اندروید — آشکارساز بومی", () => {
     const g = { BarcodeDetector: class {} } as unknown as Record<string, unknown>;

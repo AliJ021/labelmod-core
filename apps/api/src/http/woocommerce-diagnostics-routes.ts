@@ -3,9 +3,10 @@ import { sql } from "kysely";
 import { z } from "zod";
 import type { Db } from "../db/client.ts";
 import { AuthError } from "../auth/service.ts";
-import { requireForSession } from "../auth/permission.ts";
-import { assertBranch, assertWarehouseInBranch } from "../sales/scope.ts";
+import { can, requireForSession } from "../auth/permission.ts";
+import { assertBranch, assertWarehouseInBranch, branchesOf } from "../sales/scope.ts";
 import { testWooConnection } from "../platform/woocommerce-diagnostics.ts";
+import { wooSigningKey } from "../lib/private-key-file.ts";
 import { readWooSite } from "../platform/woocommerce-site.ts";
 import { readCoreToWoo, readWooToCore, type WooToCore } from "../platform/stock-sync.ts";
 
@@ -33,14 +34,18 @@ export function registerWooDiagnosticsRoutes(app: FastifyInstance, db: Db, secre
 
   // پاسخ صفحهٔ تنظیمات همان شکل قبلی است؛ شعبهٔ انبار فقط برای دامنه خوانده می‌شود.
   async function config() {
-    const { branchId: _branch, ...site } = await readWooSite(db, secret);
+    const { branchId: _branch, ...site } = await readWooSite(db, await wooSigningKey(secret));
     return site;
   }
   app.get("/settings/woocommerce", async (req, reply) => {
     if (!req.session) throw new AuthError("no_session", "وارد نشده‌اید");
     await requireForSession(db, req.session, "settings.view");
     reply.header("cache-control", "no-store");
-    return config();
+    const session = req.session;
+    const canManageKeys = !session.pinUnlocked && !session.enrollmentOnly && !("apiClientId" in session)
+      && (await can(db, { userId: session.userId, operation: "settings.security" })).verdict === "allow"
+      && await branchesOf(db, session.userId) === "all";
+    return { ...await config(), canManageKeys };
   });
   /**
    * کارت همگام‌سازی سایت در داشبورد (دستهٔ C) — فقط‌خواندنی، پشت `settings.view` مثل سلامت سیستم.
@@ -65,7 +70,7 @@ export function registerWooDiagnosticsRoutes(app: FastifyInstance, db: Db, secre
       wooToCore = { state: "unknown", code: "warehouse", message: "انبار سایت تعیین نشده یا معتبر نیست؛ web.stock_warehouse را بررسی کنید.", fetchedAt: checkedAt };
     } else {
       await assertBranch(db, req.session.userId, wh.branch_id);
-      wooToCore = await readWooToCore({ siteUrl: local.siteUrl, secret, warehouseId: local.warehouseId, branchId: wh.branch_id },
+      wooToCore = await readWooToCore({ siteUrl: local.siteUrl, secret: await wooSigningKey(secret), warehouseId: local.warehouseId, branchId: wh.branch_id },
         deps.test ? { test: deps.test } : {});
     }
     reply.header("cache-control", "no-store");
@@ -86,7 +91,7 @@ export function registerWooDiagnosticsRoutes(app: FastifyInstance, db: Db, secre
       .where("id", "=", local.warehouseId).executeTakeFirst() : undefined;
     if (!wh) return { ok: false, code: "warehouse", message: "انبار سایت تعیین نشده یا معتبر نیست؛ web.stock_warehouse را بررسی کنید.", remote: null };
     await assertBranch(db, req.session.userId, wh.branch_id);
-    const result = await testWooConnection({ siteUrl: local.siteUrl, secret }, body.orderId);
+    const result = await testWooConnection({ siteUrl: local.siteUrl, secret: await wooSigningKey(secret) }, body.orderId);
     reply.header("cache-control", "no-store");
     if (result.remote && (result.remote.warehouseId !== local.warehouseId || result.remote.branchId !== wh.branch_id)) {
       return { ok: false, code: "scope_mismatch", message: "شعبه یا انبار افزونه با انبار سایت در مرکز یکسان نیست.", remote: null };

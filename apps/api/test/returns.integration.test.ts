@@ -84,6 +84,8 @@ describe("برگشت از فروش و دوره ثبت", { skip }, () => {
     method?: string;
     refNo?: string;
     variation?: string;
+    shipping?: string;
+    second?: {methodCode:string;amount:string;refNo:string};
   }): Promise<{ invoiceId: string; lineId: string }> {
     const s = await loginAs(opts.who);
     const channel = opts.channel ?? "pos";
@@ -110,6 +112,8 @@ describe("برگشت از فروش و دوره ثبت", { skip }, () => {
     assert.equal(line.statusCode, 201, line.body);
     const lineId = line.json().lines[0].id as string;
 
+    if (opts.shipping) await sql`UPDATE sales.invoice SET shipping_amount=${opts.shipping}::numeric,
+      payable_amount=payable_amount+${opts.shipping}::numeric WHERE id=${invoiceId}::uuid`.execute(handle.db);
     if (opts.paid !== "0") {
       const pay = await app.inject({
         method: "POST",
@@ -120,6 +124,10 @@ describe("برگشت از فروش و دوره ثبت", { skip }, () => {
       assert.equal(pay.statusCode, 201, pay.body);
     }
 
+    if (opts.second) {
+      const second=await app.inject({method:"POST",url:`/invoices/${invoiceId}/payments`,...s,payload:opts.second});
+      assert.equal(second.statusCode,201,second.body);
+    }
     const fin = await app.inject({
       method: "POST",
       url: `/invoices/${invoiceId}/finalize`,
@@ -231,6 +239,143 @@ describe("برگشت از فروش و دوره ثبت", { skip }, () => {
       payload: { value, reason: "آزمون سیاست تعویض" } });
     assert.equal(r.statusCode, 200, r.body);
   }
+  test("ابطال پس از مرجوعی جزئی فقط ماندهٔ کالا و وجه را یک بار برمی‌گرداند", async () => {
+    const sale = await soldInvoice({who: supervisor, qty:"2", paid:"2000000"});
+    const auth = await loginAs(supervisor);
+    const request = (qty:string,amount:string,full:boolean,key=randomUUID()) => app.inject({
+      method:"POST",url:"/returns/commit",...auth,headers:{...auth.headers,"idempotency-key":key},
+      payload:{invoiceId:sale.invoiceId,reasonCode:"changed_mind",refundMethod:"cash",refundAmount:amount,
+        shiftId:supervisorShift,confirmed:true,...(full && {fullCancellation:true}),lines:[{invoiceLineId:sale.lineId,qty}]}
+    });
+    const stale=await request("1","1000000",true);
+    assert.equal(stale.statusCode,409,stale.body);
+    const partial=await request("1","1000000",false);
+    assert.equal(partial.statusCode,200,partial.body);
+    const key=randomUUID();
+    const [a,b]=await Promise.all([request("1","1000000",true,key),request("1","1000000",true,key)]);
+    assert.equal(a.statusCode,200,a.body);assert.equal(b.statusCode,200,b.body);assert.equal(a.json().id,b.json().id);
+    const totals=await sql<{count:number;refund:string;status:string}>`SELECT count(*)::int AS count,sum(r.refund_amount)::text AS refund,
+      (SELECT status FROM sales.invoice WHERE id=${sale.invoiceId}::uuid) AS status FROM sales.sale_return r
+      WHERE r.invoice_id=${sale.invoiceId}::uuid AND r.status='posted'`.execute(handle.db);
+    assert.deepEqual(totals.rows[0],{count:2,refund:"2000000",status:"returned"});
+  });
+  test("اصلاح کالای نزد مشتری فقط اختلاف وجه و تعداد را جابه‌جا می‌کند", async () => {
+    const auth = await loginAs(supervisor);
+    for (const [oldQty,newQty] of [[1,1],[1,2],[2,1]] as const) {
+      const sold = await soldInvoice({who:supervisor,qty:String(oldQty),paid:String(oldQty*1000000)});
+      const body = {...exchangeBody(sold.invoiceId,sold.lineId,String(oldQty),String(newQty)), reasonNote:"اصلاح قیمت تأییدشده",
+        replacements:[{variationId, qty:String(newQty), retainLineId:sold.lineId, unitPrice:"1010000"}]};
+      const quote = await exchangeQuote(body);
+      assert.equal(quote.statusCode,200,quote.body);
+      const post = await app.inject({method:"POST",url:"/exchanges",...auth,headers:{...auth.headers,"idempotency-key":randomUUID()},
+        payload:{...body,token:quote.json().token,confirmed:true,collectMethod:"cash",refundMethod:"cash"}});
+      assert.equal(post.statusCode,200,post.body);
+      const result = post.json();
+      assert.equal(BigInt(result.collectAmount)-BigInt(result.refundAmount), BigInt(newQty)*1010000n-BigInt(oldQty)*1000000n);
+      const movements = await sql<{n:number;qty:string}>`SELECT count(*)::int n,coalesce(sum(qty),0)::text qty
+        FROM inventory.stock_movement WHERE ref_id IN (${result.returnId}::uuid,${result.replacementInvoiceId}::uuid)`.execute(handle.db);
+      assert.equal(movements.rows[0]!.n, oldQty===newQty ? 0 : 1);
+      assert.equal(Number(movements.rows[0]!.qty),oldQty-newQty);
+      if (oldQty===newQty) {
+        const lines = await handle.db.selectFrom("sales.invoice_line").select("cogs_amount")
+          .where("invoice_id","in",[sold.invoiceId,result.replacementInvoiceId]).execute();
+        assert.equal(lines.length,2);
+        assert.equal(lines[0]!.cogs_amount,lines[1]!.cogs_amount);
+      }
+    }
+  });
+  test("ابطال کامل کرایهٔ دریافت‌شده را هم در پیشنهاد، خزانه و دفتر برمی‌گرداند", async () => {
+    const sold = await soldInvoice({who:supervisor,qty:"1",paid:"1050000",shipping:"50000"});
+    const auth = await loginAs(supervisor);
+    const lines = [{invoiceLineId:sold.lineId,qty:"1"}];
+    const preview = await app.inject({method:"POST",url:`/invoices/${sold.invoiceId}/return-account`,...auth,payload:{lines,fullCancellation:true}});
+    assert.equal(preview.statusCode,200,preview.body);
+    assert.equal(preview.json().suggestedRefund,"1050000");
+    const post = await app.inject({method:"POST",url:"/returns/commit",...auth,headers:{...auth.headers,"idempotency-key":randomUUID()},
+      payload:{invoiceId:sold.invoiceId,reasonCode:"changed_mind",refundMethod:"cash",refundAmount:"1050000",
+        lines,shiftId:supervisorShift,fullCancellation:true,confirmed:true}});
+    assert.equal(post.statusCode,200,post.body);
+    const result = await sql<{shipping:string;paid:string}>`SELECT r.shipping_amount::text shipping,p.amount::text paid
+      FROM sales.sale_return r JOIN treasury.payment p ON p.return_id=r.id WHERE r.id=${post.json().id}::uuid`.execute(handle.db);
+    assert.deepEqual(result.rows,[{shipping:"50000",paid:"1050000"}]);
+  });
+  test("ترکیب کارت و نقد، مابه‌التفاوت، مجوز، تراز دفتر و بازپخش",async()=>{
+    const sale=await soldInvoice({who:supervisor,qty:"10",paid:"4000000",second:{methodCode:"card",amount:"6000000",refNo:"card-in-split"}});
+    const session=await loginAs(supervisor);
+    const lines=[{invoiceLineId:sale.lineId,qty:"5"}];
+    const preview=async(qty:string)=>{
+      const r=await app.inject({method:"POST",url:`/invoices/${sale.invoiceId}/return-account`,...session,
+        payload:{lines:[{invoiceLineId:sale.lineId,qty}]}});
+      assert.equal(r.statusCode,200,r.body); return r.json().splitPlan as {basis:string;legs:Array<{sourceId:string;method:string;amount:string}>};
+    };
+    const amounts=(plan:Awaited<ReturnType<typeof preview>>)=>Object.fromEntries(plan.legs.map(l=>[l.method,l.amount]));
+    assert.deepEqual(amounts(await preview("10")),{cash:"4000000",card:"6000000"});
+    const plan=await preview("5");
+    assert.deepEqual(amounts(plan),{cash:"2000000",card:"3000000"});
+    const legs=plan.legs.map(l=>({sourceId:l.sourceId,method:l.method,amount:l.method==="cash"?"1000000":"4000000",
+      ...(l.method==="card" && {reference:"card-refund-1"})}));
+    const base={invoiceId:sale.invoiceId,reasonCode:"changed_mind",confirmed:true,refundAmount:"5000000",shiftId:supervisorShift,
+      lines,splitRefund:{basis:plan.basis,legs}};
+    const post=(body:unknown,who=session,key=randomUUID())=>app.inject({method:"POST",url:"/returns/commit",...who,
+      headers:{...who.headers,"idempotency-key":key},payload:body as object});
+    assert.equal((await post(base,await loginAs(cashier))).statusCode,403);
+    assert.equal((await post(base)).json().error.code,"payout_reason_required");
+    const before=await sql<{v:string}>`SELECT sales.shift_expected_cash(${supervisorShift}::uuid)::text v`.execute(handle.db);
+    const key=randomUUID();
+    const body={...base,reasonNote:"ترکیب مورد تقاضای مشتری"};
+    const result=await post(body,session,key); assert.equal(result.statusCode,200,result.body);
+    assert.equal((await post(body,session,key)).json().id,result.json().id);
+    assert.equal((await post(body)).json().error.code,"refund_split_changed");
+    const after=await sql<{v:string}>`SELECT sales.shift_expected_cash(${supervisorShift}::uuid)::text v`.execute(handle.db);
+    assert.equal(BigInt(before.rows[0]!.v)-BigInt(after.rows[0]!.v),1000000n);
+    const postings=await sql<{method:string;amount:string;ref:string|null;credited:string}>`
+      SELECT p.method_code AS method,p.amount::text,p.ref_no ref,l.credit::text credited
+      FROM treasury.payment p JOIN ledger.journal_entry e ON e.ref_id=p.return_id AND e.ref_type='sale_return'
+      JOIN ledger.posting_rule pr ON pr.event_type='sale_shift' AND pr.leg=CASE p.method_code WHEN 'cash' THEN 'cash' ELSE 'card_clearing' END
+      JOIN ledger.journal_line l ON l.entry_id=e.id AND l.account_code=pr.account_code
+      WHERE p.return_id=${result.json().id}::uuid ORDER BY method`.execute(handle.db);
+    assert.deepEqual(postings.rows,[{method:"card",amount:"4000000",ref:"card-refund-1",credited:"4000000"},
+      {method:"cash",amount:"1000000",ref:null,credited:"1000000"}]);
+    const last=await preview("5"); assert.deepEqual(amounts(last),{cash:"3000000",card:"2000000"});
+    const defaultBody={...base,fullCancellation:true,splitRefund:{basis:last.basis,
+      legs:last.legs.map(({sourceId,method,amount})=>({sourceId,method,amount,...(method==="card" && {reference:"card-refund-2"})}))}};
+    const cancelled=await post(defaultBody); assert.equal(cancelled.statusCode,200,cancelled.body);
+  });
+  test("برگشت کامل طبق دریافت بدون تغییر دستی، پیگیری بانکی و گردکردن آخرین ریال",async()=>{
+    const auth=await loginAs(supervisor);
+    const sale=await soldInvoice({who:supervisor,qty:"1",paid:"400000",second:{methodCode:"card",amount:"600000",refNo:"mixed-bank-in"}});
+    const lines=[{invoiceLineId:sale.lineId,qty:"1"}];
+    const quote=(amount:string,session=auth)=>app.inject({method:"POST",url:`/invoices/${sale.invoiceId}/return-account`,...session,payload:{lines,refundAmount:amount}});
+    const tiny=await quote("1"); assert.equal(tiny.statusCode,200,tiny.body);
+    assert.deepEqual(Object.fromEntries(tiny.json().splitPlan.legs.map((l:{method:string;amount:string})=>[l.method,l.amount])),{card:"1",cash:"0"});
+    const clerk=await quote("1000000",await loginAs(cashier));
+    assert.equal(clerk.statusCode,200,clerk.body); assert.equal(clerk.json().splitPlan.canChange,false);
+    const q=await quote("1000000");const plan=q.json().splitPlan;assert.equal(plan.canChange,true);
+    const legs=plan.legs.map((l:{method:string;sourceId:string;amount:string})=>({method:l.method,sourceId:l.sourceId,amount:l.amount}));
+    const body={invoiceId:sale.invoiceId,reasonCode:"changed_mind",confirmed:true,fullCancellation:true,refundAmount:"1000000",shiftId:supervisorShift,lines};
+    const post=(parts:typeof legs)=>app.inject({method:"POST",url:"/returns/commit",...auth,headers:{...auth.headers,"idempotency-key":randomUUID()},payload:{...body,splitRefund:{basis:plan.basis,legs:parts}}});
+    assert.equal((await post(legs)).json().error.code,"refund_reference_required");
+    const r=await post(legs.map((l:{method:string})=>l.method==="card"?{...l,reference:"mixed-bank-out"}:l));
+    assert.equal(r.statusCode,200,r.body);
+    assert.deepEqual(Object.fromEntries(r.json().payouts.map((l:{method:string;amount:string})=>[l.method,l.amount])),{card:"600000",cash:"400000"});
+  });
+  test("اختلاف تعویض و فاکتور جایگزین هر دو ترکیب پرداخت واقعی را حفظ می‌کنند",async()=>{
+    const auth=await loginAs(supervisor);
+    const sale=await soldInvoice({who:supervisor,qty:"2",paid:"800000",second:{methodCode:"card",amount:"1200000",refNo:"exchange-mixed-in"}});
+    const input=exchangeBody(sale.invoiceId,sale.lineId,"2","1");
+    const q=await exchangeQuote(input); assert.equal(q.statusCode,200,q.body);
+    const {splitPlan,token}=q.json();
+    const legs=splitPlan.legs.map((l:{method:string;amount:string;sourceId:string})=>({
+      method:l.method,amount:l.amount,sourceId:l.sourceId,...(l.method==="card" && {reference:"exchange-mixed-out"})}));
+    const r=await app.inject({method:"POST",url:"/exchanges",...auth,headers:{...auth.headers,"idempotency-key":randomUUID()},
+      payload:{...input,token,confirmed:true,splitRefund:{basis:splitPlan.basis,legs}}});
+    assert.equal(r.statusCode,200,r.body);
+    const inv=await app.inject({method:"GET",url:`/invoices/${r.json().replacementInvoiceId}`,...auth});
+    const next=await app.inject({method:"POST",url:`/invoices/${r.json().replacementInvoiceId}/return-account`,...auth,
+      payload:{lines:[{invoiceLineId:inv.json().lines[0].id,qty:"1"}]}});
+    assert.equal(next.statusCode,200,next.body);
+    assert.deepEqual(Object.fromEntries(next.json().splitPlan.legs.map((l:{method:string;amount:string})=>[l.method,l.amount])),{cash:"400000",card:"600000"});
+  });
   async function publicInvoice(invoiceId: string) {
     const result = await sql<{ token: string }>`SELECT sales.ensure_public_token(${invoiceId}::uuid) token`.execute(handle.db);
     const response = await app.inject({ method: "GET", url: `/i/${result.rows[0]!.token}` });
@@ -432,6 +577,21 @@ describe("برگشت از فروش و دوره ثبت", { skip }, () => {
     const config = await app.inject({ method: "PUT", url: "/snappay/config", ...a, payload: { accountId: accounts.rows[0]!.id } });
     assert.equal(config.statusCode, 200, config.body);
     try {
+      const mixedSale=await soldInvoice({who:supervisor,qty:"1",paid:"400000",
+        second:{methodCode:"snappay",amount:"600000",refNo:`SNAP-MIX-IN-${suffix}`}});
+      const mixedLines=[{invoiceLineId:mixedSale.lineId,qty:"1"}];
+      const mix=await app.inject({method:"POST",url:`/invoices/${mixedSale.invoiceId}/return-account`,...s,
+        payload:{lines:mixedLines,fullCancellation:true}});
+      assert.equal(mix.statusCode,200,mix.body);
+      const {basis,legs}=mix.json().splitPlan;
+      const split=await app.inject({method:"POST",url:"/returns/commit",...s,headers:{...s.headers,"idempotency-key":randomUUID()},
+        payload:{invoiceId:mixedSale.invoiceId,reasonCode:"changed_mind",confirmed:true,fullCancellation:true,refundAmount:"1000000",
+        shiftId:supervisorShift,lines:mixedLines,splitRefund:{basis,legs:legs.map((l:{method:string;amount:string;sourceId:string})=>({
+          method:l.method,amount:l.amount,sourceId:l.sourceId,...(l.method==="snappay" && {reference:`SNAP-MIX-OUT-${suffix}`})}))}}});
+      assert.equal(split.statusCode,200,split.body);
+      assert.equal(split.json().payouts.find((p:{method:string})=>p.method==="snappay").amount,"600000");
+      const used=await app.inject({method:"GET",url:`/invoices/${mixedSale.invoiceId}/refund-sources`,...s});
+      assert.deepEqual(used.json().payments,[]);
       const sold = await soldInvoice({ who: supervisor, qty: "2", paid: "2000000", method: "snappay", refNo: `SNAP-${suffix}` });
       const source = await app.inject({ method: "GET", url: `/invoices/${sold.invoiceId}/refund-sources`, ...s });
       assert.equal(source.statusCode, 200, source.body);

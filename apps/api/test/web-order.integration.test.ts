@@ -24,6 +24,9 @@ import { loginWithMfa } from "./helpers/login-with-mfa.ts";
  */
 import { after, before, describe, test } from "node:test";
 import assert from "node:assert/strict";
+import { mkdtemp, rm } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { sql } from "kysely";
 import type { FastifyInstance } from "fastify";
 import { createDb, type DbHandle } from "../src/db/client.ts";
@@ -349,6 +352,42 @@ describe("سفارش سایت (ووکامرس)", { skip }, () => {
   });
 
   // ── احراز هویت ──────────────────────────────────────────────────
+
+  test("Woo credentials require a full global manager and reuse the branch key", async () => {
+    const username = "woo-keys-" + suffix;
+    const user = await handle.db.insertInto("identity.app_user").values({ username, full_name: "مدیر کلید",
+      password_hash: await hashSecret(PASSWORD), pin_hash: null, mobile: null, totp_secret: null, is_active: true })
+      .returning("id").executeTakeFirstOrThrow();
+    await handle.db.insertInto("identity.user_role").values({ user_id: user.id, role_code: "admin", branch_id: BRANCH }).execute();
+    const logged = await loginWithMfa(app, { method: "POST", url: "/auth/login", remoteAddress: "127.0.0.13", payload: { username, password: PASSWORD } });
+    const cookies = Object.fromEntries(logged.cookies.map(c => [c.name, c.value]));
+    const ask = (kind: string) => app.inject({ method: "POST", url: "/settings/woocommerce/credentials", cookies,
+      headers: { "x-csrf-token": cookies.labelmod_csrf! }, payload: { kind, password: PASSWORD } });
+    assert.equal((await ask("api")).statusCode, 403);
+    const prior = await handle.db.selectFrom("platform.setting").select("value").where("key", "=", "web.stock_warehouse").executeTakeFirstOrThrow();
+    const dir = await mkdtemp(join(tmpdir(), "woo-keys-"));
+    const previousFile = process.env.WOO_SIGNING_KEY_FILE;
+    process.env.WOO_SIGNING_KEY_FILE = join(dir, "sign");
+    try {
+      await handle.db.updateTable("identity.user_role").set({ branch_id: null }).where("user_id", "=", user.id).execute();
+      await sql`SELECT platform.set_setting('web.stock_warehouse','"STORE"'::jsonb,'credential test',${SYSTEM_USER}::uuid)`.execute(handle.db);
+      const first = await ask("api");
+      assert.equal(first.statusCode, 200, first.body);
+      assert.equal(first.headers["cache-control"], "no-store");
+      const second = await ask("api");
+      assert.equal(first.json().key, second.json().key);
+      const verify = await app.inject({ method: "GET", url: `/web/connection?branchId=${BRANCH}&warehouseId=${STORE_WH}`,
+        headers: { authorization: "Bearer " + first.json().key } });
+      assert.equal(verify.statusCode, 200, verify.body);
+      const signing = await ask("push");
+      assert.equal(signing.statusCode, 200, signing.body);
+      assert.match(signing.json().key, /^[0-9a-f]{64}$/);
+    } finally {
+      if (previousFile) process.env.WOO_SIGNING_KEY_FILE = previousFile; else delete process.env.WOO_SIGNING_KEY_FILE;
+      await rm(dir, { recursive: true, force: true });
+      await sql`SELECT platform.set_setting('web.stock_warehouse',${JSON.stringify(prior.value)}::jsonb,'restore credential test scope',${SYSTEM_USER}::uuid)`.execute(handle.db);
+    }
+  });
 
   test("Woo diagnostics resolves warehouse codes and enforces the resolved branch", async () => {
     const username = `woo-admin-${suffix}`;

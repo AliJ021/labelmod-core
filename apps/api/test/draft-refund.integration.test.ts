@@ -140,6 +140,17 @@ describe("بازیابی پیش‌نویس پرداخت‌شده", { skip: !proc
     const noRef = await refund(d); assert.equal(noRef.json().error.code, "refund_reference_required");
     assert.equal((await refund(d, randomUUID(), { refundReference: "manual-bank-return-123" })).statusCode, 200);
   });
+  test("بازپرداخت دریافت بانکی تطبیق‌شده به همان روش با پیگیری و حفظ سند اصلی", async () => {
+    const d = await draft("transfer","bank-in");
+    await sql`UPDATE treasury.payment SET status='reconciled' WHERE id=${d.paymentId}::uuid`.execute(handle.db);
+    assert.equal((await refund(d)).json().error.code, "refund_reference_required");
+    const result = await refund(d, randomUUID(), { refundReference: "bank-out" });
+    assert.equal(result.statusCode, 200, result.body);
+    const row = await sql<{status:string;method_code:string;ref_no:string}>`
+      SELECT src.status,p.method_code,p.ref_no FROM treasury.payment p
+      JOIN treasury.payment src ON p.draft_refund_of=src.id WHERE src.id=${d.paymentId}::uuid`.execute(handle.db);
+    assert.deepEqual(row.rows,[{status:"reconciled",method_code:"transfer",ref_no:"bank-out"}]);
+  });
   test("سقف مبلغ مجوز برگشت از پرداخت‌های قفل‌شده سنجیده می‌شود", async () => {
     const d = await draft();
     await sql`UPDATE identity.permission_rule SET max_amount=1000 WHERE role_code='admin' AND operation='invoice.cancel'`.execute(handle.db);
@@ -174,6 +185,27 @@ describe("بازیابی پیش‌نویس پرداخت‌شده", { skip: !proc
     assert.equal(closed.statusCode, 200, closed.body); assert.equal(closed.json().variance, "0");
     const check = await sql<{ n: string }>`SELECT count(*)::text n FROM platform.audit_check`.execute(handle.db);
     assert.equal(check.rows[0]!.n, "0");
+  });
+  test("دریافت کارت‌به‌کارت و برگشت نقدی یک بار از کشو و دفتر ثبت می‌شود", async () => {
+    const opened = await app.inject({method:"POST",url:"/shifts",...admin,payload:{branchId:BRANCH,openingCash:"200000",openingNote:"تنخواه نقد برای بازپرداخت"}});
+    assert.equal(opened.statusCode,201,opened.body); shiftId=opened.json().id;
+    const d = await draft("transfer","bank-ref");
+    const before = await sql<{cash:string}>`SELECT sales.shift_expected_cash(${shiftId}::uuid)::text cash`.execute(handle.db);
+    const key = randomUUID();
+    for (let i=0; i<2; i++) {
+      const response = await refund(d,key,{payoutMethod:"cash"});
+      assert.equal(response.statusCode,200,response.body);
+    }
+    const result = await sql<{cash:string; count:number; debit:string;credit:string}>`
+      SELECT sales.shift_expected_cash(${shiftId}::uuid)::text cash, count(DISTINCT p.id)::int count,
+        sum(l.debit)::text debit, sum(l.credit)::text credit FROM treasury.payment p
+      JOIN ledger.journal_entry e ON e.ref_id=p.id AND e.ref_type='draft_payout'
+      JOIN ledger.journal_line l ON l.entry_id=e.id WHERE p.draft_refund_of=${d.paymentId}::uuid`.execute(handle.db);
+    assert.equal(BigInt(before.rows[0]!.cash)-BigInt(result.rows[0]!.cash),200000n);
+    assert.equal(result.rows[0]!.count,1);
+    assert.equal(result.rows[0]!.debit,"200000"); assert.equal(result.rows[0]!.credit,"200000");
+    const closed = await app.inject({method:"POST",url:`/shifts/${shiftId}/close`,...admin,payload:{countedCash:"0"}});
+    assert.equal(closed.statusCode,200,closed.body); assert.equal(closed.json().variance,"0");
   });
   test("رقابت نهایی‌سازی با برگشت؛ فقط یکی موفق و کالا با پرداخت سازگار است", async () => {
     const opened = await app.inject({ method: "POST", url: "/shifts", ...admin, payload: { branchId: BRANCH, openingCash: "0" } });

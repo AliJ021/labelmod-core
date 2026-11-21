@@ -365,6 +365,23 @@ jobs:
       - name: ساخت ایمیج زمان‌بند
         run: .github/scripts/build-image.sh ops/deploy/Dockerfile.scheduler labelmod-scheduler:ci
 
+      - name: Build panel backup service
+        run: .github/scripts/build-image.sh apps/api/Dockerfile labelmod-panel-backup:ci panel-backup
+
+      - name: Verify private backup socket and PostgreSQL client
+        run: |
+          docker run --rm --entrypoint pg_dump labelmod-panel-backup:ci --version | grep -E ' 16[.]'
+          docker run -d --name panel-backup-ci -e OPS_DATABASE_URL=postgres://test@db/labelmod labelmod-panel-backup:ci
+          for attempt in {1..30}; do
+            if docker exec panel-backup-ci test -S /run/labelmod-panel-backup/manager.sock; then break; fi
+            sleep 1
+          done
+          docker exec panel-backup-ci node --input-type=module -e "
+            import http from 'node:http';
+            http.get({socketPath:'/run/labelmod-panel-backup/manager.sock',path:'/status'},
+              res => { if(res.statusCode !== 401) process.exitCode=1; });"
+
+
       # ⚠️ `-w /app/apps/api` لازم است، نه تزئین: چیدمان pnpm وابستگی‌ها
       # را در `apps/api/node_modules` می‌گذارد، نه در ریشه. از `/app`،
       # `argon2` اصلاً پیدا نمی‌شود.

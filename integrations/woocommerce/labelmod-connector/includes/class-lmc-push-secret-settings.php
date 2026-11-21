@@ -22,7 +22,7 @@ class LMC_Push_Secret_Settings
         $raw = $_POST['push_secret'] ?? '';
         $clear = isset($_POST['clear_push_secret']) && $_POST['clear_push_secret'] === '1';
         $ok = is_string($raw) && LMC_Push_Secret::save(wp_unslash($raw), $clear);
-        wp_safe_redirect(add_query_arg('lmc_push_msg', $ok ? 'saved' : 'failed', admin_url('admin.php?page=' . LMC_Settings::PAGE)));
+        wp_safe_redirect(add_query_arg('lmc_push_msg', $ok ? 'saved' : 'failed', admin_url('admin.php?page=' . LMC_Settings::PAGE . '&lmc_section=live')));
         exit;
     }
 
@@ -49,9 +49,9 @@ class LMC_Push_Secret_Settings
         wp_nonce_field('lmc_save_push_secret');
         echo '<input type="hidden" name="action" value="lmc_save_push_secret">';
         echo '<p><label>کلید همگام‌سازی لحظه‌ای <input type="password" name="push_secret" class="regular-text" dir="ltr" autocomplete="new-password" value="" maxlength="512"></label></p>';
-        echo '<p class="description">همان کلید امضای API و Worker حسابداری را وارد کنید؛ با کلید API سفارش‌ها متفاوت است. کلید باید 32 تا 512 نویسهٔ انگلیسی چاپ‌پذیر و بدون فاصله باشد. خالی گذاشتن یعنی حفظ کلید. نیازی به ویرایش فایل هاست نیست.</p>';
+        echo '<p class="description">در حسابداری ← اتصال ووکامرس، «کلید امضای ارسال لحظه‌ای» را دریافت و اینجا وارد کنید. برای حفظ کلید قبلی، فیلد را خالی بگذارید.</p>';
         echo '<p><label><input type="checkbox" name="clear_push_secret" value="1"> کلید پاک و دریافت لحظه‌ای غیرفعال شود (کلید قدیمی پیکربندی هم فعال نمی‌شود)</label></p>';
         submit_button('ذخیرهٔ کلید همگام‌سازی', 'secondary');
-        echo '</form><p class="description">این کلید دوباره نمایش داده نمی‌شود. تغییر کلیدهای امنیتی وردپرس ممکن است ورود دوبارهٔ آن را لازم کند. همگام‌سازی دوره‌ای همچنان مسیر جبران قطعی است.</p>';
+        echo '</form><p class="description">کلید در وردپرس به‌صورت رمزگذاری‌شده ذخیره می‌شود.</p>';
     }
 }

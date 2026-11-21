@@ -107,7 +107,7 @@ const wooFailure = (code: string, message: string): WooFailure => ({ ok: false, 
  */
 export async function signedWooPost(config: { siteUrl: string; secret: string | undefined }, route: string, payload: unknown,
   deps: WooCallDeps = {}, maxBytes?: number): Promise<WooFailure | { ok: true; status: number; body: unknown }> {
-  if (!config.secret) return wooFailure("missing_secret", "کلید امضا در محیط API تنظیم نشده؛ WEB_PUSH_SECRET را با Worker و افزونه تطبیق دهید.");
+  if (!config.secret) return wooFailure("missing_secret", "در تنظیمات اتصال ووکامرس کلید امضای ارسال لحظه‌ای را بسازید و در افزونه ذخیره کنید.");
   let target: PinnedTarget;
   try {
     // ابتدا خود نشانی تنظیم‌شده سنجیده می‌شود تا query/fragment/اطلاعات ورود حذف و پنهان نشوند.

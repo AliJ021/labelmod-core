@@ -1,7 +1,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { normalizeSearch, routeUrl } from "../src/lib/navigation.ts";
-import { readPendingScan, writePendingScan, clearPendingScan, type PendingScan } from "../src/lib/pending-scan.ts";
+import { appendScans, readScanQueue, readPendingScan, writePendingScan, clearPendingScan, type PendingScan } from "../src/lib/pending-scan.ts";
 
 test("Persian product input normalizes Arabic letters, both numeral sets and spacing", () => {
   assert.equal(normalizeSearch("  شلوار\u200cكتان ي ۱۲٣  "), "شلوار کتان ی 123");
@@ -22,6 +22,12 @@ test("uncertain scan survives reload with its exact operation key; users stay se
   assert.deepEqual(readPendingScan(intent.actorId,store),intent);
   clearPendingScan("11111111-1111-4111-8111-111111111111", intent.key, store);
   assert.equal(readPendingScan("11111111-1111-4111-8111-111111111111", store), null);
+  const next = {...intent,key:"66666666-6666-4666-8666-666666666666"};
+  appendScans([intent,next],store);
+  assert.deepEqual(readScanQueue(intent.actorId,store),[intent,next]);
+  clearPendingScan(intent.actorId,intent.key,store);
+  assert.deepEqual(readPendingScan(intent.actorId,store),next);
+
 });
 
 test("storage failure prevents dispatch rather than silently losing the operation", () => {

@@ -1,13 +1,17 @@
+import { exactTomanInput, rialFromExactTomanInput } from "../lib/money.ts";
 import { useEffect, useState } from "react";
 import { api, ApiError } from "../lib/api.ts";
 import { pos, type Invoice, type PaymentMethod, type Warehouse } from "../lib/pos.ts";
 import { PosProductPicker } from "./PosProductPicker.tsx";
+import { AmountInput } from "./ui/AmountInput.tsx";
 import { Money } from "./ui/Money.tsx";
 import { SafeAction } from "./ui/SafeAction.tsx";
 import { saleQuantity } from "../lib/sale-quantity.ts";
 import { onSettingSaved } from "../lib/settings-events.ts";
 
-interface Quote { token: string; returnedValue: string; replacementValue: string; debt: string; funds: string;
+import { useRefundSplit, type RefundPlan } from "./RefundSplit.tsx";
+
+interface Quote { splitPlan?:RefundPlan | null; token: string; returnedValue: string; replacementValue: string; debt: string; funds: string;
   debtApplied: string; transferAmount: string; fundedTransfer: string; collectAmount: string; refundAmount: string; policy: string }
 export function ExchangePanel({ invoice, lines, reasonCode, reasonNote, returnWarehouseId, warehouses, methods, locked, run, verify }: {
   invoice: Invoice; lines: Array<{ invoiceLineId: string; qty: string; restock?: boolean; condition?: "sellable" | "defective" }>;
@@ -15,11 +19,12 @@ export function ExchangePanel({ invoice, lines, reasonCode, reasonNote, returnWa
   run: (body: unknown) => Promise<void>; verify: () => Promise<boolean>;
 }) {
   const [warehouseId, setWarehouseId] = useState(invoice.warehouseId);
-  const [items, setItems] = useState<Array<{ id: string; name: string; sku: string; qty: string }>>([]);
+  const [items, setItems] = useState<Array<{ id: string; name: string; sku: string; qty: string; price:string; discount:string; retainLineId?:string }>>([]);
   const [quote, setQuote] = useState<{ value: Quote; body: string } | null>(null);
   const [collectMethod, setCollectMethod] = useState("cash");
   const [collectReference, setCollectReference] = useState("");
-  const [refundMethod, setRefundMethod] = useState("cash");
+  const [refundMethod, setRefundMethod] = useState("");
+  const [originalMethods,setOriginalMethods] = useState<string[]>([]);
   const [refundReference, setRefundReference] = useState("");
   const [refundPaymentId, setRefundPaymentId] = useState("");
   const [sources, setSources] = useState<Array<{ id: string; methodCode?: string; reference: string }>>([]);
@@ -41,20 +46,29 @@ export function ExchangePanel({ invoice, lines, reasonCode, reasonNote, returnWa
     return () => { active = false; window.removeEventListener("focus", refreshPolicy); unsubscribe(); };
   }, [invoice.branchId]);
   const body = { invoiceId: invoice.id, warehouseId, returnWarehouseId, lines,
-    replacements: items.map(i => ({ variationId: i.id, qty: saleQuantity(i.qty, fractional) ?? i.qty })), reasonCode,
+    replacements: items.map(i => ({ variationId: i.id, qty: saleQuantity(i.qty, fractional) ?? i.qty,
+      ...(i.retainLineId && {retainLineId:i.retainLineId}),
+      ...(i.price.trim() && {unitPrice:rialFromExactTomanInput(i.price)?.toString() ?? ""}),
+      ...(i.discount.trim() && {discountAmount:rialFromExactTomanInput(i.discount)?.toString() ?? ""}) })), reasonCode,
     ...(reasonNote.trim() ? { reasonNote: reasonNote.trim() } : {}) };
   const currentQuote = quote?.body === JSON.stringify(body) ? quote.value : null;
+  const split=useRefundSplit(currentQuote?.splitPlan,currentQuote ? BigInt(currentQuote.refundAmount) : null,methods,reasonNote,locked || busy);
   async function pick(id: string) {
     const item = await api.get<{ id: string; name: string; sku: string }>(`/exchanges/variation/${id}`);
-    setItems(current => [...current, { ...item, qty: "1" }]);
+    setItems(current => [...current, { ...item, qty: "1", price:"", discount:"" }]);
   }
   async function preview() {
     setBusy(true); setError("");
     try {
       const [value, refundSources] = await Promise.all([
         api.post<Quote>("/exchanges/quote", body),
-        api.get<{ payments: Array<{ id: string; methodCode?: string; reference: string }> }>(`/invoices/${invoice.id}/refund-sources`),
+        api.get<{ receivedMethods?:string[]; payments: Array<{ id: string; methodCode?: string; reference: string }> }>(`/invoices/${invoice.id}/refund-sources`),
       ]);
+      const received = refundSources.receivedMethods ?? [];
+      setOriginalMethods(received);
+      setRefundMethod(received.length===1 ? received[0]! : received.length ? "" : "cash");
+      setRefundPaymentId(refundSources.payments.length===1 ? refundSources.payments[0]!.id : "");
+      setRefundReference("");
       setQuote({ value, body: JSON.stringify(body) }); setSources(refundSources.payments);
     } catch (e) { setError(e instanceof ApiError ? e.message : "پیش‌نمایش خوانده نشد"); }
     finally { setBusy(false); }
@@ -65,14 +79,29 @@ export function ExchangePanel({ invoice, lines, reasonCode, reasonNote, returnWa
       {warehouses.filter(w => !["defective", "in_transit"].includes(w.kind)).map(w => <option key={w.id} value={w.id}>{w.name}</option>)}
     </select></label>
     <PosProductPicker warehouseId={warehouseId} busy={locked || busy} onPick={pick} />
-    <div className="row" style={{ flexWrap: "wrap" }}>{invoice.lines.filter(l => lines.some(x => x.invoiceLineId === l.id)).map(l =>
-      <button className="btn" type="button" key={l.id} disabled={locked || busy} onClick={() => void pick(l.variationId).catch(() => setError("کالا خوانده نشد"))}>
-        جایگزین با همان تنوع: {l.productName} · {l.sku}
-      </button>)}</div>
+    <div className="row" style={{ flexWrap: "wrap" }}>{invoice.lines.map(line => {
+      const source = lines.find(x => x.invoiceLineId === line.id && x.restock !== false && x.condition !== "defective");
+      if (!source || returnWarehouseId !== warehouseId) return null;
+      const scaledQty = (q: string) => {
+        const [whole, fraction = ""] = q.split(".");
+        return BigInt(whole!) * 1000n + BigInt(fraction.padEnd(3,"0"));
+      };
+      return <button type="button" className="btn" key={line.id}
+        disabled={locked || busy || items.some(i => i.retainLineId === line.id)} onClick={() => {
+          const totalQty = scaledQty(line.qty), selectedQty = scaledQty(source.qty);
+          const discount = (BigInt(line.discountAmount) * selectedQty + totalQty/2n) / totalQty;
+          setItems(old => [...old, {id:line.variationId, name:line.productName, sku:line.sku, qty:source.qty,
+            price:exactTomanInput(line.unitPrice), discount:exactTomanInput(discount.toString()), retainLineId:line.id}]);
+        }}>اصلاح همان کالا نزد مشتری · {line.productName} · {line.sku}</button>;
+    })}</div>
     {items.map((item, index) => <div className="row" key={`${item.id}-${index}`}>
       <span>{item.name} · {item.sku}</span>
       <label>تعداد<input aria-label={`تعداد جایگزین ${index + 1}`} inputMode={fractional ? "decimal" : "numeric"} value={item.qty} disabled={locked || busy}
         onChange={e => setItems(current => current.map((v, i) => i === index ? { ...v, qty: e.target.value } : v))} /></label>
+      <label>قیمت اصلاحی واحد (تومان)<AmountInput inputMode="decimal" placeholder="قیمت فهرست" value={item.price} disabled={locked || busy}
+        onChange={e => setItems(rows => rows.map((r,i) => i === index ? {...r,price:e.target.value} : r))} /></label>
+      <label>تخفیف کل سطر (تومان)<AmountInput inputMode="decimal" value={item.discount} disabled={locked || busy}
+        onChange={e => setItems(rows => rows.map((r,i) => i === index ? {...r,discount:e.target.value} : r))} /></label>
       <button className="btn" type="button" disabled={locked || busy} onClick={() => setItems(current => current.filter((_, i) => i !== index))}>حذف</button>
     </div>)}
     {items.some(i => saleQuantity(i.qty, fractional) === null) ? <p role="alert">{fractional ? "تعداد مثبت با حداکثر سه رقم اعشار وارد کنید." : "تعداد کالای جایگزین باید عدد صحیح باشد؛ فروش اعشاری غیرفعال است."}</p> : null}
@@ -95,11 +124,14 @@ export function ExchangePanel({ invoice, lines, reasonCode, reasonNote, returnWa
         </select></label>
         <label className="auth-field">پیگیری دریافت تأییدشده<input value={collectReference} disabled={locked} onChange={e => setCollectReference(e.target.value)} /></label>
       </> : null}
-      {BigInt(currentQuote.refundAmount)>0n ? <>
+      {BigInt(currentQuote.refundAmount)>0n ? split ? split.editor : <>
         <label className="auth-field">روش بازپرداخت اختلاف<select value={refundMethod} disabled={locked} onChange={e => { setRefundMethod(e.target.value); setRefundPaymentId(""); setRefundReference(""); }}>
+          <option value="">انتخاب روش بازپرداخت</option>
           {methods.filter(m => m.code !== "snappay" && m.code !== "digipay").map(m => <option key={m.code} value={m.code}>{m.name}</option>)}
           {[...new Set(sources.map(s => s.methodCode ?? "snappay"))].map(code => <option key={code} value={code}>{code === "digipay" ? "دیجی‌پی" : "اسنپ‌پی"} — برگشت تأییدشده</option>)}
         </select></label>
+        {originalMethods.length>0 && <p className="small">دریافت اولیه · {originalMethods.map(code=>methods.find(m=>m.code===code)?.name ?? code).join("، ")}</p>}
+        {methods.some(m=>m.code===refundMethod && m.requiresRef) && !["snappay","digipay"].includes(refundMethod) && <label className="auth-field">پیگیری برگشت بانکی<input value={refundReference} disabled={locked} onChange={e=>setRefundReference(e.target.value)} /></label>}
         {(refundMethod === "snappay" || refundMethod === "digipay") ? <>
           <label className="auth-field">پرداخت اصلی<select value={refundPaymentId} disabled={locked} onChange={e => setRefundPaymentId(e.target.value)}>
             <option value="">انتخاب کنید</option>{sources.filter(s => (s.methodCode ?? "snappay") === refundMethod).map(s => <option key={s.id} value={s.id}>{s.reference}</option>)}
@@ -107,13 +139,16 @@ export function ExchangePanel({ invoice, lines, reasonCode, reasonNote, returnWa
           <label className="auth-field">پیگیری برگشت تأییدشده<input value={refundReference} disabled={locked} onChange={e => setRefundReference(e.target.value)} /></label>
         </> : null}
       </> : null}
-      <SafeAction trigger="۲. بررسی نهایی تعویض" title="تأیید نهایی تعویض" triggerVariant="primary" disabled={locked}
-        summary={<><p>دریافت: <Money rial={currentQuote.collectAmount} /></p><p>بازپرداخت: <Money rial={currentQuote.refundAmount} /></p></>}
-        consequence="بازگشت کالای انتخاب‌شده، خروج جایگزین و تسویه مالی با هم ثبت می‌شوند. فقط وجه واقعاً تأییدشده را ثبت کنید."
+      <SafeAction trigger="۲. بررسی نهایی تعویض" title="تأیید نهایی تعویض" triggerVariant="primary" disabled={locked || (BigInt(currentQuote.refundAmount)>0n &&
+        (split ? !split.ready : !refundMethod || (originalMethods.length>0 && !originalMethods.includes(refundMethod) && !reasonNote.trim()) ||
+        (methods.some(m=>m.code===refundMethod && m.requiresRef) && !refundReference.trim())))}
+        summary={<><p>دریافت: <Money rial={currentQuote.collectAmount} /></p><p>بازپرداخت: <Money rial={currentQuote.refundAmount} /></p>{split?.summary}</>}
+        consequence="برای کالایی که نزد مشتری می‌ماند فقط تغییر تعداد در انبار ثبت می‌شود. وجه اختلاف را طبق پیش‌نمایش تأیید کنید."
         confirmLabel="اقلام و تسویه را تأیید می‌کنم؛ ثبت تعویض" pendingLabel="در حال ثبت تعویض…"
-        run={() => run({ ...body, token: currentQuote.token, confirmed: true, collectMethod, refundMethod,
+        run={() => run({ ...body, token: currentQuote.token, confirmed: true, collectMethod, ...(split ? {splitRefund:split.payload} : refundMethod && {refundMethod}),
           ...(collectReference.trim() ? { collectReference: collectReference.trim() } : {}),
-          ...((refundMethod === "snappay" || refundMethod === "digipay") ? { refundReference: refundReference.trim(), refundPaymentId } : {}) })}
+          ...(!split && refundReference.trim() && {refundReference:refundReference.trim()}),
+          ...(!split && (refundMethod === "snappay" || refundMethod === "digipay") ? { refundReference: refundReference.trim(), refundPaymentId } : {}) })}
         verify={verify} onDone={() => undefined} />
     </> : null}
   </section>;

@@ -25,6 +25,7 @@ import { inflateSync } from "node:zlib";
 
 export interface ReceiptLogo {
   dataUri: string;
+  thermalUri?: string;
   width: number;
   height: number;
   /** `black`: لوگوی شفاف، هر پیکسل دیده‌شده سیاه چاپ شود؛ `gray`: پس‌زمینهٔ مات. */
@@ -106,6 +107,9 @@ let cached: ReceiptLogo | null | undefined;
 /** لوگوی بسته‌بندی‌شده، یا `null` اگر فایل اصیل هنوز قرار نگرفته است. */
 export function receiptLogo(): ReceiptLogo | null {
   if (cached !== undefined) return cached;
-  cached = existsSync(LOGO_FILE) ? receiptLogoFromBuffer(readFileSync(LOGO_FILE)) : null;
+  cached = existsSync(LOGO_FILE) ? {
+    ...receiptLogoFromBuffer(readFileSync(LOGO_FILE)),
+    thermalUri: `data:image/png;base64,${readFileSync(new URL("./assets/receipt-logo-thermal.png", import.meta.url)).toString("base64")}`,
+  } : null;
   return cached;
 }

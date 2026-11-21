@@ -244,7 +244,7 @@ describe("آمادگی API صندوق", { skip }, () => {
       assert.equal(sources.statusCode,200,sources.body);assert.deepEqual(sources.json().payments,[{id:paymentId,methodCode:"snappay",reference:"SNAPP-CONFIRMED-1",remaining:"1000001"}]);
       // Disabling new receipts must not erase the ability to reverse historical confirmed receipts.
       assert.equal((await app.inject({method:"PUT",url:"/snappay/config",...a,payload:{accountId:""}})).statusCode,200);
-      const refund={invoiceId,reasonCode:"quality",refundAmount:"1000001",refundMethod:"snappay",lines:[{invoiceLineId:body.lines[0]!.id,qty:"1"}]};
+      const refund={invoiceId,reasonCode:"quality",reasonNote:"بازپرداخت این قلم به درخواست مشتری از درگاه اصلی انجام شد",refundAmount:"1000001",refundMethod:"snappay",lines:[{invoiceLineId:body.lines[0]!.id,qty:"1"}]};
       const missing=await app.inject({method:"POST",url:"/returns",...a,payload:refund});assert.equal(missing.statusCode,422,missing.body);
       const draft=await app.inject({method:"POST",url:"/returns",...a,payload:{...refund,refundReference:"SNAPP-REFUND-1",refundPaymentId:paymentId}});assert.equal(draft.statusCode,201,draft.body);
       const returned=await app.inject({method:"POST",url:`/returns/${draft.json().id}/post`,...a,payload:{}});assert.equal(returned.statusCode,200,returned.body);
@@ -304,7 +304,7 @@ describe("آمادگی API صندوق", { skip }, () => {
       assert.equal(sources.statusCode,200,sources.body);assert.deepEqual(sources.json().payments,[{id:paymentId,methodCode:"digipay",reference:"DIGI-CONFIRMED-1",remaining:"1000001"}]);
       // Disabling new receipts must not erase the ability to reverse historical confirmed receipts.
       assert.equal((await app.inject({method:"PUT",url:"/digipay/config",...a,payload:{accountId:""}})).statusCode,200);
-      const refund={invoiceId,reasonCode:"quality",refundAmount:"1000001",refundMethod:"digipay",lines:[{invoiceLineId:body.lines[0]!.id,qty:"1"}]};
+      const refund={invoiceId,reasonCode:"quality",reasonNote:"بازپرداخت این قلم به درخواست مشتری از درگاه اصلی انجام شد",refundAmount:"1000001",refundMethod:"digipay",lines:[{invoiceLineId:body.lines[0]!.id,qty:"1"}]};
       const missing=await app.inject({method:"POST",url:"/returns",...a,payload:refund});assert.equal(missing.statusCode,422,missing.body);
       const draft=await app.inject({method:"POST",url:"/returns",...a,payload:{...refund,refundReference:"DIGI-REFUND-1",refundPaymentId:paymentId}});assert.equal(draft.statusCode,201,draft.body);
       const returned=await app.inject({method:"POST",url:`/returns/${draft.json().id}/post`,...a,payload:{}});assert.equal(returned.statusCode,200,returned.body);
@@ -370,7 +370,7 @@ describe("آمادگی API صندوق", { skip }, () => {
     assert.equal(provenance.rows[0]!.finalized_by,cashierId);
     const print=await app.inject({method:"GET",url:`/invoices/${other}/print`,...s});assert.equal(print.statusCode,200,print.body);assert.match(print.body,/موجودی یک عدد/);
     // نام برند alt لوگوست و زیرش «فروشگاه لیبل مد» (خواستهٔ مالک ۱۴۰۵/۰۷/۲۰)؛ بی لوگو نشان متنی برند.
-    assert.match(print.body, /alt="لیبل مد">\s*<div class="shop">فروشگاه لیبل مد<\/div>|class="brand">لیبل مد<\/div>/);
+    assert.match(print.body, /alt="لیبل مد"><\/picture>\s*<div class="shop">فروشگاه لیبل مد<\/div>|class="brand">لیبل مد<\/div>/);
     assert.equal((await app.inject({method:"GET",url:`/invoices/${other}/proforma-print`,...s})).statusCode,409);
     assert.equal((await app.inject({method:"GET",url:`/invoices/${first}/print`,...s})).statusCode,409);
     const list=await app.inject({method:"GET",url:"/invoices?status=draft",...s});assert.equal(list.statusCode,200,list.body);
@@ -2677,4 +2677,44 @@ describe("آمادگی API صندوق", { skip }, () => {
       assert.equal((await finalize(unpaid.invoiceId)).statusCode, 200);
     } finally { await setRequired(false); }
   });
+  test("فروش منتسب، تعلیق پیش‌نویس و نام تاریخی رسید در صندوق مشترک", async () => {
+    const {s,invoiceId}=await newCart();
+    const users=await app.inject({method:"GET",url:`/pos/sellers?branchId=${BRANCH}`,...s});
+    assert.equal(users.statusCode,200,users.body);
+    const seller=users.json().sellers.find((u:{name:string})=>u.name==="سرپرست آمادگی");
+    assert.ok(seller);
+    const assign=(sellerId:string)=>app.inject({method:"PATCH",url:`/invoices/${invoiceId}/seller`,...s,payload:{sellerId}});
+    assert.equal((await assign(outsiderId)).statusCode,409);
+    const assigned=await assign(seller.id);
+    assert.equal(assigned.statusCode,200,assigned.body);
+    assert.equal(assigned.json().createdBy,cashierId);
+    assert.equal(assigned.json().sellerId,seller.id);
+    const review=(hold:boolean)=>app.inject({method:"PATCH",url:`/invoices/${invoiceId}/review`,...s,payload:{hold,reason:"بررسی مشتری"}});
+    assert.equal((await review(true)).statusCode,200);
+    const pay=()=>app.inject({method:"POST",url:`/invoices/${invoiceId}/payments`,...s,payload:{methodCode:"cash",amount:"1000001"}});
+    assert.ok((await pay()).statusCode>=400);
+    assert.equal((await review(false)).statusCode,200);
+    const attach=await app.inject({method:"PATCH",url:`/invoices/${invoiceId}/customer`,...s,
+      payload:{mobile:"09120000891",fullName:"مریم آزمون",salutation:"ms",requireNameForNew:true}});
+    assert.equal(attach.statusCode,200,attach.body);
+    const customerId=attach.json().customerId;
+    const profile=await sql<{birth:string|null; title:string}>`SELECT birth_date::text AS birth,salutation AS title FROM sales.customer WHERE id=${customerId}::uuid`.execute(handle.db);
+    assert.deepEqual(profile.rows[0],{birth:null,title:"ms"});
+    const paid=await pay();
+    assert.equal(paid.statusCode,201,paid.body);
+    const sold=await app.inject({method:"POST",url:`/invoices/${invoiceId}/finalize`,...s,payload:{}});
+    assert.equal(sold.statusCode,200,sold.body);
+    assert.ok(Number(sold.json().number)>=1405);
+    await sql`UPDATE sales.customer SET full_name='نام ویرایش‌شده',salutation='mr' WHERE id=${customerId}::uuid`.execute(handle.db);
+    const printed=await app.inject({method:"GET",url:`/invoices/${invoiceId}/print`,...s});
+    assert.equal(printed.statusCode,200);
+    assert.ok(printed.body.includes("خانم مریم آزمون"));
+    assert.ok(!printed.body.includes("نام ویرایش‌شده"));
+    for (const [who,expected] of [[cashier,false],[supervisor,true]] as const) {
+      const list=await app.inject({method:"GET",url:`/invoices?mine=1&search=${sold.json().number}`,...await loginAs(who)});
+      assert.equal(list.statusCode,200,list.body);
+      assert.equal(list.json().rows.some((row:{id:string})=>row.id===invoiceId),expected);
+    }
+  });
+
 });

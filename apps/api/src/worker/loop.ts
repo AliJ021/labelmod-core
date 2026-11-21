@@ -25,6 +25,7 @@ import { readMeliKey } from "../platform/melipayamak-credential.ts";
 import { makeSender, SmsError } from "./sms.ts";
 import { readNotifySettings } from "./settings.ts";
 import { makeWebhookSender } from "./webhook.ts";
+import { wooSigningKey } from "../lib/private-key-file.ts";
 import { makeWebPushSender } from "./web-push.ts";
 
 /** کاربر «سیستم» (seed): نامِ کارهای خودکار بی آدم پشتشان؛ هرگز وارد نمی‌شود. */
@@ -263,11 +264,12 @@ export async function tick(opts: LoopOptions): Promise<TickResult> {
     token: opts.webhookToken,
   });
 
-  const webPush = makeWebPushSender({
-    enabled: settings.webPushEnabled,
-    baseUrl: settings.webSiteUrl,
-    secret: opts.webPushSecret,
-  }, opts.webPushDeps);
+  const webPush = {
+    async send(message: Parameters<ReturnType<typeof makeWebPushSender>["send"]>[0]) {
+      const secret = settings.webPushEnabled ? await wooSigningKey(opts.webPushSecret) : undefined;
+      return makeWebPushSender({ enabled: settings.webPushEnabled, baseUrl: settings.webSiteUrl, secret }, opts.webPushDeps).send(message);
+    },
+  };
 
   const ctx = { db: opts.db, settings, sms: sender, smsCredentialKey: opts.smsCredentialKey, webhook, webPush };
 

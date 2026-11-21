@@ -248,16 +248,27 @@ export function PaymentSelector({ layout, remaining, received, phase, disabled, 
   const tiles: Tile[] = [
     { key: layout.primaryKind, label: card ? labelOf(card) : transfer ? "کارت‌به‌کارت" : "کارت‌خوان", option: card,
       reason: card ? card.unavailableReason : transfer ? TRANSFER_NOT_CONFIGURED : CARD_READER_NOT_CONFIGURED },
-    ...layout.providers.map((p): Tile => ({ key: p.key, label: p.label, option: p.option,
-      reason: p.option ? p.option.unavailableReason : p.unavailableReason })),
+    ...layout.providers.map((p): Tile => {
+      if (!transfer && p.key === "digipay") {
+        const option = layout.more.find(o => o.kind === "transfer") ?? null;
+        return { key: "transfer", label: option ? labelOf(option) : "کارت‌به‌کارت", option, reason: option ? option.unavailableReason : TRANSFER_NOT_CONFIGURED };
+      }
+      return { key: p.key, label: p.label, option: p.option, reason: p.option ? p.option.unavailableReason : p.unavailableReason };
+    }),
   ];
   const tileCodes = new Set(tiles.flatMap((t) => (t.option ? [t.option.code] : [])));
   const pressedOf = (code: string) => (activeCode !== null ? code === activeCode : selected.includes(code));
   // بقیهٔ روش‌های قابل ثبت تراشه می‌شوند؛ ناموجودها با دلیل در بخش ثانوی.
-  const active = options.filter((o) => o.unavailableReason === null && !tileCodes.has(o.code));
+  const digi = layout.providers.find(p=>p.key==="digipay")?.option;
+  const movedTransfer = tiles.find(t=>t.key==="transfer")?.option;
+  const extraOptions = !transfer && digi && movedTransfer
+    ? options.flatMap(o=>o.code===digi.code ? [] : o.code===movedTransfer.code ? [digi] : [o])
+    : options;
+  const active = extraOptions.filter((o) => o.unavailableReason === null && !tileCodes.has(o.code));
   // ناموجودهای «نمایش بیشتر»؛ سه خانهٔ اصلی دلیل خودشان را روی خود خانه دارند.
   const unavailable: Array<{ key: string; label: string; reason: string }> = [
     ...options.filter((o) => o.unavailableReason !== null && !tileCodes.has(o.code)).map((o) => ({ key: o.code, label: labelOf(o), reason: o.unavailableReason! })),
+    ...layout.providers.filter(p => !transfer && p.key === "digipay" && !p.option).map(p => ({ key: p.key, label: p.label, reason: p.unavailableReason! })),
     ...(layout.providers.length ? [{ key: "link", label: "لینک پرداخت", reason: LINK_NOT_IMPLEMENTED }] : []),
   ];
   // روش‌های «بیشتر» که انتخاب شده‌اند (یا قصد قفل‌شده مال یکی از آن‌هاست) روی دکمه هم نام برده می‌شوند.

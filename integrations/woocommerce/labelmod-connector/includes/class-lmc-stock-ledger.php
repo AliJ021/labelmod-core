@@ -1328,7 +1328,7 @@ class LMC_Stock_Ledger
                 : 'درخواست ثبت شد و با خواندن زندهٔ Core اعمال شد. ' . LMC_Stock_Sync::manual_summary($res);
         }
         wp_safe_redirect(add_query_arg(['lmc_msg' => 'synced', 'lmc_count' => 0, 'lmc_detail' => rawurlencode($detail)],
-            admin_url('admin.php?page=labelmod-connector')));
+            admin_url('admin.php?page=labelmod-connector&lmc_section=holds')));
         exit;
     }
 
@@ -1344,7 +1344,7 @@ class LMC_Stock_Ledger
         if ($n === 0) { return; }
         printf('<div class="notice notice-warning"><p>%s <a href="%s">%s</a></p></div>',
             esc_html(sprintf('لیبل مد: %d کسر موجودی بیش از یک ساعت حل نشده و موجودی سایت را پایین نگه داشته است.', $n)),
-            esc_url(admin_url('admin.php?page=labelmod-connector#lmc-stuck')),
+            esc_url(admin_url('admin.php?page=labelmod-connector&lmc_section=holds#lmc-stuck')),
             esc_html__('رسیدگی', 'labelmod-connector'));
     }
 
@@ -1523,7 +1523,7 @@ class LMC_Stock_Ledger
         $res = LMC_Stock_Sync::run();
         wp_safe_redirect(add_query_arg(['lmc_msg' => 'synced', 'lmc_count' => $res['updated'],
             'lmc_detail' => rawurlencode('واترمارک بازنشانی شد. ' . LMC_Stock_Sync::manual_summary($res))],
-            admin_url('admin.php?page=labelmod-connector')));
+            admin_url('admin.php?page=labelmod-connector&lmc_section=holds')));
         exit;
     }
 }

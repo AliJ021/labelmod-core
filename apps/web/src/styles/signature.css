@@ -812,3 +812,23 @@ table.grid td small, table.ui-table td small { font-size: 0.6875rem; color: var(
 
 /* طرح ۱۰: نشانهٔ «جلو» کنار «ورود»؛ تزئینی است و نام دکمه همان «ورود» می‌ماند. */
 .auth-submit { display: inline-flex; align-items: center; justify-content: center; gap: var(--s-2); }
+
+/* Catalog list and product workspace */
+.catalog-panel:not([hidden]), .catalog-product-panel:not([hidden]) {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  min-width: 0;
+  gap: var(--s-4);
+}
+.catalog-list .catalog-toolbar {
+  margin: 0;
+  padding: var(--s-3) var(--s-4);
+  border-block-start: 1px solid var(--rule);
+}
+.catalog-product-heading { display: flex; align-items: center; gap: var(--s-2); flex-wrap: wrap; }
+.catalog-product-title { flex: 1 1 22rem; min-width: 0; }
+.catalog-product-title h2 { font-size: 1.2rem; margin: 0; overflow-wrap: anywhere; }
+.catalog-variation-scroll { max-block-size: min(56vh, 36rem); overflow: auto; }
+.catalog-variation-scroll th { position: sticky; top: 0; z-index: 1; background: var(--surface-solid); }
+.catalog-product-panel { min-width: 0; }
+.catalog-product-panel[hidden] { display: none; }

@@ -2,7 +2,7 @@
 /**
  * Plugin Name: Label Mod Connector
  * Description: سفارش‌های ووکامرس را به سامانه «لیبل مد» می‌فرستد و موجودی سایت را از انبار همگام می‌کند.
- * Version: 1.6.0
+ * Version: 1.6.3
  * Requires PHP: 7.4
  * Requires at least: 6.0
  * License: proprietary
@@ -48,7 +48,7 @@ if (!defined('ABSPATH')) {
     exit;
 }
 
-define('LMC_VERSION', '1.6.0');
+define('LMC_VERSION', '1.6.3');
 define('LMC_PATH', plugin_dir_path(__FILE__));
 define('LMC_OPTION', 'labelmod_connector_settings');
 
@@ -163,6 +163,7 @@ register_activation_hook(__FILE__, function () {
 
 register_deactivation_hook(__FILE__, function () {
     wp_clear_scheduled_hook(LMC_STOCK_EVENT);
+    wp_clear_scheduled_hook(LMC_Stock_Sync::NEXT_PAGE_EVENT);
     wp_clear_scheduled_hook(LMC_INSTORE_EVENT);
     // فقط شتاب‌دهنده؛ کارهای معلق Action Scheduler عمداً می‌مانند تا با فعال‌سازی دوباره گم نشوند.
     wp_clear_scheduled_hook(LMC_Queue::KICK);

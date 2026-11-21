@@ -49,6 +49,7 @@ COPY apps/api/package.json ./apps/api/package.json
 COPY apps/api/src ./apps/api/src
 
 # اجرا با کاربر غیر root — بند ۵ SECURITY.md.
+RUN mkdir -p /var/lib/labelmod-woo /run/labelmod-panel-backup && chown node:node /var/lib/labelmod-woo /run/labelmod-panel-backup
 USER node
 
 ENV NODE_ENV=production
@@ -59,3 +60,15 @@ EXPOSE 3000
 # tini تا SIGTERM واقعاً به Node برسد و Shutdown تمیز اجرا شود.
 ENTRYPOINT ["/sbin/tini", "--"]
 CMD ["node", "--experimental-strip-types", "apps/api/src/server.ts"]
+
+# Keep the pg_dump client on exactly the same major version as the production database.
+FROM ${BASE_REGISTRY}/postgres:16-alpine AS panel-backup
+RUN apk add --no-cache libstdc++ "cmd:flock" tini && mkdir -p /var/lib/labelmod-panel-backup /run/labelmod-panel-backup && chown 1000:1000 /var/lib/labelmod-panel-backup /run/labelmod-panel-backup
+COPY --from=runtime /usr/local/bin/node /usr/local/bin/node
+COPY --from=runtime /app /app
+WORKDIR /app
+USER 1000:1000
+ENTRYPOINT ["/sbin/tini", "--", "flock", "--no-fork", "--nonblock", "/var/lib/labelmod-panel-backup/manager.lock"]
+CMD ["node", "--experimental-strip-types", "apps/api/src/cli/backup-manager.ts", "--panel-backup"]
+
+FROM runtime AS api

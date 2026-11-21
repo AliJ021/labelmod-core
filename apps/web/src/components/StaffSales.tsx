@@ -20,7 +20,7 @@ interface Row { userId: string | null; userName: string | null; invoiceCount: st
  * می‌ماند؛ سرور همان را می‌سنجد و هیچ عددی اینجا ساخته نمی‌شود.
  */
 export function StaffSales({ period, filters }: { period: Period; filters: PeriodFilters }) {
-  const [basis, setBasis] = useUrlState("reports.staffBasis", "finalizer");
+  const [basis, setBasis] = useUrlState("reports.staffBasis", "creator");
   const id = useId();
   const { from, to, branchId } = period;
   const load = useCallback((signal: AbortSignal) => {
