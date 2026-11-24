@@ -301,6 +301,15 @@ export function registerPeopleRoutes(app: FastifyInstance, deps: PeopleRouteDeps
 
   // ── مشتری ────────────────────────────────────────────────────────
 
+  app.get("/customers/export", async req => {
+    const s = session(req);
+    await requireForSession(db, s, "customer.manage");
+    const filters = z.object({ q:z.string().trim().max(64).default(""),
+      title:z.enum(["all","mr","ms","unknown"]).default("all"),
+      audience:z.enum(["all","receipt","marketing","no_marketing"]).default("all") }).parse(req.query);
+    return { customers: await customers.search({ ...filters, limit:null, branches:await branchesOf(db,s.userId) }) };
+  });
+
   app.get("/customers", async (req) => {
     const s = session(req);
     await requireForSession(db, s, "customer.manage");

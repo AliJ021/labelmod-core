@@ -298,6 +298,9 @@ export interface WarehouseTable {
 // ── فروش ──────────────────────────────────────────────────────────
 
 export interface CashShiftTable {
+  sale_cutoff_at: Generated<Date | null>;
+  sale_ended_at: Generated<Date | null>;
+  close_review: Generated<string | null>;
   id: Generated<string>;
   branch_id: string;
   user_id: string;

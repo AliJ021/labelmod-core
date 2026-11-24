@@ -1,3 +1,5 @@
+import { ExcelButton } from "../components/ExcelExport.tsx";
+import { ReceiptLabels } from "../components/ReceiptLabels.tsx";
 import { AmountInput } from "../components/ui/AmountInput.tsx";
 /**
  * انبار و خرید — رسید خرید.
@@ -454,6 +456,11 @@ export function Purchasing() {
             {receipt.supplierInvoiceNo ? ` · فاکتور ${receipt.supplierInvoiceNo}` : ""}
           </p>
 
+          {receipt.lines.length > 0 && <ExcelButton name={receipt.number ?? "رسید خرید"} label="اکسل رسید خرید" load={() => [{
+            title:"اقلام رسید خرید", columns:["کد تنوع","بارکد","نام کالا","رنگ","سایز","تعداد","قیمت واحد (ریال)","مبلغ سطر (ریال)","هزینه جانبی تخصیص یافته (ریال)"],
+            rows:receipt.lines.map(l=>[l.sku,l.barcode,l.productName,l.color,l.size,l.qty,l.unitPrice,l.lineAmount,l.chargeAlloc]),
+          }]} />}
+          {receipt.status !== "cancelled" && receipt.lines.length > 0 && <ReceiptLabels key={JSON.stringify([receipt.id, receipt.lines.map(l => [l.id,l.qty])])} receipt={receipt} />}
           {editable ? (
             <form
               className="stack"

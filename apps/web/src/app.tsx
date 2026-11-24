@@ -1,5 +1,6 @@
 const Invoices = lazy(() => import("./screens/Invoices.tsx").then(m => ({ default: m.Invoices })));
 /** پوسته: ناوبری شیشه‌ای، محتوای مالی مات و دسترس‌پذیر. */
+import { VisibleExcel } from "./components/ExcelExport.tsx";
 import { lazy, Suspense, useCallback, useEffect, useRef, useState } from "react";
 import { GlassFilters, Solid } from "./components/Glass.tsx";
 import { TabPanels, useTabsId } from "./components/Tabs.tsx";
@@ -303,6 +304,7 @@ export function App() {
 
         <ShellNav top={<><ShellBrand />{me ? <ShellBranch key={me.id} /> : null}</>} bottom={me ? <ShellUser me={me} onPassword={() => setPasswordOpen(true)} onReauth={() => setUpgrading(true)} onLogout={() => void signOut()} /> : null} collapsed={railed} onToggle={toggleNav} id={tabsId} items={navItems} pending={pendingItems} access={access.state} onRetry={access.retry} zone={zone} onZone={switchZone} compact={compact} more={more} onMore={openMore} opener={() => moreOpener.current} />
         <main id="workspace-content" tabIndex={-1}>
+          {me && <VisibleExcel zone={zone} title={trailItem?.label ?? "گزارش فروشگاه"} />}
         {uiKit && UiKit ? <SectionBoundary key="ui-kit"><Suspense fallback={<p className="solid pad" role="status">در حال بارگذاری UI Kit…</p>}><UiKit /></Suspense></SectionBoundary> : null}
         <SectionBoundary key={`${me?.id}:${zone}:${homeVisit}`}>
         {/* Suspense داخل پنل است، نه دور همهٔ پنل‌ها: هنگام بارگذاری یک بخش،

@@ -222,6 +222,7 @@ export interface DrawerShift {
   status: "open" | "closed" | "approved" | string;
   /** باز و از روز کاری پیش: «ماندهٔ دیروز». */
   carriedOver: boolean;
+  closeReview?: string | null;
   openingCash: string;
   /** کشوی باز: `sales.shift_expected_cash` (همان فرمول بستن)؛ بسته: عدد ثبت‌شده. */
   expectedCash: string | null;
@@ -248,6 +249,7 @@ export interface DrawersBody {
   businessDate: string;
   /** بی `report.view` کشوها و انتظار نقد نیامده‌اند (`shifts: null`)، نه «کشویی نیست». */
   shiftsVisible: boolean;
+  canReconcile?: boolean;
   shifts: DrawerShift[] | null;
   moves: DrawerMove[];
 }

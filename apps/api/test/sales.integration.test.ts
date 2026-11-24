@@ -481,33 +481,10 @@ describe("فروش و صندوق روی دیتابیس واقعی", { skip }, ()
 
     const s = await loginAs(supervisor);
 
-    // نگهبان دیتابیس: سبد نیمه‌کاره شیفت را نمی‌بندد. این درست است —
-    // ولی راه خروجی هم لازم دارد، وگرنه صندوق‌دار وسط شیفت گیر می‌کند.
-    const blocked = await app.inject({
-      method: "POST",
-      url: `/shifts/${shiftId}/close`,
-      ...s,
-      payload: { countedCash: "500000" },
-    });
-    assert.equal(blocked.statusCode, 409);
-    assert.match(blocked.json().error.message, /فاکتور نهایی‌نشده/);
-
-    // رها کردن سبدهای باز
-    const drafts = await sql<{ id: string }>`
-      SELECT id FROM sales.invoice WHERE shift_id = ${shiftId}::uuid AND status = 'draft'
+    const drafts = await sql<{id:string}>`
+      SELECT id FROM sales.invoice WHERE shift_id=${shiftId}::uuid AND status='draft'
     `.execute(handle.db);
-    assert.ok(drafts.rows.length > 0, "باید سبد رهاشده وجود داشته باشد");
-    for (const d of drafts.rows) {
-      const r = await app.inject({
-        method: "POST",
-        url: `/invoices/${d.id}/cancel`,
-        ...c,
-        payload: { reason: "مشتری رفت" },
-      });
-      assert.equal(r.statusCode, 200, r.body);
-      assert.equal(r.json().status, "cancelled");
-    }
-
+    assert.ok(drafts.rows.length);
     const ok = await app.inject({
       method: "POST",
       url: `/shifts/${shiftId}/close`,
@@ -517,6 +494,27 @@ describe("فروش و صندوق روی دیتابیس واقعی", { skip }, ()
     assert.equal(ok.statusCode, 200, ok.body);
     assert.equal(ok.json().status, "closed");
     assert.equal(typeof ok.json().variance, "string", "مغایرت باید رشته باشد");
+    const draftId = drafts.rows[0]!.id;
+    const preserved = await handle.db.selectFrom("sales.invoice").select(["status","shift_id"]).where("id","=",draftId).executeTakeFirstOrThrow();
+    assert.deepEqual(preserved,{status:"draft",shift_id:shiftId});
+    const next = await app.inject({method:"POST",url:"/shifts",...c,payload:{branchId:BRANCH,openingCash:"0",openingNote:"تست شیفت روز بعد"}});
+    assert.equal(next.statusCode,201,next.body);
+    const target = next.json().id;
+    for (let attempt = 0; attempt < 2; attempt++) {
+      const resumed = await app.inject({method:"POST",url:`/invoices/${draftId}/resume-shift`,...c,payload:{shiftId:target}});
+      assert.equal(resumed.statusCode,200,resumed.body);
+      assert.equal(resumed.json().shiftId,target);
+    }
+    await sql`UPDATE sales.cash_shift SET sale_cutoff_at=now()-interval '1 second' WHERE id=${target}::uuid`.execute(handle.db);
+    const closeDue = () => sql<{n:number}>`SELECT sales.auto_close_due_shifts(${supervisorId}::uuid) AS n`.execute(handle.db);
+    assert.equal((await closeDue()).rows[0]?.n,1);
+    assert.equal((await closeDue()).rows[0]?.n,0);
+    const ended = await handle.db.selectFrom("sales.cash_shift").select(["status","sale_ended_at","close_review"]).where("id","=",target).executeTakeFirstOrThrow();
+    assert.ok(ended.sale_ended_at);
+    assert.equal(ended.close_review,null);
+    assert.equal(ended.status,"closed");
+    assert.equal((await handle.db.selectFrom("sales.invoice").select("status").where("id","=",draftId).executeTakeFirstOrThrow()).status,"draft");
+
   });
 
   test("سبدی که پول رویش نشسته، بی‌سروصدا رها نمی‌شود", async () => {

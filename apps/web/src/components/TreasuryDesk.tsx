@@ -9,7 +9,11 @@
  * - کارمزد، دورهٔ تسویه و درایور پایانه فقط از تنظیمات عوض می‌شوند و فقط با `settings.view` خوانده
  *   می‌شوند؛ بی آن مجوز ستون‌ها «—» با توضیح‌اند، نه صفر.
  */
-import { useCallback, useState, type ReactNode } from "react";
+import { useCallback, useRef, useState, type ReactNode } from "react";
+import { ActionKeys } from "../lib/action-key.ts";
+import { rialFromTomanInput } from "../lib/money.ts";
+import { pos } from "../lib/pos.ts";
+import { AmountInput } from "./ui/AmountInput.tsx";
 import { api } from "../lib/api.ts";
 import { admin, type SettlementTerm, type TerminalDriver } from "../lib/admin.ts";
 import { formatClock, formatCount, formatJalaliMoment } from "../lib/format.ts";
@@ -29,7 +33,7 @@ const muted = (text: string) => <span className="muted">{text}</span>;
 const SHIFT_COLUMNS: readonly Column<DrawerShift>[] = [
   { key: "drawer", header: "کشو", cell: s => stack(<strong key="n">{s.userName}</strong>, <small key="s" className="cell-sub">باز {formatJalaliMoment(s.openedAt)}</small>) },
   { key: "status", header: "وضعیت", cell: s => s.status === "open"
-    ? (s.carriedOver ? <StatusBadge state="warning" label="ماندهٔ دیروز" /> : <StatusBadge state="active" label="باز" quiet />)
+    ? (s.closeReview ? <span title={s.closeReview}><StatusBadge state="warning" label="پایان فروش · نیازمند تطبیق" /> <small>{s.closeReview}</small></span> : s.carriedOver ? <StatusBadge state="warning" label="ماندهٔ دیروز" /> : <StatusBadge state="active" label="باز" quiet />)
     : stack(<StatusBadge key="b" state="completed" label="بسته" quiet />, s.closedAt ? <small key="t" className="cell-sub">{formatJalaliMoment(s.closedAt)}</small> : null) },
   { key: "opening", header: "موجودی اول", numeric: true, cell: s => <Money rial={BigInt(s.openingCash)} /> },
   { key: "expected", header: "انتظار نقد", numeric: true, cell: s => <span className="drawer-expected"><Money rial={s.expectedCash === null ? null : BigInt(s.expectedCash)} /></span> },
@@ -56,6 +60,33 @@ const MOVE_COLUMNS: readonly Column<DrawerMove>[] = [
   } },
 ];
 
+function ReconcileDrawer({ shift, refresh }: {shift: DrawerShift; refresh: () => void}) {
+  const [count, setCount] = useState("");
+  const [note, setNote] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState("");
+  const keys = useRef(new ActionKeys());
+  const rial = rialFromTomanInput(count);
+  return <details className="pad"><summary>تطبیق شیفت {shift.userName} · {formatJalaliMoment(shift.openedAt)}</summary>
+    <form className="stack" onSubmit={async e => {
+      e.preventDefault();
+      if (busy || rial === null || !note.trim()) return;
+      setBusy(true); setError("");
+      try {
+        await keys.current.run(JSON.stringify([shift.id,String(rial),note]), key => pos.closeShift(shift.id,
+          {countedCash:String(rial),note:note.trim()},{idempotencyKey:key}));
+        refresh();
+      } catch (err) { setError(err instanceof Error ? err.message : "تطبیق انجام نشد."); }
+      finally { setBusy(false); }
+    }}>
+      <p>{shift.closeReview}</p>
+      <label>نقد شمارش‌شده (تومان)<AmountInput value={count} onChange={e=>setCount(e.target.value)} /></label>
+      <label>توضیح تطبیق<input required maxLength={500} value={note} onChange={e=>setNote(e.target.value)} /></label>
+      <button className="btn" disabled={busy || rial === null || !note.trim()}>ثبت تطبیق و بستن مالی</button>
+      {error && <p role="alert">{error}</p>}
+    </form></details>;
+}
+
 export function TreasuryDesk({ branchId, version }: { branchId: string | null; version: number }) {
   const [retry, setRetry] = useState(0);
   const load = useCallback((signal: AbortSignal) => treasury.drawers(branchId!, { signal }), [branchId]);
@@ -71,6 +102,8 @@ export function TreasuryDesk({ branchId, version }: { branchId: string | null; v
       <SectionHeader id="treasury-drawers" title="شیفت‌ها و کشوها" description="کشو از شعبه پیدا می‌شود، نه از کاربر عامل؛ با دو کشوی باز، انتخاب کشو اجباری است. انتظار نقد کشوی باز با همان فرمول بستن شیفت حساب می‌شود." />
       <DataTable<DrawerShift> caption="شیفت‌ها و کشوهای امروز و دیروز" stack loading={data === null} rows={data?.shifts ?? []} rowKey={s => s.id}
         columns={SHIFT_COLUMNS} empty={{ title: "امروز و دیروز کشویی باز نشده." }} />
+      {data?.canReconcile && data.shifts?.filter(s=>s.status==="open" && s.closeReview).map(s=>
+        <ReconcileDrawer key={s.id} shift={s} refresh={()=>setRetry(n=>n+1)} />)}
     </Solid> : null}
     <Solid as="section" className="list-card drawer-card" aria-labelledby="treasury-cash-today" aria-busy={data === null || undefined}>
       <SectionHeader id="treasury-cash-today" title="حرکت‌های نقد غیرفروشی امروز" description="هر حرکتی که از کشوی صندوق رد شود به شیفت باز همان شعبه می‌چسبد؛ وگرنه شمارش کشو مغایرت کاذب می‌دهد." />

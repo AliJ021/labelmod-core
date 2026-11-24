@@ -258,15 +258,15 @@ export class CustomerService {
     title?: string | undefined;
     audience?: string | undefined;
     q?: string | undefined;
-    limit: number;
+    limit: number | null;
     branches: CustomerBranchScope;
   }): Promise<Customer[]> {
     const rows = await sql<Row>`
       ${selectCustomer(input.branches)}
       WHERE ${customerSearchPredicate((input.q ?? "").trim(), input.branches)} AND ${audiencePredicate(input.audience)}
       AND (${input.title ?? "all"}='all' OR coalesce(c.salutation,'unknown')=${input.title ?? "all"})
-      ORDER BY c.created_at DESC
-      LIMIT ${input.limit}
+      ORDER BY c.created_at DESC, c.id
+      ${input.limit === null ? sql`` : sql`LIMIT ${input.limit}`}
     `.execute(this.#db);
     return rows.rows.map(toJson);
   }

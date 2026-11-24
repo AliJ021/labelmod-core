@@ -63,6 +63,8 @@ export class ShiftService {
       .where("user_id", "=", userId)
       .where("branch_id", "=", branchId)
       .where("status", "=", "open")
+      .where("sale_ended_at", "is", null)
+      .where(sql<boolean>`(sale_cutoff_at IS NULL OR sale_cutoff_at > clock_timestamp())`)
       .executeTakeFirst();
     return row ? toShift(row) : null;
   }
@@ -85,6 +87,8 @@ export class ShiftService {
       .selectAll()
       .where("branch_id", "=", branchId)
       .where("status", "=", "open")
+      .where("sale_ended_at", "is", null)
+      .where(sql<boolean>`(sale_cutoff_at IS NULL OR sale_cutoff_at > clock_timestamp())`)
       .orderBy("opened_at")
       .execute();
     return rows.map(toShift);
@@ -121,6 +125,9 @@ export class ShiftService {
       throw new ShiftError("bad_opening_cash", "موجودی اول شیفت منفی نمی‌شود", 400);
     }
 
+    // At midnight the next cashier may arrive before the worker's next tick.
+    await sql`SELECT sales.auto_close_due_shifts('00000000-0000-7000-8000-0000000000f1'::uuid,
+      ${input.userId}::uuid, ${input.branchId}::uuid)`.execute(this.#db);
     const existing = await this.current(input.userId, input.branchId);
     if (existing) {
       throw new ShiftError(

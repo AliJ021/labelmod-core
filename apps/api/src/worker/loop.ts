@@ -169,6 +169,7 @@ export async function runProducers(
     SELECT treasury.enqueue_due_cheque_alerts() AS n
   `.execute(opts.db);
   result.enqueuedCheques = Number(cheques.rows[0]?.n ?? 0);
+  await sql`SELECT sales.auto_close_due_shifts(${SYSTEM_USER}::uuid)`.execute(opts.db);
 
   /*
    * زنگ خطر سیستم — همان‌جا و به همان دلیل که هشدار چک اینجاست.

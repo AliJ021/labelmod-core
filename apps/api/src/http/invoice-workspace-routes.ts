@@ -82,7 +82,7 @@ export function registerInvoiceWorkspaceRoutes(app: FastifyInstance, db: Db): vo
       i.occurred_at AS "occurredAt",i.last_activity_at AS "lastActivityAt",i.payable_amount::text AS "payableAmount",
       i.received::text AS "receivedAmount",i.methods AS "paymentMethods",
       i.remaining::text AS "remainingAmount",
-      (i.status='draft' AND i.created_by=${s.userId}::uuid AND sh.user_id=${s.userId}::uuid AND sh.status='open') AS "canResume",
+      (i.status='draft' AND i.created_by=${s.userId}::uuid AND sh.user_id=${s.userId}::uuid AND i.channel='pos') AS "canResume",
       (EXISTS(SELECT 1 FROM sales.invoice_review r WHERE r.invoice_id=i.id) OR i.status='draft' AND i.last_activity_at < now()-make_interval(hours=>
         (SELECT value::text::int FROM platform.setting WHERE key='sale.draft_attention_hours'))) AS "needsReview"
       FROM i JOIN platform.branch b ON b.id=i.branch_id

@@ -283,7 +283,7 @@ export function registerTreasuryRoutes(
       id: string; userName: string; openedAt: Date; closedAt: Date | null; status: string; carriedOver: boolean;
       openingCash: string; expectedCash: string | null; countedCash: string | null; variance: string | null;
     }>`
-      SELECT s.id::text, u.full_name AS "userName", s.opened_at AS "openedAt", s.closed_at AS "closedAt", s.status,
+      SELECT s.id::text, u.full_name AS "userName", s.opened_at AS "openedAt", s.closed_at AS "closedAt", s.status, s.close_review AS "closeReview",
              (s.status = 'open' AND s.opened_at < platform.business_day_start(platform.business_date())) AS "carriedOver",
              s.opening_cash::text AS "openingCash",
              (CASE WHEN s.status = 'open' THEN sales.shift_expected_cash(s.id) ELSE s.expected_cash END)::text AS "expectedCash",
@@ -330,6 +330,7 @@ export function registerTreasuryRoutes(
     return {
       businessDate: day.rows[0]!.d,
       shiftsVisible,
+      canReconcile: shiftsVisible && (await can(db, {userId:s.userId,operation:"shift.close",viaPin:s.pinUnlocked})).verdict === "allow",
       shifts,
       moves: moves.rows.map(r => ({ ...r, occurredAt: r.occurredAt.toISOString() })),
     };

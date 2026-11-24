@@ -2136,10 +2136,7 @@ function CloseShiftPanel({
     <Solid className="pad stack" style={{ gap: "var(--s-3)" }}>
       <h2 style={{ margin: 0 }}>بستن شیفت</h2>
       {openCart ? (
-        <p className="auth-error" role="alert">
-          <span className="dot dot--warn" aria-hidden="true">●</span> سبد باز دارید. تا
-          نهایی‌سازی یا رها کردنش، شیفت بسته نمی‌شود.
-        </p>
+        <p className="muted">پیش‌نویس محفوظ می‌ماند و در شیفت بعد از بخش فاکتورها قابل ادامه است.</p>
       ) : null}
       <label className="auth-field">
         <span>پول شمرده‌شده در کشو (تومان)</span>

@@ -332,9 +332,7 @@ export function registerSalesRoutes(app: FastifyInstance, deps: SalesRouteDeps):
     }
 
     // Idempotent: دابل‌کلیک روی «فروش تازه» یا Retry شبکه تبلت نباید
-    // یک پیش‌نویس دوم جا بگذارد. پیش‌نویس رها اثر مالی ندارد، ولی
-    // `close_shift` تا ابد ردش می‌کند: «شیفت با فاکتور نهایی‌نشده بسته
-    // نمی‌شود».
+    // یک پیش‌نویس دوم جا بگذارد.
     //
     // `shiftId` عمداً در Payload نیست: ورودی کلاینت نیست، از وضعیت
     // سرور می‌آید. اگر بود، Retry همان درخواست پس از عوض‌شدن شیفت
@@ -455,6 +453,34 @@ export function registerSalesRoutes(app: FastifyInstance, deps: SalesRouteDeps):
       ...invoiceToJson(inv),
       receivedAmount: serializeMoney(await invoices.paidSoFar(row.id)),
     };
+  });
+
+  app.post("/invoices/:id/resume-shift", async req => {
+    const s = session(req);
+    const { id } = z.object({ id: uuid }).parse(req.params);
+    const { shiftId } = z.object({ shiftId: uuid }).strict().parse(req.body);
+    await requireForSession(db, s, "sale.create");
+    await db.transaction().execute(async trx => {
+      const target = await trx.selectFrom("sales.cash_shift").selectAll().where("id", "=", shiftId).forUpdate().executeTakeFirst();
+      if (!target || target.status !== "open" || target.sale_ended_at || target.user_id !== s.userId)
+        throw new InvoiceError("draft_context", "شیفت فعال خودتان را باز کنید.", 409);
+      await assertBranch(trx, s.userId, target.branch_id);
+      const inv = await trx.selectFrom("sales.invoice").selectAll().where("id", "=", id).forUpdate().executeTakeFirst();
+      if (!inv || inv.status !== "draft" || inv.channel !== "pos" || inv.branch_id !== target.branch_id || inv.created_by !== s.userId || !inv.shift_id || inv.posting_batch_id)
+        throw new InvoiceError("draft_context", "این پیش‌نویس برای ادامه در این شیفت مجاز نیست.", 403);
+      if (inv.shift_id === target.id) return;
+      const source = await trx.selectFrom("sales.cash_shift").select(["status","sale_ended_at","user_id"]).where("id","=",inv.shift_id).executeTakeFirstOrThrow();
+      if (source.user_id !== s.userId || (source.status === "open" && !source.sale_ended_at))
+        throw new InvoiceError("draft_context", "شیفت قبلی هنوز در حال فروش است.", 409);
+      const unresolved = await trx.selectFrom("treasury.payment").select("id").where("invoice_id","=",id)
+        .where("status","in",["pending","unknown","initiated"]).executeTakeFirst();
+      if (unresolved) throw new InvoiceError("payment_review_required", "ابتدا نتیجهٔ پرداخت قبلی را تطبیق دهید.", 409);
+      await setActor(trx,s.userId);
+      await trx.updateTable("sales.invoice").set({shift_id:shiftId}).where("id","=",id).execute();
+      await sql`SELECT platform.audit('invoice.resume_shift','invoice',${id}::text,
+        jsonb_build_object('fromShift',${inv.shift_id}::text,'toShift',${shiftId}::text),${s.userId}::uuid)`.execute(trx);
+    });
+    return invoiceToJson((await invoices.byId(id))!);
   });
 
   app.get("/invoices/:id", async (req) => {
@@ -1231,14 +1257,14 @@ async function assertInvoiceInScope(
   }
   if (requireOwnership && inv.channel === "pos") {
     const context = await sql<{ created_by: string | null; user_id: string | null; status: string | null; branch_id: string | null }>`
-      SELECT i.created_by, s.user_id, s.status, s.branch_id
+      SELECT i.created_by, s.user_id, CASE WHEN s.sale_ended_at IS NOT NULL OR s.sale_cutoff_at <= clock_timestamp() THEN 'closed' ELSE s.status END AS status, s.branch_id
       FROM sales.invoice i LEFT JOIN sales.cash_shift s ON s.id=i.shift_id
       WHERE i.id=${invoiceId}::uuid`.execute(db);
     const row = context.rows[0];
     if (!row || row.created_by !== userId || row.user_id !== userId || row.branch_id !== inv.branchId)
       throw new InvoiceError("draft_owner_mismatch", "این فاکتور متعلق به صندوق شما نیست.", 403);
     if (inv.status === "draft" && row.status !== "open")
-      throw new InvoiceError("draft_shift_closed", "شیفت این پیش‌نویس بسته است؛ به شیفت تازه منتقل نمی‌شود.", 409);
+      throw new InvoiceError("draft_shift_closed", "برای ادامهٔ این پیش‌نویس، شیفت امروز را باز کنید.", 409);
   }
 }
 

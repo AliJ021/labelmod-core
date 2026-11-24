@@ -1,3 +1,4 @@
+import { ExcelButton } from "../components/ExcelExport.tsx";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { Returns } from "./Returns.tsx";
 import { DraftRefundPanel } from "../components/pos/DraftRefundPanel.tsx";
@@ -124,8 +125,8 @@ export function Invoices({ access }: { access?: NavAccess } = {}) {
   useEffect(() => { void pos.branches().then(r => setBranches(r.branches)).catch(e => setError(errorMessage(e))); }, []);
   const todayFilter = tab0(status) === "list" && dayMode === "today";
   const key = JSON.stringify([status, search, branch, page, from, to, channel, todayFilter, mine]);
-  const load = useCallback((signal: AbortSignal) => {
-    const q = new URLSearchParams({ status, search, page });
+  const load = useCallback((signal: AbortSignal, selectedPage = page) => {
+    const q = new URLSearchParams({ status, search, page:selectedPage });
     if (mine === "1") q.set("mine","1");
     if (channel) q.set("channel", channel);
     if (branch) q.set("branchId", branch);
@@ -138,11 +139,20 @@ export function Invoices({ access }: { access?: NavAccess } = {}) {
   async function resume(row: Pick<Row,"id"|"branchId">) {
     setError("");
     try {
-      const [invoice, shift] = await Promise.all([pos.invoice(row.id), pos.currentShift(row.branchId)]);
-      if (!shift || shift.id !== invoice.shiftId || shift.status !== "open" || invoice.createdBy !== shift.userId || invoice.status !== "draft")
-        throw new ApiError(409, "draft_context", "این پیش‌نویس در شیفت فعلی قابل ادامه نیست.", null);
+      const shift = await pos.currentShift(row.branchId);
+      if (!shift || shift.status !== "open") throw new ApiError(409, "draft_context", "ابتدا شیفت امروز را باز کنید.", null);
       if (readPendingScan(shift.userId) || readPendingPayment(shift.userId))
         throw new Error("ابتدا عملیات معلق صندوق را تعیین تکلیف کنید.");
+      let invoice: Invoice;
+      try { invoice = await pos.invoice(row.id); }
+      catch (err) {
+        if (!(err instanceof ApiError) || err.code !== "draft_shift_closed") throw err;
+        invoice = await api.post<Invoice>(`/invoices/${row.id}/resume-shift`, { shiftId: shift.id });
+      }
+      if (invoice.shiftId !== shift.id && invoice.createdBy === shift.userId && invoice.status === "draft")
+        invoice = await api.post<Invoice>(`/invoices/${row.id}/resume-shift`, { shiftId: shift.id });
+      if (invoice.shiftId !== shift.id || invoice.createdBy !== shift.userId || invoice.status !== "draft")
+        throw new ApiError(409, "draft_context", "این پیش‌نویس در شیفت فعلی قابل ادامه نیست.", null);
       if (invoice.reviewReason) await api.patch(`/invoices/${invoice.id}/review`, {hold:false,reason:"ادامهٔ پیش‌نویس در صندوق"});
       rememberCart({ invoiceId: invoice.id, shiftId: shift.id });
       navigate(`/?page=pos&pos.branch=${encodeURIComponent(row.branchId)}&pos.warehouse=${encodeURIComponent(invoice.warehouseId)}`);
@@ -160,7 +170,21 @@ export function Invoices({ access }: { access?: NavAccess } = {}) {
   if (selected) return <InvoiceDetail key={selected} onResume={resume} resumeError={error} id={selected} onBack={() => { setSelected(""); setRevision(value => value + 1); }} />;
   return <section className="stack invoice-center">
     <PageHeader eyebrow="فروش" title="فاکتورها" context="فاکتورهای نهایی و پیش‌نویس‌های ذخیره‌شده در سرور"
-      actions={<button className="btn" type="button" onClick={() => setRevision(v => v + 1)}>تازه‌سازی</button>} />
+      actions={<div className="row"><ExcelButton name="فاکتورها" load={async () => {
+        const rows = new Map<string, Row>();
+        const signal = new AbortController().signal;
+        for (let pageNumber = 1; ; pageNumber++) {
+          const result = await load(signal, String(pageNumber));
+          for (const row of result.rows) {
+            if (rows.has(row.id)) throw new Error("فهرست فاکتورها تغییر کرد. دوباره خروجی بگیرید.");
+            rows.set(row.id,row);
+          }
+          if (rows.size >= result.total) break;
+          if (!result.rows.length) throw new Error("دریافت فهرست فاکتورها کامل نشد.");
+        }
+        return [{title:"فاکتورها",columns:["شماره فاکتور","مشتری","شعبه","وضعیت","قابل پرداخت (ریال)","دریافت (ریال)","مانده (ریال)"],
+          rows:[...rows.values()].map(r=>[r.number,r.customerName,r.branchName,statusNames[r.chip ?? r.status] ?? r.status,r.payableAmount,r.receivedAmount,r.remainingAmount ?? null])}];
+      }} /><button className="btn" type="button" onClick={() => setRevision(v => v + 1)}>تازه‌سازی</button></div>} />
     <TabList id={tabsId} items={tabItems} value={tab} label="فهرست فاکتورها و پیش‌نویس‌ها"
       onChange={next => { setStatus(next === "drafts" ? "draft" : "all"); setPage("1"); }} />
     <TabPanels id={tabsId} items={tabItems} value={tab} className="stack">
