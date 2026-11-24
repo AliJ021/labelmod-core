@@ -629,10 +629,18 @@ function PosScreen({ actorId, mode, onMode, browseInvoices }: {
   }, [instagram, shift, currentStaff, actorId]);
   async function changeSeller(id: string) {
     if (!currentStaff || busy) return;
+    const remember = () => {
+      sessionStorage.setItem(currentStaff.key, id);
+      setStaff({ ...currentStaff, selected: id });
+    };
+    if (!invoice) {
+      // This is a tab preference until a draft exists. Persist before a reload can interrupt it.
+      try { remember(); } catch (err) { setError(message(err)); }
+      return;
+    }
     await guarded(async () => {
-      if (invoice) setInvoice(await api.patch<Invoice>(`/invoices/${invoice.id}/seller`, {sellerId:id}));
-      sessionStorage.setItem(currentStaff.key,id);
-      setStaff({...currentStaff,selected:id});
+      setInvoice(await api.patch<Invoice>(`/invoices/${invoice.id}/seller`, { sellerId: id }));
+      remember();
     });
   }
   const openDraft = invoice && invoice.status === "draft" ? invoice : null;
