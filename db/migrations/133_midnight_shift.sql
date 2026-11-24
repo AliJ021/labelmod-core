@@ -158,8 +158,14 @@ BEGIN
   END IF;
   RETURN NEW;
 END $$;
-CREATE TRIGGER invoice_trading_shift BEFORE INSERT OR UPDATE OF shift_id,status ON sales.invoice
+CREATE TRIGGER invoice_trading_shift BEFORE INSERT ON sales.invoice
   FOR EACH ROW WHEN (NEW.channel='pos' AND NEW.status IN ('draft','finalized','paid'))
+  EXECUTE FUNCTION sales.require_trading_shift();
+-- Collections or returns on an already posted invoice may settle on a later day.
+CREATE TRIGGER invoice_trading_transition BEFORE UPDATE OF shift_id,status ON sales.invoice
+  FOR EACH ROW WHEN (NEW.channel='pos' AND (
+    OLD.shift_id IS DISTINCT FROM NEW.shift_id OR
+    (OLD.status IN ('draft','confirmed','partially_paid') AND NEW.status IN ('finalized','paid'))))
   EXECUTE FUNCTION sales.require_trading_shift();
 CREATE TRIGGER payment_trading_shift BEFORE INSERT ON treasury.payment
   FOR EACH ROW WHEN (NEW.shift_id IS NOT NULL) EXECUTE FUNCTION sales.require_trading_shift();

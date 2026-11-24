@@ -462,7 +462,7 @@ export function registerSalesRoutes(app: FastifyInstance, deps: SalesRouteDeps):
     await requireForSession(db, s, "sale.create");
     await db.transaction().execute(async trx => {
       const target = await trx.selectFrom("sales.cash_shift").selectAll().where("id", "=", shiftId).forUpdate().executeTakeFirst();
-      if (!target || target.status !== "open" || target.sale_ended_at || target.user_id !== s.userId)
+      if (!target || target.status !== "open" || target.sale_ended_at || target.user_id !== s.userId || (target.sale_cutoff_at && target.sale_cutoff_at.getTime() <= Date.now()))
         throw new InvoiceError("draft_context", "شیفت فعال خودتان را باز کنید.", 409);
       await assertBranch(trx, s.userId, target.branch_id);
       const inv = await trx.selectFrom("sales.invoice").selectAll().where("id", "=", id).forUpdate().executeTakeFirst();
