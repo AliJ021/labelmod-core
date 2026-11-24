@@ -2474,9 +2474,9 @@ describe("آمادگی API صندوق", { skip }, () => {
 
   // ── بستن شیفت ───────────────────────────────────────────────────
 
-  test("بستن شیفت با Draft باز، ۴۰۹ فارسی می‌دهد", async () => {
+  test("بستن شیفت، پیش‌نویس باز را با همان شناسه نگه می‌دارد", async () => {
     const c = await loginAs(cashier);
-    await newCart("1"); // یک پیش‌نویس باز می‌گذاریم
+    const {invoiceId} = await newCart("1"); // یک پیش‌نویس باز می‌گذاریم
     const mine = await app.inject({
       method: "GET",
       url: `/shifts/current?branchId=${BRANCH}`,
@@ -2491,9 +2491,10 @@ describe("آمادگی API صندوق", { skip }, () => {
       ...sup,
       payload: { countedCash: "0" },
     });
-    assert.equal(r.statusCode, 409, r.body);
-    assert.equal(r.json().error.code, "rule_violation");
-    assert.match(r.json().error.message as string, /نهایی‌نشده/);
+    assert.equal(r.statusCode, 200, r.body);
+    assert.equal(r.json().status, "closed");
+    const saved = await handle.db.selectFrom("sales.invoice").select(["status","shift_id"]).where("id","=",invoiceId).executeTakeFirstOrThrow();
+    assert.deepEqual(saved,{status:"draft",shift_id:shiftId});
   });
 
   test("صندوق‌دار مجوز بستن شیفت ندارد", async () => {
