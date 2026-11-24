@@ -39,6 +39,9 @@ interface Pay { methodCode: string; amount: string; refNo?: string }
  * `settlement` را از وضعیت **همان لحظه** می‌سازد، نه از آنچه صفحه دیده بود.
  */
 function pos(api: MockApi, over: Partial<typeof draft> = {}, methods = METHODS) {
+  api.handlers.set(`GET /invoices/${INV}/print`, route => route.fulfill({
+    contentType: "text/html", body: "<html><body><div class='sheet'>رسید فروش آزمایشی</div></body></html>",
+  }));
   const state = { invoice: { ...draft, ...over }, payments: [] as Array<{ id: string; name: string; amount: string }>, posted: [] as Pay[], keys: [] as string[], finalized: 0, finalizeKeys: [] as string[],
     byKey: new Map<string, { id: string; body: Pay }>(), sealed: new Set<string>(), intentChecks: [] as string[] };
   const received = () => state.payments.reduce((n, p) => n + BigInt(p.amount), BigInt(over.receivedAmount ?? "0")).toString();
@@ -517,6 +520,7 @@ test("proforma load failure allows safe retry and an empty draft stays disabled"
 test("cash sale: confirm dialog, one finalize under double click, persistent success with change, print and next sale", async ({ page, api }) => {
   const s = pos(api);
   await open(page);
+  await page.getByRole("checkbox", { name: "چاپ رسید بلافاصله پس از ثبت" }).uncheck();
   await expect(page.locator(".pos-bar .pill")).toHaveText("۲ ردیف · ۳ عدد");
   await expect(payPanel(page).locator(".checkout-payable")).toContainText("20٬000");
   await pick(page, "نقدی");
@@ -539,7 +543,7 @@ test("cash sale: confirm dialog, one finalize under double click, persistent suc
   await expect(done.getByRole("region", { name: "ریز پرداخت‌ها" })).toContainText("نقدی");
   const print = done.getByRole("button", { name: "چاپ رسید" });
   await expect(print).toBeEnabled();
-  expect(api.calls.some(call => call.endsWith("/print")), "ثبت فروش چاپ خودکار ندارد").toBe(false);
+  expect(api.calls.some(call => call.endsWith("/print")), "با انتخاب چاپ دستی، ثبت فروش رسید را به چاپ نمی‌فرستد").toBe(false);
   // چاپ دستی است: بی کلیک هیچ پنجره‌ای باز نمی‌شود و وضعیت «ثبت شد» می‌ماند.
   expect(page.context().pages()).toHaveLength(1);
   await done.getByRole("button", { name: "فروش بعدی", exact: true }).click();
@@ -659,6 +663,7 @@ test("receipt with an already failed embedded logo still prints once without cha
     body: '<!doctype html><html><body><div class="sheet"><img alt="لیبل مد" src="data:image/png;base64,broken"><table class="totals"><tr><td>رسید</td></tr></table></div><button id="print-btn">چاپ</button></body></html>',
   }));
   await open(page, s);
+  await page.getByRole("checkbox", { name: "چاپ رسید بلافاصله پس از ثبت" }).uncheck();
   await page.getByRole("button", { name: "نهایی‌کردن فاکتور", exact: true }).click();
   await page.getByRole("dialog").getByRole("button", { name: "تأیید و نهایی‌کردن", exact: true }).click();
   const button = page.getByRole("button", { name: "چاپ رسید", exact: true });
@@ -679,6 +684,7 @@ test("receipt errors and timeout allow retry without reopening or mutating the s
   await page.addInitScript(() => { window.print = () => { Reflect.get(window, "recordReceiptPrint")(); }; });
   api.handlers.set(`GET /invoices/${INV}/print`, route => route.fulfill({ status: 403, json: { error: { code: "branch_forbidden" } } }));
   await open(page, s);
+  await page.getByRole("checkbox", { name: "چاپ رسید بلافاصله پس از ثبت" }).uncheck();
   await page.getByRole("button", { name: "نهایی‌کردن فاکتور", exact: true }).click();
   await page.getByRole("dialog").getByRole("button", { name: "تأیید و نهایی‌کردن", exact: true }).click();
   const button = page.getByRole("button", { name: "چاپ رسید", exact: true });

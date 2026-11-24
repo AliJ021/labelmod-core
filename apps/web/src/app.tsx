@@ -304,7 +304,6 @@ export function App() {
 
         <ShellNav top={<><ShellBrand />{me ? <ShellBranch key={me.id} /> : null}</>} bottom={me ? <ShellUser me={me} onPassword={() => setPasswordOpen(true)} onReauth={() => setUpgrading(true)} onLogout={() => void signOut()} /> : null} collapsed={railed} onToggle={toggleNav} id={tabsId} items={navItems} pending={pendingItems} access={access.state} onRetry={access.retry} zone={zone} onZone={switchZone} compact={compact} more={more} onMore={openMore} opener={() => moreOpener.current} />
         <main id="workspace-content" tabIndex={-1}>
-          {me && <VisibleExcel zone={zone} title={trailItem?.label ?? "گزارش فروشگاه"} />}
         {uiKit && UiKit ? <SectionBoundary key="ui-kit"><Suspense fallback={<p className="solid pad" role="status">در حال بارگذاری UI Kit…</p>}><UiKit /></Suspense></SectionBoundary> : null}
         <SectionBoundary key={`${me?.id}:${zone}:${homeVisit}`}>
         {/* Suspense داخل پنل است، نه دور همهٔ پنل‌ها: هنگام بارگذاری یک بخش،
@@ -343,6 +342,7 @@ export function App() {
         </Suspense>
         </TabPanels>
         </SectionBoundary>
+          {me && <VisibleExcel zone={zone} title={trailItem?.label ?? "گزارش فروشگاه"} />}
         </main>
 
         {passwordOpen && me ? <PasswordDialog name={me.fullName} own onCancel={() => setPasswordOpen(false)} onApply={async (password, currentPassword) => {

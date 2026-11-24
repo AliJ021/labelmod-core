@@ -90,7 +90,7 @@ test.describe("سفارش‌های سایت", () => {
       "GET /web/orders/41?items=2&notes=2"]);
     // هیچ کنشی سفارش را تغییر نمی‌دهد: فقط خواندن، جست‌وجو، بستن و رفتن بین صفحه‌ها.
     const labels = await page.locator("main").getByRole("button").allInnerTexts();
-    expect(labels.filter(l => !/به‌روزرسانی|جزئیات|بستن|تلاش دوباره|صفحهٔ|بازنشانی|جست‌وجو|برو|اقلام|یادداشت‌های|فیلتر/.test(l))).toEqual([]);
+    expect(labels.filter(l => l !== "اکسل جدول‌های این صفحه" && !/به‌روزرسانی|جزئیات|بستن|تلاش دوباره|صفحهٔ|بازنشانی|جست‌وجو|برو|اقلام|یادداشت‌های|فیلتر/.test(l))).toEqual([]);
   });
 
   test("stable paging past page 200 keeps the anchor; filters reset it; search goes only in a POST body", async ({ page, api }) => {
