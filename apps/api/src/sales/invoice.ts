@@ -486,8 +486,10 @@ export class InvoiceService {
    * Commit نشده.
    */
   async addLineIn(trx: Transaction<Database>, input: AddLineInput, authorize?: LineAdditionAuthorizer): Promise<void> {
-    await trx.selectFrom("sales.invoice").select("id").where("id", "=", input.invoiceId).forUpdate().execute();
-    await this.requireDraft(input.invoiceId, trx);
+    // Loading all prior lines here made a multi-line web order repeatedly read the entire cart.
+    const header = await trx.selectFrom("sales.invoice").select("status").where("id", "=", input.invoiceId).forUpdate().executeTakeFirst();
+    if (!header) throw new InvoiceError("invoice_not_found", "فاکتور یافت نشد", 404);
+    if (header.status !== "draft") throw new InvoiceError("invoice_not_draft", `فاکتور در وضعیت «${header.status}» است و دیگر تغییر نمی‌کند`);
     const variationId = await this.resolveVariation(input, trx);
     await this.assertStock(trx, input.invoiceId, variationId, input.qty);
     const listPrice = await this.currentPrice(variationId, undefined, trx);
@@ -1158,11 +1160,13 @@ export class InvoiceService {
       .where("p.invoice_id", "=", invoiceId).orderBy("p.id").execute();
   }
 
-  async cancelDraft(invoiceId: string, actorId: string, reason?: string, archive = false): Promise<Invoice> {
+  async cancelDraft(invoiceId: string, actorId: string, reason?: string, archive = false, archiveOwnOnly = false): Promise<Invoice> {
     await this.#db.transaction().execute(async (trx) => {
       await trx.selectFrom("sales.invoice").select("id").where("id", "=", invoiceId).forUpdate().execute();
       const inv = await this.byId(invoiceId, trx);
       if (!inv) throw new InvoiceError("invoice_not_found", "فاکتور یافت نشد", 404);
+      if (archiveOwnOnly && (inv.createdBy !== actorId || !["draft","cancelled"].includes(inv.status)))
+        throw new InvoiceError("archive_forbidden","حذف این فاکتور به مجوز مدیر نیاز دارد.",403);
       async function archiveInvoice() {
         if (!archive) return;
         const inserted = await sql`INSERT INTO sales.invoice_archive(invoice_id,actor_id,reason)

@@ -314,6 +314,14 @@ describe("بازطراحی رسید — جمع‌ها بی پرداخت و وض�
     assert.doesNotMatch(plain, /class="incl"/);
   });
 
+  test("قیمت قبل از کاهش و جمع تخفیف صریح و تغییر قیمت با هم", () => {
+    const discounted = { ...line({ unitPrice: 800_000n, discountAmount: 100_000n, netAmount: 1_100_000n }), qty: "1.500", listPrice: 1_000_000n };
+    const page = invoicePage({ ...base, lines: [discounted], netAmount: 1_100_000n, payableAmount: 1_100_000n, paidAmount: 1_100_000n }, "Asia/Tehran");
+    assert.match(page,/قیمت واحد: 100,000 تومان/);
+    assert.match(page,/جمع تخفیف<\/th><td class="num">40,000</);
+    assert.match(page,/قابل پرداخت<\/th><td class="num">110,000/);
+  });
+
   test("ترتیب اقلام حفظ می‌شود، بی rowspan؛ ۳۰+ قلم هر کدام سطر خودش را دارد", () => {
     const lines = Array.from({ length: 32 }, () => line());
     const html = invoicePage({ ...base, lines, netAmount: 32_000_000n, payableAmount: 32_000_000n, paidAmount: 32_000_000n }, "Asia/Tehran");

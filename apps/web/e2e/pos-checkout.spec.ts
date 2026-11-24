@@ -1077,3 +1077,21 @@ test("فروشنده در نشست و شیفت مشترک برای فروش بع
   await expect.poll(()=>bodies.length).toBe(1);
   expect(bodies[0]).toMatchObject({sellerId:seller});
 });
+
+test("automatic discount resolves percent or toman before posting the exact Rial amount", async ({ page, api }) => {
+  const state = pos(api);
+  const item = state.invoice.lines[0]!;
+  state.invoice = {...state.invoice, lines:[{...item,qty:"2",unitPrice:"10000000",netAmount:"20000000"}]};
+  const amounts: string[] = [];
+  api.handlers.set(`PATCH /invoices/${INV}/lines/l1/discount`,async route => {
+    amounts.push(route.request().postDataJSON().discountAmount);
+    await route.fulfill({json:state.invoice});
+  });
+  await open(page);
+  for (const [value,expected] of [["20","4000000"],["1000000","10000000"]] as const) {
+    await page.getByRole("button",{name:"تخفیف شلوار کتان",exact:true}).click();
+    await page.getByLabel(/^تخفیف \(/).fill(value);
+    await page.getByRole("button",{name:"اعمال تخفیف",exact:true}).click();
+    await expect.poll(()=>amounts.at(-1)).toBe(expected);
+  }
+});

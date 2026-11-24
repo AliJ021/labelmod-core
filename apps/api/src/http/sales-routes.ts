@@ -889,7 +889,7 @@ export function registerSalesRoutes(app: FastifyInstance, deps: SalesRouteDeps):
     const { id } = z.object({ id: uuid }).parse(req.params);
     const body = z.object({ reason: z.string().trim().max(200).optional(), archive: z.boolean().optional() }).parse(req.body ?? {});
     if (body.archive && !body.reason) throw new InvoiceError("reason_required", "دلیل حذف را وارد کنید.", 422);
-    if (body.archive) await requireForSession(db, s, "invoice.cancel");
+    const archiveOwnOnly = !!body.archive && (await can(db,{userId:s.userId,operation:"invoice.cancel",viaPin:s.pinUnlocked})).verdict !== "allow";
     try { await assertInvoiceInScope(db, s.userId, id, invoices); }
     catch (error) {
       // رسیدگی صریح سرپرست به پیش‌نویس رهاشده، مجوز ادامهٔ فروش نیست.
@@ -897,7 +897,7 @@ export function registerSalesRoutes(app: FastifyInstance, deps: SalesRouteDeps):
       await requireForSession(db, s, "invoice.cancel");
     }
     await requireSaleFor(s, id);
-    const inv = await invoices.cancelDraft(id, s.userId, body.reason, body.archive);
+    const inv = await invoices.cancelDraft(id, s.userId, body.reason, body.archive, archiveOwnOnly);
     return invoiceToJson(inv);
   });
 

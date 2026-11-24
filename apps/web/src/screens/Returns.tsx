@@ -62,7 +62,8 @@ const RETURN_TABS = [
 ] as const;
 const RETURN_TAB_ITEMS = RETURN_TABS.map(t => ({ ...t, icon: <Icon name={t.key === "returns" ? "return" : t.key === "exchanges" ? "swap" : "external"} size="sm" /> }));
 
-export function Returns() {
+type LinkedAction = "edit" | "return" | "void";
+export function Returns({ linkedId, action, onPosted }: { linkedId?:string; action?:LinkedAction; onPosted?:()=>void } = {}) {
   const [branches, setBranches] = useState<Branch[]>([]);
   const [branchId, setBranchId] = useState("");
   const [methods, setMethods] = useState<PaymentMethod[]>([]);
@@ -72,7 +73,8 @@ export function Returns() {
   const [lookupKind, setLookupKind] = useState<"number" | "phone">("number");
   // طرح ۱۰: سه زبانه؛ «مرجوعی» و «تعویض» همان فرم فاکتور را با دو حالت دارند و «درخواست‌های سایت» صف بررسی است.
   // تا عملیاتی در راه است زبانه عوض نمی‌شود (همان قفل دکمه‌های پیشین).
-  const [tab, setTabRaw] = useUrlTab("returns.tab", RETURN_TABS, "returns");
+  const [urlTab, setTabRaw] = useUrlTab("returns.tab", RETURN_TABS, "returns");
+  const tab = linkedId ? (action === "edit" ? "exchanges" : "returns") : urlTab;
   const mode: "returns" | "exchanges" = tab === "exchanges" ? "exchanges" : "returns";
   const tabsId = useTabsId();
   const [matches, setMatches] = useState<Array<{ id: string; number: string; payableAmount: string }>>([]);
@@ -104,6 +106,7 @@ export function Returns() {
 
   const [todayVersion, setTodayVersion] = useState(0);
   const operation = useReturnOperation((postedNumber) => {
+    onPosted?.();
     setDone(`عملیات ${postedNumber} ثبت شد.`);
     setTodayVersion((v) => v + 1);
     setInvoice(null); setView(null); setSelection(new Map()); setRefund("");
@@ -127,17 +130,17 @@ export function Returns() {
           b.branches.flatMap((x) => x.warehouses.filter((w) => w.kind === "outlet")),
         );
         const params = new URLSearchParams(window.location.search);
-        const linked = params.get("returns.invoice");
+        const linked = linkedId ?? params.get("returns.invoice");
         if (linked) {
           const inv = await pos.invoice(linked);
           setNumber(inv.number ?? ""); setBranchId(inv.branchId);
-          await loadInvoice(inv, params.get("returns.full") === "1");
+          await loadInvoice(inv, linkedId ? action === "void" : params.get("returns.full") === "1");
         } else if (b.branches.length === 1) setBranchId(b.branches[0]?.id ?? "");
       } catch (err) {
         setError(message(err));
       }
     })();
-  }, []);
+  }, [linkedId,action]);
 
   async function guarded(fn: () => Promise<void>) {
     if (busy) return;
@@ -241,7 +244,7 @@ export function Returns() {
 
   return (
     <div className="stack" style={{ gap: "var(--s-4)" }}>
-      <TabList id={tabsId} items={RETURN_TAB_ITEMS} value={tab} onChange={k => { if (!operation.pending) setTabRaw(k); }} label="مرجوعی و تعویض" />
+      {!linkedId && <TabList id={tabsId} items={RETURN_TAB_ITEMS} value={tab} onChange={k => { if (!operation.pending) setTabRaw(k); }} label="مرجوعی و تعویض" />}
       <TabPanels id={tabsId} items={RETURN_TAB_ITEMS} value={tab} className="stack returns-panel">
       {tab === "web" ? <WebRefundRequests key={branchId} branchId={branchId} /> : <>
       {error ? (
@@ -263,7 +266,7 @@ export function Returns() {
         <div className="list-card-body stack">
         <ReturnRecovery operation={operation} />
 
-        {branches.length > 1 ? (
+        {!linkedId && branches.length > 1 ? (
           <div className="stack" style={{ gap: "var(--s-2)", marginBottom: "var(--s-3)" }}>
             {branches.map((b) => (
               <button
@@ -279,7 +282,7 @@ export function Returns() {
           </div>
         ) : null}
 
-        <form
+        {!linkedId && <form
           className="stack returns-lookup"
           style={{ gap: "var(--s-3)" }}
           onSubmit={(e) => {
@@ -311,7 +314,7 @@ export function Returns() {
           >
             {busy ? "…" : "پیدا کن"}
           </button>
-        </form>
+        </form>}
         <div className="stack">{matches.map(row => <button className="btn" type="button" key={row.id} disabled={busy || !!operation.pending}
           onClick={() => void guarded(async () => loadInvoice(await api.get<Invoice>(`/invoices/${row.id}`)))}>
           {row.number} · <Money rial={row.payableAmount} />
@@ -426,7 +429,8 @@ export function Returns() {
                   type="button"
                   className={m.code === method ? "btn btn--primary" : "btn"}
                   onClick={() => { setMethod(m.code); setRefundPaymentId(""); setRefundReference(""); }}
-                  disabled={busy}
+                  aria-pressed={m.code === method}
+                  disabled={busy || (accountKey !== "" && !account.data)}
                 >
                   {m.name}
                 </button>
@@ -510,7 +514,7 @@ export function Returns() {
         </fieldset>
       ) : null}
       {/* طرح ۱۰: فهرست برگ‌های ثبت‌شدهٔ امروز، زیر هر دو زبانهٔ مرجوعی و تعویض. */}
-      <TodayReturns version={todayVersion} />
+      {!linkedId && <TodayReturns version={todayVersion} />}
       </>}
       </TabPanels>
     </div>

@@ -49,17 +49,17 @@ export function registerInvoiceWorkspaceRoutes(app: FastifyInstance, db: Db): vo
     //            «تسویه‌شده» از وضعیت خوانده نمی‌شود؛ از مانده خوانده می‌شود. پیش‌نویس و لغوشده خودشان‌اند.
     const scoped = sql`SELECT i.*, c.full_name AS customer_name,
         CASE WHEN length(c.mobile_normalized) >= 8 THEN left(c.mobile_normalized, 4) || ' *** ' || right(c.mobile_normalized, 4) END AS customer_mobile_masked,
-        coalesce(pay.amount,0) AS received, coalesce(pay.methods,'') AS methods,
-        greatest(i.payable_amount-coalesce(pay.amount,0)-coalesce(ex.transfer_amount,0)-ret.debt,0) AS remaining,
+        coalesce(pay.amount,0) AS received,
+        concat_ws('، ', NULLIF(pay.methods,''), CASE WHEN ex.transfer_amount>0 THEN 'انتقال از تعویض' END) AS methods,
+        greatest(i.payable_amount-(CASE WHEN i.status='draft' THEN coalesce(pay.amount,0) ELSE i.paid_amount END)-coalesce(ex.transfer_amount,0)-ret.debt,0) AS remaining,
         CASE WHEN ret.exchanged THEN 'exchanged'
              WHEN i.status IN ('partially_returned','returned') THEN 'returns'
-             WHEN i.status IN ('finalized','paid') THEN CASE WHEN i.payable_amount-coalesce(pay.amount,0)-coalesce(ex.transfer_amount,0)-ret.debt > 0 THEN 'open' ELSE 'settled' END
+             WHEN i.status IN ('finalized','paid') THEN CASE WHEN i.payable_amount-(CASE WHEN i.status='draft' THEN coalesce(pay.amount,0) ELSE i.paid_amount END)-coalesce(ex.transfer_amount,0)-ret.debt > 0 THEN 'open' ELSE 'settled' END
              ELSE i.status END AS chip
       FROM sales.invoice i LEFT JOIN sales.customer c ON c.id=i.customer_id
       LEFT JOIN sales.exchange ex ON ex.replacement_invoice_id=i.id
       LEFT JOIN LATERAL (SELECT coalesce(sum(r.receivable_applied),0) AS debt,
-        bool_and(x.id IS NOT NULL) AS exchanged FROM sales.sale_return r
-        LEFT JOIN sales.exchange x ON x.return_id=r.id WHERE r.invoice_id=i.id AND r.status='posted') ret ON true
+        bool_and(r.kind='exchange') AS exchanged FROM sales.sale_return r WHERE r.invoice_id=i.id AND r.status='posted') ret ON true
       LEFT JOIN LATERAL (SELECT sum(p.amount) AS amount,string_agg(DISTINCT m.name,'، ') AS methods
         FROM treasury.payment p JOIN treasury.payment_method m ON m.code=p.method_code
         WHERE p.invoice_id=i.id AND p.direction='in' AND p.status IN ('succeeded','settled','reconciled')) pay ON true
@@ -221,7 +221,13 @@ export function registerInvoiceWorkspaceRoutes(app: FastifyInstance, db: Db): vo
     const canManage = (await can(db,{userId:s.userId,operation:"invoice.cancel",viaPin:s.pinUnlocked})).verdict === "allow";
     const canEditLines = inv.status === "draft" && (inv.createdBy === s.userId || canManage)
       && (inv.channel === "pos" || inv.channel === "instagram");
-    return { invoice: invoiceToJson(inv), payments: await invoices.draftPayments(id), exchanges: exchanges.rows, canManage, canEditLines };
+    const accounting = (await sql<{remaining:string; exchanged:boolean}>`
+      SELECT greatest(i.payable_amount-i.paid_amount-sales.exchange_in(i.id)-coalesce(sum(r.receivable_applied),0),0)::text AS remaining,
+        coalesce(bool_and(r.kind='exchange') FILTER (WHERE r.id IS NOT NULL),false) AS exchanged
+      FROM sales.invoice i LEFT JOIN sales.sale_return r ON r.invoice_id=i.id AND r.status='posted'
+      WHERE i.id=${id}::uuid GROUP BY i.id`.execute(db)).rows[0]!;
+    return { invoice: invoiceToJson(inv), payments: await invoices.draftPayments(id), exchanges: exchanges.rows,
+      remaining: accounting.remaining, exchangesOnly: accounting.exchanged, canManage, canEditLines };
 
   });
 }

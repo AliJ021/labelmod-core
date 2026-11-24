@@ -218,10 +218,14 @@ export function registerWebRoutes(app: FastifyInstance, deps: WebRouteDeps): voi
       replay: async (ref) => ref,
     });
 
-    const invoice = await invoices.byId(out.value);
+    // Acknowledgement needs only the posted header and stock watermark, both read after commit.
+    const [invoice, stock] = await Promise.all([
+      db.selectFrom("sales.invoice").select(["id","status","payable_amount"])
+        .select(sql<string | null>`sales.invoice_display_number(id)`.as("number"))
+        .where("id","=",out.value).executeTakeFirst(),
+      stockWatermarks(body.warehouseId, body.lines.map(line => line.sku)),
+    ]);
     if (!invoice) throw new InvoiceError("invoice_not_found", "فاکتور یافت نشد", 404);
-
-    const stock = await stockWatermarks(body.warehouseId, body.lines.map((l) => l.sku));
     reply.header("server-timing", `lmc;dur=${reply.elapsedTime.toFixed(2)}`);
     return reply.code(out.replayed ? 200 : 201).send({
       invoiceId: invoice.id,
@@ -229,7 +233,7 @@ export function registerWebRoutes(app: FastifyInstance, deps: WebRouteDeps): voi
       status: invoice.status,
       // پول در JSON **رشته** است، نه عدد — و `bigint` را هم اصلاً
       // نمی‌شود Serialize کرد. `serializeMoney` تنها مرز تبدیل است.
-      payableAmount: serializeMoney(invoice.payableAmount),
+      payableAmount: serializeMoney(parseMoney(invoice.payable_amount)),
       replayed: out.replayed,
       stock,
     });

@@ -1,4 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
+import { Returns } from "./Returns.tsx";
+import { DraftRefundPanel } from "../components/pos/DraftRefundPanel.tsx";
+import { ActionKeys } from "../lib/action-key.ts";
 import { PosProductPicker } from "../components/PosProductPicker.tsx";
 import { api, ApiError } from "../lib/api.ts";
 import { useUrlState, navigate } from "../lib/use-url-state.ts";
@@ -247,7 +250,7 @@ export function Invoices({ access }: { access?: NavAccess } = {}) {
 }
 
 function InvoiceDetail({ id, onBack, onResume, resumeError }: { id: string; onBack: () => void; onResume: (row:Pick<Row,"id"|"branchId">)=>Promise<void>; resumeError:string }) {
-  const load = useCallback((signal: AbortSignal) => api.get<{ invoice: Invoice; payments: DraftPayment[]; exchanges?: {id:string; number:string; source:boolean; transfer:string}[]; canManage?:boolean; canEditLines?:boolean }>(`/invoices/${encodeURIComponent(id)}/overview`, { signal }), [id]);
+  const load = useCallback((signal: AbortSignal) => api.get<{ invoice: Invoice; payments: DraftPayment[]; exchanges?: {id:string; number:string; source:boolean; transfer:string}[]; canManage?:boolean; canEditLines?:boolean; exchangesOnly?:boolean; remaining?:string }>(`/invoices/${encodeURIComponent(id)}/overview`, { signal }), [id]);
   const [revision,setRevision] = useState(0);
   const [reason,setReason] = useState("");
   const [pending,setPending] = useState(false);
@@ -258,7 +261,10 @@ function InvoiceDetail({ id, onBack, onResume, resumeError }: { id: string; onBa
     try { await api.patch(`/invoices/${id}/review`,{hold,reason:reason.trim()}); setReason(""); setRevision(n => n+1); }
     catch(err) { setIssue(errorMessage(err)); } finally { setPending(false); }
   }
+  const [documentAction,setDocumentAction] = useState<"edit"|"return"|"void"|null>(null);
   const [editing, setEditing] = useState(false);
+  const refundKeys = useRef(new ActionKeys());
+  const [refundOpen, setRefundOpen] = useState(false);
   const [archive, setArchive] = useState(false);
   const editingLock = useRef(false);
   const pendingPick = useRef<{variationId:string; key:string} | null>(null);
@@ -271,8 +277,9 @@ function InvoiceDetail({ id, onBack, onResume, resumeError }: { id: string; onBa
   }
   const inv = q.data?.invoice;
   const links = q.data?.exchanges ?? [];
-  const sourceExchange = links.some(link => link.source);
+  const sourceExchange = q.data?.exchangesOnly;
   const state = inv && (sourceExchange && ["returned","partially_returned"].includes(inv.status) ? "exchanged" : inv.status);
+  const outstanding = q.data?.payments.filter(payment => !["failed","reversed"].includes(payment.status)) ?? [];
   const editable = inv?.status === "draft" && !inv.reviewReason && q.data?.canEditLines;
   async function pick(variationId: string) {
     const prior = pendingPick.current;
@@ -295,9 +302,10 @@ function InvoiceDetail({ id, onBack, onResume, resumeError }: { id: string; onBa
       {editable && <button className="btn" onClick={()=>setEditing(!editing)}>{editing ? "پایان ویرایش" : "ویرایش اقلام"}</button>}
       {editable && editing && <PosProductPicker warehouseId={inv.warehouseId} busy={pending} onPick={pick} />}
       <div className="scroll-x"><table className="grid"><thead><tr><th>کالا</th><th>تعداد</th><th>قیمت واحد (تومان)</th><th>مبلغ (تومان)</th></tr></thead>
-        <tbody>{inv.lines.map(l => <tr key={l.id}><td>{l.productName}<small dir="ltr">{l.sku}</small>{editing && editable &&
-          <button className="btn" disabled={pending} onClick={()=>void change(()=>pos.removeLine(id,l.id))}>حذف قلم</button>}</td><td>{l.qty}</td><td>{toman(BigInt(l.unitPrice))}</td><td>{toman(BigInt(l.netAmount))}</td></tr>)}</tbody></table></div>
-      <p>قابل پرداخت: <strong>{toman(BigInt(inv.payableAmount))} تومان</strong></p></section>
+        <tbody>{inv.lines.map(l => <tr key={l.id}><td>{l.productName}<small><bdi>{l.sku}</bdi></small>{editing && editable &&
+          <button className="btn" disabled={pending} onClick={()=>void change(()=>pos.removeLine(id,l.id))}>حذف قلم</button>}</td><td>{l.qty}</td><td>{toman(BigInt(l.listPrice ?? l.unitPrice))}</td><td>{toman(BigInt(l.netAmount))}</td></tr>)}</tbody></table></div>
+      <p>قابل پرداخت: <strong>{toman(BigInt(inv.payableAmount))} تومان</strong></p>
+      {q.data?.remaining !== undefined && inv.status !== "draft" && <p>ماندهٔ فاکتور · <Money rial={q.data.remaining} /></p>}</section>
       <section className="solid pad stack"><h2>عملیات فاکتور</h2>
       {issue && <p role="alert">{issue}</p>}
       {inv.reviewReason && <p role="status">در انتظار بررسی · {inv.reviewReason}</p>}
@@ -306,13 +314,26 @@ function InvoiceDetail({ id, onBack, onResume, resumeError }: { id: string; onBa
         <button className="btn" disabled={pending || !reason.trim()} onClick={() => void review(!inv.reviewReason)}>{inv.reviewReason ? "رفع تعلیق" : "تعلیق برای بررسی"}</button>
       </div>}
       {["finalized","paid","partially_returned"].includes(inv.status) && <div className="invoice-actions">
-        <a className="btn" href={`/?page=returns&returns.invoice=${inv.id}&returns.tab=exchanges`}>اصلاح اقلام با سند مرتبط</a>
-        <a className="btn" href={`/?page=returns&returns.invoice=${inv.id}`}>مرجوعی و بازپرداخت</a>
-        <a className="btn" href={`/?page=returns&returns.invoice=${inv.id}&returns.full=1`}>ابطال کامل و تسویه</a>
+        {inv.channel === "web" ? <a className="btn" href="/?page=returns&returns.tab=web">رسیدگی به درخواست مرجوعی سایت</a> : <>
+          <button className="btn" aria-pressed={documentAction==="edit"} onClick={()=>setDocumentAction("edit")}>ویرایش اقلام</button>
+          <button className="btn" aria-pressed={documentAction==="return"} onClick={()=>setDocumentAction("return")}>مرجوعی و بازپرداخت</button>
+          <button className="btn" aria-pressed={documentAction==="void"} onClick={()=>setDocumentAction("void")}>ابطال کامل و تسویه</button>
+        </>}
       </div>}
+      {documentAction && <Returns key={documentAction} linkedId={id} action={documentAction} onPosted={()=>{
+        setDocumentAction(null); setRevision(n=>n+1);
+      }}/>}
       {inv.status==="draft" && inv.channel==="pos" && <button type="button" className="btn" disabled={pending} onClick={()=>void onResume(inv)}>ادامه در صندوق برای ویرایش یا لغو</button>}
-      {inv.status === "draft" && <button className="btn" disabled={pending || !reason.trim()} onClick={()=>void change(()=>api.post(`/invoices/${id}/cancel`,{reason}))}>لغو پیش‌نویس</button>}
-      {q.data?.canManage && ["draft","cancelled","returned"].includes(inv.status) && <div className="stack">
+      {inv.status === "draft" && outstanding.length === 0 && <button className="btn" disabled={pending || !reason.trim()} onClick={()=>void change(()=>api.post(`/invoices/${id}/cancel`,{reason}))}>لغو پیش‌نویس</button>}
+      {inv.status === "draft" && q.data?.canManage && outstanding.length > 0 &&
+        (refundOpen ? <DraftRefundPanel payments={outstanding} busy={pending} onCancel={()=>setRefundOpen(false)}
+          onConfirm={(why,reference,payout)=>void change(async()=>{
+            const body = { reason:why, confirmed:true as const, paymentIds:outstanding.map(payment=>payment.id),
+              ...(reference && {refundReference:reference}), ...(payout && {payoutMethod:payout}) };
+            await refundKeys.current.run(JSON.stringify(body),key=>pos.refundDraft(id,body,key));
+            setRefundOpen(false);
+          })}/> : <button className="btn" onClick={()=>setRefundOpen(true)}>برگشت وجه و لغو پیش‌نویس</button>)}
+      {(q.data?.canManage || (inv.status === "draft" && editable && outstanding.length === 0)) && ["draft","cancelled","returned"].includes(inv.status) && <div className="stack">
         <button className="btn" onClick={()=>setArchive(!archive)}>حذف از فهرست</button>
         {archive && <><Field label="دلیل حذف از فهرست"><input maxLength={200} value={reason} onChange={e=>setReason(e.target.value)} /></Field>
           <button className="btn" disabled={pending || !reason.trim()} onClick={()=>void change(async()=>{

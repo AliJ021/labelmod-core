@@ -2215,6 +2215,39 @@ describe("آمادگی API صندوق", { skip }, () => {
     );
   });
 
+  test("مدیر پیش‌نویس صندوق‌دار را در همان شعبه ویرایش و با دلیل از فهرست حذف می‌کند", async () => {
+    const username = `archive_admin_${suffix}`;
+    const user = await handle.db.insertInto("identity.app_user").values({username,full_name:"مدیر آزمون",password_hash:await hashSecret(PASSWORD),
+      is_active:true,mobile:null,pin_hash:null,totp_secret:null}).returning("id").executeTakeFirstOrThrow();
+    await handle.db.insertInto("identity.user_role").values({user_id:user.id,role_code:"admin",branch_id:BRANCH}).execute();
+    const admin = await loginAs(username);
+    const draft = await newCart();
+    const path = `/invoices/${draft.invoiceId}`;
+    const request = {method:"POST" as const,url:`${path}/scan`,...admin,headers:{...admin.headers,"idempotency-key":crypto.randomUUID()},payload:{barcode:BARCODE}};
+    const first = await app.inject(request);
+    const retry = await app.inject(request);
+    assert.equal(first.statusCode,200,first.body);
+    assert.equal(retry.json().replayed,true);
+    assert.equal(Number(retry.json().invoice.lines[0].qty),2);
+    const removed = await app.inject({method:"DELETE",url:`${path}/lines/${draft.body.lines[0]!.id}`,...admin});
+    assert.equal(removed.statusCode,200,removed.body);
+    const archive = {method:"POST" as const,url:`${path}/cancel`,...admin,payload:{reason:"پیش‌نویس تکراری",archive:true}};
+    const denied = await app.inject({...archive,...await loginAs(outsider)});
+    assert.equal(denied.statusCode,403);
+    for (let i=0;i<2;i++) {
+      const response=await app.inject(archive);
+      assert.equal(response.statusCode,200,response.body);
+    }
+    const overview = await app.inject({method:"GET",url:`${path}/overview`,...admin});
+    assert.equal(overview.json().invoice.status,"cancelled");
+    const list = await app.inject({method:"GET",url:"/invoices?status=cancelled",...admin});
+    assert.equal(list.statusCode,200,list.body);
+    assert.ok(!list.json().rows.some((r:{id:string})=>r.id===draft.invoiceId));
+    const recorded = await sql<{n:number}>`SELECT count(*)::int n FROM platform.audit_log
+      WHERE action='invoice.archive' AND entity_id=${draft.invoiceId}`.execute(handle.db);
+    assert.equal(recorded.rows[0]?.n,1);
+  });
+
   test("سرپرست قیمت سطر دیگران را با مجوز اصلاح می‌کند؛ ادامهٔ فروش همچنان متعلق به مالک است", async () => {
     const {invoiceId,body}=await newCart("1");
     const sup=await loginAs(supervisor);

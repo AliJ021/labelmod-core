@@ -162,9 +162,9 @@ export function SiteOrders() {
       </form>
       <Field label="وضعیت سفارش">
         <select value={status ?? ""} onChange={e => refilter({ status: e.target.value })}>
-          <option value="">همهٔ وضعیت‌ها</option>
+          <option value="">در حال انجام و تکمیل‌شده</option>
           {/* وضعیت‌ها از خود سایت می‌آیند، وضعیت‌های افزونه‌ای هم. */}
-          {(ready?.statuses ?? (status ? [{ slug: status, label: status }] : [])).map(s => <option key={s.slug} value={s.slug}>{s.label}</option>)}
+          {(ready?.statuses ?? (status ? [{ slug: status, label: status }] : [])).filter(s => s.slug === "processing" || s.slug === "completed").map(s => <option key={s.slug} value={s.slug}>{s.label}</option>)}
         </select>
       </Field>
       <Field label="روش پرداخت">

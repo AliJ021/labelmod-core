@@ -108,12 +108,13 @@ export function registerPublicRoutes(app: FastifyInstance, deps: { db: Db }): vo
       color: string | null;
       size: string | null;
       qty: string;
+      list_price: string | null;
       unit_price: string;
       discount_amount: string;
       net_amount: string;
     }>`
       SELECT p.name_internal AS product_name, v.color, v.size,
-             l.qty::text, l.unit_price::text,
+             l.qty::text, l.unit_price::text, l.list_price::text,
              l.discount_amount::text, l.net_amount::text
         FROM sales.invoice_line l
         JOIN sales.invoice    i ON i.id = l.invoice_id
@@ -129,6 +130,7 @@ export function registerPublicRoutes(app: FastifyInstance, deps: { db: Db }): vo
       size: l.size,
       qty: l.qty,
       unitPrice: parseMoney(l.unit_price),
+      listPrice: l.list_price === null ? null : parseMoney(l.list_price),
       discountAmount: parseMoney(l.discount_amount),
       netAmount: parseMoney(l.net_amount),
     }));

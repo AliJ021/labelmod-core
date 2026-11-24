@@ -92,24 +92,18 @@ export class WebOrderService {
    * تراکنش صدایش می‌زند تا مجوز قیمت را بگیرد، و `ingest` داخل همان
    * تراکنش. یک تعریف از «SKU چه کالایی است»، نه دو تا.
    */
-  async resolveSku(ex: Executor, sku: string): Promise<string> {
-    const v = await ex
-      .selectFrom("catalog.variation")
-      .select(["id", "status"])
-      .where("sku", "=", sku)
-      .executeTakeFirst();
-
-    if (!v) {
-      throw new InvoiceError(
-        "sku_not_found",
-        `کالایی با SKU «${sku}» در سیستم نیست. سفارش سایت ثبت نشد.`,
-        422,
-      );
+  private async resolveSkus(ex: Executor, skus: string[]): Promise<Map<string,string>> {
+    const rows = await ex.selectFrom("catalog.variation").select(["sku","id","status"])
+      .where("sku","in",skus).execute();
+    const found = new Map(rows.map(row => [row.sku,row]));
+    const ids = new Map<string,string>();
+    for (const sku of skus) {
+      const row = found.get(sku);
+      if (!row) throw new InvoiceError("sku_not_found",`کالایی با SKU «${sku}» در سیستم نیست. سفارش سایت ثبت نشد.`,422);
+      if (row.status !== "active") throw new InvoiceError("variation_inactive",`کالای «${sku}» غیرفعال است`,422);
+      ids.set(sku,row.id);
     }
-    if (v.status !== "active") {
-      throw new InvoiceError("variation_inactive", `کالای «${sku}» غیرفعال است`, 422);
-    }
-    return v.id;
+    return ids;
   }
 
   /**
@@ -179,7 +173,8 @@ export class WebOrderService {
 
     // پیش از حسابرسی تغییر قیمت، هویت سفارش و تمام موجودی‌های آن به ترتیب قفل می‌شوند.
     // این مرحله فقط قفل است؛ Snapshot هم‌زمان قیمت هیچ قفل حسابرسی از ما نمی‌بیند.
-    for (const line of input.lines) await this.resolveSku(trx, line.sku);
+    const skus = [...new Set(input.lines.map(line=>line.sku))];
+    const initialIds = await this.resolveSkus(trx,skus);
     const reservationLines = JSON.stringify(input.lines.map(l => ({ sku: l.sku, qty: l.qty })));
     await sql`SELECT inventory.web_order_reserve(${input.actorId}::uuid, ${input.externalId},
       ${input.branchId}::uuid, ${input.warehouseId}::uuid, ${reservationLines}::jsonb,
@@ -200,8 +195,11 @@ export class WebOrderService {
       ...(customerId === undefined ? {} : { customerId }),
     });
 
+    // Validate the SKU mapping again after the inventory locks. One query covers the entire basket.
+    const ids = await this.resolveSkus(trx,skus);
     for (const line of input.lines) {
-      const variationId = await this.resolveSku(trx, line.sku);
+      const variationId = ids.get(line.sku)!;
+      if (variationId !== initialIds.get(line.sku)) throw new InvoiceError("sku_changed","نگاشت کالا هنگام ثبت سفارش تغییر کرد.",409);
       await this.#invoices.addLineIn(trx, {
         invoiceId,
         variationId,
