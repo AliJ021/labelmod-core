@@ -56,6 +56,7 @@ export interface InvoiceCustomer {
 }
 
 export interface Shift {
+  saleCutoffAt?: string | null;
   id: string;
   branchId: string;
   userId: string;

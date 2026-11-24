@@ -523,6 +523,33 @@ function PosScreen({ actorId, mode, onMode, browseInvoices }: {
     })();
   }, [branchId, instagram, actorId]);
 
+  // Re-read the server at its cutoff; a tab left open overnight may still show yesterday's cart.
+  useEffect(() => {
+    if (instagram || !shift?.saleCutoffAt || busy || pendingScan || payPhase.kind !== "idle" || completed) return;
+    const deadline = Date.parse(shift.saleCutoffAt);
+    if (!Number.isFinite(deadline)) return;
+    let active = true;
+    let checking = false;
+    let timer: number;
+    const check = async () => {
+      if (checking || Date.now() < deadline) return;
+      checking = true;
+      try {
+        const current = await pos.currentShift(branchId);
+        if (active && current?.id !== shift.id) {
+          setInvoice(null); setReceived(0n); setMobile(""); setNameForMobile(null);
+          setClosing(false); setShift(current); setError(null);
+          return;
+        }
+      } catch { /* Retry after sleep, clock skew or a temporary network outage. */ }
+      finally { checking = false; }
+      if (active) { window.clearTimeout(timer); timer = window.setTimeout(check, 60_000); }
+    };
+    timer = window.setTimeout(check, Math.max(0, deadline - Date.now() + 100));
+    document.addEventListener("visibilitychange", check);
+    return () => { active = false; window.clearTimeout(timer); document.removeEventListener("visibilitychange", check); };
+  }, [instagram, shift, branchId, busy, pendingScan, payPhase.kind, completed]);
+
   /**
    * سبدی که به همین زمینه تعلق دارد: در صندوق فروشگاه همان شیفت؛ در حالت اینستاگرام
    * فاکتور کانال اینستاگرامِ بی‌شیفتِ همین شعبه. یک تعریف، برای بازیابی و اسکن.
@@ -1348,6 +1375,7 @@ function PosScreen({ actorId, mode, onMode, browseInvoices }: {
       );
       setShift(null);
       setClosing(false);
+      setInvoice(null); setReceived(0n); setMobile(""); setNameForMobile(null);
       dropCart();
     });
 

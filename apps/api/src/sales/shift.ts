@@ -19,6 +19,7 @@ export interface Shift {
   branchId: string;
   userId: string;
   openedAt: Date;
+  saleCutoffAt: Date | null;
   openingCash: bigint;
   closedAt: Date | null;
   countedCash: bigint | null;
@@ -226,6 +227,7 @@ function toShift(row: {
   branch_id: string;
   user_id: string;
   opened_at: Date;
+  sale_cutoff_at: Date | null;
   opening_cash: string;
   closed_at: Date | null;
   counted_cash: string | null;
@@ -241,6 +243,7 @@ function toShift(row: {
     branchId: row.branch_id,
     userId: row.user_id,
     openedAt: row.opened_at,
+    saleCutoffAt: row.sale_cutoff_at,
     openingCash: parseMoney(row.opening_cash),
     closedAt: row.closed_at,
     countedCash: row.counted_cash === null ? null : parseMoney(row.counted_cash),
@@ -260,6 +263,7 @@ export function shiftToJson(s: Shift) {
     branchId: s.branchId,
     userId: s.userId,
     openedAt: s.openedAt.toISOString(),
+    saleCutoffAt: s.saleCutoffAt?.toISOString() ?? null,
     openingCash: serializeMoney(s.openingCash),
     closedAt: s.closedAt?.toISOString() ?? null,
     countedCash: s.countedCash === null ? null : serializeMoney(s.countedCash),
