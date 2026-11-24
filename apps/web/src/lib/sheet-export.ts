@@ -13,6 +13,10 @@ function numericCell(header: string, value: ExportValue): ExportValue {
 export async function saveWorkbook(name: string, tables: ExportTable[]) {
   if (!tables.length || !tables.some(t => t.rows.length)) throw new Error("داده‌ای برای خروجی وجود ندارد.");
   const { default: write } = await import("write-excel-file/browser");
+  const tokens = getComputedStyle(document.documentElement);
+  const headerColor = tokens.getPropertyValue("--xlsx-header").trim();
+  const paperColor = tokens.getPropertyValue("--xlsx-paper").trim();
+  const stripeColor = tokens.getPropertyValue("--xlsx-stripe").trim();
   const used = new Set<string>();
   const sheets = tables.filter(t => t.rows.length).map(table => {
     const base = table.title.replace(/[\\/?:*[\]]/g, " ").trim().slice(0, 27) || "گزارش";
@@ -20,10 +24,10 @@ export async function saveWorkbook(name: string, tables: ExportTable[]) {
     for (let n = 2; used.has(sheet); n++) sheet = base.slice(0, 25) + " " + n;
     used.add(sheet);
     const data: SheetData = [[...table.columns.map(value => ({ value, type: String, fontWeight: "bold" as const,
-      fontFamily: "Tahoma", textColor: "#FFFFFF", backgroundColor: "#24453E", align: "right" as const, height: 30 }))]];
+      fontFamily: "Tahoma", textColor: paperColor, backgroundColor: headerColor, align: "right" as const, height: 30 }))]];
     for (const [index,row] of table.rows.entries()) data.push(table.columns.map((header, column): Cell => {
       const value = numericCell(header, row[column] ?? null);
-      const style = { fontFamily:"Tahoma", fontSize:10, align:"right" as const, backgroundColor: index % 2 ? "#F1F5F3" : "#FFFFFF", height:22 };
+      const style = { fontFamily:"Tahoma", fontSize:10, align:"right" as const, backgroundColor: index % 2 ? stripeColor : paperColor, height:22 };
       if (value === null) return { type: String, value: "", ...style };
       return typeof value === "number" ? { type: Number, value, format: "#,##0.###", ...style } : { type: String, value, ...style };
     }));
