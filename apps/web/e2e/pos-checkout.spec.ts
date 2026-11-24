@@ -289,6 +289,7 @@ for (const allowFractionalQty of [false, true]) {
     await page.getByRole("button", { name: "ثبت قیمت", exact: true }).click();
     await expect(page.getByLabel(/قیمت واحد/)).toHaveCount(0);
     await page.getByRole("button", { name: "تخفیف شلوار کتان", exact: true }).click();
+    await page.getByLabel("نوع تخفیف").selectOption("amount");
     await page.getByLabel(/^تخفیف \(تومان\)/).fill("۰٫۱");
     await page.getByRole("button", { name: "اعمال تخفیف", exact: true }).click();
     await expect(page.getByLabel(/^تخفیف \(تومان\)/)).toHaveCount(0);

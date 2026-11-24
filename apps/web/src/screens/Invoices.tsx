@@ -157,7 +157,7 @@ export function Invoices({ access }: { access?: NavAccess } = {}) {
   // آخرین شمارش و جمع رسیده می‌ماند تا هنگام بارگذاری صفحه نپرد؛ با خطا پنهان می‌شود.
   const counts = query.data?.statusCounts;
   const summary = query.error ? undefined : query.data?.summary;
-  if (selected) return <InvoiceDetail key={selected} onResume={resume} resumeError={error} id={selected} onBack={() => setSelected("")} />;
+  if (selected) return <InvoiceDetail key={selected} onResume={resume} resumeError={error} id={selected} onBack={() => { setSelected(""); setRevision(value => value + 1); }} />;
   return <section className="stack invoice-center">
     <PageHeader eyebrow="فروش" title="فاکتورها" context="فاکتورهای نهایی و پیش‌نویس‌های ذخیره‌شده در سرور"
       actions={<button className="btn" type="button" onClick={() => setRevision(v => v + 1)}>تازه‌سازی</button>} />
@@ -278,7 +278,10 @@ function InvoiceDetail({ id, onBack, onResume, resumeError }: { id: string; onBa
   const inv = q.data?.invoice;
   const links = q.data?.exchanges ?? [];
   const sourceExchange = q.data?.exchangesOnly;
-  const state = inv && (sourceExchange && ["returned","partially_returned"].includes(inv.status) ? "exchanged" : inv.status);
+  let state = inv?.status ?? "";
+  if (sourceExchange && ["returned", "partially_returned"].includes(state)) state = "exchanged";
+  else if (["finalized", "paid"].includes(state) && q.data?.remaining !== undefined)
+    state = BigInt(q.data.remaining) > 0n ? "open" : "settled";
   const outstanding = q.data?.payments.filter(payment => !["failed","reversed"].includes(payment.status)) ?? [];
   const editable = inv?.status === "draft" && !inv.reviewReason && q.data?.canEditLines;
   async function pick(variationId: string) {
@@ -294,8 +297,15 @@ function InvoiceDetail({ id, onBack, onResume, resumeError }: { id: string; onBa
   }
   return <section className="invoice-detail stack"><button className="btn invoice-back" type="button" onClick={onBack}>بازگشت به فاکتورها</button>
     {q.loading ? <ResultState kind="loading" title="در حال دریافت جزئیات…" /> : q.error ? <ResultState kind="error" title={errorMessage(q.error)} /> : inv && <>
-      <header className="solid pad"><h1>فاکتور {inv.number ?? "پیش‌نویس"}</h1>
-        <p>{state && (statusNames[state] ?? state)} · {date(inv.occurredAt)} · {channelLabel(inv.channel)}</p>
+      <header className="solid pad invoice-detail-head">
+        <div className="invoice-detail-heading"><div><h1>فاکتور {inv.number ?? "پیش‌نویس"}</h1>
+          <span className="muted">{date(inv.occurredAt)} · {channelLabel(inv.channel)}</span></div>
+          <StatusBadge state={statusTone[state] ?? "unknown"} label={statusNames[state] ?? state} /></div>
+        <dl className="invoice-detail-totals">
+          <div><dt>قابل پرداخت</dt><dd><Money rial={inv.payableAmount} size="lg" /></dd></div>
+          {q.data?.remaining !== undefined && inv.status !== "draft" && <div><dt>ماندهٔ فاکتور</dt><dd><Money rial={q.data.remaining} size="lg" /></dd></div>}
+          <div><dt>فروشنده</dt><dd>{inv.sellerName ?? inv.createdByName ?? "نامشخص"}</dd></div>
+        </dl>
         {links.map(link => <p key={link.id}><a href={`/?page=invoices&invoices.id=${link.id}`}>{link.source ? "فاکتور جایگزین" : "فاکتور اولیه"} {link.number}</a> · انتقال از تعویض <Money rial={link.transfer} /></p>)}
       </header>
       <section className="solid pad stack"><h2>اقلام فاکتور</h2>
@@ -304,8 +314,7 @@ function InvoiceDetail({ id, onBack, onResume, resumeError }: { id: string; onBa
       <div className="scroll-x"><table className="grid"><thead><tr><th>کالا</th><th>تعداد</th><th>قیمت واحد (تومان)</th><th>مبلغ (تومان)</th></tr></thead>
         <tbody>{inv.lines.map(l => <tr key={l.id}><td>{l.productName}<small><bdi>{l.sku}</bdi></small>{editing && editable &&
           <button className="btn" disabled={pending} onClick={()=>void change(()=>pos.removeLine(id,l.id))}>حذف قلم</button>}</td><td>{l.qty}</td><td>{toman(BigInt(l.listPrice ?? l.unitPrice))}</td><td>{toman(BigInt(l.netAmount))}</td></tr>)}</tbody></table></div>
-      <p>قابل پرداخت: <strong>{toman(BigInt(inv.payableAmount))} تومان</strong></p>
-      {q.data?.remaining !== undefined && inv.status !== "draft" && <p>ماندهٔ فاکتور · <Money rial={q.data.remaining} /></p>}</section>
+      </section>
       <section className="solid pad stack"><h2>عملیات فاکتور</h2>
       {issue && <p role="alert">{issue}</p>}
       {inv.reviewReason && <p role="status">در انتظار بررسی · {inv.reviewReason}</p>}
@@ -342,9 +351,8 @@ function InvoiceDetail({ id, onBack, onResume, resumeError }: { id: string; onBa
       </div>}
       </section><section className="solid pad stack">
       {resumeError && <p role="alert">{resumeError}</p>}
-      <p>فروشنده · {inv.sellerName ?? inv.createdByName ?? "نامشخص"}</p>
-      <p>کاربر صادرکننده: {inv.createdByName ?? "نامشخص"}</p>
-      <h2>گردش پرداخت</h2>{q.data?.payments.length ? q.data.payments.map(p => <p key={p.id}>{p.name} · {toman(BigInt(p.amount))} تومان · {p.direction === "in" ? "دریافت" : "برگشت"} · {({succeeded:"موفق",settled:"تسویه‌شده",reconciled:"تطبیق‌شده",reversed:"برگشت‌خورده",failed:"ناموفق",pending:"در انتظار",unknown:"نامشخص"} as Record<string,string>)[p.status] ?? p.status}</p>) : <p>پرداختی ثبت نشده است.</p>}
+      <h2>گردش پرداخت</h2>
+      <p className="muted">کاربر صادرکننده · {inv.createdByName ?? "نامشخص"}</p>{q.data?.payments.length ? q.data.payments.map(p => <p key={p.id}>{p.name} · {toman(BigInt(p.amount))} تومان · {p.direction === "in" ? "دریافت" : "برگشت"} · {({succeeded:"موفق",settled:"تسویه‌شده",reconciled:"تطبیق‌شده",reversed:"برگشت‌خورده",failed:"ناموفق",pending:"در انتظار",unknown:"نامشخص"} as Record<string,string>)[p.status] ?? p.status}</p>) : <p>پرداختی ثبت نشده است.</p>}
       {["finalized", "paid", "partially_returned", "returned"].includes(inv.status) && <a className="btn" href={`/api/invoices/${inv.id}/print`} target="_blank" rel="noopener">چاپ فاکتور / ذخیره PDF</a>}</section>
     </>}
   </section>;

@@ -101,7 +101,7 @@ export function registerInvoiceWorkspaceRoutes(app: FastifyInstance, db: Db): vo
       FROM i GROUP BY 1, 2`.execute(db);
     // کلیدهای قدیمی (all، draft، finalized، cancelled، returned) همان افراز پیشین‌اند؛ تراشه‌های طرح ۱۰
     // (settled، open، returns) کلید جدا دارند و در «all» دوباره شمرده نمی‌شوند.
-    const statusCounts: Record<string, number> = { all: 0, draft: 0, finalized: 0, cancelled: 0, returned: 0, settled: 0, open: 0, returns: 0 };
+    const statusCounts: Record<string, number> = { all: 0, draft: 0, finalized: 0, cancelled: 0, returned: 0, settled: 0, open: 0, returns: 0, exchanged: 0 };
     for (const b of buckets.rows) {
       statusCounts[b.bucket] = (statusCounts[b.bucket] ?? 0) + Number(b.n);
       statusCounts.all = (statusCounts.all ?? 0) + Number(b.n);
