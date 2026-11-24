@@ -226,7 +226,9 @@ export function registerInvoiceWorkspaceRoutes(app: FastifyInstance, db: Db): vo
         coalesce(bool_and(r.kind='exchange') FILTER (WHERE r.id IS NOT NULL),false) AS exchanged
       FROM sales.invoice i LEFT JOIN sales.sale_return r ON r.invoice_id=i.id AND r.status='posted'
       WHERE i.id=${id}::uuid GROUP BY i.id`.execute(db)).rows[0]!;
-    return { invoice: invoiceToJson(inv), payments: await invoices.draftPayments(id), exchanges: exchanges.rows,
+    const dispatch = (await sql<{ state:string; reference:string | null }>`SELECT state,provider_ref AS reference
+      FROM platform.invoice_sms_dispatch WHERE invoice_id=${id}::uuid`.execute(db)).rows[0] ?? null;
+    return { invoice: invoiceToJson(inv), smsReceipt: dispatch, payments: await invoices.draftPayments(id), exchanges: exchanges.rows,
       remaining: accounting.remaining, exchangesOnly: accounting.exchanged, canManage, canEditLines };
 
   });

@@ -575,6 +575,7 @@ test("receipt print stays in the cashier tab, waits for fonts and the embedded l
       body: '<!doctype html><html><body><div class="sheet"><img class="logo" alt="لیبل مد" src="data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNkYPhfDwAChwGA60e6kgAAAABJRU5ErkJggg=="><table class="totals"><tr><td>رسید</td></tr></table></div><button id="print-btn">چاپ</button></body></html>' });
   });
   await open(page, s);
+  await page.getByRole("checkbox", { name: "چاپ رسید بلافاصله پس از ثبت" }).uncheck();
   await page.getByRole("button", { name: "نهایی‌کردن فاکتور", exact: true }).click();
   await page.getByRole("dialog").getByRole("button", { name: "تأیید و نهایی‌کردن", exact: true }).click();
   const button = page.getByRole("button", { name: "چاپ رسید", exact: true });
@@ -594,7 +595,7 @@ test("receipt print stays in the cashier tab, waits for fonts and the embedded l
   await expect(page.locator('iframe[title="رسید آمادهٔ چاپ"]')).toHaveCount(0);
 });
 
-test("automatic receipt is opt-in and runs once after confirmed finalization, without a second print click", async ({ page, api }) => {
+test("automatic receipt defaults on and runs once after confirmed finalization, without a second print click", async ({ page, api }) => {
   const s = pos(api, { receivedAmount: "200000" });
   let prints = 0;
   await page.exposeFunction("recordAutoReceipt", () => { prints++; });
@@ -611,8 +612,7 @@ test("automatic receipt is opt-in and runs once after confirmed finalization, wi
   });
   await open(page, s);
   const option = page.getByRole("checkbox", { name: "چاپ رسید بلافاصله پس از ثبت" });
-  await expect(option).not.toBeChecked();
-  await option.check();
+  await expect(option).toBeChecked();
   expect(api.calls.filter(call => call.endsWith("/print"))).toHaveLength(0);
   await page.getByRole("button", { name: "نهایی‌کردن فاکتور", exact: true }).click();
   await page.getByRole("dialog").getByRole("button", { name: "تأیید و نهایی‌کردن", exact: true }).dblclick();

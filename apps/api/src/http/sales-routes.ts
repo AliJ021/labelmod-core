@@ -671,6 +671,7 @@ export function registerSalesRoutes(app: FastifyInstance, deps: SalesRouteDeps):
         fullName: z.string().trim().max(120).optional(),
         salutation: z.enum(["mr","ms"]).optional(),
         birthDate: z.iso.date().refine(v => v <= new Date().toLocaleDateString("sv-SE", { timeZone: "Asia/Tehran" }), "تاریخ تولد در آینده است").optional(),
+        consentSms: z.boolean().optional(), consentMarketing: z.boolean().optional(),
         requireNameForNew: z.boolean().optional(),
       })
       .parse(req.body);
@@ -680,7 +681,7 @@ export function registerSalesRoutes(app: FastifyInstance, deps: SalesRouteDeps):
         invoiceId: id,
         mobile: body.mobile,
         ...(body.fullName === undefined ? {} : { fullName: body.fullName }),
-        salutation: body.salutation, birthDate: body.birthDate,
+        salutation: body.salutation, birthDate: body.birthDate, consentSms: body.consentSms, consentMarketing: body.consentMarketing,
         ...(body.requireNameForNew === undefined ? {} : { requireNameForNew: body.requireNameForNew }),
         actorId: s.userId,
       }),

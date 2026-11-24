@@ -30,7 +30,7 @@ export function CustomerSummary({ customer, loading, error, mobile, onMobile, on
   busy: boolean;
   inputRef: RefObject<HTMLInputElement | null>;
   nameForMobile: string | null;
-  onConfirmName: (name: string, title: "mr" | "ms", birthDate?: string) => void;
+  onConfirmName: (name: string, title: "mr" | "ms", birthDate?: string, consentSms?: boolean, consentMarketing?: boolean) => void;
   onCancelName: () => void;
   canManage: boolean;
   onSaveName: (name: string) => void;
@@ -39,6 +39,8 @@ export function CustomerSummary({ customer, loading, error, mobile, onMobile, on
   const [editingName, setEditingName] = useState(false);
   const [fullName, setFullName] = useState("");
   const [title, setTitle] = useState<"mr" | "ms">("mr");
+  const [receiptConsent, setReceiptConsent] = useState(false);
+  const [marketingConsent, setMarketingConsent] = useState(false);
   const [dob, setDob] = useState("");
   const parsed = dob.trim() ? parseJalaliDate(dob) : null;
   const editing = customer === null || changing || (required && !customer.mobile?.trim());
@@ -59,7 +61,7 @@ export function CustomerSummary({ customer, loading, error, mobile, onMobile, on
     {error ? <p className="field-error" role="alert">{error}</p> : null}
     {nameForMobile !== null || (editingName && customer && !customer.fullName?.trim()) ? <form className="pos-customer-form" onSubmit={(e) => {
       e.preventDefault(); if (busy || !fullName.trim()) return;
-      if (nameForMobile !== null) { if (parsed && parsed.kind !== "ok") return; onConfirmName(fullName.trim(), title, parsed?.iso); } else onSaveName(fullName.trim());
+      if (nameForMobile !== null) { if (parsed && parsed.kind !== "ok") return; onConfirmName(fullName.trim(), title, parsed?.iso, receiptConsent, marketingConsent); } else onSaveName(fullName.trim());
     }}>
       <div className="customer-name-fields">{nameForMobile !== null && <div className="segmented" role="group" aria-label="عنوان مشتری">
         {(["mr","ms"] as const).map(value => <button key={value} type="button" aria-pressed={title === value}
@@ -70,11 +72,15 @@ export function CustomerSummary({ customer, loading, error, mobile, onMobile, on
       {nameForMobile !== null && <Field label="تاریخ تولد شمسی" optional error={parsed && parsed.kind !== "ok" ? "تاریخ شمسی معتبر وارد کنید." : null}>
         <input dir="ltr" inputMode="text" placeholder="۱۳۷۰/۰۱/۲۵" value={dob} disabled={busy} onChange={e => setDob(e.target.value)} />
       </Field>}
+      {nameForMobile !== null && <fieldset className="stack"><legend>درخواست مشتری برای پیامک</legend>
+        <label><input type="checkbox" checked={receiptConsent} onChange={e => setReceiptConsent(e.target.checked)} /> دریافت رسید خرید با پیامک</label>
+        <label><input type="checkbox" checked={marketingConsent} onChange={e => setMarketingConsent(e.target.checked)} /> دریافت پیشنهادها و پیام‌های بازاریابی</label>
+      </fieldset>}
       <Button type="submit" disabled={busy || !fullName.trim()}>{nameForMobile !== null ? "ثبت نام و افزودن مشتری" : "ذخیره نام مشتری"}</Button>
       <Button variant="quiet" disabled={busy} onClick={() => { onCancelName(); setEditingName(false); setFullName(""); }}>انصراف</Button>
       {nameForMobile !== null ? <p className="muted small">مشتری تازه با شمارهٔ <Ltr>{nameForMobile}</Ltr>؛ پیش از ثبت، نام را وارد کنید.</p> : null}
     </form> : null}
-    {editing && nameForMobile === null ? <form className="pos-customer-form" onSubmit={(e) => { e.preventDefault(); if (!empty && !busy) { setFullName(""); setTitle("mr"); setDob(""); onAttach(); setChanging(false); } }}>
+    {editing && nameForMobile === null ? <form className="pos-customer-form" onSubmit={(e) => { e.preventDefault(); if (!empty && !busy) { setFullName(""); setTitle("mr"); setDob(""); setReceiptConsent(false); setMarketingConsent(false); onAttach(); setChanging(false); } }}>
       <Field label={customer ? "شمارهٔ مشتری تازه" : required ? "موبایل مشتری (الزامی)" : "موبایل مشتری"} optional={customer === null && !required}>
         <input ref={inputRef} type="tel" inputMode="tel" autoComplete="off" value={mobile} disabled={busy} required={required}
           placeholder="۰۹XXXXXXXXX" onChange={(e) => onMobile(e.target.value)} />

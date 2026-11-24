@@ -36,8 +36,24 @@ export function decryptMeliKey(value: unknown, master: string | undefined): stri
   }
 }
 
+export type MeliProfile = {
+  transport: "console" | "panel";
+  accountName: string;
+  otpPattern: number | null;
+  invoicePattern: number | null;
+};
+
+export async function readMeliConnection(db: Db, master: string | undefined) {
+  const result = await sql<MeliProfile & { encrypted_key: unknown }>`
+    SELECT transport, account_name AS "accountName", otp_pattern AS "otpPattern",
+      invoice_pattern AS "invoicePattern", encrypted_key
+    FROM platform.melipayamak_credential WHERE singleton`.execute(db);
+  const row = result.rows[0];
+  if (!row) throw new SettingError("credential_missing", "تنظیم اتصال ملی‌پیامک آماده نیست", 503);
+  const { encrypted_key, ...profile } = row;
+  return { ...profile, apiKey: encrypted_key == null ? "" : decryptMeliKey(encrypted_key, master) };
+}
+
 export async function readMeliKey(db: Db, master: string | undefined): Promise<string> {
-  const r = await sql<{ encrypted_key: unknown }>`SELECT encrypted_key FROM platform.melipayamak_credential WHERE singleton`.execute(db);
-  const encrypted = r.rows[0]?.encrypted_key;
-  return encrypted === null || encrypted === undefined ? "" : decryptMeliKey(encrypted, master);
+  return (await readMeliConnection(db, master)).apiKey;
 }

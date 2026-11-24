@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { makeSender, SmsError } from "../src/worker/sms.ts";
+import { makeSender, meliCredit, SmsError } from "../src/worker/sms.ts";
 
 const config = { provider: "melipayamak", sender: "500000000000", apiKey: "test-key/not-real" };
 const to = "09120000000";
@@ -55,7 +55,7 @@ test("ملی‌پیامک: خطای شبکه، کلید داخل URL را افش
   t.mock.method(globalThis, "fetch", async () => { throw new Error(`failed ${config.apiKey}`); });
   await assert.rejects(makeSender(config).send(to, message), (e: unknown) => {
     assert.ok(e instanceof SmsError);
-    assert.equal(e.permanent, false);
+    assert.equal(e.uncertain, true);
     assert.ok(!e.message.includes(config.apiKey));
     return true;
   });
@@ -67,4 +67,33 @@ test("ملی‌پیامک: کلید، فرستنده و گیرنده نامعت�
   assert.throws(() => makeSender({ ...config, sender: "" }), SmsError);
   await assert.rejects(makeSender(config).send("invalid", message), SmsError);
   assert.equal(fetchMock.mock.callCount(), 0);
+});
+
+test("approved OTP uses a shared line and preserves positional arguments", async t => {
+  t.mock.method(globalThis, "fetch", async (url: string, init: RequestInit) => {
+    assert.match(url, /send\/shared\//);
+    assert.deepEqual(JSON.parse(String(init.body)), { bodyId: 524, to, args: ["003129"] });
+    return Response.json({ recId: "12345678" });
+  });
+  const sender = makeSender({ ...config, sender: "", otpPattern: 524 });
+  assert.equal(await sender.send(to, "unused", { purpose: "otp", args: ["003129"] }), "12345678");
+  await assert.rejects(sender.send(to, "free text"), /فرستنده/);
+});
+
+test("panel uses account credentials and the receipt pattern; credit probe never sends SMS", async t => {
+  const connection = { ...config, accountName:"shop", transport:"panel" as const, sender:"", invoicePattern:12 };
+  const calls: string[] = [];
+  t.mock.method(globalThis, "fetch", async (url: string, init: RequestInit) => {
+    calls.push(url);
+    const params = init.body as URLSearchParams;
+    assert.equal(params.get("username"), "shop");
+    assert.equal(params.get("password"), config.apiKey);
+    if (url.endsWith("GetCredit")) return Response.json({ RetStatus: 1, Value: "0" });
+    assert.equal(params.get("text"), "23;12500;https://example.com/i/x");
+    assert.equal(params.get("bodyId"), "12");
+    return Response.json({ RetStatus: 1, Value: "987654321" });
+  });
+  assert.equal(await meliCredit(connection), 0);
+  await makeSender(connection).send(to, "unused", { purpose: "invoice", args:["23","12500","https://example.com/i/x"] });
+  assert.deepEqual(calls.map(url=>url.split("/").at(-1)), ["GetCredit","BaseServiceNumber"]);
 });

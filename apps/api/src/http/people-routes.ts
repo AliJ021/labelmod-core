@@ -306,6 +306,7 @@ export function registerPeopleRoutes(app: FastifyInstance, deps: PeopleRouteDeps
     await requireForSession(db, s, "customer.manage");
     const q = z
       .object({
+        audience: z.enum(["all","receipt","marketing","no_marketing"]).optional(),
         title: z.enum(["all","mr","ms","unknown"]).optional(),
         q: z.string().trim().max(64).optional(),
         limit: z.coerce.number().int().min(1).max(200).default(50),
@@ -313,12 +314,12 @@ export function registerPeopleRoutes(app: FastifyInstance, deps: PeopleRouteDeps
       .parse(req.query);
     const branches = await branchesOf(db, s.userId);
     const list = await customers.search({
-      limit: q.limit, title: q.title,
+      limit: q.limit, title: q.title, audience: q.audience,
       branches,
       ...(q.q === undefined ? {} : { q: q.q }),
     });
     // طرح ۱۰: سطر جمع همین فهرست، از SQL و با همان تعریف ستون‌ها.
-    return { customers: list, titleCounts: await customers.titleCounts(q.q ?? "", branches), totals: await customers.ledgerTotals(list.map((c) => c.id), branches) };
+    return { customers: list, titleCounts: await customers.titleCounts(q.q ?? "", branches, q.audience), totals: await customers.ledgerTotals(list.map((c) => c.id), branches) };
   });
 
   app.get("/customers/:id", async (req) => {

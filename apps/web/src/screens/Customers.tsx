@@ -111,9 +111,10 @@ export function Customers() {
   const [mobile, setMobile] = useState("");
   const [fullName, setFullName] = useState("");
 
+  const [audience, setAudience] = useState("all");
   const [title, setTitle] = useState("all");
-  const load = useCallback((signal: AbortSignal) => people.customers(submitted, { signal }, title), [submitted, title]);
-  const query = useLatestQuery({ key: JSON.stringify([submitted, title]), version: revision, load });
+  const load = useCallback((signal: AbortSignal) => people.customers(submitted, { signal }, title, audience), [submitted, title, audience]);
+  const query = useLatestQuery({ key: JSON.stringify([submitted, title, audience]), version: revision, load });
   const rows = query.data?.customers ?? [];
   const totals = query.data?.totals ?? null;
   /*
@@ -195,6 +196,10 @@ export function Customers() {
           void search();
         }}
       >
+          <label>رضایت پیامک<select value={audience} onChange={e => setAudience(e.target.value)}>
+            <option value="all">همهٔ مشتریان</option><option value="receipt">رضایت دریافت رسید</option>
+            <option value="marketing">رضایت بازاریابی</option><option value="no_marketing">بدون رضایت بازاریابی</option>
+          </select></label>
         <label>عنوان مشتری<select aria-label="عنوان مشتری" value={title} onChange={e => setTitle(e.target.value)}>
           <option value="all">همه</option>{Object.entries({mr:"آقا",ms:"خانم",unknown:"نامشخص"}).map(([v,label]) =>
             <option key={v} value={v}>{label}{query.data?.titleCounts ? ` (${query.data.titleCounts[v]})` : ""}</option>)}

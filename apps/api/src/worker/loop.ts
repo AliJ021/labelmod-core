@@ -16,7 +16,7 @@ import { setTimeout as delay } from "node:timers/promises";
 import { sql } from "kysely";
 import type { Db } from "../db/client.ts";
 import { HANDLERS, type OutboxMessage } from "./handlers.ts";
-import { readMeliKey } from "../platform/melipayamak-credential.ts";
+import { readMeliConnection } from "../platform/melipayamak-credential.ts";
 import { makeSender, SmsError } from "./sms.ts";
 import { readNotifySettings } from "./settings.ts";
 import { makeWebhookSender } from "./webhook.ts";
@@ -241,10 +241,10 @@ export async function tick(opts: LoopOptions): Promise<TickResult> {
 
   // خطای تنظیم پیامک فقط هنگام ارسال همان پیام اثر دارد؛ Push سایت مستقل است.
   const sender = {
-    async send(to: string, text: string) {
-      const apiKey = settings.provider === "melipayamak"
-        ? await readMeliKey(opts.db, opts.smsCredentialKey) : opts.smsApiKey;
-      await makeSender({ provider: settings.provider, sender: settings.sender, apiKey }).send(to, text);
+    async send(to: string, text: string, pattern?: import("./sms.ts").SmsPattern) {
+      const connection = settings.provider === "melipayamak"
+        ? await readMeliConnection(opts.db, opts.smsCredentialKey) : { apiKey: opts.smsApiKey };
+      return makeSender({ provider: settings.provider, sender: settings.sender, ...connection }).send(to, text, pattern);
     },
   };
 

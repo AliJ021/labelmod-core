@@ -25,6 +25,7 @@ import { z } from "zod";
 import type { Db } from "../db/client.ts";
 import { parseMoney } from "../lib/money.ts";
 import { toToman } from "../sales/invoice-page.ts";
+import { invoiceText } from "./sms-copy.ts";
 import { SmsError, toLocalMobile, type SmsSender } from "./sms.ts";
 import type { NotifySettings } from "./settings.ts";
 import type { WebhookSender } from "./webhook.ts";
@@ -144,24 +145,33 @@ export async function handleInvoiceFinalized(
   const amount = toToman(parseMoney(row.payable_amount));
   const link = `${ctx.settings.publicUrl}/i/${token}`;
 
-  await ctx.sms.send(
-    to,
-    `${shop}\nفاکتور ${row.number} ثبت شد.\nمبلغ: ${amount} تومان\n${link}`,
-  );
+  const sendReceipt = () => ctx.sms.send(to, invoiceText(shop, row.number!, String(amount), link),
+    { purpose: "invoice", args: [String(row.number), String(amount), link] });
 
-  /*
-   * و همان لینک به پیام‌رسان.
-   *
-   * ⚠️ **ترتیب عمدی است: پیامک اول، Webhook بعد.** پیامک راهِ تضمینیِ
-   *    رسیدن به مشتری است و Webhook یک پل اختیاری به سرویس مالک. اگر
-   *    Webhook اول بود و ۵xx می‌داد، کل پیام Backoff می‌گرفت و پیامکِ
-   *    مشتری هم تا تلاش بعدی معلق می‌ماند.
-   *
-   * ⚠️ و اگر Webhook شکست بخورد، پیام **دوباره** برداشته می‌شود و
-   *    پیامک هم دوباره می‌رود — تحویل «حداقل یک بار» است. پیامک تکراری
-   *    آزاردهنده است ولی بی‌ضرر؛ راه‌حل واقعی‌اش یک ستون «چه چیزی رفت»
-   *    روی صف است که امروز لازم نیست و پیچیدگی‌اش را نمی‌ارزد.
-   */
+  if (ctx.settings.provider === "melipayamak") {
+    const claim = await sql`INSERT INTO platform.invoice_sms_dispatch(invoice_id,state)
+      VALUES(${invoiceId}::uuid,'sending') ON CONFLICT DO NOTHING RETURNING invoice_id`.execute(ctx.db);
+    if (claim.rows.length) {
+      let reference;
+      try { reference = await sendReceipt(); }
+      catch (error) {
+        if (error instanceof SmsError && error.uncertain) {
+          await sql`UPDATE platform.invoice_sms_dispatch SET state='unknown',updated_at=now() WHERE invoice_id=${invoiceId}::uuid`.execute(ctx.db);
+          throw new SmsError("نتیجهٔ پیامک رسید نامعلوم است؛ پیش از ارسال مجدد گزارش پنل ملی‌پیامک را تطبیق دهید", true);
+        }
+        await sql`DELETE FROM platform.invoice_sms_dispatch WHERE invoice_id=${invoiceId}::uuid AND state='sending'`.execute(ctx.db);
+        throw error;
+      }
+      await sql`UPDATE platform.invoice_sms_dispatch SET state='accepted',provider_ref=${reference ?? null},updated_at=now()
+        WHERE invoice_id=${invoiceId}::uuid`.execute(ctx.db);
+    } else {
+      const prior = await sql<{state:string}>`SELECT state FROM platform.invoice_sms_dispatch WHERE invoice_id=${invoiceId}::uuid`.execute(ctx.db);
+      if (prior.rows[0]?.state !== "accepted") throw new SmsError("نتیجهٔ تلاش قبلی پیامک مشخص نیست؛ گزارش ملی‌پیامک را بررسی کنید", true);
+    }
+  } else {
+    await sendReceipt();
+  }
+
   await ctx.webhook.send({
     kind: "invoice",
     invoiceNumber: row.number,

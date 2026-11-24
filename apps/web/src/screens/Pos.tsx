@@ -356,7 +356,7 @@ function PosScreen({ actorId, mode, onMode, browseInvoices }: {
   const [received, setReceived] = useState(0n);
   /** فروش تمام‌شده — تا «فروش بعدی» روی صفحه می‌ماند (Batch 2.1). */
   const [completed, setCompleted] = useState<CompletedSale | null>(null);
-  const [printOnComplete, setPrintOnComplete] = useState(false);
+  const [printOnComplete, setPrintOnComplete] = useState(true);
   const completedRef = useRef<CompletedSale | null>(null);
   completedRef.current = completed;
   /** قصد پرداختی که نتیجه‌اش روشن نیست — تا روشن شدن، روش و مبلغ قفل‌اند. */
@@ -1079,14 +1079,14 @@ function PosScreen({ actorId, mode, onMode, browseInvoices }: {
    * `normalizeDigits` فقط رقم فارسی و عربی را لاتین می‌کند چون
    * صفحه‌کلید فارسی «۰۹۱۲…» می‌فرستد.
    */
-  const attachCustomer = (fullName?: string, salutation?: "mr" | "ms", birthDate?: string) =>
+  const attachCustomer = (fullName?: string, salutation?: "mr" | "ms", birthDate?: string, consentSms?: boolean, consentMarketing?: boolean) =>
     guarded(async () => {
       const m = fullName === undefined ? normalizeDigits(mobile).trim() : nameForMobile;
       if (m === "") return;
       if (!m) return;
       const inv = await ensureInvoice();
       try {
-        setInvoice(await pos.attachCustomer(inv.id, { mobile: m, requireNameForNew: true, ...(salutation && { salutation }), ...(birthDate && { birthDate }), ...(fullName === undefined ? {} : { fullName }) }));
+        setInvoice(await pos.attachCustomer(inv.id, { mobile: m, requireNameForNew: true, ...(consentSms && { consentSms }), ...(consentMarketing && { consentMarketing }), ...(salutation && { salutation }), ...(birthDate && { birthDate }), ...(fullName === undefined ? {} : { fullName }) }));
       } catch (err) {
         if (err instanceof ApiError && err.code === "customer_name_required") { setNameForMobile(m); return; }
         throw err;
@@ -1453,7 +1453,7 @@ function PosScreen({ actorId, mode, onMode, browseInvoices }: {
   const customerBlock = <CustomerSummary customer={linkedCustomer} loading={customerLoading} error={customerError}
     required={policyReady && policy.requireCustomer}
     mobile={mobile} onMobile={(v) => { setMobile(v); setNameForMobile(null); }} onAttach={() => void attachCustomer()}
-    nameForMobile={nameForMobile} onConfirmName={(name, title, dob) => void attachCustomer(name, title, dob)} onCancelName={() => setNameForMobile(null)}
+    nameForMobile={nameForMobile} onConfirmName={(...details) => void attachCustomer(...details)} onCancelName={() => setNameForMobile(null)}
     canManage={canManageCustomer} onSaveName={(name) => void saveCustomerName(name)}
     busy={busy} inputRef={customerInput} />;
   const focusCustomer = () => {

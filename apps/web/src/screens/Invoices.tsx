@@ -250,7 +250,7 @@ export function Invoices({ access }: { access?: NavAccess } = {}) {
 }
 
 function InvoiceDetail({ id, onBack, onResume, resumeError }: { id: string; onBack: () => void; onResume: (row:Pick<Row,"id"|"branchId">)=>Promise<void>; resumeError:string }) {
-  const load = useCallback((signal: AbortSignal) => api.get<{ invoice: Invoice; payments: DraftPayment[]; exchanges?: {id:string; number:string; source:boolean; transfer:string}[]; canManage?:boolean; canEditLines?:boolean; exchangesOnly?:boolean; remaining?:string }>(`/invoices/${encodeURIComponent(id)}/overview`, { signal }), [id]);
+  const load = useCallback((signal: AbortSignal) => api.get<{ invoice: Invoice; smsReceipt?: {state:string;reference:string|null}|null; payments: DraftPayment[]; exchanges?: {id:string; number:string; source:boolean; transfer:string}[]; canManage?:boolean; canEditLines?:boolean; exchangesOnly?:boolean; remaining?:string }>(`/invoices/${encodeURIComponent(id)}/overview`, { signal }), [id]);
   const [revision,setRevision] = useState(0);
   const [reason,setReason] = useState("");
   const [pending,setPending] = useState(false);
@@ -351,6 +351,9 @@ function InvoiceDetail({ id, onBack, onResume, resumeError }: { id: string; onBa
       </div>}
       </section><section className="solid pad stack">
       {resumeError && <p role="alert">{resumeError}</p>}
+      {q.data?.smsReceipt && <p>پیامک رسید · {q.data.smsReceipt.state === "accepted"
+        ? `پذیرفته‌شده توسط ملی‌پیامک · شمارهٔ پیگیری ${q.data.smsReceipt.reference ?? "—"}`
+        : "نتیجه در انتظار تطبیق با ملی‌پیامک"}</p>}
       <h2>گردش پرداخت</h2>
       <p className="muted">کاربر صادرکننده · {inv.createdByName ?? "نامشخص"}</p>{q.data?.payments.length ? q.data.payments.map(p => <p key={p.id}>{p.name} · {toman(BigInt(p.amount))} تومان · {p.direction === "in" ? "دریافت" : "برگشت"} · {({succeeded:"موفق",settled:"تسویه‌شده",reconciled:"تطبیق‌شده",reversed:"برگشت‌خورده",failed:"ناموفق",pending:"در انتظار",unknown:"نامشخص"} as Record<string,string>)[p.status] ?? p.status}</p>) : <p>پرداختی ثبت نشده است.</p>}
       {["finalized", "paid", "partially_returned", "returned"].includes(inv.status) && <a className="btn" href={`/api/invoices/${inv.id}/print`} target="_blank" rel="noopener">چاپ فاکتور / ذخیره PDF</a>}</section>

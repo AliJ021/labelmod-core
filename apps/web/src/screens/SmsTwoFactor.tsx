@@ -9,7 +9,7 @@ import { StatusBadge } from "../components/ui/Status.tsx";
 import { api, ApiError } from "../lib/api.ts";
 import { normalizeDigits } from "../lib/settings-value.ts";
 
-type SmsStatus = { enabled: boolean; maskedMobile: string | null };
+type SmsStatus = { enabled: boolean; maskedMobile: string | null; setupIssue?: string | null };
 
 /**
  * ورود دومرحله‌ای پیامکی — فقط نمایش با primitiveهای نظام طراحی.
@@ -67,6 +67,7 @@ export function SmsTwoFactor({ onEnrolled }: { onEnrolled?: () => void }) {
       ? <ResultState kind="error" title={statusError} actionLabel="تلاش دوباره" onAction={() => setAttempt((v) => v + 1)} />
       : <Skeleton variant="row" lines={1} label="در حال دریافت وضعیت پیامک…" />}
     <p className="settings-note" style={{ margin: 0 }}>ابتدا ارسال پیامک و سرویس ملی‌پیامک را در تنظیمات آماده کنید. تغییر شماره فقط پس از تأیید شماره جدید اعمال می‌شود.</p>
+    {status?.setupIssue && <p className="settings-note" role="status">{status.setupIssue}</p>}
     <div className="settings-form">
       <Field label="رمز عبور فعلی برای تنظیم پیامک" hint="برای ثبت شماره یا برداشتن ورود پیامکی لازم است.">
         <input type="password" autoComplete="current-password" value={password} onChange={(e) => setPassword(e.target.value)} />
@@ -75,7 +76,7 @@ export function SmsTwoFactor({ onEnrolled }: { onEnrolled?: () => void }) {
         <input type="tel" value={mobile} onChange={(e) => setMobile(e.target.value)} placeholder="09xxxxxxxxx" />
       </Field>
       <div className="settings-actions">
-        <Button busy={busy && !pending} busyLabel="در حال ارسال…" disabled={busy || !status || !password || !mobile} onClick={() => void act("enroll")}>ارسال کد تأیید شماره</Button>
+        <Button busy={busy && !pending} busyLabel="در حال ارسال…" disabled={busy || !status || Boolean(status.setupIssue) || !password || !mobile} onClick={() => void act("enroll")}>ارسال کد تأیید شماره</Button>
         {status?.enabled ? <Button variant="danger" disabled={busy || !password} onClick={() => void act("disable")}>برداشتن ورود پیامکی</Button> : null}
       </div>
       {pending ? <>

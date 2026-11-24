@@ -803,6 +803,8 @@ export class InvoiceService {
     fullName?: string | undefined;
     salutation?: "mr" | "ms" | undefined;
     birthDate?: string | undefined;
+    consentSms?: boolean | undefined;
+    consentMarketing?: boolean | undefined;
     requireNameForNew?: boolean | undefined;
     actorId: string;
   }): Promise<Invoice> {
@@ -832,8 +834,8 @@ export class InvoiceService {
       const r = await sql<{ id: string; created: boolean }>`
         WITH norm AS (SELECT sales.normalize_mobile(${input.mobile}) AS m),
         ins AS (
-          INSERT INTO sales.customer (mobile_normalized, full_name, salutation, birth_date)
-          SELECT m, nullif(${input.fullName ?? null}::text, ''), ${input.salutation ?? null}, ${input.birthDate ?? null}::date FROM norm
+          INSERT INTO sales.customer (mobile_normalized, full_name, salutation, birth_date, consent_sms, consent_marketing)
+          SELECT m, nullif(${input.fullName ?? null}::text, ''), ${input.salutation ?? null}, ${input.birthDate ?? null}::date, ${input.consentSms ?? false}, ${input.consentMarketing ?? false} FROM norm
           ON CONFLICT (mobile_normalized) DO NOTHING
           RETURNING id
         )
@@ -848,6 +850,10 @@ export class InvoiceService {
         throw new InvoiceError("bad_mobile", "شماره موبایل معتبر نیست", 400);
       }
       if (r.rows[0]?.created) {
+        if (input.consentSms || input.consentMarketing) {
+          await sql`SELECT platform.audit('customer.sms_consent','customer',${customerId}::text,
+            jsonb_build_object('receipt',${input.consentSms ?? false}::boolean,'marketing',${input.consentMarketing ?? false}::boolean,'source','pos'),${input.actorId}::uuid)`.execute(trx);
+        }
         await sql`INSERT INTO sales.customer_branch (customer_id, branch_id)
           SELECT ${customerId}::uuid, branch_id FROM sales.invoice
            WHERE id = ${input.invoiceId}::uuid ON CONFLICT DO NOTHING`.execute(trx);

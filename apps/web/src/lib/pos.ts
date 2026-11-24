@@ -513,7 +513,7 @@ export const pos = {
    */
   attachCustomer: (
     invoiceId: string,
-    input: { mobile: string; fullName?: string; salutation?: "mr" | "ms"; birthDate?: string; requireNameForNew?: boolean },
+    input: { mobile: string; fullName?: string; salutation?: "mr" | "ms"; birthDate?: string; consentSms?: boolean; consentMarketing?: boolean; requireNameForNew?: boolean },
     opts?: RequestOptions,
   ) => api.patch<Invoice>(`/invoices/${invoiceId}/customer`, input, opts),
 
