@@ -133,6 +133,7 @@ export function registerProductRoutes(
         limit: z.coerce.number().int().min(1).max(500).default(100),
         page: z.coerce.number().int().min(1).max(10000).default(1),
         categoryId: z.string().uuid().optional(),
+        sort: z.enum(["code","newest","oldest","name"]).default("code"),
       })
       .parse(req.query ?? {});
     const rows = await products.list({ ...q, offset: (q.page - 1) * q.limit, extraRow: true });

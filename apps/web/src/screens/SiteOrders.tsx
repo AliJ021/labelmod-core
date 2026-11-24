@@ -23,7 +23,7 @@ import { navigate, useUrlState } from "../lib/use-url-state.ts";
 import { normalizeDigits } from "../lib/settings-value.ts";
 import { parseJalaliDate, readOptionalJalaliPeriod } from "../lib/report-filters.ts";
 import {
-  addressLines, coreState, isPaymentId, queueView, isShippingId, isStatusSlug, moneyView, ORDERS_PAGE_MAX, orderStatusState, siteOrders,
+  addressLines, coreState, isPaymentId, queueView, isShippingId, moneyView, ORDERS_PAGE_MAX, orderStatusState, siteOrders,
   type Address, type OrderDetail, type OrderItem, type OrderSummary, type OrdersPage, type OrderView, type WooMoney,
 } from "../lib/site-orders.ts";
 import { Solid } from "../components/Glass.tsx";
@@ -98,7 +98,7 @@ export function SiteOrders() {
   const [shippingParam] = useUrlState(PARAM.shipping);
   const [untilParam] = useUrlState(PARAM.until);
   const [orderParam] = useUrlState(PARAM.order);
-  const status = isStatusSlug(statusParam) ? statusParam : null;
+  const status = statusParam === "processing" || statusParam === "completed" ? statusParam : null;
   const payment = isPaymentId(paymentParam) ? paymentParam : null;
   const shipping = isShippingId(shippingParam) ? shippingParam : null;
   const from = ISO_DAY.test(fromParam) ? fromParam : null;

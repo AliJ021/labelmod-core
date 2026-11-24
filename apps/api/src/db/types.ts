@@ -134,6 +134,7 @@ export interface BranchTable {
 // ── کاتالوگ و انبار ───────────────────────────────────────────────
 
 export interface ProductTable {
+  created_at: Generated<Date>;
   id: Generated<string>;
   code: string;
   name_internal: string;

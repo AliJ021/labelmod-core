@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from "react";
+import { PosProductPicker } from "../components/PosProductPicker.tsx";
 import { api, ApiError } from "../lib/api.ts";
 import { useUrlState, navigate } from "../lib/use-url-state.ts";
 import { useLatestQuery } from "../lib/use-latest-query.ts";
@@ -32,7 +33,7 @@ interface Row {
   customerMobile?: string | null;
   canResume: boolean; needsReview: boolean | null;
 }
-type StatusKey = "all" | "draft" | "finalized" | "cancelled" | "returned" | "settled" | "open" | "returns";
+type StatusKey = "all" | "draft" | "finalized" | "cancelled" | "returned" | "settled" | "open" | "returns" | "exchanged";
 /** جمع‌های همین فیلتر، از SQL (GET /invoices). پول رشته است؛ نبودنش یعنی نشان‌ندادن، نه صفر. */
 interface Summary { count: number; payableAmount: string; receivedAmount: string; remainingAmount: string }
 interface ListResponse { rows: Row[]; total: number; pageSize: number; summary?: Summary; statusCounts?: Partial<Record<StatusKey, number>>;
@@ -43,15 +44,15 @@ interface ListResponse { rows: Row[]; total: number; pageSize: number; summary?:
  * (تا چیزی پنهان نماند). مانده‌دار و تسویه‌شده از ماندهٔ SQL می‌آیند، نه از وضعیت.
  * «قطعی» و «مرجوع‌شده» کلیدهای پیوندهای قدیمی‌اند و فقط وقتی در نشانی باشند دیده می‌شوند.
  */
-const STATUS_KEYS: readonly StatusKey[] = ["all", "settled", "open", "returns", "cancelled"];
+const STATUS_KEYS: readonly StatusKey[] = ["all", "settled", "open", "exchanged", "returns", "cancelled"];
 const LEGACY_KEYS: readonly StatusKey[] = ["finalized", "returned"];
 const statusNames: Record<string, string> = { draft: "پیش‌نویس", finalized: "قطعی", paid: "پرداخت‌شده", cancelled: "لغوشده", returned: "مرجوع‌شده", partially_returned: "مرجوعی جزئی",
-  settled: "تسویه‌شده", open: "مانده‌دار", returns: "مرجوعی" };
+  exchanged: "تعویض", settled: "تسویه‌شده", open: "مانده‌دار", returns: "مرجوعی" };
 /** نشان وضعیت ردیف (طرح ۱۰): آیکون + برچسب، نه فقط رنگ. وضعیت ناشناخته «نامعلوم» است. */
 const statusTone: Record<string, StatusState> = { draft: "draft", finalized: "active", paid: "completed", cancelled: "cancelled", returned: "warning", partially_returned: "warning",
-  settled: "completed", open: "active" };
+  exchanged: "completed", settled: "completed", open: "active" };
 /** برچسب ردیف: فاکتور قطعی با تراشهٔ SQL (تسویه‌شده/مانده‌دار)، مرجوعی و بقیه با وضعیت خودشان. */
-const rowState = (row: Row) => row.chip === "settled" || row.chip === "open" ? row.chip : row.status;
+const rowState = (row: Row) => row.chip === "settled" || row.chip === "open" || row.chip === "exchanged" ? row.chip : row.status;
 const CHANNELS = ["pos", "instagram", "web", "phone"] as const;
 const errorMessage = (e: unknown) => e instanceof ApiError ? e.message : "ارتباط با سرور برقرار نشد.";
 const date = (value: string) => new Intl.DateTimeFormat("fa-IR", { dateStyle: "short", timeStyle: "short", timeZone: "Asia/Tehran" }).format(new Date(value));
@@ -153,7 +154,7 @@ export function Invoices({ access }: { access?: NavAccess } = {}) {
   // آخرین شمارش و جمع رسیده می‌ماند تا هنگام بارگذاری صفحه نپرد؛ با خطا پنهان می‌شود.
   const counts = query.data?.statusCounts;
   const summary = query.error ? undefined : query.data?.summary;
-  if (selected) return <InvoiceDetail onResume={resume} resumeError={error} id={selected} onBack={() => setSelected("")} />;
+  if (selected) return <InvoiceDetail key={selected} onResume={resume} resumeError={error} id={selected} onBack={() => setSelected("")} />;
   return <section className="stack invoice-center">
     <PageHeader eyebrow="فروش" title="فاکتورها" context="فاکتورهای نهایی و پیش‌نویس‌های ذخیره‌شده در سرور"
       actions={<button className="btn" type="button" onClick={() => setRevision(v => v + 1)}>تازه‌سازی</button>} />
@@ -246,7 +247,7 @@ export function Invoices({ access }: { access?: NavAccess } = {}) {
 }
 
 function InvoiceDetail({ id, onBack, onResume, resumeError }: { id: string; onBack: () => void; onResume: (row:Pick<Row,"id"|"branchId">)=>Promise<void>; resumeError:string }) {
-  const load = useCallback((signal: AbortSignal) => api.get<{ invoice: Invoice; payments: DraftPayment[] }>(`/invoices/${encodeURIComponent(id)}/overview`, { signal }), [id]);
+  const load = useCallback((signal: AbortSignal) => api.get<{ invoice: Invoice; payments: DraftPayment[]; exchanges?: {id:string; number:string; source:boolean; transfer:string}[]; canManage?:boolean; canEditLines?:boolean }>(`/invoices/${encodeURIComponent(id)}/overview`, { signal }), [id]);
   const [revision,setRevision] = useState(0);
   const [reason,setReason] = useState("");
   const [pending,setPending] = useState(false);
@@ -257,17 +258,51 @@ function InvoiceDetail({ id, onBack, onResume, resumeError }: { id: string; onBa
     try { await api.patch(`/invoices/${id}/review`,{hold,reason:reason.trim()}); setReason(""); setRevision(n => n+1); }
     catch(err) { setIssue(errorMessage(err)); } finally { setPending(false); }
   }
+  const [editing, setEditing] = useState(false);
+  const [archive, setArchive] = useState(false);
+  const editingLock = useRef(false);
+  const pendingPick = useRef<{variationId:string; key:string} | null>(null);
+  async function change(fn: () => Promise<unknown>) {
+    if (editingLock.current) return;
+    editingLock.current = true; setPending(true); setIssue("");
+    try { await fn(); setRevision(n => n + 1); }
+    catch (err) { setIssue(errorMessage(err)); }
+    finally { editingLock.current = false; setPending(false); }
+  }
   const inv = q.data?.invoice;
-  return <section className="solid pad stack"><button className="btn" type="button" onClick={onBack}>بازگشت به فاکتورها</button>
+  const links = q.data?.exchanges ?? [];
+  const sourceExchange = links.some(link => link.source);
+  const state = inv && (sourceExchange && ["returned","partially_returned"].includes(inv.status) ? "exchanged" : inv.status);
+  const editable = inv?.status === "draft" && !inv.reviewReason && q.data?.canEditLines;
+  async function pick(variationId: string) {
+    const prior = pendingPick.current;
+    if (prior && prior.variationId !== variationId) { setIssue("ابتدا نتیجه افزودن کالای قبلی را با انتخاب همان کالا بررسی کنید."); return; }
+    const op = prior ?? {variationId, key:crypto.randomUUID()};
+    await change(async () => {
+      pendingPick.current = op;
+      try { await pos.scan(id,{variationId},{idempotencyKey:op.key}); }
+      catch(err) { if(err instanceof ApiError && err.status < 500) pendingPick.current=null; throw err; }
+      pendingPick.current = null;
+    });
+  }
+  return <section className="invoice-detail stack"><button className="btn invoice-back" type="button" onClick={onBack}>بازگشت به فاکتورها</button>
     {q.loading ? <ResultState kind="loading" title="در حال دریافت جزئیات…" /> : q.error ? <ResultState kind="error" title={errorMessage(q.error)} /> : inv && <>
-      <h1>فاکتور {inv.number ?? "پیش‌نویس"}</h1><p>{statusNames[inv.status] ?? inv.status} · {date(inv.occurredAt)}</p>
+      <header className="solid pad"><h1>فاکتور {inv.number ?? "پیش‌نویس"}</h1>
+        <p>{state && (statusNames[state] ?? state)} · {date(inv.occurredAt)} · {channelLabel(inv.channel)}</p>
+        {links.map(link => <p key={link.id}><a href={`/?page=invoices&invoices.id=${link.id}`}>{link.source ? "فاکتور جایگزین" : "فاکتور اولیه"} {link.number}</a> · انتقال از تعویض <Money rial={link.transfer} /></p>)}
+      </header>
+      <section className="solid pad stack"><h2>اقلام فاکتور</h2>
+      {editable && <button className="btn" onClick={()=>setEditing(!editing)}>{editing ? "پایان ویرایش" : "ویرایش اقلام"}</button>}
+      {editable && editing && <PosProductPicker warehouseId={inv.warehouseId} busy={pending} onPick={pick} />}
       <div className="scroll-x"><table className="grid"><thead><tr><th>کالا</th><th>تعداد</th><th>قیمت واحد (تومان)</th><th>مبلغ (تومان)</th></tr></thead>
-        <tbody>{inv.lines.map(l => <tr key={l.id}><td>{l.productName}<small>{l.sku}</small></td><td>{l.qty}</td><td>{toman(BigInt(l.unitPrice))}</td><td>{toman(BigInt(l.netAmount))}</td></tr>)}</tbody></table></div>
-      <p>قابل پرداخت: <strong>{toman(BigInt(inv.payableAmount))} تومان</strong></p>
+        <tbody>{inv.lines.map(l => <tr key={l.id}><td>{l.productName}<small dir="ltr">{l.sku}</small>{editing && editable &&
+          <button className="btn" disabled={pending} onClick={()=>void change(()=>pos.removeLine(id,l.id))}>حذف قلم</button>}</td><td>{l.qty}</td><td>{toman(BigInt(l.unitPrice))}</td><td>{toman(BigInt(l.netAmount))}</td></tr>)}</tbody></table></div>
+      <p>قابل پرداخت: <strong>{toman(BigInt(inv.payableAmount))} تومان</strong></p></section>
+      <section className="solid pad stack"><h2>عملیات فاکتور</h2>
       {issue && <p role="alert">{issue}</p>}
       {inv.reviewReason && <p role="status">در انتظار بررسی · {inv.reviewReason}</p>}
       {["draft","finalized","paid","partially_returned"].includes(inv.status) && <div className="stack">
-        <Field label="دلیل تعلیق یا رفع تعلیق"><input value={reason} maxLength={200} onChange={e => setReason(e.target.value)} /></Field>
+        <Field label="دلیل عملیات"><input value={reason} maxLength={200} onChange={e => setReason(e.target.value)} /></Field>
         <button className="btn" disabled={pending || !reason.trim()} onClick={() => void review(!inv.reviewReason)}>{inv.reviewReason ? "رفع تعلیق" : "تعلیق برای بررسی"}</button>
       </div>}
       {["finalized","paid","partially_returned"].includes(inv.status) && <div className="invoice-actions">
@@ -276,11 +311,20 @@ function InvoiceDetail({ id, onBack, onResume, resumeError }: { id: string; onBa
         <a className="btn" href={`/?page=returns&returns.invoice=${inv.id}&returns.full=1`}>ابطال کامل و تسویه</a>
       </div>}
       {inv.status==="draft" && inv.channel==="pos" && <button type="button" className="btn" disabled={pending} onClick={()=>void onResume(inv)}>ادامه در صندوق برای ویرایش یا لغو</button>}
+      {inv.status === "draft" && <button className="btn" disabled={pending || !reason.trim()} onClick={()=>void change(()=>api.post(`/invoices/${id}/cancel`,{reason}))}>لغو پیش‌نویس</button>}
+      {q.data?.canManage && ["draft","cancelled","returned"].includes(inv.status) && <div className="stack">
+        <button className="btn" onClick={()=>setArchive(!archive)}>حذف از فهرست</button>
+        {archive && <><Field label="دلیل حذف از فهرست"><input maxLength={200} value={reason} onChange={e=>setReason(e.target.value)} /></Field>
+          <button className="btn" disabled={pending || !reason.trim()} onClick={()=>void change(async()=>{
+            await api.post(`/invoices/${id}/cancel`,{reason,archive:true}); onBack();
+          })}>تأیید حذف از فهرست</button></>}
+      </div>}
+      </section><section className="solid pad stack">
       {resumeError && <p role="alert">{resumeError}</p>}
       <p>فروشنده · {inv.sellerName ?? inv.createdByName ?? "نامشخص"}</p>
       <p>کاربر صادرکننده: {inv.createdByName ?? "نامشخص"}</p>
       <h2>گردش پرداخت</h2>{q.data?.payments.length ? q.data.payments.map(p => <p key={p.id}>{p.name} · {toman(BigInt(p.amount))} تومان · {p.direction === "in" ? "دریافت" : "برگشت"} · {({succeeded:"موفق",settled:"تسویه‌شده",reconciled:"تطبیق‌شده",reversed:"برگشت‌خورده",failed:"ناموفق",pending:"در انتظار",unknown:"نامشخص"} as Record<string,string>)[p.status] ?? p.status}</p>) : <p>پرداختی ثبت نشده است.</p>}
-      {["finalized", "paid", "partially_returned", "returned"].includes(inv.status) && <a className="btn" href={`/api/invoices/${inv.id}/print`} target="_blank" rel="noopener">چاپ فاکتور / ذخیره PDF</a>}
+      {["finalized", "paid", "partially_returned", "returned"].includes(inv.status) && <a className="btn" href={`/api/invoices/${inv.id}/print`} target="_blank" rel="noopener">چاپ فاکتور / ذخیره PDF</a>}</section>
     </>}
   </section>;
 }

@@ -25,7 +25,7 @@ import { wooSigningKey } from "../lib/private-key-file.ts";
 import { readWooSite } from "../platform/woocommerce-site.ts";
 import { hasControlChars } from "../lib/text.ts";
 import {
-  makeWooOrdersReader, WOO_ORDERS_PAGE_MAX, WOO_PAYMENT_ID, WOO_SHIPPING_ID, WOO_STATUS_SLUG, type WooOrdersReader, type WooOrdersSite,
+  makeWooOrdersReader, WOO_ORDERS_PAGE_MAX, WOO_PAYMENT_ID, WOO_SHIPPING_ID, type WooOrdersReader, type WooOrdersSite,
 } from "../platform/woocommerce-orders.ts";
 
 const RATE = { config: { rateLimit: { max: 30, timeWindow: "1 minute" } } };
@@ -49,7 +49,7 @@ export function registerWebOrdersRoutes(app: FastifyInstance, db: Db, secret: st
   /** فیلترهای فهرست؛ `coerce` چون GET رشته می‌دهد و بدنهٔ POST عدد. */
   const filters = {
     page: z.coerce.number().int().min(1).max(WOO_ORDERS_PAGE_MAX).default(1),
-    status: z.string().regex(WOO_STATUS_SLUG).optional(),
+    status: z.enum(["processing", "completed"]).optional(),
     from: z.iso.date().optional(),
     to: z.iso.date().optional(),
     payment: z.string().regex(WOO_PAYMENT_ID).optional(),

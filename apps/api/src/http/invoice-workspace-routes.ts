@@ -25,7 +25,7 @@ export function registerInvoiceWorkspaceRoutes(app: FastifyInstance, db: Db): vo
     const q = z.object({ page: z.coerce.number().int().min(1).max(100000).default(1),
       // طرح ۱۰: «تسویه‌شده»، «مانده‌دار» و «مرجوعی» (settled/open/returns) تراشه‌های فهرست‌اند؛
       // finalized و returned قدیمی برای پیوندهای ذخیره‌شده می‌مانند.
-      status: z.enum(["all", "draft", "finalized", "cancelled", "returned", "settled", "open", "returns"]).default("all"),
+      status: z.enum(["all", "draft", "finalized", "cancelled", "returned", "settled", "open", "returns", "exchanged"]).default("all"),
       channel: z.enum(["pos", "web", "phone", "instagram"]).optional(),
       from: z.iso.date().optional(), to: z.iso.date().optional(),
       // تصمیم مالک (۲۰۲۶/۱۱/۰۷): فهرست با «امروز» باز می‌شود. «امروز» را سرور تعیین می‌کند
@@ -50,15 +50,21 @@ export function registerInvoiceWorkspaceRoutes(app: FastifyInstance, db: Db): vo
     const scoped = sql`SELECT i.*, c.full_name AS customer_name,
         CASE WHEN length(c.mobile_normalized) >= 8 THEN left(c.mobile_normalized, 4) || ' *** ' || right(c.mobile_normalized, 4) END AS customer_mobile_masked,
         coalesce(pay.amount,0) AS received, coalesce(pay.methods,'') AS methods,
-        greatest(i.payable_amount-coalesce(pay.amount,0),0) AS remaining,
-        CASE WHEN i.status IN ('partially_returned','returned') THEN 'returns'
-             WHEN i.status IN ('finalized','paid') THEN CASE WHEN i.payable_amount-coalesce(pay.amount,0) > 0 THEN 'open' ELSE 'settled' END
+        greatest(i.payable_amount-coalesce(pay.amount,0)-coalesce(ex.transfer_amount,0)-ret.debt,0) AS remaining,
+        CASE WHEN ret.exchanged THEN 'exchanged'
+             WHEN i.status IN ('partially_returned','returned') THEN 'returns'
+             WHEN i.status IN ('finalized','paid') THEN CASE WHEN i.payable_amount-coalesce(pay.amount,0)-coalesce(ex.transfer_amount,0)-ret.debt > 0 THEN 'open' ELSE 'settled' END
              ELSE i.status END AS chip
       FROM sales.invoice i LEFT JOIN sales.customer c ON c.id=i.customer_id
+      LEFT JOIN sales.exchange ex ON ex.replacement_invoice_id=i.id
+      LEFT JOIN LATERAL (SELECT coalesce(sum(r.receivable_applied),0) AS debt,
+        bool_and(x.id IS NOT NULL) AS exchanged FROM sales.sale_return r
+        LEFT JOIN sales.exchange x ON x.return_id=r.id WHERE r.invoice_id=i.id AND r.status='posted') ret ON true
       LEFT JOIN LATERAL (SELECT sum(p.amount) AS amount,string_agg(DISTINCT m.name,'، ') AS methods
         FROM treasury.payment p JOIN treasury.payment_method m ON m.code=p.method_code
         WHERE p.invoice_id=i.id AND p.direction='in' AND p.status IN ('succeeded','settled','reconciled')) pay ON true
-      WHERE (${scope === "all"} OR i.branch_id=ANY(${scope === "all" ? [] : scope}::uuid[]))
+      WHERE NOT EXISTS (SELECT 1 FROM sales.invoice_archive a WHERE a.invoice_id=i.id)
+      AND (${scope === "all"} OR i.branch_id=ANY(${scope === "all" ? [] : scope}::uuid[]))
       AND (${q.branchId ?? null}::uuid IS NULL OR i.branch_id=${q.branchId ?? null}::uuid)
       AND (${q.channel ?? null}::text IS NULL OR i.channel=${q.channel ?? null}::text)
       AND (${q.from ?? null}::date IS NULL OR platform.business_date(i.occurred_at)>=${q.from ?? null}::date)
@@ -99,7 +105,7 @@ export function registerInvoiceWorkspaceRoutes(app: FastifyInstance, db: Db): vo
     for (const b of buckets.rows) {
       statusCounts[b.bucket] = (statusCounts[b.bucket] ?? 0) + Number(b.n);
       statusCounts.all = (statusCounts.all ?? 0) + Number(b.n);
-      if (b.chip === "settled" || b.chip === "open" || b.chip === "returns") statusCounts[b.chip] = (statusCounts[b.chip] ?? 0) + Number(b.n);
+      if (b.chip === "settled" || b.chip === "open" || b.chip === "returns" || b.chip === "exchanged") statusCounts[b.chip] = (statusCounts[b.chip] ?? 0) + Number(b.n);
     }
     const sum = summary.rows[0]!;
     return { rows: result.rows, total: Number(count.rows[0]?.total ?? 0), page: q.page, pageSize: 50,
@@ -207,6 +213,15 @@ export function registerInvoiceWorkspaceRoutes(app: FastifyInstance, db: Db): vo
     if (!inv) throw new InvoiceError("invoice_not_found", "فاکتور یافت نشد", 404);
     await assertBranch(db, s.userId, inv.branchId);
     if (inv.createdBy !== s.userId && inv.sellerId !== s.userId) await requireForSession(db, s, "report.view");
-    return { invoice: invoiceToJson(inv), payments: await invoices.draftPayments(id) };
+    const exchanges = await sql<{ id: string; number: string; source: boolean; transfer: string }>`
+      SELECT other.id,sales.invoice_display_number(other.id) AS number,e.original_invoice_id=${id}::uuid AS source,
+        e.transfer_amount::text AS transfer FROM sales.exchange e JOIN sales.invoice other ON
+        other.id=CASE WHEN e.original_invoice_id=${id}::uuid THEN e.replacement_invoice_id ELSE e.original_invoice_id END
+      WHERE e.original_invoice_id=${id}::uuid OR e.replacement_invoice_id=${id}::uuid ORDER BY e.created_at,e.id`.execute(db);
+    const canManage = (await can(db,{userId:s.userId,operation:"invoice.cancel",viaPin:s.pinUnlocked})).verdict === "allow";
+    const canEditLines = inv.status === "draft" && (inv.createdBy === s.userId || canManage)
+      && (inv.channel === "pos" || inv.channel === "instagram");
+    return { invoice: invoiceToJson(inv), payments: await invoices.draftPayments(id), exchanges: exchanges.rows, canManage, canEditLines };
+
   });
 }

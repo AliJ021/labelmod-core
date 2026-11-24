@@ -155,6 +155,7 @@ export class ProductService {
     status?: "active" | "archived" | "all" | undefined;
     limit?: number | undefined;
     offset?: number | undefined;
+    sort?: "code" | "newest" | "oldest" | "name";
     /** یک سطر اضافه فقط برای تشخیص وجود صفحهٔ بعد؛ در پاسخ کاربر نمی‌آید. */
     extraRow?: boolean | undefined;
     /** فیلتر دسته (طرح ۱۰) سمت سرور، تا سقف فهرست کالای دستهٔ دیگری را جای آن نگذارد. */
@@ -226,6 +227,9 @@ export class ProductService {
         "agg.price_min",
         "agg.price_max",
       ])
+      .$if(opts.sort === "newest", query => query.orderBy("p.created_at", "desc"))
+      .$if(opts.sort === "oldest", query => query.orderBy("p.created_at", "asc"))
+      .$if(opts.sort === "name", query => query.orderBy("p.name_internal"))
       .orderBy("p.code")
       .limit(limit + (opts.extraRow ? 1 : 0))
       .offset(opts.offset ?? 0);

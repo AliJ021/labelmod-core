@@ -1,4 +1,15 @@
 import pg from "pg";
+import { sql } from "kysely";
+import type { Db } from "../db/client.ts";
+import type { FastifyBaseLogger } from "fastify";
+
+// Call after commit. The durable outbox remains authoritative if the signal is missed.
+export function wakeStockWorker(db: Db, log: FastifyBaseLogger): void {
+  void sql`SELECT pg_notify('lmc_pos_stock', '')`.execute(db).catch(() => {
+    log.warn("Stock wake-up failed; the outbox worker will poll");
+  });
+}
+
 import { setTimeout as delay } from "node:timers/promises";
 
 // LISTEN needs a session of its own. Reconnects wake the consumer to cover

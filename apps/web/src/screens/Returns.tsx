@@ -434,7 +434,7 @@ export function Returns() {
             </div>
             {(method === "snappay" || method === "digipay") && <div className="stack solid pad">
               <p>ابتدا برگشت را در پنل {method === "digipay" ? "دیجی‌پی" : "اسنپ‌پی"} تأیید کنید؛ این فرم پولی جابه‌جا نمی‌کند.</p>
-              <label>پرداخت اصلی {method === "digipay" ? "دیجی‌پی" : "اسنپ‌پی"}<select value={refundPaymentId} disabled={busy || !!draft} onChange={e => setRefundPaymentId(e.target.value)}>
+              <label>پرداخت اصلی {method === "digipay" ? "دیجی‌پی" : "اسنپ‌پی"}<select aria-label={`پرداخت اصلی ${method === "digipay" ? "دیجی‌پی" : "اسنپ‌پی"}`} value={refundPaymentId} disabled={busy || !!draft} onChange={e => setRefundPaymentId(e.target.value)}>
                 <option value="">انتخاب پرداخت</option>{refundSources.filter(p => (p.methodCode ?? "snappay") === method).map(p => <option key={p.id} value={p.id}>{p.reference} · باقی‌مانده {toman(parseRial(p.remaining))} تومان</option>)}
               </select></label>
               <label>شماره پیگیری برگشت تأییدشده<input value={refundReference} maxLength={200} disabled={busy || !!draft} onChange={e => setRefundReference(e.target.value)} /></label>

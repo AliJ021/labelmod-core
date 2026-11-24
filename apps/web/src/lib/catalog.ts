@@ -183,9 +183,10 @@ export interface CatalogSummary { activeProducts: number; activeVariations: numb
 
 export const catalog = {
   summary: (request?: RequestOptions) => api.get<CatalogSummary>("/products/summary", request),
-  products: (opts: { search?: string; status?: string; categoryId?: string; page?: number } = {}, request?: RequestOptions) => {
+  products: (opts: { search?: string; status?: string; categoryId?: string; sort?: string; page?: number } = {}, request?: RequestOptions) => {
     const q = new URLSearchParams();
     if (opts.search) q.set("search", opts.search);
+    if (opts.sort && opts.sort !== "code") q.set("sort", opts.sort);
     if (opts.categoryId) q.set("categoryId", opts.categoryId);
     if (opts.status) q.set("status", opts.status);
     if (opts.page !== undefined) q.set("page", String(opts.page));

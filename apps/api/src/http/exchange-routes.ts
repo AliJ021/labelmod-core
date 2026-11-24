@@ -1,3 +1,4 @@
+import { wakeStockWorker } from "../worker/pos-wake.ts";
 import type { FastifyInstance } from "fastify";
 import { z } from "zod";
 import { sql } from "kysely";
@@ -102,6 +103,7 @@ export function registerExchangeRoutes(app: FastifyInstance, deps: ReturnRouteDe
         return { value: id, ref: id };
       }, replay: async ref => ref,
     });
+    if (!result.replayed) wakeStockWorker(db, req.log);
     return { ...(await exchanges.byId(result.value)), replayed: result.replayed, status: "posted" };
   });
   // نبود رکورد ممکن است پاسخ درخواستِ در حال رسیدن باشد؛ پایان عملیات محسوب نمی‌شود.

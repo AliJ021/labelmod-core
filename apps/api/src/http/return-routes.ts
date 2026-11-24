@@ -1,3 +1,4 @@
+import { wakeStockWorker } from "../worker/pos-wake.ts";
 /**
  * مسیرهای برگشت از فروش.
  *
@@ -228,6 +229,7 @@ export function registerReturnRoutes(app: FastifyInstance, deps: ReturnRouteDeps
         return { value: id, ref: id };
       }, replay: async ref => ref,
     });
+    if (!out.replayed) wakeStockWorker(db, req.log);
     return { ...returnToJson((await returns.byId(out.value))!, await seesCost(s)), replayed: out.replayed };
   });
   app.get("/returns/status/:key", async req => {
@@ -443,6 +445,7 @@ export function registerReturnRoutes(app: FastifyInstance, deps: ReturnRouteDeps
       },
     });
 
+    if (!out.replayed) wakeStockWorker(db, req.log);
     const posted = await returns.byId(id);
     return {
       ...returnToJson(posted as NonNullable<typeof posted>, await seesCost(s)),

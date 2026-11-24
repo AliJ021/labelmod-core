@@ -362,6 +362,7 @@ for (const kind of ["price", "discount"] as const) {
     });
     await open(page);
     await page.getByRole("button", { name: kind === "price" ? "ویرایش قیمت شلوار کتان" : "تخفیف شلوار کتان", exact: true }).click();
+    if (kind === "discount") await page.getByLabel("نوع تخفیف").selectOption("amount");
     const input = page.getByLabel(kind === "price" ? /قیمت واحد/ : /^تخفیف \(تومان\)/);
     const submit = page.getByRole("button", { name: kind === "price" ? "ثبت قیمت" : "اعمال تخفیف", exact: true });
     for (const invalid of ["۱۲٫۳۴", "1.2.3", "-1.2"]) {

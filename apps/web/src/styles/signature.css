@@ -832,3 +832,11 @@ table.grid td small, table.ui-table td small { font-size: 0.6875rem; color: var(
 .catalog-variation-scroll th { position: sticky; top: 0; z-index: 1; background: var(--surface-solid); }
 .catalog-product-panel { min-width: 0; }
 .catalog-product-panel[hidden] { display: none; }
+
+.invoice-detail { min-width: 0; }
+.invoice-detail .invoice-back { align-self: flex-start; }
+.invoice-detail h1, .invoice-detail h2 { margin-block: 0 var(--s-2); }
+.invoice-detail td small { display: block; color: var(--muted); }
+.invoice-detail .invoice-actions { flex-wrap: wrap; justify-content: flex-start; white-space: normal; gap: var(--s-2); }
+.catalog-sort { display: flex; align-items: center; gap: var(--s-2); }
+.catalog-sort select { min-height: 44px; }

@@ -1158,12 +1158,22 @@ export class InvoiceService {
       .where("p.invoice_id", "=", invoiceId).orderBy("p.id").execute();
   }
 
-  async cancelDraft(invoiceId: string, actorId: string, reason?: string): Promise<Invoice> {
+  async cancelDraft(invoiceId: string, actorId: string, reason?: string, archive = false): Promise<Invoice> {
     await this.#db.transaction().execute(async (trx) => {
       await trx.selectFrom("sales.invoice").select("id").where("id", "=", invoiceId).forUpdate().execute();
       const inv = await this.byId(invoiceId, trx);
       if (!inv) throw new InvoiceError("invoice_not_found", "فاکتور یافت نشد", 404);
-      if (inv.status === "cancelled") return;
+      async function archiveInvoice() {
+        if (!archive) return;
+        const inserted = await sql`INSERT INTO sales.invoice_archive(invoice_id,actor_id,reason)
+          VALUES(${invoiceId}::uuid,${actorId}::uuid,${reason}) ON CONFLICT DO NOTHING RETURNING invoice_id`.execute(trx);
+        if (inserted.rows.length) await sql`SELECT platform.audit('invoice.archive','invoice',${invoiceId}::text,
+          jsonb_build_object('reason',${reason}::text),${actorId}::uuid)`.execute(trx);
+      }
+      if (inv.status === "cancelled" || (archive && inv.status === "returned")) {
+        await archiveInvoice();
+        return;
+      }
       await this.requireDraft(invoiceId, trx);
       const payments = await this.draftPayments(invoiceId, trx);
       if (payments.some((p) => !["failed", "reversed"].includes(p.status))) {
@@ -1174,6 +1184,7 @@ export class InvoiceService {
         .where("id", "=", invoiceId).execute();
       await sql`SELECT platform.audit('invoice.cancel_draft', 'invoice', ${invoiceId}::text,
         jsonb_build_object('reason', ${reason ?? null}::text), ${actorId}::uuid)`.execute(trx);
+      await archiveInvoice();
     });
     return (await this.byId(invoiceId)) as Invoice;
   }

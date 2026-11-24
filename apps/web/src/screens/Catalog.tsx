@@ -115,11 +115,13 @@ export function Catalog() {
   const [revision, setRevision] = useState(0);
   const [delay, setDelay] = useState(0);
   // طرح ۱۰: تراشهٔ دسته. فیلتر سمت سرور است تا سقف فهرست کالای دستهٔ دیگری را جای آن نگذارد.
+  const [sortRaw] = useUrlState("catalog.sort", "code");
+  const sort = ["newest", "oldest", "name"].includes(sortRaw) ? sortRaw : "code";
   const [category] = useUrlState("catalog.category");
   const categoriesLoad = useCallback((signal: AbortSignal) => catalog.refData({ signal }).then(r => r.categories), []);
   const categories = useLatestQuery({ key: "catalog-categories", load: categoriesLoad }).data ?? [];
-  const load = useCallback((signal: AbortSignal) => catalog.products({ search, status: showArchived ? "archived" : "active", page, ...(category ? { categoryId: category } : {}) }, { signal }), [search, showArchived, category, page]);
-  const query = useLatestQuery({ key: JSON.stringify([search, showArchived, category, page]), version: revision, load, delay, enabled: selected === null });
+  const load = useCallback((signal: AbortSignal) => catalog.products({ search, sort, status: showArchived ? "archived" : "active", page, ...(category ? { categoryId: category } : {}) }, { signal }), [search, showArchived, category, page, sort]);
+  const query = useLatestQuery({ key: JSON.stringify([search, showArchived, category, page, sort]), version: revision, load, delay, enabled: selected === null });
   const products = query.data?.products ?? [];
   function reload() { setDelay(0); setRevision(v => v + 1); }
   // چاپ گروهی از همین فهرست: چند کالا را تیک بزنید، «از هر تنوع N لیبل»، و همه یک‌جا به
@@ -233,6 +235,12 @@ export function Catalog() {
             <Icon name={creating ? "close" : "plus"} size="sm" />{creating ? "انصراف" : "کالای تازه"}</button>} />
         <div className="catalog-toolbar">
           <SearchField label="جست‌وجوی کد یا نام کالا" value={search} onChange={changeSearch} onSearch={reload} onClear={reload} />
+          <label className="catalog-sort">مرتب‌سازی
+            <select value={sort} onChange={e => { changeFilters({ "catalog.sort": e.target.value }); setDelay(0); }}>
+              <option value="code">کد کالا</option><option value="newest">جدیدترین کالاها</option>
+              <option value="oldest">قدیمی‌ترین کالاها</option><option value="name">نام کالا</option>
+            </select>
+          </label>
           {categories.length > 0 ? <div className="catalog-categories" role="group" aria-label="دستهٔ کالا">
             <button type="button" className="pick-chip" aria-pressed={category === ""} onClick={() => { changeFilters({ "catalog.category": "" }); setDelay(0); }}>همه</button>
             {categories.map(c => <button key={c.id} type="button" className="pick-chip" aria-pressed={category === c.id}

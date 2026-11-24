@@ -2283,14 +2283,24 @@ function DiscountPanel({
 }) {
   const [amount, setAmount] = useState(current > 0n ? exactTomanInput(current.toString()) : "");
   const [why, setWhy] = useState("");
-  const rial = amount.trim() === "" ? 0n : rialFromExactTomanInput(amount);
+  const [unit, setUnit] = useState<"auto" | "amount" | "percent">(current > 0n ? "amount" : "auto");
+  const entered = amount.trim() === "" ? 0n : rialFromExactTomanInput(amount);
+  const percent = unit === "percent" || (unit === "auto" && entered !== null && entered <= 1000n);
+  const rial = entered === null || entered < 0n || (percent && entered > 1000n) ? null
+    : percent ? (gross * entered + 500n) / 1000n : entered;
   const tooBig = rial !== null && rial > gross;
 
   return (
     <div className="line-panel" onKeyDown={(e) => { if (e.key === "Escape") { e.stopPropagation(); onCancel(); } }}>
     <Solid className="line-discount stack" style={{ gap: "var(--s-2)" }}>
       <label className="auth-field">
-        <span>تخفیف (تومان) — حداکثر <Money rial={gross} size="sm" /></span>
+        <span>نوع تخفیف</span><select value={unit} onChange={e => setUnit(e.target.value as typeof unit)}>
+          <option value="auto">خودکار · تا ۱۰۰ درصد، بیشتر به تومان</option>
+          <option value="percent">درصد</option><option value="amount">مبلغ به تومان</option>
+        </select>
+      </label>
+      <label className="auth-field">
+        <span>تخفیف ({percent ? "درصد" : "تومان"}) — حداکثر <Money rial={gross} size="sm" /></span>
         <AmountInput
           type="text"
           inputMode="decimal"
@@ -2303,6 +2313,7 @@ function DiscountPanel({
         <span>دلیل — بالای آستانه اجباری است</span>
         <input value={why} onChange={(e) => setWhy(e.target.value)} />
       </label>
+      {amount && rial !== null && !tooBig && <output>تخفیف این قلم · <Money rial={rial} size="sm" /></output>}
       {tooBig ? (
         <p className="auth-error" role="alert">
           <span className="dot dot--crit" aria-hidden="true">●</span> تخفیف از مبلغ خودِ قلم

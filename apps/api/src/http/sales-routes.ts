@@ -1,3 +1,4 @@
+import { wakeStockWorker } from "../worker/pos-wake.ts";
 import { sql } from "kysely";
 import { latinDigits } from "../sales/invoice-page.ts";
 /**
@@ -478,13 +479,28 @@ export function registerSalesRoutes(app: FastifyInstance, deps: SalesRouteDeps):
    * قیمت **از دیتابیس** خوانده می‌شود، مگر اینکه کلاینت `unitPrice`
    * بفرستد — و آن‌وقت دو دروازه باز می‌شود، نه یکی.
    */
+  async function requireLineEditor(s: { userId: string; pinUnlocked: boolean }, id: string) {
+    try { await assertInvoiceInScope(db, s.userId, id, invoices); }
+    catch (err) {
+      if (!(err instanceof InvoiceError) || err.code !== "draft_owner_mismatch") throw err;
+      if ((await can(db,{userId:s.userId,operation:"invoice.cancel",viaPin:s.pinUnlocked})).verdict !== "allow") throw err;
+      const other = await invoices.byId(id);
+      if (!other || other.status !== "draft") throw err;
+      if (other.shiftId) {
+        const shift = await db.selectFrom("sales.cash_shift").select("status").where("id","=",other.shiftId).executeTakeFirst();
+        if (shift?.status !== "open") throw new InvoiceError("draft_shift_closed","شیفت این پیش‌نویس بسته است.");
+      }
+    }
+  }
+
   app.post("/invoices/:id/lines", async (req, reply) => {
     const s = session(req);
     const { id } = z.object({ id: uuid }).parse(req.params);
     const body = addLineBody.parse(req.body);
     // Explicit supervisory price approval remains possible without taking over a cart.
     if (body.unitPrice !== undefined) await requireForSession(db, s, "sale.price_override");
-    await assertInvoiceInScope(db, s.userId, id, invoices, body.unitPrice === undefined);
+    if (body.unitPrice === undefined) await requireLineEditor(s, id);
+    else await assertInvoiceInScope(db, s.userId, id, invoices, false);
     await requireSaleFor(s, id);
 
     const discount = body.discountAmount ? parseMoney(body.discountAmount) : 0n;
@@ -523,7 +539,7 @@ export function registerSalesRoutes(app: FastifyInstance, deps: SalesRouteDeps):
     const s = session(req);
     const { id, lineId } = z.object({ id: uuid, lineId: uuid }).parse(req.params);
     const body = setLineQtyBody.parse(req.body);
-    await assertInvoiceInScope(db, s.userId, id, invoices);
+    await requireLineEditor(s, id);
     await requireSaleFor(s, id);
 
     // سنجش مقدار **پس از** دامنه و مجوز: کاربری که به این فاکتور
@@ -814,7 +830,7 @@ export function registerSalesRoutes(app: FastifyInstance, deps: SalesRouteDeps):
     const s = session(req);
     const { id } = z.object({ id: uuid }).parse(req.params);
     const body = scanBody.parse(req.body ?? {});
-    await assertInvoiceInScope(db, s.userId, id, invoices);
+    await requireLineEditor(s, id);
     await requireSaleFor(s, id);
 
     // مثل مسیر تغییر تعداد: اول «اجازه داری؟»، بعد «ورودی درست است؟».
@@ -856,7 +872,7 @@ export function registerSalesRoutes(app: FastifyInstance, deps: SalesRouteDeps):
   app.delete("/invoices/:id/lines/:lineId", async (req) => {
     const s = session(req);
     const { id, lineId } = z.object({ id: uuid, lineId: uuid }).parse(req.params);
-    await assertInvoiceInScope(db, s.userId, id, invoices);
+    await requireLineEditor(s, id);
     await requireSaleFor(s, id);
     return invoiceToJson(await invoices.removeLine(id, lineId, s.userId));
   });
@@ -871,7 +887,9 @@ export function registerSalesRoutes(app: FastifyInstance, deps: SalesRouteDeps):
   app.post("/invoices/:id/cancel", async (req) => {
     const s = session(req);
     const { id } = z.object({ id: uuid }).parse(req.params);
-    const body = z.object({ reason: z.string().max(200).optional() }).parse(req.body ?? {});
+    const body = z.object({ reason: z.string().trim().max(200).optional(), archive: z.boolean().optional() }).parse(req.body ?? {});
+    if (body.archive && !body.reason) throw new InvoiceError("reason_required", "دلیل حذف را وارد کنید.", 422);
+    if (body.archive) await requireForSession(db, s, "invoice.cancel");
     try { await assertInvoiceInScope(db, s.userId, id, invoices); }
     catch (error) {
       // رسیدگی صریح سرپرست به پیش‌نویس رهاشده، مجوز ادامهٔ فروش نیست.
@@ -879,7 +897,7 @@ export function registerSalesRoutes(app: FastifyInstance, deps: SalesRouteDeps):
       await requireForSession(db, s, "invoice.cancel");
     }
     await requireSaleFor(s, id);
-    const inv = await invoices.cancelDraft(id, s.userId, body.reason);
+    const inv = await invoices.cancelDraft(id, s.userId, body.reason, body.archive);
     return invoiceToJson(inv);
   });
 
@@ -1149,11 +1167,7 @@ export function registerSalesRoutes(app: FastifyInstance, deps: SalesRouteDeps):
 
     // runOnce has committed the stock and durable outbox row. A missed wake-up
     // is covered by polling and cannot roll back the sale or delay its receipt.
-    if (!out.replayed) {
-      void sql`SELECT pg_notify('lmc_pos_stock', '')`.execute(db).catch(() => {
-        req.log.warn("POS stock wake-up failed; the outbox worker will poll");
-      });
-    }
+    if (!out.replayed) wakeStockWorker(db, req.log);
     const finalized = await invoices.byId(id);
     return {
       ...invoiceToJson(finalized as NonNullable<typeof finalized>),
