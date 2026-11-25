@@ -107,14 +107,6 @@ class LMC_Order_Reservation
         if ($action === '') { return; }
         $payload = self::snapshot($order, $action);
         if (is_wp_error($payload)) { self::fail($order, $payload); return; }
-        $connection = LMC_Client::get('/web/connection', ['branchId' => $payload['branchId'], 'warehouseId' => $payload['warehouseId']]);
-        if (is_wp_error($connection)) { self::fail($order, $connection); return; }
-        if (($connection['protocol'] ?? null) !== 1 || ($connection['authenticated'] ?? false) !== true
-            || ($connection['branchId'] ?? '') !== $payload['branchId'] || ($connection['warehouseId'] ?? '') !== $payload['warehouseId']
-            || ($connection['features']['codReservations'] ?? false) !== true) {
-            self::fail($order, new WP_Error('lmc_reservation_upgrade', 'Core هنوز رزرو پرداخت در محل را پشتیبانی نمی‌کند؛ ابتدا سامانه را به‌روز کنید.'));
-            return;
-        }
         $sent = LMC_Stock_Ledger::sent_from($payload, $order->get_meta(self::ITEMS));
         if ($action === 'release') { unset($payload['lines']); }
         $result = LMC_Client::post('/web/order-reservations' . ($action === 'release' ? '/release' : ''), $payload);

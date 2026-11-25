@@ -154,6 +154,6 @@ require __DIR__ . '/../labelmod-connector/uninstall.php';
 check(!array_key_exists(LMC_Push_Secret::OPTION, $options) && $options['retained-financial-history'] === 'keep', 'حذف فقط راز جدید؛ تاریخچه حفظ شد');
 $multisite = true; $deleted = [];
 require __DIR__ . '/../labelmod-connector/uninstall.php';
-check(count($deleted) === 101 && $deleted[100] === [101, LMC_Push_Secret::OPTION], 'حذف راز در همه سایت‌ها با صفحه‌بندی');
+check(count($deleted) === 202 && $deleted[200] === [101, LMC_Push_Secret::OPTION] && $deleted[201] === [101, 'lmc_connection_check_status'], 'حذف راز در همه سایت‌ها با صفحه‌بندی');
 check(count($site_queries) === 2 && $blog === 1 && $options['retained-financial-history'] === 'keep', 'شبکه: بازگشت سایت و حفظ دیگر تنظیمات');
 echo "$checks checks passed\n";

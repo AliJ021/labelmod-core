@@ -94,16 +94,26 @@ class LMC_Order_Sync
     public static function dispatch_paid_order($order_id): void
     {
         $order_id = (int) $order_id;
+        $dispatch_ms = (int) round(microtime(true) * 1000);
+        $start = hrtime(true);
         if (!self::payment_complete($order_id)) {
             return;
         }
+        $queued = hrtime(true);
         $lock = LMC_Queue::try_exclusive(LMC_ORDER_EVENT, [$order_id]);
         if ($lock === null) {
             return;
         }
         try {
             // The worker may have completed or scheduled backoff while we acquired the lock.
-            self::deliver($order_id, microtime(true) + 2.0);
+            $phases = [
+                'ثبت پرداخت و صف بازیابی' => ($queued - $start) / 1e6,
+                'گرفتن قفل ارسال' => (hrtime(true) - $queued) / 1e6,
+            ];
+            if (isset(self::$payment_started[$order_id])) {
+                $phases['از رویداد پرداخت تا ارسال'] = max(0, $dispatch_ms - self::$payment_started[$order_id]);
+            }
+            self::deliver($order_id, microtime(true) + 2.0, $phases);
         } catch (Throwable $error) {
             lmc_log(sprintf('ارسال فوری سفارش %d کامل نشد؛ پیگیری از صف بازیابی.', $order_id));
         } finally {
@@ -188,8 +198,9 @@ class LMC_Order_Sync
     }
 
     /** ارسال واقعی — فقط زیر قفل اجرا (از `send`). */
-    private static function deliver($order_id, ?float $deadline = null): void
+    private static function deliver($order_id, ?float $deadline = null, array $phases = []): void
     {
+        $prepare = hrtime(true);
         $epoch    = LMC_Stock_Ledger::epoch();
         $order_id = (int) $order_id;
         $order    = wc_get_order($order_id);
@@ -228,19 +239,22 @@ class LMC_Order_Sync
         }
 
         $timings = [];
-        $supported = self::check_discount_support($payload, $deadline, $timings);
-        if (is_wp_error($supported)) {
-            self::fail($order, $supported, LMC_Client::is_retryable($supported));
-            return;
-        }
         $path = '/web/orders';
-        foreach ($payload['lines'] as $line) {
-            if (array_key_exists('discountAmount', $line)) { $path = '/web/discounted-orders'; break; }
+        if (!empty($payload['codDelivered'])) {
+            $path = '/web/delivered-orders';
+        } else {
+            foreach ($payload['lines'] as $line) {
+                if (array_key_exists('discountAmount', $line)) {
+                    $path = '/web/discounted-orders';
+                    break;
+                }
+            }
         }
+        $phases['آماده‌سازی سفارش'] = (hrtime(true) - $prepare) / 1e6;
         $res = LMC_Client::post($path, $payload, $deadline, $timings);
 
         if (is_wp_error($res)) {
-            self::fail($order, $res, LMC_Client::is_retryable($res));
+            self::fail($order, $res, LMC_Client::is_retryable($res), $timings[0]['http'] ?? null);
             return;
         }
 
@@ -281,6 +295,19 @@ class LMC_Order_Sync
                 }
             }
         }
+        $labels = ['access' => 'دسترسی', 'inbox' => 'کنترل تکرار', 'stocklock' => 'قفل موجودی',
+            'draft' => 'ساخت فاکتور', 'lines' => 'اقلام', 'settle' => 'تسویه', 'finalize' => 'نهایی‌سازی',
+            'commit' => 'ثبت تراکنش', 'replay' => 'بازیابی ثبت قبلی', 'ack' => 'خواندن نتیجه'];
+        foreach ($timings as $sample) {
+            foreach ($sample['stages'] ?? [] as $key => $duration) {
+                $phases[$labels[$key]] = $duration;
+            }
+        }
+        $details = [];
+        foreach ($phases as $label => $duration) {
+            $details[] = $label . ' ' . round($duration, 1);
+        }
+        $note .= '؛ جزئیات تلاش موفق (میلی‌ثانیه) ' . implode('، ', $details);
         $order->add_order_note($note);
 
         // ⚠️ مقایسه مبلغ، و چرا نه یک بررسی ساکت.
@@ -502,27 +529,7 @@ class LMC_Order_Sync
         return $payload;
     }
 
-    /** Core قدیمی فیلد ناشناخته را حذف می‌کند؛ تا اعلام پشتیبانی ارسال ممنوع است. */
-    public static function check_discount_support(array $payload, ?float $deadline = null, ?array &$timings = null)
-    {
-        $has_discount = false;
-        foreach ($payload['lines'] as $line) {
-            if (array_key_exists('discountAmount', $line)) { $has_discount = true; break; }
-        }
-        $cod = ($payload['codDelivered'] ?? false) === true;
-        if (!$has_discount && !$cod) { return true; }
-        $response = LMC_Client::get('/web/connection', [
-            'branchId' => $payload['branchId'], 'warehouseId' => $payload['warehouseId'],
-        ], $deadline, $timings);
-        if (is_wp_error($response)) { return $response; }
-        if (($response['protocol'] ?? null) !== 1 || ($response['authenticated'] ?? false) !== true
-            || ($response['branchId'] ?? '') !== $payload['branchId'] || ($response['warehouseId'] ?? '') !== $payload['warehouseId']
-            || ($has_discount && ($response['features']['explicitLineDiscount'] ?? false) !== true)
-            || ($cod && ($response['features']['codReservations'] ?? false) !== true)) {
-            return new WP_Error('lmc_discount_api_upgrade', 'Core قابلیت لازم برای تخفیف یا رزرو پرداخت در محل را تأیید نکرده است؛ ابتدا API را به‌روز کنید. سفارش ارسال نشد.', ['kind' => LMC_Client::PERMANENT]);
-        }
-        return true;
-    }
+
 
     /** تنها مدرک مسیر تأیید دستیِ مجاز؛ وضعیت سفارش جای نشان پرداخت را نمی‌گیرد. */
     private static function audited_payment_reference(WC_Order $order)
@@ -637,12 +644,16 @@ class LMC_Order_Sync
      * تلاش دوباره درست نمی‌شود و صفی که تا ابد یک سفارش غلط را
      * می‌فرستد، فقط لاگ را پر می‌کند و مشکل واقعی را پنهان.
      */
-    private static function fail(WC_Order $order, WP_Error $err, bool $retryable): void
+    private static function fail(WC_Order $order, WP_Error $err, bool $retryable, ?float $http_ms = null): void
     {
         $attempts = (int) $order->get_meta(self::META_ATTEMPTS) + 1;
         $order->update_meta_data(self::META_ATTEMPTS, $attempts);
         $order->update_meta_data(self::META_ERROR, $err->get_error_message());
 
+        $message = $err->get_error_message();
+        if ($http_ms !== null) {
+            $message .= sprintf(' (HTTP %d میلی‌ثانیه)', round($http_ms));
+        }
         $retry = $retryable && $attempts < self::MAX_ATTEMPTS;
         if ($retry) {
             // ۱، ۲، ۴، ۸، ۱۶ دقیقه — هر کدام با jitter بین نیمه و کامل، و Retry-After ۴۲۹ به‌عنوان کف.
@@ -650,7 +661,7 @@ class LMC_Order_Sync
             $order->add_order_note(sprintf(
                 /* translators: 1: پیام خطا 2: شماره تلاش 3: سقف تلاش */
                 __('ارسال به لیبل مد ناموفق بود (%1$s). تلاش %2$d از %3$d — دوباره تلاش می‌شود.', 'labelmod-connector'),
-                $err->get_error_message(),
+                $message,
                 $attempts,
                 self::MAX_ATTEMPTS
             ));
@@ -659,7 +670,7 @@ class LMC_Order_Sync
             $order->add_order_note(sprintf(
                 /* translators: %s: پیام خطا */
                 __('⛔ ارسال به لیبل مد متوقف شد: %s — این سفارش باید دستی بررسی شود.', 'labelmod-connector'),
-                $err->get_error_message()
+                $message
             ));
         }
 

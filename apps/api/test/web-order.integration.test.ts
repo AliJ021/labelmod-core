@@ -288,8 +288,9 @@ describe("سفارش سایت (ووکامرس)", { skip }, () => {
     await sql`SELECT inventory.apply_movement(${variationId}::uuid,${STORE_WH}::uuid,1,'opening',NULL,NULL,${SYSTEM_USER}::uuid,800000)`.execute(handle.db);
     const free = { ...base,externalId:`cod-free-${suffix}` };
     await reserve({ ...free,lines:[{sku:code,qty:"1"}] });
+    assert.equal((await order({ ...paid, ...free }, "/web/delivered-orders")).statusCode, 422);
     const zero = await order({ ...paid,...free,codDelivered:true,paidAmount:"0",
-      lines:[{sku:code,qty:"1",unitPrice:"2000000",discountAmount:"2000000"}] },"/web/discounted-orders");
+      lines:[{sku:code,qty:"1",unitPrice:"2000000",discountAmount:"2000000"}] },"/web/delivered-orders");
     assert.equal(zero.statusCode,201,zero.body);
     const payments = await handle.db.selectFrom("treasury.payment").select("id")
       .where("invoice_id","=",zero.json().invoiceId).execute();
@@ -999,7 +1000,7 @@ describe("سفارش سایت (ووکامرس)", { skip }, () => {
 
   // پیش از F100: آن آزمون در پایان دورهٔ کانال امروز را می‌بندد و پس از آن سفارش سایتِ امروز
   // عمداً رد می‌شود («دوره ثبت این فاکتور قبلاً بسته شده است»).
-  test("F101: partial explicit discount on an indivisible multi-unit net is exact under duplicate delivery, retry and unit returns", async () => {
+  test("F101: partial explicit discount on an indivisible multi-unit net is exact under duplicate delivery, retry and unit returns", async (t) => {
     // کوپن ووکامرس روی ۳ عدد: خالص ۴٬۴۹۹٬۹۹۹ بر ۳ بخش‌پذیر نیست. افزونه قیمت اصلی واقعی
     // و تخفیف صریح ۱ ریال را می‌فرستد؛ Core باید دقیقاً همان پول دریافتی را ثبت کند، موجودی را
     // یک بار کم کند، و سه مرجوعی تک‌عددی جمعاً نه کمتر و نه بیشتر از همان خالص پس بدهند.
@@ -1024,12 +1025,14 @@ describe("سفارش سایت (ووکامرس)", { skip }, () => {
     // Drop the TCP connection after the real Core handler commits, before the
     // caller receives any headers. Two workers then retry the same frozen order.
     let committedStatus = 0;
+    let committedTiming = "";
     const relay = createServer(async (req, res) => {
       try {
         const bytes: Buffer[] = [];
         for await (const chunk of req) bytes.push(Buffer.from(chunk));
         const upstream = await order(JSON.parse(Buffer.concat(bytes).toString()), "/web/discounted-orders");
         committedStatus = upstream.statusCode;
+        committedTiming = String(upstream.headers["server-timing"]);
       } finally {
         res.destroy();
       }
@@ -1042,6 +1045,10 @@ describe("سفارش سایت (ووکامرس)", { skip }, () => {
         method: "POST", body: JSON.stringify(payload),
       }), /fetch failed/);
       assert.equal(committedStatus, 201);
+      t.diagnostic(`Discounted sale, local API milliseconds: ${committedTiming}`);
+      assert.deepEqual(committedTiming.split(", ").map(metric => metric.split(";")[0]),
+        ["lmc", "access", "inbox", "stocklock", "draft", "lines", "settle", "finalize", "commit", "ack"]);
+      assert.ok(committedTiming.split(", ").every(metric => /^\w+;dur=\d+(?:\.\d+)?$/.test(metric)));
       assert.equal(await onHand(), 2);
     } finally {
       await new Promise<void>(resolve => relay.close(() => resolve()));
@@ -1050,7 +1057,15 @@ describe("سفارش سایت (ووکامرس)", { skip }, () => {
     assert.deepEqual(both.map((r) => r.statusCode), [200, 200], both.map((r) => r.body).join(" | "));
     const invoiceId = both[0]!.json<OrderResponse>().invoiceId;
     assert.equal(both[1]!.json<OrderResponse>().invoiceId, invoiceId);
-    for (const r of both) assert.equal(r.json<OrderResponse>().payableAmount, NET.toString());
+    for (const r of both) {
+      assert.equal(r.json<OrderResponse>().payableAmount, NET.toString());
+      assert.match(String(r.headers["server-timing"]), /replay;dur=/);
+    }
+    const counts = await sql<{ invoices: number; payments: number; movements: number }>`SELECT
+      (SELECT count(DISTINCT invoice_id)::int FROM sales.invoice_line WHERE variation_id=${variationId}::uuid) AS invoices,
+      (SELECT count(*)::int FROM treasury.payment WHERE invoice_id=${invoiceId}::uuid) AS payments,
+      (SELECT count(*)::int FROM inventory.stock_movement WHERE ref_type='invoice' AND variation_id=${variationId}::uuid) AS movements`.execute(handle.db);
+    assert.deepEqual(counts.rows[0], { invoices: 1, payments: 1, movements: 1 });
     // پاسخ گم‌شده: افزونه همان snapshot را دوباره می‌فرستد.
     const retried = await order(payload, "/web/discounted-orders");
     assert.equal(retried.statusCode, 200, retried.body);

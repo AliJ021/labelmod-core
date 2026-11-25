@@ -166,7 +166,8 @@ export class WebOrderService {
    * `shippingAmount` روی سرآیند فاکتور می‌نشیند، نه به‌عنوان یک قلم:
    * کرایه ارسال کالا نیست و نباید در گزارش «چه فروختیم» بیاید.
    */
-  async ingest(trx: Transaction<Database>, input: WebOrderInput, authorize?: LineAdditionAuthorizer): Promise<string> {
+  async ingest(trx: Transaction<Database>, input: WebOrderInput, authorize?: LineAdditionAuthorizer,
+    mark?: (stage: string) => void): Promise<string> {
     if (input.lines.length === 0) {
       throw new InvoiceError("empty_order", "سفارش بدون قلم ثبت نمی‌شود", 422);
     }
@@ -179,6 +180,8 @@ export class WebOrderService {
     await sql`SELECT inventory.web_order_reserve(${input.actorId}::uuid, ${input.externalId},
       ${input.branchId}::uuid, ${input.warehouseId}::uuid, ${reservationLines}::jsonb,
       'lock', ${input.codDelivered ?? false})`.execute(trx);
+
+    mark?.("stocklock");
 
     // `null` از `resolveCustomer` یعنی «تلفن بی‌معنا بود» و با «تلفن
     // نفرستاد» یک‌طور رفتار می‌شود: فروش ناشناس، نه مشتریِ مشترک.
@@ -195,6 +198,7 @@ export class WebOrderService {
       ...(customerId === undefined ? {} : { customerId }),
     });
 
+    mark?.("draft");
     // Validate the SKU mapping again after the inventory locks. One query covers the entire basket.
     const ids = await this.resolveSkus(trx,skus);
     for (const line of input.lines) {
@@ -215,6 +219,7 @@ export class WebOrderService {
       }, authorize);
     }
 
+    mark?.("lines");
     if (input.shippingAmount > 0n) {
       await trx
         .updateTable("sales.invoice")
@@ -268,6 +273,7 @@ export class WebOrderService {
     // نهایی‌سازی: کالا از انبار خارج می‌شود و شماره فاکتور می‌خورد.
     // سند درآمد و COGS اینجا زده نمی‌شود — کار `sales.post_batch()`
     // در بستن شبانه دوره کانال است (ADR-003).
+    mark?.("settle");
     await this.#invoices.finalizeIn(trx, invoiceId, input.actorId);
 
     if (input.note) {
@@ -278,6 +284,7 @@ export class WebOrderService {
         .execute();
     }
 
+    mark?.("finalize");
     return invoiceId;
   }
 }

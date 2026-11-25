@@ -10,18 +10,25 @@ $settings = ['base_url' => 'https://core.example.test', 'api_key' => 'secret-tes
     'branch_id' => '', 'warehouse_id' => '', 'sync_stock' => 'yes'];
 $calls = []; $logs = []; $routes = []; $events = []; $response = ['code' => 200, 'body' => '{}'];
 function lmc_setting($key, $default = '') { global $settings; return $settings[$key] ?? $default; }
-function get_option($key, $default = false) { return $default; }
+function get_option($key, $default = false) { return $GLOBALS['options'][$key] ?? $default; }
 function __($text, $domain = '') { return $text; }
 function wp_parse_url($url) { return parse_url($url); }
 function wp_json_encode($body, $flags = 0) { return json_encode($body, $flags); }
 function wp_safe_remote_request($url, $args) { global $calls, $response; $calls[] = [$url, $args]; return $response; }
 function wp_remote_retrieve_response_code($res) { return $res['code']; }
+function wp_remote_retrieve_header($res, $header) { return $res['headers'][$header] ?? ''; }
 function wp_remote_retrieve_body($res) { return $res['body']; }
 function lmc_log($message) { global $logs; $logs[] = $message; }
 function is_wp_error($value) { return $value instanceof WP_Error; }
 function home_url() { return 'https://shop.example.test'; }
 function untrailingslashit($value) { return rtrim($value, '/'); }
-function add_action($hook, $callback) { $callback(); }
+function add_action($hook, $callback) { $GLOBALS['hooks'][$hook] = $callback; if ($hook === 'rest_api_init') { $callback(); } }
+function wp_schedule_event($time, $period, $hook) {
+    $GLOBALS['events'][$hook . '[]'] = $time;
+    $GLOBALS['schedules'][] = $period;
+}
+function wp_salt($context) { return 'unit-test'; }
+function update_option($key, $value, $autoload) { $GLOBALS['options'][$key] = $value; }
 function register_rest_route($ns, $path, $args) { global $routes; $routes[$ns . $path] = $args; }
 function wp_next_scheduled($hook, $args = []) { global $events; return $events[$hook . json_encode($args)] ?? false; }
 function wc_get_order($id) { global $order; return $id === 42 ? $order : false; }
@@ -111,4 +118,27 @@ check(strpos($err->get_error_message() . implode('', $logs), 'secret-test-token'
 $response = ['code' => 302, 'body' => ''];
 $err = LMC_Client::get('/web/connection');
 check(!LMC_Client::is_retryable($err), 'redirect شکست دائمی است');
+($GLOBALS['hooks']['init'])();
+($GLOBALS['hooks']['init'])();
+check($GLOBALS['schedules'] === ['daily'], 'یک رویداد روزانه پس از نصب یا ارتقا');
+$settings['branch_id'] = 'b'; $settings['warehouse_id'] = 'w';
+$response = ['code' => 200, 'body' => json_encode(['protocol' => 1, 'authenticated' => true,
+    'branchId' => 'b', 'warehouseId' => 'w', 'features' => ['explicitLineDiscount' => true]])];
+$count = count($calls);
+($GLOBALS['hooks'][LMC_Diagnostics::DAILY])();
+check(LMC_Diagnostics::status()['discount'] && LMC_Diagnostics::status()['ok'] && count($calls) === $count + 1, 'خواندن نتیجه درخواست شبکه ندارد');
+check(!str_contains(json_encode($GLOBALS['options']), $settings['api_key']), 'کلید در نتیجه ذخیره نمی‌شود');
+$response = new WP_Error('network', 'offline');
+LMC_Diagnostics::check();
+check(LMC_Diagnostics::status()['ok'] === false, 'قطع ارتباط نتیجه قبلی را تازه نشان نمی‌دهد');
+$settings['warehouse_id'] = 'other';
+check(LMC_Diagnostics::status() === [], 'نتیجه انبار قبلی معتبر نیست');
+$response = ['code' => 201, 'body' => '{}', 'headers' => ['server-timing' => 'lmc;dur=1.50, access;dur=0.2, commit;dur=0.80, unexpected;dur=999']];
+$timings = [];
+LMC_Client::post('/web/discounted-orders', [], null, $timings);
+check($timings[0]['core'] === 1.5 && $timings[0]['stages'] === ['access' => 0.2, 'commit' => 0.8], 'فقط زمان‌های شناخته شده ثبت می‌شوند');
+$response = new WP_Error('offline', 'offline');
+$timings = [];
+LMC_Client::post('/web/discounted-orders', [], null, $timings);
+check(isset($timings[0]['http']) && !isset($timings[0]['core']), 'زمان تلاش ناموفق جدا از زمان نامعلوم سرور است');
 echo "OK: {$checks} diagnostics assertions\n";

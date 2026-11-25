@@ -150,6 +150,16 @@ export function registerWebRoutes(app: FastifyInstance, deps: WebRouteDeps): voi
   const ingestWebOrder: RouteHandlerMethod = async (req, reply) => {
     const s = session(req);
     const body = webOrderBody.parse(req.body);
+    if (req.routeOptions.url === "/web/delivered-orders" && body.codDelivered !== true) {
+      throw new InvoiceError("delivery_required", "تأیید تحویل سفارش لازم است", 422);
+    }
+    const stages: string[] = [];
+    let stageStart = performance.now();
+    function mark(stage: string) {
+      const now = performance.now();
+      stages.push(`${stage};dur=${(now - stageStart).toFixed(2)}`);
+      stageStart = now;
+    }
 
     await assertBranch(db, s.userId, body.branchId);
     await assertWarehouseInBranch(db, body.warehouseId, body.branchId);
@@ -173,6 +183,7 @@ export function registerWebRoutes(app: FastifyInstance, deps: WebRouteDeps): voi
     // ⚠️ کلید از **شماره سفارش** ساخته می‌شود، نه از هدر کلاینت.
     //    هویت این عملیات همان سفارش است؛ ووکامرسی که دو بار Webhook
     //    بزند باید Replay بگیرد، نه فاکتور دوم.
+    mark("access");
     const out = await runOnce<string>(db, {
       key: `woo-order:${body.externalId}`,
       source: "api.web.order",
@@ -188,6 +199,7 @@ export function registerWebRoutes(app: FastifyInstance, deps: WebRouteDeps): voi
         ...(body.codDelivered === undefined ? {} : { codDelivered: body.codDelivered }),
       },
       run: async (trx) => {
+        mark("inbox");
         const id = await webOrders.ingest(trx, {
           branchId: body.branchId,
           warehouseId: body.warehouseId,
@@ -212,12 +224,13 @@ export function registerWebRoutes(app: FastifyInstance, deps: WebRouteDeps): voi
         }, (lineTrx, line) => assertMarkdownAllowed(lineTrx, invoices, s, {
           variationId: line.variationId, qty: line.qty, discount: line.discountAmount,
           settingPrice: line.unitPrice, listPrice: line.listPrice,
-        }));
+        }), mark);
         return { value: id, ref: id };
       },
       replay: async (ref) => ref,
     });
 
+    mark(out.replayed ? "replay" : "commit");
     // Acknowledgement needs only the posted header and stock watermark, both read after commit.
     const [invoice, stock] = await Promise.all([
       db.selectFrom("sales.invoice").select(["id","status","payable_amount"])
@@ -226,7 +239,8 @@ export function registerWebRoutes(app: FastifyInstance, deps: WebRouteDeps): voi
       stockWatermarks(body.warehouseId, body.lines.map(line => line.sku)),
     ]);
     if (!invoice) throw new InvoiceError("invoice_not_found", "فاکتور یافت نشد", 404);
-    reply.header("server-timing", `lmc;dur=${reply.elapsedTime.toFixed(2)}`);
+    mark("ack");
+    reply.header("server-timing", [`lmc;dur=${reply.elapsedTime.toFixed(2)}`, ...stages].join(", "));
     return reply.code(out.replayed ? 200 : 201).send({
       invoiceId: invoice.id,
       number: invoice.number,
@@ -241,6 +255,7 @@ export function registerWebRoutes(app: FastifyInstance, deps: WebRouteDeps): voi
   app.post("/web/orders", ingestWebOrder);
   // مسیر مجزا جلوی حذف بی‌صدای فیلد تخفیف روی API قدیمی در استقرار تدریجی را می‌گیرد.
   app.post("/web/discounted-orders", ingestWebOrder);
+  app.post("/web/delivered-orders", ingestWebOrder);
 
   /**
    * خوراک موجودی — تا سایت بیش از موجودی نفروشد.

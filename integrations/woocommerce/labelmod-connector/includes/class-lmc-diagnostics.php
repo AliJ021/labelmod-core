@@ -4,8 +4,50 @@ if (!defined('ABSPATH')) { exit; }
 
 class LMC_Diagnostics
 {
+    public const DAILY = 'lmc_daily_connection_check';
+    public const STATUS = 'lmc_connection_check_status';
+
+    public static function schedule(): void
+    {
+        if (!wp_next_scheduled(self::DAILY)) {
+            wp_schedule_event(time() + 60, 'daily', self::DAILY);
+        }
+    }
+
+    private static function scope(): string
+    {
+        $parts = array_map('lmc_setting', ['base_url', 'api_key', 'branch_id', 'warehouse_id']);
+        return hash_hmac('sha256', wp_json_encode($parts), wp_salt('auth'));
+    }
+
+    public static function status(): array
+    {
+        $status = get_option(self::STATUS, []);
+        return ($status['scope'] ?? null) === self::scope() ? $status : [];
+    }
+
+    public static function check(array $query = [])
+    {
+        $scope = self::scope();
+        $query['branchId'] = (string) lmc_setting('branch_id');
+        $query['warehouseId'] = (string) lmc_setting('warehouse_id');
+        if (!lmc_setting('api_key') || !lmc_setting('base_url') || !$query['branchId'] || !$query['warehouseId']) {
+            return new WP_Error('lmc_missing_scope', 'اتصال، شعبه و انبار را انتخاب کنید.');
+        }
+        $res = LMC_Client::get('/web/connection', $query);
+        $ok = is_array($res) && ($res['protocol'] ?? null) === 1 && ($res['authenticated'] ?? false) === true
+            && ($res['branchId'] ?? '') === $query['branchId'] && ($res['warehouseId'] ?? '') === $query['warehouseId'];
+        if ($scope === self::scope()) {
+            update_option(self::STATUS, ['scope' => $scope, 'time' => time(), 'ok' => $ok,
+                'discount' => $ok && ($res['features']['explicitLineDiscount'] ?? false) === true], false);
+        }
+        return $res;
+    }
+
     public static function init(): void
     {
+        add_action('init', [__CLASS__, 'schedule']);
+        add_action(self::DAILY, [__CLASS__, 'check']);
         add_action('rest_api_init', function () {
             register_rest_route(LMC_Push_Receiver::NS, '/diagnostics', [
                 'methods' => 'POST', 'callback' => [__CLASS__, 'handle'],
@@ -105,7 +147,7 @@ class LMC_Diagnostics
                 }
             }
         }
-        $res = LMC_Client::get('/web/connection', $query);
+        $res = self::check($query);
         if (is_wp_error($res)) {
             $status = (int) ($res->get_error_data()['status'] ?? 0);
             $message = in_array($status, [401, 403], true)
