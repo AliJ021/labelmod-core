@@ -1,3 +1,4 @@
+import { readFile } from "node:fs/promises";
 /**
  * رسید خرید: افزودن گروهی رنگ/سایز و کد خودکار کالا — رفتار مرورگر.
  * قرارداد مالی (همه یا هیچ، ادغام هم‌قیمت، Idempotency، هم‌زمانی کد) در آزمون API است.
@@ -144,4 +145,26 @@ test("new product without a code: the server's generated code is shown", async (
   await page.getByRole("button", { name: "ساخت کالا", exact: true }).click();
   await expect(page.getByText("کالا با کد LM00042 ساخته شد. حالا تنوع‌هایش را بسازید.")).toBeVisible();
   expect(posts).toEqual([{ nameInternal: "کالای تازه" }]);
+});
+
+test("رسید خرید اکسل واقعی و لیبل به تعداد هر تنوع می‌دهد", async ({ page, api }, info) => {
+  const line = { id:"l1", variationId:"v-bs", sku:"000012", barcode:"2000000000015", productName:"پیراهن", color:"مشکی", size:"S", qty:"101", unitPrice:"50000", lineAmount:"5050000", chargeAlloc:"0", landedUnitCost:"50000" };
+  api.defaults["GET /receipts"] = [summary];
+  api.defaults["GET /receipts/r1"] = {...receipt, lines:[line,{...line,id:"l2",variationId:"v-bm",size:"M",qty:"2"}]};
+  await page.goto("/?page=purchasing");
+  await page.getByRole("button",{name:"باز کن"}).click();
+  const download = page.waitForEvent("download");
+  await page.getByRole("button",{name:"اکسل رسید خرید"}).click();
+  const exported = await download;
+  expect(exported.suggestedFilename()).toMatch(/\.xlsx$/);
+  const filename = info.outputPath("receipt.xlsx");
+  await exported.saveAs(filename);
+  const bytes = await readFile(filename);
+  expect(bytes.subarray(0,4).toString("hex")).toBe("504b0304");
+  expect(bytes.includes(Buffer.from("xl/worksheets/sheet1.xml"))).toBe(true);
+  await page.getByRole("button",{name:"چاپ لیبل به تعداد خرید"}).click();
+  await expect(page.getByRole("button",{name:"پیش‌نمایش ۱۰۰ لیبل"})).toBeEnabled();
+  await page.getByRole("button",{name:"نوبت بعد"}).click();
+  await expect(page.getByRole("button",{name:"پیش‌نمایش ۳ لیبل"})).toBeEnabled();
+  await expect(page.getByRole("button",{name:"نوبت بعد"})).toBeDisabled();
 });

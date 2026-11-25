@@ -70,6 +70,7 @@ export interface InvoicePageLine {
   qty: string;
   /** ریال. */
   unitPrice: bigint;
+  listPrice?: bigint | null;
   discountAmount: bigint;
   netAmount: bigint;
 }
@@ -244,7 +245,7 @@ export function invoicePage(data: InvoicePageData, timeZone: string): string {
       // نهایی سطر. قیمت واحد و تخفیف قلم چاپ نمی‌شوند؛ snapshot همان قلم در
       // دیتابیس و «شامل تخفیف اقلام» در جمع‌ها دست‌نخورده‌اند.
       return `    <tbody class="item" data-line="${latn(i + 1)}">
-      <tr class="line"><td class="name"><div class="item-title">${name}</div></td><td class="qty">${esc(qty)}</td><td class="num total">${money(l.netAmount)}</td></tr>
+      <tr class="line"><td class="name"><div class="item-title">${name}</div><small>قیمت واحد: ${money(l.listPrice != null && l.listPrice > l.unitPrice ? l.listPrice : l.unitPrice)} تومان</small></td><td class="qty">${esc(qty)}</td><td class="num total">${money(l.netAmount)}</td></tr>
     </tbody>`;
     })
     .join("\n");
@@ -258,9 +259,16 @@ export function invoicePage(data: InvoicePageData, timeZone: string): string {
       : "",
   ].join("");
   // اطلاع، نه کسر: مبلغ هر قلم از پیش خالص از تخفیف است.
-  const lineDiscounts = data.lines.reduce((sum, l) => sum + l.discountAmount, 0n);
+  const lineDiscounts = data.lines.reduce((sum, line) => {
+    if (line.listPrice == null || line.listPrice <= line.unitPrice) return sum + line.discountAmount;
+    // PostgreSQL stores quantity in thousandths and rounds each line to one Rial.
+    const [units, fraction = ""] = line.qty.split(".");
+    const thousandths = BigInt(units!) * 1000n + BigInt(fraction.padEnd(3,"0"));
+    const original = (line.listPrice * thousandths + 500n) / 1000n;
+    return sum + original - line.netAmount;
+  }, 0n);
   const savingRow = lineDiscounts > 0n
-    ? `<tr class="incl"><th>شامل تخفیف اقلام</th><td class="num">${money(lineDiscounts)}</td></tr>` : "";
+    ? `<tr class="incl"><th>جمع تخفیف</th><td class="num">${money(lineDiscounts)}</td></tr>` : "";
   // پرداخت‌شده، تسویه از تعویض، مانده و وضعیت تسویه عمداً چاپ نمی‌شوند
   // (خواستهٔ مالک، ۱۴۰۵/۰۷/۲۰). میدان‌هایشان در قرارداد و API و دیتابیس
   // دست‌نخورده‌اند؛ فقط این صفحهٔ نمایشی آن‌ها را نمی‌نویسد.
@@ -309,8 +317,8 @@ ${items}
 
   <section class="summary" aria-label="خلاصه حساب به تومان">
   <table class="totals">
-    ${savingRow}
     ${extra}
+    ${savingRow}
     <tr class="grand"><th>قابل پرداخت</th><td class="num">${money(data.payableAmount)} <small>تومان</small></td></tr>
   </table>
   </section>

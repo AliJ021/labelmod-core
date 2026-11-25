@@ -234,6 +234,13 @@ function customerSearchPredicate(term: string, branches: CustomerBranchScope) {
        OR sales.normalize_mobile(${term}) = c.mobile_normalized)`;
 }
 
+function audiencePredicate(audience = "all") {
+  if (audience === "marketing") return sql`c.consent_marketing IS TRUE`;
+  if (audience === "receipt") return sql`c.consent_sms IS TRUE`;
+  if (audience === "no_marketing") return sql`c.consent_marketing IS FALSE`;
+  return sql`true`;
+}
+
 export class CustomerService {
   readonly #db: Db;
 
@@ -249,26 +256,27 @@ export class CustomerService {
    */
   async search(input: {
     title?: string | undefined;
+    audience?: string | undefined;
     q?: string | undefined;
-    limit: number;
+    limit: number | null;
     branches: CustomerBranchScope;
   }): Promise<Customer[]> {
     const rows = await sql<Row>`
       ${selectCustomer(input.branches)}
-      WHERE ${customerSearchPredicate((input.q ?? "").trim(), input.branches)}
+      WHERE ${customerSearchPredicate((input.q ?? "").trim(), input.branches)} AND ${audiencePredicate(input.audience)}
       AND (${input.title ?? "all"}='all' OR coalesce(c.salutation,'unknown')=${input.title ?? "all"})
-      ORDER BY c.created_at DESC
-      LIMIT ${input.limit}
+      ORDER BY c.created_at DESC, c.id
+      ${input.limit === null ? sql`` : sql`LIMIT ${input.limit}`}
     `.execute(this.#db);
     return rows.rows.map(toJson);
   }
 
-  async titleCounts(term: string, branches: CustomerBranchScope) {
+  async titleCounts(term: string, branches: CustomerBranchScope, audience?: string) {
     const result = await sql<{mr: number; ms: number; unknown: number}>`
       SELECT count(*) FILTER (WHERE c.salutation='mr')::int AS mr,
         count(*) FILTER (WHERE c.salutation='ms')::int AS ms,
         count(*) FILTER (WHERE c.salutation IS NULL)::int AS unknown FROM sales.customer c
-        WHERE ${customerSearchPredicate(term.trim(), branches)}`.execute(this.#db);
+        WHERE ${customerSearchPredicate(term.trim(), branches)} AND ${audiencePredicate(audience)}`.execute(this.#db);
     return result.rows[0]!;
   }
 

@@ -39,6 +39,9 @@ interface Pay { methodCode: string; amount: string; refNo?: string }
  * `settlement` را از وضعیت **همان لحظه** می‌سازد، نه از آنچه صفحه دیده بود.
  */
 function pos(api: MockApi, over: Partial<typeof draft> = {}, methods = METHODS) {
+  api.handlers.set(`GET /invoices/${INV}/print`, route => route.fulfill({
+    contentType: "text/html", body: "<html><body><div class='sheet'>رسید فروش آزمایشی</div></body></html>",
+  }));
   const state = { invoice: { ...draft, ...over }, payments: [] as Array<{ id: string; name: string; amount: string }>, posted: [] as Pay[], keys: [] as string[], finalized: 0, finalizeKeys: [] as string[],
     byKey: new Map<string, { id: string; body: Pay }>(), sealed: new Set<string>(), intentChecks: [] as string[] };
   const received = () => state.payments.reduce((n, p) => n + BigInt(p.amount), BigInt(over.receivedAmount ?? "0")).toString();
@@ -289,6 +292,7 @@ for (const allowFractionalQty of [false, true]) {
     await page.getByRole("button", { name: "ثبت قیمت", exact: true }).click();
     await expect(page.getByLabel(/قیمت واحد/)).toHaveCount(0);
     await page.getByRole("button", { name: "تخفیف شلوار کتان", exact: true }).click();
+    await page.getByLabel("نوع تخفیف").selectOption("amount");
     await page.getByLabel(/^تخفیف \(تومان\)/).fill("۰٫۱");
     await page.getByRole("button", { name: "اعمال تخفیف", exact: true }).click();
     await expect(page.getByLabel(/^تخفیف \(تومان\)/)).toHaveCount(0);
@@ -362,6 +366,7 @@ for (const kind of ["price", "discount"] as const) {
     });
     await open(page);
     await page.getByRole("button", { name: kind === "price" ? "ویرایش قیمت شلوار کتان" : "تخفیف شلوار کتان", exact: true }).click();
+    if (kind === "discount") await page.getByLabel("نوع تخفیف").selectOption("amount");
     const input = page.getByLabel(kind === "price" ? /قیمت واحد/ : /^تخفیف \(تومان\)/);
     const submit = page.getByRole("button", { name: kind === "price" ? "ثبت قیمت" : "اعمال تخفیف", exact: true });
     for (const invalid of ["۱۲٫۳۴", "1.2.3", "-1.2"]) {
@@ -515,6 +520,7 @@ test("proforma load failure allows safe retry and an empty draft stays disabled"
 test("cash sale: confirm dialog, one finalize under double click, persistent success with change, print and next sale", async ({ page, api }) => {
   const s = pos(api);
   await open(page);
+  await page.getByRole("checkbox", { name: "چاپ رسید بلافاصله پس از ثبت" }).uncheck();
   await expect(page.locator(".pos-bar .pill")).toHaveText("۲ ردیف · ۳ عدد");
   await expect(payPanel(page).locator(".checkout-payable")).toContainText("20٬000");
   await pick(page, "نقدی");
@@ -537,7 +543,7 @@ test("cash sale: confirm dialog, one finalize under double click, persistent suc
   await expect(done.getByRole("region", { name: "ریز پرداخت‌ها" })).toContainText("نقدی");
   const print = done.getByRole("button", { name: "چاپ رسید" });
   await expect(print).toBeEnabled();
-  expect(api.calls.some(call => call.endsWith("/print")), "ثبت فروش چاپ خودکار ندارد").toBe(false);
+  expect(api.calls.some(call => call.endsWith("/print")), "با انتخاب چاپ دستی، ثبت فروش رسید را به چاپ نمی‌فرستد").toBe(false);
   // چاپ دستی است: بی کلیک هیچ پنجره‌ای باز نمی‌شود و وضعیت «ثبت شد» می‌ماند.
   expect(page.context().pages()).toHaveLength(1);
   await done.getByRole("button", { name: "فروش بعدی", exact: true }).click();
@@ -573,6 +579,7 @@ test("receipt print stays in the cashier tab, waits for fonts and the embedded l
       body: '<!doctype html><html><body><div class="sheet"><img class="logo" alt="لیبل مد" src="data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNkYPhfDwAChwGA60e6kgAAAABJRU5ErkJggg=="><table class="totals"><tr><td>رسید</td></tr></table></div><button id="print-btn">چاپ</button></body></html>' });
   });
   await open(page, s);
+  await page.getByRole("checkbox", { name: "چاپ رسید بلافاصله پس از ثبت" }).uncheck();
   await page.getByRole("button", { name: "نهایی‌کردن فاکتور", exact: true }).click();
   await page.getByRole("dialog").getByRole("button", { name: "تأیید و نهایی‌کردن", exact: true }).click();
   const button = page.getByRole("button", { name: "چاپ رسید", exact: true });
@@ -592,7 +599,7 @@ test("receipt print stays in the cashier tab, waits for fonts and the embedded l
   await expect(page.locator('iframe[title="رسید آمادهٔ چاپ"]')).toHaveCount(0);
 });
 
-test("automatic receipt is opt-in and runs once after confirmed finalization, without a second print click", async ({ page, api }) => {
+test("automatic receipt defaults on and runs once after confirmed finalization, without a second print click", async ({ page, api }) => {
   const s = pos(api, { receivedAmount: "200000" });
   let prints = 0;
   await page.exposeFunction("recordAutoReceipt", () => { prints++; });
@@ -609,8 +616,7 @@ test("automatic receipt is opt-in and runs once after confirmed finalization, wi
   });
   await open(page, s);
   const option = page.getByRole("checkbox", { name: "چاپ رسید بلافاصله پس از ثبت" });
-  await expect(option).not.toBeChecked();
-  await option.check();
+  await expect(option).toBeChecked();
   expect(api.calls.filter(call => call.endsWith("/print"))).toHaveLength(0);
   await page.getByRole("button", { name: "نهایی‌کردن فاکتور", exact: true }).click();
   await page.getByRole("dialog").getByRole("button", { name: "تأیید و نهایی‌کردن", exact: true }).dblclick();
@@ -657,6 +663,7 @@ test("receipt with an already failed embedded logo still prints once without cha
     body: '<!doctype html><html><body><div class="sheet"><img alt="لیبل مد" src="data:image/png;base64,broken"><table class="totals"><tr><td>رسید</td></tr></table></div><button id="print-btn">چاپ</button></body></html>',
   }));
   await open(page, s);
+  await page.getByRole("checkbox", { name: "چاپ رسید بلافاصله پس از ثبت" }).uncheck();
   await page.getByRole("button", { name: "نهایی‌کردن فاکتور", exact: true }).click();
   await page.getByRole("dialog").getByRole("button", { name: "تأیید و نهایی‌کردن", exact: true }).click();
   const button = page.getByRole("button", { name: "چاپ رسید", exact: true });
@@ -677,6 +684,7 @@ test("receipt errors and timeout allow retry without reopening or mutating the s
   await page.addInitScript(() => { window.print = () => { Reflect.get(window, "recordReceiptPrint")(); }; });
   api.handlers.set(`GET /invoices/${INV}/print`, route => route.fulfill({ status: 403, json: { error: { code: "branch_forbidden" } } }));
   await open(page, s);
+  await page.getByRole("checkbox", { name: "چاپ رسید بلافاصله پس از ثبت" }).uncheck();
   await page.getByRole("button", { name: "نهایی‌کردن فاکتور", exact: true }).click();
   await page.getByRole("dialog").getByRole("button", { name: "تأیید و نهایی‌کردن", exact: true }).click();
   const button = page.getByRole("button", { name: "چاپ رسید", exact: true });
@@ -1075,4 +1083,22 @@ test("فروشنده در نشست و شیفت مشترک برای فروش بع
   await page.getByRole("button",{name:"افزودن مشتری",exact:true}).click();
   await expect.poll(()=>bodies.length).toBe(1);
   expect(bodies[0]).toMatchObject({sellerId:seller});
+});
+
+test("automatic discount resolves percent or toman before posting the exact Rial amount", async ({ page, api }) => {
+  const state = pos(api);
+  const item = state.invoice.lines[0]!;
+  state.invoice = {...state.invoice, lines:[{...item,qty:"2",unitPrice:"10000000",netAmount:"20000000"}]};
+  const amounts: string[] = [];
+  api.handlers.set(`PATCH /invoices/${INV}/lines/l1/discount`,async route => {
+    amounts.push(route.request().postDataJSON().discountAmount);
+    await route.fulfill({json:state.invoice});
+  });
+  await open(page);
+  for (const [value,expected] of [["20","4000000"],["1000000","10000000"]] as const) {
+    await page.getByRole("button",{name:"تخفیف شلوار کتان",exact:true}).click();
+    await page.getByLabel(/^تخفیف \(/).fill(value);
+    await page.getByRole("button",{name:"اعمال تخفیف",exact:true}).click();
+    await expect.poll(()=>amounts.at(-1)).toBe(expected);
+  }
 });

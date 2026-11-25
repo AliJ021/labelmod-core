@@ -201,9 +201,9 @@ $r = LMC_Orders_View::handle(req(['page' => 201, 'perPage' => 20, 'until' => $un
 check($r instanceof WP_REST_Response && $r->status === 200, 'صفحهٔ ۲۰۱ رد نمی‌شود (بازبینی ریشه)');
 $d = $r->data;
 check($d['protocol'] === 3 && $d['siteUrl'] === 'https://shop.example.test' && $d['branchId'] === $settings['branch_id'], 'هویت سایت و دامنه');
-check($d['total'] === 4099 && $d['pages'] === 205 && count($d['orders']) === 20 && $d['until'] === $until, 'سفارش پس از لنگر بیرون است؛ شمار کل از ووکامرس');
+check($d['total'] === 4098 && $d['pages'] === 205 && count($d['orders']) === 20 && $d['until'] === $until, 'سفارش پس از لنگر بیرون است؛ شمار کل از ووکامرس');
 check(LMC_Orders_View::handle(req(['page' => 205, 'perPage' => 20, 'until' => $until]))->data['orders'] !== [], 'صفحهٔ آخر ۲۰۵');
-check(count(rows(LMC_Orders_View::handle(req(['page' => 205, 'perPage' => 20, 'until' => $until])))) === 19, 'صفحهٔ آخر ناقص');
+check(count(rows(LMC_Orders_View::handle(req(['page' => 205, 'perPage' => 20, 'until' => $until])))) === 18, 'صفحهٔ آخر ناقص');
 $q = end($queries);
 check($q['paginate'] === true && $q['limit'] === 20 && $q['paged'] === 205 && $q['type'] === 'shop_order', 'صفحه‌بندی CRUD رسمی');
 check($q['orderby'] === ['date' => 'DESC', 'ID' => 'DESC'], 'ترتیب پایدار: تاریخ و شناسه');
@@ -219,13 +219,14 @@ $byId = fn ($id) => array_values(array_filter(rows(LMC_Orders_View::handle(req([
 check($byId(7)['currency'] === 'IRR' && $byId(7)['total'] === '100', 'IRR صد می‌ماند، نه هزار');
 check($byId(8)['currency'] === 'USD' && $byId(8)['total'] === '12.50', 'دلار برچسب ریال نمی‌گیرد و دقیق می‌ماند');
 check($byId(6)['currency'] === 'IRT' && $byId(6)['total'] === '1200000', 'تومان همان عدد سایت؛ تبدیل با Core');
-check($byId(9)['status'] === 'awaiting-pickup' && $byId(9)['statusLabel'] === 'آمادهٔ تحویل حضوری', 'وضعیت سفارشی نام و برچسب خودش را دارد');
+check(!in_array(9, array_column(rows(LMC_Orders_View::handle(req(['perPage'=>50,'until'=>1792500005]))), 'id'), true), 'Custom status excluded from sale queue');
 check($byId(6)['customerName'] === 'علی رضایی' && $byId(6)['customerType'] === 'guest' && $byId(2)['customerType'] === 'registered', 'مهمان یا عضو');
 
 // ── فیلترها و جست‌وجو ──
 $r = LMC_Orders_View::handle(req(['status' => 'awaiting-pickup', 'until' => $until]));
-check(array_column(rows($r), 'id') === [9] && end($queries)['status'] === ['awaiting-pickup'], 'فیلتر وضعیت سفارشی ثبت‌شده');
-check(array_column($r->data['statuses'], 'slug') === ['pending', 'processing', 'completed', 'awaiting-pickup', 'trash'], 'فهرست وضعیت‌ها از خود سایت، نامک بی‌اعتبار بیرون، زباله‌دان آخر');
+check($r instanceof WP_Error, 'Custom status rejected');
+$r = LMC_Orders_View::handle(req(['until' => $until]));
+check(array_column($r->data['statuses'], 'slug') === ['processing','completed'], 'Only fulfilment statuses offered');
 check($r->data['paymentMethods'] === [['id' => 'zarinpal', 'title' => 'زرین‌پال']], 'روش‌های پرداخت سایت');
 LMC_Orders_View::handle(req(['paymentMethod' => 'zarinpal', 'until' => $until]));
 check(end($queries)['payment_method'] === 'zarinpal', 'فیلتر روش پرداخت در ووکامرس');
@@ -245,14 +246,14 @@ check(rows($r) === [] && $r->data['total'] === 0 && count($queries) === $n + 1, 
 check($r->data['filters']['search'] === true && !str_contains(json_encode($r->data, JSON_UNESCAPED_UNICODE), 'هیچ'), 'عبارت جست‌وجو برنمی‌گردد');
 OrderUtil::$on = true;
 $r = LMC_Orders_View::handle(req(['search' => 'رضایی', 'until' => $until]));
-check(end($queries)['s'] === 'رضایی' && !isset(end($queries)['post__in']) && $r->data['total'] === 4099, 'HPOS: پارامتر s در همان پرسش');
+check(end($queries)['s'] === 'رضایی' && !isset(end($queries)['post__in']) && $r->data['total'] === 4098, 'HPOS: پارامتر s در همان پرسش');
 OrderUtil::$on = false;
 
 // ── زباله‌دان: فیلتر جدا، بیرون از «همه» (همان پیشخوان ووکامرس) ──
 check(!in_array(6000, array_column(rows(LMC_Orders_View::handle(req(['perPage' => 50, 'until' => 1792500000]))), 'id'), true), 'زباله‌دان در «همه» نیست');
 $r = LMC_Orders_View::handle(req(['status' => 'trash', 'until' => $until]));
-check(array_column(rows($r), 'id') === [6000] && end($queries)['status'] === ['trash'] && rows($r)[0]['statusLabel'] === 'زباله‌دان', 'فیلتر زباله‌دان');
-check(end($r->data['statuses']) === ['slug' => 'trash', 'label' => 'زباله‌دان'], 'زباله‌دان گزینهٔ فیلتر است');
+check($r instanceof WP_Error, 'Trash filter rejected');
+$r = LMC_Orders_View::handle(req(['until' => $until]));
 check(LMC_Orders_View::handle(req(['orderId' => 6000]))->data['order']['status'] === 'trash', 'جزئیات سفارش زباله‌دان');
 
 // ── روش ارسال: یک شرط آماده‌شده در همان پرسش ووکامرس، فقط برای همان پرسش ──

@@ -16,6 +16,7 @@ test.beforeEach(async ({ api }) => {
     const status = url.searchParams.get("status") ?? "active";
     const filtered = rows.filter(p => p.status === status && (!category || p.categoryId === category)
       && (p.code.includes(search) || p.nameInternal.includes(search)));
+    if (url.searchParams.get("sort") === "newest") filtered.reverse();
     await route.fulfill({ json: { products: filtered.slice((page - 1) * 100, page * 100), page, hasMore: filtered.length > page * 100 } });
   });
   api.handlers.set("GET /products/ref-data", async route => {
@@ -102,4 +103,13 @@ test("صفحهٔ خالی یا خطادار راه بازگشت دارد؛ خط�
   await expect(page.getByText("کالایی برای نمایش در این فهرست نیست.", { exact: true })).toHaveCount(0);
   await expect(page.getByRole("button", { name: "تلاش دوباره" })).toBeEnabled();
   await expect(page.getByRole("button", { name: "صفحهٔ بعد" })).toBeDisabled();
+});
+
+test("newest sorts the whole catalog and returns the cashier to page one", async ({ page }) => {
+  await page.goto("/?page=catalog&catalog.page=2");
+  await page.getByRole("combobox", { name: "مرتب‌سازی", exact: true }).selectOption("newest");
+  await expect(page.getByRole("table",{name:tableName}).getByRole("row").nth(1)).toContainText("LM00114");
+  await expect(page).toHaveURL(/catalog.sort=newest/);
+  await page.reload();
+  await expect(page.getByRole("combobox", { name: "مرتب‌سازی", exact: true })).toHaveValue("newest");
 });

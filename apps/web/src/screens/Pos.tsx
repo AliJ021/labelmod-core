@@ -1,3 +1,4 @@
+import { DraftRefundPanel } from "../components/pos/DraftRefundPanel.tsx";
 import { AmountInput } from "../components/ui/AmountInput.tsx";
 import { Dialog } from "../components/ui/Dialog.tsx";
 import { Field, Segmented } from "../components/ui/Controls.tsx";
@@ -355,7 +356,7 @@ function PosScreen({ actorId, mode, onMode, browseInvoices }: {
   const [received, setReceived] = useState(0n);
   /** فروش تمام‌شده — تا «فروش بعدی» روی صفحه می‌ماند (Batch 2.1). */
   const [completed, setCompleted] = useState<CompletedSale | null>(null);
-  const [printOnComplete, setPrintOnComplete] = useState(false);
+  const [printOnComplete, setPrintOnComplete] = useState(true);
   const completedRef = useRef<CompletedSale | null>(null);
   completedRef.current = completed;
   /** قصد پرداختی که نتیجه‌اش روشن نیست — تا روشن شدن، روش و مبلغ قفل‌اند. */
@@ -522,6 +523,33 @@ function PosScreen({ actorId, mode, onMode, browseInvoices }: {
     })();
   }, [branchId, instagram, actorId]);
 
+  // Re-read the server at its cutoff; a tab left open overnight may still show yesterday's cart.
+  useEffect(() => {
+    if (instagram || !shift?.saleCutoffAt || busy || pendingScan || payPhase.kind !== "idle" || completed) return;
+    const deadline = Date.parse(shift.saleCutoffAt);
+    if (!Number.isFinite(deadline)) return;
+    let active = true;
+    let checking = false;
+    let timer: number;
+    const check = async () => {
+      if (checking || Date.now() < deadline) return;
+      checking = true;
+      try {
+        const current = await pos.currentShift(branchId);
+        if (active && current?.id !== shift.id) {
+          setInvoice(null); setReceived(0n); setMobile(""); setNameForMobile(null);
+          setClosing(false); setShift(current); setError(null);
+          return;
+        }
+      } catch { /* Retry after sleep, clock skew or a temporary network outage. */ }
+      finally { checking = false; }
+      if (active) { window.clearTimeout(timer); timer = window.setTimeout(check, 60_000); }
+    };
+    timer = window.setTimeout(check, Math.max(0, deadline - Date.now() + 100));
+    document.addEventListener("visibilitychange", check);
+    return () => { active = false; window.clearTimeout(timer); document.removeEventListener("visibilitychange", check); };
+  }, [instagram, shift, branchId, busy, pendingScan, payPhase.kind, completed]);
+
   /**
    * سبدی که به همین زمینه تعلق دارد: در صندوق فروشگاه همان شیفت؛ در حالت اینستاگرام
    * فاکتور کانال اینستاگرامِ بی‌شیفتِ همین شعبه. یک تعریف، برای بازیابی و اسکن.
@@ -628,10 +656,18 @@ function PosScreen({ actorId, mode, onMode, browseInvoices }: {
   }, [instagram, shift, currentStaff, actorId]);
   async function changeSeller(id: string) {
     if (!currentStaff || busy) return;
+    const remember = () => {
+      sessionStorage.setItem(currentStaff.key, id);
+      setStaff({ ...currentStaff, selected: id });
+    };
+    if (!invoice) {
+      // This is a tab preference until a draft exists. Persist before a reload can interrupt it.
+      try { remember(); } catch (err) { setError(message(err)); }
+      return;
+    }
     await guarded(async () => {
-      if (invoice) setInvoice(await api.patch<Invoice>(`/invoices/${invoice.id}/seller`, {sellerId:id}));
-      sessionStorage.setItem(currentStaff.key,id);
-      setStaff({...currentStaff,selected:id});
+      setInvoice(await api.patch<Invoice>(`/invoices/${invoice.id}/seller`, { sellerId: id }));
+      remember();
     });
   }
   const openDraft = invoice && invoice.status === "draft" ? invoice : null;
@@ -1070,14 +1106,14 @@ function PosScreen({ actorId, mode, onMode, browseInvoices }: {
    * `normalizeDigits` فقط رقم فارسی و عربی را لاتین می‌کند چون
    * صفحه‌کلید فارسی «۰۹۱۲…» می‌فرستد.
    */
-  const attachCustomer = (fullName?: string, salutation?: "mr" | "ms", birthDate?: string) =>
+  const attachCustomer = (fullName?: string, salutation?: "mr" | "ms", birthDate?: string, consentSms?: boolean, consentMarketing?: boolean) =>
     guarded(async () => {
       const m = fullName === undefined ? normalizeDigits(mobile).trim() : nameForMobile;
       if (m === "") return;
       if (!m) return;
       const inv = await ensureInvoice();
       try {
-        setInvoice(await pos.attachCustomer(inv.id, { mobile: m, requireNameForNew: true, ...(salutation && { salutation }), ...(birthDate && { birthDate }), ...(fullName === undefined ? {} : { fullName }) }));
+        setInvoice(await pos.attachCustomer(inv.id, { mobile: m, requireNameForNew: true, ...(consentSms && { consentSms }), ...(consentMarketing && { consentMarketing }), ...(salutation && { salutation }), ...(birthDate && { birthDate }), ...(fullName === undefined ? {} : { fullName }) }));
       } catch (err) {
         if (err instanceof ApiError && err.code === "customer_name_required") { setNameForMobile(m); return; }
         throw err;
@@ -1339,6 +1375,7 @@ function PosScreen({ actorId, mode, onMode, browseInvoices }: {
       );
       setShift(null);
       setClosing(false);
+      setInvoice(null); setReceived(0n); setMobile(""); setNameForMobile(null);
       dropCart();
     });
 
@@ -1444,7 +1481,7 @@ function PosScreen({ actorId, mode, onMode, browseInvoices }: {
   const customerBlock = <CustomerSummary customer={linkedCustomer} loading={customerLoading} error={customerError}
     required={policyReady && policy.requireCustomer}
     mobile={mobile} onMobile={(v) => { setMobile(v); setNameForMobile(null); }} onAttach={() => void attachCustomer()}
-    nameForMobile={nameForMobile} onConfirmName={(name, title, dob) => void attachCustomer(name, title, dob)} onCancelName={() => setNameForMobile(null)}
+    nameForMobile={nameForMobile} onConfirmName={(...details) => void attachCustomer(...details)} onCancelName={() => setNameForMobile(null)}
     canManage={canManageCustomer} onSaveName={(name) => void saveCustomerName(name)}
     busy={busy} inputRef={customerInput} />;
   const focusCustomer = () => {
@@ -2127,10 +2164,7 @@ function CloseShiftPanel({
     <Solid className="pad stack" style={{ gap: "var(--s-3)" }}>
       <h2 style={{ margin: 0 }}>بستن شیفت</h2>
       {openCart ? (
-        <p className="auth-error" role="alert">
-          <span className="dot dot--warn" aria-hidden="true">●</span> سبد باز دارید. تا
-          نهایی‌سازی یا رها کردنش، شیفت بسته نمی‌شود.
-        </p>
+        <p className="muted">پیش‌نویس محفوظ می‌ماند و در شیفت بعد از بخش فاکتورها قابل ادامه است.</p>
       ) : null}
       <label className="auth-field">
         <span>پول شمرده‌شده در کشو (تومان)</span>
@@ -2283,14 +2317,24 @@ function DiscountPanel({
 }) {
   const [amount, setAmount] = useState(current > 0n ? exactTomanInput(current.toString()) : "");
   const [why, setWhy] = useState("");
-  const rial = amount.trim() === "" ? 0n : rialFromExactTomanInput(amount);
+  const [unit, setUnit] = useState<"auto" | "amount" | "percent">(current > 0n ? "amount" : "auto");
+  const entered = amount.trim() === "" ? 0n : rialFromExactTomanInput(amount);
+  const percent = unit === "percent" || (unit === "auto" && entered !== null && entered <= 1000n);
+  const rial = entered === null || entered < 0n || (percent && entered > 1000n) ? null
+    : percent ? (gross * entered + 500n) / 1000n : entered;
   const tooBig = rial !== null && rial > gross;
 
   return (
     <div className="line-panel" onKeyDown={(e) => { if (e.key === "Escape") { e.stopPropagation(); onCancel(); } }}>
     <Solid className="line-discount stack" style={{ gap: "var(--s-2)" }}>
       <label className="auth-field">
-        <span>تخفیف (تومان) — حداکثر <Money rial={gross} size="sm" /></span>
+        <span>نوع تخفیف</span><select value={unit} onChange={e => setUnit(e.target.value as typeof unit)}>
+          <option value="auto">خودکار · تا ۱۰۰ درصد، بیشتر به تومان</option>
+          <option value="percent">درصد</option><option value="amount">مبلغ به تومان</option>
+        </select>
+      </label>
+      <label className="auth-field">
+        <span>تخفیف ({percent ? "درصد" : "تومان"}) — حداکثر <Money rial={gross} size="sm" /></span>
         <AmountInput
           type="text"
           inputMode="decimal"
@@ -2303,6 +2347,7 @@ function DiscountPanel({
         <span>دلیل — بالای آستانه اجباری است</span>
         <input value={why} onChange={(e) => setWhy(e.target.value)} />
       </label>
+      {amount && rial !== null && !tooBig && <output>تخفیف این قلم · <Money rial={rial} size="sm" /></output>}
       {tooBig ? (
         <p className="auth-error" role="alert">
           <span className="dot dot--crit" aria-hidden="true">●</span> تخفیف از مبلغ خودِ قلم
@@ -2323,34 +2368,4 @@ function DiscountPanel({
     </Solid>
     </div>
   );
-}
-
-function DraftRefundPanel({ payments, busy, onCancel, onConfirm }: {
-  payments: DraftPayment[]; busy: boolean; onCancel: () => void;
-  onConfirm: (reason: string, ref: string, payoutMethod:string) => void;
-}) {
-  const [reason, setReason] = useState("");
-  const [ref, setRef] = useState("");
-  const [confirmed, setConfirmed] = useState(false);
-  const [payout,setPayout] = useState("");
-  const external = payout === "transfer" || !payout && payments.some((p) => ["card_reader", "gateway", "transfer"].includes(p.kind));
-  const blocked = payments.some(p => p.direction !== "in" || (payout && ["snappay","digipay"].includes(p.method_code ?? "")) ||
-    ((!["snappay","digipay"].includes(p.method_code ?? "") && (payout && ["cash","card_reader","gateway","transfer"].includes(p.kind) || ["card_reader","gateway","transfer"].includes(p.kind)))
-    ? !["succeeded","settled","reconciled"].includes(p.status)
-    : p.status !== "succeeded" || p.settlement_id !== null || p.settled_at !== null || parseRial(p.fee_amount) !== 0n));
-  return <section role="region" aria-label="برگشت پرداخت پیش‌نویس"><Solid className="pad">
-    <h3>برگشت پرداخت و لغو پیش‌نویس</h3>
-    <p>{external ? "بازپرداخت بانکی را انجام دهید و شماره پیگیری آن را ثبت کنید." : "مبلغ نقدی انتخاب‌شده را از کشوی همین شیفت به مشتری تحویل دهید."} رزرو اعتبار و امتیاز مربوط به پیش‌نویس هنگام لغو آزاد می‌شود.</p>
-    <ul>{payments.map((p) => <li key={p.id}>{p.name}: <Money rial={p.amount} /></li>)}</ul>
-    <label>روش پس‌دادن وجه<select disabled={busy} value={payout} onChange={e => {setPayout(e.target.value);setConfirmed(false);}}>
-      <option value="">هر مبلغ با روش دریافت خودش</option><option value="cash">نقد از کشوی همین شیفت</option>
-      <option value="transfer">کارت‌به‌کارت با شماره پیگیری</option></select></label>
-    {blocked ? <p role="alert">برای این پرداخت، وضعیت یا تأیید برگشت ارائه‌دهنده باید بررسی شود.</p> : null}
-    <label className="auth-field">دلیل برگشت<input value={reason} maxLength={200} onChange={(e) => setReason(e.target.value)} /></label>
-    {external ? <label className="auth-field">شماره پیگیری برگشت بانکی<input value={ref} maxLength={120} onChange={(e) => setRef(e.target.value)} /></label> : null}
-    <label><input type="checkbox" checked={confirmed} onChange={(e) => setConfirmed(e.target.checked)} />برگشت وجه لازم را انجام داده‌ام و لغو این پیش‌نویس را تأیید می‌کنم.</label>
-    <button type="button" className="btn btn--primary" disabled={busy || blocked || !confirmed || reason.trim().length < 3 || (external && !ref.trim())}
-      onClick={() => onConfirm(reason.trim(), ref, payout)}>ثبت برگشت و لغو پیش‌نویس</button>
-    <button type="button" className="btn btn--quiet" disabled={busy} onClick={onCancel}>انصراف</button>
-  </Solid></section>;
 }

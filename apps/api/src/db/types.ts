@@ -134,6 +134,7 @@ export interface BranchTable {
 // ── کاتالوگ و انبار ───────────────────────────────────────────────
 
 export interface ProductTable {
+  created_at: Generated<Date>;
   id: Generated<string>;
   code: string;
   name_internal: string;
@@ -297,6 +298,9 @@ export interface WarehouseTable {
 // ── فروش ──────────────────────────────────────────────────────────
 
 export interface CashShiftTable {
+  sale_cutoff_at: Generated<Date | null>;
+  sale_ended_at: Generated<Date | null>;
+  close_review: Generated<string | null>;
   id: Generated<string>;
   branch_id: string;
   user_id: string;

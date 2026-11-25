@@ -486,8 +486,10 @@ export class InvoiceService {
    * Commit نشده.
    */
   async addLineIn(trx: Transaction<Database>, input: AddLineInput, authorize?: LineAdditionAuthorizer): Promise<void> {
-    await trx.selectFrom("sales.invoice").select("id").where("id", "=", input.invoiceId).forUpdate().execute();
-    await this.requireDraft(input.invoiceId, trx);
+    // Loading all prior lines here made a multi-line web order repeatedly read the entire cart.
+    const header = await trx.selectFrom("sales.invoice").select("status").where("id", "=", input.invoiceId).forUpdate().executeTakeFirst();
+    if (!header) throw new InvoiceError("invoice_not_found", "فاکتور یافت نشد", 404);
+    if (header.status !== "draft") throw new InvoiceError("invoice_not_draft", `فاکتور در وضعیت «${header.status}» است و دیگر تغییر نمی‌کند`);
     const variationId = await this.resolveVariation(input, trx);
     await this.assertStock(trx, input.invoiceId, variationId, input.qty);
     const listPrice = await this.currentPrice(variationId, undefined, trx);
@@ -801,6 +803,8 @@ export class InvoiceService {
     fullName?: string | undefined;
     salutation?: "mr" | "ms" | undefined;
     birthDate?: string | undefined;
+    consentSms?: boolean | undefined;
+    consentMarketing?: boolean | undefined;
     requireNameForNew?: boolean | undefined;
     actorId: string;
   }): Promise<Invoice> {
@@ -830,8 +834,8 @@ export class InvoiceService {
       const r = await sql<{ id: string; created: boolean }>`
         WITH norm AS (SELECT sales.normalize_mobile(${input.mobile}) AS m),
         ins AS (
-          INSERT INTO sales.customer (mobile_normalized, full_name, salutation, birth_date)
-          SELECT m, nullif(${input.fullName ?? null}::text, ''), ${input.salutation ?? null}, ${input.birthDate ?? null}::date FROM norm
+          INSERT INTO sales.customer (mobile_normalized, full_name, salutation, birth_date, consent_sms, consent_marketing)
+          SELECT m, nullif(${input.fullName ?? null}::text, ''), ${input.salutation ?? null}, ${input.birthDate ?? null}::date, ${input.consentSms ?? false}, ${input.consentMarketing ?? false} FROM norm
           ON CONFLICT (mobile_normalized) DO NOTHING
           RETURNING id
         )
@@ -846,6 +850,10 @@ export class InvoiceService {
         throw new InvoiceError("bad_mobile", "شماره موبایل معتبر نیست", 400);
       }
       if (r.rows[0]?.created) {
+        if (input.consentSms || input.consentMarketing) {
+          await sql`SELECT platform.audit('customer.sms_consent','customer',${customerId}::text,
+            jsonb_build_object('receipt',${input.consentSms ?? false}::boolean,'marketing',${input.consentMarketing ?? false}::boolean,'source','pos'),${input.actorId}::uuid)`.execute(trx);
+        }
         await sql`INSERT INTO sales.customer_branch (customer_id, branch_id)
           SELECT ${customerId}::uuid, branch_id FROM sales.invoice
            WHERE id = ${input.invoiceId}::uuid ON CONFLICT DO NOTHING`.execute(trx);
@@ -1158,12 +1166,24 @@ export class InvoiceService {
       .where("p.invoice_id", "=", invoiceId).orderBy("p.id").execute();
   }
 
-  async cancelDraft(invoiceId: string, actorId: string, reason?: string): Promise<Invoice> {
+  async cancelDraft(invoiceId: string, actorId: string, reason?: string, archive = false, archiveOwnOnly = false): Promise<Invoice> {
     await this.#db.transaction().execute(async (trx) => {
       await trx.selectFrom("sales.invoice").select("id").where("id", "=", invoiceId).forUpdate().execute();
       const inv = await this.byId(invoiceId, trx);
       if (!inv) throw new InvoiceError("invoice_not_found", "فاکتور یافت نشد", 404);
-      if (inv.status === "cancelled") return;
+      if (archiveOwnOnly && (inv.createdBy !== actorId || !["draft","cancelled"].includes(inv.status)))
+        throw new InvoiceError("archive_forbidden","حذف این فاکتور به مجوز مدیر نیاز دارد.",403);
+      async function archiveInvoice() {
+        if (!archive) return;
+        const inserted = await sql`INSERT INTO sales.invoice_archive(invoice_id,actor_id,reason)
+          VALUES(${invoiceId}::uuid,${actorId}::uuid,${reason}) ON CONFLICT DO NOTHING RETURNING invoice_id`.execute(trx);
+        if (inserted.rows.length) await sql`SELECT platform.audit('invoice.archive','invoice',${invoiceId}::text,
+          jsonb_build_object('reason',${reason}::text),${actorId}::uuid)`.execute(trx);
+      }
+      if (inv.status === "cancelled" || (archive && inv.status === "returned")) {
+        await archiveInvoice();
+        return;
+      }
       await this.requireDraft(invoiceId, trx);
       const payments = await this.draftPayments(invoiceId, trx);
       if (payments.some((p) => !["failed", "reversed"].includes(p.status))) {
@@ -1174,6 +1194,7 @@ export class InvoiceService {
         .where("id", "=", invoiceId).execute();
       await sql`SELECT platform.audit('invoice.cancel_draft', 'invoice', ${invoiceId}::text,
         jsonb_build_object('reason', ${reason ?? null}::text), ${actorId}::uuid)`.execute(trx);
+      await archiveInvoice();
     });
     return (await this.byId(invoiceId)) as Invoice;
   }

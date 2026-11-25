@@ -141,6 +141,17 @@ describe("شمارهٔ عددی فاکتور: مهاجرت، هم‌زمانی �
       },{id:'1',topic:'invoice.finalized',payload:{invoice_id:historical.id,number:historical.number},attempts:0});
       assert.equal(messages.length,1);assert.ok(messages[0]!.includes(`فاکتور ${number} ثبت شد`));
       assert.ok(!messages[0]!.includes(historical.number));assert.equal(links.length,1);
+      let outbound = 0, hooks = 0;
+      const notify = { db:app.db, settings:{...await readNotifySettings(app.db),provider:"melipayamak",invoiceSms:true,publicUrl:"https://example.test"},
+        sms:{send:async () => {outbound++; return "40500123";}},
+        webhook:{send:async () => { if (++hooks === 1) throw new Error("offline"); }},
+        webPush:{send:async () => {}},
+      };
+      const event = {id:"test",topic:"invoice.finalized",payload:{invoice_id:historical.id},attempts:0};
+      await assert.rejects(handleInvoiceFinalized(notify,event),/offline/);
+      await handleInvoiceFinalized(notify,event);
+      assert.equal(outbound,1);
+      assert.equal(hooks,2);
       const publicPage=await http.inject({method:'GET',url:new URL(links[0]!).pathname});
       assert.equal(publicPage.statusCode,200);assert.match(publicPage.body,new RegExp('class="docno">'+number+'<'));
       const other=(await new InvoiceService(app.db).byId(legacy.at(-1)!.id))!.number!;

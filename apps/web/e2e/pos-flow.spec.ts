@@ -11,9 +11,9 @@ const draft = { id, number: null, branchId: "b1", warehouseId: "w1", shiftId: sh
     variationId: "66666666-6666-4666-8666-666666666666", productName: "شلوار کتان", sku: "NAVY-M",
     qty: "2", unitPrice: "100000", netAmount: "200000", discountAmount: "0", listPrice: null,
     priceOverrideReason: null, discountReason: null }] };
-async function open(page: Page, api: MockApi) {
+async function open(page: Page, api: MockApi, saleCutoffAt?: string) {
   api.defaults["GET /payment-methods"] = { methods: [{ code: "card", name: "کارت‌خوان", kind: "card_reader", requiresRef: true }] };
-  api.defaults["GET /shifts/current"] = { id: shift, userId: draft.createdBy, branchId: "b1", status: "open", openingCash: "0" };
+  api.defaults["GET /shifts/current"] = { id: shift, userId: draft.createdBy, branchId: "b1", status: "open", openingCash: "0", saleCutoffAt };
   api.defaults["GET /gift-options"] = { options: [] };
   api.defaults[`GET /invoices/${id}`] = draft;
   api.defaults[`GET /invoices/${id}/customer`] = { customer: null };
@@ -71,4 +71,16 @@ test("the editable unit price is distinct from the total for a quantity of two",
   await expect(page.getByLabel(/قیمت واحد/)).toBeFocused();
   await page.keyboard.press("Escape");
   await expect(edit).toHaveAttribute("aria-expanded", "false");
+});
+
+test("a till left open at Tehran midnight preserves the draft and shows the next opening screen", async ({page, api}) => {
+  const cutoff = new Date("2026-11-24T20:30:00Z");
+  await page.clock.install({time:new Date(cutoff.getTime()-120_000)});
+  await open(page,api,cutoff.toISOString());
+  api.handlers.set("GET /shifts/current",route=>route.fulfill({contentType:"application/json",body:"null"}));
+  const writes = () => api.calls.filter(call=>/^(POST|PATCH|DELETE) \/(invoices|shifts)/.test(call));
+  const before = writes();
+  await page.clock.fastForward(121_000);
+  await expect(page.getByRole("heading",{name:"شیفت باز نیست"})).toBeVisible();
+  expect(writes()).toEqual(before);
 });

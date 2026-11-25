@@ -402,7 +402,7 @@ describe("فروش اینستاگرام از صندوق: قرارداد و رق�
     assert.ok(sold <= offered);
   });
 
-  test("نقد اینستاگرام: کشوی نام‌برده، نگهبان بستن، شمارش بی مغایرت و Replay پس از بستن", async () => {
+  test("نقد اینستاگرام: کشوی نام‌برده، بستن با پیش‌نویس، شمارش بی مغایرت و Replay پس از بستن", async () => {
     const listed = await call("GET", `/shifts/open?branchId=${BRANCH}`, u.op);
     assert.equal(listed.statusCode, 200, listed.body);
     assert.ok(listed.json().length >= 2, "multiple concurrent cashiers are selectable");
@@ -435,16 +435,18 @@ describe("فروش اینستاگرام از صندوق: قرارداد و رق�
     const over = await pay({ methodCode: "cash", amount: "400001", shiftId: drawer });
     assert.equal(over.statusCode, 409, over.body);
     assert.match(over.json().error.message, /باقی پول ندارد/);
-    // کشو با نقدِ پیش‌نویس اینستاگرام بسته نمی‌شود (بستن کشو `shift.close` است: مدیر، نه صندوق‌دار).
-    const early = await call("POST", `/shifts/${drawer}/close`, u.admin, { countedCash: "600000" }, key());
-    assert.equal(early.statusCode, 409, early.body);
-    assert.match(early.json().error.message, /نقدِ فاکتور نهایی‌نشده/);
+    const closeKey = key();
+    const early = await call("POST", `/shifts/${drawer}/close`, u.admin, { countedCash: "600000" }, closeKey);
+    assert.equal(early.statusCode, 200, early.body);
+    assert.equal(early.json().variance, "0");
+    assert.equal((await invoice(id)).status, "draft");
     assert.equal((await pay({ methodCode: "transfer", amount: "400000", refNo: `C2C-${suffix}-drawer` })).statusCode, 201);
     assert.equal((await call("POST", `/invoices/${id}/finalize`, u.op, {}, key())).statusCode, 200);
     const done = await invoice(id);
     assert.deepEqual({ status: done.status, shift: done.shift_id, batch: done.batch, paid: done.paid },
       { status: "finalized", shift: null, batch: "channel_day/instagram", paid: "1000000" });
-    const closed = await call("POST", `/shifts/${drawer}/close`, u.admin, { countedCash: "600000" }, key());
+    const closed = await call("POST", `/shifts/${drawer}/close`, u.admin, { countedCash: "600000" }, closeKey);
+    assert.equal(closed.json().replayed, true);
     assert.equal(closed.statusCode, 200, closed.body);
     assert.equal(closed.json().variance, "0", "نقد اینستاگرام در شمارش همان کشو آمد");
     // پاسخ گم‌شدهٔ همان پرداخت نقد پس از بستن کشو: Replay، نه ۴۲۲ و نه ردیف دوم.

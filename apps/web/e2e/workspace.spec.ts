@@ -12,6 +12,27 @@ async function horizontallyInside(item:Locator,container:Locator){
   return a.x>=b.x-1&&a.x+a.width<=b.x+b.width+1;
 }
 
+test("equal-price exchange links both invoices and shows the funded replacement as settled", async ({ page, api }) => {
+  const common = { occurredAt: "2026-11-23T12:00:00Z", payableAmount: "129000000", lines: [], sellerName: "فروشندهٔ آزمون" };
+  api.defaults["GET /invoices/original/overview"] = {
+    invoice: { ...common, id: "original", number: "501", channel: "instagram", status: "returned" },
+    payments: [], remaining: "0", exchangesOnly: true,
+    exchanges: [{ id: "replacement", number: "502", source: true, transfer: "129000000" }],
+  };
+  api.defaults["GET /invoices/replacement/overview"] = {
+    invoice: { ...common, id: "replacement", number: "502", channel: "pos", status: "finalized" },
+    payments: [], remaining: "0", exchangesOnly: false,
+    exchanges: [{ id: "original", number: "501", source: false, transfer: "129000000" }],
+  };
+  await page.goto("/?page=invoices&invoices.id=original");
+  const detail = page.locator(".invoice-detail");
+  await expect(detail.getByText("تعویض", { exact: true })).toBeVisible();
+  await detail.getByRole("link", { name: "فاکتور جایگزین 502" }).click();
+  await expect(detail.getByText("تسویه‌شده", { exact: true })).toBeVisible();
+  await expect(detail.getByRole("link", { name: "فاکتور اولیه 501" })).toBeVisible();
+  await expect(detail.getByText("پرداختی ثبت نشده است.", { exact: true })).toBeVisible();
+});
+
 test("invoice center restores URL filters and browser navigation and prints only posted documents", async ({page,api}) => {
   const row={id:"i1",number:null,status:"draft",branchId:"b1",branchName:"شعبه آزمون",shiftId:"s1",creatorName:"صندوق‌دار آزمون",finalizerName:null,customerName:null,occurredAt:"2026-09-26T08:00:00Z",payableAmount:"1000000",receivedAmount:"0",paymentMethods:"",canResume:false,needsReview:true};
   api.defaults["GET /invoices"]={rows:[row],total:1,pageSize:50};
@@ -74,12 +95,12 @@ test("V10 invoice list: settled/open/returns chips and channel are server filter
   const settled={...base,id:"i2",number:"MAIN-2",status:"finalized",chip:"settled",channel:"web",customerName:null,customerMobile:null,payableAmount:"1000000",receivedAmount:"1000000",remainingAmount:"0"};
   api.defaults["GET /invoices"]={rows:[open,settled],total:2,pageSize:50,
     summary:{count:2,payableAmount:"3000000",receivedAmount:"2500000",remainingAmount:"500000"},
-    statusCounts:{all:4,draft:1,finalized:2,cancelled:1,returned:0,settled:1,open:1,returns:0}};
+    statusCounts:{all:4,draft:1,finalized:2,cancelled:1,returned:0,settled:1,open:1,returns:0,exchanged:0}};
   const calls=()=>api.calls.filter(c=>c.startsWith("GET /invoices?"));
   await page.goto("/?page=invoices");
   const chips=page.getByRole("group",{name:"وضعیت",exact:true});
-  await expect(chips.getByRole("radio")).toHaveCount(5);
-  for (const name of ["همه (۴)","تسویه‌شده (۱)","مانده‌دار (۱)","مرجوعی (۰)","لغوشده (۱)"]) await expect(chips.getByRole("radio",{name,exact:true}),name).toHaveCount(1);
+  await expect(chips.getByRole("radio")).toHaveCount(6);
+  for (const name of ["همه (۴)","تسویه‌شده (۱)","مانده‌دار (۱)","تعویض (۰)","مرجوعی (۰)","لغوشده (۱)"]) await expect(chips.getByRole("radio",{name,exact:true}),name).toHaveCount(1);
   await expect(chips.getByRole("radio",{name:"همه (۴)",exact:true})).toBeChecked();
   await expect(chips.getByRole("radio",{name:/^قطعی/}),"legacy chip only when the URL carries it").toHaveCount(0);
   // نشان ردیف همان تراشهٔ SQL است: قطعیِ مانده‌دار و قطعیِ تسویه‌شده، نه «قطعی» برای هر دو.

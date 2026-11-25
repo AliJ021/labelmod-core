@@ -520,3 +520,7 @@ a[role="tab"] { display: inline-flex; align-items: center; text-decoration: none
 .customer-name-fields [aria-pressed="true"] { border-color: var(--accent); color: var(--accent); }
 .pos-tools-list { display: grid; gap: var(--s-2); }
 .pos-tools-list .tool { justify-content: start; min-block-size: var(--touch); }
+
+.excel-export { display: inline-flex; flex-wrap: wrap; align-items: center; gap: var(--s-2); }
+.excel-export [role="alert"] { color: var(--crit); }
+@media print { .excel-export { display: none; } }

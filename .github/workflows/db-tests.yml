@@ -457,17 +457,16 @@ jobs:
   # کل ماتریس مرورگر (۲ موتور × ۲ تم × ۶ عرض) در یک Job به سقف ۲۰ دقیقه
   # می‌رسید: روی main (0e564e6) کل Job ۱۹ دقیقه و ۵۸ ثانیه طول کشید و روی
   # PR #104 پیش از پایان «cancelled» شد. هیچ آزمونی کم نشده؛ همان مجموعه در
-  # چهار Shard موازی تقسیم می‌شود و Job تجمیعیِ همنام، نتیجهٔ همه را الزام می‌کند.
+  # شش Shard موازی تقسیم می‌شود و Job تجمیعیِ همنام، نتیجهٔ همه را الزام می‌کند.
   browser-regression-shard:
-    name: browser-regression (${{ matrix.shard }}/4)
+    name: browser-regression (${{ matrix.shard }}/6)
     runs-on: ubuntu-24.04
-    # مجموعهٔ فعلی حدود ۲۰۰۰ آزمون در هر shard دارد؛ run 39701529510 در انتهای
-    # shard ۴ به سقف کل job رسید. مهلت خود آزمون‌ها، retries و ماتریس ثابت‌اند.
-    timeout-minutes: 60
+    # حدود ده هزار اجرای مرورگر داریم. PR 238 با چهار بخش به سقف یک ساعت رسید.
+    timeout-minutes: 75
     strategy:
       fail-fast: false
       matrix:
-        shard: [1, 2, 3, 4]
+        shard: [1, 2, 3, 4, 5, 6]
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
       - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1
@@ -489,7 +488,7 @@ jobs:
       - name: آزمون مرورگر (همراه نمونه‌برداری منابع)
         env:
           RESOURCE_LOG: ${{ runner.temp }}/resources.log
-        run: .github/scripts/e2e-with-resources.sh pnpm --filter @labelmod/web test:e2e --shard=${{ matrix.shard }}/4
+        run: .github/scripts/e2e-with-resources.sh pnpm --filter @labelmod/web test:e2e --shard=${{ matrix.shard }}/6
       - name: شواهد شکست مرورگر در لاگ (فقط هنگام شکست)
         if: failure()
         env:

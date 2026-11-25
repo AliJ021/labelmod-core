@@ -19,6 +19,7 @@ export interface Shift {
   branchId: string;
   userId: string;
   openedAt: Date;
+  saleCutoffAt: Date | null;
   openingCash: bigint;
   closedAt: Date | null;
   countedCash: bigint | null;
@@ -63,6 +64,8 @@ export class ShiftService {
       .where("user_id", "=", userId)
       .where("branch_id", "=", branchId)
       .where("status", "=", "open")
+      .where("sale_ended_at", "is", null)
+      .where(sql<boolean>`(sale_cutoff_at IS NULL OR sale_cutoff_at > clock_timestamp())`)
       .executeTakeFirst();
     return row ? toShift(row) : null;
   }
@@ -85,6 +88,8 @@ export class ShiftService {
       .selectAll()
       .where("branch_id", "=", branchId)
       .where("status", "=", "open")
+      .where("sale_ended_at", "is", null)
+      .where(sql<boolean>`(sale_cutoff_at IS NULL OR sale_cutoff_at > clock_timestamp())`)
       .orderBy("opened_at")
       .execute();
     return rows.map(toShift);
@@ -121,6 +126,9 @@ export class ShiftService {
       throw new ShiftError("bad_opening_cash", "موجودی اول شیفت منفی نمی‌شود", 400);
     }
 
+    // At midnight the next cashier may arrive before the worker's next tick.
+    await sql`SELECT sales.auto_close_due_shifts('00000000-0000-7000-8000-0000000000f1'::uuid,
+      ${input.userId}::uuid, ${input.branchId}::uuid)`.execute(this.#db);
     const existing = await this.current(input.userId, input.branchId);
     if (existing) {
       throw new ShiftError(
@@ -219,6 +227,7 @@ function toShift(row: {
   branch_id: string;
   user_id: string;
   opened_at: Date;
+  sale_cutoff_at: Date | null;
   opening_cash: string;
   closed_at: Date | null;
   counted_cash: string | null;
@@ -234,6 +243,7 @@ function toShift(row: {
     branchId: row.branch_id,
     userId: row.user_id,
     openedAt: row.opened_at,
+    saleCutoffAt: row.sale_cutoff_at,
     openingCash: parseMoney(row.opening_cash),
     closedAt: row.closed_at,
     countedCash: row.counted_cash === null ? null : parseMoney(row.counted_cash),
@@ -253,6 +263,7 @@ export function shiftToJson(s: Shift) {
     branchId: s.branchId,
     userId: s.userId,
     openedAt: s.openedAt.toISOString(),
+    saleCutoffAt: s.saleCutoffAt?.toISOString() ?? null,
     openingCash: serializeMoney(s.openingCash),
     closedAt: s.closedAt?.toISOString() ?? null,
     countedCash: s.countedCash === null ? null : serializeMoney(s.countedCash),

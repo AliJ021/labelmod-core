@@ -35,22 +35,32 @@ export class SmsError extends Error {
    */
   readonly retryAfterSeconds: number | null;
 
-  constructor(message: string, permanent = false, retryAfterSeconds: number | null = null) {
+  readonly uncertain: boolean;
+
+  constructor(message: string, permanent = false, retryAfterSeconds: number | null = null, uncertain = false) {
+
     super(message);
     this.name = "SmsError";
     this.permanent = permanent;
+    this.uncertain = uncertain;
     this.retryAfterSeconds = retryAfterSeconds;
   }
 }
 
+export type SmsPattern = { purpose: "otp" | "invoice"; args: string[] };
+
 export interface SmsConfig {
+  transport?: "console" | "panel";
+  accountName?: string;
+  otpPattern?: number | null;
+  invoicePattern?: number | null;
   provider: string;
   sender: string;
   apiKey: string;
 }
 
 export interface SmsSender {
-  send(to: string, text: string): Promise<void>;
+  send(to: string, text: string, pattern?: SmsPattern): Promise<void | string>;
 }
 
 /**
@@ -185,43 +195,64 @@ function meliPayamakSender(config: SmsConfig): SmsSender {
   if (!config.apiKey.trim()) {
     throw new SmsError("کلید سرویس پیامک (SMS_API_KEY) تنظیم نشده است", true);
   }
-  if (!/^\d+$/.test(config.sender)) {
+  const panel = config.transport === "panel";
+  if (panel && !config.accountName?.trim()) throw new SmsError("نام کاربری پنل ملی‌پیامک لازم است", true);
+  if (!config.otpPattern && !config.invoicePattern && !/^\d+$/.test(config.sender)) {
     throw new SmsError("شماره فرستنده ملی‌پیامک تنظیم نشده یا نامعتبر است", true);
   }
   return {
-    async send(to, text) {
+    async send(to, text, pattern) {
       const mobile = toLocalMobile(to);
       if (!mobile || !/^09\d{9}$/.test(mobile)) {
         throw new SmsError("شماره گیرنده پیامک نامعتبر است", true);
       }
+      const bodyId = pattern?.purpose === "otp" ? config.otpPattern : pattern?.purpose === "invoice" ? config.invoicePattern : null;
+      if (!bodyId && !/^\d+$/.test(config.sender))
+        throw new SmsError("ارسال متن آزاد به خط فرستندهٔ تأییدشده نیاز دارد", true);
+      const args = pattern?.args ?? [];
+      if (panel && bodyId && args.some(value => value.includes(";")))
+        throw new SmsError("پارامتر پترن ملی‌پیامک شامل جداکننده نامعتبر است", true);
+      const url = panel
+        ? "https://rest.payamak-panel.com/api/SendSMS/" + (bodyId ? "BaseServiceNumber" : "SendSMS")
+        : `https://console.melipayamak.com/api/send/${bodyId ? "shared" : "simple"}/${encodeURIComponent(config.apiKey)}`;
+      const body = panel
+        ? new URLSearchParams({ username: config.accountName!, password: config.apiKey, to: mobile,
+            ...(bodyId ? { bodyId: String(bodyId), text: args.join(";") } : { from: config.sender, text, isFlash: "false" }) })
+        : JSON.stringify(bodyId ? { bodyId, to: mobile, args } : { from: config.sender, to: mobile, text });
       let res: Response;
       try {
-        res = await fetch(
-          `https://console.melipayamak.com/api/send/simple/${encodeURIComponent(config.apiKey)}`,
-          {
+        res = await fetch(url, {
             method: "POST",
             redirect: "error",
-            headers: { "content-type": "application/json", accept: "application/json" },
-            body: JSON.stringify({ from: config.sender, to: mobile, text }),
+            headers: { "content-type": panel ? "application/x-www-form-urlencoded" : "application/json", accept: "application/json" },
+            body,
             signal: AbortSignal.timeout(20_000),
           },
         );
       } catch {
         // URL حاوی کلید است؛ خطای خام fetch نباید وارد outbox/log شود.
-        throw new SmsError("ارتباط با ملی‌پیامک کامل نشد؛ وضعیت ارسال نامشخص است");
+        throw new SmsError("ارتباط با ملی‌پیامک کامل نشد؛ وضعیت ارسال نامشخص است", true, null, true);
       }
       if (!res.ok) {
         throw new SmsError(
           `ملی‌پیامک پاسخ HTTP ${res.status} داد`,
           res.status >= 400 && res.status < 500 && res.status !== 429,
           retryAfterFor(res.status, res.headers.get("retry-after"), Date.now()),
+          res.status >= 500 || res.status === 408,
         );
       }
       let payload: unknown;
       try { payload = await res.json(); }
-      catch { throw new SmsError("پاسخ ملی‌پیامک JSON معتبر نیست؛ وضعیت ارسال نامشخص است", true); }
+      catch { throw new SmsError("پاسخ ملی‌پیامک JSON معتبر نیست؛ وضعیت ارسال نامشخص است", true, null, true); }
       if (!payload || typeof payload !== "object" || Array.isArray(payload)) {
-        throw new SmsError("پاسخ ملی‌پیامک فاقد تأیید معتبر ارسال است", true);
+        throw new SmsError("پاسخ ملی‌پیامک فاقد تأیید معتبر ارسال است", true, null, true);
+      }
+      if (panel) {
+        const result = payload as { RetStatus?: unknown; Value?: unknown };
+        // On this endpoint a positive short value can be an error code, not a message receipt.
+        if (String(result.RetStatus) !== "1" || !/^[1-9]\d{5,}$/.test(String(result.Value)))
+          throw new SmsError("پنل ملی‌پیامک پذیرش را تأیید نکرد؛ نام کاربری، کلید، اعتبار و پترن را بررسی کنید", true);
+        return String(result.Value);
       }
       const result = payload as { recId?: unknown; status?: unknown };
       const validId = typeof result.recId === "number"
@@ -232,6 +263,31 @@ function meliPayamakSender(config: SmsConfig): SmsSender {
         // متن پاسخ ممکن است شامل شماره/متن/کلید باشد؛ فقط خطای ثابت ثبت می‌شود.
         throw new SmsError("ملی‌پیامک ارسال را تأیید نکرد؛ اعتبار، فرستنده و گزارش پنل را بررسی کنید", true);
       }
+      return String(result.recId);
     },
   };
+}
+
+/** Account probe is read-only. Never return provider text or a URL containing a key. */
+export async function meliCredit(connection: { transport: "console" | "panel"; apiKey: string; accountName: string }): Promise<number> {
+  if (!connection.apiKey) throw new SmsError("کلید اتصال ذخیره نشده است", true);
+  const panel = connection.transport === "panel";
+  if (panel && !connection.accountName) throw new SmsError("نام کاربری پنل را وارد کنید", true);
+  let response: Response;
+  try {
+    response = panel
+      ? await fetch("https://rest.payamak-panel.com/api/SendSMS/GetCredit", { method: "POST",
+          body: new URLSearchParams({ username: connection.accountName, password: connection.apiKey }),
+          redirect: "error", signal: AbortSignal.timeout(8000) })
+      : await fetch(`https://console.melipayamak.com/api/receive/credit/${encodeURIComponent(connection.apiKey)}`,
+          { redirect: "error", signal: AbortSignal.timeout(8000) });
+  } catch { throw new SmsError("ارتباط با وب‌سرویس ملی‌پیامک برقرار نشد"); }
+  if (!response.ok) throw new SmsError(`ملی‌پیامک درخواست بررسی اعتبار را نپذیرفت (HTTP ${response.status})`);
+  const raw: unknown = await response.json().catch(() => null);
+  const data = raw && typeof raw === "object" ? raw as Record<string, unknown> : null;
+  const amount: unknown = panel ? data?.Value : data?.amount;
+  if ((panel ? String(data?.RetStatus) !== "1" : Boolean(data?.status)) ||
+      (typeof amount !== "number" && typeof amount !== "string") || !/^\d+(?:\.\d+)?$/.test(String(amount)) ||
+      !Number.isFinite(Number(amount))) throw new SmsError("اعتبار حساب تأیید نشد؛ نوع کلید و نام کاربری را بررسی کنید");
+  return Number(amount);
 }

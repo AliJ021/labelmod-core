@@ -155,9 +155,9 @@ export const people = {
   setPin: (id: string, pin: string | null) =>
     api.put<{ ok: boolean; hasPin: boolean }>(`/users/${id}/pin`, { pin }),
 
-  customers: (q = "", opts?: RequestOptions, title = "all") =>
+  customers: (q = "", opts?: RequestOptions, title = "all", audience = "all") =>
     api.get<{ customers: Customer[]; titleCounts?: Record<string, number>; totals?: CustomerLedgerTotals }>(
-      `/customers?${new URLSearchParams({ q: q.trim(), title })}`,
+      `/customers?${new URLSearchParams({ q: q.trim(), title, ...(audience !== "all" && { audience }) })}`,
       opts,
     ),
 

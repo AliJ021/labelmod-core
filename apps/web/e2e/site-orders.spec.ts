@@ -15,12 +15,12 @@ const UNTIL = 1792000000;
 const core = { paymentConfirmed: true, recorded: false, invoiceNumber: null, attempts: 2, hasError: true, stopped: false };
 const m = (amount: string | null, rial: string | null = amount) => ({ amount, rial });
 const order = {
-  id: 41, number: "41", status: "awaiting-shipment", statusLabel: "منتظر ارسال", createdAt: "2026-09-16T08:00:00.000Z",
+  id: 41, number: "41", status: "completed", statusLabel: "تکمیل‌شده", createdAt: "2026-09-16T08:00:00.000Z",
   currency: "IRR", total: m("12000000"), itemCount: 2, customerName: "مشتری سایت", customerType: "guest",
   paymentMethodId: "zarinpal", paymentMethod: "زرین‌پال", core,
 };
 const page1 = { state: "ready", page: 1, perPage: 20, until: UNTIL, total: 4500, pages: 225,
-  statuses: [{ slug: "processing", label: "در حال انجام" }, { slug: "awaiting-shipment", label: "منتظر ارسال" }],
+  statuses: [{ slug: "processing", label: "در حال انجام" }, { slug: "completed", label: "تکمیل‌شده" }],
   paymentMethods: [{ id: "zarinpal", title: "زرین‌پال" }, { id: "bacs", title: "انتقال بانکی" }],
   shippingMethods: [{ id: "flat_rate", title: "نرخ ثابت" }, { id: "local_pickup", title: "تحویل حضوری" }],
   orders: [order, { ...order, id: 42, number: "42", currency: "USD", total: m("19.99", null), customerName: "مشتری دلاری" }],
@@ -47,7 +47,7 @@ const calls = (api: MockApi) => api.calls.filter(c => / \/web\/orders/.test(c));
 const list = (page: Page) => page.getByRole("region", { name: "فهرست سفارش‌ها" });
 
 test.describe("سفارش‌های سایت", () => {
-  test("list and detail are read-only, exact amounts, custom status, Core sync state; detail shows full order with paged items and notes", async ({ page, api }) => {
+  test("list and detail are read-only, exact amounts, fulfilment status, Core sync state; detail shows full order with paged items and notes", async ({ page, api }) => {
     api.handlers.set("GET /web/orders", async route => { await route.fulfill({ json: page1 }); });
     api.handlers.set("GET /web/orders/41", async (route, url) => {
       await route.fulfill({ json: detail(Number(url.searchParams.get("items") ?? 1), Number(url.searchParams.get("notes") ?? 1)) });
@@ -56,7 +56,7 @@ test.describe("سفارش‌های سایت", () => {
     const row = list(page).getByRole("row").filter({ hasText: "مشتری سایت" });
     await expect(row).toContainText("1٬200٬000");
     await expect(row).toContainText("خطا در ارسال به مرکز (2 تلاش)");
-    await expect(row).toContainText("منتظر ارسال");
+    await expect(row).toContainText("تکمیل‌شده");
     // دلار ریال نمی‌شود: همان عدد سایت با کد ارز.
     const usd = list(page).getByRole("row").filter({ hasText: "مشتری دلاری" });
     await expect(usd).toContainText("19.99 USD");
@@ -90,7 +90,7 @@ test.describe("سفارش‌های سایت", () => {
       "GET /web/orders/41?items=2&notes=2"]);
     // هیچ کنشی سفارش را تغییر نمی‌دهد: فقط خواندن، جست‌وجو، بستن و رفتن بین صفحه‌ها.
     const labels = await page.locator("main").getByRole("button").allInnerTexts();
-    expect(labels.filter(l => !/به‌روزرسانی|جزئیات|بستن|تلاش دوباره|صفحهٔ|بازنشانی|جست‌وجو|برو|اقلام|یادداشت‌های|فیلتر/.test(l))).toEqual([]);
+    expect(labels.filter(l => l !== "اکسل جدول‌های این صفحه" && !/به‌روزرسانی|جزئیات|بستن|تلاش دوباره|صفحهٔ|بازنشانی|جست‌وجو|برو|اقلام|یادداشت‌های|فیلتر/.test(l))).toEqual([]);
   });
 
   test("stable paging past page 200 keeps the anchor; filters reset it; search goes only in a POST body", async ({ page, api }) => {
@@ -114,18 +114,18 @@ test.describe("سفارش‌های سایت", () => {
     await expect(list(page)).toContainText("#1202");
     expect(calls(api)).toEqual(["GET /web/orders?page=1", `GET /web/orders?page=201&until=${UNTIL}`, `GET /web/orders?page=202&until=${UNTIL}`]);
 
-    await page.getByLabel("وضعیت سفارش").selectOption("awaiting-shipment");
-    await expect.poll(() => calls(api).at(-1)).toBe("GET /web/orders?page=1&status=awaiting-shipment");
+    await page.getByLabel("وضعیت سفارش").selectOption("completed");
+    await expect.poll(() => calls(api).at(-1)).toBe("GET /web/orders?page=1&status=completed");
     await expect(page).not.toHaveURL(/site-orders\.until=/);
 
     await page.getByLabel("روش ارسال").selectOption("local_pickup");
-    await expect.poll(() => calls(api).at(-1)).toBe("GET /web/orders?page=1&status=awaiting-shipment&shipping=local_pickup");
+    await expect.poll(() => calls(api).at(-1)).toBe("GET /web/orders?page=1&status=completed&shipping=local_pickup");
 
     await page.getByRole("searchbox", { name: "جست‌وجو" }).fill("09121234567");
     await page.getByRole("searchbox", { name: "جست‌وجو" }).press("Enter");
     await expect(list(page)).toContainText("#77");
     expect(calls(api).at(-1)).toBe("POST /web/orders/search");
-    expect(searches).toEqual([{ page: 1, status: "awaiting-shipment", shipping: "local_pickup", q: "09121234567" }]);
+    expect(searches).toEqual([{ page: 1, status: "completed", shipping: "local_pickup", q: "09121234567" }]);
     expect(page.url()).not.toContain("0912");
     expect(calls(api).filter(c => c.includes("0912"))).toEqual([]);
   });

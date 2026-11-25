@@ -408,6 +408,17 @@ describe("برگشت از فروش و دوره ثبت", { skip }, () => {
     assert.deepEqual(evidence.rows[0], { payments: "0", movements: "2", credit: "0" });
     const replacement = await app.inject({ method: "GET", url: `/invoices/${posted.replacementInvoiceId}`, ...s });
     assert.equal(replacement.json().settlement.dueAmount, "0");
+    const adminSession = await loginAs(admin);
+    const listing = await app.inject({method:"GET",url:`/invoices?branchId=${BRANCH}`,...adminSession});
+    assert.equal(listing.statusCode,200,listing.body);
+    const rows: {id:string; remainingAmount:string; chip:string}[] = listing.json().rows;
+    assert.equal(rows.find(row=>row.id===sold.invoiceId)?.chip,"exchanged");
+    assert.equal(rows.find(row=>row.id===posted.replacementInvoiceId)?.remainingAmount,"0");
+    assert.equal(rows.find(row=>row.id===posted.replacementInvoiceId)?.chip,"settled");
+    const info=await app.inject({method:"GET",url:`/invoices/${posted.replacementInvoiceId}/overview`,...adminSession});
+    assert.equal(info.statusCode,200,info.body);
+    assert.equal(info.json().remaining,"0");
+    assert.equal(info.json().exchanges[0].id,sold.invoiceId);
     // از ۱۴۰۵/۰۷/۲۰ رسید چاپی تسویه، پرداخت و مانده را نشان نمی‌دهد (خواستهٔ مالک)؛ حقیقت مالی بالا از API سنجیده شد.
     const receipt = await publicInvoice(posted.replacementInvoiceId);
     assert.doesNotMatch(receipt, /تسویه از تعویض|class="due"|class="paid"/);

@@ -7,7 +7,8 @@ import { lockEnrollment, proveEnrollment } from "./enrollment.ts";
 import { verifySecret } from "./password.ts";
 import { setActor } from "../lib/idempotency.ts";
 import { readNotifySettings } from "../worker/settings.ts";
-import { readMeliKey } from "../platform/melipayamak-credential.ts";
+import { readMeliConnection } from "../platform/melipayamak-credential.ts";
+import { otpText } from "../worker/sms-copy.ts";
 import { toLocalMobile, SmsError, type SmsSender } from "../worker/sms.ts";
 import type { Config } from "../lib/config.ts";
 
@@ -45,20 +46,32 @@ export class SmsFactorService {
   private readonly config: Config;
   constructor(db: Db, config: Config) { this.db = db; this.config = config; }
 
+  async readiness(): Promise<string | null> {
+    const settings = await readNotifySettings(this.db);
+    if (!settings.smsEnabled) return "ارسال پیامک در تنظیمات اعلان‌ها خاموش است.";
+    if (!["melipayamak", "smsir", "kavenegar"].includes(settings.provider)) return "سرویس واقعی پیامک را در تنظیمات اعلان‌ها انتخاب کنید.";
+    if (!this.config.SMS_CREDENTIAL_KEY) return "کلید رمزگذاری پیامک روی سرور آماده نیست.";
+    if (settings.provider === "melipayamak") {
+      const connection = await readMeliConnection(this.db, this.config.SMS_CREDENTIAL_KEY);
+      if (!connection.apiKey) return "کلید ملی‌پیامک را در تنظیمات اعلان‌ها ذخیره کنید.";
+      if (connection.transport === "panel" && !connection.accountName) return "نام کاربری پنل ملی‌پیامک لازم است.";
+      if (!connection.otpPattern && !/^\d+$/.test(settings.sender)) return "شناسهٔ پترن ورود یا خط فرستندهٔ تأییدشده لازم است.";
+    } else if (!this.config.SMS_API_KEY || !settings.sender) return "کلید و خط فرستندهٔ سرویس پیامک را تنظیم کنید.";
+    return null;
+  }
+
   async status(userId: string) {
     const r = await sql<{ mobile: string }>`SELECT mobile FROM identity.sms_factor WHERE user_id=${userId}::uuid`.execute(this.db);
     const mobile = r.rows[0]?.mobile;
-    return { enabled: !!mobile, maskedMobile: mobile ? mobile.slice(0, 4) + "••••" + mobile.slice(-3) : null };
+    let setupIssue: string | null;
+    try { setupIssue = await this.readiness(); }
+    catch { setupIssue = "خواندن تنظیمات امن پیامک ممکن نشد؛ اتصال سرویس را بررسی کنید."; }
+    return { enabled: !!mobile, maskedMobile: mobile ? mobile.slice(0, 4) + "••••" + mobile.slice(-3) : null, setupIssue };
   }
 
   async request(input: { userId: string; purpose: "enroll" | "login"; binding: string; mobile?: string; ip: string; sessionId?: string; currentPassword?: string }) {
-    // حالت log برای OTP هیچ‌گاه معتبر نیست؛ کد نه در لاگ است نه در outbox.
-    const settings = await readNotifySettings(this.db);
-    key(this.config.SMS_CREDENTIAL_KEY);
-    const apiKey = settings.provider === "melipayamak" ? await readMeliKey(this.db, this.config.SMS_CREDENTIAL_KEY) : this.config.SMS_API_KEY;
-    if (!settings.smsEnabled || !["melipayamak", "smsir", "kavenegar"].includes(settings.provider) || !apiKey || !settings.sender) {
-      throw new AuthError("sms_unavailable", "ارسال پیامک واقعی هنوز در تنظیمات آماده نیست؛ از روش دیگر ورود استفاده کنید.");
-    }
+    const issue = await this.readiness();
+    if (issue) throw new AuthError("sms_unavailable", issue);
     return this.db.transaction().execute(async (trx) => {
       const user = await trx.selectFrom("identity.app_user").select(["id", "is_active"]).where("id", "=", input.userId).forUpdate().executeTakeFirst();
       if (!user?.is_active) throw new AuthError("no_session", "ورود معتبر نیست.");
@@ -157,7 +170,8 @@ export async function deliverSmsChallenge(db: Db, id: string, sender: SmsSender,
     const e = row.encrypted_code, d = createDecipheriv("aes-256-gcm",key(master),Buffer.from(e.nonce,"hex"));
     d.setAAD(AAD); d.setAuthTag(Buffer.from(e.tag,"hex"));
     const code = Buffer.concat([d.update(Buffer.from(e.ciphertext,"hex")),d.final()]).toString("utf8");
-    await sender.send(row.mobile,`کد ورود لیبل مد: ${code}\nاعتبار: دو دقیقه. کد را در اختیار دیگران نگذارید.`);
-  } catch { throw new SmsError("ارسال کد ورود انجام نشد؛ تنظیمات و سرویس پیامک بررسی شود."); }
+    await sender.send(row.mobile,otpText(code),
+      { purpose: "otp", args: [code] });
+  } catch (error) { if (error instanceof SmsError) throw error; throw new SmsError("ارسال کد ورود انجام نشد؛ تنظیمات و سرویس پیامک بررسی شود."); }
   await sql`UPDATE identity.sms_challenge SET sent_at=now(),encrypted_code=NULL WHERE id=${id}::uuid`.execute(db);
 }

@@ -231,28 +231,28 @@ describe("رسید حرارتی ۸۰ میلی‌متری", () => {
     assert.match(html, /\.items th\.num, \.items td\.num \{ text-align: center; vertical-align: middle; \}/);
   });
 
-  test("فاکتور خلوت: قیمت واحد و تخفیف قلم چاپ نمی‌شوند؛ نام، ویژگی، تعداد و مبلغ سطر می‌مانند", () => {
+  test("فاکتور خلوت: قیمت واحد چاپ می‌شود؛ نام، ویژگی، تعداد و مبلغ سطر می‌مانند", () => {
     const row = html.slice(html.indexOf('<tr class="line">'), html.indexOf("</tr>", html.indexOf('<tr class="line">')));
     assert.equal(row,
-      '<tr class="line"><td class="name"><div class="item-title">مانتو کتان بلند با آستین پفی و جیب‌های دوخت دستی مدل تابستانهٔ 1405 <small>سرمه‌ای</small></div></td>' +
+      '<tr class="line"><td class="name"><div class="item-title">مانتو کتان بلند با آستین پفی و جیب‌های دوخت دستی مدل تابستانهٔ 1405 <small>سرمه‌ای</small></div><small>قیمت واحد: 1,234,567.5 تومان</small></td>' +
       '<td class="qty">2</td><td class="num total">2,434,567.5</td>', "دقیقاً سه خانه");
-    assert.doesNotMatch(html, /قیمت واحد|تخفیف قلم|unit-line|line-discount/);
-    assert.ok(!html.includes("1,234,567.5"), "قیمت واحد (۱۲٬۳۴۵٬۶۷۵ ریال) هیچ‌جا نیست");
+    assert.match(html, /قیمت واحد:/);
+    assert.match(html, /قیمت واحد: 1,234,567\.5 تومان/);
     for (const kind of ["sale", "proforma"] as const) {
       const page = invoicePage({ ...data, documentKind: kind }, "Asia/Tehran");
-      assert.doesNotMatch(page, /قیمت واحد|تخفیف قلم/, kind);
+      assert.match(page, /قیمت واحد:/, kind);
       assert.match(page, /<td class="qty">2<\/td><td class="num total">2,434,567\.5<\/td>/, kind);
     }
   });
 
-  test("کنترل عدم تغییر جمع: جمع کالاها زیر ستون خالص، شامل تخفیف اقلام و قابل پرداخت همان bigintها", () => {
+  test("کنترل عدم تغییر جمع: جمع کالاها زیر ستون خالص، جمع تخفیف و قابل پرداخت همان bigintها", () => {
     const totals = html.slice(html.indexOf('<table class="totals">'), html.indexOf("</table>", html.indexOf('<table class="totals">')));
     // جمع کالاها پای جدول اقلام است: برچسب روی نام و تعداد (colspan=2)، مبلغ دقیقاً در ستون خالص.
     const items = html.slice(html.indexOf('<table class="items">'), html.indexOf("</table>", html.indexOf('<table class="items">')));
     assert.match(items, /<tfoot>\s*<tr class="sum"><th colspan="2">جمع کالاها<\/th><td class="num total">2,434,567\.5<\/td><\/tr>\s*<\/tfoot>\s*$/);
     assert.equal((html.match(/جمع کالاها/g) ?? []).length, 1, "یک بار، فقط زیر ستون خالص");
     // جمع تخفیف اقلام (۳۴۵٬۶۷۵ ریال) هنوز در جمع‌ها اطلاع داده می‌شود و از جمع کم نمی‌شود.
-    assert.match(totals, /<tr class="incl"><th>شامل تخفیف اقلام<\/th><td class="num">34,567\.5<\/td><\/tr>/);
+    assert.match(totals, /<tr class="incl"><th>جمع تخفیف<\/th><td class="num">34,567\.5<\/td><\/tr>/);
     assert.match(totals, /<tr class="grand"><th>قابل پرداخت<\/th><td class="num">2,434,567\.5 <small>تومان<\/small><\/td><\/tr>/);
     assert.doesNotMatch(html, /پرداخت‌شده|تسویه|مانده|class="settle/);
     // پرداخت ناقص چیزی از جمع‌ها عوض نمی‌کند.
@@ -302,16 +302,24 @@ describe("بازطراحی رسید — جمع‌ها بی پرداخت و وض�
     assert.match(html, /<tr class="grand"><th>قابل پرداخت<\/th><td class="num">0 <small>تومان<\/small><\/td><\/tr>/);
     assert.doesNotMatch(html, /class="paid"|class="due"/);
     assert.doesNotMatch(html, /تسویه/);
-    assert.match(html, /<tr class="incl"><th>شامل تخفیف اقلام<\/th><td class="num">100,000<\/td><\/tr>/);
+    assert.match(html, /<tr class="incl"><th>جمع تخفیف<\/th><td class="num">100,000<\/td><\/tr>/);
   });
 
-  test("«شامل تخفیف اقلام» جمع دقیق تخفیف‌های ذخیره‌شده است و بی تخفیف نمی‌آید؛ «سود» هرگز", () => {
+  test("«جمع تخفیف» جمع دقیق تخفیف‌های ذخیره‌شده است و بی تخفیف نمی‌آید؛ «سود» هرگز", () => {
     const html = invoicePage({ ...base, lines: [line({ discountAmount: 12_345n, netAmount: 987_655n }), line({ discountAmount: 5n, netAmount: 999_995n })],
       netAmount: 1_987_650n, payableAmount: 1_987_650n, paidAmount: 1_987_650n }, "Asia/Tehran");
-    assert.match(html, /شامل تخفیف اقلام<\/th><td class="num">1,235<\/td>/, "۱۲٬۳۵۰ ریال = ۱٬۲۳۵ تومان، دقیق");
+    assert.match(html, /جمع تخفیف<\/th><td class="num">1,235<\/td>/, "۱۲٬۳۵۰ ریال = ۱٬۲۳۵ تومان، دقیق");
     assert.ok(!html.includes("سود"));
     const plain = invoicePage({ ...base, lines: [line()], netAmount: 1_000_000n, payableAmount: 1_000_000n, paidAmount: 1_000_000n }, "Asia/Tehran");
     assert.doesNotMatch(plain, /class="incl"/);
+  });
+
+  test("قیمت قبل از کاهش و جمع تخفیف صریح و تغییر قیمت با هم", () => {
+    const discounted = { ...line({ unitPrice: 800_000n, discountAmount: 100_000n, netAmount: 1_100_000n }), qty: "1.500", listPrice: 1_000_000n };
+    const page = invoicePage({ ...base, lines: [discounted], netAmount: 1_100_000n, payableAmount: 1_100_000n, paidAmount: 1_100_000n }, "Asia/Tehran");
+    assert.match(page,/قیمت واحد: 100,000 تومان/);
+    assert.match(page,/جمع تخفیف<\/th><td class="num">40,000</);
+    assert.match(page,/قابل پرداخت<\/th><td class="num">110,000/);
   });
 
   test("ترتیب اقلام حفظ می‌شود، بی rowspan؛ ۳۰+ قلم هر کدام سطر خودش را دارد", () => {
@@ -368,7 +376,7 @@ describe("رقم لاتین روی فاکتور و پیش‌فاکتور (خوا
     assert.match(html, /<td class="qty">1\.5<\/td><td class="num total">1,817,283\.7<\/td>/);
     assert.doesNotMatch(html, /<dt>اقلام<\/dt>/);
     assert.match(html, /data-line="1"/);
-    assert.doesNotMatch(html, /قیمت واحد/, "فاکتور خلوت: قیمت واحد چاپ نمی‌شود");
+    assert.match(html, /قیمت واحد:/);
     assert.match(html, /مهلت تعویض: 2 روز \(48 ساعت\)/);
     // با لوگو زیرنویس ثابت «فروشگاه لیبل مد» است؛ نام شعبه alt لوگو یا نشان متنی بی لوگو.
     assert.match(html, /alt="لیبل مد 2"><\/picture>\s*<div class="shop">فروشگاه لیبل مد<\/div>|<div class="brand">لیبل مد 2<\/div>/);

@@ -24,6 +24,10 @@
    ═══════════════════════════════════════════════════════════════════ */
 
 :root {
+  /* Fixed colours for exported workbooks in either screen theme. */
+  --xlsx-header: #24453E;
+  --xlsx-paper: #FFFFFF;
+  --xlsx-stripe: #F1F5F3;
   /* ── زمینه: کاغذ گرم و روشنایی کنترل‌شده؛ مِش از خانوادهٔ برند ─── */
   --bg-deep: #f5f4ef;
   --mesh-1: #d6d1c4;

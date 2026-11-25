@@ -3,7 +3,7 @@
 -- =====================================================================
 -- قرارداد: docs/INSTAGRAM-POS-MODE-FA.md (قاعدهٔ ۳ و ۴). فاکتور بی شیفت می‌ماند و دورهٔ
 -- ثبتش (شعبه، instagram، روز) است. ردیف نقد `shift_id` کشو را می‌برد تا `close_shift` آن را
--- در همان کشو بشمارد. باقی پول نیست. کشو با نقدِ پیش‌نویس بسته نمی‌شود.
+-- در همان کشو بشمارد. باقی پول نیست. نقدِ پیش‌نویس در شمارش واقعی کشو منظور می‌شود.
 -- هر رد یک کنترل دارد: یا همان کار با شرط درست پذیرفته می‌شود، یا (بند ۶) با Trigger خاموش
 -- همان کار می‌گذرد.
 -- =====================================================================
@@ -98,9 +98,10 @@ INSERT INTO treasury.payment (invoice_id, method_code, amount, ref_no, account_i
 SELECT pg_temp.eq('فاکتور هنوز بی شیفت است', (SELECT shift_id FROM sales.invoice WHERE id=(SELECT v FROM f WHERE k='inv')), NULL::uuid);
 
 \echo '── ۲. کشو با نقدِ پیش‌نویس اینستاگرام بسته نمی‌شود ──'
-SELECT pg_temp.rejects('بستن کشو پیش از نهایی‌سازی',
-  format('SELECT * FROM sales.close_shift(%L, 600000, %L)', (SELECT v FROM f WHERE k='s1'), (SELECT v FROM f WHERE k='c1')),
-  'کشو با نقدِ فاکتور نهایی‌نشده');
+SAVEPOINT close_with_draft;
+SELECT pg_temp.eq('شمارش واقعی شامل نقد پیش‌نویس است',
+  (SELECT variance::numeric FROM sales.close_shift((SELECT v FROM f WHERE k='s1'),600000,(SELECT v FROM f WHERE k='c1'))),0::numeric);
+ROLLBACK TO SAVEPOINT close_with_draft;
 
 \echo '── ۳. نهایی‌سازی: کانال و دورهٔ ثبت اینستاگرام، پول کامل ──'
 SELECT sales.finalize_invoice((SELECT v FROM f WHERE k='inv'), (SELECT v FROM f WHERE k='op'));

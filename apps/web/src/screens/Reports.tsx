@@ -26,6 +26,8 @@
  * نداشتی»؛ «—» یعنی «اجازه دیدنش را نداری». یکی‌کردنشان یعنی سرپرست
  * فکر کند فروشگاه ضرر کرده.
  */
+import { ExcelButton } from "../components/ExcelExport.tsx";
+import { parseExportCsv } from "../lib/sheet-export.ts";
 import { ManagerOverview } from "../components/ManagerOverview.tsx";
 import { useCallback, useEffect, useId, useState, type FormEvent, type ReactNode } from "react";
 import { SnappayReport } from "../components/SnappayReport.tsx";
@@ -328,7 +330,12 @@ function ReportError({ error, onRetry }: { error: LoadError; onRetry: () => void
  * Endpoint و همان فیلترهای جلوی چشم است، پس فایل چیزی بیش از صفحه نمی‌گوید.
  */
 function CsvLink({ href, title }: { href: string; title: string }) {
-  return <a className="btn btn--quiet csv-link" href={href} download title={`دانلود CSV — ${title}، با همین فیلترها`}>دانلود CSV</a>;
+  return <span className="row"><ExcelButton name={title} load={async () => {
+    const response = await fetch(href, { credentials: "same-origin" });
+    if (!response.ok || !response.headers.get("content-type")?.includes("csv")) throw new Error("دریافت گزارش ممکن نشد.");
+    const [columns, ...rows] = parseExportCsv(await response.text());
+    return [{ title, columns: columns ?? [], rows }];
+  }} /><a className="btn btn--quiet csv-link" href={href} download title={`دانلود CSV — ${title}، با همین فیلترها`}>دانلود CSV</a></span>;
 }
 
 /** مبلغ ستون جدول: بی واحد (واحد در توضیح بخش است)، `null` = «—». */

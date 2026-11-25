@@ -1,3 +1,4 @@
+import { ExcelButton } from "../components/ExcelExport.tsx";
 import { Field } from "../components/ui/Controls.tsx";
 import { jalaliInputOf, parseJalaliDate } from "../lib/report-filters.ts";
 import { StatusBadge } from "../components/ui/Status.tsx";
@@ -33,7 +34,7 @@ import { SectionHeader } from "../components/ui/PageHeader.tsx";
 import { Ltr } from "../components/ui/Bidi.tsx";
 import { ResultState } from "../components/ResultState.tsx";
 import { useLatestQuery } from "../lib/use-latest-query.ts";
-import { ApiError } from "../lib/api.ts";
+import { api, ApiError } from "../lib/api.ts";
 import { parseRial, rialFromTomanInput, toman } from "../lib/money.ts";
 import { normalizeDigits } from "../lib/settings-value.ts";
 import {
@@ -111,9 +112,10 @@ export function Customers() {
   const [mobile, setMobile] = useState("");
   const [fullName, setFullName] = useState("");
 
+  const [audience, setAudience] = useState("all");
   const [title, setTitle] = useState("all");
-  const load = useCallback((signal: AbortSignal) => people.customers(submitted, { signal }, title), [submitted, title]);
-  const query = useLatestQuery({ key: JSON.stringify([submitted, title]), version: revision, load });
+  const load = useCallback((signal: AbortSignal) => people.customers(submitted, { signal }, title, audience), [submitted, title, audience]);
+  const query = useLatestQuery({ key: JSON.stringify([submitted, title, audience]), version: revision, load });
   const rows = query.data?.customers ?? [];
   const totals = query.data?.totals ?? null;
   /*
@@ -195,6 +197,15 @@ export function Customers() {
           void search();
         }}
       >
+          <label>رضایت پیامک<select value={audience} onChange={e => setAudience(e.target.value)}>
+            <option value="all">همهٔ مشتریان</option><option value="receipt">رضایت دریافت رسید</option>
+            <option value="marketing">رضایت بازاریابی</option><option value="no_marketing">بدون رضایت بازاریابی</option>
+          </select></label>
+        <ExcelButton name="مشتریان" load={async () => {
+          const { customers } = await api.get<{customers: Customer[]}>(`/customers/export?${new URLSearchParams({q:submitted,title,audience})}`);
+          return [{title:"مشتریان",columns:["نام","موبایل","تعداد فاکتور","مانده بدهکار (ریال)","مانده بستانکار (ریال)","رضایت رسید","رضایت بازاریابی"],
+            rows: customers.map(c=>[c.fullName,c.mobile,c.invoiceCount,c.ledgerOwed ?? null,c.ledgerCredit ?? null,c.consentSms ? "دارد":"ندارد",c.consentMarketing ? "دارد":"ندارد"])}];
+        }} />
         <label>عنوان مشتری<select aria-label="عنوان مشتری" value={title} onChange={e => setTitle(e.target.value)}>
           <option value="all">همه</option>{Object.entries({mr:"آقا",ms:"خانم",unknown:"نامشخص"}).map(([v,label]) =>
             <option key={v} value={v}>{label}{query.data?.titleCounts ? ` (${query.data.titleCounts[v]})` : ""}</option>)}

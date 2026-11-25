@@ -1,5 +1,6 @@
 const Invoices = lazy(() => import("./screens/Invoices.tsx").then(m => ({ default: m.Invoices })));
 /** پوسته: ناوبری شیشه‌ای، محتوای مالی مات و دسترس‌پذیر. */
+import { VisibleExcel } from "./components/ExcelExport.tsx";
 import { lazy, Suspense, useCallback, useEffect, useRef, useState } from "react";
 import { GlassFilters, Solid } from "./components/Glass.tsx";
 import { TabPanels, useTabsId } from "./components/Tabs.tsx";
@@ -341,6 +342,7 @@ export function App() {
         </Suspense>
         </TabPanels>
         </SectionBoundary>
+          {me && <VisibleExcel zone={zone} title={trailItem?.label ?? "گزارش فروشگاه"} />}
         </main>
 
         {passwordOpen && me ? <PasswordDialog name={me.fullName} own onCancel={() => setPasswordOpen(false)} onApply={async (password, currentPassword) => {

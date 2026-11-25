@@ -44,6 +44,9 @@ function allow(api: MockApi, ops: readonly string[]) {
 
 /** سبد اینستاگرامِ بازیابی‌شده، با شمارش پرداخت و نهایی‌سازی. */
 function server(api: MockApi) {
+  api.handlers.set(`GET /invoices/${INV}/print`, route => route.fulfill({
+    contentType: "text/html", body: "<html><body><div class='sheet'>رسید فروش آزمایشی</div></body></html>",
+  }));
   const state = { invoice: { ...draft }, posted: [] as Array<Record<string, unknown>>, finalized: 0 };
   let received = 0n;
   api.defaults["GET /branches"] = BRANCHES;

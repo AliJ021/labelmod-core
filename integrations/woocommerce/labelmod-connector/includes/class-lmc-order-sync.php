@@ -37,6 +37,7 @@ class LMC_Order_Sync
     const META_PAID     = '_lmc_payment_complete';
     const META_PAID_AT_MS = '_lmc_paid_at_ms';
     private static $payment_started = [];
+    private static $gateway_reference = [];
 
     const META_DELIVERED = '_lmc_cod_delivered';
     const META_PAYLOAD  = '_lmc_order_payload';
@@ -47,9 +48,13 @@ class LMC_Order_Sync
 
     public static function init(): void
     {
-        add_action('woocommerce_pre_payment_complete', static function ($id) {
+        add_action('woocommerce_pre_payment_complete', static function ($id, $reference = '') {
+            self::$gateway_reference[(int) $id] = (string) $reference;
             self::$payment_started[(int) $id] = (int) round(microtime(true) * 1000);
-        }, 1);
+        }, 1, 2);
+        foreach (['processing', 'completed'] as $status) {
+            add_action('woocommerce_order_status_' . $status, [__CLASS__, 'after_gateway_stock'], 12, 2);
+        }
         add_action('woocommerce_payment_complete', [__CLASS__, 'dispatch_paid_order'], 1);
         add_action('woocommerce_order_status_changed', [__CLASS__, 'resume_confirmed_order']);
         add_action(LMC_ORDER_EVENT, [__CLASS__, 'send']);
@@ -57,6 +62,32 @@ class LMC_Order_Sync
         add_action('add_meta_boxes', [__CLASS__, 'meta_box']);
         add_action('admin_post_lmc_resend', [__CLASS__, 'handle_resend']);
         add_action('admin_post_lmc_confirm_payment', [__CLASS__, 'handle_confirm_payment']);
+    }
+
+    /** Woo has persisted the payment and run its stock and reservation hooks at priorities 10/11.
+     * A manual status edit can also set date_paid. Only use the early path inside the
+     * gateway's own payment_complete -> save call for this exact order object.
+     */
+    public static function after_gateway_stock($id, WC_Order $order): void
+    {
+        $reference = self::$gateway_reference[(int) $id] ?? '';
+        if ($reference === '' || $reference !== $order->get_transaction_id('edit')
+            || !$order->get_date_paid('edit') || $order->get_payment_method() === 'cod') {
+            return;
+        }
+        $stack = debug_backtrace(DEBUG_BACKTRACE_PROVIDE_OBJECT | DEBUG_BACKTRACE_IGNORE_ARGS, 16);
+        foreach ($stack as $index => $frame) {
+            if (($frame['object'] ?? null) !== $order || $frame['function'] !== 'save') {
+                continue;
+            }
+            $caller = $stack[$index + 1] ?? [];
+            if (($caller['object'] ?? null) === $order && $caller['function'] === 'payment_complete'
+                && $caller['class'] === 'WC_Order') {
+                unset(self::$gateway_reference[(int) $id]);
+                self::dispatch_paid_order($id);
+            }
+            return;
+        }
     }
 
     /** Woo has saved payment before calling this hook. Persist recovery work before any HTTP. */
@@ -196,7 +227,8 @@ class LMC_Order_Sync
             $payload['codDelivered'] = true;
         }
 
-        $supported = self::check_discount_support($payload, $deadline);
+        $timings = [];
+        $supported = self::check_discount_support($payload, $deadline, $timings);
         if (is_wp_error($supported)) {
             self::fail($order, $supported, LMC_Client::is_retryable($supported));
             return;
@@ -205,7 +237,7 @@ class LMC_Order_Sync
         foreach ($payload['lines'] as $line) {
             if (array_key_exists('discountAmount', $line)) { $path = '/web/discounted-orders'; break; }
         }
-        $res = LMC_Client::post($path, $payload, $deadline);
+        $res = LMC_Client::post($path, $payload, $deadline, $timings);
 
         if (is_wp_error($res)) {
             self::fail($order, $res, LMC_Client::is_retryable($res));
@@ -234,6 +266,20 @@ class LMC_Order_Sync
         $started_ms = (int) $order->get_meta(self::META_PAID_AT_MS);
         if ($started_ms > 0 && $ack_ms >= $started_ms) {
             $note .= sprintf('؛ از تأیید پرداخت تا پاسخ حسابداری: %d میلی‌ثانیه', $ack_ms - $started_ms);
+        }
+        if ($timings) {
+            $http_ms = (int) round(array_sum(array_column($timings, 'http')));
+            $note .= sprintf('؛ رفت‌وبرگشت HTTP در تلاش موفق: %d میلی‌ثانیه', $http_ms);
+            if ($deadline !== null && $started_ms > 0 && isset(self::$payment_started[$order_id])
+                && self::$payment_started[$order_id] === $started_ms && $ack_ms >= $started_ms + $http_ms) {
+                $note .= sprintf('؛ پردازش وردپرس بیرون از HTTP: %d میلی‌ثانیه', $ack_ms - $started_ms - $http_ms);
+            }
+            if (count(array_column($timings, 'core')) === count($timings)) {
+                $core_ms = (int) round(array_sum(array_column($timings, 'core')));
+                if ($core_ms <= $http_ms) {
+                    $note .= sprintf('؛ داخل API حسابداری: %d؛ انتقال و سربار HTTP: %d میلی‌ثانیه', $core_ms, $http_ms - $core_ms);
+                }
+            }
         }
         $order->add_order_note($note);
 
@@ -457,7 +503,7 @@ class LMC_Order_Sync
     }
 
     /** Core قدیمی فیلد ناشناخته را حذف می‌کند؛ تا اعلام پشتیبانی ارسال ممنوع است. */
-    public static function check_discount_support(array $payload, ?float $deadline = null)
+    public static function check_discount_support(array $payload, ?float $deadline = null, ?array &$timings = null)
     {
         $has_discount = false;
         foreach ($payload['lines'] as $line) {
@@ -467,7 +513,7 @@ class LMC_Order_Sync
         if (!$has_discount && !$cod) { return true; }
         $response = LMC_Client::get('/web/connection', [
             'branchId' => $payload['branchId'], 'warehouseId' => $payload['warehouseId'],
-        ], $deadline);
+        ], $deadline, $timings);
         if (is_wp_error($response)) { return $response; }
         if (($response['protocol'] ?? null) !== 1 || ($response['authenticated'] ?? false) !== true
             || ($response['branchId'] ?? '') !== $payload['branchId'] || ($response['warehouseId'] ?? '') !== $payload['warehouseId']

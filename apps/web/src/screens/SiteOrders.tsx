@@ -23,7 +23,7 @@ import { navigate, useUrlState } from "../lib/use-url-state.ts";
 import { normalizeDigits } from "../lib/settings-value.ts";
 import { parseJalaliDate, readOptionalJalaliPeriod } from "../lib/report-filters.ts";
 import {
-  addressLines, coreState, isPaymentId, queueView, isShippingId, isStatusSlug, moneyView, ORDERS_PAGE_MAX, orderStatusState, siteOrders,
+  addressLines, coreState, isPaymentId, queueView, isShippingId, moneyView, ORDERS_PAGE_MAX, orderStatusState, siteOrders,
   type Address, type OrderDetail, type OrderItem, type OrderSummary, type OrdersPage, type OrderView, type WooMoney,
 } from "../lib/site-orders.ts";
 import { Solid } from "../components/Glass.tsx";
@@ -98,7 +98,7 @@ export function SiteOrders() {
   const [shippingParam] = useUrlState(PARAM.shipping);
   const [untilParam] = useUrlState(PARAM.until);
   const [orderParam] = useUrlState(PARAM.order);
-  const status = isStatusSlug(statusParam) ? statusParam : null;
+  const status = statusParam === "processing" || statusParam === "completed" ? statusParam : null;
   const payment = isPaymentId(paymentParam) ? paymentParam : null;
   const shipping = isShippingId(shippingParam) ? shippingParam : null;
   const from = ISO_DAY.test(fromParam) ? fromParam : null;
@@ -162,9 +162,9 @@ export function SiteOrders() {
       </form>
       <Field label="وضعیت سفارش">
         <select value={status ?? ""} onChange={e => refilter({ status: e.target.value })}>
-          <option value="">همهٔ وضعیت‌ها</option>
+          <option value="">در حال انجام و تکمیل‌شده</option>
           {/* وضعیت‌ها از خود سایت می‌آیند، وضعیت‌های افزونه‌ای هم. */}
-          {(ready?.statuses ?? (status ? [{ slug: status, label: status }] : [])).map(s => <option key={s.slug} value={s.slug}>{s.label}</option>)}
+          {(ready?.statuses ?? (status ? [{ slug: status, label: status }] : [])).filter(s => s.slug === "processing" || s.slug === "completed").map(s => <option key={s.slug} value={s.slug}>{s.label}</option>)}
         </select>
       </Field>
       <Field label="روش پرداخت">

@@ -128,7 +128,7 @@ class LMC_Orders_View
     /** وضعیت‌های فیلتر: وضعیت‌های سایت به‌علاوهٔ زباله‌دان. «همه» زباله‌دان را ندارد، مثل پیشخوان ووکامرس. */
     public static function filter_statuses(): array
     {
-        return self::statuses() + ['trash' => self::TRASH_LABEL];
+        return array_intersect_key(self::statuses(), array_flip(['processing', 'completed']));
     }
 
     /** روش‌های ارسال ثبت‌شده در سایت، با شناسهٔ نوع (`flat_rate`، `local_pickup`، …). */
@@ -188,7 +188,7 @@ class LMC_Orders_View
 
         $args = ['type' => 'shop_order', 'limit' => $q['perPage'], 'paged' => $q['page'], 'paginate' => true,
             'orderby' => ['date' => 'DESC', 'ID' => 'DESC'], 'date_created' => $from . '...' . $to];
-        if ($q['status'] !== null) { $args['status'] = [$q['status']]; }
+        $args['status'] = $q['status'] === null ? ['processing', 'completed'] : [$q['status']];
         if ($q['paymentMethod'] !== null) { $args['payment_method'] = $q['paymentMethod']; }
         if ($q['search'] !== null) {
             $term = self::clean_search($q['search']);
