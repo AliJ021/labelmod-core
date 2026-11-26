@@ -2,8 +2,9 @@ import {useId,useState} from "react";
 import type {ReactNode} from "react";
 
 /** A click pins the hint for touch. Hovering the text itself keeps it readable. */
-export function HelpHint({label,children}:{label:string;children:ReactNode}) {
-  const id=useId();
+export function HelpHint({label,children,descriptionId}:{label:string;children:ReactNode;descriptionId?:string}) {
+  const generated=useId();
+  const id=descriptionId ?? generated;
   const [open,setOpen]=useState(false);
   return <span className="help-hint" onMouseEnter={()=>setOpen(true)} onMouseLeave={()=>setOpen(false)}
     onBlur={e=>{if(!e.currentTarget.contains(e.relatedTarget))setOpen(false);}}

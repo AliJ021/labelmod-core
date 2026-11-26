@@ -566,3 +566,6 @@
 .site-order-attrs { display: block; }
 .site-order-notes { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 10px; }
 .site-order-notes > li { display: flex; flex-direction: column; gap: 2px; overflow-wrap: anywhere; }
+
+.set-row-name { display: flex; align-items: center; flex: 1 1 100%; gap: var(--s-1); min-inline-size: 0; }
+.set-row-name .set-label { flex: 1 1 auto; }
