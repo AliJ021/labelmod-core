@@ -1,5 +1,6 @@
 import type { FastifyInstance } from "fastify";
 import { sql } from "kysely";
+import {branchesOf} from "../sales/scope.ts";
 import { z } from "zod";
 import type { Db } from "../db/client.ts";
 import { withActor } from "../db/actor.ts";
@@ -28,7 +29,10 @@ const bodySchema = z.object({
 }).strict().refine((b) => !(b.clearKey && b.apiKey), { message: "حذف و جایگزینی هم‌زمان کلید مجاز نیست" });
 
 export function registerMeliPayamakRoutes(app: FastifyInstance, db: Db, master: string | undefined): void {
-  async function status() {
+  async function status(includeHistory=false) {
+    const history=includeHistory ? (await sql<{day:string;state:string;rendered:string|null}>`
+      SELECT report_date::text AS day,state,rendered FROM platform.manager_digest ORDER BY report_date DESC LIMIT 7
+    `.execute(db)).rows : undefined;
     const r = await sql<{ accountName: string; hasKey: boolean; revision: number; updatedAt: Date }>`
       SELECT account_name AS "accountName",encrypted_key IS NOT NULL AS "hasKey",revision,updated_at AS "updatedAt",
         transport, otp_pattern AS "otpPattern", invoice_pattern AS "invoicePattern",
@@ -37,7 +41,7 @@ export function registerMeliPayamakRoutes(app: FastifyInstance, db: Db, master: 
       FROM platform.melipayamak_credential WHERE singleton`.execute(db);
     if (!r.rows[0]) throw new SettingError("credential_missing", "تنظیم اتصال ملی‌پیامک آماده نیست", 503);
     const settings = await readNotifySettings(db);
-    return { ...r.rows[0], storageReady: Boolean(master), examples: {
+    return { ...r.rows[0], history, storageReady: Boolean(master), examples: {
       otp: otpText("123456"), invoice: invoiceText("فروشگاه نمونه", "۱۴۰۵", "۵۰٬۰۰۰", settings.webSiteUrl ? settings.webSiteUrl+"/?labelmod_receipts=1" : (settings.publicUrl||"https://example.com")+"/customer-receipts"),
     }, routing: {
       enabled: settings.smsEnabled, provider: settings.provider, sender: settings.sender,
@@ -50,7 +54,7 @@ export function registerMeliPayamakRoutes(app: FastifyInstance, db: Db, master: 
     if (!req.session) throw new AuthError("no_session", "وارد نشده‌اید");
     await requireForSession(db, req.session, "settings.view");
     const permission = await can(db, { userId: req.session.userId, viaPin: req.session.pinUnlocked, operation: "settings.security" });
-    return { ...await status(), canEdit: permission.verdict === "allow" };
+    return { ...await status(permission.verdict === "allow" && await branchesOf(db, req.session.userId) === "all"), canEdit: permission.verdict === "allow" };
   });
 
   app.post("/settings/melipayamak-credit", async req => {
@@ -100,6 +104,6 @@ export function registerMeliPayamakRoutes(app: FastifyInstance, db: Db, master: 
           ${JSON.stringify({ revision: r.rows[0].revision, hasKey: r.rows[0].hasKey,
             keyChanged: encrypted !== undefined || Boolean(input.clearKey) })}::jsonb,${req.ip}::inet)`.execute(trx);
     });
-    return { ...await status(), canEdit: true };
+    return { ...await status(await branchesOf(db,req.session.userId) === "all"), canEdit: true };
   });
 }

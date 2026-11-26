@@ -237,6 +237,19 @@ SELECT count(*) INTO v_n FROM ledger.report_trial_balance(v_day, v_day, BR);
 PERFORM pg_temp.assert_eq('حساب‌های درگیر در گزارش هستند', (v_n > 0)::int, 1);
 
 -- ═══════════════════════════════════════════════════════════════════
+SELECT amount INTO v_num FROM ledger.financial_statements(v_day,v_day,BR) WHERE label='سود یا زیان دوره';
+PERFORM pg_temp.assert_eq('صورت سود و زیان پس از برگشت کالا',v_num,500000);
+SELECT amount INTO v_num FROM ledger.financial_statements(v_day,v_day,BR) WHERE label='اختلاف تراز';
+PERFORM pg_temp.assert_eq('دارایی با بدهی و حقوق مالکانه برابر است',v_num,0);
+SELECT count(*) INTO v_n FROM ledger.financial_statements(v_day,v_day,BR) WHERE section='سهم هزینهٔ مشترک';
+PERFORM pg_temp.assert_eq('تفکیک هزینهٔ مشترک پیش‌فرض خاموش است',v_n,0);
+PERFORM platform.set_setting('report.shared_accounts','"5101"','آزمون گزارش',v_user);
+PERFORM platform.set_setting('report.shared_weights','"50,30,20"','آزمون گزارش',v_user);
+SELECT amount INTO v_num FROM ledger.financial_statements(v_day,v_day,BR) WHERE label='سایت';
+PERFORM pg_temp.assert_eq('سهم سی درصدی از چهارصد هزار',v_num,120000);
+SELECT SUM(amount) INTO v_num FROM ledger.financial_statements(v_day,v_day,BR) WHERE section='سهم هزینهٔ مشترک';
+PERFORM pg_temp.assert_eq('سهم سه کانال دقیقاً برابر هزینهٔ مبناست',v_num,400000);
+
 RAISE NOTICE E'\n═══ ۸. دفتر یک حساب ═══';
 -- ═══════════════════════════════════════════════════════════════════
 -- حساب موجودی کالا: خرید بدهکارش می‌کند، فروش بستانکار.

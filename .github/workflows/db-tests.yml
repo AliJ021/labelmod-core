@@ -68,6 +68,9 @@ jobs:
       - name: تست‌های مالی — سناریوی طلایی، حالت لبه‌ای، همزمانی
         run: ./ops/db.sh test
 
+      - name: Migration rollback and parallel retry
+        run: bash ops/test-migration-atomicity.sh
+
       - name: ادعاهای پایدار — هیچ سند نامتوازن، هیچ موجودی منفی
         run: |
           psql -v ON_ERROR_STOP=1 "$DATABASE_URL" -c "

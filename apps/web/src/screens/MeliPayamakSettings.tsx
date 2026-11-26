@@ -1,3 +1,4 @@
+import {HelpHint} from "../components/ui/HelpHint.tsx";
 import { useEffect, useState } from "react";
 import { Solid } from "../components/Glass.tsx";
 import { api, ApiError } from "../lib/api.ts";
@@ -12,6 +13,7 @@ interface Credential {
   otpPattern?: number | null;
   invoicePattern?: number | null;
   digestEnabled?: boolean; digestPattern?: number | null; digestCopy?: string;
+  history?: {day:string;state:string;rendered:string|null}[];
   otpCopy?: string;
   invoiceCopy?: string;
   routing?: { enabled: boolean; provider: string; sender: string; invoiceEnabled: boolean; receiptConsentRequired: boolean; hasPublicUrl: boolean; chequeEnabled: boolean };
@@ -101,7 +103,7 @@ export function MeliPayamakSettings() {
       <p className="muted small" style={{ margin: 0 }}>برای نگه‌داشتن کلید فعلی، این کادر را خالی بگذارید. ذخیرهٔ کلید به معنی تأیید اتصال یا تحویل پیامک نیست.</p>
       {value.hasKey ? <label><input type="checkbox" checked={clearKey} disabled={disabled}
         onChange={(e) => { setClearKey(e.target.checked); if (e.target.checked) setKey(""); }} /> حذف کلید ذخیره‌شده (ارسال ملی‌پیامک متوقف می‌شود)</label> : null}
-      <fieldset disabled={disabled} className="stack"><legend>الگوی خدماتی</legend>
+      <fieldset disabled={disabled} className="stack"><legend>الگوی خدماتی <HelpHint label="الگوی خدماتی">ابتدا همین متن و ترتیب عددها را در ملی‌پیامک ثبت کنید. پس از تأیید، کد همان الگو را اینجا وارد کنید.</HelpHint></legend>
         {([{ label: "ورود دومرحله‌ای", id: otp, setId: setOtp, copy: otpCopy, setCopy: setOtpCopy,
              args: ["123456"], hint: "۰: کد شش‌رقمی", example: value.examples?.otp },
           { label: "رسید خرید", id: invoice, setId: setInvoice, copy: invoiceCopy, setCopy: setInvoiceCopy,
@@ -127,6 +129,10 @@ export function MeliPayamakSettings() {
         <div><strong>نمونهٔ پیام مدیر</strong><p style={{whiteSpace:"pre-line"}}>{digestCopy.replace(/\{(حضوری|سایت|اینستاگرام|جمع)\}/g,(_m,k:string)=>({"حضوری":"۸۰۰٬۰۰۰","سایت":"۴۰۰٬۰۰۰","اینستاگرام":"۳۰۰٬۰۰۰","جمع":"۱٬۵۰۰٬۰۰۰"}[k] ?? ""))}</p></div>
         <small>پس از تأیید متن تازه در ملی‌پیامک، شناسهٔ همان پترن را ذخیره کنید. بدون پترن، ارسال به خط متن‌آزاد نیاز دارد.</small>
       </fieldset>
+      {value.history?.length ? <details className="solid pad"><summary>هفت گزارش اخیر مدیر</summary>
+        {value.history.map(row => <article key={row.day}><strong>{new Intl.DateTimeFormat("fa-IR",{timeZone:"UTC"}).format(new Date(row.day+"T12:00:00Z"))}</strong>
+          {" · "}{({accepted:"پذیرفته‌شده توسط سرویس",unknown:"نتیجه نامشخص",queued:"در صف",sending:"در حال ارسال"}[row.state] ?? row.state)}
+          {row.rendered && <p style={{whiteSpace:"pre-line"}}>{row.rendered}</p>}</article>)}</details> : null}
       {value.routing && <section className="solid pad stack"><h3>وضعیت مسیر ارسال</h3>
         <span>ارسال واقعی ملی‌پیامک · {value.routing.enabled && value.routing.provider === "melipayamak" ? "انتخاب و فعال شده" : "غیرفعال؛ سرویس و کلید ارسال را در گروه اعلان‌ها بررسی کنید"}</span>
         <span>رسید خرید · {value.routing.invoiceEnabled ? "فعال" : "خاموش"} · {value.routing.receiptConsentRequired ? "با رضایت رسید مشتری" : "بدون شرط رضایت رسید"} · {value.routing.hasPublicUrl ? "نشانی رسید تنظیم شده" : "نشانی عمومی فاکتور لازم است"}</span>

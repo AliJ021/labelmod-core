@@ -486,55 +486,12 @@ class LMC_Instore
     /** صفحه «خریدهای حضوری» در حساب کاربری. */
     public static function render_account_page(): void
     {
-        $user_id = get_current_user_id();
-        if (!$user_id) {
+        if (!get_current_user_id()) {
             return;
         }
-
-        $posts = get_posts([
-            'post_type'   => self::POST_TYPE,
-            'post_status' => 'publish',
-            'author'      => $user_id,
-            'numberposts' => 50,
-            'orderby'     => 'date',
-            'order'       => 'DESC',
-        ]);
-
-        if (empty($posts)) {
-            echo '<p>' . esc_html__('هنوز خرید حضوری‌ای ثبت نشده است.', 'labelmod-connector') . '</p>';
-            return;
-        }
-
-        echo '<table class="woocommerce-orders-table shop_table"><thead><tr>';
-        echo '<th>' . esc_html__('شماره', 'labelmod-connector') . '</th>';
-        echo '<th>' . esc_html__('تاریخ', 'labelmod-connector') . '</th>';
-        echo '<th>' . esc_html__('مبلغ', 'labelmod-connector') . '</th>';
-        echo '<th>' . esc_html__('اقلام', 'labelmod-connector') . '</th>';
-        echo '</tr></thead><tbody>';
-
-        foreach ($posts as $p) {
-            $lines = get_post_meta($p->ID, '_lmc_lines', true);
-            $lines = is_array($lines) ? $lines : [];
-            $net   = (string) get_post_meta($p->ID, '_lmc_payable_amount', true);
-
-            echo '<tr><td>';
-            echo esc_html((string) get_post_meta($p->ID, '_lmc_number', true));
-            // برچسبی که مشتری را گمراه نکند: این سفارش سایت نیست.
-            echo ' <span class="lmc-tag">'
-               . esc_html__('سفارش حضوری', 'labelmod-connector') . '</span>';
-            echo '</td><td>';
-            echo esc_html(self::purchase_date((int) $p->ID));
-            echo '</td><td>';
-            echo wp_kses_post(wc_price(self::to_site_amount($net)));
-            echo '</td><td><ul style="margin:0;padding-inline-start:1em">';
-            foreach ($lines as $l) {
-                $label = trim(($l['name'] ?? '') . ' ' . ($l['color'] ?? '') . ' ' . ($l['size'] ?? ''));
-                echo '<li>' . esc_html($label) . ' × ' . esc_html((string) ($l['qty'] ?? '')) . '</li>';
-            }
-            echo '</ul></td></tr>';
-        }
-
-        echo '</tbody></table>';
+        // The billing phone in a WordPress profile is editable. The portal verifies possession.
+        echo '<p><a class="button" href="' . esc_url(add_query_arg('labelmod_receipts', '1', home_url('/'))) . '">'
+            . esc_html__('مشاهدهٔ خریدها با تأیید موبایل', 'labelmod-connector') . '</a></p>';
     }
 
     /** تاریخ خرید از سرور؛ تاریخ واردسازی هرگز جای تاریخ نامعلوم جا زده نمی‌شود. */

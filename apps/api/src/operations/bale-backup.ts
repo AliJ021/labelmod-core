@@ -56,7 +56,7 @@ export async function deliverBale(dest:Destination,file:string,date:string,diges
   return String(data.result!.message_id);
 }
 
-export async function runBaleBackup(db:Db, url:string,root:string,configDir:string) {
+export async function runBaleBackup(db:Db, url:string,root:string,configDir:string,send:typeof fetch=fetch) {
   // The panel-backup process holds an exclusive volume lock for its entire lifetime.
   const current=(await sql<{day:string}> `SELECT (now() AT TIME ZONE 'Asia/Tehran')::date::text AS day
     WHERE platform.setting_text('backup.bale_enabled','false')='true'
@@ -78,7 +78,7 @@ export async function runBaleBackup(db:Db, url:string,root:string,configDir:stri
   let detail="بات، مقصد خصوصی و کلید عمومی بکاپ را بررسی کنید.";
   try {
     const dest=await destination(configDir);
-    await verifyBaleChat(dest);
+    await verifyBaleChat(dest,send);
     await mkdir(root,{recursive:true,mode:0o700});
     detail="ساخت بکاپ رمزگذاری‌شده موفق نبود.";
     if (!record.digest) {
@@ -95,7 +95,7 @@ export async function runBaleBackup(db:Db, url:string,root:string,configDir:stri
     await sql`UPDATE platform.bale_backup SET state='sending',updated_at=now() WHERE due_day=${day}::date`.execute(db);
     deliveryStarted=true;
     detail="نتیجهٔ تحویل قطعی نیست. فایل و هش همان روز را در گفت‌وگوی بله تطبیق دهید.";
-    const id=await deliverBale(dest,file,day,checked.sha256);
+    const id=await deliverBale(dest,file,day,checked.sha256,send);
     await sql`UPDATE platform.bale_backup SET state='sent',delivered_at=now(),message_id=${id},detail=NULL,updated_at=now() WHERE due_day=${day}::date`.execute(db);
   } catch {
     await sql`UPDATE platform.bale_backup SET state=${deliveryStarted?"unknown":"failed"},detail=${detail},updated_at=now() WHERE due_day=${day}::date`.execute(db);

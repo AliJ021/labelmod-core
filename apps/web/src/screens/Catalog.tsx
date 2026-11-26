@@ -1,3 +1,4 @@
+import {HelpHint} from "../components/ui/HelpHint.tsx";
 import { ExcelButton } from "../components/ExcelExport.tsx";
 import { AmountInput } from "../components/ui/AmountInput.tsx";
 import { CatalogSummaryRow } from "../components/CatalogSummaryRow.tsx";
@@ -893,7 +894,7 @@ function VariationBuilder({
 
   return (
     <Solid className="pad" as="section">
-      <h3 style={{ fontSize: ".95rem", marginTop: 0 }}>ساخت تنوع</h3>
+      <h3 style={{ fontSize: ".95rem", marginTop: 0 }}>ساخت تنوع <HelpHint label="رنگ و سایز">حرف اول رنگ را بزنید و از پیشنهادها انتخاب کنید. رنگ تازه را می‌توانید برای کالاهای بعد ذخیره کنید.</HelpHint></h3>
       <p className="muted" style={{ marginTop: 0 }}>
         برای هر ترکیب رنگ و سایز یک بارکد ساخته می‌شود. می‌توانید چند مقدار را با ویرگول جدا کنید.
       </p>

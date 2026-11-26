@@ -32,6 +32,9 @@ import { AuthService } from "../src/auth/service.ts";
 import { buildApp } from "../src/http/app.ts";
 import { loadConfig } from "../src/lib/config.ts";
 import { tick, type LoopOptions } from "../src/worker/loop.ts";
+import {handleInvoiceFinalized} from "../src/worker/handlers.ts";
+import {sendManagerDigest} from "../src/worker/digest.ts";
+import {readNotifySettings} from "../src/worker/settings.ts";
 import { toLocalMobile } from "../src/worker/sms.ts";
 
 const DATABASE_URL = process.env.DATABASE_URL;
@@ -74,7 +77,7 @@ describe("Worker — صف پیام، پیامک و هشدار چک", { skip }, (
   }
 
   /** یک فاکتور نهایی‌شده — همان مسیری که صندوق می‌رود. */
-  async function finalizedInvoice(withCustomer: boolean): Promise<string> {
+  async function finalizedInvoice(withCustomer: boolean, paid = true): Promise<string> {
     const inv = await sql<{ id: string }>`
       INSERT INTO sales.invoice (branch_id, warehouse_id, shift_id, channel,
                                  customer_id, created_by)
@@ -88,7 +91,7 @@ describe("Worker — صف پیام، پیامک و هشدار چک", { skip }, (
                                       unit_price, net_amount)
       VALUES (${id}::uuid, 1, ${variationId}::uuid, 1, 1500000, 1500000)`
       .execute(handle.db);
-    await sql`
+    if (paid) await sql`
       INSERT INTO treasury.payment (invoice_id, shift_id, method_code, amount, ref_no)
       VALUES (${id}::uuid, NULL, 'gateway', 1500000, ${`GW-${id.slice(0, 8)}`})`
       .execute(handle.db);
@@ -368,6 +371,44 @@ describe("Worker — صف پیام، پیامک و هشدار چک", { skip }, (
       await set("notify.health_alerts", false);
       await set("notify.health_alert_codes", codesBefore);
     }
+  });
+
+  test("Meli issues one receipt after payment and records the exact submitted pattern values",async()=>{
+    await sql`UPDATE sales.customer SET credit_limit=10000000 WHERE id=${customerId}::uuid`.execute(handle.db);
+    const unpaid=await finalizedInvoice(true,false);
+    const paid=await finalizedInvoice(true);
+    const messages:string[][]=[];
+    const ctx={db:handle.db,settings:{...await readNotifySettings(handle.db),provider:"melipayamak"},
+      sms:{send:async(_to:string,_text:string,p?:import("../src/worker/sms.ts").SmsPattern)=>{messages.push(p?.args??[]);return "123";}},
+      webPush:{send:async()=>{}},webhook:{send:async()=>{}}};
+    await sql`UPDATE platform.melipayamak_credential SET invoice_pattern=20,invoice_copy='رسید {0} مبلغ {1}' WHERE singleton`.execute(handle.db);
+    try {
+      for (const id of [unpaid, paid, paid]) await handleInvoiceFinalized(ctx,{id:"1",topic:"invoice.finalized",payload:{invoice_id:id},attempts:1});
+      assert.equal(messages.length,1);
+      const row=(await sql<{rendered:string;state:string}>`SELECT rendered,state FROM platform.invoice_sms_dispatch WHERE invoice_id=${paid}::uuid`.execute(handle.db)).rows[0];
+      assert.equal(row?.state,"accepted");
+      assert.equal(row.rendered,"رسید "+messages[0]![0]+" مبلغ "+messages[0]![1]);
+    } finally {
+      await sql`UPDATE platform.melipayamak_credential SET invoice_pattern=NULL,invoice_copy='' WHERE singleton`.execute(handle.db);
+    }
+  });
+
+  test("nightly manager template uses net sales by channel once, including customized order",async()=>{
+    await finalizedInvoice(true);
+    const day=(await sql<{day:string}>`SELECT platform.business_date()::text AS day`.execute(handle.db)).rows[0]!.day;
+    await sql`UPDATE platform.melipayamak_credential SET digest_enabled=true,digest_pattern=12,digest_copy='سایت {سایت} و جمع {جمع}' WHERE singleton`.execute(handle.db);
+    try{
+      await sql`INSERT INTO platform.manager_digest(report_date) VALUES(${day}::date)`.execute(handle.db);
+      const sent:string[][]=[];
+      const ctx={db:handle.db,settings:{...await readNotifySettings(handle.db),provider:"melipayamak",managerMobile:"09121111111"},
+        sms:{send:async(_to:string,_text:string,p?:import("../src/worker/sms.ts").SmsPattern)=>{sent.push(p?.args??[]);return "123";}},
+        webPush:{send:async()=>{}},webhook:{send:async()=>{}}};
+      const msg={id:"1",topic:"manager.digest",payload:{date:day},attempts:1};
+      await sendManagerDigest(ctx,msg);await sendManagerDigest(ctx,msg);
+      const total=(await sql<{t:string}>`SELECT coalesce(sum(sales_amount),0)::text AS t FROM sales.daily_summary_by_channel(${BRANCH}::uuid,${day}::date) WHERE channel='web'`.execute(handle.db)).rows[0]!.t;
+      const formatted=(BigInt(total)/10n).toLocaleString("en-US");
+      assert.ok(BigInt(total)>0n);assert.deepEqual(sent,[[formatted,formatted]]);
+    }finally{await sql`UPDATE platform.melipayamak_credential SET digest_enabled=false WHERE singleton`.execute(handle.db);}
   });
 
   test("fixed receipt page verifies a mobile, enforces expiry and signs out",async()=>{

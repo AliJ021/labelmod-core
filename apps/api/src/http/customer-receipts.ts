@@ -30,11 +30,16 @@ export async function deliverReceiptOtp(ctx:HandlerContext,msg:OutboxMessage) {
   const master=ctx.smsCredentialKey;
   if(!master) throw new SmsError("کلید امن ورود مشتری تنظیم نشده است");
   const id=String(msg.payload["id"]);
-  const row=(await sql<{mobile:string}>`SELECT mobile FROM platform.receipt_access WHERE id=${id}::uuid AND sent_at IS NULL
-    AND created_at>now()-interval '2 minutes' AND attempts<3 AND session_hash IS NULL`.execute(ctx.db)).rows[0];
-  if (!row || !ctx.settings.smsEnabled || ctx.settings.provider==="log") return {done:true as const,note:"کد رسید قابل ارسال نیست"};
+  if (!ctx.settings.smsEnabled || ctx.settings.provider==="log") return {done:true as const,note:"ارسال کد ورود خاموش است"};
+  const row=(await sql<{mobile:string}>`UPDATE platform.receipt_access SET sending_at=clock_timestamp() WHERE id=${id}::uuid AND sending_at IS NULL AND sent_at IS NULL
+    AND created_at>now()-interval '2 minutes' AND attempts<3 AND session_hash IS NULL RETURNING mobile`.execute(ctx.db)).rows[0];
+  if (!row) return {done:true as const,note:"کد رسید قابل ارسال نیست"};
   const code=codeFor(id,master);
-  await ctx.sms.send(row.mobile,otpText(code),{purpose:"otp",args:[code]});
+  try {await ctx.sms.send(row.mobile,otpText(code),{purpose:"otp",args:[code]});}
+  catch(error){
+    if(error instanceof SmsError && !error.uncertain) await sql`UPDATE platform.receipt_access SET sending_at=NULL WHERE id=${id}::uuid AND sent_at IS NULL`.execute(ctx.db);
+    throw error;
+  }
   await sql`UPDATE platform.receipt_access SET sent_at=now() WHERE id=${id}::uuid`.execute(ctx.db);
   return {done:true as const,note:"کد مشاهدهٔ رسید ارسال شد"};
 }

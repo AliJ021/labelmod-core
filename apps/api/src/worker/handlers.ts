@@ -95,9 +95,15 @@ export async function handleInvoiceFinalized(
     consent: boolean | null;
     channel: string;
     web_receipt: boolean;
+    fully_paid: boolean;
     shop_name: string | null;
   }>`
     SELECT sales.invoice_display_number(i.id) AS number, i.payable_amount::text,
+           i.status IN ('paid','finalized') AND i.payable_amount <=
+             coalesce((SELECT sum(CASE WHEN p.direction='in' THEN p.amount ELSE -p.amount END)
+               FROM treasury.payment p JOIN treasury.payment_method m ON m.code=p.method_code
+               WHERE p.invoice_id=i.id AND m.kind<>'credit' AND p.status IN ('succeeded','settled','reconciled')),0)
+               +sales.exchange_in(i.id) AS fully_paid,
            i.channel, coalesce((SELECT value='true'::jsonb FROM platform.setting WHERE key='notify.accounting_web_receipt'),false) AS web_receipt,
            c.mobile_normalized AS mobile,
            c.consent_sms       AS consent,
@@ -112,7 +118,8 @@ export async function handleInvoiceFinalized(
     // فاکتور رفته ولی پیامش مانده. تلاش دوباره چیزی را برنمی‌گرداند.
     throw new SmsError("فاکتور یافت نشد", true);
   }
-  const sendSms = row.channel !== "web" || row.web_receipt;
+  const meliReceipt = ctx.settings.provider === "melipayamak";
+  const sendSms = (row.channel !== "web" || row.web_receipt) && (!meliReceipt || row.fully_paid);
   if (!row.number) return { done: true, note: "فاکتور شماره ندارد" };
 
   // فروش ناشناس عادی است — بیشتر فروش صندوق همین است.
@@ -151,12 +158,20 @@ export async function handleInvoiceFinalized(
   const amount = toToman(parseMoney(row.payable_amount));
   const link = `${ctx.settings.publicUrl}/i/${token}`;
 
-  const sendReceipt = () => ctx.sms.send(to, invoiceText(shop, row.number!, String(amount), ctx.settings.provider === "melipayamak" ? (ctx.settings.webSiteUrl ? ctx.settings.webSiteUrl + "/?labelmod_receipts=1" : ctx.settings.publicUrl + "/customer-receipts") : link),
+  const fixedLink = ctx.settings.webSiteUrl ? ctx.settings.webSiteUrl + "/?labelmod_receipts=1" : ctx.settings.publicUrl + "/customer-receipts";
+  const text = invoiceText(shop, row.number, String(amount), meliReceipt ? fixedLink : link);
+  const sendReceipt = () => ctx.sms.send(to, text,
     { purpose: "invoice", args: [String(row.number), String(amount)] });
 
   if (sendSms && ctx.settings.provider === "melipayamak") {
-    const claim = await sql`INSERT INTO platform.invoice_sms_dispatch(invoice_id,state)
-      VALUES(${invoiceId}::uuid,'sending') ON CONFLICT DO NOTHING RETURNING invoice_id`.execute(ctx.db);
+    const pattern = (await sql<{id:number|null;copy:string}>`SELECT invoice_pattern AS id,invoice_copy AS copy
+      FROM platform.melipayamak_credential WHERE singleton`.execute(ctx.db)).rows[0];
+    if (pattern?.id && /\{(?![01]\})/.test(pattern.copy)) {
+      throw new SmsError("پترن قدیمی رسید را با دو متغیر شماره و مبلغ و نشانی ثابت فروشگاه جایگزین کنید",true);
+    }
+    const rendered = pattern?.id ? (pattern.copy ? pattern.copy.replace(/\{([01])\}/g, (_, n:string) => n==="0" ? row.number! : String(amount)) : null) : text;
+    const claim = await sql`INSERT INTO platform.invoice_sms_dispatch(invoice_id,state,rendered,pattern_id)
+      VALUES(${invoiceId}::uuid,'sending',${rendered},${pattern?.id ?? null}) ON CONFLICT DO NOTHING RETURNING invoice_id`.execute(ctx.db);
     if (claim.rows.length) {
       let reference;
       try { reference = await sendReceipt(); }

@@ -70,8 +70,7 @@ migrate () {
   # دیتابیسی که از قبل مهاجرت شده ولی دفتر ندارد — یعنی نصبی که پیش از
   # این تغییر بالا آمده. حدس‌زدن اینکه کدام مهاجرت‌ها اجرا شده‌اند کار
   # خطرناکی است، پس اپراتور را صریح راهنمایی می‌کنیم.
-  if [ "$($PSQL -Aqt -d "$url" -c "SELECT count(*) FROM public.schema_migration")" = "0" ] \
-     && [ "$($PSQL -Aqt -d "$url" -c "SELECT count(*) FROM pg_namespace WHERE nspname = 'platform'")" != "0" ]; then
+  if [ "$($PSQL -Aqt -d "$url" -c "SELECT NOT EXISTS (SELECT FROM public.schema_migration) AND EXISTS (SELECT FROM pg_namespace WHERE nspname='platform')")" = "t" ]; then
     echo "⚠️  این دیتابیس از قبل مهاجرت شده ولی دفتر مهاجرت ندارد."
     echo "    یک بار وضعیت فعلی را ثبت کنید (هیچ SQLی اجرا نمی‌شود):"
     echo "        ops/db.sh baseline 031    # شماره آخرین مهاجرتِ اجراشده"
