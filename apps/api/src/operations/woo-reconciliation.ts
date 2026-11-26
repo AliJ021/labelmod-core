@@ -11,8 +11,8 @@ const wooOrder=z.object({
 export async function reconcileWooSnapshot(db:Db,actor:string,data:unknown,unit:"rial"|"toman"){
   const orders=z.array(wooOrder).parse(data);
   if(new Set(orders.map(r=>r.id)).size!==orders.length)throw new Error("شناسهٔ سفارش در فایل تکراری است.");
-  const result=await sql<{orderId:string;invoice:string|null;issues:string[]}>
-    `WITH source AS (SELECT value AS o FROM jsonb_array_elements(${JSON.stringify(orders)}::jsonb)),
+  const result=await sql<{orderId:string;invoice:string|null;issues:string[]}>`
+    WITH source AS (SELECT value AS o FROM jsonb_array_elements(${JSON.stringify(orders)}::jsonb)),
     matched AS (
       SELECT o,i.id,i.status,i.tax_amount,i.payable_amount,sales.invoice_display_number(i.id) invoice
       FROM source s LEFT JOIN platform.inbox_message m ON m.source='api.web.order' AND m.event_id='woo-order:'||(o->>'id') AND m.payload->>'actorId'=${actor}

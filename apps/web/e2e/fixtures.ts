@@ -163,6 +163,8 @@ export class MockApi {
   productRows = [product];
   permissionRows = [rule];
   defaults: Record<string, unknown> = {
+    "GET /backups/bale": {schedule:{enabled:false,hour:0,minute:0},history:[]},
+    "GET /catalog/attribute-terms": [{kind:"color",label:"استخوانی"},{kind:"size",label:"XL"}],
     "GET /pos/policy": { requireCustomer: false },
     "GET /auth/me": me, "GET /branches": { branches }, "GET /reports/daily": daily, "GET /reports/daily/hourly": DEFAULT_HOURLY, "GET /reports/daily/channels": DEFAULT_CHANNELS,
     "GET /pos/sellers": { sellers:[{id: me.id, name: me.fullName},{id:staff.id,name:staff.fullName}], sessionId:"test-session" },
