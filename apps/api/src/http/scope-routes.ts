@@ -124,6 +124,7 @@ export function registerScopeRoutes(app: FastifyInstance, deps: ScopeRouteDeps):
       .selectFrom("treasury.payment_method")
       .select(["code", "name", "kind", "requires_ref"])
       .where("is_active", "=", true)
+      .where("code", "!=", "shopino")
       .orderBy("code")
       .execute();
 

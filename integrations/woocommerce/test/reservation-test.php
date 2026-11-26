@@ -64,6 +64,7 @@ class LMC_Client {
 // دفتر کسر: ACK رزرو به آن می‌رسد. پرس‌وجوها ثبت می‌شوند تا ادعا روی خودِ SQL باشد.
 $GLOBALS['wpdb'] = new class {
     public string $prefix = 'wp_'; public array $log = [];
+    public string $options = 'wp_options'; public string $last_error = '';
     public function prepare($q, ...$a) { return vsprintf(str_replace(['%s', '%d'], ["'%s'", '%d'], $q), $a); }
     public function get_var($q) { $this->log[] = $q; return str_contains($q, 'GET_LOCK') ? '1' : null; }
     public function query($q) { $this->log[] = $q; return 1; }
@@ -411,4 +412,33 @@ LMC_Client::$result = ['invoiceId' => 'direct-81', 'number' => '81'];
 LMC_Order_Sync::send(81);
 check(end(LMC_Client::$calls) === $sent && $uncertain->get_meta(LMC_Order_Sync::META_INVOICE) === 'direct-81', 'worker reuses identical payload after unknown outcome');
 
+foreach ([9029 => 'LM00151-011', 9030 => 'LM00151-008'] as $id => $sku) {
+    $orders[$id] = $market = new WC_Order($id);
+    $market->method = 'shopino';
+    $market->total = '93000000';
+    $market->items = [new WC_Order_Item_Product($sku, 1)];
+    $old = ['externalId' => (string) $id, 'branchId' => 'b', 'warehouseId' => 'w', 'paymentMethod' => 'gateway',
+        'lines' => [['sku' => $sku, 'qty' => '1', 'unitPrice' => '93000000']], 'paidAmount' => '93000000'];
+    $market->meta = [LMC_Order_Sync::META_PAID => 'yes', LMC_Order_Sync::META_STOPPED => 'yes',
+        LMC_Order_Sync::META_ERROR => 'روش پرداخت «gateway» شماره پیگیری لازم دارد',
+        LMC_Order_Sync::META_PAYLOAD => $old, LMC_Order_Sync::META_LINES => [1 => 1]];
+    LMC_Client::$result = new WP_Error('network', 'response lost');
+    LMC_Order_Sync::retry($market);
+    $wire = end(LMC_Client::$calls);
+    check($wire === ['/web/orders', array_replace($old, ['paymentMethod' => 'shopino'])], 'همان سفارش و همان مبلغ به حساب شاپینو می‌رود');
+    LMC_Client::$result = ['invoiceId' => 'test-' . $id, 'number' => (string) $id, 'replayed' => true];
+    LMC_Order_Sync::send($id);
+    check(end(LMC_Client::$calls) === $wire && $market->get_meta(LMC_Order_Sync::META_INVOICE) === 'test-' . $id, 'تلاش بعد از قطع پاسخ همان فاکتور را می‌گیرد');
+    $count = count(LMC_Client::$calls);
+    LMC_Order_Sync::retry($market);
+    $paid($id);
+    check(count(LMC_Client::$calls) === $count, 'ارسال دستی و رویداد پرداخت بعد از تأیید تکرار نمی‌شوند');
+}
+$orders[9031] = $wrong = new WC_Order(9031);
+$wrong->method = 'bacs';
+$wrong->meta = [LMC_Order_Sync::META_PAID => 'yes', LMC_Order_Sync::META_LINES => [1 => 1],
+    LMC_Order_Sync::META_PAYLOAD => array_replace($old, ['externalId' => '9031', 'paymentMethod' => 'shopino'])];
+$count = count(LMC_Client::$calls);
+LMC_Order_Sync::send(9031);
+check(count(LMC_Client::$calls) === $count && $wrong->get_meta(LMC_Order_Sync::META_STOPPED) === 'yes', 'درگاه دیگر به حساب شاپینو نمی‌رود');
 printf("✓ %d بررسی رزرو و بازیابی سفارش موفق بود\n", $checks);

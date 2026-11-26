@@ -248,7 +248,7 @@ export class WebOrderService {
       });
     }
 
-    if (input.codDelivered) {
+    if (input.codDelivered || input.paymentMethod === "shopino") {
       // سقف اعتبار مشتری مجوز خروج سفارش پرداخت در محلِ پرداخت‌نشده نیست.
       // سفارش کاملاً تخفیف‌خورده با مبلغ صفر بدون ساخت دریافت جعلی مجاز است.
       const settled = await sql<{ payable: string; received: string }>`
@@ -261,6 +261,9 @@ export class WebOrderService {
       `.execute(trx);
       const row = settled.rows[0]!;
       if (parseMoney(row.received) !== parseMoney(row.payable)) {
+        if (input.paymentMethod === "shopino") {
+          throw new InvoiceError("shopino_amount_mismatch", "مبلغ وصول‌شده توسط شاپینو با مبلغ فاکتور برابر نیست", 409);
+        }
         throw new InvoiceError("cod_payment_required", "خروج سفارش پرداخت در محل نیازمند ثبت دریافت کامل وجه پس از تحویل است", 409);
       }
     }
