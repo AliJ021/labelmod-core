@@ -97,3 +97,18 @@ test("panel uses account credentials and the receipt pattern; credit probe never
   await makeSender(connection).send(to, "unused", { purpose: "invoice", args:["23","12500"] });
   assert.deepEqual(calls.map(url=>url.split("/").at(-1)), ["GetCredit","BaseServiceNumber"]);
 });
+
+test("manager alerts use the selected shared patterns without a sender line", async t=>{
+  const calls: Array<{bodyId:number;args:string[]}>=[];
+  t.mock.method(globalThis,"fetch",async(url:string,init:RequestInit)=>{
+    assert.ok(url.includes("/send/shared/"));
+    calls.push(JSON.parse(String(init.body)));
+    return Response.json({recId:"3741437414",status:""});
+  });
+  const sender=makeSender({...config,sender:"",chequePattern:31,healthPattern:32});
+  await sender.send(to,"آزمون",{purpose:"cheque",args:["دریافتی","500,000","امروز سررسید است"]});
+  await sender.send(to,"آزمون",{purpose:"health",args:["بکاپ دیر شده","1"]});
+  assert.deepEqual(calls.map(({bodyId,args})=>[bodyId,args]),[
+    [31,["دریافتی","500,000","امروز سررسید است"]],[32,["بکاپ دیر شده","1"]]
+  ]);
+});

@@ -47,7 +47,7 @@ export class SmsError extends Error {
   }
 }
 
-export type SmsPattern = { purpose: "otp"; args: string[] } | {purpose:"invoice";args:string[];bodyId?:number|null} | { purpose: "digest"; args: string[]; bodyId: number | null };
+export type SmsPattern = { purpose: "otp" | "cheque" | "health"; args: string[] } | {purpose:"invoice";args:string[];bodyId?:number|null} | { purpose: "digest"; args: string[]; bodyId: number | null };
 
 export interface SmsConfig {
   transport?: "console" | "panel";
@@ -55,6 +55,8 @@ export interface SmsConfig {
   otpPattern?: number | null;
   invoicePattern?: number | null;
   digestPattern?: number | null;
+  chequePattern?: number | null;
+  healthPattern?: number | null;
   provider: string;
   sender: string;
   apiKey: string;
@@ -198,7 +200,7 @@ function meliPayamakSender(config: SmsConfig): SmsSender {
   }
   const panel = config.transport === "panel";
   if (panel && !config.accountName?.trim()) throw new SmsError("نام کاربری پنل ملی‌پیامک لازم است", true);
-  if (!config.otpPattern && !config.invoicePattern && !config.digestPattern && !/^\d+$/.test(config.sender)) {
+  if (!config.otpPattern && !config.invoicePattern && !config.digestPattern && !config.chequePattern && !config.healthPattern && !/^\d+$/.test(config.sender)) {
     throw new SmsError("شماره فرستنده ملی‌پیامک تنظیم نشده یا نامعتبر است", true);
   }
   return {
@@ -207,7 +209,14 @@ function meliPayamakSender(config: SmsConfig): SmsSender {
       if (!mobile || !/^09\d{9}$/.test(mobile)) {
         throw new SmsError("شماره گیرنده پیامک نامعتبر است", true);
       }
-      const bodyId = pattern?.purpose === "otp" ? config.otpPattern : pattern?.purpose === "invoice" ? (pattern.bodyId === undefined ? config.invoicePattern : pattern.bodyId) : pattern?.purpose === "digest" ? pattern.bodyId : null;
+      let bodyId: number | null | undefined;
+      switch (pattern?.purpose) {
+        case "otp": bodyId=config.otpPattern; break;
+        case "cheque": bodyId=config.chequePattern; break;
+        case "health": bodyId=config.healthPattern; break;
+        case "invoice": bodyId=pattern.bodyId===undefined ? config.invoicePattern : pattern.bodyId; break;
+        case "digest": bodyId=pattern.bodyId; break;
+      }
       if (!bodyId && !/^\d+$/.test(config.sender))
         throw new SmsError("ارسال متن آزاد به خط فرستندهٔ تأییدشده نیاز دارد", true);
       const args = pattern?.args ?? [];

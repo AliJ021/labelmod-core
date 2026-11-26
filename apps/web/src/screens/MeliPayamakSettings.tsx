@@ -14,9 +14,10 @@ interface Credential {
   invoicePattern?: number | null;
   digestEnabled?: boolean; digestPattern?: number | null; digestCopy?: string;
   history?: {day:string;state:string;rendered:string|null}[];
+  chequePattern?: number|null; healthPattern?:number|null;
   otpCopy?: string;
   invoiceCopy?: string;
-  routing?: { enabled: boolean; provider: string; sender: string; invoiceEnabled: boolean; receiptConsentRequired: boolean; hasPublicUrl: boolean; chequeEnabled: boolean };
+  routing?: { enabled: boolean; provider: string; sender: string; invoiceEnabled: boolean; receiptConsentRequired: boolean; hasPublicUrl: boolean; chequeEnabled: boolean; healthEnabled?:boolean };
   examples?: { otp: string; invoice: string };
 }
 
@@ -34,6 +35,8 @@ export function MeliPayamakSettings() {
   const [invoice, setInvoice] = useState("");
   const [otpCopy, setOtpCopy] = useState("");
   const [invoiceCopy, setInvoiceCopy] = useState("");
+  const [chequePattern,setChequePattern]=useState("");
+  const [healthPattern,setHealthPattern]=useState("");
   const [digestEnabled, setDigestEnabled] = useState(false);
   const [digestPattern, setDigestPattern] = useState("");
   const [digestCopy, setDigestCopy] = useState("");
@@ -46,6 +49,7 @@ export function MeliPayamakSettings() {
     api.get<Credential>("/settings/melipayamak-credential").then((r) => {
       if (alive) { setValue(r); setName(r.accountName); setTransport(r.transport ?? "console");
         setOtp(r.otpPattern?.toString() ?? ""); setInvoice(r.invoicePattern?.toString() ?? "");
+        setChequePattern(r.chequePattern?.toString() ?? ""); setHealthPattern(r.healthPattern?.toString() ?? "");
         setDigestEnabled(r.digestEnabled ?? false); setDigestPattern(r.digestPattern?.toString() ?? ""); setDigestCopy(r.digestCopy ?? "");
         setOtpCopy(r.otpCopy ?? ""); setInvoiceCopy(r.invoiceCopy ?? ""); }
     }).catch((e: unknown) => { if (alive) setError(e instanceof ApiError ? e.message : "دریافت تنظیم اتصال ممکن نشد"); });
@@ -58,6 +62,7 @@ export function MeliPayamakSettings() {
     try {
       const r = await api.put<Credential>("/settings/melipayamak-credential", {
         revision: value.revision, accountName: name, transport,
+        chequePattern:chequePattern ? Number(chequePattern):null,healthPattern:healthPattern ? Number(healthPattern):null,
         digestEnabled,digestPattern:digestPattern ? Number(digestPattern) : null,digestCopy,
         otpPattern: otp ? Number(otp) : null, invoicePattern: invoice ? Number(invoice) : null, otpCopy, invoiceCopy,
         ...(key.trim() ? { apiKey: key.trim() } : {}), clearKey,
@@ -136,7 +141,14 @@ export function MeliPayamakSettings() {
       {value.routing && <section className="solid pad stack"><h3>وضعیت مسیر ارسال</h3>
         <span>ارسال واقعی ملی‌پیامک · {value.routing.enabled && value.routing.provider === "melipayamak" ? "انتخاب و فعال شده" : "غیرفعال؛ سرویس و کلید ارسال را در گروه اعلان‌ها بررسی کنید"}</span>
         <span>رسید خرید · {value.routing.invoiceEnabled ? "فعال" : "خاموش"} · {value.routing.receiptConsentRequired ? "با رضایت رسید مشتری" : "بدون شرط رضایت رسید"} · {value.routing.hasPublicUrl ? "نشانی رسید تنظیم شده" : "نشانی عمومی فاکتور لازم است"}</span>
-        <span>هشدار سررسید چک به مدیر · {value.routing.chequeEnabled ? "فعال" : "خاموش"}</span>
+        <details><summary>هشدارهای مدیر و قالب خدماتی</summary>
+          <fieldset disabled={disabled} className="stack"><legend>چک و سلامت سامانه</legend>
+            <label>شناسهٔ پترن هشدار چک · {value.routing.chequeEnabled?"فعال":"خاموش"}<input value={chequePattern} inputMode="numeric" pattern="[0-9]+" onChange={e=>setChequePattern(e.target.value.replace(/[۰-۹]/g,d=>String("۰۱۲۳۴۵۶۷۸۹".indexOf(d))))}/></label>
+            <small>{"نمونهٔ پترن: چک {0} به مبلغ {1} تومان، {2}. نمونهٔ پیام: چک دریافتی به مبلغ ۵۰۰٬۰۰۰ تومان، امروز سررسید است."}</small>
+            <label>شناسهٔ پترن هشدار سامانه · {value.routing.healthEnabled?"فعال":"خاموش"}<input value={healthPattern} inputMode="numeric" pattern="[0-9]+" onChange={e=>setHealthPattern(e.target.value.replace(/[۰-۹]/g,d=>String("۰۱۲۳۴۵۶۷۸۹".indexOf(d))))}/></label>
+            <small>{"نمونهٔ پترن: هشدار لیبل مد، {0}، تعداد {1}. متغیر اول عنوان هشدار و متغیر دوم تعداد موارد است."}</small>
+            <small>فعال‌سازی رویدادها و انتخاب هشدارها از گروه اعلان‌هاست. بدون شناسهٔ پترن، خط فرستنده باید امکان ارسال متن آزاد داشته باشد.</small>
+          </fieldset></details>
       </section>}
       <button className="btn" type="button" disabled={disabled || !value.hasKey} onClick={() => void checkCredit()}>تست اتصال ذخیره‌شده و استعلام اعتبار</button>
       <button className="btn btn-primary" type="submit" disabled={disabled || (transport === "panel" && !name.trim())}>{busy ? "در حال ذخیره…" : "ذخیرهٔ اتصال ملی‌پیامک"}</button>

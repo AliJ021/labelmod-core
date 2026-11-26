@@ -19,6 +19,8 @@ const bodySchema = z.object({
   apiKey: z.string().trim().min(1).max(2048).optional(),
   clearKey: z.boolean().optional(),
   digestEnabled: z.boolean().optional(),
+  chequePattern: z.number().int().positive().max(2147483647).nullable().optional(),
+  healthPattern: z.number().int().positive().max(2147483647).nullable().optional(),
   digestPattern: z.number().int().positive().max(2147483647).nullable().optional(),
   digestCopy: z.string().trim().min(1).max(750).optional(),
   transport: z.enum(["console", "panel"]).optional(),
@@ -37,6 +39,7 @@ export function registerMeliPayamakRoutes(app: FastifyInstance, db: Db, master: 
       SELECT account_name AS "accountName",encrypted_key IS NOT NULL AS "hasKey",revision,updated_at AS "updatedAt",
         transport, otp_pattern AS "otpPattern", invoice_pattern AS "invoicePattern",
         digest_enabled AS "digestEnabled", digest_pattern AS "digestPattern",digest_copy AS "digestCopy",
+        cheque_pattern AS "chequePattern", health_pattern AS "healthPattern",
         otp_copy AS "otpCopy", invoice_copy AS "invoiceCopy"
       FROM platform.melipayamak_credential WHERE singleton`.execute(db);
     if (!r.rows[0]) throw new SettingError("credential_missing", "تنظیم اتصال ملی‌پیامک آماده نیست", 503);
@@ -46,7 +49,7 @@ export function registerMeliPayamakRoutes(app: FastifyInstance, db: Db, master: 
     }, routing: {
       enabled: settings.smsEnabled, provider: settings.provider, sender: settings.sender,
       invoiceEnabled: settings.invoiceSms, receiptConsentRequired: settings.invoiceSmsRequiresConsent,
-      hasPublicUrl: Boolean(settings.publicUrl), chequeEnabled: settings.chequeDueSms,
+      hasPublicUrl: Boolean(settings.publicUrl), chequeEnabled: settings.chequeDueSms, healthEnabled:settings.healthAlerts,
     } };
   }
 
@@ -90,6 +93,8 @@ export function registerMeliPayamakRoutes(app: FastifyInstance, db: Db, master: 
             transport=coalesce(${input.transport ?? null}::text,transport),
             otp_pattern=CASE WHEN ${input.otpPattern !== undefined} THEN ${input.otpPattern ?? null}::int ELSE otp_pattern END,
             invoice_pattern=CASE WHEN ${input.invoicePattern !== undefined} THEN ${input.invoicePattern ?? null}::int ELSE invoice_pattern END,
+            cheque_pattern=CASE WHEN ${input.chequePattern!==undefined} THEN ${input.chequePattern??null}::int ELSE cheque_pattern END,
+            health_pattern=CASE WHEN ${input.healthPattern!==undefined} THEN ${input.healthPattern??null}::int ELSE health_pattern END,
             digest_enabled=coalesce(${input.digestEnabled ?? null}::boolean,digest_enabled),
             digest_pattern=CASE WHEN ${input.digestPattern !== undefined} THEN ${input.digestPattern ?? null}::int ELSE digest_pattern END,
             digest_copy=coalesce(${input.digestCopy ?? null}::text,digest_copy),

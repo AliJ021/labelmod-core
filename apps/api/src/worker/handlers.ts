@@ -260,6 +260,7 @@ export async function handleChequeDue(
     to,
     `چک ${dir} ${no}${party ? ` — ${party}` : ""}\n` +
       `مبلغ: ${amount} تومان\n${when}.`,
+    {purpose:"cheque",args:[dir,String(amount),when]},
   );
 
   return { done: true, note: "اطلاع‌رسانی چک انجام شد" };
@@ -324,6 +325,7 @@ export async function handleHealthAlert(
       to,
       `${mark} ${title}\nتعداد: ${count.toLocaleString("fa-IR")}` +
         (detail === "" || detail === "—" ? "" : `\n${detail}`),
+      {purpose:"health",args:[title,String(count)]},
     );
   }
 
