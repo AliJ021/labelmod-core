@@ -221,7 +221,7 @@ class LMC_Settings
             __('نگاشت درگاه پرداخت', 'labelmod-connector'),
             '<textarea name="payment_map" rows="4" class="large-text" dir="ltr">'
                 . esc_textarea($s['payment_map']) . '</textarea>',
-            __('هر درگاه در یک خط، مانند zarinpal=gateway. برای پرداخت در محل، روش واقعی دریافت را برای cod وارد کنید.', 'labelmod-connector')
+            __('هر درگاه در یک خط، مانند zarinpal=gateway. برای cod روش واقعی دریافت را بنویسید. فروش شاپینو خودکار در حساب «مطالبات از شاپینو» ثبت می‌شود.', 'labelmod-connector')
         );
 
         echo '</table><h3 class="lmc-section-heading">تنظیمات همگام‌سازی</h3><table class="form-table" role="presentation">';

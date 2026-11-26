@@ -680,6 +680,87 @@ describe("سفارش سایت (ووکامرس)", { skip }, () => {
       "هر پنج فاکتور باید بدون مشتری بمانند");
   });
 
+  test("Shopino pays for the customer once and remains due until a bank statement", async () => {
+    const variant = await handle.db.selectFrom("catalog.variation").select("id").where("sku", "=", sku2).executeTakeFirstOrThrow();
+    await sql`SELECT inventory.apply_movement(${variant.id}::uuid,${STORE_WH}::uuid,3,'opening',NULL,NULL,${SYSTEM_USER}::uuid,800000)`.execute(handle.db);
+    const bankGateway = () => sql<{ id: string }>`SELECT treasury.payment_terminal(${BRANCH}::uuid,'gateway') AS id`.execute(handle.db);
+    const gatewayBefore = (await bankGateway()).rows[0]!.id;
+    assert.ok(gatewayBefore);
+    let clearing = "";
+    for (const externalId of ["9029", "9030"]) {
+      const payload = { branchId: BRANCH, warehouseId: STORE_WH, externalId,
+        lines: [{ sku: sku2, qty: "1", unitPrice: "93000000" }], paymentMethod: "gateway", paidAmount: "93000000" };
+      const rejected = await order(payload);
+      assert.equal(rejected.json().error.code, "ref_required", rejected.body);
+      const corrected = { ...payload, paymentMethod: "shopino" };
+      const responses = await Promise.all([order(corrected), order(corrected)]);
+      assert.deepEqual(responses.map(r => r.statusCode).sort(), [200, 201], responses.map(r => r.body).join("\n"));
+      const id = responses[0]!.json<OrderResponse>().invoiceId;
+      assert.equal(responses[1]!.json<OrderResponse>().invoiceId, id);
+      assert.equal((await order(corrected)).json<OrderResponse>().invoiceId, id, "retry after losing the first ACK");
+      assert.equal((await order({ ...payload, paymentRef: "other-evidence" })).statusCode, 409);
+      const result = await sql<{ id: string; amount: string; method: string; reference: string | null; movement: string; qty: string; pending: boolean }>`
+        SELECT a.id,p.amount::text,p.method_code AS method,p.ref_no AS reference,
+          (SELECT count(*) FROM inventory.stock_movement WHERE ref_type='invoice' AND ref_id=i.id)::text AS movement,
+          (SELECT sum(qty) FROM inventory.stock_movement WHERE ref_type='invoice' AND ref_id=i.id)::text AS qty,
+          (a.marketplace_method='shopino' AND a.branch_id=i.branch_id AND a.settlement_account_id IS NULL
+           AND p.settlement_id IS NULL AND p.status='succeeded' AND a.ledger_account_code='1104'
+           AND p.amount=i.payable_amount) AS pending
+        FROM treasury.payment p JOIN sales.invoice i ON i.id=p.invoice_id JOIN treasury.account a ON a.id=p.account_id
+        WHERE i.id=${id}::uuid AND p.client_event_id=${"woo:" + externalId}`.execute(handle.db);
+      assert.equal(result.rows.length, 1);
+      const row = result.rows[0]!;
+      if (clearing) assert.equal(row.id, clearing);
+      clearing = row.id;
+      assert.equal(row.amount, "93000000");
+      assert.equal(row.method, "shopino");
+      assert.equal(row.reference, null);
+      assert.equal(row.movement, "1");
+      assert.equal(Number(row.qty), -1);
+      assert.equal(row.pending, true);
+    }
+    assert.equal((await bankGateway()).rows[0]!.id, gatewayBefore);
+    const generic = { branchId: BRANCH, warehouseId: STORE_WH, externalId: "preexisting-with-ack-lost",
+      lines: [{ sku: sku2, qty: "1", unitPrice: "2000000" }], paidAmount: "2000000" };
+    const recorded = await order({ ...generic, paymentMethod: "gateway", paymentRef: "actual-bank-ref" });
+    assert.equal(recorded.statusCode, 201, recorded.body);
+    assert.equal((await order({ ...generic, paymentMethod: "shopino" })).statusCode, 409);
+    const underpaid = await order({ ...generic, externalId: "underpaid-shopino", paymentMethod: "shopino", paidAmount: "0" });
+    assert.equal(underpaid.json().error.code, "shopino_amount_mismatch", underpaid.body);
+    assert.equal(await handle.db.selectFrom("platform.inbox_message").select("event_id")
+      .where("event_id", "=", "woo-order:underpaid-shopino").executeTakeFirst(), undefined);
+    const bank = await handle.db.selectFrom("treasury.account").select("id").where("kind", "=", "bank")
+      .where("branch_id", "=", BRANCH).executeTakeFirstOrThrow();
+    const payout = async (actual: string | null, statementFee = "0") => handle.db.transaction().execute(async trx => {
+      const s = await sql<{ id: string }>`INSERT INTO treasury.settlement
+        (source_account_id,bank_account_id,branch_id,period_from,period_to,bank_reported_amount,fee_amount,created_by)
+        VALUES (${clearing}::uuid,${bank.id}::uuid,${BRANCH}::uuid,platform.business_date(),platform.business_date(),
+          ${actual}::numeric,${statementFee}::numeric,${SYSTEM_USER}::uuid) RETURNING id`.execute(trx);
+      const id = s.rows[0]!.id;
+      await sql`SELECT treasury.post_settlement(${id}::uuid,${SYSTEM_USER}::uuid)`.execute(trx);
+      return sql<{ gross: string; net: string; fee: string }>`SELECT gross_amount::text AS gross,
+        net_amount::text AS net,fee_amount::text AS fee FROM treasury.settlement WHERE id=${id}::uuid`.execute(trx);
+    });
+    await assert.rejects(payout(null), /مبلغ واریز واقعی/);
+    await assert.rejects(payout("93000000"), /کارمزد صورت‌حساب/);
+    assert.deepEqual((await payout("184000000", "2000000")).rows[0], { gross: "186000000", net: "184000000", fee: "2000000" });
+    const refund = await handle.db.transaction().execute(async trx => {
+      const created = await sql<{ id: string }>`INSERT INTO sales.sale_return
+        (branch_id,invoice_id,warehouse_id,reason_code,refund_amount,refund_method,created_by)
+        SELECT ${BRANCH}::uuid,p.invoice_id,${STORE_WH}::uuid,'web_refund',p.amount,'shopino',${SYSTEM_USER}::uuid
+          FROM treasury.payment p WHERE p.client_event_id='woo:9029' RETURNING id`.execute(trx);
+      const id = created.rows[0]!.id;
+      await sql`INSERT INTO sales.sale_return_line(return_id,invoice_line_id,qty,restock,unit_price,net_amount,unit_cost,cogs_amount)
+        SELECT ${id}::uuid,l.id,1,true,0,0,0,0 FROM sales.invoice_line l JOIN treasury.payment p ON p.invoice_id=l.invoice_id
+        WHERE p.client_event_id='woo:9029'`.execute(trx);
+      await sql`SELECT sales.post_return(${id}::uuid,${SYSTEM_USER}::uuid)`.execute(trx);
+      return sql<{ account: string; amount: string; origin: string }>`SELECT p.account_id AS account,p.amount::text,
+        incoming.client_event_id AS origin FROM treasury.payment p JOIN treasury.payment incoming ON incoming.id=p.refund_origin_id
+        WHERE p.return_id=${id}::uuid AND p.direction='out' AND p.settlement_id IS NULL`.execute(trx);
+    });
+    assert.deepEqual(refund.rows, [{ account: clearing, amount: "93000000", origin: "woo:9029" }]);
+  });
+
   test("Webhook تکراری فاکتور دوم نمی‌سازد", async () => {
     const payload = {
       branchId: BRANCH,
