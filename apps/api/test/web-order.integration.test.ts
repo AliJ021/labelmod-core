@@ -30,6 +30,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { sql } from "kysely";
 import type { FastifyInstance } from "fastify";
+import {reconcileWooSnapshot} from "../src/operations/woo-reconciliation.ts";
 import { createDb, type DbHandle } from "../src/db/client.ts";
 import { createDisposableDb, type DisposableDb } from "./helpers/disposable-db.ts";
 import { AuthService } from "../src/auth/service.ts";
@@ -781,13 +782,26 @@ describe("سفارش سایت (ووکامرس)", { skip }, () => {
     await sql`SELECT platform.set_setting('tax.enabled','true'::jsonb,'Tax regression',${SYSTEM_USER}::uuid)`.execute(handle.db);
     await sql`SELECT platform.set_setting('tax.default_rate','10'::jsonb,'Tax regression',${SYSTEM_USER}::uuid)`.execute(handle.db);
     try {
-      const response = await order({ branchId: BRANCH, warehouseId: STORE_WH, externalId: `tax-${suffix}`,
+      const wrong={branchId:BRANCH,warehouseId:STORE_WH,externalId:`tax-diff-${suffix}`,lines:[{sku,qty:"1",unitPrice:"2000000"}],paymentMethod:"gateway",paidAmount:"2200000",siteTotals:{tax:"150000",total:"2200000"}};
+      const count=async()=>(await sql`SELECT (SELECT count(*) FROM sales.invoice) AS invoices,(SELECT count(*) FROM treasury.payment) AS payments,(SELECT count(*) FROM inventory.stock_movement) AS movements`.execute(handle.db)).rows[0];
+      const before=await count();
+      for(let attempt=0;attempt<2;attempt++){const failed=await order(wrong);assert.equal(failed.statusCode,422,failed.body);assert.equal(failed.json().error.code,"woo_totals_mismatch");}
+      assert.deepEqual(await count(),before);
+      const response = await order({ branchId: BRANCH, warehouseId: STORE_WH, externalId: `tax-${suffix}`,siteTotals:{tax:"200000",total:"2200000"},
         lines: [{ sku, qty: "1", unitPrice: "2000000" }], paymentMethod: "gateway", paymentRef: `tax-${suffix}`, paidAmount: "2200000" });
       assert.equal(response.statusCode, 201, response.body);
       assert.equal(response.json().payableAmount, "2200000");
       const row = await handle.db.selectFrom("sales.invoice_line").select("tax_amount")
         .where("invoice_id", "=", response.json().invoiceId).executeTakeFirstOrThrow();
       assert.equal(row.tax_amount, "200000");
+      const actor=(await sql<{actor:string}>`SELECT payload->>'actorId' AS actor FROM platform.inbox_message WHERE source='api.web.order' AND event_id=${"woo-order:tax-"+suffix}`.execute(handle.db)).rows[0]!.actor;
+      const snapshot=[{id:"tax-"+suffix,date_paid:"2026-11-01",status:"cancelled",total:"2200000",total_tax:"5000",fee_lines:[{total:"1000",total_tax:"0"}]},
+        {id:"missed-"+suffix,date_paid:"2026-11-01",status:"processing",total:"200",total_tax:"0"}];
+      const beforeReview=await count();
+      const findings=await handle.db.transaction().setAccessMode("read only").execute(tx=>reconcileWooSnapshot(tx,actor,snapshot,"rial"));
+      assert.deepEqual(findings.find(r=>r.orderId===snapshot[0]!.id)?.issues,["fee_review","cancelled_after_posting","tax_mismatch"]);
+      assert.deepEqual(findings.find(r=>r.orderId===snapshot[1]!.id)?.issues,["paid_missing"]);
+      assert.deepEqual(await count(),beforeReview);
     } finally {
       await sql`SELECT platform.set_setting('tax.enabled','false'::jsonb,'Restore test setting',${SYSTEM_USER}::uuid)`.execute(handle.db);
     }

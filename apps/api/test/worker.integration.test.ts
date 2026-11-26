@@ -21,6 +21,7 @@
  * ۵. **صفحه عمومی فاکتور فقط سند واقعی را نشان می‌دهد** و توکن غلط،
  *    پیش‌نویس و فاکتور باطل همه یک پاسخ می‌گیرند.
  */
+import { createHmac } from "node:crypto";
 import { after, before, describe, test } from "node:test";
 import assert from "node:assert/strict";
 import { sql } from "kysely";
@@ -125,13 +126,14 @@ describe("Worker — صف پیام، پیامک و هشدار چک", { skip }, (
 
     await set("notify.sms_enabled", true);
     await set("notify.invoice_sms", true);
+    await set("notify.accounting_web_receipt", true);
     await set("notify.sms_provider", "log");
     await set("platform.public_url", "https://shop.example.com");
 
     app = await buildApp({
       db: handle.db,
       auth: new AuthService(handle.db),
-      config: loadConfig({ ...process.env, NODE_ENV: "test", LOG_LEVEL: "fatal" }),
+      config: loadConfig({ ...process.env, NODE_ENV: "test", LOG_LEVEL: "fatal", SMS_CREDENTIAL_KEY:"ab".repeat(32) }),
     });
     await app.ready();
   });
@@ -366,6 +368,39 @@ describe("Worker — صف پیام، پیامک و هشدار چک", { skip }, (
       await set("notify.health_alerts", false);
       await set("notify.health_alert_codes", codesBefore);
     }
+  });
+
+  test("fixed receipt page verifies a mobile, enforces expiry and signs out",async()=>{
+    const id=await finalizedInvoice(true);
+    const other=await finalizedInvoice(false);
+    const token=(await sql<{token:string}>`SELECT sales.ensure_public_token(${id}::uuid) AS token`.execute(handle.db)).rows[0]!.token;
+    await set("receipt.link_days",0);
+    try{
+      assert.equal((await app.inject({method:"GET",url:"/i/"+token})).statusCode,303);
+      const start=await app.inject({method:"GET",url:"/customer-receipts"});
+      const name="__Host-lm-receipt-form";
+      const nonce=start.cookies.find(c=>c.name===name)!.value;
+      const post=(url:string,fields:Record<string,string>,cookies:Record<string,string>)=>app.inject({method:"POST",url,cookies,headers:{"content-type":"application/x-www-form-urlencoded"},payload:new URLSearchParams(fields).toString()});
+      const r=await post("/customer-receipts/start",{nonce,mobile:"09121112233"},{[name]:nonce});
+      assert.equal(r.statusCode,200,r.body);
+      const cookies=Object.fromEntries(r.cookies.map(c=>[c.name,c.value]));
+      const pending=cookies["__Host-lm-receipt-code"]!;
+      assert.equal((await sql`SELECT FROM platform.outbox_message WHERE topic='customer.receipt_otp' AND payload->>'id'=${pending}`.execute(handle.db)).rows.length,1);
+      const code=String(createHmac("sha256",Buffer.from("ab".repeat(32),"hex")).update("labelmod/customer-receipt/v1/"+pending).digest().readUInt32BE(0)%1000000).padStart(6,"0");
+      const bad=await post("/customer-receipts/verify",{nonce:cookies[name]!,code:code==="000000"?"000001":"000000"},cookies);
+      assert.equal(bad.statusCode,400);
+      cookies[name]=bad.cookies.find(c=>c.name===name)!.value;
+      const verified=await post("/customer-receipts/verify",{nonce:cookies[name]!,code},cookies);
+      assert.equal(verified.statusCode,303,verified.body);
+      const session=Object.fromEntries(verified.cookies.map(c=>[c.name,c.value]));
+      const home=await app.inject({method:"GET",url:"/customer-receipts",cookies:session});
+      assert.ok(home.body.includes(id));assert.ok(!home.body.includes(other));
+      assert.equal((await app.inject({method:"GET",url:"/customer-receipts/view/"+other,cookies:session})).statusCode,404);
+      assert.equal((await app.inject({method:"GET",url:"/i/"+token,cookies:session})).statusCode,200);
+      const exitNonce=home.cookies.find(c=>c.name===name)!.value;
+      assert.equal((await post("/customer-receipts/logout",{nonce:exitNonce},{...session,[name]:exitNonce})).statusCode,303);
+      assert.equal((await app.inject({method:"GET",url:"/customer-receipts/view/"+id,cookies:session})).statusCode,404);
+    }finally{await set("receipt.link_days",30);}
   });
 
   // ── صفحه عمومی فاکتور ───────────────────────────────────────────

@@ -239,6 +239,27 @@ describe("برگشت از فروش و دوره ثبت", { skip }, () => {
       payload: { value, reason: "آزمون سیاست تعویض" } });
     assert.equal(r.statusCode, 200, r.body);
   }
+  test("Full return approval binds the requester, lines, payout and a single posting",async()=>{
+    const sale=await soldInvoice({who:supervisor,qty:"1",paid:"1000000"});
+    const cashier=await loginAs(supervisor),reviewer=await loginAs(admin);
+    const change=(value:boolean)=>app.inject({method:"PATCH",url:"/settings/return.full_review",...reviewer,payload:{value,reason:"آزمون تأیید ابطال کامل"}});
+    const enabled=await change(true);assert.equal(enabled.statusCode,200,enabled.body);
+    const key=randomUUID();
+    const body={invoiceId:sale.invoiceId,reasonCode:"changed_mind",refundMethod:"cash",refundAmount:"1000000",shiftId:supervisorShift,confirmed:true,lines:[{invoiceLineId:sale.lineId,qty:"1"}]};
+    const post=(payload=body)=>app.inject({method:"POST",url:"/returns/commit",...cashier,headers:{...cashier.headers,"idempotency-key":key},payload});
+    try {
+      const first=await post();assert.equal(first.statusCode,409,first.body);assert.equal(first.json().error.code,"approval_pending");
+      assert.equal((await post()).json().error.code,"approval_pending");
+      const list=await app.inject({method:"GET",url:"/return-approvals?branchId="+BRANCH,...reviewer});assert.equal(list.statusCode,200,list.body);
+      const id=list.json().items[0].id;
+      const decide=(who:typeof reviewer)=>app.inject({method:"POST",url:"/return-approvals/"+id+"/decision",...who,payload:{decision:"approved",reason:"بررسی مبلغ و کالا"}});
+      assert.equal((await decide(cashier)).statusCode,403);
+      const accept=await decide(reviewer);assert.equal(accept.statusCode,200,accept.body);
+      assert.equal((await post({...body,reasonCode:"other"})).statusCode>=400,true);
+      const done=await post();assert.equal(done.statusCode,200,done.body);
+      assert.equal((await post()).json().id,done.json().id);
+    } finally{await change(false);}
+  });
   test("ابطال پس از مرجوعی جزئی فقط ماندهٔ کالا و وجه را یک بار برمی‌گرداند", async () => {
     const sale = await soldInvoice({who: supervisor, qty:"2", paid:"2000000"});
     const auth = await loginAs(supervisor);

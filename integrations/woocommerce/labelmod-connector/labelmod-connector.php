@@ -235,3 +235,15 @@ function lmc_log(string $message): void
     }
     wc_get_logger()->info($message, ['source' => 'labelmod']);
 }
+
+// نشانی ثابت برای درج در پترن تأییدشده؛ مالکیت موبایل را خود حسابداری می‌سنجد.
+add_action('template_redirect', static function () {
+    if (!isset($_GET['labelmod_receipts']) || $_GET['labelmod_receipts'] !== '1') { return; }
+    $base = untrailingslashit((string) lmc_setting('base_url'));
+    if (!$base || wp_parse_url($base, PHP_URL_SCHEME) !== 'https' || !wp_http_validate_url($base)) {
+        wp_die('نشانی مشاهدهٔ رسیدها هنوز تنظیم نشده است.', '', ['response' => 503]);
+    }
+    nocache_headers();
+    wp_redirect($base . '/api/customer-receipts', 302, 'LabelMod');
+    exit;
+});

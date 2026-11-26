@@ -59,6 +59,7 @@ export interface WebOrderInput {
   paymentRef?: string | undefined;
   /** مبلغی که درگاه واقعاً گرفته. */
   paidAmount: bigint;
+  siteTotals?:{tax:string;total:string};
   note?: string | undefined;
   actorId: string;
   codDelivered?: boolean | undefined;
@@ -229,6 +230,12 @@ export class WebOrderService {
       // جمع‌ها را دیتابیس می‌سازد، نه ما: `payable_amount` باید
       // کرایه را هم در خودش داشته باشد.
       await sql`SELECT sales.refresh_invoice_totals(${invoiceId}::uuid)`.execute(trx);
+    }
+
+    if(input.siteTotals){
+      const calculated=await trx.selectFrom("sales.invoice").select(["tax_amount","payable_amount"]).where("id","=",invoiceId).executeTakeFirstOrThrow();
+      if(parseMoney(calculated.tax_amount)!==parseMoney(input.siteTotals.tax) || parseMoney(calculated.payable_amount)!==parseMoney(input.siteTotals.total))
+        throw new InvoiceError("woo_totals_mismatch","مالیات یا جمع نهایی سفارش با حسابداری برابر نیست. نرخ مالیات، هزینه‌های سفارش و کرایه را تطبیق دهید.",422);
     }
 
     // پس از Snapshot قیمت و پیش از دریافت/خروج، سهم همین سفارش آزاد می‌شود.

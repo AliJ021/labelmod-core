@@ -199,9 +199,11 @@ class WC_Order
     public string $status = 'processing';
     private array $meta = [];
 
-    public function get_items(): array
+    public array $fees = [];
+    public function get_total_tax(): string { return "0"; }
+    public function get_items($kind = "line_item"): array
     {
-        return $this->items;
+        return $kind === "fee" ? $this->fees : $this->items;
     }
 
     public function get_total(): string

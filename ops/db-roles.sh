@@ -219,6 +219,9 @@ END $guard$;
 SELECT format('REVOKE INSERT, UPDATE, DELETE, TRUNCATE ON platform.backup_event FROM %I', :'app_role')
  WHERE to_regclass('platform.backup_event') IS NOT NULL
 UNION ALL
+SELECT format('REVOKE INSERT, UPDATE, DELETE, TRUNCATE ON platform.bale_backup FROM %I', :'app_role')
+ WHERE to_regclass('platform.bale_backup') IS NOT NULL
+UNION ALL
 SELECT format('REVOKE EXECUTE ON FUNCTION %s FROM %I', fn, :'app_role')
   FROM unnest(ARRAY['platform.record_backup_event(text, text, text, bigint, text, uuid)']) AS fn
  WHERE to_regprocedure(fn) IS NOT NULL

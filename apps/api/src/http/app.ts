@@ -100,6 +100,8 @@ const SAFE_METHODS = new Set(["GET", "HEAD", "OPTIONS"]);
  * این در آزمایش زنده پیدا شد، نه در تست.
  */
 const CSRF_EXEMPT_PATHS = new Set([
+  // این فرم‌ها nonce مخصوص مشتری و کوکی Strict خود را بررسی می‌کنند.
+  "/customer-receipts/start", "/customer-receipts/verify", "/customer-receipts/logout",
   "/auth/2fa/sms",
   "/auth/2fa/sms/request",
   "/auth/login",
@@ -484,7 +486,7 @@ export async function buildApp(deps: AppDeps): Promise<FastifyInstance> {
     webOrders: new WebOrderService(invoices),
     invoices,
   });
-  registerPublicRoutes(app, { db: deps.db });
+  registerPublicRoutes(app, { db: deps.db, master:config.SMS_CREDENTIAL_KEY });
   registerScopeRoutes(app, { db: deps.db });
   registerAdminRoutes(app, { db: deps.db });
   registerWithdrawalRoutes(app, deps.db);

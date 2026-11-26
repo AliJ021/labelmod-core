@@ -42,6 +42,9 @@
 	# ── API ──────────────────────────────────────────────────────────
 	# `/api` جدا می‌شود چون کلاینت با پیشوند صدا می‌زند ولی سرور
 	# مسیرهایش را بدون پیشوند تعریف کرده است.
+	@customer_receipts path /customer-receipts /customer-receipts/* /i/*
+	redir @customer_receipts /api{uri} 307
+
 	handle_path /api/* {
 		# `?` یعنی «فقط اگر خودِ پاسخ نگذاشته باشد». صفحه چاپ برچسب
 		# CSP سخت‌گیرتر خودش را می‌فرستد (catalog/label.ts) و نباید با

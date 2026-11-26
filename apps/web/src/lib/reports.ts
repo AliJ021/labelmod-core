@@ -251,6 +251,7 @@ export interface CustomerBasketRow {
 }
 
 export const reports = {
+  statements:(p:Period,opts?:RequestOptions)=>api.get<{rows:Array<{section:string;label:string;amount:string}>}>(`/reports/statements?${qs(p)}`,opts),
   sales: (p: Period, opts?: RequestOptions) => api.get<{ rows: SalesRow[] }>(`/reports/sales?${qs(p)}`, opts),
 
   hourly: (p: Period, opts?: RequestOptions) => api.get<{ rows: HourlyRow[] }>(`/reports/hourly?${qs(p)}`, opts),

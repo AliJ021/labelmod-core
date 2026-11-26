@@ -492,6 +492,11 @@ class LMC_Order_Sync
             );
         }
 
+        foreach ($order->get_items('fee') as $fee) {
+            if (self::to_rial($fee->get_total()) !== 0 || self::to_rial($fee->get_total_tax()) !== 0) {
+                return new WP_Error('lmc_fee_review', 'این سفارش کارمزد یا تخفیف مستقل دارد. برای تعیین حساب آن به بررسی مالی نیاز است.', ['kind' => LMC_Client::PERMANENT]);
+            }
+        }
         $shipping = self::to_rial($order->get_shipping_total());
         $paid     = self::to_rial($order->get_total());
 
@@ -505,6 +510,7 @@ class LMC_Order_Sync
             'shippingAmount' => (string) $shipping,
             'paymentMethod'  => self::map_payment_method($order),
             'paidAmount'     => (string) $paid,
+            'siteTotals'     => ['tax' => (string) self::to_rial($order->get_total_tax()), 'total' => (string) $paid],
             'note'           => self::note($order),
         ];
 

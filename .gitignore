@@ -34,3 +34,5 @@ apps/web/test-results*/
 apps/web/playwright-report/
 apps/web/public/downloads/
 .tools/
+
+/private/bale/

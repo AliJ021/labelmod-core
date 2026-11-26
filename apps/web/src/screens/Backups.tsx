@@ -27,6 +27,9 @@ export function Backups() {
   const [version,refresh]=useState(0),[error,setError]=useState(""),[busy,setBusy]=useState(false),[notice,setNotice]=useState("");
   const [selected,setSelected]=useState<Manifest|null>(null),[confirmed,setConfirmed]=useState(false);
   const [password,setPassword]=useState(""),[code,setCode]=useState(""),[factorKind,setFactorKind]=useState("totp");
+  const loadBale=useCallback((signal:AbortSignal)=>api.get<{schedule:{enabled:boolean;hour:number;minute:number};history:Array<{day:string;state:string;detail:string|null}>}>("/backups/bale",{signal}),[]);
+  const bale=useLatestQuery({key:"backups/bale",version,load:loadBale});
+  const baleStates:Record<string,string>={preparing:"در حال تهیه",ready:"رمزگذاری شده",sending:"در حال ارسال",sent:"تحویل به بله",unknown:"نیازمند تطبیق",failed:"ناموفق"};
   const operation=useRef<string|null>(null),working=useRef(false);
   const confirmation=useRef<HTMLHeadingElement>(null);
   useEffect(()=>{if(selected){confirmation.current?.scrollIntoView({block:"start"});confirmation.current?.focus();}},[selected]);
@@ -98,5 +101,10 @@ export function Backups() {
       <section className="solid pad operations-section"><SectionHeader title="تاریخچهٔ بازیابی" description="وضعیت هر درخواست و شناسهٔ پیگیری آن؛ وجود بکاپ به‌تنهایی به معنای آزموده‌شدن بازیابی نیست." />
       {status.jobs.length?<ul className="operations-list">{status.jobs.map(j=><li key={j.id} className="operations-entry"><div className="operations-entry-head"><StatusBadge state={phaseState(j.phase)} label={phases[j.phase]??"وضعیت ناشناخته؛ با مدیر سامانه بررسی کنید"}/><span className="muted small">{date(j.updatedAt)}</span></div><small className="muted break-anywhere">شناسهٔ پیگیری: <Ltr>{j.id}</Ltr></small>{j.error&&<p className="operations-error" role="alert">{j.error}</p>}{j.safetyBackupId&&<p>بکاپ بازگشت جداگانه ثبت شده است.</p>}</li>)}</ul>:<ResultState title="عملیات بازیابی ثبت نشده است."/>}</section>
     </>}
+    {bale.data&&<details className="solid pad"><summary>پشتیبان خصوصی بله · {bale.data.schedule.enabled?"فعال":"خاموش"}</summary>
+      <p>ساعت {String(bale.data.schedule.hour).padStart(2,"0")}:{String(bale.data.schedule.minute).padStart(2,"0")} به وقت تهران. زمان و فعال‌سازی در تنظیمات عمومی، گروه بکاپ قابل تغییر است.</p>
+      {bale.data.history.length?<ul>{bale.data.history.map(row=><li key={row.day}>{formatJalali(row.day)} · {baleStates[row.state]} {row.detail}</li>)}</ul>:<p>هنوز تحویلی ثبت نشده است.</p>}
+    </details>}
+    {!!bale.error&&<p role="alert">تاریخچهٔ بله دریافت نشد.</p>}
   </section>;
 }

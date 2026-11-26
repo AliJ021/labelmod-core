@@ -830,6 +830,28 @@ function ProductNameEditor({ product, onCancel, onSaved }: {
   </Solid>;
 }
 
+function AttributeInput({kind,value,suggested,onChange,onSaved,onError}:{
+  kind:"color"|"size";value:string;suggested:string[];onChange:(v:string)=>void;onSaved:()=>void;onError:(msg:string)=>void
+}) {
+  const [saving,setSaving]=useState(false);
+  const label=kind==="color"?"رنگ":"سایز";
+  const parts=value.split(/[,،;؛\n]/);
+  const last=parts.pop()?.trim()??"";
+  const prefix=parts.map(s=>s.trim()).filter(Boolean);
+  const canon=(s:string)=>s.toLowerCase().replaceAll("ي","ی").replaceAll("ك","ک");
+  const list=suggested.filter(s=>!prefix.some(p=>canon(p)===canon(s)) && canon(s).startsWith(canon(last))).slice(0,12);
+  const add=(s:string)=>onChange([...new Set([...prefix,s])].join("، ")+"، ");
+  async function save() {
+    if(saving || !last)return;
+    setSaving(true);
+    try {await catalog.saveAttribute(kind,last);add(last);onSaved();}catch(e){onError(message(e));}finally{setSaving(false);}
+  }
+  return <div><label>{label}‌ها<input value={value} onChange={e=>onChange(e.target.value)} placeholder={kind==="color"?"مثلاً استخوانی":"مثلاً XL"}/></label>
+    <div className="row wrap" aria-label={"پیشنهادهای "+label}>{list.map(term=><button key={term} type="button" className="btn btn--small" onClick={()=>add(term)}>{term}</button>)}
+      {last && !suggested.some(s=>canon(s)===canon(last)) && <button type="button" className="btn btn--small" disabled={saving||last.length>64} onClick={()=>void save()}>ذخیرهٔ «{last}» برای کالاهای بعد</button>}
+    </div></div>;
+}
+
 function VariationBuilder({
   productId,
   onDone,
@@ -841,6 +863,9 @@ function VariationBuilder({
 }) {
   const [colors, setColors] = useState("");
   const [sizes, setSizes] = useState("");
+  const [version,refreshTerms]=useState(0);
+  const loadTerms=useCallback((signal:AbortSignal)=>catalog.attributeTerms({signal}),[]);
+  const terms=useLatestQuery({key:"catalog-attribute-terms",version,load:loadTerms});
   const [busy, setBusy] = useState(false);
 
   async function submit(e: React.FormEvent) {
@@ -870,29 +895,14 @@ function VariationBuilder({
     <Solid className="pad" as="section">
       <h3 style={{ fontSize: ".95rem", marginTop: 0 }}>ساخت تنوع</h3>
       <p className="muted" style={{ marginTop: 0 }}>
-        رنگ‌ها و سایزها را با ویرگول جدا کنید. هر ترکیب یک کالای مستقل با
-        بارکد خودش می‌شود. ترکیبی که از قبل باشد رد می‌شود، نه بازنویسی —
-        پس دوباره‌زدن این دکمه بارکد چاپ‌شده را خراب نمی‌کند.
+        برای هر ترکیب رنگ و سایز یک بارکد ساخته می‌شود. می‌توانید چند مقدار را با ویرگول جدا کنید.
       </p>
       <form onSubmit={submit} className="stack">
-        <label>
-          <span>رنگ‌ها</span>
-          <input
-            type="text"
-            value={colors}
-            onChange={(e) => setColors(e.target.value)}
-            placeholder="سبز لجنی، مشکی، سرمه‌ای"
-          />
-        </label>
-        <label>
-          <span>سایزها</span>
-          <input
-            type="text"
-            value={sizes}
-            onChange={(e) => setSizes(e.target.value)}
-            placeholder="30، 32، 34"
-          />
-        </label>
+        {(["color","size"] as const).map(kind=><AttributeInput key={kind} kind={kind}
+          suggested={(terms.data??[]).filter(t=>t.kind===kind).map(t=>t.label)}
+          value={kind==="color"?colors:sizes} onChange={kind==="color"?setColors:setSizes}
+          onSaved={()=>refreshTerms(n=>n+1)} onError={onError}/>)}
+        {!!terms.error&&<p role="status">پیشنهادها دریافت نشدند. رنگ و سایز را می‌توانید بنویسید.</p>}
         <button type="submit" className="btn btn--primary" disabled={busy}>
           {busy ? "در حال ساخت…" : "ساخت ترکیب‌ها"}
         </button>

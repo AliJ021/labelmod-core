@@ -11,7 +11,7 @@ cd "$(dirname "$0")/.."
 # کل این مخزن UTF-8 است؛ صریح اعلامش می‌کنیم.
 export PGCLIENTENCODING="${PGCLIENTENCODING:-UTF8}"
 
-PSQL="psql -v ON_ERROR_STOP=1 -q"
+PSQL="psql -X -v ON_ERROR_STOP=1 -q"
 
 # ---------------------------------------------------------------------
 # migrate — فقط مهاجرت‌های اجرانشده
@@ -60,12 +60,12 @@ migrate () {
   local url="$1" f name sum applied repair
 
   $PSQL -d "$url" -c "
-    SET client_min_messages = warning;
+    BEGIN; SELECT pg_advisory_xact_lock(1668509553, 2); SET LOCAL client_min_messages = warning;
     CREATE TABLE IF NOT EXISTS public.schema_migration (
       filename   text PRIMARY KEY,
       checksum   text NOT NULL,
       applied_at timestamptz NOT NULL DEFAULT now()
-    );" >/dev/null
+    ); COMMIT;" >/dev/null
 
   # دیتابیسی که از قبل مهاجرت شده ولی دفتر ندارد — یعنی نصبی که پیش از
   # این تغییر بالا آمده. حدس‌زدن اینکه کدام مهاجرت‌ها اجرا شده‌اند کار
@@ -99,16 +99,38 @@ migrate () {
     fi
 
     echo "→ $f"
-    $PSQL -d "$url" -f "$f"
-    # ثبت **پس از** موفقیت، با psql جدا. برای مهاجرتی که خودش BEGIN/COMMIT
-    # دارد، شکستش یعنی هیچ اثری نگذاشته و ثبت‌نشدنش درست است.
-    # ⚠️ چهارده مهاجرت تاریخی (۰۴۱ تا ۰۴۷، ۰۵۱، ۰۵۲، ۰۵۷، ۰۶۰، ۰۶۱_tafsili،
-    #    ۰۷۳، ۱۰۴) تراکنش ندارند؛ شکست میانهٔ آن‌ها روی نصب تازه اثر نیمه‌کاره
-    #    می‌گذارد. ویرایش نمی‌شوند (هش)؛ `source-hygiene.test.ts` جلوی مهاجرت
-    #    تازهٔ بی‌تراکنش را می‌گیرد.
-    $PSQL -d "$url" -c \
-      "INSERT INTO public.schema_migration (filename, checksum)
-       VALUES ('$name', '$sum')" >/dev/null
+    # قفل و دفتر در همان تراکنش DDL هستند. نصب هم‌زمان پس از قفل دوباره می‌خواند.
+    {
+      cat <<'SQL'
+BEGIN;
+SELECT pg_advisory_xact_lock(1668509553, 2);
+SELECT EXISTS (SELECT FROM public.schema_migration WHERE filename=:'migration') AS done,
+       EXISTS (SELECT FROM public.schema_migration WHERE filename=:'migration' AND checksum=:'checksum') AS matches
+\gset
+\if :done
+  \if :matches
+  \else
+    DO $$ BEGIN RAISE EXCEPTION 'Migration checksum changed during installation'; END $$;
+  \endif
+\else
+SQL
+      # فقط مرزهای بیرونی نسخه‌های شناخته‌شده برداشته می‌شوند؛ فایل اصلی و هش آن ثابت‌اند.
+      awk -v file="$name" '
+        /^BEGIN;[[:space:]]*$/ { starts++; start[starts]=NR }
+        /^COMMIT;[[:space:]]*$/ { ends++; finish[ends]=NR }
+        { line[NR]=$0 }
+        END {
+          multi=(file=="005_cheques.sql" || file=="006_sessions.sql" || file=="007_device_trust.sql")
+          if (starts!=ends || (!multi && starts>1)) exit 2
+          for (j=1;j<=starts;j++) { if (start[j]>=finish[j]) exit 2; delete line[start[j]]; delete line[finish[j]] }
+          for (j=1;j<=NR;j++) if (j in line) print line[j]
+        }' "$f" || return 1
+      cat <<'SQL'
+INSERT INTO public.schema_migration(filename,checksum) VALUES (:'migration',:'checksum');
+\endif
+COMMIT;
+SQL
+    } | $PSQL -X -d "$url" -v migration="$name" -v checksum="$sum" >/dev/null
   done
 }
 

@@ -47,3 +47,16 @@ updates:
       types:
         patterns:
           - "@types/*"
+  - package-ecosystem: docker
+    directories:
+      - "/apps/api"
+      - "/apps/web"
+      - "/ops/deploy"
+    schedule:
+      interval: weekly
+    open-pull-requests-limit: 3
+  - package-ecosystem: docker-compose
+    directory: "/"
+    schedule:
+      interval: weekly
+    open-pull-requests-limit: 2

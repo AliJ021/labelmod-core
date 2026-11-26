@@ -47,13 +47,14 @@ export class SmsError extends Error {
   }
 }
 
-export type SmsPattern = { purpose: "otp" | "invoice"; args: string[] };
+export type SmsPattern = { purpose: "otp" | "invoice"; args: string[] } | { purpose: "digest"; args: string[]; bodyId: number | null };
 
 export interface SmsConfig {
   transport?: "console" | "panel";
   accountName?: string;
   otpPattern?: number | null;
   invoicePattern?: number | null;
+  digestPattern?: number | null;
   provider: string;
   sender: string;
   apiKey: string;
@@ -131,10 +132,10 @@ function logSender(): SmsSender {
  */
 async function check(res: Response, provider: string): Promise<void> {
   if (res.ok) return;
-  const body = await res.text().catch(() => "");
+  await res.body?.cancel().catch(() => undefined);
   const permanent = res.status >= 400 && res.status < 500 && res.status !== 429;
   throw new SmsError(
-    `${provider} پاسخ ${res.status} داد: ${body.slice(0, 200)}`,
+    `${provider} پاسخ ${res.status} داد`,
     permanent,
     retryAfterFor(res.status, res.headers.get("retry-after"), Date.now()),
   );
@@ -197,7 +198,7 @@ function meliPayamakSender(config: SmsConfig): SmsSender {
   }
   const panel = config.transport === "panel";
   if (panel && !config.accountName?.trim()) throw new SmsError("نام کاربری پنل ملی‌پیامک لازم است", true);
-  if (!config.otpPattern && !config.invoicePattern && !/^\d+$/.test(config.sender)) {
+  if (!config.otpPattern && !config.invoicePattern && !config.digestPattern && !/^\d+$/.test(config.sender)) {
     throw new SmsError("شماره فرستنده ملی‌پیامک تنظیم نشده یا نامعتبر است", true);
   }
   return {
@@ -206,10 +207,12 @@ function meliPayamakSender(config: SmsConfig): SmsSender {
       if (!mobile || !/^09\d{9}$/.test(mobile)) {
         throw new SmsError("شماره گیرنده پیامک نامعتبر است", true);
       }
-      const bodyId = pattern?.purpose === "otp" ? config.otpPattern : pattern?.purpose === "invoice" ? config.invoicePattern : null;
+      const bodyId = pattern?.purpose === "otp" ? config.otpPattern : pattern?.purpose === "invoice" ? config.invoicePattern : pattern?.purpose === "digest" ? pattern.bodyId : null;
       if (!bodyId && !/^\d+$/.test(config.sender))
         throw new SmsError("ارسال متن آزاد به خط فرستندهٔ تأییدشده نیاز دارد", true);
       const args = pattern?.args ?? [];
+      if (bodyId && pattern?.purpose === "invoice" && (args.length !== 2 || args.some(arg => /https?:/i.test(arg))))
+        throw new SmsError("پترن رسید فقط شماره فاکتور و مبلغ دارد. نشانی فروشگاه را در متن ثابت پترن بنویسید.", true);
       if (panel && bodyId && args.some(value => value.includes(";")))
         throw new SmsError("پارامتر پترن ملی‌پیامک شامل جداکننده نامعتبر است", true);
       const url = panel

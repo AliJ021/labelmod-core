@@ -34,6 +34,9 @@ export function useReturnOperation(onDone: (number: string) => void) {
     const op = pending ?? parseReturnOperation(localStorage.getItem(operationStorageKey(userId)), userId);
     if (!op) throw new Error("عملیاتی برای بررسی پیدا نشد");
     const result = await api.get<{ status: string; number?: string }>(`/${op.kind}/status/${op.key}`);
+    if (result.status==="approval_pending") throw new Error("درخواست به مدیر رسیده و منتظر تأیید است.");
+    if (result.status==="approval_approved") throw new Error("مدیر تأیید کرد. «ارسال دوباره همان عملیات» را بزنید.");
+    if (result.status==="approval_rejected") {clear(op);throw new Error("مدیر درخواست را رد کرد. مرجوعی ثبت نشد.");}
     if (result.status === "not_found") throw new Error("نتیجه هنوز معلوم نیست؛ عملیات جدید ثبت نکنید");
     if (result.status === "posted") { clear(op); onDone(result.number ?? ""); return true; }
     if (result.status === "abandoned") { clear(op); return false; }
@@ -52,7 +55,7 @@ export function useReturnOperation(onDone: (number: string) => void) {
       const result = await api.post<{ number: string }>(kind === "returns" ? "/returns/commit" : "/exchanges", op.body, { idempotencyKey: op.key });
       clear(op); onDone(result.number);
     } catch (e) {
-      if (e instanceof ApiError && e.status < 500 && !["idempotency_in_flight", "idempotency_key_reused"].includes(e.code)) clear(op);
+      if (e instanceof ApiError && e.status < 500 && !["idempotency_in_flight", "idempotency_key_reused","approval_pending"].includes(e.code)) clear(op);
       throw e;
     }
   }

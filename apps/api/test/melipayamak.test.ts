@@ -89,11 +89,11 @@ test("panel uses account credentials and the receipt pattern; credit probe never
     assert.equal(params.get("username"), "shop");
     assert.equal(params.get("password"), config.apiKey);
     if (url.endsWith("GetCredit")) return Response.json({ RetStatus: 1, Value: "0" });
-    assert.equal(params.get("text"), "23;12500;https://example.com/i/x");
+    assert.equal(params.get("text"), "23;12500");
     assert.equal(params.get("bodyId"), "12");
     return Response.json({ RetStatus: 1, Value: "987654321" });
   });
   assert.equal(await meliCredit(connection), 0);
-  await makeSender(connection).send(to, "unused", { purpose: "invoice", args:["23","12500","https://example.com/i/x"] });
+  await makeSender(connection).send(to, "unused", { purpose: "invoice", args:["23","12500"] });
   assert.deepEqual(calls.map(url=>url.split("/").at(-1)), ["GetCredit","BaseServiceNumber"]);
 });

@@ -11,10 +11,16 @@ interface Credential {
   transport?: "console" | "panel";
   otpPattern?: number | null;
   invoicePattern?: number | null;
+  digestEnabled?: boolean; digestPattern?: number | null; digestCopy?: string;
   otpCopy?: string;
   invoiceCopy?: string;
   routing?: { enabled: boolean; provider: string; sender: string; invoiceEnabled: boolean; receiptConsentRequired: boolean; hasPublicUrl: boolean; chequeEnabled: boolean };
   examples?: { otp: string; invoice: string };
+}
+
+function providerCopy(template: string) {
+  let index=0;
+  return template.replace(/\{(حضوری|سایت|اینستاگرام|جمع)\}/g,()=>`{${index++}}`);
 }
 
 export function MeliPayamakSettings() {
@@ -26,6 +32,9 @@ export function MeliPayamakSettings() {
   const [invoice, setInvoice] = useState("");
   const [otpCopy, setOtpCopy] = useState("");
   const [invoiceCopy, setInvoiceCopy] = useState("");
+  const [digestEnabled, setDigestEnabled] = useState(false);
+  const [digestPattern, setDigestPattern] = useState("");
+  const [digestCopy, setDigestCopy] = useState("");
   const [clearKey, setClearKey] = useState(false);
   const [busy, setBusy] = useState(false);
   const [message, setMessage] = useState("");
@@ -35,6 +44,7 @@ export function MeliPayamakSettings() {
     api.get<Credential>("/settings/melipayamak-credential").then((r) => {
       if (alive) { setValue(r); setName(r.accountName); setTransport(r.transport ?? "console");
         setOtp(r.otpPattern?.toString() ?? ""); setInvoice(r.invoicePattern?.toString() ?? "");
+        setDigestEnabled(r.digestEnabled ?? false); setDigestPattern(r.digestPattern?.toString() ?? ""); setDigestCopy(r.digestCopy ?? "");
         setOtpCopy(r.otpCopy ?? ""); setInvoiceCopy(r.invoiceCopy ?? ""); }
     }).catch((e: unknown) => { if (alive) setError(e instanceof ApiError ? e.message : "دریافت تنظیم اتصال ممکن نشد"); });
     return () => { alive = false; };
@@ -46,6 +56,7 @@ export function MeliPayamakSettings() {
     try {
       const r = await api.put<Credential>("/settings/melipayamak-credential", {
         revision: value.revision, accountName: name, transport,
+        digestEnabled,digestPattern:digestPattern ? Number(digestPattern) : null,digestCopy,
         otpPattern: otp ? Number(otp) : null, invoicePattern: invoice ? Number(invoice) : null, otpCopy, invoiceCopy,
         ...(key.trim() ? { apiKey: key.trim() } : {}), clearKey,
       });
@@ -94,16 +105,27 @@ export function MeliPayamakSettings() {
         {([{ label: "ورود دومرحله‌ای", id: otp, setId: setOtp, copy: otpCopy, setCopy: setOtpCopy,
              args: ["123456"], hint: "۰: کد شش‌رقمی", example: value.examples?.otp },
           { label: "رسید خرید", id: invoice, setId: setInvoice, copy: invoiceCopy, setCopy: setInvoiceCopy,
-             args: ["۱۴۰۵", "۵۰٬۰۰۰", "https://example.com/i/sample"], hint: "۰: شمارهٔ فاکتور، ۱: مبلغ به تومان، ۲: لینک رسید", example: value.examples?.invoice }]).map(item =>
+             args: ["۱۴۰۵", "۵۰٬۰۰۰"], hint: "متغیر {0} شمارهٔ فاکتور و {1} مبلغ به تومان است. نشانی ثابت خریدهای مشتری را در خود الگوی ملی‌پیامک بنویسید.", example: value.examples?.invoice }]).map(item =>
           <section key={item.label} className="solid pad stack"><h3>{item.label}</h3>
             <label>شناسهٔ پترن {item.label}<input inputMode="numeric" pattern="[0-9]+" value={item.id} onChange={e => item.setId(e.target.value.replace(/[۰-۹]/g, d => String("۰۱۲۳۴۵۶۷۸۹".indexOf(d))))} /></label>
-            {item.id ? <><small>ترتیب متغیرهای الگو · {item.hint}</small>
+            <small>{item.hint}</small>
+            <p className="small">{item.label === "رسید خرید" ? "نمونه برای ثبت در ملی‌پیامک: فاکتور {0} لیبل مد ثبت شد. مبلغ فاکتور {1} تومان. سپس نشانی ثابت صفحهٔ خریدهای فروشگاه را بنویسید." : "نمونه برای ثبت در ملی‌پیامک: کد ورود لیبل مد {0} است. این کد را در اختیار دیگران نگذارید."}</p>
+            {item.id ? <>
               <label>رونوشت متن تأییدشده در ملی‌پیامک<textarea maxLength={750} value={item.copy} onChange={e => item.setCopy(e.target.value)} /></label>
               <small>متن نهایی را ملی‌پیامک از پترن می‌خواند. برای پیش‌نمایش، متن همان الگو را با جای‌نگهدارهای {"{0}"} و بعدی وارد کنید.</small>
             </> : <small>بدون پترن، متن آزاد از خط فرستنده ارسال می‌شود.</small>}
             <div><strong>پیش‌نمایش با دادهٔ نمونه</strong><p style={{ whiteSpace: "pre-line", overflowWrap: "anywhere" }}>{item.id
               ? item.copy.replace(/\{(\d+)\}/g, (token, n: string) => item.args[Number(n)] ?? token) || "رونوشت متن پترن وارد نشده است." : item.example}</p></div>
           </section>)}
+      </fieldset>
+      <fieldset className="stack" disabled={disabled}><legend>گزارش شبانهٔ مدیر</legend>
+        <label><input type="checkbox" checked={digestEnabled} onChange={e=>setDigestEnabled(e.target.checked)} /> ارسال فروش خالص روز گذشته پس از نیمه‌شب به موبایل مدیر</label>
+        <label>شناسهٔ پترن گزارش مدیر<input value={digestPattern} inputMode="numeric" pattern="[0-9]+" onChange={e=>setDigestPattern(e.target.value.replace(/[۰-۹]/g,d=>String("۰۱۲۳۴۵۶۷۸۹".indexOf(d))))}/></label>
+        <label>متن و ترتیب عددها<textarea maxLength={750} value={digestCopy} onChange={e=>setDigestCopy(e.target.value)}/></label>
+        <small>{"عددهای قابل انتخاب: {حضوری}، {سایت}، {اینستاگرام}، {جمع}. مبلغ‌ها به تومان و پس از کسر مرجوعی همان روز هستند."}</small>
+        <div><strong>متن برای ثبت در ملی‌پیامک</strong><pre style={{whiteSpace:"pre-wrap"}}>{providerCopy(digestCopy)}</pre></div>
+        <div><strong>نمونهٔ پیام مدیر</strong><p style={{whiteSpace:"pre-line"}}>{digestCopy.replace(/\{(حضوری|سایت|اینستاگرام|جمع)\}/g,(_m,k:string)=>({"حضوری":"۸۰۰٬۰۰۰","سایت":"۴۰۰٬۰۰۰","اینستاگرام":"۳۰۰٬۰۰۰","جمع":"۱٬۵۰۰٬۰۰۰"}[k] ?? ""))}</p></div>
+        <small>پس از تأیید متن تازه در ملی‌پیامک، شناسهٔ همان پترن را ذخیره کنید. بدون پترن، ارسال به خط متن‌آزاد نیاز دارد.</small>
       </fieldset>
       {value.routing && <section className="solid pad stack"><h3>وضعیت مسیر ارسال</h3>
         <span>ارسال واقعی ملی‌پیامک · {value.routing.enabled && value.routing.provider === "melipayamak" ? "انتخاب و فعال شده" : "غیرفعال؛ سرویس و کلید ارسال را در گروه اعلان‌ها بررسی کنید"}</span>

@@ -101,7 +101,7 @@ export function createDisposableDb(adminUrl: string): DisposableDb | null {
 
   try {
     for (const step of ["migrate", "seed"]) {
-      execFileSync("bash", [path.join(REPO_ROOT, "ops/db.sh"), step], {
+      execFileSync("bash", ["ops/db.sh", step], {
         cwd: REPO_ROOT,
         stdio: "pipe",
         env: { ...process.env, DATABASE_URL: url, PGCLIENTENCODING: "UTF8" },
@@ -126,7 +126,7 @@ export function createDisposableDb(adminUrl: string): DisposableDb | null {
   if (restrictedRoleRequested()) {
     appRole = `lmc_app_t_${randomBytes(6).toString("hex")}`;
     try {
-      execFileSync("bash", [path.join(REPO_ROOT, "ops/db-roles.sh")], {
+      execFileSync("bash", ["ops/db-roles.sh"], {
         cwd: REPO_ROOT,
         stdio: "pipe",
         env: {

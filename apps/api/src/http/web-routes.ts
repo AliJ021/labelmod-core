@@ -69,6 +69,7 @@ const webOrderBody = z.object({
   paymentMethod: z.string().trim().min(1).max(40),
   paymentRef: z.string().trim().max(120).optional(),
   paidAmount: moneyString.default("0"),
+  siteTotals:z.object({tax:moneyString,total:moneyString}).strict().optional(),
   codDelivered: z.boolean().optional(),
   note: z.string().trim().max(500).optional(),
 });
@@ -196,6 +197,7 @@ export function registerWebRoutes(app: FastifyInstance, deps: WebRouteDeps): voi
         shippingAmount: body.shippingAmount,
         paymentMethod: body.paymentMethod,
         paidAmount: body.paidAmount,
+        ...(body.siteTotals && {siteTotals:body.siteTotals}),
         ...(body.codDelivered === undefined ? {} : { codDelivered: body.codDelivered }),
       },
       run: async (trx) => {
@@ -213,6 +215,7 @@ export function registerWebRoutes(app: FastifyInstance, deps: WebRouteDeps): voi
           shippingAmount: parseMoney(body.shippingAmount),
           paymentMethod: body.paymentMethod,
           paidAmount: parseMoney(body.paidAmount),
+          ...(body.siteTotals && {siteTotals:body.siteTotals}),
           actorId: s.userId,
           ...(body.codDelivered === undefined ? {} : { codDelivered: body.codDelivered }),
           ...(body.customerMobile === undefined

@@ -21,6 +21,7 @@ import type { Database } from "../db/types.ts";
 import { parseMoney, serializeMoney } from "../lib/money.ts";
 import { setActor } from "../lib/idempotency.ts";
 
+import { checkFullReturnApproval } from "./return-approval.ts";
 import { ReturnError } from "./return-error.ts";
 export { ReturnError } from "./return-error.ts";
 import { refundPlan, recordSplit, type SplitRefund } from "./refund-plan.ts";
@@ -437,6 +438,7 @@ export class ReturnService {
     returnId: string,
     actorId: string,
     split?: SplitRefund,
+    manualIntent?:string,
   ): Promise<string> {
     await setActor(trx, actorId);
     const doc = await trx.selectFrom("sales.sale_return").select(["invoice_id","refund_method","refund_amount",
@@ -463,6 +465,7 @@ export class ReturnService {
         (!sources.rows.some(p=>p.method===payout) || (new Set(sources.rows.map(p=>p.method)).size>1 &&
          (await refundPlan(trx,doc.invoice_id,amount)).legs.some(l=>l.amount!=="0" && l.method!==payout))))
       throw new ReturnError("payout_reason_required","برای تغییر روش بازپرداخت دلیل بنویسید.",422);
+    if(manualIntent) await checkFullReturnApproval(trx,returnId,actorId,manualIntent,split);
     const r = await sql<{ post_return: string }>`
       SELECT sales.post_return(${returnId}::uuid, ${actorId}::uuid) AS post_return
     `.execute(trx);

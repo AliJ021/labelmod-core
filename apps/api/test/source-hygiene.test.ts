@@ -309,6 +309,9 @@ test("استثناهای CSRF و مسیرهای عمومی، همان‌اند �
     "/auth/2fa/webauthn/begin",
     "/auth/2fa/webauthn/verify",
     "/auth/login",
+    "/customer-receipts/logout",
+    "/customer-receipts/start",
+    "/customer-receipts/verify",
   ]);
 
   // ⚠️ `/auth/2fa/webauthn` (بدون پسوند) عمداً **نیست**: آن مسیر
@@ -626,7 +629,7 @@ test("ایمیج‌های پایهٔ CI ابتدا از ECR Public می‌آین
     for (const from of froms) {
       if (stages.has(from.split(" ")[1]!)) continue;
       // مرحلهٔ ساخته‌شده در همین فایل (FROM deps) استثناست؛ هر ایمیج بیرونی از آرگومان.
-      assert.match(from, /^FROM \$\{BASE_REGISTRY\}\/[a-z0-9]+:[\w.-]+( AS [\w-]+)?$/, `${f}: «${from}» از BASE_REGISTRY نمی‌خواند`);
+      assert.match(from, /^FROM \$\{BASE_REGISTRY\}\/[a-z0-9]+:[\w.-]+@sha256:[0-9a-f]{64}( AS [\w-]+)?$/, `${f}: «${from}» از BASE_REGISTRY نمی‌خواند`);
       const stage = / AS ([\w-]+)$/.exec(from)?.[1];
       if (stage) stages.add(stage);
     }

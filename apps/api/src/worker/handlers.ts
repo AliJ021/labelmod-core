@@ -25,6 +25,8 @@ import { z } from "zod";
 import type { Db } from "../db/client.ts";
 import { parseMoney } from "../lib/money.ts";
 import { toToman } from "../sales/invoice-page.ts";
+import { deliverReceiptOtp } from "../http/customer-receipts.ts";
+import { sendManagerDigest } from "./digest.ts";
 import { invoiceText } from "./sms-copy.ts";
 import { SmsError, toLocalMobile, type SmsSender } from "./sms.ts";
 import type { NotifySettings } from "./settings.ts";
@@ -91,9 +93,12 @@ export async function handleInvoiceFinalized(
     payable_amount: string;
     mobile: string | null;
     consent: boolean | null;
+    channel: string;
+    web_receipt: boolean;
     shop_name: string | null;
   }>`
     SELECT sales.invoice_display_number(i.id) AS number, i.payable_amount::text,
+           i.channel, coalesce((SELECT value='true'::jsonb FROM platform.setting WHERE key='notify.accounting_web_receipt'),false) AS web_receipt,
            c.mobile_normalized AS mobile,
            c.consent_sms       AS consent,
            (SELECT b.name FROM platform.branch b WHERE b.id = i.branch_id) AS shop_name
@@ -107,6 +112,7 @@ export async function handleInvoiceFinalized(
     // فاکتور رفته ولی پیامش مانده. تلاش دوباره چیزی را برنمی‌گرداند.
     throw new SmsError("فاکتور یافت نشد", true);
   }
+  const sendSms = row.channel !== "web" || row.web_receipt;
   if (!row.number) return { done: true, note: "فاکتور شماره ندارد" };
 
   // فروش ناشناس عادی است — بیشتر فروش صندوق همین است.
@@ -145,10 +151,10 @@ export async function handleInvoiceFinalized(
   const amount = toToman(parseMoney(row.payable_amount));
   const link = `${ctx.settings.publicUrl}/i/${token}`;
 
-  const sendReceipt = () => ctx.sms.send(to, invoiceText(shop, row.number!, String(amount), link),
-    { purpose: "invoice", args: [String(row.number), String(amount), link] });
+  const sendReceipt = () => ctx.sms.send(to, invoiceText(shop, row.number!, String(amount), ctx.settings.provider === "melipayamak" ? (ctx.settings.webSiteUrl ? ctx.settings.webSiteUrl + "/?labelmod_receipts=1" : ctx.settings.publicUrl + "/customer-receipts") : link),
+    { purpose: "invoice", args: [String(row.number), String(amount)] });
 
-  if (ctx.settings.provider === "melipayamak") {
+  if (sendSms && ctx.settings.provider === "melipayamak") {
     const claim = await sql`INSERT INTO platform.invoice_sms_dispatch(invoice_id,state)
       VALUES(${invoiceId}::uuid,'sending') ON CONFLICT DO NOTHING RETURNING invoice_id`.execute(ctx.db);
     if (claim.rows.length) {
@@ -168,7 +174,7 @@ export async function handleInvoiceFinalized(
       const prior = await sql<{state:string}>`SELECT state FROM platform.invoice_sms_dispatch WHERE invoice_id=${invoiceId}::uuid`.execute(ctx.db);
       if (prior.rows[0]?.state !== "accepted") throw new SmsError("نتیجهٔ تلاش قبلی پیامک مشخص نیست؛ گزارش ملی‌پیامک را بررسی کنید", true);
     }
-  } else {
+  } else if (sendSms) {
     await sendReceipt();
   }
 
@@ -388,6 +394,8 @@ export const HANDLERS: Record<
     return { done: true, note: "درخواست کد ورود پردازش شد" };
   },
   "invoice.finalized": handleInvoiceFinalized,
+  "manager.digest": sendManagerDigest,
+  "customer.receipt_otp": deliverReceiptOtp,
   "cheque.due": handleChequeDue,
   "health.alert": handleHealthAlert,
   "web.stock_push": handleWebPush,
