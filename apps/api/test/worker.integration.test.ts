@@ -399,15 +399,17 @@ describe("Worker — صف پیام، پیامک و هشدار چک", { skip }, (
     await sql`UPDATE platform.melipayamak_credential SET digest_enabled=true,digest_pattern=12,digest_copy='سایت {سایت} و جمع {جمع}' WHERE singleton`.execute(handle.db);
     try{
       await sql`INSERT INTO platform.manager_digest(report_date) VALUES(${day}::date)`.execute(handle.db);
+      const salesBefore=(await sql<{t:string}>`SELECT coalesce(sum(sales_amount),0)::text AS t FROM sales.daily_summary_by_channel(${BRANCH}::uuid,${day}::date) WHERE channel='web'`.execute(handle.db)).rows[0]!.t;
+      await sql`INSERT INTO sales.invoice (branch_id,warehouse_id,channel,status,gross_amount,net_amount,payable_amount,created_by)
+        VALUES (${BRANCH}::uuid,${STORE_WH}::uuid,'web','partially_paid',500000,500000,500000,${SYSTEM_USER}::uuid)`.execute(handle.db);
       const sent:string[][]=[];
       const ctx={db:handle.db,settings:{...await readNotifySettings(handle.db),provider:"melipayamak",managerMobile:"09121111111"},
         sms:{send:async(_to:string,_text:string,p?:import("../src/worker/sms.ts").SmsPattern)=>{sent.push(p?.args??[]);return "123";}},
         webPush:{send:async()=>{}},webhook:{send:async()=>{}}};
       const msg={id:"1",topic:"manager.digest",payload:{date:day},attempts:1};
       await sendManagerDigest(ctx,msg);await sendManagerDigest(ctx,msg);
-      const total=(await sql<{t:string}>`SELECT coalesce(sum(sales_amount),0)::text AS t FROM sales.daily_summary_by_channel(${BRANCH}::uuid,${day}::date) WHERE channel='web'`.execute(handle.db)).rows[0]!.t;
-      const formatted=(BigInt(total)/10n).toLocaleString("en-US");
-      assert.ok(BigInt(total)>0n);assert.deepEqual(sent,[[formatted,formatted]]);
+      const formatted=(BigInt(salesBefore)/10n).toLocaleString("en-US");
+      assert.ok(BigInt(salesBefore)>0n);assert.deepEqual(sent,[[formatted,formatted]]);
     }finally{await sql`UPDATE platform.melipayamak_credential SET digest_enabled=false WHERE singleton`.execute(handle.db);}
   });
 

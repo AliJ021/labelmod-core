@@ -24,6 +24,10 @@ test("Bale acknowledgement is bound to the private recipient and encrypted attac
       assert.equal(await doc.text(),"synthetic-ciphertext");
       return Response.json({ok:true,result:{message_id:77,chat:{type:"private",id:123}}});
     };
+    for (const messageId of [0,-1]) {
+      const pending = async () => Response.json({ok:true,result:{message_id:messageId,chat:{type:"private",id:123}}});
+      await assert.rejects(deliverBale(target,file,"2026-11-26","a".repeat(64),pending),/delivery/);
+    }
     assert.equal(await deliverBale(target,file,"2026-11-26","a".repeat(64),send),"77");
     await assert.rejects(deliverBale(target,file,"2026-11-26","a".repeat(64),async()=>Response.json({ok:true,result:{message_id:77,chat:{id:999,type:"private"}}})),/delivery/);
   }finally{await rm(dir,{recursive:true});}

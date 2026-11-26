@@ -64,9 +64,10 @@ export async function deliverBale(dest:Destination,file:string,date:string,diges
   const response=await send("https://tapi.bale.ai/bot"+dest.token+"/sendDocument",{method:"POST",redirect:"error",body,signal:AbortSignal.timeout(120000)});
   const data=await response.json() as Json;
   if (response.status>=400 && response.status<500 && data.ok===false) throw new DefiniteBaleRejection();
-  if (!response.ok || !data.ok || !Number.isSafeInteger(data.result?.message_id) ||
+  const messageId = data.result?.message_id;
+  if (!response.ok || !data.ok || typeof messageId !== "number" || !Number.isSafeInteger(messageId) || messageId <= 0 ||
       String(data.result?.chat?.id)!==dest.chat || data.result?.chat?.type!=="private") throw new Error("delivery");
-  return String(data.result!.message_id);
+  return String(messageId);
 }
 
 export async function runBaleBackup(db:Db, url:string,root:string,configDir:string,send:typeof fetch=fetch) {

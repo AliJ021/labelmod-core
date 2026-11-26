@@ -26,9 +26,8 @@ export async function sendManagerDigest(ctx: HandlerContext, msg: OutboxMessage)
   const to = toLocalMobile(ctx.settings.managerMobile);
   if (!to) throw new SmsError("موبایل مدیر را در تنظیمات اعلان‌ها وارد کنید");
   const sums = await sql<{channel:string; amount:string}>`
-    SELECT r.channel,sum(r.sales_amount)::text AS amount
-    FROM platform.branch b CROSS JOIN LATERAL sales.daily_summary_by_channel(b.id,${date}::date) r
-    GROUP BY r.channel`.execute(ctx.db);
+    SELECT channel, (net_amount - return_amount)::text AS amount
+    FROM sales.report_summary(${date}::date, ${date}::date, NULL)`.execute(ctx.db);
   const by = new Map(sums.rows.map(r=>[r.channel,BigInt(r.amount)]));
   const pos=by.get("pos")??0n, web=by.get("web")??0n, ig=by.get("instagram")??0n;
   const content=digestContent(cfg.template,{"حضوری":toTomanExact(pos),"سایت":toTomanExact(web),"اینستاگرام":toTomanExact(ig),"جمع":toTomanExact(pos+web+ig)});
