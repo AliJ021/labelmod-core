@@ -23,11 +23,14 @@ class LMC_Diagnostics
     public static function status(): array
     {
         $status = get_option(self::STATUS, []);
-        return ($status['scope'] ?? null) === self::scope() ? $status : [];
+        if (($status['scope'] ?? null) !== self::scope()) { return []; }
+        $status['overdue'] = time() - (int) $status['time'] >= 86400;
+        return $status;
     }
 
     public static function check(array $query = [])
     {
+        $general = !isset($query['sku']) && !isset($query['variationId']);
         $scope = self::scope();
         $query['branchId'] = (string) lmc_setting('branch_id');
         $query['warehouseId'] = (string) lmc_setting('warehouse_id');
@@ -37,7 +40,7 @@ class LMC_Diagnostics
         $res = LMC_Client::get('/web/connection', $query);
         $ok = is_array($res) && ($res['protocol'] ?? null) === 1 && ($res['authenticated'] ?? false) === true
             && ($res['branchId'] ?? '') === $query['branchId'] && ($res['warehouseId'] ?? '') === $query['warehouseId'];
-        if ($scope === self::scope()) {
+        if ($general && $scope === self::scope()) {
             update_option(self::STATUS, ['scope' => $scope, 'time' => time(), 'ok' => $ok,
                 'discount' => $ok && ($res['features']['explicitLineDiscount'] ?? false) === true], false);
         }

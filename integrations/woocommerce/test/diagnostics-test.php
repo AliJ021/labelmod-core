@@ -127,6 +127,12 @@ $response = ['code' => 200, 'body' => json_encode(['protocol' => 1, 'authenticat
 $count = count($calls);
 ($GLOBALS['hooks'][LMC_Diagnostics::DAILY])();
 check(LMC_Diagnostics::status()['discount'] && LMC_Diagnostics::status()['ok'] && count($calls) === $count + 1, 'خواندن نتیجه درخواست شبکه ندارد');
+$healthy = LMC_Diagnostics::status();
+$response = new WP_Error('mapping', 'unknown SKU');
+LMC_Diagnostics::check(['sku' => 'unknown']);
+check(LMC_Diagnostics::status() === $healthy, 'خطای یک کالا نتیجهٔ اتصال عمومی را عوض نمی‌کند');
+$GLOBALS['options'][LMC_Diagnostics::STATUS]['time'] -= 86401;
+check(LMC_Diagnostics::status()['overdue'], 'تست روز قبل وضعیت فعلی را تضمین نمی‌کند');
 check(!str_contains(json_encode($GLOBALS['options']), $settings['api_key']), 'کلید در نتیجه ذخیره نمی‌شود');
 $response = new WP_Error('network', 'offline');
 LMC_Diagnostics::check();
