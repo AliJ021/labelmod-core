@@ -82,7 +82,7 @@ export function registerCustomerReceipts(app:FastifyInstance,db:Db,master:string
       let token:string|undefined;
       if(master && id && /^[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}$/i.test(id) && /^\d{6}$/.test(code)){
         token=await db.transaction().execute(async tx=>{
-          const r=await sql`UPDATE platform.receipt_access SET attempts=attempts+1 WHERE id=${id}::uuid AND attempts<3 AND session_hash IS NULL
+          const r=await sql`UPDATE platform.receipt_access SET attempts=attempts+1 WHERE id=${id}::uuid AND attempts<3 AND sent_at IS NOT NULL AND session_hash IS NULL
               AND created_at>clock_timestamp()-interval '2 minutes' RETURNING id`.execute(tx);
           if(!r.rows.length || !timingSafeEqual(Buffer.from(code),Buffer.from(codeFor(id,master))))return;
           const t=randomBytes(32).toString("hex");

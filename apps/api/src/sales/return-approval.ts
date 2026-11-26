@@ -21,7 +21,11 @@ export async function checkFullReturnApproval(tx:Transaction<Database>,id:string
       AND r.refund_amount >= 10::bigint * platform.setting_text('return.full_review_min','0')::bigint
       AND NOT EXISTS(SELECT FROM sales.invoice_line il WHERE il.invoice_id=r.invoice_id AND il.qty-il.returned_qty <>
         coalesce((SELECT sum(l.qty) FROM sales.sale_return_line l WHERE l.return_id=r.id AND l.invoice_line_id=il.id),0))`.execute(tx)).rows[0];
-  if (!result) return;
+  if (!result) {
+    const previous=await sql`SELECT FROM sales.return_approval WHERE actor_id=${actor}::uuid AND intent=${intent}`.execute(tx);
+    if (previous.rows.length) throw new ReturnError("approval_changed","شرایط درخواست قبلی تغییر کرده است. پس از بررسی، درخواست تازه بسازید.");
+    return;
+  }
   const prior=(await sql<{id:string;status:string;same:boolean;consumed_by:string|null}>`SELECT a.id,a.status,a.context=${JSON.stringify(result.details)}::jsonb AS same,r.consumed_by
     FROM sales.return_approval r JOIN identity.approval_request a ON a.id=r.id
     WHERE r.actor_id=${actor}::uuid AND r.intent=${intent} AND r.invoice_id=${result.invoice}::uuid FOR UPDATE OF a,r`.execute(tx)).rows[0];

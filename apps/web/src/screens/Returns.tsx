@@ -72,7 +72,7 @@ export function Returns({ linkedId, action, onPosted }: { linkedId?:string; acti
 
   const [number, setNumber] = useState("");
   const [lookupKind, setLookupKind] = useState<"number" | "phone">("number");
-  // طرح ۱۰: سه زبانه؛ «مرجوعی» و «تعویض» همان فرم فاکتور را با دو حالت دارند و «درخواست‌های سایت» صف بررسی است.
+  // طرح ۱۰: سه زبانه؛ «مرجوعی» و «تعویض» همان فرم فاکتور را با دو حالت دارند و «درخواست‌های تأیید» درخواست‌های سایت و ابطال فروشگاه را نشان می‌دهد.
   // تا عملیاتی در راه است زبانه عوض نمی‌شود (همان قفل دکمه‌های پیشین).
   const [urlTab, setTabRaw] = useUrlTab("returns.tab", RETURN_TABS, "returns");
   const tab = linkedId ? (action === "edit" ? "exchanges" : "returns") : urlTab;

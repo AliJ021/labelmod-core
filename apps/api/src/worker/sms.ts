@@ -47,7 +47,7 @@ export class SmsError extends Error {
   }
 }
 
-export type SmsPattern = { purpose: "otp" | "invoice"; args: string[] } | { purpose: "digest"; args: string[]; bodyId: number | null };
+export type SmsPattern = { purpose: "otp"; args: string[] } | {purpose:"invoice";args:string[];bodyId?:number|null} | { purpose: "digest"; args: string[]; bodyId: number | null };
 
 export interface SmsConfig {
   transport?: "console" | "panel";
@@ -207,7 +207,7 @@ function meliPayamakSender(config: SmsConfig): SmsSender {
       if (!mobile || !/^09\d{9}$/.test(mobile)) {
         throw new SmsError("شماره گیرنده پیامک نامعتبر است", true);
       }
-      const bodyId = pattern?.purpose === "otp" ? config.otpPattern : pattern?.purpose === "invoice" ? config.invoicePattern : pattern?.purpose === "digest" ? pattern.bodyId : null;
+      const bodyId = pattern?.purpose === "otp" ? config.otpPattern : pattern?.purpose === "invoice" ? (pattern.bodyId === undefined ? config.invoicePattern : pattern.bodyId) : pattern?.purpose === "digest" ? pattern.bodyId : null;
       if (!bodyId && !/^\d+$/.test(config.sender))
         throw new SmsError("ارسال متن آزاد به خط فرستندهٔ تأییدشده نیاز دارد", true);
       const args = pattern?.args ?? [];

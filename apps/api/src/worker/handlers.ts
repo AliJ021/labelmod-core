@@ -160,8 +160,8 @@ export async function handleInvoiceFinalized(
 
   const fixedLink = ctx.settings.webSiteUrl ? ctx.settings.webSiteUrl + "/?labelmod_receipts=1" : ctx.settings.publicUrl + "/customer-receipts";
   const text = invoiceText(shop, row.number, String(amount), meliReceipt ? fixedLink : link);
-  const sendReceipt = () => ctx.sms.send(to, text,
-    { purpose: "invoice", args: [String(row.number), String(amount)] });
+  const sendReceipt = (bodyId?:number|null) => ctx.sms.send(to, text,
+    { purpose: "invoice", args: [String(row.number), String(amount)], ...(bodyId===undefined?{}:{bodyId}) });
 
   if (sendSms && ctx.settings.provider === "melipayamak") {
     const pattern = (await sql<{id:number|null;copy:string}>`SELECT invoice_pattern AS id,invoice_copy AS copy
@@ -174,7 +174,7 @@ export async function handleInvoiceFinalized(
       VALUES(${invoiceId}::uuid,'sending',${rendered},${pattern?.id ?? null}) ON CONFLICT DO NOTHING RETURNING invoice_id`.execute(ctx.db);
     if (claim.rows.length) {
       let reference;
-      try { reference = await sendReceipt(); }
+      try { reference = await sendReceipt(pattern?.id ?? null); }
       catch (error) {
         if (error instanceof SmsError && error.uncertain) {
           await sql`UPDATE platform.invoice_sms_dispatch SET state='unknown',updated_at=now() WHERE invoice_id=${invoiceId}::uuid`.execute(ctx.db);

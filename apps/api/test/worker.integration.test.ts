@@ -21,7 +21,7 @@
  * ۵. **صفحه عمومی فاکتور فقط سند واقعی را نشان می‌دهد** و توکن غلط،
  *    پیش‌نویس و فاکتور باطل همه یک پاسخ می‌گیرند.
  */
-import { createHmac } from "node:crypto";
+import { deliverReceiptOtp } from "../src/http/customer-receipts.ts";
 import { after, before, describe, test } from "node:test";
 import assert from "node:assert/strict";
 import { sql } from "kysely";
@@ -427,7 +427,15 @@ describe("Worker — صف پیام، پیامک و هشدار چک", { skip }, (
       const cookies=Object.fromEntries(r.cookies.map(c=>[c.name,c.value]));
       const pending=cookies["__Host-lm-receipt-code"]!;
       assert.equal((await sql`SELECT FROM platform.outbox_message WHERE topic='customer.receipt_otp' AND payload->>'id'=${pending}`.execute(handle.db)).rows.length,1);
-      const code=String(createHmac("sha256",Buffer.from("ab".repeat(32),"hex")).update("labelmod/customer-receipt/v1/"+pending).digest().readUInt32BE(0)%1000000).padStart(6,"0");
+      const codes:string[]=[];
+      const delivery={db:handle.db,smsCredentialKey:"ab".repeat(32),settings:{...await readNotifySettings(handle.db),provider:"melipayamak"},
+        sms:{send:async(_to:string,_text:string,p?:import("../src/worker/sms.ts").SmsPattern)=>{codes.push(p!.args[0]!);return "test-otp";}},
+        webPush:{send:async()=>{}},webhook:{send:async()=>{}}};
+      const notice={id:"1",topic:"customer.receipt_otp",payload:{id:pending},attempts:1};
+      await deliverReceiptOtp(delivery,notice);
+      await deliverReceiptOtp(delivery,notice);
+      assert.equal(codes.length,1);
+      const code=codes[0]!;
       const bad=await post("/customer-receipts/verify",{nonce:cookies[name]!,code:code==="000000"?"000001":"000000"},cookies);
       assert.equal(bad.statusCode,400);
       cookies[name]=bad.cookies.find(c=>c.name===name)!.value;
