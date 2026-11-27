@@ -1,0 +1,27 @@
+#!/bin/bash
+set -Eeuo pipefail
+state=/run/lmrelease244
+app=/srv/labelmod/app
+cd "$app"
+target=569fb37df03e056c02456b9d4ba100d63e725b9f
+test "$(git rev-parse HEAD)" = "$target"
+diff -q "$state/live.before" "$state/live.after"
+dc(){ docker compose -p labelmod --env-file "$app/.env" -f "$app/docker-compose.prod.yml" "$@"; }
+for svc in api panel-backup; do
+ user=$(docker image inspect -f '{{.Config.User}}' "lm244-$svc")
+ test -n "$user" && test "$user" != root
+ printf 'FROM lm244-%s:latest\nUSER root\nRUN chmod -R a+rX /app/apps/api/src && chmod a+r /app/apps/api/package.json\nUSER %s\n' "$svc" "$user" | docker build --pull=false --network=none -t "local/lm-readable-$svc:244" - >"$state/build-perms-$svc.log" 2>&1
+ docker run --rm --network none --entrypoint node "local/lm-readable-$svc:244" -e "const f=require('node:fs');for(const p of ['server.ts','worker.ts','cli/backup-manager.ts']) f.accessSync('/app/apps/api/src/'+p,f.constants.R_OK); console.log('Verified access for service user')"
+done
+docker tag local/lm-readable-api:244 labelmod-api
+docker tag local/lm-readable-api:244 labelmod-worker
+docker tag local/lm-readable-panel-backup:244 labelmod-panel-backup
+dc up -d --no-build --no-deps --force-recreate api worker panel-backup
+for _ in $(seq 1 45); do
+ if curl -fsS --max-time 3 --resolve hesab.labelmod.com:443:127.0.0.1 https://hesab.labelmod.com/api/health >/dev/null && test "$(docker inspect -f '{{.State.Health.Status}}' labelmod-api-1)" = healthy; then
+  for s in db api worker panel-backup caddy scheduler;do docker inspect -f '{{.Name}} {{.State.Status}}' "labelmod-$s-1";done
+  echo "$target" > "$state/production.ok"; echo 'Release verified.'; exit 0
+ fi
+ sleep 2
+done
+exit 1
