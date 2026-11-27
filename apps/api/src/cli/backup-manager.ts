@@ -3,6 +3,7 @@ import { z } from "zod";
 import { chmod, rm } from "node:fs/promises";
 import path from "node:path";
 import { createDb } from "../db/client.ts";
+import { runBaleBackup } from "../operations/bale-backup.ts";
 import { BackupStore } from "../operations/backup-store.ts";
 import { PostgresBackupDriver } from "../operations/postgres-backup-driver.ts";
 import { RestoreManager } from "../operations/restore-manager.ts";
@@ -49,5 +50,14 @@ const db=createDb(config.OPS_DATABASE_URL,2);
 const app=await buildManagementApp({db:db.db,manager:new RestoreManager(store,driver),rpcToken:config.OPS_RPC_TOKEN,restoreEnabled:!panelMode});
 // سوکت موجود خودکار حذف نمی‌شود: ممکن است سرویس دیگری هنوز فعال باشد.
 await app.listen({path:config.OPS_SOCKET});await chmod(config.OPS_SOCKET,0o660);
-async function close(){await app.close();await db.close();}
+let timer:ReturnType<typeof setTimeout>|undefined;
+let stopping=false;
+let running:Promise<void>|undefined;
+function tick() {
+  running=runBaleBackup(db.db,config.OPS_DATABASE_URL,path.join(config.OPS_BACKUP_DIR,"bale"),"/run/labelmod-bale")
+    .catch(()=>{process.stderr.write("Bale backup status unavailable.\n");})
+    .finally(()=>{if (!stopping) timer=setTimeout(tick,60000);});
+}
+if (panelMode) tick();
+async function close(){stopping=true;clearTimeout(timer);await running;await app.close();await db.close();}
 process.once("SIGTERM",()=>{void close();});process.once("SIGINT",()=>{void close();});

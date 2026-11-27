@@ -41,12 +41,15 @@ export type MeliProfile = {
   accountName: string;
   otpPattern: number | null;
   invoicePattern: number | null;
+  digestPattern: number | null;
+  chequePattern: number | null;
+  healthPattern: number | null;
 };
 
 export async function readMeliConnection(db: Db, master: string | undefined) {
   const result = await sql<MeliProfile & { encrypted_key: unknown }>`
     SELECT transport, account_name AS "accountName", otp_pattern AS "otpPattern",
-      invoice_pattern AS "invoicePattern", encrypted_key
+      invoice_pattern AS "invoicePattern", digest_pattern AS "digestPattern", cheque_pattern AS "chequePattern", health_pattern AS "healthPattern", encrypted_key
     FROM platform.melipayamak_credential WHERE singleton`.execute(db);
   const row = result.rows[0];
   if (!row) throw new SettingError("credential_missing", "تنظیم اتصال ملی‌پیامک آماده نیست", 503);

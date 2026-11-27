@@ -103,7 +103,11 @@ export function WithdrawalLog({ currentUserId, write, writeState }: { currentUse
   const columns: Column<WithdrawalItem>[] = [
     ...(write === "allow" ? [{ key: "select", header: "انتخاب", cell: (r: WithdrawalItem) => <input type="checkbox"
       aria-label={`انتخاب برداشت ${r.owner.name}، ${r.reason}`} checked={sent ? sent.items.some(i => i.id === r.id) : chosen.some(i => i.id === r.id)}
-      disabled={locked || !!r.settledAt || (chosen.length >= 500 && !chosen.some(i => i.id === r.id))} onChange={e => { setBulkDone(""); setChosen(current => e.target.checked ? [...current,r] : current.filter(i => i.id !== r.id)); }} /> }] : []),
+      disabled={locked || !!r.settledAt || (chosen.length >= 500 && !chosen.some(i => i.id === r.id))} onChange={e => {
+        const checked = e.currentTarget.checked;
+        setBulkDone("");
+        setChosen(current => checked ? [...current, r] : current.filter(i => i.id !== r.id));
+      }} /> }] : []),
     { key: "owner", header: "کاربر", cell: r => r.owner.name },
     { key: "at", header: "زمان ثبت", cell: r => <span className="cell-nowrap">{formatJalaliMoment(r.createdAt)}</span> },
     { key: "amount", header: "مبلغ", numeric: true, cell: r => <Money rial={r.amount} exact size="sm" /> },

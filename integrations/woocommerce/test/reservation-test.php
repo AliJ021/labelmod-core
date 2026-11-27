@@ -52,8 +52,7 @@ class WC_Order_Refund extends WC_Order {
 class LMC_Client {
     const PERMANENT = 'permanent';
     public static $calls = []; public static $result = ['status' => 'reserved']; public static $on_post = null;
-    public static $connection = ['protocol' => 1, 'authenticated' => true, 'branchId' => 'b', 'warehouseId' => 'w', 'features' => ['codReservations' => true]];
-    public static function get($path, $q) { return self::$connection; }
+    public static function get($path, $q) { throw new RuntimeException('Unexpected order preflight'); }
     public static function post($path, $payload) {
         self::$calls[] = [$path, $payload];
         if (self::$on_post) { $callback = self::$on_post; self::$on_post = null; $callback(); }
@@ -116,14 +115,12 @@ check(count(LMC_Client::$calls) === 2, 'دریافت وجه بدون تحویل 
 $unpaid->status = 'completed';
 $unpaid->meta[LMC_Order_Sync::META_PAYLOAD] = ['branchId' => 'b', 'warehouseId' => 'w', 'externalId' => '2', 'lines' => [['sku' => 'SKU-1', 'qty' => '2', 'unitPrice' => '10']], 'paymentRef' => 'RECEIPT-2', 'paymentMethod' => 'cash'];
 $unpaid->meta[LMC_Order_Sync::META_LINES] = [1 => 1];
-// با API قدیمی پیش از POST متوقف می‌شود؛ حتی اگر تأیید مالی موجود باشد.
-LMC_Client::$connection['features']['codReservations'] = false;
-check(is_wp_error(LMC_Order_Sync::check_discount_support(['branchId' => 'b', 'warehouseId' => 'w', 'lines' => [], 'codDelivered' => true])), 'API قدیمی اجازه خروج COD نمی‌گیرد');
+// A missing dedicated route must stop the operation without downgrading it.
+LMC_Client::$result = new WP_Error('permanent', 'missing route');
 $orders[3] = new WC_Order(3);
 LMC_Order_Reservation::changed(3); run_reservation(3);
-check(count(LMC_Client::$calls) === 2 && $orders[3]->get_meta(LMC_Order_Reservation::ERROR) !== '', 'API قدیمی پیش از POST رزرو متوقف می‌شود');
+check(count(LMC_Client::$calls) === 3 && $orders[3]->get_meta(LMC_Order_Reservation::ERROR) !== '', 'خطای مسیر رزرو ارسال را متوقف می‌کند');
 check(!wp_next_scheduled(LMC_Order_Reservation::EVENT, [3]), 'خطای قابلیت retry خودکار ندارد');
-LMC_Client::$connection['features']['codReservations'] = true;
 LMC_Client::$result = new WP_Error('network', 'قطع شبکه');
 LMC_Order_Reservation::retry($orders[3]); run_reservation(3);
 check((int) $orders[3]->get_meta(LMC_Order_Reservation::ATTEMPTS) === 1 && (bool) wp_next_scheduled(LMC_Order_Reservation::EVENT, [3]), 'خطای شبکه تلاش محدود دارد');
@@ -152,7 +149,7 @@ $unpaid->meta[LMC_Order_Sync::META_PAYLOAD]['paymentMethod'] = 'cash';
 LMC_Client::$result = ['invoiceId' => 'invoice-2', 'number' => 'F-2'];
 LMC_Order_Sync::retry($unpaid);
 $sent = LMC_Client::$calls[count(LMC_Client::$calls) - 1];
-check($sent[0] === '/web/orders' && $sent[1]['codDelivered'] === true && $sent[1]['paymentRef'] === 'RECEIPT-2', 'COD فقط با تحویل و مدرک قبلی پرداخت نهایی می‌شود');
+check($sent[0] === '/web/delivered-orders' && $sent[1]['codDelivered'] === true && $sent[1]['paymentRef'] === 'RECEIPT-2', 'COD فقط با تحویل و مدرک قبلی پرداخت نهایی می‌شود');
 check($unpaid->get_meta(LMC_Order_Sync::META_INVOICE) === 'invoice-2', 'فاکتور پاسخ قطعی ذخیره شد');
 $before_calls = count(LMC_Client::$calls);
 LMC_Order_Sync::send(2); LMC_Order_Reservation::changed(2);
@@ -188,13 +185,12 @@ foreach (['full', 'partial', 'free'] as $i => $kind) {
     $frozen = $refund->get_meta(LMC_Refund_Sync::PAYLOAD);
     LMC_Refund_Sync::send($id + 100);
     check(count(LMC_Client::$calls) === $calls, "$kind: مرجوعی پیش از رسیدن سند اصلی اثر ندارد");
-    LMC_Client::$connection['features']['explicitLineDiscount'] = true;
     LMC_Client::$result = ['invoiceId' => "invoice-$id", 'number' => "F-$id"];
     LMC_Order_Sync::send($id);
     $sent = LMC_Client::$calls[count(LMC_Client::$calls) - 1];
     check(count(LMC_Client::$calls) === $calls + 1 && $cod->get_meta(LMC_Order_Sync::META_INVOICE) === "invoice-$id", "$kind: سند اصلی پس از مرجوعی نیز می‌رسد");
     check($sent[1]['codDelivered'] === true && $sent[1]['paidAmount'] === $cod->total && $sent[1]['lines'] === [$line], "$kind: هویت اقلام و مبلغ وصول اصلی حفظ می‌شود");
-    check($sent[0] === ($kind === 'free' ? '/web/discounted-orders' : '/web/orders'), "$kind: مسیر تخفیف کامل صحیح است");
+    check($sent[0] === '/web/delivered-orders', "$kind: مسیر تخفیف کامل صحیح است");
     LMC_Client::$result = ['requestId' => "review-$id", 'status' => 'pending'];
     LMC_Refund_Sync::send($id + 100);
     check($refund->get_meta(LMC_Refund_Sync::STATUS) === 'pending' && $refund->get_meta(LMC_Refund_Sync::DONE) === '', "$kind: تأیید دستی مرجوعی همچنان لازم است");

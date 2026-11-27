@@ -9,10 +9,12 @@ if (is_multisite()) {
         foreach ($ids as $id) {
             switch_to_blog((int) $id);
             delete_option('labelmod_connector_push_secret');
+            delete_option('lmc_connection_check_status');
             restore_current_blog();
         }
         $offset += count($ids);
     } while (count($ids) === 100);
 } else {
     delete_option('labelmod_connector_push_secret');
+    delete_option('lmc_connection_check_status');
 }

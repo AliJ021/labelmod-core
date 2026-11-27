@@ -33,6 +33,8 @@ import {
   type ReturnService,
 } from "../sales/return.ts";
 import type { ShiftService } from "../sales/shift.ts";
+import { registerReturnApprovals } from "./return-approval-routes.ts";
+import { recordApproval } from "../sales/return-approval.ts";
 import { registerExchangeRoutes } from "./exchange-routes.ts";
 
 import { previewRefundPlan, splitRefundSchema } from "../sales/refund-plan.ts";
@@ -111,6 +113,7 @@ export interface ReturnRouteDeps {
 export function registerReturnRoutes(app: FastifyInstance, deps: ReturnRouteDeps): void {
   const { db, returns } = deps;
   registerExchangeRoutes(app, deps);
+  registerReturnApprovals(app,db);
 
   const session = (req: { session: unknown }) => {
     const s = req.session as ResolvedSession | null;
@@ -221,14 +224,14 @@ export function registerReturnRoutes(app: FastifyInstance, deps: ReturnRouteDeps
           await sql`UPDATE sales.sale_return SET shipping_amount=sales.return_shipping_remaining(${body.invoiceId}::uuid)
             WHERE id=${id}::uuid`.execute(trx);
         if (body.warehouseId) await sql`SELECT sales.set_return_warehouse(${id}::uuid,${body.warehouseId}::uuid,${s.userId}::uuid)`.execute(trx);
-        await returns.postIn(trx, id, s.userId, body.splitRefund);
+        await returns.postIn(trx, id, s.userId, body.splitRefund,key);
         if (body.fullCancellation) {
           await sql`SELECT platform.audit('invoice.full_cancellation','sale_return',${id}::text,
             jsonb_build_object('invoice',${body.invoiceId}::uuid),${s.userId}::uuid,${body.reasonNote ?? null})`.execute(trx);
         }
         return { value: id, ref: id };
       }, replay: async ref => ref,
-    });
+    }).catch(err=>recordApproval(db,err));
     if (!out.replayed) wakeStockWorker(db, req.log);
     return { ...returnToJson((await returns.byId(out.value))!, await seesCost(s)), replayed: out.replayed };
   });
@@ -239,7 +242,11 @@ export function registerReturnRoutes(app: FastifyInstance, deps: ReturnRouteDeps
     const inbox = await db.selectFrom("platform.inbox_message").select(["result_ref", "payload"])
       .where("source", "=", `api.return.commit.${s.userId}`).where("event_id", "=", key).executeTakeFirst();
     if (inbox && (inbox.payload as { abandoned?: boolean })?.abandoned) return { status: "abandoned" };
-    if (!inbox?.result_ref) return { status: "not_found" };
+    if (!inbox?.result_ref) {
+      const record=(await sql<{status:string}>`SELECT a.status FROM sales.return_approval r JOIN identity.approval_request a USING(id)
+        WHERE r.actor_id=${s.userId}::uuid AND r.intent=${key}`.execute(db)).rows[0];
+      return {status:record ? "approval_"+record.status : "not_found"};
+    }
     const r = await returns.byId(inbox.result_ref);
     if (!r) return { status: "not_found" };
     await assertBranch(db, s.userId, r.branchId);
@@ -436,14 +443,14 @@ export function registerReturnRoutes(app: FastifyInstance, deps: ReturnRouteDeps
       payload: { returnId: id },
       run: async (trx) => {
         if (r.status !== "posted") await requireManualReturnChannel(trx, r.invoiceId);
-        const number = await returns.postIn(trx, id, s.userId);
+        const number = await returns.postIn(trx, id, s.userId,undefined,"draft:"+id);
         return { value: { number }, ref: id };
       },
       replay: async (ref) => {
         const done = await returns.byId(ref);
         return { number: done?.number ?? "" };
       },
-    });
+    }).catch(err=>recordApproval(db,err));
 
     if (!out.replayed) wakeStockWorker(db, req.log);
     const posted = await returns.byId(id);

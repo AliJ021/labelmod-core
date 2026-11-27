@@ -9,6 +9,7 @@ import { TabList, TabPanels, useTabsId } from "../components/Tabs.tsx";
 import { Icon } from "../components/Icon.tsx";
 import { SectionHeader } from "../components/ui/PageHeader.tsx";
 import { useUrlTab } from "../lib/use-url-state.ts";
+import { FullReturnApprovals } from "./FullReturnApprovals.tsx";
 import { WebRefundRequests } from "./WebRefundRequests.tsx";
 import { api, ApiError } from "../lib/api.ts";
 import { SafeAction } from "../components/ui/SafeAction.tsx";
@@ -58,7 +59,7 @@ function message(err: unknown): string {
 const RETURN_TABS = [
   { key: "returns", label: "مرجوعی" },
   { key: "exchanges", label: "تعویض" },
-  { key: "web", label: "درخواست‌های سایت" },
+  { key: "web", label: "درخواست‌های تأیید" },
 ] as const;
 const RETURN_TAB_ITEMS = RETURN_TABS.map(t => ({ ...t, icon: <Icon name={t.key === "returns" ? "return" : t.key === "exchanges" ? "swap" : "external"} size="sm" /> }));
 
@@ -71,7 +72,7 @@ export function Returns({ linkedId, action, onPosted }: { linkedId?:string; acti
 
   const [number, setNumber] = useState("");
   const [lookupKind, setLookupKind] = useState<"number" | "phone">("number");
-  // طرح ۱۰: سه زبانه؛ «مرجوعی» و «تعویض» همان فرم فاکتور را با دو حالت دارند و «درخواست‌های سایت» صف بررسی است.
+  // طرح ۱۰: سه زبانه؛ «مرجوعی» و «تعویض» همان فرم فاکتور را با دو حالت دارند و «درخواست‌های تأیید» درخواست‌های سایت و ابطال فروشگاه را نشان می‌دهد.
   // تا عملیاتی در راه است زبانه عوض نمی‌شود (همان قفل دکمه‌های پیشین).
   const [urlTab, setTabRaw] = useUrlTab("returns.tab", RETURN_TABS, "returns");
   const tab = linkedId ? (action === "edit" ? "exchanges" : "returns") : urlTab;
@@ -246,7 +247,7 @@ export function Returns({ linkedId, action, onPosted }: { linkedId?:string; acti
     <div className="stack" style={{ gap: "var(--s-4)" }}>
       {!linkedId && <TabList id={tabsId} items={RETURN_TAB_ITEMS} value={tab} onChange={k => { if (!operation.pending) setTabRaw(k); }} label="مرجوعی و تعویض" />}
       <TabPanels id={tabsId} items={RETURN_TAB_ITEMS} value={tab} className="stack returns-panel">
-      {tab === "web" ? <WebRefundRequests key={branchId} branchId={branchId} /> : <>
+      {tab === "web" ? <div className="stack" key={branchId}><FullReturnApprovals branchId={branchId}/><WebRefundRequests branchId={branchId} /></div> : <>
       {error ? (
         <p className="solid pos-alert" role="alert">
           <span className="dot dot--crit" aria-hidden="true">●</span> {error}

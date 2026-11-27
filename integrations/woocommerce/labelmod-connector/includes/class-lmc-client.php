@@ -93,11 +93,17 @@ class LMC_Client
 
         $start = hrtime(true);
         $res = wp_safe_remote_request($url, $args);
-        if ($timings !== null && !is_wp_error($res)) {
+        if ($timings !== null) {
             $sample = ['http' => (hrtime(true) - $start) / 1e6];
-            $server = wp_remote_retrieve_header($res, 'server-timing');
+            $server = is_wp_error($res) ? '' : wp_remote_retrieve_header($res, 'server-timing');
             if (is_string($server) && preg_match('/(?:^|,)\s*lmc;dur=([0-9]+(?:\.[0-9]+)?)(?:\s*,|$)/', $server, $m)) {
                 $sample['core'] = (float) $m[1];
+            }
+            if (is_string($server)) {
+                preg_match_all('/(?:^|,)\s*(access|inbox|stocklock|draft|lines|settle|finalize|commit|replay|ack);dur=([0-9]+(?:\.[0-9]+)?)(?=\s*(?:,|$))/', $server, $metrics, PREG_SET_ORDER);
+                foreach ($metrics as $metric) {
+                    $sample['stages'][$metric[1]] = (float) $metric[2];
+                }
             }
             $timings[] = $sample;
         }

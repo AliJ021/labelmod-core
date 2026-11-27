@@ -24,7 +24,8 @@
  *    یک پیام‌رسان باز شود و خزنده‌اش دنبالش کند. فاکتور مشتری نباید
  *    در گوگل پیدا شود.
  */
-import type { FastifyInstance } from "fastify";
+import { receiptMobile, registerCustomerReceipts } from "./customer-receipts.ts";
+import type { FastifyInstance, FastifyReply, FastifyRequest } from "fastify";
 import { z } from "zod";
 import { sql } from "kysely";
 import type { Db } from "../db/client.ts";
@@ -38,7 +39,7 @@ import {
 } from "../sales/invoice-page.ts";
 
 /** مسیرهایی که این ماژول ثبت می‌کند و باید در فهرست عمومی باشند. */
-export const PUBLIC_ROUTE_PATHS = ["/i/:token"] as const;
+export const PUBLIC_ROUTE_PATHS = ["/i/:token", "/customer-receipts", "/customer-receipts/start", "/customer-receipts/verify","/customer-receipts/logout","/customer-receipts/view/:id"] as const;
 
 const tokenParam = z.object({
   // همان الفبای base64url که `ensure_public_token` می‌سازد. طول ثابت
@@ -48,6 +49,8 @@ const tokenParam = z.object({
 });
 
 interface Row {
+  id: string;
+  allowed: boolean;
   number: string;
   occurred_at: Date;
   customer_name: string | null;
@@ -64,19 +67,34 @@ interface Row {
   site_url: string | null;
 }
 
-export function registerPublicRoutes(app: FastifyInstance, deps: { db: Db }): void {
+export function registerPublicRoutes(app: FastifyInstance, deps: { db: Db; master?: string | undefined }): void {
   const { db } = deps;
+  registerCustomerReceipts(app,db,deps.master);
 
   // تنها مسیر محتوایی بی‌نشست: سقف نرخ به‌ازای IP (یافتهٔ ممیزی LM-23).
   // توکن ۲۴ بایتی حدس‌زدنی نیست؛ این سقف جلوی پیمایش انبوه و بار بی‌حساب را
   // می‌گیرد. شصت در دقیقه برای مشتری‌ای که لینک پیامکش را باز می‌کند بس است.
-  app.get("/i/:token", { config: { rateLimit: { max: 60, timeWindow: "1 minute" } } }, async (req, reply) => {
-    const parsed = tokenParam.safeParse(req.params);
+  const limits = {config:{rateLimit:{max:60,timeWindow:"1 minute"}}};
+  app.get("/i/:token",limits,async(req,reply)=>{
+    const parsed=tokenParam.safeParse(req.params);
     if (!parsed.success) return notFound(reply);
-    const { token } = parsed.data;
+    return render(req,reply,parsed.data.token,null);
+  });
+  app.get("/customer-receipts/view/:id",limits,async(req,reply)=>{
+    const id=z.object({id:z.uuid()}).safeParse(req.params);
+    if (!id.success) return notFound(reply);
+    return render(req,reply,null,id.data.id);
+  });
+  async function render(req:FastifyRequest,reply:FastifyReply,token:string|null,id:string|null) {
+    const mobile=await receiptMobile(db,req);
+    if(id && !mobile)return notFound(reply);
+
 
     const head = await sql<Row>`
-      SELECT sales.invoice_display_number(i.id) AS number, i.occurred_at,
+      SELECT i.id, (c.mobile_normalized=${mobile} OR (i.public_token IS NOT NULL AND
+        clock_timestamp()<coalesce(i.public_token_issued_at, (SELECT introduced_at FROM platform.receipt_link_policy WHERE singleton))
+        +make_interval(days=>platform.setting_text('receipt.link_days','30')::int))) IS TRUE AS allowed,
+             sales.invoice_display_number(i.id) AS number, i.occurred_at,
              coalesce(i.receipt_customer_name,c.full_name) AS customer_name,
              i.net_amount::text, i.tax_amount::text, i.shipping_amount::text,
              i.payable_amount::text, i.paid_amount::text,
@@ -94,7 +112,7 @@ export function registerPublicRoutes(app: FastifyInstance, deps: { db: Db }): vo
              platform.setting_text('web.site_url', '') AS site_url
         FROM sales.invoice i
         LEFT JOIN sales.customer c ON c.id = i.customer_id
-       WHERE i.public_token = ${token}
+       WHERE ${id ? sql`i.id=${id}::uuid AND c.mobile_normalized=${mobile}` : sql`i.public_token=${token}`}
          -- فقط سند واقعی. پیش‌نویس هنوز سبد است و باطل‌شده دیگر سند
          -- نیست؛ هیچ‌کدام نباید مثل فاکتور معتبر دیده شوند.
          AND i.status IN ('finalized','paid','partially_returned','returned')
@@ -102,6 +120,7 @@ export function registerPublicRoutes(app: FastifyInstance, deps: { db: Db }): vo
 
     const row = head.rows[0];
     if (!row) return notFound(reply);
+    if (!row.allowed) return reply.header("Cache-Control","no-store").header("Referrer-Policy","no-referrer").redirect("../customer-receipts",303);
 
     const lines = await sql<{
       product_name: string;
@@ -120,7 +139,7 @@ export function registerPublicRoutes(app: FastifyInstance, deps: { db: Db }): vo
         JOIN sales.invoice    i ON i.id = l.invoice_id
         JOIN catalog.variation v ON v.id = l.variation_id
         JOIN catalog.product   p ON p.id = v.product_id
-       WHERE i.public_token = ${token}
+       WHERE i.id = ${row.id}::uuid
        ORDER BY l.line_no
     `.execute(db);
 
@@ -163,7 +182,7 @@ export function registerPublicRoutes(app: FastifyInstance, deps: { db: Db }): vo
       // و نباید در Cache واسط بماند: لینک عمومی است ولی محتوا شخصی.
       .header("cache-control", "private, no-store")
       .send(html);
-  });
+  }
 }
 
 /**

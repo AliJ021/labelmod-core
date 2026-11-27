@@ -13,7 +13,7 @@ name: labelmod
 
 services:
   db:
-    image: postgres:16-alpine
+    image: postgres:16-alpine@sha256:f2f98726820d0342055351c6e9d36e705f5bfffb3dd53ff556325114b08afb6d
     environment:
       POSTGRES_DB: labelmod
       POSTGRES_USER: labelmod
@@ -116,6 +116,7 @@ services:
     environment:
       OPS_DATABASE_URL: postgres://labelmod:${DB_PASSWORD:?DB_PASSWORD لازم است}@db:5432/labelmod
     volumes:
+      - ${BALE_CONFIG_DIR:-./private/bale}:/run/labelmod-bale:ro
       - panel_backup_files:/var/lib/labelmod-panel-backup
       - panel_backup_channel:/run/labelmod-panel-backup
     depends_on:

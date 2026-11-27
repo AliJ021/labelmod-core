@@ -154,7 +154,7 @@ export interface TickResult {
  *    اصلاً کاری ندارد». برای موضوعی که کانال دیگری هم دارد (Webhook،
  *    Push سایت) این **غلط** است و پیام را بی‌صدا می‌بلعد.
  */
-const SMS_ONLY_TOPICS = new Set(["invoice.finalized", "cheque.due"]);
+const SMS_ONLY_TOPICS = new Set(["invoice.finalized", "cheque.due", "manager.digest"]);
 
 /**
  * تولیدکننده‌ها: هشدار چک، زنگ سلامت و انقضای رزرو اینستاگرام. هر سه روزانه یا
@@ -165,6 +165,15 @@ export async function runProducers(
 ): Promise<Pick<TickResult, "enqueuedCheques" | "enqueuedAlerts" | "expiredInstagram">> {
   const result = { enqueuedCheques: 0, enqueuedAlerts: 0, expiredInstagram: 0 };
   // هشدار چک: تولید پیام؛ دور مصرفِ بعدی می‌فرستدش.
+  await sql`WITH day AS (
+    INSERT INTO platform.manager_digest(report_date)
+    SELECT platform.business_date()-1 FROM platform.melipayamak_credential WHERE singleton AND digest_enabled
+      AND platform.setting_text('notify.sms_enabled','false')='true'
+      AND platform.setting_text('notify.sms_provider','log')='melipayamak'
+    ON CONFLICT DO NOTHING RETURNING report_date
+  ) INSERT INTO platform.outbox_message(topic,payload)
+    SELECT 'manager.digest',jsonb_build_object('date',report_date) FROM day`.execute(opts.db);
+  await sql`DELETE FROM platform.receipt_access WHERE created_at<now()-interval '1 day'`.execute(opts.db);
   const cheques = await sql<{ n: number }>`
     SELECT treasury.enqueue_due_cheque_alerts() AS n
   `.execute(opts.db);

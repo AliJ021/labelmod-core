@@ -1,6 +1,7 @@
 import { readPrivateKey } from "../lib/private-key-file.ts";
 import { request } from "node:http";
 import type { FastifyInstance, FastifyRequest } from "fastify";
+import { sql } from "kysely";
 import { z } from "zod";
 import type { Db } from "../db/client.ts";
 import type { Config } from "../lib/config.ts";
@@ -24,6 +25,15 @@ export function registerBackupRoutes(app:FastifyInstance,db:Db,config:Config) {
       call.setTimeout(65000,()=>call.destroy());call.end(data);
     });
   }
+  app.get("/backups/bale",async(req,reply)=>{
+    await guard(req,"backup.view");
+    reply.header("Cache-Control","no-store");
+    const history=await sql<{day:string;state:string;detail:string|null;deliveredAt:string|null}>`SELECT due_day::text AS day,state,detail,delivered_at AS "deliveredAt"
+      FROM platform.bale_backup ORDER BY due_day DESC LIMIT 7`.execute(db);
+    const schedule=(await sql<{enabled:boolean;hour:number;minute:number}>`SELECT platform.setting_text('backup.bale_enabled','false')::boolean AS enabled,
+      platform.setting_text('backup.bale_hour','0')::int AS hour,platform.setting_text('backup.bale_minute','0')::int AS minute`.execute(db)).rows[0];
+    return {schedule,history:history.rows};
+  });
   app.get("/backups",async(req,reply)=>{
     await guard(req,"backup.view");reply.header("Cache-Control","no-store");
     if(!config.BACKUP_MANAGER_SOCKET || !(config.BACKUP_MANAGER_TOKEN || config.BACKUP_MANAGER_TOKEN_FILE)) return {available:false,backups:[],jobs:[],needsRecovery:false};

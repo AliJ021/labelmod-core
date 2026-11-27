@@ -50,3 +50,18 @@ test("MelliPayamak settings respect permission and missing secure storage", asyn
   await expect(page.getByRole("button", { name: "ذخیرهٔ اتصال ملی‌پیامک", exact: true })).toBeDisabled();
   expect(api.calls.filter(c => c.startsWith("PUT /settings/melipayamak-credential"))).toHaveLength(0);
 });
+
+test("keyboard and touch expose pattern instructions and the report follows the owner's order",async({page,api})=>{
+  api.defaults["GET /settings"]={groups:[{key:"notify",title:"اعلان‌ها",subtitle:null,settings:[]}]};
+  api.defaults["GET /settings/melipayamak-credential"]={accountName:"",hasKey:false,revision:1,storageReady:true,canEdit:true,
+    digestCopy:"فروش {حضوری}"};
+  await page.goto("/");await openZone(page,"تنظیمات");
+  const help=page.getByRole("button",{name:"راهنمای الگوی خدماتی"});
+  await help.focus();
+  await expect(page.getByRole("tooltip")).toBeVisible();
+  await help.press("Escape");await expect(page.getByRole("tooltip")).toHaveCount(0);
+  await help.click();await expect(page.getByRole("tooltip")).toBeVisible();
+  await page.getByLabel("متن و ترتیب عددها").fill("جمع {جمع} و سایت {سایت}");
+  await expect(page.getByText("جمع ۱٬۵۰۰٬۰۰۰ و سایت ۴۰۰٬۰۰۰")).toBeVisible();
+  await expect(page.getByText("جمع {0} و سایت {1}")).toBeVisible();
+});

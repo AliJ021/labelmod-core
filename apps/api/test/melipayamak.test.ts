@@ -89,11 +89,26 @@ test("panel uses account credentials and the receipt pattern; credit probe never
     assert.equal(params.get("username"), "shop");
     assert.equal(params.get("password"), config.apiKey);
     if (url.endsWith("GetCredit")) return Response.json({ RetStatus: 1, Value: "0" });
-    assert.equal(params.get("text"), "23;12500;https://example.com/i/x");
+    assert.equal(params.get("text"), "23;12500");
     assert.equal(params.get("bodyId"), "12");
     return Response.json({ RetStatus: 1, Value: "987654321" });
   });
   assert.equal(await meliCredit(connection), 0);
-  await makeSender(connection).send(to, "unused", { purpose: "invoice", args:["23","12500","https://example.com/i/x"] });
+  await makeSender(connection).send(to, "unused", { purpose: "invoice", args:["23","12500"] });
   assert.deepEqual(calls.map(url=>url.split("/").at(-1)), ["GetCredit","BaseServiceNumber"]);
+});
+
+test("manager alerts use the selected shared patterns without a sender line", async t=>{
+  const calls: Array<{bodyId:number;args:string[]}>=[];
+  t.mock.method(globalThis,"fetch",async(url:string,init:RequestInit)=>{
+    assert.ok(url.includes("/send/shared/"));
+    calls.push(JSON.parse(String(init.body)));
+    return Response.json({recId:"3741437414",status:""});
+  });
+  const sender=makeSender({...config,sender:"",chequePattern:31,healthPattern:32});
+  await sender.send(to,"آزمون",{purpose:"cheque",args:["دریافتی","500,000","امروز سررسید است"]});
+  await sender.send(to,"آزمون",{purpose:"health",args:["بکاپ دیر شده","1"]});
+  assert.deepEqual(calls.map(({bodyId,args})=>[bodyId,args]),[
+    [31,["دریافتی","500,000","امروز سررسید است"]],[32,["بکاپ دیر شده","1"]]
+  ]);
 });

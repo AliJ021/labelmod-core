@@ -24,6 +24,7 @@
  * - «تغییر ذخیره‌نشده» روی ردیف و شمارش آن روی گروه، به‌علاوهٔ «بازگردانی»؛
  *   و هشدار مرورگر هنگام ترک صفحه با پیش‌نویس باز.
  */
+import {HelpHint} from "../components/ui/HelpHint.tsx";
 import { useCallback, useEffect, useId, useState } from "react";
 import { Solid } from "../components/Glass.tsx";
 import { AmountInput } from "../components/ui/AmountInput.tsx";
@@ -272,10 +273,11 @@ function Row({ setting, onSaved, onDirty }: { setting: Setting; onSaved: (s: Set
 
   return <div className={`set-row${dirty ? " is-dirty" : ""}`} data-setting={setting.key}>
     <div className="set-row-meta">
+      <div className="set-row-name">{setting.help && <HelpHint label={setting.label} descriptionId={hintId}>{setting.help}</HelpHint>}
       {setting.kind === "bool"
         ? <span className="set-label" aria-hidden="true">{setting.label}</span>
         : setting.kind === "multichoice" ? <span className="set-label">{setting.label}</span>
-        : <label className="set-label" htmlFor={id}>{setting.label}</label>}
+        : <label className="set-label" htmlFor={id}>{setting.label}</label>}</div>
       <Ltr><span className="set-key">{setting.key}</span></Ltr>
       {!setting.canEdit ? <LockNote text={setting.isEditable ? "دسترسی ندارید" : "قفل‌شده"} /> : null}
       {setting.requiresApproval ? <span className="set-flag">نیازمند دلیل و تأیید</span> : null}
@@ -283,7 +285,6 @@ function Row({ setting, onSaved, onDirty }: { setting: Setting; onSaved: (s: Set
     <div className="set-row-control">
       <Control setting={setting} id={id} value={draft} disabled={locked} describedBy={describedBy} invalid={fieldError !== null}
         onChange={change} onBlur={() => setTouched(true)} />
-      {setting.help ? <p id={hintId} className="set-help">{setting.help}</p> : null}
       {fieldError ? <p id={errorId} className="field-error" role="alert">{fieldError}</p> : null}
 
       {setting.canEdit && dirty && needsReason ? <div className="field set-reason">

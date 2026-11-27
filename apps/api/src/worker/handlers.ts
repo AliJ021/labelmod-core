@@ -25,6 +25,8 @@ import { z } from "zod";
 import type { Db } from "../db/client.ts";
 import { parseMoney } from "../lib/money.ts";
 import { toToman } from "../sales/invoice-page.ts";
+import { deliverReceiptOtp } from "../http/customer-receipts.ts";
+import { sendManagerDigest } from "./digest.ts";
 import { invoiceText } from "./sms-copy.ts";
 import { SmsError, toLocalMobile, type SmsSender } from "./sms.ts";
 import type { NotifySettings } from "./settings.ts";
@@ -91,9 +93,18 @@ export async function handleInvoiceFinalized(
     payable_amount: string;
     mobile: string | null;
     consent: boolean | null;
+    channel: string;
+    web_receipt: boolean;
+    fully_paid: boolean;
     shop_name: string | null;
   }>`
     SELECT sales.invoice_display_number(i.id) AS number, i.payable_amount::text,
+           i.status IN ('paid','finalized') AND i.payable_amount <=
+             coalesce((SELECT sum(CASE WHEN p.direction='in' THEN p.amount ELSE -p.amount END)
+               FROM treasury.payment p JOIN treasury.payment_method m ON m.code=p.method_code
+               WHERE p.invoice_id=i.id AND m.kind<>'credit' AND p.status IN ('succeeded','settled','reconciled')),0)
+               +sales.exchange_in(i.id) AS fully_paid,
+           i.channel, coalesce((SELECT value='true'::jsonb FROM platform.setting WHERE key='notify.accounting_web_receipt'),false) AS web_receipt,
            c.mobile_normalized AS mobile,
            c.consent_sms       AS consent,
            (SELECT b.name FROM platform.branch b WHERE b.id = i.branch_id) AS shop_name
@@ -107,6 +118,8 @@ export async function handleInvoiceFinalized(
     // فاکتور رفته ولی پیامش مانده. تلاش دوباره چیزی را برنمی‌گرداند.
     throw new SmsError("فاکتور یافت نشد", true);
   }
+  const meliReceipt = ctx.settings.provider === "melipayamak";
+  const sendSms = (row.channel !== "web" || row.web_receipt) && (!meliReceipt || row.fully_paid);
   if (!row.number) return { done: true, note: "فاکتور شماره ندارد" };
 
   // فروش ناشناس عادی است — بیشتر فروش صندوق همین است.
@@ -145,15 +158,23 @@ export async function handleInvoiceFinalized(
   const amount = toToman(parseMoney(row.payable_amount));
   const link = `${ctx.settings.publicUrl}/i/${token}`;
 
-  const sendReceipt = () => ctx.sms.send(to, invoiceText(shop, row.number!, String(amount), link),
-    { purpose: "invoice", args: [String(row.number), String(amount), link] });
+  const fixedLink = ctx.settings.webSiteUrl ? ctx.settings.webSiteUrl + "/?labelmod_receipts=1" : ctx.settings.publicUrl + "/customer-receipts";
+  const text = invoiceText(shop, row.number, String(amount), meliReceipt ? fixedLink : link);
+  const sendReceipt = (bodyId?:number|null) => ctx.sms.send(to, text,
+    { purpose: "invoice", args: [String(row.number), String(amount)], ...(bodyId===undefined?{}:{bodyId}) });
 
-  if (ctx.settings.provider === "melipayamak") {
-    const claim = await sql`INSERT INTO platform.invoice_sms_dispatch(invoice_id,state)
-      VALUES(${invoiceId}::uuid,'sending') ON CONFLICT DO NOTHING RETURNING invoice_id`.execute(ctx.db);
+  if (sendSms && ctx.settings.provider === "melipayamak") {
+    const pattern = (await sql<{id:number|null;copy:string}>`SELECT invoice_pattern AS id,invoice_copy AS copy
+      FROM platform.melipayamak_credential WHERE singleton`.execute(ctx.db)).rows[0];
+    if (pattern?.id && /\{(?![01]\})/.test(pattern.copy)) {
+      throw new SmsError("پترن قدیمی رسید را با دو متغیر شماره و مبلغ و نشانی ثابت فروشگاه جایگزین کنید",true);
+    }
+    const rendered = pattern?.id ? (pattern.copy ? pattern.copy.replace(/\{([01])\}/g, (_, n:string) => n==="0" ? row.number! : String(amount)) : null) : text;
+    const claim = await sql`INSERT INTO platform.invoice_sms_dispatch(invoice_id,state,rendered,pattern_id)
+      VALUES(${invoiceId}::uuid,'sending',${rendered},${pattern?.id ?? null}) ON CONFLICT DO NOTHING RETURNING invoice_id`.execute(ctx.db);
     if (claim.rows.length) {
       let reference;
-      try { reference = await sendReceipt(); }
+      try { reference = await sendReceipt(pattern?.id ?? null); }
       catch (error) {
         if (error instanceof SmsError && error.uncertain) {
           await sql`UPDATE platform.invoice_sms_dispatch SET state='unknown',updated_at=now() WHERE invoice_id=${invoiceId}::uuid`.execute(ctx.db);
@@ -168,7 +189,7 @@ export async function handleInvoiceFinalized(
       const prior = await sql<{state:string}>`SELECT state FROM platform.invoice_sms_dispatch WHERE invoice_id=${invoiceId}::uuid`.execute(ctx.db);
       if (prior.rows[0]?.state !== "accepted") throw new SmsError("نتیجهٔ تلاش قبلی پیامک مشخص نیست؛ گزارش ملی‌پیامک را بررسی کنید", true);
     }
-  } else {
+  } else if (sendSms) {
     await sendReceipt();
   }
 
@@ -239,6 +260,7 @@ export async function handleChequeDue(
     to,
     `چک ${dir} ${no}${party ? ` — ${party}` : ""}\n` +
       `مبلغ: ${amount} تومان\n${when}.`,
+    {purpose:"cheque",args:[dir,String(amount),when]},
   );
 
   return { done: true, note: "اطلاع‌رسانی چک انجام شد" };
@@ -303,6 +325,7 @@ export async function handleHealthAlert(
       to,
       `${mark} ${title}\nتعداد: ${count.toLocaleString("fa-IR")}` +
         (detail === "" || detail === "—" ? "" : `\n${detail}`),
+      {purpose:"health",args:[title,String(count)]},
     );
   }
 
@@ -388,6 +411,8 @@ export const HANDLERS: Record<
     return { done: true, note: "درخواست کد ورود پردازش شد" };
   },
   "invoice.finalized": handleInvoiceFinalized,
+  "manager.digest": sendManagerDigest,
+  "customer.receipt_otp": deliverReceiptOtp,
   "cheque.due": handleChequeDue,
   "health.alert": handleHealthAlert,
   "web.stock_push": handleWebPush,

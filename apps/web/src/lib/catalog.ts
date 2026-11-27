@@ -182,6 +182,8 @@ export function splitList(raw: string): string[] {
 export interface CatalogSummary { activeProducts: number; activeVariations: number; inventoryValue: string | null; pricesLast30Days: number }
 
 export const catalog = {
+  attributeTerms:(request?:RequestOptions)=>api.get<Array<{kind:"color"|"size";label:string}>>("/catalog/attribute-terms",request),
+  saveAttribute:(kind:"color"|"size",label:string)=>api.post("/catalog/attribute-terms",{kind,label}),
   summary: (request?: RequestOptions) => api.get<CatalogSummary>("/products/summary", request),
   products: (opts: { search?: string; status?: string; categoryId?: string; sort?: string; page?: number } = {}, request?: RequestOptions) => {
     const q = new URLSearchParams();

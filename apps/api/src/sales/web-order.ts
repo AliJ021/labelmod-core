@@ -59,6 +59,7 @@ export interface WebOrderInput {
   paymentRef?: string | undefined;
   /** مبلغی که درگاه واقعاً گرفته. */
   paidAmount: bigint;
+  siteTotals?:{tax:string;total:string};
   note?: string | undefined;
   actorId: string;
   codDelivered?: boolean | undefined;
@@ -166,7 +167,8 @@ export class WebOrderService {
    * `shippingAmount` روی سرآیند فاکتور می‌نشیند، نه به‌عنوان یک قلم:
    * کرایه ارسال کالا نیست و نباید در گزارش «چه فروختیم» بیاید.
    */
-  async ingest(trx: Transaction<Database>, input: WebOrderInput, authorize?: LineAdditionAuthorizer): Promise<string> {
+  async ingest(trx: Transaction<Database>, input: WebOrderInput, authorize?: LineAdditionAuthorizer,
+    mark?: (stage: string) => void): Promise<string> {
     if (input.lines.length === 0) {
       throw new InvoiceError("empty_order", "سفارش بدون قلم ثبت نمی‌شود", 422);
     }
@@ -179,6 +181,8 @@ export class WebOrderService {
     await sql`SELECT inventory.web_order_reserve(${input.actorId}::uuid, ${input.externalId},
       ${input.branchId}::uuid, ${input.warehouseId}::uuid, ${reservationLines}::jsonb,
       'lock', ${input.codDelivered ?? false})`.execute(trx);
+
+    mark?.("stocklock");
 
     // `null` از `resolveCustomer` یعنی «تلفن بی‌معنا بود» و با «تلفن
     // نفرستاد» یک‌طور رفتار می‌شود: فروش ناشناس، نه مشتریِ مشترک.
@@ -195,6 +199,7 @@ export class WebOrderService {
       ...(customerId === undefined ? {} : { customerId }),
     });
 
+    mark?.("draft");
     // Validate the SKU mapping again after the inventory locks. One query covers the entire basket.
     const ids = await this.resolveSkus(trx,skus);
     for (const line of input.lines) {
@@ -215,6 +220,7 @@ export class WebOrderService {
       }, authorize);
     }
 
+    mark?.("lines");
     if (input.shippingAmount > 0n) {
       await trx
         .updateTable("sales.invoice")
@@ -224,6 +230,12 @@ export class WebOrderService {
       // جمع‌ها را دیتابیس می‌سازد، نه ما: `payable_amount` باید
       // کرایه را هم در خودش داشته باشد.
       await sql`SELECT sales.refresh_invoice_totals(${invoiceId}::uuid)`.execute(trx);
+    }
+
+    if(input.siteTotals){
+      const calculated=await trx.selectFrom("sales.invoice").select(["tax_amount","payable_amount"]).where("id","=",invoiceId).executeTakeFirstOrThrow();
+      if(parseMoney(calculated.tax_amount)!==parseMoney(input.siteTotals.tax) || parseMoney(calculated.payable_amount)!==parseMoney(input.siteTotals.total))
+        throw new InvoiceError("woo_totals_mismatch","مالیات یا جمع نهایی سفارش با حسابداری برابر نیست. نرخ مالیات، هزینه‌های سفارش و کرایه را تطبیق دهید.",422);
     }
 
     // پس از Snapshot قیمت و پیش از دریافت/خروج، سهم همین سفارش آزاد می‌شود.
@@ -271,6 +283,7 @@ export class WebOrderService {
     // نهایی‌سازی: کالا از انبار خارج می‌شود و شماره فاکتور می‌خورد.
     // سند درآمد و COGS اینجا زده نمی‌شود — کار `sales.post_batch()`
     // در بستن شبانه دوره کانال است (ADR-003).
+    mark?.("settle");
     await this.#invoices.finalizeIn(trx, invoiceId, input.actorId);
 
     if (input.note) {
@@ -281,6 +294,7 @@ export class WebOrderService {
         .execute();
     }
 
+    mark?.("finalize");
     return invoiceId;
   }
 }

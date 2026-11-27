@@ -7,6 +7,7 @@
  * هر دو خلاف قاعده‌اند؛ راه درست یک ردیف تازه در داده است.
  */
 import type { FastifyInstance } from "fastify";
+import { sql } from "kysely";
 import { z } from "zod";
 import { AuthError } from "../auth/service.ts";
 import { requireForSession } from "../auth/permission.ts";
@@ -126,6 +127,27 @@ export function registerCatalogRoutes(
     if (!s) throw new AuthError("no_session", "وارد نشده‌اید");
     return s;
   };
+
+  app.get("/catalog/attribute-terms",async req=>{
+    await requireForSession(db,session(req),"catalog.manage");
+    const terms=await sql<{kind:"color"|"size";label:string}>`WITH terms(kind,label,priority) AS (
+      SELECT kind,label,0 FROM catalog.attribute_term UNION ALL
+      SELECT 'color',btrim(color),1 FROM catalog.variation WHERE color IS NOT NULL UNION ALL
+      SELECT 'size',btrim(size),1 FROM catalog.variation WHERE size IS NOT NULL
+    ) SELECT DISTINCT ON(kind,lower(translate(label,'يك','یک'))) kind,label FROM terms
+      WHERE label<>'' ORDER BY kind,lower(translate(label,'يك','یک')),priority,label`.execute(db);
+    return terms.rows;
+  });
+  app.post("/catalog/attribute-terms",async req=>{
+    const actor=session(req);
+    await requireForSession(db,actor,"catalog.manage");
+    const {kind,label}=z.object({kind:z.enum(["color","size"]),label:z.string().trim().min(1).max(64).refine(v=>!CONTROL_CHARS.test(v)&&!/[،,؛;]/.test(v))}).strict().parse(req.body);
+    await db.transaction().execute(async tx=>{
+      const saved=await sql`INSERT INTO catalog.attribute_term(kind,label) VALUES(${kind},${label}) ON CONFLICT DO NOTHING RETURNING label`.execute(tx);
+      if(saved.rows.length) await sql`SELECT platform.audit('catalog.attribute.create','attribute_term',${kind+":"+label},NULL,${actor.userId}::uuid)`.execute(tx);
+    });
+    return {ok:true};
+  });
 
   // فقط قاب خالی با سیاست مستقل؛ بدون ذخیرهٔ داده، شناسهٔ چاپ یا پارامتر کالا در URL.
   app.get("/labels/frame", async (req, reply) => {

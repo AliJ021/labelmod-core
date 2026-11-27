@@ -30,6 +30,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { sql } from "kysely";
 import type { FastifyInstance } from "fastify";
+import {reconcileWooSnapshot} from "../src/operations/woo-reconciliation.ts";
 import { createDb, type DbHandle } from "../src/db/client.ts";
 import { createDisposableDb, type DisposableDb } from "./helpers/disposable-db.ts";
 import { AuthService } from "../src/auth/service.ts";
@@ -288,8 +289,9 @@ describe("سفارش سایت (ووکامرس)", { skip }, () => {
     await sql`SELECT inventory.apply_movement(${variationId}::uuid,${STORE_WH}::uuid,1,'opening',NULL,NULL,${SYSTEM_USER}::uuid,800000)`.execute(handle.db);
     const free = { ...base,externalId:`cod-free-${suffix}` };
     await reserve({ ...free,lines:[{sku:code,qty:"1"}] });
+    assert.equal((await order({ ...paid, ...free }, "/web/delivered-orders")).statusCode, 422);
     const zero = await order({ ...paid,...free,codDelivered:true,paidAmount:"0",
-      lines:[{sku:code,qty:"1",unitPrice:"2000000",discountAmount:"2000000"}] },"/web/discounted-orders");
+      lines:[{sku:code,qty:"1",unitPrice:"2000000",discountAmount:"2000000"}] },"/web/delivered-orders");
     assert.equal(zero.statusCode,201,zero.body);
     const payments = await handle.db.selectFrom("treasury.payment").select("id")
       .where("invoice_id","=",zero.json().invoiceId).execute();
@@ -861,13 +863,26 @@ describe("سفارش سایت (ووکامرس)", { skip }, () => {
     await sql`SELECT platform.set_setting('tax.enabled','true'::jsonb,'Tax regression',${SYSTEM_USER}::uuid)`.execute(handle.db);
     await sql`SELECT platform.set_setting('tax.default_rate','10'::jsonb,'Tax regression',${SYSTEM_USER}::uuid)`.execute(handle.db);
     try {
-      const response = await order({ branchId: BRANCH, warehouseId: STORE_WH, externalId: `tax-${suffix}`,
+      const wrong={branchId:BRANCH,warehouseId:STORE_WH,externalId:`tax-diff-${suffix}`,lines:[{sku,qty:"1",unitPrice:"2000000"}],paymentMethod:"gateway",paidAmount:"2200000",siteTotals:{tax:"150000",total:"2200000"}};
+      const count=async()=>(await sql`SELECT (SELECT count(*) FROM sales.invoice) AS invoices,(SELECT count(*) FROM treasury.payment) AS payments,(SELECT count(*) FROM inventory.stock_movement) AS movements`.execute(handle.db)).rows[0];
+      const before=await count();
+      for(let attempt=0;attempt<2;attempt++){const failed=await order(wrong);assert.equal(failed.statusCode,422,failed.body);assert.equal(failed.json().error.code,"woo_totals_mismatch");}
+      assert.deepEqual(await count(),before);
+      const response = await order({ branchId: BRANCH, warehouseId: STORE_WH, externalId: `tax-${suffix}`,siteTotals:{tax:"200000",total:"2200000"},
         lines: [{ sku, qty: "1", unitPrice: "2000000" }], paymentMethod: "gateway", paymentRef: `tax-${suffix}`, paidAmount: "2200000" });
       assert.equal(response.statusCode, 201, response.body);
       assert.equal(response.json().payableAmount, "2200000");
       const row = await handle.db.selectFrom("sales.invoice_line").select("tax_amount")
         .where("invoice_id", "=", response.json().invoiceId).executeTakeFirstOrThrow();
       assert.equal(row.tax_amount, "200000");
+      const actor=(await sql<{actor:string}>`SELECT payload->>'actorId' AS actor FROM platform.inbox_message WHERE source='api.web.order' AND event_id=${"woo-order:tax-"+suffix}`.execute(handle.db)).rows[0]!.actor;
+      const snapshot=[{id:"tax-"+suffix,date_paid:"2026-11-01",status:"cancelled",total:"2200000",total_tax:"5000",fee_lines:[{total:"1000",total_tax:"0"}]},
+        {id:"missed-"+suffix,date_paid:"2026-11-01",status:"processing",total:"200",total_tax:"0"}];
+      const beforeReview=await count();
+      const findings=await handle.db.transaction().setAccessMode("read only").execute(tx=>reconcileWooSnapshot(tx,actor,snapshot,"rial"));
+      assert.deepEqual(findings.find(r=>r.orderId===snapshot[0]!.id)?.issues,["fee_review","cancelled_after_posting","tax_mismatch"]);
+      assert.deepEqual(findings.find(r=>r.orderId===snapshot[1]!.id)?.issues,["paid_missing"]);
+      assert.deepEqual(await count(),beforeReview);
     } finally {
       await sql`SELECT platform.set_setting('tax.enabled','false'::jsonb,'Restore test setting',${SYSTEM_USER}::uuid)`.execute(handle.db);
     }
@@ -1080,7 +1095,7 @@ describe("سفارش سایت (ووکامرس)", { skip }, () => {
 
   // پیش از F100: آن آزمون در پایان دورهٔ کانال امروز را می‌بندد و پس از آن سفارش سایتِ امروز
   // عمداً رد می‌شود («دوره ثبت این فاکتور قبلاً بسته شده است»).
-  test("F101: partial explicit discount on an indivisible multi-unit net is exact under duplicate delivery, retry and unit returns", async () => {
+  test("F101: partial explicit discount on an indivisible multi-unit net is exact under duplicate delivery, retry and unit returns", async (t) => {
     // کوپن ووکامرس روی ۳ عدد: خالص ۴٬۴۹۹٬۹۹۹ بر ۳ بخش‌پذیر نیست. افزونه قیمت اصلی واقعی
     // و تخفیف صریح ۱ ریال را می‌فرستد؛ Core باید دقیقاً همان پول دریافتی را ثبت کند، موجودی را
     // یک بار کم کند، و سه مرجوعی تک‌عددی جمعاً نه کمتر و نه بیشتر از همان خالص پس بدهند.
@@ -1105,12 +1120,14 @@ describe("سفارش سایت (ووکامرس)", { skip }, () => {
     // Drop the TCP connection after the real Core handler commits, before the
     // caller receives any headers. Two workers then retry the same frozen order.
     let committedStatus = 0;
+    let committedTiming = "";
     const relay = createServer(async (req, res) => {
       try {
         const bytes: Buffer[] = [];
         for await (const chunk of req) bytes.push(Buffer.from(chunk));
         const upstream = await order(JSON.parse(Buffer.concat(bytes).toString()), "/web/discounted-orders");
         committedStatus = upstream.statusCode;
+        committedTiming = String(upstream.headers["server-timing"]);
       } finally {
         res.destroy();
       }
@@ -1123,6 +1140,10 @@ describe("سفارش سایت (ووکامرس)", { skip }, () => {
         method: "POST", body: JSON.stringify(payload),
       }), /fetch failed/);
       assert.equal(committedStatus, 201);
+      t.diagnostic(`Discounted sale, local API milliseconds: ${committedTiming}`);
+      assert.deepEqual(committedTiming.split(", ").map(metric => metric.split(";")[0]),
+        ["lmc", "access", "inbox", "stocklock", "draft", "lines", "settle", "finalize", "commit", "ack"]);
+      assert.ok(committedTiming.split(", ").every(metric => /^\w+;dur=\d+(?:\.\d+)?$/.test(metric)));
       assert.equal(await onHand(), 2);
     } finally {
       await new Promise<void>(resolve => relay.close(() => resolve()));
@@ -1131,7 +1152,15 @@ describe("سفارش سایت (ووکامرس)", { skip }, () => {
     assert.deepEqual(both.map((r) => r.statusCode), [200, 200], both.map((r) => r.body).join(" | "));
     const invoiceId = both[0]!.json<OrderResponse>().invoiceId;
     assert.equal(both[1]!.json<OrderResponse>().invoiceId, invoiceId);
-    for (const r of both) assert.equal(r.json<OrderResponse>().payableAmount, NET.toString());
+    for (const r of both) {
+      assert.equal(r.json<OrderResponse>().payableAmount, NET.toString());
+      assert.match(String(r.headers["server-timing"]), /replay;dur=/);
+    }
+    const counts = await sql<{ invoices: number; payments: number; movements: number }>`SELECT
+      (SELECT count(DISTINCT invoice_id)::int FROM sales.invoice_line WHERE variation_id=${variationId}::uuid) AS invoices,
+      (SELECT count(*)::int FROM treasury.payment WHERE invoice_id=${invoiceId}::uuid) AS payments,
+      (SELECT count(*)::int FROM inventory.stock_movement WHERE ref_type='invoice' AND variation_id=${variationId}::uuid) AS movements`.execute(handle.db);
+    assert.deepEqual(counts.rows[0], { invoices: 1, payments: 1, movements: 1 });
     // پاسخ گم‌شده: افزونه همان snapshot را دوباره می‌فرستد.
     const retried = await order(payload, "/web/discounted-orders");
     assert.equal(retried.statusCode, 200, retried.body);

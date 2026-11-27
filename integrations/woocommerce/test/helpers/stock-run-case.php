@@ -66,13 +66,14 @@ function wp_json_encode($value, $flags = 0) { return json_encode($value, $flags)
 function wp_safe_remote_request($url, $args) {
     $GLOBALS['stock_requests'] = ($GLOBALS['stock_requests'] ?? 0) + 1;
     $GLOBALS['stock_http_calls'][] = [$url, $args['method']];
-    if (str_contains($url, '/web/connection')) { return ['body' => json_encode($GLOBALS['discount_capability'] ?? [])]; }
+    if (str_contains($url, '/web/connection')) { throw new RuntimeException('Unexpected preflight'); }
+    if (!empty($GLOBALS['missing_discount_route']) && str_contains($url, '/web/discounted-orders')) { return ['code' => 404, 'body' => '{}']; }
     if (str_contains($url, '/web/discounted-orders')) { return ['body' => json_encode(['invoiceId' => 'free-invoice', 'number' => 'TEST-1', 'payableAmount' => '0'])]; }
     return ['body' => json_encode(['items' => $GLOBALS['stock_items'] ?? [[
         'variationId' => 'synthetic-stock', 'available' => (string) $GLOBALS['stock_available'], 'price' => null,
     ]]])];
 }
-function wp_remote_retrieve_response_code($response) { return 200; }
+function wp_remote_retrieve_response_code($response) { return $response['code'] ?? 200; }
 function wp_remote_retrieve_header($response, $header) { return $response['headers'][$header] ?? ''; }
 function wp_remote_retrieve_body($response) { return $response['body']; }
 
@@ -154,15 +155,7 @@ assert_eq('invalid feed item not matched', $invalid['updated'] + $invalid['uncha
 // Core قدیمی نباید تخفیف ناشناخته را حذف و قیمت اصلی را ثبت کند.
 $cap_payload = ['branchId' => 'b-uuid', 'warehouseId' => 'w-uuid',
     'lines' => [['sku' => 'FREE-SKU', 'qty' => '1', 'unitPrice' => '4500000', 'discountAmount' => '4500000']]];
-$GLOBALS['discount_capability'] = ['protocol' => 1, 'authenticated' => true, 'branchId' => 'b-uuid', 'warehouseId' => 'w-uuid'];
-assert_eq('Core قدیمی تخفیف را دریافت نمی‌کند', LMC_Order_Sync::check_discount_support($cap_payload)->get_error_code(), 'lmc_discount_api_upgrade');
-$GLOBALS['discount_capability']['features'] = ['explicitLineDiscount' => true];
-assert_eq('Core سازگار اجازه ارسال می‌دهد', LMC_Order_Sync::check_discount_support($cap_payload), true);
-$GLOBALS['discount_capability']['warehouseId'] = 'another-warehouse';
-assert_eq('پشتیبانی انبار دیگر پذیرفته نیست', LMC_Order_Sync::check_discount_support($cap_payload)->get_error_code(), 'lmc_discount_api_upgrade');
-$requests = $GLOBALS['stock_requests'];
-assert_eq('سفارش قدیمی پیش‌نیاز تازه ندارد', LMC_Order_Sync::check_discount_support(['lines' => [['unitPrice' => '1']]]), true);
-assert_eq('سفارش قدیمی درخواست اضافه ندارد', $GLOBALS['stock_requests'], $requests);
+$GLOBALS['missing_discount_route'] = true;
 $blocked_order = new WC_Order();
 $blocked_order->id = 2001;
 $blocked_order->update_meta_data(LMC_Order_Sync::META_PAID, 'yes');
@@ -171,12 +164,12 @@ $blocked_order->update_meta_data(LMC_Order_Sync::META_LINES, [1 => 1]);
 $GLOBALS['lmc_test_orders'][2001] = $blocked_order;
 $GLOBALS['stock_http_calls'] = [];
 LMC_Order_Sync::send(2001);
-assert_eq('ناسازگاری Core پیش از POST مالی متوقف می‌شود', array_column($GLOBALS['stock_http_calls'], 1), ['GET']);
+assert_eq('مسیر قدیمی جایگزین نمی‌شود', array_column($GLOBALS['stock_http_calls'], 1), ['POST']);
 assert_eq('ناسازگاری Core فاکتور موفق وانمود نمی‌شود', $blocked_order->get_meta(LMC_Order_Sync::META_INVOICE), '');
-$GLOBALS['discount_capability']['warehouseId'] = 'w-uuid';
+$GLOBALS['missing_discount_route'] = false;
 $GLOBALS['stock_http_calls'] = [];
 // A corrected permanent capability error is reopened by the manual retry path.
 LMC_Order_Sync::retry($blocked_order);
-assert_eq('ارسال سازگار ابتدا قابلیت و سپس POST دارد', array_column($GLOBALS['stock_http_calls'], 1), ['GET', 'POST']);
-assert_eq('تخفیف هرگز به مسیر قدیمی ارسال نمی‌شود', str_ends_with($GLOBALS['stock_http_calls'][1][0], '/web/discounted-orders'), true);
+assert_eq('ارسال تخفیف مستقیم است', array_column($GLOBALS['stock_http_calls'], 1), ['POST']);
+assert_eq('تخفیف هرگز به مسیر قدیمی ارسال نمی‌شود', str_ends_with($GLOBALS['stock_http_calls'][0][0], '/web/discounted-orders'), true);
 assert_eq('پاسخ مسیر سازگار ثبت می‌شود', $blocked_order->get_meta(LMC_Order_Sync::META_INVOICE), 'free-invoice');

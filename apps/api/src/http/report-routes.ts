@@ -653,6 +653,14 @@ export function registerReportRoutes(app: FastifyInstance, deps: ReportRouteDeps
 
   // ── تراز آزمایشی ────────────────────────────────────────────────
 
+  app.get("/reports/statements",async(req,reply)=>{
+    const s=session(req);
+    await requireForSession(db,s,"report.view");await requireForSession(db,s,"cost.view");
+    const p=await period(s.userId,periodQuery.parse(req.query));
+    const {format}=formatQuery.parse(req.query);
+    const result=await sql<{section:string;label:string;amount:string}>`SELECT section,label,amount::text FROM ledger.financial_statements(${p.from}::date,${p.to}::date,${p.branchId??null}::uuid)`.execute(db);
+    return respond(reply,format,{fa:"صورت‌های مالی",ascii:"statements"},[["section","صورت"],["label","ردیف"],["amount","ریال"]],result.rows);
+  });
   app.get("/reports/trial-balance", async (req, reply) => {
     const s = session(req);
     await requireForSession(db, s, "report.view");

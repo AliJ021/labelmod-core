@@ -100,6 +100,12 @@ class LMC_Settings
         $new['price_list'] = $list === '' ? 'default' : $list;
 
         update_option(LMC_OPTION, $new);
+        foreach (['base_url', 'api_key', 'branch_id', 'warehouse_id'] as $field) {
+            if ($old[$field] !== $new[$field]) {
+                LMC_Diagnostics::check();
+                break;
+            }
+        }
 
         // انبار عوض شد؟ مکان‌نما دیگر معنا ندارد — به انبار قبلی
         // اشاره می‌کرد و نگه‌داشتنش یعنی موجودی انبار تازه ناقص بیاید.
@@ -430,27 +436,19 @@ class LMC_Settings
             return;
         }
 
-        [$branches, $error] = self::fetch_scope();
-        if ($error !== '') {
-            printf(
-                '<div class="notice notice-error inline"><p>%s</p></div>',
-                esc_html(sprintf(
-                    /* translators: %s: پیام خطای سامانه */
-                    __('اتصال برقرار نشد: %s', 'labelmod-connector'),
-                    $error
-                ))
-            );
+        $status = LMC_Diagnostics::status();
+        if (!$status) {
+            echo '<p>بررسی روزانهٔ اتصال هنوز برای این تنظیمات اجرا نشده است.</p>';
             return;
         }
-
-        printf(
-            '<div class="notice notice-success inline"><p>%s</p></div>',
-            esc_html(sprintf(
-                /* translators: %d: تعداد شعبه‌های در دسترس */
-                __('اتصال برقرار است — %d شعبه در دسترس این کلید.', 'labelmod-connector'),
-                count($branches)
-            ))
-        );
+        if ($status['overdue']) {
+            echo '<p>' . esc_html('بیش از یک روز از آخرین بررسی گذشته است. زمان‌بند وردپرس را بررسی کنید. آخرین تلاش ' . wp_date('Y/m/d H:i', $status['time'])) . '</p>';
+            return;
+        }
+        $label = $status['ok']
+            ? ($status['discount'] ? 'اتصال و پشتیبانی تخفیف تأیید شد.' : 'اتصال برقرار است. پشتیبانی تخفیف تأیید نشد.')
+            : 'بررسی اتصال ناموفق بود. برای جزئیات، تست اتصال را اجرا کنید.';
+        echo '<p>' . esc_html($label . ' آخرین بررسی ' . wp_date('Y/m/d H:i', $status['time'])) . '</p>';
     }
 
     /**

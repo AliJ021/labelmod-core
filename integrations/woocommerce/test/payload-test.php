@@ -199,9 +199,11 @@ class WC_Order
     public string $status = 'processing';
     private array $meta = [];
 
-    public function get_items(): array
+    public array $fees = [];
+    public function get_total_tax(): string { return "0"; }
+    public function get_items($kind = "line_item"): array
     {
-        return $this->items;
+        return $kind === "fee" ? $this->fees : $this->items;
     }
 
     public function get_total(): string
@@ -499,6 +501,13 @@ assert_eq('نام مشتری', $payload['customerName'], 'علی رضایی');
 assert_eq('شماره پیگیری', $payload['paymentRef'], 'REF-9');
 
 // مرجع تأیید دستی باید همراه همان snapshot ثابت به Core برسد.
+$withFee = clone $order;
+$withFee->fees = [new class {
+    public function get_total(): string { return '2500'; }
+    public function get_total_tax(): string { return '0'; }
+}];
+assert_eq('کارمزد مستقل باید پیش از ارسال بررسی شود', LMC_Order_Sync::build_payload($withFee)->get_error_code(), 'lmc_fee_review');
+
 $manual = clone $order;
 $manual->txn = '';
 $manual->update_meta_data('_lmc_payment_evidence', ['reference' => 'TEST-BANK-123', 'actor' => 42, 'at' => '2026-10-03T00:00:00Z']);

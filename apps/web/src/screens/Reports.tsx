@@ -91,6 +91,7 @@ const TABS = [
   { key: "stock", icon: "box", label: "موجودی" },
   { key: "lowstock", icon: "alert", label: "کمبود موجودی" },
   { key: "ledger", icon: "receipt", label: "دفتر حساب" },
+  { key:"statements",icon:"layers",label:"صورت‌های مالی" },
   { key: "trial", icon: "layers", label: "تراز آزمایشی" },
   { key: "parties", icon: "return", label: "دریافتنی و پرداختنی" },
   { key: "cash", icon: "vault", label: "مغایرت نقد" },
@@ -249,6 +250,8 @@ export function Reports() {
           <LowStockReport branches={branches} branchId={branchId} filters={filters} />
         ) : tab === "ledger" ? (
           <LedgerReport period={p} filters={filters} />
+        ) : tab === "statements" ? (
+          <><ReportFilters filters={filters}/><Statements period={p}/></>
         ) : tab === "trial" ? (
           <><ReportFilters filters={filters} /><TrialReport period={p} /></>
         ) : tab === "parties" ? (
@@ -735,6 +738,16 @@ function LedgerReport({ period, filters }: { period: Period; filters: PeriodFilt
 }
 
 // ── تراز آزمایشی ─────────────────────────────────────────────────────
+
+function Statements({period}:{period:Period}){
+  type Row={section:string;label:string;amount:string};
+  const query=useReport<Row>([period.from,period.to,period.branchId],async signal=>(await reports.statements(period,{signal})).rows);
+  return <ReportSection title="صورت‌های مالی بازه" description="سود و زیان از گردش دوره و ترازنامه از ماندهٔ پایان دوره محاسبه می‌شود. سهم کانال‌ها از هزینه، در تنظیمات گزارش قابل تغییر است." query={query} csv={periodCsvUrl("/reports/statements",period)} empty="سندی ثبت نشده است.">
+    {rows=><DataTable caption="صورت‌های مالی" rows={rows} rowKey={r=>r.section+r.label} columns={[
+      {key:"section",header:"گزارش",cell:r=>r.section},{key:"label",header:"شرح",cell:r=>r.label},{key:"amount",header:"مبلغ (تومان)",numeric:true,cell:r=><Cell rial={r.amount}/>}
+    ]}/>}
+  </ReportSection>;
+}
 
 function TrialReport({ period }: { period: Period }) {
   const query = useReport<TrialRow>([period.from, period.to, period.branchId],
