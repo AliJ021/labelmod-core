@@ -60,8 +60,29 @@ def prepare(apt_dir):
     return changed
 
 
+def use_noble_archive(apt_dir):
+    """Scope the disposable ubuntu-24.04 runner to signed Ubuntu packages."""
+    source = apt_dir / "labelmod-ci.sources"
+    source.write_text(
+        "Types: deb\n"
+        f"URIs: {OFFICIAL_URI}\n"
+        "Suites: noble noble-updates noble-security noble-backports\n"
+        "Components: main restricted universe multiverse\n"
+        "Signed-By: /usr/share/keyrings/ubuntu-archive-keyring.gpg\n",
+        encoding="utf-8",
+    )
+    (apt_dir / "apt.conf.d" / "99labelmod-ci").write_text(
+        f'Dir::Etc::sourcelist "{source}";\nDir::Etc::sourceparts "-";\n',
+        encoding="utf-8",
+    )
+
+
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--apt-dir", type=Path, default=Path("/etc/apt"))
+    parser.add_argument("--ubuntu-only", action="store_true")
     args = parser.parse_args()
+    if args.ubuntu_only:
+        use_noble_archive(args.apt_dir)
+        raise SystemExit(0)
     print(f"Browser dependency APT preparation: {prepare(args.apt_dir)} source file(s) updated")

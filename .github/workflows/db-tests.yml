@@ -47,6 +47,7 @@ jobs:
 
       - name: نصب کلاینت پستگرس هم‌نسخه با سرور
         run: |
+          sudo python3 .github/scripts/prepare-browser-apt.py --ubuntu-only
           sudo apt-get update -qq
           sudo apt-get install -y -qq postgresql-client-16
           echo "/usr/lib/postgresql/16/bin" >> "$GITHUB_PATH"
@@ -477,12 +478,12 @@ jobs:
           node-version: '22'
       - run: corepack enable
       - run: pnpm install --frozen-lockfile
-      # Azure's Ubuntu package mirror consumed 40+ minutes of the browser job.
-      # Keep APT signature checks and all suites; replace only that known URI.
+      # Browser libraries are Ubuntu packages. An unrelated preinstalled feed
+      # returning 403 must not prevent their installation on this disposable runner.
       - name: Prepare Ubuntu archive for browser dependencies
         run: |
           python3 .github/scripts/test-prepare-browser-apt.py
-          sudo python3 .github/scripts/prepare-browser-apt.py
+          sudo python3 .github/scripts/prepare-browser-apt.py --ubuntu-only
       - run: pnpm --filter @labelmod/web exec playwright install --with-deps chromium webkit
       # همان Build تولیدی به‌علاوهٔ chunk تنبل UI Kit، تا سطح تأیید بصری هم آزموده شود.
       - run: pnpm --filter @labelmod/web build

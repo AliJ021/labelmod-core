@@ -15,6 +15,18 @@ NEW = "https://archive.ubuntu.com/ubuntu"
 
 
 class BrowserAptPreparation(unittest.TestCase):
+    def test_noble_archive_does_not_consult_runner_vendor_feeds(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            apt = Path(temporary)
+            (apt / "apt.conf.d").mkdir()
+            module.use_noble_archive(apt)
+            config = (apt / "apt.conf.d/99labelmod-ci").read_text()
+            source = apt / "labelmod-ci.sources"
+            self.assertIn(f'Dir::Etc::sourcelist "{source}";', config)
+            self.assertIn('Dir::Etc::sourceparts "-";', config)
+            self.assertIn("noble-security", source.read_text())
+            self.assertIn("Signed-By: /usr/share/keyrings/ubuntu-archive-keyring.gpg", source.read_text())
+
     def test_github_runner_mirror_indirection_in_both_formats(self):
         mirror = "mirror+file:/etc/apt/apt-mirrors.txt"
         for deb822, source in [
