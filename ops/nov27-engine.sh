@@ -24,6 +24,7 @@ for source in "${sources[@]}"; do
  if python3 /run/lm244runner/ops/nov27-engine.py; then
   apt-get -s --no-remove install "$stage"/next/*.deb > plan.log
   grep -E 'upgraded, .*newly installed' plan.log
+  sha256sum current/*.deb next/*.deb > debs.sha256
   echo READY > ready
   echo 'Signed current and replacement Docker packages are staged.'
   exit 0

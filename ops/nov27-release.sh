@@ -73,10 +73,32 @@ publish(){
   docker image inspect "lm244-$svc" >/dev/null
   docker tag "$(docker inspect -f '{{.Image}}' "labelmod-$svc-1")" "local/lmpre244-$svc:saved"
  done
+ engine_dir=/var/cache/labelmod-engine-244
+ test "$(cat "$engine_dir/ready")" = READY
+ (cd "$engine_dir"; sha256sum -c debs.sha256 >/dev/null)
+ test "$(docker ps -q | wc -l)" -eq 6
+ db_volume=$(docker inspect --format '{{range .Mounts}}{{if eq .Destination "/var/lib/postgresql/data"}}{{.Name}}{{end}}{{end}}' labelmod-db-1)
+ test -n "$db_volume"
+ start_database(){
+  docker start labelmod-db-1 >/dev/null
+  for i in $(seq 1 45); do
+   if docker exec labelmod-db-1 pg_isready -q -U labelmod -d labelmod; then
+    test "$(docker inspect --format '{{range .Mounts}}{{if eq .Destination "/var/lib/postgresql/data"}}{{.Name}}{{end}}{{end}}' labelmod-db-1)" = "$db_volume"
+    return
+   fi
+   sleep 1
+  done
+  return 1
+ }
  backup_now
  rollback(){
   trap - ERR
   cd "$app"
+  if ! docker info >/dev/null 2>&1; then
+   DEBIAN_FRONTEND=noninteractive NEEDRESTART_MODE=l apt-get -o Dpkg::Options::=--force-confold --no-download --allow-downgrades --no-remove -y install "$engine_dir"/current/*.deb >"$state/engine-recovery.log" 2>&1
+   systemctl start containerd docker
+  fi
+  start_database
   git checkout --detach "$old" && for svc in "${services[@]}"; do docker tag "local/lmpre244-$svc:saved" "labelmod-$svc"; done
   compose "$app" up -d --no-build --no-deps "${services[@]}"
   echo "Application rollback triggered; database preserved." >&2
@@ -92,6 +114,11 @@ publish(){
  docker exec -i labelmod-db-1 pg_restore -l < "$f" >/dev/null
  sha256sum "$f" > "$f.sha256"
  fingerprint labelmod > "$state/live.before"
+ compose "$app" stop panel-backup caddy db
+ DEBIAN_FRONTEND=noninteractive NEEDRESTART_MODE=l apt-get -o Dpkg::Options::=--force-confold --no-download --no-remove -y install "$engine_dir"/next/*.deb >"$state/engine-install.log" 2>&1
+ systemctl start containerd docker
+ start_database
+ docker version --format '{{.Server.Version}}'
  git checkout --detach "$target"
  for svc in "${services[@]}"; do docker tag "lm244-$svc" "labelmod-$svc"; done
  migrate "$app" labelmod > "$state/live.migration" 2>&1
