@@ -8,7 +8,7 @@ mkdir -p "$state"
 chmod 700 "$state"
 exec 9>"$state/lock"
 flock -n 9
-tested=a01f8e18b323a63f8f563e4a84a04738a7f6a1bf
+tested=cce57d933f1c40d48bc4a6ebf9cf2a3c9ddc552a
 compose(){ docker compose -p labelmod --env-file "$app/.env" -f "$1/docker-compose.prod.yml" "${@:2}"; }
 psql_db(){ docker exec labelmod-db-1 psql -XAt -v ON_ERROR_STOP=1 -U labelmod -d "$1" -c "$2"; }
 fingerprint(){
