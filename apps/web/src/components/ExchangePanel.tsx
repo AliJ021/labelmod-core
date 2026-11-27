@@ -11,6 +11,10 @@ import { onSettingSaved } from "../lib/settings-events.ts";
 
 import { useRefundSplit, type RefundPlan } from "./RefundSplit.tsx";
 
+function needsAdjustmentReason(item: { price: string; discount: string }): boolean {
+  return item.price.trim() !== "" || (rialFromExactTomanInput(item.discount) ?? 0n) > 0n;
+}
+
 interface Quote { splitPlan?:RefundPlan | null; token: string; returnedValue: string; replacementValue: string; debt: string; funds: string;
   debtApplied: string; transferAmount: string; fundedTransfer: string; collectAmount: string; refundAmount: string; policy: string }
 export function ExchangePanel({ invoice, lines, reasonCode, reasonNote, returnWarehouseId, warehouses, methods, locked, run, verify }: {
@@ -19,7 +23,7 @@ export function ExchangePanel({ invoice, lines, reasonCode, reasonNote, returnWa
   run: (body: unknown) => Promise<void>; verify: () => Promise<boolean>;
 }) {
   const [warehouseId, setWarehouseId] = useState(invoice.warehouseId);
-  const [items, setItems] = useState<Array<{ id: string; name: string; sku: string; qty: string; price:string; discount:string; retainLineId?:string }>>([]);
+  const [items, setItems] = useState<Array<{ id: string; name: string; sku: string; qty: string; price:string; discount:string; adjustmentReason: string; retainLineId?:string }>>([]);
   const [quote, setQuote] = useState<{ value: Quote; body: string } | null>(null);
   const [collectMethod, setCollectMethod] = useState("cash");
   const [collectReference, setCollectReference] = useState("");
@@ -47,6 +51,7 @@ export function ExchangePanel({ invoice, lines, reasonCode, reasonNote, returnWa
   }, [invoice.branchId]);
   const body = { invoiceId: invoice.id, warehouseId, returnWarehouseId, lines,
     replacements: items.map(i => ({ variationId: i.id, qty: saleQuantity(i.qty, fractional) ?? i.qty,
+      ...(needsAdjustmentReason(i) && { adjustmentReason: i.adjustmentReason.trim() }),
       ...(i.retainLineId && {retainLineId:i.retainLineId}),
       ...(i.price.trim() && {unitPrice:rialFromExactTomanInput(i.price)?.toString() ?? ""}),
       ...(i.discount.trim() && {discountAmount:rialFromExactTomanInput(i.discount)?.toString() ?? ""}) })), reasonCode,
@@ -55,7 +60,7 @@ export function ExchangePanel({ invoice, lines, reasonCode, reasonNote, returnWa
   const split=useRefundSplit(currentQuote?.splitPlan,currentQuote ? BigInt(currentQuote.refundAmount) : null,methods,reasonNote,locked || busy);
   async function pick(id: string) {
     const item = await api.get<{ id: string; name: string; sku: string }>(`/exchanges/variation/${id}`);
-    setItems(current => [...current, { ...item, qty: "1", price:"", discount:"" }]);
+    setItems(current => [...current, { ...item, qty: "1", price:"", discount:"", adjustmentReason:"" }]);
   }
   async function preview() {
     setBusy(true); setError("");
@@ -91,10 +96,10 @@ export function ExchangePanel({ invoice, lines, reasonCode, reasonNote, returnWa
           const totalQty = scaledQty(line.qty), selectedQty = scaledQty(source.qty);
           const discount = (BigInt(line.discountAmount) * selectedQty + totalQty/2n) / totalQty;
           setItems(old => [...old, {id:line.variationId, name:line.productName, sku:line.sku, qty:source.qty,
-            price:exactTomanInput(line.unitPrice), discount:exactTomanInput(discount.toString()), retainLineId:line.id}]);
+            price:exactTomanInput(line.unitPrice), discount:exactTomanInput(discount.toString()), retainLineId:line.id, adjustmentReason:""}]);
         }}>اصلاح همان کالا نزد مشتری · {line.productName} · {line.sku}</button>;
     })}</div>
-    {items.map((item, index) => <div className="row" key={`${item.id}-${index}`}>
+    {items.map((item, index) => <div className="row" style={{ flexWrap: "wrap" }} key={`${item.id}-${index}`}>
       <span>{item.name} · {item.sku}</span>
       <label>تعداد<input aria-label={`تعداد جایگزین ${index + 1}`} inputMode={fractional ? "decimal" : "numeric"} value={item.qty} disabled={locked || busy}
         onChange={e => setItems(current => current.map((v, i) => i === index ? { ...v, qty: e.target.value } : v))} /></label>
@@ -102,10 +107,15 @@ export function ExchangePanel({ invoice, lines, reasonCode, reasonNote, returnWa
         onChange={e => setItems(rows => rows.map((r,i) => i === index ? {...r,price:e.target.value} : r))} /></label>
       <label>تخفیف کل سطر (تومان)<AmountInput inputMode="decimal" value={item.discount} disabled={locked || busy}
         onChange={e => setItems(rows => rows.map((r,i) => i === index ? {...r,discount:e.target.value} : r))} /></label>
+      {needsAdjustmentReason(item) && <label className="auth-field">دلیل تخفیف یا تغییر قیمت (الزامی)
+        <input aria-label={`دلیل تخفیف یا تغییر قیمت قلم ${index + 1}`} required maxLength={200}
+          value={item.adjustmentReason} disabled={locked || busy}
+          onChange={e => setItems(rows => rows.map((r, i) => i === index ? { ...r, adjustmentReason: e.target.value } : r))} />
+      </label>}
       <button className="btn" type="button" disabled={locked || busy} onClick={() => setItems(current => current.filter((_, i) => i !== index))}>حذف</button>
     </div>)}
     {items.some(i => saleQuantity(i.qty, fractional) === null) ? <p role="alert">{fractional ? "تعداد مثبت با حداکثر سه رقم اعشار وارد کنید." : "تعداد کالای جایگزین باید عدد صحیح باشد؛ فروش اعشاری غیرفعال است."}</p> : null}
-    <button className="btn" type="button" disabled={locked || busy || !lines.length || !items.length || !reasonCode || items.some(i => saleQuantity(i.qty, fractional) === null)} onClick={() => void preview()}>۱. محاسبه و بررسی تسویه</button>
+    <button className="btn" type="button" disabled={locked || busy || !lines.length || !items.length || !reasonCode || items.some(i => saleQuantity(i.qty, fractional) === null || (needsAdjustmentReason(i) && !i.adjustmentReason.trim()))} onClick={() => void preview()}>۱. محاسبه و بررسی تسویه</button>
     {error ? <p role="alert">{error}</p> : null}
     {currentQuote ? <>
       <dl>

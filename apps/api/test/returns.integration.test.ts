@@ -260,6 +260,27 @@ describe("برگشت از فروش و دوره ثبت", { skip }, () => {
       assert.equal((await post()).json().id,done.json().id);
     } finally{await change(false);}
   });
+  test("تعویض با دلیل تخفیف مستقل روی قلم جایگزین", async () => {
+    const sale = await soldInvoice({ who: supervisor, qty: "1", paid: "1000000" });
+    const base = exchangeBody(sale.invoiceId, sale.lineId);
+    const line = { variationId, qty: "1", discountAmount: "10000" };
+    const missing = await exchangeQuote({ ...base, replacements: [line] });
+    assert.equal(missing.statusCode, 422, missing.body);
+    const adjustmentReason = "تخفیف کالای جایگزین";
+    const body = { ...base, replacements: [{ ...line, adjustmentReason }] };
+    const quote = await exchangeQuote(body);
+    assert.equal(quote.statusCode, 200, quote.body);
+    assert.equal(quote.json().refundAmount, "10000");
+    const auth = await loginAs(supervisor);
+    const posted = await app.inject({ method: "POST", url: "/exchanges", ...auth,
+      headers: { ...auth.headers, "idempotency-key": randomUUID() },
+      payload: { ...body, token: quote.json().token, confirmed: true, refundMethod: "cash" } });
+    assert.equal(posted.statusCode, 200, posted.body);
+    const saved = await handle.db.selectFrom("sales.invoice_line").select("discount_reason")
+      .where("invoice_id", "=", posted.json().replacementInvoiceId).executeTakeFirstOrThrow();
+    assert.equal(saved.discount_reason, adjustmentReason);
+  });
+
   test("ابطال پس از مرجوعی جزئی فقط ماندهٔ کالا و وجه را یک بار برمی‌گرداند", async () => {
     const sale = await soldInvoice({who: supervisor, qty:"2", paid:"2000000"});
     const auth = await loginAs(supervisor);

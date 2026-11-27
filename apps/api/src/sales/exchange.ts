@@ -14,7 +14,7 @@ export interface ExchangeInput {
   warehouseId: string;
   returnWarehouseId: string;
   lines: ReturnLineInput[];
-  replacements: Array<{ variationId: string; qty: string; retainLineId?: string | undefined; unitPrice?:string | undefined; discountAmount?:string | undefined }>;
+  replacements: Array<{ variationId: string; qty: string; retainLineId?: string | undefined; unitPrice?:string | undefined; discountAmount?:string | undefined; adjustmentReason?: string | undefined }>;
   reasonCode: string;
   reasonNote?: string | undefined;
 }
@@ -30,7 +30,8 @@ export class ExchangeService {
   constructor(db: Db) { this.db = db; }
 
   async quote(input: ExchangeInput, ex: Executor = this.db): Promise<ExchangeQuote> {
-    if (input.replacements.some(line => line.unitPrice !== undefined || BigInt(line.discountAmount ?? "0") > 0n) && !input.reasonNote?.trim())
+    if (input.replacements.some(line => (line.unitPrice !== undefined || BigInt(line.discountAmount ?? "0") > 0n)
+      && !(line.adjustmentReason ?? input.reasonNote)?.trim()))
       throw new ReturnError("correction_reason_required","برای اصلاح قیمت یا تخفیف دلیل بنویسید.",422);
     const retained = input.replacements.flatMap(line => line.retainLineId ? [line.retainLineId] : []);
     if (new Set(retained).size !== retained.length)
@@ -146,8 +147,8 @@ export class ExchangeService {
     // کالای سالمِ همان انبار اکنون قابل فروش است؛ معیوب/بدون بازگشت هرگز پشتوانه فروش نمی‌شود.
     for (const line of input.replacements) await invoices.addLineIn(trx, { invoiceId: replacement,
       variationId: line.variationId, qty: line.qty, actorId: input.actorId,
-      ...(line.unitPrice !== undefined && {unitPrice:BigInt(line.unitPrice), priceOverrideReason:input.reasonNote}),
-      ...(line.discountAmount !== undefined && {discountAmount:BigInt(line.discountAmount), discountReason:input.reasonNote})
+      ...(line.unitPrice !== undefined && {unitPrice:BigInt(line.unitPrice), priceOverrideReason:line.adjustmentReason ?? input.reasonNote}),
+      ...(line.discountAmount !== undefined && {discountAmount:BigInt(line.discountAmount), discountReason:line.adjustmentReason ?? input.reasonNote})
     }, (executor,row) => assertMarkdownAllowed(executor,invoices,{userId:input.actorId,pinUnlocked:input.viaPin ?? false},{
       variationId:row.variationId,qty:row.qty,discount:row.discountAmount,settingPrice:row.unitPrice,listPrice:row.listPrice
     }));

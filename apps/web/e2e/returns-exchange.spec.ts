@@ -123,6 +123,7 @@ test("exchange separately quotes settlement before explicit final confirmation",
   await page.getByRole("tab", { name: "تعویض", exact: true }).click();
   await expect(page.getByRole("button", { name: "۱. بررسی مرجوعی", exact: true })).toHaveCount(0);
   await page.getByRole("button", { name: /اصلاح همان کالا نزد مشتری/ }).click();
+  await page.getByLabel("دلیل تخفیف یا تغییر قیمت قلم 1").fill("اصلاح قیمت مورد توافق");
   await page.getByRole("button", { name: "۱. محاسبه و بررسی تسویه", exact: true }).click();
   await page.getByRole("button", { name: "۲. بررسی نهایی تعویض", exact: true }).click();
   expect(posts).toBe(0);
@@ -130,6 +131,40 @@ test("exchange separately quotes settlement before explicit final confirmation",
   await page.getByRole("button", { name: "اقلام و تسویه را تأیید می‌کنم؛ ثبت تعویض", exact: true }).click();
   await expect(page.getByRole("status")).toContainText("عملیات E-TEST-1 ثبت شد.");
   expect(posts).toBe(1);
+});
+
+test("discounted replacement carries its reason from preview to posting", async ({ page, api }) => {
+  fixture(api);
+  api.defaults["GET /pos/products"] = { exactVariationId: "v1", products: [] };
+  let posted: unknown;
+  api.handlers.set("POST /exchanges", async route => {
+    posted = route.request().postDataJSON();
+    await route.fulfill({ json: { status: "posted", number: "E-DISCOUNT" } });
+  });
+  await choose(page);
+  await page.getByRole("tab", { name: "تعویض", exact: true }).click();
+  const search = page.getByRole("region", { name: "افزودن کالا" }).getByRole("searchbox");
+  await search.fill("TEST-M");
+  await search.press("Enter");
+  const amount = page.getByLabel("تخفیف کل سطر (تومان)");
+  const reason = page.getByLabel("دلیل تخفیف یا تغییر قیمت قلم 1");
+  await expect(amount).toBeVisible();
+  await expect(reason).toHaveCount(0);
+  await amount.fill("۵۰۰۰");
+  const preview = page.getByRole("button", { name: "۱. محاسبه و بررسی تسویه" });
+  await expect(preview).toBeDisabled();
+  await reason.fill("تخفیف مشتری");
+  const quoted = page.waitForRequest(r => r.method() === "POST" && r.url().endsWith("/exchanges/quote"));
+  await preview.click();
+  expect((await quoted).postDataJSON().replacements[0]).toMatchObject({ discountAmount: "50000", adjustmentReason: "تخفیف مشتری" });
+  const review = page.getByRole("button", { name: "۲. بررسی نهایی تعویض" });
+  await expect(review).toBeVisible();
+  await reason.fill("تخفیف توافق‌شده");
+  await expect(review).toHaveCount(0);
+  await preview.click();
+  await review.click();
+  await page.getByRole("button", { name: "اقلام و تسویه را تأیید می‌کنم؛ ثبت تعویض" }).click();
+  await expect.poll(() => posted).toMatchObject({ replacements: [{ discountAmount: "50000", adjustmentReason: "تخفیف توافق‌شده" }] });
 });
 
 for (const enabled of [false, true]) test(`exchange replacement fractional policy=${enabled}, Persian exact input`, async ({ page, api }) => {
@@ -143,6 +178,7 @@ for (const enabled of [false, true]) test(`exchange replacement fractional polic
   await choose(page);
   await page.getByRole("tab", { name: "تعویض", exact: true }).click();
   await page.getByRole("button", { name: /اصلاح همان کالا نزد مشتری/ }).click();
+  await page.getByLabel("دلیل تخفیف یا تغییر قیمت قلم 1").fill("اصلاح قیمت مورد توافق");
   await page.getByLabel("تعداد جایگزین 1").fill("۰٫۱۲۵");
   const button = page.getByRole("button", { name: "۱. محاسبه و بررسی تسویه", exact: true });
   if (!enabled) { await expect(button).toBeDisabled(); expect(requests).toEqual([]); }
@@ -194,6 +230,7 @@ for (const kind of ["returns", "exchanges"] as const) {
     } else {
       await page.getByRole("tab", { name: "تعویض", exact: true }).click();
       await page.getByRole("button", { name: /اصلاح همان کالا نزد مشتری/ }).click();
+      await page.getByLabel("دلیل تخفیف یا تغییر قیمت قلم 1").fill("اصلاح قیمت مورد توافق");
       await page.getByRole("button", { name: "۱. محاسبه و بررسی تسویه", exact: true }).click();
       await page.getByRole("button", { name: "۲. بررسی نهایی تعویض", exact: true }).click();
       await page.getByRole("button", { name: "اقلام و تسویه را تأیید می‌کنم؛ ثبت تعویض", exact: true }).click();

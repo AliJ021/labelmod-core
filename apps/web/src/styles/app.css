@@ -953,6 +953,17 @@ select.set-input {
   color: var(--ink);
 }
 
+.section-title-row {
+  position: relative;
+  display: flex;
+  align-items: center;
+  gap: .25rem;
+}
+
+.perm-group .help-hint {
+  position: static;
+}
+
 .perm-group {
   margin-block-start: var(--s-4);
 }
