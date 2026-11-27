@@ -14,7 +14,7 @@
     "react": "19.3.1",
     "react-dom": "19.3.1",
     "write-excel-file": "4.1.1",
-    "zxing-wasm": "3.1.6"
+    "zxing-wasm": "3.1.7"
   },
   "devDependencies": {
     "@playwright/test": "1.64.1",
