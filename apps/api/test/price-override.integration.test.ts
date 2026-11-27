@@ -346,6 +346,16 @@ describe("قیمت دستی روی سطر فاکتور", { skip }, () => {
     assert.equal(r.statusCode, 428, r.body);
   });
 
+  test("سقف مبلغی تخفیف فقط مبلغ کاهش واقعی را می‌سنجد", async () => {
+    const invoices = new InvoiceService(handle.db);
+    for (const price of [1000000n, 1500000n]) {
+      assert.deepEqual(await invoices.markdownCheck(variationId, "1", 0n, price), { percent: 0, grossAmount: 0n });
+    }
+    assert.deepEqual(await invoices.markdownCheck(variationId, "1", 100000n, 900000n), {
+      percent: 20, grossAmount: 200000n,
+    });
+  });
+
   test("گران‌تر از فهرست، نردبان تخفیف را فعال نمی‌کند", async () => {
     const inv = await newDraft(supervisor);
     const r = await addLine(supervisor, inv, { variationId, qty: "1", unitPrice: "1500000" });

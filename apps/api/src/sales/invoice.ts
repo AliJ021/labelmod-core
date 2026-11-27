@@ -432,10 +432,8 @@ export class InvoiceService {
         422,
       );
     }
-    if (listGross <= 0n) return { percent: 0, grossAmount: listGross };
-
     const markdown = listGross - (soldGross - discountAmount);
-    if (markdown <= 0n) return { percent: 0, grossAmount: listGross };
+    if (listGross <= 0n || markdown <= 0n) return { percent: 0, grossAmount: 0n };
 
     return {
       percent: Number((markdown * 10000n) / listGross) / 100,
