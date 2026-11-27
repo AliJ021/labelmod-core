@@ -22,6 +22,7 @@ const quoteBody = z.object({
   lines: z.array(z.object({ invoiceLineId: uuid, qty, restock: z.boolean().optional(),
     condition: z.enum(["sellable", "defective"]).optional() })).min(1).max(200),
   replacements: z.array(z.object({ variationId: uuid, qty, retainLineId: uuid.optional(),
+    adjustmentReason: z.string().trim().min(1).max(200).optional(),
     unitPrice:z.string().regex(/^[1-9][0-9]{0,17}$/).optional(), discountAmount:z.string().regex(/^[0-9]{1,18}$/).optional() })).min(1).max(200),
   reasonCode: code, reasonNote: z.string().trim().max(500).optional(),
 });

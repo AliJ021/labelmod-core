@@ -953,6 +953,17 @@ select.set-input {
   color: var(--ink);
 }
 
+.section-title-row {
+  position: relative;
+  display: flex;
+  align-items: center;
+  gap: .25rem;
+}
+
+.perm-group .help-hint {
+  position: static;
+}
+
 .perm-group {
   margin-block-start: var(--s-4);
 }
@@ -1215,3 +1226,7 @@ select.set-input {
   border-radius: 999px;
   background: var(--chart-1);
 }
+
+.help-hint { position: relative; display: inline-flex; vertical-align: middle; margin-inline: .3rem; }
+.help-hint-trigger { background: var(--surface-solid); color: var(--ink); border: 1px solid currentColor; border-radius: 50%; min-width: 28px; min-height: 28px; font: inherit; cursor: help; }
+.help-hint-text { position: absolute; inset-block-start: 100%; inset-inline-start: 0; z-index: 5; width: max-content; max-width: min(18rem, 68vw); background: var(--surface-solid, Canvas); color: var(--ink, CanvasText); padding: .6rem .8rem; border: 1px solid currentColor; border-radius: var(--r-inner); font-size: .875rem; font-weight: normal; line-height: 1.7; }

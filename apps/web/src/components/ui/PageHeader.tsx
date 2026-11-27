@@ -30,15 +30,16 @@ export function PageHeader({ title, context, meta, actions, eyebrow }: {
 }
 
 /** سرعنوان بخش داخل یک سطح. */
-export function SectionHeader({ title, id, description, actions, level = 2 }: {
-  title: string; id?: string; description?: ReactNode; actions?: ReactNode; level?: 2 | 3;
+export function SectionHeader({ title, id, description, actions, titleAccessory, level = 2 }: {
+  title: string; id?: string; description?: ReactNode; actions?: ReactNode; titleAccessory?: ReactNode; level?: 2 | 3;
 }) {
   // درون ناحیه‌ای که سرصفحهٔ بخشش h2 است، بخش‌ها یک پله پایین‌تر می‌روند تا سلسله‌مراتب بشکند نه تکرار شود.
   const nested = useContext(NestedHeader);
   const H = nested ? (level === 2 ? "h3" : "h4") : level === 2 ? "h2" : "h3";
+  const heading = <H className="section-title" id={id}>{title}</H>;
   return <div className="section-header">
     <div>
-      <H className="section-title" id={id}>{title}</H>
+      {titleAccessory ? <div className="section-title-row">{heading}{titleAccessory}</div> : heading}
       {description ? <p className="section-description">{description}</p> : null}
     </div>
     {actions ? <div className="section-actions">{actions}</div> : null}
