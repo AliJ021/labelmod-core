@@ -121,8 +121,11 @@ test("settlement total comes from the server; a changed selection blocks settlin
   const trigger=page.getByRole("button",{name:"تسویهٔ انتخاب‌ها",exact:true});
   await expect(trigger).toBeEnabled();
 
-  reply={status:200, body:{count:2,amount:"203",stale:1}};
+  // Let the single-selection preview settle before reselecting the changed row.
+  reply={status:200, body:{count:1,amount:"1010",stale:0}};
   await page.getByRole("checkbox",{name:`انتخاب برداشت ${CASHIER.name}، ثبت دو`}).uncheck();
+  await expect(line).toContainText("101");
+  reply={status:200, body:{count:2,amount:"203",stale:1}};
   await page.getByRole("checkbox",{name:`انتخاب برداشت ${CASHIER.name}، ثبت دو`}).check();
   await expect(page.getByRole("alert")).toContainText("تغییر کرده یا تسویه شده");
   await expect(trigger).toBeDisabled();
