@@ -8,7 +8,7 @@ mkdir -p "$state"
 chmod 700 "$state"
 exec 9>"$state/lock"
 flock -n 9
-tested=c47c8cdbf9e200cb1611e6ee3077c603d7394b47
+tested=a01f8e18b323a63f8f563e4a84a04738a7f6a1bf
 compose(){ docker compose -p labelmod --env-file "$app/.env" -f "$1/docker-compose.prod.yml" "${@:2}"; }
 psql_db(){ docker exec labelmod-db-1 psql -XAt -v ON_ERROR_STOP=1 -U labelmod -d "$1" -c "$2"; }
 fingerprint(){
@@ -117,7 +117,18 @@ ubuntu(){
   test ! -e /var/run/reboot-required || echo REBOOT_REQUIRED
  fi
 }
+prepare(){
+ git -C "$prep" fetch origin refs/pull/244/head
+ test "$(git -C "$prep" rev-parse FETCH_HEAD)" = "$tested"
+ test -z "$(git -C "$prep" status --porcelain --untracked-files=no)"
+ git -C "$prep" checkout --detach "$tested"
+ cd "$prep"
+ docker compose -p lm244 --env-file "$app/.env" -f docker-compose.prod.yml build --build-arg BASE_REGISTRY=public.ecr.aws/docker/library api worker panel-backup caddy scheduler >"$state/final-build.log" 2>&1
+ echo "Built $tested"
+ stage
+}
 case "${1:-}" in
+ prepare) prepare;;
  ubuntu) ubuntu "${2:-}";;
  stage) stage;;
  publish) publish;;
