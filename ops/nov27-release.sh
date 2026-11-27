@@ -109,13 +109,17 @@ publish(){
  # Read-only standby backup captured after writers have stopped, outside the app checkout.
  dir=/var/backups/labelmod-release
  install -m700 -d "$dir"
- f=$(mktemp "$dir/pre244-XXXXXXXX.dump")
+ f=$(mktemp --suffix=.dump "$dir/pre244-XXXXXXXX")
  docker exec labelmod-db-1 pg_dump -Fc -U labelmod -d labelmod > "$f"
  docker exec -i labelmod-db-1 pg_restore -l < "$f" >/dev/null
  sha256sum "$f" > "$f.sha256"
  fingerprint labelmod > "$state/live.before"
  compose "$app" stop panel-backup caddy db
  DEBIAN_FRONTEND=noninteractive NEEDRESTART_MODE=l apt-get -o Dpkg::Options::=--force-confold --no-download --no-remove -y install "$engine_dir"/next/*.deb >"$state/engine-install.log" 2>&1
+ for deb in "$engine_dir"/next/*.deb; do
+  package=$(dpkg-deb -f "$deb" Package)
+  test "$(dpkg-query -W -f='${Version}' "$package")" = "$(dpkg-deb -f "$deb" Version)"
+ done
  systemctl start containerd docker
  start_database
  docker version --format '{{.Server.Version}}'
