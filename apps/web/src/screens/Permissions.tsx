@@ -24,6 +24,8 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { SearchField } from "../components/SearchField.tsx";
 import { ResultState } from "../components/ResultState.tsx";
 import { Button, Field, Switch } from "../components/ui/Controls.tsx";
+import { HelpHint } from "../components/ui/HelpHint.tsx";
+import { permissionHelp } from "../lib/permission-help.ts";
 import { Money } from "../components/ui/Money.tsx";
 import { PageHeader, SectionHeader } from "../components/ui/PageHeader.tsx";
 import { StatusBadge } from "../components/ui/Status.tsx";
@@ -67,8 +69,10 @@ export function Permissions() {
   /** گروه‌بندی بر اساس عملیات — چون سؤال همیشه «چه کسی می‌تواند X» است. */
   const byOperation = useMemo(() => {
     const out = new Map<string, PermissionRule[]>();
+    const query = filter.trim().toLowerCase();
     for (const r of rules ?? []) {
-      if (filter && !r.operation.includes(filter) && !r.roleName.includes(filter)) continue;
+      const searchable = [r.operation, r.roleName, permissionHelp(r.operation)?.title ?? ""];
+      if (query && !searchable.some(value => value.toLowerCase().includes(query))) continue;
       const list = out.get(r.operation);
       if (list) list.push(r);
       else out.set(r.operation, [r]);
@@ -102,7 +106,7 @@ export function Permissions() {
         (list ?? []).map((x) => (key(x) === key(r) ? { ...x, ...saved, hasRule: true } : x)),
       );
       setEditing(null);
-      setNote(`مجوز «${r.operation}» برای ${r.roleName} ذخیره شد.`);
+      setNote(`مجوز «${permissionHelp(r.operation)?.title ?? r.operation}» برای ${r.roleName} ذخیره شد.`);
     } catch (e: unknown) {
       setError(message(e));
     } finally {
@@ -148,9 +152,14 @@ export function Permissions() {
         <SearchField label="جست‌وجوی عملیات یا نقش" value={filter} onChange={setFilter} />
         {byOperation.size === 0 ? <ResultState title={filter ? "برای این جست‌وجو مجوزی پیدا نشد." : "مجوزی برای نمایش وجود ندارد."} actionLabel={filter ? "پاک‌کردن جست‌وجو" : undefined} onAction={() => setFilter("")} /> : null}
 
-        {[...byOperation.entries()].map(([operation, list]) => (
-          <section key={operation} className="perm-group" aria-labelledby={`perm-${operation}`}>
-            <SectionHeader id={`perm-${operation}`} title={operation} level={3} description={`${formatCount(list.length)} نقش`} />
+        {[...byOperation.entries()].map(([operation, list]) => {
+          const help = permissionHelp(operation);
+          return <section key={operation} className="perm-group" aria-labelledby={`perm-${operation}`}>
+            <SectionHeader id={`perm-${operation}`} title={help?.title ?? "مجوز اختصاصی"} level={3}
+              titleAccessory={<HelpHint label={help?.title ?? operation}>
+                {help ? <>مثلاً {help.example}</> : "این مجوز در تنظیمات این نصب تعریف شده و هنوز راهنمای اختصاصی ندارد. پیش از تغییر، کاربرد کد آن را از مدیر سامانه بپرسید."}
+              </HelpHint>}
+              description={<><bdi dir="ltr">{operation}</bdi> · {formatCount(list.length)} نقش</>} />
             <ul className="perm-list">
               {list.map((r) =>
                 editing === key(r) ? (
@@ -180,8 +189,8 @@ export function Permissions() {
                 ),
               )}
             </ul>
-          </section>
-        ))}
+          </section>;
+        })}
       </Solid>
     </div>
   );

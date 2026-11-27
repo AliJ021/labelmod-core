@@ -6,7 +6,7 @@
  * فقط دادهٔ ساختگی؛ هیچ اعتبار یا حساب واقعی.
  */
 import type { Page, Route } from "@playwright/test";
-import { test, expect, settings, staff } from "./fixtures";
+import { test, expect, settings, staff, rule } from "./fixtures";
 
 const withPin = { ...staff, hasPin: true };
 const count = (calls: string[], key: string) => calls.filter(c => c.split("?")[0] === key).length;
@@ -252,4 +252,31 @@ test("پیامک: در بارگذاری و خطای وضعیت «شماره‌ا
   await panel.getByRole("button", { name: "تلاش دوباره" }).click();
   await expect(panel.getByText("هنوز شماره‌ای تأیید نشده است.")).toBeVisible();
   expect(api.calls.filter(c => c.startsWith("POST"))).toEqual([]);
+});
+
+test("راهنمای مجوزهای تعویض با نام فارسی، کد، ماوس و صفحه‌کلید", async ({ page, api }) => {
+  api.permissionRows = ["sale.price_override", "sale.discount", "sale.discount_high", "custom.operation"]
+    .map(operation => ({ ...rule, operation }));
+  await page.goto("/");
+  await settings(page, "permissions", "مجوزها");
+  const search = page.locator("main").getByRole("searchbox");
+  await search.fill("تعویض");
+  const hint = page.getByRole("button", { name: "راهنمای ویرایش قیمت یک قلم در فروش یا تعویض" });
+  await hint.hover();
+  const tip = page.getByRole("tooltip");
+  await expect(tip).toContainText("۹۰۰ هزار تومان");
+  await hint.focus();
+  await hint.press("Escape");
+  await expect(tip).toHaveCount(0);
+  await hint.click();
+  await expect(tip).toBeVisible();
+  await search.fill("sale.discount_high");
+  await expect(page.getByRole("heading", { name: "تخفیف بالاتر از اختیار عادی" })).toBeVisible();
+  const higher = page.getByRole("button", { name: "راهنمای تخفیف بالاتر از اختیار عادی" });
+  await higher.focus();
+  await expect(tip).toContainText("تأیید او");
+  await search.fill("custom.operation");
+  await page.getByRole("button", { name: "راهنمای custom.operation" }).click();
+  await expect(tip).toContainText("مجوز در تنظیمات این نصب");
+  expect(api.calls.some(call => call.startsWith("PUT /permission-rules"))).toBe(false);
 });
