@@ -14,10 +14,29 @@ case "$1" in
   [[ "$2" =~ ^[0-9]{2}$ && "$3" =~ ^[0-9a-f]{2,120}$ ]]
   printf '%s' "$3" > "part$2"
   ;;
- install)
+ verify|install)
   [[ "$2" =~ ^[0-9a-f]{64}$ ]]
   cat part[0-9][0-9] | xxd -r -p > config.age
   printf '%s  config.age\n' "$2" | sha256sum -c -
+  if [[ "$1" == verify ]]; then
+   docker run --rm -i --network none -u 0 -v "$base/bale-provision.key:/key:ro" --entrypoint age lm244-panel-backup -d -i /key < config.age | python3 -c '
+import json,sys,urllib.request
+class StopRedirect(urllib.request.HTTPRedirectHandler):
+ def redirect_request(self,*args): return None
+try:
+ d=json.load(sys.stdin)
+ def call(method,body):
+  r=urllib.request.Request("https://tapi.bale.ai/bot"+d["token"]+"/"+method,data=json.dumps(body).encode(),headers={"Content-Type":"application/json"})
+  with urllib.request.build_opener(StopRedirect).open(r,timeout=15) as f: return json.load(f)["result"]
+ assert call("getMe",{})["username"].lower()=="bkhlbot"
+ c=call("getChat",{"chat_id":d["chat"]})
+ assert c["type"]=="private" and str(c["id"])==d["chat"]
+ print("Production server verified BKHLbot and the confirmed private recipient.")
+except Exception as e:
+ print("Bale verification failed:",type(e).__name__); sys.exit(1)
+'
+   exit 0
+  fi
   dir=$(docker inspect --format '{{range .Mounts}}{{if eq .Destination "/run/labelmod-bale"}}{{.Source}}{{end}}{{end}}' labelmod-panel-backup-1)
   test -n "$dir" && test -d "$dir" && test ! -e "$dir/token"
   docker run --rm -i --network none -u 0 -v "$base/bale-provision.key:/key:ro" --entrypoint age lm244-panel-backup -d -i /key < config.age | python3 -c '
