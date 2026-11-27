@@ -1,0 +1,12 @@
+#!/bin/bash
+set -u
+for c in api worker panel-backup; do
+ echo "$c"
+ docker logs --tail 60 "labelmod-$c-1" 2>&1 | python3 -c 'import sys,re
+for l in sys.stdin:
+ if re.search(r"Error|ERR_|Cannot find|denied|SyntaxError|node:internal| at file:",l) and len(l)<950:
+  l=re.sub(r"[a-z]+://(?!/)[^ ]+","[address]",l)
+  l=re.sub(r"[A-Za-z0-9_+/=-]{40,}","[filtered]",l)
+  print(l.rstrip()[:250])' | tail -14
+done
+docker run --rm --network none --entrypoint node lm244-api --experimental-strip-types -e "import('./apps/api/src/server.ts').catch(e=>{console.log(e.name,e.code,String(e.message).replace(/postgres[^ ]+/ig,'[address]').slice(0,400));process.exit(1)})" 2>&1 | head -12
