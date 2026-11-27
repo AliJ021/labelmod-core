@@ -2,7 +2,7 @@
 /**
  * Plugin Name: Label Mod Connector
  * Description: سفارش‌های ووکامرس را به سامانه «لیبل مد» می‌فرستد و موجودی سایت را از انبار همگام می‌کند.
- * Version: 1.6.9
+ * Version: 1.6.12
  * Requires PHP: 7.4
  * Requires at least: 6.0
  * License: proprietary
@@ -48,7 +48,7 @@ if (!defined('ABSPATH')) {
     exit;
 }
 
-define('LMC_VERSION', '1.6.9');
+define('LMC_VERSION', '1.6.12');
 define('LMC_PATH', plugin_dir_path(__FILE__));
 define('LMC_OPTION', 'labelmod_connector_settings');
 
@@ -162,7 +162,6 @@ register_activation_hook(__FILE__, function () {
 });
 
 register_deactivation_hook(__FILE__, function () {
-    wp_clear_scheduled_hook(LMC_Diagnostics::DAILY);
     wp_clear_scheduled_hook(LMC_STOCK_EVENT);
     wp_clear_scheduled_hook(LMC_Stock_Sync::NEXT_PAGE_EVENT);
     wp_clear_scheduled_hook(LMC_INSTORE_EVENT);
@@ -235,15 +234,3 @@ function lmc_log(string $message): void
     }
     wc_get_logger()->info($message, ['source' => 'labelmod']);
 }
-
-// نشانی ثابت برای درج در پترن تأییدشده؛ مالکیت موبایل را خود حسابداری می‌سنجد.
-add_action('template_redirect', static function () {
-    if (!isset($_GET['labelmod_receipts']) || $_GET['labelmod_receipts'] !== '1') { return; }
-    $base = untrailingslashit((string) lmc_setting('base_url'));
-    if (!$base || wp_parse_url($base, PHP_URL_SCHEME) !== 'https' || !wp_http_validate_url($base)) {
-        wp_die('نشانی مشاهدهٔ رسیدها هنوز تنظیم نشده است.', '', ['response' => 503]);
-    }
-    nocache_headers();
-    wp_redirect($base . '/api/customer-receipts', 302, 'LabelMod');
-    exit;
-});

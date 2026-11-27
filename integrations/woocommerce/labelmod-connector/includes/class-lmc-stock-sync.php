@@ -51,12 +51,24 @@ class LMC_Stock_Sync
 
     public static function init(): void
     {
+        add_filter('woocommerce_duplicate_product_exclude_meta', [__CLASS__, 'exclude_duplicate_meta']);
         add_action(LMC_STOCK_EVENT, [__CLASS__, 'run']);
         add_action(self::NEXT_PAGE_EVENT, [__CLASS__, 'run']);
         add_action('added_post_meta', [__CLASS__, 'on_sku_change'], 10, 4);
         add_action('updated_post_meta', [__CLASS__, 'on_sku_change'], 10, 4);
         add_action('wp_ajax_lmc_stock_scan', [__CLASS__, 'ajax_scan']);
         add_action('admin_post_lmc_sync_now', [__CLASS__, 'handle_manual']);
+    }
+
+    /** WooCommerce uses the same exclusions for the product and every copied variation. */
+    public static function exclude_duplicate_meta(array $keys): array
+    {
+        return array_values(array_unique(array_merge($keys, [
+            self::META_KEY,
+            LMC_Stock_Ledger::STATE_META,
+            LMC_Stock_Ledger::VERSION_META,
+            LMC_Push_Receiver::PRICE_VERSION_META,
+        ])));
     }
 
     /** A newly entered site SKU can match a variation whose last stock change predates the cursor. */

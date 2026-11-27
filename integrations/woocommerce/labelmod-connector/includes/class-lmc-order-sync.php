@@ -33,6 +33,7 @@ class LMC_Order_Sync
     const META_NUMBER   = '_lmc_invoice_number';
     const META_ATTEMPTS = '_lmc_attempts';
     const META_ERROR    = '_lmc_last_error';
+    const META_ERROR_CODE = '_lmc_last_error_code';
     const META_STOPPED  = '_lmc_order_stopped';
     const META_PAID     = '_lmc_payment_complete';
     const META_PAID_AT_MS = '_lmc_paid_at_ms';
@@ -227,6 +228,10 @@ class LMC_Order_Sync
             self::fail($order, $payload, false);
             return;
         }
+        if (($payload['paymentMethod'] ?? '') === 'shopino' && $order->get_payment_method() !== 'shopino') {
+            self::fail($order, new WP_Error('lmc_shopino_method', 'روش دریافت سفارش با حساب شاپینو تطبیق ندارد.'), false);
+            return;
+        }
         if ($order->get_payment_method() === 'cod' && self::to_rial($order->get_total()) > 0
             && ($payload['paymentMethod'] ?? '') !== self::map_payment_method($order)) {
             self::fail($order, new WP_Error('lmc_cod_payment_snapshot', 'روش دریافت با تصویر ثبت‌شده سفارش متفاوت است؛ پیش از ارسال، تطبیق دستی لازم است.'), false);
@@ -272,6 +277,7 @@ class LMC_Order_Sync
             LMC_Stock_Ledger::sent_from($payload, $order->get_meta(self::META_LINES)), $epoch);
         $order->update_meta_data(self::META_NUMBER, (string) ($res['number'] ?? ''));
         $order->delete_meta_data(self::META_ERROR);
+        $order->delete_meta_data(self::META_ERROR_CODE);
         $note = sprintf(
             /* translators: %s: شماره فاکتور در سامانه لیبل مد */
             __('در لیبل مد ثبت شد — فاکتور %s', 'labelmod-connector'),
@@ -336,6 +342,21 @@ class LMC_Order_Sync
     {
         $saved = $order->get_meta(self::META_PAYLOAD);
         if (is_array($saved) && is_array($order->get_meta(self::META_LINES))) {
+            // Older connectors froze Shopino as a bank gateway. Only repair a
+            // definitively rejected request; leave unknown outcomes replayable.
+            if ($order->get_meta(self::META_INVOICE) === ''
+                && ($saved['paymentMethod'] ?? null) === 'gateway'
+                && empty($saved['paymentRef'])
+                && $order->get_meta(self::META_PAID) === 'yes'
+                && ($order->get_meta(self::META_ERROR_CODE) === 'lmc_ref_required'
+                    || ($order->get_meta(self::META_ERROR_CODE) === ''
+                        && $order->get_meta(self::META_ERROR) === 'روش پرداخت «gateway» شماره پیگیری لازم دارد'))
+                && $order->get_payment_method() === 'shopino'
+                && ($saved['externalId'] ?? null) === (string) $order->get_id()) {
+                $saved['paymentMethod'] = 'shopino';
+                $order->update_meta_data(self::META_PAYLOAD, $saved);
+                $order->save();
+            }
             // فقط مرجع جاافتاده تکمیل می‌شود؛ مبلغ، اقلام و هویت snapshot ثابت‌اند.
             // paymentRef عضو اثرانگشت runOnce در /web/orders نیست؛ پاسخ نامعلوم
             // همچنان با همان externalId بازپخش می‌شود، نه با فاکتور تازه.
@@ -596,6 +617,9 @@ class LMC_Order_Sync
     public static function map_payment_method(WC_Order $order): string
     {
         $id  = (string) $order->get_payment_method();
+        if ($id === 'shopino') {
+            return 'shopino';
+        }
         $map = self::parse_map((string) lmc_setting('payment_map'));
         return $map[$id] ?? 'gateway';
     }
@@ -655,6 +679,7 @@ class LMC_Order_Sync
         $attempts = (int) $order->get_meta(self::META_ATTEMPTS) + 1;
         $order->update_meta_data(self::META_ATTEMPTS, $attempts);
         $order->update_meta_data(self::META_ERROR, $err->get_error_message());
+        $order->update_meta_data(self::META_ERROR_CODE, $err->get_error_code());
 
         $message = $err->get_error_message();
         if ($http_ms !== null) {
@@ -794,11 +819,13 @@ class LMC_Order_Sync
     /** Explicit manual retry; the admin handler checks capability and nonce. */
     public static function retry(WC_Order $order): void
     {
+        if ($order->get_meta(self::META_INVOICE) !== '') {
+            return;
+        }
         // The human decision reopens delivery, keeping the frozen payload and
         // diagnostic error until a definitive response confirms the invoice.
         $order->update_meta_data(self::META_ATTEMPTS, 0);
         $order->delete_meta_data(self::META_STOPPED);
-        $order->delete_meta_data(self::META_INVOICE);
         $order->save();
         if (!LMC_Queue::forget(LMC_ORDER_EVENT, [$order->get_id()])) {
             $order->add_order_note('لیبل مد: پاک‌کردن ثبت شکست صف ناموفق بود؛ اگر ارسال دوباره متوقف شد، «ارسال دوباره» را تکرار کنید.');

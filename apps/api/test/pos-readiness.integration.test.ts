@@ -1141,7 +1141,7 @@ describe("آمادگی API صندوق", { skip }, () => {
     assert.equal(r.statusCode, 401);
   });
 
-  test("همه روش‌های فعال برمی‌گردند و روش نقدی از kind پیدا می‌شود", async () => {
+  test("روش‌های فعال صندوق برمی‌گردند و وصول شاپینو فقط برای سفارش سایت است", async () => {
     const s = await loginAs(cashier);
     const r = await app.inject({ method: "GET", url: "/payment-methods", ...s });
     assert.equal(r.statusCode, 200, r.body);
@@ -1152,9 +1152,10 @@ describe("آمادگی API صندوق", { skip }, () => {
       requiresRef: boolean;
     }>;
 
-    const active = await sql<{ n: string }>`
-      SELECT count(*)::text AS n FROM treasury.payment_method WHERE is_active`.execute(handle.db);
-    assert.equal(methods.length, Number(active.rows[0]!.n), "همه روش‌های فعال باید بیایند");
+    const active = await sql<{ code: string }>`
+      SELECT code FROM treasury.payment_method WHERE is_active ORDER BY code`.execute(handle.db);
+    assert.ok(active.rows.some(m => m.code === "shopino"), "روش وصول بازارگاه باید برای سایت فعال باشد");
+    assert.deepEqual(methods.map(m => m.code), active.rows.map(m => m.code).filter(code => code !== "shopino"));
 
     const cash = methods.filter((m) => m.kind === "cash");
     assert.equal(cash.length, 1, "کلاینت باید بتواند روش نقدی را از kind پیدا کند");
