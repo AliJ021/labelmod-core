@@ -14,7 +14,9 @@ psql_db(){ docker exec labelmod-db-1 psql -XAt -v ON_ERROR_STOP=1 -U labelmod -d
 fingerprint(){
  for t in sales.invoice sales.invoice_line sales.invoice_number treasury.payment inventory.stock_movement inventory.stock_balance ledger.journal_entry ledger.journal_line; do
   printf '%s ' "$t"
-  psql_db "$1" "SELECT count(*)||':'||md5(coalesce(string_agg(h,'' ORDER BY h),'')) FROM (SELECT md5(row_to_json(r)::text) h FROM $t r) s"
+  projection='to_jsonb(r)'
+  if [[ $t = sales.invoice ]]; then projection="to_jsonb(r) - 'public_token_issued_at'"; fi
+  psql_db "$1" "SELECT count(*)||':'||md5(coalesce(string_agg(h,'' ORDER BY h),'')) FROM (SELECT md5(($projection)::text) h FROM $t r) s"
  done
 }
 migrate(){
@@ -42,6 +44,7 @@ stage(){
  fingerprint "$db" > "$state/stage.before"
  migrate "$prep" "$db" > "$state/stage.migration" 2>&1
  fingerprint "$db" > "$state/stage.after"
+ test "$(psql_db "$db" 'SELECT count(*) FROM sales.invoice WHERE public_token_issued_at IS NOT NULL')" = 0
  diff -u "$state/stage.before" "$state/stage.after"
  n=$(psql_db "$db" "SELECT count(*) FROM public.schema_migration WHERE filename BETWEEN '134' AND '145'")
  test "$n" = 11
@@ -102,7 +105,20 @@ publish(){
  echo "$target" > "$state/production.ok"
  echo "Live commit $target; transactions and inventory matched. Backup $f"
 }
+ubuntu(){
+ local opts=(-o Dir::Etc::sourcelist=/etc/apt/sources.list.d/ubuntu.sources -o Dir::Etc::sourceparts=- -o APT::Update::Error-Mode=any -o Acquire::Retries=1)
+ test -s /etc/apt/sources.list.d/ubuntu.sources
+ apt-get "${opts[@]}" update >"$state/ubuntu-update.log" 2>&1
+ apt-get "${opts[@]}" -s --with-new-pkgs upgrade >"$state/ubuntu-plan.log"
+ grep -E 'upgraded, .*newly installed' "$state/ubuntu-plan.log"
+ if [[ ${1:-} == install ]]; then
+  DEBIAN_FRONTEND=noninteractive NEEDRESTART_MODE=l apt-get "${opts[@]}" -o Dpkg::Options::=--force-confold --with-new-pkgs --no-remove -y upgrade >"$state/ubuntu-install.log" 2>&1
+  dpkg --audit
+  test ! -e /var/run/reboot-required || echo REBOOT_REQUIRED
+ fi
+}
 case "${1:-}" in
+ ubuntu) ubuntu "${2:-}";;
  stage) stage;;
  publish) publish;;
  *) exit 2;;
