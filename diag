@@ -1,0 +1,17 @@
+#!/bin/bash
+set -u
+cd /srv/labelmod/app
+git rev-parse --short HEAD
+docker ps -a --filter label=com.docker.compose.project=labelmod --format '{{.Names}} {{.Status}}'
+for c in db api caddy worker panel-backup; do
+ echo "$c"
+ docker inspect --format '{{range $n,$v:=.NetworkSettings.Networks}}{{$n}} {{$v.IPAddress}} {{end}} {{.State.ExitCode}}' "labelmod-$c-1"
+done
+docker exec labelmod-api-1 node -e "fetch('http://127.0.0.1:3000/health',{signal:AbortSignal.timeout(3000)}).then(async r=>console.log('local API',r.status)).catch(e=>console.log(e.name,e.cause?.code))"
+docker exec labelmod-caddy-1 sh -c 'nslookup api; wget -T 3 -qSO /dev/null http://api:3000/health' 2>&1 | head -18
+curl -ko /dev/null -sS --max-time 5 --resolve hesab.labelmod.com:443:127.0.0.1 -w 'loopback Caddy/API %{http_code}\n' https://hesab.labelmod.com/api/health
+for c in api caddy; do docker logs --tail 120 "labelmod-$c-1" 2>&1 | python3 -c 'import re,sys;from collections import Counter
+s=sys.stdin.read(); print(dict(Counter(re.findall(r"(?:EAI_AGAIN|ECONNREFUSED|ENOTFOUND|ETIMEDOUT|permission denied|password authentication failed|address already in use|timeout|no such host|dial tcp|connection refused|network is unreachable|migration|listening)",s,re.I))))'; done
+df -h / | tail -1
+free -m | head -2
+uptime
